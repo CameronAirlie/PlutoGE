@@ -1,0 +1,32 @@
+{
+    "version": 8,
+    "configurePresets": [
+        {
+            "name": "gcc",
+            "displayName": "GCC 14.2.0 x86_64-w64-mingw32",
+            "description": "Using compilers: C = C:\\w64devkit\\bin\\gcc.exe, CXX = C:\\w64devkit\\bin\\g++.exe",
+            "binaryDir": "${sourceDir}/out/build/${presetName}",
+            "cacheVariables": {
+                "PLUTO_BUILD_EDITOR": "ON",
+                "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}",
+                "CMAKE_C_COMPILER": "C:/w64devkit/bin/gcc.exe",
+                "CMAKE_CXX_COMPILER": "C:/w64devkit/bin/g++.exe",
+                "CMAKE_BUILD_TYPE": "Debug"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "gcc",
+            "description": "",
+            "displayName": "",
+            "configurePreset": "gcc"
+        },
+        {
+            "name": "all",
+            "description": "",
+            "displayName": "",
+            "configurePreset": "gcc"
+        }
+    ]
+}

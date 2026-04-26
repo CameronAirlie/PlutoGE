@@ -1,0 +1,53 @@
+#include "PlutoGE/core/Engine.h"
+#include "PlutoGE/platform/Window.h"
+#include "PlutoGE/render/Renderer.h"
+#include "PlutoGE/render/Material.h"
+#include "PlutoGE/render/Shader.h"
+#include "PlutoGE/render/Mesh.h"
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+
+int main(int argc, char **argv)
+{
+    PlutoGE::core::Engine engine;
+
+    if (!engine.Initialize())
+    {
+        return -1;
+    }
+
+    auto &window = engine.GetWindow();
+    auto &renderer = engine.GetRenderer();
+
+    auto material = engine.GetAssetManager().CreateDefaultMaterial();
+    auto mesh = PlutoGE::render::Mesh::Cube();
+
+    PlutoGE::render::RenderCommand command;
+    command.material = material; // Set this to a valid material
+    command.mesh = mesh;         // Set this to a valid mesh
+
+    auto modelMatrix = glm::mat4(1.0f); // Identity model matrix
+
+    while (!window.ShouldClose())
+    {
+
+        // Rotate the model matrix over time for demonstration
+        float time = static_cast<float>(glfwGetTime());
+        modelMatrix = glm::rotate(glm::mat4(1.0f), time * glm::radians(50.0f), glm::vec3(0.5f, 1.0f, 0.0f));
+
+        command.model = modelMatrix; // Set the model matrix
+
+        renderer.SubmitRenderCommand(command);
+
+        renderer.BeginFrame();
+
+        std::cout << "Rendering frame..." << std::endl;
+        renderer.RenderFrame();
+
+        renderer.EndFrame();
+
+        window.PollEvents();
+    }
+
+    return 0;
+}

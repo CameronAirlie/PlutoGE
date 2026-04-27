@@ -122,6 +122,47 @@ void main()
             return CreateShaderFromSource(defaultSource);
         }
 
+        static Shader *FullScreenQuad()
+        {
+            ShaderSource source;
+
+            source.vertexSource = R"(
+            #version 330 core
+            layout(location = 0) in vec3 aPos;
+            layout(location = 1) in vec2 aUV;
+
+            out vec2 UV;
+
+            void main()
+            {
+                vec2 vertices[3]=vec2[3](
+                    vec2(-1.0, -1.0),
+                    vec2(3.0, -1.0),
+                    vec2(-1.0, 3.0)
+                );
+                gl_Position = vec4(vertices[gl_VertexID], 0.0, 1.0);
+                UV = 0.5 * gl_Position.xy + vec2(0.5); // Map from [-1, 1] to [0, 1]
+            }
+        )";
+
+            source.fragmentSource = R"(
+            #version 330 core
+            out vec4 FragColor;
+
+            in vec2 UV;
+
+            uniform sampler2D uColorTexture;
+
+            void main()
+            {
+                FragColor = texture(uColorTexture, UV);
+                // FragColor = vec4(UV, 0.0, 1.0); // Debug: visualize UVs
+            }
+        )";
+
+            return CreateShaderFromSource(source);
+        }
+
     protected:
         friend class Graphics;
         GLuint GetProgramID() const { return m_programID; }

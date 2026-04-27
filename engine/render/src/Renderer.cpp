@@ -4,6 +4,7 @@
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/Graphics.h"
+#include "PlutoGE/render/RenderTarget.h"
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -47,6 +48,8 @@ namespace PlutoGE::render
         // Disable face culling for debug
         glDisable(GL_CULL_FACE);
 
+        m_finalRenderTarget = new RenderTarget(RenderTargetConfig{.width = 800, .height = 600});
+
         m_isInitialized = true;
         return true;
     }
@@ -84,11 +87,19 @@ namespace PlutoGE::render
             .view = view,
             .projection = projection};
 
+        Graphics::BindRenderTarget(m_finalRenderTarget);
+
+        Graphics::ClearRenderTarget(m_finalRenderTarget, glm::vec4(0.1f, 0.1f, 0.1f, 1.0f));
+
         for (const auto &command : m_renderCommands)
         {
             // Pass the correct model matrix from the command
             Graphics::DrawMeshWithMaterial(command.mesh, command.material, command.model, &cameraData);
         }
+
+        Graphics::UnbindRenderTarget();
+
+        Graphics::DrawRenderTarget(m_finalRenderTarget);
 
         m_renderCommands.clear();
     }
@@ -107,7 +118,7 @@ namespace PlutoGE::render
     {
         // Clean up rendering resources here
         m_isInitialized = false;
-
+        CleanupResources();
         glBindBuffer(GL_ARRAY_BUFFER, 0);
     }
 
@@ -128,6 +139,11 @@ namespace PlutoGE::render
 
     void Renderer::CleanupResources()
     {
-        // Clean up any additional resources if needed
+        if (m_finalRenderTarget)
+        {
+            m_finalRenderTarget->Cleanup();
+            delete m_finalRenderTarget;
+            m_finalRenderTarget = nullptr;
+        }
     }
 }

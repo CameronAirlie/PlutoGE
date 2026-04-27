@@ -4,6 +4,7 @@
 #include "PlutoGE/render/Shader.h"
 #include "PlutoGE/render/Texture.h"
 #include "PlutoGE/render/Renderer.h"
+#include "PlutoGE/render/RenderTarget.h"
 
 #include <glad/glad.h>
 
@@ -164,6 +165,72 @@ namespace PlutoGE::render
                 glUniform1i(location, textureUnit); // Set the sampler uniform to use the correct texture unit
                 textureUnit++;
             }
+        }
+    }
+
+    void Graphics::DrawRenderTarget(RenderTarget *renderTarget)
+    {
+        if (!renderTarget)
+            return;
+
+        // Use static quad mesh/material/shader to avoid recreating every frame
+        static Mesh *quadMesh = nullptr;
+        static Material *quadMaterial = nullptr;
+        static Shader *defaultShader = nullptr;
+
+        if (!quadMesh)
+            quadMesh = Mesh::Quad();
+        if (!defaultShader)
+            defaultShader = Shader::FullScreenQuad();
+        if (!quadMaterial)
+        {
+            quadMaterial = new Material();
+            quadMaterial->SetShader(defaultShader);
+        }
+
+        // Bind the render target's color texture directly, do not create a new Texture object
+        // Assume the shader expects a sampler2D uniform named "uColorTexture"
+        // We'll use a dummy Texture object just to pass the texture ID, but do not allocate
+
+        // Helper: minimal dummy texture object for passing texture ID
+        class DummyTexture : public Texture
+        {
+        public:
+            DummyTexture(GLuint id)
+                : Texture(TextureConfig{})
+            {
+                m_textureID = id;
+            }
+        };
+
+        DummyTexture colorTexture(renderTarget->GetColorTextureID());
+        SetUniform(quadMaterial, "uColorTexture", &colorTexture, 0);
+
+        // Draw the quad to the default framebuffer
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        DrawMeshWithMaterial(quadMesh, quadMaterial);
+    }
+
+    void Graphics::BindRenderTarget(RenderTarget *renderTarget)
+    {
+        if (renderTarget)
+        {
+            renderTarget->Bind();
+        }
+    }
+
+    void Graphics::UnbindRenderTarget()
+    {
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    }
+
+    void Graphics::ClearRenderTarget(RenderTarget *renderTarget, const glm::vec4 &color)
+    {
+        if (renderTarget)
+        {
+            BindRenderTarget(renderTarget);
+            glClearColor(color.r, color.g, color.b, color.a);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         }
     }
 }

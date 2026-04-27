@@ -94,6 +94,32 @@ namespace PlutoGE::render
             return mesh;
         }
 
+        static Mesh *Quad()
+        {
+            std::vector<MeshVertexData> vertices = {
+                {{-0.5f, -0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
+                {{0.5f, -0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
+                {{-0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
+                {{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
+            };
+
+            std::vector<unsigned int> indices = {
+                0, 1, 2, // First triangle
+                2, 1, 3  // Second triangle
+            };
+
+            MeshData meshData;
+            meshData.vertices = std::move(vertices);
+            meshData.indices = std::move(indices);
+
+            MeshConfig config;
+            config.data = std::move(meshData);
+
+            Mesh *mesh = new Mesh(config);
+
+            return mesh;
+        }
+
         ~Mesh() = default;
 
     protected:

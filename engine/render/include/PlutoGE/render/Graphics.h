@@ -8,6 +8,7 @@ namespace PlutoGE::render
     class Mesh;
     class Material;
     class Texture;
+    class RenderTarget;
     struct CameraData;
     class Graphics
     {
@@ -18,6 +19,12 @@ namespace PlutoGE::render
         static void DrawMeshWithMaterial(Mesh *mesh, Material *material,
                                          const glm::mat4 &modelMatrix = glm::mat4(1.0f),
                                          CameraData *cameraData = nullptr);
+
+        static void DrawRenderTarget(class RenderTarget *renderTarget);
+
+        static void BindRenderTarget(class RenderTarget *renderTarget);
+        static void UnbindRenderTarget();
+        static void ClearRenderTarget(class RenderTarget *renderTarget, const glm::vec4 &color);
 
     private:
         static void BindMesh(Mesh *mesh);

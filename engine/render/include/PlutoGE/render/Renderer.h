@@ -30,6 +30,7 @@ namespace PlutoGE::render
         glm::mat4 model;    // Model matrix for the object (position, rotation, scale)
     };
 
+    class RenderTarget;
     class Renderer
     {
     public:
@@ -51,6 +52,7 @@ namespace PlutoGE::render
 
     private:
         RendererConfig m_config;
+        RenderTarget *m_finalRenderTarget = nullptr; // Final render target for the frame
         bool m_isInitialized = false;
 
         void CleanupResources();

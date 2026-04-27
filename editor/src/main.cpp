@@ -36,9 +36,14 @@ int main(int argc, char **argv)
     while (!window.ShouldClose())
     {
 
-        // Rotate the model matrix over time for demonstration
         float time = static_cast<float>(glfwGetTime());
-        modelMatrix = glm::rotate(glm::mat4(1.0f), time * glm::radians(50.0f), glm::vec3(0.5f, 1.0f, 0.0f));
+
+        // Move the cube closer and farther over time for demonstration
+        float distance = 5.0f + sin(time * 1.5f) * 8.0f;
+        modelMatrix = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -distance));
+
+        // Rotate the model matrix over time for demonstration
+        modelMatrix = glm::rotate(modelMatrix, time * glm::radians(50.0f), glm::vec3(0.5f, 1.0f, 0.0f));
 
         command.model = modelMatrix; // Set the model matrix
 

@@ -30,7 +30,8 @@ namespace PlutoGE::render
         RenderTargetConfig m_config;
         GLuint m_framebufferID = 0;        // OpenGL framebuffer ID
         GLuint m_colorTextureID = 0;       // OpenGL texture ID for color attachment
-        GLuint m_depthStencilBufferID = 0; // OpenGL renderbuffer ID for depth and stencil attachment
+        GLuint m_depthTextureID = 0;       // OpenGL texture ID for depth attachment (sampleable)
+        GLuint m_depthStencilBufferID = 0; // OpenGL renderbuffer ID for depth and stencil attachment (legacy, optional)
         int m_width = 0;
         int m_height = 0;
 
@@ -45,6 +46,7 @@ namespace PlutoGE::render
 
         GLuint GetFramebufferID() const { return m_framebufferID; }
         GLuint GetColorTextureID() const { return m_colorTextureID; }
+        GLuint GetDepthTextureID() const { return m_depthTextureID; }
         GLuint GetDepthStencilBufferID() const { return m_depthStencilBufferID; }
     };
 }

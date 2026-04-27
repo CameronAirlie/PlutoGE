@@ -188,10 +188,6 @@ namespace PlutoGE::render
             quadMaterial->SetShader(defaultShader);
         }
 
-        // Bind the render target's color texture directly, do not create a new Texture object
-        // Assume the shader expects a sampler2D uniform named "uColorTexture"
-        // We'll use a dummy Texture object just to pass the texture ID, but do not allocate
-
         // Helper: minimal dummy texture object for passing texture ID
         class DummyTexture : public Texture
         {
@@ -205,6 +201,9 @@ namespace PlutoGE::render
 
         DummyTexture colorTexture(renderTarget->GetColorTextureID());
         SetUniform(quadMaterial, "uColorTexture", &colorTexture, 0);
+
+        DummyTexture depthTexture(renderTarget->GetDepthTextureID());
+        SetUniform(quadMaterial, "uDepthTexture", &depthTexture, 1);
 
         // Draw the quad to the default framebuffer
         glBindFramebuffer(GL_FRAMEBUFFER, 0);

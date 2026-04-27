@@ -152,11 +152,12 @@ void main()
             in vec2 UV;
 
             uniform sampler2D uColorTexture;
+            uniform sampler2D uDepthTexture;
 
             void main()
             {
                 FragColor = texture(uColorTexture, UV);
-                // FragColor = vec4(UV, 0.0, 1.0); // Debug: visualize UVs
+                
             }
         )";
 

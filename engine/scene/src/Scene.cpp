@@ -1,6 +1,7 @@
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/Entity.h"
 #include <algorithm>
+#include <iostream>
 
 namespace PlutoGE::scene
 {
@@ -38,7 +39,7 @@ namespace PlutoGE::scene
 
     bool Scene::RemoveEntityRecursive(Entity *current, Entity *target)
     {
-        auto &children = current->GetChildren();
+        auto &children = current->m_children;
         auto it = std::find(children.begin(), children.end(), target);
         if (it != children.end())
         {
@@ -56,5 +57,106 @@ namespace PlutoGE::scene
         }
 
         return false; // Entity not found in this branch
+    }
+
+    void Scene::Update(float deltaTime)
+    {
+        for (auto rootEntity : m_rootEntities)
+        {
+            if (rootEntity->IsActive())
+            {
+                rootEntity->Update(deltaTime);
+            }
+        }
+    }
+
+    void SearchEntityByNameRecursive(Entity *current, const std::string &name, Entity **result)
+    {
+        if (current->GetName() == name)
+        {
+            *result = current;
+            return;
+        }
+
+        for (auto child : current->GetChildren())
+        {
+            SearchEntityByNameRecursive(child, name, result);
+            if (*result)
+                return; // Early exit if found
+        }
+    }
+
+    Entity *Scene::FindEntityByName(const std::string &name) const
+    {
+        for (auto rootEntity : m_rootEntities)
+        {
+            if (rootEntity->GetName() == name)
+            {
+                return rootEntity;
+            }
+            Entity *result = nullptr;
+            SearchEntityByNameRecursive(rootEntity, name, &result);
+            if (result)
+            {
+                return result;
+            }
+        }
+        return nullptr; // Not found
+    }
+
+    void SearchEntityByIDRecursive(Entity *current, EntityID id, Entity **result)
+    {
+        if (current->GetID() == id)
+        {
+            *result = current;
+            return;
+        }
+
+        for (auto child : current->GetChildren())
+        {
+            SearchEntityByIDRecursive(child, id, result);
+            if (*result)
+                return; // Early exit if found
+        }
+    }
+
+    Entity *Scene::FindEntityByID(EntityID id) const
+    {
+        for (auto rootEntity : m_rootEntities)
+        {
+            if (rootEntity->GetID() == id)
+            {
+                return rootEntity;
+            }
+            Entity *result = nullptr;
+            SearchEntityByIDRecursive(rootEntity, id, &result);
+            if (result)
+            {
+                return result;
+            }
+        }
+        return nullptr; // Not found
+    }
+
+    void SearchEntitiesByTagRecursive(Entity *current, const std::string &tag, std::vector<Entity *> &results)
+    {
+        if (std::find(current->GetTags().begin(), current->GetTags().end(), tag) != current->GetTags().end())
+        {
+            results.push_back(current);
+        }
+
+        for (auto child : current->GetChildren())
+        {
+            SearchEntitiesByTagRecursive(child, tag, results);
+        }
+    }
+    std::vector<Entity *> Scene::FindEntitiesByTag(const std::string &tag) const
+    {
+        std::vector<Entity *> taggedEntities;
+        for (auto rootEntity : m_rootEntities)
+        {
+            SearchEntitiesByTagRecursive(rootEntity, tag, taggedEntities);
+        }
+        return taggedEntities;
     }
 }

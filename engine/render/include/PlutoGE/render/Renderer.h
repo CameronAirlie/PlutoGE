@@ -3,6 +3,7 @@
 #include "PlutoGE/platform/Window.h"
 #include "PlutoGE/render/Camera.h"
 #include <glm/glm.hpp>
+#include <iostream>
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>

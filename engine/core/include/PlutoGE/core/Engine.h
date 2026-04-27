@@ -22,7 +22,6 @@ namespace PlutoGE::core
     class Engine
     {
     public:
-        Engine() = default;
         ~Engine() = default;
 
         bool Initialize(const EngineConfig &config = EngineConfig());
@@ -42,6 +41,7 @@ namespace PlutoGE::core
         [[nodiscard]] render::TextureManager &GetTextureManager() { return m_textureManager; }
 
     private:
+        Engine() = default;
         EngineConfig m_config;
         platform::Window m_window;
         render::Renderer m_renderer;

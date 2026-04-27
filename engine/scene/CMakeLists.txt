@@ -1,6 +1,7 @@
 add_library(PlutoGEScene
     src/Entity.cpp
     src/Scene.cpp
+    src/components/MeshComponent.cpp
 )
 
 add_library(PlutoGE::Scene ALIAS PlutoGEScene)

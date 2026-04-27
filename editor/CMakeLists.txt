@@ -13,6 +13,7 @@ target_link_libraries(PlutoGEEditor
         PlutoGE::Render
         PlutoGE::Assets
         PlutoGE::Core
+        PlutoGE::Scene
         PlutoGE::glm
 )
 

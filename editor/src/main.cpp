@@ -20,11 +20,16 @@ int main(int argc, char **argv)
     auto &renderer = engine.GetRenderer();
 
     auto material = engine.GetAssetManager().CreateDefaultMaterial();
+    auto texturedMaterial = engine.GetAssetManager().CreateDefaultMaterial();
+    texturedMaterial->SetAlbedoTexture(engine.GetAssetManager().LoadTexture("U:\\Documents\\cobble\\cobble_base.png"));
+    // texturedMaterial->SetNormalTexture(engine.GetAssetManager().LoadTexture("U:\\Documents\\cobble\\cobble_normal.png"));
+    texturedMaterial->SetColor(glm::vec3(1.0f, 1.0f, 1.0f)); // Set a base color for the material
+
     auto mesh = PlutoGE::render::Mesh::Cube();
 
     PlutoGE::render::RenderCommand command;
-    command.material = material; // Set this to a valid material
-    command.mesh = mesh;         // Set this to a valid mesh
+    command.material = texturedMaterial; // material; // Set this to a valid material
+    command.mesh = mesh;                 // Set this to a valid mesh
 
     auto modelMatrix = glm::mat4(1.0f); // Identity model matrix
 
@@ -41,7 +46,6 @@ int main(int argc, char **argv)
 
         renderer.BeginFrame();
 
-        std::cout << "Rendering frame..." << std::endl;
         renderer.RenderFrame();
 
         renderer.EndFrame();

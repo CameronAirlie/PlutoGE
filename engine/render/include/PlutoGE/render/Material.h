@@ -11,6 +11,8 @@ namespace PlutoGE::render
         glm::vec3 color{1.0f, 1.0f, 1.0f}; // Base color (default to white)
         Texture *albedoTexture = nullptr;  // Pointer to an albedo texture (if any)
 
+        Texture *normalTexture = nullptr; // Pointer to a normal map texture (if any)
+
         float metallic = 0.0f;              // Metallic factor (0.0 = non-metal, 1.0 = metal)
         Texture *metallicTexture = nullptr; // Pointer to a metallic texture (if any)
 
@@ -27,6 +29,14 @@ namespace PlutoGE::render
 
         void SetShader(Shader *shader) { m_shader = shader; }
         Shader *GetShader() const { return m_shader; }
+
+        void SetColor(const glm::vec3 &color) { m_config.color = color; }
+        void SetAlbedoTexture(Texture *texture) { m_config.albedoTexture = texture; }
+        void SetNormalTexture(Texture *texture) { m_config.normalTexture = texture; }
+        void SetMetallic(float metallic) { m_config.metallic = metallic; }
+        void SetMetallicTexture(Texture *texture) { m_config.metallicTexture = texture; }
+        void SetRoughness(float roughness) { m_config.roughness = roughness; }
+        void SetRoughnessTexture(Texture *texture) { m_config.roughnessTexture = texture; }
 
     protected:
         friend class Graphics;

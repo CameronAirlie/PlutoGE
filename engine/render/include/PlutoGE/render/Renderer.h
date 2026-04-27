@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PlutoGE/platform/Window.h"
+#include "PlutoGE/render/Camera.h"
 #include <glm/glm.hpp>
 
 #include <glad/glad.h>
@@ -15,12 +16,6 @@ namespace PlutoGE::render
     {
         // Future configuration options can be added here
         platform::Window *window = nullptr; // Pointer to the Window, set during initialization
-    };
-
-    struct CameraData
-    {
-        glm::mat4 view;       // View matrix
-        glm::mat4 projection; // Projection matrix
     };
 
     struct RenderCommand
@@ -50,9 +45,15 @@ namespace PlutoGE::render
             m_renderCommands.push_back(command);
         }
 
+        void SetCamera(Camera *camera)
+        {
+            m_camera = camera;
+        }
+
     private:
         RendererConfig m_config;
         RenderTarget *m_finalRenderTarget = nullptr; // Final render target for the frame
+        Camera *m_camera = nullptr;
         bool m_isInitialized = false;
 
         void CleanupResources();

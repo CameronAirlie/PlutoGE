@@ -17,7 +17,6 @@ namespace PlutoGE::platform
         bool resizable = true;
         bool visible = true;
         bool fullscreen = false;
-        std::function<void(const InputState &)> inputCallback = nullptr;
         std::function<void(int, int)> resizeCallback = nullptr;
     };
 
@@ -40,8 +39,8 @@ namespace PlutoGE::platform
         [[nodiscard]] WindowExtents GetExtents() const;
         [[nodiscard]] const WindowConfig GetConfig() const;
         [[nodiscard]] void *GetWindow() const;
+        [[nodiscard]] InputState &GetInputState() { return m_inputState; }
 
-        void SetInputCallback(const std::function<void(const InputState &)> &callback);
         void SetResizeCallback(const std::function<void(int, int)> &callback);
 
         void SetContextCurrent();
@@ -49,10 +48,6 @@ namespace PlutoGE::platform
         std::function<void(int, int)> GetResizeCallback() const
         {
             return m_config.resizeCallback;
-        }
-        std::function<void(const InputState &)> GetInputCallback() const
-        {
-            return m_config.inputCallback;
         }
 
     private:

@@ -41,7 +41,8 @@ namespace PlutoGE::render
             return false;
         }
 
-        glViewport(0, 0, 800, 600); // Set viewport to match window size (can be dynamic)
+        auto extents = window->GetExtents();
+        glViewport(0, 0, extents.width, extents.height); // Set viewport to match window size (can be dynamic)
 
         // Enable depth testing for 3D rendering
         glEnable(GL_DEPTH_TEST);
@@ -57,7 +58,6 @@ namespace PlutoGE::render
     void Renderer::BeginFrame()
     {
         // Prepare for rendering a new frame (e.g., clear buffers)
-
         glClearColor(0.1f, 0.1f, 0.1f, 1.0f); // Clear to dark gray
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     }
@@ -72,20 +72,20 @@ namespace PlutoGE::render
         auto &engine = core::Engine::GetInstance();
 
         // Set up a basic camera: positioned at (0,0,3), looking at origin, up is +Y
-        glm::mat4 view = glm::lookAt(
-            glm::vec3(0.0f, 0.0f, 5.0f), // Camera position
-            glm::vec3(0.0f, 0.0f, 0.0f), // Target
-            glm::vec3(0.0f, 1.0f, 0.0f)  // Up
-        );
+        // glm::mat4 view = glm::lookAt(
+        //     glm::vec3(0.0f, 0.0f, 5.0f), // Camera position
+        //     glm::vec3(0.0f, 0.0f, 0.0f), // Target
+        //     glm::vec3(0.0f, 1.0f, 0.0f)  // Up
+        // );
         // Perspective projection: 45 deg fov, aspect ratio 4:3, near=0.1, far=100
-        glm::mat4 projection = glm::perspective(
-            glm::radians(60.0f),
-            4.0f / 3.0f,
-            0.1f,
-            100.0f);
-        CameraData cameraData{
-            .view = view,
-            .projection = projection};
+        // glm::mat4 projection = glm::perspective(
+        //     glm::radians(60.0f),
+        //     4.0f / 3.0f,
+        //     0.1f,
+        //     100.0f);
+        // CameraData cameraData{
+        //     .view = view,
+        //     .projection = projection};
 
         Graphics::BindRenderTarget(m_finalRenderTarget);
 
@@ -94,7 +94,7 @@ namespace PlutoGE::render
         for (const auto &command : m_renderCommands)
         {
             // Pass the correct model matrix from the command
-            Graphics::DrawMeshWithMaterial(command.mesh, command.material, command.model, &cameraData);
+            Graphics::DrawMeshWithMaterial(command.mesh, command.material, command.model, &m_camera->GetCameraData());
         }
 
         Graphics::UnbindRenderTarget();

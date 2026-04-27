@@ -14,6 +14,7 @@ namespace PlutoGE::platform
         auto *instance = static_cast<Window *>(glfwGetWindowUserPointer(window));
         if (auto callback = instance->GetResizeCallback())
         {
+            std::cout << "Invoking resize callback from GLFWResizeCallback." << std::endl;
             callback(width, height);
         }
     }
@@ -26,12 +27,14 @@ namespace PlutoGE::platform
 
         if (!glfwInit())
         {
+            std::cout << "Failed to initialize GLFW." << std::endl;
             return false;
         }
 
         m_window = glfwCreateWindow(m_clientWidth, m_clientHeight, m_config.title.c_str(), m_config.fullscreen ? glfwGetPrimaryMonitor() : nullptr, nullptr);
         if (!m_window)
         {
+            std::cerr << "Failed to create GLFW window." << std::endl;
             glfwTerminate();
             return false;
         }
@@ -52,14 +55,29 @@ namespace PlutoGE::platform
         {
             glfwSetWindowMonitor(m_window, glfwGetPrimaryMonitor(), 0, 0, m_clientWidth, m_clientHeight, GLFW_DONT_CARE);
         }
-        if (m_config.inputCallback)
-        {
-            m_config.inputCallback = config.inputCallback;
-        }
         if (m_config.resizeCallback)
         {
             SetResizeCallback(config.resizeCallback);
         }
+
+        glfwSetKeyCallback(static_cast<GLFWwindow *>(m_window), [](GLFWwindow *window, int key, int scancode, int action, int mods)
+                           {
+            auto *instance = static_cast<Window *>(glfwGetWindowUserPointer(window));
+            if (instance)
+            {
+                // Update input state based on key events
+                if (key >= 0 && key < static_cast<int>(instance->m_inputState.keys.size()))
+                {
+                    if (action == GLFW_PRESS)
+                    {
+                        instance->m_inputState.keys[key] = true;
+                    }
+                    else if (action == GLFW_RELEASE)
+                    {
+                        instance->m_inputState.keys[key] = false;
+                    }
+                }
+            } });
 
         return true;
     }
@@ -113,16 +131,13 @@ namespace PlutoGE::platform
         return m_window;
     }
 
-    void Window::SetInputCallback(const std::function<void(const InputState &)> &callback)
-    {
-    }
-
     void Window::SetResizeCallback(const std::function<void(int, int)> &callback)
     {
         std::cout << "Setting resize callback in Window class." << std::endl;
         m_config.resizeCallback = callback;
         if (m_window)
         {
+            std::cout << "Registering GLFW resize callback." << std::endl;
             glfwSetWindowSizeCallback(static_cast<GLFWwindow *>(m_window), GLFWResizeCallback);
         }
     }

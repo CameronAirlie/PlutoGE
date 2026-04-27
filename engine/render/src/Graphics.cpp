@@ -10,7 +10,7 @@
 
 namespace PlutoGE::render
 {
-    void Graphics::DrawMeshWithMaterial(Mesh *mesh, Material *material, const glm::mat4 &modelMatrix, CameraData *cameraData)
+    void Graphics::DrawMeshWithMaterial(Mesh *mesh, Material *material, const glm::mat4 &modelMatrix, const CameraData *cameraData)
     {
         if (!mesh || !material)
             return;
@@ -31,7 +31,7 @@ namespace PlutoGE::render
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh->GetEBO());
     }
 
-    void Graphics::BindMaterial(Material *material, const glm::mat4 &modelMatrix, CameraData *cameraData)
+    void Graphics::BindMaterial(Material *material, const glm::mat4 &modelMatrix, const CameraData *cameraData)
     {
         if (auto shader = material->GetShader())
         {

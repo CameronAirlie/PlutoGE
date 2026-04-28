@@ -223,12 +223,19 @@ namespace PlutoGE::render
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
     }
 
-    void Graphics::ClearRenderTarget(RenderTarget *renderTarget, const glm::vec4 &color)
+    void Graphics::ClearRenderTarget(RenderTarget *renderTarget)
     {
         if (renderTarget)
         {
             BindRenderTarget(renderTarget);
+            glm::vec4 color = renderTarget->GetClearColor();
             glClearColor(color.r, color.g, color.b, color.a);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        }
+        else
+        {
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            glClearColor(0.0f, 0.0f, 0.0f, 1.0f); // Default clear color
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         }
     }

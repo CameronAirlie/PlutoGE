@@ -29,8 +29,11 @@ namespace PlutoGE::scene
         ~Entity() = default;
 
         glm::vec3 GetPosition() const { return m_transform.position; }
+        glm::vec3 GetWorldPosition() const;
         glm::vec3 GetRotation() const { return m_transform.rotation; }
+        glm::vec3 GetWorldRotation() const;
         glm::vec3 GetScale() const { return m_transform.scale; }
+        glm::vec3 GetWorldScale() const;
 
         void SetPosition(const glm::vec3 &position) { m_transform.position = position; }
         void SetRotation(const glm::vec3 &rotation) { m_transform.rotation = rotation; }

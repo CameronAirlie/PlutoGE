@@ -1,6 +1,7 @@
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/platform/Window.h"
 #include "PlutoGE/render/Renderer.h"
+#include "PlutoGE/render/RenderTarget.h"
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/Shader.h"
 #include "PlutoGE/render/Mesh.h"
@@ -8,6 +9,7 @@
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/render/Camera.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
+#include "PlutoGE/scene/components/CameraComponent.h"
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -58,9 +60,6 @@ int main(int argc, char **argv)
         .nearPlane = 0.1f,
         .farPlane = 100.0f,
     });
-    glm::vec3 cameraPos(0.0f, 0.0f, 5.0f);
-
-    renderer.SetCamera(&camera);
 
     auto modelMatrix = glm::mat4(1.0f); // Identity model matrix
 
@@ -72,33 +71,78 @@ int main(int argc, char **argv)
 
     auto cube = scene->FindEntityByName("CubeEntity");
 
+    auto cameraEntity = std::make_unique<PlutoGE::scene::Entity>(PlutoGE::scene::EntityConfig{
+        .name = "CameraEntity",
+        .tags = {"Camera"}});
+    auto cameraComponent = std::make_unique<PlutoGE::scene::CameraComponent>();
+    cameraEntity->SetPosition(glm::vec3(0.0f, 0.0f, 5.0f)); // Position the camera 5 units back on the Z-axis
+    cameraComponent->SetCamera(&camera);
+
+    cameraEntity->AddComponent(cameraComponent.release());
+    scene->AddEntity(cameraEntity.release());
+
+    PlutoGE::render::RenderTarget *renderTarget = new PlutoGE::render::RenderTarget(PlutoGE::render::RenderTargetConfig{
+        .width = 800,
+        .height = 600,
+        .clearColor = glm::vec4(0.1f, 0.1f, 0.1f, 1.0f) // Set a custom clear color for the render target
+    });
+
+    if (!renderTarget->IsInitialized())
+    {
+        std::cerr << "Failed to initialize render target" << std::endl;
+        return -1;
+    }
+
     while (!window.ShouldClose())
     {
-        camera.SetViewMatrix(glm::lookAt(
-            cameraPos,                                // Camera position
-            cameraPos + glm::vec3(0.0f, 0.0f, -1.0f), // Target (looking forward)
-            glm::vec3(0.0f, 1.0f, 0.0f)               // Up
-            ));
-
         auto currentTime = std::chrono::high_resolution_clock::now();
         deltaTime = currentTime - lastTime;
 
         cube->SetRotation(glm::vec3(0.0f, positionX * 50.0f, 0.0f));
+        positionX += 0.5f * deltaTime.count(); // Move at 0.5 units per second
+
+        glm::vec3 inputDirection(0.0f);
+        if (input.IsKeyPressed(PlutoGE::platform::KeyCode::W))
+        {
+            inputDirection.z -= 1.0f; // Move forward
+        }
+        if (input.IsKeyPressed(PlutoGE::platform::KeyCode::S))
+        {
+            inputDirection.z += 1.0f; // Move backward
+        }
+        if (input.IsKeyPressed(PlutoGE::platform::KeyCode::A))
+        {
+            inputDirection.x -= 1.0f; // Move left
+        }
+        if (input.IsKeyPressed(PlutoGE::platform::KeyCode::D))
+        {
+            inputDirection.x += 1.0f; // Move right
+        }
+        if (glm::length(inputDirection) > 0.0f)
+        {
+            inputDirection = glm::normalize(inputDirection);
+            auto cameraEntity = scene->FindEntityByName("CameraEntity");
+            auto currentPosition = cameraEntity->GetPosition();
+            currentPosition += inputDirection * 5.0f * deltaTime.count(); // Move at 5 units per second
+            cameraEntity->SetPosition(currentPosition);
+        }
 
         scene->Update(deltaTime.count());
 
-        positionX += 0.5f * deltaTime.count(); // Move at 0.5 units per second
+        renderer.BeginFrame(renderTarget);
 
-        renderer.BeginFrame();
+        renderer.RenderFrame(camera.GetCameraData(), renderTarget);
 
-        renderer.RenderFrame();
+        renderer.DrawRenderTarget(renderTarget);
 
-        renderer.EndFrame();
+        renderer.EndFrame(renderTarget);
 
         window.PollEvents();
 
         lastTime = currentTime;
     }
+
+    renderer.Shutdown(renderTarget);
 
     return 0;
 }

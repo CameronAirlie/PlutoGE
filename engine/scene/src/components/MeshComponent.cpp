@@ -17,10 +17,10 @@ namespace PlutoGE::scene
             auto entity = GetOwner();
             glm::mat4 modelMatrix = glm::mat4(1.0f);
 
-            modelMatrix = glm::translate(modelMatrix, entity->GetPosition());
-            modelMatrix = glm::rotate(modelMatrix, glm::radians(entity->GetRotation().x), glm::vec3(1.0f, 0.0f, 0.0f));
-            modelMatrix = glm::rotate(modelMatrix, glm::radians(entity->GetRotation().y), glm::vec3(0.0f, 1.0f, 0.0f));
-            modelMatrix = glm::rotate(modelMatrix, glm::radians(entity->GetRotation().z), glm::vec3(0.0f, 0.0f, 1.0f));
+            modelMatrix = glm::translate(modelMatrix, entity->GetWorldPosition());
+            modelMatrix = glm::rotate(modelMatrix, glm::radians(entity->GetWorldRotation().x), glm::vec3(1.0f, 0.0f, 0.0f));
+            modelMatrix = glm::rotate(modelMatrix, glm::radians(entity->GetWorldRotation().y), glm::vec3(0.0f, 1.0f, 0.0f));
+            modelMatrix = glm::rotate(modelMatrix, glm::radians(entity->GetWorldRotation().z), glm::vec3(0.0f, 0.0f, 1.0f));
             modelMatrix = glm::scale(modelMatrix, entity->GetScale());
 
             auto &renderer = PlutoGE::core::Engine::GetInstance().GetRenderer();

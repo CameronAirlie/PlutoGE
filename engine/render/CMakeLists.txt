@@ -19,5 +19,6 @@ target_link_libraries(PlutoGERender PUBLIC
     PlutoGE::Assets
     PlutoGE::Core
     PlutoGE::glad
+    PlutoGE::Scene
     PlutoGE::stb_image
 )

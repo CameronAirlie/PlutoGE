@@ -8,6 +8,11 @@
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 
+namespace PlutoGE::scene
+{
+    class CameraComponent;
+}
+
 namespace PlutoGE::render
 {
     class Material;
@@ -34,10 +39,11 @@ namespace PlutoGE::render
         ~Renderer() = default;
 
         bool Initialize(const RendererConfig &config = RendererConfig());
-        void BeginFrame();
-        void RenderFrame();
-        void EndFrame();
-        void Shutdown();
+        void BeginFrame(RenderTarget *renderTarget = nullptr);
+        void RenderFrame(CameraData &cameraData, RenderTarget *renderTarget = nullptr);
+        void DrawRenderTarget(RenderTarget *renderTarget);
+        void EndFrame(RenderTarget *renderTarget = nullptr);
+        void Shutdown(RenderTarget *renderTarget = nullptr);
 
         void SetVSyncEnabled(bool enabled);
 
@@ -46,18 +52,11 @@ namespace PlutoGE::render
             m_renderCommands.push_back(command);
         }
 
-        void SetCamera(Camera *camera)
-        {
-            m_camera = camera;
-        }
-
     private:
         RendererConfig m_config;
-        RenderTarget *m_finalRenderTarget = nullptr; // Final render target for the frame
-        Camera *m_camera = nullptr;
         bool m_isInitialized = false;
 
-        void CleanupResources();
+        void CleanupResources(RenderTarget *renderTarget = nullptr);
         std::vector<RenderCommand> m_renderCommands; // List of render commands for the current frame
     };
 }

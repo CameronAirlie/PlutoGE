@@ -5,6 +5,7 @@
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/Graphics.h"
 #include "PlutoGE/render/RenderTarget.h"
+#include "PlutoGE/scene/components/CameraComponent.h"
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -49,20 +50,22 @@ namespace PlutoGE::render
         // Disable face culling for debug
         glDisable(GL_CULL_FACE);
 
-        m_finalRenderTarget = new RenderTarget(RenderTargetConfig{.width = 800, .height = 600});
-
         m_isInitialized = true;
         return true;
     }
 
-    void Renderer::BeginFrame()
+    void Renderer::BeginFrame(RenderTarget *renderTarget)
     {
-        // Prepare for rendering a new frame (e.g., clear buffers)
-        glClearColor(0.1f, 0.1f, 0.1f, 1.0f); // Clear to dark gray
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        if (!m_isInitialized)
+            return;
+
+        Graphics::ClearRenderTarget(nullptr); // Clear default framebuffer first to avoid artifacts if render target is not cleared properly
+
+        if (renderTarget)
+            Graphics::ClearRenderTarget(renderTarget);
     }
 
-    void Renderer::RenderFrame()
+    void Renderer::RenderFrame(CameraData &cameraData, RenderTarget *renderTarget)
     {
         // Use shader and draw triangle with VAO
         if (!m_isInitialized)
@@ -71,24 +74,22 @@ namespace PlutoGE::render
         // Get draw list from the engine and render it here
         auto &engine = core::Engine::GetInstance();
 
-        Graphics::BindRenderTarget(m_finalRenderTarget);
-
-        Graphics::ClearRenderTarget(m_finalRenderTarget, glm::vec4(0.1f, 0.1f, 0.1f, 1.0f));
-
         for (const auto &command : m_renderCommands)
         {
-            // Pass the correct model matrix from the command
-            Graphics::DrawMeshWithMaterial(command.mesh, command.material, command.model, &m_camera->GetCameraData());
+            Graphics::DrawMeshWithMaterial(command.mesh, command.material, command.model, &cameraData);
         }
 
         Graphics::UnbindRenderTarget();
 
-        Graphics::DrawRenderTarget(m_finalRenderTarget);
-
         m_renderCommands.clear();
     }
 
-    void Renderer::EndFrame()
+    void Renderer::DrawRenderTarget(RenderTarget *renderTarget)
+    {
+        Graphics::DrawRenderTarget(renderTarget);
+    }
+
+    void Renderer::EndFrame(RenderTarget *renderTarget)
     {
         // Finalize the frame (e.g., swap buffers)
 
@@ -98,11 +99,11 @@ namespace PlutoGE::render
         }
     }
 
-    void Renderer::Shutdown()
+    void Renderer::Shutdown(RenderTarget *renderTarget)
     {
         // Clean up rendering resources here
         m_isInitialized = false;
-        CleanupResources();
+        CleanupResources(renderTarget);
         glBindBuffer(GL_ARRAY_BUFFER, 0);
     }
 
@@ -121,13 +122,17 @@ namespace PlutoGE::render
         }
     }
 
-    void Renderer::CleanupResources()
+    void Renderer::CleanupResources(RenderTarget *renderTarget)
     {
-        if (m_finalRenderTarget)
+        if (renderTarget)
         {
-            m_finalRenderTarget->Cleanup();
-            delete m_finalRenderTarget;
-            m_finalRenderTarget = nullptr;
+            renderTarget->Cleanup();
+            delete renderTarget;
+            renderTarget = nullptr;
+        }
+        else
+        {
+            // Clean up any other resources if needed
         }
     }
 }

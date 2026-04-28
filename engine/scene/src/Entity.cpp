@@ -46,4 +46,31 @@ namespace PlutoGE::scene
             }
         }
     }
+
+    glm::vec3 Entity::GetWorldPosition() const
+    {
+        if (m_parent)
+        {
+            return m_parent->GetWorldPosition() + m_transform.position; // Simple addition for position (not accounting for rotation/scale)
+        }
+        return m_transform.position;
+    }
+
+    glm::vec3 Entity::GetWorldRotation() const
+    {
+        if (m_parent)
+        {
+            return m_parent->GetWorldRotation() + m_transform.rotation; // Simple addition for rotation (not accounting for hierarchical rotation)
+        }
+        return m_transform.rotation;
+    }
+
+    glm::vec3 Entity::GetWorldScale() const
+    {
+        if (m_parent)
+        {
+            return m_parent->GetWorldScale() * m_transform.scale; // Simple multiplication for scale (not accounting for hierarchical scale)
+        }
+        return m_transform.scale;
+    }
 }

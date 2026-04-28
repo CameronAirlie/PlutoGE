@@ -7,6 +7,7 @@ namespace PlutoGE::render
 {
     struct CameraData
     {
+        glm::vec3 position;   // Camera position in world space
         glm::mat4 view;       // View matrix
         glm::mat4 projection; // Projection matrix
     };

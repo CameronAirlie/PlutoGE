@@ -24,7 +24,7 @@ namespace PlutoGE::render
 
         static void BindRenderTarget(class RenderTarget *renderTarget);
         static void UnbindRenderTarget();
-        static void ClearRenderTarget(class RenderTarget *renderTarget, const glm::vec4 &color);
+        static void ClearRenderTarget(class RenderTarget *renderTarget = nullptr);
 
     private:
         static void BindMesh(Mesh *mesh);

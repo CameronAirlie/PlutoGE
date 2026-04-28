@@ -31,6 +31,14 @@ namespace PlutoGE::render
         glm::vec4 GetClearColor() const { return m_config.clearColor; }
         void SetClearColor(const glm::vec4 &color) { m_config.clearColor = color; }
 
+        int GetWidth() const { return m_width; }
+        int GetHeight() const { return m_height; }
+
+        GLuint GetFramebufferID() const { return m_framebufferID; }
+        GLuint GetColorTextureID() const { return m_colorTextureID; }
+        GLuint GetDepthTextureID() const { return m_depthTextureID; }
+        GLuint GetDepthStencilBufferID() const { return m_depthStencilBufferID; }
+
         bool IsInitialized() const { return m_isInitialized; }
 
         void Cleanup();
@@ -50,13 +58,5 @@ namespace PlutoGE::render
         bool Initialize(int width, int height);
         void Bind() const;
         void Unbind() const;
-
-        int GetWidth() const { return m_width; }
-        int GetHeight() const { return m_height; }
-
-        GLuint GetFramebufferID() const { return m_framebufferID; }
-        GLuint GetColorTextureID() const { return m_colorTextureID; }
-        GLuint GetDepthTextureID() const { return m_depthTextureID; }
-        GLuint GetDepthStencilBufferID() const { return m_depthStencilBufferID; }
     };
 }

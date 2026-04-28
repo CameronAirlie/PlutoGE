@@ -39,4 +39,11 @@ namespace PlutoGE::core
             }
         }
     }
+
+    void Engine::Shutdown()
+    {
+        m_renderer.Shutdown();
+        m_window.Close();
+        m_isInitialized = false;
+    }
 }

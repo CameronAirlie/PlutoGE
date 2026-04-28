@@ -17,6 +17,7 @@ namespace PlutoGE::core
     struct EngineConfig
     {
         // Future configuration options can be added here
+        platform::WindowConfig windowConfig; // Configuration for the window, set during initialization
     };
 
     class Engine
@@ -26,6 +27,7 @@ namespace PlutoGE::core
 
         bool Initialize(const EngineConfig &config = EngineConfig());
         void Run();
+        void Shutdown();
 
         static Engine &GetInstance()
         {

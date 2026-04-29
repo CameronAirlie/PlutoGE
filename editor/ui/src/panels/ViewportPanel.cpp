@@ -1,5 +1,6 @@
 #include "PlutoGE/ui/panels/ViewportPanel.h"
 #include "PlutoGE/render/RenderTarget.h"
+#include "PlutoGE/ui/EditorShell.h"
 #include <iostream>
 
 #include <imgui.h>
@@ -59,6 +60,17 @@ namespace PlutoGE::ui
         ImTextureID texId = (ImTextureID)(uintptr_t)m_renderTarget->GetColorTextureID();
         ImVec2 imageSize = ImVec2(static_cast<float>(m_renderTarget->GetWidth()), static_cast<float>(m_renderTarget->GetHeight()));
         ImGui::Image(texId, imageSize, ImVec2(0, 1), ImVec2(1, 0));
+    }
+
+    void ViewportPanel::RenderFrame(render::CameraData &cameraData)
+    {
+        if (!m_renderTarget || !m_renderTarget->IsInitialized())
+            return;
+
+        auto &renderer = EditorShell::GetInstance().GetEngine().GetRenderer();
+        renderer.BeginFrame(m_renderTarget);
+        renderer.RenderFrame(cameraData, m_renderTarget);
+        renderer.EndFrame(m_renderTarget);
     }
 
     void ViewportPanel::Shutdown()

@@ -45,7 +45,9 @@ namespace PlutoGE::ui
         auto deltaTime = std::chrono::duration<float>::zero();
         auto lastTime = std::chrono::high_resolution_clock::now();
 
-        PanelConfig viewportConfig{"Viewport"};
+        ViewportPanelConfig viewportConfig;
+        viewportConfig.name = "Viewport";
+        viewportConfig.clearColor = glm::vec4(0.1f, 0.1f, 0.15f, 1.0f);
         auto *viewportPanel = new ViewportPanel(viewportConfig);
         viewportPanel->Initialize();
 
@@ -58,8 +60,7 @@ namespace PlutoGE::ui
         auto *renderTarget = viewportPanel->GetRenderTarget();
 
         auto scene = std::make_unique<scene::Scene>();
-
-        sceneHierarchyPanel->SetScene(scene.get());
+        m_engine.SetScene(scene.get());
 
         auto cube = std::make_unique<scene::Entity>(scene::EntityConfig{
             .name = "Cube",
@@ -74,6 +75,11 @@ namespace PlutoGE::ui
         cube->AddComponent(meshComponent);
         scene->AddEntity(cube.get());
 
+        auto testEntity = std::make_unique<scene::Entity>(scene::EntityConfig{
+            .name = "Test Entity",
+        });
+        testEntity->SetParent(cube.get());
+
         auto cameraEntity = std::make_unique<scene::Entity>(scene::EntityConfig{
             .name = "Camera",
         });
@@ -87,6 +93,28 @@ namespace PlutoGE::ui
         cameraEntity->SetPosition(glm::vec3(0.0f, 0.0f, 5.0f));
         scene->AddEntity(cameraEntity.get());
 
+        auto cameraEntity2 = std::make_unique<scene::Entity>(scene::EntityConfig{
+            .name = "Camera 2",
+        });
+        auto camera2 = render::Camera(render::CameraConfig{
+            .fovY = 60.0f,
+            .nearPlane = 0.1f,
+            .farPlane = 100.0f,
+        });
+        auto cameraComponent2 = new scene::CameraComponent(&camera2);
+        cameraEntity2->AddComponent(cameraComponent2);
+        cameraEntity2->SetPosition(glm::vec3(0.0f, 0.0f, 5.0f));
+        scene->AddEntity(cameraEntity2.get());
+
+        ViewportPanelConfig viewportConfig2;
+        viewportConfig2.name = "Viewport 2";
+        viewportConfig2.clearColor = glm::vec4(0.15f, 0.1f, 0.1f, 1.0f);
+        auto viewportPanel2 = new ViewportPanel(viewportConfig2);
+        viewportPanel2->Initialize();
+        m_panelManager.AddPanel(viewportPanel2);
+
+        auto *renderTarget2 = viewportPanel2->GetRenderTarget();
+
         while (!window.ShouldClose())
         {
             auto currentTime = std::chrono::high_resolution_clock::now();
@@ -94,15 +122,37 @@ namespace PlutoGE::ui
 
             const auto renderTargetWidth = renderTarget->GetWidth();
             const auto renderTargetHeight = renderTarget->GetHeight();
+            const auto renderTarget2Width = renderTarget2->GetWidth();
+            const auto renderTarget2Height = renderTarget2->GetHeight();
+
+            // Scene update
 
             scene->Update(deltaTime.count());
 
             camera.SetFOV(45.0f + 10.0f * sinf(static_cast<float>(glfwGetTime()))); // Animate FOV for demonstration
 
+            // Rotate cube on all axes for demonstration
+            const float rotationSpeed = 20.0f; // degrees per second
+            const float rotationAngle = rotationSpeed * static_cast<float>(deltaTime.count());
+            cube->SetRotation(cube->GetRotation() + glm::vec3(rotationAngle, rotationAngle, rotationAngle));
+
+            // Rendering
+
             renderer.BeginFrame(renderTarget);
 
             auto cameraData = cameraComponent->GetCameraData(renderTargetWidth, renderTargetHeight);
             renderer.RenderFrame(cameraData, renderTarget);
+            renderer.EndFrame(renderTarget);
+
+            renderer.BeginFrame(renderTarget2);
+            auto cameraData2 = cameraComponent2->GetCameraData(renderTarget2Width, renderTarget2Height);
+            renderer.RenderFrame(cameraData2, renderTarget2);
+            renderer.EndFrame(renderTarget2);
+            renderer.ClearRenderCommands();
+
+            // UI
+
+            renderer.BeginFrame();
 
             m_panelManager.BeginPanelUpdate();
 

@@ -12,6 +12,11 @@ namespace PlutoGE::render
     class Shader;
 }
 
+namespace PlutoGE::scene
+{
+    class Scene;
+}
+
 namespace PlutoGE::core
 {
     struct EngineConfig
@@ -41,6 +46,8 @@ namespace PlutoGE::core
         [[nodiscard]] render::Renderer &GetRenderer() { return m_renderer; }
         [[nodiscard]] assets::AssetManager &GetAssetManager() { return m_assetManager; }
         [[nodiscard]] render::TextureManager &GetTextureManager() { return m_textureManager; }
+        [[nodiscard]] scene::Scene *GetScene() { return m_scene; }
+        void SetScene(scene::Scene *scene) { m_scene = scene; }
 
     private:
         Engine() = default;
@@ -49,6 +56,7 @@ namespace PlutoGE::core
         render::Renderer m_renderer;
         assets::AssetManager m_assetManager;
         render::TextureManager m_textureManager;
+        scene::Scene *m_scene = nullptr;
 
         bool m_isInitialized = false;
     };

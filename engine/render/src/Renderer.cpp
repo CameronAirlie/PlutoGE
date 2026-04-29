@@ -64,6 +64,12 @@ namespace PlutoGE::render
             return;
         }
 
+        if (m_config.window)
+        {
+            const auto extents = m_config.window->GetExtents();
+            glViewport(0, 0, extents.width, extents.height);
+        }
+
         Graphics::ClearRenderTarget(nullptr);
     }
 
@@ -82,7 +88,10 @@ namespace PlutoGE::render
         }
 
         Graphics::UnbindRenderTarget();
+    }
 
+    void Renderer::ClearRenderCommands()
+    {
         m_renderCommands.clear();
     }
 

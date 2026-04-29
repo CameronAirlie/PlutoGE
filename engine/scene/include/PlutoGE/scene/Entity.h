@@ -46,6 +46,11 @@ namespace PlutoGE::scene
         void AddChild(Entity *child);
         std::vector<Entity *> GetChildren() { return m_children; }
         Entity *GetParent() const { return m_parent; }
+        void SetParent(Entity *parent)
+        {
+            m_parent = parent;
+            parent->AddChild(this);
+        }
 
         EntityID GetID() const { return m_id; }
         std::string GetName() const { return m_name; }

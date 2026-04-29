@@ -1,6 +1,7 @@
 #include "PlutoGE/ui/panels/SceneHierarchyPanel.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/Entity.h"
+#include "PlutoGE/ui/EditorShell.h"
 
 #include <imgui.h>
 
@@ -15,7 +16,8 @@ namespace PlutoGE::ui
             nodeFlags |= ImGuiTreeNodeFlags_Leaf;
         }
 
-        bool nodeOpen = ImGui::TreeNodeEx((void *)(intptr_t)entity->GetID(), nodeFlags, "%s", entity->GetName().c_str());
+        ImGui::PushID(entity->GetName().c_str()); // Ensure unique ID for ImGui tree node
+        bool nodeOpen = ImGui::TreeNodeEx((void *)(intptr_t)entity->GetName().c_str(), nodeFlags, "%s", entity->GetName().c_str());
         if (nodeOpen)
         {
             for (auto child : entity->GetChildren())
@@ -24,6 +26,7 @@ namespace PlutoGE::ui
             }
             ImGui::TreePop();
         }
+        ImGui::PopID();
     }
 
     void SceneHierarchyPanel::Initialize()
@@ -33,13 +36,14 @@ namespace PlutoGE::ui
 
     void SceneHierarchyPanel::Render()
     {
-        if (!m_currentScene)
+        auto scene = ui::EditorShell::GetInstance().GetEngine().GetScene();
+        if (!scene)
         {
             ImGui::Text("No scene loaded");
             return;
         }
 
-        for (auto entity : m_currentScene->GetRootEntities())
+        for (auto entity : scene->GetRootEntities())
         {
             RenderEntityNode(entity);
         }

@@ -44,6 +44,7 @@ namespace PlutoGE::render
         void DrawRenderTarget(RenderTarget *renderTarget);
         void EndFrame(RenderTarget *renderTarget = nullptr);
         void Shutdown(RenderTarget *renderTarget = nullptr);
+        void ClearRenderCommands();
 
         void SetVSyncEnabled(bool enabled);
 

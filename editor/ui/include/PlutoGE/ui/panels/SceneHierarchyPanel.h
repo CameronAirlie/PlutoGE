@@ -19,10 +19,5 @@ namespace PlutoGE::ui
         void Initialize() override;
         void Render() override;
         void Shutdown() override;
-
-        void SetScene(scene::Scene *scene) { m_currentScene = scene; }
-
-    private:
-        scene::Scene *m_currentScene = nullptr;
     };
 }

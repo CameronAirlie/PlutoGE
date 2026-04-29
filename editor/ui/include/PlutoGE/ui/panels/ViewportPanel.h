@@ -3,6 +3,8 @@
 #include "PlutoGE/ui/panels/ViewportPanel.h"
 #include "PlutoGE/ui/panels/Panel.h"
 
+#include <glm/glm.hpp>
+
 namespace PlutoGE::render
 {
     class RenderTarget;
@@ -12,10 +14,15 @@ namespace PlutoGE::ui
 {
     class EditorShell;
     class PanelManager;
+    struct ViewportPanelConfig : public PanelConfig
+    {
+        glm::vec4 clearColor = glm::vec4(0.1f, 0.1f, 0.1f, 1.0f);
+    };
+
     class ViewportPanel : public Panel
     {
     public:
-        ViewportPanel(const PanelConfig &config) : Panel(config) {}
+        ViewportPanel(const ViewportPanelConfig &config) : Panel(config), m_config(config) {}
         ~ViewportPanel() override = default;
 
         void Initialize() override;
@@ -23,6 +30,9 @@ namespace PlutoGE::ui
         void Shutdown() override;
 
         render::RenderTarget *GetRenderTarget() const { return m_renderTarget; }
+
+    private:
+        ViewportPanelConfig m_config;
 
     private:
         render::RenderTarget *m_renderTarget = nullptr; // The render target used for rendering the viewport content

@@ -18,7 +18,7 @@ namespace PlutoGE::ui
         auto renderConfig = render::RenderTargetConfig{
             .width = kDefaultViewportWidth,
             .height = kDefaultViewportHeight,
-            .clearColor = glm::vec4(0.1f, 0.1f, 0.1f, 1.0f),
+            .clearColor = m_config.clearColor,
         };
         m_renderTarget = new render::RenderTarget(renderConfig);
         if (!m_renderTarget->IsInitialized())

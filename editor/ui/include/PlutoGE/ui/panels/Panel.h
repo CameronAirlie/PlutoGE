@@ -15,7 +15,7 @@ namespace PlutoGE::ui
         Panel(PanelConfig config) : m_config(config) {}
         virtual ~Panel() = default;
 
-        void BeginPanel();
+        bool BeginPanel();
         void EndPanel();
         void Update();
 

@@ -22,7 +22,12 @@ namespace PlutoGE::ui
         void Render() override;
         void Shutdown() override;
 
+        render::RenderTarget *GetRenderTarget() const { return m_renderTarget; }
+
     private:
-        render::RenderTarget *m_renderTarget = nullptr;
+        render::RenderTarget *m_renderTarget = nullptr; // The render target used for rendering the viewport content
+        int m_pendingWidth = 0;
+        int m_pendingHeight = 0;
+        int m_resizeStableFrames = 0;
     };
 }

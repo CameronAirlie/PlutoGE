@@ -1,17 +1,23 @@
 #include "PlutoGE/ui/panels/ViewportPanel.h"
 #include "PlutoGE/render/RenderTarget.h"
 #include <iostream>
-#include "PlutoGE/ui/EditorShell.h"
 
 #include <imgui.h>
 
 namespace PlutoGE::ui
 {
+    namespace
+    {
+        constexpr int kDefaultViewportWidth = 1280;
+        constexpr int kDefaultViewportHeight = 720;
+        constexpr int kResizeDebounceFrames = 2;
+    }
+
     void ViewportPanel::Initialize()
     {
         auto renderConfig = render::RenderTargetConfig{
-            .width = 1280,
-            .height = 720,
+            .width = kDefaultViewportWidth,
+            .height = kDefaultViewportHeight,
             .clearColor = glm::vec4(0.1f, 0.1f, 0.1f, 1.0f),
         };
         m_renderTarget = new render::RenderTarget(renderConfig);
@@ -26,33 +32,32 @@ namespace PlutoGE::ui
         if (!m_renderTarget || !m_renderTarget->IsInitialized())
             return;
 
-        // Get the available region size for the viewport
-        ImVec2 panelSize = ImGui::GetContentRegionAvail();
-        int newWidth = static_cast<int>(panelSize.x);
-        int newHeight = static_cast<int>(panelSize.y);
+        const ImVec2 panelSize = ImGui::GetContentRegionAvail();
+        const int newWidth = static_cast<int>(panelSize.x);
+        const int newHeight = static_cast<int>(panelSize.y);
 
-        // Only resize if the size is valid and changed
-        if (newWidth > 0 && newHeight > 0 && (newWidth != m_renderTarget->GetWidth() || newHeight != m_renderTarget->GetHeight()))
+        if (newWidth <= 0 || newHeight <= 0)
         {
-            m_renderTarget->Cleanup();
-            delete m_renderTarget;
-            render::RenderTargetConfig renderConfig{
-                .width = newWidth,
-                .height = newHeight,
-                .clearColor = glm::vec4(0.1f, 0.1f, 0.1f, 1.0f),
-            };
-            m_renderTarget = new render::RenderTarget(renderConfig);
+            return;
         }
 
-        auto &renderer = EditorShell::GetInstance().GetEngine().GetRenderer();
+        if (newWidth != m_pendingWidth || newHeight != m_pendingHeight)
+        {
+            m_pendingWidth = newWidth;
+            m_pendingHeight = newHeight;
+            m_resizeStableFrames = 0;
+        }
+        else if ((newWidth != m_renderTarget->GetWidth() || newHeight != m_renderTarget->GetHeight()) && ++m_resizeStableFrames >= kResizeDebounceFrames)
+        {
+            if (!m_renderTarget->Resize(newWidth, newHeight))
+            {
+                std::cerr << "Failed to resize RenderTarget in ViewportPanel" << std::endl;
+                return;
+            }
+        }
 
-        renderer.BeginFrame(m_renderTarget);
-        renderer.DrawRenderTarget(m_renderTarget);
-        renderer.EndFrame(m_renderTarget);
-
-        // Draw the framebuffer texture to the ImGui panel
         ImTextureID texId = (ImTextureID)(uintptr_t)m_renderTarget->GetColorTextureID();
-        ImVec2 imageSize = ImVec2((float)m_renderTarget->GetWidth(), (float)m_renderTarget->GetHeight());
+        ImVec2 imageSize = ImVec2(static_cast<float>(m_renderTarget->GetWidth()), static_cast<float>(m_renderTarget->GetHeight()));
         ImGui::Image(texId, imageSize, ImVec2(0, 1), ImVec2(1, 0));
     }
 

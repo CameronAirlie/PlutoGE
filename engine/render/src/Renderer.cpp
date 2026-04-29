@@ -17,7 +17,6 @@ namespace PlutoGE::render
 {
     void ResizeCallback(int width, int height)
     {
-        std::cout << "Window resized: " << width << "x" << height << std::endl;
         glViewport(0, 0, width, height);
     }
 
@@ -59,10 +58,13 @@ namespace PlutoGE::render
         if (!m_isInitialized)
             return;
 
-        Graphics::ClearRenderTarget(nullptr); // Clear default framebuffer first to avoid artifacts if render target is not cleared properly
-
         if (renderTarget)
+        {
             Graphics::ClearRenderTarget(renderTarget);
+            return;
+        }
+
+        Graphics::ClearRenderTarget(nullptr);
     }
 
     void Renderer::RenderFrame(CameraData &cameraData, RenderTarget *renderTarget)
@@ -91,7 +93,11 @@ namespace PlutoGE::render
 
     void Renderer::EndFrame(RenderTarget *renderTarget)
     {
-        // Finalize the frame (e.g., swap buffers)
+        if (renderTarget)
+        {
+            Graphics::UnbindRenderTarget();
+            return;
+        }
 
         if (m_config.window)
         {

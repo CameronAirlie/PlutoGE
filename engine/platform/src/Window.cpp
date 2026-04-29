@@ -3,18 +3,19 @@
 
 namespace PlutoGE::platform
 {
-    // Add a member to store the resize callback
-    std::function<void(int, int)> m_resizeCallback;
-
-    // Static GLFW resize callback
-    static void GLFWResizeCallback(GLFWwindow *window, int width, int height)
+    static void GLFWFramebufferResizeCallback(GLFWwindow *window, int width, int height)
     {
-        // Retrieve the Window instance from the user pointer
-        std::cout << "GLFWResizeCallback called with width: " << width << ", height: " << height << std::endl;
         auto *instance = static_cast<Window *>(glfwGetWindowUserPointer(window));
+        if (!instance)
+        {
+            return;
+        }
+
+        instance->m_clientWidth = width;
+        instance->m_clientHeight = height;
+
         if (auto callback = instance->GetResizeCallback())
         {
-            std::cout << "Invoking resize callback from GLFWResizeCallback." << std::endl;
             callback(width, height);
         }
     }
@@ -40,8 +41,8 @@ namespace PlutoGE::platform
         }
 
         glfwMakeContextCurrent(m_window);
-        // Set the user pointer to this Window instance
         glfwSetWindowUserPointer(m_window, this);
+        glfwGetFramebufferSize(m_window, &m_clientWidth, &m_clientHeight);
 
         if (!m_config.resizable)
         {
@@ -118,6 +119,13 @@ namespace PlutoGE::platform
 
     WindowExtents Window::GetExtents() const
     {
+        if (m_window)
+        {
+            int width = 0;
+            int height = 0;
+            glfwGetFramebufferSize(m_window, &width, &height);
+            return {width, height};
+        }
         return {m_clientWidth, m_clientHeight};
     }
 
@@ -133,12 +141,10 @@ namespace PlutoGE::platform
 
     void Window::SetResizeCallback(const std::function<void(int, int)> &callback)
     {
-        std::cout << "Setting resize callback in Window class." << std::endl;
         m_config.resizeCallback = callback;
         if (m_window)
         {
-            std::cout << "Registering GLFW resize callback." << std::endl;
-            glfwSetWindowSizeCallback(static_cast<GLFWwindow *>(m_window), GLFWResizeCallback);
+            glfwSetFramebufferSizeCallback(static_cast<GLFWwindow *>(m_window), GLFWFramebufferResizeCallback);
         }
     }
 

@@ -25,7 +25,7 @@ namespace PlutoGE::ui
         EditorShell() = default;
         ~EditorShell() = default;
 
-        core::Engine m_engine = core::Engine::GetInstance();
+        core::Engine &m_engine = core::Engine::GetInstance();
         PanelManager m_panelManager;
     };
 }

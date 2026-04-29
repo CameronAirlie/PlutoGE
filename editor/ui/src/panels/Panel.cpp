@@ -6,9 +6,9 @@
 
 namespace PlutoGE::ui
 {
-    void Panel::BeginPanel()
+    bool Panel::BeginPanel()
     {
-        ImGui::Begin(m_config.name.c_str(), &m_isOpen, ImGuiWindowFlags_None);
+        return ImGui::Begin(m_config.name.c_str(), &m_isOpen, ImGuiWindowFlags_None);
     }
 
     void Panel::EndPanel()
@@ -18,8 +18,11 @@ namespace PlutoGE::ui
 
     void Panel::Update()
     {
-        BeginPanel();
-        Render();
+        const bool shouldRender = BeginPanel();
+        if (shouldRender)
+        {
+            Render();
+        }
         EndPanel();
     }
 }

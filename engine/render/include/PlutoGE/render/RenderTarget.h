@@ -23,6 +23,7 @@ namespace PlutoGE::render
             {
                 std::cerr << "Failed to initialize RenderTarget" << std::endl;
                 m_isInitialized = false;
+                return;
             }
             m_isInitialized = true;
         }
@@ -41,6 +42,7 @@ namespace PlutoGE::render
 
         bool IsInitialized() const { return m_isInitialized; }
 
+        bool Resize(int width, int height);
         void Cleanup();
 
     private:

@@ -2,6 +2,23 @@
 
 namespace PlutoGE::render
 {
+    bool RenderTarget::Resize(int width, int height)
+    {
+        if (width <= 0 || height <= 0)
+        {
+            return false;
+        }
+
+        if (width == m_width && height == m_height && m_isInitialized)
+        {
+            return true;
+        }
+
+        Cleanup();
+        m_isInitialized = Initialize(width, height);
+        return m_isInitialized;
+    }
+
     bool RenderTarget::Initialize(int width, int height)
     {
         m_width = width;
@@ -62,6 +79,9 @@ namespace PlutoGE::render
         m_depthTextureID = 0;
         m_depthStencilBufferID = 0;
         m_framebufferID = 0;
+        m_width = 0;
+        m_height = 0;
+        m_isInitialized = false;
     }
 
     void RenderTarget::Bind() const

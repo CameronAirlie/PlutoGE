@@ -8,10 +8,7 @@ namespace PlutoGE::core
     {
         m_config = config;
 
-        platform::WindowConfig windowConfig;
-        windowConfig.title = "PlutoGE Engine";
-
-        if (!m_window.Create(windowConfig))
+        if (!m_window.Create(m_config.windowConfig))
         {
             std::cerr << "Failed to create window." << std::endl;
             return false;

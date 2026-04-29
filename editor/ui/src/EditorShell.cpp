@@ -1,5 +1,11 @@
 #include "PlutoGE/ui/EditorShell.h"
 #include "PlutoGE/ui/panels/ViewportPanel.h"
+#include "PlutoGE/render/RenderTarget.h"
+#include "PlutoGE/scene/Scene.h"
+#include "PlutoGE/scene/Entity.h"
+#include "PlutoGE/render/Material.h"
+#include "PlutoGE/render/Mesh.h"
+#include "PlutoGE/scene/components/MeshComponent.h"
 
 #include <imgui.h>
 #include <backends/imgui_impl_glfw.h>
@@ -7,6 +13,7 @@
 
 #include <iostream>
 #include <chrono>
+#include <memory>
 
 namespace PlutoGE::ui
 {
@@ -27,10 +34,6 @@ namespace PlutoGE::ui
         }
 
         m_panelManager.InitializeImGui(&m_engine.GetWindow());
-        PanelConfig viewportConfig{"Viewport"};
-        auto *viewportPanel = new ViewportPanel(viewportConfig);
-        viewportPanel->Initialize();
-        // m_panelManager.AddPanel(viewportPanel);
     }
 
     void EditorShell::Render()
@@ -40,36 +43,59 @@ namespace PlutoGE::ui
         auto deltaTime = std::chrono::duration<float>::zero();
         auto lastTime = std::chrono::high_resolution_clock::now();
 
+        PanelConfig viewportConfig{"Viewport"};
+        auto *viewportPanel = new ViewportPanel(viewportConfig);
+        viewportPanel->Initialize();
+        m_panelManager.AddPanel(viewportPanel);
+        auto *renderTarget = viewportPanel->GetRenderTarget();
+
+        auto scene = std::make_unique<scene::Scene>();
+        auto cube = std::make_unique<scene::Entity>(scene::EntityConfig{
+            .name = "Cube",
+        });
+        auto *material = m_engine.GetAssetManager().CreateDefaultMaterial();
+        material->SetColor(glm::vec3(0.8f, 0.2f, 0.2f));
+        auto mesh = render::Mesh::Cube();
+        auto meshComponent = new scene::MeshComponent(scene::MeshComponentConfig{
+            .mesh = mesh,
+            .material = material,
+        });
+        cube->AddComponent(meshComponent);
+        scene->AddEntity(cube.get());
+
+        auto cameraData = render::CameraData{};
+        cameraData.view = glm::lookAt(glm::vec3(0.0f, 0.0f, 5.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+        cameraData.position = glm::vec3(0.0f, 0.0f, 5.0f);
+
         while (!window.ShouldClose())
         {
             auto currentTime = std::chrono::high_resolution_clock::now();
             deltaTime = currentTime - lastTime;
 
+            const auto renderTargetWidth = renderTarget->GetWidth();
+            const auto renderTargetHeight = renderTarget->GetHeight();
+            if (renderTargetWidth > 0 && renderTargetHeight > 0)
+            {
+                cameraData.projection = glm::perspective(
+                    glm::radians(90.0f),
+                    static_cast<float>(renderTargetWidth) / static_cast<float>(renderTargetHeight),
+                    0.1f,
+                    100.0f);
+            }
+
+            scene->Update(deltaTime.count());
+
+            renderer.BeginFrame(renderTarget);
+
+            renderer.RenderFrame(cameraData, renderTarget);
+
             m_panelManager.BeginPanelUpdate();
 
-            // ImGui::Begin("Main DockSpace", nullptr, ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus);
+            m_panelManager.UpdatePanels();
 
-            // ImGui::DockSpace(ImGui::GetID("MainDockSpace"), ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_PassthruCentralNode);
-            // ImGui::End();
-
-            // ImGui::Begin("Test");
-            // ImGui::Text("Hello, world! Delta time: %.3f ms/frame (%.1f FPS)", deltaTime.count() * 1000.0f, 1.0f / deltaTime.count());
-            // ImGui::End();
-
-            renderer.BeginFrame();
-            renderer.EndFrame();
-
-            // ImGui::ShowStyleEditor();
-
-            // // Show the ImGui demo window for debugging
-            static bool showDemo = true;
-            // ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_Always);
-            // ImGui::SetNextWindowSize(ImVec2(400, 600), ImGuiCond_Always);
-            ImGui::ShowMetricsWindow(&showDemo);
-            // ImGui::ShowDemoWindow(&showDemo);
-
-            // m_panelManager.UpdatePanels();
             m_panelManager.EndPanelUpdate();
+
+            renderer.EndFrame();
 
             window.PollEvents();
 

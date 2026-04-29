@@ -51,6 +51,8 @@ namespace PlutoGE::platform
         }
 
     private:
+        friend void GLFWFramebufferResizeCallback(GLFWwindow *window, int width, int height);
+
         WindowConfig m_config;
         InputState m_inputState;
         GLFWwindow *m_window = nullptr;

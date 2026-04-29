@@ -1,5 +1,6 @@
 #include "PlutoGE/ui/EditorShell.h"
 #include "PlutoGE/ui/panels/ViewportPanel.h"
+#include "PlutoGE/ui/panels/SceneHierarchyPanel.h"
 #include "PlutoGE/render/RenderTarget.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/Entity.h"
@@ -47,10 +48,19 @@ namespace PlutoGE::ui
         PanelConfig viewportConfig{"Viewport"};
         auto *viewportPanel = new ViewportPanel(viewportConfig);
         viewportPanel->Initialize();
+
+        auto *sceneHierarchyPanel = new SceneHierarchyPanel(PanelConfig{"Scene Hierarchy"});
+        sceneHierarchyPanel->Initialize();
+
         m_panelManager.AddPanel(viewportPanel);
+        m_panelManager.AddPanel(sceneHierarchyPanel);
+
         auto *renderTarget = viewportPanel->GetRenderTarget();
 
         auto scene = std::make_unique<scene::Scene>();
+
+        sceneHierarchyPanel->SetScene(scene.get());
+
         auto cube = std::make_unique<scene::Entity>(scene::EntityConfig{
             .name = "Cube",
         });
@@ -87,8 +97,7 @@ namespace PlutoGE::ui
 
             scene->Update(deltaTime.count());
 
-            camera.SetFOV(45.0f + 10.0f * sinf(static_cast<float>(glfwGetTime())));                      // Animate FOV for demonstration
-            cameraEntity->SetRotation(glm::vec3(0.0f, static_cast<float>(glfwGetTime()) * 20.0f, 0.0f)); // Rotate camera around Y-axis
+            camera.SetFOV(45.0f + 10.0f * sinf(static_cast<float>(glfwGetTime()))); // Animate FOV for demonstration
 
             renderer.BeginFrame(renderTarget);
 

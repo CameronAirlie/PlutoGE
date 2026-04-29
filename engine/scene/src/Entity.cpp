@@ -1,6 +1,8 @@
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/components/Component.h"
 
+#include <glm/gtc/matrix_transform.hpp>
+
 #include <iostream>
 
 namespace PlutoGE::scene
@@ -72,5 +74,28 @@ namespace PlutoGE::scene
             return m_parent->GetWorldScale() * m_transform.scale; // Simple multiplication for scale (not accounting for hierarchical scale)
         }
         return m_transform.scale;
+    }
+
+    glm::mat4 Entity::GetWorldTransform() const
+    {
+        if (m_parent)
+        {
+            return m_parent->GetWorldTransform() * GetLocalTransform();
+        }
+        else
+        {
+            return GetLocalTransform();
+        }
+    }
+
+    glm::mat4 Entity::GetLocalTransform() const
+    {
+        glm::mat4 localTransform = glm::mat4(1.0f);
+        localTransform = glm::translate(localTransform, m_transform.position);
+        localTransform = glm::rotate(localTransform, glm::radians(m_transform.rotation.x), glm::vec3(1.0f, 0.0f, 0.0f));
+        localTransform = glm::rotate(localTransform, glm::radians(m_transform.rotation.y), glm::vec3(0.0f, 1.0f, 0.0f));
+        localTransform = glm::rotate(localTransform, glm::radians(m_transform.rotation.z), glm::vec3(0.0f, 0.0f, 1.0f));
+        localTransform = glm::scale(localTransform, m_transform.scale);
+        return localTransform;
     }
 }

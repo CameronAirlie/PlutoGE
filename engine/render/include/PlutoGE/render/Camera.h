@@ -3,44 +3,52 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+namespace PlutoGE::scene
+{
+    class CameraComponent;
+}
+
 namespace PlutoGE::render
 {
     struct CameraData
     {
-        glm::vec3 position;   // Camera position in world space
         glm::mat4 view;       // View matrix
         glm::mat4 projection; // Projection matrix
     };
 
     struct CameraConfig
     {
-        float fovY = 45.0f;              // Field of view in the Y direction (degrees)
-        float aspectRatio = 4.0f / 3.0f; // Aspect ratio (width/height)
-        float nearPlane = 0.1f;          // Near clipping plane
-        float farPlane = 100.0f;         // Far clipping plane
+        float fovY = 45.0f;      // Field of view in the Y direction (degrees)
+        float nearPlane = 0.1f;  // Near clipping plane
+        float farPlane = 100.0f; // Far clipping plane
     };
 
     class Camera
     {
     public:
-        Camera(const CameraConfig &config)
-        {
-            // Set up the projection matrix based on the config
-            m_cameraData.projection = glm::perspective(
-                glm::radians(config.fovY),
-                config.aspectRatio,
-                config.nearPlane,
-                config.farPlane);
-            m_cameraData.view = glm::mat4(1.0f); // Start with an identity view matrix
-        }
+        Camera(const CameraConfig &config) : m_config(config) {}
         ~Camera() = default;
 
-        void SetViewMatrix(const glm::mat4 &view) { m_cameraData.view = view; }
-        void SetProjectionMatrix(const glm::mat4 &projection) { m_cameraData.projection = projection; }
+        void SetFOV(float fovY) { m_config.fovY = fovY; }
+        void SetNearPlane(float nearPlane) { m_config.nearPlane = nearPlane; }
+        void SetFarPlane(float farPlane) { m_config.farPlane = farPlane; }
 
-        CameraData &GetCameraData() { return m_cameraData; }
+    protected:
+        friend class scene::CameraComponent;
+
+        CameraData &GetCameraData(glm::mat4 &transform, int width, int height) const
+        {
+            CameraData data;
+            const glm::vec3 position = glm::vec3(transform[3]);                 // Extract position from the transform
+            const glm::vec3 forward = -glm::normalize(glm::vec3(transform[2])); // Extract forward direction
+            const glm::vec3 up = glm::normalize(glm::vec3(transform[1]));       // Extract up direction
+
+            data.view = glm::lookAt(position, position + forward, up);
+            data.projection = glm::perspective(glm::radians(m_config.fovY), static_cast<float>(width) / static_cast<float>(height), m_config.nearPlane, m_config.farPlane);
+            return data;
+        }
 
     private:
-        CameraData m_cameraData; // Camera data containing view and projection matrices
+        CameraConfig m_config;
     };
 }

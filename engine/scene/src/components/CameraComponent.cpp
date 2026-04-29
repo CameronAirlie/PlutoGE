@@ -11,17 +11,21 @@ namespace PlutoGE::scene
         if (m_camera)
         {
             auto entity = GetOwner();
-            glm::mat4 viewMatrix = glm::mat4(1.0f);
+            glm::mat4 transform = entity->GetWorldTransform();
 
-            // Calculate the view matrix based on the entity's world position and rotation
-            viewMatrix = glm::translate(viewMatrix, -entity->GetWorldPosition());
-            auto worldRotation = entity->GetWorldRotation();
-            viewMatrix = glm::rotate(viewMatrix, glm::radians(-worldRotation.x), glm::vec3(1.0f, 0.0f, 0.0f));
-            viewMatrix = glm::rotate(viewMatrix, glm::radians(-worldRotation.y), glm::vec3(0.0f, 1.0f, 0.0f));
-            viewMatrix = glm::rotate(viewMatrix, glm::radians(-worldRotation.z), glm::vec3(0.0f, 0.0f, 1.0f));
-
-            m_camera->SetViewMatrix(viewMatrix);
-            m_camera->GetCameraData().position = entity->GetWorldPosition();
+            m_camera->GetCameraData(transform, 1, 1);
         }
+    }
+
+    render::CameraData CameraComponent::GetCameraData(int width, int height) const
+    {
+        if (m_camera)
+        {
+            auto entity = GetOwner();
+            glm::mat4 transform = entity->GetWorldTransform();
+
+            return m_camera->GetCameraData(transform, width, height);
+        }
+        return render::CameraData{}; // Return default camera data if no camera is set
     }
 }

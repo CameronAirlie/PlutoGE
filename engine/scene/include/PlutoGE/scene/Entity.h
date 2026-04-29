@@ -28,6 +28,8 @@ namespace PlutoGE::scene
         Entity(const EntityConfig &config = {}) : m_name(config.name), m_tags(config.tags) {}
         ~Entity() = default;
 
+        glm::mat4 GetLocalTransform() const;
+        glm::mat4 GetWorldTransform() const;
         glm::vec3 GetPosition() const { return m_transform.position; }
         glm::vec3 GetWorldPosition() const;
         glm::vec3 GetRotation() const { return m_transform.rotation; }

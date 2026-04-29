@@ -6,6 +6,7 @@
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
+#include "PlutoGE/scene/components/CameraComponent.h"
 
 #include <imgui.h>
 #include <backends/imgui_impl_glfw.h>
@@ -63,9 +64,18 @@ namespace PlutoGE::ui
         cube->AddComponent(meshComponent);
         scene->AddEntity(cube.get());
 
-        auto cameraData = render::CameraData{};
-        cameraData.view = glm::lookAt(glm::vec3(0.0f, 0.0f, 5.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-        cameraData.position = glm::vec3(0.0f, 0.0f, 5.0f);
+        auto cameraEntity = std::make_unique<scene::Entity>(scene::EntityConfig{
+            .name = "Camera",
+        });
+        auto camera = render::Camera(render::CameraConfig{
+            .fovY = 45.0f,
+            .nearPlane = 0.1f,
+            .farPlane = 100.0f,
+        });
+        auto cameraComponent = new scene::CameraComponent(&camera);
+        cameraEntity->AddComponent(cameraComponent);
+        cameraEntity->SetPosition(glm::vec3(0.0f, 0.0f, 5.0f));
+        scene->AddEntity(cameraEntity.get());
 
         while (!window.ShouldClose())
         {
@@ -74,19 +84,15 @@ namespace PlutoGE::ui
 
             const auto renderTargetWidth = renderTarget->GetWidth();
             const auto renderTargetHeight = renderTarget->GetHeight();
-            if (renderTargetWidth > 0 && renderTargetHeight > 0)
-            {
-                cameraData.projection = glm::perspective(
-                    glm::radians(90.0f),
-                    static_cast<float>(renderTargetWidth) / static_cast<float>(renderTargetHeight),
-                    0.1f,
-                    100.0f);
-            }
 
             scene->Update(deltaTime.count());
 
+            camera.SetFOV(45.0f + 10.0f * sinf(static_cast<float>(glfwGetTime())));                      // Animate FOV for demonstration
+            cameraEntity->SetRotation(glm::vec3(0.0f, static_cast<float>(glfwGetTime()) * 20.0f, 0.0f)); // Rotate camera around Y-axis
+
             renderer.BeginFrame(renderTarget);
 
+            auto cameraData = cameraComponent->GetCameraData(renderTargetWidth, renderTargetHeight);
             renderer.RenderFrame(cameraData, renderTarget);
 
             m_panelManager.BeginPanelUpdate();

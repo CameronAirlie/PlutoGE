@@ -28,6 +28,7 @@ namespace PlutoGE::ui
 
         void Initialize() override;
         void Render() override;
+        void ClearFrame();
         void RenderFrame(render::CameraData &cameraData);
         void Shutdown() override;
 

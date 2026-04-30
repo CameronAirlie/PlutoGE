@@ -73,6 +73,16 @@ namespace PlutoGE::ui
         renderer.EndFrame(m_renderTarget);
     }
 
+    void ViewportPanel::ClearFrame()
+    {
+        if (!m_renderTarget || !m_renderTarget->IsInitialized())
+            return;
+
+        auto &renderer = EditorShell::GetInstance().GetEngine().GetRenderer();
+        renderer.BeginFrame(m_renderTarget);
+        renderer.EndFrame(m_renderTarget);
+    }
+
     void ViewportPanel::Shutdown()
     {
         if (m_renderTarget)

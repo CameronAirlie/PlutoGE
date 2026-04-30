@@ -20,6 +20,25 @@
 
 namespace PlutoGE::ui
 {
+    namespace
+    {
+        bool IsCameraActiveInScene(scene::Scene *scene, scene::CameraComponent *cameraComponent)
+        {
+            if (!scene || !cameraComponent)
+            {
+                return false;
+            }
+
+            auto *owner = cameraComponent->GetOwner();
+            if (!owner || !cameraComponent->GetCamera())
+            {
+                return false;
+            }
+
+            return scene->FindEntityByID(owner->GetID()) == owner;
+        }
+    }
+
     void EditorShell::Initialize()
     {
         auto config = core::EngineConfig{
@@ -143,11 +162,25 @@ namespace PlutoGE::ui
 
             // Rendering
 
-            auto cameraData = cameraComponent->GetCameraData(renderTargetWidth, renderTargetHeight);
-            viewportPanel->RenderFrame(cameraData);
+            if (IsCameraActiveInScene(scene.get(), cameraComponent))
+            {
+                auto cameraData = cameraComponent->GetCameraData(renderTargetWidth, renderTargetHeight);
+                viewportPanel->RenderFrame(cameraData);
+            }
+            else
+            {
+                viewportPanel->ClearFrame();
+            }
 
-            auto cameraData2 = cameraComponent2->GetCameraData(renderTarget2Width, renderTarget2Height);
-            viewportPanel2->RenderFrame(cameraData2);
+            if (IsCameraActiveInScene(scene.get(), cameraComponent2))
+            {
+                auto cameraData2 = cameraComponent2->GetCameraData(renderTarget2Width, renderTarget2Height);
+                viewportPanel2->RenderFrame(cameraData2);
+            }
+            else
+            {
+                viewportPanel2->ClearFrame();
+            }
 
             renderer.ClearRenderCommands();
 

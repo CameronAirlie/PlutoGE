@@ -1,6 +1,7 @@
 #include "PlutoGE/ui/EditorShell.h"
 #include "PlutoGE/ui/panels/ViewportPanel.h"
 #include "PlutoGE/ui/panels/SceneHierarchyPanel.h"
+#include "PlutoGE/ui/panels/InspectorPanel.h"
 #include "PlutoGE/render/RenderTarget.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/Entity.h"
@@ -113,6 +114,10 @@ namespace PlutoGE::ui
         viewportPanel2->Initialize();
         m_panelManager.AddPanel(viewportPanel2);
 
+        auto inspectorPanel = new InspectorPanel(PanelConfig{"Inspector"});
+        inspectorPanel->Initialize();
+        m_panelManager.AddPanel(inspectorPanel);
+
         auto *renderTarget2 = viewportPanel2->GetRenderTarget();
 
         while (!window.ShouldClose())
@@ -139,7 +144,6 @@ namespace PlutoGE::ui
             // Rendering
 
             renderer.BeginFrame(renderTarget);
-
             auto cameraData = cameraComponent->GetCameraData(renderTargetWidth, renderTargetHeight);
             renderer.RenderFrame(cameraData, renderTarget);
             renderer.EndFrame(renderTarget);
@@ -148,6 +152,7 @@ namespace PlutoGE::ui
             auto cameraData2 = cameraComponent2->GetCameraData(renderTarget2Width, renderTarget2Height);
             renderer.RenderFrame(cameraData2, renderTarget2);
             renderer.EndFrame(renderTarget2);
+
             renderer.ClearRenderCommands();
 
             // UI

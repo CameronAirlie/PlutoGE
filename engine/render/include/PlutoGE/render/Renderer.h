@@ -2,6 +2,7 @@
 
 #include "PlutoGE/platform/Window.h"
 #include "PlutoGE/render/Camera.h"
+#include "PlutoGE/render/GBuffer.h"
 #include <glm/glm.hpp>
 #include <iostream>
 
@@ -32,6 +33,7 @@ namespace PlutoGE::render
     };
 
     class RenderTarget;
+    class Shader;
     class Renderer
     {
     public:
@@ -56,6 +58,12 @@ namespace PlutoGE::render
     private:
         RendererConfig m_config;
         bool m_isInitialized = false;
+
+        GBuffer m_gBuffer;
+        void GeometryPass(CameraData &cameraData, RenderTarget *renderTarget);
+        void LightingPass(CameraData &cameraData, RenderTarget *renderTarget);
+        Shader *m_geometryPassShader = nullptr;
+        Shader *m_lightingPassShader = nullptr;
 
         void CleanupResources(RenderTarget *renderTarget = nullptr);
         std::vector<RenderCommand> m_renderCommands; // List of render commands for the current frame

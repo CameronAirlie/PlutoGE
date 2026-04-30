@@ -3,6 +3,8 @@
 #include <glad/glad.h>
 #include <string>
 #include <iostream>
+#include <unordered_map>
+#include <glm/glm.hpp>
 
 namespace PlutoGE::render
 {
@@ -164,6 +166,158 @@ void main()
             return CreateShaderFromSource(source);
         }
 
+        static Shader *CreateGeometryPassShader()
+        {
+            ShaderSource source;
+
+            source.vertexSource = R"(
+            #version 330 core
+            layout(location = 0) in vec3 aPos;
+            layout(location = 1) in vec3 aNormal;
+            layout(location = 2) in vec2 aUV;
+
+            uniform mat4 uModel;
+            uniform mat4 uView;
+            uniform mat4 uProjection;
+
+            out vec3 FragPos;
+            out vec3 Normal;
+            out vec2 UV;
+
+            void main()
+            {
+                FragPos = vec3(uModel * vec4(aPos, 1.0));
+                Normal = mat3(transpose(inverse(uModel))) * aNormal;
+                UV = aUV;
+                gl_Position = uProjection * uView * vec4(FragPos, 1.0);
+            }
+        )";
+
+            source.fragmentSource = R"(
+            #version 330 core
+            
+            layout (location = 0) out vec3 gPosition;
+            layout (location = 1) out vec3 gNormal;
+            layout (location = 2) out vec4 gAlbedoSpec;
+            
+            in vec3 FragPos;
+            in vec3 Normal;
+            in vec2 UV;
+
+            uniform sampler2D uAlbedoTexture;
+            uniform float uHasAlbedoTexture;
+            uniform vec3 uColor = vec3(1.0, 0.0, 0.0); // Placeholder color
+            
+            uniform float uSpecular = 1.0; // Placeholder specular value
+            
+            void main()
+            {
+                gPosition = FragPos;
+                gNormal = normalize(Normal);
+                vec3 albedo = uColor;
+                if (uHasAlbedoTexture > 0.5)
+                {
+                    vec4 texAlbedo = texture(uAlbedoTexture, UV);
+                    if (texAlbedo.a < 0.1)
+                        discard;
+                    albedo = texAlbedo.rgb;
+                }
+                gAlbedoSpec = vec4(albedo, uSpecular);
+            }
+        )";
+
+            return CreateShaderFromSource(source);
+        }
+
+        static Shader *CreateLightingPassShader()
+        {
+            ShaderSource source;
+
+            source.vertexSource = R"(
+            #version 330 core
+            layout(location = 0) in vec3 aPos;
+            layout(location = 1) in vec2 aUV;
+
+            out vec2 UV;
+
+            void main()
+            {
+                vec2 vertices[3]=vec2[3](
+                    vec2(-1.0, -1.0),
+                    vec2(3.0, -1.0),
+                    vec2(-1.0, 3.0)
+                );
+                gl_Position = vec4(vertices[gl_VertexID], 0.0, 1.0);
+                UV = 0.5 * gl_Position.xy + vec2(0.5); // Map from [-1, 1] to [0, 1]
+            }
+        )";
+
+            source.fragmentSource = R"(
+#version 330 core
+
+out vec4 FragColor;
+in vec2 UV;
+
+uniform sampler2D gPosition;
+uniform sampler2D gNormal;
+uniform sampler2D gAlbedoSpec;
+
+struct Light {
+    vec3 Position;
+    vec3 Color;
+};
+
+uniform Light uLight;
+uniform vec3 uViewPos;
+
+void main()
+{
+    vec3 FragPos = texture(gPosition, UV).rgb;
+    vec3 Normal = normalize(texture(gNormal, UV).rgb);
+    vec3 Albedo = texture(gAlbedoSpec, UV).rgb;
+    float Specular = texture(gAlbedoSpec, UV).a;
+
+    // Basic lighting
+    vec3 lightDir = normalize(uLight.Position - FragPos);
+    float diff = max(dot(Normal, lightDir), 0.0);
+
+    vec3 viewDir = normalize(uViewPos - FragPos);
+    vec3 halfwayDir = normalize(lightDir + viewDir);
+    float spec = pow(max(dot(Normal, halfwayDir), 0.0), 16.0);
+
+    vec3 lighting = (diff * Albedo + spec * Specular) * uLight.Color;
+    vec3 ambient = 0.1 * Albedo;
+    lighting += ambient;
+
+    // FragColor = vec4(Albedo, 1.0);
+    FragColor = vec4(lighting, 1.0);
+}
+        )";
+
+            return CreateShaderFromSource(source);
+        }
+
+        void Bind() const
+        {
+            if (m_programID == 0)
+            {
+                std::cerr << "Error: Attempting to bind an uninitialized shader!" << std::endl;
+                return;
+            }
+            glUseProgram(m_programID);
+        }
+
+        void Unbind() const
+        {
+            glUseProgram(0);
+        }
+
+        void SetUniform(const std::string &name, const glm::mat4 &value) const;
+        void SetUniform(const std::string &name, const glm::vec4 &value) const;
+        void SetUniform(const std::string &name, const glm::vec3 &value) const;
+        void SetUniform(const std::string &name, float value) const;
+        void SetUniform(const std::string &name, int value) const;
+
     protected:
         friend class Graphics;
         GLuint GetProgramID() const { return m_programID; }
@@ -173,5 +327,7 @@ void main()
 
         ShaderConfig m_config;
         GLuint m_programID = 0; // OpenGL shader program ID
+        mutable std::unordered_map<std::string, GLint> m_uniformLocationCache;
+        GLuint GetUniformLocation(const std::string &name) const;
     };
 }

@@ -5,6 +5,7 @@
 #include "PlutoGE/render/Texture.h"
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/RenderTarget.h"
+#include "PlutoGE/render/GBuffer.h"
 
 #include <glad/glad.h>
 
@@ -238,5 +239,14 @@ namespace PlutoGE::render
             glClearColor(0.0f, 0.0f, 0.0f, 1.0f); // Default clear color
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         }
+    }
+
+    void Graphics::BindFramebuffer(GLuint framebufferID)
+    {
+        glBindFramebuffer(GL_FRAMEBUFFER, framebufferID);
+    }
+    void Graphics::UnbindFramebuffer()
+    {
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
     }
 }

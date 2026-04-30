@@ -5,6 +5,7 @@ add_library(PlutoGERender
     src/Texture.cpp
     src/Graphics.cpp
     src/RenderTarget.cpp
+    src/GBuffer.cpp
 )
 
 add_library(PlutoGE::Render ALIAS PlutoGERender)

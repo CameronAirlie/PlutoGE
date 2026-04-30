@@ -49,6 +49,9 @@ namespace PlutoGE::render
         // Disable face culling for debug
         glDisable(GL_CULL_FACE);
 
+        m_geometryPassShader = Shader::CreateGeometryPassShader();
+        m_lightingPassShader = Shader::CreateLightingPassShader();
+
         m_isInitialized = true;
         return true;
     }
@@ -73,19 +76,113 @@ namespace PlutoGE::render
         Graphics::ClearRenderTarget(nullptr);
     }
 
+    // Forward Implementation
+    // void Renderer::RenderFrame(CameraData &cameraData, RenderTarget *renderTarget)
+    // {
+    //     // Use shader and draw triangle with VAO
+    //     if (!m_isInitialized)
+    //         return;
+
+    //     // Get draw list from the engine and render it here
+    //     auto &engine = core::Engine::GetInstance();
+
+    //     for (const auto &command : m_renderCommands)
+    //     {
+    //         Graphics::DrawMeshWithMaterial(command.mesh, command.material, command.model, &cameraData);
+    //     }
+
+    //     Graphics::UnbindRenderTarget();
+    // }
+
+    // Deferred Implementation
     void Renderer::RenderFrame(CameraData &cameraData, RenderTarget *renderTarget)
     {
-        // Use shader and draw triangle with VAO
         if (!m_isInitialized)
             return;
 
-        // Get draw list from the engine and render it here
-        auto &engine = core::Engine::GetInstance();
+        GeometryPass(cameraData, renderTarget);
+        LightingPass(cameraData, renderTarget);
+    }
+
+    void Renderer::GeometryPass(CameraData &cameraData, RenderTarget *renderTarget)
+    {
+        if (!m_gBuffer.IsInitialized() ||
+            m_gBuffer.GetWidth() != renderTarget->GetWidth() ||
+            m_gBuffer.GetHeight() != renderTarget->GetHeight())
+        {
+            m_gBuffer.Cleanup();
+            m_gBuffer.Initialize(renderTarget->GetWidth(), renderTarget->GetHeight());
+        }
+
+        m_gBuffer.Bind();
+        glEnable(GL_DEPTH_TEST);
+        glViewport(0, 0, m_gBuffer.GetWidth(), m_gBuffer.GetHeight());
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        m_geometryPassShader->Bind();
 
         for (const auto &command : m_renderCommands)
         {
-            Graphics::DrawMeshWithMaterial(command.mesh, command.material, command.model, &cameraData);
+            glBindVertexArray(command.mesh->GetVAO());
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, command.mesh->GetEBO());
+
+            m_geometryPassShader->SetUniform("uModel", command.model);
+            m_geometryPassShader->SetUniform("uView", cameraData.view);
+            m_geometryPassShader->SetUniform("uProjection", cameraData.projection);
+
+            m_geometryPassShader->SetUniform("uColor", glm::vec3(1.0f));
+            m_geometryPassShader->SetUniform("uHasAlbedoTexture", 0.0f);
+
+            glDrawElements(GL_TRIANGLES,
+                           (GLsizei)command.mesh->GetIndexCount(),
+                           GL_UNSIGNED_INT,
+                           0);
         }
+
+        m_gBuffer.Unbind();
+        m_geometryPassShader->Unbind();
+
+        // glBindFramebuffer(GL_READ_FRAMEBUFFER, m_gBuffer.GetFBO());
+        // glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0); // Default framebuffer
+
+        // glBlitFramebuffer(0, 0, m_gBuffer.GetWidth(), m_gBuffer.GetHeight(),
+        //                   0, 0, m_gBuffer.GetWidth(), m_gBuffer.GetHeight(),
+        //                   GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    }
+
+    void Renderer::LightingPass(CameraData &cameraData, RenderTarget *renderTarget)
+    {
+
+        glDisable(GL_DEPTH_TEST); // Disable depth testing for lighting pass
+        Graphics::BindRenderTarget(renderTarget);
+
+        m_lightingPassShader->Bind();
+
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, m_gBuffer.GetPositionTextureID());
+        m_lightingPassShader->SetUniform("gPosition", 0);
+
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, m_gBuffer.GetNormalTextureID());
+        m_lightingPassShader->SetUniform("gNormal", 1);
+
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D, m_gBuffer.GetAlbedoTextureID());
+        m_lightingPassShader->SetUniform("gAlbedoSpec", 2);
+
+        glm::vec3 cameraPos = glm::vec3(glm::inverse(cameraData.view)[3]); // Extract camera position from view matrix
+        m_lightingPassShader->SetUniform("uViewPos", cameraPos);
+        m_lightingPassShader->SetUniform("uLight.Position", glm::vec3(0.5f, 1.0f, 0.6f));
+        m_lightingPassShader->SetUniform("uLight.Color", glm::vec3(1.0f, 1.0f, 1.0f));
+
+        // Draw a full-screen quad to apply lighting calculations in the fragment shader
+        // auto material = new Material();
+        // material->SetShader(m_lightingPassShader);
+        // auto quadMesh = Mesh::QuadUV();
+
+        glBindVertexArray(0);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        // Graphics::DrawMeshWithMaterial(quadMesh, material);
 
         Graphics::UnbindRenderTarget();
     }

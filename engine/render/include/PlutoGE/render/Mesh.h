@@ -35,7 +35,6 @@ namespace PlutoGE::render
         Mesh(const MeshConfig &config) : m_config(config)
         {
             m_meshData = m_config.data; // Store mesh data for buffer initialization
-            InitializeBuffers();
         }
 
         static Mesh *Cube()
@@ -90,6 +89,7 @@ namespace PlutoGE::render
             config.data = std::move(meshData);
 
             Mesh *mesh = new Mesh(config);
+            mesh->Initialize();
 
             return mesh;
         }
@@ -116,19 +116,70 @@ namespace PlutoGE::render
             config.data = std::move(meshData);
 
             Mesh *mesh = new Mesh(config);
+            mesh->Initialize();
+            return mesh;
+        }
 
+        struct QuadVertex
+        {
+            float position[3];
+            float uv[2];
+        };
+
+        static Mesh *QuadUV()
+        {
+            // Fullscreen quad with only position and UV attributes
+            std::vector<QuadVertex> vertices = {
+                {{-1.0f, -1.0f, 0.0f}, {0.0f, 0.0f}},
+                {{1.0f, -1.0f, 0.0f}, {1.0f, 0.0f}},
+                {{-1.0f, 1.0f, 0.0f}, {0.0f, 1.0f}},
+                {{1.0f, 1.0f, 0.0f}, {1.0f, 1.0f}},
+            };
+            std::vector<unsigned int> indices = {
+                0, 1, 2,
+                2, 1, 3};
+
+            GLuint VAO, VBO, EBO;
+            glGenVertexArrays(1, &VAO);
+            glGenBuffers(1, &VBO);
+            glGenBuffers(1, &EBO);
+
+            glBindVertexArray(VAO);
+            glBindBuffer(GL_ARRAY_BUFFER, VBO);
+            glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(QuadVertex), vertices.data(), GL_STATIC_DRAW);
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
+            glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), indices.data(), GL_STATIC_DRAW);
+
+            // Position attribute (location = 0)
+            glEnableVertexAttribArray(0);
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(QuadVertex), (void *)offsetof(QuadVertex, position));
+            // UV attribute (location = 1)
+            glEnableVertexAttribArray(1);
+            glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(QuadVertex), (void *)offsetof(QuadVertex, uv));
+
+            glBindVertexArray(0);
+
+            // Create a Mesh object with dummy MeshData (not used for rendering)
+            MeshConfig config;
+            Mesh *mesh = new Mesh(config);
+            mesh->m_VAO = VAO;
+            mesh->m_VBO = VBO;
+            mesh->m_EBO = EBO;
+            mesh->m_config.data.indices = indices;
             return mesh;
         }
 
         ~Mesh() = default;
 
-    protected:
-        friend class Graphics;
+        size_t GetVertexCount() const { return m_config.data.vertices.size(); }
+        size_t GetIndexCount() const { return m_config.data.indices.size(); }
+
         GLuint GetVAO() const { return m_VAO; }
         GLuint GetVBO() const { return m_VBO; }
         GLuint GetEBO() const { return m_EBO; }
-        size_t GetVertexCount() const { return m_config.data.vertices.size(); }
-        size_t GetIndexCount() const { return m_config.data.indices.size(); }
+
+        // protected:
+        //     friend class Graphics;
 
     private:
         MeshConfig m_config;
@@ -137,7 +188,7 @@ namespace PlutoGE::render
         GLuint m_EBO = 0;    // Element Buffer Object (for indexed drawing)
         MeshData m_meshData; // Mesh data (vertices and indices)
 
-        void InitializeBuffers()
+        void Initialize()
         {
             // Generate and bind VAO, VBO, and EBO here
             glGenVertexArrays(1, &m_VAO);

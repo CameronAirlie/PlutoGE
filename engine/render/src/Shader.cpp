@@ -95,4 +95,64 @@ namespace PlutoGE::render
     {
         return CreateShaderFromSource(source);
     }
+
+    GLuint Shader::GetUniformLocation(const std::string &name) const
+    {
+        // Check cache first
+        if (m_uniformLocationCache.find(name) != m_uniformLocationCache.end())
+            return m_uniformLocationCache[name];
+
+        GLint location = glGetUniformLocation(m_programID, name.c_str());
+        if (location == -1)
+        {
+            std::cerr << "Warning: Uniform '" << name << "' not found in shader program." << std::endl;
+        }
+        m_uniformLocationCache[name] = location; // Cache the location
+        return location;
+    }
+
+    void Shader::SetUniform(const std::string &name, const glm::mat4 &value) const
+    {
+        GLint location = GetUniformLocation(name);
+        if (location != -1)
+        {
+            glUniformMatrix4fv(location, 1, GL_FALSE, &value[0][0]);
+        }
+    }
+
+    void Shader::SetUniform(const std::string &name, const glm::vec4 &value) const
+    {
+        GLint location = GetUniformLocation(name);
+        if (location != -1)
+        {
+            glUniform4f(location, value.x, value.y, value.z, value.w);
+        }
+    }
+
+    void Shader::SetUniform(const std::string &name, const glm::vec3 &value) const
+    {
+        GLint location = GetUniformLocation(name);
+        if (location != -1)
+        {
+            glUniform3f(location, value.x, value.y, value.z);
+        }
+    }
+
+    void Shader::SetUniform(const std::string &name, float value) const
+    {
+        GLint location = GetUniformLocation(name);
+        if (location != -1)
+        {
+            glUniform1f(location, value);
+        }
+    }
+
+    void Shader::SetUniform(const std::string &name, int value) const
+    {
+        GLint location = GetUniformLocation(name);
+        if (location != -1)
+        {
+            glUniform1i(location, value);
+        }
+    }
 }

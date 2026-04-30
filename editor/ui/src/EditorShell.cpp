@@ -6,8 +6,10 @@
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/Mesh.h"
+#include "PlutoGE/scripting/ScriptEngine.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
+#include "PlutoGE/scene/components/ScriptComponent.h"
 
 #include <imgui.h>
 #include <backends/imgui_impl_glfw.h>
@@ -15,10 +17,37 @@
 
 #include <iostream>
 #include <chrono>
+#include <filesystem>
 #include <memory>
 
 namespace PlutoGE::ui
 {
+    namespace
+    {
+        std::filesystem::path FindScriptCoreProjectPath()
+        {
+            auto current = std::filesystem::current_path();
+
+            while (!current.empty())
+            {
+                const auto candidate = current / "engine" / "scripting" / "managed" / "PlutoGE.ScriptCore" / "PlutoGE.ScriptCore.csproj";
+                if (std::filesystem::exists(candidate))
+                {
+                    return candidate;
+                }
+
+                if (current == current.root_path())
+                {
+                    break;
+                }
+
+                current = current.parent_path();
+            }
+
+            return {};
+        }
+    }
+
     void EditorShell::Initialize()
     {
         auto config = core::EngineConfig{
@@ -42,8 +71,36 @@ namespace PlutoGE::ui
     {
         auto &window = m_engine.GetWindow();
         auto &renderer = m_engine.GetRenderer();
+        auto &scriptEngine = m_engine.GetScriptEngine();
         auto deltaTime = std::chrono::duration<float>::zero();
         auto lastTime = std::chrono::high_resolution_clock::now();
+
+        const auto scriptProjectPath = FindScriptCoreProjectPath();
+        if (!scriptProjectPath.empty())
+        {
+            const auto buildResult = scriptEngine.BuildProject(scripting::ScriptBuildConfig{
+                .projectPath = scriptProjectPath,
+                .configuration = "Debug",
+                .framework = "net8.0",
+            });
+
+            if (!buildResult.succeeded)
+            {
+                std::cerr << "Failed to build script assembly with command: " << buildResult.command << std::endl;
+            }
+            else
+            {
+                const auto scriptAssemblyPath = scriptProjectPath.parent_path() / "bin" / "Debug" / "net8.0" / "PlutoGE.ScriptCore.dll";
+                if (!scriptEngine.LoadAssembly(scriptAssemblyPath))
+                {
+                    std::cerr << "Failed to load script assembly: " << scriptAssemblyPath.string() << std::endl;
+                }
+            }
+        }
+        else
+        {
+            std::cerr << "Failed to locate PlutoGE.ScriptCore.csproj for editor scripting." << std::endl;
+        }
 
         ViewportPanelConfig viewportConfig;
         viewportConfig.name = "Viewport";
@@ -73,6 +130,21 @@ namespace PlutoGE::ui
             .material = material,
         });
         cube->AddComponent(meshComponent);
+
+        auto scriptComponent = new scene::ScriptComponent();
+        scriptComponent->SetScriptClass("PlutoGE.ScriptCore.Examples.RotatorScript");
+        if (!scriptComponent->SetFieldValue("DegreesPerSecond", 20.0f))
+        {
+            std::cerr << "Failed to set DegreesPerSecond on RotatorScript." << std::endl;
+        }
+
+        if (!scriptComponent->SetFieldValue("Axis", glm::vec3(1.0f, 1.0f, 1.0f)))
+        {
+            std::cerr << "Failed to set Axis on RotatorScript." << std::endl;
+        }
+
+        cube->AddComponent(scriptComponent);
+
         scene->AddEntity(cube.get());
 
         auto testEntity = std::make_unique<scene::Entity>(scene::EntityConfig{
@@ -130,11 +202,6 @@ namespace PlutoGE::ui
             scene->Update(deltaTime.count());
 
             camera.SetFOV(45.0f + 10.0f * sinf(static_cast<float>(glfwGetTime()))); // Animate FOV for demonstration
-
-            // Rotate cube on all axes for demonstration
-            const float rotationSpeed = 20.0f; // degrees per second
-            const float rotationAngle = rotationSpeed * static_cast<float>(deltaTime.count());
-            cube->SetRotation(cube->GetRotation() + glm::vec3(rotationAngle, rotationAngle, rotationAngle));
 
             // Rendering
 

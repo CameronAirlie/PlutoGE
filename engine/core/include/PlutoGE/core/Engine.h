@@ -4,6 +4,7 @@
 #include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/TextureManager.h"
+#include "PlutoGE/scripting/ScriptEngine.h"
 
 namespace PlutoGE::render
 {
@@ -46,6 +47,7 @@ namespace PlutoGE::core
         [[nodiscard]] render::Renderer &GetRenderer() { return m_renderer; }
         [[nodiscard]] assets::AssetManager &GetAssetManager() { return m_assetManager; }
         [[nodiscard]] render::TextureManager &GetTextureManager() { return m_textureManager; }
+        [[nodiscard]] scripting::ScriptEngine &GetScriptEngine() { return m_scriptEngine; }
         [[nodiscard]] scene::Scene *GetScene() { return m_scene; }
         void SetScene(scene::Scene *scene) { m_scene = scene; }
 
@@ -56,6 +58,7 @@ namespace PlutoGE::core
         render::Renderer m_renderer;
         assets::AssetManager m_assetManager;
         render::TextureManager m_textureManager;
+        scripting::ScriptEngine m_scriptEngine;
         scene::Scene *m_scene = nullptr;
 
         bool m_isInitialized = false;

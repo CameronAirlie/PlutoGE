@@ -3,6 +3,7 @@ add_library(PlutoGEScene
     src/Scene.cpp
     src/components/MeshComponent.cpp
     src/components/CameraComponent.cpp
+    src/components/ScriptComponent.cpp
 )
 
 add_library(PlutoGE::Scene ALIAS PlutoGEScene)
@@ -14,4 +15,5 @@ target_link_libraries(PlutoGEScene PUBLIC
     PlutoGE::Core
     PlutoGE::Render
     PlutoGE::Assets
+    PlutoGE::Scripting
 )

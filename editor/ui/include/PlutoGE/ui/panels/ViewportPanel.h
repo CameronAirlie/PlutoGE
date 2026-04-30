@@ -8,6 +8,7 @@
 namespace PlutoGE::render
 {
     class RenderTarget;
+    struct CameraData;
 }
 
 namespace PlutoGE::ui
@@ -27,6 +28,7 @@ namespace PlutoGE::ui
 
         void Initialize() override;
         void Render() override;
+        void RenderFrame(render::CameraData &cameraData);
         void Shutdown() override;
 
         render::RenderTarget *GetRenderTarget() const { return m_renderTarget; }

@@ -143,15 +143,11 @@ namespace PlutoGE::ui
 
             // Rendering
 
-            renderer.BeginFrame(renderTarget);
             auto cameraData = cameraComponent->GetCameraData(renderTargetWidth, renderTargetHeight);
-            renderer.RenderFrame(cameraData, renderTarget);
-            renderer.EndFrame(renderTarget);
+            viewportPanel->RenderFrame(cameraData);
 
-            renderer.BeginFrame(renderTarget2);
             auto cameraData2 = cameraComponent2->GetCameraData(renderTarget2Width, renderTarget2Height);
-            renderer.RenderFrame(cameraData2, renderTarget2);
-            renderer.EndFrame(renderTarget2);
+            viewportPanel2->RenderFrame(cameraData2);
 
             renderer.ClearRenderCommands();
 

@@ -18,6 +18,7 @@ namespace PlutoGE::render
 {
     class Material;
     class Mesh;
+    class RenderTarget;
 
     struct RendererConfig
     {
@@ -32,7 +33,14 @@ namespace PlutoGE::render
         glm::mat4 model;    // Model matrix for the object (position, rotation, scale)
     };
 
-    class RenderTarget;
+    struct RenderContext
+    {
+        CameraData cameraData;                      // Camera data for the current frame
+        RenderTarget *renderTarget;                 // Render target for the current frame (nullptr for default framebuffer)
+        std::vector<RenderCommand> *renderCommands; // List of render commands for the current frame
+        GBuffer *gBuffer;                           // GBuffer for deferred rendering
+    };
+
     class Shader;
     class Renderer
     {
@@ -43,7 +51,6 @@ namespace PlutoGE::render
         bool Initialize(const RendererConfig &config = RendererConfig());
         void BeginFrame(RenderTarget *renderTarget = nullptr);
         void RenderFrame(CameraData &cameraData, RenderTarget *renderTarget = nullptr);
-        void DrawRenderTarget(RenderTarget *renderTarget);
         void EndFrame(RenderTarget *renderTarget = nullptr);
         void Shutdown(RenderTarget *renderTarget = nullptr);
         void ClearRenderCommands();

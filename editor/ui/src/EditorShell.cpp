@@ -86,7 +86,7 @@ namespace PlutoGE::ui
             .name = "Cube",
         });
         auto *material = m_engine.GetAssetManager().CreateDefaultMaterial();
-        material->SetColor(glm::vec3(0.8f, 0.2f, 0.2f));
+        material->SetColor(glm::vec4(0.8f, 0.2f, 0.2f, 1.0f));
         auto mesh = render::Mesh::Cube();
         auto meshComponent = new scene::MeshComponent(scene::MeshComponentConfig{
             .mesh = mesh,

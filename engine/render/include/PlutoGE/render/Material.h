@@ -6,10 +6,11 @@ namespace PlutoGE::render
 {
     class Texture;
     class Shader;
+    struct CameraData;
     struct MaterialConfig
     {
-        glm::vec3 color{1.0f, 1.0f, 1.0f}; // Base color (default to white)
-        Texture *albedoTexture = nullptr;  // Pointer to an albedo texture (if any)
+        glm::vec4 color{1.0f, 1.0f, 1.0f, 1.0f}; // Base color (default to white)
+        Texture *albedoTexture = nullptr;        // Pointer to an albedo texture (if any)
 
         Texture *normalTexture = nullptr; // Pointer to a normal map texture (if any)
 
@@ -30,7 +31,9 @@ namespace PlutoGE::render
         void SetShader(Shader *shader) { m_shader = shader; }
         Shader *GetShader() const { return m_shader; }
 
-        void SetColor(const glm::vec3 &color) { m_config.color = color; }
+        void Bind(const CameraData &cameraData, const glm::mat4 &modelMatrix);
+
+        void SetColor(const glm::vec4 &color) { m_config.color = color; }
         void SetAlbedoTexture(Texture *texture) { m_config.albedoTexture = texture; }
         void SetNormalTexture(Texture *texture) { m_config.normalTexture = texture; }
         void SetMetallic(float metallic) { m_config.metallic = metallic; }

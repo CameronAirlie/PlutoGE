@@ -21,6 +21,7 @@ namespace PlutoGE::render
         std::string fragmentShaderPath;
     };
 
+    class Texture;
     class Shader
     {
     public:
@@ -30,99 +31,99 @@ namespace PlutoGE::render
         static Shader *Create(const ShaderConfig &config);
         static Shader *Create(const ShaderSource &source);
 
-        static Shader *CreateDefault()
-        {
-            ShaderSource defaultSource;
+        //         static Shader *CreateDefault()
+        //         {
+        //             ShaderSource defaultSource;
 
-            defaultSource.vertexSource = R"(
-                #version 330 core
-                layout(location = 0) in vec3 aPos;
-                layout(location = 1) in vec3 aNormal;
-                layout(location = 2) in vec2 aUV;
-                layout(location = 3) in vec4 aTangent;
+        //             defaultSource.vertexSource = R"(
+        //                 #version 330 core
+        //                 layout(location = 0) in vec3 aPos;
+        //                 layout(location = 1) in vec3 aNormal;
+        //                 layout(location = 2) in vec2 aUV;
+        //                 layout(location = 3) in vec4 aTangent;
 
-                uniform mat4 uModel;
-                uniform mat4 uView;
-                uniform mat4 uProjection;
+        //                 uniform mat4 uModel;
+        //                 uniform mat4 uView;
+        //                 uniform mat4 uProjection;
 
-                out vec3 FragPos;
-                out vec3 Normal;
-                out vec2 UV;
-                out mat3 TBN;
+        //                 out vec3 FragPos;
+        //                 out vec3 Normal;
+        //                 out vec2 UV;
+        //                 out mat3 TBN;
 
-                void main()
-                {
-                    FragPos = vec3(uModel * vec4(aPos, 1.0));
-                    Normal = mat3(transpose(inverse(uModel))) * aNormal; // Transform normal to world space
-                    UV = aUV;
-                    gl_Position = uProjection * uView * vec4(FragPos, 1.0);
-                    TBN = mat3(
-                        normalize(mat3(uModel) * aTangent.xyz), // Tangent
-                        normalize(cross(Normal, normalize(mat3(uModel) * aTangent.xyz))), // Bitangent
-                        Normal // Normal
-                    );
-                }
-            )";
+        //                 void main()
+        //                 {
+        //                     FragPos = vec3(uModel * vec4(aPos, 1.0));
+        //                     Normal = mat3(transpose(inverse(uModel))) * aNormal; // Transform normal to world space
+        //                     UV = aUV;
+        //                     gl_Position = uProjection * uView * vec4(FragPos, 1.0);
+        //                     TBN = mat3(
+        //                         normalize(mat3(uModel) * aTangent.xyz), // Tangent
+        //                         normalize(cross(Normal, normalize(mat3(uModel) * aTangent.xyz))), // Bitangent
+        //                         Normal // Normal
+        //                     );
+        //                 }
+        //             )";
 
-            defaultSource.fragmentSource = R"(
-#version 330 core
-out vec4 FragColor;
+        //             defaultSource.fragmentSource = R"(
+        // #version 330 core
+        // out vec4 FragColor;
 
-in vec3 FragPos;
-in vec3 Normal;
-in vec2 UV;
-in mat3 TBN;
+        // in vec3 FragPos;
+        // in vec3 Normal;
+        // in vec2 UV;
+        // in mat3 TBN;
 
-uniform vec3 uColor;
-uniform sampler2D uAlbedoTexture;
-uniform float uHasAlbedoTexture;
+        // uniform vec3 uColor;
+        // uniform sampler2D uAlbedoTexture;
+        // uniform float uHasAlbedoTexture;
 
-uniform sampler2D uNormalTexture;
-uniform float uHasNormalTexture;
+        // uniform sampler2D uNormalTexture;
+        // uniform float uHasNormalTexture;
 
-uniform float uMetallic;
-uniform sampler2D uMetallicTexture;
-uniform float uHasMetallicTexture;
+        // uniform float uMetallic;
+        // uniform sampler2D uMetallicTexture;
+        // uniform float uHasMetallicTexture;
 
-uniform sampler2D uRoughnessTexture;
-uniform float uRoughness;
-uniform float uHasRoughnessTexture;
+        // uniform sampler2D uRoughnessTexture;
+        // uniform float uRoughness;
+        // uniform float uHasRoughnessTexture;
 
-void main()
-{
-    vec3 ambient = 0.1 * uColor;
+        // void main()
+        // {
+        //     vec3 ambient = 0.1 * uColor;
 
-    vec3 lightDir = normalize(vec3(0.5, 1.0, 0.6));
-    vec3 normal = normalize(Normal);
+        //     vec3 lightDir = normalize(vec3(0.5, 1.0, 0.6));
+        //     vec3 normal = normalize(Normal);
 
-    if (uHasNormalTexture > 0.5)
-    {
-        normal = texture(uNormalTexture, UV).rgb;
-        normal = normalize(normal * 2.0 - 1.0);
-        normal = normalize(TBN * normal); // Transform to world space
-    }
+        //     if (uHasNormalTexture > 0.5)
+        //     {
+        //         normal = texture(uNormalTexture, UV).rgb;
+        //         normal = normalize(normal * 2.0 - 1.0);
+        //         normal = normalize(TBN * normal); // Transform to world space
+        //     }
 
-    float lightIntensity = 1.0;
-    float lightDirection = max(dot(normal, lightDir), 0.0);
+        //     float lightIntensity = 1.0;
+        //     float lightDirection = max(dot(normal, lightDir), 0.0);
 
-    vec3 albedo = uColor;
-    if (uHasAlbedoTexture > 0.5)
-    {
-        vec4 texAlbedo = texture(uAlbedoTexture, UV);
-        if (texAlbedo.a < 0.1)
-            discard;
-        albedo = texAlbedo.rgb;
-    }
+        //     vec3 albedo = uColor;
+        //     if (uHasAlbedoTexture > 0.5)
+        //     {
+        //         vec4 texAlbedo = texture(uAlbedoTexture, UV);
+        //         if (texAlbedo.a < 0.1)
+        //             discard;
+        //         albedo = texAlbedo.rgb;
+        //     }
 
-    vec3 diffuse = albedo * lightDirection * lightIntensity;
+        //     vec3 diffuse = albedo * lightDirection * lightIntensity;
 
-    vec4 color = vec4(ambient + diffuse, 1.0);
-    FragColor = color;
-}
-            )";
+        //     vec4 color = vec4(ambient + diffuse, 1.0);
+        //     FragColor = color;
+        // }
+        //             )";
 
-            return CreateShaderFromSource(defaultSource);
-        }
+        //             return CreateShaderFromSource(defaultSource);
+        //         }
 
         static Shader *FullScreenQuad()
         {
@@ -205,23 +206,46 @@ void main()
             in vec2 UV;
 
             uniform sampler2D uAlbedoTexture;
-            uniform float uHasAlbedoTexture;
-            uniform vec3 uColor = vec3(1.0, 0.0, 0.0); // Placeholder color
+            uniform float uHasAlbedoTexture = 0.0;
+            uniform vec4 uColor = vec4(1.0, 1.0, 1.0, 1.0); // Placeholder color
+            
+            uniform sampler2D uNormalTexture;
+            uniform float uHasNormalTexture = 0.0;
+
+            uniform sampler2D uMetallicTexture;
+            uniform float uHasMetallicTexture = 0.0;
+            uniform float uMetallicFactor = 0.0;
+            
+            uniform sampler2D uRoughnessTexture;
+            uniform float uHasRoughnessTexture = 0.0;
+            uniform float uRoughnessFactor = 1.0;
             
             uniform float uSpecular = 1.0; // Placeholder specular value
+            
+            float mix(float a, float b, float factor)
+            {
+                return a * (1.0 - factor) + b * factor;
+            }
+            
+            vec3 mix(vec3 a, vec3 b, float factor)
+            {
+                return a * (1.0 - factor) + b * factor;
+            }
             
             void main()
             {
                 gPosition = FragPos;
                 gNormal = normalize(Normal);
-                vec3 albedo = uColor;
+                vec3 albedo = uColor.rgb;
                 if (uHasAlbedoTexture > 0.5)
                 {
                     vec4 texAlbedo = texture(uAlbedoTexture, UV);
                     if (texAlbedo.a < 0.1)
                         discard;
-                    albedo = texAlbedo.rgb;
+                    // albedo = texAlbedo.rgb;
+                    albedo = mix(albedo, texAlbedo.rgb, uColor.a);
                 }
+                 
                 gAlbedoSpec = vec4(albedo, uSpecular);
             }
         )";
@@ -317,6 +341,7 @@ void main()
         void SetUniform(const std::string &name, const glm::vec3 &value) const;
         void SetUniform(const std::string &name, float value) const;
         void SetUniform(const std::string &name, int value) const;
+        void SetUniform(const std::string &name, const Texture *texture, int slot) const;
 
     protected:
         friend class Graphics;

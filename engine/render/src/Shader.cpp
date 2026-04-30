@@ -1,6 +1,7 @@
 #include <iostream>
 
 #include "PlutoGE/render/Shader.h"
+#include "PlutoGE/render/Texture.h"
 #include "PlutoGE/core/Engine.h"
 
 namespace PlutoGE::render
@@ -153,6 +154,23 @@ namespace PlutoGE::render
         if (location != -1)
         {
             glUniform1i(location, value);
+        }
+    }
+
+    void Shader::SetUniform(const std::string &name, const Texture *texture, int slot) const
+    {
+        if (!texture)
+        {
+            std::cerr << "Error: Attempting to set uniform '" << name << "' with a null texture." << std::endl;
+            return;
+        }
+
+        GLint location = GetUniformLocation(name);
+        if (location != -1)
+        {
+            glActiveTexture(GL_TEXTURE0 + slot);
+            glBindTexture(GL_TEXTURE_2D, texture->GetTextureID());
+            glUniform1i(location, slot);
         }
     }
 }

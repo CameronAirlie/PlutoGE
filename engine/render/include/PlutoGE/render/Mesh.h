@@ -169,6 +169,18 @@ namespace PlutoGE::render
             return mesh;
         }
 
+        void Bind() const
+        {
+            glBindVertexArray(m_VAO);
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_EBO);
+        }
+
+        void Draw() const
+        {
+            Bind();
+            glDrawElements(GL_TRIANGLES, (GLsizei)GetIndexCount(), GL_UNSIGNED_INT, 0);
+        }
+
         ~Mesh() = default;
 
         size_t GetVertexCount() const { return m_config.data.vertices.size(); }

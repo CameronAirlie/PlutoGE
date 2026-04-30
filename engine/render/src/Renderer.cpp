@@ -77,25 +77,6 @@ namespace PlutoGE::render
         Graphics::ClearRenderTarget(nullptr);
     }
 
-    // Forward Implementation
-    // void Renderer::RenderFrame(CameraData &cameraData, RenderTarget *renderTarget)
-    // {
-    //     // Use shader and draw triangle with VAO
-    //     if (!m_isInitialized)
-    //         return;
-
-    //     // Get draw list from the engine and render it here
-    //     auto &engine = core::Engine::GetInstance();
-
-    //     for (const auto &command : m_renderCommands)
-    //     {
-    //         Graphics::DrawMeshWithMaterial(command.mesh, command.material, command.model, &cameraData);
-    //     }
-
-    //     Graphics::UnbindRenderTarget();
-    // }
-
-    // Deferred Implementation
     void Renderer::RenderFrame(CameraData &cameraData, RenderTarget *renderTarget)
     {
         if (!m_isInitialized)
@@ -124,47 +105,17 @@ namespace PlutoGE::render
 
         for (const auto &command : m_renderCommands)
         {
-            glBindVertexArray(command.mesh->GetVAO());
-            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, command.mesh->GetEBO());
-
-            m_geometryPassShader->SetUniform("uModel", command.model);
-            m_geometryPassShader->SetUniform("uView", cameraData.view);
-            m_geometryPassShader->SetUniform("uProjection", cameraData.projection);
-
-            auto materialConfig = command.material->GetConfig();
-            if (materialConfig.albedoTexture)
-            {
-                m_geometryPassShader->SetUniform("uHasAlbedoTexture", 1.0f);
-                glActiveTexture(GL_TEXTURE0);
-                glBindTexture(GL_TEXTURE_2D, materialConfig.albedoTexture->GetTextureID());
-                m_geometryPassShader->SetUniform("uAlbedoTexture", 0);
-            }
-            else
-            {
-                m_geometryPassShader->SetUniform("uColor", command.material->GetConfig().color);
-                m_geometryPassShader->SetUniform("uHasAlbedoTexture", 0.0f);
-            }
-
-            glDrawElements(GL_TRIANGLES,
-                           (GLsizei)command.mesh->GetIndexCount(),
-                           GL_UNSIGNED_INT,
-                           0);
+            command.material->SetShader(m_geometryPassShader);
+            command.material->Bind(cameraData, command.model);
+            command.mesh->Draw();
         }
 
         m_gBuffer.Unbind();
         m_geometryPassShader->Unbind();
-
-        // glBindFramebuffer(GL_READ_FRAMEBUFFER, m_gBuffer.GetFBO());
-        // glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0); // Default framebuffer
-
-        // glBlitFramebuffer(0, 0, m_gBuffer.GetWidth(), m_gBuffer.GetHeight(),
-        //                   0, 0, m_gBuffer.GetWidth(), m_gBuffer.GetHeight(),
-        //                   GL_COLOR_BUFFER_BIT, GL_NEAREST);
     }
 
     void Renderer::LightingPass(CameraData &cameraData, RenderTarget *renderTarget)
     {
-
         glDisable(GL_DEPTH_TEST); // Disable depth testing for lighting pass
         Graphics::BindRenderTarget(renderTarget);
 
@@ -202,11 +153,6 @@ namespace PlutoGE::render
     void Renderer::ClearRenderCommands()
     {
         m_renderCommands.clear();
-    }
-
-    void Renderer::DrawRenderTarget(RenderTarget *renderTarget)
-    {
-        Graphics::DrawRenderTarget(renderTarget);
     }
 
     void Renderer::EndFrame(RenderTarget *renderTarget)

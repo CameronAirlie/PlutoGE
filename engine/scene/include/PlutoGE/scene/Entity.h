@@ -25,7 +25,7 @@ namespace PlutoGE::scene
     class Entity
     {
     public:
-        Entity(const EntityConfig &config = {}) : m_name(config.name), m_tags(config.tags) {}
+        Entity(const EntityConfig &config = {}) : m_id(GenerateUniqueID()), m_name(config.name), m_tags(config.tags) {}
         ~Entity() = default;
 
         glm::mat4 GetLocalTransform() const;

@@ -36,7 +36,7 @@ namespace PlutoGE::render
     protected:
         friend class scene::CameraComponent;
 
-        CameraData &GetCameraData(glm::mat4 &transform, int width, int height) const
+        CameraData GetCameraData(const glm::mat4 &transform, int width, int height) const
         {
             CameraData data;
             const glm::vec3 position = glm::vec3(transform[3]);                 // Extract position from the transform

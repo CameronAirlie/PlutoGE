@@ -1,6 +1,7 @@
 #include "PlutoGE/ui/EditorShell.h"
 #include "PlutoGE/ui/panels/ViewportPanel.h"
 #include "PlutoGE/ui/panels/SceneHierarchyPanel.h"
+#include "PlutoGE/ui/panels/InspectorPanel.h"
 #include "PlutoGE/render/RenderTarget.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/Entity.h"
@@ -24,27 +25,20 @@ namespace PlutoGE::ui
 {
     namespace
     {
-        std::filesystem::path FindScriptCoreProjectPath()
+        bool IsCameraActiveInScene(scene::Scene *scene, scene::CameraComponent *cameraComponent)
         {
-            auto current = std::filesystem::current_path();
-
-            while (!current.empty())
+            if (!scene || !cameraComponent)
             {
-                const auto candidate = current / "engine" / "scripting" / "managed" / "PlutoGE.ScriptCore" / "PlutoGE.ScriptCore.csproj";
-                if (std::filesystem::exists(candidate))
-                {
-                    return candidate;
-                }
-
-                if (current == current.root_path())
-                {
-                    break;
-                }
-
-                current = current.parent_path();
+                return false;
             }
 
-            return {};
+            auto *owner = cameraComponent->GetOwner();
+            if (!owner || !cameraComponent->GetCamera())
+            {
+                return false;
+            }
+
+            return scene->FindEntityByID(owner->GetID()) == owner;
         }
     }
 
@@ -185,6 +179,10 @@ namespace PlutoGE::ui
         viewportPanel2->Initialize();
         m_panelManager.AddPanel(viewportPanel2);
 
+        auto inspectorPanel = new InspectorPanel(PanelConfig{"Inspector"});
+        inspectorPanel->Initialize();
+        m_panelManager.AddPanel(inspectorPanel);
+
         auto *renderTarget2 = viewportPanel2->GetRenderTarget();
 
         while (!window.ShouldClose())
@@ -205,11 +203,25 @@ namespace PlutoGE::ui
 
             // Rendering
 
-            auto cameraData = cameraComponent->GetCameraData(renderTargetWidth, renderTargetHeight);
-            viewportPanel->RenderFrame(cameraData);
+            if (IsCameraActiveInScene(scene.get(), cameraComponent))
+            {
+                auto cameraData = cameraComponent->GetCameraData(renderTargetWidth, renderTargetHeight);
+                viewportPanel->RenderFrame(cameraData);
+            }
+            else
+            {
+                viewportPanel->ClearFrame();
+            }
 
-            auto cameraData2 = cameraComponent2->GetCameraData(renderTarget2Width, renderTarget2Height);
-            viewportPanel2->RenderFrame(cameraData2);
+            if (IsCameraActiveInScene(scene.get(), cameraComponent2))
+            {
+                auto cameraData2 = cameraComponent2->GetCameraData(renderTarget2Width, renderTarget2Height);
+                viewportPanel2->RenderFrame(cameraData2);
+            }
+            else
+            {
+                viewportPanel2->ClearFrame();
+            }
 
             renderer.ClearRenderCommands();
 

@@ -3,6 +3,7 @@ add_library(PlutoGEEditorUI
     src/panels/Panel.cpp
     src/panels/ViewportPanel.cpp
     src/panels/SceneHierarchyPanel.cpp
+    src/panels/InspectorPanel.cpp
     src/PanelManager.cpp
 )
 add_library(PlutoGE::EditorUI ALIAS PlutoGEEditorUI)

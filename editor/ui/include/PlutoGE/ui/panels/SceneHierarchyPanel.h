@@ -19,5 +19,7 @@ namespace PlutoGE::ui
         void Initialize() override;
         void Render() override;
         void Shutdown() override;
+
+        void ContextMenu();
     };
 }

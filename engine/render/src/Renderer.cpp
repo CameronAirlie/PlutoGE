@@ -3,6 +3,7 @@
 #include "PlutoGE/render/Shader.h"
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/render/Material.h"
+#include "PlutoGE/render/Texture.h"
 #include "PlutoGE/render/Graphics.h"
 #include "PlutoGE/render/RenderTarget.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
@@ -130,8 +131,19 @@ namespace PlutoGE::render
             m_geometryPassShader->SetUniform("uView", cameraData.view);
             m_geometryPassShader->SetUniform("uProjection", cameraData.projection);
 
-            m_geometryPassShader->SetUniform("uColor", glm::vec3(1.0f));
-            m_geometryPassShader->SetUniform("uHasAlbedoTexture", 0.0f);
+            auto materialConfig = command.material->GetConfig();
+            if (materialConfig.albedoTexture)
+            {
+                m_geometryPassShader->SetUniform("uHasAlbedoTexture", 1.0f);
+                glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_2D, materialConfig.albedoTexture->GetTextureID());
+                m_geometryPassShader->SetUniform("uAlbedoTexture", 0);
+            }
+            else
+            {
+                m_geometryPassShader->SetUniform("uColor", command.material->GetConfig().color);
+                m_geometryPassShader->SetUniform("uHasAlbedoTexture", 0.0f);
+            }
 
             glDrawElements(GL_TRIANGLES,
                            (GLsizei)command.mesh->GetIndexCount(),

@@ -40,6 +40,7 @@ namespace PlutoGE::render
 
     protected:
         friend class Graphics;
+        friend class Renderer;
         MaterialConfig &GetConfig() { return m_config; }
 
     private:

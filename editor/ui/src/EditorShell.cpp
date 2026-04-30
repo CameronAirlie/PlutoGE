@@ -95,6 +95,20 @@ namespace PlutoGE::ui
         cube->AddComponent(meshComponent);
         scene->AddEntity(cube.get());
 
+        auto cube2 = std::make_unique<scene::Entity>(scene::EntityConfig{
+            .name = "Cube 2",
+        });
+        auto *material2 = m_engine.GetAssetManager().CreateDefaultMaterial();
+        auto texture = m_engine.GetAssetManager().LoadTexture("C:/textures/brick/brick.png");
+        material2->SetAlbedoTexture(texture);
+        auto mesh2 = render::Mesh::Cube();
+        auto meshComponent2 = new scene::MeshComponent(scene::MeshComponentConfig{
+            .mesh = mesh2,
+            .material = material2,
+        });
+        cube2->AddComponent(meshComponent2);
+        scene->AddEntity(cube2.get());
+
         auto testEntity = std::make_unique<scene::Entity>(scene::EntityConfig{
             .name = "Test Entity",
         });
@@ -157,8 +171,10 @@ namespace PlutoGE::ui
 
             // Rotate cube on all axes for demonstration
             const float rotationSpeed = 20.0f; // degrees per second
-            const float rotationAngle = rotationSpeed * static_cast<float>(deltaTime.count());
-            cube->SetRotation(cube->GetRotation() + glm::vec3(rotationAngle, rotationAngle, rotationAngle));
+            const float rotationAngle1 = rotationSpeed * static_cast<float>(deltaTime.count());
+            const float rotationAngle2 = rotationSpeed * -0.5f * static_cast<float>(deltaTime.count());
+            cube->SetRotation(cube->GetRotation() + glm::vec3(rotationAngle1, rotationAngle1, rotationAngle1));
+            cube2->SetRotation(cube2->GetRotation() + glm::vec3(rotationAngle2, rotationAngle2, rotationAngle2));
 
             // Rendering
 

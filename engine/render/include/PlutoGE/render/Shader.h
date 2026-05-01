@@ -220,7 +220,7 @@ namespace PlutoGE::render
             uniform float uHasRoughnessTexture = 0.0;
             uniform float uRoughnessFactor = 1.0;
             
-            uniform float uSpecular = 1.0; // Placeholder specular value
+            uniform float uSpecular = 0.5; // Legacy fallback when no gloss data is available
             
             float mix(float a, float b, float factor)
             {
@@ -237,6 +237,8 @@ namespace PlutoGE::render
                 gPosition = FragPos;
                 gNormal = normalize(Normal);
                 vec3 albedo = uColor.rgb;
+                float gloss = clamp(1.0 - uRoughnessFactor, 0.04, 1.0);
+
                 if (uHasAlbedoTexture > 0.5)
                 {
                     vec4 texAlbedo = texture(uAlbedoTexture, UV);
@@ -245,8 +247,17 @@ namespace PlutoGE::render
                     // albedo = texAlbedo.rgb;
                     albedo = mix(albedo, texAlbedo.rgb, uColor.a);
                 }
+
+                if (uHasRoughnessTexture > 0.5)
+                {
+                    gloss = clamp(1.0 - texture(uRoughnessTexture, UV).r, 0.04, 1.0);
+                }
+                else if (uSpecular > 0.0)
+                {
+                    gloss = clamp(uSpecular, 0.04, 1.0);
+                }
                  
-                gAlbedoSpec = vec4(albedo, uSpecular);
+                gAlbedoSpec = vec4(albedo, gloss);
             }
         )";
 
@@ -293,11 +304,82 @@ struct Light {
     vec3 Color;
     float Intensity;
     float Range;
+    vec3 Direction;
+    int Type; // 0 = Point, 1 = Directional, 2 = Spot
 };
 
 uniform int uLightCount;
 uniform Light uLights[MAX_LIGHTS];
 uniform vec3 uViewPos;
+
+vec3 PointLightCalculation(vec3 FragPos, vec3 lightDir, vec3 normal, vec3 viewDir, vec3 albedo, float specular, Light light)
+{
+    float diff = max(dot(normal, lightDir), 0.0);
+    if (diff <= 0.0)
+    {
+        return vec3(0.0);
+    }
+
+    vec3 halfwayDir = normalize(lightDir + viewDir);
+    float shininess = mix(16.0, 64.0, specular);
+    float spec = pow(max(dot(normal, halfwayDir), 0.0), shininess);
+
+    float distanceToLight = length(light.Position - FragPos);
+    float normalizedDistance = light.Range > 0.0001 ? distanceToLight / light.Range : 1.0;
+    float attenuation = clamp(1.0 - normalizedDistance, 0.0, 1.0);
+    attenuation *= attenuation;
+
+    vec3 diffuse = diff * albedo * light.Color;
+    vec3 specularColor = vec3(spec * specular * 0.08) * light.Color;
+    return (diffuse + specularColor) * light.Intensity * attenuation;
+}
+
+vec3 DirectionalLightCalculation(vec3 FragPos, vec3 lightDir, vec3 normal, vec3 viewDir, vec3 albedo, float specular, Light light)
+{
+    float diff = max(dot(normal, lightDir), 0.0);
+    if (diff <= 0.0)
+    {
+        return vec3(0.0);
+    }
+
+    vec3 halfwayDir = normalize(lightDir + viewDir);
+    float shininess = mix(16.0, 64.0, specular);
+    float spec = pow(max(dot(normal, halfwayDir), 0.0), shininess);
+
+    vec3 diffuse = diff * albedo * light.Color;
+    vec3 specularColor = vec3(spec * specular * 0.08) * light.Color;
+    return (diffuse + specularColor) * light.Intensity;
+}
+
+vec3 SpotLightCalculation(vec3 FragPos, vec3 lightDir, vec3 normal, vec3 viewDir, vec3 albedo, float specular, Light light)
+{
+    float diff = max(dot(normal, lightDir), 0.0);
+    if (diff <= 0.0)
+    {
+        return vec3(0.0);
+    }
+
+    vec3 halfwayDir = normalize(lightDir + viewDir);
+    float shininess = mix(16.0, 64.0, specular);
+    float spec = pow(max(dot(normal, halfwayDir), 0.0), shininess);
+
+    float distanceToLight = length(light.Position - FragPos);
+    float normalizedDistance = light.Range > 0.0001 ? distanceToLight / light.Range : 1.0;
+    float attenuation = clamp(1.0 - normalizedDistance, 0.0, 1.0);
+    attenuation *= attenuation;
+
+    float spotEffect = dot(-lightDir, normalize(light.Direction));
+    if (spotEffect > 0.95) // Assuming a tight spotlight cone
+    {
+        vec3 diffuse = diff * albedo * light.Color;
+        vec3 specularColor = vec3(spec * specular * 0.08) * light.Color;
+        return (diffuse + specularColor) * light.Intensity * attenuation * spotEffect;
+    }
+    else
+    {
+        return vec3(0.0);
+    }
+}
 
 void main()
 {
@@ -311,20 +393,33 @@ void main()
 
     for (int i = 0; i < min(uLightCount, MAX_LIGHTS); ++i)
     {
-        vec3 lightOffset = uLights[i].Position - FragPos;
-        float distanceToLight = length(lightOffset);
-        vec3 lightDir = distanceToLight > 0.0001 ? lightOffset / distanceToLight : vec3(0.0, 1.0, 0.0);
-        float diff = max(dot(Normal, lightDir), 0.0);
+        if (uLights[i].Type == 0) // Point Light
+        {
+            lighting += PointLightCalculation(FragPos, normalize(uLights[i].Position - FragPos), Normal, viewDir, Albedo, Specular, uLights[i]);
+        }
+        else if (uLights[i].Type == 1) // Directional Light
+        {
+            lighting += DirectionalLightCalculation(FragPos, normalize(-uLights[i].Direction), Normal, viewDir, Albedo, Specular, uLights[i]);
+        }
+        else if (uLights[i].Type == 2) // Spot Light
+        {
+            lighting += SpotLightCalculation(FragPos, normalize(uLights[i].Position - FragPos), Normal, viewDir, Albedo, Specular, uLights[i]);
+        }
+        
+        // vec3 lightOffset = uLights[i].Position - FragPos;
+        // float distanceToLight = length(lightOffset);
+        // vec3 lightDir = distanceToLight > 0.0001 ? lightOffset / distanceToLight : vec3(0.0, 1.0, 0.0);
+        // float diff = max(dot(Normal, lightDir), 0.0);
 
-        vec3 halfwayDir = normalize(lightDir + viewDir);
-        float spec = pow(max(dot(Normal, halfwayDir), 0.0), 16.0);
+        // vec3 halfwayDir = normalize(lightDir + viewDir);
+        // float spec = pow(max(dot(Normal, halfwayDir), 0.0), 16.0);
 
-        float normalizedDistance = uLights[i].Range > 0.0001 ? distanceToLight / uLights[i].Range : 1.0;
-        float attenuation = clamp(1.0 - normalizedDistance, 0.0, 1.0);
-        attenuation *= attenuation;
+        // float normalizedDistance = uLights[i].Range > 0.0001 ? distanceToLight / uLights[i].Range : 1.0;
+        // float attenuation = clamp(1.0 - normalizedDistance, 0.0, 1.0);
+        // attenuation *= attenuation;
 
-        vec3 contribution = (diff * Albedo + spec * Specular) * uLights[i].Color;
-        lighting += contribution * uLights[i].Intensity * attenuation;
+        // vec3 contribution = (diff * Albedo + spec * Specular) * uLights[i].Color;
+        // lighting += contribution * uLights[i].Intensity * attenuation;
     }
 
     // FragColor = vec4(Albedo, 1.0);

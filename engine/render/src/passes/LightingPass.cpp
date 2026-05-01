@@ -65,6 +65,8 @@ namespace PlutoGE::render
             m_lightingPassShader->SetUniform(uniformPrefix + ".Color", light->color);
             m_lightingPassShader->SetUniform(uniformPrefix + ".Intensity", light->intensity);
             m_lightingPassShader->SetUniform(uniformPrefix + ".Range", light->range);
+            m_lightingPassShader->SetUniform(uniformPrefix + ".Direction", light->direction);
+            m_lightingPassShader->SetUniform(uniformPrefix + ".Type", static_cast<int>(light->type));
         }
 
         glBindVertexArray(0);

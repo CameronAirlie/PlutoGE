@@ -138,6 +138,13 @@ namespace PlutoGE::ui
         cameraEntity2->SetPosition(glm::vec3(0.0f, 0.0f, 5.0f));
         scene->AddEntity(cameraEntity2.get());
 
+        auto cameraHolder = std::make_unique<scene::Entity>(scene::EntityConfig{
+            .name = "Camera Holder",
+        });
+        cameraHolder->SetPosition(glm::vec3(0.0f, 0.0f, 0.0f));
+        scene->AddEntity(cameraHolder.get());
+        cameraEntity2->SetParent(cameraHolder.get());
+
         auto lightEntity = std::make_unique<scene::Entity>(scene::EntityConfig{
             .name = "Key Light",
         });
@@ -146,6 +153,7 @@ namespace PlutoGE::ui
         lightComponent->GetLight().color = glm::vec3(1.0f, 0.95f, 0.85f);
         lightComponent->GetLight().intensity = 6.0f;
         lightComponent->GetLight().range = 20.0f;
+        lightComponent->GetLight().type = scene::LightType::Point;
         scene->AddEntity(lightEntity.get());
 
         ViewportPanelConfig viewportConfig2;
@@ -178,11 +186,11 @@ namespace PlutoGE::ui
             camera.SetFOV(45.0f + 10.0f * sinf(static_cast<float>(glfwGetTime()))); // Animate FOV for demonstration
 
             // Rotate cube on all axes for demonstration
-            const float rotationSpeed = 20.0f; // degrees per second
-            const float rotationAngle1 = rotationSpeed * static_cast<float>(deltaTime.count());
-            const float rotationAngle2 = rotationSpeed * -0.5f * static_cast<float>(deltaTime.count());
-            cube->SetRotation(cube->GetRotation() + glm::vec3(rotationAngle1, rotationAngle1, rotationAngle1));
-            cube2->SetRotation(cube2->GetRotation() + glm::vec3(rotationAngle2, rotationAngle2, rotationAngle2));
+            // const float rotationSpeed = 20.0f; // degrees per second
+            // const float rotationAngle1 = rotationSpeed * static_cast<float>(deltaTime.count());
+            // const float rotationAngle2 = rotationSpeed * -0.5f * static_cast<float>(deltaTime.count());
+            // cube->SetRotation(cube->GetRotation() + glm::vec3(rotationAngle1, rotationAngle1, rotationAngle1));
+            // cube2->SetRotation(cube2->GetRotation() + glm::vec3(rotationAngle2, rotationAngle2, rotationAngle2));
 
             // Rendering
 

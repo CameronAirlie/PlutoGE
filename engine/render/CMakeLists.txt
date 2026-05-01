@@ -7,6 +7,8 @@ add_library(PlutoGERender
     src/RenderTarget.cpp
     src/GBuffer.cpp
     src/Material.cpp
+    src/passes/GeometryPass.cpp
+    src/passes/LightingPass.cpp
 )
 
 add_library(PlutoGE::Render ALIAS PlutoGERender)

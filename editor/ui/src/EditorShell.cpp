@@ -100,7 +100,8 @@ namespace PlutoGE::ui
         });
         auto *material2 = m_engine.GetAssetManager().CreateDefaultMaterial();
         auto texture = m_engine.GetAssetManager().LoadTexture("C:/textures/brick/brick.png");
-        material2->SetAlbedoTexture(texture);
+        // material2->SetAlbedoTexture(texture);
+        material2->SetColor(glm::vec4(0.8f, 0.2f, 0.2f, 1.0f));
         auto mesh2 = render::Mesh::Cube();
         auto meshComponent2 = new scene::MeshComponent(scene::MeshComponentConfig{
             .mesh = mesh2,

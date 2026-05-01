@@ -42,6 +42,7 @@ namespace PlutoGE::render
     };
 
     class Shader;
+    class IRenderPass;
     class Renderer
     {
     public:
@@ -67,12 +68,9 @@ namespace PlutoGE::render
         bool m_isInitialized = false;
 
         GBuffer m_gBuffer;
-        void GeometryPass(CameraData &cameraData, RenderTarget *renderTarget);
-        void LightingPass(CameraData &cameraData, RenderTarget *renderTarget);
-        Shader *m_geometryPassShader = nullptr;
-        Shader *m_lightingPassShader = nullptr;
 
         void CleanupResources(RenderTarget *renderTarget = nullptr);
-        std::vector<RenderCommand> m_renderCommands; // List of render commands for the current frame
+        std::vector<IRenderPass *> m_renderPasses;
+        std::vector<RenderCommand> m_renderCommands;
     };
 }

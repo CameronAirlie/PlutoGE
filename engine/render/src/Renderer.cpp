@@ -7,6 +7,8 @@
 #include "PlutoGE/render/Graphics.h"
 #include "PlutoGE/render/RenderTarget.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
+#include "PlutoGE/render/passes/GeometryPass.h"
+#include "PlutoGE/render/passes/LightingPass.h"
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -50,8 +52,16 @@ namespace PlutoGE::render
         // Disable face culling for debug
         glDisable(GL_CULL_FACE);
 
-        m_geometryPassShader = Shader::CreateGeometryPassShader();
-        m_lightingPassShader = Shader::CreateLightingPassShader();
+        // m_geometryPassShader = Shader::CreateGeometryPassShader();
+        // m_lightingPassShader = Shader::CreateLightingPassShader();
+
+        auto geometryPass = new GeometryPass();
+        geometryPass->Initialize();
+        m_renderPasses.push_back(geometryPass);
+
+        auto lightingPass = new LightingPass();
+        lightingPass->Initialize();
+        m_renderPasses.push_back(lightingPass);
 
         m_isInitialized = true;
         return true;
@@ -82,72 +92,17 @@ namespace PlutoGE::render
         if (!m_isInitialized)
             return;
 
-        GeometryPass(cameraData, renderTarget);
-        LightingPass(cameraData, renderTarget);
-    }
+        RenderContext ctx{
+            .cameraData = cameraData,
+            .renderTarget = renderTarget,
+            .renderCommands = &m_renderCommands,
+            .gBuffer = &m_gBuffer,
+        };
 
-    void Renderer::GeometryPass(CameraData &cameraData, RenderTarget *renderTarget)
-    {
-        if (!m_gBuffer.IsInitialized() ||
-            m_gBuffer.GetWidth() != renderTarget->GetWidth() ||
-            m_gBuffer.GetHeight() != renderTarget->GetHeight())
+        for (auto *pass : m_renderPasses)
         {
-            m_gBuffer.Cleanup();
-            m_gBuffer.Initialize(renderTarget->GetWidth(), renderTarget->GetHeight());
+            pass->Execute(ctx);
         }
-
-        m_gBuffer.Bind();
-        glEnable(GL_DEPTH_TEST);
-        glViewport(0, 0, m_gBuffer.GetWidth(), m_gBuffer.GetHeight());
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-        m_geometryPassShader->Bind();
-
-        for (const auto &command : m_renderCommands)
-        {
-            command.material->SetShader(m_geometryPassShader);
-            command.material->Bind(cameraData, command.model);
-            command.mesh->Draw();
-        }
-
-        m_gBuffer.Unbind();
-        m_geometryPassShader->Unbind();
-    }
-
-    void Renderer::LightingPass(CameraData &cameraData, RenderTarget *renderTarget)
-    {
-        glDisable(GL_DEPTH_TEST); // Disable depth testing for lighting pass
-        Graphics::BindRenderTarget(renderTarget);
-
-        m_lightingPassShader->Bind();
-
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, m_gBuffer.GetPositionTextureID());
-        m_lightingPassShader->SetUniform("gPosition", 0);
-
-        glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, m_gBuffer.GetNormalTextureID());
-        m_lightingPassShader->SetUniform("gNormal", 1);
-
-        glActiveTexture(GL_TEXTURE2);
-        glBindTexture(GL_TEXTURE_2D, m_gBuffer.GetAlbedoTextureID());
-        m_lightingPassShader->SetUniform("gAlbedoSpec", 2);
-
-        glm::vec3 cameraPos = glm::vec3(glm::inverse(cameraData.view)[3]); // Extract camera position from view matrix
-        m_lightingPassShader->SetUniform("uViewPos", cameraPos);
-        m_lightingPassShader->SetUniform("uLight.Position", glm::vec3(0.5f, 1.0f, 0.6f));
-        m_lightingPassShader->SetUniform("uLight.Color", glm::vec3(1.0f, 1.0f, 1.0f));
-
-        // Draw a full-screen quad to apply lighting calculations in the fragment shader
-        // auto material = new Material();
-        // material->SetShader(m_lightingPassShader);
-        // auto quadMesh = Mesh::QuadUV();
-
-        glBindVertexArray(0);
-        glDrawArrays(GL_TRIANGLES, 0, 3);
-        // Graphics::DrawMeshWithMaterial(quadMesh, material);
-
-        Graphics::UnbindRenderTarget();
     }
 
     void Renderer::ClearRenderCommands()

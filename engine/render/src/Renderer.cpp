@@ -9,6 +9,7 @@
 #include "PlutoGE/scene/components/CameraComponent.h"
 #include "PlutoGE/render/passes/GeometryPass.h"
 #include "PlutoGE/render/passes/LightingPass.h"
+#include "PlutoGE/scene/components/LightComponent.h"
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -80,7 +81,7 @@ namespace PlutoGE::render
         Graphics::ClearRenderTarget(nullptr);
     }
 
-    void Renderer::RenderFrame(CameraData &cameraData, RenderTarget *renderTarget)
+    void Renderer::RenderFrame(CameraData &cameraData, RenderTarget *renderTarget, std::vector<scene::Light *> lights)
     {
         if (!m_isInitialized)
             return;
@@ -95,6 +96,7 @@ namespace PlutoGE::render
             .cameraData = cameraData,
             .renderTarget = renderTarget,
             .renderCommands = &m_renderCommands,
+            .lights = &lights,
             .gBuffer = &m_gBuffer,
         };
 

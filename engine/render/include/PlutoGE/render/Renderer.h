@@ -12,6 +12,8 @@
 namespace PlutoGE::scene
 {
     class CameraComponent;
+    class LightComponent;
+    struct Light;
 }
 
 namespace PlutoGE::render
@@ -38,6 +40,7 @@ namespace PlutoGE::render
         CameraData cameraData;                      // Camera data for the current frame
         RenderTarget *renderTarget;                 // Render target for the current frame (nullptr for default framebuffer)
         std::vector<RenderCommand> *renderCommands; // List of render commands for the current frame
+        std::vector<scene::Light *> *lights;        // List of lights in the scene for the current frame
         GBuffer *gBuffer;                           // GBuffer for deferred rendering
     };
 
@@ -51,7 +54,7 @@ namespace PlutoGE::render
 
         bool Initialize(const RendererConfig &config = RendererConfig());
         void BeginFrame(RenderTarget *renderTarget = nullptr);
-        void RenderFrame(CameraData &cameraData, RenderTarget *renderTarget = nullptr);
+        void RenderFrame(CameraData &cameraData, RenderTarget *renderTarget = nullptr, std::vector<scene::Light *> lights = {});
         void EndFrame(RenderTarget *renderTarget = nullptr);
         void Shutdown(RenderTarget *renderTarget = nullptr);
         void ClearRenderCommands();

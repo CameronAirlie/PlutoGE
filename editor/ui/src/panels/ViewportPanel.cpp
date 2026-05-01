@@ -1,6 +1,9 @@
 #include "PlutoGE/ui/panels/ViewportPanel.h"
 #include "PlutoGE/render/RenderTarget.h"
 #include "PlutoGE/ui/EditorShell.h"
+#include "PlutoGE/scene/Scene.h"
+#include "PlutoGE/core/Engine.h"
+#include "PlutoGE/scene/components/LightComponent.h"
 #include <iostream>
 
 #include <imgui.h>
@@ -69,7 +72,8 @@ namespace PlutoGE::ui
 
         auto &renderer = EditorShell::GetInstance().GetEngine().GetRenderer();
         renderer.BeginFrame(m_renderTarget);
-        renderer.RenderFrame(cameraData, m_renderTarget);
+        auto lights = EditorShell::GetInstance().GetEngine().GetScene()->GetLights();
+        renderer.RenderFrame(cameraData, m_renderTarget, lights);
         renderer.EndFrame(m_renderTarget);
     }
 

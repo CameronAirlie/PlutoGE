@@ -286,12 +286,17 @@ uniform sampler2D gPosition;
 uniform sampler2D gNormal;
 uniform sampler2D gAlbedoSpec;
 
+const int MAX_LIGHTS = 16;
+
 struct Light {
     vec3 Position;
     vec3 Color;
+    float Intensity;
+    float Range;
 };
 
-uniform Light uLight;
+uniform int uLightCount;
+uniform Light uLights[MAX_LIGHTS];
 uniform vec3 uViewPos;
 
 void main()
@@ -301,17 +306,26 @@ void main()
     vec3 Albedo = texture(gAlbedoSpec, UV).rgb;
     float Specular = texture(gAlbedoSpec, UV).a;
 
-    // Basic lighting
-    vec3 lightDir = normalize(uLight.Position - FragPos);
-    float diff = max(dot(Normal, lightDir), 0.0);
-
     vec3 viewDir = normalize(uViewPos - FragPos);
-    vec3 halfwayDir = normalize(lightDir + viewDir);
-    float spec = pow(max(dot(Normal, halfwayDir), 0.0), 16.0);
+    vec3 lighting = 0.1 * Albedo;
 
-    vec3 lighting = (diff * Albedo + spec * Specular) * uLight.Color;
-    vec3 ambient = 0.1 * Albedo;
-    lighting += ambient;
+    for (int i = 0; i < min(uLightCount, MAX_LIGHTS); ++i)
+    {
+        vec3 lightOffset = uLights[i].Position - FragPos;
+        float distanceToLight = length(lightOffset);
+        vec3 lightDir = distanceToLight > 0.0001 ? lightOffset / distanceToLight : vec3(0.0, 1.0, 0.0);
+        float diff = max(dot(Normal, lightDir), 0.0);
+
+        vec3 halfwayDir = normalize(lightDir + viewDir);
+        float spec = pow(max(dot(Normal, halfwayDir), 0.0), 16.0);
+
+        float normalizedDistance = uLights[i].Range > 0.0001 ? distanceToLight / uLights[i].Range : 1.0;
+        float attenuation = clamp(1.0 - normalizedDistance, 0.0, 1.0);
+        attenuation *= attenuation;
+
+        vec3 contribution = (diff * Albedo + spec * Specular) * uLights[i].Color;
+        lighting += contribution * uLights[i].Intensity * attenuation;
+    }
 
     // FragColor = vec4(Albedo, 1.0);
     FragColor = vec4(lighting, 1.0);

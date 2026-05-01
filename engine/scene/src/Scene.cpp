@@ -7,6 +7,11 @@ namespace PlutoGE::scene
 {
     void Scene::AddEntity(Entity *entity, Entity *parent)
     {
+        if (!entity)
+        {
+            return;
+        }
+
         if (parent)
         {
             parent->AddChild(entity);
@@ -14,6 +19,7 @@ namespace PlutoGE::scene
         else
         {
             m_rootEntities.push_back(entity);
+            entity->SetSceneRecursive(this);
         }
     }
 
@@ -23,6 +29,7 @@ namespace PlutoGE::scene
         auto it = std::find(m_rootEntities.begin(), m_rootEntities.end(), entity);
         if (it != m_rootEntities.end())
         {
+            entity->SetSceneRecursive(nullptr);
             m_rootEntities.erase(it);
             return;
         }
@@ -43,6 +50,7 @@ namespace PlutoGE::scene
         auto it = std::find(children.begin(), children.end(), target);
         if (it != children.end())
         {
+            target->SetSceneRecursive(nullptr);
             children.erase(it);
             return true; // Entity found and removed
         }

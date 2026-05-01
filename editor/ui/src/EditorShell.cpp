@@ -9,6 +9,7 @@
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
+#include "PlutoGE/scene/components/LightComponent.h"
 
 #include <imgui.h>
 #include <backends/imgui_impl_glfw.h>
@@ -136,6 +137,16 @@ namespace PlutoGE::ui
         cameraEntity2->CreateComponent<scene::CameraComponent>(&camera2);
         cameraEntity2->SetPosition(glm::vec3(0.0f, 0.0f, 5.0f));
         scene->AddEntity(cameraEntity2.get());
+
+        auto lightEntity = std::make_unique<scene::Entity>(scene::EntityConfig{
+            .name = "Key Light",
+        });
+        lightEntity->SetPosition(glm::vec3(2.5f, 2.0f, 3.0f));
+        auto *lightComponent = lightEntity->CreateComponent<scene::LightComponent>();
+        lightComponent->GetLight().color = glm::vec3(1.0f, 0.95f, 0.85f);
+        lightComponent->GetLight().intensity = 6.0f;
+        lightComponent->GetLight().range = 20.0f;
+        scene->AddEntity(lightEntity.get());
 
         ViewportPanelConfig viewportConfig2;
         viewportConfig2.name = "Viewport 2";

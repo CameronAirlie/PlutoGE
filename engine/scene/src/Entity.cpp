@@ -1,5 +1,7 @@
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/components/Component.h"
+#include "PlutoGE/scene/Scene.h"
+#include "PlutoGE/scene/components/LightComponent.h"
 
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -10,8 +12,14 @@ namespace PlutoGE::scene
 {
     void Entity::AddChild(Entity *child)
     {
+        if (!child)
+        {
+            return;
+        }
+
         m_children.push_back(child);
         child->m_parent = this;
+        child->SetSceneRecursive(m_scene);
     }
 
     EntityID Entity::GenerateUniqueID()
@@ -59,6 +67,15 @@ namespace PlutoGE::scene
 
         AttachComponent(component);
         m_componentStorage.emplace_back(component);
+
+        if (m_scene)
+        {
+            if (auto *lightComponent = dynamic_cast<LightComponent *>(component))
+            {
+                m_scene->AddLight(&lightComponent->GetLight());
+            }
+        }
+
         return component;
     }
 
@@ -67,6 +84,14 @@ namespace PlutoGE::scene
         if (!component || component->GetOwner() != this)
         {
             return false;
+        }
+
+        if (m_scene)
+        {
+            if (auto *lightComponent = dynamic_cast<LightComponent *>(component))
+            {
+                m_scene->RemoveLight(&lightComponent->GetLight());
+            }
         }
 
         DetachComponent(component);
@@ -84,6 +109,46 @@ namespace PlutoGE::scene
 
         m_componentStorage.erase(it);
         return true;
+    }
+
+    void Entity::SetSceneRecursive(Scene *scene)
+    {
+        if (m_scene == scene)
+        {
+            return;
+        }
+
+        if (m_scene)
+        {
+            for (auto *lightComponent : GetComponents<LightComponent>())
+            {
+                if (lightComponent)
+                {
+                    m_scene->RemoveLight(&lightComponent->GetLight());
+                }
+            }
+        }
+
+        m_scene = scene;
+
+        if (m_scene)
+        {
+            for (auto *lightComponent : GetComponents<LightComponent>())
+            {
+                if (lightComponent)
+                {
+                    m_scene->AddLight(&lightComponent->GetLight());
+                }
+            }
+        }
+
+        for (auto *child : m_children)
+        {
+            if (child)
+            {
+                child->SetSceneRecursive(scene);
+            }
+        }
     }
 
     void Entity::Update(float deltaTime)

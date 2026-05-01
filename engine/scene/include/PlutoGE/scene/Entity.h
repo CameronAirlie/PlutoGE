@@ -12,6 +12,8 @@
 
 namespace PlutoGE::scene
 {
+    class Scene;
+
     struct Transform
     {
         glm::vec3 position{0.0f, 0.0f, 0.0f}; // Local position of the entity
@@ -50,9 +52,9 @@ namespace PlutoGE::scene
         void AddChild(Entity *child);
         std::vector<Entity *> GetChildren() { return m_children; }
         Entity *GetParent() const { return m_parent; }
+        Scene *GetScene() const { return m_scene; }
         void SetParent(Entity *parent)
         {
-            m_parent = parent;
             parent->AddChild(this);
         }
 
@@ -79,12 +81,8 @@ namespace PlutoGE::scene
             static_assert(std::is_base_of_v<Component, T>, "T must derive from Component");
 
             auto component = std::make_unique<T>(std::forward<Args>(args)...);
-            auto *componentPtr = component.get();
-
-            AttachComponent(componentPtr);
-            m_componentStorage.push_back(std::move(component));
-
-            return componentPtr;
+            auto *componentPtr = component.release();
+            return static_cast<T *>(AddComponent(static_cast<Component *>(componentPtr)));
         }
 
         template <typename T>
@@ -209,6 +207,7 @@ namespace PlutoGE::scene
         void AttachComponent(Component *component);
         void EnsureComponentBucketSize(ComponentTypeID typeID);
         void DetachComponent(Component *component);
+        void SetSceneRecursive(Scene *scene);
 
         bool m_isActive = true;          // Whether the entity is active (can be used to enable/disable rendering and updates)
         Transform m_transform;           // Local transform of the entity
@@ -217,5 +216,6 @@ namespace PlutoGE::scene
         std::vector<std::string> m_tags; // Optional tags for categorizing entities (e.g., "Player", "Enemy", "Collectible")
         std::vector<std::unique_ptr<Component>> m_componentStorage;
         std::vector<std::vector<Component *>> m_componentBuckets;
+        Scene *m_scene = nullptr;
     };
 }

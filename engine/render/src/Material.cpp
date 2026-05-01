@@ -17,6 +17,10 @@ namespace PlutoGE::render
 
         shader->Bind();
 
+        shader->SetUniform("uColor", m_config.color);
+        shader->SetUniform("uMetallicFactor", m_config.metallic);
+        shader->SetUniform("uRoughnessFactor", m_config.roughness);
+
         // Set common uniforms (camera and model data)
         // shader->SetUniform("uModel", modelMatrix);
         // shader->SetUniform("uView", cameraData.view);
@@ -30,7 +34,6 @@ namespace PlutoGE::render
         }
         else
         {
-            shader->SetUniform("uColor", m_config.color);
             shader->SetUniform("uHasAlbedoTexture", 0.0f);
         }
 
@@ -52,7 +55,6 @@ namespace PlutoGE::render
         else
         {
             shader->SetUniform("uHasMetallicTexture", 0.0f);
-            shader->SetUniform("uMetallicFactor", m_config.metallic);
         }
 
         if (m_config.roughnessTexture)
@@ -63,7 +65,6 @@ namespace PlutoGE::render
         else
         {
             shader->SetUniform("uHasRoughnessTexture", 0.0f);
-            shader->SetUniform("uRoughnessFactor", m_config.roughness);
         }
     }
 }

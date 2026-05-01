@@ -15,7 +15,7 @@ namespace PlutoGE::scene
         render::Material *material = nullptr;
     };
 
-    class MeshComponent : public Component
+    class MeshComponent : public TypedComponent<MeshComponent>
     {
     public:
         MeshComponent(const MeshComponentConfig &config)

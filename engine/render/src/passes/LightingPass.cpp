@@ -14,11 +14,11 @@ namespace PlutoGE::render
     {
         m_lightingPassShader = Shader::CreateLightingPassShader();
     }
-    
 
     void LightingPass::Execute(const RenderContext &ctx)
     {
-        glDisable(GL_DEPTH_TEST); // Disable depth testing for lighting pass
+        glDisable(GL_DEPTH_TEST);
+        glDisable(GL_CULL_FACE);
         Graphics::BindRenderTarget(ctx.renderTarget);
 
         m_lightingPassShader->Bind();

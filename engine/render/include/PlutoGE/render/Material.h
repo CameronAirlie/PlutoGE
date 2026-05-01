@@ -28,10 +28,10 @@ namespace PlutoGE::render
         Material(const MaterialConfig &config) : m_config(config) {}
         ~Material() = default;
 
-        void SetShader(Shader *shader) { m_shader = shader; }
-        Shader *GetShader() const { return m_shader; }
+        void SetShader(Shader *shader) { m_overrideShader = shader; }
+        Shader *GetShader() const { return m_overrideShader; }
 
-        void Bind(const CameraData &cameraData, const glm::mat4 &modelMatrix);
+        void Bind(Shader *shader = nullptr);
 
         void SetColor(const glm::vec4 &color) { m_config.color = color; }
         void SetAlbedoTexture(Texture *texture) { m_config.albedoTexture = texture; }
@@ -47,7 +47,7 @@ namespace PlutoGE::render
         MaterialConfig &GetConfig() { return m_config; }
 
     private:
-        MaterialConfig m_config;    // Material configuration data
-        Shader *m_shader = nullptr; // Pointer to the shader used for this material (can be set during rendering)
+        MaterialConfig m_config;            // Material configuration data
+        Shader *m_overrideShader = nullptr; // Pointer to the shader used for this material (can be set during rendering)
     };
 }

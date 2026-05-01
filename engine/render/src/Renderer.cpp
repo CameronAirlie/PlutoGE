@@ -15,6 +15,7 @@
 
 #include <iostream>
 #include <vector>
+#include <algorithm>
 
 namespace PlutoGE::render
 {
@@ -37,23 +38,15 @@ namespace PlutoGE::render
         window->SetContextCurrent();
         window->SetResizeCallback(ResizeCallback);
 
-        // Initialize rendering resources here
         if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
         {
-            // Handle error: failed to initialize OpenGL context
             return false;
         }
 
         auto extents = window->GetExtents();
-        glViewport(0, 0, extents.width, extents.height); // Set viewport to match window size (can be dynamic)
+        glViewport(0, 0, extents.width, extents.height);
 
-        // Enable depth testing for 3D rendering
         glEnable(GL_DEPTH_TEST);
-        // Disable face culling for debug
-        glDisable(GL_CULL_FACE);
-
-        // m_geometryPassShader = Shader::CreateGeometryPassShader();
-        // m_lightingPassShader = Shader::CreateLightingPassShader();
 
         auto geometryPass = new GeometryPass();
         geometryPass->Initialize();
@@ -91,6 +84,12 @@ namespace PlutoGE::render
     {
         if (!m_isInitialized)
             return;
+
+        sort(m_renderCommands.begin(), m_renderCommands.end(),
+             [](const RenderCommand &a, const RenderCommand &b)
+             {
+                 return a.material < b.material;
+             });
 
         RenderContext ctx{
             .cameraData = cameraData,

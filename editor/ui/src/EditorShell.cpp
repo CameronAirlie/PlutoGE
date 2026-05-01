@@ -88,11 +88,10 @@ namespace PlutoGE::ui
         auto *material = m_engine.GetAssetManager().CreateDefaultMaterial();
         material->SetColor(glm::vec4(0.8f, 0.2f, 0.2f, 1.0f));
         auto mesh = render::Mesh::Cube();
-        auto meshComponent = new scene::MeshComponent(scene::MeshComponentConfig{
+        cube->CreateComponent<scene::MeshComponent>(scene::MeshComponentConfig{
             .mesh = mesh,
             .material = material,
         });
-        cube->AddComponent(meshComponent);
         scene->AddEntity(cube.get());
 
         auto cube2 = std::make_unique<scene::Entity>(scene::EntityConfig{
@@ -103,11 +102,10 @@ namespace PlutoGE::ui
         // material2->SetAlbedoTexture(texture);
         material2->SetColor(glm::vec4(0.8f, 0.2f, 0.2f, 1.0f));
         auto mesh2 = render::Mesh::Cube();
-        auto meshComponent2 = new scene::MeshComponent(scene::MeshComponentConfig{
+        cube2->CreateComponent<scene::MeshComponent>(scene::MeshComponentConfig{
             .mesh = mesh2,
             .material = material2,
         });
-        cube2->AddComponent(meshComponent2);
         scene->AddEntity(cube2.get());
 
         auto testEntity = std::make_unique<scene::Entity>(scene::EntityConfig{
@@ -123,8 +121,7 @@ namespace PlutoGE::ui
             .nearPlane = 0.1f,
             .farPlane = 100.0f,
         });
-        auto cameraComponent = new scene::CameraComponent(&camera);
-        cameraEntity->AddComponent(cameraComponent);
+        cameraEntity->CreateComponent<scene::CameraComponent>(&camera);
         cameraEntity->SetPosition(glm::vec3(0.0f, 0.0f, 5.0f));
         scene->AddEntity(cameraEntity.get());
 
@@ -136,8 +133,7 @@ namespace PlutoGE::ui
             .nearPlane = 0.1f,
             .farPlane = 100.0f,
         });
-        auto cameraComponent2 = new scene::CameraComponent(&camera2);
-        cameraEntity2->AddComponent(cameraComponent2);
+        cameraEntity2->CreateComponent<scene::CameraComponent>(&camera2);
         cameraEntity2->SetPosition(glm::vec3(0.0f, 0.0f, 5.0f));
         scene->AddEntity(cameraEntity2.get());
 
@@ -178,6 +174,9 @@ namespace PlutoGE::ui
             cube2->SetRotation(cube2->GetRotation() + glm::vec3(rotationAngle2, rotationAngle2, rotationAngle2));
 
             // Rendering
+
+            auto *cameraComponent = cameraEntity->GetComponent<scene::CameraComponent>();
+            auto *cameraComponent2 = cameraEntity2->GetComponent<scene::CameraComponent>();
 
             if (IsCameraActiveInScene(scene.get(), cameraComponent))
             {

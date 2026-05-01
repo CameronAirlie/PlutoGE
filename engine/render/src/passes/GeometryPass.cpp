@@ -26,6 +26,8 @@ namespace PlutoGE::render
 
         ctx.gBuffer->Bind();
         glEnable(GL_DEPTH_TEST);
+        glEnable(GL_CULL_FACE);
+        glCullFace(GL_BACK);
         glViewport(0, 0, ctx.gBuffer->GetWidth(), ctx.gBuffer->GetHeight());
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
@@ -33,8 +35,11 @@ namespace PlutoGE::render
 
         for (const auto &command : *ctx.renderCommands)
         {
-            command.material->SetShader(m_geometryPassShader);
-            command.material->Bind(ctx.cameraData, command.model);
+            m_geometryPassShader->SetUniform("uView", ctx.cameraData.view);
+            m_geometryPassShader->SetUniform("uProjection", ctx.cameraData.projection);
+            m_geometryPassShader->SetUniform("uModel", command.model);
+
+            command.material->Bind(m_geometryPassShader);
             command.mesh->Draw();
         }
 

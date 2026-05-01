@@ -10,7 +10,7 @@ namespace PlutoGE::render
 
 namespace PlutoGE::scene
 {
-    class CameraComponent : public Component
+    class CameraComponent : public TypedComponent<CameraComponent>
     {
     public:
         CameraComponent(render::Camera *camera = nullptr) : m_camera(camera) {}

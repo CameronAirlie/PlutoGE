@@ -156,6 +156,7 @@ namespace PlutoGE::ui
         lightComponent->GetLight().color = glm::vec3(1.0f, 0.95f, 0.85f);
         lightComponent->GetLight().intensity = 6.0f;
         lightComponent->GetLight().range = 20.0f;
+        lightComponent->GetLight().castsShadows = true;
         lightComponent->GetLight().type = scene::LightType::Point;
         scene->AddEntity(lightEntity.get());
 

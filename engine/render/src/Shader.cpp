@@ -169,7 +169,7 @@ namespace PlutoGE::render
         if (location != -1)
         {
             glActiveTexture(GL_TEXTURE0 + slot);
-            glBindTexture(GL_TEXTURE_2D, texture->GetTextureID());
+            glBindTexture(texture->GetType(), texture->GetTextureID());
             glUniform1i(location, slot);
         }
     }

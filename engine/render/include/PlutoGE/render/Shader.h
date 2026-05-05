@@ -316,6 +316,8 @@ uniform sampler2D gNormal;
 uniform sampler2D gAlbedoSpec;
 
 const int MAX_LIGHTS = 16;
+const int MAX_2D_SHADOWS = 8;
+const int MAX_CUBE_SHADOWS = 4;
 const float PI = 3.14159265359;
 
 struct Light {
@@ -325,11 +327,18 @@ struct Light {
     float Range;
     vec3 Direction;
     int Type;
+    int CastsShadows;
+    int ShadowTextureType;
+    int ShadowMapIndex;
+    mat4 LightSpaceMatrix;
+    float ShadowFarPlane;
 };
 
 uniform int uLightCount;
 uniform Light uLights[MAX_LIGHTS];
 uniform vec3 uViewPos;
+uniform sampler2D uShadowMaps2D[MAX_2D_SHADOWS];
+uniform samplerCube uShadowMapsCube[MAX_CUBE_SHADOWS];
 
 float DistributionGGX(vec3 normal, vec3 halfwayDir, float roughness)
 {
@@ -399,6 +408,47 @@ vec3 EvaluatePbrLighting(vec3 normal, vec3 viewDir, vec3 albedo, float metallic,
     return (diffuse + specular) * radiance * ndotl;
 }
 
+float ComputeProjectedShadow(vec3 fragPos, vec3 normal, Light light)
+{
+    vec4 lightSpacePosition = light.LightSpaceMatrix * vec4(fragPos, 1.0);
+    vec3 projectedCoords = lightSpacePosition.xyz / max(lightSpacePosition.w, 0.0001);
+    projectedCoords = projectedCoords * 0.5 + 0.5;
+
+    if (projectedCoords.z > 1.0 || projectedCoords.x < 0.0 || projectedCoords.x > 1.0 || projectedCoords.y < 0.0 || projectedCoords.y > 1.0)
+    {
+        return 0.0;
+    }
+
+    vec3 lightVector = light.Type == 1 ? normalize(-light.Direction) : normalize(light.Position - fragPos);
+    float bias = max(0.0005 * (1.0 - dot(normal, lightVector)), 0.00005);
+    float closestDepth = texture(uShadowMaps2D[light.ShadowMapIndex], projectedCoords.xy).r;
+    return projectedCoords.z - bias > closestDepth ? 1.0 : 0.0;
+}
+
+float ComputePointShadow(vec3 fragPos, Light light)
+{
+    vec3 fragToLight = fragPos - light.Position;
+    float currentDepth = length(fragToLight);
+    float closestDepth = texture(uShadowMapsCube[light.ShadowMapIndex], fragToLight).r * light.ShadowFarPlane;
+    float bias = max(light.ShadowFarPlane * 0.0005, 0.01);
+    return currentDepth - bias > closestDepth ? 1.0 : 0.0;
+}
+
+float ComputeShadow(vec3 fragPos, vec3 normal, Light light)
+{
+    if (light.CastsShadows == 0 || light.ShadowMapIndex < 0)
+    {
+        return 0.0;
+    }
+
+    if (light.ShadowTextureType == 2)
+    {
+        return ComputePointShadow(fragPos, light);
+    }
+
+    return ComputeProjectedShadow(fragPos, normal, light);
+}
+
 vec3 ComputeLightContribution(vec3 fragPos, vec3 normal, vec3 viewDir, vec3 albedo, float metallic, float roughness, Light light)
 {
     vec3 lightDir;
@@ -420,7 +470,8 @@ vec3 ComputeLightContribution(vec3 fragPos, vec3 normal, vec3 viewDir, vec3 albe
     }
 
     vec3 radiance = light.Color * light.Intensity * attenuation;
-    return EvaluatePbrLighting(normal, viewDir, albedo, metallic, roughness, lightDir, radiance);
+    float shadow = ComputeShadow(fragPos, normal, light);
+    return EvaluatePbrLighting(normal, viewDir, albedo, metallic, roughness, lightDir, radiance) * (1.0 - shadow);
 }
 
 void main()
@@ -445,6 +496,66 @@ void main()
     lighting = pow(lighting, vec3(1.0 / 2.2));
     FragColor = vec4(lighting, 1.0);
 }
+        )";
+
+            return CreateShaderFromSource(source);
+        }
+
+        static Shader *CreateShadowPassShader()
+        {
+            ShaderSource source;
+
+            source.vertexSource = R"(
+            #version 330 core
+            layout(location = 0) in vec3 aPos;
+            layout(location = 1) in vec3 aNormal;
+            layout(location = 2) in vec2 aUV;
+            layout(location = 3) in vec4 aTangent;
+
+            uniform mat4 uModel;
+            uniform mat4 uLightSpaceMatrix;
+
+            out vec3 FragPos;
+            out vec2 UV;
+
+            void main()
+            {
+                vec4 worldPosition = uModel * vec4(aPos, 1.0);
+                FragPos = worldPosition.xyz;
+                UV = aUV;
+                gl_Position = uLightSpaceMatrix * worldPosition;
+            }
+        )";
+
+            source.fragmentSource = R"(
+            #version 330 core
+
+            in vec3 FragPos;
+            in vec2 UV;
+
+            uniform sampler2D uAlbedoTexture;
+            uniform float uHasAlbedoTexture = 0.0;
+            uniform int uShadowPassMode = 0;
+            uniform vec3 uLightPosition = vec3(0.0);
+            uniform float uFarPlane = 1.0;
+
+            void main()
+            {
+                if (uHasAlbedoTexture > 0.5)
+                {
+                    vec4 albedo = texture(uAlbedoTexture, UV);
+                    if (albedo.a < 0.1)
+                    {
+                        discard;
+                    }
+                }
+
+                if (uShadowPassMode == 1)
+                {
+                    float lightDistance = length(FragPos - uLightPosition);
+                    gl_FragDepth = lightDistance / max(uFarPlane, 0.0001);
+                }
+            }
         )";
 
             return CreateShaderFromSource(source);

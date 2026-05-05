@@ -15,6 +15,9 @@ namespace PlutoGE::render
 
         Texture *LoadTextureFromFile(const char *filePath);
 
+        Texture *CreateDepthTexture(int width, int height);
+        Texture *CreateDepthCubemap(int width, int height);
+
     private:
         GLuint m_nextTextureID = 1;                                // Start from 1 since 0 is reserved for "no texture"
         std::unordered_map<std::string, Texture *> m_textureCache; // Cache for loaded textures

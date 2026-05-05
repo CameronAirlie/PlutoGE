@@ -9,6 +9,7 @@
 #include "PlutoGE/scene/components/CameraComponent.h"
 #include "PlutoGE/render/passes/GeometryPass.h"
 #include "PlutoGE/render/passes/LightingPass.h"
+#include "PlutoGE/render/passes/ShadowPass.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 
 #include <glm/glm.hpp>
@@ -52,6 +53,10 @@ namespace PlutoGE::render
         auto geometryPass = new GeometryPass();
         geometryPass->Initialize();
         m_renderPasses.push_back(geometryPass);
+
+        auto shadowPass = new ShadowPass();
+        shadowPass->Initialize();
+        m_renderPasses.push_back(shadowPass);
 
         auto lightingPass = new LightingPass();
         lightingPass->Initialize();

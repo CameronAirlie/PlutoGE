@@ -19,6 +19,7 @@ namespace PlutoGE::scene
     public:
         explicit Component(ComponentTypeID typeID) : m_typeID(typeID) {}
         virtual ~Component() = default;
+        virtual void Initialize() {}
         virtual void Update(float deltaTime) = 0;
 
         bool IsEnabled() const { return m_enabled; }

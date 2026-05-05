@@ -1,8 +1,30 @@
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/Entity.h"
+#include "PlutoGE/render/Texture.h"
 
 namespace PlutoGE::scene
 {
+    namespace
+    {
+        render::Texture *CreateShadowTextureForLight(const Light &light)
+        {
+            if (light.type == LightType::Point)
+            {
+                return render::Texture::DepthCubemap(1024, 1024);
+            }
+
+            return render::Texture::DepthTexture(1024, 1024);
+        }
+    }
+
+    void LightComponent::Initialize()
+    {
+        if (m_config.castsShadows && !m_config.shadowMap)
+        {
+            m_config.shadowMap = CreateShadowTextureForLight(m_config);
+        }
+    }
+
     void LightComponent::Update(float deltaTime)
     {
         if (auto *owner = GetOwner())
@@ -18,6 +40,11 @@ namespace PlutoGE::scene
             direction.y = sin(rotationRadians.x);
             direction.z = -cos(rotationRadians.y) * cos(rotationRadians.x);
             m_config.direction = glm::normalize(direction);
+        }
+
+        if (m_config.castsShadows && !m_config.shadowMap)
+        {
+            m_config.shadowMap = CreateShadowTextureForLight(m_config);
         }
     }
 }

@@ -15,4 +15,30 @@ namespace PlutoGE::render
 
         return texture;
     }
+
+    Texture *Texture::DepthTexture(int width, int height)
+    {
+        auto &engine = PlutoGE::core::Engine::GetInstance();
+        Texture *texture = engine.GetTextureManager().CreateDepthTexture(width, height);
+        if (texture == nullptr)
+        {
+            delete texture;
+            return nullptr; // Failed to create depth texture
+        }
+
+        return texture;
+    }
+
+    Texture *Texture::DepthCubemap(int width, int height)
+    {
+        auto &engine = PlutoGE::core::Engine::GetInstance();
+        Texture *texture = engine.GetTextureManager().CreateDepthCubemap(width, height);
+        if (texture == nullptr)
+        {
+            delete texture;
+            return nullptr;
+        }
+
+        return texture;
+    }
 }

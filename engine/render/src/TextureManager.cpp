@@ -64,4 +64,51 @@ namespace PlutoGE::render
 
         return texture;
     }
+
+    Texture *TextureManager::CreateDepthTexture(int width, int height)
+    {
+        TextureConfig config;
+        Texture *texture = new Texture(config);
+        glGenTextures(1, &texture->m_textureID);
+        glBindTexture(GL_TEXTURE_2D, texture->m_textureID);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, width, height, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+        float borderColor[] = {1.0f, 1.0f, 1.0f, 1.0f};
+        glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, borderColor);
+
+        texture->m_width = width;
+        texture->m_height = height;
+        texture->m_channels = 1; // Depth textures have 1 channel
+
+        return texture;
+    }
+
+    Texture *TextureManager::CreateDepthCubemap(int width, int height)
+    {
+        TextureConfig config;
+        Texture *texture = new Texture(config);
+        texture->m_type = GL_TEXTURE_CUBE_MAP;
+
+        glGenTextures(1, &texture->m_textureID);
+        glBindTexture(GL_TEXTURE_CUBE_MAP, texture->m_textureID);
+        for (unsigned int face = 0; face < 6; ++face)
+        {
+            glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, 0, GL_DEPTH_COMPONENT24, width, height, 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
+        }
+
+        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+
+        texture->m_width = width;
+        texture->m_height = height;
+        texture->m_channels = 1;
+
+        return texture;
+    }
 }

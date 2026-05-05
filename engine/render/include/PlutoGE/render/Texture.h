@@ -24,6 +24,8 @@ namespace PlutoGE::render
         int GetChannels() const { return m_channels; }
 
         static Texture *LoadFromFile(const char *filePath);
+        static Texture *DepthTexture(int width, int height);
+        static Texture *DepthCubemap(int width, int height);
 
     protected:
         friend class TextureManager;   // Allow TextureManager to access private members

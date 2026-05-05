@@ -20,6 +20,7 @@ namespace PlutoGE::render
         shader->SetUniform("uColor", m_config.color);
         shader->SetUniform("uMetallicFactor", m_config.metallic);
         shader->SetUniform("uRoughnessFactor", m_config.roughness);
+        shader->SetUniform("uFlipNormalY", m_config.flipNormalY ? 1.0f : 0.0f);
 
         // Set common uniforms (camera and model data)
         // shader->SetUniform("uModel", modelMatrix);

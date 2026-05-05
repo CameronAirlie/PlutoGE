@@ -176,6 +176,7 @@ namespace PlutoGE::render
             layout(location = 0) in vec3 aPos;
             layout(location = 1) in vec3 aNormal;
             layout(location = 2) in vec2 aUV;
+            layout(location = 3) in vec4 aTangent;
 
             uniform mat4 uModel;
             uniform mat4 uView;
@@ -184,13 +185,25 @@ namespace PlutoGE::render
             out vec3 FragPos;
             out vec3 Normal;
             out vec2 UV;
+            out mat3 TBN;
 
             void main()
             {
                 FragPos = vec3(uModel * vec4(aPos, 1.0));
-                Normal = mat3(transpose(inverse(uModel))) * aNormal;
+                mat3 normalMatrix = transpose(inverse(mat3(uModel)));
+                vec3 worldNormal = normalize(normalMatrix * aNormal);
+                vec3 worldTangent = normalize(normalMatrix * aTangent.xyz);
+                worldTangent = normalize(worldTangent - dot(worldTangent, worldNormal) * worldNormal);
+                vec3 worldBitangent = cross(worldNormal, worldTangent) * aTangent.w;
+
+                Normal = worldNormal;
                 UV = aUV;
                 gl_Position = uProjection * uView * vec4(FragPos, 1.0);
+                TBN = mat3(
+                    worldTangent,
+                    normalize(worldBitangent),
+                    worldNormal
+                );
             }
         )";
 
@@ -204,6 +217,7 @@ namespace PlutoGE::render
             in vec3 FragPos;
             in vec3 Normal;
             in vec2 UV;
+            in mat3 TBN;
 
             uniform sampler2D uAlbedoTexture;
             uniform float uHasAlbedoTexture = 0.0;
@@ -211,6 +225,7 @@ namespace PlutoGE::render
             
             uniform sampler2D uNormalTexture;
             uniform float uHasNormalTexture = 0.0;
+            uniform float uFlipNormalY = 0.0;
 
             uniform sampler2D uMetallicTexture;
             uniform float uHasMetallicTexture = 0.0;
@@ -227,6 +242,7 @@ namespace PlutoGE::render
                 float opacity = uColor.a;
                 float metallic = clamp(uMetallicFactor, 0.0, 1.0);
                 float roughness = clamp(uRoughnessFactor, 0.04, 1.0);
+                vec3 normal = normalize(Normal);
 
                 if (uHasAlbedoTexture > 0.5)
                 {
@@ -235,6 +251,17 @@ namespace PlutoGE::render
                     if (opacity < 0.1)
                         discard;
                     albedo *= texAlbedo.rgb;
+                }
+                
+                if (uHasNormalTexture > 0.5)
+                {
+                    normal = texture(uNormalTexture, UV).rgb;
+                    if (uFlipNormalY > 0.5)
+                    {
+                        normal.g = 1.0 - normal.g;
+                    }
+                    normal = normalize(normal * 2.0 - 1.0);
+                    normal = normalize(TBN * normal); // Transform to world space
                 }
 
                 if (uHasMetallicTexture > 0.5)
@@ -247,7 +274,7 @@ namespace PlutoGE::render
                     roughness *= texture(uRoughnessTexture, UV).r;
                 }
 
-                gNormalRoughness = vec4(normalize(Normal), clamp(roughness, 0.04, 1.0));
+                gNormalRoughness = vec4(normalize(normal), clamp(roughness, 0.04, 1.0));
                 gAlbedoMetallic = vec4(albedo, clamp(metallic, 0.0, 1.0));
             }
         )";

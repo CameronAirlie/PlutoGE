@@ -20,8 +20,7 @@ namespace PlutoGE::render
         constexpr int kMaxDeferredLights = 16;
         constexpr int kMax2DShadowMaps = 8;
         constexpr int kMaxCubeShadowMaps = 4;
-        constexpr int kShadow2DTextureBaseSlot = 3;
-        constexpr int kShadowCubeTextureBaseSlot = kShadow2DTextureBaseSlot + kMax2DShadowMaps;
+        constexpr int kReservedLightingTextureSlots = 3;
     }
 
     void LightingPass::Initialize()
@@ -54,29 +53,24 @@ namespace PlutoGE::render
         glm::vec3 cameraPos = glm::vec3(glm::inverse(ctx.cameraData.view)[3]); // Extract camera position from view matrix
         m_lightingPassShader->SetUniform("uViewPos", cameraPos);
 
-        for (int index = 0; index < kMax2DShadowMaps; ++index)
-        {
-            m_lightingPassShader->SetUniform("uShadowMaps2D[" + std::to_string(index) + "]", kShadow2DTextureBaseSlot + index);
-        }
-
-        for (int index = 0; index < kMaxCubeShadowMaps; ++index)
-        {
-            m_lightingPassShader->SetUniform("uShadowMapsCube[" + std::to_string(index) + "]", kShadowCubeTextureBaseSlot + index);
-        }
-
         const int lightCount = std::min<int>(static_cast<int>(lights.size()), kMaxDeferredLights);
         m_lightingPassShader->SetUniform("uLightCount", lightCount);
 
         int next2DShadowIndex = 0;
         int nextCubeShadowIndex = 0;
+        int nextShadowTextureSlot = kReservedLightingTextureSlots;
 
         for (int index = 0; index < lightCount; ++index)
         {
-            const auto *light = lights[index];
+            auto *light = lights[index];
             if (!light)
             {
                 continue;
             }
+
+            light->shadowTextureType = 0;
+            light->shadowMapIndex = -1;
+            light->shadowTextureSlot = -1;
 
             const std::string uniformPrefix = "uLights[" + std::to_string(index) + "]";
             m_lightingPassShader->SetUniform(uniformPrefix + ".Position", light->position);
@@ -86,34 +80,34 @@ namespace PlutoGE::render
             m_lightingPassShader->SetUniform(uniformPrefix + ".Direction", light->direction);
             m_lightingPassShader->SetUniform(uniformPrefix + ".Type", static_cast<int>(light->type));
 
-            int shadowTextureType = 0;
-            int shadowMapIndex = -1;
             if (light->castsShadows && light->shadowMap)
             {
                 if (light->type == scene::LightType::Point)
                 {
                     if (nextCubeShadowIndex < kMaxCubeShadowMaps)
                     {
-                        shadowTextureType = 2;
-                        shadowMapIndex = nextCubeShadowIndex;
-                        glActiveTexture(GL_TEXTURE0 + kShadowCubeTextureBaseSlot + nextCubeShadowIndex);
+                        light->shadowTextureType = 2;
+                        light->shadowMapIndex = nextCubeShadowIndex++;
+                        light->shadowTextureSlot = nextShadowTextureSlot++;
+                        glActiveTexture(GL_TEXTURE0 + light->shadowTextureSlot);
                         glBindTexture(light->shadowMap->GetType(), light->shadowMap->GetTextureID());
-                        ++nextCubeShadowIndex;
+                        m_lightingPassShader->SetUniform("uShadowMapsCube[" + std::to_string(light->shadowMapIndex) + "]", light->shadowTextureSlot);
                     }
                 }
                 else if (next2DShadowIndex < kMax2DShadowMaps)
                 {
-                    shadowTextureType = 1;
-                    shadowMapIndex = next2DShadowIndex;
-                    glActiveTexture(GL_TEXTURE0 + kShadow2DTextureBaseSlot + next2DShadowIndex);
+                    light->shadowTextureType = 1;
+                    light->shadowMapIndex = next2DShadowIndex++;
+                    light->shadowTextureSlot = nextShadowTextureSlot++;
+                    glActiveTexture(GL_TEXTURE0 + light->shadowTextureSlot);
                     glBindTexture(light->shadowMap->GetType(), light->shadowMap->GetTextureID());
-                    ++next2DShadowIndex;
+                    m_lightingPassShader->SetUniform("uShadowMaps2D[" + std::to_string(light->shadowMapIndex) + "]", light->shadowTextureSlot);
                 }
             }
 
-            m_lightingPassShader->SetUniform(uniformPrefix + ".CastsShadows", shadowTextureType == 0 ? 0 : 1);
-            m_lightingPassShader->SetUniform(uniformPrefix + ".ShadowTextureType", shadowTextureType);
-            m_lightingPassShader->SetUniform(uniformPrefix + ".ShadowMapIndex", shadowMapIndex);
+            m_lightingPassShader->SetUniform(uniformPrefix + ".CastsShadows", light->shadowTextureType == 0 ? 0 : 1);
+            m_lightingPassShader->SetUniform(uniformPrefix + ".ShadowTextureType", light->shadowTextureType);
+            m_lightingPassShader->SetUniform(uniformPrefix + ".ShadowMapIndex", light->shadowMapIndex);
             m_lightingPassShader->SetUniform(uniformPrefix + ".LightSpaceMatrix", light->shadowMatrix);
             m_lightingPassShader->SetUniform(uniformPrefix + ".ShadowFarPlane", light->shadowFarPlane);
         }

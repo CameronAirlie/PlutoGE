@@ -30,6 +30,9 @@ namespace PlutoGE::scene
         glm::mat4 shadowMatrix{1.0f};           // Light-space matrix for projected shadow maps
         float shadowFarPlane = 0.0f;            // Far plane used when sampling point-light shadows
         bool castsShadows = false;              // Whether the light casts shadows
+        int shadowTextureType = 0;              // 0 = none, 1 = projected 2D, 2 = point cubemap
+        int shadowMapIndex = -1;                // Sampler array index used by the lighting shader
+        int shadowTextureSlot = -1;             // Actual texture unit bound for this light's shadow map
     };
 
     class LightComponent : public TypedComponent<LightComponent>

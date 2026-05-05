@@ -46,6 +46,9 @@ namespace PlutoGE::scene
         void SetCastsShadows(bool castsShadows) { m_config.castsShadows = castsShadows; }
         void SetShadowMap(render::Texture *shadowMap) { m_config.shadowMap = shadowMap; }
 
+        std::vector<Property> Serialize() const override;
+        void Deserialize(const std::vector<Property> &properties) override;
+
         void Initialize() override;
         void Update(float deltaTime) override;
         Light &GetLight() { return m_config; }

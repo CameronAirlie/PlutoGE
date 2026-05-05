@@ -93,6 +93,8 @@ namespace PlutoGE::ui
             .mesh = mesh,
             .material = material,
         });
+        cube->SetPosition(glm::vec3(0.0f, -1.0f, 0.0f));
+        cube->SetScale(glm::vec3(10.0f, 0.1f, 10.0f));
         scene->AddEntity(cube.get());
 
         auto cube2 = std::make_unique<scene::Entity>(scene::EntityConfig{

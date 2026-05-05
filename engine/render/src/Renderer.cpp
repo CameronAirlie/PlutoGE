@@ -49,6 +49,7 @@ namespace PlutoGE::render
         glViewport(0, 0, extents.width, extents.height);
 
         glEnable(GL_DEPTH_TEST);
+        glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);
 
         auto geometryPass = new GeometryPass();
         geometryPass->Initialize();

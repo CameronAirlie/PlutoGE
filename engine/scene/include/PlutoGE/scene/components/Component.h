@@ -1,7 +1,9 @@
 #pragma once
 
 #include <cstddef>
+#include <vector>
 #include <type_traits>
+#include <string>
 
 namespace PlutoGE::scene
 {
@@ -14,6 +16,25 @@ namespace PlutoGE::scene
         return nextTypeID++;
     }
 
+    enum class PropertyType
+    {
+        Float,
+        Int,
+        String,
+        Vec3,
+        Bool,
+        Color,
+        Enum,
+    };
+
+    struct Property
+    {
+        std::string name;
+        PropertyType type;
+        std::string value;
+        std::vector<std::string> enumOptions; // Only used if type is Enum
+    };
+
     class Component
     {
     public:
@@ -21,6 +42,9 @@ namespace PlutoGE::scene
         virtual ~Component() = default;
         virtual void Initialize() {}
         virtual void Update(float deltaTime) = 0;
+
+        virtual std::vector<Property> Serialize() const { return {}; }
+        virtual void Deserialize(const std::vector<Property> &properties) {}
 
         bool IsEnabled() const { return m_enabled; }
         void SetEnabled(bool enabled) { m_enabled = enabled; }

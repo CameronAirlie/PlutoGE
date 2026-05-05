@@ -1,5 +1,5 @@
 #pragma once
-#include "Component.h"
+#include "PlutoGE/scene/components/Component.h"
 
 namespace PlutoGE::render
 {
@@ -23,6 +23,9 @@ namespace PlutoGE::scene
         ~MeshComponent() override = default;
 
         void Update(float deltaTime) override;
+
+        std::vector<Property> Serialize() const override;
+        void Deserialize(const std::vector<Property> &properties) override;
 
         void SetMesh(render::Mesh *mesh) { m_mesh = mesh; }
         render::Mesh *GetMesh() const { return m_mesh; }

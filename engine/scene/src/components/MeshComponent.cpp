@@ -10,6 +10,16 @@
 
 namespace PlutoGE::scene
 {
+    std::vector<Property> MeshComponent::Serialize() const
+    {
+        return {};
+    }
+
+    void MeshComponent::Deserialize(const std::vector<Property> &properties)
+    {
+        (void)properties;
+    }
+
     void MeshComponent::Update(float deltaTime)
     {
         if (m_mesh && m_material)

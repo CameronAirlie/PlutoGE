@@ -414,24 +414,61 @@ float ComputeProjectedShadow(vec3 fragPos, vec3 normal, Light light)
     vec3 projectedCoords = lightSpacePosition.xyz / max(lightSpacePosition.w, 0.0001);
     projectedCoords = projectedCoords * 0.5 + 0.5;
 
-    if (projectedCoords.z > 1.0 || projectedCoords.x < 0.0 || projectedCoords.x > 1.0 || projectedCoords.y < 0.0 || projectedCoords.y > 1.0)
+    if (projectedCoords.z < 0.0 || projectedCoords.z > 1.0 || projectedCoords.x < 0.0 || projectedCoords.x > 1.0 || projectedCoords.y < 0.0 || projectedCoords.y > 1.0)
     {
         return 0.0;
     }
 
     vec3 lightVector = light.Type == 1 ? normalize(-light.Direction) : normalize(light.Position - fragPos);
-    float bias = max(0.0005 * (1.0 - dot(normal, lightVector)), 0.00005);
-    float closestDepth = texture(uShadowMaps2D[light.ShadowMapIndex], projectedCoords.xy).r;
-    return projectedCoords.z - bias > closestDepth ? 1.0 : 0.0;
+    float biasScale = light.Type == 1 ? 0.004 : 0.0015;
+    float minimumBias = light.Type == 1 ? 0.0005 : 0.0001;
+    float bias = max(biasScale * (1.0 - max(dot(normal, lightVector), 0.0)), minimumBias);
+    vec2 texelSize = 1.0 / vec2(textureSize(uShadowMaps2D[light.ShadowMapIndex], 0));
+    float filterRadius = 1.5;
+
+    float shadow = 0.0;
+    for (int x = -2; x <= 2; ++x)
+    {
+        for (int y = -2; y <= 2; ++y)
+        {
+            vec2 sampleCoords = clamp(projectedCoords.xy + vec2(x, y) * texelSize * filterRadius, vec2(0.0), vec2(1.0));
+            float closestDepth = texture(uShadowMaps2D[light.ShadowMapIndex], sampleCoords).r;
+            shadow += projectedCoords.z - bias > closestDepth ? 1.0 : 0.0;
+        }
+    }
+
+    return shadow / 25.0;
 }
 
-float ComputePointShadow(vec3 fragPos, Light light)
+float ComputePointShadow(vec3 fragPos, vec3 normal, Light light)
 {
-    vec3 fragToLight = fragPos - light.Position;
+    vec3 surfaceNormal = normalize(normal);
+    vec3 lightDir = normalize(light.Position - fragPos);
+    float slopeBias = 0.05 * (1.0 - max(dot(surfaceNormal, lightDir), 0.0));
+    float bias = max(light.ShadowFarPlane * 0.00075, 0.004 + slopeBias);
+    vec3 receiverPosition = fragPos + surfaceNormal * bias;
+    vec3 fragToLight = receiverPosition - light.Position;
     float currentDepth = length(fragToLight);
-    float closestDepth = texture(uShadowMapsCube[light.ShadowMapIndex], fragToLight).r * light.ShadowFarPlane;
-    float bias = max(light.ShadowFarPlane * 0.0005, 0.01);
-    return currentDepth - bias > closestDepth ? 1.0 : 0.0;
+    float sampleRadius = max(light.Range * 0.0025, 0.02);
+    vec3 sampleOffsets[8] = vec3[](
+        vec3(1.0, 0.0, 0.0),
+        vec3(-1.0, 0.0, 0.0),
+        vec3(0.0, 1.0, 0.0),
+        vec3(0.0, -1.0, 0.0),
+        vec3(0.0, 0.0, 1.0),
+        vec3(0.0, 0.0, -1.0),
+        normalize(vec3(1.0, 1.0, 1.0)),
+        normalize(vec3(-1.0, -1.0, -1.0))
+    );
+
+    float shadow = 0.0;
+    for (int sampleIndex = 0; sampleIndex < 8; ++sampleIndex)
+    {
+        float closestDepth = texture(uShadowMapsCube[light.ShadowMapIndex], fragToLight + sampleOffsets[sampleIndex] * sampleRadius).r * light.ShadowFarPlane;
+        shadow += currentDepth - bias > closestDepth ? 1.0 : 0.0;
+    }
+
+    return shadow / 8.0;
 }
 
 float ComputeShadow(vec3 fragPos, vec3 normal, Light light)
@@ -443,7 +480,7 @@ float ComputeShadow(vec3 fragPos, vec3 normal, Light light)
 
     if (light.ShadowTextureType == 2)
     {
-        return ComputePointShadow(fragPos, light);
+        return ComputePointShadow(fragPos, normal, light);
     }
 
     return ComputeProjectedShadow(fragPos, normal, light);

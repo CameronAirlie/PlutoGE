@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Component.h"
+#include "PlutoGE/scene/components/Component.h"
 
 namespace PlutoGE::render
 {
@@ -17,6 +17,9 @@ namespace PlutoGE::scene
         ~CameraComponent() override = default;
 
         void Update(float deltaTime) override;
+
+        std::vector<Property> Serialize() const override;
+        void Deserialize(const std::vector<Property> &properties) override;
 
         void SetCamera(render::Camera *camera) { m_camera = camera; }
         render::Camera *GetCamera() const { return m_camera; }

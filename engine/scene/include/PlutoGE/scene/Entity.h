@@ -68,6 +68,8 @@ namespace PlutoGE::scene
         Component *AddComponent(Component *component);
         bool RemoveComponent(Component *component);
 
+        std::vector<std::vector<Component *>> GetComponentBuckets() const { return m_componentBuckets; }
+
         template <typename T>
         T *AddComponent(T *component)
         {

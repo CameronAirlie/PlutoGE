@@ -8,8 +8,10 @@
 #include "PlutoGE/scene/components/LightComponent.h"
 
 #include <array>
+#include <limits>
 
 #include <glm/ext/matrix_clip_space.hpp>
+#include <glm/gtc/matrix_inverse.hpp>
 #include <glm/ext/matrix_transform.hpp>
 
 namespace
@@ -23,14 +25,94 @@ namespace
         return std::abs(direction.y) > 0.99f ? glm::vec3(0.0f, 0.0f, 1.0f) : glm::vec3(0.0f, 1.0f, 0.0f);
     }
 
-    glm::mat4 BuildDirectionalShadowMatrix(const PlutoGE::scene::Light &light)
+    struct ShadowCasterBounds
     {
-        const float shadowExtent = glm::max(light.range, 10.0f);
+        glm::vec3 center{0.0f};
+        float radius = 10.0f;
+    };
+
+    ShadowCasterBounds BuildShadowCasterBounds(const std::vector<PlutoGE::render::RenderCommand> &renderCommands)
+    {
+        ShadowCasterBounds bounds;
+        if (renderCommands.empty())
+        {
+            return bounds;
+        }
+
+        glm::vec3 minCorner(std::numeric_limits<float>::max());
+        glm::vec3 maxCorner(std::numeric_limits<float>::lowest());
+
+        for (const auto &command : renderCommands)
+        {
+            const glm::vec3 position = glm::vec3(command.model[3]);
+            const float xScale = glm::length(glm::vec3(command.model[0]));
+            const float yScale = glm::length(glm::vec3(command.model[1]));
+            const float zScale = glm::length(glm::vec3(command.model[2]));
+            const float maxScale = std::max(1.0f, std::max(xScale, std::max(yScale, zScale)));
+            const glm::vec3 extent = glm::vec3(maxScale) * 0.8660254f;
+            minCorner = glm::min(minCorner, position - extent);
+            maxCorner = glm::max(maxCorner, position + extent);
+        }
+
+        bounds.center = (minCorner + maxCorner) * 0.5f;
+        bounds.radius = glm::max(glm::length(maxCorner - bounds.center), 10.0f);
+        return bounds;
+    }
+
+    glm::mat4 BuildDirectionalShadowMatrix(const PlutoGE::scene::Light &light, const std::vector<PlutoGE::render::RenderCommand> &renderCommands)
+    {
+        const ShadowCasterBounds casterBounds = BuildShadowCasterBounds(renderCommands);
         const glm::vec3 lightDirection = glm::normalize(light.direction);
-        const glm::vec3 target = light.position;
-        const glm::vec3 eye = target - lightDirection * shadowExtent;
-        const glm::mat4 view = glm::lookAt(eye, target, ResolveUpVector(lightDirection));
-        const glm::mat4 projection = glm::ortho(-shadowExtent, shadowExtent, -shadowExtent, shadowExtent, 0.1f, shadowExtent * 4.0f);
+
+        const glm::vec3 eye = casterBounds.center - lightDirection * (casterBounds.radius * 2.0f);
+        const glm::mat4 view = glm::lookAt(eye, casterBounds.center, ResolveUpVector(lightDirection));
+
+        glm::vec3 minBounds(std::numeric_limits<float>::max());
+        glm::vec3 maxBounds(std::numeric_limits<float>::lowest());
+        for (const auto &command : renderCommands)
+        {
+            const glm::vec3 position = glm::vec3(command.model[3]);
+            const float xScale = glm::length(glm::vec3(command.model[0]));
+            const float yScale = glm::length(glm::vec3(command.model[1]));
+            const float zScale = glm::length(glm::vec3(command.model[2]));
+            const float maxScale = std::max(1.0f, std::max(xScale, std::max(yScale, zScale)));
+            const glm::vec3 extent = glm::vec3(maxScale) * 0.8660254f;
+
+            const std::array<glm::vec3, 8> corners = {
+                position + glm::vec3(-extent.x, -extent.y, -extent.z),
+                position + glm::vec3(-extent.x, -extent.y, extent.z),
+                position + glm::vec3(-extent.x, extent.y, -extent.z),
+                position + glm::vec3(-extent.x, extent.y, extent.z),
+                position + glm::vec3(extent.x, -extent.y, -extent.z),
+                position + glm::vec3(extent.x, -extent.y, extent.z),
+                position + glm::vec3(extent.x, extent.y, -extent.z),
+                position + glm::vec3(extent.x, extent.y, extent.z),
+            };
+
+            for (const glm::vec3 &corner : corners)
+            {
+                const glm::vec3 lightSpaceCorner = glm::vec3(view * glm::vec4(corner, 1.0f));
+                minBounds = glm::min(minBounds, lightSpaceCorner);
+                maxBounds = glm::max(maxBounds, lightSpaceCorner);
+            }
+        }
+
+        const float zPadding = glm::max(casterBounds.radius, 25.0f);
+        minBounds.z -= zPadding;
+        maxBounds.z += zPadding;
+
+        const glm::vec2 extents = glm::max(glm::vec2(maxBounds - minBounds), glm::vec2(1.0f));
+        const glm::vec2 texelSize = extents / static_cast<float>(kShadowMapResolution);
+        glm::vec2 centerXY = (glm::vec2(minBounds) + glm::vec2(maxBounds)) * 0.5f;
+        centerXY = glm::floor(centerXY / texelSize) * texelSize;
+        const glm::vec2 halfExtents = extents * 0.5f;
+
+        minBounds.x = centerXY.x - halfExtents.x;
+        maxBounds.x = centerXY.x + halfExtents.x;
+        minBounds.y = centerXY.y - halfExtents.y;
+        maxBounds.y = centerXY.y + halfExtents.y;
+
+        const glm::mat4 projection = glm::ortho(minBounds.x, maxBounds.x, minBounds.y, maxBounds.y, -maxBounds.z, -minBounds.z);
         return projection * view;
     }
 
@@ -83,7 +165,8 @@ namespace PlutoGE::render
         glViewport(0, 0, kShadowMapResolution, kShadowMapResolution);
         glEnable(GL_DEPTH_TEST);
         glEnable(GL_CULL_FACE);
-        glCullFace(GL_FRONT);
+        glCullFace(GL_BACK);
+        glDisable(GL_POLYGON_OFFSET_FILL);
 
         m_shadowPassShader->Bind();
 
@@ -96,6 +179,7 @@ namespace PlutoGE::render
 
             if (light->type == scene::LightType::Point)
             {
+                glDisable(GL_POLYGON_OFFSET_FILL);
                 const float farPlane = glm::max(light->range, 0.1f);
                 light->shadowFarPlane = farPlane;
                 const auto shadowMatrices = BuildPointShadowMatrices(*light, farPlane);
@@ -132,12 +216,14 @@ namespace PlutoGE::render
             }
 
             const glm::mat4 shadowMatrix = light->type == scene::LightType::Directional
-                                               ? BuildDirectionalShadowMatrix(*light)
+                                               ? BuildDirectionalShadowMatrix(*light, *ctx.renderCommands)
                                                : BuildSpotShadowMatrix(*light);
 
             light->shadowMatrix = shadowMatrix;
             light->shadowFarPlane = glm::max(light->range, 0.1f);
 
+            glEnable(GL_POLYGON_OFFSET_FILL);
+            glPolygonOffset(2.0f, 4.0f);
             glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, light->shadowMap->GetTextureID(), 0);
             if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
             {
@@ -162,6 +248,7 @@ namespace PlutoGE::render
         }
 
         m_shadowPassShader->Unbind();
+        glDisable(GL_POLYGON_OFFSET_FILL);
         glCullFace(GL_BACK);
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         glViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);

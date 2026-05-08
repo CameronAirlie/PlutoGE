@@ -5,6 +5,19 @@ add_library(PlutoGERender
     src/Texture.cpp
     src/Graphics.cpp
     src/RenderTarget.cpp
+    src/GBuffer.cpp
+    src/Material.cpp
+    src/postprocess/ShaderPostProcessEffect.cpp
+    src/postprocess/SceneCompositeEffect.cpp
+    src/postprocess/ToneMappingEffect.cpp
+    src/postprocess/SSAOEffect.cpp
+    src/postprocess/FXAAEffect.cpp
+    src/postprocess/GammaCorrectionEffect.cpp
+    src/postprocess/PostProcessEffectFactory.cpp
+    src/passes/GeometryPass.cpp
+    src/passes/LightingPass.cpp
+    src/passes/ShadowPass.cpp
+    src/passes/PostProcessPass.cpp
 )
 
 add_library(PlutoGE::Render ALIAS PlutoGERender)

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <glad/glad.h>
+#include <glm/glm.hpp>
 #include <string>
 #include <vector>
 #include <array>
@@ -35,7 +36,7 @@ namespace PlutoGE::render
         Mesh(const MeshConfig &config) : m_config(config)
         {
             m_meshData = m_config.data; // Store mesh data for buffer initialization
-            InitializeBuffers();
+            GenerateTangents(m_meshData);
         }
 
         static Mesh *Cube()
@@ -75,7 +76,7 @@ namespace PlutoGE::render
 
             std::vector<unsigned int> indices = {
                 0, 1, 2, 2, 3, 0,       // Front face
-                4, 5, 6, 6, 7, 4,       // Back face
+                4, 6, 5, 4, 7, 6,       // Back face
                 8, 9, 10, 10, 11, 8,    // Left face
                 12, 13, 14, 14, 15, 12, // Right face
                 16, 17, 18, 18, 19, 16, // Top face
@@ -90,6 +91,7 @@ namespace PlutoGE::render
             config.data = std::move(meshData);
 
             Mesh *mesh = new Mesh(config);
+            mesh->Initialize();
 
             return mesh;
         }
@@ -116,28 +118,191 @@ namespace PlutoGE::render
             config.data = std::move(meshData);
 
             Mesh *mesh = new Mesh(config);
-
+            mesh->Initialize();
             return mesh;
+        }
+
+        struct QuadVertex
+        {
+            float position[3];
+            float uv[2];
+        };
+
+        static Mesh *QuadUV()
+        {
+            // Fullscreen quad with only position and UV attributes
+            std::vector<QuadVertex> vertices = {
+                {{-1.0f, -1.0f, 0.0f}, {0.0f, 0.0f}},
+                {{1.0f, -1.0f, 0.0f}, {1.0f, 0.0f}},
+                {{-1.0f, 1.0f, 0.0f}, {0.0f, 1.0f}},
+                {{1.0f, 1.0f, 0.0f}, {1.0f, 1.0f}},
+            };
+            std::vector<unsigned int> indices = {
+                0, 1, 2,
+                2, 1, 3};
+
+            GLuint VAO, VBO, EBO;
+            glGenVertexArrays(1, &VAO);
+            glGenBuffers(1, &VBO);
+            glGenBuffers(1, &EBO);
+
+            glBindVertexArray(VAO);
+            glBindBuffer(GL_ARRAY_BUFFER, VBO);
+            glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(QuadVertex), vertices.data(), GL_STATIC_DRAW);
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
+            glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), indices.data(), GL_STATIC_DRAW);
+
+            // Position attribute (location = 0)
+            glEnableVertexAttribArray(0);
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(QuadVertex), (void *)offsetof(QuadVertex, position));
+            // UV attribute (location = 1)
+            glEnableVertexAttribArray(1);
+            glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(QuadVertex), (void *)offsetof(QuadVertex, uv));
+
+            glBindVertexArray(0);
+
+            // Create a Mesh object with dummy MeshData (not used for rendering)
+            MeshConfig config;
+            Mesh *mesh = new Mesh(config);
+            mesh->m_VAO = VAO;
+            mesh->m_VBO = VBO;
+            mesh->m_EBO = EBO;
+            mesh->m_config.data.indices = indices;
+            return mesh;
+        }
+
+        void Bind() const
+        {
+            glBindVertexArray(m_VAO);
+            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_EBO);
+        }
+
+        void Draw() const
+        {
+            Bind();
+            glDrawElements(GL_TRIANGLES, (GLsizei)GetIndexCount(), GL_UNSIGNED_INT, 0);
         }
 
         ~Mesh() = default;
 
-    protected:
-        friend class Graphics;
-        GLuint GetVAO() const { return m_VAO; }
-        GLuint GetVBO() const { return m_VBO; }
-        GLuint GetEBO() const { return m_EBO; }
         size_t GetVertexCount() const { return m_config.data.vertices.size(); }
         size_t GetIndexCount() const { return m_config.data.indices.size(); }
 
+        GLuint GetVAO() const { return m_VAO; }
+        GLuint GetVBO() const { return m_VBO; }
+        GLuint GetEBO() const { return m_EBO; }
+
+        // protected:
+        //     friend class Graphics;
+
     private:
+        static glm::vec3 ToVec3(const std::array<float, 3> &value)
+        {
+            return glm::vec3(value[0], value[1], value[2]);
+        }
+
+        static glm::vec2 ToVec2(const std::array<float, 2> &value)
+        {
+            return glm::vec2(value[0], value[1]);
+        }
+
+        static glm::vec3 BuildFallbackTangent(const glm::vec3 &normal)
+        {
+            const glm::vec3 referenceAxis = std::abs(normal.z) < 0.999f
+                                                ? glm::vec3(0.0f, 0.0f, 1.0f)
+                                                : glm::vec3(0.0f, 1.0f, 0.0f);
+            return glm::normalize(glm::cross(referenceAxis, normal));
+        }
+
+        static void GenerateTangents(MeshData &meshData)
+        {
+            if (meshData.vertices.empty())
+            {
+                return;
+            }
+
+            std::vector<glm::vec3> accumulatedTangents(meshData.vertices.size(), glm::vec3(0.0f));
+            std::vector<glm::vec3> accumulatedBitangents(meshData.vertices.size(), glm::vec3(0.0f));
+
+            for (size_t triangleStart = 0; triangleStart + 2 < meshData.indices.size(); triangleStart += 3)
+            {
+                const auto index0 = meshData.indices[triangleStart];
+                const auto index1 = meshData.indices[triangleStart + 1];
+                const auto index2 = meshData.indices[triangleStart + 2];
+
+                if (index0 >= meshData.vertices.size() ||
+                    index1 >= meshData.vertices.size() ||
+                    index2 >= meshData.vertices.size())
+                {
+                    continue;
+                }
+
+                const glm::vec3 position0 = ToVec3(meshData.vertices[index0].position);
+                const glm::vec3 position1 = ToVec3(meshData.vertices[index1].position);
+                const glm::vec3 position2 = ToVec3(meshData.vertices[index2].position);
+
+                const glm::vec2 uv0 = ToVec2(meshData.vertices[index0].uv);
+                const glm::vec2 uv1 = ToVec2(meshData.vertices[index1].uv);
+                const glm::vec2 uv2 = ToVec2(meshData.vertices[index2].uv);
+
+                const glm::vec3 edge1 = position1 - position0;
+                const glm::vec3 edge2 = position2 - position0;
+                const glm::vec2 deltaUV1 = uv1 - uv0;
+                const glm::vec2 deltaUV2 = uv2 - uv0;
+
+                const float determinant = deltaUV1.x * deltaUV2.y - deltaUV2.x * deltaUV1.y;
+                if (std::abs(determinant) < 1e-6f)
+                {
+                    continue;
+                }
+
+                const float invDeterminant = 1.0f / determinant;
+                const glm::vec3 tangent = (edge1 * deltaUV2.y - edge2 * deltaUV1.y) * invDeterminant;
+                const glm::vec3 bitangent = (edge2 * deltaUV1.x - edge1 * deltaUV2.x) * invDeterminant;
+
+                accumulatedTangents[index0] += tangent;
+                accumulatedTangents[index1] += tangent;
+                accumulatedTangents[index2] += tangent;
+
+                accumulatedBitangents[index0] += bitangent;
+                accumulatedBitangents[index1] += bitangent;
+                accumulatedBitangents[index2] += bitangent;
+            }
+
+            for (size_t vertexIndex = 0; vertexIndex < meshData.vertices.size(); ++vertexIndex)
+            {
+                const glm::vec3 normal = glm::normalize(ToVec3(meshData.vertices[vertexIndex].normal));
+                glm::vec3 tangent = accumulatedTangents[vertexIndex];
+
+                tangent = tangent - normal * glm::dot(normal, tangent);
+                if (glm::dot(tangent, tangent) < 1e-8f)
+                {
+                    tangent = BuildFallbackTangent(normal);
+                }
+                else
+                {
+                    tangent = glm::normalize(tangent);
+                }
+
+                const glm::vec3 bitangent = accumulatedBitangents[vertexIndex];
+                const float handedness = glm::dot(glm::cross(normal, tangent), bitangent) < 0.0f ? -1.0f : 1.0f;
+
+                meshData.vertices[vertexIndex].tangent = {
+                    tangent.x,
+                    tangent.y,
+                    tangent.z,
+                    handedness,
+                };
+            }
+        }
+
         MeshConfig m_config;
         GLuint m_VAO = 0;    // Vertex Array Object
         GLuint m_VBO = 0;    // Vertex Buffer Object
         GLuint m_EBO = 0;    // Element Buffer Object (for indexed drawing)
         MeshData m_meshData; // Mesh data (vertices and indices)
 
-        void InitializeBuffers()
+        void Initialize()
         {
             // Generate and bind VAO, VBO, and EBO here
             glGenVertexArrays(1, &m_VAO);

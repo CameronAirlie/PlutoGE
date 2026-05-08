@@ -1,6 +1,7 @@
 #include <iostream>
 
 #include "PlutoGE/render/Shader.h"
+#include "PlutoGE/render/Texture.h"
 #include "PlutoGE/core/Engine.h"
 
 namespace PlutoGE::render
@@ -94,5 +95,93 @@ namespace PlutoGE::render
     Shader *Shader::Create(const ShaderSource &source)
     {
         return CreateShaderFromSource(source);
+    }
+
+    GLint Shader::ResolveUniformLocation(const std::string &name, bool warnIfMissing) const
+    {
+        if (m_uniformLocationCache.find(name) != m_uniformLocationCache.end())
+        {
+            return m_uniformLocationCache[name];
+        }
+
+        GLint location = glGetUniformLocation(m_programID, name.c_str());
+        if (location == -1 && warnIfMissing)
+        {
+            std::cerr << "Warning: Uniform '" << name << "' not found in shader program." << std::endl;
+        }
+        m_uniformLocationCache[name] = location;
+        return location;
+    }
+
+    GLuint Shader::GetUniformLocation(const std::string &name) const
+    {
+        return ResolveUniformLocation(name, true);
+    }
+
+    bool Shader::HasUniform(const std::string &name) const
+    {
+        return ResolveUniformLocation(name, false) != -1;
+    }
+
+    void Shader::SetUniform(const std::string &name, const glm::mat4 &value) const
+    {
+        GLint location = GetUniformLocation(name);
+        if (location != -1)
+        {
+            glUniformMatrix4fv(location, 1, GL_FALSE, &value[0][0]);
+        }
+    }
+
+    void Shader::SetUniform(const std::string &name, const glm::vec4 &value) const
+    {
+        GLint location = GetUniformLocation(name);
+        if (location != -1)
+        {
+            glUniform4f(location, value.x, value.y, value.z, value.w);
+        }
+    }
+
+    void Shader::SetUniform(const std::string &name, const glm::vec3 &value) const
+    {
+        GLint location = GetUniformLocation(name);
+        if (location != -1)
+        {
+            glUniform3f(location, value.x, value.y, value.z);
+        }
+    }
+
+    void Shader::SetUniform(const std::string &name, float value) const
+    {
+        GLint location = GetUniformLocation(name);
+        if (location != -1)
+        {
+            glUniform1f(location, value);
+        }
+    }
+
+    void Shader::SetUniform(const std::string &name, int value) const
+    {
+        GLint location = GetUniformLocation(name);
+        if (location != -1)
+        {
+            glUniform1i(location, value);
+        }
+    }
+
+    void Shader::SetUniform(const std::string &name, const Texture *texture, int slot) const
+    {
+        if (!texture)
+        {
+            std::cerr << "Error: Attempting to set uniform '" << name << "' with a null texture." << std::endl;
+            return;
+        }
+
+        GLint location = GetUniformLocation(name);
+        if (location != -1)
+        {
+            glActiveTexture(GL_TEXTURE0 + slot);
+            glBindTexture(texture->GetType(), texture->GetTextureID());
+            glUniform1i(location, slot);
+        }
     }
 }

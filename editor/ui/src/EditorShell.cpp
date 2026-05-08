@@ -1,4 +1,5 @@
 #include "PlutoGE/ui/EditorShell.h"
+#include "PlutoGE/ui/panels/ProfilerPanel.h"
 #include "PlutoGE/ui/panels/ViewportPanel.h"
 #include "PlutoGE/ui/panels/SceneHierarchyPanel.h"
 #include "PlutoGE/ui/panels/InspectorPanel.h"
@@ -10,7 +11,7 @@
 #include "PlutoGE/scripting/ScriptEngine.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
-#include "PlutoGE/scene/components/ScriptComponent.h"
+#include "PlutoGE/scene/components/LightComponent.h"
 
 #include <imgui.h>
 #include <backends/imgui_impl_glfw.h>
@@ -61,6 +62,15 @@ namespace PlutoGE::ui
         m_panelManager.InitializeImGui(&m_engine.GetWindow());
     }
 
+    glm::vec3 randomColour()
+    {
+        // maximum value for each color channel is 255, so we divide by 255 to get a value between 0 and 1
+        return glm::vec3(
+            static_cast<float>(rand()) / static_cast<float>(RAND_MAX),
+            static_cast<float>(rand()) / static_cast<float>(RAND_MAX),
+            static_cast<float>(rand()) / static_cast<float>(RAND_MAX));
+    }
+
     void EditorShell::Render()
     {
         auto &window = m_engine.GetWindow();
@@ -68,33 +78,6 @@ namespace PlutoGE::ui
         auto &scriptEngine = m_engine.GetScriptEngine();
         auto deltaTime = std::chrono::duration<float>::zero();
         auto lastTime = std::chrono::high_resolution_clock::now();
-
-        const auto scriptProjectPath = FindScriptCoreProjectPath();
-        if (!scriptProjectPath.empty())
-        {
-            const auto buildResult = scriptEngine.BuildProject(scripting::ScriptBuildConfig{
-                .projectPath = scriptProjectPath,
-                .configuration = "Debug",
-                .framework = "net8.0",
-            });
-
-            if (!buildResult.succeeded)
-            {
-                std::cerr << "Failed to build script assembly with command: " << buildResult.command << std::endl;
-            }
-            else
-            {
-                const auto scriptAssemblyPath = scriptProjectPath.parent_path() / "bin" / "Debug" / "net8.0" / "PlutoGE.ScriptCore.dll";
-                if (!scriptEngine.LoadAssembly(scriptAssemblyPath))
-                {
-                    std::cerr << "Failed to load script assembly: " << scriptAssemblyPath.string() << std::endl;
-                }
-            }
-        }
-        else
-        {
-            std::cerr << "Failed to locate PlutoGE.ScriptCore.csproj for editor scripting." << std::endl;
-        }
 
         ViewportPanelConfig viewportConfig;
         viewportConfig.name = "Viewport";
@@ -117,34 +100,37 @@ namespace PlutoGE::ui
             .name = "Cube",
         });
         auto *material = m_engine.GetAssetManager().CreateDefaultMaterial();
-        material->SetColor(glm::vec3(0.8f, 0.2f, 0.2f));
+        material->SetColor(glm::vec4(0.8f, 0.2f, 0.2f, 1.0f));
         auto mesh = render::Mesh::Cube();
-        auto meshComponent = new scene::MeshComponent(scene::MeshComponentConfig{
+        cube->CreateComponent<scene::MeshComponent>(scene::MeshComponentConfig{
             .mesh = mesh,
             .material = material,
         });
-        cube->AddComponent(meshComponent);
+        cube->SetPosition(glm::vec3(0.0f, -1.0f, 0.0f));
+        cube->SetScale(glm::vec3(10.0f, 0.1f, 10.0f));
+        auto *cubeEntity = scene->AddEntity(std::move(cube));
 
-        auto scriptComponent = new scene::ScriptComponent();
-        scriptComponent->SetScriptClass("PlutoGE.ScriptCore.Examples.RotatorScript");
-        if (!scriptComponent->SetFieldValue("DegreesPerSecond", 20.0f))
-        {
-            std::cerr << "Failed to set DegreesPerSecond on RotatorScript." << std::endl;
-        }
-
-        if (!scriptComponent->SetFieldValue("Axis", glm::vec3(1.0f, 1.0f, 1.0f)))
-        {
-            std::cerr << "Failed to set Axis on RotatorScript." << std::endl;
-        }
-
-        cube->AddComponent(scriptComponent);
-
-        scene->AddEntity(cube.get());
+        auto cube2 = std::make_unique<scene::Entity>(scene::EntityConfig{
+            .name = "Cube 2",
+        });
+        auto *material2 = m_engine.GetAssetManager().CreateDefaultMaterial();
+        auto texture = m_engine.GetAssetManager().LoadTexture("C:/textures/brick/brick.png");
+        material2->SetAlbedoTexture(texture);
+        auto normalTexture = m_engine.GetAssetManager().LoadTexture("C:/textures/brick/brick_normal.png");
+        material2->SetNormalTexture(normalTexture);
+        material2->SetFlipNormalY(true);
+        // material2->SetColor(glm::vec4(0.8f, 0.2f, 0.2f, 1.0f));
+        auto mesh2 = render::Mesh::Cube();
+        cube2->CreateComponent<scene::MeshComponent>(scene::MeshComponentConfig{
+            .mesh = mesh2,
+            .material = material2,
+        });
+        scene->AddEntity(std::move(cube2));
 
         auto testEntity = std::make_unique<scene::Entity>(scene::EntityConfig{
             .name = "Test Entity",
         });
-        testEntity->SetParent(cube.get());
+        testEntity->SetParent(cubeEntity);
 
         auto cameraEntity = std::make_unique<scene::Entity>(scene::EntityConfig{
             .name = "Camera",
@@ -154,10 +140,9 @@ namespace PlutoGE::ui
             .nearPlane = 0.1f,
             .farPlane = 100.0f,
         });
-        auto cameraComponent = new scene::CameraComponent(&camera);
-        cameraEntity->AddComponent(cameraComponent);
+        cameraEntity->CreateComponent<scene::CameraComponent>(&camera);
         cameraEntity->SetPosition(glm::vec3(0.0f, 0.0f, 5.0f));
-        scene->AddEntity(cameraEntity.get());
+        auto *cameraEntityPtr = scene->AddEntity(std::move(cameraEntity));
 
         auto cameraEntity2 = std::make_unique<scene::Entity>(scene::EntityConfig{
             .name = "Camera 2",
@@ -167,10 +152,31 @@ namespace PlutoGE::ui
             .nearPlane = 0.1f,
             .farPlane = 100.0f,
         });
-        auto cameraComponent2 = new scene::CameraComponent(&camera2);
-        cameraEntity2->AddComponent(cameraComponent2);
+        cameraEntity2->CreateComponent<scene::CameraComponent>(&camera2);
         cameraEntity2->SetPosition(glm::vec3(0.0f, 0.0f, 5.0f));
-        scene->AddEntity(cameraEntity2.get());
+
+        auto cameraHolder = std::make_unique<scene::Entity>(scene::EntityConfig{
+            .name = "Camera Holder",
+        });
+        cameraHolder->SetPosition(glm::vec3(0.0f, 0.0f, 0.0f));
+        auto *cameraHolderEntity = scene->AddEntity(std::move(cameraHolder));
+        auto *cameraEntity2Ptr = scene->AddEntity(std::move(cameraEntity2), cameraHolderEntity);
+
+        for (int i = 0; i < 1; ++i)
+        {
+            auto lightEntity = std::make_unique<scene::Entity>(scene::EntityConfig{
+                .name = "Key Light " + std::to_string(i),
+            });
+            auto positionOffset = (randomColour() - 1.0f) * 5.0f; // Random position offset for each light
+            lightEntity->SetPosition(glm::vec3(positionOffset.x, 5.0f, positionOffset.z));
+            auto *lightComponent = lightEntity->CreateComponent<scene::LightComponent>();
+            lightComponent->GetLight().color = randomColour(); // glm::vec3(1.0f, 0.95f, 0.85f);
+            lightComponent->GetLight().intensity = 1.0f;
+            lightComponent->GetLight().range = 20.0f;
+            lightComponent->GetLight().castsShadows = true;
+            lightComponent->GetLight().type = scene::LightType::Point;
+            scene->AddEntity(std::move(lightEntity));
+        }
 
         ViewportPanelConfig viewportConfig2;
         viewportConfig2.name = "Viewport 2";
@@ -182,6 +188,10 @@ namespace PlutoGE::ui
         auto inspectorPanel = new InspectorPanel(PanelConfig{"Inspector"});
         inspectorPanel->Initialize();
         m_panelManager.AddPanel(inspectorPanel);
+
+        auto profilerPanel = new ProfilerPanel(PanelConfig{"Profiler"}, &m_profiler, &m_panelManager, &renderer);
+        profilerPanel->Initialize();
+        m_panelManager.AddPanel(profilerPanel);
 
         auto *renderTarget2 = viewportPanel2->GetRenderTarget();
 
@@ -201,12 +211,15 @@ namespace PlutoGE::ui
 
             camera.SetFOV(45.0f + 10.0f * sinf(static_cast<float>(glfwGetTime()))); // Animate FOV for demonstration
 
-            // Rendering
+            auto lights = scene->GetLights();
+            renderer.UpdateShadowMaps(lights);
+
+            auto *cameraComponent = cameraEntityPtr->GetComponent<scene::CameraComponent>();
+            auto *cameraComponent2 = cameraEntity2Ptr->GetComponent<scene::CameraComponent>();
 
             if (IsCameraActiveInScene(scene.get(), cameraComponent))
             {
-                auto cameraData = cameraComponent->GetCameraData(renderTargetWidth, renderTargetHeight);
-                viewportPanel->RenderFrame(cameraData);
+                viewportPanel->RenderFrame(*cameraComponent);
             }
             else
             {
@@ -215,8 +228,7 @@ namespace PlutoGE::ui
 
             if (IsCameraActiveInScene(scene.get(), cameraComponent2))
             {
-                auto cameraData2 = cameraComponent2->GetCameraData(renderTarget2Width, renderTarget2Height);
-                viewportPanel2->RenderFrame(cameraData2);
+                viewportPanel2->RenderFrame(*cameraComponent2);
             }
             else
             {
@@ -238,6 +250,9 @@ namespace PlutoGE::ui
             renderer.EndFrame();
 
             window.PollEvents();
+
+            const auto frameEndTime = std::chrono::high_resolution_clock::now();
+            m_profiler.AddFrameSample(std::chrono::duration<float, std::milli>(frameEndTime - currentTime).count());
 
             lastTime = currentTime;
         }

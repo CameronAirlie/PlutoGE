@@ -1,0 +1,22 @@
+#pragma once
+
+#include "PlutoGE/render/passes/IRenderPass.h"
+
+namespace PlutoGE::render
+{
+    class Renderer;
+    class Shader;
+    class LightingPass : public IRenderPass
+    {
+    public:
+        LightingPass() = default;
+        ~LightingPass() = default;
+
+        void Initialize() override;
+        void Execute(const RenderContext &ctx) override;
+        const char *GetName() const override { return "Lighting"; }
+
+    private:
+        Shader *m_lightingPassShader = nullptr;
+    };
+}

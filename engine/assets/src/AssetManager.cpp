@@ -38,10 +38,10 @@ namespace PlutoGE::assets
     {
         // Create a default material with some basic properties
         render::MaterialConfig defaultConfig;
-        defaultConfig.color = glm::vec3(1.0f, 1.0f, 1.0f); // Default to white color
+        defaultConfig.color = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f); // Default to white color
         render::Material *material = new render::Material(defaultConfig);
-        render::Shader *defaultShader = render::Shader::CreateDefault();
-        material->SetShader(defaultShader);
+        // render::Shader *defaultShader = render::Shader::CreateDefault();
+        // material->SetShader(defaultShader);
         return material;
     }
 

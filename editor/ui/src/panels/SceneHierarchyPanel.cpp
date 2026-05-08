@@ -93,11 +93,11 @@ namespace PlutoGE::ui
         {
             if (ImGui::MenuItem("Create Empty Entity"))
             {
-                auto newEntity = new scene::Entity({.name = "New Entity"});
+                auto newEntity = std::make_unique<scene::Entity>(scene::EntityConfig{.name = "New Entity"});
                 auto scene = ui::EditorShell::GetInstance().GetEngine().GetScene();
                 if (scene)
                 {
-                    scene->AddEntity(newEntity);
+                    scene->AddEntity(std::move(newEntity));
                 }
             }
             ImGui::EndPopup();

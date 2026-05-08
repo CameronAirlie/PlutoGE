@@ -29,6 +29,10 @@ namespace PlutoGE::render
         Camera(const CameraConfig &config) : m_config(config) {}
         ~Camera() = default;
 
+        float GetFOV() const { return m_config.fovY; }
+        float GetNearPlane() const { return m_config.nearPlane; }
+        float GetFarPlane() const { return m_config.farPlane; }
+
         void SetFOV(float fovY) { m_config.fovY = fovY; }
         void SetNearPlane(float nearPlane) { m_config.nearPlane = nearPlane; }
         void SetFarPlane(float farPlane) { m_config.farPlane = farPlane; }

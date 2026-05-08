@@ -14,7 +14,13 @@ namespace PlutoGE::render
     {
     public:
         Texture(const TextureConfig &config) : m_filePath(config.filePath) {}
-        ~Texture() = default;
+        ~Texture()
+        {
+            if (m_textureID != 0)
+            {
+                glDeleteTextures(1, &m_textureID);
+            }
+        }
 
         GLenum GetType() const { return m_type; }
 
@@ -24,6 +30,8 @@ namespace PlutoGE::render
         int GetChannels() const { return m_channels; }
 
         static Texture *LoadFromFile(const char *filePath);
+        static Texture *DepthTexture(int width, int height);
+        static Texture *DepthCubemap(int width, int height);
 
     protected:
         friend class TextureManager;   // Allow TextureManager to access private members

@@ -230,10 +230,32 @@ namespace PlutoGE::render
             uniform sampler2D uMetallicTexture;
             uniform float uHasMetallicTexture = 0.0;
             uniform float uMetallicFactor = 0.0;
+            uniform int uMetallicTextureChannel = 0;
             
             uniform sampler2D uRoughnessTexture;
             uniform float uHasRoughnessTexture = 0.0;
             uniform float uRoughnessFactor = 1.0;
+            uniform int uRoughnessTextureChannel = 0;
+
+            float ReadTextureChannel(vec4 value, int channel)
+            {
+                if (channel == 1)
+                {
+                    return value.g;
+                }
+
+                if (channel == 2)
+                {
+                    return value.b;
+                }
+
+                if (channel == 3)
+                {
+                    return value.a;
+                }
+
+                return value.r;
+            }
             
             void main()
             {
@@ -266,12 +288,12 @@ namespace PlutoGE::render
 
                 if (uHasMetallicTexture > 0.5)
                 {
-                    metallic *= texture(uMetallicTexture, UV).r;
+                    metallic *= ReadTextureChannel(texture(uMetallicTexture, UV), uMetallicTextureChannel);
                 }
 
                 if (uHasRoughnessTexture > 0.5)
                 {
-                    roughness *= texture(uRoughnessTexture, UV).r;
+                    roughness *= ReadTextureChannel(texture(uRoughnessTexture, UV), uRoughnessTextureChannel);
                 }
 
                 gNormalRoughness = vec4(normalize(normal), clamp(roughness, 0.04, 1.0));

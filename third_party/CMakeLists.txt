@@ -65,3 +65,15 @@ target_link_libraries(PlutoGE_imgui PUBLIC
 target_include_directories(PlutoGE_imgui PUBLIC
     ${imgui_SOURCE_DIR}
 )
+
+FetchContent_Declare(
+    tinygltf
+    GIT_REPOSITORY https://github.com/syoyo/tinygltf.git
+    GIT_TAG        release
+)
+FetchContent_MakeAvailable(tinygltf)
+add_library(PlutoGE_tinygltf INTERFACE)
+add_library(PlutoGE::tinygltf ALIAS PlutoGE_tinygltf)
+target_include_directories(PlutoGE_tinygltf INTERFACE
+    ${tinygltf_SOURCE_DIR}
+)

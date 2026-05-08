@@ -13,5 +13,6 @@ target_link_libraries(PlutoGECore PUBLIC
     PlutoGE::Platform
     PlutoGE::Render
     PlutoGE::Assets
+    PlutoGE::Import
     PlutoGE::Scripting
 )

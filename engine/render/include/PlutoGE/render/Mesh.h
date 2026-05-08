@@ -24,9 +24,17 @@ namespace PlutoGE::render
         std::vector<unsigned int> indices;    // Index data for indexed drawing
     };
 
+    struct Submesh
+    {
+        uint32_t indexOffset = 0;
+        uint32_t indexCount = 0;
+        uint32_t materialIndex = 0;
+    };
+
     struct MeshConfig
     {
         MeshData data;
+        std::vector<Submesh> submeshes;
     };
 
     class Graphics;
@@ -37,6 +45,15 @@ namespace PlutoGE::render
         {
             m_meshData = m_config.data; // Store mesh data for buffer initialization
             GenerateTangents(m_meshData);
+
+            if (m_config.submeshes.empty() && !m_meshData.indices.empty())
+            {
+                m_config.submeshes.push_back(Submesh{
+                    .indexOffset = 0,
+                    .indexCount = static_cast<uint32_t>(m_meshData.indices.size()),
+                    .materialIndex = 0,
+                });
+            }
         }
 
         static Mesh *Cube()
@@ -122,6 +139,17 @@ namespace PlutoGE::render
             return mesh;
         }
 
+        static Mesh *FromData(MeshData data, std::vector<Submesh> submeshes = {})
+        {
+            MeshConfig config;
+            config.data = std::move(data);
+            config.submeshes = std::move(submeshes);
+
+            Mesh *mesh = new Mesh(config);
+            mesh->Initialize();
+            return mesh;
+        }
+
         struct QuadVertex
         {
             float position[3];
@@ -183,10 +211,34 @@ namespace PlutoGE::render
             glDrawElements(GL_TRIANGLES, (GLsizei)GetIndexCount(), GL_UNSIGNED_INT, 0);
         }
 
+        void DrawSubmesh(size_t submeshIndex) const
+        {
+            if (submeshIndex >= m_config.submeshes.size())
+            {
+                Draw();
+                return;
+            }
+
+            const auto &submesh = m_config.submeshes[submeshIndex];
+            if (submesh.indexCount == 0)
+            {
+                return;
+            }
+
+            Bind();
+            glDrawElements(
+                GL_TRIANGLES,
+                static_cast<GLsizei>(submesh.indexCount),
+                GL_UNSIGNED_INT,
+                reinterpret_cast<const void *>(static_cast<uintptr_t>(submesh.indexOffset) * sizeof(unsigned int)));
+        }
+
         ~Mesh() = default;
 
         size_t GetVertexCount() const { return m_config.data.vertices.size(); }
         size_t GetIndexCount() const { return m_config.data.indices.size(); }
+        size_t GetSubmeshCount() const { return m_config.submeshes.size(); }
+        const Submesh &GetSubmesh(size_t index) const { return m_config.submeshes.at(index); }
 
         GLuint GetVAO() const { return m_VAO; }
         GLuint GetVBO() const { return m_VBO; }

@@ -4,6 +4,14 @@
 
 namespace PlutoGE::render
 {
+    enum class TextureChannel
+    {
+        Red = 0,
+        Green = 1,
+        Blue = 2,
+        Alpha = 3,
+    };
+
     class Texture;
     class Shader;
     struct CameraData;
@@ -17,9 +25,11 @@ namespace PlutoGE::render
 
         float metallic = 0.0f;              // Metallic factor (0.0 = non-metal, 1.0 = metal)
         Texture *metallicTexture = nullptr; // Pointer to a metallic texture (if any)
+        TextureChannel metallicTextureChannel = TextureChannel::Red;
 
         float roughness = 1.0f;              // Roughness factor (0.0 = smooth, 1.0 = rough)
         Texture *roughnessTexture = nullptr; // Pointer to a roughness texture (if any)
+        TextureChannel roughnessTextureChannel = TextureChannel::Red;
     };
 
     class Material
@@ -40,13 +50,16 @@ namespace PlutoGE::render
         void SetFlipNormalY(bool flipNormalY) { m_config.flipNormalY = flipNormalY; }
         void SetMetallic(float metallic) { m_config.metallic = metallic; }
         void SetMetallicTexture(Texture *texture) { m_config.metallicTexture = texture; }
+        void SetMetallicTextureChannel(TextureChannel channel) { m_config.metallicTextureChannel = channel; }
         void SetRoughness(float roughness) { m_config.roughness = roughness; }
         void SetRoughnessTexture(Texture *texture) { m_config.roughnessTexture = texture; }
+        void SetRoughnessTextureChannel(TextureChannel channel) { m_config.roughnessTextureChannel = channel; }
+        MaterialConfig &GetConfig() { return m_config; }
+        const MaterialConfig &GetConfig() const { return m_config; }
 
     protected:
         friend class Graphics;
         friend class Renderer;
-        MaterialConfig &GetConfig() { return m_config; }
 
     private:
         MaterialConfig m_config;            // Material configuration data

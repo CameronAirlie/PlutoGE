@@ -1,17 +1,22 @@
+
 #include "PlutoGE/ui/panels/InspectorPanel.h"
 #include "PlutoGE/ui/EditorShell.h"
 #include "PlutoGE/scene/components/Component.h"
-
+#include "PlutoGE/scene/components/MeshComponent.h"
+#include "PlutoGE/core/Engine.h"
+#include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/postprocess/IPostProcessEffect.h"
 #include "PlutoGE/render/postprocess/PostProcessEffectFactory.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
-
 #include "PlutoGE/scene/Entity.h"
-
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <imgui.h>
+#ifdef _WIN32
+#include <windows.h>
+#include <commdlg.h>
+#endif
 
 namespace PlutoGE::ui
 {
@@ -274,6 +279,117 @@ namespace PlutoGE::ui
                 entity->SetPosition(position);
                 entity->SetRotation(rotation);
                 entity->SetScale(scale);
+            }
+
+            // Mesh Import UI (if entity has MeshComponent)
+            if (auto *meshComponent = entity->GetComponent<PlutoGE::scene::MeshComponent>())
+            {
+                ImGui::Separator();
+                ImGui::Text("Mesh Import");
+                static char meshPath[512] = "";
+                ImGui::InputText("Mesh Path", meshPath, sizeof(meshPath));
+                ImGui::SameLine();
+                if (ImGui::Button("..."))
+                {
+#ifdef _WIN32
+                    OPENFILENAMEA ofn = {};
+                    char fileName[MAX_PATH] = "";
+                    ofn.lStructSize = sizeof(ofn);
+                    ofn.hwndOwner = nullptr;
+                    ofn.lpstrFilter = "glTF Files\0*.glb;*.gltf\0All Files\0*.*\0";
+                    ofn.lpstrFile = fileName;
+                    ofn.nMaxFile = MAX_PATH;
+                    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+                    if (GetOpenFileNameA(&ofn))
+                    {
+                        strncpy_s(meshPath, sizeof(meshPath), fileName, _TRUNCATE);
+                    }
+#endif
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Import Mesh"))
+                {
+                    if (strlen(meshPath) > 0)
+                    {
+                        auto importedMeshAsset = PlutoGE::core::Engine::GetInstance().ImportMeshAsset(meshPath);
+                        if (importedMeshAsset.mesh)
+                        {
+                            meshComponent->SetMesh(importedMeshAsset.mesh);
+                            meshComponent->SetMaterials(importedMeshAsset.materials);
+                        }
+                    }
+                }
+
+                if (meshComponent->GetMesh() && meshComponent->GetMesh()->GetSubmeshCount() > 0)
+                {
+                    ImGui::Separator();
+                    if (ImGui::CollapsingHeader("Submesh Materials"))
+                    {
+                        for (size_t submeshIndex = 0; submeshIndex < meshComponent->GetMesh()->GetSubmeshCount(); ++submeshIndex)
+                        {
+                            const auto &submesh = meshComponent->GetMesh()->GetSubmesh(submeshIndex);
+                            auto *material = meshComponent->GetMaterialForSubmesh(submeshIndex);
+
+                            ImGui::PushID(static_cast<int>(submeshIndex));
+                            if (ImGui::TreeNode((std::string("Submesh ") + std::to_string(submeshIndex)).c_str()))
+                            {
+                                ImGui::Text("Material Slot: %u", submesh.materialIndex);
+                                ImGui::Text("Indices: %u", submesh.indexCount);
+
+                                if (material)
+                                {
+                                    const auto &materialConfig = material->GetConfig();
+                                    float color[4] = {
+                                        materialConfig.color.r,
+                                        materialConfig.color.g,
+                                        materialConfig.color.b,
+                                        materialConfig.color.a,
+                                    };
+                                    if (ImGui::ColorEdit4("Color", color))
+                                    {
+                                        material->SetColor(glm::vec4(color[0], color[1], color[2], color[3]));
+                                    }
+
+                                    float metallic = materialConfig.metallic;
+                                    if (ImGui::DragFloat("Metallic", &metallic, 0.01f, 0.0f, 1.0f))
+                                    {
+                                        material->SetMetallic(metallic);
+                                    }
+
+                                    float roughness = materialConfig.roughness;
+                                    if (ImGui::DragFloat("Roughness", &roughness, 0.01f, 0.04f, 1.0f))
+                                    {
+                                        material->SetRoughness(roughness);
+                                    }
+
+                                    bool flipNormalY = materialConfig.flipNormalY;
+                                    if (ImGui::Checkbox("Flip Normal Y", &flipNormalY))
+                                    {
+                                        material->SetFlipNormalY(flipNormalY);
+                                    }
+
+                                    ImGui::Text("Textures: Albedo %s | Normal %s | Metallic/Roughness %s",
+                                                materialConfig.albedoTexture ? "yes" : "no",
+                                                materialConfig.normalTexture ? "yes" : "no",
+                                                materialConfig.metallicTexture || materialConfig.roughnessTexture ? "yes" : "no");
+
+                                    if (ImGui::Button("Make Unique Override"))
+                                    {
+                                        auto *overrideMaterial = new render::Material(material->GetConfig());
+                                        meshComponent->SetMaterialForMaterialSlot(submesh.materialIndex, overrideMaterial);
+                                    }
+                                }
+                                else
+                                {
+                                    ImGui::Text("No material assigned.");
+                                }
+
+                                ImGui::TreePop();
+                            }
+                            ImGui::PopID();
+                        }
+                    }
+                }
             }
 
             // Components

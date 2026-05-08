@@ -2,6 +2,7 @@ add_subdirectory(core)
 add_subdirectory(platform)
 add_subdirectory(render)
 add_subdirectory(assets)
+add_subdirectory(import)
 add_subdirectory(scripting)
 add_subdirectory(scene)
     
@@ -14,6 +15,7 @@ target_link_libraries(PlutoGE
         PlutoGE::Platform
         PlutoGE::Render
         PlutoGE::Assets
-    PlutoGE::Scripting
+        PlutoGE::Import
+        PlutoGE::Scripting
         PlutoGE::Scene
 )

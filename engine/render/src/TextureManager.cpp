@@ -7,6 +7,26 @@
 
 namespace PlutoGE::render
 {
+    namespace
+    {
+        GLenum ResolveTextureFormat(int channels)
+        {
+            switch (channels)
+            {
+            case 1:
+                return GL_RED;
+            case 2:
+                return GL_RG;
+            case 3:
+                return GL_RGB;
+            case 4:
+                return GL_RGBA;
+            default:
+                return GL_RGBA;
+            }
+        }
+    }
+
     Texture *TextureManager::LoadTextureFromFile(const char *filePath)
     {
         // Check if the texture is already loaded
@@ -17,33 +37,23 @@ namespace PlutoGE::render
         }
 
         // Load the texture
-        TextureConfig config;
-        config.filePath = filePath;
-        Texture *texture = new Texture(config);
-
-        // Generate OpenGL texture ID
-        glGenTextures(1, &texture->m_textureID);
-        glBindTexture(GL_TEXTURE_2D, texture->m_textureID);
-
-        // Set texture parameters (you can customize these)
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
         // Load image data
         int width, height, channels;
         unsigned char *data = stbi_load(filePath, &width, &height, &channels, 0);
         if (data)
         {
-            GLenum format;
-            if (channels == 1)
-                format = GL_RED;
-            else if (channels == 3)
-                format = GL_RGB;
-            else if (channels == 4)
-                format = GL_RGBA;
+            TextureConfig config;
+            config.filePath = filePath;
+            Texture *texture = new Texture(config);
 
+            glGenTextures(1, &texture->m_textureID);
+            glBindTexture(GL_TEXTURE_2D, texture->m_textureID);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+            const GLenum format = ResolveTextureFormat(channels);
             glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, GL_UNSIGNED_BYTE, data);
             glGenerateMipmap(GL_TEXTURE_2D);
 
@@ -52,16 +62,51 @@ namespace PlutoGE::render
             texture->m_channels = channels;
 
             stbi_image_free(data);
+            if (!texture)
+            {
+                return nullptr;
+            }
+
+            m_textureCache[filePath] = texture;
+            return texture;
         }
-        else
+
+        return nullptr; // Failed to load texture
+    }
+
+    Texture *TextureManager::LoadTextureFromMemory(const std::string &cacheKey, const unsigned char *pixels, int width, int height, int channels)
+    {
+        auto it = m_textureCache.find(cacheKey);
+        if (it != m_textureCache.end())
         {
-            delete texture;
-            return nullptr; // Failed to load texture
+            return it->second;
         }
 
-        // Cache the texture
-        m_textureCache[filePath] = texture;
+        if (!pixels || width <= 0 || height <= 0 || channels <= 0)
+        {
+            return nullptr;
+        }
 
+        TextureConfig config;
+        config.filePath = cacheKey;
+        Texture *texture = new Texture(config);
+
+        glGenTextures(1, &texture->m_textureID);
+        glBindTexture(GL_TEXTURE_2D, texture->m_textureID);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+        const GLenum format = ResolveTextureFormat(channels);
+        glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, GL_UNSIGNED_BYTE, pixels);
+        glGenerateMipmap(GL_TEXTURE_2D);
+
+        texture->m_width = width;
+        texture->m_height = height;
+        texture->m_channels = channels;
+
+        m_textureCache[cacheKey] = texture;
         return texture;
     }
 

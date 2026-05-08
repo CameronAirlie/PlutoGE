@@ -2,9 +2,15 @@
 
 #include "PlutoGE/platform/Window.h"
 #include "PlutoGE/assets/AssetManager.h"
+#include "PlutoGE/import/MeshImporter.h"
+#include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/TextureManager.h"
 #include "PlutoGE/scripting/ScriptEngine.h"
+
+#include <memory>
+#include <unordered_map>
+#include <vector>
 
 namespace PlutoGE::render
 {
@@ -20,6 +26,12 @@ namespace PlutoGE::scene
 
 namespace PlutoGE::core
 {
+    struct ImportedRenderMeshAsset
+    {
+        render::Mesh *mesh = nullptr;
+        std::vector<render::Material *> materials;
+    };
+
     struct EngineConfig
     {
         // Future configuration options can be added here
@@ -46,9 +58,12 @@ namespace PlutoGE::core
         [[nodiscard]] platform::Window &GetWindow() { return m_window; }
         [[nodiscard]] render::Renderer &GetRenderer() { return m_renderer; }
         [[nodiscard]] assets::AssetManager &GetAssetManager() { return m_assetManager; }
+        [[nodiscard]] assetimport::MeshImporter &GetMeshImporter() { return m_meshImporter; }
         [[nodiscard]] render::TextureManager &GetTextureManager() { return m_textureManager; }
         [[nodiscard]] scripting::ScriptEngine &GetScriptEngine() { return m_scriptEngine; }
         [[nodiscard]] scene::Scene *GetScene() { return m_scene; }
+        ImportedRenderMeshAsset ImportMeshAsset(const std::string &filePath);
+        render::Mesh *ImportMesh(const std::string &filePath);
         void SetScene(scene::Scene *scene) { m_scene = scene; }
 
     private:
@@ -57,9 +72,11 @@ namespace PlutoGE::core
         platform::Window m_window;
         render::Renderer m_renderer;
         assets::AssetManager m_assetManager;
+        assetimport::MeshImporter m_meshImporter;
         render::TextureManager m_textureManager;
         scripting::ScriptEngine m_scriptEngine;
         scene::Scene *m_scene = nullptr;
+        std::unordered_map<std::string, std::vector<std::unique_ptr<render::Material>>> m_importedMaterialCache;
 
         bool m_isInitialized = false;
     };

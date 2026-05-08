@@ -22,7 +22,7 @@ namespace PlutoGE::scene
 
     void MeshComponent::Update(float deltaTime)
     {
-        if (m_mesh && m_material)
+        if (m_mesh)
         {
             auto entity = GetOwner();
             glm::mat4 modelMatrix = glm::mat4(1.0f);
@@ -34,12 +34,23 @@ namespace PlutoGE::scene
             modelMatrix = glm::scale(modelMatrix, entity->GetScale());
 
             auto &renderer = PlutoGE::core::Engine::GetInstance().GetRenderer();
-            render::RenderCommand command;
-            command.model = modelMatrix;
-            command.material = m_material;
-            command.mesh = m_mesh;
+            const size_t submeshCount = std::max<size_t>(m_mesh->GetSubmeshCount(), 1);
+            for (size_t submeshIndex = 0; submeshIndex < submeshCount; ++submeshIndex)
+            {
+                auto *material = GetMaterialForSubmesh(submeshIndex);
+                if (!material)
+                {
+                    continue;
+                }
 
-            renderer.SubmitRenderCommand(command);
+                render::RenderCommand command;
+                command.model = modelMatrix;
+                command.material = material;
+                command.mesh = m_mesh;
+                command.submeshIndex = static_cast<uint32_t>(submeshIndex);
+
+                renderer.SubmitRenderCommand(command);
+            }
         };
     }
 }

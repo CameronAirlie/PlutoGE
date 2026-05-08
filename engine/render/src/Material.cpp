@@ -33,6 +33,14 @@ namespace PlutoGE::render
             }
         };
 
+        const auto setInt = [shader](const char *name, int value)
+        {
+            if (shader->HasUniform(name))
+            {
+                shader->SetUniform(name, value);
+            }
+        };
+
         const auto setTexture = [shader](const char *name, Texture *texture, int slot)
         {
             if (texture && shader->HasUniform(name))
@@ -76,6 +84,7 @@ namespace PlutoGE::render
         {
             setTexture("uMetallicTexture", m_config.metallicTexture, 2);
             setFloat("uHasMetallicTexture", 1.0f);
+            setInt("uMetallicTextureChannel", static_cast<int>(m_config.metallicTextureChannel));
         }
         else
         {
@@ -86,6 +95,7 @@ namespace PlutoGE::render
         {
             setTexture("uRoughnessTexture", m_config.roughnessTexture, 3);
             setFloat("uHasRoughnessTexture", 1.0f);
+            setInt("uRoughnessTextureChannel", static_cast<int>(m_config.roughnessTextureChannel));
         }
         else
         {

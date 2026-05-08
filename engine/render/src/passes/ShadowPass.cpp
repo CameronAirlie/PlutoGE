@@ -220,7 +220,7 @@ namespace PlutoGE::render
 
                         m_shadowPassShader->SetUniform("uModel", command.model);
                         command.material->Bind(m_shadowPassShader);
-                        command.mesh->Draw();
+                        command.mesh->DrawSubmesh(command.submeshIndex);
                     }
                 }
 
@@ -255,7 +255,7 @@ namespace PlutoGE::render
 
                 m_shadowPassShader->SetUniform("uModel", command.model);
                 command.material->Bind(m_shadowPassShader);
-                command.mesh->Draw();
+                command.mesh->DrawSubmesh(command.submeshIndex);
             }
         }
 

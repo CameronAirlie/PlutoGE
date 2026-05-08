@@ -48,6 +48,7 @@ namespace PlutoGE::render
         Material *material; // Material to use for rendering
         Mesh *mesh;         // Mesh to render
         glm::mat4 model;    // Model matrix for the object (position, rotation, scale)
+        uint32_t submeshIndex = 0;
     };
 
     struct GpuPassTiming

@@ -40,7 +40,7 @@ namespace PlutoGE::render
             m_geometryPassShader->SetUniform("uModel", command.model);
 
             command.material->Bind(m_geometryPassShader);
-            command.mesh->Draw();
+            command.mesh->DrawSubmesh(command.submeshIndex);
         }
 
         m_geometryPassShader->Unbind();

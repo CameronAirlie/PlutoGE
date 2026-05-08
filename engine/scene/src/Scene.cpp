@@ -1,11 +1,23 @@
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/Entity.h"
+#include "PlutoGE/scene/components/LightComponent.h"
 #include <algorithm>
 #include <iostream>
 #include <unordered_set>
 
 namespace PlutoGE::scene
 {
+    void Scene::MarkShadowLightsDirty()
+    {
+        for (auto *light : m_lights)
+        {
+            if (light && light->castsShadows)
+            {
+                light->isDirty = true;
+            }
+        }
+    }
+
     Entity *Scene::AddEntity(std::unique_ptr<Entity> entity, Entity *parent)
     {
         if (!entity)

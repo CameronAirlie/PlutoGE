@@ -43,9 +43,9 @@ namespace PlutoGE::scene
         glm::vec3 GetScale() const { return m_transform.scale; }
         glm::vec3 GetWorldScale() const;
 
-        void SetPosition(const glm::vec3 &position) { m_transform.position = position; }
-        void SetRotation(const glm::vec3 &rotation) { m_transform.rotation = rotation; }
-        void SetScale(const glm::vec3 &scale) { m_transform.scale = scale; }
+        void SetPosition(const glm::vec3 &position);
+        void SetRotation(const glm::vec3 &rotation);
+        void SetScale(const glm::vec3 &scale);
 
         void Update(float deltaTime); // Update function to be called every frame (for components to update)
 
@@ -210,6 +210,7 @@ namespace PlutoGE::scene
         void EnsureComponentBucketSize(ComponentTypeID typeID);
         void DetachComponent(Component *component);
         void SetSceneRecursive(Scene *scene);
+        void MarkShadowSceneDirty();
 
         bool m_isActive = true;          // Whether the entity is active (can be used to enable/disable rendering and updates)
         Transform m_transform;           // Local transform of the entity

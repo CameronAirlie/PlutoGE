@@ -40,7 +40,7 @@ namespace PlutoGE::scene
         std::vector<Property> Serialize() const override;
         void Deserialize(const std::vector<Property> &properties) override;
 
-        void SetMesh(render::Mesh *mesh) { m_mesh = mesh; }
+        void SetMesh(render::Mesh *mesh);
         render::Mesh *GetMesh() const { return m_mesh; }
 
         void SetMaterial(render::Material *material)

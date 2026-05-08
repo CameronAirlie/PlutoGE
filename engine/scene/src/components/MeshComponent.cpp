@@ -1,5 +1,6 @@
 #include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/scene/Entity.h"
+#include "PlutoGE/scene/Scene.h"
 
 #include "PlutoGE/render/Renderer.h"
 
@@ -10,6 +11,24 @@
 
 namespace PlutoGE::scene
 {
+    void MeshComponent::SetMesh(render::Mesh *mesh)
+    {
+        if (m_mesh == mesh)
+        {
+            return;
+        }
+
+        m_mesh = mesh;
+
+        if (auto *owner = GetOwner())
+        {
+            if (auto *scene = owner->GetScene())
+            {
+                scene->MarkShadowLightsDirty();
+            }
+        }
+    }
+
     std::vector<Property> MeshComponent::Serialize() const
     {
         return {};

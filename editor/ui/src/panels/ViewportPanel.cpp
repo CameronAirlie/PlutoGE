@@ -101,6 +101,11 @@ namespace PlutoGE::ui
         renderer.EndFrame(m_renderTarget);
     }
 
+    bool ViewportPanel::ShouldRenderFrame() const
+    {
+        return IsOpen() && m_renderTarget && m_renderTarget->IsInitialized() && m_renderTarget->GetWidth() > 0 && m_renderTarget->GetHeight() > 0;
+    }
+
     void ViewportPanel::ClearFrame()
     {
         if (!m_renderTarget || !m_renderTarget->IsInitialized())

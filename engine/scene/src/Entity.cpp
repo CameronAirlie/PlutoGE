@@ -2,6 +2,7 @@
 #include "PlutoGE/scene/components/Component.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/LightComponent.h"
+#include "PlutoGE/scene/components/MeshComponent.h"
 
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -10,6 +11,47 @@
 
 namespace PlutoGE::scene
 {
+    void Entity::MarkShadowSceneDirty()
+    {
+        if (m_scene)
+        {
+            m_scene->MarkShadowLightsDirty();
+        }
+    }
+
+    void Entity::SetPosition(const glm::vec3 &position)
+    {
+        if (m_transform.position == position)
+        {
+            return;
+        }
+
+        m_transform.position = position;
+        MarkShadowSceneDirty();
+    }
+
+    void Entity::SetRotation(const glm::vec3 &rotation)
+    {
+        if (m_transform.rotation == rotation)
+        {
+            return;
+        }
+
+        m_transform.rotation = rotation;
+        MarkShadowSceneDirty();
+    }
+
+    void Entity::SetScale(const glm::vec3 &scale)
+    {
+        if (m_transform.scale == scale)
+        {
+            return;
+        }
+
+        m_transform.scale = scale;
+        MarkShadowSceneDirty();
+    }
+
     void Entity::AddChild(Entity *child)
     {
         if (!child)
@@ -90,6 +132,11 @@ namespace PlutoGE::scene
             {
                 m_scene->AddLight(&lightComponent->GetLight());
             }
+
+            if (dynamic_cast<MeshComponent *>(component))
+            {
+                m_scene->MarkShadowLightsDirty();
+            }
         }
 
         return component;
@@ -107,6 +154,11 @@ namespace PlutoGE::scene
             if (auto *lightComponent = dynamic_cast<LightComponent *>(component))
             {
                 m_scene->RemoveLight(&lightComponent->GetLight());
+            }
+
+            if (dynamic_cast<MeshComponent *>(component))
+            {
+                m_scene->MarkShadowLightsDirty();
             }
         }
 

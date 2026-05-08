@@ -20,6 +20,12 @@ namespace
     constexpr int kProjectedShadowPassMode = 0;
     constexpr int kPointShadowPassMode = 1;
 
+    struct FrustumPlane
+    {
+        glm::vec3 normal{0.0f};
+        float distance = 0.0f;
+    };
+
     glm::vec3 ResolveUpVector(const glm::vec3 &direction)
     {
         return std::abs(direction.y) > 0.99f ? glm::vec3(0.0f, 0.0f, 1.0f) : glm::vec3(0.0f, 1.0f, 0.0f);
@@ -139,6 +145,77 @@ namespace
             projection * glm::lookAt(position, position + glm::vec3(0.0f, 0.0f, -1.0f), glm::vec3(0.0f, -1.0f, 0.0f)),
         };
     }
+
+    std::array<FrustumPlane, 6> ExtractFrustumPlanes(const glm::mat4 &viewProjection)
+    {
+        std::array<FrustumPlane, 6> planes = {
+            FrustumPlane{glm::vec3(viewProjection[0][3] + viewProjection[0][0], viewProjection[1][3] + viewProjection[1][0], viewProjection[2][3] + viewProjection[2][0]), viewProjection[3][3] + viewProjection[3][0]},
+            FrustumPlane{glm::vec3(viewProjection[0][3] - viewProjection[0][0], viewProjection[1][3] - viewProjection[1][0], viewProjection[2][3] - viewProjection[2][0]), viewProjection[3][3] - viewProjection[3][0]},
+            FrustumPlane{glm::vec3(viewProjection[0][3] + viewProjection[0][1], viewProjection[1][3] + viewProjection[1][1], viewProjection[2][3] + viewProjection[2][1]), viewProjection[3][3] + viewProjection[3][1]},
+            FrustumPlane{glm::vec3(viewProjection[0][3] - viewProjection[0][1], viewProjection[1][3] - viewProjection[1][1], viewProjection[2][3] - viewProjection[2][1]), viewProjection[3][3] - viewProjection[3][1]},
+            FrustumPlane{glm::vec3(viewProjection[0][3] + viewProjection[0][2], viewProjection[1][3] + viewProjection[1][2], viewProjection[2][3] + viewProjection[2][2]), viewProjection[3][3] + viewProjection[3][2]},
+            FrustumPlane{glm::vec3(viewProjection[0][3] - viewProjection[0][2], viewProjection[1][3] - viewProjection[1][2], viewProjection[2][3] - viewProjection[2][2]), viewProjection[3][3] - viewProjection[3][2]},
+        };
+
+        for (auto &plane : planes)
+        {
+            const float length = glm::length(plane.normal);
+            if (length > 1e-6f)
+            {
+                plane.normal /= length;
+                plane.distance /= length;
+            }
+        }
+
+        return planes;
+    }
+
+    PlutoGE::render::MeshBounds GetWorldBounds(const PlutoGE::render::RenderCommand &command)
+    {
+        if (!command.mesh)
+        {
+            return {};
+        }
+
+        const auto &bounds = command.submeshIndex < command.mesh->GetSubmeshCount()
+                                 ? command.mesh->GetSubmesh(command.submeshIndex).bounds
+                                 : command.mesh->GetBounds();
+        const glm::vec3 worldCenter = glm::vec3(command.model * glm::vec4(bounds.center, 1.0f));
+        const float scaleX = glm::length(glm::vec3(command.model[0]));
+        const float scaleY = glm::length(glm::vec3(command.model[1]));
+        const float scaleZ = glm::length(glm::vec3(command.model[2]));
+
+        return PlutoGE::render::MeshBounds{
+            .center = worldCenter,
+            .radius = bounds.radius * std::max(scaleX, std::max(scaleY, scaleZ)),
+        };
+    }
+
+    bool IsBoundsVisible(const PlutoGE::render::MeshBounds &bounds, const std::array<FrustumPlane, 6> &planes)
+    {
+        for (const auto &plane : planes)
+        {
+            if (glm::dot(plane.normal, bounds.center) + plane.distance < -bounds.radius)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    bool IsCommandRelevantForPointLight(const PlutoGE::render::RenderCommand &command, const PlutoGE::scene::Light &light)
+    {
+        const auto bounds = GetWorldBounds(command);
+        const float maxDistance = glm::max(light.range, 0.1f) + bounds.radius;
+        const glm::vec3 offset = bounds.center - light.position;
+        return glm::dot(offset, offset) <= maxDistance * maxDistance;
+    }
+
+    bool IsCommandRelevantForProjectedLight(const PlutoGE::render::RenderCommand &command, const std::array<FrustumPlane, 6> &planes)
+    {
+        return IsBoundsVisible(GetWorldBounds(command), planes);
+    }
 }
 
 namespace PlutoGE::render
@@ -172,15 +249,9 @@ namespace PlutoGE::render
 
         for (auto *light : *ctx.lights)
         {
-            if (!light || light->isStatic && !light->isDirty)
+            if (!light || !light->castsShadows || !light->isDirty)
             {
-                continue; // Skip static lights that are not dirty
-            }
-
-            // Update shadow map for dynamic or dirty static lights
-            if (light->isStatic)
-            {
-                light->isDirty = false; // Clear dirty flag after updating
+                continue;
             }
 
             auto *shadowMap = light->shadowMap.get();
@@ -199,6 +270,7 @@ namespace PlutoGE::render
                 m_shadowPassShader->SetUniform("uShadowPassMode", kPointShadowPassMode);
                 m_shadowPassShader->SetUniform("uLightPosition", light->position);
                 m_shadowPassShader->SetUniform("uFarPlane", farPlane);
+                Material *boundMaterial = nullptr;
 
                 for (unsigned int face = 0; face < shadowMatrices.size(); ++face)
                 {
@@ -213,23 +285,32 @@ namespace PlutoGE::render
 
                     for (const auto &command : *ctx.renderCommands)
                     {
-                        if (!command.mesh || !command.material)
+                        if (!command.mesh || !command.material || !IsCommandRelevantForPointLight(command, *light))
                         {
                             continue;
                         }
 
                         m_shadowPassShader->SetUniform("uModel", command.model);
-                        command.material->Bind(m_shadowPassShader);
+                        if (command.material != boundMaterial)
+                        {
+                            command.material->Bind(m_shadowPassShader);
+                            boundMaterial = command.material;
+                        }
+
                         command.mesh->DrawSubmesh(command.submeshIndex);
                     }
                 }
 
+                light->isDirty = false;
                 continue;
             }
 
             const glm::mat4 shadowMatrix = light->type == scene::LightType::Directional
                                                ? BuildDirectionalShadowMatrix(*light, *ctx.renderCommands)
                                                : BuildSpotShadowMatrix(*light);
+            const auto shadowFrustumPlanes = light->type == scene::LightType::Directional
+                                                 ? std::array<FrustumPlane, 6>{}
+                                                 : ExtractFrustumPlanes(shadowMatrix);
 
             light->shadowMatrix = shadowMatrix;
             light->shadowFarPlane = glm::max(light->range, 0.1f);
@@ -245,6 +326,7 @@ namespace PlutoGE::render
             glClear(GL_DEPTH_BUFFER_BIT);
             m_shadowPassShader->SetUniform("uShadowPassMode", kProjectedShadowPassMode);
             m_shadowPassShader->SetUniform("uLightSpaceMatrix", shadowMatrix);
+            Material *boundMaterial = nullptr;
 
             for (const auto &command : *ctx.renderCommands)
             {
@@ -253,10 +335,22 @@ namespace PlutoGE::render
                     continue;
                 }
 
+                if (light->type == scene::LightType::Spot && !IsCommandRelevantForProjectedLight(command, shadowFrustumPlanes))
+                {
+                    continue;
+                }
+
                 m_shadowPassShader->SetUniform("uModel", command.model);
-                command.material->Bind(m_shadowPassShader);
+                if (command.material != boundMaterial)
+                {
+                    command.material->Bind(m_shadowPassShader);
+                    boundMaterial = command.material;
+                }
+
                 command.mesh->DrawSubmesh(command.submeshIndex);
             }
+
+            light->isDirty = false;
         }
 
         m_shadowPassShader->Unbind();

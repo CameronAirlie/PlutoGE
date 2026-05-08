@@ -77,3 +77,16 @@ add_library(PlutoGE::tinygltf ALIAS PlutoGE_tinygltf)
 target_include_directories(PlutoGE_tinygltf INTERFACE
     ${tinygltf_SOURCE_DIR}
 )
+
+FetchContent_Declare(
+    meshoptimizer
+    GIT_REPOSITORY https://github.com/zeux/meshoptimizer.git
+    GIT_TAG        master
+)
+FetchContent_MakeAvailable(meshoptimizer)
+add_library(PlutoGE_meshoptimizer INTERFACE)
+add_library(PlutoGE::meshoptimizer ALIAS PlutoGE_meshoptimizer)
+target_link_libraries(PlutoGE_meshoptimizer INTERFACE meshoptimizer)
+target_include_directories(PlutoGE_meshoptimizer INTERFACE
+    ${meshoptimizer_SOURCE_DIR}/src
+)

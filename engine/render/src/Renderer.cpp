@@ -30,6 +30,25 @@ namespace PlutoGE::render
         constexpr std::size_t kLightingAmbientStage = 1;
         constexpr std::size_t kLightingAccumulationStage = 2;
 
+        void SortRenderCommands(std::vector<RenderCommand> &renderCommands)
+        {
+            std::sort(renderCommands.begin(), renderCommands.end(),
+                      [](const RenderCommand &a, const RenderCommand &b)
+                      {
+                          if (a.material != b.material)
+                          {
+                              return a.material < b.material;
+                          }
+
+                          if (a.mesh != b.mesh)
+                          {
+                              return a.mesh < b.mesh;
+                          }
+
+                          return a.submeshIndex < b.submeshIndex;
+                      });
+        }
+
         bool EnsureRenderTargetSize(RenderTarget *renderTarget, int width, int height)
         {
             if (!renderTarget)
@@ -137,6 +156,8 @@ namespace PlutoGE::render
         if (!m_isInitialized || !m_shadowPass)
             return;
 
+        SortRenderCommands(m_renderCommands);
+
         RenderContext ctx{
             .renderer = this,
             .cameraData = {},
@@ -187,11 +208,7 @@ namespace PlutoGE::render
 
         auto cameraData = cameraComponent.GetCameraData(renderWidth, renderHeight);
 
-        sort(m_renderCommands.begin(), m_renderCommands.end(),
-             [](const RenderCommand &a, const RenderCommand &b)
-             {
-                 return a.material < b.material;
-             });
+        SortRenderCommands(m_renderCommands);
 
         RenderContext ctx{
             .renderer = this,

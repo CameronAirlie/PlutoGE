@@ -36,6 +36,7 @@ namespace PlutoGE::ui
         void ClearFrame();
         void RenderFrame(scene::CameraComponent &cameraComponent);
         void Shutdown() override;
+        bool ShouldRenderFrame() const;
 
         render::RenderTarget *GetRenderTarget() const { return m_renderTarget; }
         static const char *GetDebugViewLabel(render::PostProcessDebugView debugView);

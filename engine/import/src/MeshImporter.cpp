@@ -9,6 +9,7 @@
 // #define TINYGLTF_NO_STB_IMAGE
 #define TINYGLTF_NO_STB_IMAGE_WRITE
 #include <tiny_gltf.h>
+#include <meshoptimizer.h>
 
 #include <algorithm>
 #include <array>
@@ -301,6 +302,95 @@ namespace PlutoGE::assetimport
             }
         }
 
+        void OptimizeMeshData(render::MeshData &meshData, const std::vector<render::Submesh> &submeshes)
+        {
+            if (meshData.vertices.empty() || meshData.indices.empty())
+            {
+                return;
+            }
+
+            std::vector<unsigned int> remap(meshData.indices.size());
+            const size_t vertexCount = meshopt_generateVertexRemap(
+                remap.data(),
+                meshData.indices.data(),
+                meshData.indices.size(),
+                meshData.vertices.data(),
+                meshData.vertices.size(),
+                sizeof(render::MeshVertexData));
+
+            std::vector<render::MeshVertexData> remappedVertices(vertexCount);
+            std::vector<unsigned int> remappedIndices(meshData.indices.size());
+            meshopt_remapVertexBuffer(
+                remappedVertices.data(),
+                meshData.vertices.data(),
+                meshData.vertices.size(),
+                sizeof(render::MeshVertexData),
+                remap.data());
+            meshopt_remapIndexBuffer(
+                remappedIndices.data(),
+                meshData.indices.data(),
+                meshData.indices.size(),
+                remap.data());
+
+            meshData.vertices = std::move(remappedVertices);
+            meshData.indices = std::move(remappedIndices);
+
+            for (const auto &submesh : submeshes)
+            {
+                if (submesh.indexCount == 0)
+                {
+                    continue;
+                }
+
+                auto *submeshIndices = meshData.indices.data() + submesh.indexOffset;
+                meshopt_optimizeVertexCache(submeshIndices, submeshIndices, submesh.indexCount, meshData.vertices.size());
+                meshopt_optimizeOverdraw(
+                    submeshIndices,
+                    submeshIndices,
+                    submesh.indexCount,
+                    reinterpret_cast<const float *>(meshData.vertices.data()),
+                    meshData.vertices.size(),
+                    sizeof(render::MeshVertexData),
+                    1.05f);
+            }
+
+            meshopt_optimizeVertexFetch(
+                meshData.vertices.data(),
+                meshData.indices.data(),
+                meshData.indices.size(),
+                meshData.vertices.data(),
+                meshData.vertices.size(),
+                sizeof(render::MeshVertexData));
+        }
+
+        void MergeAdjacentSubmeshes(std::vector<render::Submesh> &submeshes)
+        {
+            if (submeshes.empty())
+            {
+                return;
+            }
+
+            std::vector<render::Submesh> mergedSubmeshes;
+            mergedSubmeshes.reserve(submeshes.size());
+            mergedSubmeshes.push_back(submeshes.front());
+
+            for (size_t index = 1; index < submeshes.size(); ++index)
+            {
+                auto &previous = mergedSubmeshes.back();
+                const auto &current = submeshes[index];
+                const bool isAdjacent = previous.indexOffset + previous.indexCount == current.indexOffset;
+                if (isAdjacent && previous.materialIndex == current.materialIndex)
+                {
+                    previous.indexCount += current.indexCount;
+                    continue;
+                }
+
+                mergedSubmeshes.push_back(current);
+            }
+
+            submeshes = std::move(mergedSubmeshes);
+        }
+
         void AppendPrimitive(
             const tinygltf::Model &model,
             const tinygltf::Primitive &primitive,
@@ -540,6 +630,8 @@ namespace PlutoGE::assetimport
             }
 
             FinalizeMissingNormals(parsedMeshAsset.meshData);
+            MergeAdjacentSubmeshes(parsedMeshAsset.submeshes);
+            OptimizeMeshData(parsedMeshAsset.meshData, parsedMeshAsset.submeshes);
             return parsedMeshAsset;
         }
     }

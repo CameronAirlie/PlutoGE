@@ -7,17 +7,19 @@ namespace PlutoGE::ui
     struct PanelConfig
     {
         std::string name;
+        bool openByDefault = true;
     };
 
     class Panel
     {
     public:
-        Panel(PanelConfig config) : m_config(config) {}
+        Panel(PanelConfig config) : m_config(config), m_isOpen(config.openByDefault) {}
         virtual ~Panel() = default;
 
         bool BeginPanel();
         void EndPanel();
         void Update();
+        bool IsOpen() const { return m_isOpen; }
 
         virtual void Initialize() {} // Optional initialization logic for the panel
         virtual void Render() = 0;   // Pure virtual function to render the panel

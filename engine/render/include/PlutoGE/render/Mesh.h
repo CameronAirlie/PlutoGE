@@ -6,6 +6,7 @@
 #include <vector>
 #include <array>
 #include <iostream>
+#include <limits>
 
 namespace PlutoGE::render
 {
@@ -24,11 +25,18 @@ namespace PlutoGE::render
         std::vector<unsigned int> indices;    // Index data for indexed drawing
     };
 
+    struct MeshBounds
+    {
+        glm::vec3 center{0.0f};
+        float radius = 0.0f;
+    };
+
     struct Submesh
     {
         uint32_t indexOffset = 0;
         uint32_t indexCount = 0;
         uint32_t materialIndex = 0;
+        MeshBounds bounds;
     };
 
     struct MeshConfig
@@ -45,6 +53,7 @@ namespace PlutoGE::render
         {
             m_meshData = m_config.data; // Store mesh data for buffer initialization
             GenerateTangents(m_meshData);
+            m_bounds = ComputeBounds(m_meshData);
 
             if (m_config.submeshes.empty() && !m_meshData.indices.empty())
             {
@@ -53,6 +62,11 @@ namespace PlutoGE::render
                     .indexCount = static_cast<uint32_t>(m_meshData.indices.size()),
                     .materialIndex = 0,
                 });
+            }
+
+            for (auto &submesh : m_config.submeshes)
+            {
+                submesh.bounds = ComputeBounds(m_meshData, submesh.indexOffset, submesh.indexCount);
             }
         }
 
@@ -239,6 +253,7 @@ namespace PlutoGE::render
         size_t GetIndexCount() const { return m_config.data.indices.size(); }
         size_t GetSubmeshCount() const { return m_config.submeshes.size(); }
         const Submesh &GetSubmesh(size_t index) const { return m_config.submeshes.at(index); }
+        const MeshBounds &GetBounds() const { return m_bounds; }
 
         GLuint GetVAO() const { return m_VAO; }
         GLuint GetVBO() const { return m_VBO; }
@@ -264,6 +279,50 @@ namespace PlutoGE::render
                                                 ? glm::vec3(0.0f, 0.0f, 1.0f)
                                                 : glm::vec3(0.0f, 1.0f, 0.0f);
             return glm::normalize(glm::cross(referenceAxis, normal));
+        }
+
+        static MeshBounds ComputeBounds(const MeshData &meshData)
+        {
+            return ComputeBounds(meshData, 0, static_cast<uint32_t>(meshData.indices.size()));
+        }
+
+        static MeshBounds ComputeBounds(const MeshData &meshData, uint32_t indexOffset, uint32_t indexCount)
+        {
+            MeshBounds bounds;
+            if (meshData.vertices.empty() || meshData.indices.empty() || indexCount == 0 || indexOffset + indexCount > meshData.indices.size())
+            {
+                return bounds;
+            }
+
+            glm::vec3 minBounds(std::numeric_limits<float>::max());
+            glm::vec3 maxBounds(std::numeric_limits<float>::lowest());
+            for (uint32_t index = indexOffset; index < indexOffset + indexCount; ++index)
+            {
+                const auto vertexIndex = meshData.indices[index];
+                if (vertexIndex >= meshData.vertices.size())
+                {
+                    continue;
+                }
+
+                const glm::vec3 position = ToVec3(meshData.vertices[vertexIndex].position);
+                minBounds = glm::min(minBounds, position);
+                maxBounds = glm::max(maxBounds, position);
+            }
+
+            bounds.center = (minBounds + maxBounds) * 0.5f;
+            for (uint32_t index = indexOffset; index < indexOffset + indexCount; ++index)
+            {
+                const auto vertexIndex = meshData.indices[index];
+                if (vertexIndex >= meshData.vertices.size())
+                {
+                    continue;
+                }
+
+                const glm::vec3 position = ToVec3(meshData.vertices[vertexIndex].position);
+                bounds.radius = std::max(bounds.radius, glm::length(position - bounds.center));
+            }
+
+            return bounds;
         }
 
         static void GenerateTangents(MeshData &meshData)
@@ -353,6 +412,7 @@ namespace PlutoGE::render
         GLuint m_VBO = 0;    // Vertex Buffer Object
         GLuint m_EBO = 0;    // Element Buffer Object (for indexed drawing)
         MeshData m_meshData; // Mesh data (vertices and indices)
+        MeshBounds m_bounds;
 
         void Initialize()
         {

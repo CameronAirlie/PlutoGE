@@ -180,6 +180,7 @@ namespace PlutoGE::ui
 
         ViewportPanelConfig viewportConfig2;
         viewportConfig2.name = "Viewport 2";
+        viewportConfig2.openByDefault = false;
         viewportConfig2.clearColor = glm::vec4(0.15f, 0.1f, 0.1f, 1.0f);
         auto viewportPanel2 = new ViewportPanel(viewportConfig2);
         viewportPanel2->Initialize();
@@ -211,13 +212,18 @@ namespace PlutoGE::ui
 
             camera.SetFOV(45.0f + 10.0f * sinf(static_cast<float>(glfwGetTime()))); // Animate FOV for demonstration
 
-            auto lights = scene->GetLights();
-            renderer.UpdateShadowMaps(lights);
-
             auto *cameraComponent = cameraEntityPtr->GetComponent<scene::CameraComponent>();
             auto *cameraComponent2 = cameraEntity2Ptr->GetComponent<scene::CameraComponent>();
+            const bool shouldRenderViewport1 = viewportPanel->ShouldRenderFrame() && IsCameraActiveInScene(scene.get(), cameraComponent);
+            const bool shouldRenderViewport2 = viewportPanel2->ShouldRenderFrame() && IsCameraActiveInScene(scene.get(), cameraComponent2);
 
-            if (IsCameraActiveInScene(scene.get(), cameraComponent))
+            if (shouldRenderViewport1 || shouldRenderViewport2)
+            {
+                auto lights = scene->GetLights();
+                renderer.UpdateShadowMaps(lights);
+            }
+
+            if (shouldRenderViewport1)
             {
                 viewportPanel->RenderFrame(*cameraComponent);
             }
@@ -226,7 +232,7 @@ namespace PlutoGE::ui
                 viewportPanel->ClearFrame();
             }
 
-            if (IsCameraActiveInScene(scene.get(), cameraComponent2))
+            if (shouldRenderViewport2)
             {
                 viewportPanel2->RenderFrame(*cameraComponent2);
             }

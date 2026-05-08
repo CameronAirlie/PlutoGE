@@ -63,7 +63,6 @@ namespace PlutoGE::scene
         }
 
         m_config.intensity = intensity;
-        MarkDirty();
     }
 
     void LightComponent::SetColor(const glm::vec3 &color)
@@ -74,7 +73,6 @@ namespace PlutoGE::scene
         }
 
         m_config.color = color;
-        MarkDirty();
     }
 
     void LightComponent::SetDirection(const glm::vec3 &direction)
@@ -194,17 +192,23 @@ namespace PlutoGE::scene
         }
 
         const GLenum expectedTextureType = GetExpectedShadowTextureType(m_config);
+        bool recreatedShadowMap = false;
         if (m_config.shadowMap && m_config.shadowMap->GetType() != expectedTextureType)
         {
             m_config.shadowMap.reset();
+            recreatedShadowMap = true;
         }
 
         if (!m_config.shadowMap)
         {
             m_config.shadowMap = CreateShadowTextureForLight(m_config);
+            recreatedShadowMap = true;
         }
 
-        MarkDirty();
+        if (recreatedShadowMap)
+        {
+            MarkDirty();
+        }
     }
 
     void LightComponent::Update(float deltaTime)
@@ -233,7 +237,5 @@ namespace PlutoGE::scene
                 MarkDirty();
             }
         }
-
-        Initialize();
     }
 }

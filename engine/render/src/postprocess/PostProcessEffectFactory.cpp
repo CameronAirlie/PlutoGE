@@ -1,5 +1,6 @@
 #include "PlutoGE/render/postprocess/PostProcessEffectFactory.h"
 
+#include "PlutoGE/render/postprocess/FXAAEffect.h"
 #include "PlutoGE/render/postprocess/GammaCorrectionEffect.h"
 #include "PlutoGE/render/postprocess/IPostProcessEffect.h"
 #include "PlutoGE/render/postprocess/SceneCompositeEffect.h"
@@ -12,6 +13,7 @@ namespace PlutoGE::render
     {
         const std::vector<std::string> kRegisteredTypes = {
             "SceneComposite",
+            "FXAA",
             "GammaCorrection",
         };
     }
@@ -26,6 +28,11 @@ namespace PlutoGE::render
         if (typeName == "GammaCorrection")
         {
             return std::make_unique<GammaCorrectionEffect>();
+        }
+
+        if (typeName == "FXAA")
+        {
+            return std::make_unique<FXAAEffect>();
         }
 
         return nullptr;

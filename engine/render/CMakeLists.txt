@@ -9,6 +9,7 @@ add_library(PlutoGERender
     src/Material.cpp
     src/postprocess/ShaderPostProcessEffect.cpp
     src/postprocess/SceneCompositeEffect.cpp
+    src/postprocess/FXAAEffect.cpp
     src/postprocess/GammaCorrectionEffect.cpp
     src/postprocess/PostProcessEffectFactory.cpp
     src/passes/GeometryPass.cpp

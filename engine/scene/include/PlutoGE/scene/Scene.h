@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <memory>
 #include <vector>
 #include <string>
 
@@ -18,7 +19,7 @@ namespace PlutoGE::scene
         Scene() = default;
         ~Scene() = default;
 
-        void AddEntity(Entity *entity, Entity *parent = nullptr);
+        Entity *AddEntity(std::unique_ptr<Entity> entity, Entity *parent = nullptr);
         void RemoveEntity(Entity *entity);
         std::vector<Entity *> GetRootEntities() const { return m_rootEntities; }
 
@@ -44,8 +45,10 @@ namespace PlutoGE::scene
 
     private:
         std::string m_name;
+        std::vector<std::unique_ptr<Entity>> m_entityStorage;
         std::vector<Entity *> m_rootEntities;
         std::vector<Light *> m_lights;
+        void CollectEntitySubtree(Entity *entity, std::vector<Entity *> &entities) const;
         bool RemoveEntityRecursive(Entity *current, Entity *target);
     };
 }

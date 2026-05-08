@@ -1,12 +1,10 @@
 #pragma once
 
 #include "PlutoGE/scene/components/Component.h"
+#include "PlutoGE/render/Texture.h"
 #include <glm/glm.hpp>
 
-namespace PlutoGE::render
-{
-    class Texture;
-}
+#include <memory>
 
 namespace PlutoGE::scene
 {
@@ -22,32 +20,35 @@ namespace PlutoGE::scene
     {
         LightType type = LightType::Point; // Type of the light (point, directional, spot)
         glm::vec3 position{0.0f, 0.0f, 0.0f};
-        glm::vec3 color{1.0f, 1.0f, 1.0f};      // Color of the light (default to white)
-        float intensity = 1.0f;                 // Intensity of the light (default to 1.0)
-        float range = 10.0f;                    // Range of the light (for point and spot lights)
-        glm::vec3 direction{0.0f, -1.0f, 0.0f}; // Direction of the light (for directional and spot lights)
-        render::Texture *shadowMap = nullptr;   // Pointer to the shadow map texture (if any)
-        glm::mat4 shadowMatrix{1.0f};           // Light-space matrix for projected shadow maps
-        float shadowFarPlane = 0.0f;            // Far plane used when sampling point-light shadows
-        bool castsShadows = false;              // Whether the light casts shadows
-        int shadowTextureType = 0;              // 0 = none, 1 = projected 2D, 2 = point cubemap
-        int shadowMapIndex = -1;                // Sampler array index used by the lighting shader
-        int shadowTextureSlot = -1;             // Actual texture unit bound for this light's shadow map
+        glm::vec3 color{1.0f, 1.0f, 1.0f};          // Color of the light (default to white)
+        float intensity = 1.0f;                     // Intensity of the light (default to 1.0)
+        float range = 10.0f;                        // Range of the light (for point and spot lights)
+        glm::vec3 direction{0.0f, -1.0f, 0.0f};     // Direction of the light (for directional and spot lights)
+        std::unique_ptr<render::Texture> shadowMap; // Owned shadow map texture (if any)
+        glm::mat4 shadowMatrix{1.0f};               // Light-space matrix for projected shadow maps
+        float shadowFarPlane = 0.0f;                // Far plane used when sampling point-light shadows
+        bool castsShadows = false;                  // Whether the light casts shadows
+        bool isStatic = false;                      // Static lights only refresh shadow data when dirty
+        bool isDirty = true;                        // Dirty lights need their shadow data refreshed
     };
 
     class LightComponent : public TypedComponent<LightComponent>
     {
     public:
         LightComponent() = default;
-        ~LightComponent() override = default;
+        ~LightComponent() override;
 
-        void SetLightType(LightType type) { m_config.type = type; }
-        void SetColor(const glm::vec3 &color) { m_config.color = color; }
-        void SetIntensity(float intensity) { m_config.intensity = intensity; }
-        void SetRange(float range) { m_config.range = range; }
-        void SetDirection(const glm::vec3 &direction) { m_config.direction = direction; }
-        void SetCastsShadows(bool castsShadows) { m_config.castsShadows = castsShadows; }
-        void SetShadowMap(render::Texture *shadowMap) { m_config.shadowMap = shadowMap; }
+        void SetLightType(LightType type);
+        void SetColor(const glm::vec3 &color);
+        void SetIntensity(float intensity);
+        void SetRange(float range);
+        void SetDirection(const glm::vec3 &direction);
+        void SetStatic(bool isStatic);
+        void SetCastsShadows(bool castsShadows);
+        void SetShadowMap(render::Texture *shadowMap);
+        void MarkDirty();
+        void ClearDirty();
+        bool IsDirty() const;
 
         std::vector<Property> Serialize() const override;
         void Deserialize(const std::vector<Property> &properties) override;

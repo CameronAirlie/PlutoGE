@@ -59,6 +59,15 @@ namespace PlutoGE::ui
         m_panelManager.InitializeImGui(&m_engine.GetWindow());
     }
 
+    glm::vec3 randomColour()
+    {
+        // maximum value for each color channel is 255, so we divide by 255 to get a value between 0 and 1
+        return glm::vec3(
+            static_cast<float>(rand()) / static_cast<float>(RAND_MAX),
+            static_cast<float>(rand()) / static_cast<float>(RAND_MAX),
+            static_cast<float>(rand()) / static_cast<float>(RAND_MAX));
+    }
+
     void EditorShell::Render()
     {
         auto &window = m_engine.GetWindow();
@@ -95,7 +104,7 @@ namespace PlutoGE::ui
         });
         cube->SetPosition(glm::vec3(0.0f, -1.0f, 0.0f));
         cube->SetScale(glm::vec3(10.0f, 0.1f, 10.0f));
-        scene->AddEntity(cube.get());
+        auto *cubeEntity = scene->AddEntity(std::move(cube));
 
         auto cube2 = std::make_unique<scene::Entity>(scene::EntityConfig{
             .name = "Cube 2",
@@ -112,12 +121,12 @@ namespace PlutoGE::ui
             .mesh = mesh2,
             .material = material2,
         });
-        scene->AddEntity(cube2.get());
+        scene->AddEntity(std::move(cube2));
 
         auto testEntity = std::make_unique<scene::Entity>(scene::EntityConfig{
             .name = "Test Entity",
         });
-        testEntity->SetParent(cube.get());
+        testEntity->SetParent(cubeEntity);
 
         auto cameraEntity = std::make_unique<scene::Entity>(scene::EntityConfig{
             .name = "Camera",
@@ -129,7 +138,7 @@ namespace PlutoGE::ui
         });
         cameraEntity->CreateComponent<scene::CameraComponent>(&camera);
         cameraEntity->SetPosition(glm::vec3(0.0f, 0.0f, 5.0f));
-        scene->AddEntity(cameraEntity.get());
+        auto *cameraEntityPtr = scene->AddEntity(std::move(cameraEntity));
 
         auto cameraEntity2 = std::make_unique<scene::Entity>(scene::EntityConfig{
             .name = "Camera 2",
@@ -141,26 +150,29 @@ namespace PlutoGE::ui
         });
         cameraEntity2->CreateComponent<scene::CameraComponent>(&camera2);
         cameraEntity2->SetPosition(glm::vec3(0.0f, 0.0f, 5.0f));
-        scene->AddEntity(cameraEntity2.get());
 
         auto cameraHolder = std::make_unique<scene::Entity>(scene::EntityConfig{
             .name = "Camera Holder",
         });
         cameraHolder->SetPosition(glm::vec3(0.0f, 0.0f, 0.0f));
-        scene->AddEntity(cameraHolder.get());
-        cameraEntity2->SetParent(cameraHolder.get());
+        auto *cameraHolderEntity = scene->AddEntity(std::move(cameraHolder));
+        auto *cameraEntity2Ptr = scene->AddEntity(std::move(cameraEntity2), cameraHolderEntity);
 
-        auto lightEntity = std::make_unique<scene::Entity>(scene::EntityConfig{
-            .name = "Key Light",
-        });
-        lightEntity->SetPosition(glm::vec3(2.5f, 2.0f, 3.0f));
-        auto *lightComponent = lightEntity->CreateComponent<scene::LightComponent>();
-        lightComponent->GetLight().color = glm::vec3(1.0f, 0.95f, 0.85f);
-        lightComponent->GetLight().intensity = 6.0f;
-        lightComponent->GetLight().range = 20.0f;
-        lightComponent->GetLight().castsShadows = true;
-        lightComponent->GetLight().type = scene::LightType::Point;
-        scene->AddEntity(lightEntity.get());
+        for (int i = 0; i < 10; ++i)
+        {
+            auto lightEntity = std::make_unique<scene::Entity>(scene::EntityConfig{
+                .name = "Key Light " + std::to_string(i),
+            });
+            auto positionOffset = (randomColour() - 1.0f) * 5.0f; // Random position offset for each light
+            lightEntity->SetPosition(glm::vec3(positionOffset.x, 5.0f, positionOffset.z));
+            auto *lightComponent = lightEntity->CreateComponent<scene::LightComponent>();
+            lightComponent->GetLight().color = randomColour(); // glm::vec3(1.0f, 0.95f, 0.85f);
+            lightComponent->GetLight().intensity = 1.0f;
+            lightComponent->GetLight().range = 20.0f;
+            lightComponent->GetLight().castsShadows = true;
+            lightComponent->GetLight().type = scene::LightType::Point;
+            scene->AddEntity(std::move(lightEntity));
+        }
 
         ViewportPanelConfig viewportConfig2;
         viewportConfig2.name = "Viewport 2";
@@ -200,8 +212,11 @@ namespace PlutoGE::ui
 
             // Rendering
 
-            auto *cameraComponent = cameraEntity->GetComponent<scene::CameraComponent>();
-            auto *cameraComponent2 = cameraEntity2->GetComponent<scene::CameraComponent>();
+            auto lights = scene->GetLights();
+            renderer.UpdateShadowMaps(lights);
+
+            auto *cameraComponent = cameraEntityPtr->GetComponent<scene::CameraComponent>();
+            auto *cameraComponent2 = cameraEntity2Ptr->GetComponent<scene::CameraComponent>();
 
             if (IsCameraActiveInScene(scene.get(), cameraComponent))
             {

@@ -66,6 +66,7 @@ namespace PlutoGE::render
 
         bool Initialize(const RendererConfig &config = RendererConfig());
         void BeginFrame(RenderTarget *renderTarget = nullptr);
+        void UpdateShadowMaps(std::vector<scene::Light *> lights = {});
         void RenderFrame(CameraData &cameraData, RenderTarget *renderTarget = nullptr, std::vector<scene::Light *> lights = {});
         void EndFrame(RenderTarget *renderTarget = nullptr);
         void Shutdown(RenderTarget *renderTarget = nullptr);
@@ -89,6 +90,7 @@ namespace PlutoGE::render
 
         void CleanupResources(RenderTarget *renderTarget = nullptr);
         RenderTarget *m_temporaryRenderTarget = nullptr; // Optional temporary render target for intermediate passes
+        IRenderPass *m_shadowPass = nullptr;
         std::vector<IRenderPass *> m_renderPasses;
         std::vector<RenderCommand> m_renderCommands;
     };

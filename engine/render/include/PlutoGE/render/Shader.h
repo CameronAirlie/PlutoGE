@@ -315,10 +315,9 @@ uniform sampler2D gPosition;
 uniform sampler2D gNormal;
 uniform sampler2D gAlbedoSpec;
 
-const int MAX_LIGHTS = 16;
-const int MAX_2D_SHADOWS = 8;
-const int MAX_CUBE_SHADOWS = 4;
 const float PI = 3.14159265359;
+const int PASS_MODE_AMBIENT = 0;
+const int LIGHT_TYPE_POINT = 0;
 
 struct Light {
     vec3 Position;
@@ -328,17 +327,15 @@ struct Light {
     vec3 Direction;
     int Type;
     int CastsShadows;
-    int ShadowTextureType;
-    int ShadowMapIndex;
     mat4 LightSpaceMatrix;
     float ShadowFarPlane;
 };
 
-uniform int uLightCount;
-uniform Light uLights[MAX_LIGHTS];
+uniform int uPassMode;
+uniform Light uLight;
 uniform vec3 uViewPos;
-uniform sampler2D uShadowMaps2D[MAX_2D_SHADOWS];
-uniform samplerCube uShadowMapsCube[MAX_CUBE_SHADOWS];
+uniform sampler2D uShadowMap2D;
+uniform samplerCube uShadowMapCube;
 
 float DistributionGGX(vec3 normal, vec3 halfwayDir, float roughness)
 {
@@ -423,7 +420,7 @@ float ComputeProjectedShadow(vec3 fragPos, vec3 normal, Light light)
     float biasScale = light.Type == 1 ? 0.004 : 0.0015;
     float minimumBias = light.Type == 1 ? 0.0005 : 0.0001;
     float bias = max(biasScale * (1.0 - max(dot(normal, lightVector), 0.0)), minimumBias);
-    vec2 texelSize = 1.0 / vec2(textureSize(uShadowMaps2D[light.ShadowMapIndex], 0));
+    vec2 texelSize = 1.0 / vec2(textureSize(uShadowMap2D, 0));
     float filterRadius = 1.25;
     vec2 sampleOffsets[4] = vec2[](
         vec2(-0.9420, -0.3990),
@@ -436,7 +433,7 @@ float ComputeProjectedShadow(vec3 fragPos, vec3 normal, Light light)
     for (int sampleIndex = 0; sampleIndex < 4; ++sampleIndex)
     {
         vec2 sampleCoords = clamp(projectedCoords.xy + sampleOffsets[sampleIndex] * texelSize * filterRadius, vec2(0.0), vec2(1.0));
-        float closestDepth = texture(uShadowMaps2D[light.ShadowMapIndex], sampleCoords).r;
+        float closestDepth = texture(uShadowMap2D, sampleCoords).r;
         shadow += projectedCoords.z - bias > closestDepth ? 1.0 : 0.0;
     }
 
@@ -471,7 +468,7 @@ float ComputePointShadow(vec3 fragPos, vec3 normal, Light light)
             sampleDirection +
             tangent * sampleOffsets[sampleIndex].x * angularRadius +
             bitangent * sampleOffsets[sampleIndex].y * angularRadius);
-        float closestDepth = texture(uShadowMapsCube[light.ShadowMapIndex], blurredDirection).r * light.ShadowFarPlane;
+        float closestDepth = texture(uShadowMapCube, blurredDirection).r * light.ShadowFarPlane;
         shadow += currentDepth - bias > closestDepth ? 1.0 : 0.0;
     }
 
@@ -480,12 +477,12 @@ float ComputePointShadow(vec3 fragPos, vec3 normal, Light light)
 
 float ComputeShadow(vec3 fragPos, vec3 normal, Light light)
 {
-    if (light.CastsShadows == 0 || light.ShadowMapIndex < 0)
+    if (light.CastsShadows == 0)
     {
         return 0.0;
     }
 
-    if (light.ShadowTextureType == 2)
+    if (light.Type == LIGHT_TYPE_POINT)
     {
         return ComputePointShadow(fragPos, normal, light);
     }
@@ -530,14 +527,14 @@ void main()
     float metallic = clamp(albedoMetallic.a, 0.0, 1.0);
     vec3 viewDir = normalize(uViewPos - fragPos);
 
-    vec3 lighting = vec3(0.03) * albedo * (1.0 - metallic);
-    for (int i = 0; i < min(uLightCount, MAX_LIGHTS); ++i)
+    if (uPassMode == PASS_MODE_AMBIENT)
     {
-        lighting += ComputeLightContribution(fragPos, normal, viewDir, albedo, metallic, roughness, uLights[i]);
+        vec3 ambient = vec3(0.03) * albedo * (1.0 - metallic);
+        FragColor = vec4(ambient, 1.0);
+        return;
     }
 
-    lighting = lighting / (lighting + vec3(1.0));
-    lighting = pow(lighting, vec3(1.0 / 2.2));
+    vec3 lighting = ComputeLightContribution(fragPos, normal, viewDir, albedo, metallic, roughness, uLight);
     FragColor = vec4(lighting, 1.0);
 }
         )";
@@ -578,6 +575,12 @@ void main()
             uniform sampler2D uSceneNormalTexture;
             uniform sampler2D uSceneAlbedoTexture;
             uniform int uDebugViewMode;
+
+            vec3 ToneMap(vec3 color)
+            {
+                color = color / (color + vec3(1.0));
+                return pow(color, vec3(1.0 / 2.2));
+            }
             
             float LinearizeDepth(float depth)
             {
@@ -591,22 +594,10 @@ void main()
             {
                 vec3 sceneColor = texture(uSceneTexture, UV).rgb;
                 vec2 texelSize = 1.0 / vec2(textureSize(uSceneTexture, 0));
-                vec3 blurredColor = vec3(0.0);
-
-                for (int y = -1; y <= 1; ++y)
-                {
-                    for (int x = -1; x <= 1; ++x)
-                    {
-                        vec2 offset = vec2(float(x), float(y)) * texelSize;
-                        blurredColor += texture(uSceneTexture, UV + offset).rgb;
-                    }
-                }
-
-                blurredColor /= 9.0;
 
                 if (uDebugViewMode == 0)
                 {
-                    FragColor = vec4(blurredColor, 1.0);
+                    FragColor = vec4(ToneMap(sceneColor), 1.0);
                     return;
                 }
 

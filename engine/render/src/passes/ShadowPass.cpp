@@ -172,7 +172,19 @@ namespace PlutoGE::render
 
         for (auto *light : *ctx.lights)
         {
-            if (!light || !light->castsShadows || !light->shadowMap)
+            if (!light || light->isStatic && !light->isDirty)
+            {
+                continue; // Skip static lights that are not dirty
+            }
+
+            // Update shadow map for dynamic or dirty static lights
+            if (light->isStatic)
+            {
+                light->isDirty = false; // Clear dirty flag after updating
+            }
+
+            auto *shadowMap = light->shadowMap.get();
+            if (!shadowMap)
             {
                 continue;
             }
@@ -190,7 +202,7 @@ namespace PlutoGE::render
 
                 for (unsigned int face = 0; face < shadowMatrices.size(); ++face)
                 {
-                    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, light->shadowMap->GetTextureID(), 0);
+                    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, shadowMap->GetTextureID(), 0);
                     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
                     {
                         break;
@@ -224,7 +236,7 @@ namespace PlutoGE::render
 
             glEnable(GL_POLYGON_OFFSET_FILL);
             glPolygonOffset(2.0f, 4.0f);
-            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, light->shadowMap->GetTextureID(), 0);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, shadowMap->GetTextureID(), 0);
             if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
             {
                 continue;

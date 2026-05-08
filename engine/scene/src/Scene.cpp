@@ -2,46 +2,86 @@
 #include "PlutoGE/scene/Entity.h"
 #include <algorithm>
 #include <iostream>
+#include <unordered_set>
 
 namespace PlutoGE::scene
 {
-    void Scene::AddEntity(Entity *entity, Entity *parent)
+    Entity *Scene::AddEntity(std::unique_ptr<Entity> entity, Entity *parent)
+    {
+        if (!entity)
+        {
+            return nullptr;
+        }
+
+        auto *entityPtr = entity.get();
+        m_entityStorage.push_back(std::move(entity));
+
+        if (parent)
+        {
+            parent->AddChild(entityPtr);
+        }
+        else
+        {
+            m_rootEntities.push_back(entityPtr);
+            entityPtr->SetSceneRecursive(this);
+        }
+
+        return entityPtr;
+    }
+
+    void Scene::CollectEntitySubtree(Entity *entity, std::vector<Entity *> &entities) const
     {
         if (!entity)
         {
             return;
         }
 
-        if (parent)
+        entities.push_back(entity);
+        for (auto *child : entity->GetChildren())
         {
-            parent->AddChild(entity);
-        }
-        else
-        {
-            m_rootEntities.push_back(entity);
-            entity->SetSceneRecursive(this);
+            CollectEntitySubtree(child, entities);
         }
     }
 
     void Scene::RemoveEntity(Entity *entity)
     {
+        if (!entity)
+        {
+            return;
+        }
+
         // Check if the entity is a root entity
         auto it = std::find(m_rootEntities.begin(), m_rootEntities.end(), entity);
         if (it != m_rootEntities.end())
         {
             entity->SetSceneRecursive(nullptr);
             m_rootEntities.erase(it);
-            return;
         }
-
-        // If not a root entity, we need to search through the hierarchy to find and remove it
-        for (auto rootEntity : m_rootEntities)
+        else
         {
-            if (RemoveEntityRecursive(rootEntity, entity))
+            // If not a root entity, we need to search through the hierarchy to find and remove it
+            for (auto rootEntity : m_rootEntities)
             {
-                return; // Entity found and removed
+                if (RemoveEntityRecursive(rootEntity, entity))
+                {
+                    break;
+                }
             }
         }
+
+        std::vector<Entity *> subtree;
+        CollectEntitySubtree(entity, subtree);
+        const std::unordered_set<Entity *> entitySet(subtree.begin(), subtree.end());
+
+        m_entityStorage.erase(
+            std::remove_if(
+                m_entityStorage.begin(),
+                m_entityStorage.end(),
+                [&entitySet](const std::unique_ptr<Entity> &ownedEntity)
+                {
+                    return entitySet.contains(ownedEntity.get());
+                }),
+            m_entityStorage.end());
     }
 
     bool Scene::RemoveEntityRecursive(Entity *current, Entity *target)

@@ -58,7 +58,7 @@ namespace PlutoGE::render
 
         auto shadowPass = new ShadowPass();
         shadowPass->Initialize();
-        m_renderPasses.push_back(shadowPass);
+        m_shadowPass = shadowPass;
 
         auto lightingPass = new LightingPass();
         lightingPass->Initialize();
@@ -97,6 +97,24 @@ namespace PlutoGE::render
         }
 
         Graphics::ClearRenderTarget(nullptr);
+    }
+
+    void Renderer::UpdateShadowMaps(std::vector<scene::Light *> lights)
+    {
+        if (!m_isInitialized || !m_shadowPass)
+            return;
+
+        RenderContext ctx{
+            .cameraData = {},
+            .renderTarget = nullptr,
+            .temporaryRenderTarget = m_temporaryRenderTarget,
+            .renderCommands = &m_renderCommands,
+            .lights = &lights,
+            .gBuffer = &m_gBuffer,
+            .postProcessDebugView = m_postProcessDebugView,
+        };
+
+        m_shadowPass->Execute(ctx);
     }
 
     void Renderer::RenderFrame(CameraData &cameraData, RenderTarget *renderTarget, std::vector<scene::Light *> lights)
@@ -155,6 +173,11 @@ namespace PlutoGE::render
             m_temporaryRenderTarget->Cleanup();
             delete m_temporaryRenderTarget;
             m_temporaryRenderTarget = nullptr;
+        }
+        if (m_shadowPass)
+        {
+            delete m_shadowPass;
+            m_shadowPass = nullptr;
         }
         glBindBuffer(GL_ARRAY_BUFFER, 0);
     }

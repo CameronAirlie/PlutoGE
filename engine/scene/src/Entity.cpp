@@ -17,6 +17,22 @@ namespace PlutoGE::scene
             return;
         }
 
+        if (child->m_parent == this)
+        {
+            return;
+        }
+
+        if (child->m_parent)
+        {
+            auto &siblings = child->m_parent->m_children;
+            siblings.erase(std::remove(siblings.begin(), siblings.end(), child), siblings.end());
+        }
+        else if (m_scene && child->m_scene == m_scene)
+        {
+            auto &rootEntities = m_scene->m_rootEntities;
+            rootEntities.erase(std::remove(rootEntities.begin(), rootEntities.end(), child), rootEntities.end());
+        }
+
         m_children.push_back(child);
         child->m_parent = this;
         child->SetSceneRecursive(m_scene);

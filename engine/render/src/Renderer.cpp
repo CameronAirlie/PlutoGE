@@ -22,6 +22,24 @@
 
 namespace PlutoGE::render
 {
+    namespace
+    {
+        bool EnsureRenderTargetSize(RenderTarget *renderTarget, int width, int height)
+        {
+            if (!renderTarget)
+            {
+                return false;
+            }
+
+            if (renderTarget->GetWidth() == width && renderTarget->GetHeight() == height && renderTarget->IsInitialized())
+            {
+                return true;
+            }
+
+            return renderTarget->Resize(width, height);
+        }
+    }
+
     void ResizeCallback(int width, int height)
     {
         glViewport(0, 0, width, height);
@@ -75,6 +93,13 @@ namespace PlutoGE::render
             return false;
         }
 
+        m_postProcessIntermediateRenderTarget = new RenderTarget(RenderTargetConfig{extents.width, extents.height, glm::vec4(0.0f)});
+        if (!m_postProcessIntermediateRenderTarget->IsInitialized())
+        {
+            std::cerr << "Failed to initialize post process intermediate render target" << std::endl;
+            return false;
+        }
+
         m_isInitialized = true;
         return true;
     }
@@ -106,8 +131,10 @@ namespace PlutoGE::render
 
         RenderContext ctx{
             .cameraData = {},
+            .cameraComponent = nullptr,
             .renderTarget = nullptr,
             .temporaryRenderTarget = m_temporaryRenderTarget,
+            .postProcessIntermediateRenderTarget = m_postProcessIntermediateRenderTarget,
             .renderCommands = &m_renderCommands,
             .lights = &lights,
             .gBuffer = &m_gBuffer,
@@ -117,10 +144,39 @@ namespace PlutoGE::render
         m_shadowPass->Execute(ctx);
     }
 
-    void Renderer::RenderFrame(CameraData &cameraData, RenderTarget *renderTarget, std::vector<scene::Light *> lights)
+    void Renderer::RenderFrame(const scene::CameraComponent &cameraComponent, RenderTarget *renderTarget, std::vector<scene::Light *> lights)
     {
         if (!m_isInitialized)
             return;
+
+        int renderWidth = 0;
+        int renderHeight = 0;
+
+        if (renderTarget)
+        {
+            renderWidth = renderTarget->GetWidth();
+            renderHeight = renderTarget->GetHeight();
+        }
+        else if (m_config.window)
+        {
+            const auto extents = m_config.window->GetExtents();
+            renderWidth = extents.width;
+            renderHeight = extents.height;
+        }
+
+        if (renderWidth <= 0 || renderHeight <= 0)
+        {
+            return;
+        }
+
+        if (!EnsureRenderTargetSize(m_temporaryRenderTarget, renderWidth, renderHeight) ||
+            !EnsureRenderTargetSize(m_postProcessIntermediateRenderTarget, renderWidth, renderHeight))
+        {
+            std::cerr << "Failed to resize post process render targets" << std::endl;
+            return;
+        }
+
+        auto cameraData = cameraComponent.GetCameraData(renderWidth, renderHeight);
 
         sort(m_renderCommands.begin(), m_renderCommands.end(),
              [](const RenderCommand &a, const RenderCommand &b)
@@ -130,8 +186,10 @@ namespace PlutoGE::render
 
         RenderContext ctx{
             .cameraData = cameraData,
+            .cameraComponent = &cameraComponent,
             .renderTarget = renderTarget,
             .temporaryRenderTarget = m_temporaryRenderTarget,
+            .postProcessIntermediateRenderTarget = m_postProcessIntermediateRenderTarget,
             .renderCommands = &m_renderCommands,
             .lights = &lights,
             .gBuffer = &m_gBuffer,
@@ -173,6 +231,12 @@ namespace PlutoGE::render
             m_temporaryRenderTarget->Cleanup();
             delete m_temporaryRenderTarget;
             m_temporaryRenderTarget = nullptr;
+        }
+        if (m_postProcessIntermediateRenderTarget)
+        {
+            m_postProcessIntermediateRenderTarget->Cleanup();
+            delete m_postProcessIntermediateRenderTarget;
+            m_postProcessIntermediateRenderTarget = nullptr;
         }
         if (m_shadowPass)
         {

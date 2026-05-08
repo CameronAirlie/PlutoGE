@@ -1,79 +1,107 @@
 #include "PlutoGE/render/passes/PostProcessPass.h"
 
+#include "PlutoGE/render/postprocess/IPostProcessEffect.h"
 #include "PlutoGE/render/RenderTarget.h"
-#include "PlutoGE/render/Shader.h"
 #include "PlutoGE/render/Renderer.h"
-#include "PlutoGE/render/Graphics.h"
+#include "PlutoGE/scene/components/CameraComponent.h"
 
 #include <glad/glad.h>
-#include <iostream>
 
 namespace PlutoGE::render
 {
+    namespace
+    {
+        void BlitColorBuffer(RenderTarget *source, RenderTarget *destination)
+        {
+            if (!source)
+            {
+                return;
+            }
+
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, source->GetFramebufferID());
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, destination ? destination->GetFramebufferID() : 0);
+            glBlitFramebuffer(
+                0, 0, source->GetWidth(), source->GetHeight(),
+                0, 0, source->GetWidth(), source->GetHeight(),
+                GL_COLOR_BUFFER_BIT,
+                GL_NEAREST);
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        }
+    }
+
     void PostProcessPass::Initialize()
     {
-        m_postProcessShader = Shader::CreatePostProcessShader();
     }
 
     void PostProcessPass::Execute(const RenderContext &ctx)
     {
-        if (!m_postProcessShader || !ctx.temporaryRenderTarget)
+        if (!ctx.temporaryRenderTarget)
         {
             return;
         }
 
-        glDisable(GL_DEPTH_TEST);
-        glDisable(GL_CULL_FACE);
-        Graphics::BindRenderTarget(ctx.renderTarget);
-
-        m_postProcessShader->Bind();
-
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, ctx.temporaryRenderTarget->GetColorTextureID());
-        if (m_postProcessShader->HasUniform("uSceneTexture"))
+        if (!ctx.cameraComponent)
         {
-            m_postProcessShader->SetUniform("uSceneTexture", 0);
-        }
-        glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, ctx.temporaryRenderTarget->GetDepthTextureID());
-        if (m_postProcessShader->HasUniform("uSceneDepthTexture"))
-        {
-            m_postProcessShader->SetUniform("uSceneDepthTexture", 1);
+            BlitColorBuffer(ctx.temporaryRenderTarget, ctx.renderTarget);
+            return;
         }
 
-        if (ctx.gBuffer)
+        const auto &effects = ctx.cameraComponent->GetPostProcessEffects();
+        if (effects.empty())
         {
-            glActiveTexture(GL_TEXTURE2);
-            glBindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetPositionTextureID());
-            if (m_postProcessShader->HasUniform("uScenePositionTexture"))
-            {
-                m_postProcessShader->SetUniform("uScenePositionTexture", 2);
-            }
+            BlitColorBuffer(ctx.temporaryRenderTarget, ctx.renderTarget);
+            return;
+        }
 
-            glActiveTexture(GL_TEXTURE3);
-            glBindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetNormalTextureID());
-            if (m_postProcessShader->HasUniform("uSceneNormalTexture"))
+        size_t enabledEffectCount = 0;
+        for (const auto &effect : effects)
+        {
+            if (effect && effect->IsEnabled())
             {
-                m_postProcessShader->SetUniform("uSceneNormalTexture", 3);
-            }
-
-            glActiveTexture(GL_TEXTURE4);
-            glBindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetAlbedoTextureID());
-            if (m_postProcessShader->HasUniform("uSceneAlbedoTexture"))
-            {
-                m_postProcessShader->SetUniform("uSceneAlbedoTexture", 4);
+                ++enabledEffectCount;
             }
         }
 
-        if (m_postProcessShader->HasUniform("uDebugViewMode"))
+        if (enabledEffectCount == 0)
         {
-            m_postProcessShader->SetUniform("uDebugViewMode", static_cast<int>(ctx.postProcessDebugView));
+            BlitColorBuffer(ctx.temporaryRenderTarget, ctx.renderTarget);
+            return;
         }
 
-        glBindVertexArray(0);
-        glDrawArrays(GL_TRIANGLES, 0, 3);
+        RenderTarget *source = ctx.temporaryRenderTarget;
+        RenderTarget *scratchA = ctx.temporaryRenderTarget;
+        RenderTarget *scratchB = ctx.postProcessIntermediateRenderTarget;
+        RenderTarget *nextIntermediate = scratchB;
+        size_t appliedEffectCount = 0;
 
-        Graphics::UnbindRenderTarget();
+        for (size_t index = 0; index < effects.size(); ++index)
+        {
+            auto *effect = effects[index].get();
+            if (!effect || !effect->IsEnabled())
+            {
+                continue;
+            }
+
+            ++appliedEffectCount;
+            const bool isLastEffect = appliedEffectCount == enabledEffectCount;
+            RenderTarget *destination = isLastEffect ? ctx.renderTarget : nextIntermediate;
+            if (!destination)
+            {
+                continue;
+            }
+
+            effect->Apply(PostProcessContext{
+                .renderContext = ctx,
+                .sourceRenderTarget = source,
+                .destinationRenderTarget = destination,
+            });
+
+            if (!isLastEffect)
+            {
+                source = destination;
+                nextIntermediate = (destination == scratchA) ? scratchB : scratchA;
+            }
+        }
     }
 
 }

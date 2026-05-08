@@ -4,6 +4,7 @@
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/scene/components/LightComponent.h"
+#include "PlutoGE/scene/components/CameraComponent.h"
 #include "PlutoGE/render/Renderer.h"
 #include <iostream>
 
@@ -88,7 +89,7 @@ namespace PlutoGE::ui
         ImGui::Image(texId, imageSize, ImVec2(0, 1), ImVec2(1, 0));
     }
 
-    void ViewportPanel::RenderFrame(render::CameraData &cameraData)
+    void ViewportPanel::RenderFrame(scene::CameraComponent &cameraComponent)
     {
         if (!m_renderTarget || !m_renderTarget->IsInitialized())
             return;
@@ -96,7 +97,7 @@ namespace PlutoGE::ui
         auto &renderer = EditorShell::GetInstance().GetEngine().GetRenderer();
         renderer.BeginFrame(m_renderTarget);
         auto lights = EditorShell::GetInstance().GetEngine().GetScene()->GetLights();
-        renderer.RenderFrame(cameraData, m_renderTarget, lights);
+        renderer.RenderFrame(cameraComponent, m_renderTarget, lights);
         renderer.EndFrame(m_renderTarget);
     }
 

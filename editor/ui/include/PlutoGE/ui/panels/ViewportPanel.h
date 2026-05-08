@@ -7,9 +7,13 @@
 
 namespace PlutoGE::render
 {
-    class RenderTarget;
-    struct CameraData;
     enum class PostProcessDebugView;
+    class RenderTarget;
+}
+
+namespace PlutoGE::scene
+{
+    class CameraComponent;
 }
 
 namespace PlutoGE::ui
@@ -30,7 +34,7 @@ namespace PlutoGE::ui
         void Initialize() override;
         void Render() override;
         void ClearFrame();
-        void RenderFrame(render::CameraData &cameraData);
+        void RenderFrame(scene::CameraComponent &cameraComponent);
         void Shutdown() override;
 
         render::RenderTarget *GetRenderTarget() const { return m_renderTarget; }

@@ -48,11 +48,13 @@ namespace PlutoGE::render
     struct RenderContext
     {
         CameraData cameraData;                         // Camera data for the current frame
+        const scene::CameraComponent *cameraComponent; // Camera component owning this frame's post-process chain
         RenderTarget *renderTarget;                    // Render target for the current frame (nullptr for default framebuffer)
         RenderTarget *temporaryRenderTarget = nullptr; // Optional temporary render target for intermediate passes
-        std::vector<RenderCommand> *renderCommands;    // List of render commands for the current frame
-        std::vector<scene::Light *> *lights;           // List of lights in the scene for the current frame
-        GBuffer *gBuffer;                              // GBuffer for deferred rendering
+        RenderTarget *postProcessIntermediateRenderTarget = nullptr;
+        std::vector<RenderCommand> *renderCommands; // List of render commands for the current frame
+        std::vector<scene::Light *> *lights;        // List of lights in the scene for the current frame
+        GBuffer *gBuffer;                           // GBuffer for deferred rendering
         PostProcessDebugView postProcessDebugView = PostProcessDebugView::None;
     };
 
@@ -67,7 +69,7 @@ namespace PlutoGE::render
         bool Initialize(const RendererConfig &config = RendererConfig());
         void BeginFrame(RenderTarget *renderTarget = nullptr);
         void UpdateShadowMaps(std::vector<scene::Light *> lights = {});
-        void RenderFrame(CameraData &cameraData, RenderTarget *renderTarget = nullptr, std::vector<scene::Light *> lights = {});
+        void RenderFrame(const scene::CameraComponent &cameraComponent, RenderTarget *renderTarget = nullptr, std::vector<scene::Light *> lights = {});
         void EndFrame(RenderTarget *renderTarget = nullptr);
         void Shutdown(RenderTarget *renderTarget = nullptr);
         void ClearRenderCommands();
@@ -90,6 +92,7 @@ namespace PlutoGE::render
 
         void CleanupResources(RenderTarget *renderTarget = nullptr);
         RenderTarget *m_temporaryRenderTarget = nullptr; // Optional temporary render target for intermediate passes
+        RenderTarget *m_postProcessIntermediateRenderTarget = nullptr;
         IRenderPass *m_shadowPass = nullptr;
         std::vector<IRenderPass *> m_renderPasses;
         std::vector<RenderCommand> m_renderCommands;

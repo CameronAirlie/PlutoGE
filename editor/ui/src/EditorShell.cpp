@@ -10,6 +10,7 @@
 #include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
+#include "PlutoGE/render/postprocess/GammaCorrectionEffect.h"
 
 #include <imgui.h>
 #include <backends/imgui_impl_glfw.h>
@@ -136,7 +137,8 @@ namespace PlutoGE::ui
             .nearPlane = 0.1f,
             .farPlane = 100.0f,
         });
-        cameraEntity->CreateComponent<scene::CameraComponent>(&camera);
+        auto *cameraComponent = cameraEntity->CreateComponent<scene::CameraComponent>(&camera);
+        cameraComponent->EmplacePostProcessEffect<render::GammaCorrectionEffect>(2.2f);
         cameraEntity->SetPosition(glm::vec3(0.0f, 0.0f, 5.0f));
         auto *cameraEntityPtr = scene->AddEntity(std::move(cameraEntity));
 
@@ -148,7 +150,8 @@ namespace PlutoGE::ui
             .nearPlane = 0.1f,
             .farPlane = 100.0f,
         });
-        cameraEntity2->CreateComponent<scene::CameraComponent>(&camera2);
+        auto *cameraComponent2 = cameraEntity2->CreateComponent<scene::CameraComponent>(&camera2);
+        cameraComponent2->EmplacePostProcessEffect<render::GammaCorrectionEffect>(1.8f);
         cameraEntity2->SetPosition(glm::vec3(0.0f, 0.0f, 5.0f));
 
         auto cameraHolder = std::make_unique<scene::Entity>(scene::EntityConfig{
@@ -220,8 +223,7 @@ namespace PlutoGE::ui
 
             if (IsCameraActiveInScene(scene.get(), cameraComponent))
             {
-                auto cameraData = cameraComponent->GetCameraData(renderTargetWidth, renderTargetHeight);
-                viewportPanel->RenderFrame(cameraData);
+                viewportPanel->RenderFrame(*cameraComponent);
             }
             else
             {
@@ -230,8 +232,7 @@ namespace PlutoGE::ui
 
             if (IsCameraActiveInScene(scene.get(), cameraComponent2))
             {
-                auto cameraData2 = cameraComponent2->GetCameraData(renderTarget2Width, renderTarget2Height);
-                viewportPanel2->RenderFrame(cameraData2);
+                viewportPanel2->RenderFrame(*cameraComponent2);
             }
             else
             {

@@ -10,7 +10,6 @@
 #include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
-#include "PlutoGE/render/postprocess/GammaCorrectionEffect.h"
 
 #include <imgui.h>
 #include <backends/imgui_impl_glfw.h>
@@ -137,8 +136,7 @@ namespace PlutoGE::ui
             .nearPlane = 0.1f,
             .farPlane = 100.0f,
         });
-        auto *cameraComponent = cameraEntity->CreateComponent<scene::CameraComponent>(&camera);
-        cameraComponent->EmplacePostProcessEffect<render::GammaCorrectionEffect>(2.2f);
+        cameraEntity->CreateComponent<scene::CameraComponent>(&camera);
         cameraEntity->SetPosition(glm::vec3(0.0f, 0.0f, 5.0f));
         auto *cameraEntityPtr = scene->AddEntity(std::move(cameraEntity));
 
@@ -150,8 +148,7 @@ namespace PlutoGE::ui
             .nearPlane = 0.1f,
             .farPlane = 100.0f,
         });
-        auto *cameraComponent2 = cameraEntity2->CreateComponent<scene::CameraComponent>(&camera2);
-        cameraComponent2->EmplacePostProcessEffect<render::GammaCorrectionEffect>(1.8f);
+        cameraEntity2->CreateComponent<scene::CameraComponent>(&camera2);
         cameraEntity2->SetPosition(glm::vec3(0.0f, 0.0f, 5.0f));
 
         auto cameraHolder = std::make_unique<scene::Entity>(scene::EntityConfig{
@@ -161,7 +158,7 @@ namespace PlutoGE::ui
         auto *cameraHolderEntity = scene->AddEntity(std::move(cameraHolder));
         auto *cameraEntity2Ptr = scene->AddEntity(std::move(cameraEntity2), cameraHolderEntity);
 
-        for (int i = 0; i < 10; ++i)
+        for (int i = 0; i < 1; ++i)
         {
             auto lightEntity = std::make_unique<scene::Entity>(scene::EntityConfig{
                 .name = "Key Light " + std::to_string(i),

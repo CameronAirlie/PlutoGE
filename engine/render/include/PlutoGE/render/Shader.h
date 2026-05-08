@@ -575,12 +575,6 @@ void main()
             uniform sampler2D uSceneNormalTexture;
             uniform sampler2D uSceneAlbedoTexture;
             uniform int uDebugViewMode;
-
-            vec3 ToneMap(vec3 color)
-            {
-                color = color / (color + vec3(1.0));
-                return pow(color, vec3(1.0 / 2.2));
-            }
             
             float LinearizeDepth(float depth)
             {
@@ -593,11 +587,10 @@ void main()
             void main()
             {
                 vec3 sceneColor = texture(uSceneTexture, UV).rgb;
-                vec2 texelSize = 1.0 / vec2(textureSize(uSceneTexture, 0));
 
                 if (uDebugViewMode == 0)
                 {
-                    FragColor = vec4(ToneMap(sceneColor), 1.0);
+                    FragColor = vec4(sceneColor, 1.0);
                     return;
                 }
 

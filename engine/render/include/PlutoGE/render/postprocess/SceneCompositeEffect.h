@@ -15,7 +15,7 @@ namespace PlutoGE::render
         void Initialize() override;
         void Apply(const PostProcessContext &context) override;
         std::string GetTypeName() const override { return "SceneComposite"; }
-        std::string GetDisplayName() const override { return "Scene Composite"; }
+        std::string GetDisplayName() const override { return "Scene Composite / Debug"; }
 
     private:
         Shader *m_shader = nullptr;

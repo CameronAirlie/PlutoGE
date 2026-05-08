@@ -4,6 +4,7 @@
 #include "PlutoGE/render/postprocess/GammaCorrectionEffect.h"
 #include "PlutoGE/render/postprocess/IPostProcessEffect.h"
 #include "PlutoGE/render/postprocess/SceneCompositeEffect.h"
+#include "PlutoGE/render/postprocess/ToneMappingEffect.h"
 
 #include <memory>
 
@@ -12,6 +13,7 @@ namespace PlutoGE::render
     namespace
     {
         const std::vector<std::string> kRegisteredTypes = {
+            "ToneMapping",
             "SceneComposite",
             "FXAA",
             "GammaCorrection",
@@ -23,6 +25,11 @@ namespace PlutoGE::render
         if (typeName == "SceneComposite")
         {
             return std::make_unique<SceneCompositeEffect>();
+        }
+
+        if (typeName == "ToneMapping")
+        {
+            return std::make_unique<ToneMappingEffect>();
         }
 
         if (typeName == "GammaCorrection")

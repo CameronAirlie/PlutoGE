@@ -30,9 +30,25 @@ namespace PlutoGE::render
 
     void LightingPass::Execute(const RenderContext &ctx)
     {
+        if (!ctx.temporaryRenderTarget)
+        {
+            return;
+        }
+
         glDisable(GL_DEPTH_TEST);
         glDisable(GL_CULL_FACE);
-        Graphics::BindRenderTarget(ctx.renderTarget);
+        Graphics::ClearRenderTarget(ctx.temporaryRenderTarget);
+
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, ctx.gBuffer->GetFBO());
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, ctx.temporaryRenderTarget->GetFramebufferID());
+        // Get depth from GBuffer and copy to temporary render target's depth attachment
+        glBlitFramebuffer(
+            0, 0, ctx.gBuffer->GetWidth(), ctx.gBuffer->GetHeight(),
+            0, 0, ctx.temporaryRenderTarget->GetWidth(), ctx.temporaryRenderTarget->GetHeight(),
+            GL_DEPTH_BUFFER_BIT,
+            GL_NEAREST);
+
+        Graphics::BindRenderTarget(ctx.temporaryRenderTarget);
 
         auto lights = *ctx.lights;
 

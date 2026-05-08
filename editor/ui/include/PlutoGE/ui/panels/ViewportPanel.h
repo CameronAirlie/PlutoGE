@@ -9,6 +9,7 @@ namespace PlutoGE::render
 {
     class RenderTarget;
     struct CameraData;
+    enum class PostProcessDebugView;
 }
 
 namespace PlutoGE::ui
@@ -33,6 +34,7 @@ namespace PlutoGE::ui
         void Shutdown() override;
 
         render::RenderTarget *GetRenderTarget() const { return m_renderTarget; }
+        static const char *GetDebugViewLabel(render::PostProcessDebugView debugView);
 
     private:
         ViewportPanelConfig m_config;

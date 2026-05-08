@@ -97,19 +97,30 @@ namespace PlutoGE::render
         return CreateShaderFromSource(source);
     }
 
-    GLuint Shader::GetUniformLocation(const std::string &name) const
+    GLint Shader::ResolveUniformLocation(const std::string &name, bool warnIfMissing) const
     {
-        // Check cache first
         if (m_uniformLocationCache.find(name) != m_uniformLocationCache.end())
+        {
             return m_uniformLocationCache[name];
+        }
 
         GLint location = glGetUniformLocation(m_programID, name.c_str());
-        if (location == -1)
+        if (location == -1 && warnIfMissing)
         {
             std::cerr << "Warning: Uniform '" << name << "' not found in shader program." << std::endl;
         }
-        m_uniformLocationCache[name] = location; // Cache the location
+        m_uniformLocationCache[name] = location;
         return location;
+    }
+
+    GLuint Shader::GetUniformLocation(const std::string &name) const
+    {
+        return ResolveUniformLocation(name, true);
+    }
+
+    bool Shader::HasUniform(const std::string &name) const
+    {
+        return ResolveUniformLocation(name, false) != -1;
     }
 
     void Shader::SetUniform(const std::string &name, const glm::mat4 &value) const

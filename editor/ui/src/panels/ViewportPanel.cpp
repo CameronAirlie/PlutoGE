@@ -4,6 +4,7 @@
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/scene/components/LightComponent.h"
+#include "PlutoGE/render/Renderer.h"
 #include <iostream>
 
 #include <imgui.h>
@@ -15,6 +16,19 @@ namespace PlutoGE::ui
         constexpr int kDefaultViewportWidth = 1280;
         constexpr int kDefaultViewportHeight = 720;
         constexpr int kResizeDebounceFrames = 2;
+        constexpr const char *kDebugViewLabels[] = {
+            "Post Process",
+            "Quadrants",
+            "Position",
+            "Normal",
+            "Albedo",
+            "Depth",
+        };
+    }
+
+    const char *ViewportPanel::GetDebugViewLabel(render::PostProcessDebugView debugView)
+    {
+        return kDebugViewLabels[static_cast<int>(debugView)];
     }
 
     void ViewportPanel::Initialize()
@@ -35,6 +49,15 @@ namespace PlutoGE::ui
     {
         if (!m_renderTarget || !m_renderTarget->IsInitialized())
             return;
+
+        auto &renderer = EditorShell::GetInstance().GetEngine().GetRenderer();
+        int debugView = static_cast<int>(renderer.GetPostProcessDebugView());
+        ImGui::SetNextItemWidth(180.0f);
+        if (ImGui::Combo("Debug View", &debugView, kDebugViewLabels, IM_ARRAYSIZE(kDebugViewLabels)))
+        {
+            renderer.SetPostProcessDebugView(static_cast<render::PostProcessDebugView>(debugView));
+        }
+        ImGui::Separator();
 
         const ImVec2 panelSize = ImGui::GetContentRegionAvail();
         const int newWidth = static_cast<int>(panelSize.x);

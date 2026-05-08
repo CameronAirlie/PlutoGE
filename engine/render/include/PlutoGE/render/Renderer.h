@@ -22,6 +22,16 @@ namespace PlutoGE::render
     class Mesh;
     class RenderTarget;
 
+    enum class PostProcessDebugView
+    {
+        None = 0,
+        Quadrants,
+        Position,
+        Normal,
+        Albedo,
+        Depth,
+    };
+
     struct RendererConfig
     {
         // Future configuration options can be added here
@@ -37,11 +47,13 @@ namespace PlutoGE::render
 
     struct RenderContext
     {
-        CameraData cameraData;                      // Camera data for the current frame
-        RenderTarget *renderTarget;                 // Render target for the current frame (nullptr for default framebuffer)
-        std::vector<RenderCommand> *renderCommands; // List of render commands for the current frame
-        std::vector<scene::Light *> *lights;        // List of lights in the scene for the current frame
-        GBuffer *gBuffer;                           // GBuffer for deferred rendering
+        CameraData cameraData;                         // Camera data for the current frame
+        RenderTarget *renderTarget;                    // Render target for the current frame (nullptr for default framebuffer)
+        RenderTarget *temporaryRenderTarget = nullptr; // Optional temporary render target for intermediate passes
+        std::vector<RenderCommand> *renderCommands;    // List of render commands for the current frame
+        std::vector<scene::Light *> *lights;           // List of lights in the scene for the current frame
+        GBuffer *gBuffer;                              // GBuffer for deferred rendering
+        PostProcessDebugView postProcessDebugView = PostProcessDebugView::None;
     };
 
     class Shader;
@@ -60,6 +72,8 @@ namespace PlutoGE::render
         void ClearRenderCommands();
 
         void SetVSyncEnabled(bool enabled);
+        void SetPostProcessDebugView(PostProcessDebugView debugView) { m_postProcessDebugView = debugView; }
+        PostProcessDebugView GetPostProcessDebugView() const { return m_postProcessDebugView; }
 
         void SubmitRenderCommand(const RenderCommand &command)
         {
@@ -71,8 +85,10 @@ namespace PlutoGE::render
         bool m_isInitialized = false;
 
         GBuffer m_gBuffer;
+        PostProcessDebugView m_postProcessDebugView = PostProcessDebugView::None;
 
         void CleanupResources(RenderTarget *renderTarget = nullptr);
+        RenderTarget *m_temporaryRenderTarget = nullptr; // Optional temporary render target for intermediate passes
         std::vector<IRenderPass *> m_renderPasses;
         std::vector<RenderCommand> m_renderCommands;
     };

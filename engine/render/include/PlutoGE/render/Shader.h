@@ -545,6 +545,148 @@ void main()
             return CreateShaderFromSource(source);
         }
 
+        static Shader *CreatePostProcessShader()
+        {
+            ShaderSource source;
+
+            source.vertexSource = R"(
+            #version 330 core
+
+            out vec2 UV;
+
+            void main()
+            {
+                vec2 vertices[3] = vec2[3](
+                    vec2(-1.0, -1.0),
+                    vec2(3.0, -1.0),
+                    vec2(-1.0, 3.0)
+                );
+                gl_Position = vec4(vertices[gl_VertexID], 0.0, 1.0);
+                UV = 0.5 * gl_Position.xy + vec2(0.5);
+            }
+        )";
+
+            source.fragmentSource = R"(
+            #version 330 core
+
+            in vec2 UV;
+            out vec4 FragColor;
+
+            uniform sampler2D uSceneTexture;
+            uniform sampler2D uSceneDepthTexture;
+            uniform sampler2D uScenePositionTexture;
+            uniform sampler2D uSceneNormalTexture;
+            uniform sampler2D uSceneAlbedoTexture;
+            uniform int uDebugViewMode;
+            
+            float LinearizeDepth(float depth)
+            {
+                float near = 0.1; // Match with camera near plane
+                float far = 100.0; // Match with camera far plane
+                float z = depth * 2.0 - 1.0; // Convert from [0, 1] to [-1, 1]
+                return (2.0 * near * far) / (far + near - z * (far - near));
+            }
+
+            void main()
+            {
+                vec3 sceneColor = texture(uSceneTexture, UV).rgb;
+                vec2 texelSize = 1.0 / vec2(textureSize(uSceneTexture, 0));
+                vec3 blurredColor = vec3(0.0);
+
+                for (int y = -1; y <= 1; ++y)
+                {
+                    for (int x = -1; x <= 1; ++x)
+                    {
+                        vec2 offset = vec2(float(x), float(y)) * texelSize;
+                        blurredColor += texture(uSceneTexture, UV + offset).rgb;
+                    }
+                }
+
+                blurredColor /= 9.0;
+
+                if (uDebugViewMode == 0)
+                {
+                    FragColor = vec4(blurredColor, 1.0);
+                    return;
+                }
+
+                vec3 position = texture(uScenePositionTexture, UV).rgb;
+                vec4 normalRoughness = texture(uSceneNormalTexture, UV);
+                vec4 albedoMetallic = texture(uSceneAlbedoTexture, UV);
+                float depth = texture(uSceneDepthTexture, UV).r;
+
+                vec3 positionColor = abs(position) / (abs(position) + vec3(1.0));
+                vec3 normalColor = normalize(normalRoughness.rgb) * 0.5 + 0.5;
+                vec3 albedoColor = albedoMetallic.rgb;
+                float depthColor = 1.0 - clamp(LinearizeDepth(depth) / 100.0, 0.0, 1.0);
+
+                if (uDebugViewMode == 1)
+                {
+                    vec2 quadrantUV = fract(UV * 2.0);
+                    vec2 borderDistance = min(quadrantUV, 1.0 - quadrantUV);
+                    if (min(borderDistance.x, borderDistance.y) < 0.01)
+                    {
+                        FragColor = vec4(vec3(0.02), 1.0);
+                        return;
+                    }
+
+                    position = texture(uScenePositionTexture, quadrantUV).rgb;
+                    normalRoughness = texture(uSceneNormalTexture, quadrantUV);
+                    albedoMetallic = texture(uSceneAlbedoTexture, quadrantUV);
+                    depth = texture(uSceneDepthTexture, quadrantUV).r;
+
+                    positionColor = abs(position) / (abs(position) + vec3(1.0));
+                    normalColor = normalize(normalRoughness.rgb) * 0.5 + 0.5;
+                    albedoColor = albedoMetallic.rgb;
+                    depthColor = 1.0 - clamp(LinearizeDepth(depth) / 100.0, 0.0, 1.0);
+
+                    vec3 quadrantColor;
+                    if (UV.x < 0.5 && UV.y >= 0.5)
+                    {
+                        quadrantColor = positionColor;
+                    }
+                    else if (UV.x >= 0.5 && UV.y >= 0.5)
+                    {
+                        quadrantColor = normalColor;
+                    }
+                    else if (UV.x < 0.5 && UV.y < 0.5)
+                    {
+                        quadrantColor = albedoColor;
+                    }
+                    else
+                    {
+                        quadrantColor = vec3(depthColor);
+                    }
+
+                    FragColor = vec4(quadrantColor, 1.0);
+                    return;
+                }
+
+                vec3 outputColor = sceneColor;
+                if (uDebugViewMode == 2)
+                {
+                    outputColor = positionColor;
+                }
+                else if (uDebugViewMode == 3)
+                {
+                    outputColor = normalColor;
+                }
+                else if (uDebugViewMode == 4)
+                {
+                    outputColor = albedoColor;
+                }
+                else if (uDebugViewMode == 5)
+                {
+                    outputColor = vec3(depthColor);
+                }
+
+                FragColor = vec4(outputColor, 1.0);
+            }
+        )";
+
+            return CreateShaderFromSource(source);
+        }
+
         static Shader *CreateShadowPassShader()
         {
             ShaderSource source;
@@ -620,6 +762,7 @@ void main()
             glUseProgram(0);
         }
 
+        bool HasUniform(const std::string &name) const;
         void SetUniform(const std::string &name, const glm::mat4 &value) const;
         void SetUniform(const std::string &name, const glm::vec4 &value) const;
         void SetUniform(const std::string &name, const glm::vec3 &value) const;
@@ -633,6 +776,7 @@ void main()
 
     private:
         static Shader *CreateShaderFromSource(const ShaderSource &source);
+        GLint ResolveUniformLocation(const std::string &name, bool warnIfMissing) const;
 
         ShaderConfig m_config;
         GLuint m_programID = 0; // OpenGL shader program ID

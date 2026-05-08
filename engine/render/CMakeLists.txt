@@ -10,6 +10,7 @@ add_library(PlutoGERender
     src/passes/GeometryPass.cpp
     src/passes/LightingPass.cpp
     src/passes/ShadowPass.cpp
+    src/passes/PostProcessPass.cpp
 )
 
 add_library(PlutoGE::Render ALIAS PlutoGERender)

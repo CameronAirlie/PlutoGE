@@ -17,10 +17,34 @@ namespace PlutoGE::render
 
         shader->Bind();
 
-        shader->SetUniform("uColor", m_config.color);
-        shader->SetUniform("uMetallicFactor", m_config.metallic);
-        shader->SetUniform("uRoughnessFactor", m_config.roughness);
-        shader->SetUniform("uFlipNormalY", m_config.flipNormalY ? 1.0f : 0.0f);
+        const auto setVec4 = [shader](const char *name, const glm::vec4 &value)
+        {
+            if (shader->HasUniform(name))
+            {
+                shader->SetUniform(name, value);
+            }
+        };
+
+        const auto setFloat = [shader](const char *name, float value)
+        {
+            if (shader->HasUniform(name))
+            {
+                shader->SetUniform(name, value);
+            }
+        };
+
+        const auto setTexture = [shader](const char *name, Texture *texture, int slot)
+        {
+            if (texture && shader->HasUniform(name))
+            {
+                shader->SetUniform(name, texture, slot);
+            }
+        };
+
+        setVec4("uColor", m_config.color);
+        setFloat("uMetallicFactor", m_config.metallic);
+        setFloat("uRoughnessFactor", m_config.roughness);
+        setFloat("uFlipNormalY", m_config.flipNormalY ? 1.0f : 0.0f);
 
         // Set common uniforms (camera and model data)
         // shader->SetUniform("uModel", modelMatrix);
@@ -30,42 +54,42 @@ namespace PlutoGE::render
         // Set material-specific uniforms
         if (m_config.albedoTexture)
         {
-            shader->SetUniform("uAlbedoTexture", m_config.albedoTexture, 0);
-            shader->SetUniform("uHasAlbedoTexture", 1.0f);
+            setTexture("uAlbedoTexture", m_config.albedoTexture, 0);
+            setFloat("uHasAlbedoTexture", 1.0f);
         }
         else
         {
-            shader->SetUniform("uHasAlbedoTexture", 0.0f);
+            setFloat("uHasAlbedoTexture", 0.0f);
         }
 
         if (m_config.normalTexture)
         {
-            shader->SetUniform("uNormalTexture", m_config.normalTexture, 1);
-            shader->SetUniform("uHasNormalTexture", 1.0f);
+            setTexture("uNormalTexture", m_config.normalTexture, 1);
+            setFloat("uHasNormalTexture", 1.0f);
         }
         else
         {
-            shader->SetUniform("uHasNormalTexture", 0.0f);
+            setFloat("uHasNormalTexture", 0.0f);
         }
 
         if (m_config.metallicTexture)
         {
-            shader->SetUniform("uMetallicTexture", m_config.metallicTexture, 2);
-            shader->SetUniform("uHasMetallicTexture", 1.0f);
+            setTexture("uMetallicTexture", m_config.metallicTexture, 2);
+            setFloat("uHasMetallicTexture", 1.0f);
         }
         else
         {
-            shader->SetUniform("uHasMetallicTexture", 0.0f);
+            setFloat("uHasMetallicTexture", 0.0f);
         }
 
         if (m_config.roughnessTexture)
         {
-            shader->SetUniform("uRoughnessTexture", m_config.roughnessTexture, 3);
-            shader->SetUniform("uHasRoughnessTexture", 1.0f);
+            setTexture("uRoughnessTexture", m_config.roughnessTexture, 3);
+            setFloat("uHasRoughnessTexture", 1.0f);
         }
         else
         {
-            shader->SetUniform("uHasRoughnessTexture", 0.0f);
+            setFloat("uHasRoughnessTexture", 0.0f);
         }
     }
 }

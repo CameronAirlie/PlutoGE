@@ -9,6 +9,7 @@
 #include "PlutoGE/scene/components/CameraComponent.h"
 #include "PlutoGE/render/passes/GeometryPass.h"
 #include "PlutoGE/render/passes/LightingPass.h"
+#include "PlutoGE/render/passes/PostProcessPass.h"
 #include "PlutoGE/render/passes/ShadowPass.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 
@@ -63,6 +64,17 @@ namespace PlutoGE::render
         lightingPass->Initialize();
         m_renderPasses.push_back(lightingPass);
 
+        auto postProcessPass = new PostProcessPass();
+        postProcessPass->Initialize();
+        m_renderPasses.push_back(postProcessPass);
+
+        m_temporaryRenderTarget = new RenderTarget(RenderTargetConfig{extents.width, extents.height, glm::vec4(0.0f)});
+        if (!m_temporaryRenderTarget->IsInitialized())
+        {
+            std::cerr << "Failed to initialize temporary render target" << std::endl;
+            return false;
+        }
+
         m_isInitialized = true;
         return true;
     }
@@ -101,9 +113,11 @@ namespace PlutoGE::render
         RenderContext ctx{
             .cameraData = cameraData,
             .renderTarget = renderTarget,
+            .temporaryRenderTarget = m_temporaryRenderTarget,
             .renderCommands = &m_renderCommands,
             .lights = &lights,
             .gBuffer = &m_gBuffer,
+            .postProcessDebugView = m_postProcessDebugView,
         };
 
         for (auto *pass : m_renderPasses)
@@ -136,6 +150,12 @@ namespace PlutoGE::render
         // Clean up rendering resources here
         m_isInitialized = false;
         CleanupResources(renderTarget);
+        if (m_temporaryRenderTarget)
+        {
+            m_temporaryRenderTarget->Cleanup();
+            delete m_temporaryRenderTarget;
+            m_temporaryRenderTarget = nullptr;
+        }
         glBindBuffer(GL_ARRAY_BUFFER, 0);
     }
 

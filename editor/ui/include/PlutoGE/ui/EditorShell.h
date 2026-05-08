@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/ui/EditorProfiler.h"
 #include "PlutoGE/ui/PanelManager.h"
 
 namespace PlutoGE::scene
@@ -19,6 +20,7 @@ namespace PlutoGE::ui
 
         [[nodiscard]] core::Engine &GetEngine() { return m_engine; }
         [[nodiscard]] PanelManager &GetPanelManager() { return m_panelManager; }
+        [[nodiscard]] EditorProfiler &GetProfiler() { return m_profiler; }
 
         [[nodiscard]] static EditorShell &GetInstance()
         {
@@ -35,6 +37,7 @@ namespace PlutoGE::ui
 
         core::Engine &m_engine = core::Engine::GetInstance();
         PanelManager m_panelManager;
+        EditorProfiler m_profiler;
 
         scene::Entity *m_selectedEntity = nullptr;
     };

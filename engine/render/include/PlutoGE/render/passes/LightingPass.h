@@ -14,6 +14,7 @@ namespace PlutoGE::render
 
         void Initialize() override;
         void Execute(const RenderContext &ctx) override;
+        const char *GetName() const override { return "Lighting"; }
 
     private:
         Shader *m_lightingPassShader = nullptr;

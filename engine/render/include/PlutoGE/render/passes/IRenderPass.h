@@ -10,5 +10,6 @@ namespace PlutoGE::render
 
         virtual void Initialize() = 0;
         virtual void Execute(const RenderContext &ctx) = 0;
+        virtual const char *GetName() const = 0;
     };
 }

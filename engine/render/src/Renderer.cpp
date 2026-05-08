@@ -19,11 +19,17 @@
 #include <iostream>
 #include <vector>
 #include <algorithm>
+#include <numeric>
 
 namespace PlutoGE::render
 {
     namespace
     {
+        constexpr float kNanosecondsToMilliseconds = 1.0f / 1000000.0f;
+        constexpr std::size_t kLightingSetupStage = 0;
+        constexpr std::size_t kLightingAmbientStage = 1;
+        constexpr std::size_t kLightingAccumulationStage = 2;
+
         bool EnsureRenderTargetSize(RenderTarget *renderTarget, int width, int height)
         {
             if (!renderTarget)
@@ -86,6 +92,8 @@ namespace PlutoGE::render
         postProcessPass->Initialize();
         m_renderPasses.push_back(postProcessPass);
 
+        InitializeGpuTimers();
+
         m_temporaryRenderTarget = new RenderTarget(RenderTargetConfig{extents.width, extents.height, glm::vec4(0.0f)});
         if (!m_temporaryRenderTarget->IsInitialized())
         {
@@ -130,6 +138,7 @@ namespace PlutoGE::render
             return;
 
         RenderContext ctx{
+            .renderer = this,
             .cameraData = {},
             .cameraComponent = nullptr,
             .renderTarget = nullptr,
@@ -141,7 +150,7 @@ namespace PlutoGE::render
             .postProcessDebugView = m_postProcessDebugView,
         };
 
-        m_shadowPass->Execute(ctx);
+        ExecutePassWithGpuTiming(*m_shadowPass, ctx, 0);
     }
 
     void Renderer::RenderFrame(const scene::CameraComponent &cameraComponent, RenderTarget *renderTarget, std::vector<scene::Light *> lights)
@@ -185,6 +194,7 @@ namespace PlutoGE::render
              });
 
         RenderContext ctx{
+            .renderer = this,
             .cameraData = cameraData,
             .cameraComponent = &cameraComponent,
             .renderTarget = renderTarget,
@@ -196,9 +206,9 @@ namespace PlutoGE::render
             .postProcessDebugView = m_postProcessDebugView,
         };
 
-        for (auto *pass : m_renderPasses)
+        for (std::size_t index = 0; index < m_renderPasses.size(); ++index)
         {
-            pass->Execute(ctx);
+            ExecutePassWithGpuTiming(*m_renderPasses[index], ctx, index + 1);
         }
     }
 
@@ -243,7 +253,74 @@ namespace PlutoGE::render
             delete m_shadowPass;
             m_shadowPass = nullptr;
         }
+        ShutdownGpuTimers();
         glBindBuffer(GL_ARRAY_BUFFER, 0);
+    }
+
+    void Renderer::BeginLightingStageTiming(std::size_t stageIndex)
+    {
+        if (!m_gpuProfilingSupported || stageIndex >= m_lightingGpuTimerQueries.size())
+        {
+            return;
+        }
+
+        auto &queryState = m_lightingGpuTimerQueries[stageIndex];
+        const auto queryIndex = queryState.writeIndex;
+        switch (stageIndex)
+        {
+        case kLightingSetupStage:
+            ResolveGpuTiming(queryState, m_lightingGpuTiming.setupMs, m_lightingGpuTiming.hasSetupResult, queryIndex);
+            break;
+        case kLightingAmbientStage:
+            ResolveGpuTiming(queryState, m_lightingGpuTiming.ambientMs, m_lightingGpuTiming.hasAmbientResult, queryIndex);
+            break;
+        case kLightingAccumulationStage:
+            ResolveGpuTiming(queryState, m_lightingGpuTiming.lightAccumulationMs, m_lightingGpuTiming.hasLightAccumulationResult, queryIndex);
+            break;
+        default:
+            return;
+        }
+
+        glBeginQuery(GL_TIME_ELAPSED, queryState.queryIds[queryIndex]);
+        queryState.activeIndex = queryIndex;
+        queryState.active = true;
+    }
+
+    void Renderer::EndLightingStageTiming(std::size_t stageIndex)
+    {
+        if (!m_gpuProfilingSupported || stageIndex >= m_lightingGpuTimerQueries.size())
+        {
+            return;
+        }
+
+        auto &queryState = m_lightingGpuTimerQueries[stageIndex];
+        if (!queryState.active)
+        {
+            return;
+        }
+
+        glEndQuery(GL_TIME_ELAPSED);
+        queryState.pending[queryState.activeIndex] = true;
+        queryState.writeIndex = (queryState.activeIndex + 1) % queryState.queryIds.size();
+        queryState.active = false;
+    }
+
+    void Renderer::SetLightingPassCounters(int lightCount, int shadowedLightCount)
+    {
+        m_lightingGpuTiming.lightCount = lightCount;
+        m_lightingGpuTiming.shadowedLightCount = shadowedLightCount;
+    }
+
+    float Renderer::GetTotalGpuPassTimeMs() const
+    {
+        return std::accumulate(
+            m_gpuPassTimings.begin(),
+            m_gpuPassTimings.end(),
+            0.0f,
+            [](float total, const GpuPassTiming &timing)
+            {
+                return total + (timing.hasResult ? timing.gpuTimeMs : 0.0f);
+            });
     }
 
     void Renderer::SetVSyncEnabled(bool enabled)
@@ -273,5 +350,122 @@ namespace PlutoGE::render
         {
             // Clean up any other resources if needed
         }
+    }
+
+    void Renderer::InitializeGpuTimers()
+    {
+        m_gpuPassTimings.clear();
+        m_gpuTimerQueries.clear();
+        m_gpuProfilingSupported = GLAD_GL_VERSION_3_3;
+        if (!m_gpuProfilingSupported)
+        {
+            return;
+        }
+
+        if (m_shadowPass)
+        {
+            m_gpuPassTimings.push_back(GpuPassTiming{m_shadowPass->GetName()});
+        }
+
+        for (auto *pass : m_renderPasses)
+        {
+            m_gpuPassTimings.push_back(GpuPassTiming{pass->GetName()});
+        }
+
+        m_gpuTimerQueries.resize(m_gpuPassTimings.size());
+        for (auto &queryState : m_gpuTimerQueries)
+        {
+            glGenQueries(static_cast<GLsizei>(queryState.queryIds.size()), queryState.queryIds.data());
+        }
+
+        for (auto &queryState : m_lightingGpuTimerQueries)
+        {
+            glGenQueries(static_cast<GLsizei>(queryState.queryIds.size()), queryState.queryIds.data());
+        }
+
+        m_lightingGpuTiming = {};
+    }
+
+    void Renderer::ShutdownGpuTimers()
+    {
+        if (m_gpuProfilingSupported)
+        {
+            for (auto &queryState : m_gpuTimerQueries)
+            {
+                glDeleteQueries(static_cast<GLsizei>(queryState.queryIds.size()), queryState.queryIds.data());
+                queryState.queryIds = {};
+                queryState.pending = {};
+                queryState.writeIndex = 0;
+                queryState.activeIndex = 0;
+                queryState.active = false;
+            }
+
+            for (auto &queryState : m_lightingGpuTimerQueries)
+            {
+                glDeleteQueries(static_cast<GLsizei>(queryState.queryIds.size()), queryState.queryIds.data());
+                queryState.queryIds = {};
+                queryState.pending = {};
+                queryState.writeIndex = 0;
+                queryState.activeIndex = 0;
+                queryState.active = false;
+            }
+        }
+
+        m_gpuTimerQueries.clear();
+        m_gpuPassTimings.clear();
+        m_lightingGpuTiming = {};
+        m_gpuProfilingSupported = false;
+    }
+
+    void Renderer::ExecutePassWithGpuTiming(IRenderPass &renderPass, const RenderContext &ctx, std::size_t timingIndex)
+    {
+        if (!m_gpuProfilingSupported || timingIndex >= m_gpuTimerQueries.size())
+        {
+            renderPass.Execute(ctx);
+            return;
+        }
+
+        auto &queryState = m_gpuTimerQueries[timingIndex];
+        const auto queryIndex = queryState.writeIndex;
+        ResolveGpuTiming(timingIndex, queryIndex);
+
+        glBeginQuery(GL_TIME_ELAPSED, queryState.queryIds[queryIndex]);
+        renderPass.Execute(ctx);
+        glEndQuery(GL_TIME_ELAPSED);
+
+        queryState.pending[queryIndex] = true;
+        queryState.writeIndex = (queryState.writeIndex + 1) % queryState.queryIds.size();
+    }
+
+    void Renderer::ResolveGpuTiming(std::size_t timingIndex, std::size_t queryIndex)
+    {
+        if (!m_gpuProfilingSupported || timingIndex >= m_gpuTimerQueries.size())
+        {
+            return;
+        }
+
+        auto &queryState = m_gpuTimerQueries[timingIndex];
+        ResolveGpuTiming(queryState, m_gpuPassTimings[timingIndex].gpuTimeMs, m_gpuPassTimings[timingIndex].hasResult, queryIndex);
+    }
+
+    void Renderer::ResolveGpuTiming(GpuTimerQueryState &queryState, float &gpuTimeMs, bool &hasResult, std::size_t queryIndex)
+    {
+        if (!queryState.pending[queryIndex])
+        {
+            return;
+        }
+
+        GLuint isAvailable = GL_FALSE;
+        glGetQueryObjectuiv(queryState.queryIds[queryIndex], GL_QUERY_RESULT_AVAILABLE, &isAvailable);
+        if (isAvailable == GL_FALSE)
+        {
+            return;
+        }
+
+        GLuint64 elapsedNanoseconds = 0;
+        glGetQueryObjectui64v(queryState.queryIds[queryIndex], GL_QUERY_RESULT, &elapsedNanoseconds);
+        gpuTimeMs = static_cast<float>(elapsedNanoseconds) * kNanosecondsToMilliseconds;
+        hasResult = true;
+        queryState.pending[queryIndex] = false;
     }
 }

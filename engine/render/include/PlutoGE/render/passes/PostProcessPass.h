@@ -9,6 +9,7 @@ namespace PlutoGE::render
     public:
         void Initialize() override;
         void Execute(const RenderContext &ctx) override;
+        const char *GetName() const override { return "Post Process"; }
     };
 
 }

@@ -1,4 +1,5 @@
 #include "PlutoGE/ui/EditorShell.h"
+#include "PlutoGE/ui/panels/ProfilerPanel.h"
 #include "PlutoGE/ui/panels/ViewportPanel.h"
 #include "PlutoGE/ui/panels/SceneHierarchyPanel.h"
 #include "PlutoGE/ui/panels/InspectorPanel.h"
@@ -185,6 +186,10 @@ namespace PlutoGE::ui
         inspectorPanel->Initialize();
         m_panelManager.AddPanel(inspectorPanel);
 
+        auto profilerPanel = new ProfilerPanel(PanelConfig{"Profiler"}, &m_profiler, &m_panelManager, &renderer);
+        profilerPanel->Initialize();
+        m_panelManager.AddPanel(profilerPanel);
+
         auto *renderTarget2 = viewportPanel2->GetRenderTarget();
 
         while (!window.ShouldClose())
@@ -251,6 +256,9 @@ namespace PlutoGE::ui
             renderer.EndFrame();
 
             window.PollEvents();
+
+            const auto frameEndTime = std::chrono::high_resolution_clock::now();
+            m_profiler.AddFrameSample(std::chrono::duration<float, std::milli>(frameEndTime - currentTime).count());
 
             lastTime = currentTime;
         }

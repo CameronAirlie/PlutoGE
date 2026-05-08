@@ -14,6 +14,7 @@ namespace PlutoGE::render
 
         void Initialize() override;
         void Execute(const RenderContext &ctx) override;
+        const char *GetName() const override { return "Geometry"; }
 
     private:
         Shader *m_geometryPassShader = nullptr;

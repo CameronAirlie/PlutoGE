@@ -19,6 +19,9 @@ namespace PlutoGE::render
         constexpr int kShadowMapCubeTextureSlot = 4;
         constexpr int kAmbientPassMode = 0;
         constexpr int kLightPassMode = 1;
+        constexpr std::size_t kLightingSetupStage = 0;
+        constexpr std::size_t kLightingAmbientStage = 1;
+        constexpr std::size_t kLightingAccumulationStage = 2;
 
         void BindLightingInputs(Shader *shader, GBuffer *gBuffer)
         {
@@ -110,6 +113,28 @@ namespace PlutoGE::render
             return;
         }
 
+        if (ctx.renderer)
+        {
+            int lightCount = 0;
+            int shadowedLightCount = 0;
+            for (auto *light : *ctx.lights)
+            {
+                if (!light)
+                {
+                    continue;
+                }
+
+                ++lightCount;
+                if (light->castsShadows && light->shadowMap)
+                {
+                    ++shadowedLightCount;
+                }
+            }
+
+            ctx.renderer->SetLightingPassCounters(lightCount, shadowedLightCount);
+            ctx.renderer->BeginLightingStageTiming(kLightingSetupStage);
+        }
+
         glDisable(GL_DEPTH_TEST);
         glDisable(GL_CULL_FACE);
         Graphics::ClearRenderTarget(ctx.temporaryRenderTarget);
@@ -124,6 +149,12 @@ namespace PlutoGE::render
 
         Graphics::BindRenderTarget(ctx.temporaryRenderTarget);
 
+        if (ctx.renderer)
+        {
+            ctx.renderer->EndLightingStageTiming(kLightingSetupStage);
+            ctx.renderer->BeginLightingStageTiming(kLightingAmbientStage);
+        }
+
         m_lightingPassShader->Bind();
         BindLightingInputs(m_lightingPassShader, ctx.gBuffer);
 
@@ -134,6 +165,12 @@ namespace PlutoGE::render
         m_lightingPassShader->SetUniform("uPassMode", kAmbientPassMode);
         glBindVertexArray(0);
         glDrawArrays(GL_TRIANGLES, 0, 3);
+
+        if (ctx.renderer)
+        {
+            ctx.renderer->EndLightingStageTiming(kLightingAmbientStage);
+            ctx.renderer->BeginLightingStageTiming(kLightingAccumulationStage);
+        }
 
         glEnable(GL_BLEND);
         glBlendEquation(GL_FUNC_ADD);
@@ -153,6 +190,10 @@ namespace PlutoGE::render
         }
 
         glDisable(GL_BLEND);
+        if (ctx.renderer)
+        {
+            ctx.renderer->EndLightingStageTiming(kLightingAccumulationStage);
+        }
         Graphics::UnbindRenderTarget();
     }
 }

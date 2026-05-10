@@ -196,7 +196,7 @@ namespace PlutoGE::ui
 
         auto *renderTarget2 = viewportPanel2->GetRenderTarget();
 
-        renderer.SetVSyncEnabled(false);
+        renderer.SetVSyncEnabled(true);
 
         while (!window.ShouldClose())
         {
@@ -213,6 +213,7 @@ namespace PlutoGE::ui
             // Scene update
 
             const auto sceneUpdateStart = std::chrono::high_resolution_clock::now();
+            m_engine.UpdateAsyncMeshImports();
             scene->Update(deltaTime.count());
             const auto sceneUpdateEnd = std::chrono::high_resolution_clock::now();
             frameTimingStats.sceneUpdateMs = std::chrono::duration<float, std::milli>(sceneUpdateEnd - sceneUpdateStart).count();

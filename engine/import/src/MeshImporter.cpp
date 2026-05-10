@@ -26,14 +26,6 @@ namespace PlutoGE::assetimport
 {
     namespace
     {
-        struct ParsedMeshAsset
-        {
-            render::MeshData meshData;
-            std::vector<render::Submesh> submeshes;
-            std::vector<ImportedMaterialData> materials;
-            std::vector<ImportedTextureData> textures;
-        };
-
         struct AccessorView
         {
             const tinygltf::Accessor *accessor = nullptr;
@@ -243,8 +235,27 @@ namespace PlutoGE::assetimport
             return glm::dot(value, value);
         }
 
+        bool HasMissingNormals(const render::MeshData &meshData)
+        {
+            for (const auto &vertex : meshData.vertices)
+            {
+                const glm::vec3 normal(vertex.normal[0], vertex.normal[1], vertex.normal[2]);
+                if (SquaredLength(normal) <= 1e-12f)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         void FinalizeMissingNormals(render::MeshData &meshData)
         {
+            if (!HasMissingNormals(meshData))
+            {
+                return;
+            }
+
             std::vector<glm::vec3> accumulatedNormals(meshData.vertices.size(), glm::vec3(0.0f));
 
             for (size_t index = 0; index + 2 < meshData.indices.size(); index += 3)
@@ -519,7 +530,7 @@ namespace PlutoGE::assetimport
             const tinygltf::Model &model,
             int nodeIndex,
             const glm::mat4 &parentTransform,
-            ParsedMeshAsset &parsedMeshAsset,
+            ImportedMeshSourceAsset &parsedMeshAsset,
             uint32_t defaultMaterialIndex,
             std::unordered_set<int> &visitedNodes)
         {
@@ -554,7 +565,7 @@ namespace PlutoGE::assetimport
             }
         }
 
-        ParsedMeshAsset ParseMeshAsset(const std::string &filePath)
+        ImportedMeshSourceAsset ParseMeshAsset(const std::string &filePath)
         {
             if (!MeshImporter().SupportsFileType(filePath))
             {
@@ -582,7 +593,7 @@ namespace PlutoGE::assetimport
                 throw std::runtime_error(errors.empty() ? "Failed to load glTF mesh." : errors);
             }
 
-            ParsedMeshAsset parsedMeshAsset;
+            ImportedMeshSourceAsset parsedMeshAsset;
             parsedMeshAsset.textures.resize(model.images.size());
             for (size_t imageIndex = 0; imageIndex < model.images.size(); ++imageIndex)
             {
@@ -642,6 +653,34 @@ namespace PlutoGE::assetimport
         return extension == ".glb" || extension == ".gltf";
     }
 
+    ImportedMeshSourceAsset MeshImporter::ImportMeshSourceAsset(const std::string &filePath) const
+    {
+        return ParseMeshAsset(filePath);
+    }
+
+    ImportedMeshAsset MeshImporter::FinalizeImportedMeshAsset(const std::string &filePath, ImportedMeshSourceAsset meshSourceAsset)
+    {
+        // LRU cache for meshes
+        constexpr size_t kMaxMeshCacheSize = 8;
+        const auto normalizedPath = NormalizePath(filePath);
+        const auto cachedMesh = m_meshCache.find(normalizedPath);
+        if (cachedMesh != m_meshCache.end())
+        {
+            return cachedMesh->second.ToImportedMeshAsset();
+        }
+        if (m_meshCache.size() >= kMaxMeshCacheSize)
+        {
+            m_meshCache.erase(m_meshCache.begin());
+        }
+        CachedImportedMeshAsset cachedImportedMeshAsset;
+        cachedImportedMeshAsset.mesh = std::unique_ptr<render::Mesh>(
+            render::Mesh::FromData(std::move(meshSourceAsset.meshData), std::move(meshSourceAsset.submeshes)));
+        cachedImportedMeshAsset.materials = std::move(meshSourceAsset.materials);
+        cachedImportedMeshAsset.textures = std::move(meshSourceAsset.textures);
+        auto [iterator, inserted] = m_meshCache.emplace(normalizedPath, std::move(cachedImportedMeshAsset));
+        return iterator->second.ToImportedMeshAsset();
+    }
+
     render::MeshData MeshImporter::ImportMeshData(const std::string &filePath) const
     {
         return ParseMeshAsset(filePath).meshData;
@@ -658,16 +697,7 @@ namespace PlutoGE::assetimport
 
         try
         {
-            auto parsedMeshAsset = ParseMeshAsset(normalizedPath);
-
-            CachedImportedMeshAsset cachedImportedMeshAsset;
-            cachedImportedMeshAsset.mesh = std::unique_ptr<render::Mesh>(
-                render::Mesh::FromData(std::move(parsedMeshAsset.meshData), std::move(parsedMeshAsset.submeshes)));
-            cachedImportedMeshAsset.materials = std::move(parsedMeshAsset.materials);
-            cachedImportedMeshAsset.textures = std::move(parsedMeshAsset.textures);
-
-            auto [iterator, inserted] = m_meshCache.emplace(normalizedPath, std::move(cachedImportedMeshAsset));
-            return iterator->second.ToImportedMeshAsset();
+            return FinalizeImportedMeshAsset(normalizedPath, ParseMeshAsset(normalizedPath));
         }
         catch (const std::exception &exception)
         {

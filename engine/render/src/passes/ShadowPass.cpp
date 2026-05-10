@@ -267,6 +267,24 @@ namespace
     {
         return IsBoundsVisible(GetWorldBounds(command), planes);
     }
+
+    void BindShadowMaterialState(PlutoGE::render::Shader *shader, PlutoGE::render::Material *material)
+    {
+        if (!shader || !material)
+        {
+            return;
+        }
+
+        auto *albedoTexture = material->GetConfig().albedoTexture;
+        if (albedoTexture)
+        {
+            shader->SetUniform("uAlbedoTexture", albedoTexture, 0);
+            shader->SetUniform("uHasAlbedoTexture", 1.0f);
+            return;
+        }
+
+        shader->SetUniform("uHasAlbedoTexture", 0.0f);
+    }
 }
 
 namespace PlutoGE::render
@@ -352,7 +370,7 @@ namespace PlutoGE::render
                         m_shadowPassShader->SetUniform("uModel", command.model);
                         if (command.material != boundMaterial)
                         {
-                            command.material->Bind(m_shadowPassShader);
+                            BindShadowMaterialState(m_shadowPassShader, command.material);
                             boundMaterial = command.material;
                         }
 
@@ -393,6 +411,7 @@ namespace PlutoGE::render
                     const float cascadeFar = cascadeSplits[cascadeIndex];
                     const int shadowResolution = cascadeMap->GetWidth() > 0 ? cascadeMap->GetWidth() : GetShadowResolution(*light);
                     const glm::mat4 cascadeMatrix = BuildDirectionalCascadeMatrix(*light, ctx.cameraData, cascadeNear, cascadeFar, shadowResolution);
+                    const auto cascadeFrustumPlanes = ExtractFrustumPlanes(cascadeMatrix);
                     light->shadowCascadeMatrices[cascadeIndex] = cascadeMatrix;
                     light->shadowCascadeSplits[cascadeIndex] = cascadeFar;
 
@@ -414,10 +433,15 @@ namespace PlutoGE::render
                             continue;
                         }
 
+                        if (!IsCommandRelevantForProjectedLight(command, cascadeFrustumPlanes))
+                        {
+                            continue;
+                        }
+
                         m_shadowPassShader->SetUniform("uModel", command.model);
                         if (command.material != boundMaterial)
                         {
-                            command.material->Bind(m_shadowPassShader);
+                            BindShadowMaterialState(m_shadowPassShader, command.material);
                             boundMaterial = command.material;
                         }
 
@@ -479,7 +503,7 @@ namespace PlutoGE::render
                 m_shadowPassShader->SetUniform("uModel", command.model);
                 if (command.material != boundMaterial)
                 {
-                    command.material->Bind(m_shadowPassShader);
+                    BindShadowMaterialState(m_shadowPassShader, command.material);
                     boundMaterial = command.material;
                 }
 

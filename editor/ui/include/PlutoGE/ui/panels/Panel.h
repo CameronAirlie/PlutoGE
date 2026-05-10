@@ -1,5 +1,7 @@
 #pragma once
 
+#include <imgui.h>
+
 #include <string>
 
 namespace PlutoGE::ui
@@ -28,8 +30,15 @@ namespace PlutoGE::ui
         virtual void Shutdown() {}   // Optional cleanup logic for the panel
 
     private:
+        void ApplyFloatingWindowState();
+        void DrawFloatingWindowControls();
+        void ToggleMaximized();
+
         PanelConfig m_config;
         bool m_isOpen = true; // Panels are open by default, can be toggled by user
         bool m_wasVisibleLastFrame = true;
+        bool m_isMaximized = false;
+        ImVec2 m_restorePos = ImVec2(0.0f, 0.0f);
+        ImVec2 m_restoreSize = ImVec2(0.0f, 0.0f);
     };
 }

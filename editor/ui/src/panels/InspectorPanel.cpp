@@ -284,6 +284,9 @@ namespace PlutoGE::ui
             // Mesh Import UI (if entity has MeshComponent)
             if (auto *meshComponent = entity->GetComponent<PlutoGE::scene::MeshComponent>())
             {
+                auto &engine = PlutoGE::core::Engine::GetInstance();
+                const auto meshImportStatus = engine.GetMeshImportStatus(entity->GetID());
+
                 ImGui::Separator();
                 ImGui::Text("Mesh Import");
                 static char meshPath[512] = "";
@@ -307,17 +310,20 @@ namespace PlutoGE::ui
 #endif
                 }
                 ImGui::SameLine();
+                ImGui::BeginDisabled(meshImportStatus.pending || strlen(meshPath) == 0);
                 if (ImGui::Button("Import Mesh"))
                 {
-                    if (strlen(meshPath) > 0)
-                    {
-                        auto importedMeshAsset = PlutoGE::core::Engine::GetInstance().ImportMeshAsset(meshPath);
-                        if (importedMeshAsset.mesh)
-                        {
-                            meshComponent->SetMesh(importedMeshAsset.mesh);
-                            meshComponent->SetMaterials(importedMeshAsset.materials);
-                        }
-                    }
+                    engine.QueueMeshImport(entity->GetID(), meshPath);
+                }
+                ImGui::EndDisabled();
+
+                if (meshImportStatus.pending)
+                {
+                    ImGui::TextUnformatted("Importing mesh on background thread...");
+                }
+                else if (!meshImportStatus.errorMessage.empty())
+                {
+                    ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f), "%s", meshImportStatus.errorMessage.c_str());
                 }
 
                 if (meshComponent->GetMesh() && meshComponent->GetMesh()->GetSubmeshCount() > 0)

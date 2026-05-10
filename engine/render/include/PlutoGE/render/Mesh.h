@@ -52,7 +52,10 @@ namespace PlutoGE::render
         Mesh(const MeshConfig &config) : m_config(config)
         {
             m_meshData = m_config.data; // Store mesh data for buffer initialization
-            GenerateTangents(m_meshData);
+            if (!HasValidTangents(m_meshData))
+            {
+                GenerateTangents(m_meshData);
+            }
             m_bounds = ComputeBounds(m_meshData);
 
             if (m_config.submeshes.empty() && !m_meshData.indices.empty())
@@ -279,6 +282,25 @@ namespace PlutoGE::render
                                                 ? glm::vec3(0.0f, 0.0f, 1.0f)
                                                 : glm::vec3(0.0f, 1.0f, 0.0f);
             return glm::normalize(glm::cross(referenceAxis, normal));
+        }
+
+        static bool HasValidTangents(const MeshData &meshData)
+        {
+            for (const auto &vertex : meshData.vertices)
+            {
+                const glm::vec3 tangent(vertex.tangent[0], vertex.tangent[1], vertex.tangent[2]);
+                if (glm::dot(tangent, tangent) <= 1e-8f)
+                {
+                    return false;
+                }
+
+                if (std::abs(vertex.tangent[3]) < 0.5f)
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         static MeshBounds ComputeBounds(const MeshData &meshData)

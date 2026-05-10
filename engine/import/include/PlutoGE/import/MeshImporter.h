@@ -38,12 +38,22 @@ namespace PlutoGE::assetimport
         const std::vector<ImportedTextureData> *textures = nullptr;
     };
 
+    struct ImportedMeshSourceAsset
+    {
+        render::MeshData meshData;
+        std::vector<render::Submesh> submeshes;
+        std::vector<ImportedMaterialData> materials;
+        std::vector<ImportedTextureData> textures;
+    };
+
     class MeshImporter
     {
     public:
         MeshImporter() = default;
         ~MeshImporter() = default;
 
+        ImportedMeshSourceAsset ImportMeshSourceAsset(const std::string &filePath) const;
+        ImportedMeshAsset FinalizeImportedMeshAsset(const std::string &filePath, ImportedMeshSourceAsset meshSourceAsset);
         ImportedMeshAsset ImportMeshAsset(const std::string &filePath);
         render::Mesh *ImportMesh(const std::string &filePath);
         render::MeshData ImportMeshData(const std::string &filePath) const;

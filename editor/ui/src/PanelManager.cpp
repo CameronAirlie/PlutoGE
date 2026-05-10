@@ -35,6 +35,7 @@ namespace PlutoGE::ui
         if (kEnableNativeMultiViewport)
         {
             io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
+            io.ConfigViewportsNoDecoration = false;
         }
 
         ImGui_ImplGlfw_InitForOpenGL(static_cast<GLFWwindow *>(window->GetWindow()), true);

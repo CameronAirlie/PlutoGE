@@ -2,6 +2,7 @@
 
 #include "PlutoGE/scene/components/Component.h"
 #include "PlutoGE/render/Texture.h"
+#include <array>
 #include <glm/glm.hpp>
 
 #include <memory>
@@ -16,6 +17,18 @@ namespace PlutoGE::scene
         Spot
     };
 
+    inline constexpr int kMaxDirectionalShadowCascades = 4;
+
+    struct DirectionalShadowSettings
+    {
+        int cascadeCount = 4;
+        int resolution = 2048;
+        float maxDistance = 60.0f;
+        float splitLambda = 0.75f;
+        float cascadeBlendDistance = 4.0f;
+        float softness = 1.5f;
+    };
+
     struct Light
     {
         LightType type = LightType::Point; // Type of the light (point, directional, spot)
@@ -26,10 +39,16 @@ namespace PlutoGE::scene
         glm::vec3 direction{0.0f, -1.0f, 0.0f};     // Direction of the light (for directional and spot lights)
         std::unique_ptr<render::Texture> shadowMap; // Owned shadow map texture (if any)
         glm::mat4 shadowMatrix{1.0f};               // Light-space matrix for projected shadow maps
-        float shadowFarPlane = 0.0f;                // Far plane used when sampling point-light shadows
-        bool castsShadows = false;                  // Whether the light casts shadows
-        bool isStatic = false;                      // Static lights only refresh shadow data when dirty
-        bool isDirty = true;                        // Dirty lights need their shadow data refreshed
+        std::array<std::unique_ptr<render::Texture>, kMaxDirectionalShadowCascades> shadowCascadeMaps;
+        std::array<glm::mat4, kMaxDirectionalShadowCascades> shadowCascadeMatrices{
+            glm::mat4(1.0f), glm::mat4(1.0f), glm::mat4(1.0f), glm::mat4(1.0f)};
+        std::array<float, kMaxDirectionalShadowCascades> shadowCascadeSplits{0.0f, 0.0f, 0.0f, 0.0f};
+        DirectionalShadowSettings directionalShadowSettings{};
+        int activeShadowCascadeCount = 0;
+        float shadowFarPlane = 0.0f; // Far plane used when sampling point-light shadows
+        bool castsShadows = false;   // Whether the light casts shadows
+        bool isStatic = false;       // Static lights only refresh shadow data when dirty
+        bool isDirty = true;         // Dirty lights need their shadow data refreshed
     };
 
     class LightComponent : public TypedComponent<LightComponent>
@@ -45,6 +64,7 @@ namespace PlutoGE::scene
         void SetDirection(const glm::vec3 &direction);
         void SetStatic(bool isStatic);
         void SetCastsShadows(bool castsShadows);
+        void SetDirectionalShadowSettings(const DirectionalShadowSettings &settings);
         void SetShadowMap(render::Texture *shadowMap);
         void MarkDirty();
         void ClearDirty();

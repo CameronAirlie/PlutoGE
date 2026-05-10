@@ -20,8 +20,11 @@ namespace PlutoGE::ui
         }
 
         const auto &timingStats = m_panelManager->GetTimingStats();
+        const auto &cpuPassTimings = m_renderer->GetCpuPassTimings();
+        const auto &cpuFrameStats = m_renderer->GetCpuFrameStats();
         const auto &gpuPassTimings = m_renderer->GetGpuPassTimings();
         const auto &lightingGpuTiming = m_renderer->GetLightingGpuTiming();
+        const auto &frameTimingStats = m_profiler->GetLatestFrameTimingStats();
         ImGui::Text("Frame: %.2f ms", m_profiler->GetCurrentFrameTimeMs());
         ImGui::Text("Average: %.2f ms (%.1f FPS)", m_profiler->GetAverageFrameTimeMs(), m_profiler->GetAverageFPS());
         ImGui::Text("Min / Max: %.2f ms / %.2f ms", m_profiler->GetMinFrameTimeMs(), m_profiler->GetMaxFrameTimeMs());
@@ -45,12 +48,30 @@ namespace PlutoGE::ui
         }
 
         ImGui::Separator();
+        ImGui::Text("Scene update: %.2f ms", frameTimingStats.sceneUpdateMs);
+        ImGui::Text("Viewport render: %.2f ms", frameTimingStats.viewportRenderMs);
+        ImGui::Text("Viewport renders: %d", frameTimingStats.renderedViewportCount);
+        ImGui::Text("Renderer begin frame: %.2f ms", frameTimingStats.rendererBeginFrameMs);
+        ImGui::Text("Present / swap: %.2f ms", frameTimingStats.presentMs);
+        ImGui::Text("Event polling: %.2f ms", frameTimingStats.eventPollingMs);
+        ImGui::Text("Frame remainder: %.2f ms", std::max(0.0f, m_profiler->GetCurrentFrameTimeMs() - frameTimingStats.sceneUpdateMs - frameTimingStats.viewportRenderMs - frameTimingStats.rendererBeginFrameMs - timingStats.endPanelUpdateTotalMs - frameTimingStats.presentMs - frameTimingStats.eventPollingMs));
+        ImGui::Separator();
         ImGui::Text("ImGui render: %.2f ms", timingStats.imguiRenderMs);
         ImGui::Text("Panel update total: %.2f ms", timingStats.endPanelUpdateTotalMs);
         ImGui::Text("Platform window update: %.2f ms", timingStats.platformWindowsUpdateMs);
         ImGui::Text("Platform window render: %.2f ms", timingStats.platformWindowsRenderMs);
         ImGui::Text("Context restore: %.2f ms", timingStats.contextRestoreMs);
         ImGui::Text("Platform viewports: %d", timingStats.platformViewportCount);
+
+        ImGui::Separator();
+        ImGui::Text("Profiled renders: %d", m_renderer->GetProfiledRenderCount());
+        ImGui::Text("CPU passes total: %.2f ms", m_renderer->GetTotalCpuPassTimeMs());
+        for (const auto &cpuPassTiming : cpuPassTimings)
+        {
+            ImGui::Text("%s CPU: %.2f ms", cpuPassTiming.name.c_str(), cpuPassTiming.cpuTimeMs);
+        }
+        ImGui::Text("Intermediate target resize: %.2f ms (%d)", cpuFrameStats.intermediateTargetResizeMs, cpuFrameStats.intermediateTargetResizeCount);
+        ImGui::Text("GBuffer resize: %.2f ms (%d)", cpuFrameStats.gBufferResizeMs, cpuFrameStats.gBufferResizeCount);
 
         ImGui::Separator();
         ImGui::Text("GPU passes total: %.2f ms", m_renderer->GetTotalGpuPassTimeMs());
@@ -112,7 +133,11 @@ namespace PlutoGE::ui
         {
             m_lastCopiedMetrics = m_profiler->BuildMetricsReport(
                 timingStats,
+                frameTimingStats,
+                cpuPassTimings,
+                cpuFrameStats,
                 gpuPassTimings,
+                m_renderer->GetTotalCpuPassTimeMs(),
                 m_renderer->GetTotalGpuPassTimeMs(),
                 lightingGpuTiming);
             ImGui::SetClipboardText(m_lastCopiedMetrics.c_str());

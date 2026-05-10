@@ -1,6 +1,7 @@
 #include "PlutoGE/ui/EditorProfiler.h"
 
 #include <algorithm>
+#include <cmath>
 #include <numeric>
 #include <sstream>
 
@@ -16,6 +17,11 @@ namespace PlutoGE::ui
         m_frameSamples[m_nextSampleIndex] = frameTimeMs;
         m_nextSampleIndex = (m_nextSampleIndex + 1) % m_frameSamples.size();
         m_sampleCount = std::min(m_sampleCount + 1, m_frameSamples.size());
+    }
+
+    void EditorProfiler::SetLatestFrameTimingStats(const EditorFrameTimingStats &timingStats)
+    {
+        m_latestFrameTimingStats = timingStats;
     }
 
     float EditorProfiler::GetCurrentFrameTimeMs() const
@@ -91,8 +97,17 @@ namespace PlutoGE::ui
         return static_cast<int>(m_nextSampleIndex);
     }
 
+    const EditorFrameTimingStats &EditorProfiler::GetLatestFrameTimingStats() const
+    {
+        return m_latestFrameTimingStats;
+    }
+
     std::string EditorProfiler::BuildMetricsReport(const PanelManagerTimingStats &timingStats,
+                                                   const EditorFrameTimingStats &frameTimingStats,
+                                                   const std::vector<render::CpuPassTiming> &cpuPassTimings,
+                                                   const render::RendererCpuFrameStats &cpuFrameStats,
                                                    const std::vector<render::GpuPassTiming> &gpuPassTimings,
+                                                   float totalCpuPassTimeMs,
                                                    float totalGpuPassTimeMs,
                                                    const render::LightingGpuTiming &lightingGpuTiming) const
     {
@@ -106,12 +121,28 @@ namespace PlutoGE::ui
         report << "Max frame time: " << GetMaxFrameTimeMs() << " ms\n";
         report << "Average FPS: " << GetAverageFPS() << "\n";
         report << "Samples: " << m_sampleCount << "\n";
+        report << "Scene update: " << frameTimingStats.sceneUpdateMs << " ms\n";
+        report << "Viewport render: " << frameTimingStats.viewportRenderMs << " ms\n";
+        report << "Viewport renders: " << frameTimingStats.renderedViewportCount << "\n";
+        report << "Renderer begin frame: " << frameTimingStats.rendererBeginFrameMs << " ms\n";
+        report << "Present / swap: " << frameTimingStats.presentMs << " ms\n";
+        report << "Event polling: " << frameTimingStats.eventPollingMs << " ms\n";
+        report << "Frame remainder: " << std::max(0.0f, GetCurrentFrameTimeMs() - frameTimingStats.sceneUpdateMs - frameTimingStats.viewportRenderMs - frameTimingStats.rendererBeginFrameMs - timingStats.endPanelUpdateTotalMs - frameTimingStats.presentMs - frameTimingStats.eventPollingMs) << " ms\n";
         report << "ImGui render: " << timingStats.imguiRenderMs << " ms\n";
         report << "Panel update total: " << timingStats.endPanelUpdateTotalMs << " ms\n";
         report << "Platform windows update: " << timingStats.platformWindowsUpdateMs << " ms\n";
         report << "Platform windows render: " << timingStats.platformWindowsRenderMs << " ms\n";
         report << "Context restore: " << timingStats.contextRestoreMs << " ms\n";
         report << "Platform viewports: " << timingStats.platformViewportCount << "\n";
+        report << "CPU passes total: " << totalCpuPassTimeMs << " ms\n";
+        for (const auto &cpuPassTiming : cpuPassTimings)
+        {
+            report << cpuPassTiming.name << " CPU: " << cpuPassTiming.cpuTimeMs << " ms\n";
+        }
+        report << "Intermediate target resize: " << cpuFrameStats.intermediateTargetResizeMs << " ms\n";
+        report << "Intermediate target resizes: " << cpuFrameStats.intermediateTargetResizeCount << "\n";
+        report << "GBuffer resize: " << cpuFrameStats.gBufferResizeMs << " ms\n";
+        report << "GBuffer resizes: " << cpuFrameStats.gBufferResizeCount << "\n";
         report << "GPU passes total: " << totalGpuPassTimeMs << " ms\n";
         for (const auto &gpuPassTiming : gpuPassTimings)
         {

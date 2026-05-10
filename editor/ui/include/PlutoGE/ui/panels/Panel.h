@@ -20,6 +20,8 @@ namespace PlutoGE::ui
         void EndPanel();
         void Update();
         bool IsOpen() const { return m_isOpen; }
+        void SetOpen(bool open) { m_isOpen = open; }
+        bool WasVisibleLastFrame() const { return m_wasVisibleLastFrame; }
 
         virtual void Initialize() {} // Optional initialization logic for the panel
         virtual void Render() = 0;   // Pure virtual function to render the panel
@@ -28,5 +30,6 @@ namespace PlutoGE::ui
     private:
         PanelConfig m_config;
         bool m_isOpen = true; // Panels are open by default, can be toggled by user
+        bool m_wasVisibleLastFrame = true;
     };
 }

@@ -340,6 +340,9 @@ uniform sampler2D gAlbedoSpec;
 const float PI = 3.14159265359;
 const int PASS_MODE_AMBIENT = 0;
 const int LIGHT_TYPE_POINT = 0;
+const int LIGHT_TYPE_DIRECTIONAL = 1;
+const int LIGHT_TYPE_SPOT = 2;
+const int MAX_SHADOW_CASCADES = 4;
 
 struct Light {
     vec3 Position;
@@ -351,12 +354,22 @@ struct Light {
     int CastsShadows;
     mat4 LightSpaceMatrix;
     float ShadowFarPlane;
+    mat4 CascadeLightSpaceMatrices[MAX_SHADOW_CASCADES];
+    float CascadeSplits[MAX_SHADOW_CASCADES];
+    int CascadeCount;
+    float ShadowSoftness;
+    float CascadeBlendDistance;
 };
 
 uniform int uPassMode;
 uniform Light uLight;
 uniform vec3 uViewPos;
+uniform mat4 uViewMatrix;
 uniform sampler2D uShadowMap2D;
+uniform sampler2D uShadowCascadeMap0;
+uniform sampler2D uShadowCascadeMap1;
+uniform sampler2D uShadowCascadeMap2;
+uniform sampler2D uShadowCascadeMap3;
 uniform samplerCube uShadowMapCube;
 
 float DistributionGGX(vec3 normal, vec3 halfwayDir, float roughness)
@@ -427,9 +440,51 @@ vec3 EvaluatePbrLighting(vec3 normal, vec3 viewDir, vec3 albedo, float metallic,
     return (diffuse + specular) * radiance * ndotl;
 }
 
-float ComputeProjectedShadow(vec3 fragPos, vec3 normal, Light light)
+float SampleShadowMapPCF(sampler2D shadowMap, vec3 projectedCoords, float softness)
 {
-    vec4 lightSpacePosition = light.LightSpaceMatrix * vec4(fragPos, 1.0);
+    vec2 texelSize = 1.0 / vec2(textureSize(shadowMap, 0));
+    float filterRadius = max(softness, 0.5);
+    float shadow = 0.0;
+    float totalWeight = 0.0;
+    for (int y = -1; y <= 1; ++y)
+    {
+        for (int x = -1; x <= 1; ++x)
+        {
+            vec2 offset = vec2(float(x), float(y)) * texelSize * filterRadius;
+            vec2 sampleCoords = clamp(projectedCoords.xy + offset, vec2(0.0), vec2(1.0));
+            float closestDepth = texture(shadowMap, sampleCoords).r;
+            float weight = (x == 0 && y == 0) ? 4.0 : ((x == 0 || y == 0) ? 2.0 : 1.0);
+            shadow += projectedCoords.z > closestDepth ? weight : 0.0;
+            totalWeight += weight;
+        }
+    }
+
+    return shadow / max(totalWeight, 0.0001);
+}
+
+float SampleDirectionalCascadeShadow(int cascadeIndex, vec3 projectedCoords, float softness)
+{
+    if (cascadeIndex == 0)
+    {
+        return SampleShadowMapPCF(uShadowCascadeMap0, projectedCoords, softness);
+    }
+
+    if (cascadeIndex == 1)
+    {
+        return SampleShadowMapPCF(uShadowCascadeMap1, projectedCoords, softness);
+    }
+
+    if (cascadeIndex == 2)
+    {
+        return SampleShadowMapPCF(uShadowCascadeMap2, projectedCoords, softness);
+    }
+
+    return SampleShadowMapPCF(uShadowCascadeMap3, projectedCoords, softness);
+}
+
+float ComputeSingleProjectedShadow(vec3 receiverPosition, sampler2D shadowMap, mat4 lightSpaceMatrix, float softness)
+{
+    vec4 lightSpacePosition = lightSpaceMatrix * vec4(receiverPosition, 1.0);
     vec3 projectedCoords = lightSpacePosition.xyz / max(lightSpacePosition.w, 0.0001);
     projectedCoords = projectedCoords * 0.5 + 0.5;
 
@@ -438,28 +493,79 @@ float ComputeProjectedShadow(vec3 fragPos, vec3 normal, Light light)
         return 0.0;
     }
 
-    vec3 lightVector = light.Type == 1 ? normalize(-light.Direction) : normalize(light.Position - fragPos);
-    float biasScale = light.Type == 1 ? 0.004 : 0.0015;
-    float minimumBias = light.Type == 1 ? 0.0005 : 0.0001;
-    float bias = max(biasScale * (1.0 - max(dot(normal, lightVector), 0.0)), minimumBias);
-    vec2 texelSize = 1.0 / vec2(textureSize(uShadowMap2D, 0));
-    float filterRadius = 1.25;
-    vec2 sampleOffsets[4] = vec2[](
-        vec2(-0.9420, -0.3990),
-        vec2(0.9456, -0.7689),
-        vec2(-0.0942, 0.9294),
-        vec2(0.3449, 0.2939)
-    );
+    return SampleShadowMapPCF(shadowMap, projectedCoords, softness);
+}
 
-    float shadow = 0.0;
-    for (int sampleIndex = 0; sampleIndex < 4; ++sampleIndex)
+float ComputeSpotShadow(vec3 fragPos, vec3 normal, Light light)
+{
+    vec3 surfaceNormal = normalize(normal);
+    vec3 lightVector = normalize(light.Position - fragPos);
+    float bias = max(0.0015 * (1.0 - max(dot(surfaceNormal, lightVector), 0.0)), 0.0001);
+    vec3 receiverPosition = fragPos + surfaceNormal * bias;
+    return ComputeSingleProjectedShadow(receiverPosition, uShadowMap2D, light.LightSpaceMatrix, 1.25);
+}
+
+int SelectDirectionalCascadeIndex(Light light, float viewDepth)
+{
+    for (int cascadeIndex = 0; cascadeIndex < light.CascadeCount; ++cascadeIndex)
     {
-        vec2 sampleCoords = clamp(projectedCoords.xy + sampleOffsets[sampleIndex] * texelSize * filterRadius, vec2(0.0), vec2(1.0));
-        float closestDepth = texture(uShadowMap2D, sampleCoords).r;
-        shadow += projectedCoords.z - bias > closestDepth ? 1.0 : 0.0;
+        if (viewDepth <= light.CascadeSplits[cascadeIndex])
+        {
+            return cascadeIndex;
+        }
     }
 
-    return shadow / 4.0;
+    return light.CascadeCount - 1;
+}
+
+float ComputeDirectionalCascadeShadow(vec3 receiverPosition, Light light, int cascadeIndex)
+{
+    vec4 lightSpacePosition = light.CascadeLightSpaceMatrices[cascadeIndex] * vec4(receiverPosition, 1.0);
+    vec3 projectedCoords = lightSpacePosition.xyz / max(lightSpacePosition.w, 0.0001);
+    projectedCoords = projectedCoords * 0.5 + 0.5;
+
+    if (projectedCoords.z < 0.0 || projectedCoords.z > 1.0 || projectedCoords.x < 0.0 || projectedCoords.x > 1.0 || projectedCoords.y < 0.0 || projectedCoords.y > 1.0)
+    {
+        return 0.0;
+    }
+
+    return SampleDirectionalCascadeShadow(cascadeIndex, projectedCoords, light.ShadowSoftness);
+}
+
+float ComputeDirectionalShadow(vec3 fragPos, vec3 normal, Light light)
+{
+    if (light.CascadeCount <= 0)
+    {
+        return 0.0;
+    }
+
+    vec3 surfaceNormal = normalize(normal);
+    vec3 lightVector = normalize(-light.Direction);
+    float bias = max(0.01 * (1.0 - max(dot(surfaceNormal, lightVector), 0.0)), 0.0015);
+    vec3 receiverPosition = fragPos + surfaceNormal * bias;
+    float viewDepth = abs((uViewMatrix * vec4(receiverPosition, 1.0)).z);
+
+    if (viewDepth > light.CascadeSplits[light.CascadeCount - 1])
+    {
+        return 0.0;
+    }
+
+    int cascadeIndex = SelectDirectionalCascadeIndex(light, viewDepth);
+    float shadow = ComputeDirectionalCascadeShadow(receiverPosition, light, cascadeIndex);
+
+    if (cascadeIndex < light.CascadeCount - 1)
+    {
+        float splitDistance = light.CascadeSplits[cascadeIndex];
+        float blendStart = max(splitDistance - light.CascadeBlendDistance, 0.0);
+        if (viewDepth > blendStart)
+        {
+            float nextShadow = ComputeDirectionalCascadeShadow(receiverPosition, light, cascadeIndex + 1);
+            float blendFactor = clamp((viewDepth - blendStart) / max(splitDistance - blendStart, 0.0001), 0.0, 1.0);
+            shadow = mix(shadow, nextShadow, blendFactor);
+        }
+    }
+
+    return shadow;
 }
 
 float ComputePointShadow(vec3 fragPos, vec3 normal, Light light)
@@ -509,7 +615,12 @@ float ComputeShadow(vec3 fragPos, vec3 normal, Light light)
         return ComputePointShadow(fragPos, normal, light);
     }
 
-    return ComputeProjectedShadow(fragPos, normal, light);
+    if (light.Type == LIGHT_TYPE_DIRECTIONAL)
+    {
+        return ComputeDirectionalShadow(fragPos, normal, light);
+    }
+
+    return ComputeSpotShadow(fragPos, normal, light);
 }
 
 vec3 ComputeLightContribution(vec3 fragPos, vec3 normal, vec3 viewDir, vec3 albedo, float metallic, float roughness, Light light)
@@ -522,7 +633,7 @@ vec3 ComputeLightContribution(vec3 fragPos, vec3 normal, vec3 viewDir, vec3 albe
         lightDir = normalize(light.Position - fragPos);
         attenuation = ComputePointAttenuation(fragPos, light);
     }
-    else if (light.Type == 1)
+    else if (light.Type == LIGHT_TYPE_DIRECTIONAL)
     {
         lightDir = normalize(-light.Direction);
     }
@@ -746,7 +857,10 @@ void main()
                 {
                     float lightDistance = length(FragPos - uLightPosition);
                     gl_FragDepth = lightDistance / max(uFarPlane, 0.0001);
+                    return;
                 }
+
+                gl_FragDepth = gl_FragCoord.z;
             }
         )";
 

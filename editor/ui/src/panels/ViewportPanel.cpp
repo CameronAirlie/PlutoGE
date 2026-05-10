@@ -103,7 +103,7 @@ namespace PlutoGE::ui
 
     bool ViewportPanel::ShouldRenderFrame() const
     {
-        return IsOpen() && m_renderTarget && m_renderTarget->IsInitialized() && m_renderTarget->GetWidth() > 0 && m_renderTarget->GetHeight() > 0;
+        return IsOpen() && WasVisibleLastFrame() && m_renderTarget && m_renderTarget->IsInitialized() && m_renderTarget->GetWidth() > 0 && m_renderTarget->GetHeight() > 0;
     }
 
     void ViewportPanel::ClearFrame()

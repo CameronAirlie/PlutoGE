@@ -34,7 +34,7 @@ namespace PlutoGE::ui
             }
 
             auto *owner = cameraComponent->GetOwner();
-            if (!owner || !cameraComponent->GetCamera())
+            if (!owner || !cameraComponent->GetCamera() || !owner->IsActive())
             {
                 return false;
             }
@@ -167,20 +167,20 @@ namespace PlutoGE::ui
             auto lightEntity = std::make_unique<scene::Entity>(scene::EntityConfig{
                 .name = "Key Light " + std::to_string(i),
             });
-            auto positionOffset = (randomColour() - 1.0f) * 5.0f; // Random position offset for each light
-            lightEntity->SetPosition(glm::vec3(positionOffset.x, 5.0f, positionOffset.z));
+            lightEntity->SetPosition(glm::vec3(0.0f, 5.0f, 0.0f));
+            lightEntity->SetRotation(glm::vec3(-50.0f, -35.0f, 0.0f));
             auto *lightComponent = lightEntity->CreateComponent<scene::LightComponent>();
-            lightComponent->GetLight().color = randomColour(); // glm::vec3(1.0f, 0.95f, 0.85f);
-            lightComponent->GetLight().intensity = 1.0f;
-            lightComponent->GetLight().range = 20.0f;
-            lightComponent->GetLight().castsShadows = true;
-            lightComponent->GetLight().type = scene::LightType::Point;
+            lightComponent->SetColor(glm::vec3(1.0f, 0.95f, 0.85f));
+            lightComponent->SetIntensity(1.0f);
+            lightComponent->SetRange(20.0f);
+            lightComponent->SetLightType(scene::LightType::Directional);
+            lightComponent->SetCastsShadows(true);
             scene->AddEntity(std::move(lightEntity));
         }
 
         ViewportPanelConfig viewportConfig2;
         viewportConfig2.name = "Viewport 2";
-        viewportConfig2.openByDefault = false;
+        viewportConfig2.openByDefault = true;
         viewportConfig2.clearColor = glm::vec4(0.15f, 0.1f, 0.1f, 1.0f);
         auto viewportPanel2 = new ViewportPanel(viewportConfig2);
         viewportPanel2->Initialize();
@@ -196,10 +196,14 @@ namespace PlutoGE::ui
 
         auto *renderTarget2 = viewportPanel2->GetRenderTarget();
 
+        renderer.SetVSyncEnabled(false);
+
         while (!window.ShouldClose())
         {
             auto currentTime = std::chrono::high_resolution_clock::now();
             deltaTime = currentTime - lastTime;
+            EditorFrameTimingStats frameTimingStats{};
+            renderer.BeginProfilingFrame();
 
             const auto renderTargetWidth = renderTarget->GetWidth();
             const auto renderTargetHeight = renderTarget->GetHeight();
@@ -208,7 +212,10 @@ namespace PlutoGE::ui
 
             // Scene update
 
+            const auto sceneUpdateStart = std::chrono::high_resolution_clock::now();
             scene->Update(deltaTime.count());
+            const auto sceneUpdateEnd = std::chrono::high_resolution_clock::now();
+            frameTimingStats.sceneUpdateMs = std::chrono::duration<float, std::milli>(sceneUpdateEnd - sceneUpdateStart).count();
 
             camera.SetFOV(45.0f + 10.0f * sinf(static_cast<float>(glfwGetTime()))); // Animate FOV for demonstration
 
@@ -217,14 +224,10 @@ namespace PlutoGE::ui
             const bool shouldRenderViewport1 = viewportPanel->ShouldRenderFrame() && IsCameraActiveInScene(scene.get(), cameraComponent);
             const bool shouldRenderViewport2 = viewportPanel2->ShouldRenderFrame() && IsCameraActiveInScene(scene.get(), cameraComponent2);
 
-            if (shouldRenderViewport1 || shouldRenderViewport2)
-            {
-                auto lights = scene->GetLights();
-                renderer.UpdateShadowMaps(lights);
-            }
-
+            const auto viewportRenderStart = std::chrono::high_resolution_clock::now();
             if (shouldRenderViewport1)
             {
+                ++frameTimingStats.renderedViewportCount;
                 viewportPanel->RenderFrame(*cameraComponent);
             }
             else
@@ -234,30 +237,86 @@ namespace PlutoGE::ui
 
             if (shouldRenderViewport2)
             {
+                ++frameTimingStats.renderedViewportCount;
                 viewportPanel2->RenderFrame(*cameraComponent2);
             }
             else
             {
                 viewportPanel2->ClearFrame();
             }
+            const auto viewportRenderEnd = std::chrono::high_resolution_clock::now();
+            frameTimingStats.viewportRenderMs = std::chrono::duration<float, std::milli>(viewportRenderEnd - viewportRenderStart).count();
 
             renderer.ClearRenderCommands();
 
             // UI
 
+            const auto beginFrameStart = std::chrono::high_resolution_clock::now();
             renderer.BeginFrame();
+            const auto beginFrameEnd = std::chrono::high_resolution_clock::now();
+            frameTimingStats.rendererBeginFrameMs = std::chrono::duration<float, std::milli>(beginFrameEnd - beginFrameStart).count();
 
             m_panelManager.BeginPanelUpdate();
+
+            // Toolbar menu
+            if (ImGui::BeginMainMenuBar())
+            {
+                if (ImGui::BeginMenu("File"))
+                {
+                    if (ImGui::MenuItem("New Scene"))
+                    {
+                        scene = std::make_unique<scene::Scene>();
+                        m_engine.SetScene(scene.get());
+                    }
+                    if (ImGui::MenuItem("Exit"))
+                    {
+                        window.Close();
+                    }
+                    ImGui::EndMenu();
+                }
+                if (ImGui::BeginMenu("View"))
+                {
+                    if (ImGui::MenuItem("Viewport 1", NULL, viewportPanel->IsOpen()))
+                    {
+                        viewportPanel->SetOpen(!viewportPanel->IsOpen());
+                    }
+                    if (ImGui::MenuItem("Viewport 2", NULL, viewportPanel2->IsOpen()))
+                    {
+                        viewportPanel2->SetOpen(!viewportPanel2->IsOpen());
+                    }
+                    if (ImGui::MenuItem("Scene Hierarchy", NULL, sceneHierarchyPanel->IsOpen()))
+                    {
+                        sceneHierarchyPanel->SetOpen(!sceneHierarchyPanel->IsOpen());
+                    }
+                    if (ImGui::MenuItem("Inspector", NULL, inspectorPanel->IsOpen()))
+                    {
+                        inspectorPanel->SetOpen(!inspectorPanel->IsOpen());
+                    }
+                    if (ImGui::MenuItem("Profiler", NULL, profilerPanel->IsOpen()))
+                    {
+                        profilerPanel->SetOpen(!profilerPanel->IsOpen());
+                    }
+                    ImGui::EndMenu();
+                }
+                ImGui::EndMainMenuBar();
+            }
 
             m_panelManager.UpdatePanels();
 
             m_panelManager.EndPanelUpdate();
 
+            const auto presentStart = std::chrono::high_resolution_clock::now();
             renderer.EndFrame();
+            const auto presentEnd = std::chrono::high_resolution_clock::now();
+            frameTimingStats.presentMs = std::chrono::duration<float, std::milli>(presentEnd - presentStart).count();
 
+            const auto pollEventsStart = std::chrono::high_resolution_clock::now();
             window.PollEvents();
+            const auto pollEventsEnd = std::chrono::high_resolution_clock::now();
+            frameTimingStats.eventPollingMs = std::chrono::duration<float, std::milli>(pollEventsEnd - pollEventsStart).count();
 
             const auto frameEndTime = std::chrono::high_resolution_clock::now();
+            m_profiler.SetLatestFrameTimingStats(frameTimingStats);
             m_profiler.AddFrameSample(std::chrono::duration<float, std::milli>(frameEndTime - currentTime).count());
 
             lastTime = currentTime;

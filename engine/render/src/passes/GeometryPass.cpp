@@ -8,6 +8,7 @@
 #include "PlutoGE/render/Renderer.h"
 
 #include <array>
+#include <chrono>
 
 namespace PlutoGE::render
 {
@@ -83,8 +84,14 @@ namespace PlutoGE::render
             ctx.gBuffer->GetWidth() != ctx.renderTarget->GetWidth() ||
             ctx.gBuffer->GetHeight() != ctx.renderTarget->GetHeight())
         {
+            const auto resizeStart = std::chrono::high_resolution_clock::now();
             ctx.gBuffer->Cleanup();
             ctx.gBuffer->Initialize(ctx.renderTarget->GetWidth(), ctx.renderTarget->GetHeight());
+            const auto resizeEnd = std::chrono::high_resolution_clock::now();
+            if (ctx.renderer)
+            {
+                ctx.renderer->RecordGBufferResize(std::chrono::duration<float, std::milli>(resizeEnd - resizeStart).count());
+            }
         }
 
         ctx.gBuffer->Bind();

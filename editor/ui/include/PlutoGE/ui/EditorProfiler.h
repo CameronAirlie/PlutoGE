@@ -9,12 +9,23 @@
 
 namespace PlutoGE::ui
 {
+    struct EditorFrameTimingStats
+    {
+        float sceneUpdateMs = 0.0f;
+        float viewportRenderMs = 0.0f;
+        float rendererBeginFrameMs = 0.0f;
+        float presentMs = 0.0f;
+        float eventPollingMs = 0.0f;
+        int renderedViewportCount = 0;
+    };
+
     class EditorProfiler
     {
     public:
         static constexpr std::size_t MaxFrameSamples = 240;
 
         void AddFrameSample(float frameTimeMs);
+        void SetLatestFrameTimingStats(const EditorFrameTimingStats &timingStats);
 
         [[nodiscard]] float GetCurrentFrameTimeMs() const;
         [[nodiscard]] float GetAverageFrameTimeMs() const;
@@ -24,8 +35,13 @@ namespace PlutoGE::ui
         [[nodiscard]] std::size_t GetSampleCount() const;
         [[nodiscard]] const float *GetFrameSamples() const;
         [[nodiscard]] int GetPlotOffset() const;
+        [[nodiscard]] const EditorFrameTimingStats &GetLatestFrameTimingStats() const;
         [[nodiscard]] std::string BuildMetricsReport(const PanelManagerTimingStats &timingStats,
+                                                     const EditorFrameTimingStats &frameTimingStats,
+                                                     const std::vector<render::CpuPassTiming> &cpuPassTimings,
+                                                     const render::RendererCpuFrameStats &cpuFrameStats,
                                                      const std::vector<render::GpuPassTiming> &gpuPassTimings,
+                                                     float totalCpuPassTimeMs,
                                                      float totalGpuPassTimeMs,
                                                      const render::LightingGpuTiming &lightingGpuTiming) const;
 
@@ -33,5 +49,6 @@ namespace PlutoGE::ui
         std::array<float, MaxFrameSamples> m_frameSamples{};
         std::size_t m_nextSampleIndex = 0;
         std::size_t m_sampleCount = 0;
+        EditorFrameTimingStats m_latestFrameTimingStats;
     };
 }

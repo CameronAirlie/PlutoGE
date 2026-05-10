@@ -19,7 +19,9 @@
 #include <iostream>
 #include <vector>
 #include <algorithm>
+#include <chrono>
 #include <numeric>
+#include <string_view>
 
 namespace PlutoGE::render
 {
@@ -113,17 +115,8 @@ namespace PlutoGE::render
 
         InitializeGpuTimers();
 
-        m_temporaryRenderTarget = new RenderTarget(RenderTargetConfig{extents.width, extents.height, glm::vec4(0.0f)});
-        if (!m_temporaryRenderTarget->IsInitialized())
+        if (!GetOrCreateFrameResources(nullptr, extents.width, extents.height))
         {
-            std::cerr << "Failed to initialize temporary render target" << std::endl;
-            return false;
-        }
-
-        m_postProcessIntermediateRenderTarget = new RenderTarget(RenderTargetConfig{extents.width, extents.height, glm::vec4(0.0f)});
-        if (!m_postProcessIntermediateRenderTarget->IsInitialized())
-        {
-            std::cerr << "Failed to initialize post process intermediate render target" << std::endl;
             return false;
         }
 
@@ -151,10 +144,40 @@ namespace PlutoGE::render
         Graphics::ClearRenderTarget(nullptr);
     }
 
+    void Renderer::BeginProfilingFrame()
+    {
+        for (auto &cpuPassTiming : m_cpuPassTimings)
+        {
+            cpuPassTiming.cpuTimeMs = 0.0f;
+        }
+
+        for (auto &gpuPassTiming : m_gpuPassTimings)
+        {
+            gpuPassTiming.gpuTimeMs = 0.0f;
+            gpuPassTiming.hasResult = false;
+        }
+
+        m_lightingGpuTiming = {};
+        m_cpuFrameStats = {};
+        m_profiledRenderCount = 0;
+    }
+
     void Renderer::UpdateShadowMaps(std::vector<scene::Light *> lights)
     {
         if (!m_isInitialized || !m_shadowPass)
             return;
+
+        if (!m_config.window)
+        {
+            return;
+        }
+
+        const auto extents = m_config.window->GetExtents();
+        auto *frameResources = GetOrCreateFrameResources(nullptr, extents.width, extents.height);
+        if (!frameResources)
+        {
+            return;
+        }
 
         SortRenderCommands(m_renderCommands);
 
@@ -163,11 +186,11 @@ namespace PlutoGE::render
             .cameraData = {},
             .cameraComponent = nullptr,
             .renderTarget = nullptr,
-            .temporaryRenderTarget = m_temporaryRenderTarget,
-            .postProcessIntermediateRenderTarget = m_postProcessIntermediateRenderTarget,
+            .temporaryRenderTarget = frameResources->temporaryRenderTarget.get(),
+            .postProcessIntermediateRenderTarget = frameResources->postProcessIntermediateRenderTarget.get(),
             .renderCommands = &m_renderCommands,
             .lights = &lights,
-            .gBuffer = &m_gBuffer,
+            .gBuffer = &frameResources->gBuffer,
             .postProcessDebugView = m_postProcessDebugView,
         };
 
@@ -178,6 +201,8 @@ namespace PlutoGE::render
     {
         if (!m_isInitialized)
             return;
+
+        ++m_profiledRenderCount;
 
         int renderWidth = 0;
         int renderHeight = 0;
@@ -199,10 +224,9 @@ namespace PlutoGE::render
             return;
         }
 
-        if (!EnsureRenderTargetSize(m_temporaryRenderTarget, renderWidth, renderHeight) ||
-            !EnsureRenderTargetSize(m_postProcessIntermediateRenderTarget, renderWidth, renderHeight))
+        auto *frameResources = GetOrCreateFrameResources(renderTarget, renderWidth, renderHeight);
+        if (!frameResources)
         {
-            std::cerr << "Failed to resize post process render targets" << std::endl;
             return;
         }
 
@@ -215,13 +239,18 @@ namespace PlutoGE::render
             .cameraData = cameraData,
             .cameraComponent = &cameraComponent,
             .renderTarget = renderTarget,
-            .temporaryRenderTarget = m_temporaryRenderTarget,
-            .postProcessIntermediateRenderTarget = m_postProcessIntermediateRenderTarget,
+            .temporaryRenderTarget = frameResources->temporaryRenderTarget.get(),
+            .postProcessIntermediateRenderTarget = frameResources->postProcessIntermediateRenderTarget.get(),
             .renderCommands = &m_renderCommands,
             .lights = &lights,
-            .gBuffer = &m_gBuffer,
+            .gBuffer = &frameResources->gBuffer,
             .postProcessDebugView = m_postProcessDebugView,
         };
+
+        if (m_shadowPass)
+        {
+            ExecutePassWithGpuTiming(*m_shadowPass, ctx, 0);
+        }
 
         for (std::size_t index = 0; index < m_renderPasses.size(); ++index)
         {
@@ -253,18 +282,7 @@ namespace PlutoGE::render
         // Clean up rendering resources here
         m_isInitialized = false;
         CleanupResources(renderTarget);
-        if (m_temporaryRenderTarget)
-        {
-            m_temporaryRenderTarget->Cleanup();
-            delete m_temporaryRenderTarget;
-            m_temporaryRenderTarget = nullptr;
-        }
-        if (m_postProcessIntermediateRenderTarget)
-        {
-            m_postProcessIntermediateRenderTarget->Cleanup();
-            delete m_postProcessIntermediateRenderTarget;
-            m_postProcessIntermediateRenderTarget = nullptr;
-        }
+        CleanupFrameResources();
         if (m_shadowPass)
         {
             delete m_shadowPass;
@@ -328,6 +346,12 @@ namespace PlutoGE::render
         m_lightingGpuTiming.shadowedLightCount = shadowedLightCount;
     }
 
+    void Renderer::RecordGBufferResize(float resizeMs)
+    {
+        m_cpuFrameStats.gBufferResizeMs += resizeMs;
+        ++m_cpuFrameStats.gBufferResizeCount;
+    }
+
     float Renderer::GetTotalGpuPassTimeMs() const
     {
         return std::accumulate(
@@ -337,6 +361,18 @@ namespace PlutoGE::render
             [](float total, const GpuPassTiming &timing)
             {
                 return total + (timing.hasResult ? timing.gpuTimeMs : 0.0f);
+            });
+    }
+
+    float Renderer::GetTotalCpuPassTimeMs() const
+    {
+        return std::accumulate(
+            m_cpuPassTimings.begin(),
+            m_cpuPassTimings.end(),
+            0.0f,
+            [](float total, const CpuPassTiming &timing)
+            {
+                return total + timing.cpuTimeMs;
             });
     }
 
@@ -369,8 +405,79 @@ namespace PlutoGE::render
         }
     }
 
+    Renderer::FrameResources *Renderer::GetOrCreateFrameResources(RenderTarget *renderTarget, int width, int height)
+    {
+        auto &entry = m_frameResources[renderTarget];
+        if (!entry)
+        {
+            entry = std::make_unique<FrameResources>();
+        }
+
+        auto ensureSizedRenderTarget = [this, width, height](std::unique_ptr<RenderTarget> &target)
+        {
+            if (!target)
+            {
+                const auto resizeStart = std::chrono::high_resolution_clock::now();
+                target = std::make_unique<RenderTarget>(RenderTargetConfig{width, height, glm::vec4(0.0f)});
+                const auto resizeEnd = std::chrono::high_resolution_clock::now();
+                m_cpuFrameStats.intermediateTargetResizeMs += std::chrono::duration<float, std::milli>(resizeEnd - resizeStart).count();
+                ++m_cpuFrameStats.intermediateTargetResizeCount;
+                return target->IsInitialized();
+            }
+
+            if (target->GetWidth() == width && target->GetHeight() == height && target->IsInitialized())
+            {
+                return true;
+            }
+
+            const auto resizeStart = std::chrono::high_resolution_clock::now();
+            const bool resized = EnsureRenderTargetSize(target.get(), width, height);
+            const auto resizeEnd = std::chrono::high_resolution_clock::now();
+            m_cpuFrameStats.intermediateTargetResizeMs += std::chrono::duration<float, std::milli>(resizeEnd - resizeStart).count();
+            ++m_cpuFrameStats.intermediateTargetResizeCount;
+            return resized;
+        };
+
+        if (!ensureSizedRenderTarget(entry->temporaryRenderTarget) ||
+            !ensureSizedRenderTarget(entry->postProcessIntermediateRenderTarget))
+        {
+            std::cerr << "Failed to resize post process render targets" << std::endl;
+            return nullptr;
+        }
+
+        return entry.get();
+    }
+
+    void Renderer::CleanupFrameResources()
+    {
+        for (auto &[key, resources] : m_frameResources)
+        {
+            if (!resources)
+            {
+                continue;
+            }
+
+            if (resources->temporaryRenderTarget)
+            {
+                resources->temporaryRenderTarget->Cleanup();
+                resources->temporaryRenderTarget.reset();
+            }
+
+            if (resources->postProcessIntermediateRenderTarget)
+            {
+                resources->postProcessIntermediateRenderTarget->Cleanup();
+                resources->postProcessIntermediateRenderTarget.reset();
+            }
+
+            resources->gBuffer.Cleanup();
+        }
+
+        m_frameResources.clear();
+    }
+
     void Renderer::InitializeGpuTimers()
     {
+        m_cpuPassTimings.clear();
         m_gpuPassTimings.clear();
         m_gpuTimerQueries.clear();
         m_gpuProfilingSupported = GLAD_GL_VERSION_3_3;
@@ -381,11 +488,13 @@ namespace PlutoGE::render
 
         if (m_shadowPass)
         {
+            m_cpuPassTimings.push_back(CpuPassTiming{m_shadowPass->GetName()});
             m_gpuPassTimings.push_back(GpuPassTiming{m_shadowPass->GetName()});
         }
 
         for (auto *pass : m_renderPasses)
         {
+            m_cpuPassTimings.push_back(CpuPassTiming{pass->GetName()});
             m_gpuPassTimings.push_back(GpuPassTiming{pass->GetName()});
         }
 
@@ -401,6 +510,7 @@ namespace PlutoGE::render
         }
 
         m_lightingGpuTiming = {};
+        m_cpuFrameStats = {};
     }
 
     void Renderer::ShutdownGpuTimers()
@@ -429,16 +539,56 @@ namespace PlutoGE::render
         }
 
         m_gpuTimerQueries.clear();
+        m_cpuPassTimings.clear();
         m_gpuPassTimings.clear();
         m_lightingGpuTiming = {};
+        m_cpuFrameStats = {};
         m_gpuProfilingSupported = false;
     }
 
     void Renderer::ExecutePassWithGpuTiming(IRenderPass &renderPass, const RenderContext &ctx, std::size_t timingIndex)
     {
+        const auto cpuPassStart = std::chrono::high_resolution_clock::now();
+        const bool isLightingPass = std::string_view(renderPass.GetName()) == "Lighting";
+
+        if (isLightingPass)
+        {
+            const float lightingGpuTimeBefore = m_lightingGpuTiming.setupMs +
+                                                m_lightingGpuTiming.ambientMs +
+                                                m_lightingGpuTiming.lightAccumulationMs;
+            renderPass.Execute(ctx);
+            const auto cpuPassEnd = std::chrono::high_resolution_clock::now();
+
+            const float lightingGpuTimeAfter = m_lightingGpuTiming.setupMs +
+                                               m_lightingGpuTiming.ambientMs +
+                                               m_lightingGpuTiming.lightAccumulationMs;
+
+            if (timingIndex < m_gpuPassTimings.size())
+            {
+                auto &lightingPassTiming = m_gpuPassTimings[timingIndex];
+                const float lightingGpuDelta = lightingGpuTimeAfter - lightingGpuTimeBefore;
+                if (lightingGpuDelta > 0.0f)
+                {
+                    lightingPassTiming.gpuTimeMs += lightingGpuDelta;
+                    lightingPassTiming.hasResult = true;
+                }
+            }
+
+            if (timingIndex < m_cpuPassTimings.size())
+            {
+                m_cpuPassTimings[timingIndex].cpuTimeMs += std::chrono::duration<float, std::milli>(cpuPassEnd - cpuPassStart).count();
+            }
+            return;
+        }
+
         if (!m_gpuProfilingSupported || timingIndex >= m_gpuTimerQueries.size())
         {
             renderPass.Execute(ctx);
+            const auto cpuPassEnd = std::chrono::high_resolution_clock::now();
+            if (timingIndex < m_cpuPassTimings.size())
+            {
+                m_cpuPassTimings[timingIndex].cpuTimeMs += std::chrono::duration<float, std::milli>(cpuPassEnd - cpuPassStart).count();
+            }
             return;
         }
 
@@ -448,10 +598,16 @@ namespace PlutoGE::render
 
         glBeginQuery(GL_TIME_ELAPSED, queryState.queryIds[queryIndex]);
         renderPass.Execute(ctx);
+        const auto cpuPassEnd = std::chrono::high_resolution_clock::now();
         glEndQuery(GL_TIME_ELAPSED);
 
         queryState.pending[queryIndex] = true;
         queryState.writeIndex = (queryState.writeIndex + 1) % queryState.queryIds.size();
+
+        if (timingIndex < m_cpuPassTimings.size())
+        {
+            m_cpuPassTimings[timingIndex].cpuTimeMs += std::chrono::duration<float, std::milli>(cpuPassEnd - cpuPassStart).count();
+        }
     }
 
     void Renderer::ResolveGpuTiming(std::size_t timingIndex, std::size_t queryIndex)
@@ -481,7 +637,7 @@ namespace PlutoGE::render
 
         GLuint64 elapsedNanoseconds = 0;
         glGetQueryObjectui64v(queryState.queryIds[queryIndex], GL_QUERY_RESULT, &elapsedNanoseconds);
-        gpuTimeMs = static_cast<float>(elapsedNanoseconds) * kNanosecondsToMilliseconds;
+        gpuTimeMs += static_cast<float>(elapsedNanoseconds) * kNanosecondsToMilliseconds;
         hasResult = true;
         queryState.pending[queryIndex] = false;
     }

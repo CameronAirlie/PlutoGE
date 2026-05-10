@@ -3,11 +3,14 @@
 #include "PlutoGE/platform/Window.h"
 #include "PlutoGE/render/Camera.h"
 #include "PlutoGE/render/GBuffer.h"
+#include "PlutoGE/render/RenderTarget.h"
 #include <array>
 #include <glm/glm.hpp>
 #include <iostream>
 
+#include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include <glad/glad.h>
@@ -58,6 +61,12 @@ namespace PlutoGE::render
         bool hasResult = false;
     };
 
+    struct CpuPassTiming
+    {
+        std::string name;
+        float cpuTimeMs = 0.0f;
+    };
+
     struct LightingGpuTiming
     {
         float setupMs = 0.0f;
@@ -68,6 +77,14 @@ namespace PlutoGE::render
         bool hasLightAccumulationResult = false;
         int lightCount = 0;
         int shadowedLightCount = 0;
+    };
+
+    struct RendererCpuFrameStats
+    {
+        float intermediateTargetResizeMs = 0.0f;
+        int intermediateTargetResizeCount = 0;
+        float gBufferResizeMs = 0.0f;
+        int gBufferResizeCount = 0;
     };
 
     struct RenderContext
@@ -94,6 +111,7 @@ namespace PlutoGE::render
 
         bool Initialize(const RendererConfig &config = RendererConfig());
         void BeginFrame(RenderTarget *renderTarget = nullptr);
+        void BeginProfilingFrame();
         void UpdateShadowMaps(std::vector<scene::Light *> lights = {});
         void RenderFrame(const scene::CameraComponent &cameraComponent, RenderTarget *renderTarget = nullptr, std::vector<scene::Light *> lights = {});
         void EndFrame(RenderTarget *renderTarget = nullptr);
@@ -103,13 +121,18 @@ namespace PlutoGE::render
         void SetVSyncEnabled(bool enabled);
         void SetPostProcessDebugView(PostProcessDebugView debugView) { m_postProcessDebugView = debugView; }
         PostProcessDebugView GetPostProcessDebugView() const { return m_postProcessDebugView; }
+        [[nodiscard]] const std::vector<CpuPassTiming> &GetCpuPassTimings() const { return m_cpuPassTimings; }
         [[nodiscard]] const std::vector<GpuPassTiming> &GetGpuPassTimings() const { return m_gpuPassTimings; }
         [[nodiscard]] const LightingGpuTiming &GetLightingGpuTiming() const { return m_lightingGpuTiming; }
+        [[nodiscard]] const RendererCpuFrameStats &GetCpuFrameStats() const { return m_cpuFrameStats; }
         [[nodiscard]] float GetTotalGpuPassTimeMs() const;
+        [[nodiscard]] float GetTotalCpuPassTimeMs() const;
+        [[nodiscard]] int GetProfiledRenderCount() const { return m_profiledRenderCount; }
 
         void BeginLightingStageTiming(std::size_t stageIndex);
         void EndLightingStageTiming(std::size_t stageIndex);
         void SetLightingPassCounters(int lightCount, int shadowedLightCount);
+        void RecordGBufferResize(float resizeMs);
 
         void SubmitRenderCommand(const RenderCommand &command)
         {
@@ -117,6 +140,13 @@ namespace PlutoGE::render
         }
 
     private:
+        struct FrameResources
+        {
+            std::unique_ptr<RenderTarget> temporaryRenderTarget;
+            std::unique_ptr<RenderTarget> postProcessIntermediateRenderTarget;
+            GBuffer gBuffer;
+        };
+
         struct GpuTimerQueryState
         {
             std::array<GLuint, 2> queryIds{};
@@ -134,19 +164,23 @@ namespace PlutoGE::render
         PostProcessDebugView m_postProcessDebugView = PostProcessDebugView::None;
 
         void CleanupResources(RenderTarget *renderTarget = nullptr);
+        FrameResources *GetOrCreateFrameResources(RenderTarget *renderTarget, int width, int height);
+        void CleanupFrameResources();
         void InitializeGpuTimers();
         void ShutdownGpuTimers();
         void ExecutePassWithGpuTiming(IRenderPass &renderPass, const RenderContext &ctx, std::size_t timingIndex);
         void ResolveGpuTiming(std::size_t timingIndex, std::size_t queryIndex);
         void ResolveGpuTiming(GpuTimerQueryState &queryState, float &gpuTimeMs, bool &hasResult, std::size_t queryIndex);
-        RenderTarget *m_temporaryRenderTarget = nullptr; // Optional temporary render target for intermediate passes
-        RenderTarget *m_postProcessIntermediateRenderTarget = nullptr;
         IRenderPass *m_shadowPass = nullptr;
         std::vector<IRenderPass *> m_renderPasses;
         std::vector<RenderCommand> m_renderCommands;
+        std::unordered_map<const RenderTarget *, std::unique_ptr<FrameResources>> m_frameResources;
+        std::vector<CpuPassTiming> m_cpuPassTimings;
         std::vector<GpuPassTiming> m_gpuPassTimings;
         std::vector<GpuTimerQueryState> m_gpuTimerQueries;
         std::array<GpuTimerQueryState, 3> m_lightingGpuTimerQueries;
         LightingGpuTiming m_lightingGpuTiming;
+        RendererCpuFrameStats m_cpuFrameStats;
+        int m_profiledRenderCount = 0;
     };
 }

@@ -14,6 +14,8 @@ namespace PlutoGE::render
     {
         glm::mat4 view;       // View matrix
         glm::mat4 projection; // Projection matrix
+        float nearPlane = 0.1f;
+        float farPlane = 100.0f;
     };
 
     struct CameraConfig
@@ -49,6 +51,8 @@ namespace PlutoGE::render
 
             data.view = glm::lookAt(position, position + forward, up);
             data.projection = glm::perspective(glm::radians(m_config.fovY), static_cast<float>(width) / static_cast<float>(height), m_config.nearPlane, m_config.farPlane);
+            data.nearPlane = m_config.nearPlane;
+            data.farPlane = m_config.farPlane;
             return data;
         }
 

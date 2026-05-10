@@ -15,8 +15,9 @@ namespace PlutoGE::render
         constexpr int kPositionTextureSlot = 0;
         constexpr int kNormalTextureSlot = 1;
         constexpr int kAlbedoTextureSlot = 2;
-        constexpr int kShadowMap2DTextureSlot = 3;
-        constexpr int kShadowMapCubeTextureSlot = 4;
+        constexpr int kDirectionalShadowCascadeTextureStartSlot = 3;
+        constexpr int kShadowMap2DTextureSlot = kDirectionalShadowCascadeTextureStartSlot + scene::kMaxDirectionalShadowCascades;
+        constexpr int kShadowMapCubeTextureSlot = kShadowMap2DTextureSlot + 1;
         constexpr int kAmbientPassMode = 0;
         constexpr int kLightPassMode = 1;
         constexpr std::size_t kLightingSetupStage = 0;
@@ -37,6 +38,14 @@ namespace PlutoGE::render
             glBindTexture(GL_TEXTURE_2D, gBuffer->GetAlbedoTextureID());
             shader->SetUniform("gAlbedoSpec", kAlbedoTextureSlot);
 
+            for (int cascadeIndex = 0; cascadeIndex < scene::kMaxDirectionalShadowCascades; ++cascadeIndex)
+            {
+                const int textureSlot = kDirectionalShadowCascadeTextureStartSlot + cascadeIndex;
+                glActiveTexture(GL_TEXTURE0 + textureSlot);
+                glBindTexture(GL_TEXTURE_2D, 0);
+                shader->SetUniform("uShadowCascadeMap" + std::to_string(cascadeIndex), textureSlot);
+            }
+
             glActiveTexture(GL_TEXTURE0 + kShadowMap2DTextureSlot);
             glBindTexture(GL_TEXTURE_2D, 0);
             shader->SetUniform("uShadowMap2D", kShadowMap2DTextureSlot);
@@ -48,13 +57,48 @@ namespace PlutoGE::render
 
         bool BindShadowMapForLight(const scene::Light &light)
         {
+            for (int cascadeIndex = 0; cascadeIndex < scene::kMaxDirectionalShadowCascades; ++cascadeIndex)
+            {
+                glActiveTexture(GL_TEXTURE0 + kDirectionalShadowCascadeTextureStartSlot + cascadeIndex);
+                glBindTexture(GL_TEXTURE_2D, 0);
+            }
+
             glActiveTexture(GL_TEXTURE0 + kShadowMap2DTextureSlot);
             glBindTexture(GL_TEXTURE_2D, 0);
 
             glActiveTexture(GL_TEXTURE0 + kShadowMapCubeTextureSlot);
             glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
 
-            if (!light.castsShadows || !light.shadowMap)
+            if (!light.castsShadows)
+            {
+                return false;
+            }
+
+            if (light.type == scene::LightType::Directional)
+            {
+                if (light.activeShadowCascadeCount <= 0)
+                {
+                    return false;
+                }
+
+                bool boundCascade = false;
+                for (int cascadeIndex = 0; cascadeIndex < light.activeShadowCascadeCount; ++cascadeIndex)
+                {
+                    auto *shadowCascadeMap = light.shadowCascadeMaps[cascadeIndex].get();
+                    if (!shadowCascadeMap)
+                    {
+                        continue;
+                    }
+
+                    glActiveTexture(GL_TEXTURE0 + kDirectionalShadowCascadeTextureStartSlot + cascadeIndex);
+                    glBindTexture(GL_TEXTURE_2D, shadowCascadeMap->GetTextureID());
+                    boundCascade = true;
+                }
+
+                return boundCascade;
+            }
+
+            if (!light.shadowMap)
             {
                 return false;
             }
@@ -98,6 +142,15 @@ namespace PlutoGE::render
             shader->SetUniform("uLight.CastsShadows", hasShadowMap ? 1 : 0);
             shader->SetUniform("uLight.LightSpaceMatrix", light.shadowMatrix);
             shader->SetUniform("uLight.ShadowFarPlane", light.shadowFarPlane);
+            shader->SetUniform("uLight.CascadeCount", light.type == scene::LightType::Directional && hasShadowMap ? light.activeShadowCascadeCount : 0);
+            shader->SetUniform("uLight.ShadowSoftness", light.directionalShadowSettings.softness);
+            shader->SetUniform("uLight.CascadeBlendDistance", light.directionalShadowSettings.cascadeBlendDistance);
+
+            for (int cascadeIndex = 0; cascadeIndex < scene::kMaxDirectionalShadowCascades; ++cascadeIndex)
+            {
+                shader->SetUniform("uLight.CascadeLightSpaceMatrices[" + std::to_string(cascadeIndex) + "]", light.shadowCascadeMatrices[cascadeIndex]);
+                shader->SetUniform("uLight.CascadeSplits[" + std::to_string(cascadeIndex) + "]", light.shadowCascadeSplits[cascadeIndex]);
+            }
         }
     }
 
@@ -125,7 +178,7 @@ namespace PlutoGE::render
                 }
 
                 ++lightCount;
-                if (light->castsShadows && light->shadowMap)
+                if (light->castsShadows && ((light->type == scene::LightType::Directional && light->activeShadowCascadeCount > 0) || light->shadowMap))
                 {
                     ++shadowedLightCount;
                 }
@@ -160,6 +213,7 @@ namespace PlutoGE::render
 
         const glm::vec3 cameraPos = glm::vec3(glm::inverse(ctx.cameraData.view)[3]);
         m_lightingPassShader->SetUniform("uViewPos", cameraPos);
+        m_lightingPassShader->SetUniform("uViewMatrix", ctx.cameraData.view);
 
         glDisable(GL_BLEND);
         m_lightingPassShader->SetUniform("uPassMode", kAmbientPassMode);

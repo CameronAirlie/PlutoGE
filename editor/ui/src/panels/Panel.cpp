@@ -18,7 +18,14 @@ namespace PlutoGE::ui
 
     void Panel::Update()
     {
+        if (!m_isOpen)
+        {
+            m_wasVisibleLastFrame = false;
+            return;
+        }
+
         const bool shouldRender = BeginPanel();
+        m_wasVisibleLastFrame = shouldRender;
         if (shouldRender)
         {
             Render();

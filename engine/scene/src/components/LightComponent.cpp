@@ -2,16 +2,37 @@
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/render/Texture.h"
 
+#include <algorithm>
 #include <cstdio>
 
 namespace PlutoGE::scene
 {
     namespace
     {
+        int ClampCascadeCount(int cascadeCount)
+        {
+            return std::clamp(cascadeCount, 1, kMaxDirectionalShadowCascades);
+        }
+
+        int ResolveShadowResolution(const Light &light)
+        {
+            return std::max(light.directionalShadowSettings.resolution, 256);
+        }
+
         void ResetShadowState(Light &light)
         {
             light.shadowMap.reset();
             light.shadowMatrix = glm::mat4(1.0f);
+            for (auto &shadowCascadeMap : light.shadowCascadeMaps)
+            {
+                shadowCascadeMap.reset();
+            }
+            for (auto &shadowCascadeMatrix : light.shadowCascadeMatrices)
+            {
+                shadowCascadeMatrix = glm::mat4(1.0f);
+            }
+            light.shadowCascadeSplits.fill(0.0f);
+            light.activeShadowCascadeCount = 0;
             light.shadowFarPlane = 0.0f;
         }
 
@@ -22,12 +43,24 @@ namespace PlutoGE::scene
 
         std::unique_ptr<render::Texture> CreateShadowTextureForLight(const Light &light)
         {
+            const int resolution = ResolveShadowResolution(light);
             if (light.type == LightType::Point)
             {
-                return std::unique_ptr<render::Texture>(render::Texture::DepthCubemap(1024, 1024));
+                return std::unique_ptr<render::Texture>(render::Texture::DepthCubemap(resolution, resolution));
             }
 
-            return std::unique_ptr<render::Texture>(render::Texture::DepthTexture(1024, 1024));
+            return std::unique_ptr<render::Texture>(render::Texture::DepthTexture(resolution, resolution));
+        }
+
+        std::unique_ptr<render::Texture> CreateDirectionalCascadeTexture(const Light &light)
+        {
+            const int resolution = ResolveShadowResolution(light);
+            return std::unique_ptr<render::Texture>(render::Texture::DepthTexture(resolution, resolution));
+        }
+
+        bool NeedsShadowTextureRecreation(const render::Texture *texture, GLenum expectedTextureType, int resolution)
+        {
+            return !texture || texture->GetType() != expectedTextureType || texture->GetWidth() != resolution || texture->GetHeight() != resolution;
         }
     }
 
@@ -105,6 +138,13 @@ namespace PlutoGE::scene
         }
 
         m_config.castsShadows = castsShadows;
+        MarkDirty();
+        Initialize();
+    }
+
+    void LightComponent::SetDirectionalShadowSettings(const DirectionalShadowSettings &settings)
+    {
+        m_config.directionalShadowSettings = settings;
         MarkDirty();
         Initialize();
     }
@@ -191,9 +231,52 @@ namespace PlutoGE::scene
             return;
         }
 
+        const int resolution = ResolveShadowResolution(m_config);
+
+        if (m_config.type == LightType::Directional)
+        {
+            m_config.shadowMap.reset();
+            bool recreatedShadowMap = false;
+            m_config.activeShadowCascadeCount = ClampCascadeCount(m_config.directionalShadowSettings.cascadeCount);
+
+            for (int cascadeIndex = 0; cascadeIndex < kMaxDirectionalShadowCascades; ++cascadeIndex)
+            {
+                if (cascadeIndex >= m_config.activeShadowCascadeCount)
+                {
+                    if (m_config.shadowCascadeMaps[cascadeIndex])
+                    {
+                        m_config.shadowCascadeMaps[cascadeIndex].reset();
+                        recreatedShadowMap = true;
+                    }
+                    m_config.shadowCascadeMatrices[cascadeIndex] = glm::mat4(1.0f);
+                    m_config.shadowCascadeSplits[cascadeIndex] = 0.0f;
+                    continue;
+                }
+
+                if (NeedsShadowTextureRecreation(m_config.shadowCascadeMaps[cascadeIndex].get(), GL_TEXTURE_2D, resolution))
+                {
+                    m_config.shadowCascadeMaps[cascadeIndex] = CreateDirectionalCascadeTexture(m_config);
+                    recreatedShadowMap = true;
+                }
+            }
+
+            if (recreatedShadowMap)
+            {
+                MarkDirty();
+            }
+
+            return;
+        }
+
+        for (auto &shadowCascadeMap : m_config.shadowCascadeMaps)
+        {
+            shadowCascadeMap.reset();
+        }
+        m_config.activeShadowCascadeCount = 0;
+
         const GLenum expectedTextureType = GetExpectedShadowTextureType(m_config);
         bool recreatedShadowMap = false;
-        if (m_config.shadowMap && m_config.shadowMap->GetType() != expectedTextureType)
+        if (NeedsShadowTextureRecreation(m_config.shadowMap.get(), expectedTextureType, resolution))
         {
             m_config.shadowMap.reset();
             recreatedShadowMap = true;

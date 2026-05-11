@@ -3,6 +3,9 @@
 #include "PlutoGE/ui/panels/ViewportPanel.h"
 #include "PlutoGE/ui/panels/SceneHierarchyPanel.h"
 #include "PlutoGE/ui/panels/InspectorPanel.h"
+#include "PlutoGE/render/passes/LightPropagationVolumePass.h"
+#include "PlutoGE/render/passes/SSAOPass.h"
+#include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/RenderTarget.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/Entity.h"
@@ -21,6 +24,7 @@
 #include <chrono>
 #include <filesystem>
 #include <memory>
+#include <string>
 
 #include <glm/gtc/constants.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -178,6 +182,114 @@ namespace PlutoGE::ui
 
             camera.position += glm::normalize(movement) * moveSpeed * deltaTime;
         }
+
+        bool ParseBoolParameter(const std::string &value)
+        {
+            return value == "true" || value == "1";
+        }
+
+        bool RenderEffectParameter(render::PostProcessParameter &parameter)
+        {
+            switch (parameter.type)
+            {
+            case render::PostProcessParameterType::Float:
+            {
+                float value = std::stof(parameter.value);
+                if (ImGui::DragFloat(parameter.name.c_str(), &value, 0.01f))
+                {
+                    parameter.value = std::to_string(value);
+                    return true;
+                }
+                break;
+            }
+            case render::PostProcessParameterType::Int:
+            {
+                int value = std::stoi(parameter.value);
+                if (ImGui::DragInt(parameter.name.c_str(), &value, 1.0f))
+                {
+                    parameter.value = std::to_string(value);
+                    return true;
+                }
+                break;
+            }
+            case render::PostProcessParameterType::Bool:
+            {
+                bool value = ParseBoolParameter(parameter.value);
+                if (ImGui::Checkbox(parameter.name.c_str(), &value))
+                {
+                    parameter.value = value ? "true" : "false";
+                    return true;
+                }
+                break;
+            }
+            case render::PostProcessParameterType::Enum:
+            {
+                int currentIndex = std::stoi(parameter.value);
+                const char *preview = (currentIndex >= 0 && currentIndex < static_cast<int>(parameter.enumOptions.size())) ? parameter.enumOptions[currentIndex].c_str() : "Select";
+                if (ImGui::BeginCombo(parameter.name.c_str(), preview))
+                {
+                    for (int index = 0; index < static_cast<int>(parameter.enumOptions.size()); ++index)
+                    {
+                        const bool selected = currentIndex == index;
+                        if (ImGui::Selectable(parameter.enumOptions[index].c_str(), selected))
+                        {
+                            parameter.value = std::to_string(index);
+                            ImGui::EndCombo();
+                            return true;
+                        }
+                        if (selected)
+                        {
+                            ImGui::SetItemDefaultFocus();
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+                break;
+            }
+            case render::PostProcessParameterType::String:
+            default:
+            {
+                char buffer[256];
+                strncpy_s(buffer, sizeof(buffer), parameter.value.c_str(), _TRUNCATE);
+                if (ImGui::InputText(parameter.name.c_str(), buffer, sizeof(buffer)))
+                {
+                    parameter.value = buffer;
+                    return true;
+                }
+                break;
+            }
+            }
+
+            return false;
+        }
+
+        void RenderEffectParameterMenu(const char *menuLabel,
+                                       std::vector<render::PostProcessParameter> parameters,
+                                       const std::function<void(const std::vector<render::PostProcessParameter> &)> &applyParameters)
+        {
+            if (!ImGui::BeginMenu(menuLabel))
+            {
+                return;
+            }
+
+            ImGui::PushItemWidth(220.0f);
+            bool changed = false;
+            for (auto &parameter : parameters)
+            {
+                ImGui::PushID(parameter.name.c_str());
+                changed |= RenderEffectParameter(parameter);
+                ImGui::PopID();
+            }
+            ImGui::PopItemWidth();
+
+            if (changed)
+            {
+                applyParameters(parameters);
+            }
+
+            ImGui::EndMenu();
+        }
+
     }
 
     void EditorShell::Initialize()
@@ -229,8 +341,6 @@ namespace PlutoGE::ui
 
         m_panelManager.AddPanel(viewportPanel);
         m_panelManager.AddPanel(sceneHierarchyPanel);
-
-        auto *renderTarget = viewportPanel->GetRenderTarget();
 
         auto scene = std::make_unique<scene::Scene>();
         m_engine.SetScene(scene.get());
@@ -322,12 +432,10 @@ namespace PlutoGE::ui
         profilerPanel->Initialize();
         m_panelManager.AddPanel(profilerPanel);
 
-        auto *renderTarget2 = viewportPanel2->GetRenderTarget();
         auto *windowHandle = static_cast<GLFWwindow *>(window.GetWindow());
         bool isEditorCameraLookActive = false;
         double lastEditorCameraCursorX = 0.0;
         double lastEditorCameraCursorY = 0.0;
-
         renderer.SetVSyncEnabled(true);
 
         while (!window.ShouldClose())
@@ -337,11 +445,6 @@ namespace PlutoGE::ui
             const float deltaSeconds = deltaTime.count();
             EditorFrameTimingStats frameTimingStats{};
             renderer.BeginProfilingFrame();
-
-            const auto renderTargetWidth = renderTarget->GetWidth();
-            const auto renderTargetHeight = renderTarget->GetHeight();
-            const auto renderTarget2Width = renderTarget2->GetWidth();
-            const auto renderTarget2Height = renderTarget2->GetHeight();
 
             // Scene update
 
@@ -360,17 +463,23 @@ namespace PlutoGE::ui
                                lastEditorCameraCursorY);
 
             auto *cameraComponent2 = cameraEntity2Ptr->GetComponent<scene::CameraComponent>();
-            const bool shouldRenderViewport1 = viewportPanel->ShouldRenderFrame();
-            const bool shouldRenderViewport2 = viewportPanel2->ShouldRenderFrame() && IsCameraActiveInScene(scene.get(), cameraComponent2);
+            const bool canRenderViewport1 = viewportPanel->ShouldRenderFrame();
+            const bool canRenderViewport2 = viewportPanel2->ShouldRenderFrame() && IsCameraActiveInScene(scene.get(), cameraComponent2);
+            const bool isViewport1Interactive = viewportPanel->IsViewportHovered() || viewportPanel->IsViewportFocused() || isEditorCameraLookActive;
+            const bool isViewport2Interactive = viewportPanel2->IsViewportHovered() || viewportPanel2->IsViewportFocused();
+            const bool preferViewport2 = canRenderViewport2 && (!canRenderViewport1 || isViewport2Interactive);
+            const bool shouldRenderViewport1 = preferViewport2 ? isViewport1Interactive : canRenderViewport1;
+            const bool shouldRenderViewport2 = preferViewport2 ? canRenderViewport2 : isViewport2Interactive;
 
             const auto viewportRenderStart = std::chrono::high_resolution_clock::now();
             if (shouldRenderViewport1)
             {
                 ++frameTimingStats.renderedViewportCount;
+                auto *editorRenderTarget = viewportPanel->GetRenderTarget();
                 const glm::mat4 editorCameraTransform = GetEditorCameraTransform(m_editorCamera);
                 const auto editorCameraData = m_editorCamera.camera.GetCameraDataForTransform(editorCameraTransform,
-                                                                                              renderTarget->GetWidth(),
-                                                                                              renderTarget->GetHeight());
+                                                                                              editorRenderTarget ? editorRenderTarget->GetWidth() : 0,
+                                                                                              editorRenderTarget ? editorRenderTarget->GetHeight() : 0);
                 std::vector<render::IPostProcessEffect *> editorPostProcessEffects;
                 editorPostProcessEffects.reserve(m_editorCamera.GetPostProcessEffects().size());
                 for (const auto &effect : m_editorCamera.GetPostProcessEffects())
@@ -378,9 +487,9 @@ namespace PlutoGE::ui
                     editorPostProcessEffects.push_back(effect.get());
                 }
 
-                renderer.RenderFrame(editorCameraData, renderTarget, scene->GetLights(), &editorPostProcessEffects);
+                viewportPanel->RenderFrame(editorCameraData, scene->GetLights(), &editorPostProcessEffects);
             }
-            else
+            else if (!canRenderViewport1)
             {
                 viewportPanel->ClearFrame();
             }
@@ -390,7 +499,7 @@ namespace PlutoGE::ui
                 ++frameTimingStats.renderedViewportCount;
                 viewportPanel2->RenderFrame(*cameraComponent2);
             }
-            else
+            else if (!canRenderViewport2)
             {
                 viewportPanel2->ClearFrame();
             }
@@ -446,6 +555,35 @@ namespace PlutoGE::ui
                     {
                         profilerPanel->SetOpen(!profilerPanel->IsOpen());
                     }
+                    ImGui::EndMenu();
+                }
+                if (ImGui::BeginMenu("Effects"))
+                {
+                    if (ImGui::BeginMenu("Visualization"))
+                    {
+                        for (int index = 0; index <= static_cast<int>(render::PostProcessDebugView::GlobalIllumination); ++index)
+                        {
+                            const auto debugView = static_cast<render::PostProcessDebugView>(index);
+                            if (ImGui::MenuItem(ViewportPanel::GetDebugViewLabel(debugView), nullptr, renderer.GetPostProcessDebugView() == debugView))
+                            {
+                                renderer.SetPostProcessDebugView(debugView);
+                            }
+                        }
+                        ImGui::EndMenu();
+                    }
+
+                    if (auto *ssaoPass = renderer.GetSSAOPass())
+                    {
+                        RenderEffectParameterMenu("SSAO", ssaoPass->GetParameters(), [ssaoPass](const std::vector<render::PostProcessParameter> &parameters)
+                                                  { ssaoPass->SetParameters(parameters); });
+                    }
+
+                    if (auto *lpvPass = renderer.GetLightPropagationVolumePass())
+                    {
+                        RenderEffectParameterMenu("LPV", lpvPass->GetParameters(), [lpvPass](const std::vector<render::PostProcessParameter> &parameters)
+                                                  { lpvPass->SetParameters(parameters); });
+                    }
+
                     ImGui::EndMenu();
                 }
                 ImGui::EndMainMenuBar();

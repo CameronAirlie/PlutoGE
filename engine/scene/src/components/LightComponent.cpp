@@ -9,6 +9,12 @@ namespace PlutoGE::scene
 {
     namespace
     {
+        bool HasMeaningfulLightDelta(const glm::vec3 &lhs, const glm::vec3 &rhs, float epsilon)
+        {
+            const glm::vec3 delta = glm::abs(lhs - rhs);
+            return delta.x > epsilon || delta.y > epsilon || delta.z > epsilon;
+        }
+
         int ClampCascadeCount(int cascadeCount)
         {
             return std::clamp(cascadeCount, 1, kMaxDirectionalShadowCascades);
@@ -343,7 +349,8 @@ namespace PlutoGE::scene
             direction.z = -cos(rotationRadians.y) * cos(rotationRadians.x);
             m_config.direction = glm::normalize(direction);
 
-            if (m_config.position != previousPosition || m_config.direction != previousDirection)
+            if (HasMeaningfulLightDelta(m_config.position, previousPosition, 0.001f) ||
+                HasMeaningfulLightDelta(m_config.direction, previousDirection, 0.0005f))
             {
                 MarkDirty();
             }

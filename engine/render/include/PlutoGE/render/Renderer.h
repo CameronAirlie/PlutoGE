@@ -30,6 +30,7 @@ namespace PlutoGE::render
     class IPostProcessEffect;
     class RenderTarget;
     class Renderer;
+    class SSAOPass;
     class Texture;
     class LightPropagationVolumePass;
 
@@ -41,6 +42,8 @@ namespace PlutoGE::render
         Normal,
         Albedo,
         Depth,
+        AmbientOcclusion,
+        GlobalIllumination,
     };
 
     struct RendererConfig
@@ -88,6 +91,11 @@ namespace PlutoGE::render
         int intermediateTargetResizeCount = 0;
         float gBufferResizeMs = 0.0f;
         int gBufferResizeCount = 0;
+        float renderFrameSetupMs = 0.0f;
+        float renderCommandSortMs = 0.0f;
+        float renderPassDispatchMs = 0.0f;
+        float renderPassCpuAccountedMs = 0.0f;
+        float renderFrameUnaccountedMs = 0.0f;
     };
 
     struct RenderContext
@@ -129,6 +137,8 @@ namespace PlutoGE::render
         void SetVSyncEnabled(bool enabled);
         void SetPostProcessDebugView(PostProcessDebugView debugView) { m_postProcessDebugView = debugView; }
         PostProcessDebugView GetPostProcessDebugView() const { return m_postProcessDebugView; }
+        SSAOPass *GetSSAOPass() const { return m_ssaoPass; }
+        LightPropagationVolumePass *GetLightPropagationVolumePass() const { return m_lightPropagationVolumePass; }
         [[nodiscard]] const std::vector<CpuPassTiming> &GetCpuPassTimings() const { return m_cpuPassTimings; }
         [[nodiscard]] const std::vector<GpuPassTiming> &GetGpuPassTimings() const { return m_gpuPassTimings; }
         [[nodiscard]] const LightingGpuTiming &GetLightingGpuTiming() const { return m_lightingGpuTiming; }
@@ -181,6 +191,7 @@ namespace PlutoGE::render
         void ResolveGpuTiming(std::size_t timingIndex, std::size_t queryIndex);
         void ResolveGpuTiming(GpuTimerQueryState &queryState, float &gpuTimeMs, bool &hasResult, std::size_t queryIndex);
         IRenderPass *m_shadowPass = nullptr;
+        SSAOPass *m_ssaoPass = nullptr;
         LightPropagationVolumePass *m_lightPropagationVolumePass = nullptr;
         std::vector<IRenderPass *> m_renderPasses;
         std::vector<RenderCommand> m_renderCommands;

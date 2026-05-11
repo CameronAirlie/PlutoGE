@@ -110,6 +110,7 @@ namespace PlutoGE::render
 
         auto ssaoPass = new SSAOPass();
         ssaoPass->Initialize();
+        m_ssaoPass = ssaoPass;
         m_renderPasses.push_back(ssaoPass);
 
         auto lightPropagationVolumePass = new LightPropagationVolumePass();
@@ -234,6 +235,7 @@ namespace PlutoGE::render
         if (!m_isInitialized)
             return;
 
+        const auto renderFrameStart = std::chrono::high_resolution_clock::now();
         ++m_profiledRenderCount;
 
         int renderWidth = 0;
@@ -256,13 +258,23 @@ namespace PlutoGE::render
             return;
         }
 
+        const auto frameSetupStart = std::chrono::high_resolution_clock::now();
         auto *frameResources = GetOrCreateFrameResources(renderTarget, renderWidth, renderHeight);
+        const auto frameSetupEnd = std::chrono::high_resolution_clock::now();
+        const float frameSetupMs = std::chrono::duration<float, std::milli>(frameSetupEnd - frameSetupStart).count();
+        m_cpuFrameStats.renderFrameSetupMs += frameSetupMs;
         if (!frameResources)
         {
             return;
         }
 
+        const auto sortStart = std::chrono::high_resolution_clock::now();
         SortRenderCommands(m_renderCommands);
+        const auto sortEnd = std::chrono::high_resolution_clock::now();
+        const float sortMs = std::chrono::duration<float, std::milli>(sortEnd - sortStart).count();
+        m_cpuFrameStats.renderCommandSortMs += sortMs;
+
+        const float passCpuBefore = GetTotalCpuPassTimeMs();
 
         RenderContext ctx{
             .renderer = this,
@@ -281,6 +293,7 @@ namespace PlutoGE::render
             .postProcessDebugView = m_postProcessDebugView,
         };
 
+        const auto passDispatchStart = std::chrono::high_resolution_clock::now();
         if (m_shadowPass)
         {
             ExecutePassWithGpuTiming(*m_shadowPass, ctx, 0);
@@ -290,6 +303,16 @@ namespace PlutoGE::render
         {
             ExecutePassWithGpuTiming(*m_renderPasses[index], ctx, index + 1);
         }
+
+        const auto passDispatchEnd = std::chrono::high_resolution_clock::now();
+        const float passDispatchMs = std::chrono::duration<float, std::milli>(passDispatchEnd - passDispatchStart).count();
+        const float passCpuDelta = GetTotalCpuPassTimeMs() - passCpuBefore;
+        m_cpuFrameStats.renderPassDispatchMs += passDispatchMs;
+        m_cpuFrameStats.renderPassCpuAccountedMs += passCpuDelta;
+
+        const auto renderFrameEnd = std::chrono::high_resolution_clock::now();
+        const float renderFrameTotalMs = std::chrono::duration<float, std::milli>(renderFrameEnd - renderFrameStart).count();
+        m_cpuFrameStats.renderFrameUnaccountedMs += std::max(0.0f, renderFrameTotalMs - frameSetupMs - sortMs - passCpuDelta);
     }
 
     void Renderer::ClearRenderCommands()
@@ -322,6 +345,7 @@ namespace PlutoGE::render
             delete m_shadowPass;
             m_shadowPass = nullptr;
         }
+        m_ssaoPass = nullptr;
         m_lightPropagationVolumePass = nullptr;
         ShutdownGpuTimers();
         glBindBuffer(GL_ARRAY_BUFFER, 0);

@@ -2,9 +2,11 @@
 
 #include "PlutoGE/render/GBuffer.h"
 #include "PlutoGE/render/Graphics.h"
+#include "PlutoGE/render/passes/LightPropagationVolumePass.h"
 #include "PlutoGE/render/RenderTarget.h"
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/Shader.h"
+#include "PlutoGE/render/Texture.h"
 
 #include <glad/glad.h>
 
@@ -92,6 +94,34 @@ namespace PlutoGE::render
             {
                 shader->SetUniform("uSceneAlbedoTexture", 4);
             }
+        }
+
+        glActiveTexture(GL_TEXTURE5);
+        glBindTexture(GL_TEXTURE_2D, context.renderContext.ambientOcclusionRenderTarget ? context.renderContext.ambientOcclusionRenderTarget->GetColorTextureID() : 0);
+        if (shader->HasUniform("uAoTexture"))
+        {
+            shader->SetUniform("uAoTexture", 5);
+        }
+
+        auto *lpvPass = context.renderContext.lightPropagationVolumePass;
+        auto *lpvTexture = lpvPass ? lpvPass->GetVolumeTexture() : nullptr;
+        glActiveTexture(GL_TEXTURE6);
+        glBindTexture(GL_TEXTURE_3D, lpvTexture ? lpvTexture->GetTextureID() : 0);
+        if (shader->HasUniform("uLpvVolume"))
+        {
+            shader->SetUniform("uLpvVolume", 6);
+        }
+        if (shader->HasUniform("uLpvEnabled"))
+        {
+            shader->SetUniform("uLpvEnabled", lpvTexture ? 1 : 0);
+        }
+        if (shader->HasUniform("uLpvOrigin"))
+        {
+            shader->SetUniform("uLpvOrigin", lpvPass ? lpvPass->GetGridOrigin() : glm::vec3(0.0f));
+        }
+        if (shader->HasUniform("uLpvSize"))
+        {
+            shader->SetUniform("uLpvSize", lpvPass ? lpvPass->GetGridSize() : glm::vec3(1.0f));
         }
 
         if (shader->HasUniform("uDebugViewMode"))

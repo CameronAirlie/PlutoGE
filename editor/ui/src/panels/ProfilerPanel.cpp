@@ -28,6 +28,12 @@ namespace PlutoGE::ui
         ImGui::Text("Frame: %.2f ms", m_profiler->GetCurrentFrameTimeMs());
         ImGui::Text("Average: %.2f ms (%.1f FPS)", m_profiler->GetAverageFrameTimeMs(), m_profiler->GetAverageFPS());
         ImGui::Text("Min / Max: %.2f ms / %.2f ms", m_profiler->GetMinFrameTimeMs(), m_profiler->GetMaxFrameTimeMs());
+        ImGui::Text("P95 / P99: %.2f ms / %.2f ms", m_profiler->GetPercentileFrameTimeMs(95.0f), m_profiler->GetPercentileFrameTimeMs(99.0f));
+        if (ImGui::Button("Reset Samples"))
+        {
+            m_profiler->ResetSamples();
+            m_lastCopiedMetrics.clear();
+        }
         ImGui::Separator();
 
         if (m_profiler->GetSampleCount() > 0)
@@ -70,6 +76,11 @@ namespace PlutoGE::ui
         {
             ImGui::Text("%s CPU: %.2f ms", cpuPassTiming.name.c_str(), cpuPassTiming.cpuTimeMs);
         }
+        ImGui::Text("Render frame setup: %.2f ms", cpuFrameStats.renderFrameSetupMs);
+        ImGui::Text("Render command sort: %.2f ms", cpuFrameStats.renderCommandSortMs);
+        ImGui::Text("Render pass dispatch: %.2f ms", cpuFrameStats.renderPassDispatchMs);
+        ImGui::Text("Render pass accounted CPU: %.2f ms", cpuFrameStats.renderPassCpuAccountedMs);
+        ImGui::Text("Render frame unaccounted: %.2f ms", cpuFrameStats.renderFrameUnaccountedMs);
         ImGui::Text("Intermediate target resize: %.2f ms (%d)", cpuFrameStats.intermediateTargetResizeMs, cpuFrameStats.intermediateTargetResizeCount);
         ImGui::Text("GBuffer resize: %.2f ms (%d)", cpuFrameStats.gBufferResizeMs, cpuFrameStats.gBufferResizeCount);
 

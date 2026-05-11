@@ -31,11 +31,13 @@ namespace PlutoGE::ui
         [[nodiscard]] float GetAverageFrameTimeMs() const;
         [[nodiscard]] float GetMinFrameTimeMs() const;
         [[nodiscard]] float GetMaxFrameTimeMs() const;
+        [[nodiscard]] float GetPercentileFrameTimeMs(float percentile) const;
         [[nodiscard]] float GetAverageFPS() const;
         [[nodiscard]] std::size_t GetSampleCount() const;
         [[nodiscard]] const float *GetFrameSamples() const;
         [[nodiscard]] int GetPlotOffset() const;
         [[nodiscard]] const EditorFrameTimingStats &GetLatestFrameTimingStats() const;
+        void ResetSamples();
         [[nodiscard]] std::string BuildMetricsReport(const PanelManagerTimingStats &timingStats,
                                                      const EditorFrameTimingStats &frameTimingStats,
                                                      const std::vector<render::CpuPassTiming> &cpuPassTimings,

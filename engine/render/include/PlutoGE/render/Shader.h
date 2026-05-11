@@ -525,13 +525,14 @@ int SelectDirectionalCascadeIndex(Light light, float viewDepth)
     return light.CascadeCount - 1;
 }
 
-float ComputeDirectionalCascadeShadow(vec3 receiverPosition, Light light, int cascadeIndex, float depthBias)
+float ComputeDirectionalCascadeShadow(vec3 receiverPosition, Light light, int cascadeIndex, float depthBias, out bool isValid)
 {
     vec4 lightSpacePosition = light.CascadeLightSpaceMatrices[cascadeIndex] * vec4(receiverPosition, 1.0);
     vec3 projectedCoords = lightSpacePosition.xyz / max(lightSpacePosition.w, 0.0001);
     projectedCoords = projectedCoords * 0.5 + 0.5;
 
-    if (projectedCoords.z < 0.0 || projectedCoords.z > 1.0 || projectedCoords.x < 0.0 || projectedCoords.x > 1.0 || projectedCoords.y < 0.0 || projectedCoords.y > 1.0)
+    isValid = !(projectedCoords.z < 0.0 || projectedCoords.z > 1.0 || projectedCoords.x < 0.0 || projectedCoords.x > 1.0 || projectedCoords.y < 0.0 || projectedCoords.y > 1.0);
+    if (!isValid)
     {
         return 0.0;
     }
@@ -560,7 +561,8 @@ float ComputeDirectionalShadow(vec3 fragPos, vec3 normal, Light light)
 
     int cascadeIndex = SelectDirectionalCascadeIndex(light, viewDepth);
     float depthBias = max(0.0002 + (1.0 - ndotl) * 0.00035, 0.00005);
-    float shadow = ComputeDirectionalCascadeShadow(receiverPosition, light, cascadeIndex, depthBias);
+    bool cascadeValid = false;
+    float shadow = ComputeDirectionalCascadeShadow(receiverPosition, light, cascadeIndex, depthBias, cascadeValid);
 
     if (cascadeIndex < light.CascadeCount - 1)
     {
@@ -569,9 +571,17 @@ float ComputeDirectionalShadow(vec3 fragPos, vec3 normal, Light light)
         if (viewDepth > blendStart)
         {
             float nextDepthBias = max(0.0002 + (1.0 - ndotl) * 0.00035, 0.00005);
-            float nextShadow = ComputeDirectionalCascadeShadow(receiverPosition, light, cascadeIndex + 1, nextDepthBias);
-            float blendFactor = clamp((viewDepth - blendStart) / max(splitDistance - blendStart, 0.0001), 0.0, 1.0);
-            shadow = mix(shadow, nextShadow, blendFactor);
+            bool nextCascadeValid = false;
+            float nextShadow = ComputeDirectionalCascadeShadow(receiverPosition, light, cascadeIndex + 1, nextDepthBias, nextCascadeValid);
+            if (cascadeValid && nextCascadeValid)
+            {
+                float blendFactor = clamp((viewDepth - blendStart) / max(splitDistance - blendStart, 0.0001), 0.0, 1.0);
+                shadow = mix(shadow, nextShadow, blendFactor);
+            }
+            else if (nextCascadeValid)
+            {
+                shadow = nextShadow;
+            }
         }
     }
 
@@ -737,6 +747,11 @@ void main()
             uniform sampler2D uScenePositionTexture;
             uniform sampler2D uSceneNormalTexture;
             uniform sampler2D uSceneAlbedoTexture;
+            uniform sampler2D uAoTexture;
+            uniform sampler3D uLpvVolume;
+            uniform vec3 uLpvOrigin;
+            uniform vec3 uLpvSize;
+            uniform int uLpvEnabled;
             uniform int uDebugViewMode;
             
             float LinearizeDepth(float depth)
@@ -766,6 +781,18 @@ void main()
                 vec3 normalColor = normalize(normalRoughness.rgb) * 0.5 + 0.5;
                 vec3 albedoColor = albedoMetallic.rgb;
                 float depthColor = 1.0 - clamp(LinearizeDepth(depth) / 100.0, 0.0, 1.0);
+                float ao = clamp(texture(uAoTexture, UV).r, 0.0, 1.0);
+                vec3 giColor = vec3(0.0);
+                if (uLpvEnabled != 0)
+                {
+                    vec3 volumeSize = max(uLpvSize, vec3(0.0001));
+                    vec3 volumeUv = (position - uLpvOrigin) / volumeSize;
+                    if (all(greaterThanEqual(volumeUv, vec3(0.0))) && all(lessThanEqual(volumeUv, vec3(1.0))))
+                    {
+                        giColor = texture(uLpvVolume, volumeUv).rgb;
+                    }
+                }
+                vec3 giDebugColor = giColor / (giColor + vec3(1.0));
 
                 if (uDebugViewMode == 1)
                 {
@@ -825,6 +852,14 @@ void main()
                 else if (uDebugViewMode == 5)
                 {
                     outputColor = vec3(depthColor);
+                }
+                else if (uDebugViewMode == 6)
+                {
+                    outputColor = vec3(ao);
+                }
+                else if (uDebugViewMode == 7)
+                {
+                    outputColor = giDebugColor;
                 }
 
                 FragColor = vec4(outputColor, 1.0);

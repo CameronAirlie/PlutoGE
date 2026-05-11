@@ -66,6 +66,22 @@ namespace PlutoGE::ui
         return *std::max_element(m_frameSamples.begin(), m_frameSamples.begin() + static_cast<std::ptrdiff_t>(m_sampleCount));
     }
 
+    float EditorProfiler::GetPercentileFrameTimeMs(float percentile) const
+    {
+        if (m_sampleCount == 0)
+        {
+            return 0.0f;
+        }
+
+        percentile = std::clamp(percentile, 0.0f, 100.0f);
+        std::vector<float> sortedSamples(m_frameSamples.begin(), m_frameSamples.begin() + static_cast<std::ptrdiff_t>(m_sampleCount));
+        std::sort(sortedSamples.begin(), sortedSamples.end());
+
+        const float normalized = percentile / 100.0f;
+        const std::size_t sampleIndex = static_cast<std::size_t>(std::floor(normalized * static_cast<float>(sortedSamples.size() - 1)));
+        return sortedSamples[sampleIndex];
+    }
+
     float EditorProfiler::GetAverageFPS() const
     {
         const auto averageFrameTime = GetAverageFrameTimeMs();
@@ -102,6 +118,13 @@ namespace PlutoGE::ui
         return m_latestFrameTimingStats;
     }
 
+    void EditorProfiler::ResetSamples()
+    {
+        m_frameSamples.fill(0.0f);
+        m_nextSampleIndex = 0;
+        m_sampleCount = 0;
+    }
+
     std::string EditorProfiler::BuildMetricsReport(const PanelManagerTimingStats &timingStats,
                                                    const EditorFrameTimingStats &frameTimingStats,
                                                    const std::vector<render::CpuPassTiming> &cpuPassTimings,
@@ -119,6 +142,8 @@ namespace PlutoGE::ui
         report << "Average frame time: " << GetAverageFrameTimeMs() << " ms\n";
         report << "Min frame time: " << GetMinFrameTimeMs() << " ms\n";
         report << "Max frame time: " << GetMaxFrameTimeMs() << " ms\n";
+        report << "P95 frame time: " << GetPercentileFrameTimeMs(95.0f) << " ms\n";
+        report << "P99 frame time: " << GetPercentileFrameTimeMs(99.0f) << " ms\n";
         report << "Average FPS: " << GetAverageFPS() << "\n";
         report << "Samples: " << m_sampleCount << "\n";
         report << "Scene update: " << frameTimingStats.sceneUpdateMs << " ms\n";
@@ -139,6 +164,11 @@ namespace PlutoGE::ui
         {
             report << cpuPassTiming.name << " CPU: " << cpuPassTiming.cpuTimeMs << " ms\n";
         }
+        report << "Render frame setup: " << cpuFrameStats.renderFrameSetupMs << " ms\n";
+        report << "Render command sort: " << cpuFrameStats.renderCommandSortMs << " ms\n";
+        report << "Render pass dispatch: " << cpuFrameStats.renderPassDispatchMs << " ms\n";
+        report << "Render pass accounted CPU: " << cpuFrameStats.renderPassCpuAccountedMs << " ms\n";
+        report << "Render frame unaccounted: " << cpuFrameStats.renderFrameUnaccountedMs << " ms\n";
         report << "Intermediate target resize: " << cpuFrameStats.intermediateTargetResizeMs << " ms\n";
         report << "Intermediate target resizes: " << cpuFrameStats.intermediateTargetResizeCount << "\n";
         report << "GBuffer resize: " << cpuFrameStats.gBufferResizeMs << " ms\n";

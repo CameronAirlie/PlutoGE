@@ -24,6 +24,8 @@ namespace PlutoGE::ui
             "Normal",
             "Albedo",
             "Depth",
+            "Ambient Occlusion",
+            "Global Illumination",
         };
     }
 
@@ -39,11 +41,17 @@ namespace PlutoGE::ui
             .height = kDefaultViewportHeight,
             .clearColor = m_config.clearColor,
         };
-        m_renderTarget = new render::RenderTarget(renderConfig);
-        if (!m_renderTarget->IsInitialized())
+        for (auto &renderTarget : m_renderTargets)
         {
-            std::cerr << "Failed to initialize RenderTarget in ViewportPanel" << std::endl;
+            renderTarget = new render::RenderTarget(renderConfig);
+            if (!renderTarget->IsInitialized())
+            {
+                std::cerr << "Failed to initialize RenderTarget in ViewportPanel" << std::endl;
+            }
         }
+
+        m_displayRenderTargetIndex = 0;
+        m_nextRenderTargetIndex = 1;
     }
 
     void ViewportPanel::Render()
@@ -51,7 +59,8 @@ namespace PlutoGE::ui
         m_isViewportHovered = false;
         m_isViewportFocused = false;
 
-        if (!m_renderTarget || !m_renderTarget->IsInitialized())
+        auto *displayRenderTarget = GetDisplayedRenderTarget();
+        if (!displayRenderTarget || !displayRenderTarget->IsInitialized())
             return;
 
         auto &renderer = EditorShell::GetInstance().GetEngine().GetRenderer();
@@ -78,17 +87,27 @@ namespace PlutoGE::ui
             m_pendingHeight = newHeight;
             m_resizeStableFrames = 0;
         }
-        else if ((newWidth != m_renderTarget->GetWidth() || newHeight != m_renderTarget->GetHeight()) && ++m_resizeStableFrames >= kResizeDebounceFrames)
+        else if ((newWidth != displayRenderTarget->GetWidth() || newHeight != displayRenderTarget->GetHeight()) && ++m_resizeStableFrames >= kResizeDebounceFrames)
         {
-            if (!m_renderTarget->Resize(newWidth, newHeight))
+            bool resized = true;
+            for (auto *renderTarget : m_renderTargets)
+            {
+                if (renderTarget && !renderTarget->Resize(newWidth, newHeight))
+                {
+                    resized = false;
+                    break;
+                }
+            }
+
+            if (!resized)
             {
                 std::cerr << "Failed to resize RenderTarget in ViewportPanel" << std::endl;
                 return;
             }
         }
 
-        ImTextureID texId = (ImTextureID)(uintptr_t)m_renderTarget->GetColorTextureID();
-        ImVec2 imageSize = ImVec2(static_cast<float>(m_renderTarget->GetWidth()), static_cast<float>(m_renderTarget->GetHeight()));
+        ImTextureID texId = (ImTextureID)(uintptr_t)displayRenderTarget->GetColorTextureID();
+        ImVec2 imageSize = ImVec2(static_cast<float>(displayRenderTarget->GetWidth()), static_cast<float>(displayRenderTarget->GetHeight()));
         ImGui::Image(texId, imageSize, ImVec2(0, 1), ImVec2(1, 0));
         m_isViewportHovered = ImGui::IsItemHovered();
         m_isViewportFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
@@ -96,38 +115,77 @@ namespace PlutoGE::ui
 
     void ViewportPanel::RenderFrame(scene::CameraComponent &cameraComponent)
     {
-        if (!m_renderTarget || !m_renderTarget->IsInitialized())
+        auto *renderTarget = GetRenderTargetForRender();
+        if (!renderTarget || !renderTarget->IsInitialized())
             return;
 
         auto &renderer = EditorShell::GetInstance().GetEngine().GetRenderer();
-        renderer.BeginFrame(m_renderTarget);
+        renderer.BeginFrame(renderTarget);
         auto lights = EditorShell::GetInstance().GetEngine().GetScene()->GetLights();
-        renderer.RenderFrame(cameraComponent, m_renderTarget, lights);
-        renderer.EndFrame(m_renderTarget);
+        renderer.RenderFrame(cameraComponent, renderTarget, lights);
+        renderer.EndFrame(renderTarget);
+        PresentRenderedFrame();
+    }
+
+    void ViewportPanel::RenderFrame(const render::CameraData &cameraData, std::vector<scene::Light *> lights, const std::vector<render::IPostProcessEffect *> *postProcessEffects)
+    {
+        auto *renderTarget = GetRenderTargetForRender();
+        if (!renderTarget || !renderTarget->IsInitialized())
+            return;
+
+        auto &renderer = EditorShell::GetInstance().GetEngine().GetRenderer();
+        renderer.BeginFrame(renderTarget);
+        renderer.RenderFrame(cameraData, renderTarget, std::move(lights), postProcessEffects);
+        renderer.EndFrame(renderTarget);
+        PresentRenderedFrame();
     }
 
     bool ViewportPanel::ShouldRenderFrame() const
     {
-        return IsOpen() && WasVisibleLastFrame() && m_renderTarget && m_renderTarget->IsInitialized() && m_renderTarget->GetWidth() > 0 && m_renderTarget->GetHeight() > 0;
+        auto *renderTarget = GetRenderTargetForRender();
+        return IsOpen() && WasVisibleLastFrame() && renderTarget && renderTarget->IsInitialized() && renderTarget->GetWidth() > 0 && renderTarget->GetHeight() > 0;
     }
 
     void ViewportPanel::ClearFrame()
     {
-        if (!m_renderTarget || !m_renderTarget->IsInitialized())
+        auto *renderTarget = GetRenderTargetForRender();
+        if (!renderTarget || !renderTarget->IsInitialized())
             return;
 
         auto &renderer = EditorShell::GetInstance().GetEngine().GetRenderer();
-        renderer.BeginFrame(m_renderTarget);
-        renderer.EndFrame(m_renderTarget);
+        renderer.BeginFrame(renderTarget);
+        renderer.EndFrame(renderTarget);
+        PresentRenderedFrame();
     }
 
     void ViewportPanel::Shutdown()
     {
-        if (m_renderTarget)
+        for (auto &renderTarget : m_renderTargets)
         {
-            m_renderTarget->Cleanup();
-            delete m_renderTarget;
-            m_renderTarget = nullptr;
+            if (!renderTarget)
+            {
+                continue;
+            }
+
+            renderTarget->Cleanup();
+            delete renderTarget;
+            renderTarget = nullptr;
         }
+    }
+
+    render::RenderTarget *ViewportPanel::GetDisplayedRenderTarget() const
+    {
+        return m_renderTargets[m_displayRenderTargetIndex];
+    }
+
+    render::RenderTarget *ViewportPanel::GetRenderTargetForRender() const
+    {
+        return m_renderTargets[m_nextRenderTargetIndex];
+    }
+
+    void ViewportPanel::PresentRenderedFrame()
+    {
+        m_displayRenderTargetIndex = m_nextRenderTargetIndex;
+        m_nextRenderTargetIndex = (m_displayRenderTargetIndex + 1) % static_cast<int>(m_renderTargets.size());
     }
 }

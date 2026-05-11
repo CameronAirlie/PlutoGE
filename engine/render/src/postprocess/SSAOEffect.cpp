@@ -569,8 +569,7 @@ namespace PlutoGE::render
                                     .sourceRenderTarget = destinationRenderTarget,
                                     .destinationRenderTarget = destinationRenderTarget,
                                 },
-                                resolvedAoTarget,
-                                kAoOnlyMode);
+                                resolvedAoTarget, kAoOnlyMode);
     }
 
     void SSAOEffect::Apply(const PostProcessContext &context)

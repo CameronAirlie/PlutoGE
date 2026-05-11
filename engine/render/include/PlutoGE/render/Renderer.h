@@ -93,7 +93,7 @@ namespace PlutoGE::render
     struct RenderContext
     {
         Renderer *renderer = nullptr;
-        CameraData cameraData;                         // Camera data for the current frame
+        CameraData cameraData; // Camera data for the current frame
         bool hasCameraData = false;
         const scene::CameraComponent *cameraComponent; // Camera component owning this frame's post-process chain
         const std::vector<IPostProcessEffect *> *postProcessEffects = nullptr;

@@ -38,6 +38,10 @@ namespace PlutoGE::render
         void SetFOV(float fovY) { m_config.fovY = fovY; }
         void SetNearPlane(float nearPlane) { m_config.nearPlane = nearPlane; }
         void SetFarPlane(float farPlane) { m_config.farPlane = farPlane; }
+        CameraData GetCameraDataForTransform(const glm::mat4 &transform, int width, int height) const
+        {
+            return GetCameraData(transform, width, height);
+        }
 
     protected:
         friend class scene::CameraComponent;

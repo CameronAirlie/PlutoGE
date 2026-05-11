@@ -48,6 +48,9 @@ namespace PlutoGE::ui
 
     void ViewportPanel::Render()
     {
+        m_isViewportHovered = false;
+        m_isViewportFocused = false;
+
         if (!m_renderTarget || !m_renderTarget->IsInitialized())
             return;
 
@@ -87,6 +90,8 @@ namespace PlutoGE::ui
         ImTextureID texId = (ImTextureID)(uintptr_t)m_renderTarget->GetColorTextureID();
         ImVec2 imageSize = ImVec2(static_cast<float>(m_renderTarget->GetWidth()), static_cast<float>(m_renderTarget->GetHeight()));
         ImGui::Image(texId, imageSize, ImVec2(0, 1), ImVec2(1, 0));
+        m_isViewportHovered = ImGui::IsItemHovered();
+        m_isViewportFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
     }
 
     void ViewportPanel::RenderFrame(scene::CameraComponent &cameraComponent)

@@ -14,6 +14,8 @@ namespace PlutoGE::render
 {
     namespace
     {
+        constexpr bool kEnableVisibilityCulling = false;
+
         struct FrustumPlane
         {
             glm::vec3 normal{0.0f};
@@ -109,7 +111,7 @@ namespace PlutoGE::render
 
         for (const auto &command : *ctx.renderCommands)
         {
-            if (!IsSubmeshVisible(command, frustumPlanes))
+            if (kEnableVisibilityCulling && !IsSubmeshVisible(command, frustumPlanes))
             {
                 continue;
             }

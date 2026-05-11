@@ -188,6 +188,7 @@ namespace PlutoGE::render
             uniform sampler2D uScenePositionTexture;
             uniform sampler2D uSceneNormalTexture;
             uniform sampler2D uNoiseTexture;
+            uniform mat4 uView;
             uniform mat4 uViewProjection;
             uniform vec3 uSamples[32];
             uniform int uSampleCount;
@@ -199,17 +200,25 @@ namespace PlutoGE::render
             void main()
             {
                 vec3 fragPos = texture(uScenePositionTexture, UV).rgb;
-                vec3 normal = normalize(texture(uSceneNormalTexture, UV).xyz);
+                vec3 worldNormal = normalize(texture(uSceneNormalTexture, UV).xyz);
 
-                if (dot(normal, normal) < 0.01)
+                if (dot(worldNormal, worldNormal) < 0.01)
                 {
                     FragColor = vec4(1.0);
                     return;
                 }
 
+                vec3 fragViewPos = vec3(uView * vec4(fragPos, 1.0));
+                vec3 normal = normalize(mat3(uView) * worldNormal);
+                mat4 inverseView = inverse(uView);
+
                 vec2 noiseScale = vec2(textureSize(uScenePositionTexture, 0)) / vec2(textureSize(uNoiseTexture, 0));
                 vec3 randomVec = normalize(texture(uNoiseTexture, UV * noiseScale).xyz * 2.0 - 1.0);
                 vec3 tangent = normalize(randomVec - normal * dot(randomVec, normal));
+                if (dot(tangent, tangent) < 0.0001)
+                {
+                    tangent = normalize(abs(normal.z) < 0.999 ? cross(normal, vec3(0.0, 0.0, 1.0)) : cross(normal, vec3(0.0, 1.0, 0.0)));
+                }
                 vec3 bitangent = normalize(cross(normal, tangent));
                 mat3 tbn = mat3(tangent, bitangent, normal);
 
@@ -221,9 +230,9 @@ namespace PlutoGE::render
                         break;
                     }
 
-                    vec3 sampleWorldOffset = tbn * uSamples[sampleIndex] * uRadius;
-                    vec3 sampleWorldPos = fragPos + sampleWorldOffset;
-                    vec4 clipPos = uViewProjection * vec4(sampleWorldPos, 1.0);
+                    vec3 sampleViewPos = fragViewPos + (tbn * uSamples[sampleIndex]) * uRadius;
+                    vec4 sampleWorldPos = inverseView * vec4(sampleViewPos, 1.0);
+                    vec4 clipPos = uViewProjection * sampleWorldPos;
                     if (clipPos.w <= 0.0001)
                     {
                         continue;
@@ -236,17 +245,25 @@ namespace PlutoGE::render
                         continue;
                     }
 
-                    vec3 sceneSamplePos = texture(uScenePositionTexture, sampleUv).rgb;
-                    vec3 toSurface = sceneSamplePos - fragPos;
-                    float surfaceDistance = length(toSurface);
-                    if (surfaceDistance <= 0.0001)
+                    vec3 sceneSampleWorldPos = texture(uScenePositionTexture, sampleUv).rgb;
+                    vec3 sceneSampleViewPos = vec3(uView * vec4(sceneSampleWorldPos, 1.0));
+                    vec3 sceneDelta = sceneSampleViewPos - fragViewPos;
+                    float sceneDistance = length(sceneDelta);
+                    if (sceneDistance <= 0.0001)
                     {
                         continue;
                     }
 
-                    float hemisphereAlignment = max(dot(normalize(toSurface), normal) - uBias, 0.0);
-                    float rangeWeight = 1.0 - smoothstep(0.0, uRadius, surfaceDistance);
-                    occlusion += hemisphereAlignment * rangeWeight;
+                    float depthDifference = abs(sceneSampleViewPos.z - fragViewPos.z);
+                    float rangeWeight = 1.0 - smoothstep(uRadius * 0.25, uRadius * 1.25, depthDifference);
+                    if (rangeWeight <= 0.0)
+                    {
+                        continue;
+                    }
+
+                    float horizonWeight = max(dot(normalize(sceneDelta), normal), 0.0);
+                    float sampleOccluded = sceneSampleViewPos.z >= sampleViewPos.z + uBias ? 1.0 : 0.0;
+                    occlusion += sampleOccluded * rangeWeight * horizonWeight;
                 }
 
                 float ao = 1.0 - (occlusion / float(max(uSampleCount, 1))) * uIntensity;
@@ -306,6 +323,7 @@ namespace PlutoGE::render
                 float weightSum = 0.0;
                 minAo = 1.0;
                 maxAo = 0.0;
+                float centerViewDepth = -(uView * vec4(centerPos, 1.0)).z;
 
                 for (int offsetY = -4; offsetY <= 4; ++offsetY)
                 {
@@ -326,11 +344,18 @@ namespace PlutoGE::render
                         vec3 samplePos = texture(uScenePositionTexture, sampleUv).rgb;
                         vec3 sampleNormal = normalize(texture(uSceneNormalTexture, sampleUv).xyz);
                         float sampleAo = texture(uRawAoTexture, sampleUv).r;
+                        float sampleViewDepth = -(uView * vec4(samplePos, 1.0)).z;
+                        float depthDelta = abs(sampleViewDepth - centerViewDepth);
+                        if (depthDelta > 0.35)
+                        {
+                            continue;
+                        }
 
                         float spatialWeight = exp(-dot(offset, offset) * 0.35);
-                        float positionWeight = 1.0 / (1.0 + length(samplePos - centerPos) * 8.0);
-                        float normalWeight = pow(max(dot(centerNormal, sampleNormal), 0.0), 8.0);
-                        float weight = spatialWeight * positionWeight * normalWeight;
+                        float positionWeight = 1.0 / (1.0 + length(samplePos - centerPos) * 16.0);
+                        float depthWeight = exp(-depthDelta * 24.0);
+                        float normalWeight = pow(max(dot(centerNormal, sampleNormal), 0.0), 16.0);
+                        float weight = spatialWeight * positionWeight * depthWeight * normalWeight;
 
                         aoSum += sampleAo * weight;
                         weightSum += weight;
@@ -421,24 +446,17 @@ namespace PlutoGE::render
         m_compositeShader = Shader::Create(compositeSource);
     }
 
-    void SSAOEffect::Apply(const PostProcessContext &context)
+    RenderTarget *SSAOEffect::GenerateResolvedAmbientOcclusion(const RenderContext &renderContext, int width, int height)
     {
-        if (!m_ssaoShader || !m_resolveShader || !m_compositeShader || !context.sourceRenderTarget || !context.renderContext.gBuffer)
+        if (!m_ssaoShader || !m_resolveShader || !m_compositeShader || !renderContext.gBuffer || width <= 0 || height <= 0)
         {
-            return;
+            return nullptr;
         }
 
-        const int fullWidth = context.sourceRenderTarget->GetWidth();
-        const int fullHeight = context.sourceRenderTarget->GetHeight();
-        if (fullWidth <= 0 || fullHeight <= 0)
-        {
-            return;
-        }
-
-        EnsureInternalTargets(fullWidth, fullHeight);
+        EnsureInternalTargets(width, height);
         if (!m_rawAoRenderTarget || !m_rawAoRenderTarget->IsInitialized() || !m_historyRenderTargets[0] || !m_historyRenderTargets[1])
         {
-            return;
+            return nullptr;
         }
 
         const std::uint8_t previousHistoryIndex = m_historyIndex;
@@ -447,13 +465,18 @@ namespace PlutoGE::render
         RenderTarget *resolvedHistoryTarget = m_historyRenderTargets[resolvedHistoryIndex].get();
         if (!previousHistoryTarget || !resolvedHistoryTarget)
         {
-            return;
+            return nullptr;
         }
 
         glDisable(GL_DEPTH_TEST);
         glDisable(GL_CULL_FACE);
 
-        const glm::mat4 viewProjection = context.renderContext.cameraData.projection * context.renderContext.cameraData.view;
+        const glm::mat4 viewProjection = renderContext.cameraData.projection * renderContext.cameraData.view;
+        const PostProcessContext internalContext{
+            .renderContext = renderContext,
+            .sourceRenderTarget = m_rawAoRenderTarget.get(),
+            .destinationRenderTarget = nullptr,
+        };
 
         Graphics::BindRenderTarget(m_rawAoRenderTarget.get());
         glViewport(0, 0, m_internalWidth, m_internalHeight);
@@ -461,10 +484,11 @@ namespace PlutoGE::render
         glClear(GL_COLOR_BUFFER_BIT);
 
         m_ssaoShader->Bind();
-        BindCommonInputs(m_ssaoShader, context);
+        BindCommonInputs(m_ssaoShader, internalContext);
         glActiveTexture(GL_TEXTURE5);
         glBindTexture(GL_TEXTURE_2D, m_noiseTexture);
         m_ssaoShader->SetUniform("uNoiseTexture", 5);
+        m_ssaoShader->SetUniform("uView", renderContext.cameraData.view);
         m_ssaoShader->SetUniform("uViewProjection", viewProjection);
         m_ssaoShader->SetUniform("uSampleCount", m_sampleCount);
         m_ssaoShader->SetUniform("uRadius", m_radius);
@@ -483,14 +507,14 @@ namespace PlutoGE::render
         glClear(GL_COLOR_BUFFER_BIT);
 
         m_resolveShader->Bind();
-        BindCommonInputs(m_resolveShader, context);
+        BindCommonInputs(m_resolveShader, internalContext);
         glActiveTexture(GL_TEXTURE5);
         glBindTexture(GL_TEXTURE_2D, m_rawAoRenderTarget->GetColorTextureID());
         m_resolveShader->SetUniform("uRawAoTexture", 5);
         glActiveTexture(GL_TEXTURE6);
         glBindTexture(GL_TEXTURE_2D, previousHistoryTarget->GetColorTextureID());
         m_resolveShader->SetUniform("uHistoryTexture", 6);
-        m_resolveShader->SetUniform("uView", context.renderContext.cameraData.view);
+        m_resolveShader->SetUniform("uView", renderContext.cameraData.view);
         m_resolveShader->SetUniform("uPreviousView", m_previousView);
         m_resolveShader->SetUniform("uPreviousViewProjection", m_previousViewProjection);
         m_resolveShader->SetUniform("uBlurRadius", m_blurRadius);
@@ -500,22 +524,69 @@ namespace PlutoGE::render
         m_resolveShader->SetUniform("uHistoryNormalThreshold", m_historyNormalThreshold);
         DrawFullscreenTriangle();
 
+        m_historyIndex = resolvedHistoryIndex;
+        m_previousView = renderContext.cameraData.view;
+        m_previousViewProjection = viewProjection;
+        m_hasHistory = true;
+        return resolvedHistoryTarget;
+    }
+
+    void SSAOEffect::RenderResolvedAoTexture(const PostProcessContext &context, RenderTarget *resolvedAoTarget, int outputMode)
+    {
+        if (!m_compositeShader || !resolvedAoTarget || !context.destinationRenderTarget)
+        {
+            return;
+        }
+
         BeginApply(context);
 
         m_compositeShader->Bind();
         BindCommonInputs(m_compositeShader, context);
         glActiveTexture(GL_TEXTURE5);
-        glBindTexture(GL_TEXTURE_2D, resolvedHistoryTarget->GetColorTextureID());
+        glBindTexture(GL_TEXTURE_2D, resolvedAoTarget->GetColorTextureID());
         m_compositeShader->SetUniform("uResolvedAoTexture", 5);
-        m_compositeShader->SetUniform("uOutputMode", m_outputMode);
+        m_compositeShader->SetUniform("uOutputMode", outputMode);
         DrawFullscreenTriangle();
 
         EndApply();
+    }
 
-        m_historyIndex = resolvedHistoryIndex;
-        m_previousView = context.renderContext.cameraData.view;
-        m_previousViewProjection = viewProjection;
-        m_hasHistory = true;
+    void SSAOEffect::RenderAmbientOcclusion(const RenderContext &renderContext, RenderTarget *destinationRenderTarget)
+    {
+        if (!destinationRenderTarget)
+        {
+            return;
+        }
+
+        RenderTarget *resolvedAoTarget = GenerateResolvedAmbientOcclusion(renderContext, destinationRenderTarget->GetWidth(), destinationRenderTarget->GetHeight());
+        if (!resolvedAoTarget)
+        {
+            return;
+        }
+
+        RenderResolvedAoTexture(PostProcessContext{
+                                    .renderContext = renderContext,
+                                    .sourceRenderTarget = destinationRenderTarget,
+                                    .destinationRenderTarget = destinationRenderTarget,
+                                },
+                                resolvedAoTarget,
+                                kAoOnlyMode);
+    }
+
+    void SSAOEffect::Apply(const PostProcessContext &context)
+    {
+        if (!context.sourceRenderTarget || !context.destinationRenderTarget)
+        {
+            return;
+        }
+
+        RenderTarget *resolvedAoTarget = GenerateResolvedAmbientOcclusion(context.renderContext, context.sourceRenderTarget->GetWidth(), context.sourceRenderTarget->GetHeight());
+        if (!resolvedAoTarget)
+        {
+            return;
+        }
+
+        RenderResolvedAoTexture(context, resolvedAoTarget, m_outputMode);
     }
 
     void SSAOEffect::EnsureInternalTargets(int width, int height)

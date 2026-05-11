@@ -67,6 +67,14 @@ namespace PlutoGE::ui
 
     void SceneHierarchyPanel::Render()
     {
+        const bool isEditorCameraSelected = EditorShell::GetInstance().IsEditorCameraSelected();
+        if (ImGui::Selectable("Editor Camera", isEditorCameraSelected))
+        {
+            EditorShell::GetInstance().SelectEditorCamera();
+        }
+
+        ImGui::Separator();
+
         auto scene = ui::EditorShell::GetInstance().GetEngine().GetScene();
         if (!scene)
         {

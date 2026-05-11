@@ -27,8 +27,11 @@ namespace PlutoGE::render
 {
     class Material;
     class Mesh;
+    class IPostProcessEffect;
     class RenderTarget;
     class Renderer;
+    class Texture;
+    class LightPropagationVolumePass;
 
     enum class PostProcessDebugView
     {
@@ -91,13 +94,17 @@ namespace PlutoGE::render
     {
         Renderer *renderer = nullptr;
         CameraData cameraData;                         // Camera data for the current frame
+        bool hasCameraData = false;
         const scene::CameraComponent *cameraComponent; // Camera component owning this frame's post-process chain
+        const std::vector<IPostProcessEffect *> *postProcessEffects = nullptr;
         RenderTarget *renderTarget;                    // Render target for the current frame (nullptr for default framebuffer)
         RenderTarget *temporaryRenderTarget = nullptr; // Optional temporary render target for intermediate passes
         RenderTarget *postProcessIntermediateRenderTarget = nullptr;
+        RenderTarget *ambientOcclusionRenderTarget = nullptr;
         std::vector<RenderCommand> *renderCommands; // List of render commands for the current frame
         std::vector<scene::Light *> *lights;        // List of lights in the scene for the current frame
         GBuffer *gBuffer;                           // GBuffer for deferred rendering
+        LightPropagationVolumePass *lightPropagationVolumePass = nullptr;
         PostProcessDebugView postProcessDebugView = PostProcessDebugView::None;
     };
 
@@ -114,6 +121,7 @@ namespace PlutoGE::render
         void BeginProfilingFrame();
         void UpdateShadowMaps(std::vector<scene::Light *> lights = {});
         void RenderFrame(const scene::CameraComponent &cameraComponent, RenderTarget *renderTarget = nullptr, std::vector<scene::Light *> lights = {});
+        void RenderFrame(const CameraData &cameraData, RenderTarget *renderTarget = nullptr, std::vector<scene::Light *> lights = {}, const std::vector<IPostProcessEffect *> *postProcessEffects = nullptr);
         void EndFrame(RenderTarget *renderTarget = nullptr);
         void Shutdown(RenderTarget *renderTarget = nullptr);
         void ClearRenderCommands();
@@ -144,6 +152,7 @@ namespace PlutoGE::render
         {
             std::unique_ptr<RenderTarget> temporaryRenderTarget;
             std::unique_ptr<RenderTarget> postProcessIntermediateRenderTarget;
+            std::unique_ptr<RenderTarget> ambientOcclusionRenderTarget;
             GBuffer gBuffer;
         };
 
@@ -172,6 +181,7 @@ namespace PlutoGE::render
         void ResolveGpuTiming(std::size_t timingIndex, std::size_t queryIndex);
         void ResolveGpuTiming(GpuTimerQueryState &queryState, float &gpuTimeMs, bool &hasResult, std::size_t queryIndex);
         IRenderPass *m_shadowPass = nullptr;
+        LightPropagationVolumePass *m_lightPropagationVolumePass = nullptr;
         std::vector<IRenderPass *> m_renderPasses;
         std::vector<RenderCommand> m_renderCommands;
         std::unordered_map<const RenderTarget *, std::unique_ptr<FrameResources>> m_frameResources;

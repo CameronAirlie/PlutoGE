@@ -371,6 +371,11 @@ uniform sampler2D uShadowCascadeMap1;
 uniform sampler2D uShadowCascadeMap2;
 uniform sampler2D uShadowCascadeMap3;
 uniform samplerCube uShadowMapCube;
+uniform sampler2D uAoTexture;
+uniform sampler3D uLpvVolume;
+uniform vec3 uLpvOrigin;
+uniform vec3 uLpvSize;
+uniform int uLpvEnabled;
 
 float DistributionGGX(vec3 normal, vec3 halfwayDir, float roughness)
 {
@@ -440,7 +445,7 @@ vec3 EvaluatePbrLighting(vec3 normal, vec3 viewDir, vec3 albedo, float metallic,
     return (diffuse + specular) * radiance * ndotl;
 }
 
-float SampleShadowMapPCF(sampler2D shadowMap, vec3 projectedCoords, float softness)
+float SampleShadowMapPCF(sampler2D shadowMap, vec3 projectedCoords, float depthBias, float softness)
 {
     vec2 texelSize = 1.0 / vec2(textureSize(shadowMap, 0));
     float filterRadius = max(softness, 0.5);
@@ -454,7 +459,7 @@ float SampleShadowMapPCF(sampler2D shadowMap, vec3 projectedCoords, float softne
             vec2 sampleCoords = clamp(projectedCoords.xy + offset, vec2(0.0), vec2(1.0));
             float closestDepth = texture(shadowMap, sampleCoords).r;
             float weight = (x == 0 && y == 0) ? 4.0 : ((x == 0 || y == 0) ? 2.0 : 1.0);
-            shadow += projectedCoords.z > closestDepth ? weight : 0.0;
+            shadow += projectedCoords.z - depthBias > closestDepth ? weight : 0.0;
             totalWeight += weight;
         }
     }
@@ -462,27 +467,27 @@ float SampleShadowMapPCF(sampler2D shadowMap, vec3 projectedCoords, float softne
     return shadow / max(totalWeight, 0.0001);
 }
 
-float SampleDirectionalCascadeShadow(int cascadeIndex, vec3 projectedCoords, float softness)
+float SampleDirectionalCascadeShadow(int cascadeIndex, vec3 projectedCoords, float depthBias, float softness)
 {
     if (cascadeIndex == 0)
     {
-        return SampleShadowMapPCF(uShadowCascadeMap0, projectedCoords, softness);
+        return SampleShadowMapPCF(uShadowCascadeMap0, projectedCoords, depthBias, softness);
     }
 
     if (cascadeIndex == 1)
     {
-        return SampleShadowMapPCF(uShadowCascadeMap1, projectedCoords, softness);
+        return SampleShadowMapPCF(uShadowCascadeMap1, projectedCoords, depthBias, softness);
     }
 
     if (cascadeIndex == 2)
     {
-        return SampleShadowMapPCF(uShadowCascadeMap2, projectedCoords, softness);
+        return SampleShadowMapPCF(uShadowCascadeMap2, projectedCoords, depthBias, softness);
     }
 
-    return SampleShadowMapPCF(uShadowCascadeMap3, projectedCoords, softness);
+    return SampleShadowMapPCF(uShadowCascadeMap3, projectedCoords, depthBias, softness);
 }
 
-float ComputeSingleProjectedShadow(vec3 receiverPosition, sampler2D shadowMap, mat4 lightSpaceMatrix, float softness)
+float ComputeSingleProjectedShadow(vec3 receiverPosition, sampler2D shadowMap, mat4 lightSpaceMatrix, float depthBias, float softness)
 {
     vec4 lightSpacePosition = lightSpaceMatrix * vec4(receiverPosition, 1.0);
     vec3 projectedCoords = lightSpacePosition.xyz / max(lightSpacePosition.w, 0.0001);
@@ -493,16 +498,18 @@ float ComputeSingleProjectedShadow(vec3 receiverPosition, sampler2D shadowMap, m
         return 0.0;
     }
 
-    return SampleShadowMapPCF(shadowMap, projectedCoords, softness);
+    return SampleShadowMapPCF(shadowMap, projectedCoords, depthBias, softness);
 }
 
 float ComputeSpotShadow(vec3 fragPos, vec3 normal, Light light)
 {
     vec3 surfaceNormal = normalize(normal);
     vec3 lightVector = normalize(light.Position - fragPos);
-    float bias = max(0.0015 * (1.0 - max(dot(surfaceNormal, lightVector), 0.0)), 0.0001);
-    vec3 receiverPosition = fragPos + surfaceNormal * bias;
-    return ComputeSingleProjectedShadow(receiverPosition, uShadowMap2D, light.LightSpaceMatrix, 1.25);
+    float ndotl = max(dot(surfaceNormal, lightVector), 0.0);
+    float normalBias = max(0.00075 * (1.0 - ndotl), 0.00005);
+    float depthBias = max(0.00035 * (1.0 - ndotl), 0.00005);
+    vec3 receiverPosition = fragPos + surfaceNormal * normalBias;
+    return ComputeSingleProjectedShadow(receiverPosition, uShadowMap2D, light.LightSpaceMatrix, depthBias, 1.25);
 }
 
 int SelectDirectionalCascadeIndex(Light light, float viewDepth)
@@ -518,7 +525,7 @@ int SelectDirectionalCascadeIndex(Light light, float viewDepth)
     return light.CascadeCount - 1;
 }
 
-float ComputeDirectionalCascadeShadow(vec3 receiverPosition, Light light, int cascadeIndex)
+float ComputeDirectionalCascadeShadow(vec3 receiverPosition, Light light, int cascadeIndex, float depthBias)
 {
     vec4 lightSpacePosition = light.CascadeLightSpaceMatrices[cascadeIndex] * vec4(receiverPosition, 1.0);
     vec3 projectedCoords = lightSpacePosition.xyz / max(lightSpacePosition.w, 0.0001);
@@ -529,7 +536,7 @@ float ComputeDirectionalCascadeShadow(vec3 receiverPosition, Light light, int ca
         return 0.0;
     }
 
-    return SampleDirectionalCascadeShadow(cascadeIndex, projectedCoords, light.ShadowSoftness);
+    return SampleDirectionalCascadeShadow(cascadeIndex, projectedCoords, depthBias, light.ShadowSoftness);
 }
 
 float ComputeDirectionalShadow(vec3 fragPos, vec3 normal, Light light)
@@ -541,8 +548,9 @@ float ComputeDirectionalShadow(vec3 fragPos, vec3 normal, Light light)
 
     vec3 surfaceNormal = normalize(normal);
     vec3 lightVector = normalize(-light.Direction);
-    float bias = max(0.01 * (1.0 - max(dot(surfaceNormal, lightVector), 0.0)), 0.0015);
-    vec3 receiverPosition = fragPos + surfaceNormal * bias;
+    float ndotl = max(dot(surfaceNormal, lightVector), 0.0);
+    float normalBias = max(0.0015 * (1.0 - ndotl), 0.00015);
+    vec3 receiverPosition = fragPos + surfaceNormal * normalBias;
     float viewDepth = abs((uViewMatrix * vec4(receiverPosition, 1.0)).z);
 
     if (viewDepth > light.CascadeSplits[light.CascadeCount - 1])
@@ -551,7 +559,8 @@ float ComputeDirectionalShadow(vec3 fragPos, vec3 normal, Light light)
     }
 
     int cascadeIndex = SelectDirectionalCascadeIndex(light, viewDepth);
-    float shadow = ComputeDirectionalCascadeShadow(receiverPosition, light, cascadeIndex);
+    float depthBias = max(0.0002 + (1.0 - ndotl) * 0.00035, 0.00005);
+    float shadow = ComputeDirectionalCascadeShadow(receiverPosition, light, cascadeIndex, depthBias);
 
     if (cascadeIndex < light.CascadeCount - 1)
     {
@@ -559,7 +568,8 @@ float ComputeDirectionalShadow(vec3 fragPos, vec3 normal, Light light)
         float blendStart = max(splitDistance - light.CascadeBlendDistance, 0.0);
         if (viewDepth > blendStart)
         {
-            float nextShadow = ComputeDirectionalCascadeShadow(receiverPosition, light, cascadeIndex + 1);
+            float nextDepthBias = max(0.0002 + (1.0 - ndotl) * 0.00035, 0.00005);
+            float nextShadow = ComputeDirectionalCascadeShadow(receiverPosition, light, cascadeIndex + 1, nextDepthBias);
             float blendFactor = clamp((viewDepth - blendStart) / max(splitDistance - blendStart, 0.0001), 0.0, 1.0);
             shadow = mix(shadow, nextShadow, blendFactor);
         }
@@ -648,6 +658,24 @@ vec3 ComputeLightContribution(vec3 fragPos, vec3 normal, vec3 viewDir, vec3 albe
     return EvaluatePbrLighting(normal, viewDir, albedo, metallic, roughness, lightDir, radiance) * (1.0 - shadow);
 }
 
+vec3 SampleLPVIndirect(vec3 fragPos, vec3 albedo, float metallic, float ao)
+{
+    if (uLpvEnabled == 0)
+    {
+        return vec3(0.0);
+    }
+
+    vec3 volumeSize = max(uLpvSize, vec3(0.0001));
+    vec3 volumeUv = (fragPos - uLpvOrigin) / volumeSize;
+    if (any(lessThan(volumeUv, vec3(0.0))) || any(greaterThan(volumeUv, vec3(1.0))))
+    {
+        return vec3(0.0);
+    }
+
+    vec3 indirectRadiance = texture(uLpvVolume, volumeUv).rgb;
+    return indirectRadiance * albedo * (1.0 - metallic) * ao;
+}
+
 void main()
 {
     vec3 fragPos = texture(gPosition, UV).rgb;
@@ -659,10 +687,12 @@ void main()
     float roughness = clamp(normalRoughness.a, 0.04, 1.0);
     float metallic = clamp(albedoMetallic.a, 0.0, 1.0);
     vec3 viewDir = normalize(uViewPos - fragPos);
+    float ao = clamp(texture(uAoTexture, UV).r, 0.0, 1.0);
 
     if (uPassMode == PASS_MODE_AMBIENT)
     {
-        vec3 ambient = vec3(0.03) * albedo * (1.0 - metallic);
+        vec3 ambient = vec3(0.03) * albedo * (1.0 - metallic) * ao;
+        ambient += SampleLPVIndirect(fragPos, albedo, metallic, ao);
         FragColor = vec4(ambient, 1.0);
         return;
     }

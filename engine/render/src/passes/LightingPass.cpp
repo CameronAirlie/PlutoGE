@@ -6,6 +6,7 @@
 #include "PlutoGE/render/Texture.h"
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/Graphics.h"
+#include "PlutoGE/render/passes/LightPropagationVolumePass.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 
 namespace PlutoGE::render
@@ -18,14 +19,17 @@ namespace PlutoGE::render
         constexpr int kDirectionalShadowCascadeTextureStartSlot = 3;
         constexpr int kShadowMap2DTextureSlot = kDirectionalShadowCascadeTextureStartSlot + scene::kMaxDirectionalShadowCascades;
         constexpr int kShadowMapCubeTextureSlot = kShadowMap2DTextureSlot + 1;
+        constexpr int kAmbientOcclusionTextureSlot = kShadowMapCubeTextureSlot + 1;
+        constexpr int kLightPropagationVolumeTextureSlot = kAmbientOcclusionTextureSlot + 1;
         constexpr int kAmbientPassMode = 0;
         constexpr int kLightPassMode = 1;
         constexpr std::size_t kLightingSetupStage = 0;
         constexpr std::size_t kLightingAmbientStage = 1;
         constexpr std::size_t kLightingAccumulationStage = 2;
 
-        void BindLightingInputs(Shader *shader, GBuffer *gBuffer)
+        void BindLightingInputs(Shader *shader, const RenderContext &ctx)
         {
+            auto *gBuffer = ctx.gBuffer;
             glActiveTexture(GL_TEXTURE0 + kPositionTextureSlot);
             glBindTexture(GL_TEXTURE_2D, gBuffer->GetPositionTextureID());
             shader->SetUniform("gPosition", kPositionTextureSlot);
@@ -53,6 +57,16 @@ namespace PlutoGE::render
             glActiveTexture(GL_TEXTURE0 + kShadowMapCubeTextureSlot);
             glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
             shader->SetUniform("uShadowMapCube", kShadowMapCubeTextureSlot);
+
+            glActiveTexture(GL_TEXTURE0 + kAmbientOcclusionTextureSlot);
+            glBindTexture(GL_TEXTURE_2D, ctx.ambientOcclusionRenderTarget ? ctx.ambientOcclusionRenderTarget->GetColorTextureID() : 0);
+            shader->SetUniform("uAoTexture", kAmbientOcclusionTextureSlot);
+
+            auto *lpvPass = ctx.lightPropagationVolumePass;
+            auto *lpvTexture = lpvPass ? lpvPass->GetVolumeTexture() : nullptr;
+            glActiveTexture(GL_TEXTURE0 + kLightPropagationVolumeTextureSlot);
+            glBindTexture(GL_TEXTURE_3D, lpvTexture ? lpvTexture->GetTextureID() : 0);
+            shader->SetUniform("uLpvVolume", kLightPropagationVolumeTextureSlot);
         }
 
         bool BindShadowMapForLight(const scene::Light &light)
@@ -209,11 +223,15 @@ namespace PlutoGE::render
         }
 
         m_lightingPassShader->Bind();
-        BindLightingInputs(m_lightingPassShader, ctx.gBuffer);
+        BindLightingInputs(m_lightingPassShader, ctx);
 
         const glm::vec3 cameraPos = glm::vec3(glm::inverse(ctx.cameraData.view)[3]);
+        auto *lpvPass = ctx.lightPropagationVolumePass;
         m_lightingPassShader->SetUniform("uViewPos", cameraPos);
         m_lightingPassShader->SetUniform("uViewMatrix", ctx.cameraData.view);
+        m_lightingPassShader->SetUniform("uLpvEnabled", lpvPass && lpvPass->GetVolumeTexture() ? 1 : 0);
+        m_lightingPassShader->SetUniform("uLpvOrigin", lpvPass ? lpvPass->GetGridOrigin() : glm::vec3(0.0f));
+        m_lightingPassShader->SetUniform("uLpvSize", lpvPass ? lpvPass->GetGridSize() : glm::vec3(1.0f));
 
         glDisable(GL_BLEND);
         m_lightingPassShader->SetUniform("uPassMode", kAmbientPassMode);

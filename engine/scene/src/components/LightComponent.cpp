@@ -19,6 +19,22 @@ namespace PlutoGE::scene
             return std::max(light.directionalShadowSettings.resolution, 256);
         }
 
+        int ResolveDirectionalCascadeResolution(const Light &light, int cascadeIndex)
+        {
+            const int baseResolution = ResolveShadowResolution(light);
+            switch (cascadeIndex)
+            {
+            case 0:
+                return baseResolution;
+            case 1:
+                return std::max(baseResolution / 2, 256);
+            case 2:
+                return std::max(baseResolution / 4, 256);
+            default:
+                return std::max(baseResolution / 4, 256);
+            }
+        }
+
         void ResetShadowState(Light &light)
         {
             light.shadowMap.reset();
@@ -52,9 +68,9 @@ namespace PlutoGE::scene
             return std::unique_ptr<render::Texture>(render::Texture::DepthTexture(resolution, resolution));
         }
 
-        std::unique_ptr<render::Texture> CreateDirectionalCascadeTexture(const Light &light)
+        std::unique_ptr<render::Texture> CreateDirectionalCascadeTexture(const Light &light, int cascadeIndex)
         {
-            const int resolution = ResolveShadowResolution(light);
+            const int resolution = ResolveDirectionalCascadeResolution(light, cascadeIndex);
             return std::unique_ptr<render::Texture>(render::Texture::DepthTexture(resolution, resolution));
         }
 
@@ -173,7 +189,7 @@ namespace PlutoGE::scene
 
     std::vector<Property> LightComponent::Serialize() const
     {
-        return {
+        std::vector<Property> properties{
             {"Color", PropertyType::Vec3, std::to_string(m_config.color.x) + "," + std::to_string(m_config.color.y) + "," + std::to_string(m_config.color.z)},
             {"Intensity", PropertyType::Float, std::to_string(m_config.intensity)},
             {"Range", PropertyType::Float, std::to_string(m_config.range)},
@@ -182,6 +198,13 @@ namespace PlutoGE::scene
             {"LightType", PropertyType::Enum, std::to_string(static_cast<int>(m_config.type)), {"Point", "Directional", "Spot"}},
             {"Static", PropertyType::Bool, m_config.isStatic ? "true" : "false"},
         };
+
+        if (m_config.type == LightType::Directional)
+        {
+            properties.push_back({"Shadow Distance (0 = Camera Far)", PropertyType::Float, std::to_string(m_config.directionalShadowSettings.maxDistance)});
+        }
+
+        return properties;
     }
 
     void LightComponent::Deserialize(const std::vector<Property> &properties)
@@ -218,6 +241,10 @@ namespace PlutoGE::scene
             {
                 m_config.isStatic = (property.value == "true");
             }
+            else if (property.name == "Shadow Distance (0 = Camera Far)")
+            {
+                m_config.directionalShadowSettings.maxDistance = std::stof(property.value);
+            }
         }
         Initialize(); // Re-initialize to apply any changes that require setup (like shadow map creation)
     }
@@ -253,9 +280,10 @@ namespace PlutoGE::scene
                     continue;
                 }
 
-                if (NeedsShadowTextureRecreation(m_config.shadowCascadeMaps[cascadeIndex].get(), GL_TEXTURE_2D, resolution))
+                const int cascadeResolution = ResolveDirectionalCascadeResolution(m_config, cascadeIndex);
+                if (NeedsShadowTextureRecreation(m_config.shadowCascadeMaps[cascadeIndex].get(), GL_TEXTURE_2D, cascadeResolution))
                 {
-                    m_config.shadowCascadeMaps[cascadeIndex] = CreateDirectionalCascadeTexture(m_config);
+                    m_config.shadowCascadeMaps[cascadeIndex] = CreateDirectionalCascadeTexture(m_config, cascadeIndex);
                     recreatedShadowMap = true;
                 }
             }

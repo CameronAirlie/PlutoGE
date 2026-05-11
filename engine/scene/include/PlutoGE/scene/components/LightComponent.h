@@ -23,7 +23,7 @@ namespace PlutoGE::scene
     {
         int cascadeCount = 4;
         int resolution = 2048;
-        float maxDistance = 60.0f;
+        float maxDistance = 0.0f;
         float splitLambda = 0.75f;
         float cascadeBlendDistance = 4.0f;
         float softness = 1.5f;

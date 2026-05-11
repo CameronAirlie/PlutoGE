@@ -22,10 +22,18 @@
 #include <filesystem>
 #include <memory>
 
+#include <glm/gtc/constants.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+
 namespace PlutoGE::ui
 {
     namespace
     {
+        constexpr float kEditorCameraMoveSpeed = 6.0f;
+        constexpr float kEditorCameraBoostMultiplier = 2.5f;
+        constexpr float kEditorCameraMouseSensitivity = 0.12f;
+        constexpr float kEditorCameraPitchLimitDegrees = 89.0f;
+
         bool IsCameraActiveInScene(scene::Scene *scene, scene::CameraComponent *cameraComponent)
         {
             if (!scene || !cameraComponent)
@@ -40,6 +48,135 @@ namespace PlutoGE::ui
             }
 
             return scene->FindEntityByID(owner->GetID()) == owner;
+        }
+
+        glm::mat4 GetEditorCameraTransform(const EditorShell::EditorViewportCamera &camera)
+        {
+            glm::mat4 transform = glm::translate(glm::mat4(1.0f), camera.position);
+            transform = glm::rotate(transform, glm::radians(camera.yawDegrees), glm::vec3(0.0f, 1.0f, 0.0f));
+            transform = glm::rotate(transform, glm::radians(camera.pitchDegrees), glm::vec3(1.0f, 0.0f, 0.0f));
+            return transform;
+        }
+
+        glm::vec3 GetTransformForward(const glm::mat4 &transform)
+        {
+            return glm::normalize(-glm::vec3(transform[2]));
+        }
+
+        glm::vec3 GetTransformRight(const glm::mat4 &transform)
+        {
+            return glm::normalize(glm::vec3(transform[0]));
+        }
+
+        void SetCursorCapture(GLFWwindow *windowHandle, bool captured)
+        {
+            if (!windowHandle)
+            {
+                return;
+            }
+
+            glfwSetInputMode(windowHandle, GLFW_CURSOR, captured ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+        }
+
+        void UpdateEditorCamera(EditorShell::EditorViewportCamera &camera,
+                                GLFWwindow *windowHandle,
+                                bool canActivate,
+                                float deltaTime,
+                                bool &isLookActive,
+                                double &lastCursorX,
+                                double &lastCursorY)
+        {
+            if (!windowHandle)
+            {
+                if (isLookActive)
+                {
+                    SetCursorCapture(windowHandle, false);
+                    isLookActive = false;
+                }
+                return;
+            }
+
+            const bool isRightMouseDown = glfwGetMouseButton(windowHandle, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
+            if (!isRightMouseDown)
+            {
+                if (isLookActive)
+                {
+                    SetCursorCapture(windowHandle, false);
+                    isLookActive = false;
+                }
+                return;
+            }
+
+            if (!isLookActive)
+            {
+                if (!canActivate)
+                {
+                    return;
+                }
+
+                isLookActive = true;
+                SetCursorCapture(windowHandle, true);
+                glfwGetCursorPos(windowHandle, &lastCursorX, &lastCursorY);
+            }
+
+            double cursorX = 0.0;
+            double cursorY = 0.0;
+            glfwGetCursorPos(windowHandle, &cursorX, &cursorY);
+
+            const float deltaX = static_cast<float>(cursorX - lastCursorX);
+            const float deltaY = static_cast<float>(cursorY - lastCursorY);
+            lastCursorX = cursorX;
+            lastCursorY = cursorY;
+
+            camera.yawDegrees -= deltaX * kEditorCameraMouseSensitivity;
+            camera.pitchDegrees = glm::clamp(camera.pitchDegrees - deltaY * kEditorCameraMouseSensitivity,
+                                             -kEditorCameraPitchLimitDegrees,
+                                             kEditorCameraPitchLimitDegrees);
+
+            const glm::mat4 transform = GetEditorCameraTransform(camera);
+
+            glm::vec3 movement(0.0f);
+            const glm::vec3 forward = GetTransformForward(transform);
+            const glm::vec3 right = GetTransformRight(transform);
+            static constexpr glm::vec3 kWorldUp(0.0f, 1.0f, 0.0f);
+
+            if (glfwGetKey(windowHandle, GLFW_KEY_W) == GLFW_PRESS)
+            {
+                movement += forward;
+            }
+            if (glfwGetKey(windowHandle, GLFW_KEY_S) == GLFW_PRESS)
+            {
+                movement -= forward;
+            }
+            if (glfwGetKey(windowHandle, GLFW_KEY_D) == GLFW_PRESS)
+            {
+                movement += right;
+            }
+            if (glfwGetKey(windowHandle, GLFW_KEY_A) == GLFW_PRESS)
+            {
+                movement -= right;
+            }
+            if (glfwGetKey(windowHandle, GLFW_KEY_E) == GLFW_PRESS)
+            {
+                movement += kWorldUp;
+            }
+            if (glfwGetKey(windowHandle, GLFW_KEY_Q) == GLFW_PRESS)
+            {
+                movement -= kWorldUp;
+            }
+
+            if (glm::dot(movement, movement) <= 0.0f)
+            {
+                return;
+            }
+
+            float moveSpeed = kEditorCameraMoveSpeed;
+            if (glfwGetKey(windowHandle, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS)
+            {
+                moveSpeed *= kEditorCameraBoostMultiplier;
+            }
+
+            camera.position += glm::normalize(movement) * moveSpeed * deltaTime;
         }
     }
 
@@ -58,6 +195,8 @@ namespace PlutoGE::ui
         {
             std::cerr << "Failed to initialize Engine in EditorShell" << std::endl;
         }
+
+        m_editorCamera = EditorViewportCamera{};
 
         m_panelManager.InitializeImGui(&m_engine.GetWindow());
     }
@@ -80,7 +219,7 @@ namespace PlutoGE::ui
         auto lastTime = std::chrono::high_resolution_clock::now();
 
         ViewportPanelConfig viewportConfig;
-        viewportConfig.name = "Viewport";
+        viewportConfig.name = "Editor Viewport";
         viewportConfig.clearColor = glm::vec4(0.1f, 0.1f, 0.15f, 1.0f);
         auto *viewportPanel = new ViewportPanel(viewportConfig);
         viewportPanel->Initialize();
@@ -114,11 +253,12 @@ namespace PlutoGE::ui
             .name = "Cube 2",
         });
         auto *material2 = m_engine.GetAssetManager().CreateDefaultMaterial();
-        auto texture = m_engine.GetAssetManager().LoadTexture("C:/textures/brick/brick.png");
+        auto texture = m_engine.GetAssetManager().LoadTexture("C:/textures/cobble/cobble_base.png");
         material2->SetAlbedoTexture(texture);
-        auto normalTexture = m_engine.GetAssetManager().LoadTexture("C:/textures/brick/brick_normal.png");
+        auto normalTexture = m_engine.GetAssetManager().LoadTexture("C:/textures/cobble/cobble_normal.png");
         material2->SetNormalTexture(normalTexture);
-        material2->SetFlipNormalY(true);
+        auto roughnessTexture = m_engine.GetAssetManager().LoadTexture("C:/textures/cobble/cobble_roughness.png");
+        material2->SetRoughnessTexture(roughnessTexture);
         // material2->SetColor(glm::vec4(0.8f, 0.2f, 0.2f, 1.0f));
         auto mesh2 = render::Mesh::Cube();
         cube2->CreateComponent<scene::MeshComponent>(scene::MeshComponentConfig{
@@ -132,20 +272,8 @@ namespace PlutoGE::ui
         });
         testEntity->SetParent(cubeEntity);
 
-        auto cameraEntity = std::make_unique<scene::Entity>(scene::EntityConfig{
-            .name = "Camera",
-        });
-        auto camera = render::Camera(render::CameraConfig{
-            .fovY = 45.0f,
-            .nearPlane = 0.1f,
-            .farPlane = 100.0f,
-        });
-        cameraEntity->CreateComponent<scene::CameraComponent>(&camera);
-        cameraEntity->SetPosition(glm::vec3(0.0f, 0.0f, 5.0f));
-        auto *cameraEntityPtr = scene->AddEntity(std::move(cameraEntity));
-
         auto cameraEntity2 = std::make_unique<scene::Entity>(scene::EntityConfig{
-            .name = "Camera 2",
+            .name = "Game Camera",
         });
         auto camera2 = render::Camera(render::CameraConfig{
             .fovY = 60.0f,
@@ -171,7 +299,7 @@ namespace PlutoGE::ui
             lightEntity->SetRotation(glm::vec3(-50.0f, -35.0f, 0.0f));
             auto *lightComponent = lightEntity->CreateComponent<scene::LightComponent>();
             lightComponent->SetColor(glm::vec3(1.0f, 0.95f, 0.85f));
-            lightComponent->SetIntensity(1.0f);
+            lightComponent->SetIntensity(5.0f);
             lightComponent->SetRange(20.0f);
             lightComponent->SetLightType(scene::LightType::Directional);
             lightComponent->SetCastsShadows(true);
@@ -179,7 +307,7 @@ namespace PlutoGE::ui
         }
 
         ViewportPanelConfig viewportConfig2;
-        viewportConfig2.name = "Viewport 2";
+        viewportConfig2.name = "Game Viewport";
         viewportConfig2.openByDefault = true;
         viewportConfig2.clearColor = glm::vec4(0.15f, 0.1f, 0.1f, 1.0f);
         auto viewportPanel2 = new ViewportPanel(viewportConfig2);
@@ -195,6 +323,10 @@ namespace PlutoGE::ui
         m_panelManager.AddPanel(profilerPanel);
 
         auto *renderTarget2 = viewportPanel2->GetRenderTarget();
+        auto *windowHandle = static_cast<GLFWwindow *>(window.GetWindow());
+        bool isEditorCameraLookActive = false;
+        double lastEditorCameraCursorX = 0.0;
+        double lastEditorCameraCursorY = 0.0;
 
         renderer.SetVSyncEnabled(true);
 
@@ -202,6 +334,7 @@ namespace PlutoGE::ui
         {
             auto currentTime = std::chrono::high_resolution_clock::now();
             deltaTime = currentTime - lastTime;
+            const float deltaSeconds = deltaTime.count();
             EditorFrameTimingStats frameTimingStats{};
             renderer.BeginProfilingFrame();
 
@@ -218,18 +351,34 @@ namespace PlutoGE::ui
             const auto sceneUpdateEnd = std::chrono::high_resolution_clock::now();
             frameTimingStats.sceneUpdateMs = std::chrono::duration<float, std::milli>(sceneUpdateEnd - sceneUpdateStart).count();
 
-            camera.SetFOV(45.0f + 10.0f * sinf(static_cast<float>(glfwGetTime()))); // Animate FOV for demonstration
+            UpdateEditorCamera(m_editorCamera,
+                               windowHandle,
+                               viewportPanel->IsViewportHovered() || viewportPanel->IsViewportFocused(),
+                               deltaSeconds,
+                               isEditorCameraLookActive,
+                               lastEditorCameraCursorX,
+                               lastEditorCameraCursorY);
 
-            auto *cameraComponent = cameraEntityPtr->GetComponent<scene::CameraComponent>();
             auto *cameraComponent2 = cameraEntity2Ptr->GetComponent<scene::CameraComponent>();
-            const bool shouldRenderViewport1 = viewportPanel->ShouldRenderFrame() && IsCameraActiveInScene(scene.get(), cameraComponent);
+            const bool shouldRenderViewport1 = viewportPanel->ShouldRenderFrame();
             const bool shouldRenderViewport2 = viewportPanel2->ShouldRenderFrame() && IsCameraActiveInScene(scene.get(), cameraComponent2);
 
             const auto viewportRenderStart = std::chrono::high_resolution_clock::now();
             if (shouldRenderViewport1)
             {
                 ++frameTimingStats.renderedViewportCount;
-                viewportPanel->RenderFrame(*cameraComponent);
+                const glm::mat4 editorCameraTransform = GetEditorCameraTransform(m_editorCamera);
+                const auto editorCameraData = m_editorCamera.camera.GetCameraDataForTransform(editorCameraTransform,
+                                                                                              renderTarget->GetWidth(),
+                                                                                              renderTarget->GetHeight());
+                std::vector<render::IPostProcessEffect *> editorPostProcessEffects;
+                editorPostProcessEffects.reserve(m_editorCamera.GetPostProcessEffects().size());
+                for (const auto &effect : m_editorCamera.GetPostProcessEffects())
+                {
+                    editorPostProcessEffects.push_back(effect.get());
+                }
+
+                renderer.RenderFrame(editorCameraData, renderTarget, scene->GetLights(), &editorPostProcessEffects);
             }
             else
             {
@@ -277,11 +426,11 @@ namespace PlutoGE::ui
                 }
                 if (ImGui::BeginMenu("View"))
                 {
-                    if (ImGui::MenuItem("Viewport 1", NULL, viewportPanel->IsOpen()))
+                    if (ImGui::MenuItem("Editor Viewport", NULL, viewportPanel->IsOpen()))
                     {
                         viewportPanel->SetOpen(!viewportPanel->IsOpen());
                     }
-                    if (ImGui::MenuItem("Viewport 2", NULL, viewportPanel2->IsOpen()))
+                    if (ImGui::MenuItem("Game Viewport", NULL, viewportPanel2->IsOpen()))
                     {
                         viewportPanel2->SetOpen(!viewportPanel2->IsOpen());
                     }
@@ -321,6 +470,11 @@ namespace PlutoGE::ui
             m_profiler.AddFrameSample(std::chrono::duration<float, std::milli>(frameEndTime - currentTime).count());
 
             lastTime = currentTime;
+        }
+
+        if (isEditorCameraLookActive)
+        {
+            SetCursorCapture(windowHandle, false);
         }
     }
 

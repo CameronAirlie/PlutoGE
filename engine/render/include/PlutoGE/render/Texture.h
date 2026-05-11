@@ -27,11 +27,15 @@ namespace PlutoGE::render
         GLuint GetTextureID() const { return m_textureID; }
         int GetWidth() const { return m_width; }
         int GetHeight() const { return m_height; }
+        int GetDepth() const { return m_depth; }
         int GetChannels() const { return m_channels; }
 
         static Texture *LoadFromFile(const char *filePath);
         static Texture *DepthTexture(int width, int height);
         static Texture *DepthCubemap(int width, int height);
+        static Texture *ColorVolume(int width, int height, int depth);
+
+        void Upload3D(GLenum format, GLenum type, const void *data) const;
 
     protected:
         friend class TextureManager;   // Allow TextureManager to access private members
@@ -40,6 +44,7 @@ namespace PlutoGE::render
         GLenum m_type = GL_TEXTURE_2D; // Texture type (e.g., GL_TEXTURE_2D)
         int m_width = 0;
         int m_height = 0;
+        int m_depth = 0;
         int m_channels = 0; // Number of color channels (e.g., 3 for RGB, 4 for RGBA)
 
     protected:

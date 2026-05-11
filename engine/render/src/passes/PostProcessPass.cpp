@@ -40,13 +40,13 @@ namespace PlutoGE::render
             return;
         }
 
-        if (!ctx.cameraComponent)
+        if (!ctx.postProcessEffects)
         {
             BlitColorBuffer(ctx.temporaryRenderTarget, ctx.renderTarget);
             return;
         }
 
-        const auto &effects = ctx.cameraComponent->GetPostProcessEffects();
+        const auto &effects = *ctx.postProcessEffects;
         if (effects.empty())
         {
             BlitColorBuffer(ctx.temporaryRenderTarget, ctx.renderTarget);
@@ -76,7 +76,7 @@ namespace PlutoGE::render
 
         for (size_t index = 0; index < effects.size(); ++index)
         {
-            auto *effect = effects[index].get();
+            auto *effect = effects[index];
             if (!effect || !effect->IsEnabled())
             {
                 continue;

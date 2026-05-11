@@ -70,6 +70,39 @@ namespace
         };
     }
 
+    void ExpandDirectionalCascadeDepthBounds(
+        const glm::mat4 &lightView,
+        const std::vector<PlutoGE::render::RenderCommand> &renderCommands,
+        glm::vec3 &minBounds,
+        glm::vec3 &maxBounds)
+    {
+        const glm::vec2 receiverMin(minBounds.x, minBounds.y);
+        const glm::vec2 receiverMax(maxBounds.x, maxBounds.y);
+
+        for (const auto &command : renderCommands)
+        {
+            if (!command.mesh || !command.material)
+            {
+                continue;
+            }
+
+            const PlutoGE::render::MeshBounds bounds = GetWorldBounds(command);
+            const glm::vec3 lightSpaceCenter = glm::vec3(lightView * glm::vec4(bounds.center, 1.0f));
+            const float radius = glm::max(bounds.radius, 0.001f);
+
+            if (lightSpaceCenter.x + radius < receiverMin.x ||
+                lightSpaceCenter.x - radius > receiverMax.x ||
+                lightSpaceCenter.y + radius < receiverMin.y ||
+                lightSpaceCenter.y - radius > receiverMax.y)
+            {
+                continue;
+            }
+
+            minBounds.z = glm::min(minBounds.z, lightSpaceCenter.z - radius - kDirectionalShadowPadding);
+            maxBounds.z = glm::max(maxBounds.z, lightSpaceCenter.z + radius + kDirectionalShadowPadding);
+        }
+    }
+
     std::array<glm::vec3, 8> BuildCameraFrustumCorners(const PlutoGE::render::CameraData &cameraData)
     {
         const glm::mat4 inverseViewProjection = glm::inverse(cameraData.projection * cameraData.view);
@@ -120,7 +153,8 @@ namespace
     {
         std::array<float, PlutoGE::scene::kMaxDirectionalShadowCascades> splits{};
         const float nearPlane = cameraData.nearPlane;
-        const float farPlane = glm::min(cameraData.farPlane, glm::max(settings.maxDistance, nearPlane + 0.1f));
+        const float shadowDistance = settings.maxDistance > 0.0f ? settings.maxDistance : cameraData.farPlane;
+        const float farPlane = glm::min(cameraData.farPlane, glm::max(shadowDistance, nearPlane + 0.1f));
         const float lambda = glm::clamp(settings.splitLambda, 0.0f, 1.0f);
 
         for (int cascadeIndex = 0; cascadeIndex < cascadeCount; ++cascadeIndex)
@@ -142,6 +176,7 @@ namespace
     glm::mat4 BuildDirectionalCascadeMatrix(
         const PlutoGE::scene::Light &light,
         const PlutoGE::render::CameraData &cameraData,
+        const std::vector<PlutoGE::render::RenderCommand> &renderCommands,
         float cascadeNear,
         float cascadeFar,
         int shadowResolution)
@@ -162,8 +197,9 @@ namespace
         }
 
         radius = glm::max(radius + kDirectionalShadowPadding, 10.0f);
-        const glm::vec3 eye = frustumCenter - lightDirection * (radius * 2.0f);
-        const glm::mat4 view = glm::lookAt(eye, frustumCenter, ResolveUpVector(lightDirection));
+        glm::vec3 eye = frustumCenter - lightDirection * (radius * 2.0f);
+        const glm::vec3 upVector = ResolveUpVector(lightDirection);
+        glm::mat4 view = glm::lookAt(eye, frustumCenter, upVector);
 
         glm::vec3 minBounds(std::numeric_limits<float>::max());
         glm::vec3 maxBounds(std::numeric_limits<float>::lowest());
@@ -176,6 +212,16 @@ namespace
 
         minBounds -= glm::vec3(kDirectionalShadowPadding);
         maxBounds += glm::vec3(kDirectionalShadowPadding);
+        ExpandDirectionalCascadeDepthBounds(view, renderCommands, minBounds, maxBounds);
+
+        if (maxBounds.z > -kDirectionalShadowPadding)
+        {
+            const float retreatDistance = maxBounds.z + kDirectionalShadowPadding;
+            eye -= lightDirection * retreatDistance;
+            view = glm::lookAt(eye, frustumCenter, upVector);
+            minBounds.z -= retreatDistance;
+            maxBounds.z -= retreatDistance;
+        }
 
         const glm::vec2 extents = glm::max(glm::vec2(maxBounds - minBounds), glm::vec2(1.0f));
         const glm::vec2 texelSize = extents / static_cast<float>(shadowResolution);
@@ -323,7 +369,7 @@ namespace PlutoGE::render
             }
 
             const bool needsUpdate = light->type == scene::LightType::Directional
-                                         ? ctx.cameraComponent != nullptr
+                                         ? ctx.hasCameraData
                                          : light->isDirty;
             if (!needsUpdate)
             {
@@ -384,7 +430,7 @@ namespace PlutoGE::render
 
             if (light->type == scene::LightType::Directional)
             {
-                if (!ctx.cameraComponent)
+                if (!ctx.hasCameraData)
                 {
                     continue;
                 }
@@ -395,7 +441,7 @@ namespace PlutoGE::render
                 light->shadowMatrix = glm::mat4(1.0f);
                 light->shadowFarPlane = cascadeSplits[cascadeCount - 1];
                 glEnable(GL_POLYGON_OFFSET_FILL);
-                glPolygonOffset(2.0f, 4.0f);
+                glPolygonOffset(1.0f, 2.0f);
                 glCullFace(GL_FRONT);
                 m_shadowPassShader->SetUniform("uShadowPassMode", kProjectedShadowPassMode);
 
@@ -410,8 +456,7 @@ namespace PlutoGE::render
                     const float cascadeNear = cascadeIndex == 0 ? ctx.cameraData.nearPlane : cascadeSplits[cascadeIndex - 1];
                     const float cascadeFar = cascadeSplits[cascadeIndex];
                     const int shadowResolution = cascadeMap->GetWidth() > 0 ? cascadeMap->GetWidth() : GetShadowResolution(*light);
-                    const glm::mat4 cascadeMatrix = BuildDirectionalCascadeMatrix(*light, ctx.cameraData, cascadeNear, cascadeFar, shadowResolution);
-                    const auto cascadeFrustumPlanes = ExtractFrustumPlanes(cascadeMatrix);
+                    const glm::mat4 cascadeMatrix = BuildDirectionalCascadeMatrix(*light, ctx.cameraData, *ctx.renderCommands, cascadeNear, cascadeFar, shadowResolution);
                     light->shadowCascadeMatrices[cascadeIndex] = cascadeMatrix;
                     light->shadowCascadeSplits[cascadeIndex] = cascadeFar;
 
@@ -429,11 +474,6 @@ namespace PlutoGE::render
                     for (const auto &command : *ctx.renderCommands)
                     {
                         if (!command.mesh || !command.material)
-                        {
-                            continue;
-                        }
-
-                        if (!IsCommandRelevantForProjectedLight(command, cascadeFrustumPlanes))
                         {
                             continue;
                         }
@@ -474,7 +514,7 @@ namespace PlutoGE::render
             glViewport(0, 0, shadowMap->GetWidth(), shadowMap->GetHeight());
 
             glEnable(GL_POLYGON_OFFSET_FILL);
-            glPolygonOffset(2.0f, 4.0f);
+            glPolygonOffset(1.0f, 2.0f);
             glCullFace(GL_FRONT);
             glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, shadowMap->GetTextureID(), 0);
             if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)

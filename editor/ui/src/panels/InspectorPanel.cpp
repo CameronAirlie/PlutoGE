@@ -248,9 +248,179 @@ namespace PlutoGE::ui
         ImGui::TreePop();
     }
 
+    void InspectorPanel::RenderEditorCameraInspector(EditorShell::EditorViewportCamera &camera) const
+    {
+        ImGui::TextUnformatted("Editor Camera");
+
+        if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            ImGui::DragFloat3("Position", &camera.position.x, 0.05f);
+            ImGui::DragFloat("Yaw", &camera.yawDegrees, 0.1f);
+            ImGui::DragFloat("Pitch", &camera.pitchDegrees, 0.1f, -89.0f, 89.0f);
+        }
+
+        if (ImGui::CollapsingHeader("Camera", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            float fov = camera.camera.GetFOV();
+            if (ImGui::DragFloat("FOV", &fov, 0.1f, 1.0f, 179.0f))
+            {
+                camera.camera.SetFOV(fov);
+            }
+
+            float nearPlane = camera.camera.GetNearPlane();
+            if (ImGui::DragFloat("Near Plane", &nearPlane, 0.01f, 0.001f, camera.camera.GetFarPlane() - 0.001f))
+            {
+                camera.camera.SetNearPlane(nearPlane);
+            }
+
+            float farPlane = camera.camera.GetFarPlane();
+            const float minFarPlane = camera.camera.GetNearPlane() + 0.001f;
+            if (ImGui::DragFloat("Far Plane", &farPlane, 0.1f, minFarPlane, 10000.0f))
+            {
+                camera.camera.SetFarPlane(farPlane);
+            }
+        }
+
+        RenderEditorCameraPostProcessEditor(camera);
+    }
+
+    void InspectorPanel::RenderEditorCameraPostProcessEditor(EditorShell::EditorViewportCamera &camera) const
+    {
+        if (!ImGui::TreeNode("Post Processing"))
+        {
+            return;
+        }
+
+        const auto &registeredTypes = render::GetRegisteredPostProcessEffectTypes();
+        static int selectedEffectTypeIndex = 0;
+        if (!registeredTypes.empty())
+        {
+            selectedEffectTypeIndex = std::clamp(selectedEffectTypeIndex, 0, static_cast<int>(registeredTypes.size()) - 1);
+            if (ImGui::BeginCombo("Add Effect", registeredTypes[selectedEffectTypeIndex].c_str()))
+            {
+                for (int index = 0; index < static_cast<int>(registeredTypes.size()); ++index)
+                {
+                    const bool isSelected = (selectedEffectTypeIndex == index);
+                    if (ImGui::Selectable(registeredTypes[index].c_str(), isSelected))
+                    {
+                        selectedEffectTypeIndex = index;
+                    }
+                    if (isSelected)
+                    {
+                        ImGui::SetItemDefaultFocus();
+                    }
+                }
+                ImGui::EndCombo();
+            }
+
+            ImGui::SameLine();
+            if (ImGui::Button("Add") && selectedEffectTypeIndex >= 0 && selectedEffectTypeIndex < static_cast<int>(registeredTypes.size()))
+            {
+                camera.AddPostProcessEffectByType(registeredTypes[selectedEffectTypeIndex]);
+            }
+        }
+
+        for (size_t effectIndex = 0; effectIndex < camera.GetPostProcessEffects().size(); ++effectIndex)
+        {
+            auto *effect = camera.GetPostProcessEffect(effectIndex);
+            if (!effect)
+            {
+                continue;
+            }
+
+            ImGui::PushID(static_cast<int>(effectIndex));
+            if (ImGui::TreeNode(effect->GetDisplayName().c_str()))
+            {
+                bool isEnabled = effect->IsEnabled();
+                if (ImGui::Checkbox("Enabled", &isEnabled))
+                {
+                    effect->SetEnabled(isEnabled);
+                }
+
+                if (ImGui::Button("Up") && effectIndex > 0)
+                {
+                    camera.MovePostProcessEffect(effectIndex, effectIndex - 1);
+                    ImGui::TreePop();
+                    ImGui::PopID();
+                    break;
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Down") && effectIndex + 1 < camera.GetPostProcessEffects().size())
+                {
+                    camera.MovePostProcessEffect(effectIndex, effectIndex + 1);
+                    ImGui::TreePop();
+                    ImGui::PopID();
+                    break;
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Remove"))
+                {
+                    camera.RemovePostProcessEffect(effectIndex);
+                    ImGui::TreePop();
+                    ImGui::PopID();
+                    break;
+                }
+
+                auto parameters = effect->GetParameters();
+                bool parametersChanged = false;
+                for (auto &parameter : parameters)
+                {
+                    scene::Property property{
+                        .name = parameter.name,
+                        .type = scene::PropertyType::String,
+                        .value = parameter.value,
+                        .enumOptions = parameter.enumOptions,
+                    };
+
+                    switch (parameter.type)
+                    {
+                    case render::PostProcessParameterType::Float:
+                        property.type = scene::PropertyType::Float;
+                        break;
+                    case render::PostProcessParameterType::Int:
+                        property.type = scene::PropertyType::Int;
+                        break;
+                    case render::PostProcessParameterType::Bool:
+                        property.type = scene::PropertyType::Bool;
+                        break;
+                    case render::PostProcessParameterType::Enum:
+                        property.type = scene::PropertyType::Enum;
+                        break;
+                    case render::PostProcessParameterType::String:
+                    default:
+                        property.type = scene::PropertyType::String;
+                        break;
+                    }
+
+                    parametersChanged |= RenderPropertyEditor(property);
+                    parameter.value = property.value;
+                    parameter.enumOptions = property.enumOptions;
+                }
+
+                if (parametersChanged)
+                {
+                    effect->SetParameters(parameters);
+                }
+
+                ImGui::TreePop();
+            }
+
+            ImGui::PopID();
+        }
+
+        ImGui::TreePop();
+    }
+
     void InspectorPanel::Render()
     {
-        auto entity = EditorShell::GetInstance().GetSelectedEntity();
+        auto &editorShell = EditorShell::GetInstance();
+        if (editorShell.IsEditorCameraSelected())
+        {
+            RenderEditorCameraInspector(editorShell.GetEditorCamera());
+            return;
+        }
+
+        auto entity = editorShell.GetSelectedEntity();
         if (!entity)
         {
             ImGui::Text("No entity selected.");

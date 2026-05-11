@@ -39,6 +39,8 @@ namespace PlutoGE::ui
         bool ShouldRenderFrame() const;
 
         render::RenderTarget *GetRenderTarget() const { return m_renderTarget; }
+        bool IsViewportHovered() const { return m_isViewportHovered; }
+        bool IsViewportFocused() const { return m_isViewportFocused; }
         static const char *GetDebugViewLabel(render::PostProcessDebugView debugView);
 
     private:
@@ -49,5 +51,7 @@ namespace PlutoGE::ui
         int m_pendingWidth = 0;
         int m_pendingHeight = 0;
         int m_resizeStableFrames = 0;
+        bool m_isViewportHovered = false;
+        bool m_isViewportFocused = false;
     };
 }

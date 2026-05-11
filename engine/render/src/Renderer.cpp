@@ -9,8 +9,11 @@
 #include "PlutoGE/scene/components/CameraComponent.h"
 #include "PlutoGE/render/passes/GeometryPass.h"
 #include "PlutoGE/render/passes/LightingPass.h"
+#include "PlutoGE/render/passes/LightPropagationVolumePass.h"
 #include "PlutoGE/render/passes/PostProcessPass.h"
+#include "PlutoGE/render/passes/SSAOPass.h"
 #include "PlutoGE/render/passes/ShadowPass.h"
+#include "PlutoGE/render/postprocess/IPostProcessEffect.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 
 #include <glm/glm.hpp>
@@ -105,6 +108,15 @@ namespace PlutoGE::render
         shadowPass->Initialize();
         m_shadowPass = shadowPass;
 
+        auto ssaoPass = new SSAOPass();
+        ssaoPass->Initialize();
+        m_renderPasses.push_back(ssaoPass);
+
+        auto lightPropagationVolumePass = new LightPropagationVolumePass();
+        lightPropagationVolumePass->Initialize();
+        m_lightPropagationVolumePass = lightPropagationVolumePass;
+        m_renderPasses.push_back(lightPropagationVolumePass);
+
         auto lightingPass = new LightingPass();
         lightingPass->Initialize();
         m_renderPasses.push_back(lightingPass);
@@ -184,13 +196,17 @@ namespace PlutoGE::render
         RenderContext ctx{
             .renderer = this,
             .cameraData = {},
+            .hasCameraData = false,
             .cameraComponent = nullptr,
+            .postProcessEffects = nullptr,
             .renderTarget = nullptr,
             .temporaryRenderTarget = frameResources->temporaryRenderTarget.get(),
             .postProcessIntermediateRenderTarget = frameResources->postProcessIntermediateRenderTarget.get(),
+            .ambientOcclusionRenderTarget = frameResources->ambientOcclusionRenderTarget.get(),
             .renderCommands = &m_renderCommands,
             .lights = &lights,
             .gBuffer = &frameResources->gBuffer,
+            .lightPropagationVolumePass = m_lightPropagationVolumePass,
             .postProcessDebugView = m_postProcessDebugView,
         };
 
@@ -198,6 +214,22 @@ namespace PlutoGE::render
     }
 
     void Renderer::RenderFrame(const scene::CameraComponent &cameraComponent, RenderTarget *renderTarget, std::vector<scene::Light *> lights)
+    {
+        std::vector<IPostProcessEffect *> postProcessEffects;
+        postProcessEffects.reserve(cameraComponent.GetPostProcessEffects().size());
+        for (const auto &effect : cameraComponent.GetPostProcessEffects())
+        {
+            postProcessEffects.push_back(effect.get());
+        }
+
+        RenderFrame(cameraComponent.GetCameraData(renderTarget ? renderTarget->GetWidth() : (m_config.window ? m_config.window->GetExtents().width : 0),
+                                                  renderTarget ? renderTarget->GetHeight() : (m_config.window ? m_config.window->GetExtents().height : 0)),
+                    renderTarget,
+                    std::move(lights),
+                    &postProcessEffects);
+    }
+
+    void Renderer::RenderFrame(const CameraData &cameraData, RenderTarget *renderTarget, std::vector<scene::Light *> lights, const std::vector<IPostProcessEffect *> *postProcessEffects)
     {
         if (!m_isInitialized)
             return;
@@ -230,20 +262,22 @@ namespace PlutoGE::render
             return;
         }
 
-        auto cameraData = cameraComponent.GetCameraData(renderWidth, renderHeight);
-
         SortRenderCommands(m_renderCommands);
 
         RenderContext ctx{
             .renderer = this,
             .cameraData = cameraData,
-            .cameraComponent = &cameraComponent,
+            .hasCameraData = true,
+            .cameraComponent = nullptr,
+            .postProcessEffects = postProcessEffects,
             .renderTarget = renderTarget,
             .temporaryRenderTarget = frameResources->temporaryRenderTarget.get(),
             .postProcessIntermediateRenderTarget = frameResources->postProcessIntermediateRenderTarget.get(),
+            .ambientOcclusionRenderTarget = frameResources->ambientOcclusionRenderTarget.get(),
             .renderCommands = &m_renderCommands,
             .lights = &lights,
             .gBuffer = &frameResources->gBuffer,
+            .lightPropagationVolumePass = m_lightPropagationVolumePass,
             .postProcessDebugView = m_postProcessDebugView,
         };
 
@@ -288,6 +322,7 @@ namespace PlutoGE::render
             delete m_shadowPass;
             m_shadowPass = nullptr;
         }
+        m_lightPropagationVolumePass = nullptr;
         ShutdownGpuTimers();
         glBindBuffer(GL_ARRAY_BUFFER, 0);
     }
@@ -439,10 +474,16 @@ namespace PlutoGE::render
         };
 
         if (!ensureSizedRenderTarget(entry->temporaryRenderTarget) ||
-            !ensureSizedRenderTarget(entry->postProcessIntermediateRenderTarget))
+            !ensureSizedRenderTarget(entry->postProcessIntermediateRenderTarget) ||
+            !ensureSizedRenderTarget(entry->ambientOcclusionRenderTarget))
         {
             std::cerr << "Failed to resize post process render targets" << std::endl;
             return nullptr;
+        }
+
+        if (entry->ambientOcclusionRenderTarget)
+        {
+            entry->ambientOcclusionRenderTarget->SetClearColor(glm::vec4(1.0f));
         }
 
         return entry.get();
@@ -467,6 +508,12 @@ namespace PlutoGE::render
             {
                 resources->postProcessIntermediateRenderTarget->Cleanup();
                 resources->postProcessIntermediateRenderTarget.reset();
+            }
+
+            if (resources->ambientOcclusionRenderTarget)
+            {
+                resources->ambientOcclusionRenderTarget->Cleanup();
+                resources->ambientOcclusionRenderTarget.reset();
             }
 
             resources->gBuffer.Cleanup();

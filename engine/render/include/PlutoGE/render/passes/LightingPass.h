@@ -4,7 +4,7 @@
 
 namespace PlutoGE::render
 {
-    class Renderer;
+    class LightPropagationVolumePass;
     class Shader;
     class LightingPass : public IRenderPass
     {

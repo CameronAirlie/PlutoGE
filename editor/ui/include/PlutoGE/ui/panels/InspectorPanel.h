@@ -1,5 +1,6 @@
 #pragma once
 
+#include "PlutoGE/ui/EditorShell.h"
 #include "PlutoGE/ui/panels/Panel.h"
 
 namespace PlutoGE::scene
@@ -23,5 +24,7 @@ namespace PlutoGE::ui
     private:
         bool RenderPropertyEditor(scene::Property &property) const;
         void RenderCameraPostProcessEditor(scene::CameraComponent &cameraComponent) const;
+        void RenderEditorCameraInspector(EditorShell::EditorViewportCamera &camera) const;
+        void RenderEditorCameraPostProcessEditor(EditorShell::EditorViewportCamera &camera) const;
     };
 }

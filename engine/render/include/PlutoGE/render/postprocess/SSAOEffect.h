@@ -21,6 +21,7 @@ namespace PlutoGE::render
 
         void Initialize() override;
         void Apply(const PostProcessContext &context) override;
+        void RenderAmbientOcclusion(const RenderContext &renderContext, RenderTarget *destinationRenderTarget);
         std::string GetTypeName() const override { return "SSAO"; }
         std::string GetDisplayName() const override { return "Screen Space Ambient Occlusion"; }
         std::vector<PostProcessParameter> GetParameters() const override;
@@ -30,6 +31,8 @@ namespace PlutoGE::render
         static constexpr int kKernelSize = 32;
 
         void EnsureInternalTargets(int width, int height);
+        RenderTarget *GenerateResolvedAmbientOcclusion(const RenderContext &renderContext, int width, int height);
+        void RenderResolvedAoTexture(const PostProcessContext &context, RenderTarget *resolvedAoTarget, int outputMode);
         void GenerateKernel();
         void GenerateNoiseTexture();
         void ResetHistory();
@@ -50,7 +53,7 @@ namespace PlutoGE::render
         float m_historyDepthThreshold = 0.02f;
         float m_historyNormalThreshold = 0.85f;
         int m_sampleCount = 16;
-        int m_blurRadius = 2;
+        int m_blurRadius = 1;
         int m_outputMode = 0;
         int m_internalWidth = 0;
         int m_internalHeight = 0;

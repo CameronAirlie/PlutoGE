@@ -198,7 +198,9 @@ namespace PlutoGE::render
         RenderContext ctx{
             .renderer = this,
             .cameraData = {},
+            .previousCameraData = {},
             .hasCameraData = false,
+            .hasPreviousCameraData = false,
             .cameraComponent = nullptr,
             .postProcessEffects = nullptr,
             .renderTarget = nullptr,
@@ -270,7 +272,9 @@ namespace PlutoGE::render
         RenderContext ctx{
             .renderer = this,
             .cameraData = cameraData,
+            .previousCameraData = frameResources->previousCameraData,
             .hasCameraData = true,
+            .hasPreviousCameraData = frameResources->hasPreviousCameraData,
             .cameraComponent = nullptr,
             .postProcessEffects = postProcessEffects,
             .renderTarget = renderTarget,
@@ -294,6 +298,9 @@ namespace PlutoGE::render
         {
             ExecutePassWithGpuTiming(*m_renderPasses[index], ctx, index + 1);
         }
+
+        frameResources->previousCameraData = cameraData;
+        frameResources->hasPreviousCameraData = true;
     }
 
     void Renderer::ClearRenderCommands()

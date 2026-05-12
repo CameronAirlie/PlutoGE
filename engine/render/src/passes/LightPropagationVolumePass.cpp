@@ -22,6 +22,14 @@ namespace PlutoGE::render
         constexpr float kPropagationNeighborWeight = 0.07f;
         constexpr float kInjectionBoost = 1.8f;
         constexpr float kForwardBiasFactor = 0.25f;
+        constexpr float kRecenterHysteresisFraction = 0.25f;
+        constexpr float kTemporalBlendFactor = 0.2f;
+        constexpr float kReprojectedTemporalBlendFactor = 0.12f;
+        constexpr float kInjectionMovementUpdateFraction = 0.5f;
+        constexpr float kInjectionRotationUpdateThreshold = 0.04f;
+        constexpr auto kMovementDrivenUpdateInterval = std::chrono::milliseconds(80);
+        constexpr auto kCameraOnlyReinjectionInterval = std::chrono::milliseconds(260);
+        constexpr auto kGridTransitionDuration = std::chrono::milliseconds(140);
 
         std::size_t HashBytes(const void *data, std::size_t size, std::size_t seed = 1469598103934665603ull)
         {
@@ -73,14 +81,137 @@ namespace PlutoGE::render
             return glm::floor(origin / cellSize) * cellSize;
         }
 
+        glm::vec3 ComputeBiasedLpvCenter(const glm::vec3 &cameraPosition,
+                                         const glm::vec3 &cameraForward,
+                                         const glm::vec3 &gridSize)
+        {
+            return cameraPosition + cameraForward * (gridSize.z * kForwardBiasFactor);
+        }
+
         glm::vec3 ComputeCameraCenteredGridOrigin(const glm::vec3 &cameraPosition,
                                                   const glm::vec3 &cameraForward,
                                                   const glm::vec3 &gridSize,
                                                   const glm::ivec3 &resolution)
         {
-            const glm::vec3 lpvCenter = cameraPosition + cameraForward * (gridSize.z * kForwardBiasFactor);
+            const glm::vec3 lpvCenter = ComputeBiasedLpvCenter(cameraPosition, cameraForward, gridSize);
             const glm::vec3 rawOrigin = lpvCenter - gridSize * 0.5f;
             return SnapOriginToCell(rawOrigin, gridSize, resolution);
+        }
+
+        glm::vec3 ComputeHysteresisAdjustedOrigin(const glm::vec3 &cameraPosition,
+                                                  const glm::vec3 &cameraForward,
+                                                  const glm::vec3 &currentOrigin,
+                                                  const glm::vec3 &gridSize,
+                                                  const glm::ivec3 &resolution,
+                                                  bool hasValidVolume)
+        {
+            const glm::vec3 snappedOrigin = ComputeCameraCenteredGridOrigin(cameraPosition, cameraForward, gridSize, resolution);
+            if (!hasValidVolume)
+            {
+                return snappedOrigin;
+            }
+
+            const glm::vec3 biasedCenter = ComputeBiasedLpvCenter(cameraPosition, cameraForward, gridSize);
+            const glm::vec3 hysteresisMargin = gridSize * kRecenterHysteresisFraction;
+            const glm::vec3 minCenter = currentOrigin + hysteresisMargin;
+            const glm::vec3 maxCenter = currentOrigin + gridSize - hysteresisMargin;
+            const bool centerInsideHysteresis =
+                glm::all(glm::greaterThanEqual(biasedCenter, minCenter)) &&
+                glm::all(glm::lessThanEqual(biasedCenter, maxCenter));
+
+            return centerInsideHysteresis ? currentOrigin : snappedOrigin;
+        }
+
+        void BlendTemporalHistory(std::vector<glm::vec3> &currentRadiance,
+                                  const std::vector<glm::vec3> &historyRadiance,
+                                  float blendFactor)
+        {
+            if (historyRadiance.size() != currentRadiance.size() || blendFactor <= 0.0f)
+            {
+                return;
+            }
+
+            for (std::size_t cellIndex = 0; cellIndex < currentRadiance.size(); ++cellIndex)
+            {
+                currentRadiance[cellIndex] = glm::mix(historyRadiance[cellIndex], currentRadiance[cellIndex], blendFactor);
+            }
+        }
+
+        glm::vec3 ComputeCellCenter(const glm::vec3 &origin,
+                                    const glm::vec3 &gridSize,
+                                    const glm::ivec3 &resolution,
+                                    int x,
+                                    int y,
+                                    int z)
+        {
+            const glm::vec3 safeResolution = glm::max(glm::vec3(resolution), glm::vec3(1.0f));
+            const glm::vec3 cellSize = gridSize / safeResolution;
+            return origin + (glm::vec3(static_cast<float>(x), static_cast<float>(y), static_cast<float>(z)) + glm::vec3(0.5f)) * cellSize;
+        }
+
+        glm::vec3 SampleReprojectedRadiance(const std::vector<glm::vec3> &historyRadiance,
+                                            const glm::vec3 &historyOrigin,
+                                            const glm::vec3 &historyGridSize,
+                                            const glm::ivec3 &resolution,
+                                            const glm::vec3 &worldPosition)
+        {
+            if (historyRadiance.empty())
+            {
+                return glm::vec3(0.0f);
+            }
+
+            const glm::vec3 safeHistorySize = glm::max(historyGridSize, glm::vec3(0.0001f));
+            const glm::vec3 uvw = (worldPosition - historyOrigin) / safeHistorySize;
+            if (glm::any(glm::lessThan(uvw, glm::vec3(0.0f))) || glm::any(glm::greaterThanEqual(uvw, glm::vec3(1.0f))))
+            {
+                return glm::vec3(0.0f);
+            }
+
+            const glm::vec3 scaled = uvw * glm::vec3(resolution) - glm::vec3(0.5f);
+            const glm::ivec3 minCell = glm::clamp(glm::ivec3(glm::floor(scaled)), glm::ivec3(0), resolution - glm::ivec3(1));
+            const glm::ivec3 maxCell = glm::clamp(minCell + glm::ivec3(1), glm::ivec3(0), resolution - glm::ivec3(1));
+            const glm::vec3 fraction = glm::clamp(scaled - glm::floor(scaled), glm::vec3(0.0f), glm::vec3(1.0f));
+
+            const glm::vec3 c000 = historyRadiance[FlattenCellIndex(resolution, minCell.x, minCell.y, minCell.z)];
+            const glm::vec3 c100 = historyRadiance[FlattenCellIndex(resolution, maxCell.x, minCell.y, minCell.z)];
+            const glm::vec3 c010 = historyRadiance[FlattenCellIndex(resolution, minCell.x, maxCell.y, minCell.z)];
+            const glm::vec3 c110 = historyRadiance[FlattenCellIndex(resolution, maxCell.x, maxCell.y, minCell.z)];
+            const glm::vec3 c001 = historyRadiance[FlattenCellIndex(resolution, minCell.x, minCell.y, maxCell.z)];
+            const glm::vec3 c101 = historyRadiance[FlattenCellIndex(resolution, maxCell.x, minCell.y, maxCell.z)];
+            const glm::vec3 c011 = historyRadiance[FlattenCellIndex(resolution, minCell.x, maxCell.y, maxCell.z)];
+            const glm::vec3 c111 = historyRadiance[FlattenCellIndex(resolution, maxCell.x, maxCell.y, maxCell.z)];
+
+            const glm::vec3 c00 = glm::mix(c000, c100, fraction.x);
+            const glm::vec3 c10 = glm::mix(c010, c110, fraction.x);
+            const glm::vec3 c01 = glm::mix(c001, c101, fraction.x);
+            const glm::vec3 c11 = glm::mix(c011, c111, fraction.x);
+            const glm::vec3 c0 = glm::mix(c00, c10, fraction.y);
+            const glm::vec3 c1 = glm::mix(c01, c11, fraction.y);
+            return glm::mix(c0, c1, fraction.z);
+        }
+
+        std::vector<glm::vec3> ReprojectHistoryRadiance(const std::vector<glm::vec3> &historyRadiance,
+                                                        const glm::vec3 &historyOrigin,
+                                                        const glm::vec3 &historyGridSize,
+                                                        const glm::vec3 &currentOrigin,
+                                                        const glm::vec3 &currentGridSize,
+                                                        const glm::ivec3 &resolution)
+        {
+            std::vector<glm::vec3> reprojected(historyRadiance.size(), glm::vec3(0.0f));
+            for (int z = 0; z < resolution.z; ++z)
+            {
+                for (int y = 0; y < resolution.y; ++y)
+                {
+                    for (int x = 0; x < resolution.x; ++x)
+                    {
+                        const std::size_t cellIndex = FlattenCellIndex(resolution, x, y, z);
+                        const glm::vec3 worldCenter = ComputeCellCenter(currentOrigin, currentGridSize, resolution, x, y, z);
+                        reprojected[cellIndex] = SampleReprojectedRadiance(historyRadiance, historyOrigin, historyGridSize, resolution, worldCenter);
+                    }
+                }
+            }
+
+            return reprojected;
         }
 
         std::size_t ComputeSceneSignature(const std::vector<RenderCommand> &renderCommands)
@@ -192,6 +323,23 @@ namespace PlutoGE::render
         }
     }
 
+    float LightPropagationVolumePass::GetTransitionBlendFactor() const
+    {
+        if (!m_transitionActive || !m_previousVolumeTexture)
+        {
+            return 1.0f;
+        }
+
+        const auto now = std::chrono::steady_clock::now();
+        const auto elapsed = now - m_transitionStartTime;
+        const float blend = std::clamp(
+            static_cast<float>(std::chrono::duration_cast<std::chrono::duration<float>>(elapsed).count() /
+                               std::chrono::duration_cast<std::chrono::duration<float>>(kGridTransitionDuration).count()),
+            0.0f,
+            1.0f);
+        return blend;
+    }
+
     void LightPropagationVolumePass::Initialize()
     {
         EnsureResources();
@@ -210,9 +358,20 @@ namespace PlutoGE::render
             m_volumeTexture.reset(Texture::ColorVolume(m_resolution.x, m_resolution.y, m_resolution.z));
         }
 
+        if (!m_previousVolumeTexture ||
+            m_previousVolumeTexture->GetType() != GL_TEXTURE_3D ||
+            m_previousVolumeTexture->GetWidth() != m_resolution.x ||
+            m_previousVolumeTexture->GetHeight() != m_resolution.y ||
+            m_previousVolumeTexture->GetDepth() != m_resolution.z)
+        {
+            m_previousVolumeTexture.reset(Texture::ColorVolume(m_resolution.x, m_resolution.y, m_resolution.z));
+            m_transitionActive = false;
+        }
+
         if (m_currentRadiance.size() != voxelCount)
         {
             m_currentRadiance.assign(voxelCount, glm::vec3(0.0f));
+            m_historyRadiance.assign(voxelCount, glm::vec3(0.0f));
             m_nextRadiance.assign(voxelCount, glm::vec3(0.0f));
             m_injectionWeights.assign(voxelCount, 0.0f);
             m_hasValidVolume = false;
@@ -223,12 +382,20 @@ namespace PlutoGE::render
     {
         EnsureResources();
         std::fill(m_currentRadiance.begin(), m_currentRadiance.end(), glm::vec3(0.0f));
+        std::fill(m_historyRadiance.begin(), m_historyRadiance.end(), glm::vec3(0.0f));
         std::fill(m_nextRadiance.begin(), m_nextRadiance.end(), glm::vec3(0.0f));
         std::fill(m_injectionWeights.begin(), m_injectionWeights.end(), 0.0f);
         if (m_volumeTexture)
         {
             m_volumeTexture->Upload3D(GL_RGB, GL_FLOAT, m_currentRadiance.data());
         }
+        if (m_previousVolumeTexture)
+        {
+            m_previousVolumeTexture->Upload3D(GL_RGB, GL_FLOAT, m_currentRadiance.data());
+        }
+        m_previousGridOrigin = m_gridOrigin;
+        m_previousGridSize = m_gridSize;
+        m_transitionActive = false;
         m_hasValidVolume = false;
     }
 
@@ -267,7 +434,13 @@ namespace PlutoGE::render
         const float horizontalExtent = glm::clamp(ctx.cameraData.farPlane * 0.4f, 20.0f, 64.0f);
         const float verticalExtent = glm::clamp(ctx.cameraData.farPlane * 0.22f, 12.0f, 28.0f);
         const glm::vec3 desiredGridSize(horizontalExtent, verticalExtent, horizontalExtent);
-        const glm::vec3 desiredGridOrigin = ComputeCameraCenteredGridOrigin(cameraPosition, cameraForward, desiredGridSize, m_resolution);
+        const glm::vec3 desiredGridOrigin = ComputeHysteresisAdjustedOrigin(
+            cameraPosition,
+            cameraForward,
+            m_gridOrigin,
+            desiredGridSize,
+            m_resolution,
+            m_hasValidVolume && !glm::any(glm::greaterThan(glm::abs(desiredGridSize - m_gridSize), glm::vec3(0.01f))));
 
         const int width = ctx.gBuffer->GetWidth();
         const int height = ctx.gBuffer->GetHeight();
@@ -284,8 +457,64 @@ namespace PlutoGE::render
             return;
         }
 
+        const glm::vec3 previousGridOrigin = m_gridOrigin;
+        const glm::vec3 previousGridSize = m_gridSize;
+        const bool sceneChanged = sceneSignature != m_lastSceneSignature;
+        const bool lightsChanged = lightSignature != m_lastLightSignature;
+        const bool viewportChanged = m_lastViewportSize != glm::ivec2(width, height);
+        const bool sameGrid = m_hasValidVolume &&
+                              !glm::any(glm::greaterThan(glm::abs(desiredGridOrigin - m_gridOrigin), glm::vec3(0.01f))) &&
+                              !glm::any(glm::greaterThan(glm::abs(desiredGridSize - m_gridSize), glm::vec3(0.01f)));
+        const bool sameGridSize = m_hasValidVolume &&
+                                  !glm::any(glm::greaterThan(glm::abs(desiredGridSize - m_gridSize), glm::vec3(0.01f)));
+        const bool gridShifted = sameGridSize &&
+                                 glm::any(glm::greaterThan(glm::abs(desiredGridOrigin - m_gridOrigin), glm::vec3(0.01f)));
+        const bool cameraOnlyGridShift = gridShifted && !sceneChanged && !lightsChanged && !viewportChanged;
+        const auto now = std::chrono::steady_clock::now();
+        const bool shouldRefreshCameraOnlyInjection =
+            cameraOnlyGridShift &&
+            (m_lastFullInjectionTime.time_since_epoch().count() == 0 || now - m_lastFullInjectionTime >= kCameraOnlyReinjectionInterval);
+        const bool canBlendTemporalHistory = m_hasValidVolume && sameGridSize;
+        const std::vector<glm::vec3> reprojectedHistoryRadiance = gridShifted
+                                                                      ? ReprojectHistoryRadiance(m_historyRadiance, previousGridOrigin, previousGridSize, desiredGridOrigin, desiredGridSize, m_resolution)
+                                                                      : std::vector<glm::vec3>();
+
         m_gridSize = desiredGridSize;
         m_gridOrigin = desiredGridOrigin;
+
+        if (gridShifted && m_previousVolumeTexture && !m_historyRadiance.empty())
+        {
+            m_previousVolumeTexture->Upload3D(GL_RGB, GL_FLOAT, m_historyRadiance.data());
+            m_previousGridOrigin = previousGridOrigin;
+            m_previousGridSize = previousGridSize;
+            m_transitionStartTime = std::chrono::steady_clock::now();
+            m_transitionActive = true;
+        }
+        else if (!gridShifted)
+        {
+            m_transitionActive = false;
+            m_previousGridOrigin = m_gridOrigin;
+            m_previousGridSize = m_gridSize;
+        }
+
+        if (cameraOnlyGridShift && !shouldRefreshCameraOnlyInjection && !reprojectedHistoryRadiance.empty())
+        {
+            m_currentRadiance = reprojectedHistoryRadiance;
+            if (m_volumeTexture)
+            {
+                m_volumeTexture->Upload3D(GL_RGB, GL_FLOAT, m_currentRadiance.data());
+            }
+
+            m_historyRadiance = m_currentRadiance;
+            m_lastViewportSize = glm::ivec2(width, height);
+            m_lastSceneSignature = sceneSignature;
+            m_lastLightSignature = lightSignature;
+            m_lastInjectionCameraPosition = cameraPosition;
+            m_lastInjectionCameraForward = cameraForward;
+            m_lastVolumeUpdateTime = std::chrono::steady_clock::now();
+            m_hasValidVolume = true;
+            return;
+        }
 
         std::fill(m_currentRadiance.begin(), m_currentRadiance.end(), glm::vec3(0.0f));
         std::fill(m_nextRadiance.begin(), m_nextRadiance.end(), glm::vec3(0.0f));
@@ -402,14 +631,38 @@ namespace PlutoGE::render
             m_currentRadiance.swap(m_nextRadiance);
         }
 
+        // Temporal accumulation stabilizes injection and propagation while the snapped volume stays put.
+        if (canBlendTemporalHistory)
+        {
+            const auto &historySource = gridShifted ? reprojectedHistoryRadiance : m_historyRadiance;
+            BlendTemporalHistory(m_currentRadiance, historySource, sameGrid ? kTemporalBlendFactor : kReprojectedTemporalBlendFactor);
+        }
+
         if (m_volumeTexture)
         {
             m_volumeTexture->Upload3D(GL_RGB, GL_FLOAT, m_currentRadiance.data());
         }
 
+        if (m_transitionActive && GetTransitionBlendFactor() >= 0.999f)
+        {
+            m_transitionActive = false;
+            if (m_previousVolumeTexture)
+            {
+                m_previousVolumeTexture->Upload3D(GL_RGB, GL_FLOAT, m_currentRadiance.data());
+            }
+            m_previousGridOrigin = m_gridOrigin;
+            m_previousGridSize = m_gridSize;
+        }
+
+        m_historyRadiance = m_currentRadiance;
+
         m_lastViewportSize = glm::ivec2(width, height);
         m_lastSceneSignature = sceneSignature;
         m_lastLightSignature = lightSignature;
+        m_lastInjectionCameraPosition = cameraPosition;
+        m_lastInjectionCameraForward = cameraForward;
+        m_lastVolumeUpdateTime = now;
+        m_lastFullInjectionTime = now;
         m_hasValidVolume = true;
     }
 }

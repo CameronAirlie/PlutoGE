@@ -37,8 +37,16 @@ namespace PlutoGE::render
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, GL_TEXTURE_2D, m_albedoTexture, 0);
 
-        GLuint attachments[3] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2};
-        glDrawBuffers(3, attachments);
+        // Motion vectors
+        glGenTextures(1, &m_motionTexture);
+        glBindTexture(GL_TEXTURE_2D, m_motionTexture);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RG16F, width, height, 0, GL_RG, GL_FLOAT, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT3, GL_TEXTURE_2D, m_motionTexture, 0);
+
+        GLuint attachments[4] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3};
+        glDrawBuffers(4, attachments);
 
         // Depth
         glGenRenderbuffers(1, &m_depthRbo);
@@ -81,6 +89,12 @@ namespace PlutoGE::render
         {
             glDeleteTextures(1, &m_albedoTexture);
             m_albedoTexture = 0;
+        }
+
+        if (m_motionTexture)
+        {
+            glDeleteTextures(1, &m_motionTexture);
+            m_motionTexture = 0;
         }
 
         if (m_depthRbo)

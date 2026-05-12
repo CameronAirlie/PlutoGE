@@ -5,6 +5,7 @@
 namespace PlutoGE::render
 {
     class LightPropagationVolumePass;
+    class SceneCompositeEffect;
     class Shader;
     class LightingPass : public IRenderPass
     {
@@ -18,5 +19,6 @@ namespace PlutoGE::render
 
     private:
         Shader *m_lightingPassShader = nullptr;
+        Shader *m_indirectCompositeShader = nullptr;
     };
 }

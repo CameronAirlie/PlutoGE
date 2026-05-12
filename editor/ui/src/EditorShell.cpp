@@ -197,6 +197,10 @@ namespace PlutoGE::ui
         }
 
         m_editorCamera = EditorViewportCamera{};
+        m_editorCamera.AddPostProcessEffectByType("SSGI");
+        m_editorCamera.AddPostProcessEffectByType("ToneMapping");
+        m_editorCamera.AddPostProcessEffectByType("SceneComposite");
+        m_editorCamera.AddPostProcessEffectByType("GammaCorrection");
 
         m_panelManager.InitializeImGui(&m_engine.GetWindow());
     }
@@ -290,18 +294,19 @@ namespace PlutoGE::ui
         auto *cameraHolderEntity = scene->AddEntity(std::move(cameraHolder));
         auto *cameraEntity2Ptr = scene->AddEntity(std::move(cameraEntity2), cameraHolderEntity);
 
-        for (int i = 0; i < 1; ++i)
+        for (int i = 0; i < 10; ++i)
         {
             auto lightEntity = std::make_unique<scene::Entity>(scene::EntityConfig{
                 .name = "Key Light " + std::to_string(i),
             });
-            lightEntity->SetPosition(glm::vec3(0.0f, 5.0f, 0.0f));
-            lightEntity->SetRotation(glm::vec3(-50.0f, -35.0f, 0.0f));
+            auto randomPosition = (randomColour() - 0.5f) * 10.0f;
+            lightEntity->SetPosition(glm::vec3(randomPosition.x, 5.0f, randomPosition.z));
+            // lightEntity->SetRotation(glm::vec3(-50.0f, -35.0f, 0.0f));
             auto *lightComponent = lightEntity->CreateComponent<scene::LightComponent>();
-            lightComponent->SetColor(glm::vec3(1.0f, 0.95f, 0.85f));
+            lightComponent->SetColor(randomColour());
             lightComponent->SetIntensity(5.0f);
             lightComponent->SetRange(20.0f);
-            lightComponent->SetLightType(scene::LightType::Directional);
+            lightComponent->SetLightType(scene::LightType::Point);
             lightComponent->SetCastsShadows(true);
             scene->AddEntity(std::move(lightEntity));
         }

@@ -64,12 +64,16 @@ namespace PlutoGE::scene
 
                 render::RenderCommand command;
                 command.model = modelMatrix;
+                command.previousModel = m_hasPreviousModelMatrix ? m_previousModelMatrix : modelMatrix;
                 command.material = material;
                 command.mesh = m_mesh;
                 command.submeshIndex = static_cast<uint32_t>(submeshIndex);
 
                 renderer.SubmitRenderCommand(command);
             }
+
+            m_previousModelMatrix = modelMatrix;
+            m_hasPreviousModelMatrix = true;
         };
     }
 }

@@ -179,17 +179,24 @@ namespace PlutoGE::render
             layout(location = 3) in vec4 aTangent;
 
             uniform mat4 uModel;
+            uniform mat4 uPreviousModel;
             uniform mat4 uView;
             uniform mat4 uProjection;
+            uniform mat4 uCurrentViewProjection;
+            uniform mat4 uPreviousViewProjection;
 
             out vec3 FragPos;
             out vec3 Normal;
             out vec2 UV;
             out mat3 TBN;
+            out vec4 CurrentClipPos;
+            out vec4 PreviousClipPos;
 
             void main()
             {
-                FragPos = vec3(uModel * vec4(aPos, 1.0));
+                vec4 currentWorldPos = uModel * vec4(aPos, 1.0);
+                vec4 previousWorldPos = uPreviousModel * vec4(aPos, 1.0);
+                FragPos = currentWorldPos.xyz;
                 mat3 normalMatrix = transpose(inverse(mat3(uModel)));
                 vec3 worldNormal = normalize(normalMatrix * aNormal);
                 vec3 worldTangent = normalize(normalMatrix * aTangent.xyz);
@@ -198,7 +205,9 @@ namespace PlutoGE::render
 
                 Normal = worldNormal;
                 UV = aUV;
-                gl_Position = uProjection * uView * vec4(FragPos, 1.0);
+                CurrentClipPos = uCurrentViewProjection * currentWorldPos;
+                PreviousClipPos = uPreviousViewProjection * previousWorldPos;
+                gl_Position = CurrentClipPos;
                 TBN = mat3(
                     worldTangent,
                     normalize(worldBitangent),
@@ -213,11 +222,14 @@ namespace PlutoGE::render
             layout (location = 0) out vec3 gPosition;
             layout (location = 1) out vec4 gNormalRoughness;
             layout (location = 2) out vec4 gAlbedoMetallic;
+            layout (location = 3) out vec2 gMotionVector;
             
             in vec3 FragPos;
             in vec3 Normal;
             in vec2 UV;
             in mat3 TBN;
+            in vec4 CurrentClipPos;
+            in vec4 PreviousClipPos;
 
             uniform sampler2D uAlbedoTexture;
             uniform float uHasAlbedoTexture = 0.0;
@@ -298,6 +310,17 @@ namespace PlutoGE::render
 
                 gNormalRoughness = vec4(normalize(normal), clamp(roughness, 0.04, 1.0));
                 gAlbedoMetallic = vec4(albedo, clamp(metallic, 0.0, 1.0));
+
+                if (abs(CurrentClipPos.w) > 0.0001 && abs(PreviousClipPos.w) > 0.0001)
+                {
+                    vec2 currentUv = (CurrentClipPos.xy / CurrentClipPos.w) * 0.5 + 0.5;
+                    vec2 previousUv = (PreviousClipPos.xy / PreviousClipPos.w) * 0.5 + 0.5;
+                    gMotionVector = currentUv - previousUv;
+                }
+                else
+                {
+                    gMotionVector = vec2(0.0);
+                }
             }
         )";
 
@@ -373,9 +396,18 @@ uniform sampler2D uShadowCascadeMap3;
 uniform samplerCube uShadowMapCube;
 uniform sampler2D uAoTexture;
 uniform sampler3D uLpvVolume;
+uniform sampler3D uPreviousLpvVolume;
 uniform vec3 uLpvOrigin;
 uniform vec3 uLpvSize;
+uniform vec3 uPreviousLpvOrigin;
+uniform vec3 uPreviousLpvSize;
 uniform int uLpvEnabled;
+uniform float uLpvTransitionBlend;
+uniform int uAmbientOutputMode;
+
+const int AMBIENT_OUTPUT_FULL = 0;
+const int AMBIENT_OUTPUT_LPV_ONLY = 1;
+const int AMBIENT_OUTPUT_NONE = 2;
 
 float DistributionGGX(vec3 normal, vec3 halfwayDir, float roughness)
 {
@@ -653,7 +685,23 @@ vec3 ComputeLightContribution(vec3 fragPos, vec3 normal, vec3 viewDir, vec3 albe
         attenuation = ComputeSpotAttenuation(fragPos, lightDir, light);
     }
 
+    if (attenuation <= 0.0001)
+    {
+        return vec3(0.0);
+    }
+
+    float ndotl = dot(normal, lightDir);
+    if (ndotl <= 0.0001)
+    {
+        return vec3(0.0);
+    }
+
     vec3 radiance = light.Color * light.Intensity * attenuation;
+    if (dot(radiance, radiance) <= 0.000001)
+    {
+        return vec3(0.0);
+    }
+
     float shadow = ComputeShadow(fragPos, normal, light);
     return EvaluatePbrLighting(normal, viewDir, albedo, metallic, roughness, lightDir, radiance) * (1.0 - shadow);
 }
@@ -672,7 +720,12 @@ vec3 SampleLPVIndirect(vec3 fragPos, vec3 albedo, float metallic, float ao)
         return vec3(0.0);
     }
 
+    float edgeDistance = min(
+        min(min(volumeUv.x, volumeUv.y), volumeUv.z),
+        min(min(1.0 - volumeUv.x, 1.0 - volumeUv.y), 1.0 - volumeUv.z));
+    float edgeFade = smoothstep(0.0, 0.12, edgeDistance);
     vec3 indirectRadiance = texture(uLpvVolume, volumeUv).rgb;
+
     return indirectRadiance * albedo * (1.0 - metallic) * ao;
 }
 
@@ -681,6 +734,12 @@ void main()
     vec3 fragPos = texture(gPosition, UV).rgb;
     vec4 normalRoughness = texture(gNormal, UV);
     vec4 albedoMetallic = texture(gAlbedoSpec, UV);
+
+    if (dot(normalRoughness.rgb, normalRoughness.rgb) <= 0.000001)
+    {
+        FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+        return;
+    }
 
     vec3 normal = normalize(normalRoughness.rgb);
     vec3 albedo = albedoMetallic.rgb;
@@ -691,8 +750,21 @@ void main()
 
     if (uPassMode == PASS_MODE_AMBIENT)
     {
+        vec3 lpvIndirect = SampleLPVIndirect(fragPos, albedo, metallic, ao);
+        if (uAmbientOutputMode == AMBIENT_OUTPUT_NONE)
+        {
+            FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+            return;
+        }
+
+        if (uAmbientOutputMode == AMBIENT_OUTPUT_LPV_ONLY)
+        {
+            FragColor = vec4(lpvIndirect, 1.0);
+            return;
+        }
+
         vec3 ambient = vec3(0.03) * albedo * (1.0 - metallic) * ao;
-        ambient += SampleLPVIndirect(fragPos, albedo, metallic, ao);
+        ambient += lpvIndirect;
         FragColor = vec4(ambient, 1.0);
         return;
     }

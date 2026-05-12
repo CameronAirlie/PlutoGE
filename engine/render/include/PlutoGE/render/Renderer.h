@@ -55,6 +55,7 @@ namespace PlutoGE::render
         Material *material; // Material to use for rendering
         Mesh *mesh;         // Mesh to render
         glm::mat4 model;    // Model matrix for the object (position, rotation, scale)
+        glm::mat4 previousModel = glm::mat4(1.0f);
         uint32_t submeshIndex = 0;
     };
 
@@ -95,7 +96,9 @@ namespace PlutoGE::render
     {
         Renderer *renderer = nullptr;
         CameraData cameraData; // Camera data for the current frame
+        CameraData previousCameraData;
         bool hasCameraData = false;
+        bool hasPreviousCameraData = false;
         const scene::CameraComponent *cameraComponent; // Camera component owning this frame's post-process chain
         const std::vector<IPostProcessEffect *> *postProcessEffects = nullptr;
         RenderTarget *renderTarget;                    // Render target for the current frame (nullptr for default framebuffer)
@@ -156,6 +159,8 @@ namespace PlutoGE::render
             std::unique_ptr<RenderTarget> postProcessIntermediateRenderTarget;
             std::unique_ptr<RenderTarget> ambientOcclusionRenderTarget;
             GBuffer gBuffer;
+            CameraData previousCameraData;
+            bool hasPreviousCameraData = false;
         };
 
         struct GpuTimerQueryState

@@ -2,6 +2,8 @@
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/scene/components/Component.h"
 
+#include <glm/glm.hpp>
+
 namespace PlutoGE::render
 {
     class Mesh;
@@ -98,5 +100,7 @@ namespace PlutoGE::scene
         render::Mesh *m_mesh = nullptr;
         render::Material *m_material = nullptr;
         std::vector<render::Material *> m_materials;
+        glm::mat4 m_previousModelMatrix = glm::mat4(1.0f);
+        bool m_hasPreviousModelMatrix = false;
     };
 }

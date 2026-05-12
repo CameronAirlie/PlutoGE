@@ -4,6 +4,7 @@
 #include "PlutoGE/render/postprocess/GammaCorrectionEffect.h"
 #include "PlutoGE/render/postprocess/PostProcessEffectFactory.h"
 #include "PlutoGE/render/postprocess/SceneCompositeEffect.h"
+#include "PlutoGE/render/postprocess/SSGIEffect.h"
 #include "PlutoGE/render/postprocess/ToneMappingEffect.h"
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -79,6 +80,7 @@ namespace PlutoGE::scene
 
     CameraComponent::CameraComponent(render::Camera *camera) : m_camera(camera)
     {
+        EmplacePostProcessEffect<render::SSGIEffect>();
         EmplacePostProcessEffect<render::ToneMappingEffect>();
         EmplacePostProcessEffect<render::SceneCompositeEffect>();
         EmplacePostProcessEffect<render::GammaCorrectionEffect>(2.2f);

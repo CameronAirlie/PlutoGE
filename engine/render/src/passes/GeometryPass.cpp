@@ -106,6 +106,12 @@ namespace PlutoGE::render
         m_geometryPassShader->Bind();
         m_geometryPassShader->SetUniform("uView", ctx.cameraData.view);
         m_geometryPassShader->SetUniform("uProjection", ctx.cameraData.projection);
+        const glm::mat4 currentViewProjection = ctx.cameraData.projection * ctx.cameraData.view;
+        const glm::mat4 previousViewProjection = ctx.hasPreviousCameraData
+                                                     ? ctx.previousCameraData.projection * ctx.previousCameraData.view
+                                                     : currentViewProjection;
+        m_geometryPassShader->SetUniform("uCurrentViewProjection", currentViewProjection);
+        m_geometryPassShader->SetUniform("uPreviousViewProjection", previousViewProjection);
         const auto frustumPlanes = ExtractFrustumPlanes(ctx.cameraData.projection * ctx.cameraData.view);
         Material *boundMaterial = nullptr;
 
@@ -117,6 +123,7 @@ namespace PlutoGE::render
             }
 
             m_geometryPassShader->SetUniform("uModel", command.model);
+            m_geometryPassShader->SetUniform("uPreviousModel", command.previousModel);
 
             if (command.material != boundMaterial)
             {

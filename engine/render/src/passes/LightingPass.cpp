@@ -6,6 +6,8 @@
 #include "PlutoGE/render/Texture.h"
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/Graphics.h"
+#include "PlutoGE/render/postprocess/SceneCompositeEffect.h"
+#include "PlutoGE/render/postprocess/SSGIEffect.h"
 #include "PlutoGE/render/passes/LightPropagationVolumePass.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 
@@ -21,11 +23,68 @@ namespace PlutoGE::render
         constexpr int kShadowMapCubeTextureSlot = kShadowMap2DTextureSlot + 1;
         constexpr int kAmbientOcclusionTextureSlot = kShadowMapCubeTextureSlot + 1;
         constexpr int kLightPropagationVolumeTextureSlot = kAmbientOcclusionTextureSlot + 1;
+        constexpr int kPreviousLightPropagationVolumeTextureSlot = kLightPropagationVolumeTextureSlot + 1;
         constexpr int kAmbientPassMode = 0;
         constexpr int kLightPassMode = 1;
+        constexpr int kIndirectTextureSlot = 0;
+        constexpr int kAmbientOutputFull = 0;
+        constexpr int kAmbientOutputLpvOnly = 1;
+        constexpr int kAmbientOutputNone = 2;
         constexpr std::size_t kLightingSetupStage = 0;
         constexpr std::size_t kLightingAmbientStage = 1;
         constexpr std::size_t kLightingAccumulationStage = 2;
+
+        struct IndirectLightingSettings
+        {
+            bool enableLpv = true;
+            bool enableSsgi = true;
+            IndirectDebugView debugView = IndirectDebugView::None;
+        };
+
+        SSGIEffect *FindEnabledSsgiEffect(const RenderContext &ctx)
+        {
+            if (!ctx.postProcessEffects)
+            {
+                return nullptr;
+            }
+
+            for (auto *effect : *ctx.postProcessEffects)
+            {
+                if (!effect || !effect->IsEnabled() || effect->GetTypeName() != "SSGI")
+                {
+                    continue;
+                }
+
+                return static_cast<SSGIEffect *>(effect);
+            }
+
+            return nullptr;
+        }
+
+        IndirectLightingSettings ResolveIndirectLightingSettings(const RenderContext &ctx)
+        {
+            IndirectLightingSettings settings;
+            if (!ctx.postProcessEffects)
+            {
+                return settings;
+            }
+
+            for (auto *effect : *ctx.postProcessEffects)
+            {
+                if (!effect || !effect->IsEnabled() || effect->GetTypeName() != "SceneComposite")
+                {
+                    continue;
+                }
+
+                auto *sceneCompositeEffect = static_cast<SceneCompositeEffect *>(effect);
+                settings.enableLpv = sceneCompositeEffect->IsLpvEnabled();
+                settings.enableSsgi = sceneCompositeEffect->IsSsgiEnabled();
+                settings.debugView = sceneCompositeEffect->GetIndirectDebugView();
+                break;
+            }
+
+            return settings;
+        }
 
         void BindLightingInputs(Shader *shader, const RenderContext &ctx)
         {
@@ -67,6 +126,11 @@ namespace PlutoGE::render
             glActiveTexture(GL_TEXTURE0 + kLightPropagationVolumeTextureSlot);
             glBindTexture(GL_TEXTURE_3D, lpvTexture ? lpvTexture->GetTextureID() : 0);
             shader->SetUniform("uLpvVolume", kLightPropagationVolumeTextureSlot);
+
+            auto *previousLpvTexture = lpvPass ? lpvPass->GetPreviousVolumeTexture() : nullptr;
+            glActiveTexture(GL_TEXTURE0 + kPreviousLightPropagationVolumeTextureSlot);
+            glBindTexture(GL_TEXTURE_3D, previousLpvTexture ? previousLpvTexture->GetTextureID() : 0);
+            shader->SetUniform("uPreviousLpvVolume", kPreviousLightPropagationVolumeTextureSlot);
         }
 
         bool BindShadowMapForLight(const scene::Light &light)
@@ -171,6 +235,39 @@ namespace PlutoGE::render
     void LightingPass::Initialize()
     {
         m_lightingPassShader = Shader::CreateLightingPassShader();
+
+        ShaderSource indirectCompositeSource;
+        indirectCompositeSource.vertexSource = R"(
+            #version 330 core
+
+            out vec2 UV;
+
+            void main()
+            {
+                vec2 vertices[3] = vec2[3](
+                    vec2(-1.0, -1.0),
+                    vec2(3.0, -1.0),
+                    vec2(-1.0, 3.0)
+                );
+                gl_Position = vec4(vertices[gl_VertexID], 0.0, 1.0);
+                UV = 0.5 * gl_Position.xy + vec2(0.5);
+            }
+        )";
+        indirectCompositeSource.fragmentSource = R"(
+            #version 330 core
+
+            in vec2 UV;
+            out vec4 FragColor;
+
+            uniform sampler2D uIndirectTexture;
+
+            void main()
+            {
+                FragColor = vec4(texture(uIndirectTexture, UV).rgb, 1.0);
+            }
+        )";
+
+        m_indirectCompositeShader = Shader::Create(indirectCompositeSource);
     }
 
     void LightingPass::Execute(const RenderContext &ctx)
@@ -227,11 +324,44 @@ namespace PlutoGE::render
 
         const glm::vec3 cameraPos = glm::vec3(glm::inverse(ctx.cameraData.view)[3]);
         auto *lpvPass = ctx.lightPropagationVolumePass;
+        const IndirectLightingSettings indirectSettings = ResolveIndirectLightingSettings(ctx);
+        int ambientOutputMode = kAmbientOutputFull;
+        bool renderDirectLighting = true;
+        bool renderSsgi = indirectSettings.enableSsgi;
+        bool compositeSsgiOnly = false;
+
+        switch (indirectSettings.debugView)
+        {
+        case IndirectDebugView::LpvOnly:
+            ambientOutputMode = indirectSettings.enableLpv ? kAmbientOutputLpvOnly : kAmbientOutputNone;
+            renderDirectLighting = false;
+            renderSsgi = false;
+            break;
+        case IndirectDebugView::SsgiOnly:
+            ambientOutputMode = kAmbientOutputNone;
+            renderDirectLighting = false;
+            renderSsgi = indirectSettings.enableSsgi;
+            compositeSsgiOnly = true;
+            break;
+        case IndirectDebugView::CombinedIndirect:
+            ambientOutputMode = indirectSettings.enableLpv ? kAmbientOutputLpvOnly : kAmbientOutputNone;
+            renderDirectLighting = false;
+            renderSsgi = indirectSettings.enableSsgi;
+            break;
+        case IndirectDebugView::None:
+        default:
+            break;
+        }
+
         m_lightingPassShader->SetUniform("uViewPos", cameraPos);
         m_lightingPassShader->SetUniform("uViewMatrix", ctx.cameraData.view);
-        m_lightingPassShader->SetUniform("uLpvEnabled", lpvPass && lpvPass->GetVolumeTexture() ? 1 : 0);
+        m_lightingPassShader->SetUniform("uLpvEnabled", indirectSettings.enableLpv && lpvPass && lpvPass->GetVolumeTexture() ? 1 : 0);
         m_lightingPassShader->SetUniform("uLpvOrigin", lpvPass ? lpvPass->GetGridOrigin() : glm::vec3(0.0f));
         m_lightingPassShader->SetUniform("uLpvSize", lpvPass ? lpvPass->GetGridSize() : glm::vec3(1.0f));
+        m_lightingPassShader->SetUniform("uPreviousLpvOrigin", lpvPass ? lpvPass->GetPreviousGridOrigin() : glm::vec3(0.0f));
+        m_lightingPassShader->SetUniform("uPreviousLpvSize", lpvPass ? lpvPass->GetPreviousGridSize() : glm::vec3(1.0f));
+        m_lightingPassShader->SetUniform("uLpvTransitionBlend", lpvPass ? lpvPass->GetTransitionBlendFactor() : 1.0f);
+        m_lightingPassShader->SetUniform("uAmbientOutputMode", ambientOutputMode);
 
         glDisable(GL_BLEND);
         m_lightingPassShader->SetUniform("uPassMode", kAmbientPassMode);
@@ -244,21 +374,58 @@ namespace PlutoGE::render
             ctx.renderer->BeginLightingStageTiming(kLightingAccumulationStage);
         }
 
-        glEnable(GL_BLEND);
-        glBlendEquation(GL_FUNC_ADD);
-        glBlendFunc(GL_ONE, GL_ONE);
-
-        for (auto *light : *ctx.lights)
+        if (renderDirectLighting)
         {
-            if (!light)
-            {
-                continue;
-            }
+            glEnable(GL_BLEND);
+            glBlendEquation(GL_FUNC_ADD);
+            glBlendFunc(GL_ONE, GL_ONE);
 
-            const bool hasShadowMap = BindShadowMapForLight(*light);
-            BindLightUniforms(m_lightingPassShader, *light, hasShadowMap);
-            m_lightingPassShader->SetUniform("uPassMode", kLightPassMode);
-            glDrawArrays(GL_TRIANGLES, 0, 3);
+            for (auto *light : *ctx.lights)
+            {
+                if (!light)
+                {
+                    continue;
+                }
+
+                const bool hasShadowMap = BindShadowMapForLight(*light);
+                BindLightUniforms(m_lightingPassShader, *light, hasShadowMap);
+                m_lightingPassShader->SetUniform("uPassMode", kLightPassMode);
+                glDrawArrays(GL_TRIANGLES, 0, 3);
+            }
+        }
+
+        if (m_indirectCompositeShader && renderSsgi)
+        {
+            if (auto *ssgiEffect = FindEnabledSsgiEffect(ctx))
+            {
+                RenderTarget *resolvedIndirectTarget = ssgiEffect->GenerateResolvedIndirectLighting(PostProcessContext{
+                                                                                                        .renderContext = ctx,
+                                                                                                        .sourceRenderTarget = ctx.temporaryRenderTarget,
+                                                                                                        .destinationRenderTarget = nullptr,
+                                                                                                    },
+                                                                                                    ctx.temporaryRenderTarget->GetWidth(), ctx.temporaryRenderTarget->GetHeight());
+                if (resolvedIndirectTarget)
+                {
+                    Graphics::BindRenderTarget(ctx.temporaryRenderTarget);
+                    glViewport(0, 0, ctx.temporaryRenderTarget->GetWidth(), ctx.temporaryRenderTarget->GetHeight());
+                    if (compositeSsgiOnly || ssgiEffect->OutputsIndirectOnly())
+                    {
+                        glDisable(GL_BLEND);
+                    }
+                    else
+                    {
+                        glEnable(GL_BLEND);
+                        glBlendEquation(GL_FUNC_ADD);
+                        glBlendFunc(GL_ONE, GL_ONE);
+                    }
+
+                    m_indirectCompositeShader->Bind();
+                    glActiveTexture(GL_TEXTURE0 + kIndirectTextureSlot);
+                    glBindTexture(GL_TEXTURE_2D, resolvedIndirectTarget->GetColorTextureID());
+                    m_indirectCompositeShader->SetUniform("uIndirectTexture", kIndirectTextureSlot);
+                    glDrawArrays(GL_TRIANGLES, 0, 3);
+                }
+            }
         }
 
         glDisable(GL_BLEND);

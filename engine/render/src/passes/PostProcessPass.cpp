@@ -11,6 +11,11 @@ namespace PlutoGE::render
 {
     namespace
     {
+        bool IsLightingManagedEffect(const IPostProcessEffect *effect)
+        {
+            return effect && effect->GetTypeName() == "SSGI";
+        }
+
         void BlitColorBuffer(RenderTarget *source, RenderTarget *destination)
         {
             if (!source)
@@ -56,7 +61,7 @@ namespace PlutoGE::render
         size_t enabledEffectCount = 0;
         for (const auto &effect : effects)
         {
-            if (effect && effect->IsEnabled())
+            if (effect && effect->IsEnabled() && !IsLightingManagedEffect(effect))
             {
                 ++enabledEffectCount;
             }
@@ -77,7 +82,7 @@ namespace PlutoGE::render
         for (size_t index = 0; index < effects.size(); ++index)
         {
             auto *effect = effects[index];
-            if (!effect || !effect->IsEnabled())
+            if (!effect || !effect->IsEnabled() || IsLightingManagedEffect(effect))
             {
                 continue;
             }

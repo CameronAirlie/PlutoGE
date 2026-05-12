@@ -4,6 +4,7 @@
 
 #include <glm/glm.hpp>
 
+#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -25,6 +26,11 @@ namespace PlutoGE::render
     private:
         void EnsureResources();
         void ClearVolume();
+        bool ShouldUpdateVolume(const RenderContext &ctx,
+                                const glm::vec3 &desiredGridOrigin,
+                                const glm::vec3 &desiredGridSize,
+                                std::size_t sceneSignature,
+                                std::size_t lightSignature);
 
         glm::ivec3 m_resolution{16, 16, 16};
         glm::vec3 m_gridOrigin{0.0f};
@@ -36,5 +42,9 @@ namespace PlutoGE::render
         std::vector<float> m_positionReadback;
         std::vector<float> m_normalReadback;
         std::vector<unsigned char> m_albedoReadback;
+        glm::ivec2 m_lastViewportSize{0, 0};
+        std::size_t m_lastSceneSignature = 0;
+        std::size_t m_lastLightSignature = 0;
+        bool m_hasValidVolume = false;
     };
 }

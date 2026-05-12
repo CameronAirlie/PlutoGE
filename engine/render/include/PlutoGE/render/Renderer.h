@@ -10,6 +10,7 @@
 
 #include <memory>
 #include <string>
+#include <cstdint>
 #include <unordered_map>
 #include <vector>
 
@@ -93,7 +94,7 @@ namespace PlutoGE::render
     struct RenderContext
     {
         Renderer *renderer = nullptr;
-        CameraData cameraData;                         // Camera data for the current frame
+        CameraData cameraData; // Camera data for the current frame
         bool hasCameraData = false;
         const scene::CameraComponent *cameraComponent; // Camera component owning this frame's post-process chain
         const std::vector<IPostProcessEffect *> *postProcessEffects = nullptr;
@@ -106,6 +107,7 @@ namespace PlutoGE::render
         GBuffer *gBuffer;                           // GBuffer for deferred rendering
         LightPropagationVolumePass *lightPropagationVolumePass = nullptr;
         PostProcessDebugView postProcessDebugView = PostProcessDebugView::None;
+        std::uint64_t frameSequence = 0;
     };
 
     class Shader;
@@ -192,5 +194,6 @@ namespace PlutoGE::render
         LightingGpuTiming m_lightingGpuTiming;
         RendererCpuFrameStats m_cpuFrameStats;
         int m_profiledRenderCount = 0;
+        std::uint64_t m_frameSequence = 0;
     };
 }

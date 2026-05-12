@@ -141,6 +141,8 @@ namespace PlutoGE::render
         if (!m_isInitialized)
             return;
 
+        ++m_frameSequence;
+
         if (renderTarget)
         {
             Graphics::ClearRenderTarget(renderTarget);
@@ -208,6 +210,7 @@ namespace PlutoGE::render
             .gBuffer = &frameResources->gBuffer,
             .lightPropagationVolumePass = m_lightPropagationVolumePass,
             .postProcessDebugView = m_postProcessDebugView,
+            .frameSequence = m_frameSequence,
         };
 
         ExecutePassWithGpuTiming(*m_shadowPass, ctx, 0);
@@ -279,6 +282,7 @@ namespace PlutoGE::render
             .gBuffer = &frameResources->gBuffer,
             .lightPropagationVolumePass = m_lightPropagationVolumePass,
             .postProcessDebugView = m_postProcessDebugView,
+            .frameSequence = m_frameSequence,
         };
 
         if (m_shadowPass)

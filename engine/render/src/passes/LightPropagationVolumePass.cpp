@@ -7,8 +7,11 @@
 #include "PlutoGE/scene/components/LightComponent.h"
 
 #include <algorithm>
+#include <cstdint>
+#include <cstring>
 
 #include <glm/gtc/matrix_inverse.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
 namespace PlutoGE::render
 {
@@ -18,6 +21,28 @@ namespace PlutoGE::render
         constexpr float kPropagationSelfWeight = 0.36f;
         constexpr float kPropagationNeighborWeight = 0.07f;
         constexpr float kInjectionBoost = 1.8f;
+        constexpr float kForwardBiasFactor = 0.25f;
+
+        std::size_t HashBytes(const void *data, std::size_t size, std::size_t seed = 1469598103934665603ull)
+        {
+            constexpr std::size_t kPrime = 1099511628211ull;
+
+            std::size_t hash = seed;
+            const auto *bytes = static_cast<const std::uint8_t *>(data);
+            for (std::size_t index = 0; index < size; ++index)
+            {
+                hash ^= static_cast<std::size_t>(bytes[index]);
+                hash *= kPrime;
+            }
+
+            return hash;
+        }
+
+        template <typename T>
+        std::size_t HashValue(const T &value, std::size_t seed)
+        {
+            return HashBytes(&value, sizeof(T), seed);
+        }
 
         std::size_t FlattenCellIndex(const glm::ivec3 &resolution, int x, int y, int z)
         {
@@ -27,6 +52,72 @@ namespace PlutoGE::render
         glm::vec3 GetCameraPosition(const CameraData &cameraData)
         {
             return glm::vec3(glm::inverse(cameraData.view)[3]);
+        }
+
+        glm::vec3 GetCameraForward(const CameraData &cameraData)
+        {
+            const glm::mat4 inverseView = glm::inverse(cameraData.view);
+            const glm::vec3 forward = -glm::normalize(glm::vec3(inverseView[2]));
+            if (glm::dot(forward, forward) <= 1e-8f)
+            {
+                return glm::vec3(0.0f, 0.0f, -1.0f);
+            }
+
+            return forward;
+        }
+
+        glm::vec3 SnapOriginToCell(const glm::vec3 &origin, const glm::vec3 &gridSize, const glm::ivec3 &resolution)
+        {
+            const glm::vec3 safeResolution = glm::max(glm::vec3(resolution), glm::vec3(1.0f));
+            const glm::vec3 cellSize = glm::max(gridSize / safeResolution, glm::vec3(0.0001f));
+            return glm::floor(origin / cellSize) * cellSize;
+        }
+
+        glm::vec3 ComputeCameraCenteredGridOrigin(const glm::vec3 &cameraPosition,
+                                                  const glm::vec3 &cameraForward,
+                                                  const glm::vec3 &gridSize,
+                                                  const glm::ivec3 &resolution)
+        {
+            const glm::vec3 lpvCenter = cameraPosition + cameraForward * (gridSize.z * kForwardBiasFactor);
+            const glm::vec3 rawOrigin = lpvCenter - gridSize * 0.5f;
+            return SnapOriginToCell(rawOrigin, gridSize, resolution);
+        }
+
+        std::size_t ComputeSceneSignature(const std::vector<RenderCommand> &renderCommands)
+        {
+            std::size_t hash = HashValue(renderCommands.size(), 1469598103934665603ull);
+            for (const auto &command : renderCommands)
+            {
+                hash = HashValue(command.material, hash);
+                hash = HashValue(command.mesh, hash);
+                hash = HashValue(command.submeshIndex, hash);
+                hash = HashBytes(glm::value_ptr(command.model), sizeof(glm::mat4), hash);
+            }
+
+            return hash;
+        }
+
+        std::size_t ComputeLightSignature(const std::vector<scene::Light *> &lights)
+        {
+            std::size_t hash = HashValue(lights.size(), 1469598103934665603ull);
+            for (const auto *light : lights)
+            {
+                hash = HashValue(light, hash);
+                if (!light)
+                {
+                    continue;
+                }
+
+                hash = HashValue(light->type, hash);
+                hash = HashBytes(glm::value_ptr(light->position), sizeof(glm::vec3), hash);
+                hash = HashBytes(glm::value_ptr(light->direction), sizeof(glm::vec3), hash);
+                hash = HashBytes(glm::value_ptr(light->color), sizeof(glm::vec3), hash);
+                hash = HashValue(light->intensity, hash);
+                hash = HashValue(light->range, hash);
+                hash = HashValue(light->castsShadows, hash);
+            }
+
+            return hash;
         }
 
         bool WorldToCell(const glm::vec3 &worldPosition, const glm::vec3 &origin, const glm::vec3 &size, const glm::ivec3 &resolution, glm::ivec3 &cell)
@@ -119,9 +210,13 @@ namespace PlutoGE::render
             m_volumeTexture.reset(Texture::ColorVolume(m_resolution.x, m_resolution.y, m_resolution.z));
         }
 
-        m_currentRadiance.assign(voxelCount, glm::vec3(0.0f));
-        m_nextRadiance.assign(voxelCount, glm::vec3(0.0f));
-        m_injectionWeights.assign(voxelCount, 0.0f);
+        if (m_currentRadiance.size() != voxelCount)
+        {
+            m_currentRadiance.assign(voxelCount, glm::vec3(0.0f));
+            m_nextRadiance.assign(voxelCount, glm::vec3(0.0f));
+            m_injectionWeights.assign(voxelCount, 0.0f);
+            m_hasValidVolume = false;
+        }
     }
 
     void LightPropagationVolumePass::ClearVolume()
@@ -134,6 +229,27 @@ namespace PlutoGE::render
         {
             m_volumeTexture->Upload3D(GL_RGB, GL_FLOAT, m_currentRadiance.data());
         }
+        m_hasValidVolume = false;
+    }
+
+    bool LightPropagationVolumePass::ShouldUpdateVolume(const RenderContext &ctx,
+                                                        const glm::vec3 &desiredGridOrigin,
+                                                        const glm::vec3 &desiredGridSize,
+                                                        std::size_t sceneSignature,
+                                                        std::size_t lightSignature)
+    {
+        if (!m_hasValidVolume)
+        {
+            return true;
+        }
+
+        const bool sceneChanged = sceneSignature != m_lastSceneSignature;
+        const bool lightsChanged = lightSignature != m_lastLightSignature;
+        const bool viewportChanged = m_lastViewportSize != glm::ivec2(ctx.gBuffer->GetWidth(), ctx.gBuffer->GetHeight());
+        const bool gridChanged = glm::any(glm::greaterThan(glm::abs(desiredGridSize - m_gridSize), glm::vec3(0.01f))) ||
+                                 glm::any(glm::greaterThan(glm::abs(desiredGridOrigin - m_gridOrigin), glm::vec3(0.01f)));
+
+        return sceneChanged || lightsChanged || viewportChanged || gridChanged;
     }
 
     void LightPropagationVolumePass::Execute(const RenderContext &ctx)
@@ -147,14 +263,11 @@ namespace PlutoGE::render
         EnsureResources();
 
         const glm::vec3 cameraPosition = GetCameraPosition(ctx.cameraData);
+        const glm::vec3 cameraForward = GetCameraForward(ctx.cameraData);
         const float horizontalExtent = glm::clamp(ctx.cameraData.farPlane * 0.4f, 20.0f, 64.0f);
         const float verticalExtent = glm::clamp(ctx.cameraData.farPlane * 0.22f, 12.0f, 28.0f);
-        m_gridSize = glm::vec3(horizontalExtent, verticalExtent, horizontalExtent);
-        m_gridOrigin = cameraPosition - glm::vec3(horizontalExtent * 0.5f, verticalExtent * 0.35f, horizontalExtent * 0.5f);
-
-        std::fill(m_currentRadiance.begin(), m_currentRadiance.end(), glm::vec3(0.0f));
-        std::fill(m_nextRadiance.begin(), m_nextRadiance.end(), glm::vec3(0.0f));
-        std::fill(m_injectionWeights.begin(), m_injectionWeights.end(), 0.0f);
+        const glm::vec3 desiredGridSize(horizontalExtent, verticalExtent, horizontalExtent);
+        const glm::vec3 desiredGridOrigin = ComputeCameraCenteredGridOrigin(cameraPosition, cameraForward, desiredGridSize, m_resolution);
 
         const int width = ctx.gBuffer->GetWidth();
         const int height = ctx.gBuffer->GetHeight();
@@ -163,6 +276,20 @@ namespace PlutoGE::render
             ClearVolume();
             return;
         }
+
+        const std::size_t sceneSignature = ctx.renderCommands ? ComputeSceneSignature(*ctx.renderCommands) : 0;
+        const std::size_t lightSignature = ComputeLightSignature(*ctx.lights);
+        if (!ShouldUpdateVolume(ctx, desiredGridOrigin, desiredGridSize, sceneSignature, lightSignature))
+        {
+            return;
+        }
+
+        m_gridSize = desiredGridSize;
+        m_gridOrigin = desiredGridOrigin;
+
+        std::fill(m_currentRadiance.begin(), m_currentRadiance.end(), glm::vec3(0.0f));
+        std::fill(m_nextRadiance.begin(), m_nextRadiance.end(), glm::vec3(0.0f));
+        std::fill(m_injectionWeights.begin(), m_injectionWeights.end(), 0.0f);
 
         m_positionReadback.resize(static_cast<std::size_t>(width * height * 3));
         m_normalReadback.resize(static_cast<std::size_t>(width * height * 4));
@@ -279,5 +406,10 @@ namespace PlutoGE::render
         {
             m_volumeTexture->Upload3D(GL_RGB, GL_FLOAT, m_currentRadiance.data());
         }
+
+        m_lastViewportSize = glm::ivec2(width, height);
+        m_lastSceneSignature = sceneSignature;
+        m_lastLightSignature = lightSignature;
+        m_hasValidVolume = true;
     }
 }

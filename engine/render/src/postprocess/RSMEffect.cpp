@@ -30,6 +30,13 @@ namespace PlutoGE::render
             int shadowHeight = 0;
         };
 
+        bool HasUsableDirectionalShadowCapture(const scene::Light &light)
+        {
+            return light.castsShadows &&
+                   light.activeShadowCascadeCount > 0 &&
+                   light.shadowCascadeMaps[0] != nullptr;
+        }
+
         MeshBounds GetWorldBounds(const RenderCommand &command)
         {
             if (!command.mesh)
@@ -210,7 +217,8 @@ namespace PlutoGE::render
             for (const auto *light : *renderContext.lights)
             {
                 if (!light ||
-                    light->type != scene::LightType::Directional)
+                    light->type != scene::LightType::Directional ||
+                    glm::dot(light->direction, light->direction) <= 0.000001f)
                 {
                     continue;
                 }
@@ -223,10 +231,18 @@ namespace PlutoGE::render
 
                 strongestDirectionalWeight = lightWeight;
                 source.light = light;
+                if (HasUsableDirectionalShadowCapture(*light))
+                {
+                    source.lightSpaceMatrix = light->shadowCascadeMatrices[0];
+                    source.shadowWidth = light->shadowCascadeMaps[0]->GetWidth();
+                    source.shadowHeight = light->shadowCascadeMaps[0]->GetHeight();
+                    continue;
+                }
+
                 const int fallbackResolution = std::max(light->directionalShadowSettings.resolution, 1024);
                 source.lightSpaceMatrix = BuildRsmLightSpaceMatrix(*light, renderContext.cameraData, *renderContext.renderCommands);
-                source.shadowWidth = light->shadowCascadeMaps[0] ? light->shadowCascadeMaps[0]->GetWidth() : fallbackResolution;
-                source.shadowHeight = light->shadowCascadeMaps[0] ? light->shadowCascadeMaps[0]->GetHeight() : fallbackResolution;
+                source.shadowWidth = fallbackResolution;
+                source.shadowHeight = fallbackResolution;
             }
 
             return source;
@@ -579,10 +595,11 @@ namespace PlutoGE::render
                     }
 
                     vec2 sampleUv = centerUv;
+                    float radialScale = 0.0;
                     if (sampleIndex > 0)
                     {
                         float radialJitter = fract(uFrameJitter + float(sampleIndex) * 0.61803398875);
-                        float radialScale = sqrt((float(sampleIndex) + radialJitter) / float(max(uSampleCount, 1)));
+                        radialScale = sqrt((float(sampleIndex) + radialJitter) / float(max(uSampleCount, 1)));
                         vec2 sampleOffset = RotateOffset(poissonDisk[sampleIndex - 1], angle) * radialScale;
                         sampleUv += sampleOffset * uSampleRadius * texelSize;
                     }

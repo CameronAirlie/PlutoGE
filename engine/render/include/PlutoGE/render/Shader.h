@@ -487,7 +487,7 @@ float SampleShadowMapPCF(sampler2D shadowMap, vec3 projectedCoords, float depthB
         for (int x = -1; x <= 1; ++x)
         {
             vec2 offset = vec2(float(x), float(y)) * texelSize * filterRadius;
-            vec2 sampleCoords = clamp(projectedCoords.xy + offset, vec2(0.0), vec2(1.0));
+            vec2 sampleCoords = projectedCoords.xy + offset;
             float closestDepth = texture(shadowMap, sampleCoords).r;
             float weight = (x == 0 && y == 0) ? 4.0 : ((x == 0 || y == 0) ? 2.0 : 1.0);
             shadow += projectedCoords.z - depthBias > closestDepth ? weight : 0.0;
@@ -556,7 +556,7 @@ int SelectDirectionalCascadeIndex(Light light, float viewDepth)
     return light.CascadeCount - 1;
 }
 
-float ComputeDirectionalCascadeShadow(vec3 receiverPosition, Light light, int cascadeIndex, float depthBias)
+bool TryComputeDirectionalCascadeShadow(vec3 receiverPosition, Light light, int cascadeIndex, float depthBias, out float shadow)
 {
     vec4 lightSpacePosition = light.CascadeLightSpaceMatrices[cascadeIndex] * vec4(receiverPosition, 1.0);
     vec3 projectedCoords = lightSpacePosition.xyz / max(lightSpacePosition.w, 0.0001);
@@ -564,10 +564,12 @@ float ComputeDirectionalCascadeShadow(vec3 receiverPosition, Light light, int ca
 
     if (projectedCoords.z < 0.0 || projectedCoords.z > 1.0 || projectedCoords.x < 0.0 || projectedCoords.x > 1.0 || projectedCoords.y < 0.0 || projectedCoords.y > 1.0)
     {
-        return 0.0;
+        shadow = 0.0;
+        return false;
     }
 
-    return SampleDirectionalCascadeShadow(cascadeIndex, projectedCoords, depthBias, light.ShadowSoftness);
+    shadow = SampleDirectionalCascadeShadow(cascadeIndex, projectedCoords, depthBias, light.ShadowSoftness);
+    return true;
 }
 
 float ComputeDirectionalShadow(vec3 fragPos, vec3 normal, Light light)
@@ -580,9 +582,8 @@ float ComputeDirectionalShadow(vec3 fragPos, vec3 normal, Light light)
     vec3 surfaceNormal = normalize(normal);
     vec3 lightVector = normalize(-light.Direction);
     float ndotl = max(dot(surfaceNormal, lightVector), 0.0);
-    float normalBias = max(0.0015 * (1.0 - ndotl), 0.00015);
-    vec3 receiverPosition = fragPos + surfaceNormal * normalBias;
-    float viewDepth = abs((uViewMatrix * vec4(receiverPosition, 1.0)).z);
+    vec3 receiverPosition = fragPos;
+    float viewDepth = abs((uViewMatrix * vec4(fragPos, 1.0)).z);
 
     if (viewDepth > light.CascadeSplits[light.CascadeCount - 1])
     {
@@ -591,7 +592,36 @@ float ComputeDirectionalShadow(vec3 fragPos, vec3 normal, Light light)
 
     int cascadeIndex = SelectDirectionalCascadeIndex(light, viewDepth);
     float depthBias = max(0.0002 + (1.0 - ndotl) * 0.00035, 0.00005);
-    float shadow = ComputeDirectionalCascadeShadow(receiverPosition, light, cascadeIndex, depthBias);
+    float shadow = 0.0;
+    bool hasShadow = TryComputeDirectionalCascadeShadow(receiverPosition, light, cascadeIndex, depthBias, shadow);
+
+    if (!hasShadow)
+    {
+        if (cascadeIndex > 0)
+        {
+            float fallbackShadow = 0.0;
+            if (TryComputeDirectionalCascadeShadow(receiverPosition, light, cascadeIndex - 1, depthBias, fallbackShadow))
+            {
+                shadow = fallbackShadow;
+                hasShadow = true;
+            }
+        }
+
+        if (!hasShadow && cascadeIndex < light.CascadeCount - 1)
+        {
+            float fallbackShadow = 0.0;
+            if (TryComputeDirectionalCascadeShadow(receiverPosition, light, cascadeIndex + 1, depthBias, fallbackShadow))
+            {
+                shadow = fallbackShadow;
+                hasShadow = true;
+            }
+        }
+
+        if (!hasShadow)
+        {
+            return 0.0;
+        }
+    }
 
     if (cascadeIndex < light.CascadeCount - 1)
     {
@@ -600,9 +630,12 @@ float ComputeDirectionalShadow(vec3 fragPos, vec3 normal, Light light)
         if (viewDepth > blendStart)
         {
             float nextDepthBias = max(0.0002 + (1.0 - ndotl) * 0.00035, 0.00005);
-            float nextShadow = ComputeDirectionalCascadeShadow(receiverPosition, light, cascadeIndex + 1, nextDepthBias);
-            float blendFactor = clamp((viewDepth - blendStart) / max(splitDistance - blendStart, 0.0001), 0.0, 1.0);
-            shadow = mix(shadow, nextShadow, blendFactor);
+            float nextShadow = 0.0;
+            if (TryComputeDirectionalCascadeShadow(receiverPosition, light, cascadeIndex + 1, nextDepthBias, nextShadow))
+            {
+                float blendFactor = clamp((viewDepth - blendStart) / max(splitDistance - blendStart, 0.0001), 0.0, 1.0);
+                shadow = mix(shadow, max(shadow, nextShadow), blendFactor);
+            }
         }
     }
 

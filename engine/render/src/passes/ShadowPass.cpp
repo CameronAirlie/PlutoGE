@@ -197,6 +197,7 @@ namespace
         }
 
         radius = glm::max(radius + kDirectionalShadowPadding, 10.0f);
+        const float casterReach = radius * 2.0f;
         glm::vec3 eye = frustumCenter - lightDirection * (radius * 2.0f);
         const glm::vec3 upVector = ResolveUpVector(lightDirection);
         glm::mat4 view = glm::lookAt(eye, frustumCenter, upVector);
@@ -208,6 +209,11 @@ namespace
             const glm::vec3 lightSpaceCorner = glm::vec3(view * glm::vec4(corner, 1.0f));
             minBounds = glm::min(minBounds, lightSpaceCorner);
             maxBounds = glm::max(maxBounds, lightSpaceCorner);
+
+            const glm::vec3 extrudedCorner = corner - lightDirection * casterReach;
+            const glm::vec3 extrudedLightSpaceCorner = glm::vec3(view * glm::vec4(extrudedCorner, 1.0f));
+            minBounds = glm::min(minBounds, extrudedLightSpaceCorner);
+            maxBounds = glm::max(maxBounds, extrudedLightSpaceCorner);
         }
 
         minBounds -= glm::vec3(kDirectionalShadowPadding);
@@ -442,7 +448,7 @@ namespace PlutoGE::render
                 light->shadowFarPlane = cascadeSplits[cascadeCount - 1];
                 glEnable(GL_POLYGON_OFFSET_FILL);
                 glPolygonOffset(1.0f, 2.0f);
-                glCullFace(GL_FRONT);
+                glCullFace(GL_BACK);
                 m_shadowPassShader->SetUniform("uShadowPassMode", kProjectedShadowPassMode);
 
                 for (int cascadeIndex = 0; cascadeIndex < cascadeCount; ++cascadeIndex)

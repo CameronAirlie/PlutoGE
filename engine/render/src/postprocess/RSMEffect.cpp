@@ -570,8 +570,7 @@ namespace PlutoGE::render
                 float maxDistanceSq = uMaxDistance * uMaxDistance;
                 float metallic = clamp(albedoMetallic.a, 0.0, 1.0);
                 vec3 receiverAlbedo = albedoMetallic.rgb * (1.0 - metallic);
-                ivec2 centerTexel = clamp(ivec2(centerUv * vec2(rsmTextureSize)), ivec2(0), rsmTextureSize - ivec2(1));
-                vec3 centerFlux = texelFetch(uRsmFluxTexture, centerTexel, 0).xyz;
+                vec3 centerFlux = texture(uRsmFluxTexture, centerUv).xyz;
 
                 if (uDebugOutput == 1)
                 {
@@ -605,10 +604,9 @@ namespace PlutoGE::render
                         continue;
                     }
 
-                    ivec2 sampleTexel = clamp(ivec2(sampleUv * vec2(rsmTextureSize)), ivec2(0), rsmTextureSize - ivec2(1));
-                    vec3 vplPos = texelFetch(uRsmPositionTexture, sampleTexel, 0).xyz;
-                    vec3 vplNormal = normalize(texelFetch(uRsmNormalTexture, sampleTexel, 0).xyz);
-                    vec3 vplFlux = texelFetch(uRsmFluxTexture, sampleTexel, 0).xyz;
+                    vec3 vplPos = texture(uRsmPositionTexture, sampleUv).xyz;
+                    vec3 vplNormal = normalize(texture(uRsmNormalTexture, sampleUv).xyz);
+                    vec3 vplFlux = texture(uRsmFluxTexture, sampleUv).xyz;
                     if (dot(vplNormal, vplNormal) < 0.01 || dot(vplFlux, vplFlux) < 0.000001)
                     {
                         continue;
@@ -701,7 +699,7 @@ namespace PlutoGE::render
             uniform sampler2D uSceneNormalTexture;
             uniform vec2 uBlurDirection;
 
-            const int BLUR_RADIUS = 5;
+            const int BLUR_RADIUS = 7;
 
             void main()
             {
@@ -722,14 +720,23 @@ namespace PlutoGE::render
                 for (int offsetIndex = -BLUR_RADIUS; offsetIndex <= BLUR_RADIUS; ++offsetIndex)
                 {
                     vec2 offset = uBlurDirection * float(offsetIndex);
-                    vec2 sampleUv = clamp(UV + offset * texelSize, vec2(0.0), vec2(1.0));
+                    vec2 sampleUv = UV + offset * texelSize;
+                    if (sampleUv.x < 0.0 || sampleUv.x > 1.0 || sampleUv.y < 0.0 || sampleUv.y > 1.0)
+                    {
+                        continue;
+                    }
+
                     vec3 samplePos = texture(uScenePositionTexture, sampleUv).rgb;
                     vec3 sampleNormal = normalize(texture(uSceneNormalTexture, sampleUv).xyz);
                     vec3 sampleColor = texture(uSceneTexture, sampleUv).rgb;
+                    if (dot(sampleNormal, sampleNormal) < 0.01)
+                    {
+                        continue;
+                    }
 
                     float spatialWeight = exp(-dot(offset, offset) * 0.45);
-                    float positionWeight = exp(-length(samplePos - centerPos) * 6.0);
-                    float normalWeight = pow(max(dot(centerNormal, sampleNormal), 0.0), 24.0);
+                    float positionWeight = exp(-length(samplePos - centerPos) * 4.5);
+                    float normalWeight = pow(max(dot(centerNormal, sampleNormal), 0.0), 18.0);
                     float weight = spatialWeight * positionWeight * max(normalWeight, 0.0001);
 
                     colorSum += sampleColor * weight;

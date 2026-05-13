@@ -18,11 +18,6 @@ namespace PlutoGE::render
     {
         return {
             PostProcessParameter{
-                .name = "Enable LPV",
-                .type = PostProcessParameterType::Bool,
-                .value = m_enableLpv ? "true" : "false",
-            },
-            PostProcessParameter{
                 .name = "Enable SSGI",
                 .type = PostProcessParameterType::Bool,
                 .value = m_enableSsgi ? "true" : "false",
@@ -31,7 +26,7 @@ namespace PlutoGE::render
                 .name = "Indirect Debug View",
                 .type = PostProcessParameterType::Enum,
                 .value = std::to_string(static_cast<int>(m_indirectDebugView)),
-                .enumOptions = {"None", "LPV Only", "SSGI Only", "Combined Indirect"},
+                .enumOptions = {"None", "LPV Only", "SSGI Only", "Combined Indirect", "RSM Only"},
             },
         };
     }
@@ -40,17 +35,13 @@ namespace PlutoGE::render
     {
         for (const auto &parameter : parameters)
         {
-            if (parameter.name == "Enable LPV")
-            {
-                m_enableLpv = ParseBool(parameter.value);
-            }
-            else if (parameter.name == "Enable SSGI")
+            if (parameter.name == "Enable SSGI")
             {
                 m_enableSsgi = ParseBool(parameter.value);
             }
             else if (parameter.name == "Indirect Debug View")
             {
-                const int debugView = std::clamp(std::stoi(parameter.value), 0, 3);
+                const int debugView = std::clamp(std::stoi(parameter.value), 0, 4);
                 m_indirectDebugView = static_cast<IndirectDebugView>(debugView);
             }
         }

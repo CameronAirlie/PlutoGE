@@ -3,6 +3,7 @@
 #include "PlutoGE/render/Texture.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 
 namespace PlutoGE::scene
@@ -78,6 +79,15 @@ namespace PlutoGE::scene
         {
             return !texture || texture->GetType() != expectedTextureType || texture->GetWidth() != resolution || texture->GetHeight() != resolution;
         }
+
+        glm::vec3 EulerDegreesFromDirection(const glm::vec3 &direction)
+        {
+            const glm::vec3 normalizedDirection = glm::normalize(direction);
+            const float pitchRadians = std::asin(glm::clamp(normalizedDirection.y, -1.0f, 1.0f));
+            const float yawRadians = std::atan2(-normalizedDirection.x, -normalizedDirection.z);
+            constexpr float kRadiansToDegrees = 57.29577951308232f;
+            return glm::vec3(pitchRadians * kRadiansToDegrees, yawRadians * kRadiansToDegrees, 0.0f);
+        }
     }
 
     LightComponent::~LightComponent() = default;
@@ -126,12 +136,22 @@ namespace PlutoGE::scene
 
     void LightComponent::SetDirection(const glm::vec3 &direction)
     {
-        if (m_config.direction == direction)
+        if (glm::dot(direction, direction) <= 0.000001f)
         {
             return;
         }
 
-        m_config.direction = direction;
+        const glm::vec3 normalizedDirection = glm::normalize(direction);
+        if (m_config.direction == normalizedDirection)
+        {
+            return;
+        }
+
+        m_config.direction = normalizedDirection;
+        if (auto *owner = GetOwner())
+        {
+            owner->SetRotation(EulerDegreesFromDirection(normalizedDirection));
+        }
         MarkDirty();
     }
 

@@ -12,6 +12,7 @@ add_library(PlutoGERender
     src/postprocess/ToneMappingEffect.cpp
     src/postprocess/SSAOEffect.cpp
     src/postprocess/SSGIEffect.cpp
+    src/postprocess/RSMEffect.cpp
     src/postprocess/FXAAEffect.cpp
     src/postprocess/GammaCorrectionEffect.cpp
     src/postprocess/PostProcessEffectFactory.cpp

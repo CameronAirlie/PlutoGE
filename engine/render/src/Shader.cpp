@@ -150,6 +150,15 @@ namespace PlutoGE::render
         }
     }
 
+    void Shader::SetUniform(const std::string &name, const glm::vec2 &value) const
+    {
+        GLint location = GetUniformLocation(name);
+        if (location != -1)
+        {
+            glUniform2f(location, value.x, value.y);
+        }
+    }
+
     void Shader::SetUniform(const std::string &name, float value) const
     {
         GLint location = GetUniformLocation(name);

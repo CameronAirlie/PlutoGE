@@ -13,7 +13,7 @@ namespace PlutoGE::render
     {
         bool IsLightingManagedEffect(const IPostProcessEffect *effect)
         {
-            return effect && effect->GetTypeName() == "SSGI";
+            return effect && (effect->GetTypeName() == "SSGI" || effect->GetTypeName() == "LPV" || effect->GetTypeName() == "RSM");
         }
 
         void BlitColorBuffer(RenderTarget *source, RenderTarget *destination)

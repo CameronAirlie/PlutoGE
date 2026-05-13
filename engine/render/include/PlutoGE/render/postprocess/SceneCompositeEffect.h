@@ -9,9 +9,10 @@ namespace PlutoGE::render
     enum class IndirectDebugView
     {
         None = 0,
-        LpvOnly,
+        GiOnly,
         SsgiOnly,
         CombinedIndirect,
+        RsmOnly,
     };
 
     class SceneCompositeEffect : public ShaderPostProcessEffect
@@ -26,13 +27,11 @@ namespace PlutoGE::render
         std::string GetDisplayName() const override { return "Scene Composite / Debug"; }
         std::vector<PostProcessParameter> GetParameters() const override;
         void SetParameters(const std::vector<PostProcessParameter> &parameters) override;
-        bool IsLpvEnabled() const { return m_enableLpv; }
         bool IsSsgiEnabled() const { return m_enableSsgi; }
         IndirectDebugView GetIndirectDebugView() const { return m_indirectDebugView; }
 
     private:
         Shader *m_shader = nullptr;
-        bool m_enableLpv = true;
         bool m_enableSsgi = true;
         IndirectDebugView m_indirectDebugView = IndirectDebugView::None;
     };

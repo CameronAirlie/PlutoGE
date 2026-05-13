@@ -198,6 +198,8 @@ namespace PlutoGE::ui
 
         m_editorCamera = EditorViewportCamera{};
         m_editorCamera.AddPostProcessEffectByType("SSGI");
+        m_editorCamera.AddPostProcessEffectByType("LPV");
+        m_editorCamera.AddPostProcessEffectByType("RSM");
         m_editorCamera.AddPostProcessEffectByType("ToneMapping");
         m_editorCamera.AddPostProcessEffectByType("SceneComposite");
         m_editorCamera.AddPostProcessEffectByType("GammaCorrection");
@@ -293,6 +295,25 @@ namespace PlutoGE::ui
         cameraHolder->SetPosition(glm::vec3(0.0f, 0.0f, 0.0f));
         auto *cameraHolderEntity = scene->AddEntity(std::move(cameraHolder));
         auto *cameraEntity2Ptr = scene->AddEntity(std::move(cameraEntity2), cameraHolderEntity);
+
+        auto directionalLightEntity = std::make_unique<scene::Entity>(scene::EntityConfig{
+            .name = "Sun Light",
+        });
+        auto *directionalLightComponent = directionalLightEntity->CreateComponent<scene::LightComponent>();
+        directionalLightComponent->SetLightType(scene::LightType::Directional);
+        directionalLightComponent->SetColor(glm::vec3(1.0f, 0.96f, 0.9f));
+        directionalLightComponent->SetIntensity(3.5f);
+        directionalLightComponent->SetDirection(glm::normalize(glm::vec3(-0.45f, -1.0f, -0.3f)));
+        directionalLightComponent->SetCastsShadows(true);
+        directionalLightComponent->SetDirectionalShadowSettings(scene::DirectionalShadowSettings{
+            .cascadeCount = 4,
+            .resolution = 2048,
+            .maxDistance = 60.0f,
+            .splitLambda = 0.75f,
+            .cascadeBlendDistance = 6.0f,
+            .softness = 1.5f,
+        });
+        scene->AddEntity(std::move(directionalLightEntity));
 
         for (int i = 0; i < 10; ++i)
         {

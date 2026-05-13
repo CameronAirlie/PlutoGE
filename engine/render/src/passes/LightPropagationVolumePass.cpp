@@ -4,6 +4,7 @@
 #include "PlutoGE/render/GBuffer.h"
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/Texture.h"
+#include "PlutoGE/render/postprocess/IPostProcessEffect.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 
 #include <algorithm>
@@ -30,6 +31,24 @@ namespace PlutoGE::render
         constexpr auto kMovementDrivenUpdateInterval = std::chrono::milliseconds(80);
         constexpr auto kCameraOnlyReinjectionInterval = std::chrono::milliseconds(260);
         constexpr auto kGridTransitionDuration = std::chrono::milliseconds(140);
+
+        bool IsLpvEffectEnabled(const RenderContext &ctx)
+        {
+            if (!ctx.postProcessEffects)
+            {
+                return false;
+            }
+
+            for (const auto *effect : *ctx.postProcessEffects)
+            {
+                if (effect && effect->IsEnabled() && effect->GetTypeName() == "LPV")
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
 
         std::size_t HashBytes(const void *data, std::size_t size, std::size_t seed = 1469598103934665603ull)
         {
@@ -421,7 +440,7 @@ namespace PlutoGE::render
 
     void LightPropagationVolumePass::Execute(const RenderContext &ctx)
     {
-        if (!ctx.hasCameraData || !ctx.gBuffer || !ctx.lights)
+        if (!IsLpvEffectEnabled(ctx) || !ctx.hasCameraData || !ctx.gBuffer || !ctx.lights)
         {
             ClearVolume();
             return;

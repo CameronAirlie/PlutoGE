@@ -6,6 +6,7 @@
 #include "PlutoGE/render/Texture.h"
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/Graphics.h"
+#include "PlutoGE/render/postprocess/RSMEffect.h"
 #include "PlutoGE/render/postprocess/SceneCompositeEffect.h"
 #include "PlutoGE/render/postprocess/SSGIEffect.h"
 #include "PlutoGE/render/passes/LightPropagationVolumePass.h"
@@ -35,10 +36,27 @@ namespace PlutoGE::render
 
         struct IndirectLightingSettings
         {
-            bool enableLpv = true;
             bool enableSsgi = true;
             IndirectDebugView debugView = IndirectDebugView::None;
         };
+
+        bool IsLpvEffectEnabled(const RenderContext &ctx)
+        {
+            if (!ctx.postProcessEffects)
+            {
+                return false;
+            }
+
+            for (const auto *effect : *ctx.postProcessEffects)
+            {
+                if (effect && effect->IsEnabled() && effect->GetTypeName() == "LPV")
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
 
         SSGIEffect *FindEnabledSsgiEffect(const RenderContext &ctx)
         {
@@ -60,6 +78,26 @@ namespace PlutoGE::render
             return nullptr;
         }
 
+        RSMEffect *FindEnabledRsmEffect(const RenderContext &ctx)
+        {
+            if (!ctx.postProcessEffects)
+            {
+                return nullptr;
+            }
+
+            for (auto *effect : *ctx.postProcessEffects)
+            {
+                if (!effect || !effect->IsEnabled() || effect->GetTypeName() != "RSM")
+                {
+                    continue;
+                }
+
+                return static_cast<RSMEffect *>(effect);
+            }
+
+            return nullptr;
+        }
+
         IndirectLightingSettings ResolveIndirectLightingSettings(const RenderContext &ctx)
         {
             IndirectLightingSettings settings;
@@ -76,7 +114,6 @@ namespace PlutoGE::render
                 }
 
                 auto *sceneCompositeEffect = static_cast<SceneCompositeEffect *>(effect);
-                settings.enableLpv = sceneCompositeEffect->IsLpvEnabled();
                 settings.enableSsgi = sceneCompositeEffect->IsSsgiEnabled();
                 settings.debugView = sceneCompositeEffect->GetIndirectDebugView();
                 break;
@@ -320,37 +357,80 @@ namespace PlutoGE::render
         const glm::vec3 cameraPos = glm::vec3(glm::inverse(ctx.cameraData.view)[3]);
         auto *lpvPass = ctx.lightPropagationVolumePass;
         const IndirectLightingSettings indirectSettings = ResolveIndirectLightingSettings(ctx);
+        const bool enableLpv = IsLpvEffectEnabled(ctx);
+        const bool useRsm = FindEnabledRsmEffect(ctx) != nullptr;
         int ambientOutputMode = kAmbientOutputFull;
         bool renderDirectLighting = true;
+        bool renderRsm = useRsm;
         bool renderSsgi = indirectSettings.enableSsgi;
+        bool compositeRsmOnly = false;
         bool compositeSsgiOnly = false;
+
+        const auto compositeIndirectTarget = [&](RenderTarget *resolvedIndirectTarget, bool indirectOnly)
+        {
+            if (!resolvedIndirectTarget)
+            {
+                return;
+            }
+
+            Graphics::BindRenderTarget(ctx.temporaryRenderTarget);
+            glViewport(0, 0, ctx.temporaryRenderTarget->GetWidth(), ctx.temporaryRenderTarget->GetHeight());
+            if (indirectOnly)
+            {
+                glDisable(GL_BLEND);
+            }
+            else
+            {
+                glEnable(GL_BLEND);
+                glBlendEquation(GL_FUNC_ADD);
+                glBlendFunc(GL_ONE, GL_ONE);
+            }
+
+            m_indirectCompositeShader->Bind();
+            glActiveTexture(GL_TEXTURE0 + kIndirectTextureSlot);
+            glBindTexture(GL_TEXTURE_2D, resolvedIndirectTarget->GetColorTextureID());
+            m_indirectCompositeShader->SetUniform("uIndirectTexture", kIndirectTextureSlot);
+            glDrawArrays(GL_TRIANGLES, 0, 3);
+        };
 
         switch (indirectSettings.debugView)
         {
-        case IndirectDebugView::LpvOnly:
-            ambientOutputMode = indirectSettings.enableLpv ? kAmbientOutputLpvOnly : kAmbientOutputNone;
+        case IndirectDebugView::GiOnly:
+            ambientOutputMode = enableLpv ? kAmbientOutputLpvOnly : kAmbientOutputNone;
             renderDirectLighting = false;
+            renderRsm = useRsm;
             renderSsgi = false;
+            compositeRsmOnly = useRsm;
+            break;
+        case IndirectDebugView::RsmOnly:
+            ambientOutputMode = kAmbientOutputNone;
+            renderDirectLighting = false;
+            renderRsm = useRsm;
+            renderSsgi = false;
+            compositeRsmOnly = true;
             break;
         case IndirectDebugView::SsgiOnly:
             ambientOutputMode = kAmbientOutputNone;
             renderDirectLighting = false;
+            renderRsm = false;
             renderSsgi = indirectSettings.enableSsgi;
             compositeSsgiOnly = true;
             break;
         case IndirectDebugView::CombinedIndirect:
-            ambientOutputMode = indirectSettings.enableLpv ? kAmbientOutputLpvOnly : kAmbientOutputNone;
+            ambientOutputMode = enableLpv ? kAmbientOutputLpvOnly : kAmbientOutputNone;
             renderDirectLighting = false;
+            renderRsm = useRsm;
             renderSsgi = indirectSettings.enableSsgi;
             break;
         case IndirectDebugView::None:
         default:
+            renderRsm = useRsm;
             break;
         }
 
         m_lightingPassShader->SetUniform("uViewPos", cameraPos);
         m_lightingPassShader->SetUniform("uViewMatrix", ctx.cameraData.view);
-        m_lightingPassShader->SetUniform("uLpvEnabled", indirectSettings.enableLpv && lpvPass && lpvPass->GetVolumeTexture() ? 1 : 0);
+        m_lightingPassShader->SetUniform("uLpvEnabled", enableLpv && lpvPass && lpvPass->GetVolumeTexture() ? 1 : 0);
         m_lightingPassShader->SetUniform("uLpvOrigin", lpvPass ? lpvPass->GetGridOrigin() : glm::vec3(0.0f));
         m_lightingPassShader->SetUniform("uLpvSize", lpvPass ? lpvPass->GetGridSize() : glm::vec3(1.0f));
         m_lightingPassShader->SetUniform("uPreviousLpvOrigin", lpvPass ? lpvPass->GetPreviousGridOrigin() : glm::vec3(0.0f));
@@ -399,27 +479,21 @@ namespace PlutoGE::render
                                                                                                         .destinationRenderTarget = nullptr,
                                                                                                     },
                                                                                                     ctx.temporaryRenderTarget->GetWidth(), ctx.temporaryRenderTarget->GetHeight());
-                if (resolvedIndirectTarget)
-                {
-                    Graphics::BindRenderTarget(ctx.temporaryRenderTarget);
-                    glViewport(0, 0, ctx.temporaryRenderTarget->GetWidth(), ctx.temporaryRenderTarget->GetHeight());
-                    if (compositeSsgiOnly || ssgiEffect->OutputsIndirectOnly())
-                    {
-                        glDisable(GL_BLEND);
-                    }
-                    else
-                    {
-                        glEnable(GL_BLEND);
-                        glBlendEquation(GL_FUNC_ADD);
-                        glBlendFunc(GL_ONE, GL_ONE);
-                    }
+                compositeIndirectTarget(resolvedIndirectTarget, compositeSsgiOnly || ssgiEffect->OutputsIndirectOnly());
+            }
+        }
 
-                    m_indirectCompositeShader->Bind();
-                    glActiveTexture(GL_TEXTURE0 + kIndirectTextureSlot);
-                    glBindTexture(GL_TEXTURE_2D, resolvedIndirectTarget->GetColorTextureID());
-                    m_indirectCompositeShader->SetUniform("uIndirectTexture", kIndirectTextureSlot);
-                    glDrawArrays(GL_TRIANGLES, 0, 3);
-                }
+        if (m_indirectCompositeShader && renderRsm)
+        {
+            if (auto *rsmEffect = FindEnabledRsmEffect(ctx))
+            {
+                RenderTarget *resolvedIndirectTarget = rsmEffect->GenerateResolvedIndirectLighting(PostProcessContext{
+                                                                                                       .renderContext = ctx,
+                                                                                                       .sourceRenderTarget = ctx.temporaryRenderTarget,
+                                                                                                       .destinationRenderTarget = nullptr,
+                                                                                                   },
+                                                                                                   ctx.temporaryRenderTarget->GetWidth(), ctx.temporaryRenderTarget->GetHeight());
+                compositeIndirectTarget(resolvedIndirectTarget, compositeRsmOnly);
             }
         }
 

@@ -3,7 +3,9 @@
 #include "PlutoGE/render/postprocess/FXAAEffect.h"
 #include "PlutoGE/render/postprocess/GammaCorrectionEffect.h"
 #include "PlutoGE/render/postprocess/IPostProcessEffect.h"
+#include "PlutoGE/render/postprocess/LPVEffect.h"
 #include "PlutoGE/render/postprocess/LSAOEffect.h"
+#include "PlutoGE/render/postprocess/RSMEffect.h"
 #include "PlutoGE/render/postprocess/SceneCompositeEffect.h"
 #include "PlutoGE/render/postprocess/SSGIEffect.h"
 #include "PlutoGE/render/postprocess/ToneMappingEffect.h"
@@ -17,6 +19,8 @@ namespace PlutoGE::render
         const std::vector<std::string> kRegisteredTypes = {
             "LSAO",
             "SSGI",
+            "LPV",
+            "RSM",
             "ToneMapping",
             "SceneComposite",
             "FXAA",
@@ -39,6 +43,16 @@ namespace PlutoGE::render
         if (typeName == "SSGI")
         {
             return std::make_unique<SSGIEffect>();
+        }
+
+        if (typeName == "LPV")
+        {
+            return std::make_unique<LPVEffect>();
+        }
+
+        if (typeName == "RSM")
+        {
+            return std::make_unique<RSMEffect>();
         }
 
         if (typeName == "ToneMapping")

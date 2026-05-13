@@ -11,7 +11,6 @@
 #include "PlutoGE/render/passes/LightingPass.h"
 #include "PlutoGE/render/passes/LightPropagationVolumePass.h"
 #include "PlutoGE/render/passes/PostProcessPass.h"
-#include "PlutoGE/render/passes/SSAOPass.h"
 #include "PlutoGE/render/passes/ShadowPass.h"
 #include "PlutoGE/render/postprocess/IPostProcessEffect.h"
 #include "PlutoGE/scene/components/LightComponent.h"
@@ -108,10 +107,6 @@ namespace PlutoGE::render
         shadowPass->Initialize();
         m_shadowPass = shadowPass;
 
-        auto ssaoPass = new SSAOPass();
-        ssaoPass->Initialize();
-        m_renderPasses.push_back(ssaoPass);
-
         auto lightPropagationVolumePass = new LightPropagationVolumePass();
         lightPropagationVolumePass->Initialize();
         m_lightPropagationVolumePass = lightPropagationVolumePass;
@@ -206,7 +201,6 @@ namespace PlutoGE::render
             .renderTarget = nullptr,
             .temporaryRenderTarget = frameResources->temporaryRenderTarget.get(),
             .postProcessIntermediateRenderTarget = frameResources->postProcessIntermediateRenderTarget.get(),
-            .ambientOcclusionRenderTarget = frameResources->ambientOcclusionRenderTarget.get(),
             .renderCommands = &m_renderCommands,
             .lights = &lights,
             .gBuffer = &frameResources->gBuffer,
@@ -280,7 +274,6 @@ namespace PlutoGE::render
             .renderTarget = renderTarget,
             .temporaryRenderTarget = frameResources->temporaryRenderTarget.get(),
             .postProcessIntermediateRenderTarget = frameResources->postProcessIntermediateRenderTarget.get(),
-            .ambientOcclusionRenderTarget = frameResources->ambientOcclusionRenderTarget.get(),
             .renderCommands = &m_renderCommands,
             .lights = &lights,
             .gBuffer = &frameResources->gBuffer,
@@ -485,16 +478,10 @@ namespace PlutoGE::render
         };
 
         if (!ensureSizedRenderTarget(entry->temporaryRenderTarget) ||
-            !ensureSizedRenderTarget(entry->postProcessIntermediateRenderTarget) ||
-            !ensureSizedRenderTarget(entry->ambientOcclusionRenderTarget))
+            !ensureSizedRenderTarget(entry->postProcessIntermediateRenderTarget))
         {
             std::cerr << "Failed to resize post process render targets" << std::endl;
             return nullptr;
-        }
-
-        if (entry->ambientOcclusionRenderTarget)
-        {
-            entry->ambientOcclusionRenderTarget->SetClearColor(glm::vec4(1.0f));
         }
 
         return entry.get();
@@ -519,12 +506,6 @@ namespace PlutoGE::render
             {
                 resources->postProcessIntermediateRenderTarget->Cleanup();
                 resources->postProcessIntermediateRenderTarget.reset();
-            }
-
-            if (resources->ambientOcclusionRenderTarget)
-            {
-                resources->ambientOcclusionRenderTarget->Cleanup();
-                resources->ambientOcclusionRenderTarget.reset();
             }
 
             resources->gBuffer.Cleanup();

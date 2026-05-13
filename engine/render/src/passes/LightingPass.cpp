@@ -21,8 +21,7 @@ namespace PlutoGE::render
         constexpr int kDirectionalShadowCascadeTextureStartSlot = 3;
         constexpr int kShadowMap2DTextureSlot = kDirectionalShadowCascadeTextureStartSlot + scene::kMaxDirectionalShadowCascades;
         constexpr int kShadowMapCubeTextureSlot = kShadowMap2DTextureSlot + 1;
-        constexpr int kAmbientOcclusionTextureSlot = kShadowMapCubeTextureSlot + 1;
-        constexpr int kLightPropagationVolumeTextureSlot = kAmbientOcclusionTextureSlot + 1;
+        constexpr int kLightPropagationVolumeTextureSlot = kShadowMapCubeTextureSlot + 1;
         constexpr int kPreviousLightPropagationVolumeTextureSlot = kLightPropagationVolumeTextureSlot + 1;
         constexpr int kAmbientPassMode = 0;
         constexpr int kLightPassMode = 1;
@@ -116,10 +115,6 @@ namespace PlutoGE::render
             glActiveTexture(GL_TEXTURE0 + kShadowMapCubeTextureSlot);
             glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
             shader->SetUniform("uShadowMapCube", kShadowMapCubeTextureSlot);
-
-            glActiveTexture(GL_TEXTURE0 + kAmbientOcclusionTextureSlot);
-            glBindTexture(GL_TEXTURE_2D, ctx.ambientOcclusionRenderTarget ? ctx.ambientOcclusionRenderTarget->GetColorTextureID() : 0);
-            shader->SetUniform("uAoTexture", kAmbientOcclusionTextureSlot);
 
             auto *lpvPass = ctx.lightPropagationVolumePass;
             auto *lpvTexture = lpvPass ? lpvPass->GetVolumeTexture() : nullptr;

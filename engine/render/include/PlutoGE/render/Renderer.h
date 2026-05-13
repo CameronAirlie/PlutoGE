@@ -104,7 +104,6 @@ namespace PlutoGE::render
         RenderTarget *renderTarget;                    // Render target for the current frame (nullptr for default framebuffer)
         RenderTarget *temporaryRenderTarget = nullptr; // Optional temporary render target for intermediate passes
         RenderTarget *postProcessIntermediateRenderTarget = nullptr;
-        RenderTarget *ambientOcclusionRenderTarget = nullptr;
         std::vector<RenderCommand> *renderCommands; // List of render commands for the current frame
         std::vector<scene::Light *> *lights;        // List of lights in the scene for the current frame
         GBuffer *gBuffer;                           // GBuffer for deferred rendering
@@ -157,7 +156,6 @@ namespace PlutoGE::render
         {
             std::unique_ptr<RenderTarget> temporaryRenderTarget;
             std::unique_ptr<RenderTarget> postProcessIntermediateRenderTarget;
-            std::unique_ptr<RenderTarget> ambientOcclusionRenderTarget;
             GBuffer gBuffer;
             CameraData previousCameraData;
             bool hasPreviousCameraData = false;

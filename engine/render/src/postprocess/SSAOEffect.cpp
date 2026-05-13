@@ -29,6 +29,26 @@ namespace PlutoGE::render
         }
     }
 
+    SSAOEffect::SSAOEffect() : SSAOEffect(SSAOEffectConfig{})
+    {
+    }
+
+    SSAOEffect::SSAOEffect(SSAOEffectConfig config)
+        : m_typeName(std::move(config.typeName)),
+          m_displayName(std::move(config.displayName)),
+          m_radius(config.radius),
+          m_bias(config.bias),
+          m_intensity(config.intensity),
+          m_power(config.power),
+          m_temporalBlend(config.temporalBlend),
+          m_historyDepthThreshold(config.historyDepthThreshold),
+          m_historyNormalThreshold(config.historyNormalThreshold),
+          m_sampleCount(config.sampleCount),
+          m_blurRadius(config.blurRadius),
+          m_halfResolution(config.halfResolution)
+    {
+    }
+
     SSAOEffect::~SSAOEffect()
     {
         if (m_noiseTexture != 0)
@@ -569,8 +589,7 @@ namespace PlutoGE::render
                                     .sourceRenderTarget = destinationRenderTarget,
                                     .destinationRenderTarget = destinationRenderTarget,
                                 },
-                                resolvedAoTarget,
-                                kAoOnlyMode);
+                                resolvedAoTarget, kAoOnlyMode);
     }
 
     void SSAOEffect::Apply(const PostProcessContext &context)

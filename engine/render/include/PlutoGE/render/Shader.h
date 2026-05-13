@@ -394,7 +394,6 @@ uniform sampler2D uShadowCascadeMap1;
 uniform sampler2D uShadowCascadeMap2;
 uniform sampler2D uShadowCascadeMap3;
 uniform samplerCube uShadowMapCube;
-uniform sampler2D uAoTexture;
 uniform sampler3D uLpvVolume;
 uniform sampler3D uPreviousLpvVolume;
 uniform vec3 uLpvOrigin;
@@ -706,7 +705,7 @@ vec3 ComputeLightContribution(vec3 fragPos, vec3 normal, vec3 viewDir, vec3 albe
     return EvaluatePbrLighting(normal, viewDir, albedo, metallic, roughness, lightDir, radiance) * (1.0 - shadow);
 }
 
-vec3 SampleLPVIndirect(vec3 fragPos, vec3 albedo, float metallic, float ao)
+vec3 SampleLPVIndirect(vec3 fragPos, vec3 albedo, float metallic)
 {
     if (uLpvEnabled == 0)
     {
@@ -726,7 +725,7 @@ vec3 SampleLPVIndirect(vec3 fragPos, vec3 albedo, float metallic, float ao)
     float edgeFade = smoothstep(0.0, 0.12, edgeDistance);
     vec3 indirectRadiance = texture(uLpvVolume, volumeUv).rgb;
 
-    return indirectRadiance * albedo * (1.0 - metallic) * ao;
+    return indirectRadiance * albedo * (1.0 - metallic) * edgeFade;
 }
 
 void main()
@@ -746,11 +745,10 @@ void main()
     float roughness = clamp(normalRoughness.a, 0.04, 1.0);
     float metallic = clamp(albedoMetallic.a, 0.0, 1.0);
     vec3 viewDir = normalize(uViewPos - fragPos);
-    float ao = clamp(texture(uAoTexture, UV).r, 0.0, 1.0);
 
     if (uPassMode == PASS_MODE_AMBIENT)
     {
-        vec3 lpvIndirect = SampleLPVIndirect(fragPos, albedo, metallic, ao);
+        vec3 lpvIndirect = SampleLPVIndirect(fragPos, albedo, metallic);
         if (uAmbientOutputMode == AMBIENT_OUTPUT_NONE)
         {
             FragColor = vec4(0.0, 0.0, 0.0, 1.0);
@@ -763,7 +761,7 @@ void main()
             return;
         }
 
-        vec3 ambient = vec3(0.03) * albedo * (1.0 - metallic) * ao;
+        vec3 ambient = vec3(0.03) * albedo * (1.0 - metallic);
         ambient += lpvIndirect;
         FragColor = vec4(ambient, 1.0);
         return;

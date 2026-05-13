@@ -231,16 +231,15 @@ namespace PlutoGE::render
 
                 strongestDirectionalWeight = lightWeight;
                 source.light = light;
+                source.lightSpaceMatrix = BuildRsmLightSpaceMatrix(*light, renderContext.cameraData, *renderContext.renderCommands);
                 if (HasUsableDirectionalShadowCapture(*light))
                 {
-                    source.lightSpaceMatrix = light->shadowCascadeMatrices[0];
                     source.shadowWidth = light->shadowCascadeMaps[0]->GetWidth();
                     source.shadowHeight = light->shadowCascadeMaps[0]->GetHeight();
                     continue;
                 }
 
                 const int fallbackResolution = std::max(light->directionalShadowSettings.resolution, 1024);
-                source.lightSpaceMatrix = BuildRsmLightSpaceMatrix(*light, renderContext.cameraData, *renderContext.renderCommands);
                 source.shadowWidth = fallbackResolution;
                 source.shadowHeight = fallbackResolution;
             }
@@ -539,14 +538,6 @@ namespace PlutoGE::render
             void main()
             {
                 ivec2 rsmTextureSize = textureSize(uRsmFluxTexture, 0);
-                if (uDebugOutput == 1)
-                {
-                    ivec2 debugTexel = clamp(ivec2(UV * vec2(rsmTextureSize)), ivec2(0), rsmTextureSize - ivec2(1));
-                    vec3 rawFlux = texelFetch(uRsmFluxTexture, debugTexel, 0).xyz;
-                    FragColor = vec4(rawFlux * uIntensity * 0.5, 1.0);
-                    return;
-                }
-
                 vec3 worldPos = texture(uScenePositionTexture, UV).rgb;
                 vec3 normal = normalize(texture(uSceneNormalTexture, UV).xyz);
                 vec4 albedoMetallic = texture(uSceneAlbedoTexture, UV);
@@ -581,6 +572,12 @@ namespace PlutoGE::render
                 vec3 receiverAlbedo = albedoMetallic.rgb * (1.0 - metallic);
                 ivec2 centerTexel = clamp(ivec2(centerUv * vec2(rsmTextureSize)), ivec2(0), rsmTextureSize - ivec2(1));
                 vec3 centerFlux = texelFetch(uRsmFluxTexture, centerTexel, 0).xyz;
+
+                if (uDebugOutput == 1)
+                {
+                    FragColor = vec4(centerFlux * uIntensity * 0.5, 1.0);
+                    return;
+                }
 
                 vec3 indirect = vec3(0.0);
                 float indirectWeightSum = 0.0;

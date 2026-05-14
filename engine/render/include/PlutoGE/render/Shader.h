@@ -177,6 +177,7 @@ namespace PlutoGE::render
             layout(location = 1) in vec3 aNormal;
             layout(location = 2) in vec2 aUV;
             layout(location = 3) in vec4 aTangent;
+            layout(location = 4) in vec2 aUV2;
 
             uniform mat4 uModel;
             uniform mat4 uPreviousModel;
@@ -188,6 +189,7 @@ namespace PlutoGE::render
             out vec3 FragPos;
             out vec3 Normal;
             out vec2 UV;
+            out vec2 UV2;
             out mat3 TBN;
             out vec4 CurrentClipPos;
             out vec4 PreviousClipPos;
@@ -205,6 +207,7 @@ namespace PlutoGE::render
 
                 Normal = worldNormal;
                 UV = aUV;
+                UV2 = aUV2;
                 CurrentClipPos = uCurrentViewProjection * currentWorldPos;
                 PreviousClipPos = uPreviousViewProjection * previousWorldPos;
                 gl_Position = CurrentClipPos;
@@ -223,10 +226,12 @@ namespace PlutoGE::render
             layout (location = 1) out vec4 gNormalRoughness;
             layout (location = 2) out vec4 gAlbedoMetallic;
             layout (location = 3) out vec2 gMotionVector;
+            layout (location = 4) out vec4 gBakedLighting;
             
             in vec3 FragPos;
             in vec3 Normal;
             in vec2 UV;
+            in vec2 UV2;
             in mat3 TBN;
             in vec4 CurrentClipPos;
             in vec4 PreviousClipPos;
@@ -248,6 +253,11 @@ namespace PlutoGE::render
             uniform float uHasRoughnessTexture = 0.0;
             uniform float uRoughnessFactor = 1.0;
             uniform int uRoughnessTextureChannel = 0;
+
+            uniform sampler2D uLightmapTexture;
+            uniform float uHasLightmapTexture = 0.0;
+            uniform float uStaticMesh = 0.0;
+            uniform float uUsePrimaryUvForLightmap = 0.0;
 
             float ReadTextureChannel(vec4 value, int channel)
             {
@@ -310,6 +320,13 @@ namespace PlutoGE::render
 
                 gNormalRoughness = vec4(normalize(normal), clamp(roughness, 0.04, 1.0));
                 gAlbedoMetallic = vec4(albedo, clamp(metallic, 0.0, 1.0));
+                gBakedLighting = vec4(0.0);
+
+                if (uStaticMesh > 0.5 && uHasLightmapTexture > 0.5)
+                {
+                    vec2 lightmapUv = clamp(mix(UV2, UV, clamp(uUsePrimaryUvForLightmap, 0.0, 1.0)), vec2(0.0), vec2(1.0));
+                    gBakedLighting = vec4(max(texture(uLightmapTexture, lightmapUv).rgb, vec3(0.0)), 1.0);
+                }
 
                 if (abs(CurrentClipPos.w) > 0.0001 && abs(PreviousClipPos.w) > 0.0001)
                 {
@@ -359,6 +376,7 @@ in vec2 UV;
 uniform sampler2D gPosition;
 uniform sampler2D gNormal;
 uniform sampler2D gAlbedoSpec;
+uniform sampler2D gBakedLighting;
 
 const float PI = 3.14159265359;
 const int PASS_MODE_AMBIENT = 0;
@@ -377,6 +395,7 @@ struct Light {
     int CastsShadows;
     mat4 LightSpaceMatrix;
     float ShadowFarPlane;
+    int IsStatic;
     mat4 CascadeLightSpaceMatrices[MAX_SHADOW_CASCADES];
     float CascadeSplits[MAX_SHADOW_CASCADES];
     int CascadeCount;
@@ -396,11 +415,15 @@ uniform sampler2D uShadowCascadeMap3;
 uniform samplerCube uShadowMapCube;
 uniform sampler3D uLpvVolume;
 uniform sampler3D uPreviousLpvVolume;
+uniform sampler3D uBakedProbeVolume;
 uniform vec3 uLpvOrigin;
 uniform vec3 uLpvSize;
 uniform vec3 uPreviousLpvOrigin;
 uniform vec3 uPreviousLpvSize;
+uniform vec3 uBakedProbeOrigin;
+uniform vec3 uBakedProbeSize;
 uniform int uLpvEnabled;
+uniform int uBakedProbeEnabled;
 uniform float uLpvTransitionBlend;
 uniform int uAmbientOutputMode;
 
@@ -728,6 +751,23 @@ vec3 SampleLPVIndirect(vec3 fragPos, vec3 albedo, float metallic)
     return indirectRadiance * albedo * (1.0 - metallic) * edgeFade;
 }
 
+vec3 SampleBakedProbeIrradiance(vec3 fragPos)
+{
+    if (uBakedProbeEnabled == 0)
+    {
+        return vec3(0.0);
+    }
+
+    vec3 probeSize = max(uBakedProbeSize, vec3(0.0001));
+    vec3 probeUv = (fragPos - uBakedProbeOrigin) / probeSize;
+    if (any(lessThan(probeUv, vec3(0.0))) || any(greaterThan(probeUv, vec3(1.0))))
+    {
+        return vec3(0.0);
+    }
+
+    return max(texture(uBakedProbeVolume, probeUv).rgb, vec3(0.0));
+}
+
 void main()
 {
     vec3 fragPos = texture(gPosition, UV).rgb;
@@ -744,11 +784,15 @@ void main()
     vec3 albedo = albedoMetallic.rgb;
     float roughness = clamp(normalRoughness.a, 0.04, 1.0);
     float metallic = clamp(albedoMetallic.a, 0.0, 1.0);
+    vec4 bakedLightingMask = texture(gBakedLighting, UV);
+    vec3 bakedIrradiance = bakedLightingMask.rgb;
+    float bakedStaticMask = bakedLightingMask.a;
     vec3 viewDir = normalize(uViewPos - fragPos);
 
     if (uPassMode == PASS_MODE_AMBIENT)
     {
         vec3 lpvIndirect = SampleLPVIndirect(fragPos, albedo, metallic);
+        vec3 bakedProbeIndirect = SampleBakedProbeIrradiance(fragPos) * albedo * (1.0 - metallic);
         if (uAmbientOutputMode == AMBIENT_OUTPUT_NONE)
         {
             FragColor = vec4(0.0, 0.0, 0.0, 1.0);
@@ -757,13 +801,21 @@ void main()
 
         if (uAmbientOutputMode == AMBIENT_OUTPUT_LPV_ONLY)
         {
-            FragColor = vec4(lpvIndirect, 1.0);
+            FragColor = vec4(lpvIndirect + bakedProbeIndirect, 1.0);
             return;
         }
 
-        vec3 ambient = vec3(0.03) * albedo * (1.0 - metallic);
-        ambient += lpvIndirect;
+        vec3 realtimeAmbient = vec3(0.03) * albedo * (1.0 - metallic);
+        realtimeAmbient += lpvIndirect;
+        realtimeAmbient += bakedProbeIndirect;
+        vec3 ambient = mix(realtimeAmbient, bakedIrradiance * albedo * (1.0 - metallic), bakedStaticMask);
         FragColor = vec4(ambient, 1.0);
+        return;
+    }
+
+    if (uLight.IsStatic != 0 && bakedStaticMask > 0.5)
+    {
+        FragColor = vec4(0.0, 0.0, 0.0, 1.0);
         return;
     }
 
@@ -967,20 +1019,11 @@ void main()
             return CreateShaderFromSource(source);
         }
 
-        void Bind() const
-        {
-            if (m_programID == 0)
-            {
-                std::cerr << "Error: Attempting to bind an uninitialized shader!" << std::endl;
-                return;
-            }
-            glUseProgram(m_programID);
-        }
+        void Bind() const;
 
-        void Unbind() const
-        {
-            glUseProgram(0);
-        }
+        void Unbind() const;
+
+        static void ResetStateCache();
 
         bool HasUniform(const std::string &name) const;
         void SetUniform(const std::string &name, const glm::mat4 &value) const;

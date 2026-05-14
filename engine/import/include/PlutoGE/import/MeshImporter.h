@@ -44,6 +44,7 @@ namespace PlutoGE::assetimport
         std::vector<render::Submesh> submeshes;
         std::vector<ImportedMaterialData> materials;
         std::vector<ImportedTextureData> textures;
+        bool hasLightmapUvs = false;
     };
 
     class MeshImporter

@@ -1,12 +1,56 @@
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/components/LightComponent.h"
+#include "PlutoGE/render/Texture.h"
 #include <algorithm>
 #include <iostream>
 #include <unordered_set>
 
 namespace PlutoGE::scene
 {
+    Scene::~Scene() = default;
+
+    void Scene::RebuildBakedProbeTexture()
+    {
+        m_bakedProbeTexture.reset();
+        if (!m_bakedProbeVolume.IsValid())
+        {
+            return;
+        }
+
+        m_bakedProbeTexture = std::unique_ptr<render::Texture>(render::Texture::ColorVolume(
+            m_bakedProbeVolume.resolution.x,
+            m_bakedProbeVolume.resolution.y,
+            m_bakedProbeVolume.resolution.z));
+        if (!m_bakedProbeTexture)
+        {
+            return;
+        }
+
+        std::vector<float> volumePixels;
+        volumePixels.reserve(m_bakedProbeVolume.irradiance.size() * 3);
+        for (const auto &sample : m_bakedProbeVolume.irradiance)
+        {
+            volumePixels.push_back(sample.r);
+            volumePixels.push_back(sample.g);
+            volumePixels.push_back(sample.b);
+        }
+
+        m_bakedProbeTexture->Upload3D(GL_RGB, GL_FLOAT, volumePixels.data());
+    }
+
+    void Scene::SetBakedProbeVolume(BakedProbeVolume bakedProbeVolume)
+    {
+        m_bakedProbeVolume = std::move(bakedProbeVolume);
+        RebuildBakedProbeTexture();
+    }
+
+    void Scene::ClearBakedProbeVolume()
+    {
+        m_bakedProbeVolume = {};
+        m_bakedProbeTexture.reset();
+    }
+
     void Scene::MarkShadowLightsDirty()
     {
         for (auto *light : m_lights)

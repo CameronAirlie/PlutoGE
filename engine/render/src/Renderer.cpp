@@ -14,6 +14,7 @@
 #include "PlutoGE/render/passes/ShadowPass.h"
 #include "PlutoGE/render/postprocess/IPostProcessEffect.h"
 #include "PlutoGE/scene/components/LightComponent.h"
+#include "PlutoGE/scene/Entity.h"
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -34,11 +35,23 @@ namespace PlutoGE::render
         constexpr std::size_t kLightingAmbientStage = 1;
         constexpr std::size_t kLightingAccumulationStage = 2;
 
+        Shader *GetRenderCommandShaderKey(const RenderCommand &command)
+        {
+            return command.material ? command.material->GetShader() : nullptr;
+        }
+
         void SortRenderCommands(std::vector<RenderCommand> &renderCommands)
         {
             std::sort(renderCommands.begin(), renderCommands.end(),
                       [](const RenderCommand &a, const RenderCommand &b)
                       {
+                          const auto *aShader = GetRenderCommandShaderKey(a);
+                          const auto *bShader = GetRenderCommandShaderKey(b);
+                          if (aShader != bShader)
+                          {
+                              return aShader < bShader;
+                          }
+
                           if (a.material != b.material)
                           {
                               return a.material < b.material;
@@ -176,6 +189,8 @@ namespace PlutoGE::render
         if (!m_isInitialized || !m_shadowPass)
             return;
 
+        Shader::ResetStateCache();
+
         if (!m_config.window)
         {
             return;
@@ -225,13 +240,16 @@ namespace PlutoGE::render
                                                   renderTarget ? renderTarget->GetHeight() : (m_config.window ? m_config.window->GetExtents().height : 0)),
                     renderTarget,
                     std::move(lights),
-                    &postProcessEffects);
+                    &postProcessEffects,
+                    cameraComponent.GetOwner() ? cameraComponent.GetOwner()->GetScene() : nullptr);
     }
 
-    void Renderer::RenderFrame(const CameraData &cameraData, RenderTarget *renderTarget, std::vector<scene::Light *> lights, const std::vector<IPostProcessEffect *> *postProcessEffects)
+    void Renderer::RenderFrame(const CameraData &cameraData, RenderTarget *renderTarget, std::vector<scene::Light *> lights, const std::vector<IPostProcessEffect *> *postProcessEffects, const scene::Scene *scene)
     {
         if (!m_isInitialized)
             return;
+
+        Shader::ResetStateCache();
 
         ++m_profiledRenderCount;
 
@@ -270,6 +288,7 @@ namespace PlutoGE::render
             .hasCameraData = true,
             .hasPreviousCameraData = frameResources->hasPreviousCameraData,
             .cameraComponent = nullptr,
+            .scene = scene,
             .postProcessEffects = postProcessEffects,
             .renderTarget = renderTarget,
             .temporaryRenderTarget = frameResources->temporaryRenderTarget.get(),

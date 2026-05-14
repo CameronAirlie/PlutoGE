@@ -9,6 +9,8 @@
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/scripting/ScriptEngine.h"
+#include "PlutoGE/scene/SceneBaker.h"
+#include "PlutoGE/scene/SceneSerializer.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
@@ -25,6 +27,11 @@
 #include <glm/gtc/constants.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+#ifdef _WIN32
+#include <windows.h>
+#include <commdlg.h>
+#endif
+
 namespace PlutoGE::ui
 {
     namespace
@@ -33,6 +40,7 @@ namespace PlutoGE::ui
         constexpr float kEditorCameraBoostMultiplier = 2.5f;
         constexpr float kEditorCameraMouseSensitivity = 0.12f;
         constexpr float kEditorCameraPitchLimitDegrees = 89.0f;
+        constexpr const char *kSceneFileFilter = "PlutoGE Scene\0*.plutoscene\0All Files\0*.*\0";
 
         bool IsCameraActiveInScene(scene::Scene *scene, scene::CameraComponent *cameraComponent)
         {
@@ -178,7 +186,113 @@ namespace PlutoGE::ui
 
             camera.position += glm::normalize(movement) * moveSpeed * deltaTime;
         }
+
+        void CollectEntitiesRecursive(scene::Entity *entity, std::vector<scene::Entity *> &entities)
+        {
+            if (!entity)
+            {
+                return;
+            }
+
+            entities.push_back(entity);
+            for (auto *child : entity->GetChildren())
+            {
+                CollectEntitiesRecursive(child, entities);
+            }
+        }
+
+        scene::CameraComponent *FindFirstSceneCamera(scene::Scene *scene)
+        {
+            if (!scene)
+            {
+                return nullptr;
+            }
+
+            std::vector<scene::Entity *> entities;
+            for (auto *rootEntity : scene->GetRootEntities())
+            {
+                CollectEntitiesRecursive(rootEntity, entities);
+            }
+
+            for (auto *entity : entities)
+            {
+                if (!entity || !entity->IsActive())
+                {
+                    continue;
+                }
+
+                if (auto *cameraComponent = entity->GetComponent<scene::CameraComponent>())
+                {
+                    if (cameraComponent->GetCamera())
+                    {
+                        return cameraComponent;
+                    }
+                }
+            }
+
+            return nullptr;
+        }
+
+        std::unique_ptr<scene::Scene> CreateEmptyScene()
+        {
+            return std::make_unique<scene::Scene>();
+        }
+
+#ifdef _WIN32
+        std::string ShowOpenFileDialog(const char *filter)
+        {
+            OPENFILENAMEA openFileName{};
+            char fileName[MAX_PATH] = "";
+            openFileName.lStructSize = sizeof(openFileName);
+            openFileName.hwndOwner = nullptr;
+            openFileName.lpstrFilter = filter;
+            openFileName.lpstrFile = fileName;
+            openFileName.nMaxFile = MAX_PATH;
+            openFileName.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+            if (!GetOpenFileNameA(&openFileName))
+            {
+                return {};
+            }
+
+            return std::filesystem::path(fileName).lexically_normal().string();
+        }
+
+        std::string ShowSaveFileDialog(const char *filter, const std::string &initialPath)
+        {
+            OPENFILENAMEA openFileName{};
+            char fileName[MAX_PATH] = "";
+            if (!initialPath.empty())
+            {
+                strncpy_s(fileName, sizeof(fileName), initialPath.c_str(), _TRUNCATE);
+            }
+            openFileName.lStructSize = sizeof(openFileName);
+            openFileName.hwndOwner = nullptr;
+            openFileName.lpstrFilter = filter;
+            openFileName.lpstrFile = fileName;
+            openFileName.nMaxFile = MAX_PATH;
+            openFileName.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
+            openFileName.lpstrDefExt = "plutoscene";
+            if (!GetSaveFileNameA(&openFileName))
+            {
+                return {};
+            }
+
+            return std::filesystem::path(fileName).lexically_normal().string();
+        }
+#else
+        std::string ShowOpenFileDialog(const char *)
+        {
+            return {};
+        }
+
+        std::string ShowSaveFileDialog(const char *, const std::string &)
+        {
+            return {};
+        }
+#endif
     }
+
+    EditorShell::~EditorShell() = default;
 
     void EditorShell::Initialize()
     {
@@ -204,6 +318,10 @@ namespace PlutoGE::ui
         m_editorCamera.AddPostProcessEffectByType("SceneComposite");
         m_editorCamera.AddPostProcessEffectByType("GammaCorrection");
 
+        m_scene = CreateEmptyScene();
+        m_engine.SetScene(m_scene.get());
+        m_statusMessage = "Ready";
+
         m_panelManager.InitializeImGui(&m_engine.GetWindow());
     }
 
@@ -220,7 +338,6 @@ namespace PlutoGE::ui
     {
         auto &window = m_engine.GetWindow();
         auto &renderer = m_engine.GetRenderer();
-        auto &scriptEngine = m_engine.GetScriptEngine();
         auto deltaTime = std::chrono::duration<float>::zero();
         auto lastTime = std::chrono::high_resolution_clock::now();
 
@@ -237,100 +354,6 @@ namespace PlutoGE::ui
         m_panelManager.AddPanel(sceneHierarchyPanel);
 
         auto *renderTarget = viewportPanel->GetRenderTarget();
-
-        auto scene = std::make_unique<scene::Scene>();
-        m_engine.SetScene(scene.get());
-
-        auto cube = std::make_unique<scene::Entity>(scene::EntityConfig{
-            .name = "Cube",
-        });
-        auto *material = m_engine.GetAssetManager().CreateDefaultMaterial();
-        material->SetColor(glm::vec4(0.8f, 0.2f, 0.2f, 1.0f));
-        auto mesh = render::Mesh::Cube();
-        cube->CreateComponent<scene::MeshComponent>(scene::MeshComponentConfig{
-            .mesh = mesh,
-            .material = material,
-        });
-        cube->SetPosition(glm::vec3(0.0f, -1.0f, 0.0f));
-        cube->SetScale(glm::vec3(10.0f, 0.1f, 10.0f));
-        auto *cubeEntity = scene->AddEntity(std::move(cube));
-
-        auto cube2 = std::make_unique<scene::Entity>(scene::EntityConfig{
-            .name = "Cube 2",
-        });
-        auto *material2 = m_engine.GetAssetManager().CreateDefaultMaterial();
-        auto texture = m_engine.GetAssetManager().LoadTexture("C:/textures/cobble/cobble_base.png");
-        material2->SetAlbedoTexture(texture);
-        auto normalTexture = m_engine.GetAssetManager().LoadTexture("C:/textures/cobble/cobble_normal.png");
-        material2->SetNormalTexture(normalTexture);
-        auto roughnessTexture = m_engine.GetAssetManager().LoadTexture("C:/textures/cobble/cobble_roughness.png");
-        material2->SetRoughnessTexture(roughnessTexture);
-        // material2->SetColor(glm::vec4(0.8f, 0.2f, 0.2f, 1.0f));
-        auto mesh2 = render::Mesh::Cube();
-        cube2->CreateComponent<scene::MeshComponent>(scene::MeshComponentConfig{
-            .mesh = mesh2,
-            .material = material2,
-        });
-        scene->AddEntity(std::move(cube2));
-
-        auto testEntity = std::make_unique<scene::Entity>(scene::EntityConfig{
-            .name = "Test Entity",
-        });
-        testEntity->SetParent(cubeEntity);
-
-        auto cameraEntity2 = std::make_unique<scene::Entity>(scene::EntityConfig{
-            .name = "Game Camera",
-        });
-        auto camera2 = render::Camera(render::CameraConfig{
-            .fovY = 60.0f,
-            .nearPlane = 0.1f,
-            .farPlane = 100.0f,
-        });
-        cameraEntity2->CreateComponent<scene::CameraComponent>(&camera2);
-        cameraEntity2->SetPosition(glm::vec3(0.0f, 0.0f, 5.0f));
-
-        auto cameraHolder = std::make_unique<scene::Entity>(scene::EntityConfig{
-            .name = "Camera Holder",
-        });
-        cameraHolder->SetPosition(glm::vec3(0.0f, 0.0f, 0.0f));
-        auto *cameraHolderEntity = scene->AddEntity(std::move(cameraHolder));
-        auto *cameraEntity2Ptr = scene->AddEntity(std::move(cameraEntity2), cameraHolderEntity);
-
-        auto directionalLightEntity = std::make_unique<scene::Entity>(scene::EntityConfig{
-            .name = "Sun Light",
-        });
-        auto *directionalLightComponent = directionalLightEntity->CreateComponent<scene::LightComponent>();
-        directionalLightComponent->SetLightType(scene::LightType::Directional);
-        directionalLightComponent->SetColor(glm::vec3(1.0f, 0.96f, 0.9f));
-        directionalLightComponent->SetIntensity(3.5f);
-        directionalLightComponent->SetDirection(glm::normalize(glm::vec3(-0.45f, -1.0f, -0.3f)));
-        directionalLightComponent->SetCastsShadows(true);
-        directionalLightComponent->SetDirectionalShadowSettings(scene::DirectionalShadowSettings{
-            .cascadeCount = 4,
-            .resolution = 2048,
-            .maxDistance = 60.0f,
-            .splitLambda = 0.75f,
-            .cascadeBlendDistance = 6.0f,
-            .softness = 1.5f,
-        });
-        scene->AddEntity(std::move(directionalLightEntity));
-
-        for (int i = 0; i < 10; ++i)
-        {
-            auto lightEntity = std::make_unique<scene::Entity>(scene::EntityConfig{
-                .name = "Key Light " + std::to_string(i),
-            });
-            auto randomPosition = (randomColour() - 0.5f) * 10.0f;
-            lightEntity->SetPosition(glm::vec3(randomPosition.x, 5.0f, randomPosition.z));
-            // lightEntity->SetRotation(glm::vec3(-50.0f, -35.0f, 0.0f));
-            auto *lightComponent = lightEntity->CreateComponent<scene::LightComponent>();
-            lightComponent->SetColor(randomColour());
-            lightComponent->SetIntensity(5.0f);
-            lightComponent->SetRange(20.0f);
-            lightComponent->SetLightType(scene::LightType::Point);
-            lightComponent->SetCastsShadows(true);
-            scene->AddEntity(std::move(lightEntity));
-        }
 
         ViewportPanelConfig viewportConfig2;
         viewportConfig2.name = "Game Viewport";
@@ -373,7 +396,10 @@ namespace PlutoGE::ui
 
             const auto sceneUpdateStart = std::chrono::high_resolution_clock::now();
             m_engine.UpdateAsyncMeshImports();
-            scene->Update(deltaTime.count());
+            if (m_scene)
+            {
+                m_scene->Update(deltaTime.count());
+            }
             const auto sceneUpdateEnd = std::chrono::high_resolution_clock::now();
             frameTimingStats.sceneUpdateMs = std::chrono::duration<float, std::milli>(sceneUpdateEnd - sceneUpdateStart).count();
 
@@ -385,9 +411,9 @@ namespace PlutoGE::ui
                                lastEditorCameraCursorX,
                                lastEditorCameraCursorY);
 
-            auto *cameraComponent2 = cameraEntity2Ptr->GetComponent<scene::CameraComponent>();
+            auto *cameraComponent2 = FindFirstSceneCamera(m_scene.get());
             const bool shouldRenderViewport1 = viewportPanel->ShouldRenderFrame();
-            const bool shouldRenderViewport2 = viewportPanel2->ShouldRenderFrame() && IsCameraActiveInScene(scene.get(), cameraComponent2);
+            const bool shouldRenderViewport2 = viewportPanel2->ShouldRenderFrame() && IsCameraActiveInScene(m_scene.get(), cameraComponent2);
 
             const auto viewportRenderStart = std::chrono::high_resolution_clock::now();
             if (shouldRenderViewport1)
@@ -404,7 +430,7 @@ namespace PlutoGE::ui
                     editorPostProcessEffects.push_back(effect.get());
                 }
 
-                renderer.RenderFrame(editorCameraData, renderTarget, scene->GetLights(), &editorPostProcessEffects);
+                renderer.RenderFrame(editorCameraData, renderTarget, m_scene ? m_scene->GetLights() : std::vector<scene::Light *>{}, &editorPostProcessEffects, m_scene.get());
             }
             else
             {
@@ -441,8 +467,147 @@ namespace PlutoGE::ui
                 {
                     if (ImGui::MenuItem("New Scene"))
                     {
-                        scene = std::make_unique<scene::Scene>();
-                        m_engine.SetScene(scene.get());
+                        m_scene = CreateEmptyScene();
+                        m_engine.SetScene(m_scene.get());
+                        m_selectedEntity = nullptr;
+                        m_isEditorCameraSelected = false;
+                        m_statusMessage = "Created new scene";
+                    }
+                    if (ImGui::MenuItem("Open Scene..."))
+                    {
+                        const std::string filePath = ShowOpenFileDialog(kSceneFileFilter);
+                        if (!filePath.empty())
+                        {
+                            std::string errorMessage;
+                            auto loadedScene = scene::SceneSerializer::Load(filePath, &errorMessage);
+                            if (loadedScene)
+                            {
+                                m_scene = std::move(loadedScene);
+                                m_engine.SetScene(m_scene.get());
+                                m_selectedEntity = nullptr;
+                                m_isEditorCameraSelected = false;
+                                m_statusMessage = "Opened scene: " + std::filesystem::path(filePath).filename().string();
+                            }
+                            else
+                            {
+                                m_statusMessage = errorMessage.empty() ? "Failed to open scene" : errorMessage;
+                            }
+                        }
+                    }
+                    if (ImGui::MenuItem("Save Scene"))
+                    {
+                        if (m_scene)
+                        {
+                            std::string savePath = m_scene->GetFilePath();
+                            if (savePath.empty())
+                            {
+                                savePath = ShowSaveFileDialog(kSceneFileFilter, "scene.plutoscene");
+                            }
+
+                            if (!savePath.empty())
+                            {
+                                std::string errorMessage;
+                                if (scene::SceneSerializer::Save(*m_scene, savePath, &errorMessage))
+                                {
+                                    m_scene->SetFilePath(savePath);
+                                    m_statusMessage = "Saved scene: " + std::filesystem::path(savePath).filename().string();
+                                }
+                                else
+                                {
+                                    m_statusMessage = errorMessage.empty() ? "Failed to save scene" : errorMessage;
+                                }
+                            }
+                        }
+                    }
+                    if (ImGui::MenuItem("Save Scene As..."))
+                    {
+                        if (m_scene)
+                        {
+                            const std::string suggestedPath = m_scene->GetFilePath().empty() ? "scene.plutoscene" : m_scene->GetFilePath();
+                            const std::string savePath = ShowSaveFileDialog(kSceneFileFilter, suggestedPath);
+                            if (!savePath.empty())
+                            {
+                                std::string errorMessage;
+                                if (scene::SceneSerializer::Save(*m_scene, savePath, &errorMessage))
+                                {
+                                    m_scene->SetFilePath(savePath);
+                                    m_statusMessage = "Saved scene: " + std::filesystem::path(savePath).filename().string();
+                                }
+                                else
+                                {
+                                    m_statusMessage = errorMessage.empty() ? "Failed to save scene" : errorMessage;
+                                }
+                            }
+                        }
+                    }
+                    if (ImGui::MenuItem("Bake Scene"))
+                    {
+                        if (m_scene)
+                        {
+                            scene::SceneBaker baker;
+                            const auto bakeResult = baker.Bake(*m_scene, scene::SceneBakeSettings::Final());
+                            m_statusMessage = bakeResult.message;
+                            std::cout << bakeResult.message << std::endl;
+
+                            if (bakeResult.succeeded && !m_scene->GetFilePath().empty())
+                            {
+                                std::string errorMessage;
+                                if (scene::SceneSerializer::Save(*m_scene, m_scene->GetFilePath(), &errorMessage))
+                                {
+                                    m_statusMessage += " Saved scene.";
+                                }
+                                else if (!errorMessage.empty())
+                                {
+                                    m_statusMessage += " " + errorMessage;
+                                }
+                            }
+                        }
+                    }
+                    if (ImGui::MenuItem("Bake Scene Fast"))
+                    {
+                        if (m_scene)
+                        {
+                            scene::SceneBaker baker;
+                            const auto bakeResult = baker.Bake(*m_scene, scene::SceneBakeSettings::FastPreview());
+                            m_statusMessage = bakeResult.message;
+                            std::cout << bakeResult.message << std::endl;
+
+                            if (bakeResult.succeeded && !m_scene->GetFilePath().empty())
+                            {
+                                std::string errorMessage;
+                                if (scene::SceneSerializer::Save(*m_scene, m_scene->GetFilePath(), &errorMessage))
+                                {
+                                    m_statusMessage += " Saved scene.";
+                                }
+                                else if (!errorMessage.empty())
+                                {
+                                    m_statusMessage += " " + errorMessage;
+                                }
+                            }
+                        }
+                    }
+                    if (ImGui::MenuItem("Bake Scene Final"))
+                    {
+                        if (m_scene)
+                        {
+                            scene::SceneBaker baker;
+                            const auto bakeResult = baker.Bake(*m_scene, scene::SceneBakeSettings::Final());
+                            m_statusMessage = bakeResult.message;
+                            std::cout << bakeResult.message << std::endl;
+
+                            if (bakeResult.succeeded && !m_scene->GetFilePath().empty())
+                            {
+                                std::string errorMessage;
+                                if (scene::SceneSerializer::Save(*m_scene, m_scene->GetFilePath(), &errorMessage))
+                                {
+                                    m_statusMessage += " Saved scene.";
+                                }
+                                else if (!errorMessage.empty())
+                                {
+                                    m_statusMessage += " " + errorMessage;
+                                }
+                            }
+                        }
                     }
                     if (ImGui::MenuItem("Exit"))
                     {
@@ -473,6 +638,11 @@ namespace PlutoGE::ui
                         profilerPanel->SetOpen(!profilerPanel->IsOpen());
                     }
                     ImGui::EndMenu();
+                }
+                if (!m_statusMessage.empty())
+                {
+                    ImGui::Separator();
+                    ImGui::TextUnformatted(m_statusMessage.c_str());
                 }
                 ImGui::EndMainMenuBar();
             }
@@ -506,6 +676,9 @@ namespace PlutoGE::ui
 
     void EditorShell::Shutdown()
     {
+        m_selectedEntity = nullptr;
+        m_scene.reset();
+        m_engine.SetScene(nullptr);
         m_panelManager.ShutdownPanels();
         m_engine.Shutdown();
     }

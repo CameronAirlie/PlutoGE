@@ -29,6 +29,7 @@ namespace PlutoGE::render
         int GetHeight() const { return m_height; }
         int GetDepth() const { return m_depth; }
         int GetChannels() const { return m_channels; }
+        const std::string &GetFilePath() const { return m_filePath; }
 
         static Texture *LoadFromFile(const char *filePath);
         static Texture *DepthTexture(int width, int height);

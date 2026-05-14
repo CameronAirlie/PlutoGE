@@ -2,9 +2,15 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <glm/glm.hpp>
 #include <memory>
 #include <vector>
 #include <string>
+
+namespace PlutoGE::render
+{
+    class Texture;
+}
 
 namespace PlutoGE::scene
 {
@@ -13,11 +19,25 @@ namespace PlutoGE::scene
 
     using EntityID = uint32_t;
 
+    struct BakedProbeVolume
+    {
+        glm::vec3 origin{0.0f};
+        glm::vec3 size{1.0f};
+        glm::ivec3 resolution{0};
+        std::vector<glm::vec3> irradiance;
+
+        [[nodiscard]] bool IsValid() const
+        {
+            return resolution.x > 0 && resolution.y > 0 && resolution.z > 0 &&
+                   irradiance.size() == static_cast<std::size_t>(resolution.x * resolution.y * resolution.z);
+        }
+    };
+
     class Scene
     {
     public:
         Scene() = default;
-        ~Scene() = default;
+        ~Scene();
 
         Entity *AddEntity(std::unique_ptr<Entity> entity, Entity *parent = nullptr);
         void RemoveEntity(Entity *entity);
@@ -31,6 +51,13 @@ namespace PlutoGE::scene
 
         std::vector<Light *> GetLights() const { return m_lights; } // Get all lights in the scene (for rendering)
         void MarkShadowLightsDirty();
+        const std::string &GetFilePath() const { return m_filePath; }
+        void SetFilePath(const std::string &filePath) { m_filePath = filePath; }
+        const BakedProbeVolume &GetBakedProbeVolume() const { return m_bakedProbeVolume; }
+        bool HasBakedProbeVolume() const { return m_bakedProbeVolume.IsValid() && m_bakedProbeTexture != nullptr; }
+        render::Texture *GetBakedProbeTexture() const { return m_bakedProbeTexture.get(); }
+        void SetBakedProbeVolume(BakedProbeVolume bakedProbeVolume);
+        void ClearBakedProbeVolume();
 
     protected:
         friend class Entity;
@@ -49,7 +76,11 @@ namespace PlutoGE::scene
         std::vector<std::unique_ptr<Entity>> m_entityStorage;
         std::vector<Entity *> m_rootEntities;
         std::vector<Light *> m_lights;
+        std::string m_filePath;
+        BakedProbeVolume m_bakedProbeVolume;
+        std::unique_ptr<render::Texture> m_bakedProbeTexture;
         void CollectEntitySubtree(Entity *entity, std::vector<Entity *> &entities) const;
         bool RemoveEntityRecursive(Entity *current, Entity *target);
+        void RebuildBakedProbeTexture();
     };
 }

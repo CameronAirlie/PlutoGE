@@ -1,4 +1,5 @@
 #include <iostream>
+#include <vector>
 
 #include "PlutoGE/render/Shader.h"
 #include "PlutoGE/render/Texture.h"
@@ -6,6 +7,106 @@
 
 namespace PlutoGE::render
 {
+    namespace
+    {
+        constexpr int kTexture2DCacheIndex = 0;
+        constexpr int kTexture3DCacheIndex = 1;
+        constexpr int kTextureCubeCacheIndex = 2;
+        constexpr int kCachedTextureTargetCount = 3;
+
+        struct TextureUnitState
+        {
+            std::array<GLuint, kCachedTextureTargetCount> textureIds{};
+        };
+
+        struct RenderStateCache
+        {
+            GLuint boundProgram = 0;
+            int activeTextureSlot = -1;
+            std::vector<TextureUnitState> textureUnits;
+        };
+
+        int GetTextureCacheIndex(GLenum textureType)
+        {
+            switch (textureType)
+            {
+            case GL_TEXTURE_2D:
+                return kTexture2DCacheIndex;
+            case GL_TEXTURE_3D:
+                return kTexture3DCacheIndex;
+            case GL_TEXTURE_CUBE_MAP:
+                return kTextureCubeCacheIndex;
+            default:
+                return -1;
+            }
+        }
+
+        RenderStateCache &GetRenderStateCache()
+        {
+            static RenderStateCache cache;
+            return cache;
+        }
+
+        std::vector<TextureUnitState> &GetTextureUnitCache()
+        {
+            auto &cache = GetRenderStateCache();
+            if (!cache.textureUnits.empty())
+            {
+                return cache.textureUnits;
+            }
+
+            GLint unitCount = 0;
+            glGetIntegerv(GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS, &unitCount);
+            if (unitCount <= 0)
+            {
+                unitCount = 16;
+            }
+
+            cache.textureUnits.resize(static_cast<std::size_t>(unitCount));
+            return cache.textureUnits;
+        }
+
+        void BindTextureUnit(GLenum textureType, GLuint textureId, int slot)
+        {
+            if (slot < 0)
+            {
+                return;
+            }
+
+            auto &cache = GetRenderStateCache();
+            auto &textureUnits = GetTextureUnitCache();
+            if (slot >= static_cast<int>(textureUnits.size()))
+            {
+                glActiveTexture(GL_TEXTURE0 + slot);
+                glBindTexture(textureType, textureId);
+                cache.activeTextureSlot = slot;
+                return;
+            }
+
+            if (cache.activeTextureSlot != slot)
+            {
+                glActiveTexture(GL_TEXTURE0 + slot);
+                cache.activeTextureSlot = slot;
+            }
+
+            const int textureCacheIndex = GetTextureCacheIndex(textureType);
+            if (textureCacheIndex < 0)
+            {
+                glBindTexture(textureType, textureId);
+                return;
+            }
+
+            auto &unitState = textureUnits[slot];
+            if (unitState.textureIds[textureCacheIndex] == textureId)
+            {
+                return;
+            }
+
+            glBindTexture(textureType, textureId);
+            unitState.textureIds[textureCacheIndex] = textureId;
+        }
+    }
+
     // Helper: Compile shader
     GLuint CompileShader(GLenum type, const char *src)
     {
@@ -95,6 +196,44 @@ namespace PlutoGE::render
     Shader *Shader::Create(const ShaderSource &source)
     {
         return CreateShaderFromSource(source);
+    }
+
+    void Shader::Bind() const
+    {
+        if (m_programID == 0)
+        {
+            std::cerr << "Error: Attempting to bind an uninitialized shader!" << std::endl;
+            return;
+        }
+
+        auto &cache = GetRenderStateCache();
+        if (cache.boundProgram == m_programID)
+        {
+            return;
+        }
+
+        glUseProgram(m_programID);
+        cache.boundProgram = m_programID;
+    }
+
+    void Shader::Unbind() const
+    {
+        auto &cache = GetRenderStateCache();
+        if (cache.boundProgram == 0)
+        {
+            return;
+        }
+
+        glUseProgram(0);
+        cache.boundProgram = 0;
+    }
+
+    void Shader::ResetStateCache()
+    {
+        auto &cache = GetRenderStateCache();
+        cache.boundProgram = 0;
+        cache.activeTextureSlot = -1;
+        cache.textureUnits.clear();
     }
 
     GLint Shader::ResolveUniformLocation(const std::string &name, bool warnIfMissing) const
@@ -188,8 +327,7 @@ namespace PlutoGE::render
         GLint location = GetUniformLocation(name);
         if (location != -1)
         {
-            glActiveTexture(GL_TEXTURE0 + slot);
-            glBindTexture(texture->GetType(), texture->GetTextureID());
+            BindTextureUnit(texture->GetType(), texture->GetTextureID(), slot);
             glUniform1i(location, slot);
         }
     }

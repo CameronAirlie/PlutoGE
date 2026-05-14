@@ -30,6 +30,8 @@ namespace PlutoGE::render
         float roughness = 1.0f;              // Roughness factor (0.0 = smooth, 1.0 = rough)
         Texture *roughnessTexture = nullptr; // Pointer to a roughness texture (if any)
         TextureChannel roughnessTextureChannel = TextureChannel::Red;
+
+        Texture *lightmapTexture = nullptr; // Optional baked lighting texture sampled with UV2
     };
 
     class Material
@@ -54,6 +56,7 @@ namespace PlutoGE::render
         void SetRoughness(float roughness) { m_config.roughness = roughness; }
         void SetRoughnessTexture(Texture *texture) { m_config.roughnessTexture = texture; }
         void SetRoughnessTextureChannel(TextureChannel channel) { m_config.roughnessTextureChannel = channel; }
+        void SetLightmapTexture(Texture *texture) { m_config.lightmapTexture = texture; }
         MaterialConfig &GetConfig() { return m_config; }
         const MaterialConfig &GetConfig() const { return m_config; }
 

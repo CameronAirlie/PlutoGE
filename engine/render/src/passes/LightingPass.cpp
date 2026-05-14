@@ -11,6 +11,7 @@
 #include "PlutoGE/render/postprocess/SSGIEffect.h"
 #include "PlutoGE/render/passes/LightPropagationVolumePass.h"
 #include "PlutoGE/scene/components/LightComponent.h"
+#include "PlutoGE/scene/Scene.h"
 
 namespace PlutoGE::render
 {
@@ -19,11 +20,13 @@ namespace PlutoGE::render
         constexpr int kPositionTextureSlot = 0;
         constexpr int kNormalTextureSlot = 1;
         constexpr int kAlbedoTextureSlot = 2;
-        constexpr int kDirectionalShadowCascadeTextureStartSlot = 3;
+        constexpr int kBakedLightingTextureSlot = 3;
+        constexpr int kDirectionalShadowCascadeTextureStartSlot = 4;
         constexpr int kShadowMap2DTextureSlot = kDirectionalShadowCascadeTextureStartSlot + scene::kMaxDirectionalShadowCascades;
         constexpr int kShadowMapCubeTextureSlot = kShadowMap2DTextureSlot + 1;
         constexpr int kLightPropagationVolumeTextureSlot = kShadowMapCubeTextureSlot + 1;
         constexpr int kPreviousLightPropagationVolumeTextureSlot = kLightPropagationVolumeTextureSlot + 1;
+        constexpr int kBakedProbeTextureSlot = kPreviousLightPropagationVolumeTextureSlot + 1;
         constexpr int kAmbientPassMode = 0;
         constexpr int kLightPassMode = 1;
         constexpr int kIndirectTextureSlot = 0;
@@ -137,6 +140,10 @@ namespace PlutoGE::render
             glBindTexture(GL_TEXTURE_2D, gBuffer->GetAlbedoTextureID());
             shader->SetUniform("gAlbedoSpec", kAlbedoTextureSlot);
 
+            glActiveTexture(GL_TEXTURE0 + kBakedLightingTextureSlot);
+            glBindTexture(GL_TEXTURE_2D, gBuffer->GetBakedLightingTextureID());
+            shader->SetUniform("gBakedLighting", kBakedLightingTextureSlot);
+
             for (int cascadeIndex = 0; cascadeIndex < scene::kMaxDirectionalShadowCascades; ++cascadeIndex)
             {
                 const int textureSlot = kDirectionalShadowCascadeTextureStartSlot + cascadeIndex;
@@ -163,6 +170,11 @@ namespace PlutoGE::render
             glActiveTexture(GL_TEXTURE0 + kPreviousLightPropagationVolumeTextureSlot);
             glBindTexture(GL_TEXTURE_3D, previousLpvTexture ? previousLpvTexture->GetTextureID() : 0);
             shader->SetUniform("uPreviousLpvVolume", kPreviousLightPropagationVolumeTextureSlot);
+
+            auto *bakedProbeTexture = ctx.scene ? ctx.scene->GetBakedProbeTexture() : nullptr;
+            glActiveTexture(GL_TEXTURE0 + kBakedProbeTextureSlot);
+            glBindTexture(GL_TEXTURE_3D, bakedProbeTexture ? bakedProbeTexture->GetTextureID() : 0);
+            shader->SetUniform("uBakedProbeVolume", kBakedProbeTextureSlot);
         }
 
         bool BindShadowMapForLight(const scene::Light &light)
@@ -249,6 +261,7 @@ namespace PlutoGE::render
             shader->SetUniform("uLight.Range", light.range);
             shader->SetUniform("uLight.Direction", light.direction);
             shader->SetUniform("uLight.Type", static_cast<int>(light.type));
+            shader->SetUniform("uLight.IsStatic", light.isStatic ? 1 : 0);
             shader->SetUniform("uLight.CastsShadows", hasShadowMap ? 1 : 0);
             shader->SetUniform("uLight.LightSpaceMatrix", light.shadowMatrix);
             shader->SetUniform("uLight.ShadowFarPlane", light.shadowFarPlane);
@@ -437,6 +450,9 @@ namespace PlutoGE::render
         m_lightingPassShader->SetUniform("uPreviousLpvSize", lpvPass ? lpvPass->GetPreviousGridSize() : glm::vec3(1.0f));
         m_lightingPassShader->SetUniform("uLpvTransitionBlend", lpvPass ? lpvPass->GetTransitionBlendFactor() : 1.0f);
         m_lightingPassShader->SetUniform("uAmbientOutputMode", ambientOutputMode);
+        m_lightingPassShader->SetUniform("uBakedProbeEnabled", ctx.scene && ctx.scene->HasBakedProbeVolume() ? 1 : 0);
+        m_lightingPassShader->SetUniform("uBakedProbeOrigin", ctx.scene ? ctx.scene->GetBakedProbeVolume().origin : glm::vec3(0.0f));
+        m_lightingPassShader->SetUniform("uBakedProbeSize", ctx.scene ? ctx.scene->GetBakedProbeVolume().size : glm::vec3(1.0f));
 
         glDisable(GL_BLEND);
         m_lightingPassShader->SetUniform("uPassMode", kAmbientPassMode);

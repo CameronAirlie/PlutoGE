@@ -9,43 +9,42 @@ namespace PlutoGE::render
 {
     void Material::Bind(Shader *shader)
     {
-        if (!shader)
+        Shader *activeShader = shader ? shader : m_overrideShader;
+        if (!activeShader)
         {
             std::cerr << "Material has no shader assigned!" << std::endl;
             return;
         }
 
-        shader->Bind();
-
-        const auto setVec4 = [shader](const char *name, const glm::vec4 &value)
+        const auto setVec4 = [activeShader](const char *name, const glm::vec4 &value)
         {
-            if (shader->HasUniform(name))
+            if (activeShader->HasUniform(name))
             {
-                shader->SetUniform(name, value);
+                activeShader->SetUniform(name, value);
             }
         };
 
-        const auto setFloat = [shader](const char *name, float value)
+        const auto setFloat = [activeShader](const char *name, float value)
         {
-            if (shader->HasUniform(name))
+            if (activeShader->HasUniform(name))
             {
-                shader->SetUniform(name, value);
+                activeShader->SetUniform(name, value);
             }
         };
 
-        const auto setInt = [shader](const char *name, int value)
+        const auto setInt = [activeShader](const char *name, int value)
         {
-            if (shader->HasUniform(name))
+            if (activeShader->HasUniform(name))
             {
-                shader->SetUniform(name, value);
+                activeShader->SetUniform(name, value);
             }
         };
 
-        const auto setTexture = [shader](const char *name, Texture *texture, int slot)
+        const auto setTexture = [activeShader](const char *name, Texture *texture, int slot)
         {
-            if (texture && shader->HasUniform(name))
+            if (texture && activeShader->HasUniform(name))
             {
-                shader->SetUniform(name, texture, slot);
+                activeShader->SetUniform(name, texture, slot);
             }
         };
 
@@ -100,6 +99,16 @@ namespace PlutoGE::render
         else
         {
             setFloat("uHasRoughnessTexture", 0.0f);
+        }
+
+        if (m_config.lightmapTexture)
+        {
+            setTexture("uLightmapTexture", m_config.lightmapTexture, 4);
+            setFloat("uHasLightmapTexture", 1.0f);
+        }
+        else
+        {
+            setFloat("uHasLightmapTexture", 0.0f);
         }
     }
 }

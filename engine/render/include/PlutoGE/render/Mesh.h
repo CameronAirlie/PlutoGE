@@ -13,10 +13,11 @@ namespace PlutoGE::render
 
     struct MeshVertexData
     {
-        std::array<float, 3> position; // Vertex position (x, y, z)
-        std::array<float, 3> normal;   // Vertex normal (x, y, z)
-        std::array<float, 2> uv;       // Texture coordinates (u, v)
-        std::array<float, 4> tangent;  // Vertex tangent (x, y, z, w) - w can be used for handedness
+        std::array<float, 3> position;        // Vertex position (x, y, z)
+        std::array<float, 3> normal;          // Vertex normal (x, y, z)
+        std::array<float, 2> uv;              // Texture coordinates (u, v)
+        std::array<float, 4> tangent;         // Vertex tangent (x, y, z, w) - w can be used for handedness
+        std::array<float, 2> uv2{0.0f, 0.0f}; // Secondary UVs for baked lightmaps
     };
 
     struct MeshData
@@ -43,6 +44,7 @@ namespace PlutoGE::render
     {
         MeshData data;
         std::vector<Submesh> submeshes;
+        bool hasLightmapUvs = false;
     };
 
     class Graphics;
@@ -156,11 +158,12 @@ namespace PlutoGE::render
             return mesh;
         }
 
-        static Mesh *FromData(MeshData data, std::vector<Submesh> submeshes = {})
+        static Mesh *FromData(MeshData data, std::vector<Submesh> submeshes = {}, bool hasLightmapUvs = false)
         {
             MeshConfig config;
             config.data = std::move(data);
             config.submeshes = std::move(submeshes);
+            config.hasLightmapUvs = hasLightmapUvs;
 
             Mesh *mesh = new Mesh(config);
             mesh->Initialize();
@@ -257,6 +260,28 @@ namespace PlutoGE::render
         size_t GetSubmeshCount() const { return m_config.submeshes.size(); }
         const Submesh &GetSubmesh(size_t index) const { return m_config.submeshes.at(index); }
         const MeshBounds &GetBounds() const { return m_bounds; }
+        bool HasLightmapUvs() const { return m_config.hasLightmapUvs; }
+        bool HasUsablePrimaryUvsForSubmesh(size_t submeshIndex) const
+        {
+            if (submeshIndex >= m_config.submeshes.size())
+            {
+                return HasUsableUvs(m_meshData, 0, static_cast<uint32_t>(m_meshData.indices.size()), false);
+            }
+
+            const auto &submesh = m_config.submeshes[submeshIndex];
+            return HasUsableUvs(m_meshData, submesh.indexOffset, submesh.indexCount, false);
+        }
+        bool HasUsableLightmapUvsForSubmesh(size_t submeshIndex) const
+        {
+            if (submeshIndex >= m_config.submeshes.size())
+            {
+                return HasUsableUvs(m_meshData, 0, static_cast<uint32_t>(m_meshData.indices.size()), true);
+            }
+
+            const auto &submesh = m_config.submeshes[submeshIndex];
+            return HasUsableUvs(m_meshData, submesh.indexOffset, submesh.indexCount, true);
+        }
+        const MeshData &GetMeshData() const { return m_meshData; }
 
         GLuint GetVAO() const { return m_VAO; }
         GLuint GetVBO() const { return m_VBO; }
@@ -301,6 +326,39 @@ namespace PlutoGE::render
             }
 
             return true;
+        }
+
+        static bool HasUsableUvs(const MeshData &meshData, uint32_t indexOffset, uint32_t indexCount, bool useLightmapUvs)
+        {
+            if (indexOffset + indexCount > meshData.indices.size())
+            {
+                return false;
+            }
+
+            for (uint32_t triangleStart = indexOffset; triangleStart + 2 < indexOffset + indexCount; triangleStart += 3)
+            {
+                const auto index0 = meshData.indices[triangleStart];
+                const auto index1 = meshData.indices[triangleStart + 1];
+                const auto index2 = meshData.indices[triangleStart + 2];
+                if (index0 >= meshData.vertices.size() || index1 >= meshData.vertices.size() || index2 >= meshData.vertices.size())
+                {
+                    continue;
+                }
+
+                const auto &vertex0 = meshData.vertices[index0];
+                const auto &vertex1 = meshData.vertices[index1];
+                const auto &vertex2 = meshData.vertices[index2];
+                const glm::vec2 uv0 = useLightmapUvs ? ToVec2(vertex0.uv2) : ToVec2(vertex0.uv);
+                const glm::vec2 uv1 = useLightmapUvs ? ToVec2(vertex1.uv2) : ToVec2(vertex1.uv);
+                const glm::vec2 uv2 = useLightmapUvs ? ToVec2(vertex2.uv2) : ToVec2(vertex2.uv);
+                const float signedArea = (uv1.x - uv0.x) * (uv2.y - uv0.y) - (uv1.y - uv0.y) * (uv2.x - uv0.x);
+                if (std::abs(signedArea) > 1e-6f)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         static MeshBounds ComputeBounds(const MeshData &meshData)
@@ -460,6 +518,8 @@ namespace PlutoGE::render
             glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(MeshVertexData), (void *)offsetof(MeshVertexData, uv));
             glEnableVertexAttribArray(3); // Tangent
             glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, sizeof(MeshVertexData), (void *)offsetof(MeshVertexData, tangent));
+            glEnableVertexAttribArray(4); // Lightmap UVs
+            glVertexAttribPointer(4, 2, GL_FLOAT, GL_FALSE, sizeof(MeshVertexData), (void *)offsetof(MeshVertexData, uv2));
 
             glBindVertexArray(0); // Unbind VAO after setup
 

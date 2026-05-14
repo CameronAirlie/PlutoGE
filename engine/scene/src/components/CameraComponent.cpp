@@ -227,6 +227,11 @@ namespace PlutoGE::scene
 
     void CameraComponent::Deserialize(const std::vector<Property> &properties)
     {
+        if (!m_camera)
+        {
+            m_camera = std::make_unique<render::Camera>(render::CameraConfig{});
+        }
+
         bool hasSerializedEffects = false;
         std::map<size_t, SerializedEffectData> serializedEffects;
 

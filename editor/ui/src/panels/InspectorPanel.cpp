@@ -4,14 +4,18 @@
 #include "PlutoGE/scene/components/Component.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/render/Camera.h"
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/postprocess/IPostProcessEffect.h"
 #include "PlutoGE/render/postprocess/PostProcessEffectFactory.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
+#include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/Entity.h"
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <cstring>
+#include <unordered_map>
 #include <imgui.h>
 #ifdef _WIN32
 #include <windows.h>
@@ -22,11 +26,95 @@ namespace PlutoGE::ui
 {
     namespace
     {
+        constexpr std::size_t kInspectorPathBufferSize = 512;
+        constexpr const char *kAddableComponentLabels[] = {
+            "Mesh Component",
+            "Camera Component",
+            "Light Component",
+        };
+
+        enum class AddableComponentType
+        {
+            Mesh = 0,
+            Camera = 1,
+            Light = 2,
+        };
+
         glm::vec3 ParseVec3Property(const std::string &value)
         {
             glm::vec3 parsedValue{0.0f};
             sscanf_s(value.c_str(), "%f,%f,%f", &parsedValue.x, &parsedValue.y, &parsedValue.z);
             return parsedValue;
+        }
+
+        std::array<char, kInspectorPathBufferSize> &GetLightmapPathBuffer(const scene::Entity &entity, uint32_t materialSlot)
+        {
+            static std::unordered_map<std::string, std::array<char, kInspectorPathBufferSize>> lightmapPathBuffers;
+            const std::string key = std::to_string(entity.GetID()) + ":" + std::to_string(materialSlot);
+            return lightmapPathBuffers[key];
+        }
+
+        const char *GetComponentDisplayName(const scene::Component &component)
+        {
+            if (dynamic_cast<const scene::MeshComponent *>(&component))
+            {
+                return "Mesh Component";
+            }
+            if (dynamic_cast<const scene::CameraComponent *>(&component))
+            {
+                return "Camera Component";
+            }
+            if (dynamic_cast<const scene::LightComponent *>(&component))
+            {
+                return "Light Component";
+            }
+
+            return typeid(component).name();
+        }
+
+        bool CanAddComponentType(const scene::Entity &entity, AddableComponentType componentType)
+        {
+            switch (componentType)
+            {
+            case AddableComponentType::Mesh:
+                return !entity.HasComponent<scene::MeshComponent>();
+            case AddableComponentType::Camera:
+                return !entity.HasComponent<scene::CameraComponent>();
+            case AddableComponentType::Light:
+                return !entity.HasComponent<scene::LightComponent>();
+            default:
+                return false;
+            }
+        }
+
+        void AddComponentToEntity(scene::Entity &entity, AddableComponentType componentType)
+        {
+            auto &engine = core::Engine::GetInstance();
+            switch (componentType)
+            {
+            case AddableComponentType::Mesh:
+            {
+                entity.CreateComponent<scene::MeshComponent>(scene::MeshComponentConfig{
+                    .mesh = nullptr,
+                    .material = engine.GetAssetManager().CreateDefaultMaterial(),
+                });
+                break;
+            }
+            case AddableComponentType::Camera:
+            {
+                entity.CreateComponent<scene::CameraComponent>(new render::Camera(render::CameraConfig{
+                    .fovY = 60.0f,
+                    .nearPlane = 0.1f,
+                    .farPlane = 100.0f,
+                }));
+                break;
+            }
+            case AddableComponentType::Light:
+                entity.CreateComponent<scene::LightComponent>();
+                break;
+            default:
+                break;
+            }
         }
     }
 
@@ -549,10 +637,52 @@ namespace PlutoGE::ui
                                                 materialConfig.normalTexture ? "yes" : "no",
                                                 materialConfig.metallicTexture || materialConfig.roughnessTexture ? "yes" : "no");
 
+                                    auto &lightmapPathBuffer = GetLightmapPathBuffer(*entity, static_cast<uint32_t>(submeshIndex));
+                                    ImGui::InputText("Lightmap Path", lightmapPathBuffer.data(), lightmapPathBuffer.size());
+                                    ImGui::SameLine();
+                                    if (ImGui::Button("...##Lightmap"))
+                                    {
+#ifdef _WIN32
+                                        OPENFILENAMEA ofn = {};
+                                        char fileName[MAX_PATH] = "";
+                                        ofn.lStructSize = sizeof(ofn);
+                                        ofn.hwndOwner = nullptr;
+                                        ofn.lpstrFilter = "Texture Files\0*.png;*.jpg;*.jpeg;*.tga;*.bmp;*.hdr\0All Files\0*.*\0";
+                                        ofn.lpstrFile = fileName;
+                                        ofn.nMaxFile = MAX_PATH;
+                                        ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+                                        if (GetOpenFileNameA(&ofn))
+                                        {
+                                            strncpy_s(lightmapPathBuffer.data(), lightmapPathBuffer.size(), fileName, _TRUNCATE);
+                                        }
+#endif
+                                    }
+
+                                    ImGui::BeginDisabled(std::strlen(lightmapPathBuffer.data()) == 0);
+                                    if (ImGui::Button("Load Lightmap"))
+                                    {
+                                        auto *lightmapTexture = engine.GetTextureManager().LoadLightmapFromFile(lightmapPathBuffer.data());
+                                        material->SetLightmapTexture(lightmapTexture);
+                                    }
+                                    ImGui::EndDisabled();
+
+                                    ImGui::SameLine();
+                                    if (ImGui::Button("Clear Lightmap"))
+                                    {
+                                        material->SetLightmapTexture(nullptr);
+                                    }
+
+                                    ImGui::Text("Baked Lightmap: %s", materialConfig.lightmapTexture ? "yes" : "no");
+
+                                    if (meshComponent->IsStatic() && materialConfig.lightmapTexture && meshComponent->GetMesh() && !meshComponent->GetMesh()->HasUsableLightmapUvsForSubmesh(submeshIndex))
+                                    {
+                                        ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "Baking is using UV0 because TEXCOORD_1 / UV2 is missing. UV2 is still preferred to avoid overlap artifacts.");
+                                    }
+
                                     if (ImGui::Button("Make Unique Override"))
                                     {
                                         auto *overrideMaterial = new render::Material(material->GetConfig());
-                                        meshComponent->SetMaterialForMaterialSlot(submesh.materialIndex, overrideMaterial);
+                                        meshComponent->SetMaterialForSubmesh(submeshIndex, overrideMaterial);
                                     }
                                 }
                                 else
@@ -571,20 +701,68 @@ namespace PlutoGE::ui
             // Components
             if (ImGui::CollapsingHeader("Components"))
             {
+                static int selectedComponentTypeIndex = 0;
+                selectedComponentTypeIndex = std::clamp(selectedComponentTypeIndex, 0, static_cast<int>(IM_ARRAYSIZE(kAddableComponentLabels)) - 1);
+
+                ImGui::SetNextItemWidth(180.0f);
+                ImGui::Combo("Add Component", &selectedComponentTypeIndex, kAddableComponentLabels, IM_ARRAYSIZE(kAddableComponentLabels));
+                ImGui::SameLine();
+
+                const auto selectedComponentType = static_cast<AddableComponentType>(selectedComponentTypeIndex);
+                const bool canAddSelectedComponent = CanAddComponentType(*entity, selectedComponentType);
+                ImGui::BeginDisabled(!canAddSelectedComponent);
+                if (ImGui::Button("Add##Component"))
+                {
+                    AddComponentToEntity(*entity, selectedComponentType);
+                }
+                ImGui::EndDisabled();
+
+                if (!canAddSelectedComponent)
+                {
+                    ImGui::TextDisabled("Selected component already exists on this entity.");
+                }
+
                 int componentIndex = 0;
+                scene::Component *componentToRemove = nullptr;
                 for (const auto &component : entity->GetComponentBuckets())
                 {
                     if (!component.empty())
                     {
                         auto *componentPtr = component.front();
                         ImGui::PushID(componentIndex++);
-                        ImGui::Text("Component: %s", typeid(*componentPtr).name());
+                        const bool isComponentOpen = ImGui::TreeNodeEx(GetComponentDisplayName(*componentPtr), ImGuiTreeNodeFlags_DefaultOpen);
+                        ImGui::SameLine();
+                        if (ImGui::Button("Remove"))
+                        {
+                            componentToRemove = componentPtr;
+                        }
+
+                        if (!isComponentOpen)
+                        {
+                            ImGui::PopID();
+                            if (componentToRemove)
+                            {
+                                break;
+                            }
+                            continue;
+                        }
+
+                        bool isEnabled = componentPtr->IsEnabled();
+                        if (ImGui::Checkbox("Enabled", &isEnabled))
+                        {
+                            componentPtr->SetEnabled(isEnabled);
+                        }
+
                         auto properties = componentPtr->Serialize();
                         bool propertiesChanged = false;
 
                         if (auto *cameraComponent = dynamic_cast<scene::CameraComponent *>(componentPtr))
                         {
                             RenderCameraPostProcessEditor(*cameraComponent);
+                        }
+                        else if (dynamic_cast<scene::LightComponent *>(componentPtr))
+                        {
+                            ImGui::TextDisabled("Only lights marked Static contribute to Bake Scene.");
                         }
 
                         int propertyIndex = 0;
@@ -605,8 +783,19 @@ namespace PlutoGE::ui
                             componentPtr->Deserialize(properties);
                         }
 
+                        ImGui::TreePop();
                         ImGui::PopID();
+
+                        if (componentToRemove)
+                        {
+                            break;
+                        }
                     }
+                }
+
+                if (componentToRemove)
+                {
+                    entity->RemoveComponent(componentToRemove);
                 }
             }
         }

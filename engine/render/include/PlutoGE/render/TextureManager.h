@@ -15,6 +15,9 @@ namespace PlutoGE::render
 
         Texture *LoadTextureFromFile(const char *filePath);
         Texture *LoadTextureFromMemory(const std::string &cacheKey, const unsigned char *pixels, int width, int height, int channels);
+        Texture *LoadLightmapFromFile(const char *filePath);
+        Texture *LoadLightmapFromMemory(const std::string &cacheKey, const unsigned char *pixels, int width, int height, int channels);
+        Texture *LoadLightmapFromMemory(const std::string &cacheKey, const float *pixels, int width, int height, int channels);
 
         Texture *CreateDepthTexture(int width, int height);
         Texture *CreateDepthCubemap(int width, int height);

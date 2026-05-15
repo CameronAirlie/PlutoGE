@@ -545,7 +545,7 @@ namespace PlutoGE::ui
                         if (m_scene)
                         {
                             scene::SceneBaker baker;
-                            const auto bakeResult = baker.Bake(*m_scene, scene::SceneBakeSettings::Final());
+                            const auto bakeResult = baker.Bake(*m_scene, scene::SceneBakeSettings::BalancedPreview());
                             m_statusMessage = bakeResult.message;
                             std::cout << bakeResult.message << std::endl;
 

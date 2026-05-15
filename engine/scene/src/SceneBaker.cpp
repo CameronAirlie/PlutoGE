@@ -713,7 +713,8 @@ namespace PlutoGE::scene
             return irradiance;
         }
 
-        glm::vec3 EvaluateIndirectBounceIrradiance(const glm::vec3 &position,
+        glm::vec3 EvaluateIndirectBounceIrradiance(const BakeTriangle &sourceTriangle,
+                                                   const glm::vec3 &position,
                                                    const glm::vec3 &shadingNormal,
                                                    const glm::vec3 &geometricNormal,
                                                    float rayEpsilon,
@@ -747,16 +748,46 @@ namespace PlutoGE::scene
                     continue;
                 }
 
-                const auto hit = TraceScene(rayOrigin, sampleDirection, std::numeric_limits<float>::max(), triangles, acceleration);
-                if (!hit.has_value())
+                std::optional<RayHit> selectedHit;
+                std::optional<RayHit> fallbackSelfHit;
+                glm::vec3 traceOrigin = rayOrigin;
+                for (int traceStep = 0; traceStep < 8; ++traceStep)
+                {
+                    const auto hit = TraceScene(traceOrigin, sampleDirection, std::numeric_limits<float>::max(), triangles, acceleration);
+                    if (!hit.has_value())
+                    {
+                        break;
+                    }
+
+                    const auto &hitTriangle = triangles[hit->triangleIndex];
+                    const glm::vec3 hitPosition = hitTriangle.worldPositions[0] * hit->barycentric.x + hitTriangle.worldPositions[1] * hit->barycentric.y + hitTriangle.worldPositions[2] * hit->barycentric.z;
+                    if (hitTriangle.meshComponent != sourceTriangle.meshComponent)
+                    {
+                        selectedHit = hit;
+                        break;
+                    }
+
+                    if (!fallbackSelfHit.has_value())
+                    {
+                        fallbackSelfHit = hit;
+                    }
+
+                    traceOrigin = hitPosition + sampleDirection * std::max(ResolveRayEpsilon(hitTriangle), rayEpsilon);
+                }
+
+                if (!selectedHit.has_value())
+                {
+                    selectedHit = fallbackSelfHit;
+                }
+                if (!selectedHit.has_value())
                 {
                     continue;
                 }
 
-                const auto &triangle = triangles[hit->triangleIndex];
-                const glm::vec3 hitPosition = triangle.worldPositions[0] * hit->barycentric.x + triangle.worldPositions[1] * hit->barycentric.y + triangle.worldPositions[2] * hit->barycentric.z;
+                const auto &triangle = triangles[selectedHit->triangleIndex];
+                const glm::vec3 hitPosition = triangle.worldPositions[0] * selectedHit->barycentric.x + triangle.worldPositions[1] * selectedHit->barycentric.y + triangle.worldPositions[2] * selectedHit->barycentric.z;
                 const glm::vec3 hitGeometricNormal = ComputeTriangleNormal(triangle);
-                const glm::vec3 hitShadingNormal = ResolveInterpolatedNormal(triangle, hit->barycentric);
+                const glm::vec3 hitShadingNormal = ResolveInterpolatedNormal(triangle, selectedHit->barycentric);
                 const float hitFacing = std::min(
                     glm::max(glm::dot(hitShadingNormal, -sampleDirection), 0.0f),
                     glm::max(glm::dot(hitGeometricNormal, -sampleDirection), 0.0f));
@@ -767,7 +798,7 @@ namespace PlutoGE::scene
 
                 const float hitRayEpsilon = ResolveRayEpsilon(triangle);
                 const glm::vec3 directIrradiance = EvaluateStaticLightIrradiance(hitPosition, hitShadingNormal, hitGeometricNormal, hitRayEpsilon, scene, triangles, acceleration);
-                accumulatedIrradiance += directIrradiance * SampleTriangleAlbedo(triangle, hit->barycentric, textureCache);
+                accumulatedIrradiance += directIrradiance * SampleTriangleAlbedo(triangle, selectedHit->barycentric, textureCache);
             }
 
             if (accumulatedIrradiance == glm::vec3(0.0f))
@@ -1214,7 +1245,7 @@ namespace PlutoGE::scene
 
             BakedTexelLighting lighting;
             lighting.direct = EvaluateStaticLightIrradiance(worldPosition, shadingNormal, geometricNormal, rayEpsilon, scene, triangles, acceleration);
-            lighting.indirect = EvaluateIndirectBounceIrradiance(worldPosition, shadingNormal, geometricNormal, rayEpsilon, scene, triangles, acceleration, indirectBounceDirections, lightmapBounceStrength, albedoTextureCache);
+            lighting.indirect = EvaluateIndirectBounceIrradiance(triangle, worldPosition, shadingNormal, geometricNormal, rayEpsilon, scene, triangles, acceleration, indirectBounceDirections, lightmapBounceStrength, albedoTextureCache);
             return lighting;
         }
 

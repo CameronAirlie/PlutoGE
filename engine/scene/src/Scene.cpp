@@ -3,12 +3,31 @@
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/render/Texture.h"
 #include <algorithm>
+#include <cmath>
 #include <iostream>
 #include <unordered_set>
 
 namespace PlutoGE::scene
 {
     Scene::~Scene() = default;
+
+    void Scene::SetEnvironmentMap(render::Texture *texture, const std::string &filePath)
+    {
+        m_environmentMapTexture = texture;
+        m_environmentMapPath = filePath;
+    }
+
+    void Scene::ClearEnvironmentMap()
+    {
+        m_environmentMapTexture = nullptr;
+        m_environmentMapPath.clear();
+        m_environmentIntensity = 1.0f;
+    }
+
+    void Scene::SetEnvironmentIntensity(float intensity)
+    {
+        m_environmentIntensity = std::max(intensity, 0.0f);
+    }
 
     void Scene::RebuildBakedProbeTexture()
     {

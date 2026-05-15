@@ -13,6 +13,9 @@
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/Scene.h"
 
+#include <algorithm>
+#include <cmath>
+
 namespace PlutoGE::render
 {
     namespace
@@ -27,6 +30,7 @@ namespace PlutoGE::render
         constexpr int kLightPropagationVolumeTextureSlot = kShadowMapCubeTextureSlot + 1;
         constexpr int kPreviousLightPropagationVolumeTextureSlot = kLightPropagationVolumeTextureSlot + 1;
         constexpr int kBakedProbeTextureSlot = kPreviousLightPropagationVolumeTextureSlot + 1;
+        constexpr int kEnvironmentTextureSlot = kBakedProbeTextureSlot + 1;
         constexpr int kAmbientPassMode = 0;
         constexpr int kLightPassMode = 1;
         constexpr int kIndirectTextureSlot = 0;
@@ -175,6 +179,11 @@ namespace PlutoGE::render
             glActiveTexture(GL_TEXTURE0 + kBakedProbeTextureSlot);
             glBindTexture(GL_TEXTURE_3D, bakedProbeTexture ? bakedProbeTexture->GetTextureID() : 0);
             shader->SetUniform("uBakedProbeVolume", kBakedProbeTextureSlot);
+
+            auto *environmentTexture = ctx.scene ? ctx.scene->GetEnvironmentMapTexture() : nullptr;
+            glActiveTexture(GL_TEXTURE0 + kEnvironmentTextureSlot);
+            glBindTexture(GL_TEXTURE_2D, environmentTexture ? environmentTexture->GetTextureID() : 0);
+            shader->SetUniform("uEnvironmentMap", kEnvironmentTextureSlot);
         }
 
         bool BindShadowMapForLight(const scene::Light &light)
@@ -443,6 +452,8 @@ namespace PlutoGE::render
 
         m_lightingPassShader->SetUniform("uViewPos", cameraPos);
         m_lightingPassShader->SetUniform("uViewMatrix", ctx.cameraData.view);
+        m_lightingPassShader->SetUniform("uInverseViewMatrix", glm::inverse(ctx.cameraData.view));
+        m_lightingPassShader->SetUniform("uInverseProjectionMatrix", glm::inverse(ctx.cameraData.projection));
         m_lightingPassShader->SetUniform("uLpvEnabled", enableLpv && lpvPass && lpvPass->GetVolumeTexture() ? 1 : 0);
         m_lightingPassShader->SetUniform("uLpvOrigin", lpvPass ? lpvPass->GetGridOrigin() : glm::vec3(0.0f));
         m_lightingPassShader->SetUniform("uLpvSize", lpvPass ? lpvPass->GetGridSize() : glm::vec3(1.0f));
@@ -453,6 +464,11 @@ namespace PlutoGE::render
         m_lightingPassShader->SetUniform("uBakedProbeEnabled", ctx.scene && ctx.scene->HasBakedProbeVolume() ? 1 : 0);
         m_lightingPassShader->SetUniform("uBakedProbeOrigin", ctx.scene ? ctx.scene->GetBakedProbeVolume().origin : glm::vec3(0.0f));
         m_lightingPassShader->SetUniform("uBakedProbeSize", ctx.scene ? ctx.scene->GetBakedProbeVolume().size : glm::vec3(1.0f));
+        m_lightingPassShader->SetUniform("uEnvironmentEnabled", ctx.scene && ctx.scene->GetEnvironmentMapTexture() ? 1 : 0);
+        m_lightingPassShader->SetUniform("uEnvironmentIntensity", ctx.scene ? ctx.scene->GetEnvironmentIntensity() : 1.0f);
+        const auto *environmentTexture = ctx.scene ? ctx.scene->GetEnvironmentMapTexture() : nullptr;
+        const float environmentMaxMipLevel = environmentTexture ? static_cast<float>(std::max(0, static_cast<int>(std::floor(std::log2(static_cast<float>(std::max(environmentTexture->GetWidth(), environmentTexture->GetHeight()))))))) : 0.0f;
+        m_lightingPassShader->SetUniform("uEnvironmentMaxMipLevel", environmentMaxMipLevel);
 
         glDisable(GL_BLEND);
         m_lightingPassShader->SetUniform("uPassMode", kAmbientPassMode);

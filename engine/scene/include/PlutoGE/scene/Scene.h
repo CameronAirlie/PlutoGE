@@ -53,6 +53,13 @@ namespace PlutoGE::scene
         void MarkShadowLightsDirty();
         const std::string &GetFilePath() const { return m_filePath; }
         void SetFilePath(const std::string &filePath) { m_filePath = filePath; }
+        const std::string &GetEnvironmentMapPath() const { return m_environmentMapPath; }
+        render::Texture *GetEnvironmentMapTexture() const { return m_environmentMapTexture; }
+        bool HasEnvironmentMap() const { return m_environmentMapTexture != nullptr; }
+        float GetEnvironmentIntensity() const { return m_environmentIntensity; }
+        void SetEnvironmentMap(render::Texture *texture, const std::string &filePath);
+        void ClearEnvironmentMap();
+        void SetEnvironmentIntensity(float intensity);
         const BakedProbeVolume &GetBakedProbeVolume() const { return m_bakedProbeVolume; }
         bool HasBakedProbeVolume() const { return m_bakedProbeVolume.IsValid() && m_bakedProbeTexture != nullptr; }
         render::Texture *GetBakedProbeTexture() const { return m_bakedProbeTexture.get(); }
@@ -77,6 +84,9 @@ namespace PlutoGE::scene
         std::vector<Entity *> m_rootEntities;
         std::vector<Light *> m_lights;
         std::string m_filePath;
+        std::string m_environmentMapPath;
+        render::Texture *m_environmentMapTexture = nullptr;
+        float m_environmentIntensity = 1.0f;
         BakedProbeVolume m_bakedProbeVolume;
         std::unique_ptr<render::Texture> m_bakedProbeTexture;
         void CollectEntitySubtree(Entity *entity, std::vector<Entity *> &entities) const;

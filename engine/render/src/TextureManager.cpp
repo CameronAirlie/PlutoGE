@@ -3,6 +3,7 @@
 #include <glad/glad.h>
 
 #include <algorithm>
+#include <cctype>
 #include <fstream>
 #include <vector>
 
@@ -93,6 +94,39 @@ namespace PlutoGE::render
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, generateMipmaps ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         }
+
+        GLenum ResolveFloatTextureInternalFormat(int channels)
+        {
+            if (channels >= 4)
+            {
+                return GL_RGBA16F;
+            }
+
+            if (channels == 1)
+            {
+                return GL_R16F;
+            }
+
+            return GL_RGB16F;
+        }
+
+        std::string ToLower(std::string value)
+        {
+            std::transform(value.begin(), value.end(), value.begin(),
+                           [](unsigned char character)
+                           {
+                               return static_cast<char>(std::tolower(character));
+                           });
+            return value;
+        }
+
+        void ConfigureEnvironmentTexture2D(bool generateMipmaps)
+        {
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, generateMipmaps ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        }
     }
 
     Texture *TextureManager::LoadTextureFromFile(const char *filePath)
@@ -167,6 +201,113 @@ namespace PlutoGE::render
         texture->m_channels = channels;
 
         m_textureCache[cacheKey] = texture;
+        return texture;
+    }
+
+    Texture *TextureManager::LoadEnvironmentTextureFromFile(const char *filePath)
+    {
+        if (!filePath || filePath[0] == '\0')
+        {
+            return nullptr;
+        }
+
+        auto it = m_textureCache.find(filePath);
+        if (it != m_textureCache.end())
+        {
+            return it->second;
+        }
+
+        const std::string environmentPath(filePath);
+        const std::string lowerPath = ToLower(environmentPath);
+        const bool isPfm = lowerPath.size() >= 4 && lowerPath.compare(lowerPath.size() - 4, 4, ".pfm") == 0;
+        const bool isHdr = lowerPath.size() >= 4 && lowerPath.compare(lowerPath.size() - 4, 4, ".hdr") == 0;
+
+        if (isPfm)
+        {
+            PfmImageData pfmImage;
+            if (!LoadPfm(filePath, pfmImage))
+            {
+                return nullptr;
+            }
+
+            const GLenum format = ResolveTextureFormat(pfmImage.channels);
+            TextureConfig config;
+            config.filePath = environmentPath;
+            Texture *texture = new Texture(config);
+
+            glGenTextures(1, &texture->m_textureID);
+            glBindTexture(GL_TEXTURE_2D, texture->m_textureID);
+            ConfigureEnvironmentTexture2D(true);
+            glTexImage2D(GL_TEXTURE_2D, 0, ResolveFloatTextureInternalFormat(pfmImage.channels), pfmImage.width, pfmImage.height, 0, format, GL_FLOAT, pfmImage.pixels.data());
+            glGenerateMipmap(GL_TEXTURE_2D);
+
+            texture->m_width = pfmImage.width;
+            texture->m_height = pfmImage.height;
+            texture->m_channels = pfmImage.channels;
+
+            m_textureCache[environmentPath] = texture;
+            return texture;
+        }
+
+        if (isHdr || stbi_is_hdr(filePath))
+        {
+            int width = 0;
+            int height = 0;
+            int channels = 0;
+            float *data = stbi_loadf(filePath, &width, &height, &channels, 0);
+            if (!data)
+            {
+                return nullptr;
+            }
+
+            const GLenum format = ResolveTextureFormat(channels);
+            TextureConfig config;
+            config.filePath = environmentPath;
+            Texture *texture = new Texture(config);
+
+            glGenTextures(1, &texture->m_textureID);
+            glBindTexture(GL_TEXTURE_2D, texture->m_textureID);
+            ConfigureEnvironmentTexture2D(true);
+            glTexImage2D(GL_TEXTURE_2D, 0, ResolveFloatTextureInternalFormat(channels), width, height, 0, format, GL_FLOAT, data);
+            glGenerateMipmap(GL_TEXTURE_2D);
+
+            texture->m_width = width;
+            texture->m_height = height;
+            texture->m_channels = channels;
+
+            stbi_image_free(data);
+
+            m_textureCache[environmentPath] = texture;
+            return texture;
+        }
+
+        int width = 0;
+        int height = 0;
+        int channels = 0;
+        unsigned char *data = stbi_load(filePath, &width, &height, &channels, 0);
+        if (!data)
+        {
+            return nullptr;
+        }
+
+        TextureConfig config;
+        config.filePath = environmentPath;
+        Texture *texture = new Texture(config);
+
+        glGenTextures(1, &texture->m_textureID);
+        glBindTexture(GL_TEXTURE_2D, texture->m_textureID);
+        ConfigureEnvironmentTexture2D(true);
+        const GLenum format = ResolveTextureFormat(channels);
+        glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, GL_UNSIGNED_BYTE, data);
+        glGenerateMipmap(GL_TEXTURE_2D);
+
+        texture->m_width = width;
+        texture->m_height = height;
+        texture->m_channels = channels;
+
+        stbi_image_free(data);
+
+        m_textureCache[environmentPath] = texture;
         return texture;
     }
 

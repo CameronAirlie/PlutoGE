@@ -1,5 +1,6 @@
 #include "PlutoGE/scene/SceneSerializer.h"
 
+#include "PlutoGE/core/Engine.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
@@ -185,6 +186,13 @@ namespace PlutoGE::scene
 
         output << "SCENE\t1\n";
 
+        if (!scene.GetEnvironmentMapPath().empty())
+        {
+            output << "ENVIRONMENT\t"
+                   << EscapeText(scene.GetEnvironmentMapPath()) << '\t'
+                   << scene.GetEnvironmentIntensity() << '\n';
+        }
+
         const auto &probeVolume = scene.GetBakedProbeVolume();
         if (probeVolume.IsValid())
         {
@@ -284,6 +292,8 @@ namespace PlutoGE::scene
         std::vector<PendingEntityParent> pendingParents;
         std::optional<PendingComponent> activeComponent;
         BakedProbeVolume bakedProbeVolume;
+        std::string environmentMapPath;
+        float environmentIntensity = 1.0f;
 
         std::string line;
         while (std::getline(input, line))
@@ -296,6 +306,13 @@ namespace PlutoGE::scene
 
             if (tokens[0] == "SCENE")
             {
+                continue;
+            }
+
+            if (tokens[0] == "ENVIRONMENT" && tokens.size() >= 3)
+            {
+                environmentMapPath = tokens[1];
+                environmentIntensity = std::stof(tokens[2]);
                 continue;
             }
 
@@ -392,6 +409,13 @@ namespace PlutoGE::scene
         if (bakedProbeVolume.IsValid())
         {
             scene->SetBakedProbeVolume(std::move(bakedProbeVolume));
+        }
+
+        if (!environmentMapPath.empty())
+        {
+            auto *environmentTexture = core::Engine::GetInstance().GetTextureManager().LoadEnvironmentTextureFromFile(environmentMapPath.c_str());
+            scene->SetEnvironmentMap(environmentTexture, environmentMapPath);
+            scene->SetEnvironmentIntensity(environmentIntensity);
         }
 
         scene->MarkShadowLightsDirty();

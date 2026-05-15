@@ -11,6 +11,7 @@
 #include "PlutoGE/scene/components/CameraComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/Entity.h"
+#include "PlutoGE/scene/Scene.h"
 #include <algorithm>
 #include <array>
 #include <cstdio>
@@ -121,6 +122,72 @@ namespace PlutoGE::ui
     void InspectorPanel::Initialize()
     {
         // Initialization code for the InspectorPanel
+    }
+
+    void InspectorPanel::RenderSceneEnvironmentInspector(scene::Scene &scene) const
+    {
+        auto &engine = core::Engine::GetInstance();
+        static std::array<char, kInspectorPathBufferSize> environmentPathBuffer{};
+        static std::string cachedEnvironmentPath;
+
+        if (cachedEnvironmentPath != scene.GetEnvironmentMapPath())
+        {
+            cachedEnvironmentPath = scene.GetEnvironmentMapPath();
+            std::fill(environmentPathBuffer.begin(), environmentPathBuffer.end(), '\0');
+            strncpy_s(environmentPathBuffer.data(), environmentPathBuffer.size(), cachedEnvironmentPath.c_str(), _TRUNCATE);
+        }
+
+        ImGui::TextUnformatted("Scene Settings");
+        if (!ImGui::CollapsingHeader("Environment", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            return;
+        }
+
+        ImGui::InputText("HDRI Path", environmentPathBuffer.data(), environmentPathBuffer.size());
+        ImGui::SameLine();
+        if (ImGui::Button("...##Environment"))
+        {
+#ifdef _WIN32
+            OPENFILENAMEA ofn = {};
+            char fileName[MAX_PATH] = "";
+            ofn.lStructSize = sizeof(ofn);
+            ofn.hwndOwner = nullptr;
+            ofn.lpstrFilter = "Environment Maps\0*.hdr;*.pfm;*.png;*.jpg;*.jpeg;*.tga;*.bmp\0All Files\0*.*\0";
+            ofn.lpstrFile = fileName;
+            ofn.nMaxFile = MAX_PATH;
+            ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+            if (GetOpenFileNameA(&ofn))
+            {
+                strncpy_s(environmentPathBuffer.data(), environmentPathBuffer.size(), fileName, _TRUNCATE);
+            }
+#endif
+        }
+
+        ImGui::BeginDisabled(std::strlen(environmentPathBuffer.data()) == 0);
+        if (ImGui::Button("Load HDRI"))
+        {
+            const std::string selectedPath(environmentPathBuffer.data());
+            auto *environmentTexture = engine.GetTextureManager().LoadEnvironmentTextureFromFile(selectedPath.c_str());
+            scene.SetEnvironmentMap(environmentTexture, selectedPath);
+            cachedEnvironmentPath = scene.GetEnvironmentMapPath();
+        }
+        ImGui::EndDisabled();
+
+        ImGui::SameLine();
+        if (ImGui::Button("Clear HDRI"))
+        {
+            scene.ClearEnvironmentMap();
+            cachedEnvironmentPath.clear();
+            std::fill(environmentPathBuffer.begin(), environmentPathBuffer.end(), '\0');
+        }
+
+        float environmentIntensity = scene.GetEnvironmentIntensity();
+        if (ImGui::DragFloat("Environment Intensity", &environmentIntensity, 0.01f, 0.0f, 32.0f))
+        {
+            scene.SetEnvironmentIntensity(environmentIntensity);
+        }
+
+        ImGui::Text("Sky / IBL: %s", scene.HasEnvironmentMap() ? "loaded" : (scene.GetEnvironmentMapPath().empty() ? "not set" : "failed to load"));
     }
 
     bool InspectorPanel::RenderPropertyEditor(scene::Property &property) const
@@ -511,7 +578,14 @@ namespace PlutoGE::ui
         auto entity = editorShell.GetSelectedEntity();
         if (!entity)
         {
-            ImGui::Text("No entity selected.");
+            auto *scene = core::Engine::GetInstance().GetScene();
+            if (!scene)
+            {
+                ImGui::Text("No entity selected.");
+                return;
+            }
+
+            RenderSceneEnvironmentInspector(*scene);
             return;
         }
 

@@ -377,6 +377,7 @@ uniform sampler2D gPosition;
 uniform sampler2D gNormal;
 uniform sampler2D gAlbedoSpec;
 uniform sampler2D gBakedLighting;
+uniform sampler2D uEnvironmentMap;
 
 const float PI = 3.14159265359;
 const int PASS_MODE_AMBIENT = 0;
@@ -407,6 +408,8 @@ uniform int uPassMode;
 uniform Light uLight;
 uniform vec3 uViewPos;
 uniform mat4 uViewMatrix;
+uniform mat4 uInverseViewMatrix;
+uniform mat4 uInverseProjectionMatrix;
 uniform sampler2D uShadowMap2D;
 uniform sampler2D uShadowCascadeMap0;
 uniform sampler2D uShadowCascadeMap1;
@@ -424,7 +427,10 @@ uniform vec3 uBakedProbeOrigin;
 uniform vec3 uBakedProbeSize;
 uniform int uLpvEnabled;
 uniform int uBakedProbeEnabled;
+uniform int uEnvironmentEnabled;
 uniform float uLpvTransitionBlend;
+uniform float uEnvironmentIntensity;
+uniform float uEnvironmentMaxMipLevel;
 uniform int uAmbientOutputMode;
 
 const int AMBIENT_OUTPUT_FULL = 0;
@@ -458,6 +464,65 @@ float GeometrySmith(vec3 normal, vec3 viewDir, vec3 lightDir, float roughness)
 vec3 FresnelSchlick(float cosTheta, vec3 f0)
 {
     return f0 + (1.0 - f0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+}
+
+vec3 FresnelSchlickRoughness(float cosTheta, vec3 f0, float roughness)
+{
+    return f0 + (max(vec3(1.0 - roughness), f0) - f0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+}
+
+vec2 DirectionToEquirectangularUv(vec3 direction)
+{
+    const float invPi = 0.31830988618;
+    const float invTwoPi = 0.15915494309;
+    vec3 normalizedDirection = normalize(direction);
+    vec2 uv = vec2(atan(normalizedDirection.z, normalizedDirection.x) * invTwoPi + 0.5,
+                   acos(clamp(normalizedDirection.y, -1.0, 1.0)) * invPi);
+    return uv;
+}
+
+vec3 SampleEnvironment(vec3 direction, float lod)
+{
+    if (uEnvironmentEnabled == 0)
+    {
+        return vec3(0.0);
+    }
+
+    vec2 uv = DirectionToEquirectangularUv(direction);
+    return max(textureLod(uEnvironmentMap, uv, clamp(lod, 0.0, uEnvironmentMaxMipLevel)).rgb, vec3(0.0)) * uEnvironmentIntensity;
+}
+
+vec3 ComputeSkyColor(vec2 uv)
+{
+    vec2 clip = uv * 2.0 - 1.0;
+    vec4 viewDirection = uInverseProjectionMatrix * vec4(clip, 1.0, 1.0);
+    vec3 worldDirection = normalize((uInverseViewMatrix * vec4(normalize(viewDirection.xyz / max(viewDirection.w, 0.0001)), 0.0)).xyz);
+    return SampleEnvironment(worldDirection, 0.0);
+}
+
+vec3 EnvBRDFApprox(vec3 specularColor, float roughness, float ndotv)
+{
+    const vec4 c0 = vec4(-1.0, -0.0275, -0.572, 0.022);
+    const vec4 c1 = vec4(1.0, 0.0425, 1.04, -0.04);
+    vec4 r = roughness * c0 + c1;
+    float a004 = min(r.x * r.x, exp2(-9.28 * ndotv)) * r.x + r.y;
+    vec2 ab = vec2(-1.04, 1.04) * a004 + r.zw;
+    return specularColor * ab.x + ab.y;
+}
+
+vec3 ComputeEnvironmentDiffuse(vec3 normal, vec3 albedo, float metallic, float roughness, vec3 f0, float ndotv)
+{
+    vec3 diffuseIrradiance = SampleEnvironment(normal, max(uEnvironmentMaxMipLevel - 1.0, 0.0));
+    vec3 fresnel = FresnelSchlickRoughness(ndotv, f0, roughness);
+    vec3 kD = (vec3(1.0) - fresnel) * (1.0 - metallic);
+    return diffuseIrradiance * albedo * kD;
+}
+
+vec3 ComputeEnvironmentSpecular(vec3 normal, vec3 viewDir, float roughness, vec3 f0, float ndotv)
+{
+    vec3 reflectionDir = reflect(-viewDir, normal);
+    vec3 prefilteredColor = SampleEnvironment(reflectionDir, roughness * uEnvironmentMaxMipLevel);
+    return prefilteredColor * EnvBRDFApprox(f0, roughness, ndotv);
 }
 
 float ComputePointAttenuation(vec3 fragPos, Light light)
@@ -686,6 +751,9 @@ float ComputeShadow(vec3 fragPos, vec3 normal, Light light)
 
     return ComputeSpotShadow(fragPos, normal, light);
 }
+		)";
+
+            source.fragmentSource += R"(
 
 vec3 ComputeLightContribution(vec3 fragPos, vec3 normal, vec3 viewDir, vec3 albedo, float metallic, float roughness, Light light)
 {
@@ -767,6 +835,9 @@ vec3 SampleBakedProbeIrradiance(vec3 fragPos)
 
     return max(texture(uBakedProbeVolume, probeUv).rgb, vec3(0.0));
 }
+		)";
+
+            source.fragmentSource += R"(
 
 void main()
 {
@@ -776,7 +847,14 @@ void main()
 
     if (dot(normalRoughness.rgb, normalRoughness.rgb) <= 0.000001)
     {
-        FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+        if (uPassMode == PASS_MODE_AMBIENT)
+        {
+            FragColor = vec4(ComputeSkyColor(UV), 1.0);
+        }
+        else
+        {
+            FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+        }
         return;
     }
 
@@ -788,27 +866,33 @@ void main()
     vec3 bakedIrradiance = bakedLightingMask.rgb;
     float bakedStaticMask = bakedLightingMask.a;
     vec3 viewDir = normalize(uViewPos - fragPos);
+    float ndotv = max(dot(normal, viewDir), 0.0);
+    vec3 f0 = mix(vec3(0.04), albedo, metallic);
 
     if (uPassMode == PASS_MODE_AMBIENT)
     {
         vec3 lpvIndirect = SampleLPVIndirect(fragPos, albedo, metallic);
         vec3 bakedProbeIndirect = SampleBakedProbeIrradiance(fragPos) * albedo * (1.0 - metallic);
+        vec3 environmentDiffuse = ComputeEnvironmentDiffuse(normal, albedo, metallic, roughness, f0, ndotv);
+        vec3 environmentSpecular = ComputeEnvironmentSpecular(normal, viewDir, roughness, f0, ndotv);
         if (uAmbientOutputMode == AMBIENT_OUTPUT_NONE)
         {
-            FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+            FragColor = vec4(environmentSpecular, 1.0);
             return;
         }
 
         if (uAmbientOutputMode == AMBIENT_OUTPUT_LPV_ONLY)
         {
-            FragColor = vec4(lpvIndirect + bakedProbeIndirect, 1.0);
+            FragColor = vec4(lpvIndirect + bakedProbeIndirect + environmentSpecular, 1.0);
             return;
         }
 
         vec3 realtimeAmbient = vec3(0.03) * albedo * (1.0 - metallic);
         realtimeAmbient += lpvIndirect;
         realtimeAmbient += bakedProbeIndirect;
+        realtimeAmbient += environmentDiffuse;
         vec3 ambient = mix(realtimeAmbient, bakedIrradiance * albedo * (1.0 - metallic), bakedStaticMask);
+        ambient += environmentSpecular;
         FragColor = vec4(ambient, 1.0);
         return;
     }

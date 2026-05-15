@@ -392,13 +392,45 @@ namespace PlutoGE::ui
             const auto renderTarget2Width = renderTarget2->GetWidth();
             const auto renderTarget2Height = renderTarget2->GetHeight();
 
+            const bool bakeTaskFinished = m_activeBakeTask && m_activeBakeTask->IsFinished();
+            if (bakeTaskFinished && m_scene)
+            {
+                const auto bakeResult = m_activeBakeTask->Finalize(*m_scene);
+                m_statusMessage = bakeResult.message;
+                std::cout << bakeResult.message << std::endl;
+
+                if (bakeResult.succeeded && !m_scene->GetFilePath().empty())
+                {
+                    std::string errorMessage;
+                    if (scene::SceneSerializer::Save(*m_scene, m_scene->GetFilePath(), &errorMessage))
+                    {
+                        m_statusMessage += " Saved scene.";
+                    }
+                    else if (!errorMessage.empty())
+                    {
+                        m_statusMessage += " " + errorMessage;
+                    }
+                }
+
+                m_activeBakeTask.reset();
+            }
+
+            const bool isBakeRunning = m_activeBakeTask && m_activeBakeTask->IsRunning();
+            if (isBakeRunning)
+            {
+                m_statusMessage = m_activeBakeTask->GetStatusMessage();
+            }
+
             // Scene update
 
             const auto sceneUpdateStart = std::chrono::high_resolution_clock::now();
-            m_engine.UpdateAsyncMeshImports();
-            if (m_scene)
+            if (!isBakeRunning)
             {
-                m_scene->Update(deltaTime.count());
+                m_engine.UpdateAsyncMeshImports();
+                if (m_scene)
+                {
+                    m_scene->Update(deltaTime.count());
+                }
             }
             const auto sceneUpdateEnd = std::chrono::high_resolution_clock::now();
             frameTimingStats.sceneUpdateMs = std::chrono::duration<float, std::milli>(sceneUpdateEnd - sceneUpdateStart).count();
@@ -460,11 +492,57 @@ namespace PlutoGE::ui
 
             m_panelManager.BeginPanelUpdate();
 
+            auto sanitizeBakeSettings = [](scene::SceneBakeSettings &settings)
+            {
+                settings.lightmapResolution = (std::max)(settings.lightmapResolution, 4);
+                settings.lightmapTileSize = (std::max)(settings.lightmapTileSize, 1);
+                settings.indirectBounceSampleCount = (std::max)(settings.indirectBounceSampleCount, 0);
+                settings.probeDirectionCount = (std::max)(settings.probeDirectionCount, 0);
+                settings.lightmapBounceStrength = (std::max)(settings.lightmapBounceStrength, 0.0f);
+                settings.probeBounceStrength = (std::max)(settings.probeBounceStrength, 0.0f);
+            };
+
+            auto runBake = [&](const scene::SceneBakeSettings &requestedSettings)
+            {
+                if (!m_scene || m_activeBakeTask)
+                {
+                    return;
+                }
+
+                scene::SceneBakeSettings bakeSettings = requestedSettings;
+                sanitizeBakeSettings(bakeSettings);
+
+                scene::SceneBaker baker;
+                scene::SceneBakeResult immediateResult;
+                auto bakeTask = baker.BeginBake(*m_scene, bakeSettings, &immediateResult);
+                if (!bakeTask)
+                {
+                    m_statusMessage = immediateResult.message;
+                    std::cout << immediateResult.message << std::endl;
+                    return;
+                }
+
+                m_activeBakeTask = std::move(bakeTask);
+                m_statusMessage = m_activeBakeTask->GetStatusMessage();
+                std::cout << m_statusMessage << std::endl;
+            };
+
             // Toolbar menu
             if (ImGui::BeginMainMenuBar())
             {
                 if (ImGui::BeginMenu("File"))
                 {
+                    if (isBakeRunning && ImGui::MenuItem("Cancel Bake"))
+                    {
+                        m_activeBakeTask->Cancel();
+                        m_statusMessage = "Cancelling bake...";
+                    }
+                    if (isBakeRunning)
+                    {
+                        ImGui::Separator();
+                    }
+
+                    ImGui::BeginDisabled(isBakeRunning);
                     if (ImGui::MenuItem("New Scene"))
                     {
                         m_scene = CreateEmptyScene();
@@ -542,73 +620,22 @@ namespace PlutoGE::ui
                     }
                     if (ImGui::MenuItem("Bake Scene"))
                     {
-                        if (m_scene)
-                        {
-                            scene::SceneBaker baker;
-                            const auto bakeResult = baker.Bake(*m_scene, scene::SceneBakeSettings::BalancedPreview());
-                            m_statusMessage = bakeResult.message;
-                            std::cout << bakeResult.message << std::endl;
-
-                            if (bakeResult.succeeded && !m_scene->GetFilePath().empty())
-                            {
-                                std::string errorMessage;
-                                if (scene::SceneSerializer::Save(*m_scene, m_scene->GetFilePath(), &errorMessage))
-                                {
-                                    m_statusMessage += " Saved scene.";
-                                }
-                                else if (!errorMessage.empty())
-                                {
-                                    m_statusMessage += " " + errorMessage;
-                                }
-                            }
-                        }
+                        runBake(scene::SceneBakeSettings::BalancedPreview());
                     }
                     if (ImGui::MenuItem("Bake Scene Fast"))
                     {
-                        if (m_scene)
-                        {
-                            scene::SceneBaker baker;
-                            const auto bakeResult = baker.Bake(*m_scene, scene::SceneBakeSettings::FastPreview());
-                            m_statusMessage = bakeResult.message;
-                            std::cout << bakeResult.message << std::endl;
-
-                            if (bakeResult.succeeded && !m_scene->GetFilePath().empty())
-                            {
-                                std::string errorMessage;
-                                if (scene::SceneSerializer::Save(*m_scene, m_scene->GetFilePath(), &errorMessage))
-                                {
-                                    m_statusMessage += " Saved scene.";
-                                }
-                                else if (!errorMessage.empty())
-                                {
-                                    m_statusMessage += " " + errorMessage;
-                                }
-                            }
-                        }
+                        runBake(scene::SceneBakeSettings::FastPreview());
                     }
                     if (ImGui::MenuItem("Bake Scene Final"))
                     {
-                        if (m_scene)
-                        {
-                            scene::SceneBaker baker;
-                            const auto bakeResult = baker.Bake(*m_scene, scene::SceneBakeSettings::Final());
-                            m_statusMessage = bakeResult.message;
-                            std::cout << bakeResult.message << std::endl;
-
-                            if (bakeResult.succeeded && !m_scene->GetFilePath().empty())
-                            {
-                                std::string errorMessage;
-                                if (scene::SceneSerializer::Save(*m_scene, m_scene->GetFilePath(), &errorMessage))
-                                {
-                                    m_statusMessage += " Saved scene.";
-                                }
-                                else if (!errorMessage.empty())
-                                {
-                                    m_statusMessage += " " + errorMessage;
-                                }
-                            }
-                        }
+                        runBake(scene::SceneBakeSettings::Final());
                     }
+                    if (ImGui::MenuItem("Bake Scene Custom..."))
+                    {
+                        ImGui::OpenPopup("Bake Scene Custom");
+                    }
+                    ImGui::EndDisabled();
+
                     if (ImGui::MenuItem("Exit"))
                     {
                         window.Close();
@@ -647,7 +674,62 @@ namespace PlutoGE::ui
                 ImGui::EndMainMenuBar();
             }
 
+            if (ImGui::BeginPopupModal("Bake Scene Custom", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+            {
+                sanitizeBakeSettings(m_customBakeSettings);
+
+                if (ImGui::Button("Fast Preset"))
+                {
+                    m_customBakeSettings = scene::SceneBakeSettings::FastPreview();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Balanced Preset"))
+                {
+                    m_customBakeSettings = scene::SceneBakeSettings::BalancedPreview();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Final Preset"))
+                {
+                    m_customBakeSettings = scene::SceneBakeSettings::Final();
+                }
+
+                ImGui::Separator();
+                ImGui::InputInt("Lightmap Resolution", &m_customBakeSettings.lightmapResolution);
+                ImGui::InputInt("Lightmap Tile Size", &m_customBakeSettings.lightmapTileSize);
+                ImGui::Checkbox("Bake Indirect Bounce", &m_customBakeSettings.bakeIndirectBounce);
+                ImGui::InputInt("Indirect Samples", &m_customBakeSettings.indirectBounceSampleCount);
+                ImGui::SliderFloat("Lightmap Bounce Strength", &m_customBakeSettings.lightmapBounceStrength, 0.0f, 4.0f, "%.2f");
+                ImGui::Checkbox("Bake Probe Volume", &m_customBakeSettings.bakeProbeVolume);
+                ImGui::InputInt("Probe Directions", &m_customBakeSettings.probeDirectionCount);
+                ImGui::SliderFloat("Probe Bounce Strength", &m_customBakeSettings.probeBounceStrength, 0.0f, 4.0f, "%.2f");
+
+                sanitizeBakeSettings(m_customBakeSettings);
+
+                ImGui::BeginDisabled(isBakeRunning);
+                if (ImGui::Button("Bake"))
+                {
+                    runBake(m_customBakeSettings);
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::EndDisabled();
+                ImGui::SameLine();
+                if (ImGui::Button("Close"))
+                {
+                    ImGui::CloseCurrentPopup();
+                }
+
+                ImGui::EndPopup();
+            }
+
+            if (isBakeRunning)
+            {
+                ImGui::BeginDisabled();
+            }
             m_panelManager.UpdatePanels();
+            if (isBakeRunning)
+            {
+                ImGui::EndDisabled();
+            }
 
             m_panelManager.EndPanelUpdate();
 
@@ -676,6 +758,11 @@ namespace PlutoGE::ui
 
     void EditorShell::Shutdown()
     {
+        if (m_activeBakeTask)
+        {
+            m_activeBakeTask->Cancel();
+            m_activeBakeTask.reset();
+        }
         m_selectedEntity = nullptr;
         m_scene.reset();
         m_engine.SetScene(nullptr);

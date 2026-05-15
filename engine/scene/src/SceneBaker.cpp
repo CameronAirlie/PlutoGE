@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <limits>
 #include <map>
 #include <optional>
@@ -33,12 +34,17 @@ namespace PlutoGE::scene
         constexpr float kMinRayHitDistance = 0.0001f;
         constexpr int kLightmapDilationIterations = 8;
         constexpr float kLightmapDilationNormalThreshold = 0.5f;
-        constexpr std::size_t kMinTrianglesPerBakeWorker = 32;
-        constexpr std::size_t kMinProbeCellsPerBakeWorker = 8;
+        constexpr std::size_t kMinLightmapTasksPerBakeWorker = 1;
+        constexpr std::size_t kMinProbeCellsPerBakeWorker = 1;
 
         void LogBakeMessage(const std::string &message)
         {
             std::cout << "[SceneBaker] " << message << std::endl;
+        }
+
+        bool IsBakeCancelled(const std::shared_ptr<std::atomic<bool>> &cancelRequested)
+        {
+            return cancelRequested && cancelRequested->load(std::memory_order_relaxed);
         }
 
         std::size_t ResolveBakeWorkerCount(std::size_t taskCount, std::size_t minimumWorkPerWorker)
@@ -49,12 +55,40 @@ namespace PlutoGE::scene
             }
 
             const std::size_t hardwareWorkers = std::max<std::size_t>(std::thread::hardware_concurrency(), 1);
-            if (taskCount <= minimumWorkPerWorker)
+            const std::size_t clampedMinimumWork = std::max<std::size_t>(minimumWorkPerWorker, 1);
+            const std::size_t desiredWorkers = (taskCount + clampedMinimumWork - 1) / clampedMinimumWork;
+            if (desiredWorkers <= 1)
             {
                 return 1;
             }
 
-            return std::max<std::size_t>(1, std::min(hardwareWorkers, taskCount));
+            return std::max<std::size_t>(1, std::min({hardwareWorkers, taskCount, desiredWorkers}));
+        }
+
+        int ResolveEffectiveLightmapTileSize(int requestedTileSize, int resolution)
+        {
+            const int safeResolution = std::max(resolution, 1);
+            int effectiveTileSize = std::clamp(requestedTileSize, 1, safeResolution);
+            const std::size_t hardwareWorkers = std::max<std::size_t>(std::thread::hardware_concurrency(), 1);
+            const std::size_t desiredTaskCount = std::max<std::size_t>(hardwareWorkers * 4, 1);
+
+            while (effectiveTileSize > 4)
+            {
+                const std::size_t tileCountX = static_cast<std::size_t>((safeResolution + effectiveTileSize - 1) / effectiveTileSize);
+                const std::size_t tileCountY = static_cast<std::size_t>((safeResolution + effectiveTileSize - 1) / effectiveTileSize);
+                if (tileCountX * tileCountY >= desiredTaskCount)
+                {
+                    break;
+                }
+
+                effectiveTileSize = std::max(effectiveTileSize / 2, 4);
+                if (effectiveTileSize == 4)
+                {
+                    break;
+                }
+            }
+
+            return effectiveTileSize;
         }
 
         template <typename Callback>
@@ -75,15 +109,24 @@ namespace PlutoGE::scene
                 return;
             }
 
+            const std::size_t chunkSize = std::max<std::size_t>(1, taskCount / (clampedWorkerCount * 8));
+            std::atomic<std::size_t> nextTaskIndex{0};
+
             auto runRange = [&](std::size_t workerIndex)
             {
-                const std::size_t baseTasksPerWorker = taskCount / clampedWorkerCount;
-                const std::size_t workerRemainder = taskCount % clampedWorkerCount;
-                const std::size_t begin = workerIndex * baseTasksPerWorker + std::min(workerIndex, workerRemainder);
-                const std::size_t end = begin + baseTasksPerWorker + (workerIndex < workerRemainder ? 1 : 0);
-                for (std::size_t taskIndex = begin; taskIndex < end; ++taskIndex)
+                while (true)
                 {
-                    callback(taskIndex, workerIndex);
+                    const std::size_t begin = nextTaskIndex.fetch_add(chunkSize);
+                    if (begin >= taskCount)
+                    {
+                        break;
+                    }
+
+                    const std::size_t end = std::min(begin + chunkSize, taskCount);
+                    for (std::size_t taskIndex = begin; taskIndex < end; ++taskIndex)
+                    {
+                        callback(taskIndex, workerIndex);
+                    }
                 }
             };
 
@@ -204,6 +247,29 @@ namespace PlutoGE::scene
             int resolution = 0;
         };
 
+        struct RasterizedBakeTriangle
+        {
+            std::size_t triangleIndex = 0;
+            glm::vec2 texel0{0.0f};
+            glm::vec2 texel1{0.0f};
+            glm::vec2 texel2{0.0f};
+            int minX = 0;
+            int maxX = 0;
+            int minY = 0;
+            int maxY = 0;
+            int centerX = 0;
+            int centerY = 0;
+        };
+
+        struct BakeTileTask
+        {
+            int minX = 0;
+            int maxX = 0;
+            int minY = 0;
+            int maxY = 0;
+            std::vector<std::size_t> rasterIndices;
+        };
+
         struct BakedTexelLighting
         {
             glm::vec3 direct{0.0f};
@@ -254,6 +320,35 @@ namespace PlutoGE::scene
             int height = 0;
             int channels = 0;
             std::vector<unsigned char> pixels;
+        };
+
+        struct PreparedSceneBake
+        {
+            Scene *scene = nullptr;
+            SceneBakeSettings settings;
+            std::chrono::steady_clock::time_point bakeStartTime;
+            std::vector<BakeTriangle> triangles;
+            std::map<std::pair<MeshComponent *, std::size_t>, BakeTarget> targets;
+            BakeAccelerationStructure acceleration;
+            std::unordered_map<render::Texture *, CpuTextureData> albedoTextureCache;
+            std::vector<glm::vec3> indirectBounceDirections;
+            bool shouldStoreProbeVolume = false;
+        };
+
+        struct CompletedBakeLightmap
+        {
+            BakeTarget target;
+            std::vector<float> floatPixels;
+        };
+
+        struct BackgroundBakeOutput
+        {
+            bool cancelled = false;
+            bool shouldStoreProbeVolume = false;
+            int failedLightmapWrites = 0;
+            BakedProbeVolume probeVolume;
+            std::vector<CompletedBakeLightmap> lightmaps;
+            long long elapsedMs = 0;
         };
 
         const CpuTextureData *FindCpuTexture(const std::unordered_map<render::Texture *, CpuTextureData> &textureCache, render::Texture *texture);
@@ -536,6 +631,95 @@ namespace PlutoGE::scene
 
             outBarycentric = accumulatedBarycentric / sampleCount;
             return true;
+        }
+
+        std::vector<RasterizedBakeTriangle> BuildLightmapTileTasks(const BakeTarget &target,
+                                                                   const std::vector<BakeTriangle> &triangles,
+                                                                   int tileSize,
+                                                                   std::vector<BakeTileTask> &outTileTasks)
+        {
+            outTileTasks.clear();
+            const int safeTileSize = std::max(tileSize, 1);
+            const int tileCountX = std::max((target.resolution + safeTileSize - 1) / safeTileSize, 1);
+            const int tileCountY = std::max((target.resolution + safeTileSize - 1) / safeTileSize, 1);
+            outTileTasks.resize(static_cast<std::size_t>(tileCountX * tileCountY));
+
+            auto flattenTile = [tileCountX](int tileX, int tileY)
+            {
+                return static_cast<std::size_t>(tileX + tileY * tileCountX);
+            };
+
+            for (int tileY = 0; tileY < tileCountY; ++tileY)
+            {
+                for (int tileX = 0; tileX < tileCountX; ++tileX)
+                {
+                    auto &tileTask = outTileTasks[flattenTile(tileX, tileY)];
+                    tileTask.minX = tileX * safeTileSize;
+                    tileTask.minY = tileY * safeTileSize;
+                    tileTask.maxX = std::min(tileTask.minX + safeTileSize - 1, target.resolution - 1);
+                    tileTask.maxY = std::min(tileTask.minY + safeTileSize - 1, target.resolution - 1);
+                }
+            }
+
+            std::vector<RasterizedBakeTriangle> rasterizedTriangles;
+            rasterizedTriangles.reserve(target.triangleIndices.size());
+
+            for (const auto triangleIndex : target.triangleIndices)
+            {
+                const auto &triangle = triangles[triangleIndex];
+                const glm::vec2 uv0 = glm::clamp(triangle.lightmapUvs[0], glm::vec2(0.0f), glm::vec2(1.0f));
+                const glm::vec2 uv1 = glm::clamp(triangle.lightmapUvs[1], glm::vec2(0.0f), glm::vec2(1.0f));
+                const glm::vec2 uv2 = glm::clamp(triangle.lightmapUvs[2], glm::vec2(0.0f), glm::vec2(1.0f));
+
+                RasterizedBakeTriangle rasterizedTriangle;
+                rasterizedTriangle.triangleIndex = triangleIndex;
+                rasterizedTriangle.texel0 = uv0 * static_cast<float>(target.resolution - 1);
+                rasterizedTriangle.texel1 = uv1 * static_cast<float>(target.resolution - 1);
+                rasterizedTriangle.texel2 = uv2 * static_cast<float>(target.resolution - 1);
+                rasterizedTriangle.minX = std::clamp(static_cast<int>(std::floor(std::min({rasterizedTriangle.texel0.x, rasterizedTriangle.texel1.x, rasterizedTriangle.texel2.x}))), 0, target.resolution - 1);
+                rasterizedTriangle.maxX = std::clamp(static_cast<int>(std::ceil(std::max({rasterizedTriangle.texel0.x, rasterizedTriangle.texel1.x, rasterizedTriangle.texel2.x}))), 0, target.resolution - 1);
+                rasterizedTriangle.minY = std::clamp(static_cast<int>(std::floor(std::min({rasterizedTriangle.texel0.y, rasterizedTriangle.texel1.y, rasterizedTriangle.texel2.y}))), 0, target.resolution - 1);
+                rasterizedTriangle.maxY = std::clamp(static_cast<int>(std::ceil(std::max({rasterizedTriangle.texel0.y, rasterizedTriangle.texel1.y, rasterizedTriangle.texel2.y}))), 0, target.resolution - 1);
+
+                const glm::vec2 centerUv = glm::clamp((uv0 + uv1 + uv2) / 3.0f, glm::vec2(0.0f), glm::vec2(1.0f));
+                rasterizedTriangle.centerX = std::clamp(static_cast<int>(std::round(centerUv.x * static_cast<float>(target.resolution - 1))), 0, target.resolution - 1);
+                rasterizedTriangle.centerY = std::clamp(static_cast<int>(std::round(centerUv.y * static_cast<float>(target.resolution - 1))), 0, target.resolution - 1);
+
+                const std::size_t rasterIndex = rasterizedTriangles.size();
+                rasterizedTriangles.push_back(rasterizedTriangle);
+
+                const int tileMinX = rasterizedTriangle.minX / safeTileSize;
+                const int tileMaxX = rasterizedTriangle.maxX / safeTileSize;
+                const int tileMinY = rasterizedTriangle.minY / safeTileSize;
+                const int tileMaxY = rasterizedTriangle.maxY / safeTileSize;
+                for (int tileY = tileMinY; tileY <= tileMaxY; ++tileY)
+                {
+                    for (int tileX = tileMinX; tileX <= tileMaxX; ++tileX)
+                    {
+                        outTileTasks[flattenTile(tileX, tileY)].rasterIndices.push_back(rasterIndex);
+                    }
+                }
+            }
+
+            if (outTileTasks.size() > 1)
+            {
+                std::vector<BakeTileTask> compactedTileTasks;
+                compactedTileTasks.reserve(outTileTasks.size());
+                for (auto &tileTask : outTileTasks)
+                {
+                    if (!tileTask.rasterIndices.empty())
+                    {
+                        compactedTileTasks.push_back(std::move(tileTask));
+                    }
+                }
+
+                if (!compactedTileTasks.empty())
+                {
+                    outTileTasks = std::move(compactedTileTasks);
+                }
+            }
+
+            return rasterizedTriangles;
         }
 
         bool IntersectTriangle(const glm::vec3 &origin,
@@ -870,84 +1054,6 @@ namespace PlutoGE::scene
                     const std::array<float, 3> rgb = {pixel.r, pixel.g, pixel.b};
                     output.write(reinterpret_cast<const char *>(rgb.data()), static_cast<std::streamsize>(rgb.size() * sizeof(float)));
                 }
-            }
-
-            return static_cast<bool>(output);
-        }
-
-        glm::vec3 ToneMapPreviewPixel(const glm::vec3 &pixel)
-        {
-            const glm::vec3 safePixel = glm::max(pixel, glm::vec3(0.0f));
-            const glm::vec3 mapped = safePixel / (glm::vec3(1.0f) + safePixel);
-            return glm::pow(mapped, glm::vec3(1.0f / 2.2f));
-        }
-
-        bool WriteBmpPreview(const std::filesystem::path &path, const std::vector<glm::vec3> &pixels, int width, int height)
-        {
-            if (width <= 0 || height <= 0 || pixels.size() != static_cast<std::size_t>(width * height))
-            {
-                return false;
-            }
-
-            std::ofstream output(path, std::ios::binary | std::ios::trunc);
-            if (!output.is_open())
-            {
-                return false;
-            }
-
-            const int rowStride = width * 3;
-            const int rowPadding = (4 - (rowStride % 4)) % 4;
-            const int dataSize = (rowStride + rowPadding) * height;
-            const int fileSize = 54 + dataSize;
-
-            const unsigned char fileHeader[14] = {
-                'B', 'M',
-                static_cast<unsigned char>(fileSize),
-                static_cast<unsigned char>(fileSize >> 8),
-                static_cast<unsigned char>(fileSize >> 16),
-                static_cast<unsigned char>(fileSize >> 24),
-                0, 0, 0, 0,
-                54, 0, 0, 0};
-            output.write(reinterpret_cast<const char *>(fileHeader), sizeof(fileHeader));
-
-            const unsigned char infoHeader[40] = {
-                40, 0, 0, 0,
-                static_cast<unsigned char>(width),
-                static_cast<unsigned char>(width >> 8),
-                static_cast<unsigned char>(width >> 16),
-                static_cast<unsigned char>(width >> 24),
-                static_cast<unsigned char>(height),
-                static_cast<unsigned char>(height >> 8),
-                static_cast<unsigned char>(height >> 16),
-                static_cast<unsigned char>(height >> 24),
-                1, 0,
-                24, 0,
-                0, 0, 0, 0,
-                static_cast<unsigned char>(dataSize),
-                static_cast<unsigned char>(dataSize >> 8),
-                static_cast<unsigned char>(dataSize >> 16),
-                static_cast<unsigned char>(dataSize >> 24),
-                19, 11, 0, 0,
-                19, 11, 0, 0,
-                0, 0, 0, 0,
-                0, 0, 0, 0};
-            output.write(reinterpret_cast<const char *>(infoHeader), sizeof(infoHeader));
-
-            const std::array<unsigned char, 3> padding = {0, 0, 0};
-            for (int y = height - 1; y >= 0; --y)
-            {
-                for (int x = 0; x < width; ++x)
-                {
-                    const glm::vec3 previewPixel = ToneMapPreviewPixel(pixels[static_cast<std::size_t>(x + y * width)]);
-                    const std::array<unsigned char, 3> bgr = {
-                        static_cast<unsigned char>(glm::clamp(previewPixel.b, 0.0f, 1.0f) * 255.0f),
-                        static_cast<unsigned char>(glm::clamp(previewPixel.g, 0.0f, 1.0f) * 255.0f),
-                        static_cast<unsigned char>(glm::clamp(previewPixel.r, 0.0f, 1.0f) * 255.0f),
-                    };
-                    output.write(reinterpret_cast<const char *>(bgr.data()), static_cast<std::streamsize>(bgr.size()));
-                }
-
-                output.write(reinterpret_cast<const char *>(padding.data()), rowPadding);
             }
 
             return static_cast<bool>(output);
@@ -1348,7 +1454,8 @@ namespace PlutoGE::scene
                                           const std::vector<BakeTriangle> &triangles,
                                           const BakeAccelerationStructure &acceleration,
                                           const SceneBakeSettings &settings,
-                                          const std::unordered_map<render::Texture *, CpuTextureData> &textureCache)
+                                          const std::unordered_map<render::Texture *, CpuTextureData> &textureCache,
+                                          const std::shared_ptr<std::atomic<bool>> &cancelRequested = {})
         {
             BakedProbeVolume probeVolume;
             if (triangles.empty() || settings.probeDirectionCount <= 0 || settings.probeBounceStrength <= 0.0f)
@@ -1389,6 +1496,11 @@ namespace PlutoGE::scene
             ParallelFor(probeCount, workerCount, [&](std::size_t probeIndex, std::size_t workerIndex)
                         {
                 static_cast<void>(workerIndex);
+                if (IsBakeCancelled(cancelRequested))
+                {
+                    return;
+                }
+
                 const int sliceArea = probeVolume.resolution.x * probeVolume.resolution.y;
                 const int z = static_cast<int>(probeIndex / static_cast<std::size_t>(sliceArea));
                 const int sliceOffset = static_cast<int>(probeIndex % static_cast<std::size_t>(sliceArea));
@@ -1405,6 +1517,11 @@ namespace PlutoGE::scene
                 float totalWeight = 0.0f;
                 for (const auto &direction : probeDirections)
                 {
+                    if (IsBakeCancelled(cancelRequested))
+                    {
+                        return;
+                    }
+
                     const auto hit = TraceScene(probePosition, direction, std::numeric_limits<float>::max(), triangles, acceleration);
                     if (!hit.has_value())
                     {
@@ -1436,12 +1553,393 @@ namespace PlutoGE::scene
 
             return probeVolume;
         }
+
+        std::optional<PreparedSceneBake> PrepareSceneBake(Scene &scene, const SceneBakeSettings &settings, SceneBakeResult &outImmediateResult)
+        {
+            PreparedSceneBake preparedBake;
+            preparedBake.scene = &scene;
+            preparedBake.settings = settings;
+            preparedBake.bakeStartTime = std::chrono::steady_clock::now();
+
+            const int staticLightCount = CountStaticLights(scene);
+            if (staticLightCount == 0)
+            {
+                outImmediateResult.message = "Bake skipped: no static lights were found. Mark the lights you want baked as Static.";
+                scene.ClearBakedProbeVolume();
+                return std::nullopt;
+            }
+
+            LogBakeMessage("Starting scene bake with " + std::to_string(staticLightCount) + " static light(s).");
+            LogBakeMessage("Bake settings: " + std::to_string(settings.lightmapResolution) + "px lightmaps, " + std::to_string(settings.indirectBounceSampleCount) + " indirect bounce sample(s), " + std::to_string(settings.probeDirectionCount) + " probe direction(s).");
+
+            const std::filesystem::path bakeRoot = std::filesystem::current_path() / "baked" / ResolveBakeDirectoryName(scene);
+            std::error_code errorCode;
+            std::filesystem::create_directories(bakeRoot, errorCode);
+            if (errorCode)
+            {
+                outImmediateResult.message = "Failed to create bake output directory.";
+                return std::nullopt;
+            }
+
+            CollectStaticTriangles(scene, preparedBake.triangles, preparedBake.targets, bakeRoot, std::max(settings.lightmapResolution, 4));
+            LogBakeMessage("Collected " + std::to_string(preparedBake.targets.size()) + " bake target(s) across " + std::to_string(preparedBake.triangles.size()) + " triangle(s).");
+            if (preparedBake.targets.empty())
+            {
+                outImmediateResult.message = "No static meshes with usable bake UVs were found to bake.";
+                scene.ClearBakedProbeVolume();
+                return std::nullopt;
+            }
+
+            preparedBake.acceleration = BuildAccelerationStructure(preparedBake.triangles);
+            LogBakeMessage("Built bake BVH with " + std::to_string(preparedBake.acceleration.nodes.size()) + " node(s).");
+            preparedBake.albedoTextureCache = BuildAlbedoTextureCache(preparedBake.triangles);
+            LogBakeMessage("Captured " + std::to_string(preparedBake.albedoTextureCache.size()) + " albedo texture(s) for bake sampling.");
+
+            preparedBake.indirectBounceDirections = settings.bakeIndirectBounce
+                                                        ? GenerateHemisphereDirections(settings.indirectBounceSampleCount)
+                                                        : std::vector<glm::vec3>{};
+            preparedBake.shouldStoreProbeVolume = settings.bakeProbeVolume && SceneHasDynamicMeshes(scene);
+            if (preparedBake.shouldStoreProbeVolume)
+            {
+                LogBakeMessage("Baking probe volume for dynamic objects.");
+            }
+            else
+            {
+                LogBakeMessage("Skipping probe volume because no dynamic mesh components were found.");
+            }
+
+            return preparedBake;
+        }
+
+        BackgroundBakeOutput ExecutePreparedBake(const PreparedSceneBake &preparedBake,
+                                                 const std::shared_ptr<std::atomic<bool>> &cancelRequested)
+        {
+            BackgroundBakeOutput output;
+            output.shouldStoreProbeVolume = preparedBake.shouldStoreProbeVolume;
+
+            if (preparedBake.shouldStoreProbeVolume)
+            {
+                output.probeVolume = BuildProbeVolume(*preparedBake.scene,
+                                                      preparedBake.triangles,
+                                                      preparedBake.acceleration,
+                                                      preparedBake.settings,
+                                                      preparedBake.albedoTextureCache,
+                                                      cancelRequested);
+                if (IsBakeCancelled(cancelRequested))
+                {
+                    output.cancelled = true;
+                }
+                else if (!output.probeVolume.IsValid())
+                {
+                    LogBakeMessage("Probe volume bake produced no valid samples.");
+                }
+            }
+
+            int targetIndex = 0;
+            for (const auto &[targetKey, target] : preparedBake.targets)
+            {
+                static_cast<void>(targetKey);
+                if (IsBakeCancelled(cancelRequested))
+                {
+                    output.cancelled = true;
+                    break;
+                }
+
+                ++targetIndex;
+                LogBakeMessage("Baking lightmap " + std::to_string(targetIndex) + "/" + std::to_string(preparedBake.targets.size()) + " at " + std::to_string(target.resolution) + "x" + std::to_string(target.resolution) + ".");
+
+                const std::size_t pixelCount = static_cast<std::size_t>(target.resolution * target.resolution);
+                std::vector<glm::vec3> bakedPixels(pixelCount, glm::vec3(0.0f));
+                std::vector<glm::vec3> bakedDirectPixels(pixelCount, glm::vec3(0.0f));
+                std::vector<glm::vec3> bakedIndirectPixels(pixelCount, glm::vec3(0.0f));
+                std::vector<glm::vec3> bakedSurfaceNormals(pixelCount, glm::vec3(0.0f));
+                std::vector<float> bakedWeights(pixelCount, 0.0f);
+                const int tileSize = ResolveEffectiveLightmapTileSize(preparedBake.settings.lightmapTileSize, target.resolution);
+                std::vector<BakeTileTask> tileTasks;
+                const auto rasterizedTriangles = BuildLightmapTileTasks(target, preparedBake.triangles, tileSize, tileTasks);
+                const std::size_t workerCount = ResolveBakeWorkerCount(tileTasks.size(), kMinLightmapTasksPerBakeWorker);
+                LogBakeMessage("Lightmap " + std::to_string(targetIndex) + "/" + std::to_string(preparedBake.targets.size()) + " using " + std::to_string(workerCount) + " worker(s) across " + std::to_string(tileTasks.size()) + " tile(s) at " + std::to_string(tileSize) + "px.");
+
+                std::atomic<std::size_t> processedTiles{0};
+                std::atomic<std::size_t> nextProgressTileCount{std::max<std::size_t>(tileTasks.size() / 8, 1)};
+                const std::size_t progressBatch = std::max<std::size_t>(tileTasks.size() / 8, 1);
+
+                ParallelFor(tileTasks.size(), workerCount, [&](std::size_t taskIndex, std::size_t workerIndex)
+                            {
+                    static_cast<void>(workerIndex);
+                    if (IsBakeCancelled(cancelRequested))
+                    {
+                        return;
+                    }
+
+                    const auto &tileTask = tileTasks[taskIndex];
+                    for (const auto rasterIndex : tileTask.rasterIndices)
+                    {
+                        if (IsBakeCancelled(cancelRequested))
+                        {
+                            return;
+                        }
+
+                        const auto &rasterizedTriangle = rasterizedTriangles[rasterIndex];
+                        const auto &triangle = preparedBake.triangles[rasterizedTriangle.triangleIndex];
+                        bool wrotePixel = false;
+
+                        const int beginX = std::max(rasterizedTriangle.minX, tileTask.minX);
+                        const int endX = std::min(rasterizedTriangle.maxX, tileTask.maxX);
+                        const int beginY = std::max(rasterizedTriangle.minY, tileTask.minY);
+                        const int endY = std::min(rasterizedTriangle.maxY, tileTask.maxY);
+
+                        for (int y = beginY; y <= endY; ++y)
+                        {
+                            for (int x = beginX; x <= endX; ++x)
+                            {
+                                if (IsBakeCancelled(cancelRequested))
+                                {
+                                    return;
+                                }
+
+                                glm::vec3 barycentric{0.0f};
+                                if (!TrySampleConservativeTexel(rasterizedTriangle.texel0, rasterizedTriangle.texel1, rasterizedTriangle.texel2, x, y, barycentric))
+                                {
+                                    continue;
+                                }
+
+                                const glm::vec3 shadingNormal = ResolveInterpolatedNormal(triangle, barycentric);
+                                const BakedTexelLighting lighting = EvaluateBakedTexelLighting(triangle, barycentric, *preparedBake.scene, preparedBake.triangles, preparedBake.acceleration, preparedBake.indirectBounceDirections, preparedBake.settings.lightmapBounceStrength, preparedBake.albedoTextureCache);
+                                const std::size_t pixelIndex = static_cast<std::size_t>(x + y * target.resolution);
+                                bakedPixels[pixelIndex] += lighting.Total();
+                                bakedDirectPixels[pixelIndex] += lighting.direct;
+                                bakedIndirectPixels[pixelIndex] += lighting.indirect;
+                                bakedSurfaceNormals[pixelIndex] += shadingNormal;
+                                bakedWeights[pixelIndex] += 1.0f;
+                                wrotePixel = true;
+                            }
+                        }
+
+                        if (!wrotePixel &&
+                            rasterizedTriangle.centerX >= tileTask.minX && rasterizedTriangle.centerX <= tileTask.maxX &&
+                            rasterizedTriangle.centerY >= tileTask.minY && rasterizedTriangle.centerY <= tileTask.maxY)
+                        {
+                            const glm::vec3 barycentric(1.0f / 3.0f);
+                            const glm::vec3 shadingNormal = ResolveInterpolatedNormal(triangle, barycentric);
+                            const BakedTexelLighting lighting = EvaluateBakedTexelLighting(triangle, barycentric, *preparedBake.scene, preparedBake.triangles, preparedBake.acceleration, preparedBake.indirectBounceDirections, preparedBake.settings.lightmapBounceStrength, preparedBake.albedoTextureCache);
+
+                            const std::size_t pixelIndex = static_cast<std::size_t>(rasterizedTriangle.centerX + rasterizedTriangle.centerY * target.resolution);
+                            bakedPixels[pixelIndex] += lighting.Total();
+                            bakedDirectPixels[pixelIndex] += lighting.direct;
+                            bakedIndirectPixels[pixelIndex] += lighting.indirect;
+                            bakedSurfaceNormals[pixelIndex] += shadingNormal;
+                            bakedWeights[pixelIndex] += 1.0f;
+                        }
+                    }
+
+                    const std::size_t completedTiles = processedTiles.fetch_add(1) + 1;
+                    std::size_t expectedThreshold = nextProgressTileCount.load();
+                    while (completedTiles >= expectedThreshold)
+                    {
+                        if (nextProgressTileCount.compare_exchange_weak(expectedThreshold, expectedThreshold + progressBatch))
+                        {
+                            LogBakeMessage("Lightmap " + std::to_string(targetIndex) + "/" + std::to_string(preparedBake.targets.size()) + " processed " + std::to_string(completedTiles) + "/" + std::to_string(tileTasks.size()) + " tile(s).");
+                            break;
+                        }
+                    } });
+
+                if (IsBakeCancelled(cancelRequested))
+                {
+                    output.cancelled = true;
+                    break;
+                }
+
+                for (std::size_t pixelIndex = 0; pixelIndex < bakedPixels.size(); ++pixelIndex)
+                {
+                    if (bakedWeights[pixelIndex] > 0.0f)
+                    {
+                        bakedPixels[pixelIndex] /= bakedWeights[pixelIndex];
+                        bakedDirectPixels[pixelIndex] /= bakedWeights[pixelIndex];
+                        bakedIndirectPixels[pixelIndex] /= bakedWeights[pixelIndex];
+                        bakedSurfaceNormals[pixelIndex] /= bakedWeights[pixelIndex];
+                        const float normalLengthSq = glm::dot(bakedSurfaceNormals[pixelIndex], bakedSurfaceNormals[pixelIndex]);
+                        if (normalLengthSq > 1e-8f)
+                        {
+                            bakedSurfaceNormals[pixelIndex] /= std::sqrt(normalLengthSq);
+                        }
+                        else
+                        {
+                            bakedSurfaceNormals[pixelIndex] = glm::vec3(0.0f);
+                        }
+                    }
+                }
+
+                auto bakedFilledWeights = bakedWeights;
+                auto bakedFilledNormals = bakedSurfaceNormals;
+                FillLightmapHoles(bakedPixels, bakedFilledWeights, bakedFilledNormals, target.resolution);
+                auto bakedDirectWeights = bakedWeights;
+                auto bakedDirectNormals = bakedSurfaceNormals;
+                auto bakedIndirectWeights = bakedWeights;
+                auto bakedIndirectNormals = bakedSurfaceNormals;
+                FillLightmapHoles(bakedDirectPixels, bakedDirectWeights, bakedDirectNormals, target.resolution);
+                FillLightmapHoles(bakedIndirectPixels, bakedIndirectWeights, bakedIndirectNormals, target.resolution);
+
+                float directAverageLuminance = 0.0f;
+                float directMaxLuminance = 0.0f;
+                float indirectAverageLuminance = 0.0f;
+                float indirectMaxLuminance = 0.0f;
+                std::size_t coveredPixelCount = 0;
+                for (std::size_t pixelIndex = 0; pixelIndex < bakedIndirectPixels.size(); ++pixelIndex)
+                {
+                    if (bakedWeights[pixelIndex] <= 0.0f)
+                    {
+                        continue;
+                    }
+
+                    const glm::vec3 directPixel = bakedDirectPixels[pixelIndex];
+                    const glm::vec3 indirectPixel = bakedIndirectPixels[pixelIndex];
+                    const float directLuminance = glm::dot(directPixel, glm::vec3(0.2126f, 0.7152f, 0.0722f));
+                    const float luminance = glm::dot(indirectPixel, glm::vec3(0.2126f, 0.7152f, 0.0722f));
+                    directAverageLuminance += directLuminance;
+                    directMaxLuminance = std::max(directMaxLuminance, directLuminance);
+                    indirectAverageLuminance += luminance;
+                    indirectMaxLuminance = std::max(indirectMaxLuminance, luminance);
+                    ++coveredPixelCount;
+                }
+                if (coveredPixelCount > 0)
+                {
+                    directAverageLuminance /= static_cast<float>(coveredPixelCount);
+                    indirectAverageLuminance /= static_cast<float>(coveredPixelCount);
+                }
+
+                const std::filesystem::path directOutputPath = target.outputPath.parent_path() / (target.outputPath.stem().string() + "_direct" + target.outputPath.extension().string());
+                const std::filesystem::path indirectOutputPath = target.outputPath.parent_path() / (target.outputPath.stem().string() + "_indirect" + target.outputPath.extension().string());
+                if (!WritePfm(target.outputPath, bakedPixels, target.resolution, target.resolution))
+                {
+                    ++output.failedLightmapWrites;
+                }
+                if (!WritePfm(directOutputPath, bakedDirectPixels, target.resolution, target.resolution))
+                {
+                    ++output.failedLightmapWrites;
+                }
+                if (!WritePfm(indirectOutputPath, bakedIndirectPixels, target.resolution, target.resolution))
+                {
+                    ++output.failedLightmapWrites;
+                }
+
+                const float indirectToDirectRatio = directAverageLuminance > 1e-6f ? indirectAverageLuminance / directAverageLuminance : 0.0f;
+                LogBakeMessage("Lightmap " + std::to_string(targetIndex) + "/" + std::to_string(preparedBake.targets.size()) + " direct avg luminance=" + std::to_string(directAverageLuminance) + ", max luminance=" + std::to_string(directMaxLuminance) + ".");
+                LogBakeMessage("Lightmap " + std::to_string(targetIndex) + "/" + std::to_string(preparedBake.targets.size()) + " indirect avg luminance=" + std::to_string(indirectAverageLuminance) + ", max luminance=" + std::to_string(indirectMaxLuminance) + ", ratio=" + std::to_string(indirectToDirectRatio) + ".");
+
+                output.lightmaps.push_back(CompletedBakeLightmap{
+                    .target = target,
+                    .floatPixels = ConvertToFloatPixels(bakedPixels),
+                });
+            }
+
+            const auto bakeEndTime = std::chrono::steady_clock::now();
+            output.elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(bakeEndTime - preparedBake.bakeStartTime).count();
+            return output;
+        }
+
+        SceneBakeResult BuildBakeResult(int bakedLightmapCount,
+                                        const BakedProbeVolume &probeVolume,
+                                        int failedLightmapLoads,
+                                        int failedLightmapWrites,
+                                        long long elapsedMs)
+        {
+            SceneBakeResult result;
+            result.bakedLightmapCount = bakedLightmapCount;
+            result.bakedProbeCount = probeVolume.IsValid() ? static_cast<int>(probeVolume.irradiance.size()) : 0;
+            result.succeeded = result.bakedLightmapCount > 0;
+
+            std::ostringstream message;
+            message << "Baked " << result.bakedLightmapCount << " lightmap(s)";
+            if (probeVolume.IsValid())
+            {
+                message << " and generated " << result.bakedProbeCount << " probe samples.";
+            }
+            else
+            {
+                message << ".";
+            }
+
+            if (failedLightmapLoads > 0)
+            {
+                message << " " << failedLightmapLoads << " baked lightmap file(s) could not be loaded back into the scene.";
+            }
+
+            if (failedLightmapWrites > 0)
+            {
+                message << " " << failedLightmapWrites << " baked lightmap file(s) could not be written to disk.";
+            }
+
+            if (result.bakedLightmapCount == 0)
+            {
+                message << " Check that your static meshes have valid UVs and that the contributing lights are marked Static.";
+            }
+
+            message << " Bake time: " << elapsedMs << " ms.";
+            result.message = message.str();
+            return result;
+        }
+
+        SceneBakeResult BuildCancelledBakeResult(long long elapsedMs)
+        {
+            SceneBakeResult result;
+            result.message = "Bake cancelled. Bake time: " + std::to_string(elapsedMs) + " ms.";
+            return result;
+        }
+
+        SceneBakeResult FinalizePreparedBake(Scene &scene,
+                                             const PreparedSceneBake &preparedBake,
+                                             const BackgroundBakeOutput &output)
+        {
+            if (output.cancelled)
+            {
+                LogBakeMessage("Bake cancelled.");
+                return BuildCancelledBakeResult(output.elapsedMs);
+            }
+
+            int failedLightmapLoads = 0;
+            int bakedLightmapCount = 0;
+            for (const auto &lightmap : output.lightmaps)
+            {
+                auto *lightmapTexture = core::Engine::GetInstance().GetTextureManager().LoadLightmapFromMemory(
+                    lightmap.target.outputPath.string(),
+                    lightmap.floatPixels.data(),
+                    lightmap.target.resolution,
+                    lightmap.target.resolution,
+                    3);
+                if (!lightmapTexture)
+                {
+                    ++failedLightmapLoads;
+                    continue;
+                }
+
+                auto *material = lightmap.target.meshComponent->CreateUniqueMaterialForSubmesh(lightmap.target.submeshIndex);
+                material->SetLightmapTexture(lightmapTexture);
+                ++bakedLightmapCount;
+                LogBakeMessage("Assigned baked lightmap to submesh " + std::to_string(lightmap.target.submeshIndex) + " (material slot " + std::to_string(lightmap.target.materialSlot) + ").");
+            }
+
+            if (preparedBake.shouldStoreProbeVolume && output.probeVolume.IsValid())
+            {
+                scene.SetBakedProbeVolume(output.probeVolume);
+                LogBakeMessage("Probe volume baked with " + std::to_string(output.probeVolume.irradiance.size()) + " sample(s).");
+            }
+            else
+            {
+                scene.ClearBakedProbeVolume();
+            }
+
+            SceneBakeResult result = BuildBakeResult(bakedLightmapCount, output.probeVolume, failedLightmapLoads, output.failedLightmapWrites, output.elapsedMs);
+            LogBakeMessage(result.message);
+            return result;
+        }
     }
 
     SceneBakeSettings SceneBakeSettings::FastPreview()
     {
         SceneBakeSettings settings;
         settings.lightmapResolution = 32;
+        settings.lightmapTileSize = 16;
         settings.probeDirectionCount = 0;
         settings.indirectBounceSampleCount = 0;
         settings.bakeProbeVolume = false;
@@ -1454,27 +1952,133 @@ namespace PlutoGE::scene
     SceneBakeSettings SceneBakeSettings::BalancedPreview()
     {
         SceneBakeSettings settings;
-        settings.lightmapResolution = 128;
+        settings.lightmapResolution = 96;
+        settings.lightmapTileSize = 16;
         settings.probeDirectionCount = 0;
-        settings.indirectBounceSampleCount = 32;
+        settings.indirectBounceSampleCount = 12;
         settings.bakeProbeVolume = false;
         settings.bakeIndirectBounce = true;
         settings.probeBounceStrength = 0.0f;
-        settings.lightmapBounceStrength = 1.5f;
+        settings.lightmapBounceStrength = 1.25f;
         return settings;
     }
 
     SceneBakeSettings SceneBakeSettings::Final()
     {
         SceneBakeSettings settings;
-        settings.lightmapResolution = 256;
-        settings.probeDirectionCount = 24;
-        settings.indirectBounceSampleCount = 96;
+        settings.lightmapResolution = 192;
+        settings.lightmapTileSize = 16;
+        settings.probeDirectionCount = 12;
+        settings.indirectBounceSampleCount = 48;
         settings.bakeProbeVolume = true;
         settings.bakeIndirectBounce = true;
-        settings.probeBounceStrength = 1.25f;
-        settings.lightmapBounceStrength = 2.0f;
+        settings.probeBounceStrength = 1.0f;
+        settings.lightmapBounceStrength = 1.5f;
         return settings;
+    }
+
+    struct SceneBakeTask::Impl
+    {
+        std::shared_ptr<PreparedSceneBake> preparedBake;
+        std::shared_ptr<std::atomic<bool>> cancelRequested = std::make_shared<std::atomic<bool>>(false);
+        std::future<BackgroundBakeOutput> future;
+        std::optional<BackgroundBakeOutput> completedOutput;
+        std::optional<SceneBakeResult> finalizedResult;
+    };
+
+    SceneBakeTask::SceneBakeTask(std::unique_ptr<Impl> impl)
+        : m_impl(std::move(impl))
+    {
+    }
+
+    SceneBakeTask::SceneBakeTask(SceneBakeTask &&) noexcept = default;
+    SceneBakeTask &SceneBakeTask::operator=(SceneBakeTask &&) noexcept = default;
+
+    SceneBakeTask::~SceneBakeTask()
+    {
+        Cancel();
+        if (m_impl && m_impl->future.valid())
+        {
+            m_impl->future.wait();
+        }
+    }
+
+    void SceneBakeTask::Cancel()
+    {
+        if (m_impl)
+        {
+            m_impl->cancelRequested->store(true, std::memory_order_relaxed);
+        }
+    }
+
+    bool SceneBakeTask::IsRunning() const
+    {
+        return m_impl && !IsFinished();
+    }
+
+    bool SceneBakeTask::IsFinished() const
+    {
+        if (!m_impl)
+        {
+            return true;
+        }
+
+        if (m_impl->completedOutput.has_value() || m_impl->finalizedResult.has_value())
+        {
+            return true;
+        }
+
+        return m_impl->future.valid() && m_impl->future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready;
+    }
+
+    bool SceneBakeTask::IsCancelled() const
+    {
+        return m_impl && m_impl->cancelRequested->load(std::memory_order_relaxed);
+    }
+
+    std::string SceneBakeTask::GetStatusMessage() const
+    {
+        if (!m_impl)
+        {
+            return {};
+        }
+
+        if (m_impl->finalizedResult.has_value())
+        {
+            return m_impl->finalizedResult->message;
+        }
+
+        return IsCancelled() ? "Cancelling bake..." : "Bake running in background...";
+    }
+
+    SceneBakeResult SceneBakeTask::Finalize(Scene &scene)
+    {
+        if (!m_impl)
+        {
+            SceneBakeResult result;
+            result.message = "No bake task is active.";
+            return result;
+        }
+
+        if (m_impl->finalizedResult.has_value())
+        {
+            return *m_impl->finalizedResult;
+        }
+
+        if (!m_impl->completedOutput.has_value())
+        {
+            if (!m_impl->future.valid() || m_impl->future.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready)
+            {
+                SceneBakeResult result;
+                result.message = "Bake is still running.";
+                return result;
+            }
+
+            m_impl->completedOutput = m_impl->future.get();
+        }
+
+        m_impl->finalizedResult = FinalizePreparedBake(scene, *m_impl->preparedBake, *m_impl->completedOutput);
+        return *m_impl->finalizedResult;
     }
 
     SceneBakeResult SceneBaker::Bake(Scene &scene) const
@@ -1484,334 +2088,41 @@ namespace PlutoGE::scene
 
     SceneBakeResult SceneBaker::Bake(Scene &scene, const SceneBakeSettings &settings) const
     {
-        SceneBakeResult result;
-        const auto bakeStartTime = std::chrono::steady_clock::now();
-        const SceneBakeSettings bakeSettings = settings;
-
-        const int staticLightCount = CountStaticLights(scene);
-        if (staticLightCount == 0)
+        SceneBakeResult immediateResult;
+        auto preparedBake = PrepareSceneBake(scene, settings, immediateResult);
+        if (!preparedBake.has_value())
         {
-            result.message = "Bake skipped: no static lights were found. Mark the lights you want baked as Static.";
-            scene.ClearBakedProbeVolume();
-            return result;
+            return immediateResult;
         }
 
-        LogBakeMessage("Starting scene bake with " + std::to_string(staticLightCount) + " static light(s).");
-        LogBakeMessage("Bake settings: " + std::to_string(bakeSettings.lightmapResolution) + "px lightmaps, " + std::to_string(bakeSettings.indirectBounceSampleCount) + " indirect bounce sample(s), " + std::to_string(bakeSettings.probeDirectionCount) + " probe direction(s).");
+        const auto cancelRequested = std::make_shared<std::atomic<bool>>(false);
+        const auto backgroundOutput = ExecutePreparedBake(*preparedBake, cancelRequested);
+        return FinalizePreparedBake(scene, *preparedBake, backgroundOutput);
+    }
 
-        const std::filesystem::path bakeRoot = std::filesystem::current_path() / "baked" / ResolveBakeDirectoryName(scene);
-        std::error_code errorCode;
-        std::filesystem::create_directories(bakeRoot, errorCode);
-        if (errorCode)
+    std::unique_ptr<SceneBakeTask> SceneBaker::BeginBake(Scene &scene, const SceneBakeSettings &settings, SceneBakeResult *outImmediateResult) const
+    {
+        SceneBakeResult immediateResult;
+        auto preparedBake = PrepareSceneBake(scene, settings, immediateResult);
+        if (!preparedBake.has_value())
         {
-            result.message = "Failed to create bake output directory.";
-            return result;
-        }
-
-        std::vector<BakeTriangle> triangles;
-        std::map<std::pair<MeshComponent *, std::size_t>, BakeTarget> targets;
-        CollectStaticTriangles(scene, triangles, targets, bakeRoot, std::max(bakeSettings.lightmapResolution, 4));
-        LogBakeMessage("Collected " + std::to_string(targets.size()) + " bake target(s) across " + std::to_string(triangles.size()) + " triangle(s).");
-        if (targets.empty())
-        {
-            result.message = "No static meshes with usable bake UVs were found to bake.";
-            scene.ClearBakedProbeVolume();
-            return result;
-        }
-
-        const auto acceleration = BuildAccelerationStructure(triangles);
-        LogBakeMessage("Built bake BVH with " + std::to_string(acceleration.nodes.size()) + " node(s).");
-        const auto albedoTextureCache = BuildAlbedoTextureCache(triangles);
-        LogBakeMessage("Captured " + std::to_string(albedoTextureCache.size()) + " albedo texture(s) for bake sampling.");
-
-        const std::vector<glm::vec3> indirectBounceDirections = bakeSettings.bakeIndirectBounce
-                                                                    ? GenerateHemisphereDirections(bakeSettings.indirectBounceSampleCount)
-                                                                    : std::vector<glm::vec3>{};
-
-        const bool shouldStoreProbeVolume = bakeSettings.bakeProbeVolume && SceneHasDynamicMeshes(scene);
-        if (shouldStoreProbeVolume)
-        {
-            LogBakeMessage("Baking probe volume for dynamic objects.");
-        }
-        else
-        {
-            LogBakeMessage("Skipping probe volume because no dynamic mesh components were found.");
-        }
-
-        const BakedProbeVolume probeVolume = shouldStoreProbeVolume ? BuildProbeVolume(scene, triangles, acceleration, bakeSettings, albedoTextureCache) : BakedProbeVolume{};
-        if (shouldStoreProbeVolume && !probeVolume.IsValid())
-        {
-            LogBakeMessage("Probe volume bake produced no valid samples.");
-        }
-        int failedLightmapLoads = 0;
-        int failedLightmapWrites = 0;
-
-        int targetIndex = 0;
-
-        for (auto &[targetKey, target] : targets)
-        {
-            ++targetIndex;
-            LogBakeMessage("Baking lightmap " + std::to_string(targetIndex) + "/" + std::to_string(targets.size()) + " at " + std::to_string(target.resolution) + "x" + std::to_string(target.resolution) + ".");
-            const std::size_t pixelCount = static_cast<std::size_t>(target.resolution * target.resolution);
-            std::vector<glm::vec3> bakedPixels(pixelCount, glm::vec3(0.0f));
-            std::vector<glm::vec3> bakedDirectPixels(pixelCount, glm::vec3(0.0f));
-            std::vector<glm::vec3> bakedIndirectPixels(pixelCount, glm::vec3(0.0f));
-            std::vector<glm::vec3> bakedSurfaceNormals(pixelCount, glm::vec3(0.0f));
-            std::vector<float> bakedWeights(pixelCount, 0.0f);
-            const std::size_t workerCount = ResolveBakeWorkerCount(target.triangleIndices.size(), kMinTrianglesPerBakeWorker);
-            LogBakeMessage("Lightmap " + std::to_string(targetIndex) + "/" + std::to_string(targets.size()) + " using " + std::to_string(workerCount) + " worker(s).");
-
-            std::vector<std::vector<glm::vec3>> workerPixels(workerCount, std::vector<glm::vec3>(pixelCount, glm::vec3(0.0f)));
-            std::vector<std::vector<glm::vec3>> workerDirectPixels(workerCount, std::vector<glm::vec3>(pixelCount, glm::vec3(0.0f)));
-            std::vector<std::vector<glm::vec3>> workerIndirectPixels(workerCount, std::vector<glm::vec3>(pixelCount, glm::vec3(0.0f)));
-            std::vector<std::vector<glm::vec3>> workerSurfaceNormals(workerCount, std::vector<glm::vec3>(pixelCount, glm::vec3(0.0f)));
-            std::vector<std::vector<float>> workerWeights(workerCount, std::vector<float>(pixelCount, 0.0f));
-            std::atomic<std::size_t> processedTriangles{0};
-            std::atomic<std::size_t> nextProgressTriangleCount{std::max<std::size_t>(target.triangleIndices.size() / 4, 1)};
-            const std::size_t progressBatch = std::max<std::size_t>(target.triangleIndices.size() / 4, 1);
-
-            ParallelFor(target.triangleIndices.size(), workerCount, [&](std::size_t taskIndex, std::size_t workerIndex)
-                        {
-                auto &localPixels = workerPixels[workerIndex];
-                auto &localDirectPixels = workerDirectPixels[workerIndex];
-                auto &localIndirectPixels = workerIndirectPixels[workerIndex];
-                auto &localSurfaceNormals = workerSurfaceNormals[workerIndex];
-                auto &localWeights = workerWeights[workerIndex];
-                const auto triangleIndex = target.triangleIndices[taskIndex];
-                const auto &triangle = triangles[triangleIndex];
-                bool wrotePixel = false;
-                glm::vec2 uv0 = glm::clamp(triangle.lightmapUvs[0], glm::vec2(0.0f), glm::vec2(1.0f));
-                glm::vec2 uv1 = glm::clamp(triangle.lightmapUvs[1], glm::vec2(0.0f), glm::vec2(1.0f));
-                glm::vec2 uv2 = glm::clamp(triangle.lightmapUvs[2], glm::vec2(0.0f), glm::vec2(1.0f));
-
-                const glm::vec2 texel0 = uv0 * static_cast<float>(target.resolution - 1);
-                const glm::vec2 texel1 = uv1 * static_cast<float>(target.resolution - 1);
-                const glm::vec2 texel2 = uv2 * static_cast<float>(target.resolution - 1);
-
-                const float minX = std::floor(std::min({texel0.x, texel1.x, texel2.x}));
-                const float maxX = std::ceil(std::max({texel0.x, texel1.x, texel2.x}));
-                const float minY = std::floor(std::min({texel0.y, texel1.y, texel2.y}));
-                const float maxY = std::ceil(std::max({texel0.y, texel1.y, texel2.y}));
-
-                for (int y = std::max(static_cast<int>(minY), 0); y <= std::min(static_cast<int>(maxY), target.resolution - 1); ++y)
-                {
-                    for (int x = std::max(static_cast<int>(minX), 0); x <= std::min(static_cast<int>(maxX), target.resolution - 1); ++x)
-                    {
-                        glm::vec3 barycentric{0.0f};
-                        if (!TrySampleConservativeTexel(texel0, texel1, texel2, x, y, barycentric))
-                        {
-                            continue;
-                        }
-
-                        const glm::vec3 shadingNormal = ResolveInterpolatedNormal(triangle, barycentric);
-                        const BakedTexelLighting lighting = EvaluateBakedTexelLighting(triangle, barycentric, scene, triangles, acceleration, indirectBounceDirections, bakeSettings.lightmapBounceStrength, albedoTextureCache);
-                        const std::size_t pixelIndex = static_cast<std::size_t>(x + y * target.resolution);
-                        localPixels[pixelIndex] += lighting.Total();
-                        localDirectPixels[pixelIndex] += lighting.direct;
-                        localIndirectPixels[pixelIndex] += lighting.indirect;
-                        localSurfaceNormals[pixelIndex] += shadingNormal;
-                        localWeights[pixelIndex] += 1.0f;
-                        wrotePixel = true;
-                    }
-                }
-
-                if (!wrotePixel)
-                {
-                    const glm::vec2 centerUv = glm::clamp((uv0 + uv1 + uv2) / 3.0f, glm::vec2(0.0f), glm::vec2(1.0f));
-                    const int x = std::clamp(static_cast<int>(std::round(centerUv.x * static_cast<float>(target.resolution - 1))), 0, target.resolution - 1);
-                    const int y = std::clamp(static_cast<int>(std::round(centerUv.y * static_cast<float>(target.resolution - 1))), 0, target.resolution - 1);
-                    const glm::vec3 barycentric(1.0f / 3.0f);
-                    const glm::vec3 shadingNormal = ResolveInterpolatedNormal(triangle, barycentric);
-                    const BakedTexelLighting lighting = EvaluateBakedTexelLighting(triangle, barycentric, scene, triangles, acceleration, indirectBounceDirections, bakeSettings.lightmapBounceStrength, albedoTextureCache);
-
-                    const std::size_t pixelIndex = static_cast<std::size_t>(x + y * target.resolution);
-                    localPixels[pixelIndex] += lighting.Total();
-                    localDirectPixels[pixelIndex] += lighting.direct;
-                    localIndirectPixels[pixelIndex] += lighting.indirect;
-                    localSurfaceNormals[pixelIndex] += shadingNormal;
-                    localWeights[pixelIndex] += 1.0f;
-                }
-
-                const std::size_t completedTriangles = processedTriangles.fetch_add(1) + 1;
-                std::size_t expectedThreshold = nextProgressTriangleCount.load();
-                while (completedTriangles >= expectedThreshold)
-                {
-                    if (nextProgressTriangleCount.compare_exchange_weak(expectedThreshold, expectedThreshold + progressBatch))
-                    {
-                        LogBakeMessage("Lightmap " + std::to_string(targetIndex) + "/" + std::to_string(targets.size()) + " processed " + std::to_string(completedTriangles) + "/" + std::to_string(target.triangleIndices.size()) + " triangle(s).");
-                        break;
-                    }
-                } });
-
-            for (std::size_t workerIndex = 0; workerIndex < workerCount; ++workerIndex)
+            if (outImmediateResult)
             {
-                for (std::size_t pixelIndex = 0; pixelIndex < pixelCount; ++pixelIndex)
-                {
-                    bakedPixels[pixelIndex] += workerPixels[workerIndex][pixelIndex];
-                    bakedDirectPixels[pixelIndex] += workerDirectPixels[workerIndex][pixelIndex];
-                    bakedIndirectPixels[pixelIndex] += workerIndirectPixels[workerIndex][pixelIndex];
-                    bakedSurfaceNormals[pixelIndex] += workerSurfaceNormals[workerIndex][pixelIndex];
-                    bakedWeights[pixelIndex] += workerWeights[workerIndex][pixelIndex];
-                }
+                *outImmediateResult = immediateResult;
             }
-
-            for (std::size_t pixelIndex = 0; pixelIndex < bakedPixels.size(); ++pixelIndex)
-            {
-                if (bakedWeights[pixelIndex] > 0.0f)
-                {
-                    bakedPixels[pixelIndex] /= bakedWeights[pixelIndex];
-                    bakedDirectPixels[pixelIndex] /= bakedWeights[pixelIndex];
-                    bakedIndirectPixels[pixelIndex] /= bakedWeights[pixelIndex];
-                    bakedSurfaceNormals[pixelIndex] /= bakedWeights[pixelIndex];
-                    const float normalLengthSq = glm::dot(bakedSurfaceNormals[pixelIndex], bakedSurfaceNormals[pixelIndex]);
-                    if (normalLengthSq > 1e-8f)
-                    {
-                        bakedSurfaceNormals[pixelIndex] /= std::sqrt(normalLengthSq);
-                    }
-                    else
-                    {
-                        bakedSurfaceNormals[pixelIndex] = glm::vec3(0.0f);
-                    }
-                }
-            }
-
-            auto bakedFilledWeights = bakedWeights;
-            auto bakedFilledNormals = bakedSurfaceNormals;
-            FillLightmapHoles(bakedPixels, bakedFilledWeights, bakedFilledNormals, target.resolution);
-            auto bakedDirectWeights = bakedWeights;
-            auto bakedDirectNormals = bakedSurfaceNormals;
-            auto bakedIndirectWeights = bakedWeights;
-            auto bakedIndirectNormals = bakedSurfaceNormals;
-            FillLightmapHoles(bakedDirectPixels, bakedDirectWeights, bakedDirectNormals, target.resolution);
-            FillLightmapHoles(bakedIndirectPixels, bakedIndirectWeights, bakedIndirectNormals, target.resolution);
-
-            float directAverageLuminance = 0.0f;
-            float directMaxLuminance = 0.0f;
-            float indirectAverageLuminance = 0.0f;
-            float indirectMaxLuminance = 0.0f;
-            std::size_t coveredPixelCount = 0;
-            for (std::size_t pixelIndex = 0; pixelIndex < bakedIndirectPixels.size(); ++pixelIndex)
-            {
-                if (bakedWeights[pixelIndex] <= 0.0f)
-                {
-                    continue;
-                }
-
-                const glm::vec3 directPixel = bakedDirectPixels[pixelIndex];
-                const glm::vec3 indirectPixel = bakedIndirectPixels[pixelIndex];
-                const float directLuminance = glm::dot(directPixel, glm::vec3(0.2126f, 0.7152f, 0.0722f));
-                const float luminance = glm::dot(indirectPixel, glm::vec3(0.2126f, 0.7152f, 0.0722f));
-                directAverageLuminance += directLuminance;
-                directMaxLuminance = std::max(directMaxLuminance, directLuminance);
-                indirectAverageLuminance += luminance;
-                indirectMaxLuminance = std::max(indirectMaxLuminance, luminance);
-                ++coveredPixelCount;
-            }
-            if (coveredPixelCount > 0)
-            {
-                directAverageLuminance /= static_cast<float>(coveredPixelCount);
-                indirectAverageLuminance /= static_cast<float>(coveredPixelCount);
-            }
-
-            const std::filesystem::path directOutputPath = target.outputPath.parent_path() / (target.outputPath.stem().string() + "_direct" + target.outputPath.extension().string());
-            const std::filesystem::path indirectOutputPath = target.outputPath.parent_path() / (target.outputPath.stem().string() + "_indirect" + target.outputPath.extension().string());
-            const std::filesystem::path previewOutputPath = target.outputPath.parent_path() / (target.outputPath.stem().string() + "_preview.bmp");
-            const std::filesystem::path directPreviewOutputPath = target.outputPath.parent_path() / (target.outputPath.stem().string() + "_direct_preview.bmp");
-            const std::filesystem::path indirectPreviewOutputPath = target.outputPath.parent_path() / (target.outputPath.stem().string() + "_indirect_preview.bmp");
-
-            if (!WritePfm(target.outputPath, bakedPixels, target.resolution, target.resolution))
-            {
-                ++failedLightmapWrites;
-            }
-            if (!WritePfm(directOutputPath, bakedDirectPixels, target.resolution, target.resolution))
-            {
-                ++failedLightmapWrites;
-            }
-            if (!WritePfm(indirectOutputPath, bakedIndirectPixels, target.resolution, target.resolution))
-            {
-                ++failedLightmapWrites;
-            }
-            if (!WriteBmpPreview(previewOutputPath, bakedPixels, target.resolution, target.resolution))
-            {
-                ++failedLightmapWrites;
-            }
-            if (!WriteBmpPreview(directPreviewOutputPath, bakedDirectPixels, target.resolution, target.resolution))
-            {
-                ++failedLightmapWrites;
-            }
-            if (!WriteBmpPreview(indirectPreviewOutputPath, bakedIndirectPixels, target.resolution, target.resolution))
-            {
-                ++failedLightmapWrites;
-            }
-
-            const float indirectToDirectRatio = directAverageLuminance > 1e-6f ? indirectAverageLuminance / directAverageLuminance : 0.0f;
-            LogBakeMessage("Lightmap " + std::to_string(targetIndex) + "/" + std::to_string(targets.size()) + " direct avg luminance=" + std::to_string(directAverageLuminance) + ", max luminance=" + std::to_string(directMaxLuminance) + ".");
-            LogBakeMessage("Lightmap " + std::to_string(targetIndex) + "/" + std::to_string(targets.size()) + " indirect avg luminance=" + std::to_string(indirectAverageLuminance) + ", max luminance=" + std::to_string(indirectMaxLuminance) + ", ratio=" + std::to_string(indirectToDirectRatio) + ".");
-
-            auto floatPixels = ConvertToFloatPixels(bakedPixels);
-            auto *lightmapTexture = core::Engine::GetInstance().GetTextureManager().LoadLightmapFromMemory(
-                target.outputPath.string(),
-                floatPixels.data(),
-                target.resolution,
-                target.resolution,
-                3);
-            if (!lightmapTexture)
-            {
-                ++failedLightmapLoads;
-                continue;
-            }
-
-            auto *material = target.meshComponent->CreateUniqueMaterialForSubmesh(target.submeshIndex);
-            material->SetLightmapTexture(lightmapTexture);
-            ++result.bakedLightmapCount;
-            LogBakeMessage("Assigned baked lightmap to submesh " + std::to_string(target.submeshIndex) + " (material slot " + std::to_string(target.materialSlot) + ").");
+            return nullptr;
         }
 
-        if (shouldStoreProbeVolume && probeVolume.IsValid())
+        auto impl = std::make_unique<SceneBakeTask::Impl>();
+        impl->preparedBake = std::make_shared<PreparedSceneBake>(std::move(*preparedBake));
+        impl->future = std::async(std::launch::async, [preparedBake = impl->preparedBake, cancelRequested = impl->cancelRequested]()
+                                  { return ExecutePreparedBake(*preparedBake, cancelRequested); });
+
+        if (outImmediateResult)
         {
-            scene.SetBakedProbeVolume(probeVolume);
-            LogBakeMessage("Probe volume baked with " + std::to_string(probeVolume.irradiance.size()) + " sample(s).");
-        }
-        else
-        {
-            scene.ClearBakedProbeVolume();
+            *outImmediateResult = SceneBakeResult{};
         }
 
-        result.bakedProbeCount = probeVolume.IsValid() ? static_cast<int>(probeVolume.irradiance.size()) : 0;
-        result.succeeded = result.bakedLightmapCount > 0;
-
-        std::ostringstream message;
-        message << "Baked " << result.bakedLightmapCount << " lightmap(s)";
-        if (probeVolume.IsValid())
-        {
-            message << " and generated " << result.bakedProbeCount << " probe samples.";
-        }
-        else
-        {
-            message << ".";
-        }
-
-        if (failedLightmapLoads > 0)
-        {
-            message << " " << failedLightmapLoads << " baked lightmap file(s) could not be loaded back into the scene.";
-        }
-
-        if (failedLightmapWrites > 0)
-        {
-            message << " " << failedLightmapWrites << " baked lightmap file(s) could not be written to disk.";
-        }
-
-        if (result.bakedLightmapCount == 0)
-        {
-            message << " Check that your static meshes have valid UVs and that the contributing lights are marked Static.";
-        }
-
-        const auto bakeEndTime = std::chrono::steady_clock::now();
-        const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(bakeEndTime - bakeStartTime).count();
-        message << " Bake time: " << elapsedMs << " ms.";
-
-        result.message = message.str();
-        LogBakeMessage(result.message);
-        return result;
+        return std::unique_ptr<SceneBakeTask>(new SceneBakeTask(std::move(impl)));
     }
 }

@@ -4,6 +4,7 @@
 #include "PlutoGE/render/Camera.h"
 #include "PlutoGE/render/postprocess/IPostProcessEffect.h"
 #include "PlutoGE/render/postprocess/PostProcessEffectFactory.h"
+#include "PlutoGE/scene/SceneBaker.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/ui/EditorProfiler.h"
 #include "PlutoGE/ui/PanelManager.h"
@@ -132,6 +133,8 @@ namespace PlutoGE::ui
         bool m_isEditorCameraSelected = false;
         EditorViewportCamera m_editorCamera;
         std::unique_ptr<scene::Scene> m_scene;
+        std::unique_ptr<scene::SceneBakeTask> m_activeBakeTask;
+        scene::SceneBakeSettings m_customBakeSettings = scene::SceneBakeSettings::BalancedPreview();
         std::string m_statusMessage;
     };
 }

@@ -21,6 +21,7 @@ namespace PlutoGE::scene
 {
     class CameraComponent;
     class LightComponent;
+    class Scene;
     struct Light;
 }
 
@@ -57,6 +58,7 @@ namespace PlutoGE::render
         glm::mat4 model;    // Model matrix for the object (position, rotation, scale)
         glm::mat4 previousModel = glm::mat4(1.0f);
         uint32_t submeshIndex = 0;
+        bool isStatic = false;
     };
 
     struct GpuPassTiming
@@ -100,6 +102,7 @@ namespace PlutoGE::render
         bool hasCameraData = false;
         bool hasPreviousCameraData = false;
         const scene::CameraComponent *cameraComponent; // Camera component owning this frame's post-process chain
+        const scene::Scene *scene = nullptr;
         const std::vector<IPostProcessEffect *> *postProcessEffects = nullptr;
         RenderTarget *renderTarget;                    // Render target for the current frame (nullptr for default framebuffer)
         RenderTarget *temporaryRenderTarget = nullptr; // Optional temporary render target for intermediate passes
@@ -125,7 +128,7 @@ namespace PlutoGE::render
         void BeginProfilingFrame();
         void UpdateShadowMaps(std::vector<scene::Light *> lights = {});
         void RenderFrame(const scene::CameraComponent &cameraComponent, RenderTarget *renderTarget = nullptr, std::vector<scene::Light *> lights = {});
-        void RenderFrame(const CameraData &cameraData, RenderTarget *renderTarget = nullptr, std::vector<scene::Light *> lights = {}, const std::vector<IPostProcessEffect *> *postProcessEffects = nullptr);
+        void RenderFrame(const CameraData &cameraData, RenderTarget *renderTarget = nullptr, std::vector<scene::Light *> lights = {}, const std::vector<IPostProcessEffect *> *postProcessEffects = nullptr, const scene::Scene *scene = nullptr);
         void EndFrame(RenderTarget *renderTarget = nullptr);
         void Shutdown(RenderTarget *renderTarget = nullptr);
         void ClearRenderCommands();

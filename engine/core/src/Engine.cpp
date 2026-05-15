@@ -207,6 +207,7 @@ namespace PlutoGE::core
                     {
                         meshComponent->SetMesh(importedRenderMeshAsset.mesh);
                         meshComponent->SetMaterials(importedRenderMeshAsset.materials);
+                        meshComponent->SetSourceMeshPath(job.normalizedPath);
                     }
                     else
                     {

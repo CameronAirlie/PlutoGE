@@ -1,6 +1,8 @@
 add_library(PlutoGEScene
     src/Entity.cpp
     src/Scene.cpp
+    src/SceneBaker.cpp
+    src/SceneSerializer.cpp
     src/components/MeshComponent.cpp
     src/components/CameraComponent.cpp
     src/components/LightComponent.cpp

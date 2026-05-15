@@ -28,8 +28,8 @@ namespace PlutoGE::scene
         std::vector<Property> Serialize() const override;
         void Deserialize(const std::vector<Property> &properties) override;
 
-        void SetCamera(render::Camera *camera) { m_camera = camera; }
-        render::Camera *GetCamera() const { return m_camera; }
+        void SetCamera(render::Camera *camera) { m_camera.reset(camera); }
+        render::Camera *GetCamera() const { return m_camera.get(); }
 
         render::CameraData GetCameraData(int width, int height) const;
 
@@ -54,7 +54,7 @@ namespace PlutoGE::scene
         }
 
     private:
-        render::Camera *m_camera = nullptr;
+        std::unique_ptr<render::Camera> m_camera;
         std::vector<std::unique_ptr<render::IPostProcessEffect>> m_postProcessEffects;
     };
 }

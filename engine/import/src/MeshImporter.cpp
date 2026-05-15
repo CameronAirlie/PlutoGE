@@ -408,7 +408,8 @@ namespace PlutoGE::assetimport
             const glm::mat4 &worldTransform,
             render::MeshData &meshData,
             std::vector<render::Submesh> &submeshes,
-            uint32_t materialIndex)
+            uint32_t materialIndex,
+            bool &hasLightmapUvs)
         {
             if (primitive.mode != TINYGLTF_MODE_TRIANGLES)
             {
@@ -425,6 +426,7 @@ namespace PlutoGE::assetimport
             const auto vertexCount = positionView.accessor->count;
             const auto normalIt = primitive.attributes.find("NORMAL");
             const auto uvIt = primitive.attributes.find("TEXCOORD_0");
+            const auto lightmapUvIt = primitive.attributes.find("TEXCOORD_1");
             const auto tangentIt = primitive.attributes.find("TANGENT");
 
             const auto normalView = normalIt != primitive.attributes.end()
@@ -433,9 +435,14 @@ namespace PlutoGE::assetimport
             const auto uvView = uvIt != primitive.attributes.end()
                                     ? std::optional<AccessorView>(CreateAccessorView(model, uvIt->second))
                                     : std::nullopt;
+            const auto lightmapUvView = lightmapUvIt != primitive.attributes.end()
+                                            ? std::optional<AccessorView>(CreateAccessorView(model, lightmapUvIt->second))
+                                            : std::nullopt;
             const auto tangentView = tangentIt != primitive.attributes.end()
                                          ? std::optional<AccessorView>(CreateAccessorView(model, tangentIt->second))
                                          : std::nullopt;
+
+            hasLightmapUvs = hasLightmapUvs || lightmapUvView.has_value();
 
             const auto baseVertex = static_cast<uint32_t>(meshData.vertices.size());
             const auto submeshIndexOffset = static_cast<uint32_t>(meshData.indices.size());
@@ -471,6 +478,12 @@ namespace PlutoGE::assetimport
                     uv = ReadFloatTuple<2>(*uvView, vertexIndex);
                 }
 
+                std::array<float, 2> uv2 = {0.0f, 0.0f};
+                if (lightmapUvView.has_value())
+                {
+                    uv2 = ReadFloatTuple<2>(*lightmapUvView, vertexIndex);
+                }
+
                 std::array<float, 4> tangent = {0.0f, 0.0f, 0.0f, 1.0f};
                 if (tangentView.has_value())
                 {
@@ -494,6 +507,7 @@ namespace PlutoGE::assetimport
                     .normal = normal,
                     .uv = uv,
                     .tangent = tangent,
+                    .uv2 = uv2,
                 });
             }
 
@@ -555,7 +569,7 @@ namespace PlutoGE::assetimport
                     const uint32_t materialIndex = primitive.material >= 0 && primitive.material < static_cast<int>(parsedMeshAsset.materials.size())
                                                        ? static_cast<uint32_t>(primitive.material)
                                                        : defaultMaterialIndex;
-                    AppendPrimitive(model, primitive, worldTransform, parsedMeshAsset.meshData, parsedMeshAsset.submeshes, materialIndex);
+                    AppendPrimitive(model, primitive, worldTransform, parsedMeshAsset.meshData, parsedMeshAsset.submeshes, materialIndex, parsedMeshAsset.hasLightmapUvs);
                 }
             }
 
@@ -674,7 +688,7 @@ namespace PlutoGE::assetimport
         }
         CachedImportedMeshAsset cachedImportedMeshAsset;
         cachedImportedMeshAsset.mesh = std::unique_ptr<render::Mesh>(
-            render::Mesh::FromData(std::move(meshSourceAsset.meshData), std::move(meshSourceAsset.submeshes)));
+            render::Mesh::FromData(std::move(meshSourceAsset.meshData), std::move(meshSourceAsset.submeshes), meshSourceAsset.hasLightmapUvs));
         cachedImportedMeshAsset.materials = std::move(meshSourceAsset.materials);
         cachedImportedMeshAsset.textures = std::move(meshSourceAsset.textures);
         auto [iterator, inserted] = m_meshCache.emplace(normalizedPath, std::move(cachedImportedMeshAsset));

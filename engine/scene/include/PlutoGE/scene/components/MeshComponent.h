@@ -3,6 +3,7 @@
 #include "PlutoGE/scene/components/Component.h"
 
 #include <glm/glm.hpp>
+#include <string>
 
 namespace PlutoGE::render
 {
@@ -44,6 +45,10 @@ namespace PlutoGE::scene
 
         void SetMesh(render::Mesh *mesh);
         render::Mesh *GetMesh() const { return m_mesh; }
+        void SetStatic(bool isStatic) { m_isStatic = isStatic; }
+        bool IsStatic() const { return m_isStatic; }
+        void SetSourceMeshPath(const std::string &sourceMeshPath) { m_sourceMeshPath = sourceMeshPath; }
+        const std::string &GetSourceMeshPath() const { return m_sourceMeshPath; }
 
         void SetMaterial(render::Material *material)
         {
@@ -62,6 +67,7 @@ namespace PlutoGE::scene
         {
             m_materials = materials;
             m_material = m_materials.empty() ? nullptr : m_materials.front();
+            m_submeshMaterials.clear();
         }
         const std::vector<render::Material *> &GetMaterials() const { return m_materials; }
         render::Material *GetMaterialForMaterialSlot(size_t materialSlotIndex) const
@@ -88,6 +94,11 @@ namespace PlutoGE::scene
         }
         render::Material *GetMaterialForSubmesh(size_t submeshIndex) const
         {
+            if (submeshIndex < m_submeshMaterials.size() && m_submeshMaterials[submeshIndex])
+            {
+                return m_submeshMaterials[submeshIndex];
+            }
+
             if (m_mesh && submeshIndex < m_mesh->GetSubmeshCount())
             {
                 return GetMaterialForMaterialSlot(m_mesh->GetSubmesh(submeshIndex).materialIndex);
@@ -95,12 +106,26 @@ namespace PlutoGE::scene
 
             return m_material;
         }
+        void SetMaterialForSubmesh(size_t submeshIndex, render::Material *material)
+        {
+            if (submeshIndex >= m_submeshMaterials.size())
+            {
+                m_submeshMaterials.resize(submeshIndex + 1, nullptr);
+            }
+
+            m_submeshMaterials[submeshIndex] = material;
+        }
+        render::Material *CreateUniqueMaterialForMaterialSlot(size_t materialSlotIndex);
+        render::Material *CreateUniqueMaterialForSubmesh(size_t submeshIndex);
 
     private:
         render::Mesh *m_mesh = nullptr;
         render::Material *m_material = nullptr;
         std::vector<render::Material *> m_materials;
+        std::vector<render::Material *> m_submeshMaterials;
         glm::mat4 m_previousModelMatrix = glm::mat4(1.0f);
         bool m_hasPreviousModelMatrix = false;
+        bool m_isStatic = false;
+        std::string m_sourceMeshPath;
     };
 }

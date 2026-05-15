@@ -4,19 +4,17 @@
 #include "PlutoGE/render/Camera.h"
 #include "PlutoGE/render/postprocess/IPostProcessEffect.h"
 #include "PlutoGE/render/postprocess/PostProcessEffectFactory.h"
+#include "PlutoGE/scene/SceneBaker.h"
+#include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/ui/EditorProfiler.h"
 #include "PlutoGE/ui/PanelManager.h"
 
 #include <algorithm>
 #include <memory>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
-
-namespace PlutoGE::scene
-{
-    class Entity;
-}
 
 namespace PlutoGE::ui
 {
@@ -125,7 +123,7 @@ namespace PlutoGE::ui
 
     private:
         EditorShell() = default;
-        ~EditorShell() = default;
+        ~EditorShell();
 
         core::Engine &m_engine = core::Engine::GetInstance();
         PanelManager m_panelManager;
@@ -134,5 +132,9 @@ namespace PlutoGE::ui
         scene::Entity *m_selectedEntity = nullptr;
         bool m_isEditorCameraSelected = false;
         EditorViewportCamera m_editorCamera;
+        std::unique_ptr<scene::Scene> m_scene;
+        std::unique_ptr<scene::SceneBakeTask> m_activeBakeTask;
+        scene::SceneBakeSettings m_customBakeSettings = scene::SceneBakeSettings::BalancedPreview();
+        std::string m_statusMessage;
     };
 }

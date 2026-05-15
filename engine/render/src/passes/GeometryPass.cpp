@@ -124,6 +124,9 @@ namespace PlutoGE::render
 
             m_geometryPassShader->SetUniform("uModel", command.model);
             m_geometryPassShader->SetUniform("uPreviousModel", command.previousModel);
+            m_geometryPassShader->SetUniform("uStaticMesh", command.isStatic ? 1.0f : 0.0f);
+            const bool usePrimaryUvForLightmap = command.mesh && !command.mesh->HasUsableLightmapUvsForSubmesh(command.submeshIndex);
+            m_geometryPassShader->SetUniform("uUsePrimaryUvForLightmap", usePrimaryUvForLightmap ? 1.0f : 0.0f);
 
             if (command.material != boundMaterial)
             {

@@ -9,6 +9,7 @@
 #include "PlutoGE/render/postprocess/SceneCompositeEffect.h"
 #include "PlutoGE/render/postprocess/SSGIEffect.h"
 #include "PlutoGE/render/postprocess/ToneMappingEffect.h"
+#include "PlutoGE/render/postprocess/VolumetricFogEffect.h"
 
 #include <memory>
 
@@ -21,6 +22,7 @@ namespace PlutoGE::render
             "SSGI",
             "LPV",
             "RSM",
+            "VolumetricFog",
             "ToneMapping",
             "SceneComposite",
             "FXAA",
@@ -53,6 +55,11 @@ namespace PlutoGE::render
         if (typeName == "RSM")
         {
             return std::make_unique<RSMEffect>();
+        }
+
+        if (typeName == "VolumetricFog")
+        {
+            return std::make_unique<VolumetricFogEffect>();
         }
 
         if (typeName == "ToneMapping")

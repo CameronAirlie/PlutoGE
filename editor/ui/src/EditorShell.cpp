@@ -311,9 +311,9 @@ namespace PlutoGE::ui
         }
 
         m_editorCamera = EditorViewportCamera{};
-        m_editorCamera.AddPostProcessEffectByType("SSGI");
-        m_editorCamera.AddPostProcessEffectByType("LPV");
         m_editorCamera.AddPostProcessEffectByType("RSM");
+        m_editorCamera.AddPostProcessEffectByType("VolumetricFog");
+        m_editorCamera.AddPostProcessEffectByType("LSAO");
         m_editorCamera.AddPostProcessEffectByType("ToneMapping");
         m_editorCamera.AddPostProcessEffectByType("SceneComposite");
         m_editorCamera.AddPostProcessEffectByType("GammaCorrection");
@@ -491,6 +491,11 @@ namespace PlutoGE::ui
             frameTimingStats.rendererBeginFrameMs = std::chrono::duration<float, std::milli>(beginFrameEnd - beginFrameStart).count();
 
             m_panelManager.BeginPanelUpdate();
+
+            if (ImGui::IsKeyPressed(ImGuiKey_Escape) && !ImGui::GetIO().WantTextInput)
+            {
+                SetSelectedEntity(nullptr);
+            }
 
             auto sanitizeBakeSettings = [](scene::SceneBakeSettings &settings)
             {

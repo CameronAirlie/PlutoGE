@@ -16,14 +16,13 @@ namespace PlutoGE::ui
             nodeFlags |= ImGuiTreeNodeFlags_Leaf;
         }
 
-        ImGui::PushID(entity->GetName().c_str()); // Ensure unique ID for ImGui tree node
-        bool nodeOpen = ImGui::TreeNodeEx((void *)(intptr_t)entity->GetName().c_str(), nodeFlags, "%s", entity->GetName().c_str());
-
-        // If this entity is the currently selected entity, add the Selected flag to highlight it
         if (EditorShell::GetInstance().GetSelectedEntity() == entity)
         {
             nodeFlags |= ImGuiTreeNodeFlags_Selected;
         }
+
+        ImGui::PushID(entity->GetName().c_str()); // Ensure unique ID for ImGui tree node
+        bool nodeOpen = ImGui::TreeNodeEx((void *)(intptr_t)entity->GetName().c_str(), nodeFlags, "%s", entity->GetName().c_str());
 
         // If clicked, set this entity as the selected entity in the editor shell
         if (ImGui::IsItemClicked() && ImGui::IsItemHovered())
@@ -85,6 +84,13 @@ namespace PlutoGE::ui
         for (auto entity : scene->GetRootEntities())
         {
             RenderEntityNode(entity);
+        }
+
+        if (ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup) &&
+            ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
+            !ImGui::IsAnyItemHovered())
+        {
+            EditorShell::GetInstance().SetSelectedEntity(nullptr);
         }
 
         ContextMenu();

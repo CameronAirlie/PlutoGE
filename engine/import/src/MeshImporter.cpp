@@ -20,6 +20,7 @@
 #include <iostream>
 #include <optional>
 #include <stdexcept>
+#include <string_view>
 #include <unordered_set>
 
 namespace PlutoGE::assetimport
@@ -45,6 +46,25 @@ namespace PlutoGE::assetimport
             std::transform(value.begin(), value.end(), value.begin(), [](unsigned char character)
                            { return static_cast<char>(std::tolower(character)); });
             return value;
+        }
+
+        bool StartsWithInsensitive(std::string_view value, std::string_view prefix)
+        {
+            if (value.size() < prefix.size())
+            {
+                return false;
+            }
+
+            for (size_t index = 0; index < prefix.size(); ++index)
+            {
+                if (std::tolower(static_cast<unsigned char>(value[index])) !=
+                    std::tolower(static_cast<unsigned char>(prefix[index])))
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         std::string BuildImageCacheKey(const std::string &filePath, int imageIndex)
@@ -78,7 +98,97 @@ namespace PlutoGE::assetimport
             return texture.source;
         }
 
-        ImportedMaterialData ParseMaterial(const tinygltf::Model &model, const tinygltf::Material &material)
+        bool HasDistinctBlueChannel(const unsigned char *pixels, int width, int height, int channels)
+        {
+            if (!pixels || width <= 0 || height <= 0 || channels < 3)
+            {
+                return false;
+            }
+
+            const std::size_t pixelCount = static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
+            const std::size_t sampleStep = std::max<std::size_t>(1, pixelCount / 4096);
+            for (std::size_t pixelIndex = 0; pixelIndex < pixelCount; pixelIndex += sampleStep)
+            {
+                const std::size_t offset = pixelIndex * static_cast<std::size_t>(channels);
+                const unsigned char red = pixels[offset];
+                const unsigned char green = pixels[offset + 1];
+                const unsigned char blue = pixels[offset + 2];
+                if (blue != red || blue != green)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        bool ImageHasDistinctBlueChannel(const tinygltf::Image &image, const std::string &sourcePath)
+        {
+            if (image.component > 0 && image.component < 3)
+            {
+                return false;
+            }
+
+            if (!image.image.empty() && image.width > 0 && image.height > 0 && image.component >= 3)
+            {
+                return HasDistinctBlueChannel(image.image.data(), image.width, image.height, image.component);
+            }
+
+            if (sourcePath.empty())
+            {
+                return true;
+            }
+
+            int width = 0;
+            int height = 0;
+            int channels = 0;
+            unsigned char *pixels = stbi_load(sourcePath.c_str(), &width, &height, &channels, 0);
+            if (!pixels)
+            {
+                return true;
+            }
+
+            const bool hasDistinctBlueChannel = HasDistinctBlueChannel(pixels, width, height, channels);
+            stbi_image_free(pixels);
+            return hasDistinctBlueChannel;
+        }
+
+        bool LoadMeshImportImageData(
+            tinygltf::Image *image,
+            int imageIndex,
+            std::string *errors,
+            std::string *warnings,
+            int requestedWidth,
+            int requestedHeight,
+            const unsigned char *bytes,
+            int size,
+            void *userData)
+        {
+            if (image != nullptr && !image->uri.empty() && !StartsWithInsensitive(image->uri, "data:"))
+            {
+                image->width = -1;
+                image->height = -1;
+                image->component = -1;
+                image->bits = -1;
+                image->pixel_type = -1;
+                image->image.clear();
+                image->as_is = true;
+                return true;
+            }
+
+            return tinygltf::LoadImageData(
+                image,
+                imageIndex,
+                errors,
+                warnings,
+                requestedWidth,
+                requestedHeight,
+                bytes,
+                size,
+                userData);
+        }
+
+        ImportedMaterialData ParseMaterial(const tinygltf::Model &model, const tinygltf::Material &material, const std::string &filePath)
         {
             ImportedMaterialData parsedMaterial;
             if (material.pbrMetallicRoughness.baseColorFactor.size() == 4)
@@ -90,11 +200,26 @@ namespace PlutoGE::assetimport
                     static_cast<float>(material.pbrMetallicRoughness.baseColorFactor[3]));
             }
 
-            parsedMaterial.metallic = static_cast<float>(material.pbrMetallicRoughness.metallicFactor);
-            parsedMaterial.roughness = static_cast<float>(material.pbrMetallicRoughness.roughnessFactor);
             parsedMaterial.albedoTextureIndex = ResolveImageIndex(model, material.pbrMetallicRoughness.baseColorTexture.index);
             parsedMaterial.normalTextureIndex = ResolveImageIndex(model, material.normalTexture.index);
             parsedMaterial.metallicRoughnessTextureIndex = ResolveImageIndex(model, material.pbrMetallicRoughness.metallicRoughnessTexture.index);
+            if (parsedMaterial.metallicRoughnessTextureIndex >= 0 && parsedMaterial.metallicRoughnessTextureIndex < static_cast<int>(model.images.size()))
+            {
+                const auto &packedImage = model.images[parsedMaterial.metallicRoughnessTextureIndex];
+                parsedMaterial.metallicRoughnessTextureHasMetallicChannel = ImageHasDistinctBlueChannel(
+                    packedImage,
+                    ResolveImageSourcePath(filePath, packedImage));
+            }
+
+            const bool hasExplicitMetallicFactor = material.values.find("metallicFactor") != material.values.end();
+            parsedMaterial.metallic = static_cast<float>(material.pbrMetallicRoughness.metallicFactor);
+            if (!hasExplicitMetallicFactor &&
+                (parsedMaterial.metallicRoughnessTextureIndex < 0 || !parsedMaterial.metallicRoughnessTextureHasMetallicChannel))
+            {
+                parsedMaterial.metallic = 0.0f;
+            }
+
+            parsedMaterial.roughness = static_cast<float>(material.pbrMetallicRoughness.roughnessFactor);
             return parsedMaterial;
         }
 
@@ -587,7 +712,7 @@ namespace PlutoGE::assetimport
             }
 
             tinygltf::TinyGLTF loader;
-            loader.SetImageLoader(tinygltf::LoadImageData, nullptr);
+            loader.SetImageLoader(LoadMeshImportImageData, nullptr);
             tinygltf::Model model;
             std::string warnings;
             std::string errors;
@@ -611,20 +736,20 @@ namespace PlutoGE::assetimport
             parsedMeshAsset.textures.resize(model.images.size());
             for (size_t imageIndex = 0; imageIndex < model.images.size(); ++imageIndex)
             {
-                const auto &image = model.images[imageIndex];
+                auto &image = model.images[imageIndex];
                 auto &importedTexture = parsedMeshAsset.textures[imageIndex];
                 importedTexture.cacheKey = BuildImageCacheKey(filePath, static_cast<int>(imageIndex));
                 importedTexture.sourcePath = ResolveImageSourcePath(filePath, image);
                 importedTexture.width = image.width;
                 importedTexture.height = image.height;
                 importedTexture.channels = image.component;
-                importedTexture.pixels = image.image;
+                importedTexture.pixels = std::move(image.image);
             }
 
             parsedMeshAsset.materials.reserve(model.materials.size() + 1);
             for (const auto &material : model.materials)
             {
-                parsedMeshAsset.materials.push_back(ParseMaterial(model, material));
+                parsedMeshAsset.materials.push_back(ParseMaterial(model, material, filePath));
             }
 
             const uint32_t defaultMaterialIndex = static_cast<uint32_t>(parsedMeshAsset.materials.size());

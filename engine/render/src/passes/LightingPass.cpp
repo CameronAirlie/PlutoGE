@@ -466,6 +466,7 @@ namespace PlutoGE::render
         m_lightingPassShader->SetUniform("uBakedProbeSize", ctx.scene ? ctx.scene->GetBakedProbeVolume().size : glm::vec3(1.0f));
         m_lightingPassShader->SetUniform("uEnvironmentEnabled", ctx.scene && ctx.scene->GetEnvironmentMapTexture() ? 1 : 0);
         m_lightingPassShader->SetUniform("uEnvironmentIntensity", ctx.scene ? ctx.scene->GetEnvironmentIntensity() : 1.0f);
+        m_lightingPassShader->SetUniform("uDebugViewMode", static_cast<int>(ctx.postProcessDebugView));
         const auto *environmentTexture = ctx.scene ? ctx.scene->GetEnvironmentMapTexture() : nullptr;
         const float environmentMaxMipLevel = environmentTexture ? static_cast<float>(std::max(0, static_cast<int>(std::floor(std::log2(static_cast<float>(std::max(environmentTexture->GetWidth(), environmentTexture->GetHeight()))))))) : 0.0f;
         m_lightingPassShader->SetUniform("uEnvironmentMaxMipLevel", environmentMaxMipLevel);

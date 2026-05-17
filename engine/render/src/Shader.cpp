@@ -331,4 +331,58 @@ namespace PlutoGE::render
             glUniform1i(location, slot);
         }
     }
+
+    bool Shader::TrySetUniform(const std::string &name, const glm::vec4 &value) const
+    {
+        const GLint location = ResolveUniformLocation(name, false);
+        if (location == -1)
+        {
+            return false;
+        }
+
+        glUniform4f(location, value.x, value.y, value.z, value.w);
+        return true;
+    }
+
+    bool Shader::TrySetUniform(const std::string &name, float value) const
+    {
+        const GLint location = ResolveUniformLocation(name, false);
+        if (location == -1)
+        {
+            return false;
+        }
+
+        glUniform1f(location, value);
+        return true;
+    }
+
+    bool Shader::TrySetUniform(const std::string &name, int value) const
+    {
+        const GLint location = ResolveUniformLocation(name, false);
+        if (location == -1)
+        {
+            return false;
+        }
+
+        glUniform1i(location, value);
+        return true;
+    }
+
+    bool Shader::TrySetUniform(const std::string &name, const Texture *texture, int slot) const
+    {
+        if (!texture)
+        {
+            return false;
+        }
+
+        const GLint location = ResolveUniformLocation(name, false);
+        if (location == -1)
+        {
+            return false;
+        }
+
+        BindTextureUnit(texture->GetType(), texture->GetTextureID(), slot);
+        glUniform1i(location, slot);
+        return true;
+    }
 }

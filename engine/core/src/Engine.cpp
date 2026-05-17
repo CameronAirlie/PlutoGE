@@ -118,10 +118,13 @@ namespace PlutoGE::core
                     if (material.metallicRoughnessTextureIndex >= 0)
                     {
                         auto *packedTexture = loadImportedTexture(material.metallicRoughnessTextureIndex);
-                        config.metallicTexture = packedTexture;
-                        config.metallicTextureChannel = render::TextureChannel::Blue;
                         config.roughnessTexture = packedTexture;
                         config.roughnessTextureChannel = render::TextureChannel::Green;
+                        if (material.metallicRoughnessTextureHasMetallicChannel)
+                        {
+                            config.metallicTexture = packedTexture;
+                            config.metallicTextureChannel = render::TextureChannel::Blue;
+                        }
                     }
                     importedMaterials.push_back(std::make_unique<render::Material>(config));
                 }

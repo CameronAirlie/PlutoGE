@@ -73,6 +73,16 @@ namespace PlutoGE::render
             {
                 submesh.bounds = ComputeBounds(m_meshData, submesh.indexOffset, submesh.indexCount);
             }
+
+            m_hasUsablePrimaryUvs = HasUsableUvs(m_meshData, 0, static_cast<uint32_t>(m_meshData.indices.size()), false);
+            m_hasUsableLightmapUvs = HasUsableUvs(m_meshData, 0, static_cast<uint32_t>(m_meshData.indices.size()), true);
+            m_submeshHasUsablePrimaryUvs.reserve(m_config.submeshes.size());
+            m_submeshHasUsableLightmapUvs.reserve(m_config.submeshes.size());
+            for (const auto &submesh : m_config.submeshes)
+            {
+                m_submeshHasUsablePrimaryUvs.push_back(HasUsableUvs(m_meshData, submesh.indexOffset, submesh.indexCount, false));
+                m_submeshHasUsableLightmapUvs.push_back(HasUsableUvs(m_meshData, submesh.indexOffset, submesh.indexCount, true));
+            }
         }
 
         static Mesh *Cube()
@@ -263,23 +273,21 @@ namespace PlutoGE::render
         bool HasLightmapUvs() const { return m_config.hasLightmapUvs; }
         bool HasUsablePrimaryUvsForSubmesh(size_t submeshIndex) const
         {
-            if (submeshIndex >= m_config.submeshes.size())
+            if (submeshIndex >= m_submeshHasUsablePrimaryUvs.size())
             {
-                return HasUsableUvs(m_meshData, 0, static_cast<uint32_t>(m_meshData.indices.size()), false);
+                return m_hasUsablePrimaryUvs;
             }
 
-            const auto &submesh = m_config.submeshes[submeshIndex];
-            return HasUsableUvs(m_meshData, submesh.indexOffset, submesh.indexCount, false);
+            return m_submeshHasUsablePrimaryUvs[submeshIndex];
         }
         bool HasUsableLightmapUvsForSubmesh(size_t submeshIndex) const
         {
-            if (submeshIndex >= m_config.submeshes.size())
+            if (submeshIndex >= m_submeshHasUsableLightmapUvs.size())
             {
-                return HasUsableUvs(m_meshData, 0, static_cast<uint32_t>(m_meshData.indices.size()), true);
+                return m_hasUsableLightmapUvs;
             }
 
-            const auto &submesh = m_config.submeshes[submeshIndex];
-            return HasUsableUvs(m_meshData, submesh.indexOffset, submesh.indexCount, true);
+            return m_submeshHasUsableLightmapUvs[submeshIndex];
         }
         const MeshData &GetMeshData() const { return m_meshData; }
 
@@ -291,6 +299,11 @@ namespace PlutoGE::render
         //     friend class Graphics;
 
     private:
+        bool m_hasUsablePrimaryUvs = false;
+        bool m_hasUsableLightmapUvs = false;
+        std::vector<uint8_t> m_submeshHasUsablePrimaryUvs;
+        std::vector<uint8_t> m_submeshHasUsableLightmapUvs;
+
         static glm::vec3 ToVec3(const std::array<float, 3> &value)
         {
             return glm::vec3(value[0], value[1], value[2]);

@@ -28,6 +28,7 @@ namespace PlutoGE::assetimport
         int albedoTextureIndex = -1;
         int normalTextureIndex = -1;
         int metallicRoughnessTextureIndex = -1;
+        bool metallicRoughnessTextureHasMetallicChannel = true;
         bool flipNormalY = false;
     };
 

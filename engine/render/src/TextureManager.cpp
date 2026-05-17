@@ -3,6 +3,7 @@
 #include <glad/glad.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cctype>
 #include <fstream>
 #include <vector>
@@ -14,6 +15,8 @@ namespace PlutoGE::render
 {
     namespace
     {
+        constexpr float kMaxHalfFloatValue = 65504.0f;
+
         GLenum ResolveTextureFormat(int channels)
         {
             switch (channels)
@@ -108,6 +111,55 @@ namespace PlutoGE::render
             }
 
             return GL_RGB16F;
+        }
+
+        std::vector<float> ExpandFloatPixelsToRgba(const float *pixels, int width, int height, int channels)
+        {
+            const std::size_t pixelCount = static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
+            std::vector<float> rgbaPixels(pixelCount * 4, 1.0f);
+            for (std::size_t pixelIndex = 0; pixelIndex < pixelCount; ++pixelIndex)
+            {
+                const std::size_t srcOffset = pixelIndex * static_cast<std::size_t>(channels);
+                const std::size_t dstOffset = pixelIndex * 4;
+
+                if (channels >= 1)
+                {
+                    rgbaPixels[dstOffset] = pixels[srcOffset];
+                    rgbaPixels[dstOffset + 1] = pixels[srcOffset];
+                    rgbaPixels[dstOffset + 2] = pixels[srcOffset];
+                }
+
+                if (channels >= 2)
+                {
+                    rgbaPixels[dstOffset + 1] = pixels[srcOffset + 1];
+                }
+
+                if (channels >= 3)
+                {
+                    rgbaPixels[dstOffset + 2] = pixels[srcOffset + 2];
+                }
+
+                if (channels >= 4)
+                {
+                    rgbaPixels[dstOffset + 3] = pixels[srcOffset + 3];
+                }
+            }
+
+            return rgbaPixels;
+        }
+
+        void SanitizeFloatPixelsForHalfFloatUpload(std::vector<float> &pixels)
+        {
+            for (float &component : pixels)
+            {
+                if (!std::isfinite(component) || component < 0.0f)
+                {
+                    component = 0.0f;
+                    continue;
+                }
+
+                component = std::min(component, kMaxHalfFloatValue);
+            }
         }
 
         std::string ToLower(std::string value)
@@ -230,7 +282,18 @@ namespace PlutoGE::render
                 return nullptr;
             }
 
-            const GLenum format = ResolveTextureFormat(pfmImage.channels);
+            SanitizeFloatPixelsForHalfFloatUpload(pfmImage.pixels);
+
+            const bool useRgbaUpload = pfmImage.channels > 1 && pfmImage.channels < 4;
+            const GLenum format = useRgbaUpload ? GL_RGBA : ResolveTextureFormat(pfmImage.channels);
+            const GLenum internalFormat = useRgbaUpload ? GL_RGBA16F : ResolveFloatTextureInternalFormat(pfmImage.channels);
+            std::vector<float> expandedPixels;
+            const float *uploadPixels = pfmImage.pixels.data();
+            if (useRgbaUpload)
+            {
+                expandedPixels = ExpandFloatPixelsToRgba(pfmImage.pixels.data(), pfmImage.width, pfmImage.height, pfmImage.channels);
+                uploadPixels = expandedPixels.data();
+            }
             TextureConfig config;
             config.filePath = environmentPath;
             Texture *texture = new Texture(config);
@@ -238,7 +301,7 @@ namespace PlutoGE::render
             glGenTextures(1, &texture->m_textureID);
             glBindTexture(GL_TEXTURE_2D, texture->m_textureID);
             ConfigureEnvironmentTexture2D(true);
-            glTexImage2D(GL_TEXTURE_2D, 0, ResolveFloatTextureInternalFormat(pfmImage.channels), pfmImage.width, pfmImage.height, 0, format, GL_FLOAT, pfmImage.pixels.data());
+            glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, pfmImage.width, pfmImage.height, 0, format, GL_FLOAT, uploadPixels);
             glGenerateMipmap(GL_TEXTURE_2D);
 
             texture->m_width = pfmImage.width;
@@ -260,7 +323,19 @@ namespace PlutoGE::render
                 return nullptr;
             }
 
-            const GLenum format = ResolveTextureFormat(channels);
+            const bool useRgbaUpload = channels > 1 && channels < 4;
+            const GLenum format = useRgbaUpload ? GL_RGBA : ResolveTextureFormat(channels);
+            const GLenum internalFormat = useRgbaUpload ? GL_RGBA16F : ResolveFloatTextureInternalFormat(channels);
+            std::vector<float> sanitizedPixels(data, data + static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * static_cast<std::size_t>(channels));
+            SanitizeFloatPixelsForHalfFloatUpload(sanitizedPixels);
+
+            std::vector<float> expandedPixels;
+            const float *uploadPixels = sanitizedPixels.data();
+            if (useRgbaUpload)
+            {
+                expandedPixels = ExpandFloatPixelsToRgba(sanitizedPixels.data(), width, height, channels);
+                uploadPixels = expandedPixels.data();
+            }
             TextureConfig config;
             config.filePath = environmentPath;
             Texture *texture = new Texture(config);
@@ -268,7 +343,7 @@ namespace PlutoGE::render
             glGenTextures(1, &texture->m_textureID);
             glBindTexture(GL_TEXTURE_2D, texture->m_textureID);
             ConfigureEnvironmentTexture2D(true);
-            glTexImage2D(GL_TEXTURE_2D, 0, ResolveFloatTextureInternalFormat(channels), width, height, 0, format, GL_FLOAT, data);
+            glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, width, height, 0, format, GL_FLOAT, uploadPixels);
             glGenerateMipmap(GL_TEXTURE_2D);
 
             texture->m_width = width;

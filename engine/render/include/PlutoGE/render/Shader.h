@@ -385,6 +385,7 @@ const int LIGHT_TYPE_POINT = 0;
 const int LIGHT_TYPE_DIRECTIONAL = 1;
 const int LIGHT_TYPE_SPOT = 2;
 const int MAX_SHADOW_CASCADES = 4;
+const int DEBUG_VIEW_SHADOW_CASCADES = 6;
 
 struct Light {
     vec3 Position;
@@ -432,6 +433,7 @@ uniform float uLpvTransitionBlend;
 uniform float uEnvironmentIntensity;
 uniform float uEnvironmentMaxMipLevel;
 uniform int uAmbientOutputMode;
+uniform int uDebugViewMode;
 
 const int AMBIENT_OUTPUT_FULL = 0;
 const int AMBIENT_OUTPUT_LPV_ONLY = 1;
@@ -575,7 +577,7 @@ float SampleShadowMapPCF(sampler2D shadowMap, vec3 projectedCoords, float depthB
         for (int x = -1; x <= 1; ++x)
         {
             vec2 offset = vec2(float(x), float(y)) * texelSize * filterRadius;
-            vec2 sampleCoords = clamp(projectedCoords.xy + offset, vec2(0.0), vec2(1.0));
+            vec2 sampleCoords = projectedCoords.xy + offset;
             float closestDepth = texture(shadowMap, sampleCoords).r;
             float weight = (x == 0 && y == 0) ? 4.0 : ((x == 0 || y == 0) ? 2.0 : 1.0);
             shadow += projectedCoords.z - depthBias > closestDepth ? weight : 0.0;
@@ -644,13 +646,41 @@ int SelectDirectionalCascadeIndex(Light light, float viewDepth)
     return light.CascadeCount - 1;
 }
 
-float ComputeDirectionalCascadeShadow(vec3 receiverPosition, Light light, int cascadeIndex, float depthBias)
+vec3 GetDirectionalCascadeDebugColor(int cascadeIndex)
+{
+    if (cascadeIndex == 0)
+    {
+        return vec3(0.20, 0.55, 1.00);
+    }
+
+    if (cascadeIndex == 1)
+    {
+        return vec3(0.20, 0.90, 0.35);
+    }
+
+    if (cascadeIndex == 2)
+    {
+        return vec3(1.00, 0.80, 0.20);
+    }
+
+    return vec3(1.00, 0.35, 0.20);
+}
+
+bool ProjectDirectionalCascadeCoords(vec3 receiverPosition, Light light, int cascadeIndex, out vec3 projectedCoords)
 {
     vec4 lightSpacePosition = light.CascadeLightSpaceMatrices[cascadeIndex] * vec4(receiverPosition, 1.0);
-    vec3 projectedCoords = lightSpacePosition.xyz / max(lightSpacePosition.w, 0.0001);
+    projectedCoords = lightSpacePosition.xyz / max(lightSpacePosition.w, 0.0001);
     projectedCoords = projectedCoords * 0.5 + 0.5;
 
-    if (projectedCoords.z < 0.0 || projectedCoords.z > 1.0 || projectedCoords.x < 0.0 || projectedCoords.x > 1.0 || projectedCoords.y < 0.0 || projectedCoords.y > 1.0)
+    return !(projectedCoords.z < 0.0 || projectedCoords.z > 1.0 || projectedCoords.x < 0.0 || projectedCoords.x > 1.0 || projectedCoords.y < 0.0 || projectedCoords.y > 1.0);
+}
+
+float ComputeDirectionalCascadeShadow(vec3 receiverPosition, Light light, int cascadeIndex, float depthBias, out bool hasCoverage)
+{
+    vec3 projectedCoords;
+    hasCoverage = ProjectDirectionalCascadeCoords(receiverPosition, light, cascadeIndex, projectedCoords);
+
+    if (!hasCoverage)
     {
         return 0.0;
     }
@@ -658,8 +688,21 @@ float ComputeDirectionalCascadeShadow(vec3 receiverPosition, Light light, int ca
     return SampleDirectionalCascadeShadow(cascadeIndex, projectedCoords, depthBias, light.ShadowSoftness);
 }
 
-float ComputeDirectionalShadow(vec3 fragPos, vec3 normal, Light light)
+float ComputeDirectionalShadow(vec3 fragPos,
+                               vec3 normal,
+                               Light light,
+                               out int selectedCascadeIndex,
+                               out int sampledCascadeIndex,
+                               out bool selectedCascadeHasCoverage,
+                               out bool usedCascadeFallback,
+                               out bool hasAnyCascadeCoverage)
 {
+    selectedCascadeIndex = -1;
+    sampledCascadeIndex = -1;
+    selectedCascadeHasCoverage = false;
+    usedCascadeFallback = false;
+    hasAnyCascadeCoverage = false;
+
     if (light.CascadeCount <= 0)
     {
         return 0.0;
@@ -670,7 +713,7 @@ float ComputeDirectionalShadow(vec3 fragPos, vec3 normal, Light light)
     float ndotl = max(dot(surfaceNormal, lightVector), 0.0);
     float normalBias = max(0.0015 * (1.0 - ndotl), 0.00015);
     vec3 receiverPosition = fragPos + surfaceNormal * normalBias;
-    float viewDepth = abs((uViewMatrix * vec4(receiverPosition, 1.0)).z);
+    float viewDepth = abs((uViewMatrix * vec4(fragPos, 1.0)).z);
 
     if (viewDepth > light.CascadeSplits[light.CascadeCount - 1])
     {
@@ -678,23 +721,67 @@ float ComputeDirectionalShadow(vec3 fragPos, vec3 normal, Light light)
     }
 
     int cascadeIndex = SelectDirectionalCascadeIndex(light, viewDepth);
+    selectedCascadeIndex = cascadeIndex;
     float depthBias = max(0.0002 + (1.0 - ndotl) * 0.00035, 0.00005);
-    float shadow = ComputeDirectionalCascadeShadow(receiverPosition, light, cascadeIndex, depthBias);
+    bool hasCascadeCoverage = false;
+    float shadow = 0.0;
+    int shadowCascadeIndex = cascadeIndex;
+    vec3 selectedCascadeCoords;
+    selectedCascadeHasCoverage = ProjectDirectionalCascadeCoords(receiverPosition, light, cascadeIndex, selectedCascadeCoords);
 
-    if (cascadeIndex < light.CascadeCount - 1)
+    for (int sampleCascadeIndex = cascadeIndex; sampleCascadeIndex < light.CascadeCount; ++sampleCascadeIndex)
     {
-        float splitDistance = light.CascadeSplits[cascadeIndex];
+        shadow = ComputeDirectionalCascadeShadow(receiverPosition, light, sampleCascadeIndex, depthBias, hasCascadeCoverage);
+        if (hasCascadeCoverage)
+        {
+            shadowCascadeIndex = sampleCascadeIndex;
+            sampledCascadeIndex = sampleCascadeIndex;
+            hasAnyCascadeCoverage = true;
+            usedCascadeFallback = sampleCascadeIndex != cascadeIndex;
+            break;
+        }
+    }
+
+    if (!hasCascadeCoverage)
+    {
+        return 0.0;
+    }
+
+    if (shadowCascadeIndex < light.CascadeCount - 1)
+    {
+        float splitDistance = light.CascadeSplits[shadowCascadeIndex];
         float blendStart = max(splitDistance - light.CascadeBlendDistance, 0.0);
         if (viewDepth > blendStart)
         {
-            float nextDepthBias = max(0.0002 + (1.0 - ndotl) * 0.00035, 0.00005);
-            float nextShadow = ComputeDirectionalCascadeShadow(receiverPosition, light, cascadeIndex + 1, nextDepthBias);
-            float blendFactor = clamp((viewDepth - blendStart) / max(splitDistance - blendStart, 0.0001), 0.0, 1.0);
-            shadow = mix(shadow, nextShadow, blendFactor);
+            bool hasNextCascadeCoverage = false;
+            float nextShadow = ComputeDirectionalCascadeShadow(receiverPosition, light, shadowCascadeIndex + 1, depthBias, hasNextCascadeCoverage);
+            if (hasNextCascadeCoverage)
+            {
+                float blendFactor = clamp((viewDepth - blendStart) / max(splitDistance - blendStart, 0.0001), 0.0, 1.0);
+                shadow = mix(shadow, nextShadow, blendFactor);
+            }
         }
     }
 
     return shadow;
+}
+
+float ComputeDirectionalShadow(vec3 fragPos, vec3 normal, Light light)
+{
+    int selectedCascadeIndex;
+    int sampledCascadeIndex;
+    bool selectedCascadeHasCoverage;
+    bool usedCascadeFallback;
+    bool hasAnyCascadeCoverage;
+    return ComputeDirectionalShadow(
+        fragPos,
+        normal,
+        light,
+        selectedCascadeIndex,
+        sampledCascadeIndex,
+        selectedCascadeHasCoverage,
+        usedCascadeFallback,
+        hasAnyCascadeCoverage);
 }
 
 float ComputePointShadow(vec3 fragPos, vec3 normal, Light light)
@@ -792,6 +879,47 @@ vec3 ComputeLightContribution(vec3 fragPos, vec3 normal, vec3 viewDir, vec3 albe
         return vec3(0.0);
     }
 
+    if (uDebugViewMode == DEBUG_VIEW_SHADOW_CASCADES)
+    {
+        if (light.Type != LIGHT_TYPE_DIRECTIONAL || light.CastsShadows == 0)
+        {
+            return vec3(0.0);
+        }
+
+        int selectedCascadeIndex;
+        int sampledCascadeIndex;
+        bool selectedCascadeHasCoverage;
+        bool usedCascadeFallback;
+        bool hasAnyCascadeCoverage;
+        ComputeDirectionalShadow(
+            fragPos,
+            normal,
+            light,
+            selectedCascadeIndex,
+            sampledCascadeIndex,
+            selectedCascadeHasCoverage,
+            usedCascadeFallback,
+            hasAnyCascadeCoverage);
+
+        if (!hasAnyCascadeCoverage)
+        {
+            return vec3(1.0, 0.0, 0.0);
+        }
+
+        vec3 debugColor = GetDirectionalCascadeDebugColor(sampledCascadeIndex);
+        if (!selectedCascadeHasCoverage)
+        {
+            return mix(debugColor, vec3(1.0, 0.0, 1.0), 0.7);
+        }
+
+        if (usedCascadeFallback)
+        {
+            return mix(debugColor, vec3(1.0), 0.45);
+        }
+
+        return debugColor;
+    }
+
     float shadow = ComputeShadow(fragPos, normal, light);
     return EvaluatePbrLighting(normal, viewDir, albedo, metallic, roughness, lightDir, radiance) * (1.0 - shadow);
 }
@@ -871,6 +999,12 @@ void main()
 
     if (uPassMode == PASS_MODE_AMBIENT)
     {
+        if (uDebugViewMode == DEBUG_VIEW_SHADOW_CASCADES)
+        {
+            FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+            return;
+        }
+
         vec3 lpvIndirect = SampleLPVIndirect(fragPos, albedo, metallic);
         vec3 bakedProbeIndirect = SampleBakedProbeIrradiance(fragPos) * albedo * (1.0 - metallic);
         vec3 environmentDiffuse = ComputeEnvironmentDiffuse(normal, albedo, metallic, roughness, f0, ndotv);
@@ -1117,6 +1251,10 @@ void main()
         void SetUniform(const std::string &name, float value) const;
         void SetUniform(const std::string &name, int value) const;
         void SetUniform(const std::string &name, const Texture *texture, int slot) const;
+        bool TrySetUniform(const std::string &name, const glm::vec4 &value) const;
+        bool TrySetUniform(const std::string &name, float value) const;
+        bool TrySetUniform(const std::string &name, int value) const;
+        bool TrySetUniform(const std::string &name, const Texture *texture, int slot) const;
 
     protected:
         friend class Graphics;

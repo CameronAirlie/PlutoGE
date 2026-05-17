@@ -24,6 +24,7 @@ namespace PlutoGE::ui
             "Normal",
             "Albedo",
             "Depth",
+            "Shadow Cascades",
         };
     }
 

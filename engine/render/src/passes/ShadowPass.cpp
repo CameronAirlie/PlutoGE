@@ -39,6 +39,20 @@ namespace
         float radius = 10.0f;
     };
 
+    struct ShadowCasterEntry
+    {
+        const PlutoGE::render::RenderCommand *command = nullptr;
+        PlutoGE::render::MeshBounds bounds;
+    };
+
+    struct DirectionalCascadeProjection
+    {
+        glm::mat4 lightSpaceMatrix{1.0f};
+        glm::mat4 lightViewMatrix{1.0f};
+        glm::vec2 receiverMin{0.0f};
+        glm::vec2 receiverMax{0.0f};
+    };
+
     int GetDirectionalCascadeCount(const PlutoGE::scene::Light &light)
     {
         return std::clamp(light.activeShadowCascadeCount, 1, PlutoGE::scene::kMaxDirectionalShadowCascades);
@@ -70,14 +84,10 @@ namespace
         };
     }
 
-    void ExpandDirectionalCascadeDepthBounds(
-        const glm::mat4 &lightView,
-        const std::vector<PlutoGE::render::RenderCommand> &renderCommands,
-        glm::vec3 &minBounds,
-        glm::vec3 &maxBounds)
+    std::vector<ShadowCasterEntry> BuildShadowCasterEntries(const std::vector<PlutoGE::render::RenderCommand> &renderCommands)
     {
-        const glm::vec2 receiverMin(minBounds.x, minBounds.y);
-        const glm::vec2 receiverMax(maxBounds.x, maxBounds.y);
+        std::vector<ShadowCasterEntry> shadowCasters;
+        shadowCasters.reserve(renderCommands.size());
 
         for (const auto &command : renderCommands)
         {
@@ -86,7 +96,27 @@ namespace
                 continue;
             }
 
-            const PlutoGE::render::MeshBounds bounds = GetWorldBounds(command);
+            shadowCasters.push_back(ShadowCasterEntry{
+                .command = &command,
+                .bounds = GetWorldBounds(command),
+            });
+        }
+
+        return shadowCasters;
+    }
+
+    void ExpandDirectionalCascadeDepthBounds(
+        const glm::mat4 &lightView,
+        const std::vector<ShadowCasterEntry> &shadowCasters,
+        glm::vec3 &minBounds,
+        glm::vec3 &maxBounds)
+    {
+        const glm::vec2 receiverMin(minBounds.x, minBounds.y);
+        const glm::vec2 receiverMax(maxBounds.x, maxBounds.y);
+
+        for (const auto &shadowCaster : shadowCasters)
+        {
+            const PlutoGE::render::MeshBounds &bounds = shadowCaster.bounds;
             const glm::vec3 lightSpaceCenter = glm::vec3(lightView * glm::vec4(bounds.center, 1.0f));
             const float radius = glm::max(bounds.radius, 0.001f);
 
@@ -173,10 +203,10 @@ namespace
         return splits;
     }
 
-    glm::mat4 BuildDirectionalCascadeMatrix(
+    DirectionalCascadeProjection BuildDirectionalCascadeProjection(
         const PlutoGE::scene::Light &light,
         const PlutoGE::render::CameraData &cameraData,
-        const std::vector<PlutoGE::render::RenderCommand> &renderCommands,
+        const std::vector<ShadowCasterEntry> &shadowCasters,
         float cascadeNear,
         float cascadeFar,
         int shadowResolution)
@@ -190,29 +220,36 @@ namespace
         }
         frustumCenter /= static_cast<float>(cascadeCorners.size());
 
-        float radius = 0.0f;
+        float receiverRadius = 0.0f;
         for (const glm::vec3 &corner : cascadeCorners)
         {
-            radius = glm::max(radius, glm::length(corner - frustumCenter));
+            receiverRadius = glm::max(receiverRadius, glm::length(corner - frustumCenter));
         }
 
-        radius = glm::max(radius + kDirectionalShadowPadding, 10.0f);
-        glm::vec3 eye = frustumCenter - lightDirection * (radius * 2.0f);
+        receiverRadius = glm::max(receiverRadius + kDirectionalShadowPadding, 10.0f);
+        const float casterExtrusionDistance = receiverRadius * 2.0f + kDirectionalShadowPadding;
+        glm::vec3 eye = frustumCenter - lightDirection * (receiverRadius * 2.0f);
         const glm::vec3 upVector = ResolveUpVector(lightDirection);
         glm::mat4 view = glm::lookAt(eye, frustumCenter, upVector);
 
-        glm::vec3 minBounds(std::numeric_limits<float>::max());
-        glm::vec3 maxBounds(std::numeric_limits<float>::lowest());
+        const glm::vec3 lightSpaceCenter = glm::vec3(view * glm::vec4(frustumCenter, 1.0f));
+        glm::vec3 minBounds(lightSpaceCenter.x - receiverRadius, lightSpaceCenter.y - receiverRadius, std::numeric_limits<float>::max());
+        glm::vec3 maxBounds(lightSpaceCenter.x + receiverRadius, lightSpaceCenter.y + receiverRadius, std::numeric_limits<float>::lowest());
         for (const glm::vec3 &corner : cascadeCorners)
         {
             const glm::vec3 lightSpaceCorner = glm::vec3(view * glm::vec4(corner, 1.0f));
-            minBounds = glm::min(minBounds, lightSpaceCorner);
-            maxBounds = glm::max(maxBounds, lightSpaceCorner);
+            minBounds.z = glm::min(minBounds.z, lightSpaceCorner.z);
+            maxBounds.z = glm::max(maxBounds.z, lightSpaceCorner.z);
+
+            const glm::vec3 extrudedCorner = corner - lightDirection * casterExtrusionDistance;
+            const glm::vec3 lightSpaceExtrudedCorner = glm::vec3(view * glm::vec4(extrudedCorner, 1.0f));
+            minBounds.z = glm::min(minBounds.z, lightSpaceExtrudedCorner.z);
+            maxBounds.z = glm::max(maxBounds.z, lightSpaceExtrudedCorner.z);
         }
 
-        minBounds -= glm::vec3(kDirectionalShadowPadding);
-        maxBounds += glm::vec3(kDirectionalShadowPadding);
-        ExpandDirectionalCascadeDepthBounds(view, renderCommands, minBounds, maxBounds);
+        minBounds -= glm::vec3(0.0f, 0.0f, kDirectionalShadowPadding);
+        maxBounds += glm::vec3(0.0f, 0.0f, kDirectionalShadowPadding);
+        ExpandDirectionalCascadeDepthBounds(view, shadowCasters, minBounds, maxBounds);
 
         if (maxBounds.z > -kDirectionalShadowPadding)
         {
@@ -223,11 +260,12 @@ namespace
             maxBounds.z -= retreatDistance;
         }
 
-        const glm::vec2 extents = glm::max(glm::vec2(maxBounds - minBounds), glm::vec2(1.0f));
+        const glm::vec2 extents = glm::max(glm::vec2(maxBounds - minBounds), glm::vec2(receiverRadius * 2.0f));
         const glm::vec2 texelSize = extents / static_cast<float>(shadowResolution);
-        glm::vec2 centerXY = (glm::vec2(minBounds) + glm::vec2(maxBounds)) * 0.5f;
+        glm::vec2 centerXY = glm::vec2(lightSpaceCenter);
         centerXY = glm::floor(centerXY / texelSize) * texelSize;
-        const glm::vec2 halfExtents = extents * 0.5f;
+        const float pcfGuardTexels = glm::max(light.directionalShadowSettings.softness + 1.0f, 2.0f);
+        const glm::vec2 halfExtents = extents * 0.5f + texelSize * pcfGuardTexels;
 
         minBounds.x = centerXY.x - halfExtents.x;
         maxBounds.x = centerXY.x + halfExtents.x;
@@ -237,7 +275,12 @@ namespace
         const float nearPlane = glm::max(0.1f, -maxBounds.z);
         const float farPlane = glm::max(nearPlane + 0.1f, -minBounds.z);
         const glm::mat4 projection = glm::ortho(minBounds.x, maxBounds.x, minBounds.y, maxBounds.y, nearPlane, farPlane);
-        return projection * view;
+        return DirectionalCascadeProjection{
+            .lightSpaceMatrix = projection * view,
+            .lightViewMatrix = view,
+            .receiverMin = glm::vec2(minBounds.x, minBounds.y),
+            .receiverMax = glm::vec2(maxBounds.x, maxBounds.y),
+        };
     }
 
     glm::mat4 BuildSpotShadowMatrix(const PlutoGE::scene::Light &light)
@@ -301,17 +344,31 @@ namespace
         return true;
     }
 
-    bool IsCommandRelevantForPointLight(const PlutoGE::render::RenderCommand &command, const PlutoGE::scene::Light &light)
+    bool IsCommandRelevantForPointLight(const ShadowCasterEntry &shadowCaster, const PlutoGE::scene::Light &light)
     {
-        const auto bounds = GetWorldBounds(command);
+        const auto &bounds = shadowCaster.bounds;
         const float maxDistance = glm::max(light.range, 0.1f) + bounds.radius;
         const glm::vec3 offset = bounds.center - light.position;
         return glm::dot(offset, offset) <= maxDistance * maxDistance;
     }
 
-    bool IsCommandRelevantForProjectedLight(const PlutoGE::render::RenderCommand &command, const std::array<FrustumPlane, 6> &planes)
+    bool IsCommandRelevantForProjectedLight(const ShadowCasterEntry &shadowCaster, const std::array<FrustumPlane, 6> &planes)
     {
-        return IsBoundsVisible(GetWorldBounds(command), planes);
+        return IsBoundsVisible(shadowCaster.bounds, planes);
+    }
+
+    bool IsCommandRelevantForDirectionalCascade(const ShadowCasterEntry &shadowCaster,
+                                                const glm::mat4 &lightView,
+                                                const glm::vec2 &receiverMin,
+                                                const glm::vec2 &receiverMax)
+    {
+        const glm::vec3 lightSpaceCenter = glm::vec3(lightView * glm::vec4(shadowCaster.bounds.center, 1.0f));
+        const float radius = glm::max(shadowCaster.bounds.radius, 0.001f);
+
+        return !(lightSpaceCenter.x + radius < receiverMin.x ||
+                 lightSpaceCenter.x - radius > receiverMax.x ||
+                 lightSpaceCenter.y + radius < receiverMin.y ||
+                 lightSpaceCenter.y - radius > receiverMax.y);
     }
 
     void BindShadowMaterialState(PlutoGE::render::Shader *shader, PlutoGE::render::Material *material)
@@ -360,6 +417,7 @@ namespace PlutoGE::render
         glDisable(GL_POLYGON_OFFSET_FILL);
 
         m_shadowPassShader->Bind();
+        const auto shadowCasters = BuildShadowCasterEntries(*ctx.renderCommands);
 
         for (auto *light : *ctx.lights)
         {
@@ -397,6 +455,7 @@ namespace PlutoGE::render
 
                 for (unsigned int face = 0; face < shadowMatrices.size(); ++face)
                 {
+                    const auto faceFrustumPlanes = ExtractFrustumPlanes(shadowMatrices[face]);
                     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, shadowMap->GetTextureID(), 0);
                     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
                     {
@@ -406,13 +465,15 @@ namespace PlutoGE::render
                     glClear(GL_DEPTH_BUFFER_BIT);
                     m_shadowPassShader->SetUniform("uLightSpaceMatrix", shadowMatrices[face]);
 
-                    for (const auto &command : *ctx.renderCommands)
+                    for (const auto &shadowCaster : shadowCasters)
                     {
-                        if (!command.mesh || !command.material || !IsCommandRelevantForPointLight(command, *light))
+                        if (!IsCommandRelevantForPointLight(shadowCaster, *light) ||
+                            !IsCommandRelevantForProjectedLight(shadowCaster, faceFrustumPlanes))
                         {
                             continue;
                         }
 
+                        const auto &command = *shadowCaster.command;
                         m_shadowPassShader->SetUniform("uModel", command.model);
                         if (command.material != boundMaterial)
                         {
@@ -442,7 +503,7 @@ namespace PlutoGE::render
                 light->shadowFarPlane = cascadeSplits[cascadeCount - 1];
                 glEnable(GL_POLYGON_OFFSET_FILL);
                 glPolygonOffset(1.0f, 2.0f);
-                glCullFace(GL_FRONT);
+                glCullFace(GL_BACK);
                 m_shadowPassShader->SetUniform("uShadowPassMode", kProjectedShadowPassMode);
 
                 for (int cascadeIndex = 0; cascadeIndex < cascadeCount; ++cascadeIndex)
@@ -456,7 +517,8 @@ namespace PlutoGE::render
                     const float cascadeNear = cascadeIndex == 0 ? ctx.cameraData.nearPlane : cascadeSplits[cascadeIndex - 1];
                     const float cascadeFar = cascadeSplits[cascadeIndex];
                     const int shadowResolution = cascadeMap->GetWidth() > 0 ? cascadeMap->GetWidth() : GetShadowResolution(*light);
-                    const glm::mat4 cascadeMatrix = BuildDirectionalCascadeMatrix(*light, ctx.cameraData, *ctx.renderCommands, cascadeNear, cascadeFar, shadowResolution);
+                    const auto cascadeProjection = BuildDirectionalCascadeProjection(*light, ctx.cameraData, shadowCasters, cascadeNear, cascadeFar, shadowResolution);
+                    const glm::mat4 &cascadeMatrix = cascadeProjection.lightSpaceMatrix;
                     light->shadowCascadeMatrices[cascadeIndex] = cascadeMatrix;
                     light->shadowCascadeSplits[cascadeIndex] = cascadeFar;
 
@@ -471,13 +533,18 @@ namespace PlutoGE::render
                     m_shadowPassShader->SetUniform("uLightSpaceMatrix", cascadeMatrix);
                     Material *boundMaterial = nullptr;
 
-                    for (const auto &command : *ctx.renderCommands)
+                    for (const auto &shadowCaster : shadowCasters)
                     {
-                        if (!command.mesh || !command.material)
+                        if (!IsCommandRelevantForDirectionalCascade(
+                                shadowCaster,
+                                cascadeProjection.lightViewMatrix,
+                                cascadeProjection.receiverMin,
+                                cascadeProjection.receiverMax))
                         {
                             continue;
                         }
 
+                        const auto &command = *shadowCaster.command;
                         m_shadowPassShader->SetUniform("uModel", command.model);
                         if (command.material != boundMaterial)
                         {
@@ -528,18 +595,14 @@ namespace PlutoGE::render
             m_shadowPassShader->SetUniform("uLightSpaceMatrix", shadowMatrix);
             Material *boundMaterial = nullptr;
 
-            for (const auto &command : *ctx.renderCommands)
+            for (const auto &shadowCaster : shadowCasters)
             {
-                if (!command.mesh || !command.material)
+                if (light->type == scene::LightType::Spot && !IsCommandRelevantForProjectedLight(shadowCaster, shadowFrustumPlanes))
                 {
                     continue;
                 }
 
-                if (light->type == scene::LightType::Spot && !IsCommandRelevantForProjectedLight(command, shadowFrustumPlanes))
-                {
-                    continue;
-                }
-
+                const auto &command = *shadowCaster.command;
                 m_shadowPassShader->SetUniform("uModel", command.model);
                 if (command.material != boundMaterial)
                 {

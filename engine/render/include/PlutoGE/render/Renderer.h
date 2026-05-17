@@ -43,6 +43,7 @@ namespace PlutoGE::render
         Normal,
         Albedo,
         Depth,
+        ShadowCascades,
     };
 
     struct RendererConfig

@@ -400,7 +400,7 @@ namespace PlutoGE::render
                     for (int x = -1; x <= 1; ++x)
                     {
                         vec2 offset = vec2(float(x), float(y)) * texelSize * filterRadius;
-                        vec2 sampleCoords = clamp(projectedCoords.xy + offset, vec2(0.0), vec2(1.0));
+                        vec2 sampleCoords = projectedCoords.xy + offset;
                         float closestDepth = texture(shadowMap, sampleCoords).r;
                         float weight = (x == 0 && y == 0) ? 4.0 : ((x == 0 || y == 0) ? 2.0 : 1.0);
                         shadow += projectedCoords.z > closestDepth ? weight : 0.0;

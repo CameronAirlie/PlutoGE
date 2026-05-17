@@ -18,34 +18,22 @@ namespace PlutoGE::render
 
         const auto setVec4 = [activeShader](const char *name, const glm::vec4 &value)
         {
-            if (activeShader->HasUniform(name))
-            {
-                activeShader->SetUniform(name, value);
-            }
+            activeShader->TrySetUniform(name, value);
         };
 
         const auto setFloat = [activeShader](const char *name, float value)
         {
-            if (activeShader->HasUniform(name))
-            {
-                activeShader->SetUniform(name, value);
-            }
+            activeShader->TrySetUniform(name, value);
         };
 
         const auto setInt = [activeShader](const char *name, int value)
         {
-            if (activeShader->HasUniform(name))
-            {
-                activeShader->SetUniform(name, value);
-            }
+            activeShader->TrySetUniform(name, value);
         };
 
         const auto setTexture = [activeShader](const char *name, Texture *texture, int slot)
         {
-            if (texture && activeShader->HasUniform(name))
-            {
-                activeShader->SetUniform(name, texture, slot);
-            }
+            activeShader->TrySetUniform(name, texture, slot);
         };
 
         setVec4("uColor", m_config.color);

@@ -278,21 +278,22 @@ namespace PlutoGE::render
 
                     vec2 texelSize = 1.0 / vec2(textureSize(shadowMap, 0));
                     float filterRadius = max(softness, 0.5);
-                    vec2 offsets[4] = vec2[](
-                        vec2(-0.5, -0.5),
-                        vec2(0.5, -0.5),
-                        vec2(-0.5, 0.5),
-                        vec2(0.5, 0.5)
-                    );
                     float shadow = 0.0;
-                    for (int sampleIndex = 0; sampleIndex < 4; ++sampleIndex)
+                    float totalWeight = 0.0;
+                    for (int y = -1; y <= 1; ++y)
                     {
-                        vec2 sampleCoords = projectedCoords.xy + offsets[sampleIndex] * texelSize * filterRadius;
-                        float closestDepth = texture(shadowMap, sampleCoords).r;
-                        shadow += projectedCoords.z - depthBias > closestDepth ? 1.0 : 0.0;
+                        for (int x = -1; x <= 1; ++x)
+                        {
+                            vec2 offset = vec2(float(x), float(y)) * texelSize * filterRadius;
+                            vec2 sampleCoords = projectedCoords.xy + offset;
+                            float closestDepth = texture(shadowMap, sampleCoords).r;
+                            float weight = (x == 0 && y == 0) ? 4.0 : ((x == 0 || y == 0) ? 2.0 : 1.0);
+                            shadow += projectedCoords.z - depthBias > closestDepth ? weight : 0.0;
+                            totalWeight += weight;
+                        }
                     }
 
-                    return shadow * 0.25;
+                    return shadow / max(totalWeight, 0.0001);
                 }
 
                 float SampleDirectionalCascadeShadow(int cascadeIndex, vec3 projectedCoords, float depthBias, float softness)

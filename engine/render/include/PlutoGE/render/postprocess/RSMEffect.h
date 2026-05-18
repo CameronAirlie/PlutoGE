@@ -52,7 +52,6 @@ namespace PlutoGE::render
         std::array<std::unique_ptr<RenderTarget>, 2> m_historyColorRenderTargets;
         std::array<std::unique_ptr<RenderTarget>, 2> m_historyMetadataRenderTargets;
         unsigned int m_captureFramebuffer = 0;
-        unsigned int m_positionTexture = 0;
         unsigned int m_normalTexture = 0;
         unsigned int m_fluxTexture = 0;
         unsigned int m_depthTexture = 0;

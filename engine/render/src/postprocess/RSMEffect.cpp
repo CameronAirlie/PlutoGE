@@ -22,6 +22,12 @@ namespace PlutoGE::render
         constexpr int kMaxRsmSamples = 32;
         constexpr float kDirectionalShadowPadding = 2.0f;
 
+        struct FrustumPlane
+        {
+            glm::vec3 normal{0.0f};
+            float distance = 0.0f;
+        };
+
         struct DirectionalRsmSource
         {
             const scene::Light *light = nullptr;
@@ -61,6 +67,43 @@ namespace PlutoGE::render
         glm::vec3 ResolveUpVector(const glm::vec3 &direction)
         {
             return std::abs(direction.y) > 0.99f ? glm::vec3(0.0f, 0.0f, 1.0f) : glm::vec3(0.0f, 1.0f, 0.0f);
+        }
+
+        std::array<FrustumPlane, 6> ExtractFrustumPlanes(const glm::mat4 &viewProjection)
+        {
+            std::array<FrustumPlane, 6> planes = {
+                FrustumPlane{glm::vec3(viewProjection[0][3] + viewProjection[0][0], viewProjection[1][3] + viewProjection[1][0], viewProjection[2][3] + viewProjection[2][0]), viewProjection[3][3] + viewProjection[3][0]},
+                FrustumPlane{glm::vec3(viewProjection[0][3] - viewProjection[0][0], viewProjection[1][3] - viewProjection[1][0], viewProjection[2][3] - viewProjection[2][0]), viewProjection[3][3] - viewProjection[3][0]},
+                FrustumPlane{glm::vec3(viewProjection[0][3] + viewProjection[0][1], viewProjection[1][3] + viewProjection[1][1], viewProjection[2][3] + viewProjection[2][1]), viewProjection[3][3] + viewProjection[3][1]},
+                FrustumPlane{glm::vec3(viewProjection[0][3] - viewProjection[0][1], viewProjection[1][3] - viewProjection[1][1], viewProjection[2][3] - viewProjection[2][1]), viewProjection[3][3] - viewProjection[3][1]},
+                FrustumPlane{glm::vec3(viewProjection[0][3] + viewProjection[0][2], viewProjection[1][3] + viewProjection[1][2], viewProjection[2][3] + viewProjection[2][2]), viewProjection[3][3] + viewProjection[3][2]},
+                FrustumPlane{glm::vec3(viewProjection[0][3] - viewProjection[0][2], viewProjection[1][3] - viewProjection[1][2], viewProjection[2][3] - viewProjection[2][2]), viewProjection[3][3] - viewProjection[3][2]},
+            };
+
+            for (auto &plane : planes)
+            {
+                const float length = glm::length(plane.normal);
+                if (length > 1e-6f)
+                {
+                    plane.normal /= length;
+                    plane.distance /= length;
+                }
+            }
+
+            return planes;
+        }
+
+        bool IsBoundsVisible(const MeshBounds &bounds, const std::array<FrustumPlane, 6> &planes)
+        {
+            for (const auto &plane : planes)
+            {
+                if (glm::dot(plane.normal, bounds.center) + plane.distance < -bounds.radius)
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         std::array<glm::vec3, 8> BuildCameraFrustumCorners(const CameraData &cameraData)
@@ -389,9 +432,8 @@ namespace PlutoGE::render
         captureSource.fragmentSource = R"(
             #version 330 core
 
-            layout(location = 0) out vec3 gPosition;
-            layout(location = 1) out vec3 gNormal;
-            layout(location = 2) out vec3 gFlux;
+            layout(location = 0) out vec3 gNormal;
+            layout(location = 1) out vec3 gFlux;
 
             in vec3 FragPos;
             in vec3 FragNormal;
@@ -439,7 +481,6 @@ namespace PlutoGE::render
                 float ndotl = max(dot(normal, -normalize(uLightDirection)), 0.0);
                 vec3 flux = albedo * uLightColor * (uLightIntensity * ndotl);
 
-                gPosition = FragPos;
                 gNormal = normal;
                 gFlux = flux;
             }
@@ -472,11 +513,11 @@ namespace PlutoGE::render
             uniform sampler2D uScenePositionTexture;
             uniform sampler2D uSceneNormalTexture;
             uniform sampler2D uSceneAlbedoTexture;
-            uniform sampler2D uRsmPositionTexture;
             uniform sampler2D uRsmNormalTexture;
             uniform sampler2D uRsmFluxTexture;
             uniform sampler2D uRsmDepthTexture;
             uniform mat4 uRsmLightSpaceMatrix;
+            uniform mat4 uInverseRsmLightSpaceMatrix;
             uniform float uIntensity;
             uniform float uSampleRadius;
             uniform float uMaxDistance;
@@ -533,6 +574,13 @@ namespace PlutoGE::render
             float StableNoise(vec2 seed)
             {
                 return fract(sin(dot(seed, vec2(12.9898, 78.233))) * 43758.5453);
+            }
+
+            vec3 ReconstructRsmWorldPosition(vec2 sampleUv, float depth)
+            {
+                vec4 clipPosition = vec4(sampleUv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+                vec4 worldPosition = uInverseRsmLightSpaceMatrix * clipPosition;
+                return worldPosition.xyz / max(worldPosition.w, 0.0001);
             }
 
             void main()
@@ -604,7 +652,13 @@ namespace PlutoGE::render
                         continue;
                     }
 
-                    vec3 vplPos = texture(uRsmPositionTexture, sampleUv).xyz;
+                    float vplDepth = texture(uRsmDepthTexture, sampleUv).r;
+                    if (vplDepth >= 0.99999)
+                    {
+                        continue;
+                    }
+
+                    vec3 vplPos = ReconstructRsmWorldPosition(sampleUv, vplDepth);
                     vec3 vplNormal = normalize(texture(uRsmNormalTexture, sampleUv).xyz);
                     vec3 vplFlux = texture(uRsmFluxTexture, sampleUv).xyz;
                     if (dot(vplNormal, vplNormal) < 0.01 || dot(vplFlux, vplFlux) < 0.000001)
@@ -997,10 +1051,16 @@ namespace PlutoGE::render
         m_captureShader->SetUniform("uLightColor", rsmSource.light->color);
         m_captureShader->SetUniform("uLightIntensity", rsmSource.light->intensity);
 
+        const auto rsmCapturePlanes = ExtractFrustumPlanes(rsmSource.lightSpaceMatrix);
         Material *boundMaterial = nullptr;
         for (const auto &command : *context.renderContext.renderCommands)
         {
             if (!command.mesh || !command.material)
+            {
+                continue;
+            }
+
+            if (!IsBoundsVisible(GetWorldBounds(command), rsmCapturePlanes))
             {
                 continue;
             }
@@ -1032,22 +1092,19 @@ namespace PlutoGE::render
         BindCommonInputs(m_resolveShader, internalContext);
 
         glActiveTexture(GL_TEXTURE5);
-        glBindTexture(GL_TEXTURE_2D, m_positionTexture);
-        m_resolveShader->SetUniform("uRsmPositionTexture", 5);
+        glBindTexture(GL_TEXTURE_2D, m_normalTexture);
+        m_resolveShader->SetUniform("uRsmNormalTexture", 5);
 
         glActiveTexture(GL_TEXTURE6);
-        glBindTexture(GL_TEXTURE_2D, m_normalTexture);
-        m_resolveShader->SetUniform("uRsmNormalTexture", 6);
+        glBindTexture(GL_TEXTURE_2D, m_fluxTexture);
+        m_resolveShader->SetUniform("uRsmFluxTexture", 6);
 
         glActiveTexture(GL_TEXTURE7);
-        glBindTexture(GL_TEXTURE_2D, m_fluxTexture);
-        m_resolveShader->SetUniform("uRsmFluxTexture", 7);
-
-        glActiveTexture(GL_TEXTURE8);
         glBindTexture(GL_TEXTURE_2D, m_depthTexture);
-        m_resolveShader->SetUniform("uRsmDepthTexture", 8);
+        m_resolveShader->SetUniform("uRsmDepthTexture", 7);
 
         m_resolveShader->SetUniform("uRsmLightSpaceMatrix", rsmSource.lightSpaceMatrix);
+        m_resolveShader->SetUniform("uInverseRsmLightSpaceMatrix", glm::inverse(rsmSource.lightSpaceMatrix));
         m_resolveShader->SetUniform("uIntensity", m_intensity);
         m_resolveShader->SetUniform("uSampleRadius", m_sampleRadius);
         m_resolveShader->SetUniform("uMaxDistance", m_maxDistance);
@@ -1244,9 +1301,8 @@ namespace PlutoGE::render
         glGenFramebuffers(1, &m_captureFramebuffer);
         glBindFramebuffer(GL_FRAMEBUFFER, m_captureFramebuffer);
 
-        CreateColorAttachment(m_positionTexture, captureWidth, captureHeight, GL_COLOR_ATTACHMENT0);
-        CreateColorAttachment(m_normalTexture, captureWidth, captureHeight, GL_COLOR_ATTACHMENT1);
-        CreateColorAttachment(m_fluxTexture, captureWidth, captureHeight, GL_COLOR_ATTACHMENT2);
+        CreateColorAttachment(m_normalTexture, captureWidth, captureHeight, GL_COLOR_ATTACHMENT0);
+        CreateColorAttachment(m_fluxTexture, captureWidth, captureHeight, GL_COLOR_ATTACHMENT1);
 
         glGenTextures(1, &m_depthTexture);
         glBindTexture(GL_TEXTURE_2D, m_depthTexture);
@@ -1257,7 +1313,7 @@ namespace PlutoGE::render
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, m_depthTexture, 0);
 
-        constexpr unsigned int drawBuffers[] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2};
+        constexpr unsigned int drawBuffers[] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1};
         glDrawBuffers(static_cast<int>(std::size(drawBuffers)), drawBuffers);
 
         if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
@@ -1274,7 +1330,6 @@ namespace PlutoGE::render
 
     void RSMEffect::ReleaseCaptureResources()
     {
-        DeleteTexture(m_positionTexture);
         DeleteTexture(m_normalTexture);
         DeleteTexture(m_fluxTexture);
         DeleteTexture(m_depthTexture);

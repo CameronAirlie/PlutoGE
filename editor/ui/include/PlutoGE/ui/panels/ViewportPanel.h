@@ -23,6 +23,7 @@ namespace PlutoGE::ui
     struct ViewportPanelConfig : public PanelConfig
     {
         glm::vec4 clearColor = glm::vec4(0.1f, 0.1f, 0.1f, 1.0f);
+        float initialRenderScale = 1.0f;
     };
 
     class ViewportPanel : public Panel
@@ -45,6 +46,7 @@ namespace PlutoGE::ui
 
     private:
         ViewportPanelConfig m_config;
+        float m_renderScale = 1.0f;
 
     private:
         render::RenderTarget *m_renderTarget = nullptr; // The render target used for rendering the viewport content

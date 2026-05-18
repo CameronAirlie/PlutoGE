@@ -21,6 +21,7 @@ namespace
     constexpr int kProjectedShadowPassMode = 0;
     constexpr int kPointShadowPassMode = 1;
     constexpr float kDirectionalShadowPadding = 2.0f;
+    constexpr float kShadowUpdateMatrixEpsilon = 0.0001f;
 
     struct FrustumPlane
     {
@@ -61,6 +62,48 @@ namespace
     int GetShadowResolution(const PlutoGE::scene::Light &light)
     {
         return std::max(light.directionalShadowSettings.resolution, 256);
+    }
+
+    bool AreMatricesApproximatelyEqual(const glm::mat4 &a, const glm::mat4 &b, float epsilon = kShadowUpdateMatrixEpsilon)
+    {
+        for (int column = 0; column < 4; ++column)
+        {
+            for (int row = 0; row < 4; ++row)
+            {
+                if (std::abs(a[column][row] - b[column][row]) > epsilon)
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    bool HasCameraDataChanged(const PlutoGE::render::CameraData &current, const PlutoGE::render::CameraData &previous)
+    {
+        return !AreMatricesApproximatelyEqual(current.view, previous.view) ||
+               !AreMatricesApproximatelyEqual(current.projection, previous.projection) ||
+               std::abs(current.nearPlane - previous.nearPlane) > kShadowUpdateMatrixEpsilon ||
+               std::abs(current.farPlane - previous.farPlane) > kShadowUpdateMatrixEpsilon;
+    }
+
+    bool HaveShadowCastersChanged(const std::vector<PlutoGE::render::RenderCommand> &renderCommands)
+    {
+        for (const auto &command : renderCommands)
+        {
+            if (!command.mesh || !command.material)
+            {
+                continue;
+            }
+
+            if (!AreMatricesApproximatelyEqual(command.model, command.previousModel))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     PlutoGE::render::MeshBounds GetWorldBounds(const PlutoGE::render::RenderCommand &command)
@@ -427,7 +470,11 @@ namespace PlutoGE::render
             }
 
             const bool needsUpdate = light->type == scene::LightType::Directional
-                                         ? ctx.hasCameraData
+                                         ? (ctx.hasCameraData &&
+                                            (light->isDirty ||
+                                             !ctx.hasPreviousCameraData ||
+                                             HasCameraDataChanged(ctx.cameraData, ctx.previousCameraData) ||
+                                             HaveShadowCastersChanged(*ctx.renderCommands)))
                                          : light->isDirty;
             if (!needsUpdate)
             {

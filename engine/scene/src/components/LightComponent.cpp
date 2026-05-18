@@ -221,7 +221,12 @@ namespace PlutoGE::scene
 
         if (m_config.type == LightType::Directional)
         {
+            properties.push_back({"Shadow Cascade Count", PropertyType::Int, std::to_string(m_config.directionalShadowSettings.cascadeCount)});
+            properties.push_back({"Shadow Resolution", PropertyType::Int, std::to_string(m_config.directionalShadowSettings.resolution)});
             properties.push_back({"Shadow Distance (0 = Camera Far)", PropertyType::Float, std::to_string(m_config.directionalShadowSettings.maxDistance)});
+            properties.push_back({"Shadow Split Lambda", PropertyType::Float, std::to_string(m_config.directionalShadowSettings.splitLambda)});
+            properties.push_back({"Shadow Cascade Blend Distance", PropertyType::Float, std::to_string(m_config.directionalShadowSettings.cascadeBlendDistance)});
+            properties.push_back({"Shadow Softness (0 = Hard Shadows)", PropertyType::Float, std::to_string(m_config.directionalShadowSettings.softness)});
         }
 
         return properties;
@@ -264,6 +269,26 @@ namespace PlutoGE::scene
             else if (property.name == "Shadow Distance (0 = Camera Far)")
             {
                 m_config.directionalShadowSettings.maxDistance = std::stof(property.value);
+            }
+            else if (property.name == "Shadow Cascade Count")
+            {
+                m_config.directionalShadowSettings.cascadeCount = std::clamp(std::stoi(property.value), 1, kMaxDirectionalShadowCascades);
+            }
+            else if (property.name == "Shadow Resolution")
+            {
+                m_config.directionalShadowSettings.resolution = std::max(std::stoi(property.value), 256);
+            }
+            else if (property.name == "Shadow Split Lambda")
+            {
+                m_config.directionalShadowSettings.splitLambda = std::clamp(std::stof(property.value), 0.0f, 1.0f);
+            }
+            else if (property.name == "Shadow Cascade Blend Distance")
+            {
+                m_config.directionalShadowSettings.cascadeBlendDistance = std::max(std::stof(property.value), 0.0f);
+            }
+            else if (property.name == "Shadow Softness (0 = Hard Shadows)")
+            {
+                m_config.directionalShadowSettings.softness = std::max(std::stof(property.value), 0.0f);
             }
         }
         Initialize(); // Re-initialize to apply any changes that require setup (like shadow map creation)

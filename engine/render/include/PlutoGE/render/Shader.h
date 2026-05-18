@@ -568,6 +568,12 @@ vec3 EvaluatePbrLighting(vec3 normal, vec3 viewDir, vec3 albedo, float metallic,
 
 float SampleShadowMapPCF(sampler2D shadowMap, vec3 projectedCoords, float depthBias, float softness)
 {
+    if (softness <= 0.001)
+    {
+        float closestDepth = texture(shadowMap, projectedCoords.xy).r;
+        return projectedCoords.z - depthBias > closestDepth ? 1.0 : 0.0;
+    }
+
     vec2 texelSize = 1.0 / vec2(textureSize(shadowMap, 0));
     float filterRadius = max(softness, 0.5);
     float shadow = 0.0;

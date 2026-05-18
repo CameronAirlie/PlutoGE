@@ -17,6 +17,8 @@ namespace PlutoGE::ui
         constexpr int kDefaultViewportWidth = 1280;
         constexpr int kDefaultViewportHeight = 720;
         constexpr int kResizeDebounceFrames = 2;
+        constexpr float kMinRenderScale = 0.5f;
+        constexpr float kMaxRenderScale = 1.0f;
         constexpr const char *kDebugViewLabels[] = {
             "Post Process",
             "Quadrants",
@@ -35,9 +37,11 @@ namespace PlutoGE::ui
 
     void ViewportPanel::Initialize()
     {
+        m_renderScale = glm::clamp(m_config.initialRenderScale, kMinRenderScale, kMaxRenderScale);
+
         auto renderConfig = render::RenderTargetConfig{
-            .width = kDefaultViewportWidth,
-            .height = kDefaultViewportHeight,
+            .width = std::max(1, static_cast<int>(std::lround(static_cast<float>(kDefaultViewportWidth) * m_renderScale))),
+            .height = std::max(1, static_cast<int>(std::lround(static_cast<float>(kDefaultViewportHeight) * m_renderScale))),
             .clearColor = m_config.clearColor,
         };
         m_renderTarget = new render::RenderTarget(renderConfig);
@@ -62,6 +66,12 @@ namespace PlutoGE::ui
         {
             renderer.SetPostProcessDebugView(static_cast<render::PostProcessDebugView>(debugView));
         }
+        ImGui::SetNextItemWidth(180.0f);
+        if (ImGui::SliderFloat("Render Scale", &m_renderScale, kMinRenderScale, kMaxRenderScale, "%.2fx"))
+        {
+            m_renderScale = glm::clamp(m_renderScale, kMinRenderScale, kMaxRenderScale);
+            m_resizeStableFrames = kResizeDebounceFrames;
+        }
         ImGui::Separator();
 
         const ImVec2 panelSize = ImGui::GetContentRegionAvail();
@@ -79,9 +89,11 @@ namespace PlutoGE::ui
             m_pendingHeight = newHeight;
             m_resizeStableFrames = 0;
         }
-        else if ((newWidth != m_renderTarget->GetWidth() || newHeight != m_renderTarget->GetHeight()) && ++m_resizeStableFrames >= kResizeDebounceFrames)
+        const int scaledWidth = std::max(1, static_cast<int>(std::lround(static_cast<float>(newWidth) * m_renderScale)));
+        const int scaledHeight = std::max(1, static_cast<int>(std::lround(static_cast<float>(newHeight) * m_renderScale)));
+        if ((scaledWidth != m_renderTarget->GetWidth() || scaledHeight != m_renderTarget->GetHeight()) && ++m_resizeStableFrames >= kResizeDebounceFrames)
         {
-            if (!m_renderTarget->Resize(newWidth, newHeight))
+            if (!m_renderTarget->Resize(scaledWidth, scaledHeight))
             {
                 std::cerr << "Failed to resize RenderTarget in ViewportPanel" << std::endl;
                 return;
@@ -89,7 +101,7 @@ namespace PlutoGE::ui
         }
 
         ImTextureID texId = (ImTextureID)(uintptr_t)m_renderTarget->GetColorTextureID();
-        ImVec2 imageSize = ImVec2(static_cast<float>(m_renderTarget->GetWidth()), static_cast<float>(m_renderTarget->GetHeight()));
+        ImVec2 imageSize = ImVec2(panelSize.x, panelSize.y);
         ImGui::Image(texId, imageSize, ImVec2(0, 1), ImVec2(1, 0));
         m_isViewportHovered = ImGui::IsItemHovered();
         m_isViewportFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);

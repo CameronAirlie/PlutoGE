@@ -14,7 +14,7 @@ namespace PlutoGE::render
 {
     namespace
     {
-        constexpr bool kEnableVisibilityCulling = false;
+        constexpr bool kEnableVisibilityCulling = true;
 
         struct FrustumPlane
         {

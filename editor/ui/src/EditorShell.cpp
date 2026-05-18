@@ -344,6 +344,7 @@ namespace PlutoGE::ui
         ViewportPanelConfig viewportConfig;
         viewportConfig.name = "Editor Viewport";
         viewportConfig.clearColor = glm::vec4(0.1f, 0.1f, 0.15f, 1.0f);
+        viewportConfig.initialRenderScale = 1.0f;
         auto *viewportPanel = new ViewportPanel(viewportConfig);
         viewportPanel->Initialize();
 
@@ -359,6 +360,7 @@ namespace PlutoGE::ui
         viewportConfig2.name = "Game Viewport";
         viewportConfig2.openByDefault = true;
         viewportConfig2.clearColor = glm::vec4(0.15f, 0.1f, 0.1f, 1.0f);
+        viewportConfig2.initialRenderScale = 1.0f;
         auto viewportPanel2 = new ViewportPanel(viewportConfig2);
         viewportPanel2->Initialize();
         m_panelManager.AddPanel(viewportPanel2);

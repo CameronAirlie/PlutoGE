@@ -19,6 +19,7 @@ namespace PlutoGE::render
 
     private:
         Shader *m_lightingPassShader = nullptr;
+        Shader *m_directLightingPassShader = nullptr;
         Shader *m_indirectCompositeShader = nullptr;
     };
 }

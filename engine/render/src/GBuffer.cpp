@@ -57,10 +57,14 @@ namespace PlutoGE::render
         glDrawBuffers(5, attachments);
 
         // Depth
-        glGenRenderbuffers(1, &m_depthRbo);
-        glBindRenderbuffer(GL_RENDERBUFFER, m_depthRbo);
-        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, width, height);
-        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, m_depthRbo);
+        glGenTextures(1, &m_depthTexture);
+        glBindTexture(GL_TEXTURE_2D, m_depthTexture);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, width, height, 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, m_depthTexture, 0);
 
         assert(glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE && "GBuffer framebuffer is not complete!");
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -111,10 +115,10 @@ namespace PlutoGE::render
             m_bakedLightingTexture = 0;
         }
 
-        if (m_depthRbo)
+        if (m_depthTexture)
         {
-            glDeleteRenderbuffers(1, &m_depthRbo);
-            m_depthRbo = 0;
+            glDeleteTextures(1, &m_depthTexture);
+            m_depthTexture = 0;
         }
 
         if (m_fbo)

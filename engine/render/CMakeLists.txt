@@ -8,6 +8,7 @@ add_library(PlutoGERender
     src/GBuffer.cpp
     src/Material.cpp
     src/postprocess/ShaderPostProcessEffect.cpp
+    src/postprocess/ColorGradingEffect.cpp
     src/postprocess/SceneCompositeEffect.cpp
     src/postprocess/ToneMappingEffect.cpp
     src/postprocess/SSAOEffect.cpp

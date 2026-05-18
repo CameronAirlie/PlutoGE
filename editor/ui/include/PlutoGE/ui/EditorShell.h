@@ -10,6 +10,7 @@
 #include "PlutoGE/ui/PanelManager.h"
 
 #include <algorithm>
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -131,6 +132,20 @@ namespace PlutoGE::ui
     private:
         EditorShell() = default;
         ~EditorShell();
+
+        void InitializeEditorCamera();
+        void ApplyProjectContext();
+        void UpdateWindowTitle();
+        void ResetSelection();
+        void SetScene(std::unique_ptr<scene::Scene> scene);
+        std::filesystem::path GetDefaultProjectScenePath() const;
+        std::filesystem::path GetDefaultExportExecutablePath() const;
+        bool SaveSceneToPath(const std::filesystem::path &scenePath);
+        bool SaveActiveSceneIntoProject();
+        bool LoadProjectFromPath(const std::filesystem::path &manifestPath);
+        bool CreateProjectAtPath(const std::filesystem::path &manifestPath);
+        bool SaveProjectToDisk();
+        bool BuildProjectToPath(const std::filesystem::path &destinationExecutablePath);
 
         core::Engine &m_engine = core::Engine::GetInstance();
         PanelManager m_panelManager;

@@ -3,6 +3,7 @@
 #include "PlutoGE/ui/panels/ViewportPanel.h"
 #include "PlutoGE/ui/panels/SceneHierarchyPanel.h"
 #include "PlutoGE/ui/panels/InspectorPanel.h"
+#include "PlutoGE/assets/Project.h"
 #include "PlutoGE/render/RenderTarget.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/Entity.h"
@@ -41,6 +42,10 @@ namespace PlutoGE::ui
         constexpr float kEditorCameraMouseSensitivity = 0.12f;
         constexpr float kEditorCameraPitchLimitDegrees = 89.0f;
         constexpr const char *kSceneFileFilter = "PlutoGE Scene\0*.plutoscene\0All Files\0*.*\0";
+        constexpr const char *kProjectFileFilter = "PlutoGE Project\0*.plutoproject\0All Files\0*.*\0";
+        constexpr const char *kExecutableFileFilter = "Executable\0*.exe\0All Files\0*.*\0";
+        constexpr const char *kDefaultProjectFileName = "UntitledProject.plutoproject";
+        constexpr const char *kDefaultProjectSceneRelativePath = "Scenes/Main.plutoscene";
 
         bool IsCameraActiveInScene(scene::Scene *scene, scene::CameraComponent *cameraComponent)
         {
@@ -257,7 +262,7 @@ namespace PlutoGE::ui
             return std::filesystem::path(fileName).lexically_normal().string();
         }
 
-        std::string ShowSaveFileDialog(const char *filter, const std::string &initialPath)
+        std::string ShowSaveFileDialog(const char *filter, const std::string &initialPath, const char *defaultExtension)
         {
             OPENFILENAMEA openFileName{};
             char fileName[MAX_PATH] = "";
@@ -271,7 +276,7 @@ namespace PlutoGE::ui
             openFileName.lpstrFile = fileName;
             openFileName.nMaxFile = MAX_PATH;
             openFileName.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
-            openFileName.lpstrDefExt = "plutoscene";
+            openFileName.lpstrDefExt = defaultExtension;
             if (!GetSaveFileNameA(&openFileName))
             {
                 return {};
@@ -285,7 +290,7 @@ namespace PlutoGE::ui
             return {};
         }
 
-        std::string ShowSaveFileDialog(const char *, const std::string &)
+        std::string ShowSaveFileDialog(const char *, const std::string &, const char *)
         {
             return {};
         }
@@ -293,6 +298,309 @@ namespace PlutoGE::ui
     }
 
     EditorShell::~EditorShell() = default;
+
+    void EditorShell::InitializeEditorCamera()
+    {
+        m_editorCamera = EditorViewportCamera{};
+        m_editorCamera.AddPostProcessEffectByType("RSM");
+        m_editorCamera.AddPostProcessEffectByType("VolumetricFog");
+        m_editorCamera.AddPostProcessEffectByType("LSAO");
+        m_editorCamera.AddPostProcessEffectByType("ToneMapping");
+        m_editorCamera.AddPostProcessEffectByType("ColorGrading");
+        m_editorCamera.AddPostProcessEffectByType("SceneComposite");
+        m_editorCamera.AddPostProcessEffectByType("GammaCorrection");
+    }
+
+    void EditorShell::ApplyProjectContext()
+    {
+        auto &assetManager = m_engine.GetAssetManager();
+        if (m_project)
+        {
+            assetManager.SetProjectContext(m_project->GetRootDirectory().string(), m_project->GetManifest().assetDirectory);
+            return;
+        }
+
+        assetManager.ClearProjectContext();
+    }
+
+    void EditorShell::UpdateWindowTitle()
+    {
+        std::string windowTitle = "PlutoGE Editor";
+        if (m_project && !m_project->GetManifest().name.empty())
+        {
+            windowTitle += " - ";
+            windowTitle += m_project->GetManifest().name;
+        }
+
+        m_engine.GetWindow().SetTitle(windowTitle);
+    }
+
+    void EditorShell::ResetSelection()
+    {
+        m_selectedEntity = nullptr;
+        m_isEditorCameraSelected = false;
+    }
+
+    void EditorShell::SetScene(std::unique_ptr<scene::Scene> scene)
+    {
+        if (m_activeBakeTask)
+        {
+            m_activeBakeTask->Cancel();
+            m_activeBakeTask.reset();
+        }
+
+        if (!scene)
+        {
+            scene = CreateEmptyScene();
+        }
+
+        m_scene = std::move(scene);
+        m_engine.SetScene(m_scene.get());
+        ResetSelection();
+    }
+
+    std::filesystem::path EditorShell::GetDefaultProjectScenePath() const
+    {
+        if (!m_project)
+        {
+            return {};
+        }
+
+        if (m_scene && !m_scene->GetFilePath().empty())
+        {
+            const auto currentScenePath = std::filesystem::path(m_scene->GetFilePath()).lexically_normal();
+            if (m_project->IsInAssetDirectory(currentScenePath))
+            {
+                return currentScenePath;
+            }
+        }
+
+        return (m_project->GetAssetDirectoryPath() / std::filesystem::path(kDefaultProjectSceneRelativePath)).lexically_normal();
+    }
+
+    std::filesystem::path EditorShell::GetDefaultExportExecutablePath() const
+    {
+        if (!m_project)
+        {
+            return {};
+        }
+
+        std::string projectName = m_project->GetManifest().name.empty() ? "PlutoGEProject" : m_project->GetManifest().name;
+        std::filesystem::path executablePath = m_project->GetRootDirectory() / "Build" / projectName;
+#ifdef _WIN32
+        executablePath.replace_extension(".exe");
+#endif
+        return executablePath.lexically_normal();
+    }
+
+    bool EditorShell::SaveSceneToPath(const std::filesystem::path &scenePath)
+    {
+        if (!m_scene)
+        {
+            m_statusMessage = "No scene to save.";
+            return false;
+        }
+
+        const auto normalizedScenePath = std::filesystem::absolute(scenePath).lexically_normal();
+        std::error_code errorCode;
+        std::filesystem::create_directories(normalizedScenePath.parent_path(), errorCode);
+        if (errorCode)
+        {
+            m_statusMessage = "Failed to create scene directory: " + normalizedScenePath.parent_path().string();
+            return false;
+        }
+
+        std::string errorMessage;
+        if (!scene::SceneSerializer::Save(*m_scene, normalizedScenePath.string(), &errorMessage))
+        {
+            m_statusMessage = errorMessage.empty() ? "Failed to save scene" : errorMessage;
+            return false;
+        }
+
+        m_scene->SetFilePath(normalizedScenePath.string());
+        m_statusMessage = "Saved scene: " + normalizedScenePath.filename().string();
+        return true;
+    }
+
+    bool EditorShell::SaveActiveSceneIntoProject()
+    {
+        if (!m_project)
+        {
+            return true;
+        }
+
+        if (!m_scene)
+        {
+            SetScene(CreateEmptyScene());
+        }
+
+        const auto projectScenePath = GetDefaultProjectScenePath();
+        if (projectScenePath.empty())
+        {
+            m_statusMessage = "Project scene path could not be determined.";
+            return false;
+        }
+
+        if (!SaveSceneToPath(projectScenePath))
+        {
+            return false;
+        }
+
+        m_project->GetManifest().startupScene = m_project->MakeAssetReference(projectScenePath);
+        return true;
+    }
+
+    bool EditorShell::LoadProjectFromPath(const std::filesystem::path &manifestPath)
+    {
+        std::string errorMessage;
+        auto loadedProject = assets::Project::Load(manifestPath, &errorMessage);
+        if (!loadedProject)
+        {
+            m_statusMessage = errorMessage.empty() ? "Failed to open project." : errorMessage;
+            return false;
+        }
+
+        m_project = std::move(loadedProject);
+        ApplyProjectContext();
+
+        const auto &manifest = m_project->GetManifest();
+        m_editorCamera.position = glm::vec3(manifest.editorCamera.positionX, manifest.editorCamera.positionY, manifest.editorCamera.positionZ);
+        m_editorCamera.yawDegrees = manifest.editorCamera.yawDegrees;
+        m_editorCamera.pitchDegrees = manifest.editorCamera.pitchDegrees;
+        m_engine.GetRenderer().SetVSyncEnabled(manifest.vSyncEnabled);
+
+        std::unique_ptr<scene::Scene> loadedScene;
+        if (!manifest.startupScene.empty())
+        {
+            const std::string startupScenePath = m_engine.GetAssetManager().ResolveAssetPath(manifest.startupScene);
+            if (!startupScenePath.empty() && std::filesystem::exists(startupScenePath))
+            {
+                loadedScene = scene::SceneSerializer::Load(startupScenePath, &errorMessage);
+            }
+        }
+
+        if (loadedScene)
+        {
+            SetScene(std::move(loadedScene));
+            m_statusMessage = "Opened project: " + manifest.name;
+        }
+        else
+        {
+            SetScene(CreateEmptyScene());
+            if (!errorMessage.empty())
+            {
+                m_statusMessage = errorMessage;
+            }
+            else
+            {
+                m_statusMessage = "Opened project without a startup scene.";
+            }
+        }
+
+        UpdateWindowTitle();
+        return true;
+    }
+
+    bool EditorShell::CreateProjectAtPath(const std::filesystem::path &manifestPath)
+    {
+        std::string errorMessage;
+        std::string projectName = manifestPath.stem().string();
+        if (projectName.empty())
+        {
+            projectName = "UntitledProject";
+        }
+
+        auto createdProject = assets::Project::Create(manifestPath, projectName, &errorMessage);
+        if (!createdProject)
+        {
+            m_statusMessage = errorMessage.empty() ? "Failed to create project." : errorMessage;
+            return false;
+        }
+
+        m_project = std::move(createdProject);
+        ApplyProjectContext();
+        SetScene(CreateEmptyScene());
+
+        if (!SaveProjectToDisk())
+        {
+            return false;
+        }
+
+        m_statusMessage = "Created project: " + m_project->GetManifest().name;
+        UpdateWindowTitle();
+        return true;
+    }
+
+    bool EditorShell::SaveProjectToDisk()
+    {
+        if (!m_project)
+        {
+            m_statusMessage = "No project loaded.";
+            return false;
+        }
+
+        ApplyProjectContext();
+
+        auto &manifest = m_project->GetManifest();
+        manifest.editorCamera.positionX = m_editorCamera.position.x;
+        manifest.editorCamera.positionY = m_editorCamera.position.y;
+        manifest.editorCamera.positionZ = m_editorCamera.position.z;
+        manifest.editorCamera.yawDegrees = m_editorCamera.yawDegrees;
+        manifest.editorCamera.pitchDegrees = m_editorCamera.pitchDegrees;
+        if (manifest.windowTitle.empty())
+        {
+            manifest.windowTitle = manifest.name;
+        }
+
+        if (!SaveActiveSceneIntoProject())
+        {
+            return false;
+        }
+
+        m_project->RefreshAssetRegistry();
+
+        std::string errorMessage;
+        if (!m_project->Save(&errorMessage))
+        {
+            m_statusMessage = errorMessage.empty() ? "Failed to save project." : errorMessage;
+            return false;
+        }
+
+        m_statusMessage = "Saved project: " + m_project->GetManifestPath().filename().string();
+        UpdateWindowTitle();
+        return true;
+    }
+
+    bool EditorShell::BuildProjectToPath(const std::filesystem::path &destinationExecutablePath)
+    {
+        if (!m_project)
+        {
+            m_statusMessage = "No project loaded.";
+            return false;
+        }
+
+        if (!SaveProjectToDisk())
+        {
+            return false;
+        }
+
+        const auto runtimeExecutablePath = assets::FindRuntimeExecutable(std::filesystem::current_path());
+        if (runtimeExecutablePath.empty())
+        {
+            m_statusMessage = "Could not find PlutoGERuntime executable to export.";
+            return false;
+        }
+
+        std::string errorMessage;
+        if (!assets::ExportStandaloneProject(*m_project, destinationExecutablePath, runtimeExecutablePath, &errorMessage))
+        {
+            m_statusMessage = errorMessage.empty() ? "Failed to build project." : errorMessage;
+            return false;
+        }
+
+        m_statusMessage = "Built project: " + std::filesystem::path(destinationExecutablePath).filename().string();
+        return true;
+    }
 
     void EditorShell::Initialize()
     {
@@ -310,17 +618,11 @@ namespace PlutoGE::ui
             std::cerr << "Failed to initialize Engine in EditorShell" << std::endl;
         }
 
-        m_editorCamera = EditorViewportCamera{};
-        m_editorCamera.AddPostProcessEffectByType("RSM");
-        m_editorCamera.AddPostProcessEffectByType("VolumetricFog");
-        m_editorCamera.AddPostProcessEffectByType("LSAO");
-        m_editorCamera.AddPostProcessEffectByType("ToneMapping");
-        m_editorCamera.AddPostProcessEffectByType("SceneComposite");
-        m_editorCamera.AddPostProcessEffectByType("GammaCorrection");
-
-        m_scene = CreateEmptyScene();
-        m_engine.SetScene(m_scene.get());
+        InitializeEditorCamera();
+        ApplyProjectContext();
+        SetScene(CreateEmptyScene());
         m_statusMessage = "Ready";
+        UpdateWindowTitle();
 
         m_panelManager.InitializeImGui(&m_engine.GetWindow());
     }
@@ -550,12 +852,41 @@ namespace PlutoGE::ui
                     }
 
                     ImGui::BeginDisabled(isBakeRunning);
+                    if (ImGui::MenuItem("New Project..."))
+                    {
+                        const std::string projectPath = ShowSaveFileDialog(kProjectFileFilter, kDefaultProjectFileName, "plutoproject");
+                        if (!projectPath.empty())
+                        {
+                            CreateProjectAtPath(projectPath);
+                        }
+                    }
+                    if (ImGui::MenuItem("Open Project..."))
+                    {
+                        const std::string projectPath = ShowOpenFileDialog(kProjectFileFilter);
+                        if (!projectPath.empty())
+                        {
+                            LoadProjectFromPath(projectPath);
+                        }
+                    }
+                    if (ImGui::MenuItem("Save Project", nullptr, false, m_project != nullptr))
+                    {
+                        SaveProjectToDisk();
+                    }
+                    if (ImGui::MenuItem("Build Project...", nullptr, false, m_project != nullptr))
+                    {
+                        const std::string suggestedPath = GetDefaultExportExecutablePath().empty()
+                                                              ? std::string("PlutoGERuntime.exe")
+                                                              : GetDefaultExportExecutablePath().string();
+                        const std::string exportPath = ShowSaveFileDialog(kExecutableFileFilter, suggestedPath, "exe");
+                        if (!exportPath.empty())
+                        {
+                            BuildProjectToPath(exportPath);
+                        }
+                    }
+                    ImGui::Separator();
                     if (ImGui::MenuItem("New Scene"))
                     {
-                        m_scene = CreateEmptyScene();
-                        m_engine.SetScene(m_scene.get());
-                        m_selectedEntity = nullptr;
-                        m_isEditorCameraSelected = false;
+                        SetScene(CreateEmptyScene());
                         m_statusMessage = "Created new scene";
                     }
                     if (ImGui::MenuItem("Open Scene..."))
@@ -567,10 +898,7 @@ namespace PlutoGE::ui
                             auto loadedScene = scene::SceneSerializer::Load(filePath, &errorMessage);
                             if (loadedScene)
                             {
-                                m_scene = std::move(loadedScene);
-                                m_engine.SetScene(m_scene.get());
-                                m_selectedEntity = nullptr;
-                                m_isEditorCameraSelected = false;
+                                SetScene(std::move(loadedScene));
                                 m_statusMessage = "Opened scene: " + std::filesystem::path(filePath).filename().string();
                             }
                             else
@@ -586,21 +914,14 @@ namespace PlutoGE::ui
                             std::string savePath = m_scene->GetFilePath();
                             if (savePath.empty())
                             {
-                                savePath = ShowSaveFileDialog(kSceneFileFilter, "scene.plutoscene");
+                                savePath = ShowSaveFileDialog(kSceneFileFilter,
+                                                              m_project ? GetDefaultProjectScenePath().string() : std::string("scene.plutoscene"),
+                                                              "plutoscene");
                             }
 
                             if (!savePath.empty())
                             {
-                                std::string errorMessage;
-                                if (scene::SceneSerializer::Save(*m_scene, savePath, &errorMessage))
-                                {
-                                    m_scene->SetFilePath(savePath);
-                                    m_statusMessage = "Saved scene: " + std::filesystem::path(savePath).filename().string();
-                                }
-                                else
-                                {
-                                    m_statusMessage = errorMessage.empty() ? "Failed to save scene" : errorMessage;
-                                }
+                                SaveSceneToPath(savePath);
                             }
                         }
                     }
@@ -609,19 +930,10 @@ namespace PlutoGE::ui
                         if (m_scene)
                         {
                             const std::string suggestedPath = m_scene->GetFilePath().empty() ? "scene.plutoscene" : m_scene->GetFilePath();
-                            const std::string savePath = ShowSaveFileDialog(kSceneFileFilter, suggestedPath);
+                            const std::string savePath = ShowSaveFileDialog(kSceneFileFilter, suggestedPath, "plutoscene");
                             if (!savePath.empty())
                             {
-                                std::string errorMessage;
-                                if (scene::SceneSerializer::Save(*m_scene, savePath, &errorMessage))
-                                {
-                                    m_scene->SetFilePath(savePath);
-                                    m_statusMessage = "Saved scene: " + std::filesystem::path(savePath).filename().string();
-                                }
-                                else
-                                {
-                                    m_statusMessage = errorMessage.empty() ? "Failed to save scene" : errorMessage;
-                                }
+                                SaveSceneToPath(savePath);
                             }
                         }
                     }
@@ -771,7 +1083,9 @@ namespace PlutoGE::ui
             m_activeBakeTask.reset();
         }
         m_selectedEntity = nullptr;
+        m_project.reset();
         m_scene.reset();
+        m_engine.GetAssetManager().ClearProjectContext();
         m_engine.SetScene(nullptr);
         m_panelManager.ShutdownPanels();
         m_engine.Shutdown();

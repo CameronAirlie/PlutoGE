@@ -92,6 +92,7 @@ namespace PlutoGE::scene
         rsmEffect.SetEnabled(false);
 
         EmplacePostProcessEffect<render::ToneMappingEffect>();
+        AddPostProcessEffectByType("ColorGrading");
         EmplacePostProcessEffect<render::SceneCompositeEffect>();
         EmplacePostProcessEffect<render::GammaCorrectionEffect>(2.2f);
     }

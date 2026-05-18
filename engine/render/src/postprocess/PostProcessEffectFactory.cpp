@@ -1,5 +1,6 @@
 #include "PlutoGE/render/postprocess/PostProcessEffectFactory.h"
 
+#include "PlutoGE/render/postprocess/ColorGradingEffect.h"
 #include "PlutoGE/render/postprocess/FXAAEffect.h"
 #include "PlutoGE/render/postprocess/GammaCorrectionEffect.h"
 #include "PlutoGE/render/postprocess/IPostProcessEffect.h"
@@ -24,6 +25,7 @@ namespace PlutoGE::render
             "RSM",
             "VolumetricFog",
             "ToneMapping",
+            "ColorGrading",
             "SceneComposite",
             "FXAA",
             "GammaCorrection",
@@ -65,6 +67,11 @@ namespace PlutoGE::render
         if (typeName == "ToneMapping")
         {
             return std::make_unique<ToneMappingEffect>();
+        }
+
+        if (typeName == "ColorGrading")
+        {
+            return std::make_unique<ColorGradingEffect>();
         }
 
         if (typeName == "GammaCorrection")

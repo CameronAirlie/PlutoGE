@@ -3,6 +3,7 @@
 #include "PlutoGE/ui/panels/ViewportPanel.h"
 #include "PlutoGE/ui/panels/Panel.h"
 
+#include <ImGuizmo.h>
 #include <glm/glm.hpp>
 
 namespace PlutoGE::render
@@ -24,6 +25,7 @@ namespace PlutoGE::ui
     {
         glm::vec4 clearColor = glm::vec4(0.1f, 0.1f, 0.1f, 1.0f);
         float initialRenderScale = 1.0f;
+        bool editorViewport = false;
     };
 
     class ViewportPanel : public Panel
@@ -42,11 +44,22 @@ namespace PlutoGE::ui
         render::RenderTarget *GetRenderTarget() const { return m_renderTarget; }
         bool IsViewportHovered() const { return m_isViewportHovered; }
         bool IsViewportFocused() const { return m_isViewportFocused; }
+        bool IsGridVisible() const { return m_showGrid; }
         static const char *GetDebugViewLabel(render::PostProcessDebugView debugView);
 
     private:
+        void RenderEditorToolbar();
+        void RenderEditorOverlays(const ImVec2 &viewportMin, const ImVec2 &viewportSize, bool viewportClicked);
+
         ViewportPanelConfig m_config;
         float m_renderScale = 1.0f;
+        bool m_showGrid = true;
+        bool m_enableSnap = false;
+        ImGuizmo::OPERATION m_gizmoOperation = ImGuizmo::TRANSLATE;
+        ImGuizmo::MODE m_gizmoMode = ImGuizmo::LOCAL;
+        glm::vec3 m_translateSnap = glm::vec3(1.0f);
+        float m_rotateSnapDegrees = 15.0f;
+        float m_scaleSnap = 0.1f;
 
     private:
         render::RenderTarget *m_renderTarget = nullptr; // The render target used for rendering the viewport content

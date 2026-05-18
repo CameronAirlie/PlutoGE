@@ -229,7 +229,7 @@ namespace PlutoGE::scene
             output << "ENTITY\t"
                    << entity->GetID() << '\t'
                    << (entity->GetParent() ? entity->GetParent()->GetID() : 0) << '\t'
-                   << (entity->IsActive() ? 1 : 0) << '\t'
+                   << (entity->IsSelfActive() ? 1 : 0) << '\t'
                    << EscapeText(entity->GetName()) << '\t'
                    << SerializeVec3(entity->GetPosition()) << '\t'
                    << SerializeVec3(entity->GetRotation()) << '\t'

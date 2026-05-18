@@ -114,6 +114,7 @@ namespace PlutoGE::render
         LightPropagationVolumePass *lightPropagationVolumePass = nullptr;
         PostProcessDebugView postProcessDebugView = PostProcessDebugView::None;
         std::uint64_t frameSequence = 0;
+        bool renderEditorGrid = false;
     };
 
     class Shader;
@@ -129,7 +130,7 @@ namespace PlutoGE::render
         void BeginProfilingFrame();
         void UpdateShadowMaps(std::vector<scene::Light *> lights = {});
         void RenderFrame(const scene::CameraComponent &cameraComponent, RenderTarget *renderTarget = nullptr, std::vector<scene::Light *> lights = {});
-        void RenderFrame(const CameraData &cameraData, RenderTarget *renderTarget = nullptr, std::vector<scene::Light *> lights = {}, const std::vector<IPostProcessEffect *> *postProcessEffects = nullptr, const scene::Scene *scene = nullptr);
+        void RenderFrame(const CameraData &cameraData, RenderTarget *renderTarget = nullptr, std::vector<scene::Light *> lights = {}, const std::vector<IPostProcessEffect *> *postProcessEffects = nullptr, const scene::Scene *scene = nullptr, bool renderEditorGrid = false);
         void EndFrame(RenderTarget *renderTarget = nullptr);
         void Shutdown(RenderTarget *renderTarget = nullptr);
         void ClearRenderCommands();

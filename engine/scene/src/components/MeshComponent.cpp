@@ -308,13 +308,7 @@ namespace PlutoGE::scene
         if (m_mesh)
         {
             auto entity = GetOwner();
-            glm::mat4 modelMatrix = glm::mat4(1.0f);
-
-            modelMatrix = glm::translate(modelMatrix, entity->GetWorldPosition());
-            modelMatrix = glm::rotate(modelMatrix, glm::radians(entity->GetWorldRotation().x), glm::vec3(1.0f, 0.0f, 0.0f));
-            modelMatrix = glm::rotate(modelMatrix, glm::radians(entity->GetWorldRotation().y), glm::vec3(0.0f, 1.0f, 0.0f));
-            modelMatrix = glm::rotate(modelMatrix, glm::radians(entity->GetWorldRotation().z), glm::vec3(0.0f, 0.0f, 1.0f));
-            modelMatrix = glm::scale(modelMatrix, entity->GetScale());
+            glm::mat4 modelMatrix = entity->GetWorldTransform();
 
             auto &renderer = PlutoGE::core::Engine::GetInstance().GetRenderer();
             const size_t submeshCount = std::max<size_t>(m_mesh->GetSubmeshCount(), 1);

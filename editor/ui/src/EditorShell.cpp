@@ -23,7 +23,9 @@
 #include <iostream>
 #include <chrono>
 #include <filesystem>
+#include <cstring>
 #include <memory>
+#include <array>
 
 #include <glm/gtc/constants.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -79,6 +81,108 @@ namespace PlutoGE::ui
         glm::vec3 GetTransformRight(const glm::mat4 &transform)
         {
             return glm::normalize(glm::vec3(transform[0]));
+        }
+
+        assets::ProjectEditorCameraSettings BuildProjectEditorCameraSettings(const EditorShell::EditorViewportCamera &camera)
+        {
+            return assets::ProjectEditorCameraSettings{
+                .positionX = camera.position.x,
+                .positionY = camera.position.y,
+                .positionZ = camera.position.z,
+                .yawDegrees = camera.yawDegrees,
+                .pitchDegrees = camera.pitchDegrees,
+                .fovY = camera.camera.GetFOV(),
+                .nearPlane = camera.camera.GetNearPlane(),
+                .farPlane = camera.camera.GetFarPlane(),
+            };
+        }
+
+        std::vector<assets::ProjectPostProcessEffect> BuildProjectEditorPostProcessEffects(const EditorShell::EditorViewportCamera &camera)
+        {
+            std::vector<assets::ProjectPostProcessEffect> effects;
+            effects.reserve(camera.GetPostProcessEffects().size());
+
+            for (const auto &effect : camera.GetPostProcessEffects())
+            {
+                if (!effect)
+                {
+                    continue;
+                }
+
+                assets::ProjectPostProcessEffect serializedEffect;
+                serializedEffect.typeName = effect->GetTypeName();
+                serializedEffect.enabled = effect->IsEnabled();
+
+                const auto parameters = effect->GetParameters();
+                serializedEffect.parameters.reserve(parameters.size());
+                for (const auto &parameter : parameters)
+                {
+                    serializedEffect.parameters.push_back(assets::ProjectPostProcessParameter{
+                        .name = parameter.name,
+                        .type = static_cast<int>(parameter.type),
+                        .value = parameter.value,
+                    });
+                }
+
+                effects.push_back(std::move(serializedEffect));
+            }
+
+            return effects;
+        }
+
+        void ApplyProjectEditorCameraSettings(const assets::ProjectEditorCameraSettings &settings,
+                                              EditorShell::EditorViewportCamera &camera)
+        {
+            camera.position = glm::vec3(settings.positionX, settings.positionY, settings.positionZ);
+            camera.yawDegrees = settings.yawDegrees;
+            camera.pitchDegrees = settings.pitchDegrees;
+            camera.camera.SetFOV(settings.fovY);
+            camera.camera.SetNearPlane(settings.nearPlane);
+            camera.camera.SetFarPlane(settings.farPlane);
+        }
+
+        void ApplyProjectEditorPostProcessEffects(const std::vector<assets::ProjectPostProcessEffect> &serializedEffects,
+                                                  EditorShell::EditorViewportCamera &camera)
+        {
+            if (serializedEffects.empty())
+            {
+                return;
+            }
+
+            camera.postProcessEffects.clear();
+            for (const auto &serializedEffect : serializedEffects)
+            {
+                if (!camera.AddPostProcessEffectByType(serializedEffect.typeName))
+                {
+                    continue;
+                }
+
+                auto *effect = camera.GetPostProcessEffect(camera.GetPostProcessEffects().size() - 1);
+                if (!effect)
+                {
+                    continue;
+                }
+
+                effect->SetEnabled(serializedEffect.enabled);
+                auto parameters = effect->GetParameters();
+                for (const auto &serializedParameter : serializedEffect.parameters)
+                {
+                    auto parameterIt = std::find_if(parameters.begin(), parameters.end(),
+                                                    [&serializedParameter](const render::PostProcessParameter &parameter)
+                                                    {
+                                                        return parameter.name == serializedParameter.name;
+                                                    });
+                    if (parameterIt == parameters.end())
+                    {
+                        continue;
+                    }
+
+                    parameterIt->type = static_cast<render::PostProcessParameterType>(serializedParameter.type);
+                    parameterIt->value = serializedParameter.value;
+                }
+
+                effect->SetParameters(parameters);
+            }
         }
 
         void SetCursorCapture(GLFWwindow *windowHandle, bool captured)
@@ -464,9 +568,8 @@ namespace PlutoGE::ui
         ApplyProjectContext();
 
         const auto &manifest = m_project->GetManifest();
-        m_editorCamera.position = glm::vec3(manifest.editorCamera.positionX, manifest.editorCamera.positionY, manifest.editorCamera.positionZ);
-        m_editorCamera.yawDegrees = manifest.editorCamera.yawDegrees;
-        m_editorCamera.pitchDegrees = manifest.editorCamera.pitchDegrees;
+        ApplyProjectEditorCameraSettings(manifest.editorCamera, m_editorCamera);
+        ApplyProjectEditorPostProcessEffects(manifest.editorCameraPostProcessEffects, m_editorCamera);
         m_engine.GetRenderer().SetVSyncEnabled(manifest.vSyncEnabled);
 
         std::unique_ptr<scene::Scene> loadedScene;
@@ -542,11 +645,8 @@ namespace PlutoGE::ui
         ApplyProjectContext();
 
         auto &manifest = m_project->GetManifest();
-        manifest.editorCamera.positionX = m_editorCamera.position.x;
-        manifest.editorCamera.positionY = m_editorCamera.position.y;
-        manifest.editorCamera.positionZ = m_editorCamera.position.z;
-        manifest.editorCamera.yawDegrees = m_editorCamera.yawDegrees;
-        manifest.editorCamera.pitchDegrees = m_editorCamera.pitchDegrees;
+        manifest.editorCamera = BuildProjectEditorCameraSettings(m_editorCamera);
+        manifest.editorCameraPostProcessEffects = BuildProjectEditorPostProcessEffects(m_editorCamera);
         if (manifest.windowTitle.empty())
         {
             manifest.windowTitle = manifest.name;
@@ -647,6 +747,7 @@ namespace PlutoGE::ui
         viewportConfig.name = "Editor Viewport";
         viewportConfig.clearColor = glm::vec4(0.1f, 0.1f, 0.15f, 1.0f);
         viewportConfig.initialRenderScale = 1.0f;
+        viewportConfig.editorViewport = true;
         auto *viewportPanel = new ViewportPanel(viewportConfig);
         viewportPanel->Initialize();
 
@@ -680,6 +781,34 @@ namespace PlutoGE::ui
         bool isEditorCameraLookActive = false;
         double lastEditorCameraCursorX = 0.0;
         double lastEditorCameraCursorY = 0.0;
+        std::array<char, 256> projectNameBuffer{};
+        std::array<char, 256> projectWindowTitleBuffer{};
+        int projectWindowWidth = 1280;
+        int projectWindowHeight = 720;
+        bool projectVSyncEnabled = true;
+        bool shouldOpenProjectSettingsPopup = false;
+
+        auto loadProjectSettingsDraft = [&]()
+        {
+            if (!m_project)
+            {
+                return;
+            }
+
+            const auto &manifest = m_project->GetManifest();
+            std::memset(projectNameBuffer.data(), 0, projectNameBuffer.size());
+            std::memset(projectWindowTitleBuffer.data(), 0, projectWindowTitleBuffer.size());
+
+            const std::size_t projectNameLength = (std::min)(manifest.name.size(), projectNameBuffer.size() - 1);
+            std::memcpy(projectNameBuffer.data(), manifest.name.c_str(), projectNameLength);
+
+            const std::size_t windowTitleLength = (std::min)(manifest.windowTitle.size(), projectWindowTitleBuffer.size() - 1);
+            std::memcpy(projectWindowTitleBuffer.data(), manifest.windowTitle.c_str(), windowTitleLength);
+
+            projectWindowWidth = manifest.windowWidth;
+            projectWindowHeight = manifest.windowHeight;
+            projectVSyncEnabled = manifest.vSyncEnabled;
+        };
 
         renderer.SetVSyncEnabled(true);
 
@@ -766,7 +895,7 @@ namespace PlutoGE::ui
                     editorPostProcessEffects.push_back(effect.get());
                 }
 
-                renderer.RenderFrame(editorCameraData, renderTarget, m_scene ? m_scene->GetLights() : std::vector<scene::Light *>{}, &editorPostProcessEffects, m_scene.get());
+                renderer.RenderFrame(editorCameraData, renderTarget, m_scene ? m_scene->GetLights() : std::vector<scene::Light *>{}, &editorPostProcessEffects, m_scene.get(), viewportPanel->IsGridVisible());
             }
             else
             {
@@ -871,6 +1000,11 @@ namespace PlutoGE::ui
                     if (ImGui::MenuItem("Save Project", nullptr, false, m_project != nullptr))
                     {
                         SaveProjectToDisk();
+                    }
+                    if (ImGui::MenuItem("Project Settings...", nullptr, false, m_project != nullptr))
+                    {
+                        loadProjectSettingsDraft();
+                        shouldOpenProjectSettingsPopup = true;
                     }
                     if (ImGui::MenuItem("Build Project...", nullptr, false, m_project != nullptr))
                     {
@@ -991,6 +1125,64 @@ namespace PlutoGE::ui
                     ImGui::TextUnformatted(m_statusMessage.c_str());
                 }
                 ImGui::EndMainMenuBar();
+            }
+
+            if (shouldOpenProjectSettingsPopup)
+            {
+                ImGui::OpenPopup("Project Settings");
+                shouldOpenProjectSettingsPopup = false;
+            }
+
+            if (ImGui::BeginPopupModal("Project Settings", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+            {
+                if (!m_project)
+                {
+                    ImGui::TextUnformatted("No project loaded.");
+                    if (ImGui::Button("Close"))
+                    {
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::EndPopup();
+                }
+                else
+                {
+                    auto &manifest = m_project->GetManifest();
+                    projectWindowWidth = (std::max)(projectWindowWidth, 64);
+                    projectWindowHeight = (std::max)(projectWindowHeight, 64);
+
+                    ImGui::InputText("Project Name", projectNameBuffer.data(), projectNameBuffer.size());
+                    ImGui::InputText("Window Title", projectWindowTitleBuffer.data(), projectWindowTitleBuffer.size());
+                    ImGui::InputInt("Window Width", &projectWindowWidth);
+                    ImGui::InputInt("Window Height", &projectWindowHeight);
+                    ImGui::Checkbox("VSync", &projectVSyncEnabled);
+
+                    ImGui::Separator();
+                    ImGui::Text("Manifest: %s", m_project->GetManifestPath().string().c_str());
+                    ImGui::Text("Asset Directory: %s", manifest.assetDirectory.c_str());
+                    ImGui::Text("Startup Scene: %s", manifest.startupScene.empty() ? "<none>" : manifest.startupScene.c_str());
+
+                    if (ImGui::Button("Save"))
+                    {
+                        manifest.name = projectNameBuffer.data();
+                        manifest.windowTitle = projectWindowTitleBuffer.data();
+                        manifest.windowWidth = (std::max)(projectWindowWidth, 64);
+                        manifest.windowHeight = (std::max)(projectWindowHeight, 64);
+                        manifest.vSyncEnabled = projectVSyncEnabled;
+
+                        if (SaveProjectToDisk())
+                        {
+                            renderer.SetVSyncEnabled(manifest.vSyncEnabled);
+                            ImGui::CloseCurrentPopup();
+                        }
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Cancel"))
+                    {
+                        ImGui::CloseCurrentPopup();
+                    }
+
+                    ImGui::EndPopup();
+                }
             }
 
             if (ImGui::BeginPopupModal("Bake Scene Custom", nullptr, ImGuiWindowFlags_AlwaysAutoResize))

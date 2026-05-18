@@ -666,11 +666,13 @@ namespace PlutoGE::ui
         }
 
         ImGui::Text("Entity Name: %s", entity->GetName().c_str());
-        auto isActive = entity->IsActive();
+        auto isActive = entity->IsSelfActive();
         if (ImGui::Checkbox("Active", &isActive))
         {
             entity->SetActive(isActive);
         }
+        ImGui::SameLine();
+        ImGui::TextDisabled("Hierarchy: %s", entity->IsActive() ? "Active" : "Inactive");
 
         {
             // Transform

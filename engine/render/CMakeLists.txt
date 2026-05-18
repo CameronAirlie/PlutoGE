@@ -8,6 +8,7 @@ add_library(PlutoGERender
     src/GBuffer.cpp
     src/Material.cpp
     src/postprocess/ShaderPostProcessEffect.cpp
+    src/postprocess/AutoExposureEffect.cpp
     src/postprocess/ColorGradingEffect.cpp
     src/postprocess/SceneCompositeEffect.cpp
     src/postprocess/ToneMappingEffect.cpp
@@ -19,6 +20,7 @@ add_library(PlutoGERender
     src/postprocess/GammaCorrectionEffect.cpp
     src/postprocess/PostProcessEffectFactory.cpp
     src/passes/GeometryPass.cpp
+    src/passes/GridPass.cpp
     src/passes/LightPropagationVolumePass.cpp
     src/passes/LightingPass.cpp
     src/passes/ShadowPass.cpp

@@ -22,6 +22,23 @@ namespace PlutoGE::assets
         float positionZ = 6.0f;
         float yawDegrees = 0.0f;
         float pitchDegrees = 0.0f;
+        float fovY = 45.0f;
+        float nearPlane = 0.1f;
+        float farPlane = 100.0f;
+    };
+
+    struct ProjectPostProcessParameter
+    {
+        std::string name;
+        int type = 0;
+        std::string value;
+    };
+
+    struct ProjectPostProcessEffect
+    {
+        std::string typeName;
+        bool enabled = true;
+        std::vector<ProjectPostProcessParameter> parameters;
     };
 
     struct ProjectManifest
@@ -34,6 +51,7 @@ namespace PlutoGE::assets
         int windowHeight = 720;
         bool vSyncEnabled = true;
         ProjectEditorCameraSettings editorCamera;
+        std::vector<ProjectPostProcessEffect> editorCameraPostProcessEffects;
         std::vector<ProjectAssetEntry> assetEntries;
     };
 

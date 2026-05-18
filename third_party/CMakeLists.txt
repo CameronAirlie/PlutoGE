@@ -67,6 +67,17 @@ target_include_directories(PlutoGE_imgui PUBLIC
 )
 
 FetchContent_Declare(
+    imguizmo
+    GIT_REPOSITORY https://github.com/CedricGuillemet/ImGuizmo.git
+    GIT_TAG        master
+)
+FetchContent_MakeAvailable(imguizmo)
+target_include_directories(imguizmo PUBLIC
+    ${imgui_SOURCE_DIR}
+)
+add_library(PlutoGE::imguizmo ALIAS imguizmo)
+
+FetchContent_Declare(
     tinygltf
     GIT_REPOSITORY https://github.com/syoyo/tinygltf.git
     GIT_TAG        release

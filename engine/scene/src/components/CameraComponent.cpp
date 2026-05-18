@@ -1,6 +1,7 @@
 #include "PlutoGE/scene/components/CameraComponent.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/render/Camera.h"
+#include "PlutoGE/render/postprocess/AutoExposureEffect.h"
 #include "PlutoGE/render/postprocess/GammaCorrectionEffect.h"
 #include "PlutoGE/render/postprocess/LPVEffect.h"
 #include "PlutoGE/render/postprocess/PostProcessEffectFactory.h"
@@ -91,6 +92,7 @@ namespace PlutoGE::scene
         auto &rsmEffect = EmplacePostProcessEffect<render::RSMEffect>();
         rsmEffect.SetEnabled(false);
 
+        EmplacePostProcessEffect<render::AutoExposureEffect>();
         EmplacePostProcessEffect<render::ToneMappingEffect>();
         AddPostProcessEffectByType("ColorGrading");
         EmplacePostProcessEffect<render::SceneCompositeEffect>();

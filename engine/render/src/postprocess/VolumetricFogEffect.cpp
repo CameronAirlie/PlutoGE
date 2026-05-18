@@ -392,7 +392,11 @@ namespace PlutoGE::render
             float SampleShadowMapPCF(sampler2D shadowMap, vec3 projectedCoords)
             {
                 vec2 texelSize = 1.0 / vec2(textureSize(shadowMap, 0));
-                float filterRadius = max(uShadowSoftness, 0.5);
+                float blockerDepth = texture(shadowMap, projectedCoords.xy).r;
+                float blockerSeparation = max(projectedCoords.z - blockerDepth, 0.0);
+                float baseRadius = max(uShadowSoftness * 0.35, 0.35);
+                float maxRadius = max(uShadowSoftness * 2.5, baseRadius);
+                float filterRadius = mix(baseRadius, maxRadius, clamp(blockerSeparation * 160.0, 0.0, 1.0));
                 float shadow = 0.0;
                 float totalWeight = 0.0;
                 for (int y = -1; y <= 1; ++y)

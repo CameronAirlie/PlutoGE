@@ -2,9 +2,13 @@
 
 #include "PlutoGE/ui/panels/Panel.h"
 
+#include <array>
+#include <cstdint>
+
 namespace PlutoGE::scene
 {
     class Scene;
+    class Entity;
 }
 
 namespace PlutoGE::ui
@@ -21,5 +25,15 @@ namespace PlutoGE::ui
         void Shutdown() override;
 
         void ContextMenu();
+
+    private:
+        void RenderRootDropTarget();
+        void RenderEntityNode(scene::Entity *entity);
+        void BeginRename(scene::Entity *entity);
+        void EndRename(bool applyChanges);
+
+        std::uint32_t m_renamingEntityId = 0;
+        bool m_focusRenameInput = false;
+        std::array<char, 256> m_renameBuffer{};
     };
 }

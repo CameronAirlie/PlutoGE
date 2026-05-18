@@ -5,6 +5,7 @@
 #include <imgui.h>
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_opengl3.h>
+#include <ImGuizmo.h>
 
 #include "PlutoGE/platform/Window.h"
 
@@ -80,6 +81,7 @@ namespace PlutoGE::ui
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
+        ImGuizmo::BeginFrame();
         ImGui::DockSpaceOverViewport(ImGui::GetMainViewport()->ID);
     }
 

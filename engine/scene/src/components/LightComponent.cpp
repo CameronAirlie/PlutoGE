@@ -22,18 +22,8 @@ namespace PlutoGE::scene
 
         int ResolveDirectionalCascadeResolution(const Light &light, int cascadeIndex)
         {
-            const int baseResolution = ResolveShadowResolution(light);
-            switch (cascadeIndex)
-            {
-            case 0:
-                return baseResolution;
-            case 1:
-                return std::max(baseResolution / 2, 256);
-            case 2:
-                return std::max(baseResolution / 4, 256);
-            default:
-                return std::max(baseResolution / 4, 256);
-            }
+            static_cast<void>(cascadeIndex);
+            return ResolveShadowResolution(light);
         }
 
         void ResetShadowState(Light &light)

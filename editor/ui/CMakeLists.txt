@@ -19,5 +19,6 @@ target_link_libraries(PlutoGEEditorUI PUBLIC
     PlutoGE::Scene
     PlutoGE::glm
     PlutoGE::imgui
+    PlutoGE::imguizmo
     PlutoGE::glfw
 )

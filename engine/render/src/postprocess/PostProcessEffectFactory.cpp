@@ -1,5 +1,6 @@
 #include "PlutoGE/render/postprocess/PostProcessEffectFactory.h"
 
+#include "PlutoGE/render/postprocess/AutoExposureEffect.h"
 #include "PlutoGE/render/postprocess/ColorGradingEffect.h"
 #include "PlutoGE/render/postprocess/FXAAEffect.h"
 #include "PlutoGE/render/postprocess/GammaCorrectionEffect.h"
@@ -24,6 +25,7 @@ namespace PlutoGE::render
             "LPV",
             "RSM",
             "VolumetricFog",
+            "AutoExposure",
             "ToneMapping",
             "ColorGrading",
             "SceneComposite",
@@ -62,6 +64,11 @@ namespace PlutoGE::render
         if (typeName == "VolumetricFog")
         {
             return std::make_unique<VolumetricFogEffect>();
+        }
+
+        if (typeName == "AutoExposure")
+        {
+            return std::make_unique<AutoExposureEffect>();
         }
 
         if (typeName == "ToneMapping")

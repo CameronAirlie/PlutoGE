@@ -12,6 +12,7 @@ namespace PlutoGE::assets
     {
         constexpr std::string_view kProjectHeader = "PLUTOPROJECT";
         constexpr int kProjectVersion = 1;
+        constexpr int kRuntimeSearchAncestorLimit = 8;
 
         std::filesystem::path NormalizeAbsolutePath(const std::filesystem::path &path)
         {
@@ -22,6 +23,38 @@ namespace PlutoGE::assets
             }
 
             return std::filesystem::absolute(path, errorCode).lexically_normal();
+        }
+
+        std::string PathToUtf8String(const std::filesystem::path &path)
+        {
+#ifdef _WIN32
+            const auto utf8Path = path.u8string();
+            std::string result;
+            result.reserve(utf8Path.size());
+            for (const auto character : utf8Path)
+            {
+                result.push_back(static_cast<char>(character));
+            }
+            return result;
+#else
+            return path.string();
+#endif
+        }
+
+        std::string PathToGenericUtf8String(const std::filesystem::path &path)
+        {
+#ifdef _WIN32
+            const auto utf8Path = path.generic_u8string();
+            std::string result;
+            result.reserve(utf8Path.size());
+            for (const auto character : utf8Path)
+            {
+                result.push_back(static_cast<char>(character));
+            }
+            return result;
+#else
+            return path.generic_string();
+#endif
         }
 
         bool TryMakeRelativePath(const std::filesystem::path &target,
@@ -36,7 +69,7 @@ namespace PlutoGE::assets
             }
 
             const auto normalizedRelativePath = relativePath.lexically_normal();
-            const auto genericRelativePath = normalizedRelativePath.generic_string();
+            const auto genericRelativePath = PathToGenericUtf8String(normalizedRelativePath);
             if (genericRelativePath == "." || genericRelativePath.rfind("../", 0) == 0 || genericRelativePath == "..")
             {
                 return false;
@@ -155,6 +188,57 @@ namespace PlutoGE::assets
             return parseEnd != nullptr && *parseEnd == '\0';
         }
 
+        std::filesystem::path FindNewestRuntimeExecutableInTree(const std::filesystem::path &searchRoot,
+                                                                const std::string &runtimeFileName)
+        {
+            if (searchRoot.empty() || !std::filesystem::exists(searchRoot))
+            {
+                return {};
+            }
+
+            std::filesystem::path bestMatch;
+            const std::filesystem::path runtimeFilePath(runtimeFileName);
+            std::error_code errorCode;
+            for (std::filesystem::recursive_directory_iterator iterator(searchRoot, std::filesystem::directory_options::skip_permission_denied, errorCode), end;
+                 iterator != end;
+                 iterator.increment(errorCode))
+            {
+                if (errorCode)
+                {
+                    errorCode.clear();
+                    continue;
+                }
+
+                std::error_code statusErrorCode;
+                if (!iterator->is_regular_file(statusErrorCode))
+                {
+                    continue;
+                }
+
+                const auto path = iterator->path();
+                if (path.filename() != runtimeFilePath)
+                {
+                    continue;
+                }
+
+                if (bestMatch.empty())
+                {
+                    bestMatch = path;
+                    continue;
+                }
+
+                std::error_code timeErrorCode;
+                const auto bestWriteTime = std::filesystem::last_write_time(bestMatch, timeErrorCode);
+                const auto candidateWriteTime = std::filesystem::last_write_time(path, timeErrorCode);
+                if (!timeErrorCode && candidateWriteTime > bestWriteTime)
+                {
+                    bestMatch = path;
+                }
+            }
+
+            return bestMatch;
+        }
+
         std::string GetExecutableExtension()
         {
 #ifdef _WIN32
@@ -177,7 +261,7 @@ namespace PlutoGE::assets
             std::filesystem::create_directories(destinationDirectory, errorCode);
             if (errorCode)
             {
-                SetError(errorMessage, "Failed to create export asset directory: " + destinationDirectory.string());
+                SetError(errorMessage, "Failed to create export asset directory: " + PathToUtf8String(destinationDirectory));
                 return false;
             }
 
@@ -187,7 +271,7 @@ namespace PlutoGE::assets
             {
                 if (errorCode)
                 {
-                    SetError(errorMessage, "Failed while enumerating project assets in: " + sourceDirectory.string());
+                    SetError(errorMessage, "Failed while enumerating project assets in: " + PathToUtf8String(sourceDirectory));
                     return false;
                 }
 
@@ -195,7 +279,7 @@ namespace PlutoGE::assets
                 const auto relativePath = std::filesystem::relative(sourcePath, sourceDirectory, errorCode);
                 if (errorCode)
                 {
-                    SetError(errorMessage, "Failed to build export path for: " + sourcePath.string());
+                    SetError(errorMessage, "Failed to build export path for: " + PathToUtf8String(sourcePath));
                     return false;
                 }
 
@@ -206,7 +290,7 @@ namespace PlutoGE::assets
                     std::filesystem::create_directories(destinationPath, errorCode);
                     if (errorCode)
                     {
-                        SetError(errorMessage, "Failed to create export directory: " + destinationPath.string() + " (" + errorCode.message() + ")");
+                        SetError(errorMessage, "Failed to create export directory: " + PathToUtf8String(destinationPath) + " (" + errorCode.message() + ")");
                         return false;
                     }
                     continue;
@@ -223,7 +307,7 @@ namespace PlutoGE::assets
                 std::filesystem::create_directories(destinationPath.parent_path(), errorCode);
                 if (errorCode)
                 {
-                    SetError(errorMessage, "Failed to create export asset parent directory: " + destinationPath.parent_path().string() + " (" + errorCode.message() + ")");
+                    SetError(errorMessage, "Failed to create export asset parent directory: " + PathToUtf8String(destinationPath.parent_path()) + " (" + errorCode.message() + ")");
                     return false;
                 }
 
@@ -233,7 +317,7 @@ namespace PlutoGE::assets
                     std::filesystem::remove(destinationPath, errorCode);
                     if (errorCode)
                     {
-                        SetError(errorMessage, "Failed to replace existing export asset: " + destinationPath.string() + " (" + errorCode.message() + ")");
+                        SetError(errorMessage, "Failed to replace existing export asset: " + PathToUtf8String(destinationPath) + " (" + errorCode.message() + ")");
                         return false;
                     }
                 }
@@ -246,7 +330,7 @@ namespace PlutoGE::assets
                 if (errorCode)
                 {
                     SetError(errorMessage,
-                             "Failed to copy asset to export: " + sourcePath.string() + " -> " + destinationPath.string() + " (" + errorCode.message() + ")");
+                             "Failed to copy asset to export: " + PathToUtf8String(sourcePath) + " -> " + PathToUtf8String(destinationPath) + " (" + errorCode.message() + ")");
                     return false;
                 }
             }
@@ -271,7 +355,7 @@ namespace PlutoGE::assets
         std::filesystem::create_directories(normalizedManifestPath.parent_path(), errorCode);
         if (errorCode)
         {
-            SetError(errorMessage, "Failed to create project directory: " + normalizedManifestPath.parent_path().string());
+            SetError(errorMessage, "Failed to create project directory: " + PathToUtf8String(normalizedManifestPath.parent_path()));
             return nullptr;
         }
 
@@ -286,7 +370,7 @@ namespace PlutoGE::assets
         std::filesystem::create_directories(project->GetAssetDirectoryPath(), errorCode);
         if (errorCode)
         {
-            SetError(errorMessage, "Failed to create project asset directory: " + project->GetAssetDirectoryPath().string());
+            SetError(errorMessage, "Failed to create project asset directory: " + PathToUtf8String(project->GetAssetDirectoryPath()));
             return nullptr;
         }
 
@@ -393,6 +477,44 @@ namespace PlutoGE::assets
                 continue;
             }
 
+            if (tokens[0] == "EDITOR_CAMERA_LENS" && tokens.size() >= 4)
+            {
+                ParseFloat(tokens[1], manifest.editorCamera.fovY);
+                ParseFloat(tokens[2], manifest.editorCamera.nearPlane);
+                ParseFloat(tokens[3], manifest.editorCamera.farPlane);
+                continue;
+            }
+
+            if (tokens[0] == "EDITOR_CAMERA_EFFECT" && tokens.size() >= 3)
+            {
+                ProjectPostProcessEffect effect;
+                effect.typeName = tokens[1];
+                effect.enabled = tokens[2] == "1" || tokens[2] == "true";
+                manifest.editorCameraPostProcessEffects.push_back(std::move(effect));
+                continue;
+            }
+
+            if (tokens[0] == "EDITOR_CAMERA_EFFECT_PARAM" && tokens.size() >= 5)
+            {
+                int effectIndex = -1;
+                int parameterType = 0;
+                if (!ParseInteger(tokens[1], effectIndex) ||
+                    effectIndex < 0 ||
+                    static_cast<std::size_t>(effectIndex) >= manifest.editorCameraPostProcessEffects.size())
+                {
+                    continue;
+                }
+
+                ParseInteger(tokens[3], parameterType);
+
+                ProjectPostProcessParameter parameter;
+                parameter.name = tokens[2];
+                parameter.type = parameterType;
+                parameter.value = tokens[4];
+                manifest.editorCameraPostProcessEffects[static_cast<std::size_t>(effectIndex)].parameters.push_back(std::move(parameter));
+                continue;
+            }
+
             if (tokens[0] == "ASSET" && tokens.size() >= 3)
             {
                 ProjectAssetEntry entry;
@@ -453,6 +575,26 @@ namespace PlutoGE::assets
         output << "EDITOR_CAMERA_ROTATION\t"
                << m_manifest.editorCamera.yawDegrees << '\t'
                << m_manifest.editorCamera.pitchDegrees << '\n';
+        output << "EDITOR_CAMERA_LENS\t"
+               << m_manifest.editorCamera.fovY << '\t'
+               << m_manifest.editorCamera.nearPlane << '\t'
+               << m_manifest.editorCamera.farPlane << '\n';
+        for (std::size_t effectIndex = 0; effectIndex < m_manifest.editorCameraPostProcessEffects.size(); ++effectIndex)
+        {
+            const auto &effect = m_manifest.editorCameraPostProcessEffects[effectIndex];
+            output << "EDITOR_CAMERA_EFFECT\t"
+                   << EscapeText(effect.typeName) << '\t'
+                   << (effect.enabled ? 1 : 0) << '\n';
+
+            for (const auto &parameter : effect.parameters)
+            {
+                output << "EDITOR_CAMERA_EFFECT_PARAM\t"
+                       << effectIndex << '\t'
+                       << EscapeText(parameter.name) << '\t'
+                       << parameter.type << '\t'
+                       << EscapeText(parameter.value) << '\n';
+            }
+        }
         for (const auto &assetEntry : m_manifest.assetEntries)
         {
             output << "ASSET\t"
@@ -503,7 +645,7 @@ namespace PlutoGE::assets
 
     std::string Project::MakeAssetReference(const std::filesystem::path &filePath) const
     {
-        const auto genericPath = filePath.generic_string();
+        const auto genericPath = PathToGenericUtf8String(filePath);
         if (IsProjectAssetReference(genericPath) || IsEngineAssetReference(genericPath))
         {
             return genericPath;
@@ -512,10 +654,10 @@ namespace PlutoGE::assets
         std::filesystem::path relativePath;
         if (TryMakeRelativePath(filePath, GetAssetDirectoryPath(), relativePath))
         {
-            return std::string(kProjectAssetScheme) + relativePath.generic_string();
+            return std::string(kProjectAssetScheme) + PathToGenericUtf8String(relativePath);
         }
 
-        return NormalizeAbsolutePath(filePath).string();
+        return PathToUtf8String(NormalizeAbsolutePath(filePath));
     }
 
     std::filesystem::path Project::ResolveAssetReference(std::string_view reference) const
@@ -542,46 +684,32 @@ namespace PlutoGE::assets
 
     std::filesystem::path GetRuntimeManifestPathForExecutable(const std::filesystem::path &executablePath)
     {
-        return executablePath.parent_path() / (executablePath.stem().string() + ".plutoproject");
+        auto manifestFileName = executablePath.stem();
+        manifestFileName += ".plutoproject";
+        return executablePath.parent_path() / manifestFileName;
     }
 
     std::filesystem::path FindRuntimeExecutable(const std::filesystem::path &searchRoot)
     {
         const std::string runtimeFileName = "PlutoGERuntime" + GetExecutableExtension();
-        std::filesystem::path bestMatch;
-        std::error_code errorCode;
-
-        for (std::filesystem::recursive_directory_iterator iterator(searchRoot, std::filesystem::directory_options::skip_permission_denied, errorCode), end;
-             iterator != end;
-             iterator.increment(errorCode))
+        auto candidateRoot = NormalizeAbsolutePath(searchRoot);
+        for (int depth = 0; depth < kRuntimeSearchAncestorLimit && !candidateRoot.empty(); ++depth)
         {
-            if (errorCode || !iterator->is_regular_file())
+            if (const auto bestMatch = FindNewestRuntimeExecutableInTree(candidateRoot, runtimeFileName); !bestMatch.empty())
             {
-                continue;
+                return bestMatch;
             }
 
-            const auto path = iterator->path();
-            if (path.filename().string() != runtimeFileName)
+            const auto parentRoot = candidateRoot.parent_path();
+            if (parentRoot.empty() || parentRoot == candidateRoot)
             {
-                continue;
+                break;
             }
 
-            if (bestMatch.empty())
-            {
-                bestMatch = path;
-                continue;
-            }
-
-            std::error_code timeErrorCode;
-            const auto bestWriteTime = std::filesystem::last_write_time(bestMatch, timeErrorCode);
-            const auto candidateWriteTime = std::filesystem::last_write_time(path, timeErrorCode);
-            if (!timeErrorCode && candidateWriteTime > bestWriteTime)
-            {
-                bestMatch = path;
-            }
+            candidateRoot = parentRoot;
         }
 
-        return bestMatch;
+        return {};
     }
 
     bool ExportStandaloneProject(const Project &project,
@@ -592,7 +720,7 @@ namespace PlutoGE::assets
         const auto normalizedRuntimeExecutablePath = NormalizeAbsolutePath(runtimeExecutablePath);
         if (!std::filesystem::exists(normalizedRuntimeExecutablePath))
         {
-            SetError(errorMessage, "Runtime executable was not found: " + normalizedRuntimeExecutablePath.string());
+            SetError(errorMessage, "Runtime executable was not found: " + PathToUtf8String(normalizedRuntimeExecutablePath));
             return false;
         }
 
@@ -601,7 +729,7 @@ namespace PlutoGE::assets
         std::filesystem::create_directories(normalizedDestinationExecutablePath.parent_path(), errorCode);
         if (errorCode)
         {
-            SetError(errorMessage, "Failed to create export directory: " + normalizedDestinationExecutablePath.parent_path().string());
+            SetError(errorMessage, "Failed to create export directory: " + PathToUtf8String(normalizedDestinationExecutablePath.parent_path()));
             return false;
         }
 

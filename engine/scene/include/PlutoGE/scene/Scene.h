@@ -49,7 +49,7 @@ namespace PlutoGE::scene
         Entity *FindEntityByID(EntityID id) const;                             // Utility function to find an entity by its unique ID (useful for serialization and referencing)
         std::vector<Entity *> FindEntitiesByTag(const std::string &tag) const; // Utility function to find entities by tag (can be useful for scripting and editor)
 
-        std::vector<Light *> GetLights() const { return m_lights; } // Get all lights in the scene (for rendering)
+        std::vector<Light *> GetLights() const; // Get active lights in the scene (for rendering)
         void MarkShadowLightsDirty();
         const std::string &GetFilePath() const { return m_filePath; }
         void SetFilePath(const std::string &filePath) { m_filePath = filePath; }

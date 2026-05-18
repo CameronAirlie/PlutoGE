@@ -8,6 +8,7 @@
 #include "PlutoGE/render/RenderTarget.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
 #include "PlutoGE/render/passes/GeometryPass.h"
+#include "PlutoGE/render/passes/GridPass.h"
 #include "PlutoGE/render/passes/LightingPass.h"
 #include "PlutoGE/render/passes/LightPropagationVolumePass.h"
 #include "PlutoGE/render/passes/PostProcessPass.h"
@@ -129,6 +130,10 @@ namespace PlutoGE::render
         lightingPass->Initialize();
         m_renderPasses.push_back(lightingPass);
 
+        auto gridPass = new GridPass();
+        gridPass->Initialize();
+        m_renderPasses.push_back(gridPass);
+
         auto postProcessPass = new PostProcessPass();
         postProcessPass->Initialize();
         m_renderPasses.push_back(postProcessPass);
@@ -244,7 +249,7 @@ namespace PlutoGE::render
                     cameraComponent.GetOwner() ? cameraComponent.GetOwner()->GetScene() : nullptr);
     }
 
-    void Renderer::RenderFrame(const CameraData &cameraData, RenderTarget *renderTarget, std::vector<scene::Light *> lights, const std::vector<IPostProcessEffect *> *postProcessEffects, const scene::Scene *scene)
+    void Renderer::RenderFrame(const CameraData &cameraData, RenderTarget *renderTarget, std::vector<scene::Light *> lights, const std::vector<IPostProcessEffect *> *postProcessEffects, const scene::Scene *scene, bool renderEditorGrid)
     {
         if (!m_isInitialized)
             return;
@@ -299,6 +304,7 @@ namespace PlutoGE::render
             .lightPropagationVolumePass = m_lightPropagationVolumePass,
             .postProcessDebugView = m_postProcessDebugView,
             .frameSequence = m_frameSequence,
+            .renderEditorGrid = renderEditorGrid,
         };
 
         if (m_shadowPass)

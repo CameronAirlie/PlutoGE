@@ -271,9 +271,8 @@ namespace
 
         receiverRadius = glm::max(receiverRadius + kDirectionalShadowPadding, 10.0f);
         const float casterExtrusionDistance = receiverRadius * 2.0f + kDirectionalShadowPadding;
-        glm::vec3 eye = frustumCenter - lightDirection * (receiverRadius * 2.0f);
         const glm::vec3 upVector = ResolveUpVector(lightDirection);
-        glm::mat4 view = glm::lookAt(eye, frustumCenter, upVector);
+        glm::mat4 view = glm::lookAt(glm::vec3(0.0f), lightDirection, upVector);
 
         const glm::vec3 lightSpaceCenter = glm::vec3(view * glm::vec4(frustumCenter, 1.0f));
         glm::vec3 minBounds(lightSpaceCenter.x - receiverRadius, lightSpaceCenter.y - receiverRadius, std::numeric_limits<float>::max());
@@ -294,19 +293,9 @@ namespace
         maxBounds += glm::vec3(0.0f, 0.0f, kDirectionalShadowPadding);
         ExpandDirectionalCascadeDepthBounds(view, shadowCasters, minBounds, maxBounds);
 
-        if (maxBounds.z > -kDirectionalShadowPadding)
-        {
-            const float retreatDistance = maxBounds.z + kDirectionalShadowPadding;
-            eye -= lightDirection * retreatDistance;
-            view = glm::lookAt(eye, frustumCenter, upVector);
-            minBounds.z -= retreatDistance;
-            maxBounds.z -= retreatDistance;
-        }
-
-        const glm::vec2 extents = glm::max(glm::vec2(maxBounds - minBounds), glm::vec2(receiverRadius * 2.0f));
+        const glm::vec2 extents(receiverRadius * 2.0f);
         const glm::vec2 texelSize = extents / static_cast<float>(shadowResolution);
-        glm::vec2 centerXY = glm::vec2(lightSpaceCenter);
-        centerXY = glm::floor(centerXY / texelSize) * texelSize;
+        glm::vec2 centerXY = glm::round(glm::vec2(lightSpaceCenter) / texelSize) * texelSize;
         const float pcfGuardTexels = glm::max(light.directionalShadowSettings.softness + 1.0f, 2.0f);
         const glm::vec2 halfExtents = extents * 0.5f + texelSize * pcfGuardTexels;
 
@@ -314,6 +303,15 @@ namespace
         maxBounds.x = centerXY.x + halfExtents.x;
         minBounds.y = centerXY.y - halfExtents.y;
         maxBounds.y = centerXY.y + halfExtents.y;
+
+        if (maxBounds.z > -kDirectionalShadowPadding)
+        {
+            const float retreatDistance = maxBounds.z + kDirectionalShadowPadding;
+            const glm::vec3 eye = -lightDirection * retreatDistance;
+            view = glm::lookAt(eye, eye + lightDirection, upVector);
+            minBounds.z -= retreatDistance;
+            maxBounds.z -= retreatDistance;
+        }
 
         const float nearPlane = glm::max(0.1f, -maxBounds.z);
         const float farPlane = glm::max(nearPlane + 0.1f, -minBounds.z);

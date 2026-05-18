@@ -277,7 +277,12 @@ namespace PlutoGE::render
                     }
 
                     vec2 texelSize = 1.0 / vec2(textureSize(shadowMap, 0));
-                    float filterRadius = max(softness, 0.5);
+                    float receiverDepth = projectedCoords.z - depthBias;
+                    float blockerDepth = texture(shadowMap, projectedCoords.xy).r;
+                    float blockerSeparation = max(receiverDepth - blockerDepth, 0.0);
+                    float baseRadius = max(softness * 0.35, 0.35);
+                    float maxRadius = max(softness * 2.5, baseRadius);
+                    float filterRadius = mix(baseRadius, maxRadius, clamp(blockerSeparation * 160.0, 0.0, 1.0));
                     float shadow = 0.0;
                     float totalWeight = 0.0;
                     for (int y = -1; y <= 1; ++y)
@@ -471,7 +476,15 @@ namespace PlutoGE::render
                     vec3 referenceUp = abs(sampleDirection.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
                     vec3 tangent = normalize(cross(referenceUp, sampleDirection));
                     vec3 bitangent = cross(sampleDirection, tangent);
-                    float angularRadius = 0.006;
+                    float centerDepth = texture(uShadowMapCube, sampleDirection).r * light.ShadowFarPlane;
+                    float blockerSeparation = max(currentDepth - centerDepth, 0.0);
+                    float softness = max(light.ShadowSoftness, 0.5);
+                    float baseAngularRadius = 0.0015 * softness;
+                    float maxAngularRadius = 0.0085 * softness;
+                    float angularRadius = mix(
+                        baseAngularRadius,
+                        maxAngularRadius,
+                        clamp(blockerSeparation / max(light.ShadowFarPlane * 0.2, 0.0001), 0.0, 1.0));
                     vec2 sampleOffsets[4] = vec2[](
                         vec2(0.0, 0.0),
                         vec2(0.8660, 0.5),

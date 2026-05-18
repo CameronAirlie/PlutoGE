@@ -4,13 +4,66 @@
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
 
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtx/euler_angles.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
 #include <iostream>
+#include <limits>
 
 namespace PlutoGE::scene
 {
+    namespace
+    {
+        struct DecomposedTransform
+        {
+            glm::vec3 position{0.0f};
+            glm::vec3 rotation{0.0f};
+            glm::vec3 scale{1.0f};
+        };
+
+        DecomposedTransform DecomposeTransform(const glm::mat4 &transform)
+        {
+            DecomposedTransform result;
+            result.position = glm::vec3(transform[3]);
+
+            glm::vec3 basisX(transform[0]);
+            glm::vec3 basisY(transform[1]);
+            glm::vec3 basisZ(transform[2]);
+            result.scale = glm::vec3(glm::length(basisX), glm::length(basisY), glm::length(basisZ));
+
+            if (result.scale.x <= std::numeric_limits<float>::epsilon() ||
+                result.scale.y <= std::numeric_limits<float>::epsilon() ||
+                result.scale.z <= std::numeric_limits<float>::epsilon())
+            {
+                return result;
+            }
+
+            basisX /= result.scale.x;
+            basisY /= result.scale.y;
+            basisZ /= result.scale.z;
+
+            if (glm::dot(glm::cross(basisX, basisY), basisZ) < 0.0f)
+            {
+                result.scale.x = -result.scale.x;
+                basisX = -basisX;
+            }
+
+            glm::mat4 rotationMatrix(1.0f);
+            rotationMatrix[0] = glm::vec4(glm::normalize(basisX), 0.0f);
+            rotationMatrix[1] = glm::vec4(glm::normalize(basisY), 0.0f);
+            rotationMatrix[2] = glm::vec4(glm::normalize(basisZ), 0.0f);
+
+            float rotationX = 0.0f;
+            float rotationY = 0.0f;
+            float rotationZ = 0.0f;
+            glm::extractEulerAngleXYZ(rotationMatrix, rotationX, rotationY, rotationZ);
+            result.rotation = glm::degrees(glm::vec3(rotationX, rotationY, rotationZ));
+            return result;
+        }
+    }
+
     void Entity::MarkShadowSceneDirty()
     {
         if (m_scene)
@@ -52,6 +105,17 @@ namespace PlutoGE::scene
         MarkShadowSceneDirty();
     }
 
+    void Entity::SetActive(bool active)
+    {
+        if (m_isActive == active)
+        {
+            return;
+        }
+
+        m_isActive = active;
+        MarkShadowSceneDirty();
+    }
+
     void Entity::AddChild(Entity *child)
     {
         if (!child)
@@ -59,7 +123,7 @@ namespace PlutoGE::scene
             return;
         }
 
-        if (child->m_parent == this)
+        if (child == this || child->m_parent == this || IsDescendantOf(child))
         {
             return;
         }
@@ -78,6 +142,32 @@ namespace PlutoGE::scene
         m_children.push_back(child);
         child->m_parent = this;
         child->SetSceneRecursive(m_scene);
+        child->MarkShadowSceneDirty();
+    }
+
+    void Entity::SetParent(Entity *parent)
+    {
+        if (parent)
+        {
+            parent->AddChild(this);
+            return;
+        }
+
+        if (!m_parent)
+        {
+            return;
+        }
+
+        auto &siblings = m_parent->m_children;
+        siblings.erase(std::remove(siblings.begin(), siblings.end(), this), siblings.end());
+        m_parent = nullptr;
+
+        if (m_scene)
+        {
+            m_scene->m_rootEntities.push_back(this);
+        }
+
+        MarkShadowSceneDirty();
     }
 
     EntityID Entity::GenerateUniqueID()
@@ -239,31 +329,37 @@ namespace PlutoGE::scene
         }
     }
 
+    bool Entity::IsDescendantOf(const Entity *entity) const
+    {
+        for (auto *current = m_parent; current; current = current->m_parent)
+        {
+            if (current == entity)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    bool Entity::IsActive() const
+    {
+        return m_isActive && (!m_parent || m_parent->IsActive());
+    }
+
     glm::vec3 Entity::GetWorldPosition() const
     {
-        if (m_parent)
-        {
-            return m_parent->GetWorldPosition() + m_transform.position; // Simple addition for position (not accounting for rotation/scale)
-        }
-        return m_transform.position;
+        return glm::vec3(GetWorldTransform()[3]);
     }
 
     glm::vec3 Entity::GetWorldRotation() const
     {
-        if (m_parent)
-        {
-            return m_parent->GetWorldRotation() + m_transform.rotation; // Simple addition for rotation (not accounting for hierarchical rotation)
-        }
-        return m_transform.rotation;
+        return DecomposeTransform(GetWorldTransform()).rotation;
     }
 
     glm::vec3 Entity::GetWorldScale() const
     {
-        if (m_parent)
-        {
-            return m_parent->GetWorldScale() * m_transform.scale; // Simple multiplication for scale (not accounting for hierarchical scale)
-        }
-        return m_transform.scale;
+        return DecomposeTransform(GetWorldTransform()).scale;
     }
 
     glm::mat4 Entity::GetWorldTransform() const

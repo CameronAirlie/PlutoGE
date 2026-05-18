@@ -81,6 +81,39 @@ namespace PlutoGE::scene
         }
     }
 
+    std::vector<Light *> Scene::GetLights() const
+    {
+        std::vector<Light *> lights;
+
+        auto collectLights = [&lights](const Entity *entity, auto &self) -> void
+        {
+            if (!entity || !entity->IsActive())
+            {
+                return;
+            }
+
+            for (auto *lightComponent : entity->GetComponents<LightComponent>())
+            {
+                if (lightComponent && lightComponent->IsEnabled())
+                {
+                    lights.push_back(const_cast<Light *>(&lightComponent->GetLight()));
+                }
+            }
+
+            for (auto *child : entity->GetChildren())
+            {
+                self(child, self);
+            }
+        };
+
+        for (auto *rootEntity : m_rootEntities)
+        {
+            collectLights(rootEntity, collectLights);
+        }
+
+        return lights;
+    }
+
     Entity *Scene::AddEntity(std::unique_ptr<Entity> entity, Entity *parent)
     {
         if (!entity)

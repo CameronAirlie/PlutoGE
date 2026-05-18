@@ -46,6 +46,8 @@ namespace PlutoGE::scene
         void SetPosition(const glm::vec3 &position);
         void SetRotation(const glm::vec3 &rotation);
         void SetScale(const glm::vec3 &scale);
+        void SetName(const std::string &name) { m_name = name; }
+        void SetActive(bool active);
 
         void Update(float deltaTime); // Update function to be called every frame (for components to update)
 
@@ -54,17 +56,14 @@ namespace PlutoGE::scene
         std::vector<Entity *> GetChildren() const { return m_children; }
         Entity *GetParent() const { return m_parent; }
         Scene *GetScene() const { return m_scene; }
-        void SetParent(Entity *parent)
-        {
-            parent->AddChild(this);
-        }
+        void SetParent(Entity *parent);
 
         EntityID GetID() const { return m_id; }
         std::string GetName() const { return m_name; }
         std::vector<std::string> GetTags() const { return m_tags; }
 
-        void SetActive(bool active) { m_isActive = active; }
-        bool IsActive() const { return m_isActive; }
+        bool IsSelfActive() const { return m_isActive; }
+        bool IsActive() const;
 
         Component *AddComponent(Component *component);
         bool RemoveComponent(Component *component);
@@ -210,6 +209,7 @@ namespace PlutoGE::scene
         void AttachComponent(Component *component);
         void EnsureComponentBucketSize(ComponentTypeID typeID);
         void DetachComponent(Component *component);
+        bool IsDescendantOf(const Entity *entity) const;
         void SetSceneRecursive(Scene *scene);
         void MarkShadowSceneDirty();
 

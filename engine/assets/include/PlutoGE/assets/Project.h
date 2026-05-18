@@ -15,6 +15,15 @@ namespace PlutoGE::assets
         std::uintmax_t size = 0;
     };
 
+    struct ProjectEditorCameraSettings
+    {
+        float positionX = 0.0f;
+        float positionY = 2.0f;
+        float positionZ = 6.0f;
+        float yawDegrees = 0.0f;
+        float pitchDegrees = 0.0f;
+    };
+
     struct ProjectManifest
     {
         std::string name = "UntitledProject";
@@ -24,6 +33,7 @@ namespace PlutoGE::assets
         int windowWidth = 1280;
         int windowHeight = 720;
         bool vSyncEnabled = true;
+        ProjectEditorCameraSettings editorCamera;
         std::vector<ProjectAssetEntry> assetEntries;
     };
 

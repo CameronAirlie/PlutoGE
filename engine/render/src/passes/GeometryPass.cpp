@@ -82,20 +82,13 @@ namespace PlutoGE::render
 
     void GeometryPass::Execute(const RenderContext &ctx)
     {
-        const int targetWidth = ctx.renderTarget ? ctx.renderTarget->GetWidth() : (ctx.temporaryRenderTarget ? ctx.temporaryRenderTarget->GetWidth() : 0);
-        const int targetHeight = ctx.renderTarget ? ctx.renderTarget->GetHeight() : (ctx.temporaryRenderTarget ? ctx.temporaryRenderTarget->GetHeight() : 0);
-        if (targetWidth <= 0 || targetHeight <= 0)
-        {
-            return;
-        }
-
         if (!ctx.gBuffer->IsInitialized() ||
-            ctx.gBuffer->GetWidth() != targetWidth ||
-            ctx.gBuffer->GetHeight() != targetHeight)
+            ctx.gBuffer->GetWidth() != ctx.renderTarget->GetWidth() ||
+            ctx.gBuffer->GetHeight() != ctx.renderTarget->GetHeight())
         {
             const auto resizeStart = std::chrono::high_resolution_clock::now();
             ctx.gBuffer->Cleanup();
-            ctx.gBuffer->Initialize(targetWidth, targetHeight);
+            ctx.gBuffer->Initialize(ctx.renderTarget->GetWidth(), ctx.renderTarget->GetHeight());
             const auto resizeEnd = std::chrono::high_resolution_clock::now();
             if (ctx.renderer)
             {
@@ -108,7 +101,6 @@ namespace PlutoGE::render
         glEnable(GL_CULL_FACE);
         glCullFace(GL_BACK);
         glViewport(0, 0, ctx.gBuffer->GetWidth(), ctx.gBuffer->GetHeight());
-        glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         m_geometryPassShader->Bind();

@@ -14,6 +14,7 @@ namespace PlutoGE::ui
 
     void RenderEntityNode(scene::Entity *entity)
     {
+        const std::string entityName = entity->GetName().empty() ? "Entity" : entity->GetName();
         ImGuiTreeNodeFlags nodeFlags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick;
         if (entity->GetChildren().empty())
         {
@@ -25,8 +26,8 @@ namespace PlutoGE::ui
             nodeFlags |= ImGuiTreeNodeFlags_Selected;
         }
 
-        ImGui::PushID(entity->GetName().c_str()); // Ensure unique ID for ImGui tree node
-        bool nodeOpen = ImGui::TreeNodeEx((void *)(intptr_t)entity->GetName().c_str(), nodeFlags, "%s", entity->GetName().c_str());
+        ImGui::PushID(static_cast<int>(entity->GetID()));
+        bool nodeOpen = ImGui::TreeNodeEx("EntityNode", nodeFlags, "%s", entityName.c_str());
 
         // If clicked, set this entity as the selected entity in the editor shell
         if (ImGui::IsItemClicked() && ImGui::IsItemHovered())

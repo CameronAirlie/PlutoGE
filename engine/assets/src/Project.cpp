@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cstdlib>
 #include <fstream>
 #include <system_error>
 
@@ -144,6 +145,14 @@ namespace PlutoGE::assets
             const auto *end = value.data() + value.size();
             const auto result = std::from_chars(begin, end, parsedValue);
             return result.ec == std::errc() && result.ptr == end;
+        }
+
+        bool ParseFloat(std::string_view value, float &parsedValue)
+        {
+            std::string buffer(value);
+            char *parseEnd = nullptr;
+            parsedValue = std::strtof(buffer.c_str(), &parseEnd);
+            return parseEnd != nullptr && *parseEnd == '\0';
         }
 
         std::string GetExecutableExtension()
@@ -369,6 +378,21 @@ namespace PlutoGE::assets
                 continue;
             }
 
+            if (tokens[0] == "EDITOR_CAMERA_POSITION" && tokens.size() >= 4)
+            {
+                ParseFloat(tokens[1], manifest.editorCamera.positionX);
+                ParseFloat(tokens[2], manifest.editorCamera.positionY);
+                ParseFloat(tokens[3], manifest.editorCamera.positionZ);
+                continue;
+            }
+
+            if (tokens[0] == "EDITOR_CAMERA_ROTATION" && tokens.size() >= 3)
+            {
+                ParseFloat(tokens[1], manifest.editorCamera.yawDegrees);
+                ParseFloat(tokens[2], manifest.editorCamera.pitchDegrees);
+                continue;
+            }
+
             if (tokens[0] == "ASSET" && tokens.size() >= 3)
             {
                 ProjectAssetEntry entry;
@@ -422,6 +446,13 @@ namespace PlutoGE::assets
         output << "WINDOW_TITLE\t" << EscapeText(m_manifest.windowTitle) << '\n';
         output << "WINDOW_SIZE\t" << m_manifest.windowWidth << '\t' << m_manifest.windowHeight << '\n';
         output << "VSYNC\t" << (m_manifest.vSyncEnabled ? 1 : 0) << '\n';
+        output << "EDITOR_CAMERA_POSITION\t"
+               << m_manifest.editorCamera.positionX << '\t'
+               << m_manifest.editorCamera.positionY << '\t'
+               << m_manifest.editorCamera.positionZ << '\n';
+        output << "EDITOR_CAMERA_ROTATION\t"
+               << m_manifest.editorCamera.yawDegrees << '\t'
+               << m_manifest.editorCamera.pitchDegrees << '\n';
         for (const auto &assetEntry : m_manifest.assetEntries)
         {
             output << "ASSET\t"

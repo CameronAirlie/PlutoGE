@@ -108,6 +108,7 @@ namespace PlutoGE::render
         glEnable(GL_CULL_FACE);
         glCullFace(GL_BACK);
         glViewport(0, 0, ctx.gBuffer->GetWidth(), ctx.gBuffer->GetHeight());
+        glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         m_geometryPassShader->Bind();

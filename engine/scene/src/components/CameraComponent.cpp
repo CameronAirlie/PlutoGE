@@ -82,9 +82,15 @@ namespace PlutoGE::scene
 
     CameraComponent::CameraComponent(render::Camera *camera) : m_camera(camera)
     {
-        EmplacePostProcessEffect<render::SSGIEffect>();
-        EmplacePostProcessEffect<render::LPVEffect>();
-        EmplacePostProcessEffect<render::RSMEffect>();
+        auto &ssgiEffect = EmplacePostProcessEffect<render::SSGIEffect>();
+        ssgiEffect.SetEnabled(false);
+
+        auto &lpvEffect = EmplacePostProcessEffect<render::LPVEffect>();
+        lpvEffect.SetEnabled(false);
+
+        auto &rsmEffect = EmplacePostProcessEffect<render::RSMEffect>();
+        rsmEffect.SetEnabled(false);
+
         EmplacePostProcessEffect<render::ToneMappingEffect>();
         EmplacePostProcessEffect<render::SceneCompositeEffect>();
         EmplacePostProcessEffect<render::GammaCorrectionEffect>(2.2f);

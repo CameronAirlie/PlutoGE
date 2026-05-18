@@ -1,4 +1,8 @@
 #include "PlutoGE/ui/panels/SceneHierarchyPanel.h"
+#include "PlutoGE/assets/Project.h"
+#include "PlutoGE/core/Engine.h"
+#include "PlutoGE/render/Mesh.h"
+#include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/ui/EditorShell.h"
@@ -112,6 +116,24 @@ namespace PlutoGE::ui
                 if (scene)
                 {
                     scene->AddEntity(std::move(newEntity));
+                }
+            }
+            if (ImGui::MenuItem("Create Cube"))
+            {
+                auto newEntity = std::make_unique<scene::Entity>(scene::EntityConfig{.name = "Cube"});
+                auto &engine = core::Engine::GetInstance();
+                auto *scene = ui::EditorShell::GetInstance().GetEngine().GetScene();
+                if (scene)
+                {
+                    auto *entity = scene->AddEntity(std::move(newEntity));
+                    auto *meshComponent = entity->CreateComponent<scene::MeshComponent>(scene::MeshComponentConfig{
+                        .mesh = render::Mesh::Cube(),
+                        .material = engine.GetAssetManager().CreateDefaultMaterial(),
+                    });
+                    if (meshComponent)
+                    {
+                        meshComponent->SetSourceMeshPath(std::string(assets::Project::kBuiltinCubeMeshReference));
+                    }
                 }
             }
             ImGui::EndPopup();

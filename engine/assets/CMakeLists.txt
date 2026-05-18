@@ -1,5 +1,6 @@
 add_library(PlutoGEAssets
     src/AssetManager.cpp
+    src/Project.cpp
 )
 
 add_library(PlutoGE::Assets ALIAS PlutoGEAssets)

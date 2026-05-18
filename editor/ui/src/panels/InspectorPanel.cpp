@@ -73,6 +73,77 @@ namespace PlutoGE::ui
             return typeid(component).name();
         }
 
+        void CollectEntitiesRecursive(scene::Entity *entity, std::vector<scene::Entity *> &entities)
+        {
+            if (!entity)
+            {
+                return;
+            }
+
+            entities.push_back(entity);
+            for (auto *child : entity->GetChildren())
+            {
+                CollectEntitiesRecursive(child, entities);
+            }
+        }
+
+        bool SceneHasAnyCamera(const scene::Scene *scene)
+        {
+            if (!scene)
+            {
+                return false;
+            }
+
+            std::vector<scene::Entity *> entities;
+            for (auto *rootEntity : scene->GetRootEntities())
+            {
+                CollectEntitiesRecursive(rootEntity, entities);
+            }
+
+            for (auto *candidate : entities)
+            {
+                if (candidate && candidate->GetComponent<scene::CameraComponent>())
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        void SetSceneMainCamera(scene::Scene *scene, scene::CameraComponent *selectedCamera, bool isMainCamera)
+        {
+            if (!selectedCamera)
+            {
+                return;
+            }
+
+            if (!scene || !isMainCamera)
+            {
+                selectedCamera->SetMainCamera(isMainCamera);
+                return;
+            }
+
+            std::vector<scene::Entity *> entities;
+            for (auto *rootEntity : scene->GetRootEntities())
+            {
+                CollectEntitiesRecursive(rootEntity, entities);
+            }
+
+            for (auto *entity : entities)
+            {
+                if (!entity)
+                {
+                    continue;
+                }
+
+                if (auto *cameraComponent = entity->GetComponent<scene::CameraComponent>())
+                {
+                    cameraComponent->SetMainCamera(cameraComponent == selectedCamera);
+                }
+            }
+        }
+
         bool CanAddComponentType(const scene::Entity &entity, AddableComponentType componentType)
         {
             switch (componentType)
@@ -103,11 +174,16 @@ namespace PlutoGE::ui
             }
             case AddableComponentType::Camera:
             {
-                entity.CreateComponent<scene::CameraComponent>(new render::Camera(render::CameraConfig{
+                const bool sceneAlreadyHasCamera = SceneHasAnyCamera(entity.GetScene());
+                auto *cameraComponent = entity.CreateComponent<scene::CameraComponent>(new render::Camera(render::CameraConfig{
                     .fovY = 60.0f,
                     .nearPlane = 0.1f,
                     .farPlane = 100.0f,
                 }));
+                if (cameraComponent)
+                {
+                    cameraComponent->SetMainCamera(!sceneAlreadyHasCamera);
+                }
                 break;
             }
             case AddableComponentType::Light:
@@ -832,6 +908,12 @@ namespace PlutoGE::ui
 
                         if (auto *cameraComponent = dynamic_cast<scene::CameraComponent *>(componentPtr))
                         {
+                            bool isMainCamera = cameraComponent->IsMainCamera();
+                            if (ImGui::Checkbox("Main Camera", &isMainCamera))
+                            {
+                                SetSceneMainCamera(entity->GetScene(), cameraComponent, isMainCamera);
+                            }
+
                             RenderCameraPostProcessEditor(*cameraComponent);
                         }
                         else if (dynamic_cast<scene::LightComponent *>(componentPtr))
@@ -842,7 +924,7 @@ namespace PlutoGE::ui
                         int propertyIndex = 0;
                         for (auto &property : properties)
                         {
-                            if (property.name == "PostProcessEffectCount" || property.name.rfind("PostProcessEffects.", 0) == 0)
+                            if (property.name == "PostProcessEffectCount" || property.name == "MainCamera" || property.name == "Primary" || property.name.rfind("PostProcessEffects.", 0) == 0)
                             {
                                 continue;
                             }

@@ -197,6 +197,8 @@ namespace PlutoGE::scene
             properties.push_back({"FarPlane", scene::PropertyType::Float, std::to_string(m_camera->GetFarPlane())});
         }
 
+        properties.push_back({"MainCamera", scene::PropertyType::Bool, m_isMainCamera ? "true" : "false"});
+
         properties.push_back({"PostProcessEffectCount", scene::PropertyType::Int, std::to_string(m_postProcessEffects.size())});
 
         for (size_t index = 0; index < m_postProcessEffects.size(); ++index)
@@ -248,6 +250,10 @@ namespace PlutoGE::scene
             else if (property.name == "FarPlane")
             {
                 m_camera->SetFarPlane(std::stof(property.value));
+            }
+            else if (property.name == "MainCamera" || property.name == "Primary")
+            {
+                m_isMainCamera = (property.value == "true");
             }
             else if (property.name == "PostProcessEffectCount")
             {

@@ -16,6 +16,11 @@
 #include <utility>
 #include <vector>
 
+namespace PlutoGE::assets
+{
+    class Project;
+}
+
 namespace PlutoGE::ui
 {
     class EditorShell
@@ -120,6 +125,8 @@ namespace PlutoGE::ui
         }
         [[nodiscard]] bool IsEditorCameraSelected() const { return m_isEditorCameraSelected; }
         [[nodiscard]] EditorViewportCamera &GetEditorCamera() { return m_editorCamera; }
+        [[nodiscard]] assets::Project *GetProject() { return m_project.get(); }
+        [[nodiscard]] const assets::Project *GetProject() const { return m_project.get(); }
 
     private:
         EditorShell() = default;
@@ -132,6 +139,7 @@ namespace PlutoGE::ui
         scene::Entity *m_selectedEntity = nullptr;
         bool m_isEditorCameraSelected = false;
         EditorViewportCamera m_editorCamera;
+        std::unique_ptr<assets::Project> m_project;
         std::unique_ptr<scene::Scene> m_scene;
         std::unique_ptr<scene::SceneBakeTask> m_activeBakeTask;
         scene::SceneBakeSettings m_customBakeSettings = scene::SceneBakeSettings::BalancedPreview();

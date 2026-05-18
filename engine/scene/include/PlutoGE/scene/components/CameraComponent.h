@@ -30,6 +30,10 @@ namespace PlutoGE::scene
 
         void SetCamera(render::Camera *camera) { m_camera.reset(camera); }
         render::Camera *GetCamera() const { return m_camera.get(); }
+        void SetMainCamera(bool isMainCamera) { m_isMainCamera = isMainCamera; }
+        bool IsMainCamera() const { return m_isMainCamera; }
+        void SetPrimary(bool isPrimary) { SetMainCamera(isPrimary); }
+        bool IsPrimary() const { return IsMainCamera(); }
 
         render::CameraData GetCameraData(int width, int height) const;
 
@@ -55,6 +59,7 @@ namespace PlutoGE::scene
 
     private:
         std::unique_ptr<render::Camera> m_camera;
+        bool m_isMainCamera = false;
         std::vector<std::unique_ptr<render::IPostProcessEffect>> m_postProcessEffects;
     };
 }

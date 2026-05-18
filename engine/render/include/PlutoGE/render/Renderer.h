@@ -144,6 +144,7 @@ namespace PlutoGE::render
         [[nodiscard]] float GetTotalGpuPassTimeMs() const;
         [[nodiscard]] float GetTotalCpuPassTimeMs() const;
         [[nodiscard]] int GetProfiledRenderCount() const { return m_profiledRenderCount; }
+        [[nodiscard]] std::size_t GetQueuedRenderCommandCount() const { return m_renderCommands.size(); }
 
         void BeginLightingStageTiming(std::size_t stageIndex);
         void EndLightingStageTiming(std::size_t stageIndex);

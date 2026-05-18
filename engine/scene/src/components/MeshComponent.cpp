@@ -1,4 +1,5 @@
 #include "PlutoGE/scene/components/MeshComponent.h"
+#include "PlutoGE/assets/Project.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
 
@@ -206,12 +207,22 @@ namespace PlutoGE::scene
 
         if (!sourceMeshPath.empty())
         {
-            auto importedMeshAsset = core::Engine::GetInstance().ImportMeshAsset(sourceMeshPath);
-            if (importedMeshAsset.mesh)
+            auto &engine = core::Engine::GetInstance();
+            if (sourceMeshPath == assets::Project::kBuiltinCubeMeshReference)
             {
-                SetMesh(importedMeshAsset.mesh);
-                SetMaterials(importedMeshAsset.materials);
+                SetMesh(render::Mesh::Cube());
+                SetMaterials({engine.GetAssetManager().CreateDefaultMaterial()});
                 m_sourceMeshPath = sourceMeshPath;
+            }
+            else
+            {
+                auto importedMeshAsset = engine.ImportMeshAsset(sourceMeshPath);
+                if (importedMeshAsset.mesh)
+                {
+                    SetMesh(importedMeshAsset.mesh);
+                    SetMaterials(importedMeshAsset.materials);
+                    m_sourceMeshPath = sourceMeshPath;
+                }
             }
         }
 

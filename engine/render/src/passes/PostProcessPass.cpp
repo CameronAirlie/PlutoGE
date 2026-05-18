@@ -90,7 +90,7 @@ namespace PlutoGE::render
             ++appliedEffectCount;
             const bool isLastEffect = appliedEffectCount == enabledEffectCount;
             RenderTarget *destination = isLastEffect ? ctx.renderTarget : nextIntermediate;
-            if (!destination)
+            if (!destination && !isLastEffect)
             {
                 continue;
             }

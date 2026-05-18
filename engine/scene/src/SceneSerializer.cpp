@@ -170,6 +170,16 @@ namespace PlutoGE::scene
 
             return nullptr;
         }
+
+        bool IsAssetPathProperty(std::string_view componentType, std::string_view propertyName)
+        {
+            if (componentType == "MeshComponent")
+            {
+                return propertyName == "SourceMesh" || propertyName.ends_with("LightmapPath");
+            }
+
+            return false;
+        }
     }
 
     bool SceneSerializer::Save(const Scene &scene, const std::string &filePath, std::string *errorMessage)
@@ -186,10 +196,12 @@ namespace PlutoGE::scene
 
         output << "SCENE\t1\n";
 
+        auto &assetManager = core::Engine::GetInstance().GetAssetManager();
+
         if (!scene.GetEnvironmentMapPath().empty())
         {
             output << "ENVIRONMENT\t"
-                   << EscapeText(scene.GetEnvironmentMapPath()) << '\t'
+                   << EscapeText(assetManager.PersistAssetPath(scene.GetEnvironmentMapPath())) << '\t'
                    << scene.GetEnvironmentIntensity() << '\n';
         }
 
@@ -241,10 +253,13 @@ namespace PlutoGE::scene
                     output << "COMPONENT\t" << entity->GetID() << '\t' << componentType << '\n';
                     for (const auto &property : component->Serialize())
                     {
+                        const std::string serializedValue = IsAssetPathProperty(componentType, property.name)
+                                                                ? assetManager.PersistAssetPath(property.value)
+                                                                : property.value;
                         output << "PROPERTY\t"
                                << EscapeText(property.name) << '\t'
                                << static_cast<int>(property.type) << '\t'
-                               << EscapeText(property.value) << '\t'
+                               << EscapeText(serializedValue) << '\t'
                                << property.enumOptions.size();
                         for (const auto &option : property.enumOptions)
                         {
@@ -291,6 +306,7 @@ namespace PlutoGE::scene
         std::unordered_map<EntityID, Entity *> entityMap;
         std::vector<PendingEntityParent> pendingParents;
         std::optional<PendingComponent> activeComponent;
+        auto &assetManager = core::Engine::GetInstance().GetAssetManager();
         BakedProbeVolume bakedProbeVolume;
         std::string environmentMapPath;
         float environmentIntensity = 1.0f;
@@ -311,7 +327,7 @@ namespace PlutoGE::scene
 
             if (tokens[0] == "ENVIRONMENT" && tokens.size() >= 3)
             {
-                environmentMapPath = tokens[1];
+                environmentMapPath = assetManager.ResolveAssetPath(tokens[1]);
                 environmentIntensity = std::stof(tokens[2]);
                 continue;
             }
@@ -363,7 +379,9 @@ namespace PlutoGE::scene
                 Property property;
                 property.name = tokens[1];
                 property.type = static_cast<PropertyType>(std::stoi(tokens[2]));
-                property.value = tokens[3];
+                property.value = IsAssetPathProperty(activeComponent->typeName, property.name)
+                                     ? assetManager.ResolveAssetPath(tokens[3])
+                                     : tokens[3];
                 const int enumCount = std::stoi(tokens[4]);
                 for (int enumIndex = 0; enumIndex < enumCount && 5 + enumIndex < static_cast<int>(tokens.size()); ++enumIndex)
                 {

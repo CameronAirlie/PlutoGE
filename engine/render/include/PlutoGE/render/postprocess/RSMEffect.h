@@ -22,6 +22,13 @@ namespace PlutoGE::render
         SampleCount,
     };
 
+    enum class RsmQualityPreset
+    {
+        Low = 0,
+        Medium,
+        High,
+    };
+
     class RSMEffect : public ShaderPostProcessEffect
     {
     public:
@@ -37,6 +44,7 @@ namespace PlutoGE::render
         RenderTarget *GenerateResolvedIndirectLighting(const PostProcessContext &context, int width, int height);
 
     private:
+        void ApplyQualityPreset(RsmQualityPreset preset);
         void ResetHistory();
         void EnsureResources(int captureWidth, int captureHeight, int resolvedWidth, int resolvedHeight);
         void ReleaseCaptureResources();
@@ -70,6 +78,7 @@ namespace PlutoGE::render
         glm::mat4 m_previousViewProjection = glm::mat4(1.0f);
         std::uint8_t m_historyIndex = 0;
         bool m_hasHistory = false;
+        RsmQualityPreset m_qualityPreset = RsmQualityPreset::High;
         RsmDebugOutput m_debugOutput = RsmDebugOutput::Indirect;
     };
 }

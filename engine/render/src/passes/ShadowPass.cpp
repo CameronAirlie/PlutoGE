@@ -88,6 +88,17 @@ namespace
                std::abs(current.farPlane - previous.farPlane) > kShadowUpdateMatrixEpsilon;
     }
 
+    bool ShouldUpdateDirectionalCascade(std::uint64_t frameSequence, int cascadeIndex, bool forceFullUpdate)
+    {
+        if (forceFullUpdate || cascadeIndex <= 0)
+        {
+            return true;
+        }
+
+        const std::uint64_t cadence = 1ull << static_cast<std::uint64_t>(std::clamp(cascadeIndex, 0, 3));
+        return (frameSequence % cadence) == 0;
+    }
+
     bool HaveShadowCastersChanged(const std::vector<PlutoGE::render::RenderCommand> &renderCommands)
     {
         for (const auto &command : renderCommands)
@@ -459,6 +470,8 @@ namespace PlutoGE::render
 
         m_shadowPassShader->Bind();
         const auto shadowCasters = BuildShadowCasterEntries(*ctx.renderCommands);
+        const bool shadowCastersChanged = HaveShadowCastersChanged(*ctx.renderCommands);
+        const bool cameraDataChanged = ctx.hasCameraData && (!ctx.hasPreviousCameraData || HasCameraDataChanged(ctx.cameraData, ctx.previousCameraData));
 
         for (auto *light : *ctx.lights)
         {
@@ -470,9 +483,8 @@ namespace PlutoGE::render
             const bool needsUpdate = light->type == scene::LightType::Directional
                                          ? (ctx.hasCameraData &&
                                             (light->isDirty ||
-                                             !ctx.hasPreviousCameraData ||
-                                             HasCameraDataChanged(ctx.cameraData, ctx.previousCameraData) ||
-                                             HaveShadowCastersChanged(*ctx.renderCommands)))
+                                             cameraDataChanged ||
+                                             shadowCastersChanged))
                                          : light->isDirty;
             if (!needsUpdate)
             {
@@ -543,6 +555,7 @@ namespace PlutoGE::render
 
                 const int cascadeCount = GetDirectionalCascadeCount(*light);
                 const auto cascadeSplits = BuildDirectionalCascadeSplits(ctx.cameraData, light->directionalShadowSettings, cascadeCount);
+                const bool forceFullCascadeUpdate = light->isDirty || !ctx.hasPreviousCameraData;
 
                 light->shadowMatrix = glm::mat4(1.0f);
                 light->shadowFarPlane = cascadeSplits[cascadeCount - 1];
@@ -562,6 +575,12 @@ namespace PlutoGE::render
                     const float cascadeNear = cascadeIndex == 0 ? ctx.cameraData.nearPlane : cascadeSplits[cascadeIndex - 1];
                     const float cascadeFar = cascadeSplits[cascadeIndex];
                     const int shadowResolution = cascadeMap->GetWidth() > 0 ? cascadeMap->GetWidth() : GetShadowResolution(*light);
+
+                    if (!ShouldUpdateDirectionalCascade(ctx.frameSequence, cascadeIndex, forceFullCascadeUpdate))
+                    {
+                        continue;
+                    }
+
                     const auto cascadeProjection = BuildDirectionalCascadeProjection(*light, ctx.cameraData, shadowCasters, cascadeNear, cascadeFar, shadowResolution);
                     const glm::mat4 &cascadeMatrix = cascadeProjection.lightSpaceMatrix;
                     light->shadowCascadeMatrices[cascadeIndex] = cascadeMatrix;

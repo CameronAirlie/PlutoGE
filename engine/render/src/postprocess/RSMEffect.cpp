@@ -22,6 +22,12 @@ namespace PlutoGE::render
         constexpr int kMaxRsmSamples = 32;
         constexpr float kDirectionalShadowPadding = 2.0f;
 
+        struct RsmQualitySettings
+        {
+            float captureScale = 1.0f;
+            int sampleCount = 32;
+        };
+
         struct FrustumPlane
         {
             glm::vec3 normal{0.0f};
@@ -310,6 +316,20 @@ namespace PlutoGE::render
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
             glFramebufferTexture2D(GL_FRAMEBUFFER, attachment, GL_TEXTURE_2D, textureId, 0);
         }
+
+        RsmQualitySettings GetQualitySettings(RsmQualityPreset preset)
+        {
+            switch (preset)
+            {
+            case RsmQualityPreset::Low:
+                return RsmQualitySettings{0.5f, 8};
+            case RsmQualityPreset::Medium:
+                return RsmQualitySettings{0.75f, 16};
+            case RsmQualityPreset::High:
+            default:
+                return RsmQualitySettings{1.0f, 32};
+            }
+        }
     }
 
     RSMEffect::~RSMEffect()
@@ -321,19 +341,15 @@ namespace PlutoGE::render
     {
         return {
             PostProcessParameter{
+                .name = "Quality",
+                .type = PostProcessParameterType::Enum,
+                .value = std::to_string(static_cast<int>(m_qualityPreset)),
+                .enumOptions = {"Low", "Medium", "High"},
+            },
+            PostProcessParameter{
                 .name = "Intensity",
                 .type = PostProcessParameterType::Float,
                 .value = std::to_string(m_intensity),
-            },
-            PostProcessParameter{
-                .name = "Capture Scale",
-                .type = PostProcessParameterType::Float,
-                .value = std::to_string(m_captureScale),
-            },
-            PostProcessParameter{
-                .name = "Samples",
-                .type = PostProcessParameterType::Int,
-                .value = std::to_string(m_sampleCount),
             },
             PostProcessParameter{
                 .name = "Sample Radius",
@@ -363,7 +379,17 @@ namespace PlutoGE::render
     {
         for (const auto &parameter : parameters)
         {
-            if (parameter.name == "Intensity")
+            if (parameter.name == "Quality")
+            {
+                const int qualityPreset = std::clamp(std::stoi(parameter.value), 0, 2);
+                const auto preset = static_cast<RsmQualityPreset>(qualityPreset);
+                if (preset != m_qualityPreset)
+                {
+                    ApplyQualityPreset(preset);
+                    ResetHistory();
+                }
+            }
+            else if (parameter.name == "Intensity")
             {
                 m_intensity = std::clamp(std::stof(parameter.value), 0.0f, 16.0f);
             }
@@ -393,6 +419,14 @@ namespace PlutoGE::render
                 m_debugOutput = static_cast<RsmDebugOutput>(debugOutput);
             }
         }
+    }
+
+    void RSMEffect::ApplyQualityPreset(RsmQualityPreset preset)
+    {
+        m_qualityPreset = preset;
+        const RsmQualitySettings settings = GetQualitySettings(preset);
+        m_captureScale = settings.captureScale;
+        m_sampleCount = settings.sampleCount;
     }
 
     void RSMEffect::Initialize()

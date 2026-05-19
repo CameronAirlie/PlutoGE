@@ -36,7 +36,7 @@ namespace PlutoGE::assetimport
     {
         render::Mesh *mesh = nullptr;
         const std::vector<ImportedMaterialData> *materials = nullptr;
-        const std::vector<ImportedTextureData> *textures = nullptr;
+        std::vector<ImportedTextureData> *textures = nullptr;
     };
 
     struct ImportedMeshSourceAsset
@@ -46,6 +46,7 @@ namespace PlutoGE::assetimport
         std::vector<ImportedMaterialData> materials;
         std::vector<ImportedTextureData> textures;
         bool hasLightmapUvs = false;
+        bool requiresMissingNormalFallback = false;
     };
 
     class MeshImporter
@@ -73,7 +74,7 @@ namespace PlutoGE::assetimport
                 ImportedMeshAsset importedMeshAsset;
                 importedMeshAsset.mesh = mesh.get();
                 importedMeshAsset.materials = &materials;
-                importedMeshAsset.textures = &textures;
+                importedMeshAsset.textures = const_cast<std::vector<ImportedTextureData> *>(&textures);
                 return importedMeshAsset;
             }
         };

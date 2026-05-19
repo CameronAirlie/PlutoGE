@@ -13,6 +13,7 @@ namespace PlutoGE::render
         TextureManager() = default;
         ~TextureManager() = default;
 
+        Texture *FindTexture(const std::string &cacheKey) const;
         Texture *LoadTextureFromFile(const char *filePath);
         Texture *LoadTextureFromMemory(const std::string &cacheKey, const unsigned char *pixels, int width, int height, int channels);
         Texture *LoadEnvironmentTextureFromFile(const char *filePath);

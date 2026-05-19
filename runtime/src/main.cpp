@@ -213,6 +213,59 @@ namespace PlutoGE
 
 int main(int argc, char **argv)
 {
+    if (argc > 2 && std::string_view(argv[1]) == "--import-bench")
+    {
+        const std::filesystem::path meshPath = std::filesystem::absolute(argv[2]).lexically_normal();
+        auto &engine = PlutoGE::core::Engine::GetInstance();
+        const auto importStart = std::chrono::high_resolution_clock::now();
+        const auto importedMeshSourceAsset = engine.GetMeshImporter().ImportMeshSourceAsset(meshPath.string());
+        const auto elapsedMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - importStart).count();
+
+        std::cout
+            << "Import bench for '" << meshPath.string() << "': "
+            << elapsedMs << "ms, "
+            << importedMeshSourceAsset.meshData.vertices.size() << " vertices, "
+            << importedMeshSourceAsset.meshData.indices.size() << " indices, "
+            << importedMeshSourceAsset.materials.size() << " materials, "
+            << importedMeshSourceAsset.textures.size() << " textures"
+            << std::endl;
+        return 0;
+    }
+
+    if (argc > 2 && std::string_view(argv[1]) == "--import-bench-full")
+    {
+        const std::filesystem::path meshPath = std::filesystem::absolute(argv[2]).lexically_normal();
+        auto &engine = PlutoGE::core::Engine::GetInstance();
+        PlutoGE::core::EngineConfig config{
+            PlutoGE::platform::WindowConfig{
+                .title = "PlutoGE Import Bench",
+                .width = 64,
+                .height = 64,
+                .resizable = false,
+                .visible = false,
+                .fullscreen = false,
+            }};
+
+        if (!engine.Initialize(config))
+        {
+            std::cerr << "Failed to initialize engine for full import benchmark." << std::endl;
+            return 1;
+        }
+
+        const auto importStart = std::chrono::high_resolution_clock::now();
+        const auto importedMeshAsset = engine.ImportMeshAsset(meshPath.string());
+        const auto elapsedMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - importStart).count();
+
+        std::cout
+            << "Full import bench for '" << meshPath.string() << "': "
+            << elapsedMs << "ms, "
+            << importedMeshAsset.materials.size() << " materials"
+            << std::endl;
+
+        engine.Shutdown();
+        return importedMeshAsset.mesh ? 0 : 1;
+    }
+
     const auto executablePath = PlutoGE::ResolveExecutablePath(argv);
     const auto manifestPath = argc > 1
                                   ? std::filesystem::path(argv[1])

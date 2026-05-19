@@ -5,6 +5,7 @@
 #include "PlutoGE/scene/components/MeshComponent.h"
 
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <iostream>
 
@@ -14,10 +15,70 @@ namespace PlutoGE::core
 {
     namespace
     {
+        using ImportClock = std::chrono::steady_clock;
+
         std::string NormalizePath(const std::string &filePath)
         {
             return std::filesystem::absolute(std::filesystem::path(filePath)).lexically_normal().string();
         }
+
+        bool IsMeshFinalizeProfilingEnabled()
+        {
+            static const bool enabled = []()
+            {
+#ifdef _WIN32
+                char *value = nullptr;
+                size_t valueLength = 0;
+                const errno_t result = _dupenv_s(&value, &valueLength, "PLUTOGE_PROFILE_MESH_FINALIZE");
+                const bool isEnabled = result == 0 && value != nullptr && value[0] != '\0' && value[0] != '0';
+                std::free(value);
+                return isEnabled;
+#else
+                const char *value = std::getenv("PLUTOGE_PROFILE_MESH_FINALIZE");
+                return value != nullptr && value[0] != '\0' && value[0] != '0';
+#endif
+            }();
+            return enabled;
+        }
+
+        double ElapsedMilliseconds(ImportClock::time_point startTime)
+        {
+            return std::chrono::duration<double, std::milli>(ImportClock::now() - startTime).count();
+        }
+
+        struct MeshFinalizeProfile
+        {
+            bool enabled = false;
+            std::string filePath;
+            bool materialCacheHit = false;
+            double textureCopyMs = 0.0;
+            double textureResolveMs = 0.0;
+            double materialCreateMs = 0.0;
+            size_t textureRequests = 0;
+            size_t textureResolveHits = 0;
+            size_t memoryTextureUploads = 0;
+            size_t fileTextureLoads = 0;
+
+            ~MeshFinalizeProfile()
+            {
+                if (!enabled)
+                {
+                    return;
+                }
+
+                std::cerr
+                    << "Mesh finalize profile for '" << filePath << "': "
+                    << "materialCacheHit=" << (materialCacheHit ? "yes" : "no") << ", "
+                    << "textureCopy=" << textureCopyMs << "ms, "
+                    << "textureResolve=" << textureResolveMs << "ms, "
+                    << "materialCreate=" << materialCreateMs << "ms, "
+                    << "textureRequests=" << textureRequests << ", "
+                    << "resolvedFromLocalCache=" << textureResolveHits << ", "
+                    << "memoryUploads=" << memoryTextureUploads << ", "
+                    << "fileLoads=" << fileTextureLoads
+                    << std::endl;
+            }
+        };
 
         bool IsFutureReady(std::future<assetimport::ImportedMeshSourceAsset> &future)
         {
@@ -51,6 +112,10 @@ namespace PlutoGE::core
 
     ImportedRenderMeshAsset Engine::BuildImportedRenderMeshAsset(const std::string &normalizedPath, const assetimport::ImportedMeshAsset &importedMeshAsset)
     {
+        MeshFinalizeProfile profile;
+        profile.enabled = IsMeshFinalizeProfilingEnabled();
+        profile.filePath = normalizedPath;
+
         ImportedRenderMeshAsset importedRenderMeshAsset;
         importedRenderMeshAsset.mesh = importedMeshAsset.mesh;
         if (!importedMeshAsset.mesh)
@@ -71,20 +136,33 @@ namespace PlutoGE::core
             std::vector<std::unique_ptr<render::Material>> importedMaterials;
             importedMaterials.reserve(importedMeshAsset.materials ? importedMeshAsset.materials->size() : 0);
 
-            // Copy textures so we can clear pixel buffers after upload
-            std::vector<assetimport::ImportedTextureData> tempTextures;
-            if (importedMeshAsset.textures)
-            {
-                tempTextures = *importedMeshAsset.textures;
-            }
+            auto *importedTextures = importedMeshAsset.textures;
+            std::vector<render::Texture *> resolvedTextures(importedTextures ? importedTextures->size() : 0, nullptr);
 
-            const auto loadImportedTexture = [this, &tempTextures](int textureIndex) -> render::Texture *
+            const auto loadImportedTexture = [this, importedTextures, &resolvedTextures, &profile](int textureIndex) -> render::Texture *
             {
-                if (textureIndex < 0 || textureIndex >= static_cast<int>(tempTextures.size()))
+                profile.textureRequests += 1;
+                if (!importedTextures || textureIndex < 0 || textureIndex >= static_cast<int>(importedTextures->size()))
                 {
                     return nullptr;
                 }
-                auto &texture = tempTextures[textureIndex];
+
+                if (resolvedTextures[textureIndex] != nullptr)
+                {
+                    profile.textureResolveHits += 1;
+                    return resolvedTextures[textureIndex];
+                }
+
+                const auto textureResolveStart = ImportClock::now();
+                auto &texture = (*importedTextures)[textureIndex];
+                if (auto *cachedTexture = m_textureManager.FindTexture(texture.cacheKey))
+                {
+                    profile.textureResolveHits += 1;
+                    profile.textureResolveMs += ElapsedMilliseconds(textureResolveStart);
+                    resolvedTextures[textureIndex] = cachedTexture;
+                    return cachedTexture;
+                }
+
                 if (!texture.pixels.empty() && texture.width > 0 && texture.height > 0 && texture.channels > 0)
                 {
                     auto *tex = m_textureManager.LoadTextureFromMemory(
@@ -95,17 +173,26 @@ namespace PlutoGE::core
                         texture.channels);
                     // Clear pixel buffer after upload
                     std::vector<unsigned char>().swap(texture.pixels);
+                    profile.textureResolveMs += ElapsedMilliseconds(textureResolveStart);
+                    profile.memoryTextureUploads += 1;
+                    resolvedTextures[textureIndex] = tex;
                     return tex;
                 }
                 if (!texture.sourcePath.empty())
                 {
-                    return m_textureManager.LoadTextureFromFile(texture.sourcePath.c_str());
+                    auto *tex = m_textureManager.LoadTextureFromFile(texture.sourcePath.c_str());
+                    profile.textureResolveMs += ElapsedMilliseconds(textureResolveStart);
+                    profile.fileTextureLoads += 1;
+                    resolvedTextures[textureIndex] = tex;
+                    return tex;
                 }
+                profile.textureResolveMs += ElapsedMilliseconds(textureResolveStart);
                 return nullptr;
             };
 
             if (importedMeshAsset.materials)
             {
+                const auto materialCreateStart = ImportClock::now();
                 for (const auto &material : *importedMeshAsset.materials)
                 {
                     render::MaterialConfig config;
@@ -128,9 +215,15 @@ namespace PlutoGE::core
                     }
                     importedMaterials.push_back(std::make_unique<render::Material>(config));
                 }
+                profile.materialCreateMs = ElapsedMilliseconds(materialCreateStart);
             }
             cachedMaterials = m_importedMaterialCache.emplace(normalizedPath, std::move(importedMaterials)).first;
         }
+        else
+        {
+            profile.materialCacheHit = true;
+        }
+
         importedRenderMeshAsset.materials.reserve(cachedMaterials->second.size());
         for (const auto &material : cachedMaterials->second)
         {

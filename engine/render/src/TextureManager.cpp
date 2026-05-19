@@ -181,6 +181,17 @@ namespace PlutoGE::render
         }
     }
 
+    Texture *TextureManager::FindTexture(const std::string &cacheKey) const
+    {
+        auto it = m_textureCache.find(cacheKey);
+        if (it != m_textureCache.end())
+        {
+            return it->second;
+        }
+
+        return nullptr;
+    }
+
     Texture *TextureManager::LoadTextureFromFile(const char *filePath)
     {
         // Check if the texture is already loaded

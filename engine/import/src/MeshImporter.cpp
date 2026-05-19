@@ -14,13 +14,18 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
+#include <execution>
 #include <filesystem>
 #include <iostream>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string_view>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace PlutoGE::assetimport
@@ -35,6 +40,101 @@ namespace PlutoGE::assetimport
             const unsigned char *data = nullptr;
             size_t stride = 0;
         };
+
+        struct PrimitiveWorkItem
+        {
+            AccessorView positionView;
+            std::optional<AccessorView> normalView;
+            std::optional<AccessorView> uvView;
+            std::optional<AccessorView> lightmapUvView;
+            std::optional<AccessorView> tangentView;
+            std::optional<AccessorView> indexView;
+            glm::mat4 worldTransform{1.0f};
+            glm::mat3 normalMatrix{1.0f};
+            uint32_t materialIndex = 0;
+            uint32_t baseVertex = 0;
+            uint32_t indexOffset = 0;
+            uint32_t vertexCount = 0;
+            uint32_t indexCount = 0;
+            size_t slot = 0;
+        };
+
+        constexpr size_t kLargeMeshOverdrawThreshold = 1'000'000;
+
+        using ImportClock = std::chrono::steady_clock;
+
+        struct MeshImportProfile
+        {
+            bool enabled = false;
+            std::string filePath;
+            double loadMs = 0.0;
+            double textureStageMs = 0.0;
+            double materialStageMs = 0.0;
+            double sceneTraversalMs = 0.0;
+            double sceneVertexAssemblyMs = 0.0;
+            double sceneIndexAssemblyMs = 0.0;
+            double missingNormalsMs = 0.0;
+            double submeshMergeMs = 0.0;
+            double optimizeMs = 0.0;
+            double optimizeRemapMs = 0.0;
+            double optimizeVertexCacheMs = 0.0;
+            double optimizeOverdrawMs = 0.0;
+            double optimizeVertexFetchMs = 0.0;
+            double metallicChannelCheckMs = 0.0;
+            size_t metallicChannelCheckCount = 0;
+            size_t metallicChannelDecodeCount = 0;
+
+            ~MeshImportProfile()
+            {
+                if (!enabled)
+                {
+                    return;
+                }
+
+                std::cerr
+                    << "Mesh import profile for '" << filePath << "': "
+                    << "load=" << loadMs << "ms, "
+                    << "textures=" << textureStageMs << "ms, "
+                    << "materials=" << materialStageMs << "ms, "
+                    << "scene=" << sceneTraversalMs << "ms"
+                    << " (vertices=" << sceneVertexAssemblyMs << "ms, "
+                    << "indices=" << sceneIndexAssemblyMs << "ms), "
+                    << "missingNormals=" << missingNormalsMs << "ms, "
+                    << "mergeSubmeshes=" << submeshMergeMs << "ms, "
+                    << "optimize=" << optimizeMs << "ms"
+                    << " (remap=" << optimizeRemapMs << "ms, "
+                    << "vcache=" << optimizeVertexCacheMs << "ms, "
+                    << "overdraw=" << optimizeOverdrawMs << "ms, "
+                    << "vfetch=" << optimizeVertexFetchMs << "ms), "
+                    << "metallicChecks=" << metallicChannelCheckCount << " (" << metallicChannelCheckMs << "ms, "
+                    << metallicChannelDecodeCount << " file decodes)"
+                    << std::endl;
+            }
+        };
+
+        bool IsMeshImportProfilingEnabled()
+        {
+            static const bool enabled = []()
+            {
+#ifdef _WIN32
+                char *value = nullptr;
+                size_t valueLength = 0;
+                const errno_t result = _dupenv_s(&value, &valueLength, "PLUTOGE_PROFILE_MESH_IMPORT");
+                const bool isEnabled = result == 0 && value != nullptr && value[0] != '\0' && value[0] != '0';
+                std::free(value);
+                return isEnabled;
+#else
+                const char *value = std::getenv("PLUTOGE_PROFILE_MESH_IMPORT");
+                return value != nullptr && value[0] != '\0' && value[0] != '0';
+#endif
+            }();
+            return enabled;
+        }
+
+        double ElapsedMilliseconds(ImportClock::time_point startTime)
+        {
+            return std::chrono::duration<double, std::milli>(ImportClock::now() - startTime).count();
+        }
 
         std::string NormalizePath(const std::string &filePath)
         {
@@ -122,20 +222,37 @@ namespace PlutoGE::assetimport
             return false;
         }
 
-        bool ImageHasDistinctBlueChannel(const tinygltf::Image &image, const std::string &sourcePath)
+        bool ImageHasDistinctBlueChannel(const tinygltf::Image &image, const std::string &sourcePath, MeshImportProfile *profile = nullptr)
         {
+            const auto stageStart = ImportClock::now();
             if (image.component > 0 && image.component < 3)
             {
+                if (profile && profile->enabled)
+                {
+                    profile->metallicChannelCheckCount += 1;
+                    profile->metallicChannelCheckMs += ElapsedMilliseconds(stageStart);
+                }
                 return false;
             }
 
             if (!image.image.empty() && image.width > 0 && image.height > 0 && image.component >= 3)
             {
-                return HasDistinctBlueChannel(image.image.data(), image.width, image.height, image.component);
+                const bool hasDistinctBlueChannel = HasDistinctBlueChannel(image.image.data(), image.width, image.height, image.component);
+                if (profile && profile->enabled)
+                {
+                    profile->metallicChannelCheckCount += 1;
+                    profile->metallicChannelCheckMs += ElapsedMilliseconds(stageStart);
+                }
+                return hasDistinctBlueChannel;
             }
 
             if (sourcePath.empty())
             {
+                if (profile && profile->enabled)
+                {
+                    profile->metallicChannelCheckCount += 1;
+                    profile->metallicChannelCheckMs += ElapsedMilliseconds(stageStart);
+                }
                 return true;
             }
 
@@ -145,11 +262,23 @@ namespace PlutoGE::assetimport
             unsigned char *pixels = stbi_load(sourcePath.c_str(), &width, &height, &channels, 0);
             if (!pixels)
             {
+                if (profile && profile->enabled)
+                {
+                    profile->metallicChannelCheckCount += 1;
+                    profile->metallicChannelDecodeCount += 1;
+                    profile->metallicChannelCheckMs += ElapsedMilliseconds(stageStart);
+                }
                 return true;
             }
 
             const bool hasDistinctBlueChannel = HasDistinctBlueChannel(pixels, width, height, channels);
             stbi_image_free(pixels);
+            if (profile && profile->enabled)
+            {
+                profile->metallicChannelCheckCount += 1;
+                profile->metallicChannelDecodeCount += 1;
+                profile->metallicChannelCheckMs += ElapsedMilliseconds(stageStart);
+            }
             return hasDistinctBlueChannel;
         }
 
@@ -188,7 +317,12 @@ namespace PlutoGE::assetimport
                 userData);
         }
 
-        ImportedMaterialData ParseMaterial(const tinygltf::Model &model, const tinygltf::Material &material, const std::string &filePath)
+        ImportedMaterialData ParseMaterial(
+            const tinygltf::Model &model,
+            const tinygltf::Material &material,
+            const std::string &filePath,
+            std::vector<std::optional<bool>> &metallicChannelCache,
+            MeshImportProfile *profile = nullptr)
         {
             ImportedMaterialData parsedMaterial;
             if (material.pbrMetallicRoughness.baseColorFactor.size() == 4)
@@ -205,10 +339,17 @@ namespace PlutoGE::assetimport
             parsedMaterial.metallicRoughnessTextureIndex = ResolveImageIndex(model, material.pbrMetallicRoughness.metallicRoughnessTexture.index);
             if (parsedMaterial.metallicRoughnessTextureIndex >= 0 && parsedMaterial.metallicRoughnessTextureIndex < static_cast<int>(model.images.size()))
             {
-                const auto &packedImage = model.images[parsedMaterial.metallicRoughnessTextureIndex];
-                parsedMaterial.metallicRoughnessTextureHasMetallicChannel = ImageHasDistinctBlueChannel(
-                    packedImage,
-                    ResolveImageSourcePath(filePath, packedImage));
+                auto &cachedHasMetallicChannel = metallicChannelCache[parsedMaterial.metallicRoughnessTextureIndex];
+                if (!cachedHasMetallicChannel.has_value())
+                {
+                    const auto &packedImage = model.images[parsedMaterial.metallicRoughnessTextureIndex];
+                    cachedHasMetallicChannel = ImageHasDistinctBlueChannel(
+                        packedImage,
+                        ResolveImageSourcePath(filePath, packedImage),
+                        profile);
+                }
+
+                parsedMaterial.metallicRoughnessTextureHasMetallicChannel = *cachedHasMetallicChannel;
             }
 
             const bool hasExplicitMetallicFactor = material.values.find("metallicFactor") != material.values.end();
@@ -283,6 +424,38 @@ namespace PlutoGE::assetimport
                 std::memcpy(&tuple[componentIndex], elementData + sizeof(float) * componentIndex, sizeof(float));
             }
             return tuple;
+        }
+
+        template <size_t ComponentCount>
+        void ReadFloatTupleInto(const AccessorView &view, size_t elementIndex, float *destination)
+        {
+            if (view.accessor->componentType != TINYGLTF_COMPONENT_TYPE_FLOAT)
+            {
+                throw std::runtime_error("Only floating-point glTF vertex attributes are supported.");
+            }
+
+            if (elementIndex >= view.accessor->count)
+            {
+                throw std::runtime_error("glTF accessor read out of bounds.");
+            }
+
+            const auto *elementData = view.data + (view.stride * elementIndex);
+            std::memcpy(destination, elementData, sizeof(float) * ComponentCount);
+        }
+
+        template <size_t ComponentCount>
+        void ReadFloatTupleIntoUnchecked(const AccessorView &view, size_t elementIndex, float *destination)
+        {
+            const auto *elementData = view.data + (view.stride * elementIndex);
+            std::memcpy(destination, elementData, sizeof(float) * ComponentCount);
+        }
+
+        void ValidateFloatAccessorView(const AccessorView &view)
+        {
+            if (view.accessor->componentType != TINYGLTF_COMPONENT_TYPE_FLOAT)
+            {
+                throw std::runtime_error("Only floating-point glTF vertex attributes are supported.");
+            }
         }
 
         uint32_t ReadIndex(const AccessorView &view, size_t elementIndex)
@@ -360,23 +533,64 @@ namespace PlutoGE::assetimport
             return glm::dot(value, value);
         }
 
-        bool HasMissingNormals(const render::MeshData &meshData)
+        template <typename SourceIndexType>
+        void WriteWidenedIndices(
+            const AccessorView &view,
+            uint32_t baseVertex,
+            unsigned int *destination)
         {
-            for (const auto &vertex : meshData.vertices)
+            const auto *source = view.data;
+            for (size_t index = 0; index < view.accessor->count; ++index, source += view.stride)
             {
-                const glm::vec3 normal(vertex.normal[0], vertex.normal[1], vertex.normal[2]);
-                if (SquaredLength(normal) <= 1e-12f)
-                {
-                    return true;
-                }
+                SourceIndexType value = 0;
+                std::memcpy(&value, source, sizeof(value));
+                destination[index] = baseVertex + static_cast<uint32_t>(value);
             }
-
-            return false;
         }
 
-        void FinalizeMissingNormals(render::MeshData &meshData)
+        void WriteIndices(
+            const AccessorView &view,
+            uint32_t baseVertex,
+            unsigned int *destination)
         {
-            if (!HasMissingNormals(meshData))
+            if (view.accessor->count == 0)
+            {
+                return;
+            }
+
+            if (view.accessor->componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT && view.stride == sizeof(uint32_t))
+            {
+                const size_t indexCount = view.accessor->count;
+                std::memcpy(destination, view.data, indexCount * sizeof(uint32_t));
+                if (baseVertex != 0)
+                {
+                    for (size_t index = 0; index < indexCount; ++index)
+                    {
+                        destination[index] += baseVertex;
+                    }
+                }
+                return;
+            }
+
+            switch (view.accessor->componentType)
+            {
+            case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:
+                WriteWidenedIndices<uint8_t>(view, baseVertex, destination);
+                return;
+            case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT:
+                WriteWidenedIndices<uint16_t>(view, baseVertex, destination);
+                return;
+            case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT:
+                WriteWidenedIndices<uint32_t>(view, baseVertex, destination);
+                return;
+            default:
+                throw std::runtime_error("Unsupported glTF index component type.");
+            }
+        }
+
+        void FinalizeMissingNormals(render::MeshData &meshData, bool requiresMissingNormalFallback)
+        {
+            if (!requiresMissingNormalFallback)
             {
                 return;
             }
@@ -438,13 +652,14 @@ namespace PlutoGE::assetimport
             }
         }
 
-        void OptimizeMeshData(render::MeshData &meshData, const std::vector<render::Submesh> &submeshes)
+        void OptimizeMeshData(render::MeshData &meshData, const std::vector<render::Submesh> &submeshes, MeshImportProfile *profile = nullptr)
         {
             if (meshData.vertices.empty() || meshData.indices.empty())
             {
                 return;
             }
 
+            const auto remapStart = ImportClock::now();
             std::vector<unsigned int> remap(meshData.indices.size());
             const size_t vertexCount = meshopt_generateVertexRemap(
                 remap.data(),
@@ -467,29 +682,96 @@ namespace PlutoGE::assetimport
                 meshData.indices.data(),
                 meshData.indices.size(),
                 remap.data());
+            if (profile && profile->enabled)
+            {
+                profile->optimizeRemapMs += ElapsedMilliseconds(remapStart);
+            }
 
             meshData.vertices = std::move(remappedVertices);
             meshData.indices = std::move(remappedIndices);
 
-            for (const auto &submesh : submeshes)
+            std::mutex profileMutex;
+            auto optimizeSubmesh = [&](const render::Submesh &submesh)
             {
                 if (submesh.indexCount == 0)
                 {
-                    continue;
+                    return;
                 }
 
                 auto *submeshIndices = meshData.indices.data() + submesh.indexOffset;
-                meshopt_optimizeVertexCache(submeshIndices, submeshIndices, submesh.indexCount, meshData.vertices.size());
-                meshopt_optimizeOverdraw(
-                    submeshIndices,
-                    submeshIndices,
-                    submesh.indexCount,
-                    reinterpret_cast<const float *>(meshData.vertices.data()),
-                    meshData.vertices.size(),
-                    sizeof(render::MeshVertexData),
-                    1.05f);
+                uint32_t minIndex = std::numeric_limits<uint32_t>::max();
+                uint32_t maxIndex = 0;
+                for (uint32_t index = 0; index < submesh.indexCount; ++index)
+                {
+                    minIndex = std::min(minIndex, submeshIndices[index]);
+                    maxIndex = std::max(maxIndex, submeshIndices[index]);
+                }
+
+                const size_t localVertexCount = static_cast<size_t>(maxIndex - minIndex) + 1;
+                auto *localVertexData = meshData.vertices.data() + minIndex;
+                std::vector<unsigned int> localizedIndices;
+                unsigned int *optimizerIndices = submeshIndices;
+
+                if (minIndex != 0)
+                {
+                    localizedIndices.resize(submesh.indexCount);
+                    for (uint32_t index = 0; index < submesh.indexCount; ++index)
+                    {
+                        localizedIndices[index] = submeshIndices[index] - minIndex;
+                    }
+                    optimizerIndices = localizedIndices.data();
+                }
+
+                const auto vertexCacheStart = ImportClock::now();
+                meshopt_optimizeVertexCache(optimizerIndices, optimizerIndices, submesh.indexCount, localVertexCount);
+                if (profile && profile->enabled)
+                {
+                    const double vertexCacheMs = ElapsedMilliseconds(vertexCacheStart);
+                    std::lock_guard<std::mutex> lock(profileMutex);
+                    profile->optimizeVertexCacheMs += vertexCacheMs;
+                }
+
+                if (submesh.indexCount <= kLargeMeshOverdrawThreshold)
+                {
+                    const auto overdrawStart = ImportClock::now();
+                    meshopt_optimizeOverdraw(
+                        optimizerIndices,
+                        optimizerIndices,
+                        submesh.indexCount,
+                        reinterpret_cast<const float *>(localVertexData),
+                        localVertexCount,
+                        sizeof(render::MeshVertexData),
+                        1.05f);
+                    if (profile && profile->enabled)
+                    {
+                        const double overdrawMs = ElapsedMilliseconds(overdrawStart);
+                        std::lock_guard<std::mutex> lock(profileMutex);
+                        profile->optimizeOverdrawMs += overdrawMs;
+                    }
+                }
+
+                if (!localizedIndices.empty())
+                {
+                    for (uint32_t index = 0; index < submesh.indexCount; ++index)
+                    {
+                        submeshIndices[index] = optimizerIndices[index] + minIndex;
+                    }
+                }
+            };
+
+            if (submeshes.size() > 1)
+            {
+                std::for_each(std::execution::par, submeshes.begin(), submeshes.end(), optimizeSubmesh);
+            }
+            else
+            {
+                for (const auto &submesh : submeshes)
+                {
+                    optimizeSubmesh(submesh);
+                }
             }
 
+            const auto vertexFetchStart = ImportClock::now();
             meshopt_optimizeVertexFetch(
                 meshData.vertices.data(),
                 meshData.indices.data(),
@@ -497,6 +779,10 @@ namespace PlutoGE::assetimport
                 meshData.vertices.data(),
                 meshData.vertices.size(),
                 sizeof(render::MeshVertexData));
+            if (profile && profile->enabled)
+            {
+                profile->optimizeVertexFetchMs += ElapsedMilliseconds(vertexFetchStart);
+            }
         }
 
         void MergeAdjacentSubmeshes(std::vector<render::Submesh> &submeshes)
@@ -527,18 +813,15 @@ namespace PlutoGE::assetimport
             submeshes = std::move(mergedSubmeshes);
         }
 
-        void AppendPrimitive(
+        std::optional<PrimitiveWorkItem> CreatePrimitiveWorkItem(
             const tinygltf::Model &model,
             const tinygltf::Primitive &primitive,
             const glm::mat4 &worldTransform,
-            render::MeshData &meshData,
-            std::vector<render::Submesh> &submeshes,
-            uint32_t materialIndex,
-            bool &hasLightmapUvs)
+            uint32_t materialIndex)
         {
             if (primitive.mode != TINYGLTF_MODE_TRIANGLES)
             {
-                return;
+                return std::nullopt;
             }
 
             const auto positionIt = primitive.attributes.find("POSITION");
@@ -547,131 +830,62 @@ namespace PlutoGE::assetimport
                 throw std::runtime_error("glTF primitive is missing POSITION data.");
             }
 
-            const auto positionView = CreateAccessorView(model, positionIt->second);
-            const auto vertexCount = positionView.accessor->count;
+            PrimitiveWorkItem workItem;
+            workItem.positionView = CreateAccessorView(model, positionIt->second);
+            ValidateFloatAccessorView(workItem.positionView);
+            workItem.vertexCount = static_cast<uint32_t>(workItem.positionView.accessor->count);
             const auto normalIt = primitive.attributes.find("NORMAL");
             const auto uvIt = primitive.attributes.find("TEXCOORD_0");
             const auto lightmapUvIt = primitive.attributes.find("TEXCOORD_1");
             const auto tangentIt = primitive.attributes.find("TANGENT");
 
-            const auto normalView = normalIt != primitive.attributes.end()
-                                        ? std::optional<AccessorView>(CreateAccessorView(model, normalIt->second))
-                                        : std::nullopt;
-            const auto uvView = uvIt != primitive.attributes.end()
-                                    ? std::optional<AccessorView>(CreateAccessorView(model, uvIt->second))
-                                    : std::nullopt;
-            const auto lightmapUvView = lightmapUvIt != primitive.attributes.end()
-                                            ? std::optional<AccessorView>(CreateAccessorView(model, lightmapUvIt->second))
-                                            : std::nullopt;
-            const auto tangentView = tangentIt != primitive.attributes.end()
-                                         ? std::optional<AccessorView>(CreateAccessorView(model, tangentIt->second))
-                                         : std::nullopt;
-
-            hasLightmapUvs = hasLightmapUvs || lightmapUvView.has_value();
-
-            const auto baseVertex = static_cast<uint32_t>(meshData.vertices.size());
-            const auto submeshIndexOffset = static_cast<uint32_t>(meshData.indices.size());
-            meshData.vertices.reserve(meshData.vertices.size() + vertexCount);
-
-            const glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(worldTransform)));
-
-            for (size_t vertexIndex = 0; vertexIndex < vertexCount; ++vertexIndex)
+            if (normalIt != primitive.attributes.end())
             {
-                const auto position = ReadFloatTuple<3>(positionView, vertexIndex);
-                const glm::vec4 transformedPosition = worldTransform * glm::vec4(position[0], position[1], position[2], 1.0f);
+                workItem.normalView = CreateAccessorView(model, normalIt->second);
+                ValidateFloatAccessorView(*workItem.normalView);
+            }
 
-                std::array<float, 3> normal = {0.0f, 0.0f, 0.0f};
-                if (normalView.has_value())
-                {
-                    const auto sourceNormal = ReadFloatTuple<3>(*normalView, vertexIndex);
-                    glm::vec3 transformedNormal = normalMatrix * glm::vec3(sourceNormal[0], sourceNormal[1], sourceNormal[2]);
-                    if (SquaredLength(transformedNormal) > 1e-12f)
-                    {
-                        transformedNormal = glm::normalize(transformedNormal);
-                    }
+            if (uvIt != primitive.attributes.end())
+            {
+                workItem.uvView = CreateAccessorView(model, uvIt->second);
+                ValidateFloatAccessorView(*workItem.uvView);
+            }
 
-                    normal = {
-                        transformedNormal.x,
-                        transformedNormal.y,
-                        transformedNormal.z,
-                    };
-                }
+            if (lightmapUvIt != primitive.attributes.end())
+            {
+                workItem.lightmapUvView = CreateAccessorView(model, lightmapUvIt->second);
+                ValidateFloatAccessorView(*workItem.lightmapUvView);
+            }
 
-                std::array<float, 2> uv = {0.0f, 0.0f};
-                if (uvView.has_value())
-                {
-                    uv = ReadFloatTuple<2>(*uvView, vertexIndex);
-                }
-
-                std::array<float, 2> uv2 = {0.0f, 0.0f};
-                if (lightmapUvView.has_value())
-                {
-                    uv2 = ReadFloatTuple<2>(*lightmapUvView, vertexIndex);
-                }
-
-                std::array<float, 4> tangent = {0.0f, 0.0f, 0.0f, 1.0f};
-                if (tangentView.has_value())
-                {
-                    const auto sourceTangent = ReadFloatTuple<4>(*tangentView, vertexIndex);
-                    glm::vec3 transformedTangent = normalMatrix * glm::vec3(sourceTangent[0], sourceTangent[1], sourceTangent[2]);
-                    if (SquaredLength(transformedTangent) > 1e-12f)
-                    {
-                        transformedTangent = glm::normalize(transformedTangent);
-                    }
-
-                    tangent = {
-                        transformedTangent.x,
-                        transformedTangent.y,
-                        transformedTangent.z,
-                        sourceTangent[3],
-                    };
-                }
-
-                meshData.vertices.push_back({
-                    .position = {transformedPosition.x, transformedPosition.y, transformedPosition.z},
-                    .normal = normal,
-                    .uv = uv,
-                    .tangent = tangent,
-                    .uv2 = uv2,
-                });
+            if (tangentIt != primitive.attributes.end())
+            {
+                workItem.tangentView = CreateAccessorView(model, tangentIt->second);
+                ValidateFloatAccessorView(*workItem.tangentView);
             }
 
             if (primitive.indices >= 0)
             {
-                const auto indexView = CreateAccessorView(model, primitive.indices);
-                meshData.indices.reserve(meshData.indices.size() + indexView.accessor->count);
-                for (size_t index = 0; index < indexView.accessor->count; ++index)
-                {
-                    meshData.indices.push_back(baseVertex + ReadIndex(indexView, index));
-                }
-                submeshes.push_back(render::Submesh{
-                    .indexOffset = submeshIndexOffset,
-                    .indexCount = static_cast<uint32_t>(indexView.accessor->count),
-                    .materialIndex = materialIndex,
-                });
-                return;
+                workItem.indexView = CreateAccessorView(model, primitive.indices);
+                workItem.indexCount = static_cast<uint32_t>(workItem.indexView->accessor->count);
             }
-
-            meshData.indices.reserve(meshData.indices.size() + vertexCount);
-            for (uint32_t index = 0; index < vertexCount; ++index)
+            else
             {
-                meshData.indices.push_back(baseVertex + index);
+                workItem.indexCount = workItem.vertexCount;
             }
 
-            submeshes.push_back(render::Submesh{
-                .indexOffset = submeshIndexOffset,
-                .indexCount = static_cast<uint32_t>(vertexCount),
-                .materialIndex = materialIndex,
-            });
+            workItem.worldTransform = worldTransform;
+            workItem.normalMatrix = glm::transpose(glm::inverse(glm::mat3(worldTransform)));
+            workItem.materialIndex = materialIndex;
+            return workItem;
         }
 
-        void VisitNode(
+        void CollectPrimitiveWorkItems(
             const tinygltf::Model &model,
             int nodeIndex,
             const glm::mat4 &parentTransform,
-            ImportedMeshSourceAsset &parsedMeshAsset,
             uint32_t defaultMaterialIndex,
-            std::unordered_set<int> &visitedNodes)
+            std::unordered_set<int> &visitedNodes,
+            std::vector<PrimitiveWorkItem> &primitiveWorkItems)
         {
             if (nodeIndex < 0 || nodeIndex >= static_cast<int>(model.nodes.size()))
             {
@@ -691,17 +905,147 @@ namespace PlutoGE::assetimport
                 const auto &mesh = model.meshes[node.mesh];
                 for (const auto &primitive : mesh.primitives)
                 {
-                    const uint32_t materialIndex = primitive.material >= 0 && primitive.material < static_cast<int>(parsedMeshAsset.materials.size())
+                    const uint32_t materialIndex = primitive.material >= 0 && primitive.material < static_cast<int>(defaultMaterialIndex)
                                                        ? static_cast<uint32_t>(primitive.material)
                                                        : defaultMaterialIndex;
-                    AppendPrimitive(model, primitive, worldTransform, parsedMeshAsset.meshData, parsedMeshAsset.submeshes, materialIndex, parsedMeshAsset.hasLightmapUvs);
+                    if (auto workItem = CreatePrimitiveWorkItem(model, primitive, worldTransform, materialIndex))
+                    {
+                        primitiveWorkItems.push_back(std::move(*workItem));
+                    }
                 }
             }
 
             for (const auto childIndex : node.children)
             {
-                VisitNode(model, childIndex, worldTransform, parsedMeshAsset, defaultMaterialIndex, visitedNodes);
+                CollectPrimitiveWorkItems(model, childIndex, worldTransform, defaultMaterialIndex, visitedNodes, primitiveWorkItems);
             }
+        }
+
+        void AssignPrimitiveWorkItemStorage(
+            std::vector<PrimitiveWorkItem> &primitiveWorkItems,
+            ImportedMeshSourceAsset &parsedMeshAsset)
+        {
+            parsedMeshAsset.submeshes.resize(primitiveWorkItems.size());
+
+            uint32_t nextBaseVertex = 0;
+            uint32_t nextIndexOffset = 0;
+            for (size_t index = 0; index < primitiveWorkItems.size(); ++index)
+            {
+                auto &workItem = primitiveWorkItems[index];
+                workItem.slot = index;
+                workItem.baseVertex = nextBaseVertex;
+                workItem.indexOffset = nextIndexOffset;
+                nextBaseVertex += workItem.vertexCount;
+                nextIndexOffset += workItem.indexCount;
+                parsedMeshAsset.hasLightmapUvs = parsedMeshAsset.hasLightmapUvs || workItem.lightmapUvView.has_value();
+                parsedMeshAsset.submeshes[index] = render::Submesh{
+                    .indexOffset = workItem.indexOffset,
+                    .indexCount = workItem.indexCount,
+                    .materialIndex = workItem.materialIndex,
+                };
+            }
+
+            parsedMeshAsset.meshData.vertices.resize(nextBaseVertex);
+            parsedMeshAsset.meshData.indices.resize(nextIndexOffset);
+        }
+
+        void WritePrimitive(
+            const PrimitiveWorkItem &workItem,
+            render::MeshData &meshData,
+            bool &requiresMissingNormalFallback,
+            double &vertexAssemblyMs,
+            double &indexAssemblyMs)
+        {
+            auto *vertexDestination = meshData.vertices.data() + workItem.baseVertex;
+            auto *indexDestination = meshData.indices.data() + workItem.indexOffset;
+
+            const bool hasNormals = workItem.normalView.has_value();
+            const bool hasUvs = workItem.uvView.has_value();
+            const bool hasLightmapUvs = workItem.lightmapUvView.has_value();
+            const bool hasTangents = workItem.tangentView.has_value();
+
+            if (!hasNormals)
+            {
+                requiresMissingNormalFallback = true;
+            }
+
+            const auto vertexAssemblyStart = ImportClock::now();
+            for (size_t vertexIndex = 0; vertexIndex < workItem.vertexCount; ++vertexIndex)
+            {
+                auto &vertex = vertexDestination[vertexIndex];
+                float position[3] = {0.0f, 0.0f, 0.0f};
+                ReadFloatTupleIntoUnchecked<3>(workItem.positionView, vertexIndex, position);
+                const glm::vec4 transformedPosition = workItem.worldTransform * glm::vec4(position[0], position[1], position[2], 1.0f);
+                vertex.position = {transformedPosition.x, transformedPosition.y, transformedPosition.z};
+
+                vertex.normal = {0.0f, 0.0f, 0.0f};
+                if (hasNormals)
+                {
+                    float sourceNormal[3] = {0.0f, 0.0f, 0.0f};
+                    ReadFloatTupleIntoUnchecked<3>(*workItem.normalView, vertexIndex, sourceNormal);
+                    glm::vec3 transformedNormal = workItem.normalMatrix * glm::vec3(sourceNormal[0], sourceNormal[1], sourceNormal[2]);
+                    if (SquaredLength(transformedNormal) > 1e-12f)
+                    {
+                        transformedNormal = glm::normalize(transformedNormal);
+                    }
+                    else
+                    {
+                        requiresMissingNormalFallback = true;
+                    }
+
+                    vertex.normal = {
+                        transformedNormal.x,
+                        transformedNormal.y,
+                        transformedNormal.z,
+                    };
+                }
+
+                vertex.uv = {0.0f, 0.0f};
+                if (hasUvs)
+                {
+                    ReadFloatTupleIntoUnchecked<2>(*workItem.uvView, vertexIndex, vertex.uv.data());
+                }
+
+                vertex.uv2 = {0.0f, 0.0f};
+                if (hasLightmapUvs)
+                {
+                    ReadFloatTupleIntoUnchecked<2>(*workItem.lightmapUvView, vertexIndex, vertex.uv2.data());
+                }
+
+                vertex.tangent = {0.0f, 0.0f, 0.0f, 1.0f};
+                if (hasTangents)
+                {
+                    float sourceTangent[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+                    ReadFloatTupleIntoUnchecked<4>(*workItem.tangentView, vertexIndex, sourceTangent);
+                    glm::vec3 transformedTangent = workItem.normalMatrix * glm::vec3(sourceTangent[0], sourceTangent[1], sourceTangent[2]);
+                    if (SquaredLength(transformedTangent) > 1e-12f)
+                    {
+                        transformedTangent = glm::normalize(transformedTangent);
+                    }
+
+                    vertex.tangent = {
+                        transformedTangent.x,
+                        transformedTangent.y,
+                        transformedTangent.z,
+                        sourceTangent[3],
+                    };
+                }
+            }
+            vertexAssemblyMs = ElapsedMilliseconds(vertexAssemblyStart);
+
+            const auto indexAssemblyStart = ImportClock::now();
+            if (workItem.indexView.has_value())
+            {
+                WriteIndices(*workItem.indexView, workItem.baseVertex, indexDestination);
+            }
+            else
+            {
+                for (uint32_t index = 0; index < workItem.vertexCount; ++index)
+                {
+                    indexDestination[index] = workItem.baseVertex + index;
+                }
+            }
+            indexAssemblyMs = ElapsedMilliseconds(indexAssemblyStart);
         }
 
         ImportedMeshSourceAsset ParseMeshAsset(const std::string &filePath)
@@ -711,6 +1055,10 @@ namespace PlutoGE::assetimport
                 throw std::runtime_error("Unsupported mesh format. Use glTF 2.0 (.glb or .gltf).");
             }
 
+            MeshImportProfile profile;
+            profile.enabled = IsMeshImportProfilingEnabled();
+            profile.filePath = filePath;
+
             tinygltf::TinyGLTF loader;
             loader.SetImageLoader(LoadMeshImportImageData, nullptr);
             tinygltf::Model model;
@@ -718,9 +1066,11 @@ namespace PlutoGE::assetimport
             std::string errors;
 
             const auto extension = ToLower(std::filesystem::path(filePath).extension().string());
+            const auto loadStart = ImportClock::now();
             const bool loaded = extension == ".glb"
                                     ? loader.LoadBinaryFromFile(&model, &errors, &warnings, filePath)
                                     : loader.LoadASCIIFromFile(&model, &errors, &warnings, filePath);
+            profile.loadMs = ElapsedMilliseconds(loadStart);
 
             if (!warnings.empty())
             {
@@ -733,6 +1083,7 @@ namespace PlutoGE::assetimport
             }
 
             ImportedMeshSourceAsset parsedMeshAsset;
+            const auto textureStageStart = ImportClock::now();
             parsedMeshAsset.textures.resize(model.images.size());
             for (size_t imageIndex = 0; imageIndex < model.images.size(); ++imageIndex)
             {
@@ -745,17 +1096,23 @@ namespace PlutoGE::assetimport
                 importedTexture.channels = image.component;
                 importedTexture.pixels = std::move(image.image);
             }
+            profile.textureStageMs = ElapsedMilliseconds(textureStageStart);
 
+            const auto materialStageStart = ImportClock::now();
+            std::vector<std::optional<bool>> metallicChannelCache(model.images.size());
             parsedMeshAsset.materials.reserve(model.materials.size() + 1);
             for (const auto &material : model.materials)
             {
-                parsedMeshAsset.materials.push_back(ParseMaterial(model, material, filePath));
+                parsedMeshAsset.materials.push_back(ParseMaterial(model, material, filePath, metallicChannelCache, &profile));
             }
+            profile.materialStageMs = ElapsedMilliseconds(materialStageStart);
 
             const uint32_t defaultMaterialIndex = static_cast<uint32_t>(parsedMeshAsset.materials.size());
             parsedMeshAsset.materials.push_back(ImportedMaterialData{});
 
             std::unordered_set<int> visitedNodes;
+            const auto sceneTraversalStart = ImportClock::now();
+            std::vector<PrimitiveWorkItem> primitiveWorkItems;
 
             if (!model.scenes.empty())
             {
@@ -763,25 +1120,72 @@ namespace PlutoGE::assetimport
                 const auto &scene = model.scenes[defaultSceneIndex];
                 for (const int nodeIndex : scene.nodes)
                 {
-                    VisitNode(model, nodeIndex, glm::mat4(1.0f), parsedMeshAsset, defaultMaterialIndex, visitedNodes);
+                    CollectPrimitiveWorkItems(model, nodeIndex, glm::mat4(1.0f), defaultMaterialIndex, visitedNodes, primitiveWorkItems);
                 }
             }
             else
             {
                 for (int nodeIndex = 0; nodeIndex < static_cast<int>(model.nodes.size()); ++nodeIndex)
                 {
-                    VisitNode(model, nodeIndex, glm::mat4(1.0f), parsedMeshAsset, defaultMaterialIndex, visitedNodes);
+                    CollectPrimitiveWorkItems(model, nodeIndex, glm::mat4(1.0f), defaultMaterialIndex, visitedNodes, primitiveWorkItems);
                 }
             }
+
+            AssignPrimitiveWorkItemStorage(primitiveWorkItems, parsedMeshAsset);
+
+            std::vector<double> primitiveVertexAssemblyTimes(primitiveWorkItems.size(), 0.0);
+            std::vector<double> primitiveIndexAssemblyTimes(primitiveWorkItems.size(), 0.0);
+            std::vector<uint8_t> primitiveMissingNormalFallbacks(primitiveWorkItems.size(), 0);
+
+            auto writePrimitive = [&](const PrimitiveWorkItem &workItem)
+            {
+                bool requiresMissingNormalFallback = false;
+                double vertexAssemblyMs = 0.0;
+                double indexAssemblyMs = 0.0;
+                WritePrimitive(workItem, parsedMeshAsset.meshData, requiresMissingNormalFallback, vertexAssemblyMs, indexAssemblyMs);
+                primitiveVertexAssemblyTimes[workItem.slot] = vertexAssemblyMs;
+                primitiveIndexAssemblyTimes[workItem.slot] = indexAssemblyMs;
+                primitiveMissingNormalFallbacks[workItem.slot] = requiresMissingNormalFallback ? 1u : 0u;
+            };
+
+            if (primitiveWorkItems.size() > 1)
+            {
+                std::for_each(std::execution::par, primitiveWorkItems.begin(), primitiveWorkItems.end(), writePrimitive);
+            }
+            else
+            {
+                for (const auto &workItem : primitiveWorkItems)
+                {
+                    writePrimitive(workItem);
+                }
+            }
+
+            for (size_t index = 0; index < primitiveWorkItems.size(); ++index)
+            {
+                profile.sceneVertexAssemblyMs += primitiveVertexAssemblyTimes[index];
+                profile.sceneIndexAssemblyMs += primitiveIndexAssemblyTimes[index];
+                parsedMeshAsset.requiresMissingNormalFallback = parsedMeshAsset.requiresMissingNormalFallback || primitiveMissingNormalFallbacks[index] != 0;
+            }
+
+            profile.sceneTraversalMs = ElapsedMilliseconds(sceneTraversalStart);
 
             if (parsedMeshAsset.meshData.vertices.empty() || parsedMeshAsset.meshData.indices.empty())
             {
                 throw std::runtime_error("No triangle mesh data was found in the glTF file.");
             }
 
-            FinalizeMissingNormals(parsedMeshAsset.meshData);
+            const auto missingNormalsStart = ImportClock::now();
+            FinalizeMissingNormals(parsedMeshAsset.meshData, parsedMeshAsset.requiresMissingNormalFallback);
+            profile.missingNormalsMs = ElapsedMilliseconds(missingNormalsStart);
+
+            const auto mergeSubmeshesStart = ImportClock::now();
             MergeAdjacentSubmeshes(parsedMeshAsset.submeshes);
-            OptimizeMeshData(parsedMeshAsset.meshData, parsedMeshAsset.submeshes);
+
+            profile.submeshMergeMs = ElapsedMilliseconds(mergeSubmeshesStart);
+
+            const auto optimizeStart = ImportClock::now();
+            OptimizeMeshData(parsedMeshAsset.meshData, parsedMeshAsset.submeshes, &profile);
+            profile.optimizeMs = ElapsedMilliseconds(optimizeStart);
             return parsedMeshAsset;
         }
     }

@@ -49,6 +49,20 @@ namespace PlutoGE::ui
         constexpr const char *kDefaultProjectFileName = "UntitledProject.plutoproject";
         constexpr const char *kDefaultProjectSceneRelativePath = "Scenes/Main.plutoscene";
 
+        std::filesystem::path GetProcessDirectory()
+        {
+#ifdef _WIN32
+            std::array<char, MAX_PATH> modulePath{};
+            const DWORD modulePathLength = GetModuleFileNameA(nullptr, modulePath.data(), static_cast<DWORD>(modulePath.size()));
+            if (modulePathLength > 0 && modulePathLength < modulePath.size())
+            {
+                return std::filesystem::path(modulePath.data()).parent_path().lexically_normal();
+            }
+#endif
+
+            return std::filesystem::current_path();
+        }
+
         bool IsCameraActiveInScene(scene::Scene *scene, scene::CameraComponent *cameraComponent)
         {
             if (!scene || !cameraComponent)
@@ -357,7 +371,7 @@ namespace PlutoGE::ui
             openFileName.lpstrFilter = filter;
             openFileName.lpstrFile = fileName;
             openFileName.nMaxFile = MAX_PATH;
-            openFileName.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+            openFileName.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
             if (!GetOpenFileNameA(&openFileName))
             {
                 return {};
@@ -379,7 +393,7 @@ namespace PlutoGE::ui
             openFileName.lpstrFilter = filter;
             openFileName.lpstrFile = fileName;
             openFileName.nMaxFile = MAX_PATH;
-            openFileName.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
+            openFileName.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
             openFileName.lpstrDefExt = defaultExtension;
             if (!GetSaveFileNameA(&openFileName))
             {
@@ -684,7 +698,7 @@ namespace PlutoGE::ui
             return false;
         }
 
-        const auto runtimeExecutablePath = assets::FindRuntimeExecutable(std::filesystem::current_path());
+        const auto runtimeExecutablePath = assets::FindRuntimeExecutable(GetProcessDirectory());
         if (runtimeExecutablePath.empty())
         {
             m_statusMessage = "Could not find PlutoGERuntime executable to export.";

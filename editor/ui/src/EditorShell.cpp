@@ -441,6 +441,65 @@ namespace PlutoGE::ui
         assetManager.ClearProjectContext();
     }
 
+    std::filesystem::path EditorShell::ResolveProjectScriptAssemblyPath() const
+    {
+        if (!m_project || m_project->GetManifest().scriptAssembly.empty())
+        {
+            return {};
+        }
+
+        return std::filesystem::path(m_engine.GetAssetManager().ResolveAssetPath(m_project->GetManifest().scriptAssembly)).lexically_normal();
+    }
+
+    bool EditorShell::ReloadProjectScriptAssembly(std::string *errorMessage)
+    {
+        auto &scriptEngine = m_engine.GetScriptEngine();
+        const bool wasRuntimeRunning = m_engine.IsRuntimeRunning();
+        if (wasRuntimeRunning)
+        {
+            m_engine.StopRuntime();
+        }
+
+        scriptEngine.Shutdown();
+        scriptEngine.Initialize();
+
+        const auto assemblyPath = ResolveProjectScriptAssemblyPath();
+        if (!m_project || assemblyPath.empty())
+        {
+            if (wasRuntimeRunning)
+            {
+                m_engine.StartRuntime();
+            }
+
+            return true;
+        }
+
+        if (!std::filesystem::exists(assemblyPath))
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Project script assembly was not found: " + assemblyPath.string();
+            }
+            return false;
+        }
+
+        if (!scriptEngine.LoadAssembly(assemblyPath))
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Failed to load project script assembly: " + assemblyPath.string();
+            }
+            return false;
+        }
+
+        if (wasRuntimeRunning)
+        {
+            m_engine.StartRuntime();
+        }
+
+        return true;
+    }
+
     void EditorShell::UpdateWindowTitle()
     {
         std::string windowTitle = "PlutoGE Editor";
@@ -586,6 +645,9 @@ namespace PlutoGE::ui
         ApplyProjectEditorPostProcessEffects(manifest.editorCameraPostProcessEffects, m_editorCamera);
         m_engine.GetRenderer().SetVSyncEnabled(manifest.vSyncEnabled);
 
+        std::string scriptErrorMessage;
+        ReloadProjectScriptAssembly(&scriptErrorMessage);
+
         std::unique_ptr<scene::Scene> loadedScene;
         if (!manifest.startupScene.empty())
         {
@@ -614,6 +676,15 @@ namespace PlutoGE::ui
             }
         }
 
+        if (!scriptErrorMessage.empty())
+        {
+            if (!m_statusMessage.empty())
+            {
+                m_statusMessage += " ";
+            }
+            m_statusMessage += scriptErrorMessage;
+        }
+
         UpdateWindowTitle();
         return true;
     }
@@ -637,6 +708,7 @@ namespace PlutoGE::ui
         m_project = std::move(createdProject);
         ApplyProjectContext();
         SetScene(CreateEmptyScene());
+        ReloadProjectScriptAssembly();
 
         if (!SaveProjectToDisk())
         {
@@ -797,6 +869,7 @@ namespace PlutoGE::ui
         double lastEditorCameraCursorY = 0.0;
         std::array<char, 256> projectNameBuffer{};
         std::array<char, 256> projectWindowTitleBuffer{};
+        std::array<char, 512> projectScriptAssemblyBuffer{};
         int projectWindowWidth = 1280;
         int projectWindowHeight = 720;
         bool projectVSyncEnabled = true;
@@ -812,12 +885,16 @@ namespace PlutoGE::ui
             const auto &manifest = m_project->GetManifest();
             std::memset(projectNameBuffer.data(), 0, projectNameBuffer.size());
             std::memset(projectWindowTitleBuffer.data(), 0, projectWindowTitleBuffer.size());
+            std::memset(projectScriptAssemblyBuffer.data(), 0, projectScriptAssemblyBuffer.size());
 
             const std::size_t projectNameLength = (std::min)(manifest.name.size(), projectNameBuffer.size() - 1);
             std::memcpy(projectNameBuffer.data(), manifest.name.c_str(), projectNameLength);
 
             const std::size_t windowTitleLength = (std::min)(manifest.windowTitle.size(), projectWindowTitleBuffer.size() - 1);
             std::memcpy(projectWindowTitleBuffer.data(), manifest.windowTitle.c_str(), windowTitleLength);
+
+            const std::size_t scriptAssemblyLength = (std::min)(manifest.scriptAssembly.size(), projectScriptAssemblyBuffer.size() - 1);
+            std::memcpy(projectScriptAssemblyBuffer.data(), manifest.scriptAssembly.c_str(), scriptAssemblyLength);
 
             projectWindowWidth = manifest.windowWidth;
             projectWindowHeight = manifest.windowHeight;
@@ -1133,6 +1210,26 @@ namespace PlutoGE::ui
                     }
                     ImGui::EndMenu();
                 }
+                if (ImGui::BeginMenu("Runtime"))
+                {
+                    const bool canRunRuntime = m_scene != nullptr;
+                    ImGui::BeginDisabled(!canRunRuntime || m_engine.IsRuntimeRunning());
+                    if (ImGui::MenuItem("Play"))
+                    {
+                        m_engine.StartRuntime();
+                        m_statusMessage = "Runtime started.";
+                    }
+                    ImGui::EndDisabled();
+
+                    ImGui::BeginDisabled(!m_engine.IsRuntimeRunning());
+                    if (ImGui::MenuItem("Stop"))
+                    {
+                        m_engine.StopRuntime();
+                        m_statusMessage = "Runtime stopped.";
+                    }
+                    ImGui::EndDisabled();
+                    ImGui::EndMenu();
+                }
                 if (!m_statusMessage.empty())
                 {
                     ImGui::Separator();
@@ -1169,6 +1266,25 @@ namespace PlutoGE::ui
                     ImGui::InputInt("Window Width", &projectWindowWidth);
                     ImGui::InputInt("Window Height", &projectWindowHeight);
                     ImGui::Checkbox("VSync", &projectVSyncEnabled);
+                    ImGui::InputText("Script Assembly", projectScriptAssemblyBuffer.data(), projectScriptAssemblyBuffer.size());
+                    ImGui::SameLine();
+                    if (ImGui::Button("...##ScriptAssembly"))
+                    {
+#ifdef _WIN32
+                        OPENFILENAMEA ofn = {};
+                        char fileName[MAX_PATH] = "";
+                        ofn.lStructSize = sizeof(ofn);
+                        ofn.hwndOwner = nullptr;
+                        ofn.lpstrFilter = "Managed Assemblies\0*.dll\0All Files\0*.*\0";
+                        ofn.lpstrFile = fileName;
+                        ofn.nMaxFile = MAX_PATH;
+                        ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+                        if (GetOpenFileNameA(&ofn))
+                        {
+                            strncpy_s(projectScriptAssemblyBuffer.data(), projectScriptAssemblyBuffer.size(), fileName, _TRUNCATE);
+                        }
+#endif
+                    }
 
                     ImGui::Separator();
                     ImGui::Text("Manifest: %s", m_project->GetManifestPath().string().c_str());
@@ -1182,9 +1298,18 @@ namespace PlutoGE::ui
                         manifest.windowWidth = (std::max)(projectWindowWidth, 64);
                         manifest.windowHeight = (std::max)(projectWindowHeight, 64);
                         manifest.vSyncEnabled = projectVSyncEnabled;
+                        manifest.scriptAssembly = projectScriptAssemblyBuffer[0] == '\0'
+                                                      ? std::string{}
+                                                      : m_project->MakeAssetReference(projectScriptAssemblyBuffer.data());
 
                         if (SaveProjectToDisk())
                         {
+                            std::string scriptErrorMessage;
+                            ReloadProjectScriptAssembly(&scriptErrorMessage);
+                            if (!scriptErrorMessage.empty())
+                            {
+                                m_statusMessage = scriptErrorMessage;
+                            }
                             renderer.SetVSyncEnabled(manifest.vSyncEnabled);
                             ImGui::CloseCurrentPopup();
                         }

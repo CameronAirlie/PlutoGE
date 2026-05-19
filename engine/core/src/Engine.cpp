@@ -361,8 +361,58 @@ namespace PlutoGE::core
         }
     }
 
+    void Engine::SetScene(scene::Scene *scene)
+    {
+        if (m_scene == scene)
+        {
+            return;
+        }
+
+        if (m_isRuntimeRunning && m_scene)
+        {
+            m_scene->StopRuntime();
+        }
+
+        m_scene = scene;
+
+        if (m_isRuntimeRunning && m_scene)
+        {
+            m_scene->StartRuntime();
+        }
+    }
+
+    void Engine::StartRuntime()
+    {
+        if (m_isRuntimeRunning)
+        {
+            return;
+        }
+
+        m_isRuntimeRunning = true;
+        if (m_scene)
+        {
+            m_scene->StartRuntime();
+        }
+    }
+
+    void Engine::StopRuntime()
+    {
+        if (!m_isRuntimeRunning)
+        {
+            return;
+        }
+
+        if (m_scene)
+        {
+            m_scene->StopRuntime();
+        }
+
+        m_isRuntimeRunning = false;
+    }
+
     void Engine::Shutdown()
     {
+        StopRuntime();
         m_scriptEngine.Shutdown();
         m_renderer.Shutdown();
         m_window.Close();

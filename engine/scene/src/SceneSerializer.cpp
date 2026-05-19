@@ -6,6 +6,7 @@
 #include "PlutoGE/scene/components/CameraComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
+#include "PlutoGE/scene/components/ScriptComponent.h"
 #include "PlutoGE/render/Camera.h"
 
 #include <charconv>
@@ -149,6 +150,10 @@ namespace PlutoGE::scene
             {
                 return "LightComponent";
             }
+            if (dynamic_cast<const ScriptComponent *>(&component))
+            {
+                return "ScriptComponent";
+            }
 
             return {};
         }
@@ -166,6 +171,10 @@ namespace PlutoGE::scene
             if (componentType == "LightComponent")
             {
                 return std::make_unique<LightComponent>();
+            }
+            if (componentType == "ScriptComponent")
+            {
+                return std::make_unique<ScriptComponent>(ScriptComponentConfig{});
             }
 
             return nullptr;

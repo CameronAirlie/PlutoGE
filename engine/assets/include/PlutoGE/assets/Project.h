@@ -46,6 +46,7 @@ namespace PlutoGE::assets
         std::string name = "UntitledProject";
         std::string assetDirectory = "Assets";
         std::string startupScene;
+        std::string scriptAssembly;
         std::string windowTitle = "PlutoGE Runtime";
         int windowWidth = 1280;
         int windowHeight = 720;

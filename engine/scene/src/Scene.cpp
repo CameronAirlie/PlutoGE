@@ -1,6 +1,7 @@
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/components/LightComponent.h"
+#include "PlutoGE/scene/components/ScriptComponent.h"
 #include "PlutoGE/render/Texture.h"
 #include <algorithm>
 #include <cmath>
@@ -10,6 +11,74 @@
 namespace PlutoGE::scene
 {
     Scene::~Scene() = default;
+
+    namespace
+    {
+        void CollectRuntimeScriptComponents(Entity *entity, std::vector<ScriptComponent *> &scriptComponents)
+        {
+            if (!entity)
+            {
+                return;
+            }
+
+            if (entity->IsActive())
+            {
+                for (auto *scriptComponent : entity->GetComponents<ScriptComponent>())
+                {
+                    if (scriptComponent && scriptComponent->IsEnabled())
+                    {
+                        scriptComponents.push_back(scriptComponent);
+                    }
+                }
+            }
+
+            for (auto *child : entity->GetChildren())
+            {
+                CollectRuntimeScriptComponents(child, scriptComponents);
+            }
+        }
+
+        std::vector<ScriptComponent *> GatherRuntimeScriptComponents(const std::vector<Entity *> &rootEntities)
+        {
+            std::vector<ScriptComponent *> scriptComponents;
+            for (auto *rootEntity : rootEntities)
+            {
+                CollectRuntimeScriptComponents(rootEntity, scriptComponents);
+            }
+
+            return scriptComponents;
+        }
+    }
+
+    void Scene::StartRuntime()
+    {
+        if (m_runtimeStarted)
+        {
+            return;
+        }
+
+        for (auto *scriptComponent : GatherRuntimeScriptComponents(m_rootEntities))
+        {
+            scriptComponent->Start();
+        }
+
+        m_runtimeStarted = true;
+    }
+
+    void Scene::StopRuntime()
+    {
+        if (!m_runtimeStarted)
+        {
+            return;
+        }
+
+        for (auto *scriptComponent : GatherRuntimeScriptComponents(m_rootEntities))
+        {
+            scriptComponent->Stop();
+        }
+
+        m_runtimeStarted = false;
+    }
 
     void Scene::SetEnvironmentMap(render::Texture *texture, const std::string &filePath)
     {

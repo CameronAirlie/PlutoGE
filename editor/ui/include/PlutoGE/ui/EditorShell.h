@@ -135,6 +135,8 @@ namespace PlutoGE::ui
 
         void InitializeEditorCamera();
         void ApplyProjectContext();
+        std::filesystem::path ResolveProjectScriptAssemblyPath() const;
+        bool ReloadProjectScriptAssembly(std::string *errorMessage = nullptr);
         void UpdateWindowTitle();
         void ResetSelection();
         void SetScene(std::unique_ptr<scene::Scene> scene);

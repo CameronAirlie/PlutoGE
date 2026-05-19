@@ -443,6 +443,12 @@ namespace PlutoGE::assets
                 continue;
             }
 
+            if (tokens[0] == "SCRIPT_ASSEMBLY" && tokens.size() >= 2)
+            {
+                manifest.scriptAssembly = tokens[1];
+                continue;
+            }
+
             if (tokens[0] == "WINDOW_TITLE" && tokens.size() >= 2)
             {
                 manifest.windowTitle = tokens[1];
@@ -565,6 +571,7 @@ namespace PlutoGE::assets
         output << "NAME\t" << EscapeText(m_manifest.name) << '\n';
         output << "ASSET_DIR\t" << EscapeText(m_manifest.assetDirectory) << '\n';
         output << "STARTUP_SCENE\t" << EscapeText(m_manifest.startupScene) << '\n';
+        output << "SCRIPT_ASSEMBLY\t" << EscapeText(m_manifest.scriptAssembly) << '\n';
         output << "WINDOW_TITLE\t" << EscapeText(m_manifest.windowTitle) << '\n';
         output << "WINDOW_SIZE\t" << m_manifest.windowWidth << '\t' << m_manifest.windowHeight << '\n';
         output << "VSYNC\t" << (m_manifest.vSyncEnabled ? 1 : 0) << '\n';

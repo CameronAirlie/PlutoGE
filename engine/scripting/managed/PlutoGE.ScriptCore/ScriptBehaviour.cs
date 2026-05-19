@@ -6,6 +6,8 @@ public abstract class ScriptBehaviour
 {
     public uint EntityId { get; internal set; }
 
+    protected GameObject GameObject => new(EntityId);
+
     protected Vector3 Rotation
     {
         get => Native.ScriptBridge.GetEntityRotation(EntityId);

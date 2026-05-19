@@ -322,6 +322,20 @@ int main(int argc, char **argv)
 
     engine.GetRenderer().SetVSyncEnabled(project->GetManifest().vSyncEnabled);
 
+    if (!project->GetManifest().scriptAssembly.empty())
+    {
+        const std::string scriptAssemblyPath = engine.GetAssetManager().ResolveAssetPath(project->GetManifest().scriptAssembly);
+        if (scriptAssemblyPath.empty() || !std::filesystem::exists(scriptAssemblyPath) || !engine.GetScriptEngine().LoadAssembly(scriptAssemblyPath))
+        {
+#ifdef _WIN32
+            PlutoGE::g_runtimeDiagnostics.Log("Failed to load script assembly: " + project->GetManifest().scriptAssembly);
+#endif
+            std::cerr << "Failed to load project script assembly." << std::endl;
+            engine.Shutdown();
+            return 1;
+        }
+    }
+
 #ifdef _WIN32
     PlutoGE::g_runtimeDiagnostics.currentPhase = "resolve startup scene";
 #endif
@@ -353,6 +367,7 @@ int main(int argc, char **argv)
     }
 
     engine.SetScene(scene.get());
+    engine.StartRuntime();
 
 #ifdef _WIN32
     std::vector<PlutoGE::scene::Entity *> loadedEntities;
@@ -428,6 +443,7 @@ int main(int argc, char **argv)
     PlutoGE::g_runtimeDiagnostics.currentPhase = "shutdown";
     PlutoGE::g_runtimeDiagnostics.Log("Window requested close");
 #endif
+    engine.StopRuntime();
     engine.SetScene(nullptr);
     scene.reset();
     engine.Shutdown();

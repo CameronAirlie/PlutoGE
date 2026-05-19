@@ -73,12 +73,15 @@ namespace PlutoGE::core
         [[nodiscard]] render::TextureManager &GetTextureManager() { return m_textureManager; }
         [[nodiscard]] scripting::ScriptEngine &GetScriptEngine() { return m_scriptEngine; }
         [[nodiscard]] scene::Scene *GetScene() { return m_scene; }
+        void StartRuntime();
+        void StopRuntime();
+        [[nodiscard]] bool IsRuntimeRunning() const { return m_isRuntimeRunning; }
         ImportedRenderMeshAsset ImportMeshAsset(const std::string &filePath);
         render::Mesh *ImportMesh(const std::string &filePath);
         void QueueMeshImport(scene::EntityID entityId, const std::string &filePath);
         void UpdateAsyncMeshImports();
         [[nodiscard]] MeshImportStatus GetMeshImportStatus(scene::EntityID entityId) const;
-        void SetScene(scene::Scene *scene) { m_scene = scene; }
+        void SetScene(scene::Scene *scene);
 
     private:
         struct PendingMeshImportJob
@@ -105,5 +108,6 @@ namespace PlutoGE::core
         std::unordered_map<scene::EntityID, std::string> m_meshImportErrors;
 
         bool m_isInitialized = false;
+        bool m_isRuntimeRunning = false;
     };
 }

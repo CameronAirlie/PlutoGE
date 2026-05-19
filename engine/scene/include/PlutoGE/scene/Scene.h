@@ -43,7 +43,10 @@ namespace PlutoGE::scene
         void RemoveEntity(Entity *entity);
         std::vector<Entity *> GetRootEntities() const { return m_rootEntities; }
 
+        void StartRuntime();
+        void StopRuntime();
         void Update(float deltaTime);
+        [[nodiscard]] bool IsRuntimeStarted() const { return m_runtimeStarted; }
 
         Entity *FindEntityByName(const std::string &name) const;               // Utility function to find an entity by name (can be useful for scripting and editor)
         Entity *FindEntityByID(EntityID id) const;                             // Utility function to find an entity by its unique ID (useful for serialization and referencing)
@@ -87,6 +90,7 @@ namespace PlutoGE::scene
         std::string m_environmentMapPath;
         render::Texture *m_environmentMapTexture = nullptr;
         float m_environmentIntensity = 1.0f;
+        bool m_runtimeStarted = false;
         BakedProbeVolume m_bakedProbeVolume;
         std::unique_ptr<render::Texture> m_bakedProbeTexture;
         void CollectEntitySubtree(Entity *entity, std::vector<Entity *> &entities) const;

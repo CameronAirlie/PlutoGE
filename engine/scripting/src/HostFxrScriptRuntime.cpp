@@ -3,6 +3,10 @@
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
+#include "PlutoGE/scene/components/CameraComponent.h"
+#include "PlutoGE/scene/components/LightComponent.h"
+#include "PlutoGE/scene/components/MeshComponent.h"
+#include "PlutoGE/scene/components/ScriptComponent.h"
 
 #include <algorithm>
 #include <charconv>
@@ -57,7 +61,11 @@ namespace PlutoGE::scripting
         using invoke_on_update_fn = int(__cdecl *)(int64_t, float);
         using apply_field_data_fn = int(__cdecl *)(int64_t, const char *);
         using set_entity_id_fn = int(__cdecl *)(int64_t, uint32_t);
-        using register_entity_transform_api_fn = int(__cdecl *)(void *, void *);
+        using register_game_object_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *);
+        using register_component_api_fn = int(__cdecl *)(void *, void *, void *);
+        using register_camera_component_api_fn = int(__cdecl *)(void *, void *, void *, void *);
+        using register_light_component_api_fn = int(__cdecl *)(void *, void *, void *, void *);
+        using register_mesh_component_api_fn = int(__cdecl *)(void *, void *);
 
         struct NativeVector3
         {
@@ -66,11 +74,34 @@ namespace PlutoGE::scripting
             float z = 0.0f;
         };
 
-        using get_entity_rotation_fn = NativeVector3(__cdecl *)(uint32_t);
-        using set_entity_rotation_fn = void(__cdecl *)(uint32_t, NativeVector3);
+        using get_entity_vector3_fn = NativeVector3(__cdecl *)(uint32_t);
+        using set_entity_vector3_fn = void(__cdecl *)(uint32_t, NativeVector3);
+        using get_entity_active_fn = int(__cdecl *)(uint32_t);
+        using set_entity_active_fn = void(__cdecl *)(uint32_t, int32_t);
+        using has_entity_component_fn = int(__cdecl *)(uint32_t, int32_t);
+        using get_component_enabled_fn = int(__cdecl *)(uint32_t, int32_t);
+        using set_component_enabled_fn = void(__cdecl *)(uint32_t, int32_t, int32_t);
+        using get_camera_main_fn = int(__cdecl *)(uint32_t);
+        using set_camera_main_fn = void(__cdecl *)(uint32_t, int32_t);
+        using get_camera_fov_fn = float(__cdecl *)(uint32_t);
+        using set_camera_fov_fn = void(__cdecl *)(uint32_t, float);
+        using get_light_intensity_fn = float(__cdecl *)(uint32_t);
+        using set_light_intensity_fn = void(__cdecl *)(uint32_t, float);
+        using get_light_color_fn = NativeVector3(__cdecl *)(uint32_t);
+        using set_light_color_fn = void(__cdecl *)(uint32_t, NativeVector3);
+        using get_mesh_static_fn = int(__cdecl *)(uint32_t);
+        using set_mesh_static_fn = void(__cdecl *)(uint32_t, int32_t);
         constexpr std::wstring_view kScriptBridgeType = L"PlutoGE.ScriptCore.Native.ScriptBridge, PlutoGE.ScriptCore";
         constexpr std::wstring_view kScriptCoreAssembly = L"PlutoGE.ScriptCore.dll";
         constexpr std::wstring_view kScriptCoreRuntimeConfig = L"PlutoGE.ScriptCore.runtimeconfig.json";
+
+        enum class ManagedComponentKind : int32_t
+        {
+            Mesh = 0,
+            Camera = 1,
+            Light = 2,
+            Script = 3,
+        };
 
         std::wstring Utf8ToWide(std::string_view text)
         {
@@ -295,7 +326,7 @@ namespace PlutoGE::scripting
         {
             int fieldTypeValue = 0;
             std::from_chars(token.data(), token.data() + token.size(), fieldTypeValue);
-            if (fieldTypeValue < static_cast<int>(ScriptFieldType::None) || fieldTypeValue > static_cast<int>(ScriptFieldType::EntityId))
+            if (fieldTypeValue < static_cast<int>(ScriptFieldType::None) || fieldTypeValue > static_cast<int>(ScriptFieldType::LightComponent))
             {
                 return ScriptFieldType::None;
             }
@@ -352,6 +383,10 @@ namespace PlutoGE::scripting
                 return glm::vec3{ParseFloat(parts[0]), ParseFloat(parts[1]), ParseFloat(parts[2])};
             }
             case ScriptFieldType::EntityId:
+            case ScriptFieldType::GameObject:
+            case ScriptFieldType::MeshComponent:
+            case ScriptFieldType::CameraComponent:
+            case ScriptFieldType::LightComponent:
             {
                 uint32_t value = 0;
                 std::from_chars(token.data(), token.data() + token.size(), value);
@@ -527,15 +562,66 @@ namespace PlutoGE::scripting
             return classes;
         }
 
-        NativeVector3 GetEntityRotation(uint32_t entityId)
+        scene::Entity *FindEntity(uint32_t entityId)
         {
-            const auto *scene = core::Engine::GetInstance().GetScene();
+            auto *scene = core::Engine::GetInstance().GetScene();
             if (!scene)
+            {
+                return nullptr;
+            }
+
+            return scene->FindEntityByID(entityId);
+        }
+
+        scene::Component *FindComponent(uint32_t entityId, ManagedComponentKind componentKind)
+        {
+            auto *entity = FindEntity(entityId);
+            if (!entity)
+            {
+                return nullptr;
+            }
+
+            switch (componentKind)
+            {
+            case ManagedComponentKind::Mesh:
+                return entity->GetComponent<scene::MeshComponent>();
+            case ManagedComponentKind::Camera:
+                return entity->GetComponent<scene::CameraComponent>();
+            case ManagedComponentKind::Light:
+                return entity->GetComponent<scene::LightComponent>();
+            case ManagedComponentKind::Script:
+                return entity->GetComponent<scene::ScriptComponent>();
+            default:
+                return nullptr;
+            }
+        }
+
+        NativeVector3 GetEntityPosition(uint32_t entityId)
+        {
+            auto *entity = FindEntity(entityId);
+            if (!entity)
             {
                 return {};
             }
 
-            auto *entity = scene->FindEntityByID(entityId);
+            const auto position = entity->GetPosition();
+            return NativeVector3{position.x, position.y, position.z};
+        }
+
+        void SetEntityPosition(uint32_t entityId, NativeVector3 position)
+        {
+            auto *entity = FindEntity(entityId);
+            if (!entity)
+            {
+                return;
+            }
+
+            entity->SetPosition(glm::vec3(position.x, position.y, position.z));
+        }
+
+        NativeVector3 GetEntityRotation(uint32_t entityId)
+        {
+            auto *entity = FindEntity(entityId);
             if (!entity)
             {
                 return {};
@@ -547,19 +633,212 @@ namespace PlutoGE::scripting
 
         void SetEntityRotation(uint32_t entityId, NativeVector3 rotation)
         {
-            auto *scene = core::Engine::GetInstance().GetScene();
-            if (!scene)
-            {
-                return;
-            }
-
-            auto *entity = scene->FindEntityByID(entityId);
+            auto *entity = FindEntity(entityId);
             if (!entity)
             {
                 return;
             }
 
             entity->SetRotation(glm::vec3(rotation.x, rotation.y, rotation.z));
+        }
+
+        NativeVector3 GetEntityScale(uint32_t entityId)
+        {
+            auto *entity = FindEntity(entityId);
+            if (!entity)
+            {
+                return {};
+            }
+
+            const auto scale = entity->GetScale();
+            return NativeVector3{scale.x, scale.y, scale.z};
+        }
+
+        void SetEntityScale(uint32_t entityId, NativeVector3 scale)
+        {
+            auto *entity = FindEntity(entityId);
+            if (!entity)
+            {
+                return;
+            }
+
+            entity->SetScale(glm::vec3(scale.x, scale.y, scale.z));
+        }
+
+        int32_t GetEntityActive(uint32_t entityId)
+        {
+            auto *entity = FindEntity(entityId);
+            return entity && entity->IsSelfActive() ? 1 : 0;
+        }
+
+        void SetEntityActive(uint32_t entityId, int32_t active)
+        {
+            auto *entity = FindEntity(entityId);
+            if (!entity)
+            {
+                return;
+            }
+
+            entity->SetActive(active != 0);
+        }
+
+        int32_t HasEntityComponent(uint32_t entityId, int32_t componentKind)
+        {
+            return FindComponent(entityId, static_cast<ManagedComponentKind>(componentKind)) ? 1 : 0;
+        }
+
+        int32_t GetComponentEnabled(uint32_t entityId, int32_t componentKind)
+        {
+            auto *component = FindComponent(entityId, static_cast<ManagedComponentKind>(componentKind));
+            return component && component->IsEnabled() ? 1 : 0;
+        }
+
+        void SetComponentEnabled(uint32_t entityId, int32_t componentKind, int32_t enabled)
+        {
+            auto *component = FindComponent(entityId, static_cast<ManagedComponentKind>(componentKind));
+            if (!component)
+            {
+                return;
+            }
+
+            component->SetEnabled(enabled != 0);
+        }
+
+        int32_t GetCameraMain(uint32_t entityId)
+        {
+            auto *cameraComponent = FindEntity(entityId) ? FindEntity(entityId)->GetComponent<scene::CameraComponent>() : nullptr;
+            return cameraComponent && cameraComponent->IsMainCamera() ? 1 : 0;
+        }
+
+        void SetCameraMain(uint32_t entityId, int32_t isMain)
+        {
+            auto *entity = FindEntity(entityId);
+            if (!entity)
+            {
+                return;
+            }
+
+            if (auto *cameraComponent = entity->GetComponent<scene::CameraComponent>())
+            {
+                cameraComponent->SetMainCamera(isMain != 0);
+            }
+        }
+
+        float GetCameraFov(uint32_t entityId)
+        {
+            auto *entity = FindEntity(entityId);
+            if (!entity)
+            {
+                return 0.0f;
+            }
+
+            auto *cameraComponent = entity->GetComponent<scene::CameraComponent>();
+            return cameraComponent && cameraComponent->GetCamera() ? cameraComponent->GetCamera()->GetFOV() : 0.0f;
+        }
+
+        void SetCameraFov(uint32_t entityId, float fov)
+        {
+            auto *entity = FindEntity(entityId);
+            if (!entity)
+            {
+                return;
+            }
+
+            if (auto *cameraComponent = entity->GetComponent<scene::CameraComponent>(); cameraComponent && cameraComponent->GetCamera())
+            {
+                cameraComponent->GetCamera()->SetFOV(fov);
+            }
+        }
+
+        float GetLightIntensity(uint32_t entityId)
+        {
+            auto *entity = FindEntity(entityId);
+            if (!entity)
+            {
+                return 0.0f;
+            }
+
+            if (auto *lightComponent = entity->GetComponent<scene::LightComponent>())
+            {
+                return lightComponent->GetLight().intensity;
+            }
+
+            return 0.0f;
+        }
+
+        void SetLightIntensity(uint32_t entityId, float intensity)
+        {
+            auto *entity = FindEntity(entityId);
+            if (!entity)
+            {
+                return;
+            }
+
+            if (auto *lightComponent = entity->GetComponent<scene::LightComponent>())
+            {
+                lightComponent->SetIntensity(intensity);
+            }
+        }
+
+        NativeVector3 GetLightColor(uint32_t entityId)
+        {
+            auto *entity = FindEntity(entityId);
+            if (!entity)
+            {
+                return {};
+            }
+
+            if (auto *lightComponent = entity->GetComponent<scene::LightComponent>())
+            {
+                const auto color = lightComponent->GetLight().color;
+                return NativeVector3{color.x, color.y, color.z};
+            }
+
+            return {};
+        }
+
+        void SetLightColor(uint32_t entityId, NativeVector3 color)
+        {
+            auto *entity = FindEntity(entityId);
+            if (!entity)
+            {
+                return;
+            }
+
+            if (auto *lightComponent = entity->GetComponent<scene::LightComponent>())
+            {
+                lightComponent->SetColor(glm::vec3(color.x, color.y, color.z));
+            }
+        }
+
+        int32_t GetMeshStatic(uint32_t entityId)
+        {
+            auto *entity = FindEntity(entityId);
+            if (!entity)
+            {
+                return 0;
+            }
+
+            if (auto *meshComponent = entity->GetComponent<scene::MeshComponent>())
+            {
+                return meshComponent->IsStatic() ? 1 : 0;
+            }
+
+            return 0;
+        }
+
+        void SetMeshStatic(uint32_t entityId, int32_t isStatic)
+        {
+            auto *entity = FindEntity(entityId);
+            if (!entity)
+            {
+                return;
+            }
+
+            if (auto *meshComponent = entity->GetComponent<scene::MeshComponent>())
+            {
+                meshComponent->SetStatic(isStatic != 0);
+            }
         }
 #endif
     }
@@ -583,7 +862,11 @@ namespace PlutoGE::scripting
         invoke_on_update_fn invokeOnUpdate = nullptr;
         apply_field_data_fn applyFieldData = nullptr;
         set_entity_id_fn setEntityId = nullptr;
-        register_entity_transform_api_fn registerEntityTransformApi = nullptr;
+        register_game_object_api_fn registerGameObjectApi = nullptr;
+        register_component_api_fn registerComponentApi = nullptr;
+        register_camera_component_api_fn registerCameraComponentApi = nullptr;
+        register_light_component_api_fn registerLightComponentApi = nullptr;
+        register_mesh_component_api_fn registerMeshComponentApi = nullptr;
         std::filesystem::path bridgeAssemblyPath;
         std::filesystem::path runtimeConfigPath;
 #endif
@@ -723,7 +1006,11 @@ namespace PlutoGE::scripting
                    LoadManagedExport(impl, L"InvokeOnUpdate", impl.invokeOnUpdate) &&
                    LoadManagedExport(impl, L"ApplyFieldData", impl.applyFieldData) &&
                    LoadManagedExport(impl, L"SetEntityId", impl.setEntityId) &&
-                   LoadManagedExport(impl, L"RegisterEntityTransformApi", impl.registerEntityTransformApi);
+                   LoadManagedExport(impl, L"RegisterGameObjectApi", impl.registerGameObjectApi) &&
+                   LoadManagedExport(impl, L"RegisterComponentApi", impl.registerComponentApi) &&
+                   LoadManagedExport(impl, L"RegisterCameraComponentApi", impl.registerCameraComponentApi) &&
+                   LoadManagedExport(impl, L"RegisterLightComponentApi", impl.registerLightComponentApi) &&
+                   LoadManagedExport(impl, L"RegisterMeshComponentApi", impl.registerMeshComponentApi);
         }
 
         class ManagedScriptInstance final : public ScriptInstance
@@ -808,10 +1095,57 @@ namespace PlutoGE::scripting
             return false;
         }
 
-        if (!m_impl->registerEntityTransformApi ||
-            m_impl->registerEntityTransformApi(
-                reinterpret_cast<void *>(static_cast<get_entity_rotation_fn>(&GetEntityRotation)),
-                reinterpret_cast<void *>(static_cast<set_entity_rotation_fn>(&SetEntityRotation))) == 0)
+        if (!m_impl->registerGameObjectApi ||
+            m_impl->registerGameObjectApi(
+                reinterpret_cast<void *>(static_cast<get_entity_vector3_fn>(&GetEntityPosition)),
+                reinterpret_cast<void *>(static_cast<set_entity_vector3_fn>(&SetEntityPosition)),
+                reinterpret_cast<void *>(static_cast<get_entity_vector3_fn>(&GetEntityRotation)),
+                reinterpret_cast<void *>(static_cast<set_entity_vector3_fn>(&SetEntityRotation)),
+                reinterpret_cast<void *>(static_cast<get_entity_vector3_fn>(&GetEntityScale)),
+                reinterpret_cast<void *>(static_cast<set_entity_vector3_fn>(&SetEntityScale)),
+                reinterpret_cast<void *>(static_cast<get_entity_active_fn>(&GetEntityActive)),
+                reinterpret_cast<void *>(static_cast<set_entity_active_fn>(&SetEntityActive))) == 0)
+        {
+            m_impl->lastError = TakeManagedString(*m_impl, m_impl->getLastError);
+            return false;
+        }
+
+        if (!m_impl->registerComponentApi ||
+            m_impl->registerComponentApi(
+                reinterpret_cast<void *>(static_cast<has_entity_component_fn>(&HasEntityComponent)),
+                reinterpret_cast<void *>(static_cast<get_component_enabled_fn>(&GetComponentEnabled)),
+                reinterpret_cast<void *>(static_cast<set_component_enabled_fn>(&SetComponentEnabled))) == 0)
+        {
+            m_impl->lastError = TakeManagedString(*m_impl, m_impl->getLastError);
+            return false;
+        }
+
+        if (!m_impl->registerCameraComponentApi ||
+            m_impl->registerCameraComponentApi(
+                reinterpret_cast<void *>(static_cast<get_camera_main_fn>(&GetCameraMain)),
+                reinterpret_cast<void *>(static_cast<set_camera_main_fn>(&SetCameraMain)),
+                reinterpret_cast<void *>(static_cast<get_camera_fov_fn>(&GetCameraFov)),
+                reinterpret_cast<void *>(static_cast<set_camera_fov_fn>(&SetCameraFov))) == 0)
+        {
+            m_impl->lastError = TakeManagedString(*m_impl, m_impl->getLastError);
+            return false;
+        }
+
+        if (!m_impl->registerLightComponentApi ||
+            m_impl->registerLightComponentApi(
+                reinterpret_cast<void *>(static_cast<get_light_intensity_fn>(&GetLightIntensity)),
+                reinterpret_cast<void *>(static_cast<set_light_intensity_fn>(&SetLightIntensity)),
+                reinterpret_cast<void *>(static_cast<get_light_color_fn>(&GetLightColor)),
+                reinterpret_cast<void *>(static_cast<set_light_color_fn>(&SetLightColor))) == 0)
+        {
+            m_impl->lastError = TakeManagedString(*m_impl, m_impl->getLastError);
+            return false;
+        }
+
+        if (!m_impl->registerMeshComponentApi ||
+            m_impl->registerMeshComponentApi(
+                reinterpret_cast<void *>(static_cast<get_mesh_static_fn>(&GetMeshStatic)),
+                reinterpret_cast<void *>(static_cast<set_mesh_static_fn>(&SetMeshStatic))) == 0)
         {
             m_impl->lastError = TakeManagedString(*m_impl, m_impl->getLastError);
             return false;

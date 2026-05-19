@@ -36,6 +36,14 @@ internal static unsafe class ScriptBridge
         }
     }
 
+    internal enum NativeComponentType
+    {
+        Mesh = 0,
+        Camera = 1,
+        Light = 2,
+        Script = 3,
+    }
+
     private sealed class ScriptLoadContext : AssemblyLoadContext
     {
         private readonly AssemblyDependencyResolver _resolver;
@@ -73,8 +81,27 @@ internal static unsafe class ScriptBridge
     private static Assembly? _loadedAssembly;
     private static long _nextInstanceHandle;
     private static string _lastError = string.Empty;
+    private static delegate* unmanaged[Cdecl]<uint, NativeVector3> _getEntityPosition;
+    private static delegate* unmanaged[Cdecl]<uint, NativeVector3, void> _setEntityPosition;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3> _getEntityRotation;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3, void> _setEntityRotation;
+    private static delegate* unmanaged[Cdecl]<uint, NativeVector3> _getEntityScale;
+    private static delegate* unmanaged[Cdecl]<uint, NativeVector3, void> _setEntityScale;
+    private static delegate* unmanaged[Cdecl]<uint, int> _getEntityActive;
+    private static delegate* unmanaged[Cdecl]<uint, int, void> _setEntityActive;
+    private static delegate* unmanaged[Cdecl]<uint, int, int> _hasComponent;
+    private static delegate* unmanaged[Cdecl]<uint, int, int> _getComponentEnabled;
+    private static delegate* unmanaged[Cdecl]<uint, int, int, void> _setComponentEnabled;
+    private static delegate* unmanaged[Cdecl]<uint, int> _getCameraMain;
+    private static delegate* unmanaged[Cdecl]<uint, int, void> _setCameraMain;
+    private static delegate* unmanaged[Cdecl]<uint, float> _getCameraFov;
+    private static delegate* unmanaged[Cdecl]<uint, float, void> _setCameraFov;
+    private static delegate* unmanaged[Cdecl]<uint, float> _getLightIntensity;
+    private static delegate* unmanaged[Cdecl]<uint, float, void> _setLightIntensity;
+    private static delegate* unmanaged[Cdecl]<uint, NativeVector3> _getLightColor;
+    private static delegate* unmanaged[Cdecl]<uint, NativeVector3, void> _setLightColor;
+    private static delegate* unmanaged[Cdecl]<uint, int> _getMeshStatic;
+    private static delegate* unmanaged[Cdecl]<uint, int, void> _setMeshStatic;
 
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "LoadScriptAssembly")]
     public static int LoadScriptAssembly(nint assemblyPathPtr)
@@ -141,17 +168,116 @@ internal static unsafe class ScriptBridge
         }
     }
 
-    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterEntityTransformApi")]
-    public static int RegisterEntityTransformApi(delegate* unmanaged[Cdecl]<uint, NativeVector3> getEntityRotation, delegate* unmanaged[Cdecl]<uint, NativeVector3, void> setEntityRotation)
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterGameObjectApi")]
+    public static int RegisterGameObjectApi(
+        delegate* unmanaged[Cdecl]<uint, NativeVector3> getEntityPosition,
+        delegate* unmanaged[Cdecl]<uint, NativeVector3, void> setEntityPosition,
+        delegate* unmanaged[Cdecl]<uint, NativeVector3> getEntityRotation,
+        delegate* unmanaged[Cdecl]<uint, NativeVector3, void> setEntityRotation,
+        delegate* unmanaged[Cdecl]<uint, NativeVector3> getEntityScale,
+        delegate* unmanaged[Cdecl]<uint, NativeVector3, void> setEntityScale,
+        delegate* unmanaged[Cdecl]<uint, int> getEntityActive,
+        delegate* unmanaged[Cdecl]<uint, int, void> setEntityActive)
     {
-        if (getEntityRotation == null || setEntityRotation == null)
+        if (getEntityPosition == null ||
+            setEntityPosition == null ||
+            getEntityRotation == null ||
+            setEntityRotation == null ||
+            getEntityScale == null ||
+            setEntityScale == null ||
+            getEntityActive == null ||
+            setEntityActive == null)
         {
-            SetError("Managed transform API registration received a null function pointer.");
+            SetError("Managed game object API registration received a null function pointer.");
             return 0;
         }
 
+        _getEntityPosition = getEntityPosition;
+        _setEntityPosition = setEntityPosition;
         _getEntityRotation = getEntityRotation;
         _setEntityRotation = setEntityRotation;
+        _getEntityScale = getEntityScale;
+        _setEntityScale = setEntityScale;
+        _getEntityActive = getEntityActive;
+        _setEntityActive = setEntityActive;
+        _lastError = string.Empty;
+        return 1;
+    }
+
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterComponentApi")]
+    public static int RegisterComponentApi(
+        delegate* unmanaged[Cdecl]<uint, int, int> hasComponent,
+        delegate* unmanaged[Cdecl]<uint, int, int> getComponentEnabled,
+        delegate* unmanaged[Cdecl]<uint, int, int, void> setComponentEnabled)
+    {
+        if (hasComponent == null || getComponentEnabled == null || setComponentEnabled == null)
+        {
+            SetError("Managed component API registration received a null function pointer.");
+            return 0;
+        }
+
+        _hasComponent = hasComponent;
+        _getComponentEnabled = getComponentEnabled;
+        _setComponentEnabled = setComponentEnabled;
+        _lastError = string.Empty;
+        return 1;
+    }
+
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterCameraComponentApi")]
+    public static int RegisterCameraComponentApi(
+        delegate* unmanaged[Cdecl]<uint, int> getCameraMain,
+        delegate* unmanaged[Cdecl]<uint, int, void> setCameraMain,
+        delegate* unmanaged[Cdecl]<uint, float> getCameraFov,
+        delegate* unmanaged[Cdecl]<uint, float, void> setCameraFov)
+    {
+        if (getCameraMain == null || setCameraMain == null || getCameraFov == null || setCameraFov == null)
+        {
+            SetError("Managed camera component API registration received a null function pointer.");
+            return 0;
+        }
+
+        _getCameraMain = getCameraMain;
+        _setCameraMain = setCameraMain;
+        _getCameraFov = getCameraFov;
+        _setCameraFov = setCameraFov;
+        _lastError = string.Empty;
+        return 1;
+    }
+
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterLightComponentApi")]
+    public static int RegisterLightComponentApi(
+        delegate* unmanaged[Cdecl]<uint, float> getLightIntensity,
+        delegate* unmanaged[Cdecl]<uint, float, void> setLightIntensity,
+        delegate* unmanaged[Cdecl]<uint, NativeVector3> getLightColor,
+        delegate* unmanaged[Cdecl]<uint, NativeVector3, void> setLightColor)
+    {
+        if (getLightIntensity == null || setLightIntensity == null || getLightColor == null || setLightColor == null)
+        {
+            SetError("Managed light component API registration received a null function pointer.");
+            return 0;
+        }
+
+        _getLightIntensity = getLightIntensity;
+        _setLightIntensity = setLightIntensity;
+        _getLightColor = getLightColor;
+        _setLightColor = setLightColor;
+        _lastError = string.Empty;
+        return 1;
+    }
+
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterMeshComponentApi")]
+    public static int RegisterMeshComponentApi(
+        delegate* unmanaged[Cdecl]<uint, int> getMeshStatic,
+        delegate* unmanaged[Cdecl]<uint, int, void> setMeshStatic)
+    {
+        if (getMeshStatic == null || setMeshStatic == null)
+        {
+            SetError("Managed mesh component API registration received a null function pointer.");
+            return 0;
+        }
+
+        _getMeshStatic = getMeshStatic;
+        _setMeshStatic = setMeshStatic;
         _lastError = string.Empty;
         return 1;
     }
@@ -284,6 +410,21 @@ internal static unsafe class ScriptBridge
         return 1;
     }
 
+    internal static Vector3 GetEntityPosition(uint entityId)
+    {
+        return _getEntityPosition == null ? Vector3.Zero : _getEntityPosition(entityId).ToManaged();
+    }
+
+    internal static void SetEntityPosition(uint entityId, Vector3 position)
+    {
+        if (_setEntityPosition == null)
+        {
+            return;
+        }
+
+        _setEntityPosition(entityId, NativeVector3.FromManaged(position));
+    }
+
     internal static Vector3 GetEntityRotation(uint entityId)
     {
         return _getEntityRotation == null ? Vector3.Zero : _getEntityRotation(entityId).ToManaged();
@@ -297,6 +438,131 @@ internal static unsafe class ScriptBridge
         }
 
         _setEntityRotation(entityId, NativeVector3.FromManaged(rotation));
+    }
+
+    internal static Vector3 GetEntityScale(uint entityId)
+    {
+        return _getEntityScale == null ? Vector3.One : _getEntityScale(entityId).ToManaged();
+    }
+
+    internal static void SetEntityScale(uint entityId, Vector3 scale)
+    {
+        if (_setEntityScale == null)
+        {
+            return;
+        }
+
+        _setEntityScale(entityId, NativeVector3.FromManaged(scale));
+    }
+
+    internal static bool GetEntityActive(uint entityId)
+    {
+        return _getEntityActive != null && _getEntityActive(entityId) != 0;
+    }
+
+    internal static void SetEntityActive(uint entityId, bool active)
+    {
+        if (_setEntityActive == null)
+        {
+            return;
+        }
+
+        _setEntityActive(entityId, active ? 1 : 0);
+    }
+
+    internal static bool HasComponent(uint entityId, NativeComponentType componentType)
+    {
+        return _hasComponent != null && _hasComponent(entityId, (int)componentType) != 0;
+    }
+
+    internal static bool GetComponentEnabled(uint entityId, NativeComponentType componentType)
+    {
+        return _getComponentEnabled != null && _getComponentEnabled(entityId, (int)componentType) != 0;
+    }
+
+    internal static void SetComponentEnabled(uint entityId, NativeComponentType componentType, bool enabled)
+    {
+        if (_setComponentEnabled == null)
+        {
+            return;
+        }
+
+        _setComponentEnabled(entityId, (int)componentType, enabled ? 1 : 0);
+    }
+
+    internal static bool GetCameraMain(uint entityId)
+    {
+        return _getCameraMain != null && _getCameraMain(entityId) != 0;
+    }
+
+    internal static void SetCameraMain(uint entityId, bool isMain)
+    {
+        if (_setCameraMain == null)
+        {
+            return;
+        }
+
+        _setCameraMain(entityId, isMain ? 1 : 0);
+    }
+
+    internal static float GetCameraFov(uint entityId)
+    {
+        return _getCameraFov == null ? 0.0f : _getCameraFov(entityId);
+    }
+
+    internal static void SetCameraFov(uint entityId, float fov)
+    {
+        if (_setCameraFov == null)
+        {
+            return;
+        }
+
+        _setCameraFov(entityId, fov);
+    }
+
+    internal static float GetLightIntensity(uint entityId)
+    {
+        return _getLightIntensity == null ? 0.0f : _getLightIntensity(entityId);
+    }
+
+    internal static void SetLightIntensity(uint entityId, float intensity)
+    {
+        if (_setLightIntensity == null)
+        {
+            return;
+        }
+
+        _setLightIntensity(entityId, intensity);
+    }
+
+    internal static Vector3 GetLightColor(uint entityId)
+    {
+        return _getLightColor == null ? Vector3.Zero : _getLightColor(entityId).ToManaged();
+    }
+
+    internal static void SetLightColor(uint entityId, Vector3 color)
+    {
+        if (_setLightColor == null)
+        {
+            return;
+        }
+
+        _setLightColor(entityId, NativeVector3.FromManaged(color));
+    }
+
+    internal static bool GetMeshStatic(uint entityId)
+    {
+        return _getMeshStatic != null && _getMeshStatic(entityId) != 0;
+    }
+
+    internal static void SetMeshStatic(uint entityId, bool isStatic)
+    {
+        if (_setMeshStatic == null)
+        {
+            return;
+        }
+
+        _setMeshStatic(entityId, isStatic ? 1 : 0);
     }
 
     private static void ResetLoadedAssembly()
@@ -413,6 +679,26 @@ internal static unsafe class ScriptBridge
             return 8;
         }
 
+        if (type == typeof(GameObject))
+        {
+            return 9;
+        }
+
+        if (type == typeof(MeshComponent))
+        {
+            return 10;
+        }
+
+        if (type == typeof(CameraComponent))
+        {
+            return 11;
+        }
+
+        if (type == typeof(LightComponent))
+        {
+            return 12;
+        }
+
         return null;
     }
 
@@ -454,13 +740,19 @@ internal static unsafe class ScriptBridge
 
             var fieldName = tokens[1];
             var fieldType = int.Parse(tokens[2], CultureInfo.InvariantCulture);
-            var value = ParseValue(fieldType, tokens[3]);
-
             var member = scriptClass.Fields.FirstOrDefault(candidate => candidate.Name == fieldName);
             if (member is null)
             {
                 continue;
             }
+
+            var memberType = member.Member switch
+            {
+                FieldInfo fieldInfo => fieldInfo.FieldType,
+                PropertyInfo propertyInfo => propertyInfo.PropertyType,
+                _ => typeof(object),
+            };
+            var value = ParseValue(fieldType, tokens[3], memberType);
 
             if (member.Member is FieldInfo field)
             {
@@ -473,7 +765,7 @@ internal static unsafe class ScriptBridge
         }
     }
 
-    private static object? ParseValue(int fieldType, string value)
+    private static object? ParseValue(int fieldType, string value, Type memberType)
     {
         return fieldType switch
         {
@@ -485,6 +777,10 @@ internal static unsafe class ScriptBridge
             6 => ParseVector2(value),
             7 => ParseVector3(value),
             8 => uint.Parse(value, CultureInfo.InvariantCulture),
+            9 => CreateReferenceValue(memberType, value),
+            10 => CreateReferenceValue(memberType, value),
+            11 => CreateReferenceValue(memberType, value),
+            12 => CreateReferenceValue(memberType, value),
             _ => null,
         };
     }
@@ -501,7 +797,56 @@ internal static unsafe class ScriptBridge
             6 => SerializeVector2(value),
             7 => SerializeVector3(value),
             8 => Convert.ToUInt32(value, CultureInfo.InvariantCulture).ToString(CultureInfo.InvariantCulture),
+            9 => ExtractEntityId(value).ToString(CultureInfo.InvariantCulture),
+            10 => ExtractEntityId(value).ToString(CultureInfo.InvariantCulture),
+            11 => ExtractEntityId(value).ToString(CultureInfo.InvariantCulture),
+            12 => ExtractEntityId(value).ToString(CultureInfo.InvariantCulture),
             _ => string.Empty,
+        };
+    }
+
+    private static object? CreateReferenceValue(Type memberType, string value)
+    {
+        var entityId = uint.Parse(value, CultureInfo.InvariantCulture);
+        if (entityId == 0)
+        {
+            return null;
+        }
+
+        if (memberType == typeof(GameObject))
+        {
+            return new GameObject(entityId);
+        }
+
+        if (memberType == typeof(MeshComponent))
+        {
+            return new MeshComponent(entityId);
+        }
+
+        if (memberType == typeof(CameraComponent))
+        {
+            return new CameraComponent(entityId);
+        }
+
+        if (memberType == typeof(LightComponent))
+        {
+            return new LightComponent(entityId);
+        }
+
+        return entityId;
+    }
+
+    private static uint ExtractEntityId(object? value)
+    {
+        return value switch
+        {
+            null => 0u,
+            uint entityId => entityId,
+            GameObject gameObject => gameObject.EntityId,
+            MeshComponent meshComponent => meshComponent.EntityId,
+            CameraComponent cameraComponent => cameraComponent.EntityId,
+            LightComponent lightComponent => lightComponent.EntityId,
+            _ => 0u,
         };
     }
 

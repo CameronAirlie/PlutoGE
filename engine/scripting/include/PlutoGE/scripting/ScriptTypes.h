@@ -21,6 +21,10 @@ namespace PlutoGE::scripting
         Vector2,
         Vector3,
         EntityId,
+        GameObject,
+        MeshComponent,
+        CameraComponent,
+        LightComponent,
     };
 
     using ScriptFieldValue = std::variant<std::monostate, bool, int32_t, float, double, std::string, glm::vec2, glm::vec3, uint32_t>;

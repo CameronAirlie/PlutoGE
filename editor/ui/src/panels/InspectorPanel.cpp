@@ -3,7 +3,9 @@
 #include "PlutoGE/ui/EditorShell.h"
 #include "PlutoGE/scene/components/Component.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
+#include "PlutoGE/scene/components/ScriptComponent.h"
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/scripting/ScriptEngine.h"
 #include "PlutoGE/render/Camera.h"
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/postprocess/IPostProcessEffect.h"
@@ -32,6 +34,7 @@ namespace PlutoGE::ui
             "Mesh Component",
             "Camera Component",
             "Light Component",
+            "Script Component",
         };
 
         enum class AddableComponentType
@@ -39,6 +42,7 @@ namespace PlutoGE::ui
             Mesh = 0,
             Camera = 1,
             Light = 2,
+            Script = 3,
         };
 
         glm::vec3 ParseVec3Property(const std::string &value)
@@ -68,6 +72,10 @@ namespace PlutoGE::ui
             if (dynamic_cast<const scene::LightComponent *>(&component))
             {
                 return "Light Component";
+            }
+            if (dynamic_cast<const scene::ScriptComponent *>(&component))
+            {
+                return "Script Component";
             }
 
             return typeid(component).name();
@@ -154,6 +162,8 @@ namespace PlutoGE::ui
                 return !entity.HasComponent<scene::CameraComponent>();
             case AddableComponentType::Light:
                 return !entity.HasComponent<scene::LightComponent>();
+            case AddableComponentType::Script:
+                return !entity.HasComponent<scene::ScriptComponent>();
             default:
                 return false;
             }
@@ -188,6 +198,9 @@ namespace PlutoGE::ui
             }
             case AddableComponentType::Light:
                 entity.CreateComponent<scene::LightComponent>();
+                break;
+            case AddableComponentType::Script:
+                entity.CreateComponent<scene::ScriptComponent>(scene::ScriptComponentConfig{});
                 break;
             default:
                 break;
@@ -311,6 +324,27 @@ namespace PlutoGE::ui
             }
             break;
         }
+        case scene::PropertyType::Vec2:
+        {
+            glm::vec2 value{0.0f, 0.0f};
+            sscanf_s(property.value.c_str(), "%f,%f", &value.x, &value.y);
+            if (ImGui::DragFloat2(property.name.c_str(), &value.x))
+            {
+                property.value = std::to_string(value.x) + "," + std::to_string(value.y);
+                return true;
+            }
+            break;
+        }
+        case scene::PropertyType::Double:
+        {
+            double value = std::stod(property.value);
+            if (ImGui::InputDouble(property.name.c_str(), &value))
+            {
+                property.value = std::to_string(value);
+                return true;
+            }
+            break;
+        }
         case scene::PropertyType::Bool:
         {
             bool value = (property.value == "true");
@@ -350,6 +384,226 @@ namespace PlutoGE::ui
         }
 
         return false;
+    }
+
+    bool InspectorPanel::RenderScriptComponentEditor(scene::ScriptComponent &scriptComponent, scene::Entity &entity) const
+    {
+        auto &scriptEngine = core::Engine::GetInstance().GetScriptEngine();
+        const auto classNames = scriptEngine.GetClassNames();
+        const std::string currentSource = scriptComponent.GetSource();
+        const char *previewValue = currentSource.empty() ? "<None>" : currentSource.c_str();
+
+        bool changed = false;
+        if (ImGui::BeginCombo("Source", previewValue))
+        {
+            const bool isNoneSelected = currentSource.empty();
+            if (ImGui::Selectable("<None>", isNoneSelected))
+            {
+                scriptComponent.SetSource({});
+                changed = true;
+            }
+            if (isNoneSelected)
+            {
+                ImGui::SetItemDefaultFocus();
+            }
+
+            for (const auto &className : classNames)
+            {
+                const bool isSelected = className == currentSource;
+                if (ImGui::Selectable(className.c_str(), isSelected))
+                {
+                    scriptComponent.SetSource(className);
+                    changed = true;
+                }
+                if (isSelected)
+                {
+                    ImGui::SetItemDefaultFocus();
+                }
+            }
+
+            ImGui::EndCombo();
+        }
+
+        if (classNames.empty())
+        {
+            ImGui::TextDisabled("No script classes are loaded.");
+        }
+
+        int fieldIndex = 0;
+        for (const auto &field : scriptComponent.GetSerializedFields())
+        {
+            auto fieldValue = scriptComponent.GetFieldValue(field.name);
+            if (!fieldValue.has_value())
+            {
+                fieldValue = scripting::IsFieldValueCompatible(field.type, field.defaultValue)
+                                 ? field.defaultValue
+                                 : scripting::MakeDefaultFieldValue(field.type);
+            }
+
+            ImGui::PushID(fieldIndex++);
+            switch (field.type)
+            {
+            case scripting::ScriptFieldType::Boolean:
+            {
+                bool value = std::get<bool>(*fieldValue);
+                if (ImGui::Checkbox(field.name.c_str(), &value))
+                {
+                    changed |= scriptComponent.SetFieldValue(field.name, value);
+                }
+                break;
+            }
+            case scripting::ScriptFieldType::Int32:
+            {
+                int value = std::get<int32_t>(*fieldValue);
+                if (ImGui::DragInt(field.name.c_str(), &value))
+                {
+                    changed |= scriptComponent.SetFieldValue(field.name, static_cast<int32_t>(value));
+                }
+                break;
+            }
+            case scripting::ScriptFieldType::Float:
+            {
+                float value = std::get<float>(*fieldValue);
+                if (ImGui::DragFloat(field.name.c_str(), &value, 0.01f))
+                {
+                    changed |= scriptComponent.SetFieldValue(field.name, value);
+                }
+                break;
+            }
+            case scripting::ScriptFieldType::Double:
+            {
+                double value = std::get<double>(*fieldValue);
+                if (ImGui::InputDouble(field.name.c_str(), &value))
+                {
+                    changed |= scriptComponent.SetFieldValue(field.name, value);
+                }
+                break;
+            }
+            case scripting::ScriptFieldType::String:
+            {
+                char buffer[256];
+                const auto &value = std::get<std::string>(*fieldValue);
+                strncpy_s(buffer, sizeof(buffer), value.c_str(), _TRUNCATE);
+                if (ImGui::InputText(field.name.c_str(), buffer, sizeof(buffer)))
+                {
+                    changed |= scriptComponent.SetFieldValue(field.name, std::string(buffer));
+                }
+                break;
+            }
+            case scripting::ScriptFieldType::Vector2:
+            {
+                auto value = std::get<glm::vec2>(*fieldValue);
+                if (ImGui::DragFloat2(field.name.c_str(), &value.x, 0.01f))
+                {
+                    changed |= scriptComponent.SetFieldValue(field.name, value);
+                }
+                break;
+            }
+            case scripting::ScriptFieldType::Vector3:
+            {
+                auto value = std::get<glm::vec3>(*fieldValue);
+                if (ImGui::DragFloat3(field.name.c_str(), &value.x, 0.01f))
+                {
+                    changed |= scriptComponent.SetFieldValue(field.name, value);
+                }
+                break;
+            }
+            case scripting::ScriptFieldType::EntityId:
+            case scripting::ScriptFieldType::GameObject:
+            case scripting::ScriptFieldType::MeshComponent:
+            case scripting::ScriptFieldType::CameraComponent:
+            case scripting::ScriptFieldType::LightComponent:
+            {
+                uint32_t selectedEntityId = std::get<uint32_t>(*fieldValue);
+                scene::Scene *scene = entity.GetScene();
+                std::vector<scene::Entity *> entities;
+                if (scene)
+                {
+                    for (auto *rootEntity : scene->GetRootEntities())
+                    {
+                        CollectEntitiesRecursive(rootEntity, entities);
+                    }
+                }
+
+                auto isCompatibleEntity = [field](const scene::Entity &candidate) -> bool
+                {
+                    switch (field.type)
+                    {
+                    case scripting::ScriptFieldType::MeshComponent:
+                        return candidate.HasComponent<scene::MeshComponent>();
+                    case scripting::ScriptFieldType::CameraComponent:
+                        return candidate.HasComponent<scene::CameraComponent>();
+                    case scripting::ScriptFieldType::LightComponent:
+                        return candidate.HasComponent<scene::LightComponent>();
+                    case scripting::ScriptFieldType::EntityId:
+                    case scripting::ScriptFieldType::GameObject:
+                    default:
+                        return true;
+                    }
+                };
+
+                std::string previewLabel = "<None>";
+                if (scene)
+                {
+                    if (auto *selectedEntity = scene->FindEntityByID(selectedEntityId))
+                    {
+                        previewLabel = selectedEntity->GetName().empty()
+                                           ? ("Entity " + std::to_string(selectedEntityId))
+                                           : selectedEntity->GetName();
+                    }
+                }
+
+                if (ImGui::BeginCombo(field.name.c_str(), previewLabel.c_str()))
+                {
+                    const bool isNoneSelected = selectedEntityId == 0;
+                    if (ImGui::Selectable("<None>", isNoneSelected))
+                    {
+                        changed |= scriptComponent.SetFieldValue(field.name, uint32_t{0});
+                    }
+                    if (isNoneSelected)
+                    {
+                        ImGui::SetItemDefaultFocus();
+                    }
+
+                    for (auto *candidate : entities)
+                    {
+                        if (!candidate || !isCompatibleEntity(*candidate))
+                        {
+                            continue;
+                        }
+
+                        const bool isSelected = candidate->GetID() == selectedEntityId;
+                        std::string label = candidate->GetName().empty()
+                                                ? ("Entity " + std::to_string(candidate->GetID()))
+                                                : (candidate->GetName() + "##" + std::to_string(candidate->GetID()));
+                        if (ImGui::Selectable(label.c_str(), isSelected))
+                        {
+                            changed |= scriptComponent.SetFieldValue(field.name, candidate->GetID());
+                        }
+                        if (isSelected)
+                        {
+                            ImGui::SetItemDefaultFocus();
+                        }
+                    }
+
+                    ImGui::EndCombo();
+                }
+                break;
+            }
+            case scripting::ScriptFieldType::None:
+            default:
+                ImGui::TextDisabled("Unsupported field: %s", field.name.c_str());
+                break;
+            }
+            ImGui::PopID();
+        }
+
+        if (!currentSource.empty() && scriptComponent.GetSerializedFields().empty())
+        {
+            ImGui::TextDisabled("Selected script exposes no serialized fields.");
+        }
+
+        return changed;
     }
 
     void InspectorPanel::RenderCameraPostProcessEditor(scene::CameraComponent &cameraComponent) const
@@ -917,6 +1171,10 @@ namespace PlutoGE::ui
                             }
 
                             RenderCameraPostProcessEditor(*cameraComponent);
+                        }
+                        else if (auto *scriptComponent = dynamic_cast<scene::ScriptComponent *>(componentPtr))
+                        {
+                            RenderScriptComponentEditor(*scriptComponent, *entity);
                         }
                         else if (dynamic_cast<scene::LightComponent *>(componentPtr))
                         {

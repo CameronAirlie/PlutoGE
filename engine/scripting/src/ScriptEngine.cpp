@@ -94,6 +94,10 @@ namespace PlutoGE::scripting
         case ScriptFieldType::Vector3:
             return std::holds_alternative<glm::vec3>(value);
         case ScriptFieldType::EntityId:
+        case ScriptFieldType::GameObject:
+        case ScriptFieldType::MeshComponent:
+        case ScriptFieldType::CameraComponent:
+        case ScriptFieldType::LightComponent:
             return std::holds_alternative<uint32_t>(value);
         case ScriptFieldType::None:
         default:
@@ -120,6 +124,10 @@ namespace PlutoGE::scripting
         case ScriptFieldType::Vector3:
             return glm::vec3{0.0f, 0.0f, 0.0f};
         case ScriptFieldType::EntityId:
+        case ScriptFieldType::GameObject:
+        case ScriptFieldType::MeshComponent:
+        case ScriptFieldType::CameraComponent:
+        case ScriptFieldType::LightComponent:
             return uint32_t{0};
         case ScriptFieldType::None:
         default:
@@ -244,6 +252,21 @@ namespace PlutoGE::scripting
         }
 
         return &iterator->second.definition;
+    }
+
+    std::vector<std::string> ScriptEngine::GetClassNames() const
+    {
+        std::vector<std::string> classNames;
+        classNames.reserve(m_classes.size());
+
+        for (const auto &[fullName, registeredClass] : m_classes)
+        {
+            (void)registeredClass;
+            classNames.push_back(fullName);
+        }
+
+        std::sort(classNames.begin(), classNames.end());
+        return classNames;
     }
 
     std::vector<ScriptFieldDefinition> ScriptEngine::GetSerializedFields(std::string_view fullName) const

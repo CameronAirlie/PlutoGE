@@ -25,6 +25,9 @@ namespace PlutoGE::scene
         Bool,
         Color,
         Enum,
+        Vec2,
+        Double,
+        Entity,
     };
 
     struct Property

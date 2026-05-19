@@ -18,24 +18,33 @@ namespace PlutoGE::scene
 {
     struct ScriptComponentConfig
     {
+        std::string source;
         std::string scriptClass;
         std::unordered_map<std::string, scripting::ScriptFieldValue> fieldValues;
     };
 
-    class ScriptComponent final : public Component
+    class ScriptComponent final : public TypedComponent<ScriptComponent>
     {
     public:
         explicit ScriptComponent(const ScriptComponentConfig &config = {});
         ~ScriptComponent() override = default;
 
+        void Start();
+        void Stop();
         void Update(float deltaTime) override;
+        std::vector<Property> Serialize() const override;
+        void Deserialize(const std::vector<Property> &properties) override;
 
+        void SetSource(const std::string &source);
+        [[nodiscard]] const std::string &GetSource() const { return m_scriptClass; }
         void SetScriptClass(const std::string &scriptClass);
         [[nodiscard]] const std::string &GetScriptClass() const { return m_scriptClass; }
 
         [[nodiscard]] bool SetFieldValue(const std::string &fieldName, const scripting::ScriptFieldValue &value);
         [[nodiscard]] std::optional<scripting::ScriptFieldValue> GetFieldValue(const std::string &fieldName) const;
+        [[nodiscard]] const std::unordered_map<std::string, scripting::ScriptFieldValue> &GetFieldValues() const { return m_fieldValues; }
         [[nodiscard]] std::vector<scripting::ScriptFieldDefinition> GetSerializedFields() const;
+        [[nodiscard]] bool IsStarted() const { return m_started; }
 
         void Reload();
 

@@ -6,6 +6,8 @@
 namespace PlutoGE::scene
 {
     class CameraComponent;
+    class ScriptComponent;
+    class Entity;
     struct Property;
     class Scene;
 }
@@ -28,5 +30,6 @@ namespace PlutoGE::ui
         void RenderEditorCameraInspector(EditorShell::EditorViewportCamera &camera) const;
         void RenderEditorCameraPostProcessEditor(EditorShell::EditorViewportCamera &camera) const;
         void RenderSceneEnvironmentInspector(scene::Scene &scene) const;
+        bool RenderScriptComponentEditor(scene::ScriptComponent &scriptComponent, scene::Entity &entity) const;
     };
 }

@@ -6,6 +6,7 @@ add_library(PlutoGEScene
     src/components/MeshComponent.cpp
     src/components/CameraComponent.cpp
     src/components/LightComponent.cpp
+    src/components/ScriptComponent.cpp
 )
 
 add_library(PlutoGE::Scene ALIAS PlutoGEScene)

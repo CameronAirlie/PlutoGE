@@ -44,6 +44,7 @@ namespace PlutoGE::scripting
 
         [[nodiscard]] bool HasClass(std::string_view fullName) const;
         [[nodiscard]] const ScriptClassDefinition *FindClass(std::string_view fullName) const;
+        [[nodiscard]] std::vector<std::string> GetClassNames() const;
         [[nodiscard]] std::vector<ScriptFieldDefinition> GetSerializedFields(std::string_view fullName) const;
         [[nodiscard]] std::unique_ptr<ScriptInstance> CreateInstance(std::string_view fullName) const;
         [[nodiscard]] const std::filesystem::path &GetAssemblyPath() const { return m_assemblyPath; }

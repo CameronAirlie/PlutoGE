@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <optional>
@@ -53,6 +54,7 @@ namespace PlutoGE::scripting
         using load_assembly_and_get_function_pointer_fn = int(__cdecl *)(const char_t *, const char_t *, const char_t *, const char_t *, void *, void **);
 
         using load_script_assembly_fn = int(__cdecl *)(const char *);
+        using unload_script_assembly_fn = int(__cdecl *)();
         using get_marshaled_string_fn = const char *(__cdecl *)();
         using free_marshaled_string_fn = void(__cdecl *)(const char *);
         using create_script_instance_fn = int64_t(__cdecl *)(const char *, uint32_t);
@@ -94,6 +96,11 @@ namespace PlutoGE::scripting
         constexpr std::wstring_view kScriptBridgeType = L"PlutoGE.ScriptCore.Native.ScriptBridge, PlutoGE.ScriptCore";
         constexpr std::wstring_view kScriptCoreAssembly = L"PlutoGE.ScriptCore.dll";
         constexpr std::wstring_view kScriptCoreRuntimeConfig = L"PlutoGE.ScriptCore.runtimeconfig.json";
+
+        const wchar_t *GetUnmanagedCallersOnlyMethodMarker()
+        {
+            return reinterpret_cast<const wchar_t *>(static_cast<std::intptr_t>(-1));
+        }
 
         enum class ManagedComponentKind : int32_t
         {
@@ -204,15 +211,22 @@ namespace PlutoGE::scripting
         std::vector<std::filesystem::path> BuildScriptCoreCandidates(const std::filesystem::path &assemblyPath)
         {
             std::vector<std::filesystem::path> candidates;
-            candidates.push_back(assemblyPath.parent_path());
 
             if (const auto envOverride = GetEnvironmentVariableText(L"PLUTOGE_SCRIPTCORE_DIR"))
             {
                 candidates.emplace_back(*envOverride);
             }
 
+            std::array<wchar_t, MAX_PATH> modulePath{};
+            const DWORD modulePathLength = GetModuleFileNameW(nullptr, modulePath.data(), static_cast<DWORD>(modulePath.size()));
             auto current = std::filesystem::current_path();
-            candidates.push_back(current);
+            if (modulePathLength > 0 && modulePathLength < modulePath.size())
+            {
+                current = std::filesystem::path(modulePath.data()).parent_path().lexically_normal();
+                candidates.push_back(current);
+            }
+
+            candidates.push_back(std::filesystem::current_path());
 
             while (!current.empty())
             {
@@ -226,6 +240,8 @@ namespace PlutoGE::scripting
 
                 current = current.parent_path();
             }
+
+            candidates.push_back(assemblyPath.parent_path());
 
             return candidates;
         }
@@ -853,6 +869,7 @@ namespace PlutoGE::scripting
         load_assembly_and_get_function_pointer_fn loadAssemblyAndGetFunctionPointer = nullptr;
 
         load_script_assembly_fn loadScriptAssembly = nullptr;
+        unload_script_assembly_fn unloadScriptAssembly = nullptr;
         get_marshaled_string_fn getScriptMetadata = nullptr;
         free_marshaled_string_fn freeMarshaledString = nullptr;
         get_marshaled_string_fn getLastError = nullptr;
@@ -869,6 +886,8 @@ namespace PlutoGE::scripting
         register_mesh_component_api_fn registerMeshComponentApi = nullptr;
         std::filesystem::path bridgeAssemblyPath;
         std::filesystem::path runtimeConfigPath;
+        std::filesystem::path shadowManagedDirectory;
+        std::filesystem::path shadowAssemblyPath;
 #endif
 
         std::filesystem::path loadedAssemblyPath;
@@ -898,6 +917,98 @@ namespace PlutoGE::scripting
             return result;
         }
 
+        void CleanupShadowCopy(HostFxrScriptRuntime::Impl &impl)
+        {
+            if (impl.shadowManagedDirectory.empty())
+            {
+                return;
+            }
+
+            std::error_code errorCode;
+            std::filesystem::remove_all(impl.shadowManagedDirectory, errorCode);
+            impl.shadowManagedDirectory.clear();
+            impl.shadowAssemblyPath.clear();
+        }
+
+        bool PrepareShadowCopy(HostFxrScriptRuntime::Impl &impl,
+                               const std::filesystem::path &assemblyPath,
+                               std::filesystem::path &shadowAssemblyPath)
+        {
+            CleanupShadowCopy(impl);
+
+            std::error_code errorCode;
+            const auto tempRoot = std::filesystem::temp_directory_path(errorCode);
+            if (errorCode)
+            {
+                impl.lastError = "Failed to locate a temporary directory for managed script shadow copy.";
+                return false;
+            }
+
+            const auto sourceDirectory = assemblyPath.parent_path();
+            const auto uniqueDirectoryName = assemblyPath.stem().string() + "-" + std::to_string(GetCurrentProcessId()) + "-" + std::to_string(GetTickCount64());
+            const auto shadowDirectory = (tempRoot / "PlutoGE" / "ManagedShadow" / uniqueDirectoryName).lexically_normal();
+
+            std::filesystem::create_directories(shadowDirectory, errorCode);
+            if (errorCode)
+            {
+                impl.lastError = "Failed to create managed script shadow directory: " + shadowDirectory.string();
+                return false;
+            }
+
+            for (std::filesystem::recursive_directory_iterator iterator(sourceDirectory, std::filesystem::directory_options::skip_permission_denied, errorCode), end;
+                 iterator != end;
+                 iterator.increment(errorCode))
+            {
+                if (errorCode)
+                {
+                    impl.lastError = "Failed to enumerate managed script outputs for shadow copy.";
+                    CleanupShadowCopy(impl);
+                    return false;
+                }
+
+                const auto relativePath = std::filesystem::relative(iterator->path(), sourceDirectory, errorCode);
+                if (errorCode)
+                {
+                    impl.lastError = "Failed to resolve managed shadow-copy path.";
+                    CleanupShadowCopy(impl);
+                    return false;
+                }
+
+                const auto destinationPath = (shadowDirectory / relativePath).lexically_normal();
+                if (iterator->is_directory())
+                {
+                    std::filesystem::create_directories(destinationPath, errorCode);
+                }
+                else if (iterator->is_regular_file())
+                {
+                    std::filesystem::create_directories(destinationPath.parent_path(), errorCode);
+                    if (!errorCode)
+                    {
+                        std::filesystem::copy_file(iterator->path(), destinationPath, std::filesystem::copy_options::overwrite_existing, errorCode);
+                    }
+                }
+
+                if (errorCode)
+                {
+                    impl.lastError = "Failed to copy managed script outputs into shadow directory.";
+                    CleanupShadowCopy(impl);
+                    return false;
+                }
+            }
+
+            shadowAssemblyPath = (shadowDirectory / assemblyPath.filename()).lexically_normal();
+            if (!std::filesystem::exists(shadowAssemblyPath))
+            {
+                impl.lastError = "Managed shadow copy is missing the script assembly: " + shadowAssemblyPath.string();
+                CleanupShadowCopy(impl);
+                return false;
+            }
+
+            impl.shadowManagedDirectory = shadowDirectory;
+            impl.shadowAssemblyPath = shadowAssemblyPath;
+            return true;
+        }
+
         template <typename DelegateType>
         bool LoadManagedExport(HostFxrScriptRuntime::Impl &impl, const wchar_t *methodName, DelegateType &delegate)
         {
@@ -906,12 +1017,15 @@ namespace PlutoGE::scripting
                 impl.bridgeAssemblyPath.c_str(),
                 kScriptBridgeType.data(),
                 methodName,
-                nullptr,
+                GetUnmanagedCallersOnlyMethodMarker(),
                 nullptr,
                 &functionPointer);
 
             if (result != 0 || !functionPointer)
             {
+                impl.lastError = "Failed to load managed bridge export '" + WideToUtf8(methodName) +
+                                 "' from " + WideToUtf8(impl.bridgeAssemblyPath.wstring()) +
+                                 " (hostfxr result " + std::to_string(result) + ")";
                 return false;
             }
 
@@ -978,9 +1092,15 @@ namespace PlutoGE::scripting
 
             hostfxr_handle hostContext = nullptr;
             const int initializeResult = impl.initializeForRuntimeConfig(runtimeConfigPath.c_str(), nullptr, &hostContext);
-            if (initializeResult != 0 || !hostContext)
+            if (initializeResult < 0)
             {
-                impl.lastError = "hostfxr failed to initialize the managed runtime";
+                impl.lastError = "hostfxr failed to initialize the managed runtime (status " + std::to_string(initializeResult) + ")";
+                return false;
+            }
+
+            if (!hostContext)
+            {
+                impl.lastError = "hostfxr initialized without a host context (status " + std::to_string(initializeResult) + ")";
                 return false;
             }
 
@@ -996,21 +1116,35 @@ namespace PlutoGE::scripting
 
             impl.loadAssemblyAndGetFunctionPointer = reinterpret_cast<load_assembly_and_get_function_pointer_fn>(loadAssemblyDelegate);
 
-            return LoadManagedExport(impl, L"LoadScriptAssembly", impl.loadScriptAssembly) &&
-                   LoadManagedExport(impl, L"GetScriptMetadata", impl.getScriptMetadata) &&
-                   LoadManagedExport(impl, L"FreeNativeString", impl.freeMarshaledString) &&
-                   LoadManagedExport(impl, L"GetLastError", impl.getLastError) &&
-                   LoadManagedExport(impl, L"CreateScriptInstance", impl.createScriptInstance) &&
-                   LoadManagedExport(impl, L"DestroyScriptInstance", impl.destroyScriptInstance) &&
-                   LoadManagedExport(impl, L"InvokeOnCreate", impl.invokeOnCreate) &&
-                   LoadManagedExport(impl, L"InvokeOnUpdate", impl.invokeOnUpdate) &&
-                   LoadManagedExport(impl, L"ApplyFieldData", impl.applyFieldData) &&
-                   LoadManagedExport(impl, L"SetEntityId", impl.setEntityId) &&
-                   LoadManagedExport(impl, L"RegisterGameObjectApi", impl.registerGameObjectApi) &&
-                   LoadManagedExport(impl, L"RegisterComponentApi", impl.registerComponentApi) &&
-                   LoadManagedExport(impl, L"RegisterCameraComponentApi", impl.registerCameraComponentApi) &&
-                   LoadManagedExport(impl, L"RegisterLightComponentApi", impl.registerLightComponentApi) &&
-                   LoadManagedExport(impl, L"RegisterMeshComponentApi", impl.registerMeshComponentApi);
+            const bool requiredExportsLoaded =
+                LoadManagedExport(impl, L"LoadScriptAssembly", impl.loadScriptAssembly) &&
+                LoadManagedExport(impl, L"GetScriptMetadata", impl.getScriptMetadata) &&
+                LoadManagedExport(impl, L"FreeNativeString", impl.freeMarshaledString) &&
+                LoadManagedExport(impl, L"GetLastError", impl.getLastError) &&
+                LoadManagedExport(impl, L"CreateScriptInstance", impl.createScriptInstance) &&
+                LoadManagedExport(impl, L"DestroyScriptInstance", impl.destroyScriptInstance) &&
+                LoadManagedExport(impl, L"InvokeOnCreate", impl.invokeOnCreate) &&
+                LoadManagedExport(impl, L"InvokeOnUpdate", impl.invokeOnUpdate) &&
+                LoadManagedExport(impl, L"ApplyFieldData", impl.applyFieldData) &&
+                LoadManagedExport(impl, L"SetEntityId", impl.setEntityId) &&
+                LoadManagedExport(impl, L"RegisterGameObjectApi", impl.registerGameObjectApi) &&
+                LoadManagedExport(impl, L"RegisterComponentApi", impl.registerComponentApi) &&
+                LoadManagedExport(impl, L"RegisterCameraComponentApi", impl.registerCameraComponentApi) &&
+                LoadManagedExport(impl, L"RegisterLightComponentApi", impl.registerLightComponentApi) &&
+                LoadManagedExport(impl, L"RegisterMeshComponentApi", impl.registerMeshComponentApi);
+
+            if (!requiredExportsLoaded)
+            {
+                return false;
+            }
+
+            if (!LoadManagedExport(impl, L"UnloadScriptAssembly", impl.unloadScriptAssembly))
+            {
+                impl.unloadScriptAssembly = nullptr;
+                impl.lastError.clear();
+            }
+
+            return true;
         }
 
         class ManagedScriptInstance final : public ScriptInstance
@@ -1081,7 +1215,20 @@ namespace PlutoGE::scripting
     {
     }
 
-    HostFxrScriptRuntime::~HostFxrScriptRuntime() = default;
+    HostFxrScriptRuntime::~HostFxrScriptRuntime()
+    {
+#ifdef _WIN32
+        if (m_impl && m_impl->unloadScriptAssembly && m_impl->loaded)
+        {
+            m_impl->unloadScriptAssembly();
+        }
+
+        if (m_impl)
+        {
+            CleanupShadowCopy(*m_impl);
+        }
+#endif
+    }
 
     bool HostFxrScriptRuntime::LoadAssembly(const std::filesystem::path &assemblyPath)
     {
@@ -1090,7 +1237,24 @@ namespace PlutoGE::scripting
         m_impl->loaded = false;
         m_impl->lastError.clear();
 
+        auto setManagedBridgeFailure = [&](std::string_view stepName)
+        {
+            m_impl->lastError = TakeManagedString(*m_impl, m_impl->getLastError);
+            if (!m_impl->lastError.empty())
+            {
+                return;
+            }
+
+            m_impl->lastError = "Managed bridge call failed at step '" + std::string(stepName) + "'.";
+        };
+
         if (!EnsureManagedBridgeLoaded(*m_impl, assemblyPath))
+        {
+            return false;
+        }
+
+        std::filesystem::path shadowAssemblyPath;
+        if (!PrepareShadowCopy(*m_impl, std::filesystem::absolute(assemblyPath), shadowAssemblyPath))
         {
             return false;
         }
@@ -1106,7 +1270,7 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(static_cast<get_entity_active_fn>(&GetEntityActive)),
                 reinterpret_cast<void *>(static_cast<set_entity_active_fn>(&SetEntityActive))) == 0)
         {
-            m_impl->lastError = TakeManagedString(*m_impl, m_impl->getLastError);
+            setManagedBridgeFailure("RegisterGameObjectApi");
             return false;
         }
 
@@ -1116,7 +1280,7 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(static_cast<get_component_enabled_fn>(&GetComponentEnabled)),
                 reinterpret_cast<void *>(static_cast<set_component_enabled_fn>(&SetComponentEnabled))) == 0)
         {
-            m_impl->lastError = TakeManagedString(*m_impl, m_impl->getLastError);
+            setManagedBridgeFailure("RegisterComponentApi");
             return false;
         }
 
@@ -1127,7 +1291,7 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(static_cast<get_camera_fov_fn>(&GetCameraFov)),
                 reinterpret_cast<void *>(static_cast<set_camera_fov_fn>(&SetCameraFov))) == 0)
         {
-            m_impl->lastError = TakeManagedString(*m_impl, m_impl->getLastError);
+            setManagedBridgeFailure("RegisterCameraComponentApi");
             return false;
         }
 
@@ -1138,7 +1302,7 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(static_cast<get_light_color_fn>(&GetLightColor)),
                 reinterpret_cast<void *>(static_cast<set_light_color_fn>(&SetLightColor))) == 0)
         {
-            m_impl->lastError = TakeManagedString(*m_impl, m_impl->getLastError);
+            setManagedBridgeFailure("RegisterLightComponentApi");
             return false;
         }
 
@@ -1147,14 +1311,14 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(static_cast<get_mesh_static_fn>(&GetMeshStatic)),
                 reinterpret_cast<void *>(static_cast<set_mesh_static_fn>(&SetMeshStatic))) == 0)
         {
-            m_impl->lastError = TakeManagedString(*m_impl, m_impl->getLastError);
+            setManagedBridgeFailure("RegisterMeshComponentApi");
             return false;
         }
 
-        const std::string assemblyPathUtf8 = WideToUtf8(std::filesystem::absolute(assemblyPath).wstring());
+        const std::string assemblyPathUtf8 = WideToUtf8(shadowAssemblyPath.wstring());
         if (!m_impl->loadScriptAssembly || m_impl->loadScriptAssembly(assemblyPathUtf8.c_str()) == 0)
         {
-            m_impl->lastError = TakeManagedString(*m_impl, m_impl->getLastError);
+            setManagedBridgeFailure("LoadScriptAssembly");
             return false;
         }
 
@@ -1176,6 +1340,11 @@ namespace PlutoGE::scripting
     std::vector<ScriptClassDefinition> HostFxrScriptRuntime::GetScriptClasses() const
     {
         return m_impl->scriptClasses;
+    }
+
+    std::string HostFxrScriptRuntime::GetLastError() const
+    {
+        return m_impl->lastError;
     }
 
     std::unique_ptr<ScriptInstance> HostFxrScriptRuntime::CreateInstance(const ScriptClassDefinition &scriptClass) const

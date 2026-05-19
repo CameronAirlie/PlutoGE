@@ -296,6 +296,11 @@ namespace PlutoGE::assets
                     continue;
                 }
 
+                if (sourcePath.extension() == ".cs")
+                {
+                    continue;
+                }
+
                 const auto normalizedSourcePath = NormalizeAbsolutePath(sourcePath);
                 const auto normalizedDestinationPath = NormalizeAbsolutePath(destinationPath);
                 if (normalizedSourcePath == normalizedDestinationPath)
@@ -757,6 +762,7 @@ namespace PlutoGE::assets
         }
 
         Project exportedProject(GetRuntimeManifestPathForExecutable(normalizedDestinationExecutablePath), project.GetManifest());
+        exportedProject.RefreshAssetRegistry();
         if (!exportedProject.Save(errorMessage))
         {
             return false;

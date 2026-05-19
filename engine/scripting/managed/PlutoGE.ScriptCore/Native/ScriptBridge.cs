@@ -327,6 +327,25 @@ internal static unsafe class ScriptBridge
         Instances.TryRemove(handle, out _);
     }
 
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "UnloadScriptAssembly")]
+    public static int UnloadScriptAssembly()
+    {
+        try
+        {
+            lock (Gate)
+            {
+                ResetLoadedAssembly();
+                _lastError = string.Empty;
+                return 1;
+            }
+        }
+        catch (Exception exception)
+        {
+            SetError(exception.ToString());
+            return 0;
+        }
+    }
+
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "InvokeOnCreate")]
     public static int InvokeOnCreate(long handle)
     {

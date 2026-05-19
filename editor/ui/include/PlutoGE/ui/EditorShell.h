@@ -128,6 +128,11 @@ namespace PlutoGE::ui
         [[nodiscard]] EditorViewportCamera &GetEditorCamera() { return m_editorCamera; }
         [[nodiscard]] assets::Project *GetProject() { return m_project.get(); }
         [[nodiscard]] const assets::Project *GetProject() const { return m_project.get(); }
+        [[nodiscard]] bool IsRuntimeExportProject() const;
+        bool CreateScriptAsset(std::string_view requestedName,
+                               std::string *createdClassName = nullptr,
+                               std::string *errorMessage = nullptr);
+        bool BuildProjectScripts();
 
     private:
         EditorShell() = default;
@@ -137,6 +142,11 @@ namespace PlutoGE::ui
         void ApplyProjectContext();
         std::filesystem::path ResolveProjectScriptAssemblyPath() const;
         bool ReloadProjectScriptAssembly(std::string *errorMessage = nullptr);
+        std::filesystem::path GetProjectScriptSourceDirectory() const;
+        std::filesystem::path GetProjectScriptProjectPath() const;
+        std::filesystem::path GetProjectScriptAssemblyOutputPath() const;
+        bool EnsureProjectScriptBuildScaffold(std::string *errorMessage = nullptr);
+        bool SaveProjectManifest(std::string *errorMessage = nullptr);
         void UpdateWindowTitle();
         void ResetSelection();
         void SetScene(std::unique_ptr<scene::Scene> scene);

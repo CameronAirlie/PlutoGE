@@ -22,6 +22,7 @@ namespace PlutoGE::scripting
             bool LoadAssembly(const std::filesystem::path &assemblyPath) override
             {
                 m_loadedAssembly = assemblyPath;
+                m_lastError = "Managed scripting runtime is unavailable.";
                 return false;
             }
 
@@ -41,8 +42,14 @@ namespace PlutoGE::scripting
                 return nullptr;
             }
 
+            [[nodiscard]] std::string GetLastError() const override
+            {
+                return m_lastError;
+            }
+
         private:
             std::filesystem::path m_loadedAssembly;
+            std::string m_lastError;
         };
 
     }
@@ -188,6 +195,8 @@ namespace PlutoGE::scripting
         }
 
         m_assemblyPath.clear();
+        m_lastError.clear();
+        m_runtime.reset();
         m_initialized = false;
     }
 
@@ -200,15 +209,18 @@ namespace PlutoGE::scripting
     {
         if (!m_runtime)
         {
+            m_lastError = "Managed scripting runtime is unavailable.";
             return false;
         }
 
         if (!m_runtime->LoadAssembly(assemblyPath))
         {
+            m_lastError = m_runtime->GetLastError();
             return false;
         }
 
         m_assemblyPath = assemblyPath;
+        m_lastError.clear();
         for (auto iterator = m_classes.begin(); iterator != m_classes.end();)
         {
             if (iterator->second.managed)

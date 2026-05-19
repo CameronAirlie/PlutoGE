@@ -22,8 +22,10 @@
 
 #include <iostream>
 #include <chrono>
+#include <cctype>
 #include <filesystem>
 #include <cstring>
+#include <fstream>
 #include <memory>
 #include <array>
 
@@ -48,6 +50,9 @@ namespace PlutoGE::ui
         constexpr const char *kExecutableFileFilter = "Executable\0*.exe\0All Files\0*.*\0";
         constexpr const char *kDefaultProjectFileName = "UntitledProject.plutoproject";
         constexpr const char *kDefaultProjectSceneRelativePath = "Scenes/Main.plutoscene";
+        constexpr std::string_view kDefaultProjectScriptDirectory = "Scripts";
+        constexpr std::string_view kDefaultProjectManagedDirectory = "Managed";
+        constexpr int kScriptCoreSearchAncestorLimit = 8;
 
         std::filesystem::path GetProcessDirectory()
         {
@@ -61,6 +66,97 @@ namespace PlutoGE::ui
 #endif
 
             return std::filesystem::current_path();
+        }
+
+        std::string SanitizeIdentifier(std::string_view text)
+        {
+            std::string identifier;
+            identifier.reserve(text.size());
+
+            for (const char rawCharacter : text)
+            {
+                const unsigned char character = static_cast<unsigned char>(rawCharacter);
+                if (std::isalnum(character) != 0 || rawCharacter == '_')
+                {
+                    if (identifier.empty() && std::isdigit(character) != 0)
+                    {
+                        identifier.push_back('_');
+                    }
+
+                    identifier.push_back(rawCharacter);
+                }
+                else if (!identifier.empty() && identifier.back() != '_')
+                {
+                    identifier.push_back('_');
+                }
+            }
+
+            while (!identifier.empty() && identifier.back() == '_')
+            {
+                identifier.pop_back();
+            }
+
+            return identifier;
+        }
+
+        std::filesystem::path FindScriptCoreProjectPath(const std::filesystem::path &searchRoot)
+        {
+            auto candidateRoot = searchRoot.lexically_normal();
+            for (int depth = 0; depth < kScriptCoreSearchAncestorLimit && !candidateRoot.empty(); ++depth)
+            {
+                const auto candidate = (candidateRoot / "engine" / "scripting" / "managed" / "PlutoGE.ScriptCore" / "PlutoGE.ScriptCore.csproj").lexically_normal();
+                if (std::filesystem::exists(candidate))
+                {
+                    return candidate;
+                }
+
+                const auto parentRoot = candidateRoot.parent_path();
+                if (parentRoot.empty() || parentRoot == candidateRoot)
+                {
+                    break;
+                }
+
+                candidateRoot = parentRoot;
+            }
+
+            return {};
+        }
+
+        bool WriteTextFile(const std::filesystem::path &filePath, std::string_view content, std::string *errorMessage)
+        {
+            std::error_code errorCode;
+            std::filesystem::create_directories(filePath.parent_path(), errorCode);
+            if (errorCode)
+            {
+                if (errorMessage)
+                {
+                    *errorMessage = "Failed to create directory: " + filePath.parent_path().string();
+                }
+                return false;
+            }
+
+            std::ofstream output(filePath, std::ios::out | std::ios::trunc);
+            if (!output.is_open())
+            {
+                if (errorMessage)
+                {
+                    *errorMessage = "Failed to open file for writing: " + filePath.string();
+                }
+                return false;
+            }
+
+            output << content;
+            output.close();
+            if (!output)
+            {
+                if (errorMessage)
+                {
+                    *errorMessage = "Failed to write file: " + filePath.string();
+                }
+                return false;
+            }
+
+            return true;
         }
 
         bool IsCameraActiveInScene(scene::Scene *scene, scene::CameraComponent *cameraComponent)
@@ -451,6 +547,358 @@ namespace PlutoGE::ui
         return std::filesystem::path(m_engine.GetAssetManager().ResolveAssetPath(m_project->GetManifest().scriptAssembly)).lexically_normal();
     }
 
+    std::filesystem::path EditorShell::GetProjectScriptSourceDirectory() const
+    {
+        if (!m_project)
+        {
+            return {};
+        }
+
+        return (m_project->GetAssetDirectoryPath() / std::filesystem::path(kDefaultProjectScriptDirectory)).lexically_normal();
+    }
+
+    std::filesystem::path EditorShell::GetProjectScriptProjectPath() const
+    {
+        if (!m_project)
+        {
+            return {};
+        }
+
+        std::string baseName = SanitizeIdentifier(m_project->GetManifest().name);
+        if (baseName.empty())
+        {
+            baseName = SanitizeIdentifier(m_project->GetManifestPath().stem().string());
+        }
+        if (baseName.empty())
+        {
+            baseName = "PlutoGEProject";
+        }
+
+        return (m_project->GetRootDirectory() / (baseName + ".Scripts.csproj")).lexically_normal();
+    }
+
+    std::filesystem::path EditorShell::GetProjectScriptAssemblyOutputPath() const
+    {
+        if (!m_project)
+        {
+            return {};
+        }
+
+        const auto &manifest = m_project->GetManifest();
+        if (!manifest.scriptAssembly.empty() && !assets::Project::IsEngineAssetReference(manifest.scriptAssembly))
+        {
+            return m_project->ResolveAssetReference(manifest.scriptAssembly).lexically_normal();
+        }
+
+        std::string baseName = SanitizeIdentifier(manifest.name);
+        if (baseName.empty())
+        {
+            baseName = "PlutoGEProject";
+        }
+
+        return (m_project->GetAssetDirectoryPath() / std::filesystem::path(kDefaultProjectManagedDirectory) / (baseName + ".Scripts.dll")).lexically_normal();
+    }
+
+    bool EditorShell::IsRuntimeExportProject() const
+    {
+        if (!m_project)
+        {
+            return false;
+        }
+
+        auto runtimeExecutablePath = m_project->GetManifestPath();
+        runtimeExecutablePath.replace_extension(".exe");
+        return std::filesystem::exists(runtimeExecutablePath);
+    }
+
+    bool EditorShell::EnsureProjectScriptBuildScaffold(std::string *errorMessage)
+    {
+        if (!m_project)
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "No project loaded.";
+            }
+            return false;
+        }
+
+        if (IsRuntimeExportProject())
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Script authoring is disabled for exported runtime bundles. Open the source project to edit or build scripts.";
+            }
+            return false;
+        }
+
+        const auto scriptCoreProjectPath = FindScriptCoreProjectPath(GetProcessDirectory());
+        if (scriptCoreProjectPath.empty())
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Could not locate PlutoGE.ScriptCore.csproj for script compilation.";
+            }
+            return false;
+        }
+
+        std::error_code errorCode;
+        std::filesystem::create_directories(GetProjectScriptSourceDirectory(), errorCode);
+        if (errorCode)
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Failed to create project script source directory.";
+            }
+            return false;
+        }
+
+        std::filesystem::create_directories(GetProjectScriptAssemblyOutputPath().parent_path(), errorCode);
+        if (errorCode)
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Failed to create project script output directory.";
+            }
+            return false;
+        }
+
+        const auto scriptProjectPath = GetProjectScriptProjectPath();
+        const auto sourcePattern = std::filesystem::relative(GetProjectScriptSourceDirectory(), scriptProjectPath.parent_path(), errorCode).generic_string() + "/**/*.cs";
+        if (errorCode)
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Failed to create script project source path.";
+            }
+            return false;
+        }
+
+        const auto scriptCoreReference = std::filesystem::relative(scriptCoreProjectPath.parent_path() / "bin" / "$(Configuration)" / "$(TargetFramework)" / "PlutoGE.ScriptCore.dll",
+                                                                   scriptProjectPath.parent_path(),
+                                                                   errorCode)
+                                             .generic_string();
+        if (errorCode)
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Failed to create script project reference path.";
+            }
+            return false;
+        }
+
+        const auto scriptCoreDirectory = std::filesystem::relative(scriptCoreProjectPath.parent_path(), scriptProjectPath.parent_path(), errorCode).generic_string();
+        if (errorCode)
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Failed to create script runtime copy path.";
+            }
+            return false;
+        }
+
+        const auto managedOutputPath = std::filesystem::relative(GetProjectScriptAssemblyOutputPath().parent_path(), scriptProjectPath.parent_path(), errorCode).generic_string();
+        if (errorCode)
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Failed to create script project output path.";
+            }
+            return false;
+        }
+
+        std::string rootNamespace = SanitizeIdentifier(m_project->GetManifest().name);
+        if (rootNamespace.empty())
+        {
+            rootNamespace = "PlutoGEProject";
+        }
+
+        std::string scriptProjectContent;
+        scriptProjectContent += "<Project Sdk=\"Microsoft.NET.Sdk\">\n";
+        scriptProjectContent += "  <PropertyGroup>\n";
+        scriptProjectContent += "    <TargetFramework>net8.0</TargetFramework>\n";
+        scriptProjectContent += "    <ImplicitUsings>enable</ImplicitUsings>\n";
+        scriptProjectContent += "    <Nullable>enable</Nullable>\n";
+        scriptProjectContent += "    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>\n";
+        scriptProjectContent += "    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>\n";
+        scriptProjectContent += "    <AssemblyName>" + rootNamespace + ".Scripts</AssemblyName>\n";
+        scriptProjectContent += "    <RootNamespace>" + rootNamespace + ".Scripts</RootNamespace>\n";
+        scriptProjectContent += "    <OutputPath>" + managedOutputPath + "/</OutputPath>\n";
+        scriptProjectContent += "    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>\n";
+        scriptProjectContent += "  </PropertyGroup>\n";
+        scriptProjectContent += "  <ItemGroup>\n";
+        scriptProjectContent += "    <Compile Include=\"" + sourcePattern + "\" />\n";
+        scriptProjectContent += "  </ItemGroup>\n";
+        scriptProjectContent += "  <ItemGroup>\n";
+        scriptProjectContent += "    <Reference Include=\"PlutoGE.ScriptCore\">\n";
+        scriptProjectContent += "      <HintPath>" + scriptCoreReference + "</HintPath>\n";
+        scriptProjectContent += "      <Private>true</Private>\n";
+        scriptProjectContent += "    </Reference>\n";
+        scriptProjectContent += "  </ItemGroup>\n";
+        scriptProjectContent += "  <Target Name=\"CopyScriptCoreRuntimeFiles\" AfterTargets=\"Build\">\n";
+        scriptProjectContent += "    <ItemGroup>\n";
+        scriptProjectContent += "      <ScriptCoreRuntimeFiles Include=\"" + scriptCoreDirectory + "/bin/$(Configuration)/$(TargetFramework)/PlutoGE.ScriptCore.runtimeconfig.json\" />\n";
+        scriptProjectContent += "      <ScriptCoreRuntimeFiles Include=\"" + scriptCoreDirectory + "/bin/$(Configuration)/$(TargetFramework)/PlutoGE.ScriptCore.deps.json\" Condition=\"Exists('" + scriptCoreDirectory + "/bin/$(Configuration)/$(TargetFramework)/PlutoGE.ScriptCore.deps.json')\" />\n";
+        scriptProjectContent += "    </ItemGroup>\n";
+        scriptProjectContent += "    <Copy SourceFiles=\"@(ScriptCoreRuntimeFiles)\" DestinationFolder=\"$(OutputPath)\" SkipUnchangedFiles=\"true\" Condition=\"@(ScriptCoreRuntimeFiles) != ''\" />\n";
+        scriptProjectContent += "  </Target>\n";
+        scriptProjectContent += "</Project>\n";
+
+        if (!WriteTextFile(scriptProjectPath, scriptProjectContent, errorMessage))
+        {
+            return false;
+        }
+
+        auto &manifest = m_project->GetManifest();
+        if (manifest.scriptAssembly.empty() || assets::Project::IsEngineAssetReference(manifest.scriptAssembly))
+        {
+            manifest.scriptAssembly = m_project->MakeAssetReference(GetProjectScriptAssemblyOutputPath());
+        }
+
+        return true;
+    }
+
+    bool EditorShell::SaveProjectManifest(std::string *errorMessage)
+    {
+        if (!m_project)
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "No project loaded.";
+            }
+            return false;
+        }
+
+        m_project->RefreshAssetRegistry();
+        return m_project->Save(errorMessage);
+    }
+
+    bool EditorShell::CreateScriptAsset(std::string_view requestedName,
+                                        std::string *createdClassName,
+                                        std::string *errorMessage)
+    {
+        if (!EnsureProjectScriptBuildScaffold(errorMessage))
+        {
+            return false;
+        }
+
+        const std::string className = SanitizeIdentifier(requestedName);
+        if (className.empty())
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Enter a valid script name.";
+            }
+            return false;
+        }
+
+        const auto scriptPath = GetProjectScriptSourceDirectory() / (className + ".cs");
+        if (std::filesystem::exists(scriptPath))
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "A script with that name already exists.";
+            }
+            return false;
+        }
+
+        std::string scriptSource;
+        scriptSource += "using PlutoGE.ScriptCore;\n\n";
+        scriptSource += "public sealed class " + className + " : ScriptBehaviour\n";
+        scriptSource += "{\n";
+        scriptSource += "    public override void OnCreate()\n";
+        scriptSource += "    {\n";
+        scriptSource += "    }\n\n";
+        scriptSource += "    public override void OnUpdate(float deltaTime)\n";
+        scriptSource += "    {\n";
+        scriptSource += "    }\n";
+        scriptSource += "}\n";
+
+        if (!WriteTextFile(scriptPath, scriptSource, errorMessage))
+        {
+            return false;
+        }
+
+        if (!SaveProjectManifest(errorMessage))
+        {
+            return false;
+        }
+
+        if (createdClassName)
+        {
+            *createdClassName = className;
+        }
+
+        m_statusMessage = "Created script: " + scriptPath.filename().string();
+        return true;
+    }
+
+    bool EditorShell::BuildProjectScripts()
+    {
+        std::string errorMessage;
+        if (!EnsureProjectScriptBuildScaffold(&errorMessage))
+        {
+            m_statusMessage = errorMessage;
+            return false;
+        }
+
+        if (!SaveProjectManifest(&errorMessage))
+        {
+            m_statusMessage = errorMessage.empty() ? "Failed to save project manifest before building scripts." : errorMessage;
+            return false;
+        }
+
+        auto &scriptEngine = m_engine.GetScriptEngine();
+        const bool wasRuntimeRunning = m_engine.IsRuntimeRunning();
+        if (wasRuntimeRunning)
+        {
+            m_engine.StopRuntime();
+        }
+
+        // Release the currently loaded assembly before invoking MSBuild so the
+        // output DLL in Assets/Managed is not locked by the editor process.
+        scriptEngine.Shutdown();
+
+        auto buildConfig = scripting::ScriptBuildConfig{};
+        buildConfig.projectPath = GetProjectScriptProjectPath();
+        buildConfig.configuration = "Debug";
+        buildConfig.framework = "net8.0";
+
+        const auto buildResult = scriptEngine.BuildProject(buildConfig);
+        if (!buildResult.succeeded)
+        {
+            m_statusMessage = "Failed to build scripts (exit code " + std::to_string(buildResult.exitCode) + ").";
+
+            std::string restoreErrorMessage;
+            if (ReloadProjectScriptAssembly(&restoreErrorMessage) && wasRuntimeRunning)
+            {
+                m_engine.StartRuntime();
+            }
+
+            return false;
+        }
+
+        if (!SaveProjectManifest(&errorMessage))
+        {
+            m_statusMessage = errorMessage.empty() ? "Built scripts but failed to refresh project assets." : errorMessage;
+            return false;
+        }
+
+        std::string reloadErrorMessage;
+        if (!ReloadProjectScriptAssembly(&reloadErrorMessage))
+        {
+            m_statusMessage = reloadErrorMessage.empty() ? "Built scripts but failed to reload the script assembly." : reloadErrorMessage;
+            return false;
+        }
+
+        if (wasRuntimeRunning)
+        {
+            m_engine.StartRuntime();
+        }
+
+        m_statusMessage = "Built and reloaded scripts: " + GetProjectScriptAssemblyOutputPath().filename().string();
+        return true;
+    }
+
     bool EditorShell::ReloadProjectScriptAssembly(std::string *errorMessage)
     {
         auto &scriptEngine = m_engine.GetScriptEngine();
@@ -487,7 +935,10 @@ namespace PlutoGE::ui
         {
             if (errorMessage)
             {
-                *errorMessage = "Failed to load project script assembly: " + assemblyPath.string();
+                const auto &runtimeError = scriptEngine.GetLastError();
+                *errorMessage = runtimeError.empty()
+                                    ? ("Failed to load project script assembly: " + assemblyPath.string())
+                                    : ("Failed to load project script assembly: " + assemblyPath.string() + " (" + runtimeError + ")");
             }
             return false;
         }
@@ -629,6 +1080,8 @@ namespace PlutoGE::ui
 
     bool EditorShell::LoadProjectFromPath(const std::filesystem::path &manifestPath)
     {
+        constexpr std::string_view kMissingScriptAssemblyPrefix = "Project script assembly was not found: ";
+
         std::string errorMessage;
         auto loadedProject = assets::Project::Load(manifestPath, &errorMessage);
         if (!loadedProject)
@@ -678,11 +1131,15 @@ namespace PlutoGE::ui
 
         if (!scriptErrorMessage.empty())
         {
-            if (!m_statusMessage.empty())
+            const bool isMissingScriptAssembly = scriptErrorMessage.rfind(kMissingScriptAssemblyPrefix.data(), 0) == 0;
+            if (!isMissingScriptAssembly && !m_statusMessage.empty())
             {
                 m_statusMessage += " ";
             }
-            m_statusMessage += scriptErrorMessage;
+            if (!isMissingScriptAssembly)
+            {
+                m_statusMessage += scriptErrorMessage;
+            }
         }
 
         UpdateWindowTitle();
@@ -1228,6 +1685,33 @@ namespace PlutoGE::ui
                         m_statusMessage = "Runtime stopped.";
                     }
                     ImGui::EndDisabled();
+                    ImGui::EndMenu();
+                }
+                if (ImGui::BeginMenu("Scripts"))
+                {
+                    ImGui::BeginDisabled(m_project == nullptr || IsRuntimeExportProject());
+                    if (ImGui::MenuItem("Build Scripts"))
+                    {
+                        BuildProjectScripts();
+                    }
+                    if (ImGui::MenuItem("Reload Script Assembly"))
+                    {
+                        std::string scriptErrorMessage;
+                        if (ReloadProjectScriptAssembly(&scriptErrorMessage))
+                        {
+                            m_statusMessage = "Reloaded script assembly.";
+                        }
+                        else
+                        {
+                            m_statusMessage = scriptErrorMessage.empty() ? "Failed to reload script assembly." : scriptErrorMessage;
+                        }
+                    }
+                    ImGui::EndDisabled();
+                    if (m_project != nullptr && IsRuntimeExportProject())
+                    {
+                        ImGui::Separator();
+                        ImGui::TextDisabled("Open the source project to edit or build scripts.");
+                    }
                     ImGui::EndMenu();
                 }
                 if (!m_statusMessage.empty())

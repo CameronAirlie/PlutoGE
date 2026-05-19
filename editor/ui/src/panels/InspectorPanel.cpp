@@ -1,6 +1,7 @@
 
 #include "PlutoGE/ui/panels/InspectorPanel.h"
 #include "PlutoGE/ui/EditorShell.h"
+#include "PlutoGE/assets/Project.h"
 #include "PlutoGE/scene/components/Component.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/scene/components/ScriptComponent.h"
@@ -16,9 +17,16 @@
 #include "PlutoGE/scene/Scene.h"
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <optional>
+#include <string_view>
 #include <unordered_map>
+#include <unordered_set>
+#include <vector>
 #include <imgui.h>
 #ifdef _WIN32
 #include <windows.h>
@@ -30,6 +38,7 @@ namespace PlutoGE::ui
     namespace
     {
         constexpr std::size_t kInspectorPathBufferSize = 512;
+        constexpr std::size_t kNewScriptNameBufferSize = 128;
         constexpr const char *kAddableComponentLabels[] = {
             "Mesh Component",
             "Camera Component",
@@ -44,6 +53,284 @@ namespace PlutoGE::ui
             Light = 2,
             Script = 3,
         };
+
+        struct ScriptAssetOption
+        {
+            std::string reference;
+            std::string displayName;
+            std::string className;
+            bool classLoaded = false;
+        };
+
+        std::string_view TrimWhitespace(std::string_view text)
+        {
+            while (!text.empty() && std::isspace(static_cast<unsigned char>(text.front())) != 0)
+            {
+                text.remove_prefix(1);
+            }
+
+            while (!text.empty() && std::isspace(static_cast<unsigned char>(text.back())) != 0)
+            {
+                text.remove_suffix(1);
+            }
+
+            return text;
+        }
+
+        bool StartsWith(std::string_view text, std::string_view prefix)
+        {
+            return text.size() >= prefix.size() && text.substr(0, prefix.size()) == prefix;
+        }
+
+        bool EndsWithInsensitive(std::string_view text, std::string_view suffix)
+        {
+            if (text.size() < suffix.size())
+            {
+                return false;
+            }
+
+            const auto offset = text.size() - suffix.size();
+            for (std::size_t index = 0; index < suffix.size(); ++index)
+            {
+                const auto left = static_cast<unsigned char>(text[offset + index]);
+                const auto right = static_cast<unsigned char>(suffix[index]);
+                if (std::tolower(left) != std::tolower(right))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        std::string ExtractClassName(std::string_view line)
+        {
+            const std::size_t classPos = line.find("class ");
+            if (classPos == std::string_view::npos)
+            {
+                return {};
+            }
+
+            std::string_view remainder = line.substr(classPos + 6);
+            remainder = TrimWhitespace(remainder);
+
+            std::size_t length = 0;
+            while (length < remainder.size())
+            {
+                const unsigned char character = static_cast<unsigned char>(remainder[length]);
+                if (!std::isalnum(character) && character != '_')
+                {
+                    break;
+                }
+
+                ++length;
+            }
+
+            return std::string(remainder.substr(0, length));
+        }
+
+        std::optional<std::string> ParseScriptClassNameFromFile(const std::filesystem::path &filePath)
+        {
+            std::ifstream input(filePath);
+            if (!input.is_open())
+            {
+                return std::nullopt;
+            }
+
+            std::string namespaceName;
+            std::string firstClassName;
+            std::string scriptClassName;
+            std::string line;
+            while (std::getline(input, line))
+            {
+                std::string_view trimmed = TrimWhitespace(line);
+                if (trimmed.empty() || StartsWith(trimmed, "//"))
+                {
+                    continue;
+                }
+
+                if (namespaceName.empty() && StartsWith(trimmed, "namespace "))
+                {
+                    trimmed.remove_prefix(std::string_view("namespace ").size());
+                    trimmed = TrimWhitespace(trimmed);
+                    const std::size_t delimiterPos = trimmed.find_first_of("{;");
+                    namespaceName = std::string(TrimWhitespace(trimmed.substr(0, delimiterPos)));
+                }
+
+                if (trimmed.find("class ") == std::string_view::npos)
+                {
+                    continue;
+                }
+
+                const std::string className = ExtractClassName(trimmed);
+                if (className.empty())
+                {
+                    continue;
+                }
+
+                if (firstClassName.empty())
+                {
+                    firstClassName = className;
+                }
+
+                if (trimmed.find("ScriptBehaviour") != std::string_view::npos)
+                {
+                    scriptClassName = className;
+                    break;
+                }
+            }
+
+            const std::string &resolvedClassName = scriptClassName.empty() ? firstClassName : scriptClassName;
+            if (resolvedClassName.empty())
+            {
+                return std::nullopt;
+            }
+
+            if (namespaceName.empty())
+            {
+                return resolvedClassName;
+            }
+
+            return namespaceName + "." + resolvedClassName;
+        }
+
+        std::string FindLoadedClassForShortName(const std::vector<std::string> &loadedClassNames, std::string_view shortName)
+        {
+            if (shortName.empty())
+            {
+                return {};
+            }
+
+            std::vector<std::string> suffixMatches;
+            suffixMatches.reserve(loadedClassNames.size());
+            for (const auto &className : loadedClassNames)
+            {
+                if (className == shortName)
+                {
+                    return className;
+                }
+
+                if (className.size() > shortName.size() &&
+                    className.compare(className.size() - shortName.size(), shortName.size(), shortName) == 0 &&
+                    className[className.size() - shortName.size() - 1] == '.')
+                {
+                    suffixMatches.push_back(className);
+                }
+            }
+
+            return suffixMatches.size() == 1 ? suffixMatches.front() : std::string{};
+        }
+
+        std::string ResolveScriptClassName(const std::filesystem::path &filePath, const std::vector<std::string> &loadedClassNames)
+        {
+            const auto parsedClassName = ParseScriptClassNameFromFile(filePath);
+            if (parsedClassName.has_value())
+            {
+                if (std::find(loadedClassNames.begin(), loadedClassNames.end(), *parsedClassName) != loadedClassNames.end())
+                {
+                    return *parsedClassName;
+                }
+
+                const auto shortName = filePath.stem().string();
+                const auto loadedClassName = FindLoadedClassForShortName(loadedClassNames, shortName);
+                if (!loadedClassName.empty())
+                {
+                    return loadedClassName;
+                }
+
+                return *parsedClassName;
+            }
+
+            const auto shortName = filePath.stem().string();
+            const auto loadedClassName = FindLoadedClassForShortName(loadedClassNames, shortName);
+            if (!loadedClassName.empty())
+            {
+                return loadedClassName;
+            }
+
+            return shortName;
+        }
+
+        std::vector<ScriptAssetOption> CollectProjectScriptAssetOptions(const assets::Project &project,
+                                                                        const std::vector<std::string> &loadedClassNames)
+        {
+            std::vector<ScriptAssetOption> options;
+            for (const auto &assetEntry : project.GetManifest().assetEntries)
+            {
+                if (!EndsWithInsensitive(assetEntry.reference, ".cs"))
+                {
+                    continue;
+                }
+
+                ScriptAssetOption option;
+                option.reference = assetEntry.reference;
+                option.displayName = assetEntry.reference;
+                if (StartsWith(option.displayName, assets::Project::kProjectAssetScheme))
+                {
+                    option.displayName.erase(0, assets::Project::kProjectAssetScheme.size());
+                }
+
+                const auto assetPath = project.ResolveAssetReference(assetEntry.reference);
+                option.className = ResolveScriptClassName(assetPath, loadedClassNames);
+                option.classLoaded = !option.className.empty() &&
+                                     std::find(loadedClassNames.begin(), loadedClassNames.end(), option.className) != loadedClassNames.end();
+                options.push_back(std::move(option));
+            }
+
+            std::sort(options.begin(), options.end(),
+                      [](const ScriptAssetOption &left, const ScriptAssetOption &right)
+                      {
+                          return left.displayName < right.displayName;
+                      });
+            return options;
+        }
+
+        const ScriptAssetOption *FindScriptAssetOptionForClassName(const std::vector<ScriptAssetOption> &options,
+                                                                   std::string_view className)
+        {
+            for (const auto &option : options)
+            {
+                if (option.className == className)
+                {
+                    return &option;
+                }
+            }
+
+            return nullptr;
+        }
+
+        std::string SanitizeScriptIdentifier(std::string_view text)
+        {
+            std::string identifier;
+            identifier.reserve(text.size());
+
+            for (const char rawCharacter : text)
+            {
+                const unsigned char character = static_cast<unsigned char>(rawCharacter);
+                if (std::isalnum(character) != 0 || rawCharacter == '_')
+                {
+                    if (identifier.empty() && std::isdigit(character) != 0)
+                    {
+                        identifier.push_back('_');
+                    }
+
+                    identifier.push_back(rawCharacter);
+                    continue;
+                }
+
+                if (!identifier.empty() && identifier.back() != '_')
+                {
+                    identifier.push_back('_');
+                }
+            }
+
+            while (!identifier.empty() && identifier.back() == '_')
+            {
+                identifier.pop_back();
+            }
+
+            return identifier;
+        }
 
         glm::vec3 ParseVec3Property(const std::string &value)
         {
@@ -388,13 +675,24 @@ namespace PlutoGE::ui
 
     bool InspectorPanel::RenderScriptComponentEditor(scene::ScriptComponent &scriptComponent, scene::Entity &entity) const
     {
+        (void)entity;
+
+        auto &editorShell = EditorShell::GetInstance();
+        auto *project = editorShell.GetProject();
         auto &scriptEngine = core::Engine::GetInstance().GetScriptEngine();
         const auto classNames = scriptEngine.GetClassNames();
+        const auto scriptAssetOptions = project != nullptr
+                                            ? CollectProjectScriptAssetOptions(*project, classNames)
+                                            : std::vector<ScriptAssetOption>{};
         const std::string currentSource = scriptComponent.GetSource();
-        const char *previewValue = currentSource.empty() ? "<None>" : currentSource.c_str();
+        std::string previewValue = currentSource.empty() ? "<None>" : currentSource;
+        if (const auto *selectedAsset = FindScriptAssetOptionForClassName(scriptAssetOptions, currentSource))
+        {
+            previewValue = selectedAsset->displayName;
+        }
 
         bool changed = false;
-        if (ImGui::BeginCombo("Source", previewValue))
+        if (ImGui::BeginCombo("Source", previewValue.c_str()))
         {
             const bool isNoneSelected = currentSource.empty();
             if (ImGui::Selectable("<None>", isNoneSelected))
@@ -407,24 +705,145 @@ namespace PlutoGE::ui
                 ImGui::SetItemDefaultFocus();
             }
 
+            if (!scriptAssetOptions.empty())
+            {
+                ImGui::Separator();
+                ImGui::TextDisabled("Scripts in Assets");
+                for (const auto &option : scriptAssetOptions)
+                {
+                    const bool isSelected = option.className == currentSource;
+                    std::string label = option.displayName;
+                    if (!option.classLoaded)
+                    {
+                        label += " (not loaded)";
+                    }
+                    label += "##" + option.reference;
+
+                    if (ImGui::Selectable(label.c_str(), isSelected))
+                    {
+                        scriptComponent.SetSource(option.className);
+                        changed = true;
+                    }
+                    if (isSelected)
+                    {
+                        ImGui::SetItemDefaultFocus();
+                    }
+                }
+            }
+
+            std::unordered_set<std::string> assetClassNames;
+            assetClassNames.reserve(scriptAssetOptions.size());
+            for (const auto &option : scriptAssetOptions)
+            {
+                assetClassNames.insert(option.className);
+            }
+
+            bool hasLooseLoadedClasses = false;
             for (const auto &className : classNames)
             {
-                const bool isSelected = className == currentSource;
-                if (ImGui::Selectable(className.c_str(), isSelected))
+                if (!assetClassNames.contains(className))
                 {
-                    scriptComponent.SetSource(className);
-                    changed = true;
+                    hasLooseLoadedClasses = true;
+                    break;
                 }
-                if (isSelected)
+            }
+
+            if (hasLooseLoadedClasses)
+            {
+                ImGui::Separator();
+                ImGui::TextDisabled("Other Loaded Classes");
+                for (const auto &className : classNames)
                 {
-                    ImGui::SetItemDefaultFocus();
+                    if (assetClassNames.contains(className))
+                    {
+                        continue;
+                    }
+
+                    const bool isSelected = className == currentSource;
+                    if (ImGui::Selectable(className.c_str(), isSelected))
+                    {
+                        scriptComponent.SetSource(className);
+                        changed = true;
+                    }
+                    if (isSelected)
+                    {
+                        ImGui::SetItemDefaultFocus();
+                    }
                 }
             }
 
             ImGui::EndCombo();
         }
 
-        if (classNames.empty())
+        if (project)
+        {
+            const bool scriptAuthoringDisabled = editorShell.IsRuntimeExportProject();
+            ImGui::SameLine();
+            if (ImGui::Button("Refresh##ScriptSources"))
+            {
+                project->RefreshAssetRegistry();
+            }
+
+            ImGui::SameLine();
+            ImGui::BeginDisabled(scriptAuthoringDisabled);
+            if (ImGui::Button("New##ScriptSource"))
+            {
+                ImGui::OpenPopup("Create Script");
+            }
+            ImGui::EndDisabled();
+
+            static std::array<char, kNewScriptNameBufferSize> newScriptNameBuffer{};
+            static std::string createScriptErrorMessage;
+            if (ImGui::BeginPopupModal("Create Script", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+            {
+                ImGui::InputText("Name", newScriptNameBuffer.data(), newScriptNameBuffer.size());
+                ImGui::TextDisabled("Creates Assets/Scripts/<Name>.cs");
+                if (!createScriptErrorMessage.empty())
+                {
+                    ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.45f, 1.0f), "%s", createScriptErrorMessage.c_str());
+                }
+
+                if (ImGui::Button("Create"))
+                {
+                    std::string createdClassName;
+                    if (editorShell.CreateScriptAsset(newScriptNameBuffer.data(), &createdClassName, &createScriptErrorMessage))
+                    {
+                        scriptComponent.SetSource(createdClassName);
+                        changed = true;
+                        editorShell.BuildProjectScripts();
+                        std::fill(newScriptNameBuffer.begin(), newScriptNameBuffer.end(), '\0');
+                        createScriptErrorMessage.clear();
+                        ImGui::CloseCurrentPopup();
+                    }
+                }
+
+                ImGui::SameLine();
+                if (ImGui::Button("Cancel"))
+                {
+                    std::fill(newScriptNameBuffer.begin(), newScriptNameBuffer.end(), '\0');
+                    createScriptErrorMessage.clear();
+                    ImGui::CloseCurrentPopup();
+                }
+
+                ImGui::EndPopup();
+            }
+
+            if (scriptAuthoringDisabled)
+            {
+                ImGui::TextDisabled("Script authoring is disabled for exported runtime bundles.");
+            }
+        }
+
+        if (currentSource.empty() && scriptAssetOptions.empty() && classNames.empty())
+        {
+            ImGui::TextDisabled(project ? "No scripts were found in the asset directory or loaded assembly."
+                                        : "Open a project to browse script assets.");
+        }
+        else if (!currentSource.empty() && !scriptEngine.HasClass(currentSource))
+        {
+            ImGui::TextDisabled("Selected script is not present in the loaded assembly yet. Build scripts to compile new or changed sources.");
+        }
+        else if (classNames.empty())
         {
             ImGui::TextDisabled("No script classes are loaded.");
         }

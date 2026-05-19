@@ -48,6 +48,7 @@ namespace PlutoGE::scripting
         [[nodiscard]] std::vector<ScriptFieldDefinition> GetSerializedFields(std::string_view fullName) const;
         [[nodiscard]] std::unique_ptr<ScriptInstance> CreateInstance(std::string_view fullName) const;
         [[nodiscard]] const std::filesystem::path &GetAssemblyPath() const { return m_assemblyPath; }
+        [[nodiscard]] const std::string &GetLastError() const { return m_lastError; }
 
     private:
         struct RegisteredScriptClass
@@ -60,6 +61,7 @@ namespace PlutoGE::scripting
         std::unordered_map<std::string, RegisteredScriptClass> m_classes;
         std::unique_ptr<IScriptRuntime> m_runtime;
         std::filesystem::path m_assemblyPath;
+        std::string m_lastError;
         bool m_initialized = false;
     };
 }

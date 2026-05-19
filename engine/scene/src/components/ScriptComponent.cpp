@@ -345,6 +345,14 @@ namespace PlutoGE::scene
 
     std::optional<scripting::ScriptFieldValue> ScriptComponent::GetFieldValue(const std::string &fieldName) const
     {
+        if (m_instance && core::Engine::GetInstance().IsRuntimeRunning())
+        {
+            if (const auto runtimeValue = m_instance->GetFieldValue(fieldName))
+            {
+                return runtimeValue;
+            }
+        }
+
         const auto iterator = m_fieldValues.find(fieldName);
         if (iterator == m_fieldValues.end())
         {

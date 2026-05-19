@@ -362,7 +362,7 @@ namespace PlutoGE::scene
                 const EntityID parentId = static_cast<EntityID>(std::stoul(tokens[2]));
                 const bool isActive = tokens[3] == "1";
 
-                auto entity = std::make_unique<Entity>(EntityConfig{.name = tokens[4]});
+                auto entity = std::make_unique<Entity>(serializedId, EntityConfig{.name = tokens[4]});
                 entity->SetPosition(ParseVec3(tokens[5]));
                 entity->SetRotation(ParseVec3(tokens[6]));
                 entity->SetScale(ParseVec3(tokens[7]));

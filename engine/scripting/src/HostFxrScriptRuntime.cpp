@@ -56,6 +56,7 @@ namespace PlutoGE::scripting
         using load_script_assembly_fn = int(__cdecl *)(const char *);
         using unload_script_assembly_fn = int(__cdecl *)();
         using get_marshaled_string_fn = const char *(__cdecl *)();
+        using get_field_data_fn = const char *(__cdecl *)(int64_t);
         using free_marshaled_string_fn = void(__cdecl *)(const char *);
         using create_script_instance_fn = int64_t(__cdecl *)(const char *, uint32_t);
         using destroy_script_instance_fn = void(__cdecl *)(int64_t);
@@ -459,6 +460,21 @@ namespace PlutoGE::scripting
             return ScriptFieldType::None;
         }
 
+        ScriptFieldType GetSerializedFieldType(std::string_view fieldName,
+                                               const std::vector<ScriptFieldDefinition> &fieldDefinitions,
+                                               const ScriptFieldValue &fieldValue)
+        {
+            for (const auto &fieldDefinition : fieldDefinitions)
+            {
+                if (fieldDefinition.name == fieldName)
+                {
+                    return fieldDefinition.type;
+                }
+            }
+
+            return GetFieldTypeForValue(fieldValue);
+        }
+
         std::string SerializeFieldValue(const ScriptFieldValue &value)
         {
             return std::visit(
@@ -502,12 +518,13 @@ namespace PlutoGE::scripting
                 value);
         }
 
-        std::string SerializeFieldData(const std::unordered_map<std::string, ScriptFieldValue> &fieldValues)
+        std::string SerializeFieldData(const std::unordered_map<std::string, ScriptFieldValue> &fieldValues,
+                                       const std::vector<ScriptFieldDefinition> &fieldDefinitions)
         {
             std::ostringstream stream;
             for (const auto &[fieldName, fieldValue] : fieldValues)
             {
-                const auto fieldType = GetFieldTypeForValue(fieldValue);
+                const auto fieldType = GetSerializedFieldType(fieldName, fieldDefinitions, fieldValue);
                 stream << "FIELD\t"
                        << EscapeText(fieldName) << '\t'
                        << static_cast<int>(fieldType) << '\t'
@@ -576,6 +593,39 @@ namespace PlutoGE::scripting
             }
 
             return classes;
+        }
+
+        std::unordered_map<std::string, ScriptFieldValue> ParseFieldData(std::string_view fieldData)
+        {
+            std::unordered_map<std::string, ScriptFieldValue> fieldValues;
+
+            std::string_view remaining = fieldData;
+            while (!remaining.empty())
+            {
+                const auto lineEnd = remaining.find('\n');
+                const std::string_view line = lineEnd == std::string_view::npos
+                                                  ? remaining
+                                                  : remaining.substr(0, lineEnd);
+
+                if (!line.empty())
+                {
+                    const auto tokens = SplitEscaped(line, '\t');
+                    if (tokens.size() >= 4 && tokens[0] == "FIELD")
+                    {
+                        const auto fieldType = ParseFieldType(tokens[2]);
+                        fieldValues[tokens[1]] = ParseFieldValue(fieldType, tokens[3]);
+                    }
+                }
+
+                if (lineEnd == std::string_view::npos)
+                {
+                    break;
+                }
+
+                remaining.remove_prefix(lineEnd + 1);
+            }
+
+            return fieldValues;
         }
 
         scene::Entity *FindEntity(uint32_t entityId)
@@ -871,6 +921,7 @@ namespace PlutoGE::scripting
         load_script_assembly_fn loadScriptAssembly = nullptr;
         unload_script_assembly_fn unloadScriptAssembly = nullptr;
         get_marshaled_string_fn getScriptMetadata = nullptr;
+        get_field_data_fn getFieldData = nullptr;
         free_marshaled_string_fn freeMarshaledString = nullptr;
         get_marshaled_string_fn getLastError = nullptr;
         create_script_instance_fn createScriptInstance = nullptr;
@@ -1119,6 +1170,7 @@ namespace PlutoGE::scripting
             const bool requiredExportsLoaded =
                 LoadManagedExport(impl, L"LoadScriptAssembly", impl.loadScriptAssembly) &&
                 LoadManagedExport(impl, L"GetScriptMetadata", impl.getScriptMetadata) &&
+                LoadManagedExport(impl, L"GetFieldData", impl.getFieldData) &&
                 LoadManagedExport(impl, L"FreeNativeString", impl.freeMarshaledString) &&
                 LoadManagedExport(impl, L"GetLastError", impl.getLastError) &&
                 LoadManagedExport(impl, L"CreateScriptInstance", impl.createScriptInstance) &&
@@ -1150,9 +1202,37 @@ namespace PlutoGE::scripting
         class ManagedScriptInstance final : public ScriptInstance
         {
         public:
-            ManagedScriptInstance(std::shared_ptr<HostFxrScriptRuntime::Impl> impl, int64_t instanceHandle)
-                : m_impl(std::move(impl)), m_instanceHandle(instanceHandle)
+            ManagedScriptInstance(std::shared_ptr<HostFxrScriptRuntime::Impl> impl,
+                                  int64_t instanceHandle,
+                                  ScriptClassDefinition scriptClass)
+                : m_impl(std::move(impl)), m_instanceHandle(instanceHandle), m_scriptClass(std::move(scriptClass))
             {
+            }
+
+            [[nodiscard]] std::optional<ScriptFieldValue> GetFieldValue(std::string_view fieldName) const override
+            {
+                if (!m_impl || !m_impl->getFieldData || !m_impl->freeMarshaledString)
+                {
+                    return ScriptInstance::GetFieldValue(fieldName);
+                }
+
+                const char *managedText = m_impl->getFieldData(m_instanceHandle);
+                if (!managedText)
+                {
+                    return ScriptInstance::GetFieldValue(fieldName);
+                }
+
+                const std::string wireData(managedText);
+                m_impl->freeMarshaledString(managedText);
+
+                const auto fieldValues = ParseFieldData(wireData);
+                const auto iterator = fieldValues.find(std::string(fieldName));
+                if (iterator == fieldValues.end())
+                {
+                    return ScriptInstance::GetFieldValue(fieldName);
+                }
+
+                return iterator->second;
             }
 
             ~ManagedScriptInstance() override
@@ -1188,7 +1268,7 @@ namespace PlutoGE::scripting
                     return;
                 }
 
-                const std::string wireData = SerializeFieldData(fieldValues);
+                const std::string wireData = SerializeFieldData(fieldValues, m_scriptClass.fields);
                 m_impl->applyFieldData(m_instanceHandle, wireData.c_str());
             }
 
@@ -1206,6 +1286,7 @@ namespace PlutoGE::scripting
         private:
             std::shared_ptr<HostFxrScriptRuntime::Impl> m_impl;
             int64_t m_instanceHandle = 0;
+            ScriptClassDefinition m_scriptClass;
         };
 #endif
     }
@@ -1361,7 +1442,7 @@ namespace PlutoGE::scripting
             return nullptr;
         }
 
-        return std::make_unique<ManagedScriptInstance>(m_impl, instanceHandle);
+        return std::make_unique<ManagedScriptInstance>(m_impl, instanceHandle, scriptClass);
 #else
         (void)scriptClass;
         return nullptr;

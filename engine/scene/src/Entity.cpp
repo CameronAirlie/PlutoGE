@@ -16,6 +16,12 @@ namespace PlutoGE::scene
 {
     namespace
     {
+        EntityID &CurrentEntityIDCounter()
+        {
+            static EntityID currentID = 0;
+            return currentID;
+        }
+
         struct DecomposedTransform
         {
             glm::vec3 position{0.0f};
@@ -62,6 +68,16 @@ namespace PlutoGE::scene
             result.rotation = glm::degrees(glm::vec3(rotationX, rotationY, rotationZ));
             return result;
         }
+    }
+
+    Entity::Entity(const EntityConfig &config)
+        : m_id(GenerateUniqueID()), m_name(config.name), m_tags(config.tags)
+    {
+    }
+
+    Entity::Entity(EntityID id, const EntityConfig &config)
+        : m_id(id == 0 ? GenerateUniqueID() : ReserveUniqueID(id)), m_name(config.name), m_tags(config.tags)
+    {
     }
 
     void Entity::MarkShadowSceneDirty()
@@ -172,8 +188,15 @@ namespace PlutoGE::scene
 
     EntityID Entity::GenerateUniqueID()
     {
-        static EntityID currentID = 0;
-        return ++currentID; // Increment and return the new ID
+        auto &currentID = CurrentEntityIDCounter();
+        return ++currentID;
+    }
+
+    EntityID Entity::ReserveUniqueID(EntityID id)
+    {
+        auto &currentID = CurrentEntityIDCounter();
+        currentID = std::max(currentID, id);
+        return id;
     }
 
     void Entity::EnsureComponentBucketSize(ComponentTypeID typeID)

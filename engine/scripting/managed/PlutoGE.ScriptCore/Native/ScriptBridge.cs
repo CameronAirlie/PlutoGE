@@ -416,6 +416,33 @@ internal static unsafe class ScriptBridge
         }
     }
 
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "GetFieldData")]
+    public static nint GetFieldData(long handle)
+    {
+        try
+        {
+            if (!Instances.TryGetValue(handle, out var instance))
+            {
+                SetError($"Unknown managed script instance handle '{handle}'.");
+                return 0;
+            }
+
+            if (!ScriptClasses.TryGetValue(instance.GetType().FullName ?? string.Empty, out var scriptClass))
+            {
+                SetError($"Managed script metadata missing for '{instance.GetType().FullName}'.");
+                return 0;
+            }
+
+            _lastError = string.Empty;
+            return Marshal.StringToCoTaskMemUTF8(BuildFieldData(instance, scriptClass));
+        }
+        catch (Exception exception)
+        {
+            SetError(exception.ToString());
+            return 0;
+        }
+    }
+
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "SetEntityId")]
     public static int SetEntityId(long handle, uint entityId)
     {
@@ -782,6 +809,28 @@ internal static unsafe class ScriptBridge
                 property.SetValue(instance, value);
             }
         }
+    }
+
+    private static string BuildFieldData(ScriptBehaviour instance, ScriptClassMetadata scriptClass)
+    {
+        var builder = new StringBuilder();
+
+        foreach (var field in scriptClass.Fields)
+        {
+            var value = field.Member switch
+            {
+                FieldInfo fieldInfo => fieldInfo.GetValue(instance),
+                PropertyInfo propertyInfo => propertyInfo.GetValue(instance),
+                _ => null,
+            };
+
+            builder.Append("FIELD\t")
+                .Append(Escape(field.Name)).Append('\t')
+                .Append(field.Type.ToString(CultureInfo.InvariantCulture)).Append('\t')
+                .Append(Escape(SerializeValue(field.Type, value))).Append('\n');
+        }
+
+        return builder.ToString();
     }
 
     private static object? ParseValue(int fieldType, string value, Type memberType)

@@ -31,7 +31,8 @@ namespace PlutoGE::scene
     class Entity
     {
     public:
-        Entity(const EntityConfig &config = {}) : m_id(GenerateUniqueID()), m_name(config.name), m_tags(config.tags) {}
+        Entity(const EntityConfig &config = {});
+        Entity(EntityID id, const EntityConfig &config);
         ~Entity() = default;
 
         glm::mat4 GetLocalTransform() const;
@@ -202,6 +203,7 @@ namespace PlutoGE::scene
     protected:
         friend class Scene; // Allow Scene to access private members for managing entity hierarchy
         static EntityID GenerateUniqueID();
+        static EntityID ReserveUniqueID(EntityID id);
         std::vector<Entity *> m_children; // Child entities (for hierarchical transformations)
         Entity *m_parent = nullptr;       // Parent entity (nullptr if this is a root entity)
 

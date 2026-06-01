@@ -522,7 +522,7 @@ namespace PlutoGE::ui
         m_editorCamera.AddPostProcessEffectByType("ToneMapping");
         m_editorCamera.AddPostProcessEffectByType("ColorGrading");
         m_editorCamera.AddPostProcessEffectByType("SceneComposite");
-        m_editorCamera.AddPostProcessEffectByType("GammaCorrection");
+        // m_editorCamera.AddPostProcessEffectByType("GammaCorrection");
     }
 
     void EditorShell::ApplyProjectContext()

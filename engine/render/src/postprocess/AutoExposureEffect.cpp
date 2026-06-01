@@ -131,7 +131,6 @@ namespace PlutoGE::render
 
             uniform sampler2D uSceneTexture;
             uniform sampler2D uPreviousExposureTexture;
-            uniform float uSceneMipLevel;
             uniform float uKeyValue;
             uniform float uMinExposure;
             uniform float uMaxExposure;
@@ -145,7 +144,8 @@ namespace PlutoGE::render
 
             void main()
             {
-                vec3 averageColor = textureLod(uSceneTexture, vec2(0.5), max(uSceneMipLevel, 0.0)).rgb;
+                // Average color from mip 0 (full image average)
+                vec3 averageColor = textureLod(uSceneTexture, vec2(0.5), 0.0).rgb;
                 float averageLuminance = ComputeLuminance(averageColor);
                 float previousExposure = texture(uPreviousExposureTexture, vec2(0.5)).r;
                 float targetExposure = clamp(uKeyValue / averageLuminance, min(uMinExposure, uMaxExposure), max(uMinExposure, uMaxExposure));
@@ -249,7 +249,7 @@ namespace PlutoGE::render
         glActiveTexture(GL_TEXTURE0 + kPreviousExposureTextureSlot);
         glBindTexture(GL_TEXTURE_2D, m_exposureTextures[m_readExposureTextureIndex]);
         m_adaptationShader->SetUniform("uPreviousExposureTexture", kPreviousExposureTextureSlot);
-        m_adaptationShader->SetUniform("uSceneMipLevel", static_cast<float>(sceneTextureMipLevel));
+        // No longer needed: m_adaptationShader->SetUniform("uSceneMipLevel", static_cast<float>(sceneTextureMipLevel));
         m_adaptationShader->SetUniform("uKeyValue", std::max(m_keyValue, 0.001f));
         m_adaptationShader->SetUniform("uMinExposure", std::max(m_minExposure, 0.001f));
         m_adaptationShader->SetUniform("uMaxExposure", std::max(m_maxExposure, m_minExposure));

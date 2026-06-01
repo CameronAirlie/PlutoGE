@@ -9,7 +9,7 @@ namespace PlutoGE::render
     class ToneMappingEffect : public ShaderPostProcessEffect
     {
     public:
-        explicit ToneMappingEffect(float exposure = 1.0f) : m_exposure(exposure) {}
+        explicit ToneMappingEffect(float exposure = 1.0f, float gamma = 2.2f) : m_exposure(exposure), m_gamma(gamma) {}
         ~ToneMappingEffect() override = default;
 
         void Initialize() override;
@@ -22,8 +22,12 @@ namespace PlutoGE::render
         float GetExposure() const { return m_exposure; }
         void SetExposure(float exposure) { m_exposure = exposure; }
 
+        float GetGamma() const { return m_gamma; }
+        void SetGamma(float gamma) { m_gamma = gamma; }
+
     private:
         Shader *m_shader = nullptr;
         float m_exposure = 1.0f;
+        float m_gamma = 2.2f;
     };
 }

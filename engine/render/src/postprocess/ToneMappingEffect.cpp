@@ -12,6 +12,11 @@ namespace PlutoGE::render
                 .type = PostProcessParameterType::Float,
                 .value = std::to_string(m_exposure),
             },
+            PostProcessParameter{
+                .name = "Gamma",
+                .type = PostProcessParameterType::Float,
+                .value = std::to_string(m_gamma),
+            },
         };
     }
 
@@ -23,8 +28,15 @@ namespace PlutoGE::render
             {
                 m_exposure = std::stof(parameter.value);
             }
+            else if (parameter.name == "Gamma")
+            {
+                m_gamma = std::stof(parameter.value);
+            }
         }
     }
+
+    // Add member initialization for gamma
+    // ToneMappingEffect::ToneMappingEffect() : m_exposure(1.0f), m_gamma(2.2f) {}
 
     void ToneMappingEffect::Initialize()
     {
@@ -55,17 +67,29 @@ namespace PlutoGE::render
 
             uniform sampler2D uSceneTexture;
             uniform float uExposure;
+            uniform float uGamma;
 
-            vec3 ToneMap(vec3 color, float exposure)
-            {
-                color *= max(exposure, 0.0);
-                return color / (color + vec3(1.0));
+            // Narkowicz 2015, "ACES Filmic Tone Mapping Curve"
+            vec3 aces(vec3 x) {
+                const float a = 2.51;
+                const float b = 0.03;
+                const float c = 2.43;
+                const float d = 0.59;
+                const float e = 0.14;
+                return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
             }
 
             void main()
             {
-                vec3 color = texture(uSceneTexture, UV).rgb;
-                FragColor = vec4(ToneMap(color, uExposure), 1.0);
+                // 1. Fetch HDR color
+                vec3 hdrColor = texture(uSceneTexture, UV).rgb;
+                // 2. Apply exposure
+                hdrColor *= max(uExposure, 0.0);
+                // 3. Apply ACES tonemapping
+                vec3 mapped = aces(hdrColor);
+                // 4. Gamma correction for sRGB
+                mapped = pow(mapped, vec3(1.0 / uGamma));
+                FragColor = vec4(mapped, 1.0);
             }
         )";
 
@@ -84,6 +108,7 @@ namespace PlutoGE::render
         m_shader->Bind();
         BindCommonInputs(m_shader, context);
         m_shader->SetUniform("uExposure", m_exposure);
+        m_shader->SetUniform("uGamma", m_gamma);
         DrawFullscreenTriangle();
 
         EndApply();

@@ -45,6 +45,7 @@ namespace PlutoGE::ui
         bool IsViewportHovered() const { return m_isViewportHovered; }
         bool IsViewportFocused() const { return m_isViewportFocused; }
         bool IsGridVisible() const { return m_showGrid; }
+        void SetPanelControlsEnabled(bool enabled) { m_panelControlsEnabled = enabled; }
         static const char *GetDebugViewLabel(render::PostProcessDebugView debugView);
 
     private:
@@ -68,5 +69,6 @@ namespace PlutoGE::ui
         int m_resizeStableFrames = 0;
         bool m_isViewportHovered = false;
         bool m_isViewportFocused = false;
+        bool m_panelControlsEnabled = true;
     };
 }

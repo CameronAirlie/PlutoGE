@@ -209,10 +209,32 @@ namespace PlutoGE::platform
 
     void Window::SetCursorLocked(bool locked)
     {
-        m_isCursorLocked = locked;
+        m_requestedScriptCursorLocked = locked;
+        ApplyCursorMode();
+    }
+
+    void Window::SetScriptInputEnabled(bool enabled)
+    {
+        if (m_isScriptInputEnabled == enabled)
+        {
+            return;
+        }
+
+        m_isScriptInputEnabled = enabled;
+        if (!enabled)
+        {
+            m_inputState.ClearKeyStates();
+        }
+
+        ApplyCursorMode();
+    }
+
+    void Window::ApplyCursorMode()
+    {
+        m_isCursorLocked = m_isScriptInputEnabled && m_requestedScriptCursorLocked;
         if (m_window)
         {
-            glfwSetInputMode(static_cast<GLFWwindow *>(m_window), GLFW_CURSOR, locked ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+            glfwSetInputMode(static_cast<GLFWwindow *>(m_window), GLFW_CURSOR, m_isCursorLocked ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
         }
     }
 

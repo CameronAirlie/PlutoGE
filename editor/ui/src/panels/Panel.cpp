@@ -160,12 +160,31 @@ namespace PlutoGE::ui
             return;
         }
 
+        const float clampedAlpha = ImClamp(m_visualAlpha, 0.1f, 1.0f);
+        if (clampedAlpha < 1.0f)
+        {
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * clampedAlpha);
+        }
+
         const bool shouldRender = BeginPanel();
         m_wasVisibleLastFrame = shouldRender;
         if (shouldRender)
         {
+            if (!m_isInteractionEnabled)
+            {
+                ImGui::BeginDisabled();
+            }
             Render();
+            if (!m_isInteractionEnabled)
+            {
+                ImGui::EndDisabled();
+            }
         }
         EndPanel();
+
+        if (clampedAlpha < 1.0f)
+        {
+            ImGui::PopStyleVar();
+        }
     }
 }

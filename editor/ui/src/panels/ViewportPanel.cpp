@@ -342,23 +342,26 @@ namespace PlutoGE::ui
 
         auto &renderer = EditorShell::GetInstance().GetEngine().GetRenderer();
         int debugView = static_cast<int>(renderer.GetPostProcessDebugView());
-        ImGui::SetNextItemWidth(180.0f);
-        if (ImGui::Combo("Debug View", &debugView, kDebugViewLabels, IM_ARRAYSIZE(kDebugViewLabels)))
+        if (m_panelControlsEnabled)
         {
-            renderer.SetPostProcessDebugView(static_cast<render::PostProcessDebugView>(debugView));
-        }
-        if (m_config.editorViewport)
-        {
+            ImGui::SetNextItemWidth(180.0f);
+            if (ImGui::Combo("Debug View", &debugView, kDebugViewLabels, IM_ARRAYSIZE(kDebugViewLabels)))
+            {
+                renderer.SetPostProcessDebugView(static_cast<render::PostProcessDebugView>(debugView));
+            }
+            if (m_config.editorViewport)
+            {
+                ImGui::Separator();
+                RenderEditorToolbar();
+            }
+            ImGui::SetNextItemWidth(180.0f);
+            if (ImGui::SliderFloat("Render Scale", &m_renderScale, kMinRenderScale, kMaxRenderScale, "%.2fx"))
+            {
+                m_renderScale = glm::clamp(m_renderScale, kMinRenderScale, kMaxRenderScale);
+                m_resizeStableFrames = kResizeDebounceFrames;
+            }
             ImGui::Separator();
-            RenderEditorToolbar();
         }
-        ImGui::SetNextItemWidth(180.0f);
-        if (ImGui::SliderFloat("Render Scale", &m_renderScale, kMinRenderScale, kMaxRenderScale, "%.2fx"))
-        {
-            m_renderScale = glm::clamp(m_renderScale, kMinRenderScale, kMaxRenderScale);
-            m_resizeStableFrames = kResizeDebounceFrames;
-        }
-        ImGui::Separator();
 
         const ImVec2 panelSize = ImGui::GetContentRegionAvail();
         const int newWidth = static_cast<int>(panelSize.x);
@@ -402,7 +405,12 @@ namespace PlutoGE::ui
 
     void ViewportPanel::RenderEditorToolbar()
     {
-        if (m_isViewportFocused && !ImGui::GetIO().WantTextInput)
+        const bool allowEditorViewportHotkeys =
+            ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
+            !ImGui::GetIO().WantTextInput &&
+            !EditorShell::GetInstance().GetEngine().IsRuntimeRunning();
+
+        if (allowEditorViewportHotkeys)
         {
             if (ImGui::IsKeyPressed(ImGuiKey_W))
             {
@@ -420,17 +428,17 @@ namespace PlutoGE::ui
 
         ImGui::TextUnformatted("Transform");
         ImGui::SameLine();
-        if (ImGui::RadioButton("Position", m_gizmoOperation == ImGuizmo::TRANSLATE))
+        if (ImGui::RadioButton("Position (W)", m_gizmoOperation == ImGuizmo::TRANSLATE))
         {
             m_gizmoOperation = ImGuizmo::TRANSLATE;
         }
         ImGui::SameLine();
-        if (ImGui::RadioButton("Rotation", m_gizmoOperation == ImGuizmo::ROTATE))
+        if (ImGui::RadioButton("Rotation (E)", m_gizmoOperation == ImGuizmo::ROTATE))
         {
             m_gizmoOperation = ImGuizmo::ROTATE;
         }
         ImGui::SameLine();
-        if (ImGui::RadioButton("Scale", m_gizmoOperation == ImGuizmo::SCALE))
+        if (ImGui::RadioButton("Scale (R)", m_gizmoOperation == ImGuizmo::SCALE))
         {
             m_gizmoOperation = ImGuizmo::SCALE;
         }
@@ -483,6 +491,11 @@ namespace PlutoGE::ui
         }
 
         auto &editorShell = EditorShell::GetInstance();
+        if (editorShell.GetEngine().IsRuntimeRunning())
+        {
+            return;
+        }
+
         auto &editorCamera = editorShell.GetEditorCamera();
         const glm::mat4 cameraTransform = glm::translate(glm::mat4(1.0f), editorCamera.position) *
                                           glm::rotate(glm::mat4(1.0f), glm::radians(editorCamera.yawDegrees), glm::vec3(0.0f, 1.0f, 0.0f)) *

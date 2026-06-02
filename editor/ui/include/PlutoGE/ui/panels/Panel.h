@@ -24,6 +24,8 @@ namespace PlutoGE::ui
         bool IsOpen() const { return m_isOpen; }
         void SetOpen(bool open) { m_isOpen = open; }
         bool WasVisibleLastFrame() const { return m_wasVisibleLastFrame; }
+        void SetInteractionEnabled(bool enabled) { m_isInteractionEnabled = enabled; }
+        void SetVisualAlpha(float alpha) { m_visualAlpha = alpha; }
 
         virtual void Initialize() {} // Optional initialization logic for the panel
         virtual void Render() = 0;   // Pure virtual function to render the panel
@@ -40,5 +42,7 @@ namespace PlutoGE::ui
         bool m_isMaximized = false;
         ImVec2 m_restorePos = ImVec2(0.0f, 0.0f);
         ImVec2 m_restoreSize = ImVec2(0.0f, 0.0f);
+        bool m_isInteractionEnabled = true;
+        float m_visualAlpha = 1.0f;
     };
 }

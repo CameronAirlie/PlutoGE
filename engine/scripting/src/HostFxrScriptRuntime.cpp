@@ -676,6 +676,11 @@ namespace PlutoGE::scripting
             return core::Engine::GetInstance().GetWindow().GetInputState();
         }
 
+        bool IsScriptInputEnabled()
+        {
+            return core::Engine::GetInstance().GetWindow().IsScriptInputEnabled();
+        }
+
         bool IsFiniteVector3(NativeVector3 value)
         {
             return std::isfinite(value.x) &&
@@ -930,12 +935,22 @@ namespace PlutoGE::scripting
 
         int32_t GetKeyDown(int32_t keyCode)
         {
+            if (!IsScriptInputEnabled())
+            {
+                return 0;
+            }
+
             const auto &inputState = GetInputState();
             return keyCode >= 0 && keyCode < static_cast<int32_t>(inputState.keys.size()) && inputState.keys[static_cast<size_t>(keyCode)] ? 1 : 0;
         }
 
         int32_t GetKeyPressed(int32_t keyCode)
         {
+            if (!IsScriptInputEnabled())
+            {
+                return 0;
+            }
+
             const auto &inputState = GetInputState();
             return keyCode >= 0 && keyCode < static_cast<int32_t>(inputState.keys.size()) &&
                            inputState.keys[static_cast<size_t>(keyCode)] && !inputState.previousKeys[static_cast<size_t>(keyCode)]
@@ -945,6 +960,11 @@ namespace PlutoGE::scripting
 
         int32_t GetKeyReleased(int32_t keyCode)
         {
+            if (!IsScriptInputEnabled())
+            {
+                return 0;
+            }
+
             const auto &inputState = GetInputState();
             return keyCode >= 0 && keyCode < static_cast<int32_t>(inputState.keys.size()) &&
                            !inputState.keys[static_cast<size_t>(keyCode)] && inputState.previousKeys[static_cast<size_t>(keyCode)]
@@ -954,36 +974,66 @@ namespace PlutoGE::scripting
 
         int32_t GetMouseButtonDown(int32_t button)
         {
+            if (!IsScriptInputEnabled())
+            {
+                return 0;
+            }
+
             const auto &inputState = GetInputState();
             return button >= 0 && button < 8 && inputState.mouseState.buttons[button] ? 1 : 0;
         }
 
         int32_t GetMouseButtonPressed(int32_t button)
         {
+            if (!IsScriptInputEnabled())
+            {
+                return 0;
+            }
+
             const auto &inputState = GetInputState();
             return button >= 0 && button < 8 && inputState.mouseState.buttons[button] && !inputState.mouseState.previousButtons[button] ? 1 : 0;
         }
 
         int32_t GetMouseButtonReleased(int32_t button)
         {
+            if (!IsScriptInputEnabled())
+            {
+                return 0;
+            }
+
             const auto &inputState = GetInputState();
             return button >= 0 && button < 8 && !inputState.mouseState.buttons[button] && inputState.mouseState.previousButtons[button] ? 1 : 0;
         }
 
         NativeVector3 GetMousePosition()
         {
+            if (!IsScriptInputEnabled())
+            {
+                return {};
+            }
+
             const auto &inputState = GetInputState();
             return NativeVector3{static_cast<float>(inputState.mouseState.x), static_cast<float>(inputState.mouseState.y), 0.0f};
         }
 
         NativeVector3 GetMouseDelta()
         {
+            if (!IsScriptInputEnabled())
+            {
+                return {};
+            }
+
             const auto &inputState = GetInputState();
             return NativeVector3{static_cast<float>(inputState.mouseState.deltaX), static_cast<float>(inputState.mouseState.deltaY), 0.0f};
         }
 
         NativeVector3 GetMouseScrollDelta()
         {
+            if (!IsScriptInputEnabled())
+            {
+                return {};
+            }
+
             const auto &inputState = GetInputState();
             return NativeVector3{static_cast<float>(inputState.mouseState.scrollDeltaX), static_cast<float>(inputState.mouseState.scrollDeltaY), 0.0f};
         }
@@ -995,7 +1045,7 @@ namespace PlutoGE::scripting
 
         int32_t GetCursorLocked()
         {
-            return core::Engine::GetInstance().GetWindow().IsCursorLocked() ? 1 : 0;
+            return IsScriptInputEnabled() && core::Engine::GetInstance().GetWindow().IsCursorLocked() ? 1 : 0;
         }
 
         void SetCursorLocked(int32_t locked)

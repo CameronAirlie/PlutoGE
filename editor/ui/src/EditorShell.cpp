@@ -36,6 +36,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <commdlg.h>
+#include <shellapi.h>
 #endif
 
 namespace PlutoGE::ui
@@ -125,6 +126,41 @@ namespace PlutoGE::ui
             }
 
             return true;
+        }
+
+        bool LaunchExecutable(const std::filesystem::path &executablePath,
+                              std::string *errorMessage)
+        {
+#ifdef _WIN32
+            const auto operationResult = reinterpret_cast<std::intptr_t>(ShellExecuteA(nullptr,
+                                                                                       "open",
+                                                                                       executablePath.string().c_str(),
+                                                                                       nullptr,
+                                                                                       executablePath.parent_path().string().c_str(),
+                                                                                       SW_SHOWNORMAL));
+            if (operationResult <= 32)
+            {
+                if (errorMessage)
+                {
+                    *errorMessage = "Failed to launch built project executable.";
+                }
+                return false;
+            }
+
+            return true;
+#else
+            const std::string command = QuoteShellArgument(executablePath);
+            if (std::system(command.c_str()) != 0)
+            {
+                if (errorMessage)
+                {
+                    *errorMessage = "Failed to launch built project executable.";
+                }
+                return false;
+            }
+
+            return true;
+#endif
         }
 
         std::filesystem::path GetProcessDirectory()
@@ -1359,6 +1395,24 @@ namespace PlutoGE::ui
         return true;
     }
 
+    bool EditorShell::BuildAndRunProjectToPath(const std::filesystem::path &destinationExecutablePath)
+    {
+        if (!BuildProjectToPath(destinationExecutablePath))
+        {
+            return false;
+        }
+
+        std::string errorMessage;
+        if (!LaunchExecutable(destinationExecutablePath, &errorMessage))
+        {
+            m_statusMessage = errorMessage;
+            return false;
+        }
+
+        m_statusMessage = "Built and launched project: " + std::filesystem::path(destinationExecutablePath).filename().string();
+        return true;
+    }
+
     void EditorShell::Initialize()
     {
         auto config = core::EngineConfig{
@@ -1482,6 +1536,16 @@ namespace PlutoGE::ui
             EditorFrameTimingStats frameTimingStats{};
             renderer.BeginProfilingFrame();
 
+            const bool isRuntimeRunning = m_engine.IsRuntimeRunning();
+            window.SetScriptInputEnabled(isRuntimeRunning && viewportPanel2->IsViewportFocused());
+            if (!isRuntimeRunning)
+            {
+                window.SetCursorLocked(false);
+            }
+
+            viewportPanel->SetPanelControlsEnabled(!isRuntimeRunning);
+            viewportPanel2->SetPanelControlsEnabled(!isRuntimeRunning);
+
             const auto renderTargetWidth = renderTarget->GetWidth();
             const auto renderTargetHeight = renderTarget->GetHeight();
             const auto renderTarget2Width = renderTarget2->GetWidth();
@@ -1530,13 +1594,24 @@ namespace PlutoGE::ui
             const auto sceneUpdateEnd = std::chrono::high_resolution_clock::now();
             frameTimingStats.sceneUpdateMs = std::chrono::duration<float, std::milli>(sceneUpdateEnd - sceneUpdateStart).count();
 
-            UpdateEditorCamera(m_editorCamera,
-                               windowHandle,
-                               viewportPanel->IsViewportHovered() || viewportPanel->IsViewportFocused(),
-                               deltaSeconds,
-                               isEditorCameraLookActive,
-                               lastEditorCameraCursorX,
-                               lastEditorCameraCursorY);
+            if (isRuntimeRunning)
+            {
+                if (isEditorCameraLookActive)
+                {
+                    SetCursorCapture(windowHandle, false);
+                    isEditorCameraLookActive = false;
+                }
+            }
+            else
+            {
+                UpdateEditorCamera(m_editorCamera,
+                                   windowHandle,
+                                   viewportPanel->IsViewportHovered() || viewportPanel->IsViewportFocused(),
+                                   deltaSeconds,
+                                   isEditorCameraLookActive,
+                                   lastEditorCameraCursorX,
+                                   lastEditorCameraCursorY);
+            }
 
             auto *cameraComponent2 = FindFirstSceneCamera(m_scene.get());
             const bool shouldRenderViewport1 = viewportPanel->ShouldRenderFrame();
@@ -1587,7 +1662,7 @@ namespace PlutoGE::ui
 
             m_panelManager.BeginPanelUpdate();
 
-            if (ImGui::IsKeyPressed(ImGuiKey_Escape) && !ImGui::GetIO().WantTextInput)
+            if (!isRuntimeRunning && ImGui::IsKeyPressed(ImGuiKey_Escape) && !ImGui::GetIO().WantTextInput)
             {
                 SetSelectedEntity(nullptr);
             }
@@ -1677,6 +1752,17 @@ namespace PlutoGE::ui
                         if (!exportPath.empty())
                         {
                             BuildProjectToPath(exportPath);
+                        }
+                    }
+                    if (ImGui::MenuItem("Build and Run Project...", nullptr, false, m_project != nullptr))
+                    {
+                        const std::string suggestedPath = GetDefaultExportExecutablePath().empty()
+                                                              ? std::string("PlutoGERuntime.exe")
+                                                              : GetDefaultExportExecutablePath().string();
+                        const std::string exportPath = ShowSaveFileDialog(kExecutableFileFilter, suggestedPath, "exe");
+                        if (!exportPath.empty())
+                        {
+                            BuildAndRunProjectToPath(exportPath);
                         }
                     }
                     ImGui::Separator();
@@ -1788,6 +1874,7 @@ namespace PlutoGE::ui
                     if (ImGui::MenuItem("Play"))
                     {
                         m_engine.StartRuntime();
+                        window.SetScriptInputEnabled(viewportPanel2->IsViewportFocused());
                         m_statusMessage = "Runtime started.";
                     }
                     ImGui::EndDisabled();
@@ -1796,6 +1883,8 @@ namespace PlutoGE::ui
                     if (ImGui::MenuItem("Stop"))
                     {
                         m_engine.StopRuntime();
+                        window.SetScriptInputEnabled(false);
+                        window.SetCursorLocked(false);
                         m_statusMessage = "Runtime stopped.";
                     }
                     ImGui::EndDisabled();
@@ -1973,7 +2062,22 @@ namespace PlutoGE::ui
             {
                 ImGui::BeginDisabled();
             }
+
+            const bool playModePanelsDisabled = m_engine.IsRuntimeRunning();
+            viewportPanel->SetInteractionEnabled(true);
+            viewportPanel->SetVisualAlpha(playModePanelsDisabled ? 0.35f : 1.0f);
+            sceneHierarchyPanel->SetInteractionEnabled(true);
+            sceneHierarchyPanel->SetVisualAlpha(playModePanelsDisabled ? 0.35f : 1.0f);
+            inspectorPanel->SetInteractionEnabled(true);
+            inspectorPanel->SetVisualAlpha(playModePanelsDisabled ? 0.35f : 1.0f);
+            profilerPanel->SetInteractionEnabled(true);
+            profilerPanel->SetVisualAlpha(playModePanelsDisabled ? 0.35f : 1.0f);
+            viewportPanel2->SetInteractionEnabled(true);
+            viewportPanel2->SetVisualAlpha(1.0f);
+
             m_panelManager.UpdatePanels();
+
+            window.SetScriptInputEnabled(m_engine.IsRuntimeRunning() && viewportPanel2->IsViewportFocused());
             if (isBakeRunning)
             {
                 ImGui::EndDisabled();

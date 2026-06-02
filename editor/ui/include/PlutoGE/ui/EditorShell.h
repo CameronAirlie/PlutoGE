@@ -158,6 +158,7 @@ namespace PlutoGE::ui
         bool CreateProjectAtPath(const std::filesystem::path &manifestPath);
         bool SaveProjectToDisk();
         bool BuildProjectToPath(const std::filesystem::path &destinationExecutablePath);
+        bool BuildAndRunProjectToPath(const std::filesystem::path &destinationExecutablePath);
 
         core::Engine &m_engine = core::Engine::GetInstance();
         PanelManager m_panelManager;

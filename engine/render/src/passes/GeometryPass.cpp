@@ -82,13 +82,19 @@ namespace PlutoGE::render
 
     void GeometryPass::Execute(const RenderContext &ctx)
     {
+        RenderTarget *geometryTarget = ctx.renderTarget ? ctx.renderTarget : ctx.temporaryRenderTarget;
+        if (!ctx.gBuffer || !geometryTarget)
+        {
+            return;
+        }
+
         if (!ctx.gBuffer->IsInitialized() ||
-            ctx.gBuffer->GetWidth() != ctx.renderTarget->GetWidth() ||
-            ctx.gBuffer->GetHeight() != ctx.renderTarget->GetHeight())
+            ctx.gBuffer->GetWidth() != geometryTarget->GetWidth() ||
+            ctx.gBuffer->GetHeight() != geometryTarget->GetHeight())
         {
             const auto resizeStart = std::chrono::high_resolution_clock::now();
             ctx.gBuffer->Cleanup();
-            ctx.gBuffer->Initialize(ctx.renderTarget->GetWidth(), ctx.renderTarget->GetHeight());
+            ctx.gBuffer->Initialize(geometryTarget->GetWidth(), geometryTarget->GetHeight());
             const auto resizeEnd = std::chrono::high_resolution_clock::now();
             if (ctx.renderer)
             {

@@ -23,6 +23,7 @@
 #include <iostream>
 #include <chrono>
 #include <cctype>
+#include <cstdlib>
 #include <filesystem>
 #include <cstring>
 #include <fstream>
@@ -53,6 +54,78 @@ namespace PlutoGE::ui
         constexpr std::string_view kDefaultProjectScriptDirectory = "Scripts";
         constexpr std::string_view kDefaultProjectManagedDirectory = "Managed";
         constexpr int kScriptCoreSearchAncestorLimit = 8;
+
+        std::string QuoteShellArgument(const std::filesystem::path &path)
+        {
+            return '"' + path.string() + '"';
+        }
+
+        std::filesystem::path FindCMakeBuildDirectory(const std::filesystem::path &runtimeExecutablePath)
+        {
+            auto candidate = runtimeExecutablePath.parent_path();
+            for (int depth = 0; depth < 8 && !candidate.empty(); ++depth)
+            {
+                if (std::filesystem::exists(candidate / "CMakeCache.txt"))
+                {
+                    return candidate;
+                }
+
+                const auto parent = candidate.parent_path();
+                if (parent.empty() || parent == candidate)
+                {
+                    break;
+                }
+
+                candidate = parent;
+            }
+
+            return {};
+        }
+
+        std::string DetectCMakeBuildConfig(const std::filesystem::path &runtimeExecutablePath)
+        {
+            const auto configDirectory = runtimeExecutablePath.parent_path().filename().string();
+            if (configDirectory == "Debug" ||
+                configDirectory == "Release" ||
+                configDirectory == "RelWithDebInfo" ||
+                configDirectory == "MinSizeRel")
+            {
+                return configDirectory;
+            }
+
+            return {};
+        }
+
+        bool RebuildStandaloneRuntime(const std::filesystem::path &runtimeExecutablePath,
+                                      std::string *errorMessage)
+        {
+            const auto buildDirectory = FindCMakeBuildDirectory(runtimeExecutablePath);
+            if (buildDirectory.empty())
+            {
+                if (errorMessage)
+                {
+                    *errorMessage = "Could not determine the CMake build directory for PlutoGERuntime.";
+                }
+                return false;
+            }
+
+            std::string command = "cmake --build " + QuoteShellArgument(buildDirectory) + " --target PlutoGERuntime";
+            if (const auto config = DetectCMakeBuildConfig(runtimeExecutablePath); !config.empty())
+            {
+                command += " --config " + config;
+            }
+
+            if (std::system(command.c_str()) != 0)
+            {
+                if (errorMessage)
+                {
+                    *errorMessage = "Failed to rebuild PlutoGERuntime before exporting the project.";
+                }
+                return false;
+            }
+
+            return true;
+        }
 
         std::filesystem::path GetProcessDirectory()
         {
@@ -1270,6 +1343,12 @@ namespace PlutoGE::ui
         }
 
         std::string errorMessage;
+        if (!RebuildStandaloneRuntime(runtimeExecutablePath, &errorMessage))
+        {
+            m_statusMessage = errorMessage;
+            return false;
+        }
+
         if (!assets::ExportStandaloneProject(*m_project, destinationExecutablePath, runtimeExecutablePath, &errorMessage))
         {
             m_statusMessage = errorMessage.empty() ? "Failed to build project." : errorMessage;

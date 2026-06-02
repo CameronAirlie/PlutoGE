@@ -122,6 +122,18 @@ namespace PlutoGE::ui
             return {};
         }
 
+        std::string MakeRelativeOrAbsoluteGenericPath(const std::filesystem::path &targetPath, const std::filesystem::path &basePath)
+        {
+            std::error_code errorCode;
+            const auto relativePath = std::filesystem::relative(targetPath, basePath, errorCode);
+            if (!errorCode && !relativePath.empty())
+            {
+                return relativePath.generic_string();
+            }
+
+            return std::filesystem::absolute(targetPath).lexically_normal().generic_string();
+        }
+
         bool WriteTextFile(const std::filesystem::path &filePath, std::string_view content, std::string *errorMessage)
         {
             std::error_code errorCode;
@@ -673,11 +685,9 @@ namespace PlutoGE::ui
             return false;
         }
 
-        const auto scriptCoreReference = std::filesystem::relative(scriptCoreProjectPath.parent_path() / "bin" / "$(Configuration)" / "$(TargetFramework)" / "PlutoGE.ScriptCore.dll",
-                                                                   scriptProjectPath.parent_path(),
-                                                                   errorCode)
-                                             .generic_string();
-        if (errorCode)
+        const auto scriptCoreReference = MakeRelativeOrAbsoluteGenericPath(scriptCoreProjectPath,
+                                                                           scriptProjectPath.parent_path());
+        if (scriptCoreReference.empty())
         {
             if (errorMessage)
             {
@@ -686,8 +696,9 @@ namespace PlutoGE::ui
             return false;
         }
 
-        const auto scriptCoreDirectory = std::filesystem::relative(scriptCoreProjectPath.parent_path(), scriptProjectPath.parent_path(), errorCode).generic_string();
-        if (errorCode)
+        const auto scriptCoreDirectory = MakeRelativeOrAbsoluteGenericPath(scriptCoreProjectPath.parent_path(),
+                                                                           scriptProjectPath.parent_path());
+        if (scriptCoreDirectory.empty())
         {
             if (errorMessage)
             {
@@ -729,10 +740,7 @@ namespace PlutoGE::ui
         scriptProjectContent += "    <Compile Include=\"" + sourcePattern + "\" />\n";
         scriptProjectContent += "  </ItemGroup>\n";
         scriptProjectContent += "  <ItemGroup>\n";
-        scriptProjectContent += "    <Reference Include=\"PlutoGE.ScriptCore\">\n";
-        scriptProjectContent += "      <HintPath>" + scriptCoreReference + "</HintPath>\n";
-        scriptProjectContent += "      <Private>true</Private>\n";
-        scriptProjectContent += "    </Reference>\n";
+        scriptProjectContent += "    <ProjectReference Include=\"" + scriptCoreReference + "\" />\n";
         scriptProjectContent += "  </ItemGroup>\n";
         scriptProjectContent += "  <Target Name=\"CopyScriptCoreRuntimeFiles\" AfterTargets=\"Build\">\n";
         scriptProjectContent += "    <ItemGroup>\n";
@@ -1099,7 +1107,16 @@ namespace PlutoGE::ui
         m_engine.GetRenderer().SetVSyncEnabled(manifest.vSyncEnabled);
 
         std::string scriptErrorMessage;
-        ReloadProjectScriptAssembly(&scriptErrorMessage);
+        bool scriptScaffoldReady = true;
+        if (!IsRuntimeExportProject())
+        {
+            scriptScaffoldReady = EnsureProjectScriptBuildScaffold(&scriptErrorMessage);
+        }
+
+        if (scriptScaffoldReady)
+        {
+            ReloadProjectScriptAssembly(&scriptErrorMessage);
+        }
 
         std::unique_ptr<scene::Scene> loadedScene;
         if (!manifest.startupScene.empty())
@@ -1165,6 +1182,14 @@ namespace PlutoGE::ui
         m_project = std::move(createdProject);
         ApplyProjectContext();
         SetScene(CreateEmptyScene());
+
+        std::string scriptErrorMessage;
+        if (!EnsureProjectScriptBuildScaffold(&scriptErrorMessage))
+        {
+            m_statusMessage = scriptErrorMessage.empty() ? "Failed to prepare project scripting." : scriptErrorMessage;
+            return false;
+        }
+
         ReloadProjectScriptAssembly();
 
         if (!SaveProjectToDisk())
@@ -1186,6 +1211,16 @@ namespace PlutoGE::ui
         }
 
         ApplyProjectContext();
+
+        if (!IsRuntimeExportProject())
+        {
+            std::string scriptErrorMessage;
+            if (!EnsureProjectScriptBuildScaffold(&scriptErrorMessage))
+            {
+                m_statusMessage = scriptErrorMessage.empty() ? "Failed to prepare project scripting." : scriptErrorMessage;
+                return false;
+            }
+        }
 
         auto &manifest = m_project->GetManifest();
         manifest.editorCamera = BuildProjectEditorCameraSettings(m_editorCamera);

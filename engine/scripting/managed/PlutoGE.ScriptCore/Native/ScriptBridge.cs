@@ -102,6 +102,18 @@ internal static unsafe class ScriptBridge
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3, void> _setLightColor;
     private static delegate* unmanaged[Cdecl]<uint, int> _getMeshStatic;
     private static delegate* unmanaged[Cdecl]<uint, int, void> _setMeshStatic;
+    private static delegate* unmanaged[Cdecl]<int, int> _getKeyDown;
+    private static delegate* unmanaged[Cdecl]<int, int> _getKeyPressed;
+    private static delegate* unmanaged[Cdecl]<int, int> _getKeyReleased;
+    private static delegate* unmanaged[Cdecl]<int, int> _getMouseButtonDown;
+    private static delegate* unmanaged[Cdecl]<int, int> _getMouseButtonPressed;
+    private static delegate* unmanaged[Cdecl]<int, int> _getMouseButtonReleased;
+    private static delegate* unmanaged[Cdecl]<NativeVector3> _getMousePosition;
+    private static delegate* unmanaged[Cdecl]<NativeVector3> _getMouseDelta;
+    private static delegate* unmanaged[Cdecl]<NativeVector3> _getMouseScrollDelta;
+    private static delegate* unmanaged[Cdecl]<int> _getQuitRequested;
+    private static delegate* unmanaged[Cdecl]<int> _getCursorLocked;
+    private static delegate* unmanaged[Cdecl]<int, void> _setCursorLocked;
 
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "LoadScriptAssembly")]
     public static int LoadScriptAssembly(nint assemblyPathPtr)
@@ -278,6 +290,54 @@ internal static unsafe class ScriptBridge
 
         _getMeshStatic = getMeshStatic;
         _setMeshStatic = setMeshStatic;
+        _lastError = string.Empty;
+        return 1;
+    }
+
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterInputApi")]
+    public static int RegisterInputApi(
+        delegate* unmanaged[Cdecl]<int, int> getKeyDown,
+        delegate* unmanaged[Cdecl]<int, int> getKeyPressed,
+        delegate* unmanaged[Cdecl]<int, int> getKeyReleased,
+        delegate* unmanaged[Cdecl]<int, int> getMouseButtonDown,
+        delegate* unmanaged[Cdecl]<int, int> getMouseButtonPressed,
+        delegate* unmanaged[Cdecl]<int, int> getMouseButtonReleased,
+        delegate* unmanaged[Cdecl]<NativeVector3> getMousePosition,
+        delegate* unmanaged[Cdecl]<NativeVector3> getMouseDelta,
+        delegate* unmanaged[Cdecl]<NativeVector3> getMouseScrollDelta,
+        delegate* unmanaged[Cdecl]<int> getQuitRequested,
+        delegate* unmanaged[Cdecl]<int> getCursorLocked,
+        delegate* unmanaged[Cdecl]<int, void> setCursorLocked)
+    {
+        if (getKeyDown == null ||
+            getKeyPressed == null ||
+            getKeyReleased == null ||
+            getMouseButtonDown == null ||
+            getMouseButtonPressed == null ||
+            getMouseButtonReleased == null ||
+            getMousePosition == null ||
+            getMouseDelta == null ||
+            getMouseScrollDelta == null ||
+            getQuitRequested == null ||
+            getCursorLocked == null ||
+            setCursorLocked == null)
+        {
+            SetError("Managed input API registration received a null function pointer.");
+            return 0;
+        }
+
+        _getKeyDown = getKeyDown;
+        _getKeyPressed = getKeyPressed;
+        _getKeyReleased = getKeyReleased;
+        _getMouseButtonDown = getMouseButtonDown;
+        _getMouseButtonPressed = getMouseButtonPressed;
+        _getMouseButtonReleased = getMouseButtonReleased;
+        _getMousePosition = getMousePosition;
+        _getMouseDelta = getMouseDelta;
+        _getMouseScrollDelta = getMouseScrollDelta;
+        _getQuitRequested = getQuitRequested;
+        _getCursorLocked = getCursorLocked;
+        _setCursorLocked = setCursorLocked;
         _lastError = string.Empty;
         return 1;
     }
@@ -609,6 +669,89 @@ internal static unsafe class ScriptBridge
         }
 
         _setMeshStatic(entityId, isStatic ? 1 : 0);
+    }
+
+    internal static bool GetKeyDown(int keyCode)
+    {
+        return _getKeyDown != null && _getKeyDown(keyCode) != 0;
+    }
+
+    internal static bool GetKeyPressed(int keyCode)
+    {
+        return _getKeyPressed != null && _getKeyPressed(keyCode) != 0;
+    }
+
+    internal static bool GetKeyReleased(int keyCode)
+    {
+        return _getKeyReleased != null && _getKeyReleased(keyCode) != 0;
+    }
+
+    internal static bool GetMouseButtonDown(int button)
+    {
+        return _getMouseButtonDown != null && _getMouseButtonDown(button) != 0;
+    }
+
+    internal static bool GetMouseButtonPressed(int button)
+    {
+        return _getMouseButtonPressed != null && _getMouseButtonPressed(button) != 0;
+    }
+
+    internal static bool GetMouseButtonReleased(int button)
+    {
+        return _getMouseButtonReleased != null && _getMouseButtonReleased(button) != 0;
+    }
+
+    internal static Vector2 GetMousePosition()
+    {
+        if (_getMousePosition == null)
+        {
+            return Vector2.Zero;
+        }
+
+        var position = _getMousePosition();
+        return new Vector2(position.X, position.Y);
+    }
+
+    internal static Vector2 GetMouseDelta()
+    {
+        if (_getMouseDelta == null)
+        {
+            return Vector2.Zero;
+        }
+
+        var delta = _getMouseDelta();
+        return new Vector2(delta.X, delta.Y);
+    }
+
+    internal static Vector2 GetMouseScrollDelta()
+    {
+        if (_getMouseScrollDelta == null)
+        {
+            return Vector2.Zero;
+        }
+
+        var delta = _getMouseScrollDelta();
+        return new Vector2(delta.X, delta.Y);
+    }
+
+    internal static bool GetQuitRequested()
+    {
+        return _getQuitRequested != null && _getQuitRequested() != 0;
+    }
+
+    internal static bool GetCursorLocked()
+    {
+        return _getCursorLocked != null && _getCursorLocked() != 0;
+    }
+
+    internal static void SetCursorLocked(bool locked)
+    {
+        if (_setCursorLocked == null)
+        {
+            return;
+        }
+
+        _setCursorLocked(locked ? 1 : 0);
     }
 
     private static void ResetLoadedAssembly()

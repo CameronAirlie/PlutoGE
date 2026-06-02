@@ -1,6 +1,7 @@
 #include "PlutoGE/scripting/HostFxrScriptRuntime.h"
 
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/platform/InputState.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
@@ -10,6 +11,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -69,6 +71,7 @@ namespace PlutoGE::scripting
         using register_camera_component_api_fn = int(__cdecl *)(void *, void *, void *, void *);
         using register_light_component_api_fn = int(__cdecl *)(void *, void *, void *, void *);
         using register_mesh_component_api_fn = int(__cdecl *)(void *, void *);
+        using register_input_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
 
         struct NativeVector3
         {
@@ -94,6 +97,12 @@ namespace PlutoGE::scripting
         using set_light_color_fn = void(__cdecl *)(uint32_t, NativeVector3);
         using get_mesh_static_fn = int(__cdecl *)(uint32_t);
         using set_mesh_static_fn = void(__cdecl *)(uint32_t, int32_t);
+        using get_input_key_fn = int(__cdecl *)(int32_t);
+        using get_input_mouse_button_fn = int(__cdecl *)(int32_t);
+        using get_input_mouse_vector2_fn = NativeVector3(__cdecl *)();
+        using get_input_quit_requested_fn = int(__cdecl *)();
+        using get_input_cursor_locked_fn = int(__cdecl *)();
+        using set_input_cursor_locked_fn = void(__cdecl *)(int32_t);
         constexpr std::wstring_view kScriptBridgeType = L"PlutoGE.ScriptCore.Native.ScriptBridge, PlutoGE.ScriptCore";
         constexpr std::wstring_view kScriptCoreAssembly = L"PlutoGE.ScriptCore.dll";
         constexpr std::wstring_view kScriptCoreRuntimeConfig = L"PlutoGE.ScriptCore.runtimeconfig.json";
@@ -662,6 +671,18 @@ namespace PlutoGE::scripting
             }
         }
 
+        const platform::InputState &GetInputState()
+        {
+            return core::Engine::GetInstance().GetWindow().GetInputState();
+        }
+
+        bool IsFiniteVector3(NativeVector3 value)
+        {
+            return std::isfinite(value.x) &&
+                   std::isfinite(value.y) &&
+                   std::isfinite(value.z);
+        }
+
         NativeVector3 GetEntityPosition(uint32_t entityId)
         {
             auto *entity = FindEntity(entityId);
@@ -677,7 +698,7 @@ namespace PlutoGE::scripting
         void SetEntityPosition(uint32_t entityId, NativeVector3 position)
         {
             auto *entity = FindEntity(entityId);
-            if (!entity)
+            if (!entity || !IsFiniteVector3(position))
             {
                 return;
             }
@@ -700,7 +721,7 @@ namespace PlutoGE::scripting
         void SetEntityRotation(uint32_t entityId, NativeVector3 rotation)
         {
             auto *entity = FindEntity(entityId);
-            if (!entity)
+            if (!entity || !IsFiniteVector3(rotation))
             {
                 return;
             }
@@ -723,7 +744,7 @@ namespace PlutoGE::scripting
         void SetEntityScale(uint32_t entityId, NativeVector3 scale)
         {
             auto *entity = FindEntity(entityId);
-            if (!entity)
+            if (!entity || !IsFiniteVector3(scale))
             {
                 return;
             }
@@ -906,6 +927,81 @@ namespace PlutoGE::scripting
                 meshComponent->SetStatic(isStatic != 0);
             }
         }
+
+        int32_t GetKeyDown(int32_t keyCode)
+        {
+            const auto &inputState = GetInputState();
+            return keyCode >= 0 && keyCode < static_cast<int32_t>(inputState.keys.size()) && inputState.keys[static_cast<size_t>(keyCode)] ? 1 : 0;
+        }
+
+        int32_t GetKeyPressed(int32_t keyCode)
+        {
+            const auto &inputState = GetInputState();
+            return keyCode >= 0 && keyCode < static_cast<int32_t>(inputState.keys.size()) &&
+                           inputState.keys[static_cast<size_t>(keyCode)] && !inputState.previousKeys[static_cast<size_t>(keyCode)]
+                       ? 1
+                       : 0;
+        }
+
+        int32_t GetKeyReleased(int32_t keyCode)
+        {
+            const auto &inputState = GetInputState();
+            return keyCode >= 0 && keyCode < static_cast<int32_t>(inputState.keys.size()) &&
+                           !inputState.keys[static_cast<size_t>(keyCode)] && inputState.previousKeys[static_cast<size_t>(keyCode)]
+                       ? 1
+                       : 0;
+        }
+
+        int32_t GetMouseButtonDown(int32_t button)
+        {
+            const auto &inputState = GetInputState();
+            return button >= 0 && button < 8 && inputState.mouseState.buttons[button] ? 1 : 0;
+        }
+
+        int32_t GetMouseButtonPressed(int32_t button)
+        {
+            const auto &inputState = GetInputState();
+            return button >= 0 && button < 8 && inputState.mouseState.buttons[button] && !inputState.mouseState.previousButtons[button] ? 1 : 0;
+        }
+
+        int32_t GetMouseButtonReleased(int32_t button)
+        {
+            const auto &inputState = GetInputState();
+            return button >= 0 && button < 8 && !inputState.mouseState.buttons[button] && inputState.mouseState.previousButtons[button] ? 1 : 0;
+        }
+
+        NativeVector3 GetMousePosition()
+        {
+            const auto &inputState = GetInputState();
+            return NativeVector3{static_cast<float>(inputState.mouseState.x), static_cast<float>(inputState.mouseState.y), 0.0f};
+        }
+
+        NativeVector3 GetMouseDelta()
+        {
+            const auto &inputState = GetInputState();
+            return NativeVector3{static_cast<float>(inputState.mouseState.deltaX), static_cast<float>(inputState.mouseState.deltaY), 0.0f};
+        }
+
+        NativeVector3 GetMouseScrollDelta()
+        {
+            const auto &inputState = GetInputState();
+            return NativeVector3{static_cast<float>(inputState.mouseState.scrollDeltaX), static_cast<float>(inputState.mouseState.scrollDeltaY), 0.0f};
+        }
+
+        int32_t GetQuitRequested()
+        {
+            return GetInputState().quitRequested ? 1 : 0;
+        }
+
+        int32_t GetCursorLocked()
+        {
+            return core::Engine::GetInstance().GetWindow().IsCursorLocked() ? 1 : 0;
+        }
+
+        void SetCursorLocked(int32_t locked)
+        {
+            core::Engine::GetInstance().GetWindow().SetCursorLocked(locked != 0);
+        }
 #endif
     }
 
@@ -935,8 +1031,12 @@ namespace PlutoGE::scripting
         register_camera_component_api_fn registerCameraComponentApi = nullptr;
         register_light_component_api_fn registerLightComponentApi = nullptr;
         register_mesh_component_api_fn registerMeshComponentApi = nullptr;
+        register_input_api_fn registerInputApi = nullptr;
+        std::filesystem::path bridgeSourceAssemblyPath;
+        std::filesystem::path bridgeSourceRuntimeConfigPath;
         std::filesystem::path bridgeAssemblyPath;
         std::filesystem::path runtimeConfigPath;
+        std::filesystem::path bridgeShadowDirectory;
         std::filesystem::path shadowManagedDirectory;
         std::filesystem::path shadowAssemblyPath;
 #endif
@@ -979,6 +1079,19 @@ namespace PlutoGE::scripting
             std::filesystem::remove_all(impl.shadowManagedDirectory, errorCode);
             impl.shadowManagedDirectory.clear();
             impl.shadowAssemblyPath.clear();
+        }
+
+        void CleanupBridgeShadowCopy(HostFxrScriptRuntime::Impl &impl)
+        {
+            if (!impl.bridgeShadowDirectory.empty())
+            {
+                std::error_code errorCode;
+                std::filesystem::remove_all(impl.bridgeShadowDirectory, errorCode);
+            }
+
+            impl.bridgeShadowDirectory.clear();
+            impl.bridgeAssemblyPath.clear();
+            impl.runtimeConfigPath.clear();
         }
 
         bool PrepareShadowCopy(HostFxrScriptRuntime::Impl &impl,
@@ -1060,6 +1173,92 @@ namespace PlutoGE::scripting
             return true;
         }
 
+        bool PrepareBridgeShadowCopy(HostFxrScriptRuntime::Impl &impl,
+                                     const std::filesystem::path &assemblyPath,
+                                     const std::filesystem::path &runtimeConfigPath)
+        {
+            CleanupBridgeShadowCopy(impl);
+
+            std::error_code errorCode;
+            const auto tempRoot = std::filesystem::temp_directory_path(errorCode);
+            if (errorCode)
+            {
+                impl.lastError = "Failed to locate a temporary directory for the managed bridge shadow copy.";
+                return false;
+            }
+
+            const auto sourceDirectory = assemblyPath.parent_path();
+            const auto uniqueDirectoryName = assemblyPath.stem().string() + "-bridge-" + std::to_string(GetCurrentProcessId()) + "-" + std::to_string(GetTickCount64());
+            const auto shadowDirectory = (tempRoot / "PlutoGE" / "ManagedShadow" / uniqueDirectoryName).lexically_normal();
+
+            std::filesystem::create_directories(shadowDirectory, errorCode);
+            if (errorCode)
+            {
+                impl.lastError = "Failed to create managed bridge shadow directory: " + shadowDirectory.string();
+                return false;
+            }
+
+            for (std::filesystem::recursive_directory_iterator iterator(sourceDirectory, std::filesystem::directory_options::skip_permission_denied, errorCode), end;
+                 iterator != end;
+                 iterator.increment(errorCode))
+            {
+                if (errorCode)
+                {
+                    impl.lastError = "Failed to enumerate managed bridge outputs for shadow copy.";
+                    CleanupBridgeShadowCopy(impl);
+                    return false;
+                }
+
+                const auto relativePath = std::filesystem::relative(iterator->path(), sourceDirectory, errorCode);
+                if (errorCode)
+                {
+                    impl.lastError = "Failed to resolve managed bridge shadow-copy path.";
+                    CleanupBridgeShadowCopy(impl);
+                    return false;
+                }
+
+                const auto destinationPath = (shadowDirectory / relativePath).lexically_normal();
+                if (iterator->is_directory())
+                {
+                    std::filesystem::create_directories(destinationPath, errorCode);
+                }
+                else if (iterator->is_regular_file())
+                {
+                    std::filesystem::create_directories(destinationPath.parent_path(), errorCode);
+                    if (!errorCode)
+                    {
+                        std::filesystem::copy_file(iterator->path(), destinationPath, std::filesystem::copy_options::overwrite_existing, errorCode);
+                    }
+                }
+
+                if (errorCode)
+                {
+                    impl.lastError = "Failed to copy managed bridge outputs into the shadow directory.";
+                    CleanupBridgeShadowCopy(impl);
+                    return false;
+                }
+            }
+
+            impl.bridgeShadowDirectory = shadowDirectory;
+            impl.bridgeAssemblyPath = (shadowDirectory / assemblyPath.filename()).lexically_normal();
+            impl.runtimeConfigPath = (shadowDirectory / runtimeConfigPath.filename()).lexically_normal();
+            if (!std::filesystem::exists(impl.bridgeAssemblyPath))
+            {
+                impl.lastError = "Managed bridge shadow copy is missing the bridge assembly: " + impl.bridgeAssemblyPath.string();
+                CleanupBridgeShadowCopy(impl);
+                return false;
+            }
+
+            if (!std::filesystem::exists(impl.runtimeConfigPath))
+            {
+                impl.lastError = "Managed bridge shadow copy is missing the runtime config: " + impl.runtimeConfigPath.string();
+                CleanupBridgeShadowCopy(impl);
+                return false;
+            }
+
+            return true;
+        }
+
         template <typename DelegateType>
         bool LoadManagedExport(HostFxrScriptRuntime::Impl &impl, const wchar_t *methodName, DelegateType &delegate)
         {
@@ -1133,16 +1332,23 @@ namespace PlutoGE::scripting
             }
 
             const auto &[bridgeAssemblyPath, runtimeConfigPath] = *scriptCorePaths;
-            if (impl.loadAssemblyAndGetFunctionPointer && impl.bridgeAssemblyPath == bridgeAssemblyPath && impl.runtimeConfigPath == runtimeConfigPath)
+            if (impl.loadAssemblyAndGetFunctionPointer &&
+                impl.bridgeSourceAssemblyPath == bridgeAssemblyPath &&
+                impl.bridgeSourceRuntimeConfigPath == runtimeConfigPath)
             {
                 return true;
             }
 
-            impl.bridgeAssemblyPath = bridgeAssemblyPath;
-            impl.runtimeConfigPath = runtimeConfigPath;
+            if (!PrepareBridgeShadowCopy(impl, bridgeAssemblyPath, runtimeConfigPath))
+            {
+                return false;
+            }
+
+            impl.bridgeSourceAssemblyPath = bridgeAssemblyPath;
+            impl.bridgeSourceRuntimeConfigPath = runtimeConfigPath;
 
             hostfxr_handle hostContext = nullptr;
-            const int initializeResult = impl.initializeForRuntimeConfig(runtimeConfigPath.c_str(), nullptr, &hostContext);
+            const int initializeResult = impl.initializeForRuntimeConfig(impl.runtimeConfigPath.c_str(), nullptr, &hostContext);
             if (initializeResult < 0)
             {
                 impl.lastError = "hostfxr failed to initialize the managed runtime (status " + std::to_string(initializeResult) + ")";
@@ -1183,7 +1389,8 @@ namespace PlutoGE::scripting
                 LoadManagedExport(impl, L"RegisterComponentApi", impl.registerComponentApi) &&
                 LoadManagedExport(impl, L"RegisterCameraComponentApi", impl.registerCameraComponentApi) &&
                 LoadManagedExport(impl, L"RegisterLightComponentApi", impl.registerLightComponentApi) &&
-                LoadManagedExport(impl, L"RegisterMeshComponentApi", impl.registerMeshComponentApi);
+                LoadManagedExport(impl, L"RegisterMeshComponentApi", impl.registerMeshComponentApi) &&
+                LoadManagedExport(impl, L"RegisterInputApi", impl.registerInputApi);
 
             if (!requiredExportsLoaded)
             {
@@ -1307,6 +1514,7 @@ namespace PlutoGE::scripting
         if (m_impl)
         {
             CleanupShadowCopy(*m_impl);
+            CleanupBridgeShadowCopy(*m_impl);
         }
 #endif
     }
@@ -1393,6 +1601,25 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(static_cast<set_mesh_static_fn>(&SetMeshStatic))) == 0)
         {
             setManagedBridgeFailure("RegisterMeshComponentApi");
+            return false;
+        }
+
+        if (!m_impl->registerInputApi ||
+            m_impl->registerInputApi(
+                reinterpret_cast<void *>(static_cast<get_input_key_fn>(&GetKeyDown)),
+                reinterpret_cast<void *>(static_cast<get_input_key_fn>(&GetKeyPressed)),
+                reinterpret_cast<void *>(static_cast<get_input_key_fn>(&GetKeyReleased)),
+                reinterpret_cast<void *>(static_cast<get_input_mouse_button_fn>(&GetMouseButtonDown)),
+                reinterpret_cast<void *>(static_cast<get_input_mouse_button_fn>(&GetMouseButtonPressed)),
+                reinterpret_cast<void *>(static_cast<get_input_mouse_button_fn>(&GetMouseButtonReleased)),
+                reinterpret_cast<void *>(static_cast<get_input_mouse_vector2_fn>(&GetMousePosition)),
+                reinterpret_cast<void *>(static_cast<get_input_mouse_vector2_fn>(&GetMouseDelta)),
+                reinterpret_cast<void *>(static_cast<get_input_mouse_vector2_fn>(&GetMouseScrollDelta)),
+                reinterpret_cast<void *>(static_cast<get_input_quit_requested_fn>(&GetQuitRequested)),
+                reinterpret_cast<void *>(static_cast<get_input_cursor_locked_fn>(&GetCursorLocked)),
+                reinterpret_cast<void *>(static_cast<set_input_cursor_locked_fn>(&SetCursorLocked))) == 0)
+        {
+            setManagedBridgeFailure("RegisterInputApi");
             return false;
         }
 

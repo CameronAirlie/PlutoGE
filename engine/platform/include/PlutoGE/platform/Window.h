@@ -40,8 +40,10 @@ namespace PlutoGE::platform
         [[nodiscard]] const WindowConfig GetConfig() const;
         [[nodiscard]] void *GetWindow() const;
         [[nodiscard]] InputState &GetInputState() { return m_inputState; }
+        [[nodiscard]] bool IsCursorLocked() const;
 
         void SetResizeCallback(const std::function<void(int, int)> &callback);
+        void SetCursorLocked(bool locked);
 
         void SetContextCurrent();
 
@@ -58,5 +60,6 @@ namespace PlutoGE::platform
         GLFWwindow *m_window = nullptr;
         int m_clientWidth = 0;
         int m_clientHeight = 0;
+        bool m_isCursorLocked = false;
     };
 }

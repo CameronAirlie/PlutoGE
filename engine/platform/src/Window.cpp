@@ -72,6 +72,10 @@ namespace PlutoGE::platform
                     if (action == GLFW_PRESS)
                     {
                         instance->m_inputState.keys[key] = true;
+                        if (key == GLFW_KEY_ESCAPE)
+                        {
+                            instance->m_inputState.escapePressed = true;
+                        }
                     }
                     else if (action == GLFW_RELEASE)
                     {
@@ -80,11 +84,61 @@ namespace PlutoGE::platform
                 }
             } });
 
+        glfwSetMouseButtonCallback(static_cast<GLFWwindow *>(m_window), [](GLFWwindow *window, int button, int action, int mods)
+                                   {
+            auto *instance = static_cast<Window *>(glfwGetWindowUserPointer(window));
+            if (!instance || button < 0 || button >= 8)
+            {
+                return;
+            }
+
+            if (action == GLFW_PRESS)
+            {
+                instance->m_inputState.mouseState.buttons[button] = true;
+            }
+            else if (action == GLFW_RELEASE)
+            {
+                instance->m_inputState.mouseState.buttons[button] = false;
+            } });
+
+        glfwSetCursorPosCallback(static_cast<GLFWwindow *>(m_window), [](GLFWwindow *window, double x, double y)
+                                 {
+            auto *instance = static_cast<Window *>(glfwGetWindowUserPointer(window));
+            if (!instance)
+            {
+                return;
+            }
+
+            instance->m_inputState.mouseState.deltaX += x - instance->m_inputState.mouseState.x;
+            instance->m_inputState.mouseState.deltaY += y - instance->m_inputState.mouseState.y;
+            instance->m_inputState.mouseState.x = x;
+            instance->m_inputState.mouseState.y = y; });
+
+        glfwSetScrollCallback(static_cast<GLFWwindow *>(m_window), [](GLFWwindow *window, double xOffset, double yOffset)
+                              {
+            auto *instance = static_cast<Window *>(glfwGetWindowUserPointer(window));
+            if (!instance)
+            {
+                return;
+            }
+
+            instance->m_inputState.mouseState.scrollDeltaX += xOffset;
+            instance->m_inputState.mouseState.scrollDeltaY += yOffset; });
+
+        glfwSetWindowCloseCallback(static_cast<GLFWwindow *>(m_window), [](GLFWwindow *window)
+                                   {
+            auto *instance = static_cast<Window *>(glfwGetWindowUserPointer(window));
+            if (instance)
+            {
+                instance->m_inputState.quitRequested = true;
+            } });
+
         return true;
     }
 
     void Window::PollEvents()
     {
+        m_inputState.BeginFrame();
         glfwPollEvents();
     }
 
@@ -145,6 +199,20 @@ namespace PlutoGE::platform
         if (m_window)
         {
             glfwSetFramebufferSizeCallback(static_cast<GLFWwindow *>(m_window), GLFWFramebufferResizeCallback);
+        }
+    }
+
+    bool Window::IsCursorLocked() const
+    {
+        return m_isCursorLocked;
+    }
+
+    void Window::SetCursorLocked(bool locked)
+    {
+        m_isCursorLocked = locked;
+        if (m_window)
+        {
+            glfwSetInputMode(static_cast<GLFWwindow *>(m_window), GLFW_CURSOR, locked ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
         }
     }
 

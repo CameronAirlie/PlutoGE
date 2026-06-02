@@ -65,8 +65,13 @@ namespace PlutoGE::platform
     struct MouseState
     {
         bool buttons[8] = {false};
+        bool previousButtons[8] = {false};
         double x = 0.0;
         double y = 0.0;
+        double deltaX = 0.0;
+        double deltaY = 0.0;
+        double scrollDeltaX = 0.0;
+        double scrollDeltaY = 0.0;
     };
 
     struct InputState
@@ -75,8 +80,9 @@ namespace PlutoGE::platform
         bool quitRequested = false;
         MouseState mouseState;
         std::array<bool, 512> keys = {false};
+        std::array<bool, 512> previousKeys = {false};
 
-        [[nodiscard]] bool IsKeyPressed(KeyCode key) const
+        [[nodiscard]] bool IsKeyDown(KeyCode key) const
         {
             const auto keyIndex = static_cast<std::uint16_t>(key);
             if (keyIndex < 512)
@@ -86,9 +92,65 @@ namespace PlutoGE::platform
             return false;
         }
 
+        [[nodiscard]] bool IsKeyPressed(KeyCode key) const
+        {
+            const auto keyIndex = static_cast<std::uint16_t>(key);
+            return keyIndex < 512 && keys[keyIndex] && !previousKeys[keyIndex];
+        }
+
+        [[nodiscard]] bool IsKeyReleased(KeyCode key) const
+        {
+            const auto keyIndex = static_cast<std::uint16_t>(key);
+            return keyIndex < 512 && !keys[keyIndex] && previousKeys[keyIndex];
+        }
+
+        [[nodiscard]] bool IsMouseButtonDown(std::uint16_t button) const
+        {
+            return button < 8 && mouseState.buttons[button];
+        }
+
+        [[nodiscard]] bool IsMouseButtonPressed(std::uint16_t button) const
+        {
+            return button < 8 && mouseState.buttons[button] && !mouseState.previousButtons[button];
+        }
+
+        [[nodiscard]] bool IsMouseButtonReleased(std::uint16_t button) const
+        {
+            return button < 8 && !mouseState.buttons[button] && mouseState.previousButtons[button];
+        }
+
+        void BeginFrame()
+        {
+            previousKeys = keys;
+            for (std::uint16_t button = 0; button < 8; ++button)
+            {
+                mouseState.previousButtons[button] = mouseState.buttons[button];
+            }
+
+            mouseState.deltaX = 0.0;
+            mouseState.deltaY = 0.0;
+            mouseState.scrollDeltaX = 0.0;
+            mouseState.scrollDeltaY = 0.0;
+            escapePressed = false;
+            quitRequested = false;
+        }
+
         void ClearKeyStates()
         {
             keys.fill(false);
+            previousKeys.fill(false);
+            for (auto &button : mouseState.buttons)
+            {
+                button = false;
+            }
+            for (auto &button : mouseState.previousButtons)
+            {
+                button = false;
+            }
+            mouseState.deltaX = 0.0;
+            mouseState.deltaY = 0.0;
+            mouseState.scrollDeltaX = 0.0;
+            mouseState.scrollDeltaY = 0.0;
         }
     };
 } // namespace PlutoGE::platform

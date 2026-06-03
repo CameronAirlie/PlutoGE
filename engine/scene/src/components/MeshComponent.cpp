@@ -20,6 +20,22 @@ namespace PlutoGE::scene
         constexpr const char *kMaterialSlotPrefix = "MaterialSlots.";
         constexpr const char *kSubmeshOverridePrefix = "SubmeshOverrides.";
 
+        render::MeshBounds ComputeWorldBounds(const render::Mesh &mesh, std::size_t submeshIndex, const glm::mat4 &modelMatrix)
+        {
+            const auto &bounds = submeshIndex < mesh.GetSubmeshCount()
+                                     ? mesh.GetSubmesh(submeshIndex).bounds
+                                     : mesh.GetBounds();
+            const glm::vec3 worldCenter = glm::vec3(modelMatrix * glm::vec4(bounds.center, 1.0f));
+            const float scaleX = glm::length(glm::vec3(modelMatrix[0]));
+            const float scaleY = glm::length(glm::vec3(modelMatrix[1]));
+            const float scaleZ = glm::length(glm::vec3(modelMatrix[2]));
+
+            return render::MeshBounds{
+                .center = worldCenter,
+                .radius = bounds.radius * std::max(scaleX, std::max(scaleY, scaleZ)),
+            };
+        }
+
         std::string SerializeVec4(const glm::vec4 &value)
         {
             return std::to_string(value.r) + "," + std::to_string(value.g) + "," + std::to_string(value.b) + "," + std::to_string(value.a);
@@ -325,8 +341,11 @@ namespace PlutoGE::scene
                 command.previousModel = m_hasPreviousModelMatrix ? m_previousModelMatrix : modelMatrix;
                 command.material = material;
                 command.mesh = m_mesh;
+                command.shader = material->GetShader();
+                command.worldBounds = ComputeWorldBounds(*m_mesh, submeshIndex, modelMatrix);
                 command.submeshIndex = static_cast<uint32_t>(submeshIndex);
                 command.isStatic = m_isStatic;
+                command.usePrimaryUvForLightmap = !m_mesh->HasUsableLightmapUvsForSubmesh(submeshIndex);
 
                 renderer.SubmitRenderCommand(command);
             }

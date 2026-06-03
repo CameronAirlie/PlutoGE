@@ -156,12 +156,40 @@ namespace PlutoGE::ui
                 report << "pending\n";
             }
         }
+        float lightingTotalMs = 0.0f;
+        if (lightingGpuTiming.hasSetupResult)
+        {
+            lightingTotalMs += lightingGpuTiming.setupMs;
+        }
+        if (lightingGpuTiming.hasAmbientResult)
+        {
+            lightingTotalMs += lightingGpuTiming.ambientMs;
+        }
+        if (lightingGpuTiming.hasLightAccumulationResult)
+        {
+            lightingTotalMs += lightingGpuTiming.lightAccumulationMs;
+        }
+        if (lightingTotalMs > 0.0f)
+        {
+            const float lightingShare = totalGpuPassTimeMs > 0.0f ? (lightingTotalMs / totalGpuPassTimeMs) * 100.0f : 0.0f;
+            report << "Lighting total: " << lightingTotalMs << " ms\n";
+            report << "Lighting share of GPU passes: " << lightingShare << "%\n";
+            report << "Non-lighting GPU: " << std::max(0.0f, totalGpuPassTimeMs - lightingTotalMs) << " ms\n";
+        }
         report << "Lighting setup: ";
         report << (lightingGpuTiming.hasSetupResult ? std::to_string(lightingGpuTiming.setupMs) + " ms" : std::string("pending")) << "\n";
         report << "Lighting ambient: ";
         report << (lightingGpuTiming.hasAmbientResult ? std::to_string(lightingGpuTiming.ambientMs) + " ms" : std::string("pending")) << "\n";
         report << "Lighting light accumulation: ";
         report << (lightingGpuTiming.hasLightAccumulationResult ? std::to_string(lightingGpuTiming.lightAccumulationMs) + " ms" : std::string("pending")) << "\n";
+        if (lightingGpuTiming.hasLightAccumulationResult && lightingGpuTiming.lightCount > 0)
+        {
+            report << "Lighting accumulation / light: " << (lightingGpuTiming.lightAccumulationMs / static_cast<float>(lightingGpuTiming.lightCount)) << " ms\n";
+        }
+        if (lightingGpuTiming.hasLightAccumulationResult && lightingGpuTiming.shadowedLightCount > 0)
+        {
+            report << "Lighting accumulation / shadowed light: " << (lightingGpuTiming.lightAccumulationMs / static_cast<float>(lightingGpuTiming.shadowedLightCount)) << " ms\n";
+        }
         report << "Lighting lights: " << lightingGpuTiming.lightCount << "\n";
         report << "Lighting shadowed lights: " << lightingGpuTiming.shadowedLightCount << "\n";
         return report.str();

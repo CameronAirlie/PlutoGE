@@ -32,6 +32,10 @@ public sealed class GameObject
         set => ScriptBridge.SetEntityScale(EntityId, value);
     }
 
+    public Vector3 Forward => ScriptBridge.GetEntityForward(EntityId);
+
+    public Vector3 Right => ScriptBridge.GetEntityRight(EntityId);
+
     public bool Active
     {
         get => ScriptBridge.GetEntityActive(EntityId);

@@ -435,7 +435,23 @@ namespace PlutoGE::render
         const bool gridChanged = glm::any(glm::greaterThan(glm::abs(desiredGridSize - m_gridSize), glm::vec3(0.01f))) ||
                                  glm::any(glm::greaterThan(glm::abs(desiredGridOrigin - m_gridOrigin), glm::vec3(0.01f)));
 
-        return sceneChanged || lightsChanged || viewportChanged || gridChanged;
+        if (!sceneChanged && !lightsChanged && !viewportChanged && !gridChanged)
+        {
+            return false;
+        }
+
+        if (lightsChanged || viewportChanged)
+        {
+            return true;
+        }
+
+        const auto now = std::chrono::steady_clock::now();
+        if (m_lastVolumeUpdateTime.time_since_epoch().count() != 0 && now - m_lastVolumeUpdateTime < kMovementDrivenUpdateInterval)
+        {
+            return false;
+        }
+
+        return sceneChanged || gridChanged;
     }
 
     void LightPropagationVolumePass::Execute(const RenderContext &ctx)
@@ -489,9 +505,16 @@ namespace PlutoGE::render
         const bool gridShifted = sameGridSize &&
                                  glm::any(glm::greaterThan(glm::abs(desiredGridOrigin - m_gridOrigin), glm::vec3(0.01f)));
         const bool cameraOnlyGridShift = gridShifted && !sceneChanged && !lightsChanged && !viewportChanged;
+        const float cameraMovementThreshold = glm::max(
+            1.0f,
+            glm::max(desiredGridSize.x, desiredGridSize.z) * kInjectionMovementUpdateFraction);
+        const bool cameraMovedEnough = glm::distance(cameraPosition, m_lastInjectionCameraPosition) >= cameraMovementThreshold;
+        const float forwardAlignment = glm::clamp(glm::dot(cameraForward, m_lastInjectionCameraForward), -1.0f, 1.0f);
+        const bool cameraRotatedEnough = (1.0f - forwardAlignment) >= kInjectionRotationUpdateThreshold;
         const auto now = std::chrono::steady_clock::now();
         const bool shouldRefreshCameraOnlyInjection =
             cameraOnlyGridShift &&
+            (cameraMovedEnough || cameraRotatedEnough) &&
             (m_lastFullInjectionTime.time_since_epoch().count() == 0 || now - m_lastFullInjectionTime >= kCameraOnlyReinjectionInterval);
         const bool canBlendTemporalHistory = m_hasValidVolume && sameGridSize;
         const std::vector<glm::vec3> reprojectedHistoryRadiance = gridShifted

@@ -66,7 +66,7 @@ namespace PlutoGE::scripting
         using invoke_on_update_fn = int(__cdecl *)(int64_t, float);
         using apply_field_data_fn = int(__cdecl *)(int64_t, const char *);
         using set_entity_id_fn = int(__cdecl *)(int64_t, uint32_t);
-        using register_game_object_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *);
+        using register_game_object_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_component_api_fn = int(__cdecl *)(void *, void *, void *);
         using register_camera_component_api_fn = int(__cdecl *)(void *, void *, void *, void *);
         using register_light_component_api_fn = int(__cdecl *)(void *, void *, void *, void *);
@@ -755,6 +755,32 @@ namespace PlutoGE::scripting
             }
 
             entity->SetScale(glm::vec3(scale.x, scale.y, scale.z));
+        }
+
+        NativeVector3 GetEntityForward(uint32_t entityId)
+        {
+            auto *entity = FindEntity(entityId);
+            if (!entity)
+            {
+                return NativeVector3{0.0f, 0.0f, -1.0f};
+            }
+
+            const glm::mat4 worldTransform = entity->GetWorldTransform();
+            const glm::vec3 forward = glm::normalize(-glm::vec3(worldTransform[2]));
+            return NativeVector3{forward.x, forward.y, forward.z};
+        }
+
+        NativeVector3 GetEntityRight(uint32_t entityId)
+        {
+            auto *entity = FindEntity(entityId);
+            if (!entity)
+            {
+                return NativeVector3{1.0f, 0.0f, 0.0f};
+            }
+
+            const glm::mat4 worldTransform = entity->GetWorldTransform();
+            const glm::vec3 right = glm::normalize(glm::vec3(worldTransform[0]));
+            return NativeVector3{right.x, right.y, right.z};
         }
 
         int32_t GetEntityActive(uint32_t entityId)
@@ -1606,6 +1632,8 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(static_cast<set_entity_vector3_fn>(&SetEntityRotation)),
                 reinterpret_cast<void *>(static_cast<get_entity_vector3_fn>(&GetEntityScale)),
                 reinterpret_cast<void *>(static_cast<set_entity_vector3_fn>(&SetEntityScale)),
+                reinterpret_cast<void *>(static_cast<get_entity_vector3_fn>(&GetEntityForward)),
+                reinterpret_cast<void *>(static_cast<get_entity_vector3_fn>(&GetEntityRight)),
                 reinterpret_cast<void *>(static_cast<get_entity_active_fn>(&GetEntityActive)),
                 reinterpret_cast<void *>(static_cast<set_entity_active_fn>(&SetEntityActive))) == 0)
         {

@@ -87,6 +87,8 @@ internal static unsafe class ScriptBridge
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3, void> _setEntityRotation;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3> _getEntityScale;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3, void> _setEntityScale;
+    private static delegate* unmanaged[Cdecl]<uint, NativeVector3> _getEntityForward;
+    private static delegate* unmanaged[Cdecl]<uint, NativeVector3> _getEntityRight;
     private static delegate* unmanaged[Cdecl]<uint, int> _getEntityActive;
     private static delegate* unmanaged[Cdecl]<uint, int, void> _setEntityActive;
     private static delegate* unmanaged[Cdecl]<uint, int, int> _hasComponent;
@@ -188,6 +190,8 @@ internal static unsafe class ScriptBridge
         delegate* unmanaged[Cdecl]<uint, NativeVector3, void> setEntityRotation,
         delegate* unmanaged[Cdecl]<uint, NativeVector3> getEntityScale,
         delegate* unmanaged[Cdecl]<uint, NativeVector3, void> setEntityScale,
+        delegate* unmanaged[Cdecl]<uint, NativeVector3> getEntityForward,
+        delegate* unmanaged[Cdecl]<uint, NativeVector3> getEntityRight,
         delegate* unmanaged[Cdecl]<uint, int> getEntityActive,
         delegate* unmanaged[Cdecl]<uint, int, void> setEntityActive)
     {
@@ -197,6 +201,8 @@ internal static unsafe class ScriptBridge
             setEntityRotation == null ||
             getEntityScale == null ||
             setEntityScale == null ||
+            getEntityForward == null ||
+            getEntityRight == null ||
             getEntityActive == null ||
             setEntityActive == null)
         {
@@ -210,6 +216,8 @@ internal static unsafe class ScriptBridge
         _setEntityRotation = setEntityRotation;
         _getEntityScale = getEntityScale;
         _setEntityScale = setEntityScale;
+        _getEntityForward = getEntityForward;
+        _getEntityRight = getEntityRight;
         _getEntityActive = getEntityActive;
         _setEntityActive = setEntityActive;
         _lastError = string.Empty;
@@ -549,6 +557,16 @@ internal static unsafe class ScriptBridge
     internal static Vector3 GetEntityScale(uint entityId)
     {
         return _getEntityScale == null ? Vector3.One : _getEntityScale(entityId).ToManaged();
+    }
+
+    internal static Vector3 GetEntityForward(uint entityId)
+    {
+        return _getEntityForward == null ? -Vector3.UnitZ : _getEntityForward(entityId).ToManaged();
+    }
+
+    internal static Vector3 GetEntityRight(uint entityId)
+    {
+        return _getEntityRight == null ? Vector3.UnitX : _getEntityRight(entityId).ToManaged();
     }
 
     internal static void SetEntityScale(uint entityId, Vector3 scale)

@@ -524,6 +524,8 @@ namespace PlutoGE::render
                 float directionalInscattering = uHasDirectionalLight != 0
                     ? ComputeDirectionalInscattering(dot(viewDirection, normalize(uLightDirection)))
                     : 0.0;
+                int shadowSampleStride = max(1, uStepCount / 8);
+                float lightVisibility = 1.0;
 
                 for (int stepIndex = 0; stepIndex < uStepCount; ++stepIndex)
                 {
@@ -538,8 +540,10 @@ namespace PlutoGE::render
                     float extinction = max(density * segmentLength, 0.0);
                     float segmentTransmittance = exp(-extinction);
                     float segmentFog = 1.0 - segmentTransmittance;
-                    float shadow = ComputeDirectionalLightShadow(samplePosition);
-                    float lightVisibility = 1.0 - shadow;
+                    if (uHasDirectionalLight != 0 && (stepIndex == 0 || (stepIndex % shadowSampleStride) == 0))
+                    {
+                        lightVisibility = 1.0 - ComputeDirectionalLightShadow(samplePosition);
+                    }
                     float localDensityBoost = 1.0 + density * 24.0;
                     float multipleScattering = 1.0 - exp(-density * segmentLength * 6.0);
                     vec3 ambientScatter = ambientFogColor * uAmbientContribution * (0.25 + 0.75 * multipleScattering);

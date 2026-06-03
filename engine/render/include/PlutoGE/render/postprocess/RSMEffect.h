@@ -4,6 +4,7 @@
 #include "PlutoGE/render/postprocess/ShaderPostProcessEffect.h"
 
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <memory>
 
@@ -60,6 +61,7 @@ namespace PlutoGE::render
         std::array<std::unique_ptr<RenderTarget>, 2> m_historyColorRenderTargets;
         std::array<std::unique_ptr<RenderTarget>, 2> m_historyMetadataRenderTargets;
         unsigned int m_captureFramebuffer = 0;
+        unsigned int m_captureInstanceBuffer = 0;
         unsigned int m_normalTexture = 0;
         unsigned int m_fluxTexture = 0;
         unsigned int m_depthTexture = 0;
@@ -74,9 +76,20 @@ namespace PlutoGE::render
         int m_sampleCount = 32;
         int m_captureWidth = 0;
         int m_captureHeight = 0;
+        std::size_t m_lastObservedSceneSignature = 0;
+        std::size_t m_lastSceneSignature = 0;
+        std::size_t m_lastLightSignature = 0;
         glm::mat4 m_previousView = glm::mat4(1.0f);
         glm::mat4 m_previousViewProjection = glm::mat4(1.0f);
+        glm::mat4 m_lastObservedViewProjection = glm::mat4(1.0f);
+        glm::mat4 m_lastObservedLightSpaceMatrix = glm::mat4(1.0f);
+        glm::mat4 m_lastResolvedViewProjection = glm::mat4(1.0f);
+        glm::mat4 m_lastResolvedLightSpaceMatrix = glm::mat4(1.0f);
+        std::chrono::steady_clock::time_point m_lastResolveTime{};
+        std::size_t m_captureInstanceCapacity = 0;
         std::uint8_t m_historyIndex = 0;
+        std::uint8_t m_skippedResolveFrames = 0;
+        bool m_hasObservedState = false;
         bool m_hasHistory = false;
         RsmQualityPreset m_qualityPreset = RsmQualityPreset::High;
         RsmDebugOutput m_debugOutput = RsmDebugOutput::Indirect;

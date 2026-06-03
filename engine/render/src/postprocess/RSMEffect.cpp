@@ -10,10 +10,15 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
+#include <cstddef>
+#include <cstdint>
 #include <limits>
+#include <vector>
 
 #include <glm/ext/matrix_clip_space.hpp>
 #include <glm/ext/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
 namespace PlutoGE::render
 {
@@ -42,6 +47,82 @@ namespace PlutoGE::render
             int shadowHeight = 0;
         };
 
+        struct CaptureInstanceData
+        {
+            glm::mat4 model{1.0f};
+        };
+
+        std::size_t HashBytes(const void *data, std::size_t size, std::size_t seed = 1469598103934665603ull)
+        {
+            constexpr std::size_t kPrime = 1099511628211ull;
+
+            std::size_t hash = seed;
+            const auto *bytes = static_cast<const std::uint8_t *>(data);
+            for (std::size_t index = 0; index < size; ++index)
+            {
+                hash ^= static_cast<std::size_t>(bytes[index]);
+                hash *= kPrime;
+            }
+
+            return hash;
+        }
+
+        template <typename T>
+        std::size_t HashValue(const T &value, std::size_t seed)
+        {
+            return HashBytes(&value, sizeof(T), seed);
+        }
+
+        std::size_t ComputeSceneSignature(const std::vector<RenderCommand> &renderCommands)
+        {
+            std::size_t hash = HashValue(renderCommands.size(), 1469598103934665603ull);
+            for (const auto &command : renderCommands)
+            {
+                hash = HashValue(command.material, hash);
+                hash = HashValue(command.mesh, hash);
+                hash = HashValue(command.submeshIndex, hash);
+                hash = HashBytes(glm::value_ptr(command.model), sizeof(glm::mat4), hash);
+            }
+
+            return hash;
+        }
+
+        std::size_t ComputeLightSignature(const std::vector<scene::Light *> &lights)
+        {
+            std::size_t hash = HashValue(lights.size(), 1469598103934665603ull);
+            for (const auto *light : lights)
+            {
+                hash = HashValue(light, hash);
+                if (!light)
+                {
+                    continue;
+                }
+
+                hash = HashValue(light->type, hash);
+                hash = HashBytes(glm::value_ptr(light->position), sizeof(glm::vec3), hash);
+                hash = HashBytes(glm::value_ptr(light->direction), sizeof(glm::vec3), hash);
+                hash = HashBytes(glm::value_ptr(light->color), sizeof(glm::vec3), hash);
+                hash = HashValue(light->intensity, hash);
+                hash = HashValue(light->range, hash);
+                hash = HashValue(light->castsShadows, hash);
+            }
+
+            return hash;
+        }
+
+        bool HasMatrixChanged(const glm::mat4 &a, const glm::mat4 &b, float epsilon = 0.0001f)
+        {
+            for (int column = 0; column < 4; ++column)
+            {
+                if (glm::any(glm::greaterThan(glm::abs(a[column] - b[column]), glm::vec4(epsilon))))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         bool HasUsableDirectionalShadowCapture(const scene::Light &light)
         {
             return light.castsShadows &&
@@ -51,23 +132,58 @@ namespace PlutoGE::render
 
         MeshBounds GetWorldBounds(const RenderCommand &command)
         {
-            if (!command.mesh)
+            return command.worldBounds;
+        }
+
+        void ConfigureMatrixAttributes(unsigned int baseLocation, std::size_t offset, std::size_t stride)
+        {
+            for (unsigned int column = 0; column < 4; ++column)
             {
-                return {};
+                const unsigned int location = baseLocation + column;
+                glEnableVertexAttribArray(location);
+                glVertexAttribPointer(location, 4, GL_FLOAT, GL_FALSE, static_cast<GLsizei>(stride), reinterpret_cast<const void *>(offset + sizeof(glm::vec4) * column));
+                glVertexAttribDivisor(location, 1);
+            }
+        }
+
+        void BindCaptureInstanceAttributes(const Mesh &mesh, unsigned int instanceBuffer)
+        {
+            glBindVertexArray(mesh.GetVAO());
+            glBindBuffer(GL_ARRAY_BUFFER, instanceBuffer);
+            ConfigureMatrixAttributes(5, offsetof(CaptureInstanceData, model), sizeof(CaptureInstanceData));
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+        }
+
+        void UploadCaptureInstances(unsigned int &instanceBuffer,
+                                    std::size_t &instanceCapacity,
+                                    const std::vector<CaptureInstanceData> &instances)
+        {
+            if (instances.empty())
+            {
+                return;
             }
 
-            const auto &bounds = command.submeshIndex < command.mesh->GetSubmeshCount()
-                                     ? command.mesh->GetSubmesh(command.submeshIndex).bounds
-                                     : command.mesh->GetBounds();
-            const glm::vec3 worldCenter = glm::vec3(command.model * glm::vec4(bounds.center, 1.0f));
-            const float scaleX = glm::length(glm::vec3(command.model[0]));
-            const float scaleY = glm::length(glm::vec3(command.model[1]));
-            const float scaleZ = glm::length(glm::vec3(command.model[2]));
+            if (instanceBuffer == 0)
+            {
+                glGenBuffers(1, &instanceBuffer);
+            }
 
-            return MeshBounds{
-                .center = worldCenter,
-                .radius = bounds.radius * std::max(scaleX, std::max(scaleY, scaleZ)),
-            };
+            glBindBuffer(GL_ARRAY_BUFFER, instanceBuffer);
+            if (instanceCapacity < instances.size())
+            {
+                instanceCapacity = std::max(instances.size(), instanceCapacity == 0 ? instances.size() : instanceCapacity * 2);
+                glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(instanceCapacity * sizeof(CaptureInstanceData)), nullptr, GL_STREAM_DRAW);
+            }
+
+            glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(instances.size() * sizeof(CaptureInstanceData)), instances.data());
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+        }
+
+        bool CanBatchCaptureCommands(const RenderCommand &a, const RenderCommand &b)
+        {
+            return a.material == b.material &&
+                   a.mesh == b.mesh &&
+                   a.submeshIndex == b.submeshIndex;
         }
 
         glm::vec3 ResolveUpVector(const glm::vec3 &direction)
@@ -335,6 +451,12 @@ namespace PlutoGE::render
     RSMEffect::~RSMEffect()
     {
         ReleaseCaptureResources();
+        if (m_captureInstanceBuffer != 0)
+        {
+            glDeleteBuffers(1, &m_captureInstanceBuffer);
+            m_captureInstanceBuffer = 0;
+            m_captureInstanceCapacity = 0;
+        }
     }
 
     std::vector<PostProcessParameter> RSMEffect::GetParameters() const
@@ -439,8 +561,8 @@ namespace PlutoGE::render
             layout(location = 1) in vec3 aNormal;
             layout(location = 2) in vec2 aUV;
             layout(location = 3) in vec4 aTangent;
+            layout(location = 5) in mat4 aModel;
 
-            uniform mat4 uModel;
             uniform mat4 uLightSpaceMatrix;
 
             out vec3 FragPos;
@@ -450,9 +572,9 @@ namespace PlutoGE::render
 
             void main()
             {
-                vec4 worldPos = uModel * vec4(aPos, 1.0);
+                vec4 worldPos = aModel * vec4(aPos, 1.0);
                 FragPos = worldPos.xyz;
-                mat3 normalMatrix = transpose(inverse(mat3(uModel)));
+                mat3 normalMatrix = transpose(inverse(mat3(aModel)));
                 vec3 worldNormal = normalize(normalMatrix * aNormal);
                 vec3 worldTangent = normalize(normalMatrix * aTangent.xyz);
                 worldTangent = normalize(worldTangent - dot(worldTangent, worldNormal) * worldNormal);
@@ -520,6 +642,10 @@ namespace PlutoGE::render
             }
         )";
         m_captureShader = Shader::Create(captureSource);
+        if (m_captureInstanceBuffer == 0)
+        {
+            glGenBuffers(1, &m_captureInstanceBuffer);
+        }
 
         ShaderSource resolveSource;
         resolveSource.vertexSource = R"(
@@ -983,6 +1109,8 @@ namespace PlutoGE::render
     {
         m_hasHistory = false;
         m_historyIndex = 0;
+        m_skippedResolveFrames = 0;
+        m_hasObservedState = false;
     }
 
     void RSMEffect::Apply(const PostProcessContext &context)
@@ -1026,6 +1154,10 @@ namespace PlutoGE::render
         const int captureHeight = std::max(static_cast<int>(static_cast<float>(baseHeight) * m_captureScale), 128);
         EnsureResources(captureWidth, captureHeight, width, height);
 
+        const glm::mat4 viewProjection = context.renderContext.cameraData.projection * context.renderContext.cameraData.view;
+        const std::size_t sceneSignature = ComputeSceneSignature(*context.renderContext.renderCommands);
+        const std::size_t lightSignature = context.renderContext.lights ? ComputeLightSignature(*context.renderContext.lights) : 0;
+
         if (!rsmSource.light)
         {
             if (m_debugOutput != RsmDebugOutput::Indirect && m_resolvedIndirectRenderTarget && m_resolvedIndirectRenderTarget->IsInitialized())
@@ -1040,6 +1172,42 @@ namespace PlutoGE::render
             }
 
             return nullptr;
+        }
+
+        RenderTarget *currentHistoryTarget = m_historyColorRenderTargets[m_historyIndex].get();
+        const bool hasReusableIndirectTarget =
+            m_debugOutput == RsmDebugOutput::Indirect &&
+            m_hasHistory &&
+            currentHistoryTarget != nullptr &&
+            currentHistoryTarget->IsInitialized();
+        const bool sceneChanged = sceneSignature != m_lastSceneSignature;
+        const bool lightChanged = lightSignature != m_lastLightSignature;
+        const bool cameraChanged = HasMatrixChanged(viewProjection, m_lastResolvedViewProjection);
+        const bool lightSpaceChanged = HasMatrixChanged(rsmSource.lightSpaceMatrix, m_lastResolvedLightSpaceMatrix);
+        const auto now = std::chrono::steady_clock::now();
+        const bool motionActiveThisFrame =
+            m_hasObservedState &&
+            (sceneSignature != m_lastObservedSceneSignature ||
+             HasMatrixChanged(viewProjection, m_lastObservedViewProjection) ||
+             HasMatrixChanged(rsmSource.lightSpaceMatrix, m_lastObservedLightSpaceMatrix));
+
+        m_lastObservedSceneSignature = sceneSignature;
+        m_lastObservedViewProjection = viewProjection;
+        m_lastObservedLightSpaceMatrix = rsmSource.lightSpaceMatrix;
+        m_hasObservedState = true;
+
+        if (hasReusableIndirectTarget && !sceneChanged && !lightChanged && !cameraChanged && !lightSpaceChanged)
+        {
+            return currentHistoryTarget;
+        }
+
+        if (hasReusableIndirectTarget &&
+            !lightChanged &&
+            (sceneChanged || cameraChanged || lightSpaceChanged) &&
+            motionActiveThisFrame)
+        {
+            ++m_skippedResolveFrames;
+            return currentHistoryTarget;
         }
 
         RenderTarget *previousHistoryColorTarget = m_historyColorRenderTargets[m_historyIndex].get();
@@ -1087,6 +1255,38 @@ namespace PlutoGE::render
 
         const auto rsmCapturePlanes = ExtractFrustumPlanes(rsmSource.lightSpaceMatrix);
         Material *boundMaterial = nullptr;
+        Mesh *boundMesh = nullptr;
+        std::vector<CaptureInstanceData> batchInstances;
+        batchInstances.reserve(64);
+        const RenderCommand *batchHead = nullptr;
+
+        const auto flushBatch = [&]()
+        {
+            if (!batchHead || batchInstances.empty())
+            {
+                batchHead = nullptr;
+                batchInstances.clear();
+                return;
+            }
+
+            if (batchHead->material != boundMaterial)
+            {
+                batchHead->material->Bind(m_captureShader);
+                boundMaterial = batchHead->material;
+            }
+
+            UploadCaptureInstances(m_captureInstanceBuffer, m_captureInstanceCapacity, batchInstances);
+            if (batchHead->mesh != boundMesh)
+            {
+                BindCaptureInstanceAttributes(*batchHead->mesh, m_captureInstanceBuffer);
+                boundMesh = batchHead->mesh;
+            }
+
+            batchHead->mesh->DrawSubmeshInstancedBound(batchHead->submeshIndex, batchInstances.size());
+            batchHead = nullptr;
+            batchInstances.clear();
+        };
+
         for (const auto &command : *context.renderContext.renderCommands)
         {
             if (!command.mesh || !command.material)
@@ -1094,20 +1294,27 @@ namespace PlutoGE::render
                 continue;
             }
 
+            if (batchHead && !CanBatchCaptureCommands(*batchHead, command))
+            {
+                flushBatch();
+            }
+
             if (!IsBoundsVisible(GetWorldBounds(command), rsmCapturePlanes))
             {
                 continue;
             }
 
-            if (command.material != boundMaterial)
+            if (!batchHead)
             {
-                command.material->Bind(m_captureShader);
-                boundMaterial = command.material;
+                batchHead = &command;
             }
 
-            m_captureShader->SetUniform("uModel", command.model);
-            command.mesh->DrawSubmesh(command.submeshIndex);
+            batchInstances.push_back(CaptureInstanceData{
+                .model = command.model,
+            });
         }
+
+        flushBatch();
 
         RenderTarget *initialTarget = m_debugOutput == RsmDebugOutput::Indirect ? m_rawIndirectRenderTarget.get() : m_resolvedIndirectRenderTarget.get();
         Graphics::BindRenderTarget(initialTarget);
@@ -1182,7 +1389,7 @@ namespace PlutoGE::render
             m_blurShader->SetUniform("uBlurDirection", glm::vec2(0.0f, 1.0f));
             DrawFullscreenTriangle();
 
-            const glm::mat4 viewProjection = context.renderContext.cameraData.projection * context.renderContext.cameraData.view;
+            const bool reuseGapInvalidatesHistory = m_skippedResolveFrames > 0;
 
             const PostProcessContext temporalContext{
                 .renderContext = context.renderContext,
@@ -1212,7 +1419,7 @@ namespace PlutoGE::render
             m_temporalResolveShader->SetUniform("uView", context.renderContext.cameraData.view);
             m_temporalResolveShader->SetUniform("uPreviousView", m_previousView);
             m_temporalResolveShader->SetUniform("uPreviousViewProjection", m_previousViewProjection);
-            m_temporalResolveShader->SetUniform("uHasHistory", m_hasHistory ? 1 : 0);
+            m_temporalResolveShader->SetUniform("uHasHistory", (m_hasHistory && !reuseGapInvalidatesHistory) ? 1 : 0);
             m_temporalResolveShader->SetUniform("uTemporalBlend", m_temporalBlend);
             m_temporalResolveShader->SetUniform("uHistoryDepthThreshold", m_historyDepthThreshold);
             m_temporalResolveShader->SetUniform("uHistoryNormalThreshold", m_historyNormalThreshold);
@@ -1241,6 +1448,13 @@ namespace PlutoGE::render
         {
             ResetHistory();
         }
+
+        m_lastSceneSignature = sceneSignature;
+        m_lastLightSignature = lightSignature;
+        m_lastResolvedViewProjection = viewProjection;
+        m_lastResolvedLightSpaceMatrix = rsmSource.lightSpaceMatrix;
+        m_lastResolveTime = now;
+        m_skippedResolveFrames = 0;
 
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         glViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
@@ -1374,5 +1588,6 @@ namespace PlutoGE::render
         }
         m_captureWidth = 0;
         m_captureHeight = 0;
+        m_captureInstanceCapacity = 0;
     }
 }

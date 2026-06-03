@@ -9,8 +9,10 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cmath>
 #include <limits>
+#include <vector>
 
 #include <glm/ext/matrix_clip_space.hpp>
 #include <glm/gtc/matrix_inverse.hpp>
@@ -27,6 +29,11 @@ namespace
     {
         glm::vec3 normal{0.0f};
         float distance = 0.0f;
+    };
+
+    struct TransformInstanceData
+    {
+        glm::mat4 model{1.0f};
     };
 
     glm::vec3 ResolveUpVector(const glm::vec3 &direction)
@@ -88,14 +95,16 @@ namespace
                std::abs(current.farPlane - previous.farPlane) > kShadowUpdateMatrixEpsilon;
     }
 
-    bool ShouldUpdateDirectionalCascade(std::uint64_t frameSequence, int cascadeIndex, bool forceFullUpdate)
+    bool ShouldUpdateDirectionalCascade(std::uint64_t frameSequence, int cascadeIndex, bool forceFullUpdate, bool cameraOnlyInvalidation)
     {
-        if (forceFullUpdate || cascadeIndex <= 0)
+        if (forceFullUpdate)
         {
             return true;
         }
 
-        const std::uint64_t cadence = 1ull << static_cast<std::uint64_t>(std::clamp(cascadeIndex, 0, 3));
+        const int cadenceOffset = cameraOnlyInvalidation ? 2 : 1;
+        const int cadenceIndex = std::clamp(cascadeIndex + cadenceOffset, cadenceOffset, 5);
+        const std::uint64_t cadence = 1ull << static_cast<std::uint64_t>(cadenceIndex);
         return (frameSequence % cadence) == 0;
     }
 
@@ -117,25 +126,55 @@ namespace
         return false;
     }
 
-    PlutoGE::render::MeshBounds GetWorldBounds(const PlutoGE::render::RenderCommand &command)
+    void ConfigureMatrixAttributes(unsigned int baseLocation, std::size_t offset, std::size_t stride)
     {
-        if (!command.mesh)
+        for (unsigned int column = 0; column < 4; ++column)
         {
-            return {};
+            const unsigned int location = baseLocation + column;
+            glEnableVertexAttribArray(location);
+            glVertexAttribPointer(location, 4, GL_FLOAT, GL_FALSE, static_cast<GLsizei>(stride), reinterpret_cast<const void *>(offset + sizeof(glm::vec4) * column));
+            glVertexAttribDivisor(location, 1);
+        }
+    }
+
+    void BindTransformInstanceAttributes(const PlutoGE::render::Mesh &mesh, unsigned int instanceBuffer)
+    {
+        glBindVertexArray(mesh.GetVAO());
+        glBindBuffer(GL_ARRAY_BUFFER, instanceBuffer);
+        ConfigureMatrixAttributes(5, offsetof(TransformInstanceData, model), sizeof(TransformInstanceData));
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+    }
+
+    void UploadTransformInstances(unsigned int &instanceBuffer,
+                                  std::size_t &instanceCapacity,
+                                  const std::vector<TransformInstanceData> &instances)
+    {
+        if (instances.empty())
+        {
+            return;
         }
 
-        const auto &bounds = command.submeshIndex < command.mesh->GetSubmeshCount()
-                                 ? command.mesh->GetSubmesh(command.submeshIndex).bounds
-                                 : command.mesh->GetBounds();
-        const glm::vec3 worldCenter = glm::vec3(command.model * glm::vec4(bounds.center, 1.0f));
-        const float scaleX = glm::length(glm::vec3(command.model[0]));
-        const float scaleY = glm::length(glm::vec3(command.model[1]));
-        const float scaleZ = glm::length(glm::vec3(command.model[2]));
+        if (instanceBuffer == 0)
+        {
+            glGenBuffers(1, &instanceBuffer);
+        }
 
-        return PlutoGE::render::MeshBounds{
-            .center = worldCenter,
-            .radius = bounds.radius * std::max(scaleX, std::max(scaleY, scaleZ)),
-        };
+        glBindBuffer(GL_ARRAY_BUFFER, instanceBuffer);
+        if (instanceCapacity < instances.size())
+        {
+            instanceCapacity = std::max(instances.size(), instanceCapacity == 0 ? instances.size() : instanceCapacity * 2);
+            glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(instanceCapacity * sizeof(TransformInstanceData)), nullptr, GL_STREAM_DRAW);
+        }
+
+        glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(instances.size() * sizeof(TransformInstanceData)), instances.data());
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+    }
+
+    bool CanBatchShadowCommands(const PlutoGE::render::RenderCommand &a, const PlutoGE::render::RenderCommand &b)
+    {
+        return a.material == b.material &&
+               a.mesh == b.mesh &&
+               a.submeshIndex == b.submeshIndex;
     }
 
     std::vector<ShadowCasterEntry> BuildShadowCasterEntries(const std::vector<PlutoGE::render::RenderCommand> &renderCommands)
@@ -152,7 +191,7 @@ namespace
 
             shadowCasters.push_back(ShadowCasterEntry{
                 .command = &command,
-                .bounds = GetWorldBounds(command),
+                .bounds = command.worldBounds,
             });
         }
 
@@ -440,6 +479,72 @@ namespace
 
         shader->SetUniform("uHasAlbedoTexture", 0.0f);
     }
+
+    template <typename Predicate>
+    void DrawShadowCasterBatches(const std::vector<ShadowCasterEntry> &shadowCasters,
+                                 Predicate &&predicate,
+                                 PlutoGE::render::Shader *shader,
+                                 unsigned int &instanceBuffer,
+                                 std::size_t &instanceCapacity)
+    {
+        PlutoGE::render::Material *boundMaterial = nullptr;
+        PlutoGE::render::Mesh *boundMesh = nullptr;
+        std::vector<TransformInstanceData> batchInstances;
+        batchInstances.reserve(64);
+        const PlutoGE::render::RenderCommand *batchHead = nullptr;
+
+        const auto flushBatch = [&]()
+        {
+            if (!batchHead || batchInstances.empty())
+            {
+                batchHead = nullptr;
+                batchInstances.clear();
+                return;
+            }
+
+            if (batchHead->material != boundMaterial)
+            {
+                BindShadowMaterialState(shader, batchHead->material);
+                boundMaterial = batchHead->material;
+            }
+
+            UploadTransformInstances(instanceBuffer, instanceCapacity, batchInstances);
+            if (batchHead->mesh != boundMesh)
+            {
+                BindTransformInstanceAttributes(*batchHead->mesh, instanceBuffer);
+                boundMesh = batchHead->mesh;
+            }
+
+            batchHead->mesh->DrawSubmeshInstancedBound(batchHead->submeshIndex, batchInstances.size());
+            batchHead = nullptr;
+            batchInstances.clear();
+        };
+
+        for (const auto &shadowCaster : shadowCasters)
+        {
+            const auto &command = *shadowCaster.command;
+            if (batchHead && !CanBatchShadowCommands(*batchHead, command))
+            {
+                flushBatch();
+            }
+
+            if (!predicate(shadowCaster))
+            {
+                continue;
+            }
+
+            if (!batchHead)
+            {
+                batchHead = &command;
+            }
+
+            batchInstances.push_back(TransformInstanceData{
+                .model = command.model,
+            });
+        }
+
+        flushBatch();
+    }
 }
 
 namespace PlutoGE::render
@@ -448,6 +553,10 @@ namespace PlutoGE::render
     {
         m_shadowPassShader = Shader::CreateShadowPassShader();
         glGenFramebuffers(1, &m_shadowFramebuffer);
+        if (m_instanceBuffer == 0)
+        {
+            glGenBuffers(1, &m_instanceBuffer);
+        }
     }
 
     void ShadowPass::Execute(const RenderContext &ctx)
@@ -480,12 +589,13 @@ namespace PlutoGE::render
                 continue;
             }
 
+            const bool motionDrivenDirectionalInvalidation = light->type == scene::LightType::Directional && ctx.hasCameraData && (cameraDataChanged || shadowCastersChanged);
+
             const bool needsUpdate = light->type == scene::LightType::Directional
                                          ? (ctx.hasCameraData &&
                                             (light->isDirty ||
-                                             cameraDataChanged ||
-                                             shadowCastersChanged))
-                                         : light->isDirty;
+                                             motionDrivenDirectionalInvalidation))
+                                         : (light->isDirty || shadowCastersChanged);
             if (!needsUpdate)
             {
                 continue;
@@ -508,7 +618,6 @@ namespace PlutoGE::render
                 m_shadowPassShader->SetUniform("uShadowPassMode", kPointShadowPassMode);
                 m_shadowPassShader->SetUniform("uLightPosition", light->position);
                 m_shadowPassShader->SetUniform("uFarPlane", farPlane);
-                Material *boundMaterial = nullptr;
 
                 for (unsigned int face = 0; face < shadowMatrices.size(); ++face)
                 {
@@ -521,25 +630,16 @@ namespace PlutoGE::render
 
                     glClear(GL_DEPTH_BUFFER_BIT);
                     m_shadowPassShader->SetUniform("uLightSpaceMatrix", shadowMatrices[face]);
-
-                    for (const auto &shadowCaster : shadowCasters)
-                    {
-                        if (!IsCommandRelevantForPointLight(shadowCaster, *light) ||
-                            !IsCommandRelevantForProjectedLight(shadowCaster, faceFrustumPlanes))
+                    DrawShadowCasterBatches(
+                        shadowCasters,
+                        [&](const ShadowCasterEntry &shadowCaster)
                         {
-                            continue;
-                        }
-
-                        const auto &command = *shadowCaster.command;
-                        m_shadowPassShader->SetUniform("uModel", command.model);
-                        if (command.material != boundMaterial)
-                        {
-                            BindShadowMaterialState(m_shadowPassShader, command.material);
-                            boundMaterial = command.material;
-                        }
-
-                        command.mesh->DrawSubmesh(command.submeshIndex);
-                    }
+                            return IsCommandRelevantForPointLight(shadowCaster, *light) &&
+                                   IsCommandRelevantForProjectedLight(shadowCaster, faceFrustumPlanes);
+                        },
+                        m_shadowPassShader,
+                        m_instanceBuffer,
+                        m_instanceCapacity);
                 }
 
                 light->isDirty = false;
@@ -556,6 +656,7 @@ namespace PlutoGE::render
                 const int cascadeCount = GetDirectionalCascadeCount(*light);
                 const auto cascadeSplits = BuildDirectionalCascadeSplits(ctx.cameraData, light->directionalShadowSettings, cascadeCount);
                 const bool forceFullCascadeUpdate = light->isDirty || !ctx.hasPreviousCameraData;
+                const bool cameraOnlyInvalidation = cameraDataChanged && !light->isDirty && !shadowCastersChanged;
 
                 light->shadowMatrix = glm::mat4(1.0f);
                 light->shadowFarPlane = cascadeSplits[cascadeCount - 1];
@@ -576,13 +677,20 @@ namespace PlutoGE::render
                     const float cascadeFar = cascadeSplits[cascadeIndex];
                     const int shadowResolution = cascadeMap->GetWidth() > 0 ? cascadeMap->GetWidth() : GetShadowResolution(*light);
 
-                    if (!ShouldUpdateDirectionalCascade(ctx.frameSequence, cascadeIndex, forceFullCascadeUpdate))
+                    if (!ShouldUpdateDirectionalCascade(ctx.frameSequence, cascadeIndex, forceFullCascadeUpdate, cameraOnlyInvalidation))
                     {
                         continue;
                     }
 
                     const auto cascadeProjection = BuildDirectionalCascadeProjection(*light, ctx.cameraData, shadowCasters, cascadeNear, cascadeFar, shadowResolution);
                     const glm::mat4 &cascadeMatrix = cascadeProjection.lightSpaceMatrix;
+                    const bool cascadeMatrixChanged = !AreMatricesApproximatelyEqual(cascadeMatrix, light->shadowCascadeMatrices[cascadeIndex]);
+                    const bool cascadeSplitChanged = std::abs(light->shadowCascadeSplits[cascadeIndex] - cascadeFar) > kShadowUpdateMatrixEpsilon;
+                    if (cameraOnlyInvalidation && !cascadeMatrixChanged && !cascadeSplitChanged)
+                    {
+                        continue;
+                    }
+
                     light->shadowCascadeMatrices[cascadeIndex] = cascadeMatrix;
                     light->shadowCascadeSplits[cascadeIndex] = cascadeFar;
 
@@ -595,29 +703,19 @@ namespace PlutoGE::render
 
                     glClear(GL_DEPTH_BUFFER_BIT);
                     m_shadowPassShader->SetUniform("uLightSpaceMatrix", cascadeMatrix);
-                    Material *boundMaterial = nullptr;
-
-                    for (const auto &shadowCaster : shadowCasters)
-                    {
-                        if (!IsCommandRelevantForDirectionalCascade(
+                    DrawShadowCasterBatches(
+                        shadowCasters,
+                        [&](const ShadowCasterEntry &shadowCaster)
+                        {
+                            return IsCommandRelevantForDirectionalCascade(
                                 shadowCaster,
                                 cascadeProjection.lightViewMatrix,
                                 cascadeProjection.receiverMin,
-                                cascadeProjection.receiverMax))
-                        {
-                            continue;
-                        }
-
-                        const auto &command = *shadowCaster.command;
-                        m_shadowPassShader->SetUniform("uModel", command.model);
-                        if (command.material != boundMaterial)
-                        {
-                            BindShadowMaterialState(m_shadowPassShader, command.material);
-                            boundMaterial = command.material;
-                        }
-
-                        command.mesh->DrawSubmesh(command.submeshIndex);
-                    }
+                                cascadeProjection.receiverMax);
+                        },
+                        m_shadowPassShader,
+                        m_instanceBuffer,
+                        m_instanceCapacity);
                 }
 
                 for (int cascadeIndex = cascadeCount; cascadeIndex < scene::kMaxDirectionalShadowCascades; ++cascadeIndex)
@@ -657,25 +755,16 @@ namespace PlutoGE::render
             glClear(GL_DEPTH_BUFFER_BIT);
             m_shadowPassShader->SetUniform("uShadowPassMode", kProjectedShadowPassMode);
             m_shadowPassShader->SetUniform("uLightSpaceMatrix", shadowMatrix);
-            Material *boundMaterial = nullptr;
-
-            for (const auto &shadowCaster : shadowCasters)
-            {
-                if (light->type == scene::LightType::Spot && !IsCommandRelevantForProjectedLight(shadowCaster, shadowFrustumPlanes))
+            DrawShadowCasterBatches(
+                shadowCasters,
+                [&](const ShadowCasterEntry &shadowCaster)
                 {
-                    continue;
-                }
-
-                const auto &command = *shadowCaster.command;
-                m_shadowPassShader->SetUniform("uModel", command.model);
-                if (command.material != boundMaterial)
-                {
-                    BindShadowMaterialState(m_shadowPassShader, command.material);
-                    boundMaterial = command.material;
-                }
-
-                command.mesh->DrawSubmesh(command.submeshIndex);
-            }
+                    return light->type != scene::LightType::Spot ||
+                           IsCommandRelevantForProjectedLight(shadowCaster, shadowFrustumPlanes);
+                },
+                m_shadowPassShader,
+                m_instanceBuffer,
+                m_instanceCapacity);
 
             light->isDirty = false;
             glCullFace(GL_BACK);

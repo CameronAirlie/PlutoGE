@@ -38,7 +38,7 @@ namespace PlutoGE::render
 
         Shader *GetRenderCommandShaderKey(const RenderCommand &command)
         {
-            return command.material ? command.material->GetShader() : nullptr;
+            return command.shader;
         }
 
         void SortRenderCommands(std::vector<RenderCommand> &renderCommands)
@@ -208,7 +208,7 @@ namespace PlutoGE::render
             return;
         }
 
-        SortRenderCommands(m_renderCommands);
+        EnsureRenderCommandsSorted();
 
         RenderContext ctx{
             .renderer = this,
@@ -284,7 +284,7 @@ namespace PlutoGE::render
             return;
         }
 
-        SortRenderCommands(m_renderCommands);
+        EnsureRenderCommandsSorted();
 
         RenderContext ctx{
             .renderer = this,
@@ -324,6 +324,19 @@ namespace PlutoGE::render
     void Renderer::ClearRenderCommands()
     {
         m_renderCommands.clear();
+        m_renderCommandsDirty = false;
+    }
+
+    void Renderer::EnsureRenderCommandsSorted()
+    {
+        if (!m_renderCommandsDirty || m_renderCommands.size() < 2)
+        {
+            m_renderCommandsDirty = false;
+            return;
+        }
+
+        SortRenderCommands(m_renderCommands);
+        m_renderCommandsDirty = false;
     }
 
     void Renderer::EndFrame(RenderTarget *renderTarget)

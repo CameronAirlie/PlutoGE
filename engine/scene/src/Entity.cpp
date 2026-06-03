@@ -96,7 +96,6 @@ namespace PlutoGE::scene
         }
 
         m_transform.position = position;
-        MarkShadowSceneDirty();
     }
 
     void Entity::SetRotation(const glm::vec3 &rotation)
@@ -107,7 +106,6 @@ namespace PlutoGE::scene
         }
 
         m_transform.rotation = rotation;
-        MarkShadowSceneDirty();
     }
 
     void Entity::SetScale(const glm::vec3 &scale)
@@ -118,7 +116,6 @@ namespace PlutoGE::scene
         }
 
         m_transform.scale = scale;
-        MarkShadowSceneDirty();
     }
 
     void Entity::SetActive(bool active)

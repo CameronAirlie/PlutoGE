@@ -2,6 +2,8 @@
 
 #include "PlutoGE/render/passes/IRenderPass.h"
 
+#include <cstddef>
+
 namespace PlutoGE::render
 {
     class Renderer;
@@ -19,5 +21,7 @@ namespace PlutoGE::render
     private:
         Shader *m_shadowPassShader = nullptr;
         unsigned int m_shadowFramebuffer = 0;
+        unsigned int m_instanceBuffer = 0;
+        std::size_t m_instanceCapacity = 0;
     };
 }

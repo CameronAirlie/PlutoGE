@@ -178,9 +178,10 @@ namespace PlutoGE::render
             layout(location = 2) in vec2 aUV;
             layout(location = 3) in vec4 aTangent;
             layout(location = 4) in vec2 aUV2;
+            layout(location = 5) in mat4 aModel;
+            layout(location = 9) in mat4 aPreviousModel;
+            layout(location = 13) in vec4 aInstanceFlags;
 
-            uniform mat4 uModel;
-            uniform mat4 uPreviousModel;
             uniform mat4 uView;
             uniform mat4 uProjection;
             uniform mat4 uCurrentViewProjection;
@@ -193,13 +194,14 @@ namespace PlutoGE::render
             out mat3 TBN;
             out vec4 CurrentClipPos;
             out vec4 PreviousClipPos;
+            flat out vec2 InstanceFlags;
 
             void main()
             {
-                vec4 currentWorldPos = uModel * vec4(aPos, 1.0);
-                vec4 previousWorldPos = uPreviousModel * vec4(aPos, 1.0);
+                vec4 currentWorldPos = aModel * vec4(aPos, 1.0);
+                vec4 previousWorldPos = aPreviousModel * vec4(aPos, 1.0);
                 FragPos = currentWorldPos.xyz;
-                mat3 normalMatrix = transpose(inverse(mat3(uModel)));
+                mat3 normalMatrix = transpose(inverse(mat3(aModel)));
                 vec3 worldNormal = normalize(normalMatrix * aNormal);
                 vec3 worldTangent = normalize(normalMatrix * aTangent.xyz);
                 worldTangent = normalize(worldTangent - dot(worldTangent, worldNormal) * worldNormal);
@@ -211,6 +213,7 @@ namespace PlutoGE::render
                 CurrentClipPos = uCurrentViewProjection * currentWorldPos;
                 PreviousClipPos = uPreviousViewProjection * previousWorldPos;
                 gl_Position = CurrentClipPos;
+                InstanceFlags = aInstanceFlags.xy;
                 TBN = mat3(
                     worldTangent,
                     normalize(worldBitangent),
@@ -235,6 +238,7 @@ namespace PlutoGE::render
             in mat3 TBN;
             in vec4 CurrentClipPos;
             in vec4 PreviousClipPos;
+            flat in vec2 InstanceFlags;
 
             uniform sampler2D uAlbedoTexture;
             uniform float uHasAlbedoTexture = 0.0;
@@ -256,8 +260,6 @@ namespace PlutoGE::render
 
             uniform sampler2D uLightmapTexture;
             uniform float uHasLightmapTexture = 0.0;
-            uniform float uStaticMesh = 0.0;
-            uniform float uUsePrimaryUvForLightmap = 0.0;
 
             float ReadTextureChannel(vec4 value, int channel)
             {
@@ -322,9 +324,9 @@ namespace PlutoGE::render
                 gAlbedoMetallic = vec4(albedo, clamp(metallic, 0.0, 1.0));
                 gBakedLighting = vec4(0.0);
 
-                if (uStaticMesh > 0.5 && uHasLightmapTexture > 0.5)
+                if (InstanceFlags.x > 0.5 && uHasLightmapTexture > 0.5)
                 {
-                    vec2 lightmapUv = clamp(mix(UV2, UV, clamp(uUsePrimaryUvForLightmap, 0.0, 1.0)), vec2(0.0), vec2(1.0));
+                    vec2 lightmapUv = clamp(mix(UV2, UV, clamp(InstanceFlags.y, 0.0, 1.0)), vec2(0.0), vec2(1.0));
                     gBakedLighting = vec4(max(texture(uLightmapTexture, lightmapUv).rgb, vec3(0.0)), 1.0);
                 }
 
@@ -575,20 +577,20 @@ float SampleShadowMapPCF(sampler2D shadowMap, vec3 projectedCoords, float depthB
     }
 
     vec2 texelSize = 1.0 / vec2(textureSize(shadowMap, 0));
-    float filterRadius = max(softness, 0.5);
+    float filterRadius = max(softness * 0.75, 0.35);
     float shadow = 0.0;
     float totalWeight = 0.0;
-    for (int y = -1; y <= 1; ++y)
+    for (int sampleIndex = 0; sampleIndex < 8; ++sampleIndex)
     {
-        for (int x = -1; x <= 1; ++x)
-        {
-            vec2 offset = vec2(float(x), float(y)) * texelSize * filterRadius;
-            vec2 sampleCoords = projectedCoords.xy + offset;
-            float closestDepth = texture(shadowMap, sampleCoords).r;
-            float weight = (x == 0 && y == 0) ? 4.0 : ((x == 0 || y == 0) ? 2.0 : 1.0);
-            shadow += projectedCoords.z - depthBias > closestDepth ? weight : 0.0;
-            totalWeight += weight;
-        }
+        float t = (float(sampleIndex) + 0.5) / 8.0;
+        float angle = t * 6.28318530718;
+        float radius = sqrt(t);
+        vec2 offset = vec2(cos(angle), sin(angle)) * texelSize * filterRadius * radius;
+        vec2 sampleCoords = projectedCoords.xy + offset;
+        float closestDepth = texture(shadowMap, sampleCoords).r;
+        float weight = 1.0 - 0.65 * t;
+        shadow += projectedCoords.z - depthBias > closestDepth ? weight : 0.0;
+        totalWeight += weight;
     }
 
     return shadow / max(totalWeight, 0.0001);
@@ -1190,8 +1192,8 @@ void main()
             layout(location = 1) in vec3 aNormal;
             layout(location = 2) in vec2 aUV;
             layout(location = 3) in vec4 aTangent;
+            layout(location = 5) in mat4 aModel;
 
-            uniform mat4 uModel;
             uniform mat4 uLightSpaceMatrix;
 
             out vec3 FragPos;
@@ -1199,7 +1201,7 @@ void main()
 
             void main()
             {
-                vec4 worldPosition = uModel * vec4(aPos, 1.0);
+                vec4 worldPosition = aModel * vec4(aPos, 1.0);
                 FragPos = worldPosition.xyz;
                 UV = aUV;
                 gl_Position = uLightSpaceMatrix * worldPosition;

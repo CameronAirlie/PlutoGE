@@ -25,6 +25,21 @@ namespace PlutoGE::ui
         const auto &gpuPassTimings = m_renderer->GetGpuPassTimings();
         const auto &lightingGpuTiming = m_renderer->GetLightingGpuTiming();
         const auto &frameTimingStats = m_profiler->GetLatestFrameTimingStats();
+        float lightingTotalMs = 0.0f;
+        if (lightingGpuTiming.hasSetupResult)
+        {
+            lightingTotalMs += lightingGpuTiming.setupMs;
+        }
+        if (lightingGpuTiming.hasAmbientResult)
+        {
+            lightingTotalMs += lightingGpuTiming.ambientMs;
+        }
+        if (lightingGpuTiming.hasLightAccumulationResult)
+        {
+            lightingTotalMs += lightingGpuTiming.lightAccumulationMs;
+        }
+        const float totalGpuPassTimeMs = m_renderer->GetTotalGpuPassTimeMs();
+        const float lightingShare = totalGpuPassTimeMs > 0.0f ? (lightingTotalMs / totalGpuPassTimeMs) * 100.0f : 0.0f;
         ImGui::Text("Frame: %.2f ms", m_profiler->GetCurrentFrameTimeMs());
         ImGui::Text("Average: %.2f ms (%.1f FPS)", m_profiler->GetAverageFrameTimeMs(), m_profiler->GetAverageFPS());
         ImGui::Text("Min / Max: %.2f ms / %.2f ms", m_profiler->GetMinFrameTimeMs(), m_profiler->GetMaxFrameTimeMs());
@@ -74,7 +89,7 @@ namespace PlutoGE::ui
         ImGui::Text("GBuffer resize: %.2f ms (%d)", cpuFrameStats.gBufferResizeMs, cpuFrameStats.gBufferResizeCount);
 
         ImGui::Separator();
-        ImGui::Text("GPU passes total: %.2f ms", m_renderer->GetTotalGpuPassTimeMs());
+        ImGui::Text("GPU passes total: %.2f ms", totalGpuPassTimeMs);
         if (gpuPassTimings.empty())
         {
             ImGui::TextUnformatted("GPU timer queries are unavailable.");
@@ -98,6 +113,16 @@ namespace PlutoGE::ui
         {
             ImGui::Separator();
             ImGui::TextUnformatted("Lighting breakdown");
+            if (lightingTotalMs > 0.0f)
+            {
+                ImGui::Text("Lighting total: %.2f ms (%.1f%% of GPU passes)", lightingTotalMs, lightingShare);
+                ImGui::Text("Non-lighting GPU: %.2f ms", std::max(0.0f, totalGpuPassTimeMs - lightingTotalMs));
+            }
+            else
+            {
+                ImGui::TextUnformatted("Lighting total: pending");
+            }
+
             if (lightingGpuTiming.hasSetupResult)
             {
                 ImGui::Text("Setup + depth copy: %.2f ms", lightingGpuTiming.setupMs);
@@ -119,6 +144,14 @@ namespace PlutoGE::ui
             if (lightingGpuTiming.hasLightAccumulationResult)
             {
                 ImGui::Text("Per-light accumulation: %.2f ms", lightingGpuTiming.lightAccumulationMs);
+                if (lightingGpuTiming.lightCount > 0)
+                {
+                    ImGui::Text("Accumulation / light: %.3f ms", lightingGpuTiming.lightAccumulationMs / static_cast<float>(lightingGpuTiming.lightCount));
+                }
+                if (lightingGpuTiming.shadowedLightCount > 0)
+                {
+                    ImGui::Text("Accumulation / shadowed light: %.3f ms", lightingGpuTiming.lightAccumulationMs / static_cast<float>(lightingGpuTiming.shadowedLightCount));
+                }
             }
             else
             {

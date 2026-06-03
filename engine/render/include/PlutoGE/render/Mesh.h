@@ -238,14 +238,52 @@ namespace PlutoGE::render
         void Draw() const
         {
             Bind();
-            glDrawElements(GL_TRIANGLES, (GLsizei)GetIndexCount(), GL_UNSIGNED_INT, 0);
+            DrawBound();
+        }
+
+        void DrawBound() const
+        {
+            glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(GetIndexCount()), GL_UNSIGNED_INT, nullptr);
+        }
+
+        void DrawInstanced(std::size_t instanceCount) const
+        {
+            Bind();
+            DrawInstancedBound(instanceCount);
+        }
+
+        void DrawInstancedBound(std::size_t instanceCount) const
+        {
+            if (instanceCount == 0 || GetIndexCount() == 0)
+            {
+                return;
+            }
+
+            glDrawElementsInstanced(
+                GL_TRIANGLES,
+                static_cast<GLsizei>(GetIndexCount()),
+                GL_UNSIGNED_INT,
+                nullptr,
+                static_cast<GLsizei>(instanceCount));
         }
 
         void DrawSubmesh(size_t submeshIndex) const
         {
+            Bind();
+            DrawSubmeshBound(submeshIndex);
+        }
+
+        void DrawSubmeshInstanced(size_t submeshIndex, std::size_t instanceCount) const
+        {
+            Bind();
+            DrawSubmeshInstancedBound(submeshIndex, instanceCount);
+        }
+
+        void DrawSubmeshBound(size_t submeshIndex) const
+        {
             if (submeshIndex >= m_config.submeshes.size())
             {
-                Draw();
+                DrawBound();
                 return;
             }
 
@@ -255,12 +293,38 @@ namespace PlutoGE::render
                 return;
             }
 
-            Bind();
             glDrawElements(
                 GL_TRIANGLES,
                 static_cast<GLsizei>(submesh.indexCount),
                 GL_UNSIGNED_INT,
                 reinterpret_cast<const void *>(static_cast<uintptr_t>(submesh.indexOffset) * sizeof(unsigned int)));
+        }
+
+        void DrawSubmeshInstancedBound(size_t submeshIndex, std::size_t instanceCount) const
+        {
+            if (instanceCount == 0)
+            {
+                return;
+            }
+
+            if (submeshIndex >= m_config.submeshes.size())
+            {
+                DrawInstancedBound(instanceCount);
+                return;
+            }
+
+            const auto &submesh = m_config.submeshes[submeshIndex];
+            if (submesh.indexCount == 0)
+            {
+                return;
+            }
+
+            glDrawElementsInstanced(
+                GL_TRIANGLES,
+                static_cast<GLsizei>(submesh.indexCount),
+                GL_UNSIGNED_INT,
+                reinterpret_cast<const void *>(static_cast<uintptr_t>(submesh.indexOffset) * sizeof(unsigned int)),
+                static_cast<GLsizei>(instanceCount));
         }
 
         ~Mesh() = default;

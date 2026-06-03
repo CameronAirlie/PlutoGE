@@ -8,7 +8,9 @@
 #include "PlutoGE/render/Renderer.h"
 
 #include <array>
+#include <cstddef>
 #include <chrono>
+#include <vector>
 
 namespace PlutoGE::render
 {
@@ -20,6 +22,13 @@ namespace PlutoGE::render
         {
             glm::vec3 normal{0.0f};
             float distance = 0.0f;
+        };
+
+        struct GeometryInstanceData
+        {
+            glm::mat4 model{1.0f};
+            glm::mat4 previousModel{1.0f};
+            glm::vec4 flags{0.0f};
         };
 
         std::array<FrustumPlane, 6> ExtractFrustumPlanes(const glm::mat4 &viewProjection)
@@ -53,19 +62,9 @@ namespace PlutoGE::render
                 return false;
             }
 
-            const auto &bounds = command.submeshIndex < command.mesh->GetSubmeshCount()
-                                     ? command.mesh->GetSubmesh(command.submeshIndex).bounds
-                                     : command.mesh->GetBounds();
-            const glm::vec3 localCenter = bounds.center;
-            const glm::vec3 worldCenter = glm::vec3(command.model * glm::vec4(localCenter, 1.0f));
-            const float scaleX = glm::length(glm::vec3(command.model[0]));
-            const float scaleY = glm::length(glm::vec3(command.model[1]));
-            const float scaleZ = glm::length(glm::vec3(command.model[2]));
-            const float worldRadius = bounds.radius * std::max(scaleX, std::max(scaleY, scaleZ));
-
             for (const auto &plane : planes)
             {
-                if (glm::dot(plane.normal, worldCenter) + plane.distance < -worldRadius)
+                if (glm::dot(plane.normal, command.worldBounds.center) + plane.distance < -command.worldBounds.radius)
                 {
                     return false;
                 }
@@ -73,11 +72,70 @@ namespace PlutoGE::render
 
             return true;
         }
+
+        bool CanBatchGeometryCommands(const RenderCommand &a, const RenderCommand &b)
+        {
+            return a.material == b.material &&
+                   a.mesh == b.mesh &&
+                   a.submeshIndex == b.submeshIndex;
+        }
+
+        void ConfigureMatrixAttributes(unsigned int baseLocation, std::size_t offset, std::size_t stride)
+        {
+            for (unsigned int column = 0; column < 4; ++column)
+            {
+                const unsigned int location = baseLocation + column;
+                glEnableVertexAttribArray(location);
+                glVertexAttribPointer(location, 4, GL_FLOAT, GL_FALSE, static_cast<GLsizei>(stride), reinterpret_cast<const void *>(offset + sizeof(glm::vec4) * column));
+                glVertexAttribDivisor(location, 1);
+            }
+        }
+
+        void BindGeometryInstanceAttributes(const Mesh &mesh, unsigned int instanceBuffer)
+        {
+            glBindVertexArray(mesh.GetVAO());
+            glBindBuffer(GL_ARRAY_BUFFER, instanceBuffer);
+            ConfigureMatrixAttributes(5, offsetof(GeometryInstanceData, model), sizeof(GeometryInstanceData));
+            ConfigureMatrixAttributes(9, offsetof(GeometryInstanceData, previousModel), sizeof(GeometryInstanceData));
+            glEnableVertexAttribArray(13);
+            glVertexAttribPointer(13, 4, GL_FLOAT, GL_FALSE, static_cast<GLsizei>(sizeof(GeometryInstanceData)), reinterpret_cast<const void *>(offsetof(GeometryInstanceData, flags)));
+            glVertexAttribDivisor(13, 1);
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+        }
+
+        void UploadGeometryInstances(unsigned int &instanceBuffer,
+                                     std::size_t &instanceCapacity,
+                                     const std::vector<GeometryInstanceData> &instances)
+        {
+            if (instances.empty())
+            {
+                return;
+            }
+
+            if (instanceBuffer == 0)
+            {
+                glGenBuffers(1, &instanceBuffer);
+            }
+
+            glBindBuffer(GL_ARRAY_BUFFER, instanceBuffer);
+            if (instanceCapacity < instances.size())
+            {
+                instanceCapacity = std::max(instances.size(), instanceCapacity == 0 ? instances.size() : instanceCapacity * 2);
+                glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(instanceCapacity * sizeof(GeometryInstanceData)), nullptr, GL_STREAM_DRAW);
+            }
+
+            glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(instances.size() * sizeof(GeometryInstanceData)), instances.data());
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+        }
     }
 
     void GeometryPass::Initialize()
     {
         m_geometryPassShader = Shader::CreateGeometryPassShader();
+        if (m_instanceBuffer == 0)
+        {
+            glGenBuffers(1, &m_instanceBuffer);
+        }
     }
 
     void GeometryPass::Execute(const RenderContext &ctx)
@@ -120,28 +178,68 @@ namespace PlutoGE::render
         m_geometryPassShader->SetUniform("uPreviousViewProjection", previousViewProjection);
         const auto frustumPlanes = ExtractFrustumPlanes(ctx.cameraData.projection * ctx.cameraData.view);
         Material *boundMaterial = nullptr;
+        Mesh *boundMesh = nullptr;
+        std::vector<GeometryInstanceData> batchInstances;
+        batchInstances.reserve(64);
+        const RenderCommand *batchHead = nullptr;
+
+        const auto flushBatch = [&]()
+        {
+            if (!batchHead || batchInstances.empty())
+            {
+                batchHead = nullptr;
+                batchInstances.clear();
+                return;
+            }
+
+            if (batchHead->material != boundMaterial)
+            {
+                batchHead->material->Bind(m_geometryPassShader);
+                boundMaterial = batchHead->material;
+            }
+
+            UploadGeometryInstances(m_instanceBuffer, m_instanceCapacity, batchInstances);
+            if (batchHead->mesh != boundMesh)
+            {
+                BindGeometryInstanceAttributes(*batchHead->mesh, m_instanceBuffer);
+                boundMesh = batchHead->mesh;
+            }
+
+            batchHead->mesh->DrawSubmeshInstancedBound(batchHead->submeshIndex, batchInstances.size());
+            batchHead = nullptr;
+            batchInstances.clear();
+        };
 
         for (const auto &command : *ctx.renderCommands)
         {
+            if (!command.material || !command.mesh)
+            {
+                continue;
+            }
+
+            if (batchHead && !CanBatchGeometryCommands(*batchHead, command))
+            {
+                flushBatch();
+            }
+
             if (kEnableVisibilityCulling && !IsSubmeshVisible(command, frustumPlanes))
             {
                 continue;
             }
 
-            m_geometryPassShader->SetUniform("uModel", command.model);
-            m_geometryPassShader->SetUniform("uPreviousModel", command.previousModel);
-            m_geometryPassShader->SetUniform("uStaticMesh", command.isStatic ? 1.0f : 0.0f);
-            const bool usePrimaryUvForLightmap = command.mesh && !command.mesh->HasUsableLightmapUvsForSubmesh(command.submeshIndex);
-            m_geometryPassShader->SetUniform("uUsePrimaryUvForLightmap", usePrimaryUvForLightmap ? 1.0f : 0.0f);
-
-            if (command.material != boundMaterial)
+            if (!batchHead)
             {
-                command.material->Bind(m_geometryPassShader);
-                boundMaterial = command.material;
+                batchHead = &command;
             }
 
-            command.mesh->DrawSubmesh(command.submeshIndex);
+            batchInstances.push_back(GeometryInstanceData{
+                .model = command.model,
+                .previousModel = command.previousModel,
+                .flags = glm::vec4(command.isStatic ? 1.0f : 0.0f, command.usePrimaryUvForLightmap ? 1.0f : 0.0f, 0.0f, 0.0f),
+            });
         }
+
+        flushBatch();
 
         m_geometryPassShader->Unbind();
         ctx.gBuffer->Unbind();

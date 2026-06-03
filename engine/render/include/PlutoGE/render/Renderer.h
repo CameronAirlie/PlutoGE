@@ -3,6 +3,7 @@
 #include "PlutoGE/platform/Window.h"
 #include "PlutoGE/render/Camera.h"
 #include "PlutoGE/render/GBuffer.h"
+#include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/render/RenderTarget.h"
 #include <array>
 #include <glm/glm.hpp>
@@ -28,10 +29,10 @@ namespace PlutoGE::scene
 namespace PlutoGE::render
 {
     class Material;
-    class Mesh;
     class IPostProcessEffect;
     class RenderTarget;
     class Renderer;
+    class Shader;
     class Texture;
     class LightPropagationVolumePass;
 
@@ -54,12 +55,15 @@ namespace PlutoGE::render
 
     struct RenderCommand
     {
-        Material *material; // Material to use for rendering
-        Mesh *mesh;         // Mesh to render
-        glm::mat4 model;    // Model matrix for the object (position, rotation, scale)
+        Material *material = nullptr; // Material to use for rendering
+        Mesh *mesh = nullptr;         // Mesh to render
+        Shader *shader = nullptr;
+        glm::mat4 model = glm::mat4(1.0f); // Model matrix for the object (position, rotation, scale)
         glm::mat4 previousModel = glm::mat4(1.0f);
+        MeshBounds worldBounds{};
         uint32_t submeshIndex = 0;
         bool isStatic = false;
+        bool usePrimaryUvForLightmap = false;
     };
 
     struct GpuPassTiming
@@ -117,7 +121,6 @@ namespace PlutoGE::render
         bool renderEditorGrid = false;
     };
 
-    class Shader;
     class IRenderPass;
     class Renderer
     {
@@ -155,6 +158,7 @@ namespace PlutoGE::render
         void SubmitRenderCommand(const RenderCommand &command)
         {
             m_renderCommands.push_back(command);
+            m_renderCommandsDirty = true;
         }
 
     private:
@@ -186,6 +190,7 @@ namespace PlutoGE::render
         void CleanupResources(RenderTarget *renderTarget = nullptr);
         FrameResources *GetOrCreateFrameResources(RenderTarget *renderTarget, int width, int height);
         void CleanupFrameResources();
+        void EnsureRenderCommandsSorted();
         void InitializeGpuTimers();
         void ShutdownGpuTimers();
         void ExecutePassWithGpuTiming(IRenderPass &renderPass, const RenderContext &ctx, std::size_t timingIndex);
@@ -204,5 +209,6 @@ namespace PlutoGE::render
         RendererCpuFrameStats m_cpuFrameStats;
         int m_profiledRenderCount = 0;
         std::uint64_t m_frameSequence = 0;
+        bool m_renderCommandsDirty = false;
     };
 }

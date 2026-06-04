@@ -5,6 +5,7 @@
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/Texture.h"
 #include "PlutoGE/render/postprocess/IPostProcessEffect.h"
+#include "PlutoGE/render/postprocess/LPVEffect.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 
 #include <algorithm>
@@ -22,8 +23,6 @@ namespace PlutoGE::render
         constexpr float kPropagationSelfWeight = 0.36f;
         constexpr float kPropagationNeighborWeight = 0.07f;
         constexpr float kInjectionBoost = 1.8f;
-        constexpr float kForwardBiasFactor = 0.25f;
-        constexpr float kRecenterHysteresisFraction = 0.25f;
         constexpr float kTemporalBlendFactor = 0.2f;
         constexpr float kReprojectedTemporalBlendFactor = 0.12f;
         constexpr float kInjectionMovementUpdateFraction = 0.5f;
@@ -32,22 +31,22 @@ namespace PlutoGE::render
         constexpr auto kCameraOnlyReinjectionInterval = std::chrono::milliseconds(260);
         constexpr auto kGridTransitionDuration = std::chrono::milliseconds(140);
 
-        bool IsLpvEffectEnabled(const RenderContext &ctx)
+        const LPVEffect *FindEnabledLpvEffect(const RenderContext &ctx)
         {
             if (!ctx.postProcessEffects)
             {
-                return false;
+                return nullptr;
             }
 
             for (const auto *effect : *ctx.postProcessEffects)
             {
                 if (effect && effect->IsEnabled() && effect->GetTypeName() == "LPV")
                 {
-                    return true;
+                    return static_cast<const LPVEffect *>(effect);
                 }
             }
 
-            return false;
+            return nullptr;
         }
 
         std::size_t HashBytes(const void *data, std::size_t size, std::size_t seed = 1469598103934665603ull)
@@ -102,17 +101,19 @@ namespace PlutoGE::render
 
         glm::vec3 ComputeBiasedLpvCenter(const glm::vec3 &cameraPosition,
                                          const glm::vec3 &cameraForward,
-                                         const glm::vec3 &gridSize)
+                                         const glm::vec3 &gridSize,
+                                         float forwardBiasFactor)
         {
-            return cameraPosition + cameraForward * (gridSize.z * kForwardBiasFactor);
+            return cameraPosition + cameraForward * (gridSize.z * forwardBiasFactor);
         }
 
         glm::vec3 ComputeCameraCenteredGridOrigin(const glm::vec3 &cameraPosition,
                                                   const glm::vec3 &cameraForward,
                                                   const glm::vec3 &gridSize,
-                                                  const glm::ivec3 &resolution)
+                                                  const glm::ivec3 &resolution,
+                                                  float forwardBiasFactor)
         {
-            const glm::vec3 lpvCenter = ComputeBiasedLpvCenter(cameraPosition, cameraForward, gridSize);
+            const glm::vec3 lpvCenter = ComputeBiasedLpvCenter(cameraPosition, cameraForward, gridSize, forwardBiasFactor);
             const glm::vec3 rawOrigin = lpvCenter - gridSize * 0.5f;
             return SnapOriginToCell(rawOrigin, gridSize, resolution);
         }
@@ -122,16 +123,18 @@ namespace PlutoGE::render
                                                   const glm::vec3 &currentOrigin,
                                                   const glm::vec3 &gridSize,
                                                   const glm::ivec3 &resolution,
+                                                  float recenterHysteresisFraction,
+                                                  float forwardBiasFactor,
                                                   bool hasValidVolume)
         {
-            const glm::vec3 snappedOrigin = ComputeCameraCenteredGridOrigin(cameraPosition, cameraForward, gridSize, resolution);
+            const glm::vec3 snappedOrigin = ComputeCameraCenteredGridOrigin(cameraPosition, cameraForward, gridSize, resolution, forwardBiasFactor);
             if (!hasValidVolume)
             {
                 return snappedOrigin;
             }
 
-            const glm::vec3 biasedCenter = ComputeBiasedLpvCenter(cameraPosition, cameraForward, gridSize);
-            const glm::vec3 hysteresisMargin = gridSize * kRecenterHysteresisFraction;
+            const glm::vec3 biasedCenter = ComputeBiasedLpvCenter(cameraPosition, cameraForward, gridSize, forwardBiasFactor);
+            const glm::vec3 hysteresisMargin = gridSize * recenterHysteresisFraction;
             const glm::vec3 minCenter = currentOrigin + hysteresisMargin;
             const glm::vec3 maxCenter = currentOrigin + gridSize - hysteresisMargin;
             const bool centerInsideHysteresis =
@@ -456,7 +459,8 @@ namespace PlutoGE::render
 
     void LightPropagationVolumePass::Execute(const RenderContext &ctx)
     {
-        if (!IsLpvEffectEnabled(ctx) || !ctx.hasCameraData || !ctx.gBuffer || !ctx.lights)
+        const auto *lpvEffect = FindEnabledLpvEffect(ctx);
+        if (!lpvEffect || !ctx.hasCameraData || !ctx.gBuffer || !ctx.lights)
         {
             ClearVolume();
             return;
@@ -466,8 +470,8 @@ namespace PlutoGE::render
 
         const glm::vec3 cameraPosition = GetCameraPosition(ctx.cameraData);
         const glm::vec3 cameraForward = GetCameraForward(ctx.cameraData);
-        const float horizontalExtent = glm::clamp(ctx.cameraData.farPlane * 0.4f, 20.0f, 64.0f);
-        const float verticalExtent = glm::clamp(ctx.cameraData.farPlane * 0.22f, 12.0f, 28.0f);
+        const float horizontalExtent = std::max(lpvEffect->GetMinimumHorizontalCoverage(), glm::clamp(ctx.cameraData.farPlane * 0.55f, 48.0f, 192.0f));
+        const float verticalExtent = std::max(lpvEffect->GetMinimumVerticalCoverage(), glm::clamp(ctx.cameraData.farPlane * 0.30f, 24.0f, 96.0f));
         const glm::vec3 desiredGridSize(horizontalExtent, verticalExtent, horizontalExtent);
         const glm::vec3 desiredGridOrigin = ComputeHysteresisAdjustedOrigin(
             cameraPosition,
@@ -475,6 +479,8 @@ namespace PlutoGE::render
             m_gridOrigin,
             desiredGridSize,
             m_resolution,
+            lpvEffect->GetRecenterHysteresisFraction(),
+            lpvEffect->GetForwardBiasFactor(),
             m_hasValidVolume && !glm::any(glm::greaterThan(glm::abs(desiredGridSize - m_gridSize), glm::vec3(0.01f))));
 
         const int width = ctx.gBuffer->GetWidth();
@@ -561,6 +567,7 @@ namespace PlutoGE::render
         std::fill(m_currentRadiance.begin(), m_currentRadiance.end(), glm::vec3(0.0f));
         std::fill(m_nextRadiance.begin(), m_nextRadiance.end(), glm::vec3(0.0f));
         std::fill(m_injectionWeights.begin(), m_injectionWeights.end(), 0.0f);
+        bool hasInjectedSamples = false;
 
         m_positionReadback.resize(static_cast<std::size_t>(width * height * 3));
         m_normalReadback.resize(static_cast<std::size_t>(width * height * 4));
@@ -618,6 +625,7 @@ namespace PlutoGE::render
                 const std::size_t cellIndex = FlattenCellIndex(m_resolution, cell.x, cell.y, cell.z);
                 m_currentRadiance[cellIndex] += injectedRadiance;
                 m_injectionWeights[cellIndex] += 1.0f;
+                hasInjectedSamples = true;
             }
         }
 
@@ -627,6 +635,19 @@ namespace PlutoGE::render
             {
                 m_currentRadiance[cellIndex] = (m_currentRadiance[cellIndex] / m_injectionWeights[cellIndex]) * kInjectionBoost;
             }
+        }
+
+        // Do not cache an empty volume as valid; otherwise LPV can stay black until the
+        // effect is toggled and its cached state is cleared.
+        if (!hasInjectedSamples && !canBlendTemporalHistory)
+        {
+            if (m_volumeTexture)
+            {
+                m_volumeTexture->Upload3D(GL_RGB, GL_FLOAT, m_currentRadiance.data());
+            }
+            m_transitionActive = false;
+            m_hasValidVolume = false;
+            return;
         }
 
         for (int iteration = 0; iteration < kPropagationIterations; ++iteration)

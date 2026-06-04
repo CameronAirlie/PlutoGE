@@ -40,6 +40,8 @@ namespace PlutoGE::scene
         std::unique_ptr<render::Texture> shadowMap; // Owned shadow map texture (if any)
         glm::mat4 shadowMatrix{1.0f};               // Light-space matrix for projected shadow maps
         std::array<std::unique_ptr<render::Texture>, kMaxDirectionalShadowCascades> shadowCascadeMaps;
+        std::array<glm::vec3, kMaxDirectionalShadowCascades> shadowCascadeWorldOrigins{
+            glm::vec3(0.0f), glm::vec3(0.0f), glm::vec3(0.0f), glm::vec3(0.0f)};
         std::array<glm::mat4, kMaxDirectionalShadowCascades> shadowCascadeMatrices{
             glm::mat4(1.0f), glm::mat4(1.0f), glm::mat4(1.0f), glm::mat4(1.0f)};
         std::array<float, kMaxDirectionalShadowCascades> shadowCascadeSplits{0.0f, 0.0f, 0.0f, 0.0f};

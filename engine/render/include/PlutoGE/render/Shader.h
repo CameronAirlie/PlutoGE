@@ -939,20 +939,47 @@ vec3 SampleLPVIndirect(vec3 fragPos, vec3 albedo, float metallic)
         return vec3(0.0);
     }
 
-    vec3 volumeSize = max(uLpvSize, vec3(0.0001));
-    vec3 volumeUv = (fragPos - uLpvOrigin) / volumeSize;
-    if (any(lessThan(volumeUv, vec3(0.0))) || any(greaterThan(volumeUv, vec3(1.0))))
+    float currentSampleWeight = 0.0;
+    vec3 currentRadiance = vec3(0.0);
+    vec3 currentVolumeSize = max(uLpvSize, vec3(0.0001));
+    vec3 currentVolumeUv = (fragPos - uLpvOrigin) / currentVolumeSize;
+    if (!any(lessThan(currentVolumeUv, vec3(0.0))) && !any(greaterThan(currentVolumeUv, vec3(1.0))))
     {
-        return vec3(0.0);
+        float currentEdgeDistance = min(
+            min(min(currentVolumeUv.x, currentVolumeUv.y), currentVolumeUv.z),
+            min(min(1.0 - currentVolumeUv.x, 1.0 - currentVolumeUv.y), 1.0 - currentVolumeUv.z));
+        currentSampleWeight = smoothstep(0.0, 0.12, currentEdgeDistance);
+        currentRadiance = texture(uLpvVolume, currentVolumeUv).rgb * currentSampleWeight;
     }
 
-    float edgeDistance = min(
-        min(min(volumeUv.x, volumeUv.y), volumeUv.z),
-        min(min(1.0 - volumeUv.x, 1.0 - volumeUv.y), 1.0 - volumeUv.z));
-    float edgeFade = smoothstep(0.0, 0.12, edgeDistance);
-    vec3 indirectRadiance = texture(uLpvVolume, volumeUv).rgb;
+    float previousSampleWeight = 0.0;
+    vec3 previousRadiance = vec3(0.0);
+    vec3 previousVolumeSize = max(uPreviousLpvSize, vec3(0.0001));
+    vec3 previousVolumeUv = (fragPos - uPreviousLpvOrigin) / previousVolumeSize;
+    if (!any(lessThan(previousVolumeUv, vec3(0.0))) && !any(greaterThan(previousVolumeUv, vec3(1.0))))
+    {
+        float previousEdgeDistance = min(
+            min(min(previousVolumeUv.x, previousVolumeUv.y), previousVolumeUv.z),
+            min(min(1.0 - previousVolumeUv.x, 1.0 - previousVolumeUv.y), 1.0 - previousVolumeUv.z));
+        previousSampleWeight = smoothstep(0.0, 0.12, previousEdgeDistance);
+        previousRadiance = texture(uPreviousLpvVolume, previousVolumeUv).rgb * previousSampleWeight;
+    }
 
-    return indirectRadiance * albedo * (1.0 - metallic) * edgeFade;
+    vec3 indirectRadiance = currentRadiance;
+    if (previousSampleWeight > 0.0)
+    {
+        float transitionBlend = clamp(uLpvTransitionBlend, 0.0, 1.0);
+        if (currentSampleWeight > 0.0)
+        {
+            indirectRadiance = mix(previousRadiance, currentRadiance, transitionBlend);
+        }
+        else
+        {
+            indirectRadiance = previousRadiance * (1.0 - transitionBlend);
+        }
+    }
+
+    return indirectRadiance * albedo * (1.0 - metallic);
 }
 
 vec3 SampleBakedProbeIrradiance(vec3 fragPos)
@@ -1195,6 +1222,7 @@ void main()
             layout(location = 5) in mat4 aModel;
 
             uniform mat4 uLightSpaceMatrix;
+            uniform vec3 uShadowWorldOrigin = vec3(0.0);
 
             out vec3 FragPos;
             out vec2 UV;
@@ -1204,7 +1232,7 @@ void main()
                 vec4 worldPosition = aModel * vec4(aPos, 1.0);
                 FragPos = worldPosition.xyz;
                 UV = aUV;
-                gl_Position = uLightSpaceMatrix * worldPosition;
+                gl_Position = uLightSpaceMatrix * vec4(worldPosition.xyz - uShadowWorldOrigin, 1.0);
             }
         )";
 

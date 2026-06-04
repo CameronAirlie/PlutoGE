@@ -567,6 +567,7 @@ namespace PlutoGE::render
         std::fill(m_currentRadiance.begin(), m_currentRadiance.end(), glm::vec3(0.0f));
         std::fill(m_nextRadiance.begin(), m_nextRadiance.end(), glm::vec3(0.0f));
         std::fill(m_injectionWeights.begin(), m_injectionWeights.end(), 0.0f);
+        bool hasInjectedSamples = false;
 
         m_positionReadback.resize(static_cast<std::size_t>(width * height * 3));
         m_normalReadback.resize(static_cast<std::size_t>(width * height * 4));
@@ -624,6 +625,7 @@ namespace PlutoGE::render
                 const std::size_t cellIndex = FlattenCellIndex(m_resolution, cell.x, cell.y, cell.z);
                 m_currentRadiance[cellIndex] += injectedRadiance;
                 m_injectionWeights[cellIndex] += 1.0f;
+                hasInjectedSamples = true;
             }
         }
 
@@ -633,6 +635,19 @@ namespace PlutoGE::render
             {
                 m_currentRadiance[cellIndex] = (m_currentRadiance[cellIndex] / m_injectionWeights[cellIndex]) * kInjectionBoost;
             }
+        }
+
+        // Do not cache an empty volume as valid; otherwise LPV can stay black until the
+        // effect is toggled and its cached state is cleared.
+        if (!hasInjectedSamples && !canBlendTemporalHistory)
+        {
+            if (m_volumeTexture)
+            {
+                m_volumeTexture->Upload3D(GL_RGB, GL_FLOAT, m_currentRadiance.data());
+            }
+            m_transitionActive = false;
+            m_hasValidVolume = false;
+            return;
         }
 
         for (int iteration = 0; iteration < kPropagationIterations; ++iteration)

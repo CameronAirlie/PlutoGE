@@ -1110,7 +1110,6 @@ namespace PlutoGE::render
         m_hasHistory = false;
         m_historyIndex = 0;
         m_skippedResolveFrames = 0;
-        m_hasObservedState = false;
     }
 
     void RSMEffect::Apply(const PostProcessContext &context)
@@ -1185,30 +1184,15 @@ namespace PlutoGE::render
         const bool cameraChanged = HasMatrixChanged(viewProjection, m_lastResolvedViewProjection);
         const bool lightSpaceChanged = HasMatrixChanged(rsmSource.lightSpaceMatrix, m_lastResolvedLightSpaceMatrix);
         const auto now = std::chrono::steady_clock::now();
-        const bool motionActiveThisFrame =
-            m_hasObservedState &&
-            (sceneSignature != m_lastObservedSceneSignature ||
-             HasMatrixChanged(viewProjection, m_lastObservedViewProjection) ||
-             HasMatrixChanged(rsmSource.lightSpaceMatrix, m_lastObservedLightSpaceMatrix));
-
-        m_lastObservedSceneSignature = sceneSignature;
-        m_lastObservedViewProjection = viewProjection;
-        m_lastObservedLightSpaceMatrix = rsmSource.lightSpaceMatrix;
-        m_hasObservedState = true;
 
         if (hasReusableIndirectTarget && !sceneChanged && !lightChanged && !cameraChanged && !lightSpaceChanged)
         {
             return currentHistoryTarget;
         }
 
-        if (hasReusableIndirectTarget &&
-            !lightChanged &&
-            (sceneChanged || cameraChanged || lightSpaceChanged) &&
-            motionActiveThisFrame)
-        {
-            ++m_skippedResolveFrames;
-            return currentHistoryTarget;
-        }
+        // Reusing a previous screen-space indirect buffer while camera/light-space changes
+        // causes visible ghosting because the history is no longer spatially aligned.
+        // Always resolve in motion; only reuse when nothing changed (handled above).
 
         RenderTarget *previousHistoryColorTarget = m_historyColorRenderTargets[m_historyIndex].get();
         RenderTarget *resolvedHistoryColorTarget = m_historyColorRenderTargets[(m_historyIndex + 1) % m_historyColorRenderTargets.size()].get();

@@ -158,6 +158,7 @@ namespace PlutoGE::render
                 in vec2 UV;
 
                 uniform sampler2D gPosition;
+                uniform sampler2D gDepth;
                 uniform sampler2D gNormal;
                 uniform sampler2D gAlbedoSpec;
                 uniform sampler2D gBakedLighting;
@@ -180,6 +181,7 @@ namespace PlutoGE::render
                     mat4 LightSpaceMatrix;
                     float ShadowFarPlane;
                     int IsStatic;
+                    vec3 CascadeWorldOrigins[MAX_SHADOW_CASCADES];
                     mat4 CascadeLightSpaceMatrices[MAX_SHADOW_CASCADES];
                     float CascadeSplits[MAX_SHADOW_CASCADES];
                     int CascadeCount;
@@ -190,6 +192,8 @@ namespace PlutoGE::render
                 uniform Light uLight;
                 uniform vec3 uViewPos;
                 uniform mat4 uViewMatrix;
+                uniform mat4 uInverseViewMatrix;
+                uniform mat4 uInverseProjectionMatrix;
                 uniform sampler2D uShadowMap2D;
                 uniform sampler2D uShadowCascadeMap0;
                 uniform sampler2D uShadowCascadeMap1;
@@ -343,11 +347,30 @@ namespace PlutoGE::render
                     return ComputeSingleProjectedShadow(receiverPosition, uShadowMap2D, light.LightSpaceMatrix, depthBias, 1.25);
                 }
 
-                int SelectDirectionalCascadeIndex(Light light, float viewDepth)
+                vec3 ComputeViewPositionFromDepthBuffer(vec2 uv)
+                {
+                    float depth = texture(gDepth, uv).r;
+                    vec4 clipPosition = vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+                    vec4 viewPosition = uInverseProjectionMatrix * clipPosition;
+                    return viewPosition.xyz / max(viewPosition.w, 0.0001);
+                }
+
+                vec3 ComputeWorldPositionFromDepthBuffer(vec2 uv)
+                {
+                    vec3 viewPosition = ComputeViewPositionFromDepthBuffer(uv);
+                    return (uInverseViewMatrix * vec4(viewPosition, 1.0)).xyz;
+                }
+
+                float ComputeCameraDistanceFromDepthBuffer(vec2 uv)
+                {
+                    return length(ComputeViewPositionFromDepthBuffer(uv));
+                }
+
+                int SelectDirectionalCascadeIndex(Light light, float cameraDistance)
                 {
                     for (int cascadeIndex = 0; cascadeIndex < light.CascadeCount; ++cascadeIndex)
                     {
-                        if (viewDepth <= light.CascadeSplits[cascadeIndex])
+                        if (cameraDistance <= light.CascadeSplits[cascadeIndex])
                         {
                             return cascadeIndex;
                         }
@@ -375,7 +398,7 @@ namespace PlutoGE::render
 
                 bool ProjectDirectionalCascadeCoords(vec3 receiverPosition, Light light, int cascadeIndex, out vec3 projectedCoords)
                 {
-                    vec4 lightSpacePosition = light.CascadeLightSpaceMatrices[cascadeIndex] * vec4(receiverPosition, 1.0);
+                    vec4 lightSpacePosition = light.CascadeLightSpaceMatrices[cascadeIndex] * vec4(receiverPosition - light.CascadeWorldOrigins[cascadeIndex], 1.0);
                     projectedCoords = lightSpacePosition.xyz / max(lightSpacePosition.w, 0.0001);
                     projectedCoords = projectedCoords * 0.5 + 0.5;
 
@@ -411,30 +434,18 @@ namespace PlutoGE::render
                     float ndotl = max(dot(surfaceNormal, lightVector), 0.0);
                     float normalBias = max(0.0015 * (1.0 - ndotl), 0.00015);
                     vec3 receiverPosition = fragPos + surfaceNormal * normalBias;
-                    float viewDepth = abs((uViewMatrix * vec4(fragPos, 1.0)).z);
+                    float cameraDistance = ComputeCameraDistanceFromDepthBuffer(UV);
 
-                    if (viewDepth > light.CascadeSplits[light.CascadeCount - 1])
+                    if (cameraDistance > light.CascadeSplits[light.CascadeCount - 1])
                     {
                         return 0.0;
                     }
 
-                    int cascadeIndex = SelectDirectionalCascadeIndex(light, viewDepth);
+                    int cascadeIndex = SelectDirectionalCascadeIndex(light, cameraDistance);
                     float depthBias = max(0.0002 + (1.0 - ndotl) * 0.00035, 0.00005);
                     bool hasCascadeCoverage = false;
                     float shadow = ComputeDirectionalCascadeShadow(receiverPosition, light, cascadeIndex, depthBias, hasCascadeCoverage);
-                    int resolvedCascadeIndex = cascadeIndex;
-
-                    if (!hasCascadeCoverage && cascadeIndex < light.CascadeCount - 1)
-                    {
-                        bool hasNextCascadeCoverage = false;
-                        float nextShadow = ComputeDirectionalCascadeShadow(receiverPosition, light, cascadeIndex + 1, depthBias, hasNextCascadeCoverage);
-                        if (hasNextCascadeCoverage)
-                        {
-                            shadow = nextShadow;
-                            hasCascadeCoverage = true;
-                            resolvedCascadeIndex = cascadeIndex + 1;
-                        }
-                    }
+                    sampledCascadeIndex = cascadeIndex;
 
                     if (!hasCascadeCoverage)
                     {
@@ -442,19 +453,18 @@ namespace PlutoGE::render
                     }
 
                     hasAnyCascadeCoverage = true;
-                    sampledCascadeIndex = resolvedCascadeIndex;
 
-                    if (resolvedCascadeIndex < light.CascadeCount - 1)
+                    if (cascadeIndex < light.CascadeCount - 1)
                     {
-                        float splitDistance = light.CascadeSplits[resolvedCascadeIndex];
+                        float splitDistance = light.CascadeSplits[cascadeIndex];
                         float blendStart = max(splitDistance - light.CascadeBlendDistance, 0.0);
-                        if (viewDepth > blendStart)
+                        if (cameraDistance > blendStart)
                         {
                             bool hasNextCascadeCoverage = false;
-                            float nextShadow = ComputeDirectionalCascadeShadow(receiverPosition, light, resolvedCascadeIndex + 1, depthBias, hasNextCascadeCoverage);
+                            float nextShadow = ComputeDirectionalCascadeShadow(receiverPosition, light, cascadeIndex + 1, depthBias, hasNextCascadeCoverage);
                             if (hasNextCascadeCoverage)
                             {
-                                float blendFactor = clamp((viewDepth - blendStart) / max(splitDistance - blendStart, 0.0001), 0.0, 1.0);
+                                float blendFactor = clamp((cameraDistance - blendStart) / max(splitDistance - blendStart, 0.0001), 0.0, 1.0);
                                 shadow = mix(shadow, nextShadow, blendFactor);
                             }
                         }
@@ -587,7 +597,7 @@ namespace PlutoGE::render
             source.fragmentSource += R"(
                 void main()
                 {
-                    vec3 fragPos = texture(gPosition, UV).rgb;
+                    vec3 fragPos = ComputeWorldPositionFromDepthBuffer(UV);
                     vec4 normalRoughness = texture(gNormal, UV);
                     if (dot(normalRoughness.rgb, normalRoughness.rgb) <= 0.000001)
                     {
@@ -811,6 +821,7 @@ namespace PlutoGE::render
 
             for (int cascadeIndex = 0; cascadeIndex < scene::kMaxDirectionalShadowCascades; ++cascadeIndex)
             {
+                shader->SetUniform("uLight.CascadeWorldOrigins[" + std::to_string(cascadeIndex) + "]", light.shadowCascadeWorldOrigins[cascadeIndex]);
                 shader->SetUniform("uLight.CascadeLightSpaceMatrices[" + std::to_string(cascadeIndex) + "]", light.shadowCascadeMatrices[cascadeIndex]);
                 shader->SetUniform("uLight.CascadeSplits[" + std::to_string(cascadeIndex) + "]", light.shadowCascadeSplits[cascadeIndex]);
             }
@@ -1020,6 +1031,8 @@ namespace PlutoGE::render
             BindLightingInputs(m_directLightingPassShader, ctx);
             m_directLightingPassShader->SetUniform("uViewPos", cameraPos);
             m_directLightingPassShader->SetUniform("uViewMatrix", ctx.cameraData.view);
+            m_directLightingPassShader->SetUniform("uInverseViewMatrix", glm::inverse(ctx.cameraData.view));
+            m_directLightingPassShader->SetUniform("uInverseProjectionMatrix", glm::inverse(ctx.cameraData.projection));
             m_directLightingPassShader->SetUniform("uDebugViewMode", static_cast<int>(ctx.postProcessDebugView));
 
             glEnable(GL_BLEND);

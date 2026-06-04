@@ -33,6 +33,6 @@ namespace PlutoGE::render
         float m_ambientContribution = 0.3f;
         float m_directionalContribution = 6.0f;
         float m_maxOpacity = 0.92f;
-        int m_stepCount = 16;
+        int m_stepCount = 8;
     };
 }

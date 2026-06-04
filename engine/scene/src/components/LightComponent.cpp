@@ -36,6 +36,10 @@ namespace PlutoGE::scene
             {
                 shadowCascadeMap.reset();
             }
+            for (auto &shadowCascadeWorldOrigin : light.shadowCascadeWorldOrigins)
+            {
+                shadowCascadeWorldOrigin = glm::vec3(0.0f);
+            }
             for (auto &shadowCascadeMatrix : light.shadowCascadeMatrices)
             {
                 shadowCascadeMatrix = glm::mat4(1.0f);
@@ -312,6 +316,7 @@ namespace PlutoGE::scene
                         m_config.shadowCascadeMaps[cascadeIndex].reset();
                         recreatedShadowMap = true;
                     }
+                    m_config.shadowCascadeWorldOrigins[cascadeIndex] = glm::vec3(0.0f);
                     m_config.shadowCascadeMatrices[cascadeIndex] = glm::mat4(1.0f);
                     m_config.shadowCascadeSplits[cascadeIndex] = 0.0f;
                     continue;

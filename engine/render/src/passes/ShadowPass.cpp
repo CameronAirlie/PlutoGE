@@ -95,17 +95,35 @@ namespace
                std::abs(current.farPlane - previous.farPlane) > kShadowUpdateMatrixEpsilon;
     }
 
-    bool ShouldUpdateDirectionalCascade(std::uint64_t frameSequence, int cascadeIndex, bool forceFullUpdate, bool cameraOnlyInvalidation)
+    bool ShouldRefreshCameraRelativeCascade(const glm::vec3 &currentOrigin,
+                                            const glm::vec3 &storedOrigin,
+                                            float cascadeNear,
+                                            float cascadeFar)
+    {
+        const float cascadeThickness = glm::max(cascadeFar - cascadeNear, 0.1f);
+        const float recenterThreshold = glm::max(0.5f, cascadeThickness * 0.25f);
+        return glm::distance(currentOrigin, storedOrigin) > recenterThreshold;
+    }
+
+    bool ShouldUpdateDirectionalCascade(std::uint64_t frameSequence, int cascadeIndex, bool forceFullUpdate, bool motionDrivenInvalidation)
     {
         if (forceFullUpdate)
         {
             return true;
         }
 
-        const int cadenceOffset = cameraOnlyInvalidation ? 2 : 1;
+        const int cadenceOffset = motionDrivenInvalidation ? 2 : 1;
         const int cadenceIndex = std::clamp(cascadeIndex + cadenceOffset, cadenceOffset, 5);
         const std::uint64_t cadence = 1ull << static_cast<std::uint64_t>(cadenceIndex);
-        return (frameSequence % cadence) == 0;
+        if (!motionDrivenInvalidation)
+        {
+            return (frameSequence % cadence) == 0;
+        }
+
+        // Phase-shift motion-driven cascade refreshes so farther cascades do not pile onto
+        // the same frame as the near cascade and cause periodic present-time spikes.
+        const std::uint64_t phaseOffset = (cadence >> 1) - 1ull;
+        return ((frameSequence + phaseOffset) % cadence) == 0;
     }
 
     bool HaveShadowCastersChanged(const std::vector<PlutoGE::render::RenderCommand> &renderCommands)
@@ -201,6 +219,7 @@ namespace
     void ExpandDirectionalCascadeDepthBounds(
         const glm::mat4 &lightView,
         const std::vector<ShadowCasterEntry> &shadowCasters,
+        const glm::vec3 &shadowWorldOrigin,
         glm::vec3 &minBounds,
         glm::vec3 &maxBounds)
     {
@@ -210,7 +229,8 @@ namespace
         for (const auto &shadowCaster : shadowCasters)
         {
             const PlutoGE::render::MeshBounds &bounds = shadowCaster.bounds;
-            const glm::vec3 lightSpaceCenter = glm::vec3(lightView * glm::vec4(bounds.center, 1.0f));
+            const glm::vec3 relativeCenter = bounds.center - shadowWorldOrigin;
+            const glm::vec3 lightSpaceCenter = glm::vec3(lightView * glm::vec4(relativeCenter, 1.0f));
             const float radius = glm::max(bounds.radius, 0.001f);
 
             if (lightSpaceCenter.x + radius < receiverMin.x ||
@@ -253,17 +273,16 @@ namespace
     std::array<glm::vec3, 8> BuildCascadeFrustumCorners(const PlutoGE::render::CameraData &cameraData, float cascadeNear, float cascadeFar)
     {
         const auto frustumCorners = BuildCameraFrustumCorners(cameraData);
+        const glm::vec3 cameraPosition = glm::vec3(glm::inverse(cameraData.view)[3]);
         std::array<glm::vec3, 8> cascadeCorners{};
-        const float clipRange = glm::max(cameraData.farPlane - cameraData.nearPlane, 0.0001f);
-        const float nearFactor = glm::clamp((cascadeNear - cameraData.nearPlane) / clipRange, 0.0f, 1.0f);
-        const float farFactor = glm::clamp((cascadeFar - cameraData.nearPlane) / clipRange, 0.0f, 1.0f);
+        const float nearRadius = glm::max(cascadeNear, cameraData.nearPlane);
+        const float farRadius = glm::max(cascadeFar, nearRadius + 0.1f);
 
         for (std::size_t index = 0; index < 4; ++index)
         {
-            const glm::vec3 &cameraNearCorner = frustumCorners[index];
-            const glm::vec3 &cameraFarCorner = frustumCorners[index + 4];
-            cascadeCorners[index] = cameraNearCorner + (cameraFarCorner - cameraNearCorner) * nearFactor;
-            cascadeCorners[index + 4] = cameraNearCorner + (cameraFarCorner - cameraNearCorner) * farFactor;
+            const glm::vec3 rayDirection = glm::normalize(frustumCorners[index + 4] - cameraPosition);
+            cascadeCorners[index] = cameraPosition + rayDirection * nearRadius;
+            cascadeCorners[index + 4] = cameraPosition + rayDirection * farRadius;
         }
 
         return cascadeCorners;
@@ -275,22 +294,22 @@ namespace
         int cascadeCount)
     {
         std::array<float, PlutoGE::scene::kMaxDirectionalShadowCascades> splits{};
-        const float nearPlane = cameraData.nearPlane;
+        const float nearRadius = glm::max(cameraData.nearPlane, 0.1f);
         const float shadowDistance = settings.maxDistance > 0.0f ? settings.maxDistance : cameraData.farPlane;
-        const float farPlane = glm::min(cameraData.farPlane, glm::max(shadowDistance, nearPlane + 0.1f));
+        const float farRadius = glm::min(cameraData.farPlane, glm::max(shadowDistance, nearRadius + 0.1f));
         const float lambda = glm::clamp(settings.splitLambda, 0.0f, 1.0f);
 
         for (int cascadeIndex = 0; cascadeIndex < cascadeCount; ++cascadeIndex)
         {
             const float splitFactor = static_cast<float>(cascadeIndex + 1) / static_cast<float>(cascadeCount);
-            const float logarithmicSplit = nearPlane * std::pow(farPlane / nearPlane, splitFactor);
-            const float uniformSplit = nearPlane + (farPlane - nearPlane) * splitFactor;
+            const float logarithmicSplit = nearRadius * std::pow(farRadius / nearRadius, splitFactor);
+            const float uniformSplit = nearRadius + (farRadius - nearRadius) * splitFactor;
             splits[cascadeIndex] = glm::mix(uniformSplit, logarithmicSplit, lambda);
         }
 
         for (int cascadeIndex = cascadeCount; cascadeIndex < PlutoGE::scene::kMaxDirectionalShadowCascades; ++cascadeIndex)
         {
-            splits[cascadeIndex] = farPlane;
+            splits[cascadeIndex] = farRadius;
         }
 
         return splits;
@@ -300,12 +319,18 @@ namespace
         const PlutoGE::scene::Light &light,
         const PlutoGE::render::CameraData &cameraData,
         const std::vector<ShadowCasterEntry> &shadowCasters,
+        const glm::vec3 &shadowWorldOrigin,
         float cascadeNear,
         float cascadeFar,
         int shadowResolution)
     {
         const glm::vec3 lightDirection = glm::normalize(light.direction);
-        const auto cascadeCorners = BuildCascadeFrustumCorners(cameraData, cascadeNear, cascadeFar);
+        const auto worldCascadeCorners = BuildCascadeFrustumCorners(cameraData, cascadeNear, cascadeFar);
+        std::array<glm::vec3, 8> cascadeCorners{};
+        for (std::size_t index = 0; index < worldCascadeCorners.size(); ++index)
+        {
+            cascadeCorners[index] = worldCascadeCorners[index] - shadowWorldOrigin;
+        }
         glm::vec3 frustumCenter(0.0f);
         for (const glm::vec3 &corner : cascadeCorners)
         {
@@ -322,45 +347,55 @@ namespace
         receiverRadius = glm::max(receiverRadius + kDirectionalShadowPadding, 10.0f);
         const float casterExtrusionDistance = receiverRadius * 2.0f + kDirectionalShadowPadding;
         const glm::vec3 upVector = ResolveUpVector(lightDirection);
-        glm::mat4 view = glm::lookAt(glm::vec3(0.0f), lightDirection, upVector);
-
-        const glm::vec3 lightSpaceCenter = glm::vec3(view * glm::vec4(frustumCenter, 1.0f));
-        glm::vec3 minBounds(lightSpaceCenter.x - receiverRadius, lightSpaceCenter.y - receiverRadius, std::numeric_limits<float>::max());
-        glm::vec3 maxBounds(lightSpaceCenter.x + receiverRadius, lightSpaceCenter.y + receiverRadius, std::numeric_limits<float>::lowest());
-        for (const glm::vec3 &corner : cascadeCorners)
-        {
-            const glm::vec3 lightSpaceCorner = glm::vec3(view * glm::vec4(corner, 1.0f));
-            minBounds.z = glm::min(minBounds.z, lightSpaceCorner.z);
-            maxBounds.z = glm::max(maxBounds.z, lightSpaceCorner.z);
-
-            const glm::vec3 extrudedCorner = corner - lightDirection * casterExtrusionDistance;
-            const glm::vec3 lightSpaceExtrudedCorner = glm::vec3(view * glm::vec4(extrudedCorner, 1.0f));
-            minBounds.z = glm::min(minBounds.z, lightSpaceExtrudedCorner.z);
-            maxBounds.z = glm::max(maxBounds.z, lightSpaceExtrudedCorner.z);
-        }
-
-        minBounds -= glm::vec3(0.0f, 0.0f, kDirectionalShadowPadding);
-        maxBounds += glm::vec3(0.0f, 0.0f, kDirectionalShadowPadding);
-        ExpandDirectionalCascadeDepthBounds(view, shadowCasters, minBounds, maxBounds);
+        const glm::mat4 rotationOnlyView = glm::lookAt(glm::vec3(0.0f), lightDirection, upVector);
+        const glm::vec3 lightSpaceCenter = glm::vec3(rotationOnlyView * glm::vec4(frustumCenter, 1.0f));
 
         const glm::vec2 extents(receiverRadius * 2.0f);
         const glm::vec2 texelSize = extents / static_cast<float>(shadowResolution);
-        glm::vec2 centerXY = glm::round(glm::vec2(lightSpaceCenter) / texelSize) * texelSize;
+        const glm::vec2 snappedCenterXY = glm::round(glm::vec2(lightSpaceCenter) / texelSize) * texelSize;
         const float pcfGuardTexels = glm::max(light.directionalShadowSettings.softness + 1.0f, 2.0f);
         const glm::vec2 halfExtents = extents * 0.5f + texelSize * pcfGuardTexels;
+        const glm::vec3 lightRight = glm::normalize(glm::cross(lightDirection, upVector));
+        const glm::vec3 lightUp = glm::normalize(glm::cross(lightRight, lightDirection));
 
-        minBounds.x = centerXY.x - halfExtents.x;
-        maxBounds.x = centerXY.x + halfExtents.x;
-        minBounds.y = centerXY.y - halfExtents.y;
-        maxBounds.y = centerXY.y + halfExtents.y;
+        glm::vec3 eye = frustumCenter +
+                        lightRight * (lightSpaceCenter.x - snappedCenterXY.x) +
+                        lightUp * (lightSpaceCenter.y - snappedCenterXY.y);
+
+        auto computeCascadeBounds = [&](const glm::mat4 &view, glm::vec3 &minBounds, glm::vec3 &maxBounds)
+        {
+            const glm::vec3 centeredLightSpace = glm::vec3(view * glm::vec4(frustumCenter, 1.0f));
+            minBounds = glm::vec3(centeredLightSpace.x - halfExtents.x, centeredLightSpace.y - halfExtents.y, std::numeric_limits<float>::max());
+            maxBounds = glm::vec3(centeredLightSpace.x + halfExtents.x, centeredLightSpace.y + halfExtents.y, std::numeric_limits<float>::lowest());
+
+            for (const glm::vec3 &corner : cascadeCorners)
+            {
+                const glm::vec3 lightSpaceCorner = glm::vec3(view * glm::vec4(corner, 1.0f));
+                minBounds.z = glm::min(minBounds.z, lightSpaceCorner.z);
+                maxBounds.z = glm::max(maxBounds.z, lightSpaceCorner.z);
+
+                const glm::vec3 extrudedCorner = corner - lightDirection * casterExtrusionDistance;
+                const glm::vec3 lightSpaceExtrudedCorner = glm::vec3(view * glm::vec4(extrudedCorner, 1.0f));
+                minBounds.z = glm::min(minBounds.z, lightSpaceExtrudedCorner.z);
+                maxBounds.z = glm::max(maxBounds.z, lightSpaceExtrudedCorner.z);
+            }
+
+            minBounds -= glm::vec3(0.0f, 0.0f, kDirectionalShadowPadding);
+            maxBounds += glm::vec3(0.0f, 0.0f, kDirectionalShadowPadding);
+            ExpandDirectionalCascadeDepthBounds(view, shadowCasters, shadowWorldOrigin, minBounds, maxBounds);
+        };
+
+        glm::mat4 view = glm::lookAt(eye, eye + lightDirection, upVector);
+        glm::vec3 minBounds(0.0f);
+        glm::vec3 maxBounds(0.0f);
+        computeCascadeBounds(view, minBounds, maxBounds);
 
         if (maxBounds.z > -kDirectionalShadowPadding)
         {
             const float retreatDistance = maxBounds.z + kDirectionalShadowPadding;
-            const glm::vec3 eye = -lightDirection * retreatDistance;
+            eye -= lightDirection * retreatDistance;
             view = glm::lookAt(eye, eye + lightDirection, upVector);
-            minBounds.z -= retreatDistance;
-            maxBounds.z -= retreatDistance;
+            computeCascadeBounds(view, minBounds, maxBounds);
         }
 
         const float nearPlane = glm::max(0.1f, -maxBounds.z);
@@ -450,10 +485,12 @@ namespace
 
     bool IsCommandRelevantForDirectionalCascade(const ShadowCasterEntry &shadowCaster,
                                                 const glm::mat4 &lightView,
+                                                const glm::vec3 &shadowWorldOrigin,
                                                 const glm::vec2 &receiverMin,
                                                 const glm::vec2 &receiverMax)
     {
-        const glm::vec3 lightSpaceCenter = glm::vec3(lightView * glm::vec4(shadowCaster.bounds.center, 1.0f));
+        const glm::vec3 relativeCenter = shadowCaster.bounds.center - shadowWorldOrigin;
+        const glm::vec3 lightSpaceCenter = glm::vec3(lightView * glm::vec4(relativeCenter, 1.0f));
         const float radius = glm::max(shadowCaster.bounds.radius, 0.001f);
 
         return !(lightSpaceCenter.x + radius < receiverMin.x ||
@@ -578,6 +615,7 @@ namespace PlutoGE::render
         glDisable(GL_POLYGON_OFFSET_FILL);
 
         m_shadowPassShader->Bind();
+        m_shadowPassShader->SetUniform("uShadowWorldOrigin", glm::vec3(0.0f));
         const auto shadowCasters = BuildShadowCasterEntries(*ctx.renderCommands);
         const bool shadowCastersChanged = HaveShadowCastersChanged(*ctx.renderCommands);
         const bool cameraDataChanged = ctx.hasCameraData && (!ctx.hasPreviousCameraData || HasCameraDataChanged(ctx.cameraData, ctx.previousCameraData));
@@ -653,9 +691,11 @@ namespace PlutoGE::render
                     continue;
                 }
 
+                const glm::vec3 currentShadowWorldOrigin = glm::vec3(glm::inverse(ctx.cameraData.view)[3]);
                 const int cascadeCount = GetDirectionalCascadeCount(*light);
                 const auto cascadeSplits = BuildDirectionalCascadeSplits(ctx.cameraData, light->directionalShadowSettings, cascadeCount);
                 const bool forceFullCascadeUpdate = light->isDirty || !ctx.hasPreviousCameraData;
+                const bool motionDrivenCascadeInvalidation = !light->isDirty && shadowCastersChanged;
                 const bool cameraOnlyInvalidation = cameraDataChanged && !light->isDirty && !shadowCastersChanged;
 
                 light->shadowMatrix = glm::mat4(1.0f);
@@ -676,25 +716,37 @@ namespace PlutoGE::render
                     const float cascadeNear = cascadeIndex == 0 ? ctx.cameraData.nearPlane : cascadeSplits[cascadeIndex - 1];
                     const float cascadeFar = cascadeSplits[cascadeIndex];
                     const int shadowResolution = cascadeMap->GetWidth() > 0 ? cascadeMap->GetWidth() : GetShadowResolution(*light);
-
-                    if (!ShouldUpdateDirectionalCascade(ctx.frameSequence, cascadeIndex, forceFullCascadeUpdate, cameraOnlyInvalidation))
-                    {
-                        continue;
-                    }
-
-                    const auto cascadeProjection = BuildDirectionalCascadeProjection(*light, ctx.cameraData, shadowCasters, cascadeNear, cascadeFar, shadowResolution);
-                    const glm::mat4 &cascadeMatrix = cascadeProjection.lightSpaceMatrix;
-                    const bool cascadeMatrixChanged = !AreMatricesApproximatelyEqual(cascadeMatrix, light->shadowCascadeMatrices[cascadeIndex]);
                     const bool cascadeSplitChanged = std::abs(light->shadowCascadeSplits[cascadeIndex] - cascadeFar) > kShadowUpdateMatrixEpsilon;
-                    if (cameraOnlyInvalidation && !cascadeMatrixChanged && !cascadeSplitChanged)
-                    {
-                        continue;
-                    }
+                    const bool cascadeOriginChanged = ShouldRefreshCameraRelativeCascade(
+                        currentShadowWorldOrigin,
+                        light->shadowCascadeWorldOrigins[cascadeIndex],
+                        cascadeNear,
+                        cascadeFar);
 
-                    light->shadowCascadeMatrices[cascadeIndex] = cascadeMatrix;
+                    // Split radii drive cascade selection in lighting, so keep them current even when
+                    // this cascade's shadow map redraw is deferred by the update cadence.
                     light->shadowCascadeSplits[cascadeIndex] = cascadeFar;
 
+                    const bool forceCascadeUpdate = forceFullCascadeUpdate || (cascadeOriginChanged && cascadeIndex == 0);
+                    const bool cascadeMotionInvalidation = motionDrivenCascadeInvalidation || (cascadeOriginChanged && cascadeIndex > 0);
+                    if (!ShouldUpdateDirectionalCascade(ctx.frameSequence, cascadeIndex, forceCascadeUpdate, cascadeMotionInvalidation))
+                    {
+                        continue;
+                    }
+
+                    const auto cascadeProjection = BuildDirectionalCascadeProjection(*light, ctx.cameraData, shadowCasters, currentShadowWorldOrigin, cascadeNear, cascadeFar, shadowResolution);
+                    const glm::mat4 &cascadeMatrix = cascadeProjection.lightSpaceMatrix;
+                    const bool cascadeMatrixChanged = !AreMatricesApproximatelyEqual(cascadeMatrix, light->shadowCascadeMatrices[cascadeIndex]);
+                    if (cameraOnlyInvalidation && !cascadeMatrixChanged && !cascadeSplitChanged && !cascadeOriginChanged)
+                    {
+                        continue;
+                    }
+
+                    light->shadowCascadeWorldOrigins[cascadeIndex] = currentShadowWorldOrigin;
+                    light->shadowCascadeMatrices[cascadeIndex] = cascadeMatrix;
+
                     glViewport(0, 0, shadowResolution, shadowResolution);
+                    m_shadowPassShader->SetUniform("uShadowWorldOrigin", light->shadowCascadeWorldOrigins[cascadeIndex]);
                     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, cascadeMap->GetTextureID(), 0);
                     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
                     {
@@ -710,6 +762,7 @@ namespace PlutoGE::render
                             return IsCommandRelevantForDirectionalCascade(
                                 shadowCaster,
                                 cascadeProjection.lightViewMatrix,
+                                light->shadowCascadeWorldOrigins[cascadeIndex],
                                 cascadeProjection.receiverMin,
                                 cascadeProjection.receiverMax);
                         },
@@ -720,12 +773,14 @@ namespace PlutoGE::render
 
                 for (int cascadeIndex = cascadeCount; cascadeIndex < scene::kMaxDirectionalShadowCascades; ++cascadeIndex)
                 {
+                    light->shadowCascadeWorldOrigins[cascadeIndex] = glm::vec3(0.0f);
                     light->shadowCascadeMatrices[cascadeIndex] = glm::mat4(1.0f);
                     light->shadowCascadeSplits[cascadeIndex] = light->shadowFarPlane;
                 }
 
                 light->isDirty = false;
                 glCullFace(GL_BACK);
+                m_shadowPassShader->SetUniform("uShadowWorldOrigin", glm::vec3(0.0f));
                 continue;
             }
 

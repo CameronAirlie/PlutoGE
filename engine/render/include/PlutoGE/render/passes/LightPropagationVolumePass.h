@@ -3,6 +3,7 @@
 #include "PlutoGE/render/passes/IRenderPass.h"
 
 #include <chrono>
+#include <glad/glad.h>
 #include <glm/glm.hpp>
 
 #include <cstdint>
@@ -12,10 +13,13 @@
 namespace PlutoGE::render
 {
     class Texture;
+    class Shader;
 
     class LightPropagationVolumePass : public IRenderPass
     {
     public:
+        ~LightPropagationVolumePass() override;
+
         void Initialize() override;
         void Execute(const RenderContext &ctx) override;
         const char *GetName() const override { return "LPV"; }
@@ -31,6 +35,10 @@ namespace PlutoGE::render
     private:
         void EnsureResources();
         void ClearVolume();
+        void EnsureGpuPassResources();
+        void ReleaseGpuPassResources();
+        void RenderGpuInjection(const RenderContext &ctx);
+        void RenderGpuPropagation();
         bool ShouldUpdateVolume(const RenderContext &ctx,
                                 const glm::vec3 &desiredGridOrigin,
                                 const glm::vec3 &desiredGridSize,
@@ -44,13 +52,15 @@ namespace PlutoGE::render
         glm::vec3 m_gridSize{32.0f, 20.0f, 32.0f};
         std::unique_ptr<Texture> m_volumeTexture;
         std::unique_ptr<Texture> m_previousVolumeTexture;
+        std::unique_ptr<Texture> m_propagationTexture;
         std::vector<glm::vec3> m_currentRadiance;
         std::vector<glm::vec3> m_historyRadiance;
         std::vector<glm::vec3> m_nextRadiance;
         std::vector<float> m_injectionWeights;
-        std::vector<float> m_positionReadback;
-        std::vector<float> m_normalReadback;
-        std::vector<unsigned char> m_albedoReadback;
+        std::unique_ptr<Shader> m_injectionShader;
+        std::unique_ptr<Shader> m_propagationShader;
+        GLuint m_volumeFramebuffer = 0;
+        GLuint m_fullscreenVao = 0;
         glm::vec3 m_lastInjectionCameraPosition{0.0f};
         glm::vec3 m_lastInjectionCameraForward{0.0f, 0.0f, -1.0f};
         glm::ivec2 m_lastViewportSize{0, 0};

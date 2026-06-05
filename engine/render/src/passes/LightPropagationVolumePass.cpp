@@ -3,6 +3,7 @@
 #include "PlutoGE/render/Camera.h"
 #include "PlutoGE/render/GBuffer.h"
 #include "PlutoGE/render/Renderer.h"
+#include "PlutoGE/render/Shader.h"
 #include "PlutoGE/render/Texture.h"
 #include "PlutoGE/render/postprocess/IPostProcessEffect.h"
 #include "PlutoGE/render/postprocess/LPVEffect.h"
@@ -25,7 +26,6 @@ namespace PlutoGE::render
         constexpr float kInjectionBoost = 1.8f;
         constexpr float kTemporalBlendFactor = 0.2f;
         constexpr float kReprojectedTemporalBlendFactor = 0.12f;
-        constexpr float kInjectionMovementUpdateFraction = 0.5f;
         constexpr float kCameraMovementUpdateCellFraction = 0.5f;
         constexpr float kInjectionRotationUpdateThreshold = 0.04f;
         constexpr auto kMovementDrivenUpdateInterval = std::chrono::milliseconds(80);
@@ -344,6 +344,17 @@ namespace PlutoGE::render
 
             return totalRadiance * albedo * diffuseReflectance;
         }
+
+        float ComputeCameraMovementThreshold(const glm::vec3 &gridSize, const glm::ivec3 &resolution)
+        {
+            const glm::vec3 cellSize = gridSize / glm::max(glm::vec3(resolution), glm::vec3(1.0f));
+            return glm::max(0.5f, glm::min(glm::min(cellSize.x, cellSize.y), cellSize.z) * kCameraMovementUpdateCellFraction);
+        }
+    }
+
+    LightPropagationVolumePass::~LightPropagationVolumePass()
+    {
+        ReleaseGpuPassResources();
     }
 
     float LightPropagationVolumePass::GetTransitionBlendFactor() const
@@ -423,6 +434,371 @@ namespace PlutoGE::render
         m_hasValidVolume = false;
     }
 
+    void LightPropagationVolumePass::EnsureGpuPassResources()
+    {
+        if (!m_volumeFramebuffer)
+        {
+            glGenFramebuffers(1, &m_volumeFramebuffer);
+        }
+        if (!m_fullscreenVao)
+        {
+            glGenVertexArrays(1, &m_fullscreenVao);
+        }
+
+        if (!m_propagationTexture ||
+            m_propagationTexture->GetType() != GL_TEXTURE_3D ||
+            m_propagationTexture->GetWidth() != m_resolution.x ||
+            m_propagationTexture->GetHeight() != m_resolution.y ||
+            m_propagationTexture->GetDepth() != m_resolution.z)
+        {
+            m_propagationTexture.reset(Texture::ColorVolume(m_resolution.x, m_resolution.y, m_resolution.z));
+        }
+
+        if (!m_injectionShader)
+        {
+            ShaderSource source;
+            source.vertexSource = R"(
+                #version 330 core
+                out vec2 UV;
+
+                void main()
+                {
+                    vec2 vertices[3] = vec2[3](
+                        vec2(-1.0, -1.0),
+                        vec2(3.0, -1.0),
+                        vec2(-1.0, 3.0)
+                    );
+                    gl_Position = vec4(vertices[gl_VertexID], 0.0, 1.0);
+                    UV = 0.5 * gl_Position.xy + vec2(0.5);
+                }
+            )";
+
+            source.fragmentSource = R"(
+                #version 330 core
+                const int MAX_LIGHTS = 16;
+                const int SAMPLE_GRID_X = 96;
+                const int SAMPLE_GRID_Y = 54;
+
+                in vec2 UV;
+                out vec4 FragColor;
+
+                uniform sampler2D uPositionTexture;
+                uniform sampler2D uNormalTexture;
+                uniform sampler2D uAlbedoTexture;
+                uniform vec3 uGridOrigin;
+                uniform vec3 uGridSize;
+                uniform vec3 uResolution;
+                uniform int uLayer;
+                uniform int uLightCount;
+                uniform int uLightType[MAX_LIGHTS];
+                uniform vec3 uLightPosition[MAX_LIGHTS];
+                uniform vec3 uLightDirection[MAX_LIGHTS];
+                uniform vec3 uLightColor[MAX_LIGHTS];
+                uniform float uLightIntensity[MAX_LIGHTS];
+                uniform float uLightRange[MAX_LIGHTS];
+
+                float PointAttenuation(vec3 fragPos, int lightIndex)
+                {
+                    float distanceToLight = length(uLightPosition[lightIndex] - fragPos);
+                    float normalizedDistance = uLightRange[lightIndex] > 0.0001 ? distanceToLight / uLightRange[lightIndex] : 1.0;
+                    float attenuation = clamp(1.0 - normalizedDistance, 0.0, 1.0);
+                    return attenuation * attenuation;
+                }
+
+                vec3 InjectedRadiance(vec3 fragPos, vec3 normal, vec3 albedo, float metallic)
+                {
+                    vec3 totalRadiance = vec3(0.0);
+                    vec3 surfaceNormal = normalize(normal);
+                    float diffuseReflectance = clamp(1.0 - metallic, 0.0, 1.0);
+
+                    for (int lightIndex = 0; lightIndex < MAX_LIGHTS; ++lightIndex)
+                    {
+                        if (lightIndex >= uLightCount)
+                        {
+                            break;
+                        }
+
+                        vec3 lightDir = vec3(0.0);
+                        float attenuation = 1.0;
+                        if (uLightType[lightIndex] == 1)
+                        {
+                            lightDir = normalize(-uLightDirection[lightIndex]);
+                        }
+                        else
+                        {
+                            lightDir = normalize(uLightPosition[lightIndex] - fragPos);
+                            attenuation = PointAttenuation(fragPos, lightIndex);
+                            if (uLightType[lightIndex] == 2)
+                            {
+                                float spotEffect = dot(-lightDir, normalize(uLightDirection[lightIndex]));
+                                attenuation *= smoothstep(0.9, 0.975, spotEffect);
+                            }
+                        }
+
+                        float ndotl = max(dot(surfaceNormal, lightDir), 0.0);
+                        totalRadiance += uLightColor[lightIndex] * uLightIntensity[lightIndex] * attenuation * ndotl;
+                    }
+
+                    return totalRadiance * albedo * diffuseReflectance;
+                }
+
+                void main()
+                {
+                    ivec3 resolution = ivec3(uResolution);
+                    ivec3 targetCell = ivec3(int(gl_FragCoord.x), int(gl_FragCoord.y), uLayer);
+                    vec3 accumulatedRadiance = vec3(0.0);
+                    float sampleWeight = 0.0;
+
+                    for (int sampleY = 0; sampleY < SAMPLE_GRID_Y; ++sampleY)
+                    {
+                        for (int sampleX = 0; sampleX < SAMPLE_GRID_X; ++sampleX)
+                        {
+                            vec2 sampleUv = (vec2(sampleX, sampleY) + vec2(0.5)) / vec2(SAMPLE_GRID_X, SAMPLE_GRID_Y);
+                            vec3 worldPosition = texture(uPositionTexture, sampleUv).rgb;
+                            vec3 normal = texture(uNormalTexture, sampleUv).rgb;
+                            if (dot(normal, normal) <= 0.01)
+                            {
+                                continue;
+                            }
+
+                            vec3 normalizedPosition = (worldPosition - uGridOrigin) / max(uGridSize, vec3(0.0001));
+                            if (any(lessThan(normalizedPosition, vec3(0.0))) || any(greaterThanEqual(normalizedPosition, vec3(1.0))))
+                            {
+                                continue;
+                            }
+
+                            ivec3 cell = clamp(ivec3(normalizedPosition * uResolution), ivec3(0), resolution - ivec3(1));
+                            if (any(notEqual(cell, targetCell)))
+                            {
+                                continue;
+                            }
+
+                            vec4 albedoMetallic = texture(uAlbedoTexture, sampleUv);
+                            vec3 radiance = InjectedRadiance(worldPosition, normal, albedoMetallic.rgb, albedoMetallic.a);
+                            accumulatedRadiance += radiance;
+                            sampleWeight += 1.0;
+                        }
+                    }
+
+                    if (sampleWeight > 0.0)
+                    {
+                        accumulatedRadiance = (accumulatedRadiance / sampleWeight) * 1.8;
+                    }
+
+                    FragColor = vec4(accumulatedRadiance, 1.0);
+                }
+            )";
+
+            m_injectionShader.reset(Shader::Create(source));
+        }
+
+        if (!m_propagationShader)
+        {
+            ShaderSource source;
+            source.vertexSource = R"(
+                #version 330 core
+                out vec2 UV;
+
+                void main()
+                {
+                    vec2 vertices[3] = vec2[3](
+                        vec2(-1.0, -1.0),
+                        vec2(3.0, -1.0),
+                        vec2(-1.0, 3.0)
+                    );
+                    gl_Position = vec4(vertices[gl_VertexID], 0.0, 1.0);
+                    UV = 0.5 * gl_Position.xy + vec2(0.5);
+                }
+            )";
+
+            source.fragmentSource = R"(
+                #version 330 core
+                in vec2 UV;
+                out vec4 FragColor;
+
+                uniform sampler3D uSourceVolume;
+                uniform vec3 uResolution;
+                uniform int uLayer;
+
+                const float SELF_WEIGHT = 0.36;
+                const float NEIGHBOR_WEIGHT = 0.07;
+
+                vec3 FetchCell(ivec3 cell)
+                {
+                    ivec3 resolution = ivec3(uResolution);
+                    cell = clamp(cell, ivec3(0), resolution - ivec3(1));
+                    return texelFetch(uSourceVolume, cell, 0).rgb;
+                }
+
+                void main()
+                {
+                    ivec3 cell = ivec3(int(gl_FragCoord.x), int(gl_FragCoord.y), uLayer);
+                    vec3 radiance = FetchCell(cell) * SELF_WEIGHT;
+                    radiance += FetchCell(cell + ivec3(-1, 0, 0)) * NEIGHBOR_WEIGHT;
+                    radiance += FetchCell(cell + ivec3(1, 0, 0)) * NEIGHBOR_WEIGHT;
+                    radiance += FetchCell(cell + ivec3(0, -1, 0)) * NEIGHBOR_WEIGHT;
+                    radiance += FetchCell(cell + ivec3(0, 1, 0)) * NEIGHBOR_WEIGHT;
+                    radiance += FetchCell(cell + ivec3(0, 0, -1)) * NEIGHBOR_WEIGHT;
+                    radiance += FetchCell(cell + ivec3(0, 0, 1)) * NEIGHBOR_WEIGHT;
+                    FragColor = vec4(radiance, 1.0);
+                }
+            )";
+
+            m_propagationShader.reset(Shader::Create(source));
+        }
+    }
+
+    void LightPropagationVolumePass::ReleaseGpuPassResources()
+    {
+        if (m_volumeFramebuffer)
+        {
+            glDeleteFramebuffers(1, &m_volumeFramebuffer);
+            m_volumeFramebuffer = 0;
+        }
+        if (m_fullscreenVao)
+        {
+            glDeleteVertexArrays(1, &m_fullscreenVao);
+            m_fullscreenVao = 0;
+        }
+
+        m_injectionShader.reset();
+        m_propagationShader.reset();
+        m_propagationTexture.reset();
+    }
+
+    void LightPropagationVolumePass::RenderGpuInjection(const RenderContext &ctx)
+    {
+        EnsureGpuPassResources();
+        if (!m_injectionShader || !m_volumeTexture)
+        {
+            return;
+        }
+
+        GLint previousFramebuffer = 0;
+        GLint previousViewport[4] = {};
+        GLboolean depthTestEnabled = glIsEnabled(GL_DEPTH_TEST);
+        GLboolean blendEnabled = glIsEnabled(GL_BLEND);
+        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previousFramebuffer);
+        glGetIntegerv(GL_VIEWPORT, previousViewport);
+
+        glDisable(GL_DEPTH_TEST);
+        glDisable(GL_BLEND);
+        glBindFramebuffer(GL_FRAMEBUFFER, m_volumeFramebuffer);
+        glViewport(0, 0, m_resolution.x, m_resolution.y);
+        glBindVertexArray(m_fullscreenVao);
+
+        m_injectionShader->Bind();
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetPositionTextureID());
+        m_injectionShader->SetUniform("uPositionTexture", 0);
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetNormalTextureID());
+        m_injectionShader->SetUniform("uNormalTexture", 1);
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetAlbedoTextureID());
+        m_injectionShader->SetUniform("uAlbedoTexture", 2);
+        m_injectionShader->SetUniform("uGridOrigin", m_gridOrigin);
+        m_injectionShader->SetUniform("uGridSize", m_gridSize);
+        m_injectionShader->SetUniform("uResolution", glm::vec3(m_resolution));
+
+        const int lightCount = std::min<int>(ctx.lights ? static_cast<int>(ctx.lights->size()) : 0, 16);
+        m_injectionShader->SetUniform("uLightCount", lightCount);
+        for (int lightIndex = 0; lightIndex < lightCount; ++lightIndex)
+        {
+            const auto *light = (*ctx.lights)[lightIndex];
+            const int lightType = light ? static_cast<int>(light->type) : 0;
+            m_injectionShader->SetUniform("uLightType[" + std::to_string(lightIndex) + "]", lightType);
+            m_injectionShader->SetUniform("uLightPosition[" + std::to_string(lightIndex) + "]", light ? light->position : glm::vec3(0.0f));
+            m_injectionShader->SetUniform("uLightDirection[" + std::to_string(lightIndex) + "]", light ? light->direction : glm::vec3(0.0f, -1.0f, 0.0f));
+            m_injectionShader->SetUniform("uLightColor[" + std::to_string(lightIndex) + "]", light ? light->color : glm::vec3(0.0f));
+            m_injectionShader->SetUniform("uLightIntensity[" + std::to_string(lightIndex) + "]", light ? light->intensity : 0.0f);
+            m_injectionShader->SetUniform("uLightRange[" + std::to_string(lightIndex) + "]", light ? light->range : 1.0f);
+        }
+
+        for (int layer = 0; layer < m_resolution.z; ++layer)
+        {
+            glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, m_volumeTexture->GetTextureID(), 0, layer);
+            glDrawBuffer(GL_COLOR_ATTACHMENT0);
+            if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+            {
+                continue;
+            }
+
+            m_injectionShader->SetUniform("uLayer", layer);
+            glDrawArrays(GL_TRIANGLES, 0, 3);
+        }
+
+        glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previousFramebuffer));
+        glBindVertexArray(0);
+        glViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
+        if (depthTestEnabled)
+        {
+            glEnable(GL_DEPTH_TEST);
+        }
+        if (blendEnabled)
+        {
+            glEnable(GL_BLEND);
+        }
+        Shader::ResetStateCache();
+    }
+
+    void LightPropagationVolumePass::RenderGpuPropagation()
+    {
+        EnsureGpuPassResources();
+        if (!m_propagationShader || !m_volumeTexture || !m_propagationTexture)
+        {
+            return;
+        }
+
+        GLint previousFramebuffer = 0;
+        GLint previousViewport[4] = {};
+        GLboolean depthTestEnabled = glIsEnabled(GL_DEPTH_TEST);
+        GLboolean blendEnabled = glIsEnabled(GL_BLEND);
+        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previousFramebuffer);
+        glGetIntegerv(GL_VIEWPORT, previousViewport);
+
+        glDisable(GL_DEPTH_TEST);
+        glDisable(GL_BLEND);
+        glBindFramebuffer(GL_FRAMEBUFFER, m_volumeFramebuffer);
+        glViewport(0, 0, m_resolution.x, m_resolution.y);
+        glBindVertexArray(m_fullscreenVao);
+
+        m_propagationShader->Bind();
+        m_propagationShader->SetUniform("uResolution", glm::vec3(m_resolution));
+
+        for (int iteration = 0; iteration < kPropagationIterations; ++iteration)
+        {
+            m_propagationShader->SetUniform("uSourceVolume", m_volumeTexture.get(), 0);
+            for (int layer = 0; layer < m_resolution.z; ++layer)
+            {
+                glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, m_propagationTexture->GetTextureID(), 0, layer);
+                glDrawBuffer(GL_COLOR_ATTACHMENT0);
+                if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+                {
+                    continue;
+                }
+
+                m_propagationShader->SetUniform("uLayer", layer);
+                glDrawArrays(GL_TRIANGLES, 0, 3);
+            }
+
+            m_volumeTexture.swap(m_propagationTexture);
+        }
+
+        glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previousFramebuffer));
+        glBindVertexArray(0);
+        glViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
+        if (depthTestEnabled)
+        {
+            glEnable(GL_DEPTH_TEST);
+        }
+        if (blendEnabled)
+        {
+            glEnable(GL_BLEND);
+        }
+        Shader::ResetStateCache();
+    }
+
     bool LightPropagationVolumePass::ShouldUpdateVolume(const RenderContext &ctx,
                                                         const glm::vec3 &desiredGridOrigin,
                                                         const glm::vec3 &desiredGridSize,
@@ -441,8 +817,7 @@ namespace PlutoGE::render
         const bool viewportChanged = m_lastViewportSize != glm::ivec2(ctx.gBuffer->GetWidth(), ctx.gBuffer->GetHeight());
         const bool gridChanged = glm::any(glm::greaterThan(glm::abs(desiredGridSize - m_gridSize), glm::vec3(0.01f))) ||
                                  glm::any(glm::greaterThan(glm::abs(desiredGridOrigin - m_gridOrigin), glm::vec3(0.01f)));
-        const glm::vec3 cellSize = desiredGridSize / glm::max(glm::vec3(m_resolution), glm::vec3(1.0f));
-        const float cameraMovementThreshold = glm::max(0.5f, glm::min(glm::min(cellSize.x, cellSize.y), cellSize.z) * kCameraMovementUpdateCellFraction);
+        const float cameraMovementThreshold = ComputeCameraMovementThreshold(desiredGridSize, m_resolution);
         const bool cameraMoved = glm::distance(cameraPosition, m_lastInjectionCameraPosition) >= cameraMovementThreshold;
         const float forwardAlignment = glm::clamp(glm::dot(cameraForward, m_lastInjectionCameraForward), -1.0f, 1.0f);
         const bool cameraRotated = (1.0f - forwardAlignment) >= kInjectionRotationUpdateThreshold;
@@ -480,6 +855,7 @@ namespace PlutoGE::render
         }
 
         EnsureResources();
+        EnsureGpuPassResources();
 
         const glm::vec3 cameraPosition = GetCameraPosition(ctx.cameraData);
         const glm::vec3 cameraForward = GetCameraForward(ctx.cameraData);
@@ -513,222 +889,30 @@ namespace PlutoGE::render
 
         const glm::vec3 previousGridOrigin = m_gridOrigin;
         const glm::vec3 previousGridSize = m_gridSize;
-        const bool sceneChanged = sceneSignature != m_lastSceneSignature;
-        const bool lightsChanged = lightSignature != m_lastLightSignature;
-        const bool viewportChanged = m_lastViewportSize != glm::ivec2(width, height);
-        const bool sameGrid = m_hasValidVolume &&
-                              !glm::any(glm::greaterThan(glm::abs(desiredGridOrigin - m_gridOrigin), glm::vec3(0.01f))) &&
-                              !glm::any(glm::greaterThan(glm::abs(desiredGridSize - m_gridSize), glm::vec3(0.01f)));
         const bool sameGridSize = m_hasValidVolume &&
                                   !glm::any(glm::greaterThan(glm::abs(desiredGridSize - m_gridSize), glm::vec3(0.01f)));
         const bool gridShifted = sameGridSize &&
                                  glm::any(glm::greaterThan(glm::abs(desiredGridOrigin - m_gridOrigin), glm::vec3(0.01f)));
-        const bool cameraOnlyGridShift = gridShifted && !sceneChanged && !lightsChanged && !viewportChanged;
-        const float cameraMovementThreshold = glm::max(
-            1.0f,
-            glm::max(desiredGridSize.x, desiredGridSize.z) * kInjectionMovementUpdateFraction);
-        const bool cameraMovedEnough = glm::distance(cameraPosition, m_lastInjectionCameraPosition) >= cameraMovementThreshold;
-        const float forwardAlignment = glm::clamp(glm::dot(cameraForward, m_lastInjectionCameraForward), -1.0f, 1.0f);
-        const bool cameraRotatedEnough = (1.0f - forwardAlignment) >= kInjectionRotationUpdateThreshold;
         const auto now = std::chrono::steady_clock::now();
-        const bool shouldRefreshCameraOnlyInjection =
-            cameraOnlyGridShift &&
-            (cameraMovedEnough || cameraRotatedEnough) &&
-            (m_lastFullInjectionTime.time_since_epoch().count() == 0 || now - m_lastFullInjectionTime >= kCameraOnlyReinjectionInterval);
-        const bool canBlendTemporalHistory = m_hasValidVolume && sameGridSize;
-        const std::vector<glm::vec3> reprojectedHistoryRadiance = gridShifted
-                                                                      ? ReprojectHistoryRadiance(m_historyRadiance, previousGridOrigin, previousGridSize, desiredGridOrigin, desiredGridSize, m_resolution)
-                                                                      : std::vector<glm::vec3>();
 
         m_gridSize = desiredGridSize;
         m_gridOrigin = desiredGridOrigin;
 
-        if (gridShifted && m_previousVolumeTexture && !m_historyRadiance.empty())
+        if (gridShifted)
         {
-            m_previousVolumeTexture->Upload3D(GL_RGB, GL_FLOAT, m_historyRadiance.data());
             m_previousGridOrigin = previousGridOrigin;
             m_previousGridSize = previousGridSize;
-            m_transitionStartTime = std::chrono::steady_clock::now();
-            m_transitionActive = true;
+            m_transitionActive = false;
         }
-        else if (!gridShifted)
+        else
         {
             m_transitionActive = false;
             m_previousGridOrigin = m_gridOrigin;
             m_previousGridSize = m_gridSize;
         }
 
-        if (cameraOnlyGridShift && !shouldRefreshCameraOnlyInjection && !reprojectedHistoryRadiance.empty())
-        {
-            m_currentRadiance = reprojectedHistoryRadiance;
-            if (m_volumeTexture)
-            {
-                m_volumeTexture->Upload3D(GL_RGB, GL_FLOAT, m_currentRadiance.data());
-            }
-
-            m_historyRadiance = m_currentRadiance;
-            m_lastViewportSize = glm::ivec2(width, height);
-            m_lastSceneSignature = sceneSignature;
-            m_lastLightSignature = lightSignature;
-            m_pendingFullInjection = true;
-            m_hasValidVolume = true;
-            return;
-        }
-
-        std::fill(m_currentRadiance.begin(), m_currentRadiance.end(), glm::vec3(0.0f));
-        std::fill(m_nextRadiance.begin(), m_nextRadiance.end(), glm::vec3(0.0f));
-        std::fill(m_injectionWeights.begin(), m_injectionWeights.end(), 0.0f);
-        bool hasInjectedSamples = false;
-
-        m_positionReadback.resize(static_cast<std::size_t>(width * height * 3));
-        m_normalReadback.resize(static_cast<std::size_t>(width * height * 4));
-        m_albedoReadback.resize(static_cast<std::size_t>(width * height * 4));
-
-        glBindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetPositionTextureID());
-        glGetTexImage(GL_TEXTURE_2D, 0, GL_RGB, GL_FLOAT, m_positionReadback.data());
-        glBindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetNormalTextureID());
-        glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_FLOAT, m_normalReadback.data());
-        glBindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetAlbedoTextureID());
-        glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, m_albedoReadback.data());
-        glBindTexture(GL_TEXTURE_2D, 0);
-
-        const int sampleStep = glm::max(1, glm::max(width, height) / 160);
-        for (int y = 0; y < height; y += sampleStep)
-        {
-            for (int x = 0; x < width; x += sampleStep)
-            {
-                const std::size_t pixelIndex = static_cast<std::size_t>(y * width + x);
-                const std::size_t positionIndex = pixelIndex * 3;
-                const std::size_t normalIndex = pixelIndex * 4;
-                const std::size_t albedoIndex = pixelIndex * 4;
-
-                const glm::vec3 worldPosition(
-                    m_positionReadback[positionIndex + 0],
-                    m_positionReadback[positionIndex + 1],
-                    m_positionReadback[positionIndex + 2]);
-                const glm::vec3 normal(
-                    m_normalReadback[normalIndex + 0],
-                    m_normalReadback[normalIndex + 1],
-                    m_normalReadback[normalIndex + 2]);
-
-                if (glm::dot(normal, normal) <= 0.01f)
-                {
-                    continue;
-                }
-
-                const glm::vec3 albedo(
-                    static_cast<float>(m_albedoReadback[albedoIndex + 0]) / 255.0f,
-                    static_cast<float>(m_albedoReadback[albedoIndex + 1]) / 255.0f,
-                    static_cast<float>(m_albedoReadback[albedoIndex + 2]) / 255.0f);
-                const float metallic = static_cast<float>(m_albedoReadback[albedoIndex + 3]) / 255.0f;
-                const glm::vec3 injectedRadiance = ComputeInjectedRadiance(worldPosition, normal, albedo, metallic, *ctx.lights);
-                if (glm::dot(injectedRadiance, injectedRadiance) <= 0.000001f)
-                {
-                    continue;
-                }
-
-                glm::ivec3 cell(0);
-                if (!WorldToCell(worldPosition, m_gridOrigin, m_gridSize, m_resolution, cell))
-                {
-                    continue;
-                }
-
-                const std::size_t cellIndex = FlattenCellIndex(m_resolution, cell.x, cell.y, cell.z);
-                m_currentRadiance[cellIndex] += injectedRadiance;
-                m_injectionWeights[cellIndex] += 1.0f;
-                hasInjectedSamples = true;
-            }
-        }
-
-        for (std::size_t cellIndex = 0; cellIndex < m_currentRadiance.size(); ++cellIndex)
-        {
-            if (m_injectionWeights[cellIndex] > 0.0f)
-            {
-                m_currentRadiance[cellIndex] = (m_currentRadiance[cellIndex] / m_injectionWeights[cellIndex]) * kInjectionBoost;
-            }
-        }
-
-        // Do not cache an empty volume as valid; otherwise LPV can stay black until the
-        // effect is toggled and its cached state is cleared.
-        if (!hasInjectedSamples && !canBlendTemporalHistory)
-        {
-            if (m_volumeTexture)
-            {
-                m_volumeTexture->Upload3D(GL_RGB, GL_FLOAT, m_currentRadiance.data());
-            }
-            m_transitionActive = false;
-            m_hasValidVolume = false;
-            return;
-        }
-
-        for (int iteration = 0; iteration < kPropagationIterations; ++iteration)
-        {
-            for (int z = 0; z < m_resolution.z; ++z)
-            {
-                for (int y = 0; y < m_resolution.y; ++y)
-                {
-                    for (int x = 0; x < m_resolution.x; ++x)
-                    {
-                        const std::size_t cellIndex = FlattenCellIndex(m_resolution, x, y, z);
-                        glm::vec3 propagatedRadiance = m_currentRadiance[cellIndex] * kPropagationSelfWeight;
-
-                        if (x > 0)
-                        {
-                            propagatedRadiance += m_currentRadiance[FlattenCellIndex(m_resolution, x - 1, y, z)] * kPropagationNeighborWeight;
-                        }
-                        if (x + 1 < m_resolution.x)
-                        {
-                            propagatedRadiance += m_currentRadiance[FlattenCellIndex(m_resolution, x + 1, y, z)] * kPropagationNeighborWeight;
-                        }
-                        if (y > 0)
-                        {
-                            propagatedRadiance += m_currentRadiance[FlattenCellIndex(m_resolution, x, y - 1, z)] * kPropagationNeighborWeight;
-                        }
-                        if (y + 1 < m_resolution.y)
-                        {
-                            propagatedRadiance += m_currentRadiance[FlattenCellIndex(m_resolution, x, y + 1, z)] * kPropagationNeighborWeight;
-                        }
-                        if (z > 0)
-                        {
-                            propagatedRadiance += m_currentRadiance[FlattenCellIndex(m_resolution, x, y, z - 1)] * kPropagationNeighborWeight;
-                        }
-                        if (z + 1 < m_resolution.z)
-                        {
-                            propagatedRadiance += m_currentRadiance[FlattenCellIndex(m_resolution, x, y, z + 1)] * kPropagationNeighborWeight;
-                        }
-
-                        m_nextRadiance[cellIndex] = propagatedRadiance;
-                    }
-                }
-            }
-
-            m_currentRadiance.swap(m_nextRadiance);
-        }
-
-        // Temporal accumulation stabilizes injection and propagation while the snapped volume stays put.
-        if (canBlendTemporalHistory)
-        {
-            const auto &historySource = gridShifted ? reprojectedHistoryRadiance : m_historyRadiance;
-            BlendTemporalHistory(m_currentRadiance, historySource, sameGrid ? kTemporalBlendFactor : kReprojectedTemporalBlendFactor);
-        }
-
-        if (m_volumeTexture)
-        {
-            m_volumeTexture->Upload3D(GL_RGB, GL_FLOAT, m_currentRadiance.data());
-        }
-
-        if (m_transitionActive && GetTransitionBlendFactor() >= 0.999f)
-        {
-            m_transitionActive = false;
-            if (m_previousVolumeTexture)
-            {
-                m_previousVolumeTexture->Upload3D(GL_RGB, GL_FLOAT, m_currentRadiance.data());
-            }
-            m_previousGridOrigin = m_gridOrigin;
-            m_previousGridSize = m_gridSize;
-        }
-
-        m_historyRadiance = m_currentRadiance;
+        RenderGpuInjection(ctx);
+        RenderGpuPropagation();
 
         m_lastViewportSize = glm::ivec2(width, height);
         m_lastSceneSignature = sceneSignature;

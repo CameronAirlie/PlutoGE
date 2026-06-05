@@ -727,8 +727,8 @@ namespace PlutoGE::render
                     // this cascade's shadow map redraw is deferred by the update cadence.
                     light->shadowCascadeSplits[cascadeIndex] = cascadeFar;
 
-                    const bool forceCascadeUpdate = forceFullCascadeUpdate || (cascadeOriginChanged && cascadeIndex == 0);
-                    const bool cascadeMotionInvalidation = motionDrivenCascadeInvalidation || (cascadeOriginChanged && cascadeIndex > 0);
+                    const bool forceCascadeUpdate = forceFullCascadeUpdate || cascadeOriginChanged;
+                    const bool cascadeMotionInvalidation = motionDrivenCascadeInvalidation;
                     if (!ShouldUpdateDirectionalCascade(ctx.frameSequence, cascadeIndex, forceCascadeUpdate, cascadeMotionInvalidation))
                     {
                         continue;

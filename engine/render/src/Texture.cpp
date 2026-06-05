@@ -55,11 +55,11 @@ namespace PlutoGE::render
         texture->m_width = width;
         texture->m_height = height;
         texture->m_depth = depth;
-        texture->m_channels = 3;
+        texture->m_channels = 4;
 
         glGenTextures(1, &texture->m_textureID);
         glBindTexture(GL_TEXTURE_3D, texture->m_textureID);
-        glTexImage3D(GL_TEXTURE_3D, 0, GL_RGB16F, width, height, depth, 0, GL_RGB, GL_FLOAT, nullptr);
+        glTexImage3D(GL_TEXTURE_3D, 0, GL_RGBA16F, width, height, depth, 0, GL_RGBA, GL_FLOAT, nullptr);
         glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);

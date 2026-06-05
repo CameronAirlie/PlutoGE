@@ -418,6 +418,7 @@ namespace PlutoGE::render
         m_previousGridOrigin = m_gridOrigin;
         m_previousGridSize = m_gridSize;
         m_transitionActive = false;
+        m_pendingFullInjection = false;
         m_hasValidVolume = false;
     }
 
@@ -437,8 +438,12 @@ namespace PlutoGE::render
         const bool viewportChanged = m_lastViewportSize != glm::ivec2(ctx.gBuffer->GetWidth(), ctx.gBuffer->GetHeight());
         const bool gridChanged = glm::any(glm::greaterThan(glm::abs(desiredGridSize - m_gridSize), glm::vec3(0.01f))) ||
                                  glm::any(glm::greaterThan(glm::abs(desiredGridOrigin - m_gridOrigin), glm::vec3(0.01f)));
+        const auto now = std::chrono::steady_clock::now();
+        const bool pendingFullInjectionReady =
+            m_pendingFullInjection &&
+            (m_lastFullInjectionTime.time_since_epoch().count() == 0 || now - m_lastFullInjectionTime >= kCameraOnlyReinjectionInterval);
 
-        if (!sceneChanged && !lightsChanged && !viewportChanged && !gridChanged)
+        if (!sceneChanged && !lightsChanged && !viewportChanged && !gridChanged && !pendingFullInjectionReady)
         {
             return false;
         }
@@ -448,13 +453,12 @@ namespace PlutoGE::render
             return true;
         }
 
-        const auto now = std::chrono::steady_clock::now();
         if (m_lastVolumeUpdateTime.time_since_epoch().count() != 0 && now - m_lastVolumeUpdateTime < kMovementDrivenUpdateInterval)
         {
             return false;
         }
 
-        return sceneChanged || gridChanged;
+        return sceneChanged || gridChanged || pendingFullInjectionReady;
     }
 
     void LightPropagationVolumePass::Execute(const RenderContext &ctx)
@@ -557,9 +561,7 @@ namespace PlutoGE::render
             m_lastViewportSize = glm::ivec2(width, height);
             m_lastSceneSignature = sceneSignature;
             m_lastLightSignature = lightSignature;
-            m_lastInjectionCameraPosition = cameraPosition;
-            m_lastInjectionCameraForward = cameraForward;
-            m_lastVolumeUpdateTime = std::chrono::steady_clock::now();
+            m_pendingFullInjection = true;
             m_hasValidVolume = true;
             return;
         }
@@ -726,6 +728,7 @@ namespace PlutoGE::render
         m_lastInjectionCameraForward = cameraForward;
         m_lastVolumeUpdateTime = now;
         m_lastFullInjectionTime = now;
+        m_pendingFullInjection = false;
         m_hasValidVolume = true;
     }
 }

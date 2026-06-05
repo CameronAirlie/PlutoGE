@@ -60,6 +60,7 @@ namespace PlutoGE::render
         std::chrono::steady_clock::time_point m_lastFullInjectionTime{};
         std::chrono::steady_clock::time_point m_transitionStartTime{};
         bool m_transitionActive = false;
+        bool m_pendingFullInjection = false;
         bool m_hasValidVolume = false;
     };
 }

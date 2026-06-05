@@ -61,6 +61,7 @@ namespace PlutoGE::render
         glm::mat4 model = glm::mat4(1.0f); // Model matrix for the object (position, rotation, scale)
         glm::mat4 previousModel = glm::mat4(1.0f);
         MeshBounds worldBounds{};
+        MeshBounds previousWorldBounds{};
         uint32_t submeshIndex = 0;
         bool isStatic = false;
         bool usePrimaryUvForLightmap = false;
@@ -168,7 +169,9 @@ namespace PlutoGE::render
             std::unique_ptr<RenderTarget> postProcessIntermediateRenderTarget;
             GBuffer gBuffer;
             CameraData previousCameraData;
+            CameraData previousShadowCameraData;
             bool hasPreviousCameraData = false;
+            bool hasPreviousShadowCameraData = false;
         };
 
         struct GpuTimerQueryState

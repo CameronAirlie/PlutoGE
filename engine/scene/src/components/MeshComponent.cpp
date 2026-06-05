@@ -343,6 +343,7 @@ namespace PlutoGE::scene
                 command.mesh = m_mesh;
                 command.shader = material->GetShader();
                 command.worldBounds = ComputeWorldBounds(*m_mesh, submeshIndex, modelMatrix);
+                command.previousWorldBounds = ComputeWorldBounds(*m_mesh, submeshIndex, command.previousModel);
                 command.submeshIndex = static_cast<uint32_t>(submeshIndex);
                 command.isStatic = m_isStatic;
                 command.usePrimaryUvForLightmap = !m_mesh->HasUsableLightmapUvsForSubmesh(submeshIndex);

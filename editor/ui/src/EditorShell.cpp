@@ -640,6 +640,7 @@ namespace PlutoGE::ui
         m_editorCamera.AddPostProcessEffectByType("RSM");
         m_editorCamera.AddPostProcessEffectByType("VolumetricFog");
         m_editorCamera.AddPostProcessEffectByType("LSAO");
+        m_editorCamera.AddPostProcessEffectByType("TAA");
         m_editorCamera.AddPostProcessEffectByType("ToneMapping");
         m_editorCamera.AddPostProcessEffectByType("ColorGrading");
         m_editorCamera.AddPostProcessEffectByType("SceneComposite");

@@ -10,6 +10,7 @@
 #include "PlutoGE/render/postprocess/RSMEffect.h"
 #include "PlutoGE/render/postprocess/SceneCompositeEffect.h"
 #include "PlutoGE/render/postprocess/SSGIEffect.h"
+#include "PlutoGE/render/postprocess/TAAEffect.h"
 #include "PlutoGE/render/postprocess/ToneMappingEffect.h"
 #include "PlutoGE/render/postprocess/VolumetricFogEffect.h"
 
@@ -26,6 +27,7 @@ namespace PlutoGE::render
             "RSM",
             "VolumetricFog",
             "AutoExposure",
+            "TAA",
             "ToneMapping",
             "ColorGrading",
             "SceneComposite",
@@ -74,6 +76,11 @@ namespace PlutoGE::render
         if (typeName == "ToneMapping")
         {
             return std::make_unique<ToneMappingEffect>();
+        }
+
+        if (typeName == "TAA")
+        {
+            return std::make_unique<TAAEffect>();
         }
 
         if (typeName == "ColorGrading")

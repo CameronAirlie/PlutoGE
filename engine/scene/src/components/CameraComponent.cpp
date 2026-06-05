@@ -93,6 +93,7 @@ namespace PlutoGE::scene
         rsmEffect.SetEnabled(false);
 
         EmplacePostProcessEffect<render::AutoExposureEffect>();
+        AddPostProcessEffectByType("TAA");
         EmplacePostProcessEffect<render::ToneMappingEffect>();
         AddPostProcessEffectByType("ColorGrading");
         EmplacePostProcessEffect<render::SceneCompositeEffect>();

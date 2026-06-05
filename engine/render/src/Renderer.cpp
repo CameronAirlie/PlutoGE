@@ -14,6 +14,7 @@
 #include "PlutoGE/render/passes/PostProcessPass.h"
 #include "PlutoGE/render/passes/ShadowPass.h"
 #include "PlutoGE/render/postprocess/IPostProcessEffect.h"
+#include "PlutoGE/render/postprocess/TAAEffect.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/Entity.h"
 
@@ -80,6 +81,29 @@ namespace PlutoGE::render
             }
 
             return renderTarget->Resize(width, height);
+        }
+
+        TAAEffect *FindActiveTAAEffect(const std::vector<IPostProcessEffect *> *postProcessEffects)
+        {
+            if (!postProcessEffects)
+            {
+                return nullptr;
+            }
+
+            for (auto *effect : *postProcessEffects)
+            {
+                if (!effect || !effect->IsEnabled())
+                {
+                    continue;
+                }
+
+                if (auto *taaEffect = dynamic_cast<TAAEffect *>(effect))
+                {
+                    return taaEffect;
+                }
+            }
+
+            return nullptr;
         }
     }
 
@@ -286,9 +310,15 @@ namespace PlutoGE::render
 
         EnsureRenderCommandsSorted();
 
+        CameraData activeCameraData = cameraData;
+        if (auto *taaEffect = FindActiveTAAEffect(postProcessEffects))
+        {
+            activeCameraData = taaEffect->PrepareCameraData(cameraData, renderWidth, renderHeight, m_frameSequence);
+        }
+
         RenderContext ctx{
             .renderer = this,
-            .cameraData = cameraData,
+            .cameraData = activeCameraData,
             .previousCameraData = frameResources->previousCameraData,
             .hasCameraData = true,
             .hasPreviousCameraData = frameResources->hasPreviousCameraData,
@@ -309,7 +339,11 @@ namespace PlutoGE::render
 
         if (m_shadowPass)
         {
-            ExecutePassWithGpuTiming(*m_shadowPass, ctx, 0);
+            RenderContext shadowCtx = ctx;
+            shadowCtx.cameraData = cameraData;
+            shadowCtx.previousCameraData = frameResources->previousShadowCameraData;
+            shadowCtx.hasPreviousCameraData = frameResources->hasPreviousShadowCameraData;
+            ExecutePassWithGpuTiming(*m_shadowPass, shadowCtx, 0);
         }
 
         for (std::size_t index = 0; index < m_renderPasses.size(); ++index)
@@ -317,8 +351,10 @@ namespace PlutoGE::render
             ExecutePassWithGpuTiming(*m_renderPasses[index], ctx, index + 1);
         }
 
-        frameResources->previousCameraData = cameraData;
+        frameResources->previousCameraData = activeCameraData;
         frameResources->hasPreviousCameraData = true;
+        frameResources->previousShadowCameraData = cameraData;
+        frameResources->hasPreviousShadowCameraData = true;
     }
 
     void Renderer::ClearRenderCommands()

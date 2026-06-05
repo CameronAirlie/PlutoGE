@@ -24,6 +24,11 @@ namespace PlutoGE::scene
         {
             const int baseResolution = ResolveShadowResolution(light);
             const int clampedCascadeIndex = std::clamp(cascadeIndex, 0, kMaxDirectionalShadowCascades - 1);
+            if (ClampCascadeCount(light.directionalShadowSettings.cascadeCount) <= 2)
+            {
+                return baseResolution;
+            }
+
             const int divisor = 1 << clampedCascadeIndex;
             return std::max(baseResolution / divisor, 256);
         }

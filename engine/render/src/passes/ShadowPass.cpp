@@ -63,7 +63,7 @@ namespace
 
     int GetDirectionalCascadeCount(const PlutoGE::scene::Light &light)
     {
-        return std::clamp(light.activeShadowCascadeCount, 1, PlutoGE::scene::kMaxDirectionalShadowCascades);
+        return std::clamp(light.activeShadowCascadeCount, 1, PlutoGE::scene::kDefaultDirectionalShadowCascades);
     }
 
     int GetShadowResolution(const PlutoGE::scene::Light &light)
@@ -112,8 +112,8 @@ namespace
             return true;
         }
 
-        const int cadenceOffset = motionDrivenInvalidation ? 2 : 1;
-        const int cadenceIndex = std::clamp(cascadeIndex + cadenceOffset, cadenceOffset, 5);
+        const int cadenceOffset = motionDrivenInvalidation ? 3 : 1;
+        const int cadenceIndex = std::clamp(cascadeIndex + cadenceOffset, cadenceOffset, 6);
         const std::uint64_t cadence = 1ull << static_cast<std::uint64_t>(cadenceIndex);
         if (!motionDrivenInvalidation)
         {
@@ -181,9 +181,9 @@ namespace
         if (instanceCapacity < instances.size())
         {
             instanceCapacity = std::max(instances.size(), instanceCapacity == 0 ? instances.size() : instanceCapacity * 2);
-            glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(instanceCapacity * sizeof(TransformInstanceData)), nullptr, GL_STREAM_DRAW);
         }
 
+        glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(instanceCapacity * sizeof(TransformInstanceData)), nullptr, GL_STREAM_DRAW);
         glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(instances.size() * sizeof(TransformInstanceData)), instances.data());
         glBindBuffer(GL_ARRAY_BUFFER, 0);
     }

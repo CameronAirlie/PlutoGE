@@ -1526,7 +1526,9 @@ namespace PlutoGE::ui
             projectVSyncEnabled = manifest.vSyncEnabled;
         };
 
-        renderer.SetVSyncEnabled(true);
+        bool editorVSyncEnabled = m_project ? m_project->GetManifest().vSyncEnabled : false;
+        bool appliedEditorVSyncEnabled = editorVSyncEnabled;
+        renderer.SetVSyncEnabled(appliedEditorVSyncEnabled);
 
         while (!window.ShouldClose())
         {
@@ -1997,7 +1999,9 @@ namespace PlutoGE::ui
                             {
                                 m_statusMessage = scriptErrorMessage;
                             }
-                            renderer.SetVSyncEnabled(manifest.vSyncEnabled);
+                            editorVSyncEnabled = manifest.vSyncEnabled;
+                            appliedEditorVSyncEnabled = editorVSyncEnabled;
+                            renderer.SetVSyncEnabled(appliedEditorVSyncEnabled);
                             ImGui::CloseCurrentPopup();
                         }
                     }
@@ -2084,6 +2088,18 @@ namespace PlutoGE::ui
             }
 
             m_panelManager.EndPanelUpdate();
+
+            const bool interactiveEdit =
+                !isRuntimeRunning &&
+                (isEditorCameraLookActive ||
+                 viewportPanel->IsTransformGizmoUsing() ||
+                 viewportPanel2->IsTransformGizmoUsing());
+            const bool desiredEditorVSyncEnabled = editorVSyncEnabled && !interactiveEdit;
+            if (desiredEditorVSyncEnabled != appliedEditorVSyncEnabled)
+            {
+                appliedEditorVSyncEnabled = desiredEditorVSyncEnabled;
+                renderer.SetVSyncEnabled(appliedEditorVSyncEnabled);
+            }
 
             const auto presentStart = std::chrono::high_resolution_clock::now();
             renderer.EndFrame();

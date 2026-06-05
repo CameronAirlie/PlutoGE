@@ -287,17 +287,19 @@ namespace PlutoGE::render
                     float baseRadius = max(softness * 0.35, 0.35);
                     float maxRadius = max(softness * 2.5, baseRadius);
                     float filterRadius = mix(baseRadius, maxRadius, clamp(blockerSeparation * 160.0, 0.0, 1.0));
+                    float sigma = max(filterRadius * 0.45, 0.75);
                     float shadow = 0.0;
                     float totalWeight = 0.0;
-                    for (int y = -1; y <= 1; ++y)
+                    for (int y = -3; y <= 3; ++y)
                     {
-                        for (int x = -1; x <= 1; ++x)
+                        for (int x = -3; x <= 3; ++x)
                         {
-                            vec2 offset = vec2(float(x), float(y)) * texelSize * filterRadius;
+                            vec2 kernelOffset = vec2(float(x), float(y));
+                            vec2 offset = kernelOffset * texelSize * (filterRadius / 3.0);
                             vec2 sampleCoords = projectedCoords.xy + offset;
                             float closestDepth = texture(shadowMap, sampleCoords).r;
-                            float weight = (x == 0 && y == 0) ? 4.0 : ((x == 0 || y == 0) ? 2.0 : 1.0);
-                            shadow += projectedCoords.z - depthBias > closestDepth ? weight : 0.0;
+                            float weight = exp(-dot(kernelOffset, kernelOffset) / (2.0 * sigma * sigma));
+                            shadow += receiverDepth > closestDepth ? weight : 0.0;
                             totalWeight += weight;
                         }
                     }

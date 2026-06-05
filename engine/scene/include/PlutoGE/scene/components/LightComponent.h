@@ -18,10 +18,11 @@ namespace PlutoGE::scene
     };
 
     inline constexpr int kMaxDirectionalShadowCascades = 4;
+    inline constexpr int kDefaultDirectionalShadowCascades = 2;
 
     struct DirectionalShadowSettings
     {
-        int cascadeCount = 4;
+        int cascadeCount = kDefaultDirectionalShadowCascades;
         int resolution = 2048;
         float maxDistance = 0.0f;
         float splitLambda = 0.75f;

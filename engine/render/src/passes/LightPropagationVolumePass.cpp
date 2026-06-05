@@ -26,6 +26,7 @@ namespace PlutoGE::render
         constexpr float kInjectionBoost = 1.8f;
         constexpr float kTemporalBlendFactor = 0.2f;
         constexpr float kReprojectedTemporalBlendFactor = 0.12f;
+        constexpr float kGpuTemporalBlendFactor = 0.18f;
         constexpr float kCameraMovementUpdateCellFraction = 0.5f;
         constexpr float kInjectionRotationUpdateThreshold = 0.04f;
         constexpr auto kMovementDrivenUpdateInterval = std::chrono::milliseconds(80);
@@ -646,6 +647,49 @@ namespace PlutoGE::render
 
             m_propagationShader.reset(Shader::Create(source));
         }
+
+        if (!m_blendShader)
+        {
+            ShaderSource source;
+            source.vertexSource = R"(
+                #version 330 core
+                out vec2 UV;
+
+                void main()
+                {
+                    vec2 vertices[3] = vec2[3](
+                        vec2(-1.0, -1.0),
+                        vec2(3.0, -1.0),
+                        vec2(-1.0, 3.0)
+                    );
+                    gl_Position = vec4(vertices[gl_VertexID], 0.0, 1.0);
+                    UV = 0.5 * gl_Position.xy + vec2(0.5);
+                }
+            )";
+
+            source.fragmentSource = R"(
+                #version 330 core
+                in vec2 UV;
+                out vec4 FragColor;
+
+                uniform sampler3D uCurrentVolume;
+                uniform sampler3D uHistoryVolume;
+                uniform vec3 uResolution;
+                uniform int uLayer;
+                uniform float uCurrentBlendFactor;
+
+                void main()
+                {
+                    ivec3 cell = ivec3(int(gl_FragCoord.x), int(gl_FragCoord.y), uLayer);
+                    vec3 currentRadiance = texelFetch(uCurrentVolume, cell, 0).rgb;
+                    vec3 historyRadiance = texelFetch(uHistoryVolume, cell, 0).rgb;
+                    vec3 blendedRadiance = mix(historyRadiance, currentRadiance, clamp(uCurrentBlendFactor, 0.0, 1.0));
+                    FragColor = vec4(blendedRadiance, 1.0);
+                }
+            )";
+
+            m_blendShader.reset(Shader::Create(source));
+        }
     }
 
     void LightPropagationVolumePass::ReleaseGpuPassResources()
@@ -663,6 +707,7 @@ namespace PlutoGE::render
 
         m_injectionShader.reset();
         m_propagationShader.reset();
+        m_blendShader.reset();
         m_propagationTexture.reset();
     }
 
@@ -799,6 +844,60 @@ namespace PlutoGE::render
         Shader::ResetStateCache();
     }
 
+    void LightPropagationVolumePass::RenderGpuVolumeBlend(Texture *currentVolume, Texture *historyVolume, Texture *targetVolume, float currentBlendFactor)
+    {
+        EnsureGpuPassResources();
+        if (!m_blendShader || !currentVolume || !historyVolume || !targetVolume)
+        {
+            return;
+        }
+
+        GLint previousFramebuffer = 0;
+        GLint previousViewport[4] = {};
+        GLboolean depthTestEnabled = glIsEnabled(GL_DEPTH_TEST);
+        GLboolean blendEnabled = glIsEnabled(GL_BLEND);
+        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previousFramebuffer);
+        glGetIntegerv(GL_VIEWPORT, previousViewport);
+
+        glDisable(GL_DEPTH_TEST);
+        glDisable(GL_BLEND);
+        glBindFramebuffer(GL_FRAMEBUFFER, m_volumeFramebuffer);
+        glViewport(0, 0, m_resolution.x, m_resolution.y);
+        glBindVertexArray(m_fullscreenVao);
+
+        m_blendShader->Bind();
+        m_blendShader->SetUniform("uCurrentVolume", currentVolume, 0);
+        m_blendShader->SetUniform("uHistoryVolume", historyVolume, 1);
+        m_blendShader->SetUniform("uResolution", glm::vec3(m_resolution));
+        m_blendShader->SetUniform("uCurrentBlendFactor", currentBlendFactor);
+
+        for (int layer = 0; layer < m_resolution.z; ++layer)
+        {
+            glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, targetVolume->GetTextureID(), 0, layer);
+            glDrawBuffer(GL_COLOR_ATTACHMENT0);
+            if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+            {
+                continue;
+            }
+
+            m_blendShader->SetUniform("uLayer", layer);
+            glDrawArrays(GL_TRIANGLES, 0, 3);
+        }
+
+        glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previousFramebuffer));
+        glBindVertexArray(0);
+        glViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
+        if (depthTestEnabled)
+        {
+            glEnable(GL_DEPTH_TEST);
+        }
+        if (blendEnabled)
+        {
+            glEnable(GL_BLEND);
+        }
+        Shader::ResetStateCache();
+    }
+
     bool LightPropagationVolumePass::ShouldUpdateVolume(const RenderContext &ctx,
                                                         const glm::vec3 &desiredGridOrigin,
                                                         const glm::vec3 &desiredGridSize,
@@ -893,7 +992,13 @@ namespace PlutoGE::render
                                   !glm::any(glm::greaterThan(glm::abs(desiredGridSize - m_gridSize), glm::vec3(0.01f)));
         const bool gridShifted = sameGridSize &&
                                  glm::any(glm::greaterThan(glm::abs(desiredGridOrigin - m_gridOrigin), glm::vec3(0.01f)));
+        const bool canBlendSameGridHistory = m_hasValidVolume && !gridShifted && m_previousVolumeTexture && m_propagationTexture;
         const auto now = std::chrono::steady_clock::now();
+
+        if (m_hasValidVolume && m_previousVolumeTexture)
+        {
+            RenderGpuVolumeBlend(m_volumeTexture.get(), m_volumeTexture.get(), m_previousVolumeTexture.get(), 1.0f);
+        }
 
         m_gridSize = desiredGridSize;
         m_gridOrigin = desiredGridOrigin;
@@ -902,7 +1007,8 @@ namespace PlutoGE::render
         {
             m_previousGridOrigin = previousGridOrigin;
             m_previousGridSize = previousGridSize;
-            m_transitionActive = false;
+            m_transitionStartTime = now;
+            m_transitionActive = true;
         }
         else
         {
@@ -913,6 +1019,12 @@ namespace PlutoGE::render
 
         RenderGpuInjection(ctx);
         RenderGpuPropagation();
+
+        if (canBlendSameGridHistory)
+        {
+            RenderGpuVolumeBlend(m_volumeTexture.get(), m_previousVolumeTexture.get(), m_propagationTexture.get(), kGpuTemporalBlendFactor);
+            m_volumeTexture.swap(m_propagationTexture);
+        }
 
         m_lastViewportSize = glm::ivec2(width, height);
         m_lastSceneSignature = sceneSignature;

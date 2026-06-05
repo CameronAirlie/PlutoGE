@@ -26,6 +26,8 @@ namespace PlutoGE::render
     {
         constexpr int kMaxRsmSamples = 32;
         constexpr float kDirectionalShadowPadding = 2.0f;
+        constexpr auto kMinRsmResolveInterval = std::chrono::milliseconds(33);
+        constexpr std::uint8_t kMaxSkippedRsmResolveFrames = 2;
 
         struct RsmQualitySettings
         {
@@ -172,9 +174,9 @@ namespace PlutoGE::render
             if (instanceCapacity < instances.size())
             {
                 instanceCapacity = std::max(instances.size(), instanceCapacity == 0 ? instances.size() : instanceCapacity * 2);
-                glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(instanceCapacity * sizeof(CaptureInstanceData)), nullptr, GL_STREAM_DRAW);
             }
 
+            glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(instanceCapacity * sizeof(CaptureInstanceData)), nullptr, GL_STREAM_DRAW);
             glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(instances.size() * sizeof(CaptureInstanceData)), instances.data());
             glBindBuffer(GL_ARRAY_BUFFER, 0);
         }
@@ -1190,9 +1192,18 @@ namespace PlutoGE::render
             return currentHistoryTarget;
         }
 
-        // Reusing a previous screen-space indirect buffer while camera/light-space changes
-        // causes visible ghosting because the history is no longer spatially aligned.
-        // Always resolve in motion; only reuse when nothing changed (handled above).
+        // RSM capture is a full scene render plus screen-space resolve/blur. During
+        // continuous camera or object motion, spacing captures avoids frame spikes.
+        if (hasReusableIndirectTarget &&
+            m_debugOutput == RsmDebugOutput::Indirect &&
+            !lightChanged &&
+            (sceneChanged || cameraChanged || lightSpaceChanged) &&
+            now - m_lastResolveTime < kMinRsmResolveInterval &&
+            m_skippedResolveFrames < kMaxSkippedRsmResolveFrames)
+        {
+            ++m_skippedResolveFrames;
+            return currentHistoryTarget;
+        }
 
         RenderTarget *previousHistoryColorTarget = m_historyColorRenderTargets[m_historyIndex].get();
         RenderTarget *resolvedHistoryColorTarget = m_historyColorRenderTargets[(m_historyIndex + 1) % m_historyColorRenderTargets.size()].get();

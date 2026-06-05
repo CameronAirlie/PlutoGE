@@ -121,9 +121,9 @@ namespace PlutoGE::render
             if (instanceCapacity < instances.size())
             {
                 instanceCapacity = std::max(instances.size(), instanceCapacity == 0 ? instances.size() : instanceCapacity * 2);
-                glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(instanceCapacity * sizeof(GeometryInstanceData)), nullptr, GL_STREAM_DRAW);
             }
 
+            glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(instanceCapacity * sizeof(GeometryInstanceData)), nullptr, GL_STREAM_DRAW);
             glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(instances.size() * sizeof(GeometryInstanceData)), instances.data());
             glBindBuffer(GL_ARRAY_BUFFER, 0);
         }

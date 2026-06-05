@@ -39,6 +39,7 @@ namespace PlutoGE::render
         void ReleaseGpuPassResources();
         void RenderGpuInjection(const RenderContext &ctx);
         void RenderGpuPropagation();
+        void RenderGpuVolumeBlend(Texture *currentVolume, Texture *historyVolume, Texture *targetVolume, float currentBlendFactor);
         bool ShouldUpdateVolume(const RenderContext &ctx,
                                 const glm::vec3 &desiredGridOrigin,
                                 const glm::vec3 &desiredGridSize,
@@ -59,6 +60,7 @@ namespace PlutoGE::render
         std::vector<float> m_injectionWeights;
         std::unique_ptr<Shader> m_injectionShader;
         std::unique_ptr<Shader> m_propagationShader;
+        std::unique_ptr<Shader> m_blendShader;
         GLuint m_volumeFramebuffer = 0;
         GLuint m_fullscreenVao = 0;
         glm::vec3 m_lastInjectionCameraPosition{0.0f};

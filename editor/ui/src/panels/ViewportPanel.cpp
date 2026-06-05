@@ -485,6 +485,7 @@ namespace PlutoGE::ui
 
     void ViewportPanel::RenderEditorOverlays(const ImVec2 &viewportMin, const ImVec2 &viewportSize, bool viewportClicked)
     {
+        m_isTransformGizmoUsing = false;
         if (!m_renderTarget || !m_renderTarget->IsInitialized() || viewportSize.x <= 0.0f || viewportSize.y <= 0.0f)
         {
             return;
@@ -540,6 +541,7 @@ namespace PlutoGE::ui
                                  snapValues);
             if (ImGuizmo::IsUsing())
             {
+                m_isTransformGizmoUsing = true;
                 ApplyWorldTransformToEntity(*selectedEntity, entityTransform);
             }
         }

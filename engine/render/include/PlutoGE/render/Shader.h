@@ -576,24 +576,26 @@ float SampleShadowMapPCF(sampler2D shadowMap, vec3 projectedCoords, float depthB
         return projectedCoords.z - depthBias > closestDepth ? 1.0 : 0.0;
     }
 
-    vec2 texelSize = 1.0 / vec2(textureSize(shadowMap, 0));
-    float filterRadius = max(softness * 0.75, 0.35);
-    float shadow = 0.0;
-    float totalWeight = 0.0;
-    for (int sampleIndex = 0; sampleIndex < 8; ++sampleIndex)
+    vec2 ts = 1.0 / vec2(textureSize(shadowMap, 0));
+    float rd = projectedCoords.z - depthBias;
+    float bd = texture(shadowMap, projectedCoords.xy).r;
+    float br = max(softness * 0.35, 0.35);
+    float r = mix(br, max(softness * 2.5, br), clamp(max(rd - bd, 0.0) * 160.0, 0.0, 1.0));
+    float sg = max(r * 0.45, 0.75);
+    float sh = 0.0;
+    float tw = 0.0;
+    for (int y = -3; y <= 3; ++y)
     {
-        float t = (float(sampleIndex) + 0.5) / 8.0;
-        float angle = t * 6.28318530718;
-        float radius = sqrt(t);
-        vec2 offset = vec2(cos(angle), sin(angle)) * texelSize * filterRadius * radius;
-        vec2 sampleCoords = projectedCoords.xy + offset;
-        float closestDepth = texture(shadowMap, sampleCoords).r;
-        float weight = 1.0 - 0.65 * t;
-        shadow += projectedCoords.z - depthBias > closestDepth ? weight : 0.0;
-        totalWeight += weight;
+        for (int x = -3; x <= 3; ++x)
+        {
+            vec2 k = vec2(float(x), float(y));
+            float w = exp(-dot(k, k) / (2.0 * sg * sg));
+            sh += (rd > texture(shadowMap, projectedCoords.xy + k * ts * (r / 3.0)).r ? 1.0 : 0.0) * w;
+            tw += w;
+        }
     }
 
-    return shadow / max(totalWeight, 0.0001);
+    return sh / max(tw, 0.0001);
 }
 
 float SampleDirectionalCascadeShadow(int cascadeIndex, vec3 projectedCoords, float depthBias, float softness)

@@ -44,6 +44,7 @@ namespace PlutoGE::ui
         render::RenderTarget *GetRenderTarget() const { return m_renderTarget; }
         bool IsViewportHovered() const { return m_isViewportHovered; }
         bool IsViewportFocused() const { return m_isViewportFocused; }
+        bool IsTransformGizmoUsing() const { return m_isTransformGizmoUsing; }
         bool IsGridVisible() const { return m_showGrid; }
         void SetPanelControlsEnabled(bool enabled) { m_panelControlsEnabled = enabled; }
         static const char *GetDebugViewLabel(render::PostProcessDebugView debugView);
@@ -69,6 +70,7 @@ namespace PlutoGE::ui
         int m_resizeStableFrames = 0;
         bool m_isViewportHovered = false;
         bool m_isViewportFocused = false;
+        bool m_isTransformGizmoUsing = false;
         bool m_panelControlsEnabled = true;
     };
 }

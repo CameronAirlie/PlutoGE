@@ -12,7 +12,7 @@ namespace PlutoGE::scene
     {
         int ClampCascadeCount(int cascadeCount)
         {
-            return std::clamp(cascadeCount, 1, kMaxDirectionalShadowCascades);
+            return std::clamp(cascadeCount, 1, kDefaultDirectionalShadowCascades);
         }
 
         int ResolveShadowResolution(const Light &light)
@@ -177,6 +177,7 @@ namespace PlutoGE::scene
     void LightComponent::SetDirectionalShadowSettings(const DirectionalShadowSettings &settings)
     {
         m_config.directionalShadowSettings = settings;
+        m_config.directionalShadowSettings.cascadeCount = ClampCascadeCount(m_config.directionalShadowSettings.cascadeCount);
         MarkDirty();
         Initialize();
     }
@@ -268,7 +269,7 @@ namespace PlutoGE::scene
             }
             else if (property.name == "Shadow Cascade Count")
             {
-                m_config.directionalShadowSettings.cascadeCount = std::clamp(std::stoi(property.value), 1, kMaxDirectionalShadowCascades);
+                m_config.directionalShadowSettings.cascadeCount = ClampCascadeCount(std::stoi(property.value));
             }
             else if (property.name == "Shadow Resolution")
             {
@@ -305,6 +306,7 @@ namespace PlutoGE::scene
         {
             m_config.shadowMap.reset();
             bool recreatedShadowMap = false;
+            m_config.directionalShadowSettings.cascadeCount = ClampCascadeCount(m_config.directionalShadowSettings.cascadeCount);
             m_config.activeShadowCascadeCount = ClampCascadeCount(m_config.directionalShadowSettings.cascadeCount);
 
             for (int cascadeIndex = 0; cascadeIndex < kMaxDirectionalShadowCascades; ++cascadeIndex)

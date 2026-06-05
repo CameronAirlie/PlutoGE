@@ -634,7 +634,7 @@ namespace PlutoGE::ui
         }
         case scene::PropertyType::Bool:
         {
-            bool value = (property.value == "true");
+            bool value = (property.value == "true" || property.value == "True" || property.value == "1");
             if (ImGui::Checkbox(property.name.c_str(), &value))
             {
                 property.value = value ? "true" : "false";

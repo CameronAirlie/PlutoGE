@@ -2,11 +2,13 @@
 
 #include "PlutoGE/render/postprocess/AutoExposureEffect.h"
 #include "PlutoGE/render/postprocess/ColorGradingEffect.h"
+#include "PlutoGE/render/postprocess/DepthOfFieldEffect.h"
 #include "PlutoGE/render/postprocess/FXAAEffect.h"
 #include "PlutoGE/render/postprocess/GammaCorrectionEffect.h"
 #include "PlutoGE/render/postprocess/IPostProcessEffect.h"
 #include "PlutoGE/render/postprocess/LPVEffect.h"
 #include "PlutoGE/render/postprocess/LSAOEffect.h"
+#include "PlutoGE/render/postprocess/MotionBlurEffect.h"
 #include "PlutoGE/render/postprocess/RSMEffect.h"
 #include "PlutoGE/render/postprocess/SceneCompositeEffect.h"
 #include "PlutoGE/render/postprocess/SSGIEffect.h"
@@ -28,6 +30,8 @@ namespace PlutoGE::render
             "VolumetricFog",
             "AutoExposure",
             "TAA",
+            "MotionBlur",
+            "DepthOfField",
             "ToneMapping",
             "ColorGrading",
             "SceneComposite",
@@ -81,6 +85,16 @@ namespace PlutoGE::render
         if (typeName == "TAA")
         {
             return std::make_unique<TAAEffect>();
+        }
+
+        if (typeName == "MotionBlur")
+        {
+            return std::make_unique<MotionBlurEffect>();
+        }
+
+        if (typeName == "DepthOfField")
+        {
+            return std::make_unique<DepthOfFieldEffect>();
         }
 
         if (typeName == "ColorGrading")

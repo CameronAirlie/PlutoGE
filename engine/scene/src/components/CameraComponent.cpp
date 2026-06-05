@@ -94,6 +94,14 @@ namespace PlutoGE::scene
 
         EmplacePostProcessEffect<render::AutoExposureEffect>();
         AddPostProcessEffectByType("TAA");
+        if (AddPostProcessEffectByType("MotionBlur"))
+        {
+            GetPostProcessEffect(m_postProcessEffects.size() - 1)->SetEnabled(false);
+        }
+        if (AddPostProcessEffectByType("DepthOfField"))
+        {
+            GetPostProcessEffect(m_postProcessEffects.size() - 1)->SetEnabled(false);
+        }
         EmplacePostProcessEffect<render::ToneMappingEffect>();
         AddPostProcessEffectByType("ColorGrading");
         EmplacePostProcessEffect<render::SceneCompositeEffect>();

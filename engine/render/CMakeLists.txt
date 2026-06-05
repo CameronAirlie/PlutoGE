@@ -17,6 +17,8 @@ add_library(PlutoGERender
     src/postprocess/RSMEffect.cpp
     src/postprocess/VolumetricFogEffect.cpp
     src/postprocess/TAAEffect.cpp
+    src/postprocess/MotionBlurEffect.cpp
+    src/postprocess/DepthOfFieldEffect.cpp
     src/postprocess/FXAAEffect.cpp
     src/postprocess/GammaCorrectionEffect.cpp
     src/postprocess/PostProcessEffectFactory.cpp

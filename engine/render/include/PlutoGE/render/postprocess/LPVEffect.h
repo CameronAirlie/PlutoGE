@@ -22,6 +22,11 @@ namespace PlutoGE::render
         {
             return {
                 PostProcessParameter{
+                    .name = "Grid Resolution",
+                    .type = PostProcessParameterType::Int,
+                    .value = std::to_string(m_gridResolution),
+                },
+                PostProcessParameter{
                     .name = "Horizontal Coverage",
                     .type = PostProcessParameterType::Float,
                     .value = std::to_string(m_minimumHorizontalCoverage),
@@ -47,7 +52,11 @@ namespace PlutoGE::render
         {
             for (const auto &parameter : parameters)
             {
-                if (parameter.name == "Horizontal Coverage")
+                if (parameter.name == "Grid Resolution")
+                {
+                    m_gridResolution = std::clamp(std::stoi(parameter.value), 8, 48);
+                }
+                else if (parameter.name == "Horizontal Coverage")
                 {
                     m_minimumHorizontalCoverage = std::clamp(std::stof(parameter.value), 32.0f, 512.0f);
                 }
@@ -66,12 +75,14 @@ namespace PlutoGE::render
             }
         }
 
+        int GetGridResolution() const { return m_gridResolution; }
         float GetMinimumHorizontalCoverage() const { return m_minimumHorizontalCoverage; }
         float GetMinimumVerticalCoverage() const { return m_minimumVerticalCoverage; }
         float GetForwardBiasFactor() const { return m_forwardBiasFactor; }
         float GetRecenterHysteresisFraction() const { return m_recenterHysteresisFraction; }
 
     private:
+        int m_gridResolution = 16;
         float m_minimumHorizontalCoverage = 96.0f;
         float m_minimumVerticalCoverage = 40.0f;
         float m_forwardBiasFactor = 0.35f;

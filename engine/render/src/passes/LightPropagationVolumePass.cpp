@@ -1032,6 +1032,12 @@ namespace PlutoGE::render
             return;
         }
 
+        const int desiredResolution = std::max(lpvEffect->GetGridResolution(), 1);
+        if (m_resolution.x != desiredResolution || m_resolution.y != desiredResolution || m_resolution.z != desiredResolution)
+        {
+            m_resolution = glm::ivec3(desiredResolution);
+        }
+
         EnsureResources();
         EnsureGpuPassResources();
 

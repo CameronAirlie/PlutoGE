@@ -59,6 +59,7 @@ namespace PlutoGE::render
         std::vector<glm::vec3> m_nextRadiance;
         std::vector<float> m_injectionWeights;
         std::unique_ptr<Shader> m_injectionShader;
+        std::unique_ptr<Shader> m_injectionResolveShader;
         std::unique_ptr<Shader> m_propagationShader;
         std::unique_ptr<Shader> m_blendShader;
         GLuint m_volumeFramebuffer = 0;

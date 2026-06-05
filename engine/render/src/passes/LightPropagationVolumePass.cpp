@@ -21,6 +21,9 @@ namespace PlutoGE::render
     namespace
     {
         constexpr int kPropagationIterations = 6;
+        constexpr int kInjectionSampleGridX = 96;
+        constexpr int kInjectionSampleGridY = 54;
+        constexpr int kInjectionSampleCount = kInjectionSampleGridX * kInjectionSampleGridY;
         constexpr float kPropagationSelfWeight = 0.36f;
         constexpr float kPropagationNeighborWeight = 0.07f;
         constexpr float kInjectionBoost = 1.8f;
@@ -460,28 +463,9 @@ namespace PlutoGE::render
             ShaderSource source;
             source.vertexSource = R"(
                 #version 330 core
-                out vec2 UV;
-
-                void main()
-                {
-                    vec2 vertices[3] = vec2[3](
-                        vec2(-1.0, -1.0),
-                        vec2(3.0, -1.0),
-                        vec2(-1.0, 3.0)
-                    );
-                    gl_Position = vec4(vertices[gl_VertexID], 0.0, 1.0);
-                    UV = 0.5 * gl_Position.xy + vec2(0.5);
-                }
-            )";
-
-            source.fragmentSource = R"(
-                #version 330 core
                 const int MAX_LIGHTS = 16;
                 const int SAMPLE_GRID_X = 96;
                 const int SAMPLE_GRID_Y = 54;
-
-                in vec2 UV;
-                out vec4 FragColor;
 
                 uniform sampler2D uPositionTexture;
                 uniform sampler2D uNormalTexture;
@@ -497,6 +481,8 @@ namespace PlutoGE::render
                 uniform vec3 uLightColor[MAX_LIGHTS];
                 uniform float uLightIntensity[MAX_LIGHTS];
                 uniform float uLightRange[MAX_LIGHTS];
+
+                out vec4 vContribution;
 
                 float PointAttenuation(vec3 fragPos, int lightIndex)
                 {
@@ -537,6 +523,11 @@ namespace PlutoGE::render
                         }
 
                         float ndotl = max(dot(surfaceNormal, lightDir), 0.0);
+                        if (ndotl <= 0.0 || attenuation <= 0.0)
+                        {
+                            continue;
+                        }
+
                         totalRadiance += uLightColor[lightIndex] * uLightIntensity[lightIndex] * attenuation * ndotl;
                     }
 
@@ -545,52 +536,106 @@ namespace PlutoGE::render
 
                 void main()
                 {
-                    ivec3 resolution = ivec3(uResolution);
-                    ivec3 targetCell = ivec3(int(gl_FragCoord.x), int(gl_FragCoord.y), uLayer);
-                    vec3 accumulatedRadiance = vec3(0.0);
-                    float sampleWeight = 0.0;
+                    vContribution = vec4(0.0);
+                    gl_PointSize = 1.0;
+                    gl_Position = vec4(2.0, 2.0, 0.0, 1.0);
 
-                    for (int sampleY = 0; sampleY < SAMPLE_GRID_Y; ++sampleY)
+                    int sampleX = gl_VertexID % SAMPLE_GRID_X;
+                    int sampleY = gl_VertexID / SAMPLE_GRID_X;
+                    vec2 sampleUv = (vec2(sampleX, sampleY) + vec2(0.5)) / vec2(SAMPLE_GRID_X, SAMPLE_GRID_Y);
+
+                    vec3 worldPosition = texture(uPositionTexture, sampleUv).rgb;
+                    vec3 normal = texture(uNormalTexture, sampleUv).rgb;
+                    if (dot(normal, normal) <= 0.01)
                     {
-                        for (int sampleX = 0; sampleX < SAMPLE_GRID_X; ++sampleX)
-                        {
-                            vec2 sampleUv = (vec2(sampleX, sampleY) + vec2(0.5)) / vec2(SAMPLE_GRID_X, SAMPLE_GRID_Y);
-                            vec3 worldPosition = texture(uPositionTexture, sampleUv).rgb;
-                            vec3 normal = texture(uNormalTexture, sampleUv).rgb;
-                            if (dot(normal, normal) <= 0.01)
-                            {
-                                continue;
-                            }
-
-                            vec3 normalizedPosition = (worldPosition - uGridOrigin) / max(uGridSize, vec3(0.0001));
-                            if (any(lessThan(normalizedPosition, vec3(0.0))) || any(greaterThanEqual(normalizedPosition, vec3(1.0))))
-                            {
-                                continue;
-                            }
-
-                            ivec3 cell = clamp(ivec3(normalizedPosition * uResolution), ivec3(0), resolution - ivec3(1));
-                            if (any(notEqual(cell, targetCell)))
-                            {
-                                continue;
-                            }
-
-                            vec4 albedoMetallic = texture(uAlbedoTexture, sampleUv);
-                            vec3 radiance = InjectedRadiance(worldPosition, normal, albedoMetallic.rgb, albedoMetallic.a);
-                            accumulatedRadiance += radiance;
-                            sampleWeight += 1.0;
-                        }
+                        return;
                     }
 
-                    if (sampleWeight > 0.0)
+                    vec3 safeGridSize = max(uGridSize, vec3(0.0001));
+                    vec3 normalizedPosition = (worldPosition - uGridOrigin) / safeGridSize;
+                    if (any(lessThan(normalizedPosition, vec3(0.0))) || any(greaterThanEqual(normalizedPosition, vec3(1.0))))
                     {
-                        accumulatedRadiance = (accumulatedRadiance / sampleWeight) * 1.8;
+                        return;
                     }
 
-                    FragColor = vec4(accumulatedRadiance, 1.0);
+                    ivec3 resolution = max(ivec3(uResolution), ivec3(1));
+                    ivec3 cell = clamp(ivec3(normalizedPosition * uResolution), ivec3(0), resolution - ivec3(1));
+                    if (cell.z != uLayer)
+                    {
+                        return;
+                    }
+
+                    vec4 albedoMetallic = texture(uAlbedoTexture, sampleUv);
+                    vec3 radiance = InjectedRadiance(worldPosition, normal, albedoMetallic.rgb, albedoMetallic.a);
+                    if (dot(radiance, radiance) <= 0.0)
+                    {
+                        return;
+                    }
+
+                    vec2 resolutionXY = max(uResolution.xy, vec2(1.0));
+                    vec2 ndc = ((vec2(cell.xy) + vec2(0.5)) / resolutionXY) * 2.0 - 1.0;
+                    gl_Position = vec4(ndc, 0.0, 1.0);
+                    vContribution = vec4(radiance, 1.0);
+                }
+            )";
+
+            source.fragmentSource = R"(
+                #version 330 core
+                out vec4 FragColor;
+
+                in vec4 vContribution;
+
+                void main()
+                {
+                    if (vContribution.a <= 0.0)
+                    {
+                        discard;
+                    }
+
+                    FragColor = vContribution;
                 }
             )";
 
             m_injectionShader.reset(Shader::Create(source));
+        }
+
+        if (!m_injectionResolveShader)
+        {
+            ShaderSource source;
+            source.vertexSource = R"(
+                #version 330 core
+                out vec2 UV;
+
+                void main()
+                {
+                    vec2 vertices[3] = vec2[3](
+                        vec2(-1.0, -1.0),
+                        vec2(3.0, -1.0),
+                        vec2(-1.0, 3.0)
+                    );
+                    gl_Position = vec4(vertices[gl_VertexID], 0.0, 1.0);
+                    UV = 0.5 * gl_Position.xy + vec2(0.5);
+                }
+            )";
+
+            source.fragmentSource = R"(
+                #version 330 core
+                out vec4 FragColor;
+
+                uniform sampler3D uInjectedVolume;
+                uniform int uLayer;
+
+                void main()
+                {
+                    ivec3 cell = ivec3(int(gl_FragCoord.x), int(gl_FragCoord.y), uLayer);
+                    vec4 accumulated = texelFetch(uInjectedVolume, cell, 0);
+                    float sampleWeight = accumulated.a;
+                    vec3 averagedRadiance = sampleWeight > 0.0 ? (accumulated.rgb / sampleWeight) * 1.8 : vec3(0.0);
+                    FragColor = vec4(averagedRadiance, sampleWeight > 0.0 ? 1.0 : 0.0);
+                }
+            )";
+
+            m_injectionResolveShader.reset(Shader::Create(source));
         }
 
         if (!m_propagationShader)
@@ -706,6 +751,7 @@ namespace PlutoGE::render
         }
 
         m_injectionShader.reset();
+        m_injectionResolveShader.reset();
         m_propagationShader.reset();
         m_blendShader.reset();
         m_propagationTexture.reset();
@@ -714,23 +760,43 @@ namespace PlutoGE::render
     void LightPropagationVolumePass::RenderGpuInjection(const RenderContext &ctx)
     {
         EnsureGpuPassResources();
-        if (!m_injectionShader || !m_volumeTexture)
+        if (!m_injectionShader || !m_injectionResolveShader || !m_volumeTexture || !m_propagationTexture)
         {
             return;
         }
 
         GLint previousFramebuffer = 0;
         GLint previousViewport[4] = {};
+        GLint previousBlendSrcRgb = GL_ONE;
+        GLint previousBlendDstRgb = GL_ZERO;
+        GLint previousBlendSrcAlpha = GL_ONE;
+        GLint previousBlendDstAlpha = GL_ZERO;
+        GLint previousBlendEquationRgb = GL_FUNC_ADD;
+        GLint previousBlendEquationAlpha = GL_FUNC_ADD;
         GLboolean depthTestEnabled = glIsEnabled(GL_DEPTH_TEST);
         GLboolean blendEnabled = glIsEnabled(GL_BLEND);
         glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previousFramebuffer);
         glGetIntegerv(GL_VIEWPORT, previousViewport);
+        glGetIntegerv(GL_BLEND_SRC_RGB, &previousBlendSrcRgb);
+        glGetIntegerv(GL_BLEND_DST_RGB, &previousBlendDstRgb);
+        glGetIntegerv(GL_BLEND_SRC_ALPHA, &previousBlendSrcAlpha);
+        glGetIntegerv(GL_BLEND_DST_ALPHA, &previousBlendDstAlpha);
+        glGetIntegerv(GL_BLEND_EQUATION_RGB, &previousBlendEquationRgb);
+        glGetIntegerv(GL_BLEND_EQUATION_ALPHA, &previousBlendEquationAlpha);
 
         glDisable(GL_DEPTH_TEST);
         glDisable(GL_BLEND);
         glBindFramebuffer(GL_FRAMEBUFFER, m_volumeFramebuffer);
         glViewport(0, 0, m_resolution.x, m_resolution.y);
         glBindVertexArray(m_fullscreenVao);
+
+        constexpr GLfloat kClearColor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+        for (int layer = 0; layer < m_resolution.z; ++layer)
+        {
+            glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, m_volumeTexture->GetTextureID(), 0, layer);
+            glDrawBuffer(GL_COLOR_ATTACHMENT0);
+            glClearBufferfv(GL_COLOR, 0, kClearColor);
+        }
 
         m_injectionShader->Bind();
         glActiveTexture(GL_TEXTURE0);
@@ -760,22 +826,35 @@ namespace PlutoGE::render
             m_injectionShader->SetUniform("uLightRange[" + std::to_string(lightIndex) + "]", light ? light->range : 1.0f);
         }
 
+        glEnable(GL_BLEND);
+        glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
+        glBlendFuncSeparate(GL_ONE, GL_ONE, GL_ONE, GL_ONE);
         for (int layer = 0; layer < m_resolution.z; ++layer)
         {
             glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, m_volumeTexture->GetTextureID(), 0, layer);
             glDrawBuffer(GL_COLOR_ATTACHMENT0);
-            if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
-            {
-                continue;
-            }
-
             m_injectionShader->SetUniform("uLayer", layer);
+            glDrawArrays(GL_POINTS, 0, kInjectionSampleCount);
+        }
+
+        glDisable(GL_BLEND);
+        m_injectionResolveShader->Bind();
+        m_injectionResolveShader->SetUniform("uInjectedVolume", m_volumeTexture.get(), 0);
+        for (int layer = 0; layer < m_resolution.z; ++layer)
+        {
+            glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, m_propagationTexture->GetTextureID(), 0, layer);
+            glDrawBuffer(GL_COLOR_ATTACHMENT0);
+            m_injectionResolveShader->SetUniform("uLayer", layer);
             glDrawArrays(GL_TRIANGLES, 0, 3);
         }
+
+        m_volumeTexture.swap(m_propagationTexture);
 
         glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previousFramebuffer));
         glBindVertexArray(0);
         glViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
+        glBlendFuncSeparate(previousBlendSrcRgb, previousBlendDstRgb, previousBlendSrcAlpha, previousBlendDstAlpha);
+        glBlendEquationSeparate(previousBlendEquationRgb, previousBlendEquationAlpha);
         if (depthTestEnabled)
         {
             glEnable(GL_DEPTH_TEST);
@@ -818,9 +897,9 @@ namespace PlutoGE::render
             {
                 glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, m_propagationTexture->GetTextureID(), 0, layer);
                 glDrawBuffer(GL_COLOR_ATTACHMENT0);
-                if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+                if (layer == 0 && glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
                 {
-                    continue;
+                    break;
                 }
 
                 m_propagationShader->SetUniform("uLayer", layer);
@@ -875,9 +954,9 @@ namespace PlutoGE::render
         {
             glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, targetVolume->GetTextureID(), 0, layer);
             glDrawBuffer(GL_COLOR_ATTACHMENT0);
-            if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+            if (layer == 0 && glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
             {
-                continue;
+                break;
             }
 
             m_blendShader->SetUniform("uLayer", layer);

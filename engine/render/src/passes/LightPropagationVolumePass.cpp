@@ -26,6 +26,7 @@ namespace PlutoGE::render
         constexpr float kTemporalBlendFactor = 0.2f;
         constexpr float kReprojectedTemporalBlendFactor = 0.12f;
         constexpr float kInjectionMovementUpdateFraction = 0.5f;
+        constexpr float kCameraMovementUpdateCellFraction = 0.5f;
         constexpr float kInjectionRotationUpdateThreshold = 0.04f;
         constexpr auto kMovementDrivenUpdateInterval = std::chrono::milliseconds(80);
         constexpr auto kCameraOnlyReinjectionInterval = std::chrono::milliseconds(260);
@@ -425,6 +426,8 @@ namespace PlutoGE::render
     bool LightPropagationVolumePass::ShouldUpdateVolume(const RenderContext &ctx,
                                                         const glm::vec3 &desiredGridOrigin,
                                                         const glm::vec3 &desiredGridSize,
+                                                        const glm::vec3 &cameraPosition,
+                                                        const glm::vec3 &cameraForward,
                                                         std::size_t sceneSignature,
                                                         std::size_t lightSignature)
     {
@@ -438,12 +441,18 @@ namespace PlutoGE::render
         const bool viewportChanged = m_lastViewportSize != glm::ivec2(ctx.gBuffer->GetWidth(), ctx.gBuffer->GetHeight());
         const bool gridChanged = glm::any(glm::greaterThan(glm::abs(desiredGridSize - m_gridSize), glm::vec3(0.01f))) ||
                                  glm::any(glm::greaterThan(glm::abs(desiredGridOrigin - m_gridOrigin), glm::vec3(0.01f)));
+        const glm::vec3 cellSize = desiredGridSize / glm::max(glm::vec3(m_resolution), glm::vec3(1.0f));
+        const float cameraMovementThreshold = glm::max(0.5f, glm::min(glm::min(cellSize.x, cellSize.y), cellSize.z) * kCameraMovementUpdateCellFraction);
+        const bool cameraMoved = glm::distance(cameraPosition, m_lastInjectionCameraPosition) >= cameraMovementThreshold;
+        const float forwardAlignment = glm::clamp(glm::dot(cameraForward, m_lastInjectionCameraForward), -1.0f, 1.0f);
+        const bool cameraRotated = (1.0f - forwardAlignment) >= kInjectionRotationUpdateThreshold;
+        const bool cameraChanged = cameraMoved || cameraRotated;
         const auto now = std::chrono::steady_clock::now();
         const bool pendingFullInjectionReady =
             m_pendingFullInjection &&
             (m_lastFullInjectionTime.time_since_epoch().count() == 0 || now - m_lastFullInjectionTime >= kCameraOnlyReinjectionInterval);
 
-        if (!sceneChanged && !lightsChanged && !viewportChanged && !gridChanged && !pendingFullInjectionReady)
+        if (!sceneChanged && !lightsChanged && !viewportChanged && !gridChanged && !cameraChanged && !pendingFullInjectionReady)
         {
             return false;
         }
@@ -458,7 +467,7 @@ namespace PlutoGE::render
             return false;
         }
 
-        return sceneChanged || gridChanged || pendingFullInjectionReady;
+        return sceneChanged || gridChanged || cameraChanged || pendingFullInjectionReady;
     }
 
     void LightPropagationVolumePass::Execute(const RenderContext &ctx)
@@ -497,7 +506,7 @@ namespace PlutoGE::render
 
         const std::size_t sceneSignature = ctx.renderCommands ? ComputeSceneSignature(*ctx.renderCommands) : 0;
         const std::size_t lightSignature = ComputeLightSignature(*ctx.lights);
-        if (!ShouldUpdateVolume(ctx, desiredGridOrigin, desiredGridSize, sceneSignature, lightSignature))
+        if (!ShouldUpdateVolume(ctx, desiredGridOrigin, desiredGridSize, cameraPosition, cameraForward, sceneSignature, lightSignature))
         {
             return;
         }

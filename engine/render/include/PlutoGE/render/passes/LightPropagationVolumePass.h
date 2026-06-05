@@ -34,6 +34,8 @@ namespace PlutoGE::render
         bool ShouldUpdateVolume(const RenderContext &ctx,
                                 const glm::vec3 &desiredGridOrigin,
                                 const glm::vec3 &desiredGridSize,
+                                const glm::vec3 &cameraPosition,
+                                const glm::vec3 &cameraForward,
                                 std::size_t sceneSignature,
                                 std::size_t lightSignature);
 

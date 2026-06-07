@@ -18,6 +18,7 @@ namespace PlutoGE::scene
     struct Light;
 
     using EntityID = uint32_t;
+    constexpr int kMaxIblCaptureVolumes = 4;
 
     struct BakedProbeVolume
     {
@@ -30,6 +31,21 @@ namespace PlutoGE::scene
         {
             return resolution.x > 0 && resolution.y > 0 && resolution.z > 0 &&
                    irradiance.size() == static_cast<std::size_t>(resolution.x * resolution.y * resolution.z);
+        }
+    };
+
+    struct IblCaptureVolume
+    {
+        glm::vec3 origin{0.0f};
+        glm::vec3 size{1.0f};
+        std::string environmentMapPath;
+        render::Texture *environmentMapTexture = nullptr;
+        float intensity = 1.0f;
+        float blendDistance = 1.0f;
+
+        [[nodiscard]] bool IsValid() const
+        {
+            return environmentMapTexture != nullptr && size.x > 0.0f && size.y > 0.0f && size.z > 0.0f;
         }
     };
 
@@ -68,6 +84,11 @@ namespace PlutoGE::scene
         render::Texture *GetBakedProbeTexture() const { return m_bakedProbeTexture.get(); }
         void SetBakedProbeVolume(BakedProbeVolume bakedProbeVolume);
         void ClearBakedProbeVolume();
+        const std::vector<IblCaptureVolume> &GetIblCaptureVolumes() const { return m_iblCaptureVolumes; }
+        int AddIblCaptureVolume(IblCaptureVolume captureVolume);
+        void SetIblCaptureVolume(std::size_t index, IblCaptureVolume captureVolume);
+        void RemoveIblCaptureVolume(std::size_t index);
+        void ClearIblCaptureVolumes();
 
     protected:
         friend class Entity;
@@ -93,6 +114,7 @@ namespace PlutoGE::scene
         bool m_runtimeStarted = false;
         BakedProbeVolume m_bakedProbeVolume;
         std::unique_ptr<render::Texture> m_bakedProbeTexture;
+        std::vector<IblCaptureVolume> m_iblCaptureVolumes;
         void CollectEntitySubtree(Entity *entity, std::vector<Entity *> &entities) const;
         bool RemoveEntityRecursive(Entity *current, Entity *target);
         void RebuildBakedProbeTexture();

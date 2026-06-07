@@ -23,6 +23,7 @@ namespace PlutoGE::render
 
         Texture *CreateDepthTexture(int width, int height);
         Texture *CreateDepthCubemap(int width, int height);
+        Texture *CreateColorCubemap(int width, int height);
 
     private:
         GLuint m_nextTextureID = 1;                                // Start from 1 since 0 is reserved for "no texture"

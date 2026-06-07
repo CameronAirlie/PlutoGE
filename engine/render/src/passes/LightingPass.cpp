@@ -33,6 +33,7 @@ namespace PlutoGE::render
         constexpr int kPreviousLightPropagationVolumeTextureSlot = kLightPropagationVolumeTextureSlot + 1;
         constexpr int kBakedProbeTextureSlot = kPreviousLightPropagationVolumeTextureSlot + 1;
         constexpr int kEnvironmentTextureSlot = kBakedProbeTextureSlot + 1;
+        constexpr int kIblCaptureTextureSlotStart = kDirectionalShadowCascadeTextureStartSlot;
         constexpr int kAmbientPassMode = 0;
         constexpr int kLightPassMode = 1;
         constexpr int kIndirectTextureSlot = 0;
@@ -727,6 +728,22 @@ namespace PlutoGE::render
             {
                 shader->SetUniform("uEnvironmentMap", kEnvironmentTextureSlot);
             }
+
+            if (shader->HasUniform("uIblCaptureMaps[0]"))
+            {
+                const auto &iblCaptureVolumes = ctx.scene ? ctx.scene->GetIblCaptureVolumes() : std::vector<scene::IblCaptureVolume>{};
+                for (int captureIndex = 0; captureIndex < scene::kMaxIblCaptureVolumes; ++captureIndex)
+                {
+                    const int textureSlot = kIblCaptureTextureSlotStart + captureIndex;
+                    const auto *captureTexture = captureIndex < static_cast<int>(iblCaptureVolumes.size())
+                                                     ? iblCaptureVolumes[static_cast<std::size_t>(captureIndex)].environmentMapTexture
+                                                     : nullptr;
+                    glActiveTexture(GL_TEXTURE0 + textureSlot);
+                    glBindTexture(GL_TEXTURE_CUBE_MAP, captureTexture && captureTexture->GetType() == GL_TEXTURE_CUBE_MAP ? captureTexture->GetTextureID() : 0);
+                    const std::string uniformName = "uIblCaptureMaps[" + std::to_string(captureIndex) + "]";
+                    shader->SetUniform(uniformName, textureSlot);
+                }
+            }
         }
 
         bool BindShadowMapForLight(const scene::Light &light)
@@ -1012,9 +1029,30 @@ namespace PlutoGE::render
         m_lightingPassShader->SetUniform("uEnvironmentEnabled", ctx.scene && ctx.scene->GetEnvironmentMapTexture() ? 1 : 0);
         m_lightingPassShader->SetUniform("uEnvironmentIntensity", ctx.scene ? ctx.scene->GetEnvironmentIntensity() : 1.0f);
         m_lightingPassShader->SetUniform("uDebugViewMode", static_cast<int>(ctx.postProcessDebugView));
+        const auto resolveMaxMipLevel = [](const Texture *texture)
+        {
+            return texture ? static_cast<float>(std::max(0, static_cast<int>(std::floor(std::log2(static_cast<float>(std::max(texture->GetWidth(), texture->GetHeight()))))))) : 0.0f;
+        };
+
         const auto *environmentTexture = ctx.scene ? ctx.scene->GetEnvironmentMapTexture() : nullptr;
-        const float environmentMaxMipLevel = environmentTexture ? static_cast<float>(std::max(0, static_cast<int>(std::floor(std::log2(static_cast<float>(std::max(environmentTexture->GetWidth(), environmentTexture->GetHeight()))))))) : 0.0f;
+        const float environmentMaxMipLevel = resolveMaxMipLevel(environmentTexture);
         m_lightingPassShader->SetUniform("uEnvironmentMaxMipLevel", environmentMaxMipLevel);
+        const auto &iblCaptureVolumes = ctx.scene ? ctx.scene->GetIblCaptureVolumes() : std::vector<scene::IblCaptureVolume>{};
+        const int iblCaptureCount = std::min(scene::kMaxIblCaptureVolumes, static_cast<int>(iblCaptureVolumes.size()));
+        for (int captureIndex = 0; captureIndex < scene::kMaxIblCaptureVolumes; ++captureIndex)
+        {
+            const bool hasCapture = captureIndex < static_cast<int>(iblCaptureVolumes.size()) &&
+                                    iblCaptureVolumes[static_cast<std::size_t>(captureIndex)].IsValid() &&
+                                    iblCaptureVolumes[static_cast<std::size_t>(captureIndex)].environmentMapTexture->GetType() == GL_TEXTURE_CUBE_MAP;
+            const auto &captureVolume = hasCapture ? iblCaptureVolumes[static_cast<std::size_t>(captureIndex)] : scene::IblCaptureVolume{};
+            m_lightingPassShader->SetUniform("uIblCaptureOrigins[" + std::to_string(captureIndex) + "]", captureVolume.origin);
+            m_lightingPassShader->SetUniform("uIblCaptureSizes[" + std::to_string(captureIndex) + "]", captureVolume.size);
+            m_lightingPassShader->SetUniform("uIblCaptureIntensities[" + std::to_string(captureIndex) + "]", hasCapture ? captureVolume.intensity : 0.0f);
+            m_lightingPassShader->SetUniform("uIblCaptureBlendDistances[" + std::to_string(captureIndex) + "]", captureVolume.blendDistance);
+            m_lightingPassShader->SetUniform("uIblCaptureMaxMipLevels[" + std::to_string(captureIndex) + "]", hasCapture ? resolveMaxMipLevel(captureVolume.environmentMapTexture) : 0.0f);
+            m_lightingPassShader->SetUniform("uIblCaptureEnabled[" + std::to_string(captureIndex) + "]", hasCapture ? 1 : 0);
+        }
+        m_lightingPassShader->SetUniform("uIblCaptureCount", iblCaptureCount);
 
         glDisable(GL_BLEND);
         m_lightingPassShader->SetUniform("uPassMode", kAmbientPassMode);

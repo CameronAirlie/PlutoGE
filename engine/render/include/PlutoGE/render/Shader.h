@@ -422,24 +422,33 @@ uniform samplerCube uShadowMapCube;
 uniform sampler3D uLpvVolume;
 uniform sampler3D uPreviousLpvVolume;
 uniform sampler3D uBakedProbeVolume;
+uniform samplerCube uIblCaptureMaps[4];
 uniform vec3 uLpvOrigin;
 uniform vec3 uLpvSize;
 uniform vec3 uPreviousLpvOrigin;
 uniform vec3 uPreviousLpvSize;
 uniform vec3 uBakedProbeOrigin;
 uniform vec3 uBakedProbeSize;
+uniform vec3 uIblCaptureOrigins[4];
+uniform vec3 uIblCaptureSizes[4];
 uniform int uLpvEnabled;
 uniform int uBakedProbeEnabled;
 uniform int uEnvironmentEnabled;
+uniform int uIblCaptureEnabled[4];
+uniform int uIblCaptureCount;
 uniform float uLpvTransitionBlend;
 uniform float uEnvironmentIntensity;
 uniform float uEnvironmentMaxMipLevel;
+uniform float uIblCaptureIntensities[4];
+uniform float uIblCaptureBlendDistances[4];
+uniform float uIblCaptureMaxMipLevels[4];
 uniform int uAmbientOutputMode;
 uniform int uDebugViewMode;
 
 const int AMBIENT_OUTPUT_FULL = 0;
 const int AMBIENT_OUTPUT_LPV_ONLY = 1;
 const int AMBIENT_OUTPUT_NONE = 2;
+const int MAX_IBL_CAPTURE_VOLUMES = 4;
 
 float DistributionGGX(vec3 normal, vec3 halfwayDir, float roughness)
 {
@@ -496,6 +505,85 @@ vec3 SampleEnvironment(vec3 direction, float lod)
     return max(textureLod(uEnvironmentMap, uv, clamp(lod, 0.0, uEnvironmentMaxMipLevel)).rgb, vec3(0.0)) * uEnvironmentIntensity;
 }
 
+vec3 SampleIblCaptureMap(int captureIndex, vec3 direction, float lod)
+{
+    if (captureIndex == 0)
+    {
+        return max(textureLod(uIblCaptureMaps[0], direction, clamp(lod, 0.0, uIblCaptureMaxMipLevels[0])).rgb, vec3(0.0)) * uIblCaptureIntensities[0];
+    }
+    if (captureIndex == 1)
+    {
+        return max(textureLod(uIblCaptureMaps[1], direction, clamp(lod, 0.0, uIblCaptureMaxMipLevels[1])).rgb, vec3(0.0)) * uIblCaptureIntensities[1];
+    }
+    if (captureIndex == 2)
+    {
+        return max(textureLod(uIblCaptureMaps[2], direction, clamp(lod, 0.0, uIblCaptureMaxMipLevels[2])).rgb, vec3(0.0)) * uIblCaptureIntensities[2];
+    }
+
+    return max(textureLod(uIblCaptureMaps[3], direction, clamp(lod, 0.0, uIblCaptureMaxMipLevels[3])).rgb, vec3(0.0)) * uIblCaptureIntensities[3];
+}
+
+float ComputeIblCaptureWeight(vec3 fragPos, int captureIndex)
+{
+    if (captureIndex >= uIblCaptureCount || uIblCaptureEnabled[captureIndex] == 0)
+    {
+        return 0.0;
+    }
+
+    vec3 captureSize = max(uIblCaptureSizes[captureIndex], vec3(0.0001));
+    vec3 captureUv = (fragPos - uIblCaptureOrigins[captureIndex]) / captureSize;
+    if (any(lessThan(captureUv, vec3(0.0))) || any(greaterThan(captureUv, vec3(1.0))))
+    {
+        return 0.0;
+    }
+
+    vec3 halfSize = captureSize * 0.5;
+    float minHalfExtent = max(min(min(halfSize.x, halfSize.y), halfSize.z), 0.0001);
+    float normalizedBlendDistance = clamp(uIblCaptureBlendDistances[captureIndex] / minHalfExtent, 0.0, 1.0);
+    vec3 edgeDistance = min(captureUv, vec3(1.0) - captureUv);
+    float normalizedEdgeDistance = min(min(edgeDistance.x, edgeDistance.y), edgeDistance.z) * 2.0;
+    return normalizedBlendDistance <= 0.0001 ? 1.0 : smoothstep(0.0, normalizedBlendDistance, normalizedEdgeDistance);
+}
+
+vec3 BoxProjectIblDirection(vec3 fragPos, vec3 direction, int captureIndex)
+{
+    vec3 boxMin = uIblCaptureOrigins[captureIndex];
+    vec3 boxMax = uIblCaptureOrigins[captureIndex] + max(uIblCaptureSizes[captureIndex], vec3(0.0001));
+    vec3 captureCenter = (boxMin + boxMax) * 0.5;
+    vec3 safeDirection = direction;
+    safeDirection.x = abs(safeDirection.x) < 0.0001 ? (safeDirection.x < 0.0 ? -0.0001 : 0.0001) : safeDirection.x;
+    safeDirection.y = abs(safeDirection.y) < 0.0001 ? (safeDirection.y < 0.0 ? -0.0001 : 0.0001) : safeDirection.y;
+    safeDirection.z = abs(safeDirection.z) < 0.0001 ? (safeDirection.z < 0.0 ? -0.0001 : 0.0001) : safeDirection.z;
+    vec3 firstPlane = (boxMax - fragPos) / safeDirection;
+    vec3 secondPlane = (boxMin - fragPos) / safeDirection;
+    vec3 farPlane = max(firstPlane, secondPlane);
+    float distanceToBox = min(min(farPlane.x, farPlane.y), farPlane.z);
+    vec3 hitPosition = fragPos + direction * max(distanceToBox, 0.0);
+    return normalize(hitPosition - captureCenter);
+}
+
+vec3 SampleIblEnvironment(vec3 fragPos, vec3 direction, float lod, bool useBoxProjection)
+{
+    vec3 capturedColor = vec3(0.0);
+    float totalWeight = 0.0;
+    for (int captureIndex = 0; captureIndex < MAX_IBL_CAPTURE_VOLUMES; ++captureIndex)
+    {
+        float weight = ComputeIblCaptureWeight(fragPos, captureIndex);
+        if (weight <= 0.0)
+        {
+            continue;
+        }
+
+        vec3 sampleDirection = useBoxProjection ? BoxProjectIblDirection(fragPos, direction, captureIndex) : direction;
+        capturedColor += SampleIblCaptureMap(captureIndex, sampleDirection, lod) * weight;
+        totalWeight += weight;
+    }
+
+    float captureCoverage = clamp(totalWeight, 0.0, 1.0);
+    vec3 blendedCaptureColor = totalWeight > 0.0001 ? capturedColor / totalWeight : vec3(0.0);
+    return blendedCaptureColor * captureCoverage + SampleEnvironment(direction, lod) * (1.0 - captureCoverage);
+}
+
 vec3 ComputeSkyColor(vec2 uv)
 {
     vec2 clip = uv * 2.0 - 1.0;
@@ -514,18 +602,18 @@ vec3 EnvBRDFApprox(vec3 specularColor, float roughness, float ndotv)
     return specularColor * ab.x + ab.y;
 }
 
-vec3 ComputeEnvironmentDiffuse(vec3 normal, vec3 albedo, float metallic, float roughness, vec3 f0, float ndotv)
+vec3 ComputeEnvironmentDiffuse(vec3 fragPos, vec3 normal, vec3 albedo, float metallic, float roughness, vec3 f0, float ndotv)
 {
-    vec3 diffuseIrradiance = SampleEnvironment(normal, max(uEnvironmentMaxMipLevel - 1.0, 0.0));
+    vec3 diffuseIrradiance = SampleIblEnvironment(fragPos, normal, max(uEnvironmentMaxMipLevel - 1.0, 0.0), false);
     vec3 fresnel = FresnelSchlickRoughness(ndotv, f0, roughness);
     vec3 kD = (vec3(1.0) - fresnel) * (1.0 - metallic);
     return diffuseIrradiance * albedo * kD;
 }
 
-vec3 ComputeEnvironmentSpecular(vec3 normal, vec3 viewDir, float roughness, vec3 f0, float ndotv)
+vec3 ComputeEnvironmentSpecular(vec3 fragPos, vec3 normal, vec3 viewDir, float roughness, vec3 f0, float ndotv)
 {
     vec3 reflectionDir = reflect(-viewDir, normal);
-    vec3 prefilteredColor = SampleEnvironment(reflectionDir, roughness * uEnvironmentMaxMipLevel);
+    vec3 prefilteredColor = SampleIblEnvironment(fragPos, reflectionDir, roughness * uEnvironmentMaxMipLevel, true);
     return prefilteredColor * EnvBRDFApprox(f0, roughness, ndotv);
 }
 
@@ -697,6 +785,9 @@ float ComputeDirectionalCascadeShadow(vec3 receiverPosition, Light light, int ca
 
     return SampleDirectionalCascadeShadow(cascadeIndex, projectedCoords, depthBias, light.ShadowSoftness);
 }
+            )";
+
+            source.fragmentSource += R"(
 
 float ComputeDirectionalShadow(vec3 fragPos,
                                vec3 normal,
@@ -1044,8 +1135,8 @@ void main()
 
         vec3 lpvIndirect = SampleLPVIndirect(fragPos, albedo, metallic);
         vec3 bakedProbeIndirect = SampleBakedProbeIrradiance(fragPos) * albedo * (1.0 - metallic);
-        vec3 environmentDiffuse = ComputeEnvironmentDiffuse(normal, albedo, metallic, roughness, f0, ndotv);
-        vec3 environmentSpecular = ComputeEnvironmentSpecular(normal, viewDir, roughness, f0, ndotv);
+        vec3 environmentDiffuse = ComputeEnvironmentDiffuse(fragPos, normal, albedo, metallic, roughness, f0, ndotv);
+        vec3 environmentSpecular = ComputeEnvironmentSpecular(fragPos, normal, viewDir, roughness, f0, ndotv);
         if (uAmbientOutputMode == AMBIENT_OUTPUT_NONE)
         {
             FragColor = vec4(environmentSpecular, 1.0);

@@ -197,11 +197,13 @@ namespace PlutoGE::scene
     void LightComponent::MarkDirty()
     {
         m_config.isDirty = true;
+        m_config.shadowRefreshPending = false;
     }
 
     void LightComponent::ClearDirty()
     {
         m_config.isDirty = false;
+        m_config.shadowRefreshPending = false;
     }
 
     bool LightComponent::IsDirty() const

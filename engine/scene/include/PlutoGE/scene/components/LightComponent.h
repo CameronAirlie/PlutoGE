@@ -52,6 +52,7 @@ namespace PlutoGE::scene
         bool castsShadows = false;   // Whether the light casts shadows
         bool isStatic = false;       // Static lights only refresh shadow data when dirty
         bool isDirty = true;         // Dirty lights need their shadow data refreshed
+        bool shadowRefreshPending = false;
     };
 
     class LightComponent : public TypedComponent<LightComponent>

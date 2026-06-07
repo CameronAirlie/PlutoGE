@@ -5,6 +5,7 @@ add_library(PlutoGEScene
     src/SceneSerializer.cpp
     src/components/MeshComponent.cpp
     src/components/CameraComponent.cpp
+    src/components/IblCaptureComponent.cpp
     src/components/LightComponent.cpp
     src/components/ScriptComponent.cpp
 )

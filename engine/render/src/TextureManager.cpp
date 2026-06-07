@@ -577,4 +577,36 @@ namespace PlutoGE::render
 
         return texture;
     }
+
+    Texture *TextureManager::CreateColorCubemap(int width, int height)
+    {
+        if (width <= 0 || height <= 0)
+        {
+            return nullptr;
+        }
+
+        TextureConfig config;
+        Texture *texture = new Texture(config);
+        texture->m_type = GL_TEXTURE_CUBE_MAP;
+
+        glGenTextures(1, &texture->m_textureID);
+        glBindTexture(GL_TEXTURE_CUBE_MAP, texture->m_textureID);
+        for (unsigned int face = 0; face < 6; ++face)
+        {
+            glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, 0, GL_RGBA16F, width, height, 0, GL_RGBA, GL_FLOAT, nullptr);
+        }
+
+        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+        glGenerateMipmap(GL_TEXTURE_CUBE_MAP);
+        glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
+
+        texture->m_width = width;
+        texture->m_height = height;
+        texture->m_channels = 4;
+        return texture;
+    }
 }

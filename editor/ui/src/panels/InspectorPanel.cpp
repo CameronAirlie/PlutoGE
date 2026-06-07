@@ -12,6 +12,7 @@
 #include "PlutoGE/render/postprocess/IPostProcessEffect.h"
 #include "PlutoGE/render/postprocess/PostProcessEffectFactory.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
+#include "PlutoGE/scene/components/IblCaptureComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
@@ -43,6 +44,7 @@ namespace PlutoGE::ui
             "Mesh Component",
             "Camera Component",
             "Light Component",
+            "IBL Capture Component",
             "Script Component",
         };
 
@@ -51,7 +53,8 @@ namespace PlutoGE::ui
             Mesh = 0,
             Camera = 1,
             Light = 2,
-            Script = 3,
+            IblCapture = 3,
+            Script = 4,
         };
 
         struct ScriptAssetOption
@@ -360,6 +363,10 @@ namespace PlutoGE::ui
             {
                 return "Light Component";
             }
+            if (dynamic_cast<const scene::IblCaptureComponent *>(&component))
+            {
+                return "IBL Capture Component";
+            }
             if (dynamic_cast<const scene::ScriptComponent *>(&component))
             {
                 return "Script Component";
@@ -449,6 +456,8 @@ namespace PlutoGE::ui
                 return !entity.HasComponent<scene::CameraComponent>();
             case AddableComponentType::Light:
                 return !entity.HasComponent<scene::LightComponent>();
+            case AddableComponentType::IblCapture:
+                return !entity.HasComponent<scene::IblCaptureComponent>();
             case AddableComponentType::Script:
                 return !entity.HasComponent<scene::ScriptComponent>();
             default:
@@ -485,6 +494,9 @@ namespace PlutoGE::ui
             }
             case AddableComponentType::Light:
                 entity.CreateComponent<scene::LightComponent>();
+                break;
+            case AddableComponentType::IblCapture:
+                entity.CreateComponent<scene::IblCaptureComponent>();
                 break;
             case AddableComponentType::Script:
                 entity.CreateComponent<scene::ScriptComponent>(scene::ScriptComponentConfig{});
@@ -1598,6 +1610,21 @@ namespace PlutoGE::ui
                         else if (dynamic_cast<scene::LightComponent *>(componentPtr))
                         {
                             ImGui::TextDisabled("Only lights marked Static contribute to Bake Scene.");
+                        }
+                        else if (auto *iblCaptureComponent = dynamic_cast<scene::IblCaptureComponent *>(componentPtr))
+                        {
+                            const bool hasCapture = iblCaptureComponent->GetCaptureTexture() != nullptr;
+                            ImGui::Text("Captured HDRI: %s", hasCapture ? "ready" : "not captured");
+                            if (ImGui::Button("Capture Scene"))
+                            {
+                                EditorShell::GetInstance().RequestIblCapture(iblCaptureComponent);
+                            }
+
+                            ImGui::SameLine();
+                            if (ImGui::Button("Mark Dirty"))
+                            {
+                                iblCaptureComponent->MarkDirty();
+                            }
                         }
 
                         int propertyIndex = 0;

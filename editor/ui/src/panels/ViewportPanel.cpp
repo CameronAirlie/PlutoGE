@@ -4,6 +4,7 @@
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/scene/components/IblCaptureComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
@@ -12,12 +13,15 @@
 #include <iostream>
 
 #include <algorithm>
+#include <cmath>
+#include <limits>
 #include <optional>
 
 #include <imgui.h>
 
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/euler_angles.hpp>
+#include <glm/gtc/constants.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
 namespace PlutoGE::ui
@@ -44,6 +48,12 @@ namespace PlutoGE::ui
         {
             glm::vec3 origin{0.0f};
             glm::vec3 direction{0.0f, 0.0f, -1.0f};
+        };
+
+        struct ProjectedPoint
+        {
+            ImVec2 screen;
+            bool visible = false;
         };
 
         void CollectEntitiesRecursive(scene::Entity *entity, std::vector<scene::Entity *> &entities)
@@ -77,6 +87,415 @@ namespace PlutoGE::ui
 
             const float discriminant = b * b - c;
             return discriminant >= 0.0f;
+        }
+
+        ProjectedPoint ProjectWorldPoint(const glm::vec3 &point,
+                                         const render::CameraData &cameraData,
+                                         const ImVec2 &viewportMin,
+                                         const ImVec2 &viewportSize)
+        {
+            const glm::vec4 clip = cameraData.projection * cameraData.view * glm::vec4(point, 1.0f);
+            if (clip.w <= kRayEpsilon)
+            {
+                return {};
+            }
+
+            const glm::vec3 ndc = glm::vec3(clip) / clip.w;
+            if (ndc.z < -1.0f || ndc.z > 1.0f)
+            {
+                return {};
+            }
+
+            return ProjectedPoint{
+                .screen = ImVec2(
+                    viewportMin.x + (ndc.x * 0.5f + 0.5f) * viewportSize.x,
+                    viewportMin.y + (1.0f - (ndc.y * 0.5f + 0.5f)) * viewportSize.y),
+                .visible = true,
+            };
+        }
+
+        bool ClipScreenLineToRect(ImVec2 &a, ImVec2 &b, const ImVec2 &min, const ImVec2 &max)
+        {
+            enum OutCode
+            {
+                Inside = 0,
+                Left = 1,
+                Right = 2,
+                Bottom = 4,
+                Top = 8,
+            };
+
+            const auto computeOutCode = [&](const ImVec2 &point)
+            {
+                int code = Inside;
+                if (point.x < min.x)
+                {
+                    code |= Left;
+                }
+                else if (point.x > max.x)
+                {
+                    code |= Right;
+                }
+
+                if (point.y < min.y)
+                {
+                    code |= Top;
+                }
+                else if (point.y > max.y)
+                {
+                    code |= Bottom;
+                }
+
+                return code;
+            };
+
+            int codeA = computeOutCode(a);
+            int codeB = computeOutCode(b);
+            while (true)
+            {
+                if ((codeA | codeB) == 0)
+                {
+                    return true;
+                }
+
+                if ((codeA & codeB) != 0)
+                {
+                    return false;
+                }
+
+                const int outsideCode = codeA != 0 ? codeA : codeB;
+                ImVec2 clippedPoint = outsideCode == codeA ? a : b;
+                const float dx = b.x - a.x;
+                const float dy = b.y - a.y;
+
+                if ((outsideCode & Top) != 0)
+                {
+                    if (std::abs(dy) <= kRayEpsilon)
+                    {
+                        return false;
+                    }
+                    clippedPoint.x = a.x + dx * (min.y - a.y) / dy;
+                    clippedPoint.y = min.y;
+                }
+                else if ((outsideCode & Bottom) != 0)
+                {
+                    if (std::abs(dy) <= kRayEpsilon)
+                    {
+                        return false;
+                    }
+                    clippedPoint.x = a.x + dx * (max.y - a.y) / dy;
+                    clippedPoint.y = max.y;
+                }
+                else if ((outsideCode & Right) != 0)
+                {
+                    if (std::abs(dx) <= kRayEpsilon)
+                    {
+                        return false;
+                    }
+                    clippedPoint.y = a.y + dy * (max.x - a.x) / dx;
+                    clippedPoint.x = max.x;
+                }
+                else if ((outsideCode & Left) != 0)
+                {
+                    if (std::abs(dx) <= kRayEpsilon)
+                    {
+                        return false;
+                    }
+                    clippedPoint.y = a.y + dy * (min.x - a.x) / dx;
+                    clippedPoint.x = min.x;
+                }
+
+                if (outsideCode == codeA)
+                {
+                    a = clippedPoint;
+                    codeA = computeOutCode(a);
+                }
+                else
+                {
+                    b = clippedPoint;
+                    codeB = computeOutCode(b);
+                }
+            }
+        }
+
+        void DrawWorldLine(ImDrawList *drawList,
+                           const glm::vec3 &a,
+                           const glm::vec3 &b,
+                           const render::CameraData &cameraData,
+                           const ImVec2 &viewportMin,
+                           const ImVec2 &viewportSize,
+                           ImU32 color,
+                           float thickness = 1.5f)
+        {
+            glm::vec3 clippedA = a;
+            glm::vec3 clippedB = b;
+            const auto clipToDepthRange = [&](float minDepth, float maxDepth)
+            {
+                const glm::vec3 viewA = glm::vec3(cameraData.view * glm::vec4(clippedA, 1.0f));
+                const glm::vec3 viewB = glm::vec3(cameraData.view * glm::vec4(clippedB, 1.0f));
+                float depthA = -viewA.z;
+                float depthB = -viewB.z;
+
+                if ((depthA < minDepth && depthB < minDepth) || (depthA > maxDepth && depthB > maxDepth))
+                {
+                    return false;
+                }
+
+                const auto clipAgainstPlane = [&](float planeDepth, bool keepGreater)
+                {
+                    const bool aInside = keepGreater ? depthA >= planeDepth : depthA <= planeDepth;
+                    const bool bInside = keepGreater ? depthB >= planeDepth : depthB <= planeDepth;
+                    if (aInside && bInside)
+                    {
+                        return true;
+                    }
+
+                    const float denominator = depthB - depthA;
+                    if (std::abs(denominator) <= kRayEpsilon)
+                    {
+                        return false;
+                    }
+
+                    const float t = glm::clamp((planeDepth - depthA) / denominator, 0.0f, 1.0f);
+                    const glm::vec3 clippedPoint = glm::mix(clippedA, clippedB, t);
+                    if (!aInside)
+                    {
+                        clippedA = clippedPoint;
+                        depthA = planeDepth;
+                    }
+                    else
+                    {
+                        clippedB = clippedPoint;
+                        depthB = planeDepth;
+                    }
+                    return true;
+                };
+
+                return clipAgainstPlane(minDepth, true) && clipAgainstPlane(maxDepth, false);
+            };
+
+            if (!clipToDepthRange(std::max(cameraData.nearPlane, 0.001f), std::max(cameraData.farPlane, cameraData.nearPlane + 0.001f)))
+            {
+                return;
+            }
+
+            const auto projectedA = ProjectWorldPoint(clippedA, cameraData, viewportMin, viewportSize);
+            const auto projectedB = ProjectWorldPoint(clippedB, cameraData, viewportMin, viewportSize);
+            if (!projectedA.visible || !projectedB.visible)
+            {
+                return;
+            }
+
+            ImVec2 screenA = projectedA.screen;
+            ImVec2 screenB = projectedB.screen;
+            const ImVec2 viewportMax(viewportMin.x + viewportSize.x, viewportMin.y + viewportSize.y);
+            if (!ClipScreenLineToRect(screenA, screenB, viewportMin, viewportMax))
+            {
+                return;
+            }
+
+            drawList->AddLine(screenA, screenB, color, thickness);
+        }
+
+        void DrawWorldCircle(ImDrawList *drawList,
+                             const glm::vec3 &center,
+                             const glm::vec3 &axisA,
+                             const glm::vec3 &axisB,
+                             const render::CameraData &cameraData,
+                             const ImVec2 &viewportMin,
+                             const ImVec2 &viewportSize,
+                             ImU32 color)
+        {
+            constexpr int kSegmentCount = 48;
+            glm::vec3 previousPoint = center + axisA;
+            for (int segmentIndex = 1; segmentIndex <= kSegmentCount; ++segmentIndex)
+            {
+                const float angle = (static_cast<float>(segmentIndex) / static_cast<float>(kSegmentCount)) * glm::two_pi<float>();
+                const glm::vec3 point = center + std::cos(angle) * axisA + std::sin(angle) * axisB;
+                DrawWorldLine(drawList, previousPoint, point, cameraData, viewportMin, viewportSize, color, 1.0f);
+                previousPoint = point;
+            }
+        }
+
+        void DrawWireBox(ImDrawList *drawList,
+                         const glm::mat4 &transform,
+                         const render::CameraData &cameraData,
+                         const ImVec2 &viewportMin,
+                         const ImVec2 &viewportSize,
+                         ImU32 color,
+                         float thickness = 1.5f)
+        {
+            glm::vec3 corners[8];
+            for (int cornerIndex = 0; cornerIndex < 8; ++cornerIndex)
+            {
+                const glm::vec3 localCorner(
+                    (cornerIndex & 1) ? 0.5f : -0.5f,
+                    (cornerIndex & 2) ? 0.5f : -0.5f,
+                    (cornerIndex & 4) ? 0.5f : -0.5f);
+                corners[cornerIndex] = glm::vec3(transform * glm::vec4(localCorner, 1.0f));
+            }
+
+            constexpr int kEdges[12][2] = {
+                {0, 1}, {1, 3}, {3, 2}, {2, 0},
+                {4, 5}, {5, 7}, {7, 6}, {6, 4},
+                {0, 4}, {1, 5}, {2, 6}, {3, 7},
+            };
+            for (const auto &edge : kEdges)
+            {
+                DrawWorldLine(drawList, corners[edge[0]], corners[edge[1]], cameraData, viewportMin, viewportSize, color, thickness);
+            }
+        }
+
+        void DrawCameraShape(ImDrawList *drawList,
+                             const scene::Entity &entity,
+                             const scene::CameraComponent &cameraComponent,
+                             const render::CameraData &cameraData,
+                             const ImVec2 &viewportMin,
+                             const ImVec2 &viewportSize)
+        {
+            const auto *camera = cameraComponent.GetCamera();
+            if (!camera)
+            {
+                return;
+            }
+
+            const glm::mat4 transform = entity.GetWorldTransform();
+            const glm::vec3 origin = entity.GetWorldPosition();
+            const glm::vec3 right = glm::normalize(glm::vec3(transform[0]));
+            const glm::vec3 up = glm::normalize(glm::vec3(transform[1]));
+            const glm::vec3 forward = -glm::normalize(glm::vec3(transform[2]));
+            const float nearPlane = std::max(camera->GetNearPlane(), 0.001f);
+            const float farPlane = std::max(camera->GetFarPlane(), nearPlane + 0.001f);
+            const float tanHalfFov = std::tan(glm::radians(camera->GetFOV()) * 0.5f);
+            constexpr float kPreviewAspect = 16.0f / 9.0f;
+
+            const auto buildFrustumCorners = [&](float distance)
+            {
+                const float halfHeight = tanHalfFov * distance;
+                const float halfWidth = halfHeight * kPreviewAspect;
+                const glm::vec3 center = origin + forward * distance;
+                return std::array<glm::vec3, 4>{
+                    center - right * halfWidth - up * halfHeight,
+                    center + right * halfWidth - up * halfHeight,
+                    center + right * halfWidth + up * halfHeight,
+                    center - right * halfWidth + up * halfHeight,
+                };
+            };
+
+            const auto nearCorners = buildFrustumCorners(nearPlane);
+            const auto farCorners = buildFrustumCorners(farPlane);
+            const ImU32 color = IM_COL32(80, 180, 255, 230);
+
+            for (int cornerIndex = 0; cornerIndex < 4; ++cornerIndex)
+            {
+                DrawWorldLine(drawList, nearCorners[cornerIndex], farCorners[cornerIndex], cameraData, viewportMin, viewportSize, color);
+            }
+
+            DrawWorldLine(drawList, nearCorners[0], nearCorners[1], cameraData, viewportMin, viewportSize, color);
+            DrawWorldLine(drawList, nearCorners[1], nearCorners[2], cameraData, viewportMin, viewportSize, color);
+            DrawWorldLine(drawList, nearCorners[2], nearCorners[3], cameraData, viewportMin, viewportSize, color);
+            DrawWorldLine(drawList, nearCorners[3], nearCorners[0], cameraData, viewportMin, viewportSize, color);
+
+            DrawWorldLine(drawList, farCorners[0], farCorners[1], cameraData, viewportMin, viewportSize, color);
+            DrawWorldLine(drawList, farCorners[1], farCorners[2], cameraData, viewportMin, viewportSize, color);
+            DrawWorldLine(drawList, farCorners[2], farCorners[3], cameraData, viewportMin, viewportSize, color);
+            DrawWorldLine(drawList, farCorners[3], farCorners[0], cameraData, viewportMin, viewportSize, color);
+        }
+
+        void DrawLightShape(ImDrawList *drawList,
+                            const scene::Entity &entity,
+                            const scene::LightComponent &lightComponent,
+                            const render::CameraData &cameraData,
+                            const ImVec2 &viewportMin,
+                            const ImVec2 &viewportSize)
+        {
+            const auto &light = lightComponent.GetLight();
+            const glm::vec3 center = entity.GetWorldPosition();
+            const ImU32 color = IM_COL32(255, 216, 92, 230);
+            if (light.type == scene::LightType::Point)
+            {
+                const float radius = std::max(light.range, 0.1f);
+                DrawWorldCircle(drawList, center, glm::vec3(radius, 0.0f, 0.0f), glm::vec3(0.0f, radius, 0.0f), cameraData, viewportMin, viewportSize, color);
+                DrawWorldCircle(drawList, center, glm::vec3(radius, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, radius), cameraData, viewportMin, viewportSize, color);
+                DrawWorldCircle(drawList, center, glm::vec3(0.0f, radius, 0.0f), glm::vec3(0.0f, 0.0f, radius), cameraData, viewportMin, viewportSize, color);
+                return;
+            }
+
+            const glm::vec3 direction = glm::dot(light.direction, light.direction) > 0.0001f ? glm::normalize(light.direction) : glm::vec3(0.0f, -1.0f, 0.0f);
+            if (light.type == scene::LightType::Directional)
+            {
+                DrawWorldLine(drawList, center - direction * 0.75f, center + direction * 1.5f, cameraData, viewportMin, viewportSize, color, 2.0f);
+                return;
+            }
+
+            const glm::vec3 referenceUp = std::abs(direction.y) < 0.99f ? glm::vec3(0.0f, 1.0f, 0.0f) : glm::vec3(1.0f, 0.0f, 0.0f);
+            const glm::vec3 tangent = glm::normalize(glm::cross(referenceUp, direction));
+            const glm::vec3 bitangent = glm::normalize(glm::cross(direction, tangent));
+            const float range = std::max(light.range, 0.1f);
+            const float radius = range * 0.28f;
+            const glm::vec3 coneCenter = center + direction * range;
+            DrawWorldCircle(drawList, coneCenter, tangent * radius, bitangent * radius, cameraData, viewportMin, viewportSize, color);
+            DrawWorldLine(drawList, center, coneCenter + tangent * radius, cameraData, viewportMin, viewportSize, color);
+            DrawWorldLine(drawList, center, coneCenter - tangent * radius, cameraData, viewportMin, viewportSize, color);
+            DrawWorldLine(drawList, center, coneCenter + bitangent * radius, cameraData, viewportMin, viewportSize, color);
+            DrawWorldLine(drawList, center, coneCenter - bitangent * radius, cameraData, viewportMin, viewportSize, color);
+        }
+
+        void DrawEditorDebugShapes(scene::Scene *scene,
+                                   const render::CameraData &cameraData,
+                                   const ImVec2 &viewportMin,
+                                   const ImVec2 &viewportSize)
+        {
+            if (!scene)
+            {
+                return;
+            }
+
+            std::vector<scene::Entity *> entities;
+            for (auto *rootEntity : scene->GetRootEntities())
+            {
+                CollectEntitiesRecursive(rootEntity, entities);
+            }
+
+            auto *drawList = ImGui::GetWindowDrawList();
+            drawList->PushClipRect(viewportMin,
+                                   ImVec2(viewportMin.x + viewportSize.x, viewportMin.y + viewportSize.y),
+                                   true);
+            for (auto *entity : entities)
+            {
+                if (!entity || !entity->IsActive())
+                {
+                    continue;
+                }
+
+                if (auto *iblCaptureComponent = entity->GetComponent<scene::IblCaptureComponent>())
+                {
+                    if (iblCaptureComponent->IsEnabled())
+                    {
+                        const ImU32 color = iblCaptureComponent->GetCaptureTexture()
+                                                ? IM_COL32(118, 236, 170, 230)
+                                                : IM_COL32(118, 236, 170, 120);
+                        DrawWireBox(drawList, iblCaptureComponent->GetVolumeTransform(), cameraData, viewportMin, viewportSize, color, 1.75f);
+                    }
+                }
+
+                if (auto *cameraComponent = entity->GetComponent<scene::CameraComponent>())
+                {
+                    if (cameraComponent->IsEnabled())
+                    {
+                        DrawCameraShape(drawList, *entity, *cameraComponent, cameraData, viewportMin, viewportSize);
+                    }
+                }
+
+                if (auto *lightComponent = entity->GetComponent<scene::LightComponent>())
+                {
+                    if (lightComponent->IsEnabled())
+                    {
+                        DrawLightShape(drawList, *entity, *lightComponent, cameraData, viewportMin, viewportSize);
+                    }
+                }
+            }
+            drawList->PopClipRect();
         }
 
         bool IntersectTriangle(const glm::vec3 &origin,
@@ -456,6 +875,8 @@ namespace PlutoGE::ui
         }
         ImGui::SameLine();
         ImGui::Checkbox("Grid", &m_showGrid);
+        ImGui::SameLine();
+        ImGui::Checkbox("Debug Shapes", &m_showDebugShapes);
 
         ImGui::Checkbox("Snap", &m_enableSnap);
         if (m_enableSnap)
@@ -509,6 +930,11 @@ namespace PlutoGE::ui
         ImGuizmo::Enable(true);
         ImGuizmo::SetDrawlist();
         ImGuizmo::SetRect(viewportMin.x, viewportMin.y, viewportSize.x, viewportSize.y);
+
+        if (m_showDebugShapes)
+        {
+            DrawEditorDebugShapes(editorShell.GetEngine().GetScene(), cameraData, viewportMin, viewportSize);
+        }
 
         if (auto *selectedEntity = editorShell.GetSelectedEntity())
         {

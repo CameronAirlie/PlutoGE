@@ -256,6 +256,82 @@ namespace PlutoGE::render
         ExecutePassWithGpuTiming(*m_shadowPass, ctx, 0);
     }
 
+    bool Renderer::CaptureSceneCubemap(const glm::vec3 &position, int resolution, float farPlane, Texture *targetCubemap, std::vector<scene::Light *> lights, const scene::Scene *scene)
+    {
+        if (!m_isInitialized || !targetCubemap || targetCubemap->GetType() != GL_TEXTURE_CUBE_MAP || resolution <= 0)
+        {
+            return false;
+        }
+
+        RenderTarget captureTarget(RenderTargetConfig{
+            .width = resolution,
+            .height = resolution,
+            .clearColor = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f),
+        });
+
+        const glm::vec3 directions[6] = {
+            glm::vec3(1.0f, 0.0f, 0.0f),
+            glm::vec3(-1.0f, 0.0f, 0.0f),
+            glm::vec3(0.0f, 1.0f, 0.0f),
+            glm::vec3(0.0f, -1.0f, 0.0f),
+            glm::vec3(0.0f, 0.0f, 1.0f),
+            glm::vec3(0.0f, 0.0f, -1.0f),
+        };
+        const glm::vec3 upVectors[6] = {
+            glm::vec3(0.0f, -1.0f, 0.0f),
+            glm::vec3(0.0f, -1.0f, 0.0f),
+            glm::vec3(0.0f, 0.0f, 1.0f),
+            glm::vec3(0.0f, 0.0f, -1.0f),
+            glm::vec3(0.0f, -1.0f, 0.0f),
+            glm::vec3(0.0f, -1.0f, 0.0f),
+        };
+
+        const auto previousDebugView = m_postProcessDebugView;
+        m_postProcessDebugView = PostProcessDebugView::None;
+
+        for (int faceIndex = 0; faceIndex < 6; ++faceIndex)
+        {
+            CameraData cameraData;
+            cameraData.view = glm::lookAt(position, position + directions[faceIndex], upVectors[faceIndex]);
+            cameraData.projection = glm::perspective(glm::radians(90.0f), 1.0f, 0.1f, std::max(farPlane, 1.0f));
+            cameraData.nearPlane = 0.1f;
+            cameraData.farPlane = std::max(farPlane, 1.0f);
+
+            RenderFrame(cameraData, &captureTarget, lights, nullptr, scene, false);
+
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, captureTarget.GetFramebufferID());
+            glBindTexture(GL_TEXTURE_CUBE_MAP, targetCubemap->GetTextureID());
+            glCopyTexSubImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + faceIndex, 0, 0, 0, 0, 0, resolution, resolution);
+        }
+
+        glBindTexture(GL_TEXTURE_CUBE_MAP, targetCubemap->GetTextureID());
+        glGenerateMipmap(GL_TEXTURE_CUBE_MAP);
+        glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+
+        m_postProcessDebugView = previousDebugView;
+        if (auto frameResourceIt = m_frameResources.find(&captureTarget); frameResourceIt != m_frameResources.end())
+        {
+            if (auto &resources = frameResourceIt->second)
+            {
+                if (resources->temporaryRenderTarget)
+                {
+                    resources->temporaryRenderTarget->Cleanup();
+                    resources->temporaryRenderTarget.reset();
+                }
+                if (resources->postProcessIntermediateRenderTarget)
+                {
+                    resources->postProcessIntermediateRenderTarget->Cleanup();
+                    resources->postProcessIntermediateRenderTarget.reset();
+                }
+                resources->gBuffer.Cleanup();
+            }
+            m_frameResources.erase(frameResourceIt);
+        }
+        captureTarget.Cleanup();
+        return true;
+    }
+
     void Renderer::RenderFrame(const scene::CameraComponent &cameraComponent, RenderTarget *renderTarget, std::vector<scene::Light *> lights)
     {
         std::vector<IPostProcessEffect *> postProcessEffects;

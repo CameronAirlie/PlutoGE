@@ -4,6 +4,7 @@
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
+#include "PlutoGE/scene/components/IblCaptureComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/scene/components/ScriptComponent.h"
@@ -150,6 +151,10 @@ namespace PlutoGE::scene
             {
                 return "LightComponent";
             }
+            if (dynamic_cast<const IblCaptureComponent *>(&component))
+            {
+                return "IblCaptureComponent";
+            }
             if (dynamic_cast<const ScriptComponent *>(&component))
             {
                 return "ScriptComponent";
@@ -171,6 +176,10 @@ namespace PlutoGE::scene
             if (componentType == "LightComponent")
             {
                 return std::make_unique<LightComponent>();
+            }
+            if (componentType == "IblCaptureComponent")
+            {
+                return std::make_unique<IblCaptureComponent>();
             }
             if (componentType == "ScriptComponent")
             {
@@ -212,6 +221,21 @@ namespace PlutoGE::scene
             output << "ENVIRONMENT\t"
                    << EscapeText(assetManager.PersistAssetPath(scene.GetEnvironmentMapPath())) << '\t'
                    << scene.GetEnvironmentIntensity() << '\n';
+        }
+
+        for (const auto &captureVolume : scene.GetIblCaptureVolumes())
+        {
+            if (captureVolume.environmentMapPath.empty())
+            {
+                continue;
+            }
+
+            output << "IBL_CAPTURE\t"
+                   << SerializeVec3(captureVolume.origin) << '\t'
+                   << SerializeVec3(captureVolume.size) << '\t'
+                   << EscapeText(assetManager.PersistAssetPath(captureVolume.environmentMapPath)) << '\t'
+                   << captureVolume.intensity << '\t'
+                   << captureVolume.blendDistance << '\n';
         }
 
         const auto &probeVolume = scene.GetBakedProbeVolume();
@@ -319,6 +343,7 @@ namespace PlutoGE::scene
         BakedProbeVolume bakedProbeVolume;
         std::string environmentMapPath;
         float environmentIntensity = 1.0f;
+        std::vector<IblCaptureVolume> iblCaptureVolumes;
 
         std::string line;
         while (std::getline(input, line))
@@ -338,6 +363,18 @@ namespace PlutoGE::scene
             {
                 environmentMapPath = assetManager.ResolveAssetPath(tokens[1]);
                 environmentIntensity = std::stof(tokens[2]);
+                continue;
+            }
+
+            if (tokens[0] == "IBL_CAPTURE" && tokens.size() >= 6)
+            {
+                IblCaptureVolume captureVolume;
+                captureVolume.origin = ParseVec3(tokens[1]);
+                captureVolume.size = ParseVec3(tokens[2]);
+                captureVolume.environmentMapPath = assetManager.ResolveAssetPath(tokens[3]);
+                captureVolume.intensity = std::stof(tokens[4]);
+                captureVolume.blendDistance = std::stof(tokens[5]);
+                iblCaptureVolumes.push_back(std::move(captureVolume));
                 continue;
             }
 
@@ -443,6 +480,17 @@ namespace PlutoGE::scene
             auto *environmentTexture = core::Engine::GetInstance().GetTextureManager().LoadEnvironmentTextureFromFile(environmentMapPath.c_str());
             scene->SetEnvironmentMap(environmentTexture, environmentMapPath);
             scene->SetEnvironmentIntensity(environmentIntensity);
+        }
+
+        for (auto &captureVolume : iblCaptureVolumes)
+        {
+            if (scene->GetIblCaptureVolumes().size() >= static_cast<std::size_t>(kMaxIblCaptureVolumes))
+            {
+                break;
+            }
+
+            captureVolume.environmentMapTexture = core::Engine::GetInstance().GetTextureManager().LoadEnvironmentTextureFromFile(captureVolume.environmentMapPath.c_str());
+            scene->AddIblCaptureVolume(std::move(captureVolume));
         }
 
         scene->MarkShadowLightsDirty();

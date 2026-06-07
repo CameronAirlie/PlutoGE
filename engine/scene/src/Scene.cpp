@@ -139,6 +139,53 @@ namespace PlutoGE::scene
         m_bakedProbeTexture.reset();
     }
 
+    namespace
+    {
+        IblCaptureVolume SanitizeIblCaptureVolume(IblCaptureVolume captureVolume)
+        {
+            captureVolume.size = glm::max(captureVolume.size, glm::vec3(0.0001f));
+            captureVolume.intensity = std::max(captureVolume.intensity, 0.0f);
+            captureVolume.blendDistance = std::max(captureVolume.blendDistance, 0.0f);
+            return captureVolume;
+        }
+    }
+
+    int Scene::AddIblCaptureVolume(IblCaptureVolume captureVolume)
+    {
+        if (m_iblCaptureVolumes.size() >= static_cast<std::size_t>(kMaxIblCaptureVolumes))
+        {
+            return -1;
+        }
+
+        m_iblCaptureVolumes.push_back(SanitizeIblCaptureVolume(std::move(captureVolume)));
+        return static_cast<int>(m_iblCaptureVolumes.size() - 1);
+    }
+
+    void Scene::SetIblCaptureVolume(std::size_t index, IblCaptureVolume captureVolume)
+    {
+        if (index >= m_iblCaptureVolumes.size())
+        {
+            return;
+        }
+
+        m_iblCaptureVolumes[index] = SanitizeIblCaptureVolume(std::move(captureVolume));
+    }
+
+    void Scene::RemoveIblCaptureVolume(std::size_t index)
+    {
+        if (index >= m_iblCaptureVolumes.size())
+        {
+            return;
+        }
+
+        m_iblCaptureVolumes.erase(m_iblCaptureVolumes.begin() + static_cast<std::ptrdiff_t>(index));
+    }
+
+    void Scene::ClearIblCaptureVolumes()
+    {
+        m_iblCaptureVolumes.clear();
+    }
+
     void Scene::MarkShadowLightsDirty()
     {
         for (auto *light : m_lights)
@@ -286,6 +333,8 @@ namespace PlutoGE::scene
 
     void Scene::Update(float deltaTime)
     {
+        ClearIblCaptureVolumes();
+
         for (auto rootEntity : m_rootEntities)
         {
             if (rootEntity->IsActive())

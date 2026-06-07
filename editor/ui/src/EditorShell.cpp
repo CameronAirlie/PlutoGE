@@ -14,6 +14,7 @@
 #include "PlutoGE/scene/SceneSerializer.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
+#include "PlutoGE/scene/components/IblCaptureComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 
 #include <imgui.h>
@@ -41,6 +42,23 @@
 
 namespace PlutoGE::ui
 {
+    void EditorShell::RequestIblCapture(scene::IblCaptureComponent *captureComponent)
+    {
+        auto *owner = captureComponent ? captureComponent->GetOwner() : nullptr;
+        if (!owner)
+        {
+            return;
+        }
+
+        const auto entityId = owner->GetID();
+        if (std::find(m_pendingIblCaptureEntities.begin(), m_pendingIblCaptureEntities.end(), entityId) == m_pendingIblCaptureEntities.end())
+        {
+            captureComponent->MarkDirty();
+            m_pendingIblCaptureEntities.push_back(entityId);
+            m_statusMessage = "IBL capture queued.";
+        }
+    }
+
     namespace
     {
         constexpr float kEditorCameraMoveSpeed = 6.0f;
@@ -1605,6 +1623,45 @@ namespace PlutoGE::ui
             const auto sceneUpdateEnd = std::chrono::high_resolution_clock::now();
             frameTimingStats.sceneUpdateMs = std::chrono::duration<float, std::milli>(sceneUpdateEnd - sceneUpdateStart).count();
 
+            if (!isBakeRunning && m_scene && !m_pendingIblCaptureEntities.empty())
+            {
+                auto pendingCaptures = std::move(m_pendingIblCaptureEntities);
+                m_pendingIblCaptureEntities.clear();
+                for (const auto entityId : pendingCaptures)
+                {
+                    auto *entity = m_scene->FindEntityByID(entityId);
+                    auto *iblCaptureComponent = entity ? entity->GetComponent<scene::IblCaptureComponent>() : nullptr;
+                    if (!entity || !entity->IsActive() || !iblCaptureComponent || !iblCaptureComponent->IsEnabled())
+                    {
+                        continue;
+                    }
+
+                    auto *captureTexture = iblCaptureComponent->EnsureCaptureTexture();
+                    if (!captureTexture)
+                    {
+                        m_statusMessage = "IBL capture failed: could not create cubemap.";
+                        continue;
+                    }
+
+                    const bool captured = renderer.CaptureSceneCubemap(
+                        entity->GetWorldPosition(),
+                        iblCaptureComponent->GetResolution(),
+                        iblCaptureComponent->GetFarPlane(),
+                        captureTexture,
+                        m_scene->GetLights(),
+                        m_scene.get());
+                    if (!captured)
+                    {
+                        m_statusMessage = "IBL capture failed.";
+                        continue;
+                    }
+
+                    iblCaptureComponent->ClearDirty();
+                    m_scene->AddIblCaptureVolume(iblCaptureComponent->BuildCaptureVolume());
+                    m_statusMessage = "IBL capture complete.";
+                }
+            }
+
             if (isRuntimeRunning)
             {
                 if (isEditorCameraLookActive)
@@ -1643,7 +1700,12 @@ namespace PlutoGE::ui
                     editorPostProcessEffects.push_back(effect.get());
                 }
 
-                renderer.RenderFrame(editorCameraData, renderTarget, m_scene ? m_scene->GetLights() : std::vector<scene::Light *>{}, &editorPostProcessEffects, m_scene.get(), viewportPanel->IsGridVisible());
+                renderer.RenderFrame(editorCameraData,
+                                     renderTarget,
+                                     m_scene ? m_scene->GetLights() : std::vector<scene::Light *>{},
+                                     &editorPostProcessEffects,
+                                     m_scene.get(),
+                                     viewportPanel->IsGridVisible());
             }
             else
             {

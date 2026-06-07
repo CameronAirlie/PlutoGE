@@ -23,6 +23,7 @@ namespace
 {
     constexpr int kProjectedShadowPassMode = 0;
     constexpr int kPointShadowPassMode = 1;
+    constexpr int kMaxIncrementalShadowSurfaceUpdatesPerFrame = 2;
     constexpr float kDirectionalShadowPadding = 2.0f;
     constexpr float kShadowUpdateMatrixEpsilon = 0.0001f;
 
@@ -690,6 +691,17 @@ namespace PlutoGE::render
         const bool cameraDataChanged = ctx.hasCameraData && (!ctx.hasPreviousCameraData || HasCameraDataChanged(ctx.cameraData, ctx.previousCameraData));
         std::vector<const RenderCommand *> visibleShadowCommands;
         std::vector<TransformInstanceData> shadowBatchInstances;
+        int incrementalShadowSurfaceUpdates = 0;
+        auto reserveIncrementalShadowSurfaceUpdate = [&]()
+        {
+            if (incrementalShadowSurfaceUpdates >= kMaxIncrementalShadowSurfaceUpdatesPerFrame)
+            {
+                return false;
+            }
+
+            ++incrementalShadowSurfaceUpdates;
+            return true;
+        };
 
         for (auto *light : *ctx.lights)
         {
@@ -698,13 +710,16 @@ namespace PlutoGE::render
                 continue;
             }
 
-            const bool motionDrivenDirectionalInvalidation = light->type == scene::LightType::Directional && ctx.hasCameraData && (cameraDataChanged || shadowCastersChanged);
+            const bool hasPendingIncrementalRefresh = light->shadowRefreshPending && !light->isDirty;
+            bool deferredShadowRefresh = false;
+            const bool motionDrivenDirectionalInvalidation = light->type == scene::LightType::Directional && ctx.hasCameraData && (cameraDataChanged || shadowCastersChanged || hasPendingIncrementalRefresh);
 
             const bool needsUpdate = light->type == scene::LightType::Directional
                                          ? (ctx.hasCameraData &&
                                             (light->isDirty ||
+                                             hasPendingIncrementalRefresh ||
                                              motionDrivenDirectionalInvalidation))
-                                         : (light->isDirty || shadowCastersChanged);
+                                         : (light->isDirty || shadowCastersChanged || hasPendingIncrementalRefresh);
             if (!needsUpdate)
             {
                 continue;
@@ -731,16 +746,30 @@ namespace PlutoGE::render
                 for (unsigned int face = 0; face < shadowMatrices.size(); ++face)
                 {
                     const auto faceFrustumPlanes = ExtractFrustumPlanes(shadowMatrices[face]);
-                    if (!light->isDirty &&
-                        !AnyMovedShadowCasterRelevant(
+                    bool faceNeedsIncrementalRefresh = hasPendingIncrementalRefresh;
+                    if (!light->isDirty && !faceNeedsIncrementalRefresh)
+                    {
+                        faceNeedsIncrementalRefresh = AnyMovedShadowCasterRelevant(
                             shadowCasters,
                             [&](const ShadowCasterEntry &shadowCaster)
                             {
                                 return IsMovedCommandRelevantForPointLight(shadowCaster, *light) &&
                                        IsMovedCommandRelevantForProjectedLight(shadowCaster, faceFrustumPlanes);
-                            }))
+                            });
+                    }
+
+                    if (!light->isDirty)
                     {
-                        continue;
+                        if (!faceNeedsIncrementalRefresh)
+                        {
+                            continue;
+                        }
+
+                        if (!reserveIncrementalShadowSurfaceUpdate())
+                        {
+                            deferredShadowRefresh = true;
+                            continue;
+                        }
                     }
 
                     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, shadowMap->GetTextureID(), 0);
@@ -761,6 +790,7 @@ namespace PlutoGE::render
                 }
 
                 light->isDirty = false;
+                light->shadowRefreshPending = deferredShadowRefresh;
                 continue;
             }
 
@@ -775,8 +805,8 @@ namespace PlutoGE::render
                 const int cascadeCount = GetDirectionalCascadeCount(*light);
                 const auto cascadeSplits = BuildDirectionalCascadeSplits(ctx.cameraData, light->directionalShadowSettings, cascadeCount);
                 const bool forceFullCascadeUpdate = light->isDirty || !ctx.hasPreviousCameraData;
-                const bool motionDrivenCascadeInvalidation = !light->isDirty && shadowCastersChanged;
-                const bool casterOnlyCascadeInvalidation = motionDrivenCascadeInvalidation && !cameraDataChanged;
+                const bool motionDrivenCascadeInvalidation = !light->isDirty && (shadowCastersChanged || hasPendingIncrementalRefresh);
+                const bool casterOnlyCascadeInvalidation = shadowCastersChanged && !light->isDirty && !cameraDataChanged && !hasPendingIncrementalRefresh;
                 const bool cameraOnlyInvalidation = cameraDataChanged && !light->isDirty && !shadowCastersChanged;
 
                 light->shadowMatrix = glm::mat4(1.0f);
@@ -808,9 +838,10 @@ namespace PlutoGE::render
                     // this cascade's shadow map redraw is deferred by the update cadence.
                     light->shadowCascadeSplits[cascadeIndex] = cascadeFar;
 
-                    const bool forceCascadeUpdate = forceFullCascadeUpdate || cascadeOriginChanged;
+                    const bool forceCascadeUpdate = forceFullCascadeUpdate;
                     const bool cascadeMotionInvalidation = motionDrivenCascadeInvalidation;
-                    if (!ShouldUpdateDirectionalCascade(ctx.frameSequence, cascadeIndex, forceCascadeUpdate, cascadeMotionInvalidation))
+                    const bool cadenceWantsUpdate = ShouldUpdateDirectionalCascade(ctx.frameSequence, cascadeIndex, forceCascadeUpdate, cascadeMotionInvalidation);
+                    if (!forceFullCascadeUpdate && !cascadeOriginChanged && !hasPendingIncrementalRefresh && !cadenceWantsUpdate)
                     {
                         continue;
                     }
@@ -836,6 +867,12 @@ namespace PlutoGE::render
                                     cascadeProjection.receiverMax);
                             }))
                     {
+                        continue;
+                    }
+
+                    if (!forceFullCascadeUpdate && !reserveIncrementalShadowSurfaceUpdate())
+                    {
+                        deferredShadowRefresh = true;
                         continue;
                     }
 
@@ -873,6 +910,7 @@ namespace PlutoGE::render
                 }
 
                 light->isDirty = false;
+                light->shadowRefreshPending = deferredShadowRefresh;
                 glCullFace(GL_BACK);
                 m_shadowPassShader->SetUniform("uShadowWorldOrigin", glm::vec3(0.0f));
                 continue;
@@ -886,17 +924,32 @@ namespace PlutoGE::render
 
             const glm::mat4 shadowMatrix = BuildSpotShadowMatrix(*light);
             const auto shadowFrustumPlanes = ExtractFrustumPlanes(shadowMatrix);
-            if (!light->isDirty &&
-                !AnyMovedShadowCasterRelevant(
+            bool projectedShadowNeedsIncrementalRefresh = hasPendingIncrementalRefresh;
+            if (!light->isDirty && !projectedShadowNeedsIncrementalRefresh)
+            {
+                projectedShadowNeedsIncrementalRefresh = AnyMovedShadowCasterRelevant(
                     shadowCasters,
                     [&](const ShadowCasterEntry &shadowCaster)
                     {
                         return light->type != scene::LightType::Spot ||
                                IsMovedCommandRelevantForProjectedLight(shadowCaster, shadowFrustumPlanes);
-                    }))
+                    });
+            }
+
+            if (!light->isDirty)
             {
-                light->isDirty = false;
-                continue;
+                if (!projectedShadowNeedsIncrementalRefresh)
+                {
+                    light->isDirty = false;
+                    light->shadowRefreshPending = false;
+                    continue;
+                }
+
+                if (!reserveIncrementalShadowSurfaceUpdate())
+                {
+                    light->shadowRefreshPending = true;
+                    continue;
+                }
             }
 
             light->shadowMatrix = shadowMatrix;
@@ -924,6 +977,7 @@ namespace PlutoGE::render
                 shadowBatchInstances);
 
             light->isDirty = false;
+            light->shadowRefreshPending = false;
             glCullFace(GL_BACK);
         }
 

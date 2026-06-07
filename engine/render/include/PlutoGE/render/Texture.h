@@ -34,6 +34,7 @@ namespace PlutoGE::render
         static Texture *LoadFromFile(const char *filePath);
         static Texture *DepthTexture(int width, int height);
         static Texture *DepthCubemap(int width, int height);
+        static Texture *ColorCubemap(int width, int height);
         static Texture *ColorVolume(int width, int height, int depth);
 
         void Upload3D(GLenum format, GLenum type, const void *data) const;

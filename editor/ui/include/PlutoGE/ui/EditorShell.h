@@ -22,6 +22,11 @@ namespace PlutoGE::assets
     class Project;
 }
 
+namespace PlutoGE::scene
+{
+    class IblCaptureComponent;
+}
+
 namespace PlutoGE::ui
 {
     class EditorShell
@@ -128,6 +133,7 @@ namespace PlutoGE::ui
         [[nodiscard]] EditorViewportCamera &GetEditorCamera() { return m_editorCamera; }
         [[nodiscard]] assets::Project *GetProject() { return m_project.get(); }
         [[nodiscard]] const assets::Project *GetProject() const { return m_project.get(); }
+        void RequestIblCapture(scene::IblCaptureComponent *captureComponent);
         [[nodiscard]] bool IsRuntimeExportProject() const;
         bool CreateScriptAsset(std::string_view requestedName,
                                std::string *createdClassName = nullptr,
@@ -171,6 +177,7 @@ namespace PlutoGE::ui
         std::unique_ptr<scene::Scene> m_scene;
         std::unique_ptr<scene::SceneBakeTask> m_activeBakeTask;
         scene::SceneBakeSettings m_customBakeSettings = scene::SceneBakeSettings::BalancedPreview();
+        std::vector<scene::EntityID> m_pendingIblCaptureEntities;
         std::string m_statusMessage;
     };
 }

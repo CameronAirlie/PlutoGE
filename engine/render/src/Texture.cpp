@@ -42,6 +42,19 @@ namespace PlutoGE::render
         return texture;
     }
 
+    Texture *Texture::ColorCubemap(int width, int height)
+    {
+        auto &engine = PlutoGE::core::Engine::GetInstance();
+        Texture *texture = engine.GetTextureManager().CreateColorCubemap(width, height);
+        if (texture == nullptr)
+        {
+            delete texture;
+            return nullptr;
+        }
+
+        return texture;
+    }
+
     Texture *Texture::ColorVolume(int width, int height, int depth)
     {
         if (width <= 0 || height <= 0 || depth <= 0)

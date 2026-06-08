@@ -95,11 +95,16 @@ namespace PlutoGE::render
                 continue;
             }
 
+            const bool gpuTimingActive = ctx.renderer && ctx.renderer->BeginPostProcessEffectTiming(effect->GetTypeName());
             effect->Apply(PostProcessContext{
                 .renderContext = ctx,
                 .sourceRenderTarget = source,
                 .destinationRenderTarget = destination,
             });
+            if (gpuTimingActive)
+            {
+                ctx.renderer->EndPostProcessEffectTiming();
+            }
 
             if (!isLastEffect)
             {

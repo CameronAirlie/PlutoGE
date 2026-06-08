@@ -11,6 +11,7 @@
 
 #include <memory>
 #include <string>
+#include <string_view>
 #include <cstdint>
 #include <unordered_map>
 #include <vector>
@@ -145,6 +146,7 @@ namespace PlutoGE::render
         PostProcessDebugView GetPostProcessDebugView() const { return m_postProcessDebugView; }
         [[nodiscard]] const std::vector<CpuPassTiming> &GetCpuPassTimings() const { return m_cpuPassTimings; }
         [[nodiscard]] const std::vector<GpuPassTiming> &GetGpuPassTimings() const { return m_gpuPassTimings; }
+        [[nodiscard]] const std::vector<GpuPassTiming> &GetPostProcessGpuTimings() const { return m_postProcessGpuTimings; }
         [[nodiscard]] const LightingGpuTiming &GetLightingGpuTiming() const { return m_lightingGpuTiming; }
         [[nodiscard]] const RendererCpuFrameStats &GetCpuFrameStats() const { return m_cpuFrameStats; }
         [[nodiscard]] float GetTotalGpuPassTimeMs() const;
@@ -154,6 +156,8 @@ namespace PlutoGE::render
 
         void BeginLightingStageTiming(std::size_t stageIndex);
         void EndLightingStageTiming(std::size_t stageIndex);
+        bool BeginPostProcessEffectTiming(std::string_view effectName);
+        void EndPostProcessEffectTiming();
         void SetLightingPassCounters(int lightCount, int shadowedLightCount);
         void RecordGBufferResize(float resizeMs);
 
@@ -198,6 +202,13 @@ namespace PlutoGE::render
         void InitializeGpuTimers();
         void ShutdownGpuTimers();
         void ExecutePassWithGpuTiming(IRenderPass &renderPass, const RenderContext &ctx, std::size_t timingIndex);
+        void ResolveAllGpuTimings();
+        void ResolveAllGpuTimings(std::size_t timingIndex);
+        void ResolveAllLightingGpuTimings();
+        void ResolveAllLightingGpuTimings(std::size_t stageIndex);
+        void ResolveAllPostProcessGpuTimings();
+        void ResolveAllPostProcessGpuTimings(std::size_t timingIndex);
+        std::size_t EnsurePostProcessGpuTiming(std::string_view effectName);
         void ResolveGpuTiming(std::size_t timingIndex, std::size_t queryIndex);
         void ResolveGpuTiming(GpuTimerQueryState &queryState, float &gpuTimeMs, bool &hasResult, std::size_t queryIndex);
         IRenderPass *m_shadowPass = nullptr;
@@ -209,8 +220,13 @@ namespace PlutoGE::render
         std::vector<GpuPassTiming> m_gpuPassTimings;
         std::vector<GpuTimerQueryState> m_gpuTimerQueries;
         std::array<GpuTimerQueryState, 3> m_lightingGpuTimerQueries;
+        std::vector<GpuPassTiming> m_postProcessGpuTimings;
+        std::vector<GpuTimerQueryState> m_postProcessGpuTimerQueries;
+        std::unordered_map<std::string, std::size_t> m_postProcessGpuTimingIndices;
         LightingGpuTiming m_lightingGpuTiming;
         RendererCpuFrameStats m_cpuFrameStats;
+        std::size_t m_activePostProcessGpuTimingIndex = 0;
+        bool m_postProcessGpuTimingActive = false;
         int m_profiledRenderCount = 0;
         std::uint64_t m_frameSequence = 0;
         bool m_renderCommandsDirty = false;

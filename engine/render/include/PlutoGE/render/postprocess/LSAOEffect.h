@@ -17,8 +17,8 @@ namespace PlutoGE::render
                            .temporalBlend = 0.94f,
                            .historyDepthThreshold = 0.035f,
                            .historyNormalThreshold = 0.8f,
-                           .sampleCount = 24,
-                           .blurRadius = 3,
+                           .sampleCount = 16,
+                           .blurRadius = 2,
                            .halfResolution = true,
                        })
         {

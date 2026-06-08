@@ -37,8 +37,7 @@ namespace PlutoGE::render
     private:
         void InitializeExposureResources();
         void ReleaseExposureResources();
-        int GetSceneTextureMipLevel(const PostProcessContext &context) const;
-        void UpdateExposureTexture(const PostProcessContext &context, int sceneTextureMipLevel);
+        void UpdateExposureTexture(const PostProcessContext &context);
 
         Shader *m_applyShader = nullptr;
         Shader *m_adaptationShader = nullptr;

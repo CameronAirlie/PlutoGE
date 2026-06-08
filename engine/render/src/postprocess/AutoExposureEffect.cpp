@@ -4,7 +4,6 @@
 #include "PlutoGE/render/Shader.h"
 
 #include <algorithm>
-#include <cmath>
 
 namespace PlutoGE::render
 {
@@ -136,7 +135,6 @@ namespace PlutoGE::render
             uniform float uMaxExposure;
             uniform float uAdaptUp;
             uniform float uAdaptDown;
-
             float ComputeLuminance(vec3 color)
             {
                 return max(dot(color, vec3(0.2126, 0.7152, 0.0722)), 0.0001);
@@ -144,9 +142,20 @@ namespace PlutoGE::render
 
             void main()
             {
-                // Average color from mip 0 (full image average)
-                vec3 averageColor = textureLod(uSceneTexture, vec2(0.5), 0.0).rgb;
-                float averageLuminance = ComputeLuminance(averageColor);
+                const int sampleCountX = 16;
+                const int sampleCountY = 16;
+                float accumulatedLuminance = 0.0;
+
+                for (int y = 0; y < sampleCountY; ++y)
+                {
+                    for (int x = 0; x < sampleCountX; ++x)
+                    {
+                        vec2 sampleUv = (vec2(x, y) + vec2(0.5)) / vec2(sampleCountX, sampleCountY);
+                        accumulatedLuminance += ComputeLuminance(texture(uSceneTexture, sampleUv).rgb);
+                    }
+                }
+
+                float averageLuminance = accumulatedLuminance / float(sampleCountX * sampleCountY);
                 float previousExposure = texture(uPreviousExposureTexture, vec2(0.5)).r;
                 float targetExposure = clamp(uKeyValue / averageLuminance, min(uMinExposure, uMaxExposure), max(uMinExposure, uMaxExposure));
                 float adaptationRate = targetExposure > previousExposure ? uAdaptUp : uAdaptDown;
@@ -209,31 +218,12 @@ namespace PlutoGE::render
         m_exposureResourcesInitialized = false;
     }
 
-    int AutoExposureEffect::GetSceneTextureMipLevel(const PostProcessContext &context) const
-    {
-        if (!context.sourceRenderTarget)
-        {
-            return 0;
-        }
-
-        const int maxDimension = std::max(context.sourceRenderTarget->GetWidth(), context.sourceRenderTarget->GetHeight());
-        if (maxDimension <= 0)
-        {
-            return 0;
-        }
-
-        return static_cast<int>(std::floor(std::log2(static_cast<float>(maxDimension))));
-    }
-
-    void AutoExposureEffect::UpdateExposureTexture(const PostProcessContext &context, int sceneTextureMipLevel)
+    void AutoExposureEffect::UpdateExposureTexture(const PostProcessContext &context)
     {
         if (!m_adaptationShader || !context.sourceRenderTarget || !m_exposureResourcesInitialized)
         {
             return;
         }
-
-        glBindTexture(GL_TEXTURE_2D, context.sourceRenderTarget->GetColorTextureID());
-        glGenerateMipmap(GL_TEXTURE_2D);
 
         glDisable(GL_DEPTH_TEST);
         glDisable(GL_CULL_FACE);
@@ -249,7 +239,6 @@ namespace PlutoGE::render
         glActiveTexture(GL_TEXTURE0 + kPreviousExposureTextureSlot);
         glBindTexture(GL_TEXTURE_2D, m_exposureTextures[m_readExposureTextureIndex]);
         m_adaptationShader->SetUniform("uPreviousExposureTexture", kPreviousExposureTextureSlot);
-        // No longer needed: m_adaptationShader->SetUniform("uSceneMipLevel", static_cast<float>(sceneTextureMipLevel));
         m_adaptationShader->SetUniform("uKeyValue", std::max(m_keyValue, 0.001f));
         m_adaptationShader->SetUniform("uMinExposure", std::max(m_minExposure, 0.001f));
         m_adaptationShader->SetUniform("uMaxExposure", std::max(m_maxExposure, m_minExposure));
@@ -268,8 +257,7 @@ namespace PlutoGE::render
         }
 
         InitializeExposureResources();
-        const int sceneTextureMipLevel = GetSceneTextureMipLevel(context);
-        UpdateExposureTexture(context, sceneTextureMipLevel);
+        UpdateExposureTexture(context);
 
         BeginApply(context);
 

@@ -213,17 +213,21 @@ namespace PlutoGE::render
             {
                 vec2 bestMotion = texture(uSceneMotionTexture, baseUv).xy;
                 closestDepth = texture(uSceneDepthTexture, baseUv).r;
-                for (int y = -1; y <= 1; ++y)
+                const vec2 offsets[4] = vec2[](
+                    vec2(-1.0, 0.0),
+                    vec2(1.0, 0.0),
+                    vec2(0.0, -1.0),
+                    vec2(0.0, 1.0)
+                );
+
+                for (int sampleIndex = 0; sampleIndex < 4; ++sampleIndex)
                 {
-                    for (int x = -1; x <= 1; ++x)
+                    vec2 sampleUv = clamp(baseUv + offsets[sampleIndex] * texelSize, vec2(0.0), vec2(1.0));
+                    float depth = texture(uSceneDepthTexture, sampleUv).r;
+                    if (depth < closestDepth)
                     {
-                        vec2 sampleUv = clamp(baseUv + vec2(x, y) * texelSize, vec2(0.0), vec2(1.0));
-                        float depth = texture(uSceneDepthTexture, sampleUv).r;
-                        if (depth < closestDepth)
-                        {
-                            closestDepth = depth;
-                            bestMotion = texture(uSceneMotionTexture, sampleUv).xy;
-                        }
+                        closestDepth = depth;
+                        bestMotion = texture(uSceneMotionTexture, sampleUv).xy;
                     }
                 }
                 return bestMotion;

@@ -2,20 +2,16 @@
 
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/Shader.h"
-#include "PlutoGE/render/Texture.h"
-#include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 
 #include <algorithm>
-#include <cmath>
 
 namespace PlutoGE::render
 {
     namespace
     {
         constexpr int kDirectionalShadowCascadeTextureStartSlot = 5;
-        constexpr int kEnvironmentTextureSlot = kDirectionalShadowCascadeTextureStartSlot + scene::kMaxDirectionalShadowCascades;
-        constexpr int kMinStepCount = 4;
+        constexpr int kMinStepCount = 8;
         constexpr int kMaxStepCount = 64;
 
         const scene::Light *FindPrimaryDirectionalLight(const RenderContext &renderContext)
@@ -101,32 +97,6 @@ namespace PlutoGE::render
                 const glm::vec3 shadowWorldOrigin = directionalLight ? directionalLight->shadowCascadeWorldOrigins[cascadeIndex] : glm::vec3(0.0f);
                 shader->SetUniform("uCascadeWorldOrigins[" + std::to_string(cascadeIndex) + "]", shadowWorldOrigin);
             }
-        }
-
-        void BindEnvironmentInput(Shader *shader, const scene::Scene *scene)
-        {
-            if (!shader)
-            {
-                return;
-            }
-
-            const auto *environmentTexture = scene ? scene->GetEnvironmentMapTexture() : nullptr;
-            glActiveTexture(GL_TEXTURE0 + kEnvironmentTextureSlot);
-            glBindTexture(GL_TEXTURE_2D, environmentTexture ? environmentTexture->GetTextureID() : 0);
-            shader->SetUniform("uEnvironmentMap", kEnvironmentTextureSlot);
-            shader->SetUniform("uEnvironmentEnabled", environmentTexture ? 1 : 0);
-            shader->SetUniform("uEnvironmentIntensity", scene ? scene->GetEnvironmentIntensity() : 1.0f);
-
-            float environmentMaxMipLevel = 0.0f;
-            if (environmentTexture)
-            {
-                const int environmentDimension = std::max(environmentTexture->GetWidth(), environmentTexture->GetHeight());
-                if (environmentDimension > 0)
-                {
-                    environmentMaxMipLevel = static_cast<float>(std::max(0, static_cast<int>(std::floor(std::log2(static_cast<float>(environmentDimension))))));
-                }
-            }
-            shader->SetUniform("uEnvironmentMaxMipLevel", environmentMaxMipLevel);
         }
     }
 
@@ -294,7 +264,6 @@ namespace PlutoGE::render
             uniform sampler2D uShadowCascadeMap1;
             uniform sampler2D uShadowCascadeMap2;
             uniform sampler2D uShadowCascadeMap3;
-            uniform sampler2D uEnvironmentMap;
             uniform mat4 uViewMatrix;
             uniform mat4 uInverseViewMatrix;
             uniform mat4 uInverseProjectionMatrix;
@@ -312,29 +281,18 @@ namespace PlutoGE::render
             uniform float uAmbientContribution;
             uniform float uDirectionalContribution;
             uniform float uMaxOpacity;
-            uniform float uFrameIndex;
-            uniform float uEnvironmentIntensity;
-            uniform float uEnvironmentMaxMipLevel;
             uniform float uShadowSoftness;
             uniform float uCascadeBlendDistance;
             uniform int uStepCount;
             uniform int uCascadeCount;
-            uniform int uEnvironmentEnabled;
             uniform int uHasDirectionalLight;
             uniform vec3 uCascadeWorldOrigins[4];
             uniform mat4 uCascadeLightSpaceMatrices[4];
             uniform float uCascadeSplits[4];
 
-            const float PI = 3.14159265359;
-
             float Saturate(float value)
             {
                 return clamp(value, 0.0, 1.0);
-            }
-
-            float InterleavedGradientNoise(vec2 pixel, float frameIndex)
-            {
-                return fract(52.9829189 * fract(dot(pixel + frameIndex, vec2(0.06711056, 0.00583715))));
             }
 
             vec3 GetWorldRayDirection(vec2 uv)
@@ -365,71 +323,52 @@ namespace PlutoGE::render
                 return phase * 12.566370614359172 + forwardScatter * 0.75;
             }
 
-            vec2 DirectionToLatLongUv(vec3 direction)
+            vec3 ComputeFogAmbientColor()
             {
-                vec3 dir = normalize(direction);
-                float longitude = atan(dir.z, dir.x);
-                float latitude = asin(clamp(dir.y, -1.0, 1.0));
-                return vec2(longitude / (2.0 * PI) + 0.5, latitude / PI + 0.5);
-            }
-
-            vec3 SampleEnvironment(vec3 direction, float lod)
-            {
-                if (uEnvironmentEnabled == 0)
-                {
-                    return vec3(0.0);
-                }
-
-                vec2 uv = DirectionToLatLongUv(direction);
-                return max(textureLod(uEnvironmentMap, uv, clamp(lod, 0.0, uEnvironmentMaxMipLevel)).rgb, vec3(0.0)) * uEnvironmentIntensity;
-            }
-
-            vec3 ComputeFogAmbientColor(vec3 direction)
-            {
-                if (uEnvironmentEnabled != 0)
-                {
-                    float lod = min(max(uEnvironmentMaxMipLevel * 0.35, 1.0), uEnvironmentMaxMipLevel);
-                    return SampleEnvironment(direction, lod);
-                }
-
                 return uFogColor;
             }
 
             float SampleShadowMapPCF(sampler2D shadowMap, vec3 projectedCoords)
             {
+                float receiverDepth = projectedCoords.z - 0.00045;
                 if (uShadowSoftness <= 0.001)
                 {
                     float closestDepth = texture(shadowMap, projectedCoords.xy).r;
-                    return projectedCoords.z > closestDepth ? 1.0 : 0.0;
+                    return receiverDepth > closestDepth ? 1.0 : 0.0;
                 }
 
                 vec2 texelSize = 1.0 / vec2(textureSize(shadowMap, 0));
                 float blockerDepth = texture(shadowMap, projectedCoords.xy).r;
-                float blockerSeparation = max(projectedCoords.z - blockerDepth, 0.0);
-                float baseRadius = max(uShadowSoftness * 0.35, 0.35);
-                float maxRadius = max(uShadowSoftness * 2.5, baseRadius);
+                float blockerSeparation = max(receiverDepth - blockerDepth, 0.0);
+                float volumetricSoftness = max(uShadowSoftness * 4.0, 3.0);
+                float baseRadius = max(volumetricSoftness * 0.9, 2.0);
+                float maxRadius = max(volumetricSoftness * 5.0, baseRadius);
                 float filterRadius = mix(baseRadius, maxRadius, clamp(blockerSeparation * 160.0, 0.0, 1.0));
-                vec2 offsets[5] = vec2[](
+                vec2 offsets[9] = vec2[](
                     vec2(0.0, 0.0),
-                    vec2(1.0, 0.0),
-                    vec2(-1.0, 0.0),
-                    vec2(0.0, 1.0),
-                    vec2(0.0, -1.0)
+                    vec2(0.72, 0.28),
+                    vec2(-0.64, 0.42),
+                    vec2(0.34, -0.78),
+                    vec2(-0.26, -0.68),
+                    vec2(1.18, -0.18),
+                    vec2(-1.08, -0.22),
+                    vec2(0.18, 1.12),
+                    vec2(-0.38, -1.18)
                 );
-                float weights[5] = float[](2.0, 1.0, 1.0, 1.0, 1.0);
+                float weights[9] = float[](1.7, 1.0, 1.0, 1.0, 1.0, 0.75, 0.75, 0.75, 0.75);
                 float shadow = 0.0;
                 float totalWeight = 0.0;
-                for (int sampleIndex = 0; sampleIndex < 5; ++sampleIndex)
+
+                for (int sampleIndex = 0; sampleIndex < 9; ++sampleIndex)
                 {
-                    vec2 offset = offsets[sampleIndex] * texelSize * filterRadius;
-                    vec2 sampleCoords = projectedCoords.xy + offset;
+                    vec2 sampleCoords = projectedCoords.xy + offsets[sampleIndex] * texelSize * filterRadius;
                     float closestDepth = texture(shadowMap, sampleCoords).r;
                     float weight = weights[sampleIndex];
-                    shadow += projectedCoords.z > closestDepth ? weight : 0.0;
+                    shadow += receiverDepth > closestDepth ? weight : 0.0;
                     totalWeight += weight;
                 }
 
-                return shadow / max(totalWeight, 0.0001);
+                return smoothstep(0.12, 0.88, shadow / max(totalWeight, 0.0001));
             }
 
             float SampleDirectionalCascadeShadow(int cascadeIndex, vec3 projectedCoords)
@@ -470,7 +409,6 @@ namespace PlutoGE::render
                 vec4 lightSpacePosition = uCascadeLightSpaceMatrices[cascadeIndex] * vec4(worldPosition - uCascadeWorldOrigins[cascadeIndex], 1.0);
                 vec3 projectedCoords = lightSpacePosition.xyz / max(lightSpacePosition.w, 0.0001);
                 projectedCoords = projectedCoords * 0.5 + 0.5;
-                projectedCoords.z = max(projectedCoords.z - 0.00035, 0.0);
 
                 if (projectedCoords.z < 0.0 || projectedCoords.z > 1.0 || projectedCoords.x < 0.0 || projectedCoords.x > 1.0 || projectedCoords.y < 0.0 || projectedCoords.y > 1.0)
                 {
@@ -511,6 +449,17 @@ namespace PlutoGE::render
                 return shadow;
             }
 
+            float ComputeSegmentLightVisibility(vec3 rayDirection, float segmentStart, float segmentLength)
+            {
+                if (uHasDirectionalLight == 0)
+                {
+                    return 1.0;
+                }
+
+                vec3 position = uCameraPosition + rayDirection * (segmentStart + segmentLength * 0.5);
+                return 1.0 - ComputeDirectionalLightShadow(position);
+            }
+
             void main()
             {
                 vec3 sceneColor = texture(uSceneTexture, UV).rgb;
@@ -518,7 +467,7 @@ namespace PlutoGE::render
                 vec3 rayDirection = GetWorldRayDirection(UV);
                 vec3 surfacePosition = texture(uScenePositionTexture, UV).rgb;
                 vec3 fogTint = max(uFogColor, vec3(0.0));
-                vec3 ambientFogColor = ComputeFogAmbientColor(rayDirection) * fogTint;
+                vec3 ambientFogColor = ComputeFogAmbientColor();
 
                 float hitDistance = uMaxDistance;
                 if (sceneDepth < 0.9999)
@@ -533,16 +482,14 @@ namespace PlutoGE::render
                 }
 
                 float stepLength = hitDistance / float(uStepCount);
-                float jitter = InterleavedGradientNoise(gl_FragCoord.xy, uFrameIndex);
-                float currentDistance = stepLength * jitter;
+                float currentDistance = 0.0;
                 vec3 accumulatedLight = vec3(0.0);
                 float transmittance = 1.0;
-                vec3 viewDirection = -rayDirection;
                 float directionalInscattering = uHasDirectionalLight != 0
-                    ? ComputeDirectionalInscattering(dot(viewDirection, normalize(uLightDirection)))
+                    ? ComputeDirectionalInscattering(dot(rayDirection, normalize(uLightDirection)))
                     : 0.0;
-                int shadowSampleStride = max(1, uStepCount / 4);
-                float lightVisibility = 1.0;
+                int shadowSampleStride = max(2, uStepCount / 3);
+                float cachedLightVisibility = 1.0;
 
                 for (int stepIndex = 0; stepIndex < uStepCount; ++stepIndex)
                 {
@@ -559,13 +506,12 @@ namespace PlutoGE::render
                     float segmentFog = 1.0 - segmentTransmittance;
                     if (uHasDirectionalLight != 0 && (stepIndex == 0 || (stepIndex % shadowSampleStride) == 0))
                     {
-                        lightVisibility = 1.0 - ComputeDirectionalLightShadow(samplePosition);
+                        cachedLightVisibility = ComputeSegmentLightVisibility(rayDirection, currentDistance, segmentLength);
                     }
-                    float localDensityBoost = 1.0 + density * 24.0;
                     float multipleScattering = 1.0 - exp(-density * segmentLength * 6.0);
-                    vec3 ambientScatter = ambientFogColor * uAmbientContribution * (0.25 + 0.75 * multipleScattering);
+                    vec3 ambientScatter = ambientFogColor * uAmbientContribution * (0.55 + 0.45 * multipleScattering);
                     vec3 directionalScatter = uHasDirectionalLight != 0
-                        ? (uLightColor * uLightIntensity * directionalInscattering * uScattering * uDirectionalContribution * lightVisibility * localDensityBoost)
+                        ? (uLightColor * uLightIntensity * directionalInscattering * uScattering * uDirectionalContribution * cachedLightVisibility)
                         : vec3(0.0);
                     vec3 fogLighting = ambientScatter + (fogTint * directionalScatter);
 
@@ -628,7 +574,6 @@ namespace PlutoGE::render
         m_shader->Bind();
         BindCommonInputs(m_shader, context);
         BindDirectionalShadowInputs(m_shader, primaryDirectionalLight);
-        BindEnvironmentInput(m_shader, context.renderContext.scene);
         m_shader->SetUniform("uViewMatrix", context.renderContext.cameraData.view);
         m_shader->SetUniform("uInverseViewMatrix", inverseView);
         m_shader->SetUniform("uInverseProjectionMatrix", inverseProjection);
@@ -646,7 +591,6 @@ namespace PlutoGE::render
         m_shader->SetUniform("uAmbientContribution", m_ambientContribution);
         m_shader->SetUniform("uDirectionalContribution", m_directionalContribution);
         m_shader->SetUniform("uMaxOpacity", m_maxOpacity);
-        m_shader->SetUniform("uFrameIndex", static_cast<float>(context.renderContext.frameSequence & 1023u));
         m_shader->SetUniform("uStepCount", std::clamp(m_stepCount, kMinStepCount, kMaxStepCount));
         m_shader->SetUniform("uHasDirectionalLight", hasDirectionalLight);
         DrawFullscreenTriangle();

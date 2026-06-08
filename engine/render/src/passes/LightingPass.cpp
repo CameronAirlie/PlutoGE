@@ -288,24 +288,19 @@ namespace PlutoGE::render
                     float baseRadius = max(softness * 0.35, 0.35);
                     float maxRadius = max(softness * 2.5, baseRadius);
                     float filterRadius = mix(baseRadius, maxRadius, clamp(blockerSeparation * 160.0, 0.0, 1.0));
-                    float sigma = max(filterRadius * 0.45, 0.75);
+                    float sampleScale = filterRadius * 0.5;
                     float shadow = 0.0;
-                    float totalWeight = 0.0;
-                    for (int y = -3; y <= 3; ++y)
-                    {
-                        for (int x = -3; x <= 3; ++x)
-                        {
-                            vec2 kernelOffset = vec2(float(x), float(y));
-                            vec2 offset = kernelOffset * texelSize * (filterRadius / 3.0);
-                            vec2 sampleCoords = projectedCoords.xy + offset;
-                            float closestDepth = texture(shadowMap, sampleCoords).r;
-                            float weight = exp(-dot(kernelOffset, kernelOffset) / (2.0 * sigma * sigma));
-                            shadow += receiverDepth > closestDepth ? weight : 0.0;
-                            totalWeight += weight;
-                        }
-                    }
+                    shadow += receiverDepth > texture(shadowMap, projectedCoords.xy).r ? 4.0 : 0.0;
+                    shadow += receiverDepth > texture(shadowMap, projectedCoords.xy + vec2(-1.0, 0.0) * texelSize * sampleScale).r ? 2.0 : 0.0;
+                    shadow += receiverDepth > texture(shadowMap, projectedCoords.xy + vec2(1.0, 0.0) * texelSize * sampleScale).r ? 2.0 : 0.0;
+                    shadow += receiverDepth > texture(shadowMap, projectedCoords.xy + vec2(0.0, -1.0) * texelSize * sampleScale).r ? 2.0 : 0.0;
+                    shadow += receiverDepth > texture(shadowMap, projectedCoords.xy + vec2(0.0, 1.0) * texelSize * sampleScale).r ? 2.0 : 0.0;
+                    shadow += receiverDepth > texture(shadowMap, projectedCoords.xy + vec2(-1.0, -1.0) * texelSize * sampleScale).r ? 1.0 : 0.0;
+                    shadow += receiverDepth > texture(shadowMap, projectedCoords.xy + vec2(1.0, -1.0) * texelSize * sampleScale).r ? 1.0 : 0.0;
+                    shadow += receiverDepth > texture(shadowMap, projectedCoords.xy + vec2(-1.0, 1.0) * texelSize * sampleScale).r ? 1.0 : 0.0;
+                    shadow += receiverDepth > texture(shadowMap, projectedCoords.xy + vec2(1.0, 1.0) * texelSize * sampleScale).r ? 1.0 : 0.0;
 
-                    return shadow / max(totalWeight, 0.0001);
+                    return shadow * 0.0625;
                 }
 
                 float SampleDirectionalCascadeShadow(int cascadeIndex, vec3 projectedCoords, float depthBias, float softness)
@@ -1092,16 +1087,26 @@ namespace PlutoGE::render
             }
         }
 
+        if (ctx.renderer)
+        {
+            ctx.renderer->EndLightingStageTiming(kLightingAccumulationStage);
+        }
+
         if (m_indirectCompositeShader && renderSsgi)
         {
             if (auto *ssgiEffect = FindEnabledSsgiEffect(ctx))
             {
+                const bool gpuTimingActive = ctx.renderer && ctx.renderer->BeginPostProcessEffectTiming(ssgiEffect->GetTypeName());
                 RenderTarget *resolvedIndirectTarget = ssgiEffect->GenerateResolvedIndirectLighting(PostProcessContext{
                                                                                                         .renderContext = ctx,
                                                                                                         .sourceRenderTarget = ctx.temporaryRenderTarget,
                                                                                                         .destinationRenderTarget = nullptr,
                                                                                                     },
                                                                                                     ctx.temporaryRenderTarget->GetWidth(), ctx.temporaryRenderTarget->GetHeight());
+                if (gpuTimingActive)
+                {
+                    ctx.renderer->EndPostProcessEffectTiming();
+                }
                 compositeIndirectTarget(resolvedIndirectTarget, compositeSsgiOnly || ssgiEffect->OutputsIndirectOnly());
             }
         }
@@ -1110,21 +1115,24 @@ namespace PlutoGE::render
         {
             if (auto *rsmEffect = FindEnabledRsmEffect(ctx))
             {
+                const int rsmResolveWidth = std::max(1, ctx.temporaryRenderTarget->GetWidth() / 2);
+                const int rsmResolveHeight = std::max(1, ctx.temporaryRenderTarget->GetHeight() / 2);
+                const bool gpuTimingActive = ctx.renderer && ctx.renderer->BeginPostProcessEffectTiming(rsmEffect->GetTypeName());
                 RenderTarget *resolvedIndirectTarget = rsmEffect->GenerateResolvedIndirectLighting(PostProcessContext{
                                                                                                        .renderContext = ctx,
                                                                                                        .sourceRenderTarget = ctx.temporaryRenderTarget,
                                                                                                        .destinationRenderTarget = nullptr,
                                                                                                    },
-                                                                                                   ctx.temporaryRenderTarget->GetWidth(), ctx.temporaryRenderTarget->GetHeight());
+                                                                                                   rsmResolveWidth, rsmResolveHeight);
+                if (gpuTimingActive)
+                {
+                    ctx.renderer->EndPostProcessEffectTiming();
+                }
                 compositeIndirectTarget(resolvedIndirectTarget, compositeRsmOnly);
             }
         }
 
         glDisable(GL_BLEND);
-        if (ctx.renderer)
-        {
-            ctx.renderer->EndLightingStageTiming(kLightingAccumulationStage);
-        }
         Graphics::UnbindRenderTarget();
     }
 }

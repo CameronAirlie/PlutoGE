@@ -107,6 +107,7 @@ namespace PlutoGE::ui
                                                    const std::vector<render::CpuPassTiming> &cpuPassTimings,
                                                    const render::RendererCpuFrameStats &cpuFrameStats,
                                                    const std::vector<render::GpuPassTiming> &gpuPassTimings,
+                                                   const std::vector<render::GpuPassTiming> &postProcessGpuTimings,
                                                    float totalCpuPassTimeMs,
                                                    float totalGpuPassTimeMs,
                                                    const render::LightingGpuTiming &lightingGpuTiming) const
@@ -154,6 +155,22 @@ namespace PlutoGE::ui
             else
             {
                 report << "pending\n";
+            }
+        }
+        if (!postProcessGpuTimings.empty())
+        {
+            report << "Post process breakdown\n";
+            for (const auto &postProcessGpuTiming : postProcessGpuTimings)
+            {
+                report << postProcessGpuTiming.name << ": ";
+                if (postProcessGpuTiming.hasResult)
+                {
+                    report << postProcessGpuTiming.gpuTimeMs << " ms\n";
+                }
+                else
+                {
+                    report << "pending\n";
+                }
             }
         }
         float lightingTotalMs = 0.0f;

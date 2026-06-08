@@ -28,7 +28,7 @@ namespace PlutoGE::render
 
     private:
         Shader *m_shader = nullptr;
-        MotionBlurQuality m_quality = MotionBlurQuality::High;
+        MotionBlurQuality m_quality = MotionBlurQuality::Balanced;
         float m_strength = 1.0f;
         float m_shutterFraction = 0.5f;
         float m_maxBlurRadius = 20.0f;

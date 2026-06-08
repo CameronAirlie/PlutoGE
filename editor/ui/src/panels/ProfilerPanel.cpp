@@ -23,6 +23,7 @@ namespace PlutoGE::ui
         const auto &cpuPassTimings = m_renderer->GetCpuPassTimings();
         const auto &cpuFrameStats = m_renderer->GetCpuFrameStats();
         const auto &gpuPassTimings = m_renderer->GetGpuPassTimings();
+        const auto &postProcessGpuTimings = m_renderer->GetPostProcessGpuTimings();
         const auto &lightingGpuTiming = m_renderer->GetLightingGpuTiming();
         const auto &frameTimingStats = m_profiler->GetLatestFrameTimingStats();
         float lightingTotalMs = 0.0f;
@@ -111,6 +112,23 @@ namespace PlutoGE::ui
 
         if (!gpuPassTimings.empty())
         {
+            if (!postProcessGpuTimings.empty())
+            {
+                ImGui::Separator();
+                ImGui::TextUnformatted("Post process breakdown");
+                for (const auto &postProcessGpuTiming : postProcessGpuTimings)
+                {
+                    if (postProcessGpuTiming.hasResult)
+                    {
+                        ImGui::Text("%s: %.2f ms", postProcessGpuTiming.name.c_str(), postProcessGpuTiming.gpuTimeMs);
+                    }
+                    else
+                    {
+                        ImGui::Text("%s: pending", postProcessGpuTiming.name.c_str());
+                    }
+                }
+            }
+
             ImGui::Separator();
             ImGui::TextUnformatted("Lighting breakdown");
             if (lightingTotalMs > 0.0f)
@@ -170,6 +188,7 @@ namespace PlutoGE::ui
                 cpuPassTimings,
                 cpuFrameStats,
                 gpuPassTimings,
+                postProcessGpuTimings,
                 m_renderer->GetTotalCpuPassTimeMs(),
                 m_renderer->GetTotalGpuPassTimeMs(),
                 lightingGpuTiming);

@@ -9,10 +9,22 @@
 
 namespace PlutoGE::assets
 {
+    enum class ProjectAssetType
+    {
+        Unknown,
+        Scene,
+        Script,
+        Mesh,
+        Material,
+        Texture,
+        Assembly,
+    };
+
     struct ProjectAssetEntry
     {
         std::string reference;
         std::uintmax_t size = 0;
+        ProjectAssetType type = ProjectAssetType::Unknown;
     };
 
     struct ProjectEditorCameraSettings
@@ -62,7 +74,12 @@ namespace PlutoGE::assets
         static constexpr std::string_view kProjectAssetScheme = "project://";
         static constexpr std::string_view kEngineAssetScheme = "engine://";
         static constexpr std::string_view kBuiltinCubeMeshReference = "engine://builtin/mesh/cube";
+        static constexpr std::string_view kBuiltinSphereMeshReference = "engine://builtin/mesh/sphere";
+        static constexpr std::string_view kBuiltinPlaneMeshReference = "engine://builtin/mesh/plane";
+        static constexpr std::string_view kBuiltinCylinderMeshReference = "engine://builtin/mesh/cylinder";
+        static constexpr std::string_view kBuiltinQuadMeshReference = "engine://builtin/mesh/quad";
         static constexpr std::string_view kBuiltinDefaultMaterialReference = "engine://builtin/material/default";
+        static constexpr std::string_view kBuiltinDefaultShadedMaterialReference = "engine://builtin/material/default-shaded";
 
         Project(std::filesystem::path manifestPath, ProjectManifest manifest);
 
@@ -74,6 +91,9 @@ namespace PlutoGE::assets
 
         static bool IsProjectAssetReference(std::string_view reference);
         static bool IsEngineAssetReference(std::string_view reference);
+        static ProjectAssetType GetAssetTypeForReference(std::string_view reference);
+        static std::string_view GetAssetTypeName(ProjectAssetType type);
+        static ProjectAssetType ParseAssetTypeName(std::string_view typeName);
         static std::vector<std::string> GetBuiltinAssetReferences();
 
         bool Save(std::string *errorMessage = nullptr) const;

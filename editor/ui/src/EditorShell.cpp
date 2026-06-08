@@ -1,5 +1,8 @@
 #include "PlutoGE/ui/EditorShell.h"
 #include "PlutoGE/ui/panels/ProfilerPanel.h"
+#include "PlutoGE/ui/panels/ConsolePanel.h"
+#include "PlutoGE/ui/panels/ContentBrowserPanel.h"
+#include "PlutoGE/ui/panels/MaterialEditorPanel.h"
 #include "PlutoGE/ui/panels/ViewportPanel.h"
 #include "PlutoGE/ui/panels/SceneHierarchyPanel.h"
 #include "PlutoGE/ui/panels/InspectorPanel.h"
@@ -1095,6 +1098,181 @@ namespace PlutoGE::ui
         return true;
     }
 
+    void EditorShell::Log(ConsoleSeverity severity, std::string message)
+    {
+        if (message.empty())
+        {
+            return;
+        }
+
+        m_consoleMessages.push_back(ConsoleMessage{.severity = severity, .text = std::move(message)});
+        constexpr std::size_t kMaxConsoleMessages = 1000;
+        if (m_consoleMessages.size() > kMaxConsoleMessages)
+        {
+            m_consoleMessages.erase(m_consoleMessages.begin(), m_consoleMessages.begin() + static_cast<std::ptrdiff_t>(m_consoleMessages.size() - kMaxConsoleMessages));
+        }
+    }
+
+    void EditorShell::MarkSceneDirty()
+    {
+        if (!m_sceneDirty)
+        {
+            m_sceneDirty = true;
+            UpdateWindowTitle();
+        }
+    }
+
+    void EditorShell::MarkProjectDirty()
+    {
+        if (!m_projectDirty)
+        {
+            m_projectDirty = true;
+            UpdateWindowTitle();
+        }
+    }
+
+    void EditorShell::MarkSceneClean()
+    {
+        if (m_sceneDirty)
+        {
+            m_sceneDirty = false;
+            UpdateWindowTitle();
+        }
+    }
+
+    void EditorShell::MarkProjectClean()
+    {
+        if (m_projectDirty)
+        {
+            m_projectDirty = false;
+            UpdateWindowTitle();
+        }
+    }
+
+    bool EditorShell::CaptureSceneState(std::string &state, std::string *errorMessage) const
+    {
+        if (!m_scene)
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "No scene is loaded.";
+            }
+            return false;
+        }
+
+        return scene::SceneSerializer::SaveToString(*m_scene, state, errorMessage);
+    }
+
+    bool EditorShell::RestoreSceneState(const std::string &state, std::string *errorMessage)
+    {
+        auto restoredScene = scene::SceneSerializer::LoadFromString(state, errorMessage);
+        if (!restoredScene)
+        {
+            return false;
+        }
+
+        const std::string previousPath = m_scene ? m_scene->GetFilePath() : std::string{};
+        restoredScene->SetFilePath(previousPath);
+        SetScene(std::move(restoredScene));
+        MarkSceneDirty();
+        return true;
+    }
+
+    void EditorShell::ExecuteSceneEdit(std::string label, const std::function<void()> &edit)
+    {
+        if (!edit)
+        {
+            return;
+        }
+
+        std::string beforeState;
+        std::string errorMessage;
+        const bool capturedBefore = CaptureSceneState(beforeState, &errorMessage);
+        edit();
+
+        if (!capturedBefore)
+        {
+            MarkSceneDirty();
+            Log(ConsoleSeverity::Warning, errorMessage.empty() ? "Edited scene without undo snapshot." : errorMessage);
+            return;
+        }
+
+        std::string afterState;
+        if (!CaptureSceneState(afterState, &errorMessage) || beforeState == afterState)
+        {
+            return;
+        }
+
+        m_undoStack.push_back(SceneHistoryEntry{.label = std::move(label), .beforeState = std::move(beforeState), .afterState = std::move(afterState)});
+        constexpr std::size_t kMaxUndoEntries = 80;
+        if (m_undoStack.size() > kMaxUndoEntries)
+        {
+            m_undoStack.erase(m_undoStack.begin());
+        }
+        m_redoStack.clear();
+        MarkSceneDirty();
+    }
+
+    bool EditorShell::Undo()
+    {
+        if (m_undoStack.empty())
+        {
+            return false;
+        }
+
+        auto entry = std::move(m_undoStack.back());
+        m_undoStack.pop_back();
+        std::string errorMessage;
+        if (!RestoreSceneState(entry.beforeState, &errorMessage))
+        {
+            Log(ConsoleSeverity::Error, errorMessage.empty() ? "Undo failed." : errorMessage);
+            return false;
+        }
+
+        Log(ConsoleSeverity::Info, "Undo: " + entry.label);
+        m_redoStack.push_back(std::move(entry));
+        return true;
+    }
+
+    bool EditorShell::Redo()
+    {
+        if (m_redoStack.empty())
+        {
+            return false;
+        }
+
+        auto entry = std::move(m_redoStack.back());
+        m_redoStack.pop_back();
+        std::string errorMessage;
+        if (!RestoreSceneState(entry.afterState, &errorMessage))
+        {
+            Log(ConsoleSeverity::Error, errorMessage.empty() ? "Redo failed." : errorMessage);
+            return false;
+        }
+
+        Log(ConsoleSeverity::Info, "Redo: " + entry.label);
+        m_undoStack.push_back(std::move(entry));
+        return true;
+    }
+
+    bool EditorShell::ConfirmContinueWithUnsavedChanges()
+    {
+        if (!m_sceneDirty && !m_projectDirty)
+        {
+            return true;
+        }
+
+#ifdef _WIN32
+        const int result = MessageBoxA(nullptr,
+                                       "There are unsaved editor changes. Continue and discard them?",
+                                       "Unsaved Changes",
+                                       MB_ICONWARNING | MB_YESNO | MB_DEFBUTTON2);
+        return result == IDYES;
+#else
+        return true;
+#endif
+    }
+
     void EditorShell::UpdateWindowTitle()
     {
         std::string windowTitle = "PlutoGE Editor";
@@ -1102,6 +1280,10 @@ namespace PlutoGE::ui
         {
             windowTitle += " - ";
             windowTitle += m_project->GetManifest().name;
+        }
+        if (m_sceneDirty || m_projectDirty)
+        {
+            windowTitle += " *";
         }
 
         m_engine.GetWindow().SetTitle(windowTitle);
@@ -1191,6 +1373,8 @@ namespace PlutoGE::ui
 
         m_scene->SetFilePath(normalizedScenePath.string());
         m_statusMessage = "Saved scene: " + normalizedScenePath.filename().string();
+        MarkSceneClean();
+        Log(ConsoleSeverity::Info, m_statusMessage);
         return true;
     }
 
@@ -1222,6 +1406,43 @@ namespace PlutoGE::ui
         return true;
     }
 
+    bool EditorShell::OpenSceneFromPath(const std::filesystem::path &scenePath)
+    {
+        if (!ConfirmContinueWithUnsavedChanges())
+        {
+            return false;
+        }
+
+        std::string errorMessage;
+        auto loadedScene = scene::SceneSerializer::Load(scenePath.string(), &errorMessage);
+        if (!loadedScene)
+        {
+            m_statusMessage = errorMessage.empty() ? "Failed to open scene." : errorMessage;
+            Log(ConsoleSeverity::Error, m_statusMessage);
+            return false;
+        }
+
+        SetScene(std::move(loadedScene));
+        m_undoStack.clear();
+        m_redoStack.clear();
+        MarkSceneClean();
+        m_statusMessage = "Opened scene: " + scenePath.filename().string();
+        Log(ConsoleSeverity::Info, m_statusMessage);
+        return true;
+    }
+
+    void EditorShell::OpenMaterialAsset(std::string materialAssetReference)
+    {
+        if (materialAssetReference.empty())
+        {
+            return;
+        }
+
+        m_activeMaterialAssetReference = std::move(materialAssetReference);
+        m_openMaterialEditorRequested = true;
+        Log(ConsoleSeverity::Info, "Opened material: " + m_activeMaterialAssetReference);
+    }
+
     bool EditorShell::LoadProjectFromPath(const std::filesystem::path &manifestPath)
     {
         constexpr std::string_view kMissingScriptAssemblyPrefix = "Project script assembly was not found: ";
@@ -1236,6 +1457,7 @@ namespace PlutoGE::ui
 
         m_project = std::move(loadedProject);
         ApplyProjectContext();
+        m_project->RefreshAssetRegistry();
 
         const auto &manifest = m_project->GetManifest();
         ApplyProjectEditorCameraSettings(manifest.editorCamera, m_editorCamera);
@@ -1334,6 +1556,11 @@ namespace PlutoGE::ui
         }
 
         m_statusMessage = "Created project: " + m_project->GetManifest().name;
+        m_undoStack.clear();
+        m_redoStack.clear();
+        MarkSceneClean();
+        MarkProjectClean();
+        Log(ConsoleSeverity::Info, m_statusMessage);
         UpdateWindowTitle();
         return true;
     }
@@ -1381,6 +1608,11 @@ namespace PlutoGE::ui
         }
 
         m_statusMessage = "Saved project: " + m_project->GetManifestPath().filename().string();
+        m_undoStack.clear();
+        m_redoStack.clear();
+        MarkSceneClean();
+        MarkProjectClean();
+        Log(ConsoleSeverity::Info, m_statusMessage);
         UpdateWindowTitle();
         return true;
     }
@@ -1509,6 +1741,18 @@ namespace PlutoGE::ui
         auto inspectorPanel = new InspectorPanel(PanelConfig{"Inspector"});
         inspectorPanel->Initialize();
         m_panelManager.AddPanel(inspectorPanel);
+
+        auto contentBrowserPanel = new ContentBrowserPanel(PanelConfig{"Content Browser"});
+        contentBrowserPanel->Initialize();
+        m_panelManager.AddPanel(contentBrowserPanel);
+
+        auto consolePanel = new ConsolePanel(PanelConfig{"Console"});
+        consolePanel->Initialize();
+        m_panelManager.AddPanel(consolePanel);
+
+        auto materialEditorPanel = new MaterialEditorPanel(PanelConfig{"Material Editor", false});
+        materialEditorPanel->Initialize();
+        m_panelManager.AddPanel(materialEditorPanel);
 
         auto profilerPanel = new ProfilerPanel(PanelConfig{"Profiler"}, &m_profiler, &m_panelManager, &renderer);
         profilerPanel->Initialize();
@@ -1740,6 +1984,16 @@ namespace PlutoGE::ui
                 SetSelectedEntity(nullptr);
             }
 
+            const ImGuiIO &io = ImGui::GetIO();
+            if (!isRuntimeRunning && !io.WantTextInput && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z))
+            {
+                Undo();
+            }
+            if (!isRuntimeRunning && !io.WantTextInput && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Y))
+            {
+                Redo();
+            }
+
             auto sanitizeBakeSettings = [](scene::SceneBakeSettings &settings)
             {
                 settings.lightmapResolution = (std::max)(settings.lightmapResolution, 4);
@@ -1778,6 +2032,11 @@ namespace PlutoGE::ui
             // Toolbar menu
             if (ImGui::BeginMainMenuBar())
             {
+                if (ConsumeMaterialEditorOpenRequest())
+                {
+                    materialEditorPanel->SetOpen(true);
+                }
+
                 if (ImGui::BeginMenu("File"))
                 {
                     if (isBakeRunning && ImGui::MenuItem("Cancel Bake"))
@@ -1793,18 +2052,24 @@ namespace PlutoGE::ui
                     ImGui::BeginDisabled(isBakeRunning);
                     if (ImGui::MenuItem("New Project..."))
                     {
-                        const std::string projectPath = ShowSaveFileDialog(kProjectFileFilter, kDefaultProjectFileName, "plutoproject");
-                        if (!projectPath.empty())
+                        if (ConfirmContinueWithUnsavedChanges())
                         {
-                            CreateProjectAtPath(projectPath);
+                            const std::string projectPath = ShowSaveFileDialog(kProjectFileFilter, kDefaultProjectFileName, "plutoproject");
+                            if (!projectPath.empty())
+                            {
+                                CreateProjectAtPath(projectPath);
+                            }
                         }
                     }
                     if (ImGui::MenuItem("Open Project..."))
                     {
-                        const std::string projectPath = ShowOpenFileDialog(kProjectFileFilter);
-                        if (!projectPath.empty())
+                        if (ConfirmContinueWithUnsavedChanges())
                         {
-                            LoadProjectFromPath(projectPath);
+                            const std::string projectPath = ShowOpenFileDialog(kProjectFileFilter);
+                            if (!projectPath.empty())
+                            {
+                                LoadProjectFromPath(projectPath);
+                            }
                         }
                     }
                     if (ImGui::MenuItem("Save Project", nullptr, false, m_project != nullptr))
@@ -1841,25 +2106,22 @@ namespace PlutoGE::ui
                     ImGui::Separator();
                     if (ImGui::MenuItem("New Scene"))
                     {
-                        SetScene(CreateEmptyScene());
-                        m_statusMessage = "Created new scene";
+                        if (ConfirmContinueWithUnsavedChanges())
+                        {
+                            SetScene(CreateEmptyScene());
+                            m_undoStack.clear();
+                            m_redoStack.clear();
+                            MarkSceneDirty();
+                            m_statusMessage = "Created new scene";
+                            Log(ConsoleSeverity::Info, m_statusMessage);
+                        }
                     }
                     if (ImGui::MenuItem("Open Scene..."))
                     {
                         const std::string filePath = ShowOpenFileDialog(kSceneFileFilter);
                         if (!filePath.empty())
                         {
-                            std::string errorMessage;
-                            auto loadedScene = scene::SceneSerializer::Load(filePath, &errorMessage);
-                            if (loadedScene)
-                            {
-                                SetScene(std::move(loadedScene));
-                                m_statusMessage = "Opened scene: " + std::filesystem::path(filePath).filename().string();
-                            }
-                            else
-                            {
-                                m_statusMessage = errorMessage.empty() ? "Failed to open scene" : errorMessage;
-                            }
+                            OpenSceneFromPath(filePath);
                         }
                     }
                     if (ImGui::MenuItem("Save Scene"))
@@ -1912,8 +2174,28 @@ namespace PlutoGE::ui
 
                     if (ImGui::MenuItem("Exit"))
                     {
-                        window.Close();
+                        if (ConfirmContinueWithUnsavedChanges())
+                        {
+                            window.Close();
+                        }
                     }
+                    ImGui::EndMenu();
+                }
+                if (ImGui::BeginMenu("Edit"))
+                {
+                    ImGui::BeginDisabled(!CanUndo());
+                    if (ImGui::MenuItem("Undo", "Ctrl+Z"))
+                    {
+                        Undo();
+                    }
+                    ImGui::EndDisabled();
+
+                    ImGui::BeginDisabled(!CanRedo());
+                    if (ImGui::MenuItem("Redo", "Ctrl+Y"))
+                    {
+                        Redo();
+                    }
+                    ImGui::EndDisabled();
                     ImGui::EndMenu();
                 }
                 if (ImGui::BeginMenu("View"))
@@ -1933,6 +2215,18 @@ namespace PlutoGE::ui
                     if (ImGui::MenuItem("Inspector", NULL, inspectorPanel->IsOpen()))
                     {
                         inspectorPanel->SetOpen(!inspectorPanel->IsOpen());
+                    }
+                    if (ImGui::MenuItem("Content Browser", NULL, contentBrowserPanel->IsOpen()))
+                    {
+                        contentBrowserPanel->SetOpen(!contentBrowserPanel->IsOpen());
+                    }
+                    if (ImGui::MenuItem("Console", NULL, consolePanel->IsOpen()))
+                    {
+                        consolePanel->SetOpen(!consolePanel->IsOpen());
+                    }
+                    if (ImGui::MenuItem("Material Editor", NULL, materialEditorPanel->IsOpen()))
+                    {
+                        materialEditorPanel->SetOpen(!materialEditorPanel->IsOpen());
                     }
                     if (ImGui::MenuItem("Profiler", NULL, profilerPanel->IsOpen()))
                     {

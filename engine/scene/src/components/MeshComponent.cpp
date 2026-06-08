@@ -50,6 +50,7 @@ namespace PlutoGE::scene
 
         struct SerializedMaterialData
         {
+            std::optional<std::string> materialAsset;
             std::optional<glm::vec4> color;
             std::optional<float> metallic;
             std::optional<float> roughness;
@@ -110,6 +111,12 @@ namespace PlutoGE::scene
 
             const auto &config = material->GetConfig();
             const std::string prefix = std::string(kMaterialSlotPrefix) + std::to_string(materialSlotIndex) + ".";
+            const auto &materialAssetReference = GetMaterialAssetForMaterialSlot(materialSlotIndex);
+            if (!materialAssetReference.empty())
+            {
+                properties.push_back({prefix + "MaterialAsset", PropertyType::String, materialAssetReference});
+                continue;
+            }
             properties.push_back({prefix + "Color", PropertyType::String, SerializeVec4(config.color)});
             properties.push_back({prefix + "Metallic", PropertyType::Float, std::to_string(config.metallic)});
             properties.push_back({prefix + "Roughness", PropertyType::Float, std::to_string(config.roughness)});
@@ -127,6 +134,12 @@ namespace PlutoGE::scene
 
             const auto &config = material->GetConfig();
             const std::string prefix = std::string(kSubmeshOverridePrefix) + std::to_string(submeshIndex) + ".";
+            const auto &materialAssetReference = GetMaterialAssetForSubmesh(submeshIndex);
+            if (!materialAssetReference.empty())
+            {
+                properties.push_back({prefix + "MaterialAsset", PropertyType::String, materialAssetReference});
+                continue;
+            }
             properties.push_back({prefix + "Color", PropertyType::String, SerializeVec4(config.color)});
             properties.push_back({prefix + "Metallic", PropertyType::Float, std::to_string(config.metallic)});
             properties.push_back({prefix + "Roughness", PropertyType::Float, std::to_string(config.roughness)});
@@ -165,7 +178,11 @@ namespace PlutoGE::scene
                 const size_t materialSlotIndex = static_cast<size_t>(std::stoul(remainder.substr(0, separatorIndex)));
                 const std::string fieldName = remainder.substr(separatorIndex + 1);
                 auto &serializedMaterial = serializedMaterials[materialSlotIndex];
-                if (fieldName == "Color")
+                if (fieldName == "MaterialAsset")
+                {
+                    serializedMaterial.materialAsset = property.value;
+                }
+                else if (fieldName == "Color")
                 {
                     serializedMaterial.color = ParseVec4(property.value);
                 }
@@ -198,7 +215,11 @@ namespace PlutoGE::scene
                 const size_t submeshIndex = static_cast<size_t>(std::stoul(remainder.substr(0, separatorIndex)));
                 const std::string fieldName = remainder.substr(separatorIndex + 1);
                 auto &serializedMaterial = serializedSubmeshMaterials[submeshIndex];
-                if (fieldName == "Color")
+                if (fieldName == "MaterialAsset")
+                {
+                    serializedMaterial.materialAsset = property.value;
+                }
+                else if (fieldName == "Color")
                 {
                     serializedMaterial.color = ParseVec4(property.value);
                 }
@@ -224,15 +245,17 @@ namespace PlutoGE::scene
         if (!sourceMeshPath.empty())
         {
             auto &engine = core::Engine::GetInstance();
-            if (sourceMeshPath == assets::Project::kBuiltinCubeMeshReference)
+            if (auto *builtinMesh = engine.GetAssetManager().LoadMeshAsset(sourceMeshPath))
             {
-                SetMesh(render::Mesh::Cube());
-                SetMaterials({engine.GetAssetManager().CreateDefaultMaterial()});
+                SetMesh(builtinMesh);
+                SetMaterials({engine.GetAssetManager().LoadMaterialAsset(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference))});
+                SetMaterialAssetForMaterialSlot(0, std::string(assets::Project::kBuiltinDefaultShadedMaterialReference));
                 m_sourceMeshPath = sourceMeshPath;
             }
             else
             {
-                auto importedMeshAsset = engine.ImportMeshAsset(sourceMeshPath);
+                const std::string resolvedMeshPath = engine.GetAssetManager().ResolveMeshAssetSourcePath(sourceMeshPath);
+                auto importedMeshAsset = engine.ImportMeshAsset(resolvedMeshPath);
                 if (importedMeshAsset.mesh)
                 {
                     SetMesh(importedMeshAsset.mesh);
@@ -248,6 +271,16 @@ namespace PlutoGE::scene
             if (!material)
             {
                 continue;
+            }
+
+            if (serializedMaterial.materialAsset.has_value())
+            {
+                if (auto *materialAsset = core::Engine::GetInstance().GetAssetManager().LoadMaterialAsset(*serializedMaterial.materialAsset))
+                {
+                    SetMaterialForMaterialSlot(materialSlotIndex, materialAsset);
+                    SetMaterialAssetForMaterialSlot(materialSlotIndex, *serializedMaterial.materialAsset);
+                    material = materialAsset;
+                }
             }
 
             if (serializedMaterial.color.has_value())
@@ -286,6 +319,16 @@ namespace PlutoGE::scene
             if (!material)
             {
                 continue;
+            }
+
+            if (serializedMaterial.materialAsset.has_value())
+            {
+                if (auto *materialAsset = core::Engine::GetInstance().GetAssetManager().LoadMaterialAsset(*serializedMaterial.materialAsset))
+                {
+                    SetMaterialForSubmesh(submeshIndex, materialAsset);
+                    SetMaterialAssetForSubmesh(submeshIndex, *serializedMaterial.materialAsset);
+                    material = materialAsset;
+                }
             }
 
             if (serializedMaterial.color.has_value())

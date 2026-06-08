@@ -5,6 +5,8 @@
 #include <string>
 #include <vector>
 #include <array>
+#include <algorithm>
+#include <cmath>
 #include <iostream>
 #include <limits>
 
@@ -155,6 +157,142 @@ namespace PlutoGE::render
                 0, 1, 2, // First triangle
                 2, 1, 3  // Second triangle
             };
+
+            MeshData meshData;
+            meshData.vertices = std::move(vertices);
+            meshData.indices = std::move(indices);
+
+            MeshConfig config;
+            config.data = std::move(meshData);
+
+            Mesh *mesh = new Mesh(config);
+            mesh->Initialize();
+            return mesh;
+        }
+
+        static Mesh *Plane()
+        {
+            return Quad();
+        }
+
+        static Mesh *Sphere(unsigned int latitudeSegments = 24, unsigned int longitudeSegments = 32)
+        {
+            latitudeSegments = std::max(latitudeSegments, 3u);
+            longitudeSegments = std::max(longitudeSegments, 3u);
+
+            constexpr float kPi = 3.14159265358979323846f;
+            std::vector<MeshVertexData> vertices;
+            std::vector<unsigned int> indices;
+            vertices.reserve(static_cast<std::size_t>((latitudeSegments + 1) * (longitudeSegments + 1)));
+
+            for (unsigned int latitude = 0; latitude <= latitudeSegments; ++latitude)
+            {
+                const float v = static_cast<float>(latitude) / static_cast<float>(latitudeSegments);
+                const float theta = v * kPi;
+                const float sinTheta = std::sin(theta);
+                const float cosTheta = std::cos(theta);
+
+                for (unsigned int longitude = 0; longitude <= longitudeSegments; ++longitude)
+                {
+                    const float u = static_cast<float>(longitude) / static_cast<float>(longitudeSegments);
+                    const float phi = u * kPi * 2.0f;
+                    const float sinPhi = std::sin(phi);
+                    const float cosPhi = std::cos(phi);
+
+                    const glm::vec3 normal(cosPhi * sinTheta, cosTheta, sinPhi * sinTheta);
+                    vertices.push_back(MeshVertexData{
+                        {normal.x * 0.5f, normal.y * 0.5f, normal.z * 0.5f},
+                        {normal.x, normal.y, normal.z},
+                        {u, 1.0f - v},
+                        {-sinPhi, 0.0f, cosPhi, 1.0f},
+                    });
+                }
+            }
+
+            const unsigned int stride = longitudeSegments + 1;
+            for (unsigned int latitude = 0; latitude < latitudeSegments; ++latitude)
+            {
+                for (unsigned int longitude = 0; longitude < longitudeSegments; ++longitude)
+                {
+                    const unsigned int a = latitude * stride + longitude;
+                    const unsigned int b = a + stride;
+                    indices.push_back(a);
+                    indices.push_back(b);
+                    indices.push_back(a + 1);
+                    indices.push_back(a + 1);
+                    indices.push_back(b);
+                    indices.push_back(b + 1);
+                }
+            }
+
+            MeshData meshData;
+            meshData.vertices = std::move(vertices);
+            meshData.indices = std::move(indices);
+
+            MeshConfig config;
+            config.data = std::move(meshData);
+
+            Mesh *mesh = new Mesh(config);
+            mesh->Initialize();
+            return mesh;
+        }
+
+        static Mesh *Cylinder(unsigned int segments = 32)
+        {
+            segments = std::max(segments, 3u);
+            constexpr float kPi = 3.14159265358979323846f;
+            std::vector<MeshVertexData> vertices;
+            std::vector<unsigned int> indices;
+            vertices.reserve(static_cast<std::size_t>(segments * 4 + 2));
+
+            for (unsigned int segment = 0; segment <= segments; ++segment)
+            {
+                const float u = static_cast<float>(segment) / static_cast<float>(segments);
+                const float angle = u * kPi * 2.0f;
+                const float x = std::cos(angle) * 0.5f;
+                const float z = std::sin(angle) * 0.5f;
+                const glm::vec3 normal(std::cos(angle), 0.0f, std::sin(angle));
+                vertices.push_back({{x, -0.5f, z}, {normal.x, normal.y, normal.z}, {u, 0.0f}, {-normal.z, 0.0f, normal.x, 1.0f}});
+                vertices.push_back({{x, 0.5f, z}, {normal.x, normal.y, normal.z}, {u, 1.0f}, {-normal.z, 0.0f, normal.x, 1.0f}});
+            }
+
+            for (unsigned int segment = 0; segment < segments; ++segment)
+            {
+                const unsigned int base = segment * 2;
+                indices.push_back(base);
+                indices.push_back(base + 1);
+                indices.push_back(base + 2);
+                indices.push_back(base + 2);
+                indices.push_back(base + 1);
+                indices.push_back(base + 3);
+            }
+
+            const unsigned int bottomCenter = static_cast<unsigned int>(vertices.size());
+            vertices.push_back({{0.0f, -0.5f, 0.0f}, {0.0f, -1.0f, 0.0f}, {0.5f, 0.5f}, {1.0f, 0.0f, 0.0f, 1.0f}});
+            const unsigned int topCenter = static_cast<unsigned int>(vertices.size());
+            vertices.push_back({{0.0f, 0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.5f, 0.5f}, {1.0f, 0.0f, 0.0f, 1.0f}});
+
+            const unsigned int capStart = static_cast<unsigned int>(vertices.size());
+            for (unsigned int segment = 0; segment < segments; ++segment)
+            {
+                const float u = static_cast<float>(segment) / static_cast<float>(segments);
+                const float angle = u * kPi * 2.0f;
+                const float x = std::cos(angle) * 0.5f;
+                const float z = std::sin(angle) * 0.5f;
+                vertices.push_back({{x, -0.5f, z}, {0.0f, -1.0f, 0.0f}, {x + 0.5f, z + 0.5f}, {1.0f, 0.0f, 0.0f, 1.0f}});
+                vertices.push_back({{x, 0.5f, z}, {0.0f, 1.0f, 0.0f}, {x + 0.5f, z + 0.5f}, {1.0f, 0.0f, 0.0f, 1.0f}});
+            }
+
+            for (unsigned int segment = 0; segment < segments; ++segment)
+            {
+                const unsigned int next = (segment + 1) % segments;
+                indices.push_back(bottomCenter);
+                indices.push_back(capStart + next * 2);
+                indices.push_back(capStart + segment * 2);
+                indices.push_back(topCenter);
+                indices.push_back(capStart + segment * 2 + 1);
+                indices.push_back(capStart + next * 2 + 1);
+            }
 
             MeshData meshData;
             meshData.vertices = std::move(vertices);

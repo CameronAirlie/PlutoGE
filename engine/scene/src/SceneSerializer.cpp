@@ -193,26 +193,27 @@ namespace PlutoGE::scene
         {
             if (componentType == "MeshComponent")
             {
-                return propertyName == "SourceMesh" || propertyName.ends_with("LightmapPath");
+                return propertyName == "SourceMesh" || propertyName.ends_with("LightmapPath") || propertyName.ends_with("MaterialAsset");
             }
 
             return false;
         }
     }
 
-    bool SceneSerializer::Save(const Scene &scene, const std::string &filePath, std::string *errorMessage)
+    namespace
     {
-        std::ofstream output(filePath, std::ios::out | std::ios::trunc);
-        if (!output.is_open())
+        bool SaveSceneToStream(const Scene &scene, std::ostream &output, std::string *errorMessage)
         {
-            if (errorMessage)
+            if (!output.good())
             {
-                *errorMessage = "Failed to open scene file for writing.";
+                if (errorMessage)
+                {
+                    *errorMessage = "Scene output stream is not writable.";
+                }
+                return false;
             }
-            return false;
-        }
 
-        output << "SCENE\t1\n";
+            output << "SCENE\t1\n";
 
         auto &assetManager = core::Engine::GetInstance().GetAssetManager();
 
@@ -305,23 +306,55 @@ namespace PlutoGE::scene
             }
         }
 
-        return true;
+            return true;
+        }
     }
 
-    std::unique_ptr<Scene> SceneSerializer::Load(const std::string &filePath, std::string *errorMessage)
+    bool SceneSerializer::Save(const Scene &scene, const std::string &filePath, std::string *errorMessage)
     {
-        std::ifstream input(filePath);
-        if (!input.is_open())
+        std::ofstream output(filePath, std::ios::out | std::ios::trunc);
+        if (!output.is_open())
         {
             if (errorMessage)
             {
-                *errorMessage = "Failed to open scene file for reading.";
+                *errorMessage = "Failed to open scene file for writing.";
             }
-            return nullptr;
+            return false;
         }
 
-        auto scene = std::make_unique<Scene>();
-        scene->SetFilePath(std::filesystem::absolute(std::filesystem::path(filePath)).lexically_normal().string());
+        return SaveSceneToStream(scene, output, errorMessage);
+    }
+
+    bool SceneSerializer::SaveToString(const Scene &scene, std::string &outputText, std::string *errorMessage)
+    {
+        std::ostringstream output;
+        if (!SaveSceneToStream(scene, output, errorMessage))
+        {
+            return false;
+        }
+
+        outputText = output.str();
+        return true;
+    }
+
+    namespace
+    {
+        std::unique_ptr<Scene> LoadSceneFromStream(std::istream &input, const std::string &filePath, std::string *errorMessage)
+        {
+            if (!input.good())
+            {
+                if (errorMessage)
+                {
+                    *errorMessage = "Scene input stream is not readable.";
+                }
+                return nullptr;
+            }
+
+            auto scene = std::make_unique<Scene>();
+            if (!filePath.empty())
+            {
+                scene->SetFilePath(std::filesystem::absolute(std::filesystem::path(filePath)).lexically_normal().string());
+            }
 
         struct PendingEntityParent
         {
@@ -493,7 +526,29 @@ namespace PlutoGE::scene
             scene->AddIblCaptureVolume(std::move(captureVolume));
         }
 
-        scene->MarkShadowLightsDirty();
-        return scene;
+            scene->MarkShadowLightsDirty();
+            return scene;
+        }
+    }
+
+    std::unique_ptr<Scene> SceneSerializer::Load(const std::string &filePath, std::string *errorMessage)
+    {
+        std::ifstream input(filePath);
+        if (!input.is_open())
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Failed to open scene file for reading.";
+            }
+            return nullptr;
+        }
+
+        return LoadSceneFromStream(input, filePath, errorMessage);
+    }
+
+    std::unique_ptr<Scene> SceneSerializer::LoadFromString(const std::string &text, std::string *errorMessage)
+    {
+        std::istringstream input(text);
+        return LoadSceneFromStream(input, {}, errorMessage);
     }
 }

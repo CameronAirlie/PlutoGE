@@ -376,6 +376,7 @@ out vec4 FragColor;
 in vec2 UV;
 
 uniform sampler2D gPosition;
+uniform sampler2D gDepth;
 uniform sampler2D gNormal;
 uniform sampler2D gAlbedoSpec;
 uniform sampler2D gBakedLighting;
@@ -1099,10 +1100,11 @@ vec3 SampleBakedProbeIrradiance(vec3 fragPos)
 void main()
 {
     vec3 fragPos = texture(gPosition, UV).rgb;
+    float depth = texture(gDepth, UV).r;
     vec4 normalRoughness = texture(gNormal, UV);
     vec4 albedoMetallic = texture(gAlbedoSpec, UV);
 
-    if (dot(normalRoughness.rgb, normalRoughness.rgb) <= 0.000001)
+    if (depth >= 0.999999 || dot(normalRoughness.rgb, normalRoughness.rgb) <= 0.000001)
     {
         if (uPassMode == PASS_MODE_AMBIENT)
         {

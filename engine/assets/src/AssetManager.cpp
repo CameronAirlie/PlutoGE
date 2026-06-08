@@ -1,8 +1,10 @@
 #include <PlutoGE/assets/AssetManager.h>
+#include <PlutoGE/render/Mesh.h>
 #include <PlutoGE/render/Texture.h>
 #include <PlutoGE/render/Material.h>
 #include <PlutoGE/render/Shader.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -69,6 +71,48 @@ namespace PlutoGE::assets
         return texture;
     }
 
+    render::Mesh *AssetManager::LoadMeshAsset(const std::string &assetReference)
+    {
+        if (assetReference.empty())
+        {
+            return nullptr;
+        }
+
+        auto it = m_meshCache.find(assetReference);
+        if (it != m_meshCache.end())
+        {
+            return it->second;
+        }
+
+        render::Mesh *mesh = nullptr;
+        if (assetReference == Project::kBuiltinCubeMeshReference)
+        {
+            mesh = render::Mesh::Cube();
+        }
+        else if (assetReference == Project::kBuiltinSphereMeshReference)
+        {
+            mesh = render::Mesh::Sphere();
+        }
+        else if (assetReference == Project::kBuiltinPlaneMeshReference)
+        {
+            mesh = render::Mesh::Plane();
+        }
+        else if (assetReference == Project::kBuiltinCylinderMeshReference)
+        {
+            mesh = render::Mesh::Cylinder();
+        }
+        else if (assetReference == Project::kBuiltinQuadMeshReference)
+        {
+            mesh = render::Mesh::Quad();
+        }
+
+        if (mesh)
+        {
+            m_meshCache[assetReference] = mesh;
+        }
+        return mesh;
+    }
+
     render::Material *AssetManager::CreateMaterial()
     {
         // Create a new material with default configuration
@@ -86,6 +130,162 @@ namespace PlutoGE::assets
         // render::Shader *defaultShader = render::Shader::CreateDefault();
         // material->SetShader(defaultShader);
         return material;
+    }
+
+    render::Material *AssetManager::CreateDefaultShadedMaterial()
+    {
+        render::MaterialConfig defaultConfig;
+        defaultConfig.color = glm::vec4(0.82f, 0.84f, 0.88f, 1.0f);
+        defaultConfig.metallic = 0.0f;
+        defaultConfig.roughness = 0.55f;
+        return new render::Material(defaultConfig);
+    }
+
+    namespace
+    {
+        bool ParseFloat(std::string_view text, float &value)
+        {
+            try
+            {
+                value = std::stof(std::string(text));
+                return true;
+            }
+            catch (...)
+            {
+                return false;
+            }
+        }
+
+        bool ParseVec4(std::string_view text, glm::vec4 &value)
+        {
+            std::string copy(text);
+            std::replace(copy.begin(), copy.end(), ',', ' ');
+            std::istringstream input(copy);
+            return (input >> value.r >> value.g >> value.b >> value.a) ? true : false;
+        }
+    }
+
+    render::Material *AssetManager::LoadMaterialAsset(const std::string &assetReference)
+    {
+        if (assetReference.empty())
+        {
+            return nullptr;
+        }
+
+        auto it = m_materialCache.find(assetReference);
+        if (it != m_materialCache.end())
+        {
+            return it->second;
+        }
+
+        render::Material *material = nullptr;
+        if (assetReference == Project::kBuiltinDefaultMaterialReference)
+        {
+            material = CreateDefaultMaterial();
+        }
+        else if (assetReference == Project::kBuiltinDefaultShadedMaterialReference)
+        {
+            material = CreateDefaultShadedMaterial();
+        }
+        else
+        {
+            const std::string materialPath = ResolveAssetPath(assetReference);
+            std::ifstream input(materialPath);
+            if (input.is_open())
+            {
+                render::MaterialConfig config;
+                std::string line;
+                while (std::getline(input, line))
+                {
+                    const auto delimiter = line.find('=');
+                    if (delimiter == std::string::npos)
+                    {
+                        continue;
+                    }
+
+                    const std::string key = line.substr(0, delimiter);
+                    const std::string value = line.substr(delimiter + 1);
+                    if (key == "Color")
+                    {
+                        ParseVec4(value, config.color);
+                    }
+                    else if (key == "Metallic")
+                    {
+                        ParseFloat(value, config.metallic);
+                    }
+                    else if (key == "Roughness")
+                    {
+                        ParseFloat(value, config.roughness);
+                    }
+                    else if (key == "FlipNormalY")
+                    {
+                        config.flipNormalY = value == "true" || value == "1";
+                    }
+                }
+                material = new render::Material(config);
+            }
+        }
+
+        if (material)
+        {
+            m_materialCache[assetReference] = material;
+        }
+        return material;
+    }
+
+    bool AssetManager::SaveMaterialAsset(const std::string &assetReference, const render::MaterialConfig &config, std::string *errorMessage)
+    {
+        if (assetReference.empty() || Project::IsEngineAssetReference(assetReference))
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Cannot save an empty or engine material asset reference.";
+            }
+            return false;
+        }
+
+        const std::string materialPath = ResolveAssetPath(assetReference);
+        if (materialPath.empty())
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Could not resolve material asset path.";
+            }
+            return false;
+        }
+
+        std::error_code errorCode;
+        std::filesystem::create_directories(std::filesystem::path(materialPath).parent_path(), errorCode);
+        if (errorCode)
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Failed to create material directory: " + errorCode.message();
+            }
+            return false;
+        }
+
+        std::ofstream output(materialPath, std::ios::out | std::ios::trunc);
+        if (!output.is_open())
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Failed to open material asset for writing.";
+            }
+            return false;
+        }
+
+        output << "Color=" << config.color.r << "," << config.color.g << "," << config.color.b << "," << config.color.a << "\n";
+        output << "Metallic=" << config.metallic << "\n";
+        output << "Roughness=" << config.roughness << "\n";
+        output << "FlipNormalY=" << (config.flipNormalY ? "true" : "false") << "\n";
+
+        if (auto cachedMaterial = m_materialCache.find(assetReference); cachedMaterial != m_materialCache.end() && cachedMaterial->second)
+        {
+            cachedMaterial->second->GetConfig() = config;
+        }
+
+        return true;
     }
 
     render::ShaderSource AssetManager::LoadShader(const char *vertexPath, const char *fragmentPath)
@@ -149,6 +349,47 @@ namespace PlutoGE::assets
         }
 
         return NormalizePath(assetPath);
+    }
+
+    std::string AssetManager::ResolveMeshAssetSourcePath(const std::string &assetReference) const
+    {
+        const std::string meshAssetPath = ResolveAssetPath(assetReference);
+        if (meshAssetPath.empty() || std::filesystem::path(meshAssetPath).extension() != ".plutomesh")
+        {
+            return meshAssetPath;
+        }
+
+        std::ifstream input(meshAssetPath);
+        if (!input.is_open())
+        {
+            return {};
+        }
+
+        std::string line;
+        while (std::getline(input, line))
+        {
+            constexpr std::string_view kSourcePrefix = "Source=";
+            if (line.rfind(kSourcePrefix, 0) != 0)
+            {
+                continue;
+            }
+
+            const std::string sourceReference = line.substr(kSourcePrefix.size());
+            if (Project::IsProjectAssetReference(sourceReference) || Project::IsEngineAssetReference(sourceReference))
+            {
+                return ResolveAssetPath(sourceReference);
+            }
+
+            const auto sourcePath = std::filesystem::path(sourceReference);
+            if (sourcePath.is_absolute())
+            {
+                return sourcePath.lexically_normal().string();
+            }
+
+            return (std::filesystem::path(meshAssetPath).parent_path() / sourcePath).lexically_normal().string();
+        }
+
+        return {};
     }
 
     std::string AssetManager::PersistAssetPath(const std::string &filePath) const

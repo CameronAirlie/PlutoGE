@@ -68,6 +68,8 @@ namespace PlutoGE::scene
             m_materials = materials;
             m_material = m_materials.empty() ? nullptr : m_materials.front();
             m_submeshMaterials.clear();
+            m_materialAssetReferences.clear();
+            m_submeshMaterialAssetReferences.clear();
         }
         const std::vector<render::Material *> &GetMaterials() const { return m_materials; }
         render::Material *GetMaterialForMaterialSlot(size_t materialSlotIndex) const
@@ -92,6 +94,20 @@ namespace PlutoGE::scene
                 m_material = material;
             }
         }
+        void SetMaterialAssetForMaterialSlot(size_t materialSlotIndex, const std::string &materialAssetReference)
+        {
+            if (materialSlotIndex >= m_materialAssetReferences.size())
+            {
+                m_materialAssetReferences.resize(materialSlotIndex + 1);
+            }
+
+            m_materialAssetReferences[materialSlotIndex] = materialAssetReference;
+        }
+        const std::string &GetMaterialAssetForMaterialSlot(size_t materialSlotIndex) const
+        {
+            static const std::string empty;
+            return materialSlotIndex < m_materialAssetReferences.size() ? m_materialAssetReferences[materialSlotIndex] : empty;
+        }
         render::Material *GetMaterialForSubmesh(size_t submeshIndex) const
         {
             if (submeshIndex < m_submeshMaterials.size() && m_submeshMaterials[submeshIndex])
@@ -115,6 +131,20 @@ namespace PlutoGE::scene
 
             m_submeshMaterials[submeshIndex] = material;
         }
+        void SetMaterialAssetForSubmesh(size_t submeshIndex, const std::string &materialAssetReference)
+        {
+            if (submeshIndex >= m_submeshMaterialAssetReferences.size())
+            {
+                m_submeshMaterialAssetReferences.resize(submeshIndex + 1);
+            }
+
+            m_submeshMaterialAssetReferences[submeshIndex] = materialAssetReference;
+        }
+        const std::string &GetMaterialAssetForSubmesh(size_t submeshIndex) const
+        {
+            static const std::string empty;
+            return submeshIndex < m_submeshMaterialAssetReferences.size() ? m_submeshMaterialAssetReferences[submeshIndex] : empty;
+        }
         render::Material *CreateUniqueMaterialForMaterialSlot(size_t materialSlotIndex);
         render::Material *CreateUniqueMaterialForSubmesh(size_t submeshIndex);
 
@@ -123,6 +153,8 @@ namespace PlutoGE::scene
         render::Material *m_material = nullptr;
         std::vector<render::Material *> m_materials;
         std::vector<render::Material *> m_submeshMaterials;
+        std::vector<std::string> m_materialAssetReferences;
+        std::vector<std::string> m_submeshMaterialAssetReferences;
         glm::mat4 m_previousModelMatrix = glm::mat4(1.0f);
         bool m_hasPreviousModelMatrix = false;
         bool m_isStatic = false;

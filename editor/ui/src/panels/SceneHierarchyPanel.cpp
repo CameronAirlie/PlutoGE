@@ -89,7 +89,11 @@ namespace PlutoGE::ui
                 auto *draggedEntity = *static_cast<scene::Entity *const *>(payload->Data);
                 if (draggedEntity && draggedEntity != entity)
                 {
-                    draggedEntity->SetParent(entity);
+                    EditorShell::GetInstance().ExecuteSceneEdit("Reparent Entity",
+                                                                [draggedEntity, entity]()
+                                                                {
+                                                                    draggedEntity->SetParent(entity);
+                                                                });
                 }
             }
             ImGui::EndDragDropTarget();
@@ -105,19 +109,29 @@ namespace PlutoGE::ui
             }
             if (entity->GetParent() && ImGui::MenuItem("Unparent"))
             {
-                entity->SetParent(nullptr);
+                EditorShell::GetInstance().ExecuteSceneEdit("Unparent Entity",
+                                                            [entity]()
+                                                            {
+                                                                entity->SetParent(nullptr);
+                                                            });
             }
             if (ImGui::MenuItem("Delete Entity"))
             {
                 auto scene = EditorShell::GetInstance().GetEngine().GetScene();
                 if (scene)
                 {
-                    scene->RemoveEntity(entity);
-                    if (m_renamingEntityId == entity->GetID())
+                    const scene::EntityID deletedEntityId = entity->GetID();
+                    const bool deletedSelection = EditorShell::GetInstance().GetSelectedEntity() == entity;
+                    EditorShell::GetInstance().ExecuteSceneEdit("Delete Entity",
+                                                                [scene, entity]()
+                                                                {
+                                                                    scene->RemoveEntity(entity);
+                                                                });
+                    if (m_renamingEntityId == deletedEntityId)
                     {
                         EndRename(false);
                     }
-                    if (EditorShell::GetInstance().GetSelectedEntity() == entity)
+                    if (deletedSelection)
                     {
                         EditorShell::GetInstance().SetSelectedEntity(nullptr); // Clear selection if the selected entity is deleted
                     }
@@ -161,7 +175,16 @@ namespace PlutoGE::ui
             {
                 if (auto *entity = scene->FindEntityByID(m_renamingEntityId))
                 {
-                    entity->SetName(m_renameBuffer.data());
+                    const scene::EntityID entityId = m_renamingEntityId;
+                    std::string newName = m_renameBuffer.data();
+                    EditorShell::GetInstance().ExecuteSceneEdit("Rename Entity",
+                                                                [scene, entityId, newName = std::move(newName)]()
+                                                                {
+                                                                    if (auto *target = scene->FindEntityByID(entityId))
+                                                                    {
+                                                                        target->SetName(newName);
+                                                                    }
+                                                                });
                 }
             }
         }
@@ -181,7 +204,11 @@ namespace PlutoGE::ui
                 auto *draggedEntity = *static_cast<scene::Entity *const *>(payload->Data);
                 if (draggedEntity)
                 {
-                    draggedEntity->SetParent(nullptr);
+                    EditorShell::GetInstance().ExecuteSceneEdit("Move Entity To Root",
+                                                                [draggedEntity]()
+                                                                {
+                                                                    draggedEntity->SetParent(nullptr);
+                                                                });
                 }
             }
             ImGui::EndDragDropTarget();
@@ -238,29 +265,38 @@ namespace PlutoGE::ui
         {
             if (ImGui::MenuItem("Create Empty Entity"))
             {
-                auto newEntity = std::make_unique<scene::Entity>(scene::EntityConfig{.name = "New Entity"});
                 auto scene = ui::EditorShell::GetInstance().GetEngine().GetScene();
                 if (scene)
                 {
-                    scene->AddEntity(std::move(newEntity));
+                    EditorShell::GetInstance().ExecuteSceneEdit("Create Empty Entity",
+                                                                [scene]()
+                                                                {
+                                                                    auto newEntity = std::make_unique<scene::Entity>(scene::EntityConfig{.name = "New Entity"});
+                                                                    scene->AddEntity(std::move(newEntity));
+                                                                });
                 }
             }
             if (ImGui::MenuItem("Create Cube"))
             {
-                auto newEntity = std::make_unique<scene::Entity>(scene::EntityConfig{.name = "Cube"});
                 auto &engine = core::Engine::GetInstance();
                 auto *scene = ui::EditorShell::GetInstance().GetEngine().GetScene();
                 if (scene)
                 {
-                    auto *entity = scene->AddEntity(std::move(newEntity));
-                    auto *meshComponent = entity->CreateComponent<scene::MeshComponent>(scene::MeshComponentConfig{
-                        .mesh = render::Mesh::Cube(),
-                        .material = engine.GetAssetManager().CreateDefaultMaterial(),
-                    });
-                    if (meshComponent)
-                    {
-                        meshComponent->SetSourceMeshPath(std::string(assets::Project::kBuiltinCubeMeshReference));
-                    }
+                    EditorShell::GetInstance().ExecuteSceneEdit("Create Cube",
+                                                                [&engine, scene]()
+                                                                {
+                                                                    auto newEntity = std::make_unique<scene::Entity>(scene::EntityConfig{.name = "Cube"});
+                                                                    auto *entity = scene->AddEntity(std::move(newEntity));
+                                                                    auto *meshComponent = entity->CreateComponent<scene::MeshComponent>(scene::MeshComponentConfig{
+                                                                        .mesh = engine.GetAssetManager().LoadMeshAsset(std::string(assets::Project::kBuiltinCubeMeshReference)),
+                                                                        .material = engine.GetAssetManager().LoadMaterialAsset(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference)),
+                                                                    });
+                                                                    if (meshComponent)
+                                                                    {
+                                                                        meshComponent->SetSourceMeshPath(std::string(assets::Project::kBuiltinCubeMeshReference));
+                                                                        meshComponent->SetMaterialAssetForMaterialSlot(0, std::string(assets::Project::kBuiltinDefaultShadedMaterialReference));
+                                                                    }
+                                                                });
                 }
             }
             ImGui::EndPopup();

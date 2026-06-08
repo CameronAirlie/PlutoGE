@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -32,6 +33,19 @@ namespace PlutoGE::ui
     class EditorShell
     {
     public:
+        enum class ConsoleSeverity
+        {
+            Info,
+            Warning,
+            Error,
+        };
+
+        struct ConsoleMessage
+        {
+            ConsoleSeverity severity = ConsoleSeverity::Info;
+            std::string text;
+        };
+
         struct EditorViewportCamera
         {
             render::Camera camera{render::CameraConfig{
@@ -139,8 +153,36 @@ namespace PlutoGE::ui
                                std::string *createdClassName = nullptr,
                                std::string *errorMessage = nullptr);
         bool BuildProjectScripts();
+        bool OpenSceneFromPath(const std::filesystem::path &scenePath);
+        void OpenMaterialAsset(std::string materialAssetReference);
+        const std::string &GetActiveMaterialAssetReference() const { return m_activeMaterialAssetReference; }
+        bool ConsumeMaterialEditorOpenRequest()
+        {
+            const bool requested = m_openMaterialEditorRequested;
+            m_openMaterialEditorRequested = false;
+            return requested;
+        }
+        void Log(ConsoleSeverity severity, std::string message);
+        const std::vector<ConsoleMessage> &GetConsoleMessages() const { return m_consoleMessages; }
+        void ClearConsoleMessages() { m_consoleMessages.clear(); }
+        void MarkSceneDirty();
+        void MarkProjectDirty();
+        [[nodiscard]] bool IsSceneDirty() const { return m_sceneDirty; }
+        [[nodiscard]] bool IsProjectDirty() const { return m_projectDirty; }
+        [[nodiscard]] bool CanUndo() const { return !m_undoStack.empty(); }
+        [[nodiscard]] bool CanRedo() const { return !m_redoStack.empty(); }
+        void ExecuteSceneEdit(std::string label, const std::function<void()> &edit);
+        bool Undo();
+        bool Redo();
 
     private:
+        struct SceneHistoryEntry
+        {
+            std::string label;
+            std::string beforeState;
+            std::string afterState;
+        };
+
         EditorShell() = default;
         ~EditorShell();
 
@@ -165,6 +207,11 @@ namespace PlutoGE::ui
         bool SaveProjectToDisk();
         bool BuildProjectToPath(const std::filesystem::path &destinationExecutablePath);
         bool BuildAndRunProjectToPath(const std::filesystem::path &destinationExecutablePath);
+        bool CaptureSceneState(std::string &state, std::string *errorMessage = nullptr) const;
+        bool RestoreSceneState(const std::string &state, std::string *errorMessage = nullptr);
+        bool ConfirmContinueWithUnsavedChanges();
+        void MarkSceneClean();
+        void MarkProjectClean();
 
         core::Engine &m_engine = core::Engine::GetInstance();
         PanelManager m_panelManager;
@@ -179,5 +226,12 @@ namespace PlutoGE::ui
         scene::SceneBakeSettings m_customBakeSettings = scene::SceneBakeSettings::BalancedPreview();
         std::vector<scene::EntityID> m_pendingIblCaptureEntities;
         std::string m_statusMessage;
+        bool m_sceneDirty = false;
+        bool m_projectDirty = false;
+        std::vector<SceneHistoryEntry> m_undoStack;
+        std::vector<SceneHistoryEntry> m_redoStack;
+        std::vector<ConsoleMessage> m_consoleMessages;
+        std::string m_activeMaterialAssetReference;
+        bool m_openMaterialEditorRequested = false;
     };
 }

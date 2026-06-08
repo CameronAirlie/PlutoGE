@@ -8,8 +8,10 @@
 namespace PlutoGE::render
 {
     class Texture;
+    class Mesh;
     class Material;
     class Shader;
+    struct MaterialConfig;
     struct ShaderSource;
 }
 
@@ -23,11 +25,16 @@ namespace PlutoGE::assets
 
         std::string GetAssetPath(const std::string &relativePath) const;
         std::string ResolveAssetPath(const std::string &assetPath) const;
+        std::string ResolveMeshAssetSourcePath(const std::string &assetReference) const;
         std::string PersistAssetPath(const std::string &filePath) const;
 
         render::Texture *LoadTexture(const char *filePath);
+        render::Mesh *LoadMeshAsset(const std::string &assetReference);
+        render::Material *LoadMaterialAsset(const std::string &assetReference);
+        bool SaveMaterialAsset(const std::string &assetReference, const render::MaterialConfig &config, std::string *errorMessage = nullptr);
         render::Material *CreateMaterial();
         render::Material *CreateDefaultMaterial();
+        render::Material *CreateDefaultShadedMaterial();
         render::ShaderSource LoadShader(const char *vertexPath, const char *fragmentPath);
 
         std::string GetAssetDirectory() const { return m_assetDirectory; }
@@ -42,6 +49,7 @@ namespace PlutoGE::assets
         std::string m_projectRootDirectory;
         std::string m_projectAssetDirectory = "Assets";
         std::unordered_map<std::string, render::Texture *> m_textureCache;   // Cache for loaded textures
+        std::unordered_map<std::string, render::Mesh *> m_meshCache;
         std::unordered_map<std::string, render::Material *> m_materialCache; // Cache for loaded materials
     };
 }

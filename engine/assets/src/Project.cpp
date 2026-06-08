@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cctype>
 #include <cstdlib>
 #include <fstream>
 #include <system_error>
@@ -386,6 +387,20 @@ namespace PlutoGE::assets
             return nullptr;
         }
 
+        std::filesystem::create_directories(project->GetAssetDirectoryPath() / "Meshes", errorCode);
+        if (errorCode)
+        {
+            SetError(errorMessage, "Failed to create default Meshes directory.");
+            return nullptr;
+        }
+
+        std::filesystem::create_directories(project->GetAssetDirectoryPath() / "Materials", errorCode);
+        if (errorCode)
+        {
+            SetError(errorMessage, "Failed to create default Materials directory.");
+            return nullptr;
+        }
+
         project->RefreshAssetRegistry();
         if (!project->Save(errorMessage))
         {
@@ -531,6 +546,8 @@ namespace PlutoGE::assets
                 ProjectAssetEntry entry;
                 entry.reference = tokens[1];
                 ParseUnsignedInteger(tokens[2], entry.size);
+                entry.type = tokens.size() >= 4 ? Project::ParseAssetTypeName(tokens[3])
+                                                 : Project::GetAssetTypeForReference(entry.reference);
                 manifest.assetEntries.push_back(std::move(entry));
                 continue;
             }
@@ -559,8 +576,118 @@ namespace PlutoGE::assets
     {
         return {
             std::string(kBuiltinCubeMeshReference),
+            std::string(kBuiltinSphereMeshReference),
+            std::string(kBuiltinPlaneMeshReference),
+            std::string(kBuiltinCylinderMeshReference),
+            std::string(kBuiltinQuadMeshReference),
             std::string(kBuiltinDefaultMaterialReference),
+            std::string(kBuiltinDefaultShadedMaterialReference),
         };
+    }
+
+    namespace
+    {
+        bool EndsWithInsensitive(std::string_view text, std::string_view suffix)
+        {
+            if (text.size() < suffix.size())
+            {
+                return false;
+            }
+
+            const auto offset = text.size() - suffix.size();
+            for (std::size_t index = 0; index < suffix.size(); ++index)
+            {
+                const auto left = static_cast<unsigned char>(text[offset + index]);
+                const auto right = static_cast<unsigned char>(suffix[index]);
+                if (std::tolower(left) != std::tolower(right))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+    }
+
+    ProjectAssetType Project::GetAssetTypeForReference(std::string_view reference)
+    {
+        if (reference.rfind("engine://builtin/mesh/", 0) == 0)
+        {
+            return ProjectAssetType::Mesh;
+        }
+        if (reference.rfind("engine://builtin/material/", 0) == 0)
+        {
+            return ProjectAssetType::Material;
+        }
+        if (EndsWithInsensitive(reference, ".plutoscene"))
+        {
+            return ProjectAssetType::Scene;
+        }
+        if (EndsWithInsensitive(reference, ".cs"))
+        {
+            return ProjectAssetType::Script;
+        }
+        if (EndsWithInsensitive(reference, ".dll"))
+        {
+            return ProjectAssetType::Assembly;
+        }
+        if (EndsWithInsensitive(reference, ".plutomaterial") || EndsWithInsensitive(reference, ".mat"))
+        {
+            return ProjectAssetType::Material;
+        }
+        if (EndsWithInsensitive(reference, ".plutomesh") || EndsWithInsensitive(reference, ".gltf") ||
+            EndsWithInsensitive(reference, ".glb") || EndsWithInsensitive(reference, ".obj") ||
+            EndsWithInsensitive(reference, ".fbx"))
+        {
+            return ProjectAssetType::Mesh;
+        }
+        if (EndsWithInsensitive(reference, ".png") || EndsWithInsensitive(reference, ".jpg") ||
+            EndsWithInsensitive(reference, ".jpeg") || EndsWithInsensitive(reference, ".tga") ||
+            EndsWithInsensitive(reference, ".hdr") || EndsWithInsensitive(reference, ".exr"))
+        {
+            return ProjectAssetType::Texture;
+        }
+
+        return ProjectAssetType::Unknown;
+    }
+
+    std::string_view Project::GetAssetTypeName(ProjectAssetType type)
+    {
+        switch (type)
+        {
+        case ProjectAssetType::Scene:
+            return "Scene";
+        case ProjectAssetType::Script:
+            return "Script";
+        case ProjectAssetType::Mesh:
+            return "Mesh";
+        case ProjectAssetType::Material:
+            return "Material";
+        case ProjectAssetType::Texture:
+            return "Texture";
+        case ProjectAssetType::Assembly:
+            return "Assembly";
+        case ProjectAssetType::Unknown:
+        default:
+            return "Unknown";
+        }
+    }
+
+    ProjectAssetType Project::ParseAssetTypeName(std::string_view typeName)
+    {
+        if (typeName == "Scene")
+            return ProjectAssetType::Scene;
+        if (typeName == "Script")
+            return ProjectAssetType::Script;
+        if (typeName == "Mesh")
+            return ProjectAssetType::Mesh;
+        if (typeName == "Material")
+            return ProjectAssetType::Material;
+        if (typeName == "Texture")
+            return ProjectAssetType::Texture;
+        if (typeName == "Assembly")
+            return ProjectAssetType::Assembly;
+        return ProjectAssetType::Unknown;
     }
 
     bool Project::Save(std::string *errorMessage) const
@@ -611,7 +738,8 @@ namespace PlutoGE::assets
         {
             output << "ASSET\t"
                    << EscapeText(assetEntry.reference) << '\t'
-                   << assetEntry.size << '\n';
+                   << assetEntry.size << '\t'
+                   << GetAssetTypeName(assetEntry.type) << '\n';
         }
 
         return true;
@@ -620,6 +748,15 @@ namespace PlutoGE::assets
     void Project::RefreshAssetRegistry()
     {
         m_manifest.assetEntries.clear();
+
+        for (const auto &builtinReference : GetBuiltinAssetReferences())
+        {
+            m_manifest.assetEntries.push_back(ProjectAssetEntry{
+                .reference = builtinReference,
+                .size = 0,
+                .type = GetAssetTypeForReference(builtinReference),
+            });
+        }
 
         const auto assetDirectoryPath = GetAssetDirectoryPath();
         if (!std::filesystem::exists(assetDirectoryPath))
@@ -640,6 +777,7 @@ namespace PlutoGE::assets
             ProjectAssetEntry entry;
             entry.reference = MakeAssetReference(iterator->path());
             entry.size = iterator->file_size(errorCode);
+            entry.type = GetAssetTypeForReference(entry.reference);
             if (!entry.reference.empty())
             {
                 m_manifest.assetEntries.push_back(std::move(entry));

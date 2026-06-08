@@ -65,6 +65,12 @@ namespace PlutoGE::ui
             bool classLoaded = false;
         };
 
+        struct AssetReferenceOption
+        {
+            std::string reference;
+            std::string displayName;
+        };
+
         std::string_view TrimWhitespace(std::string_view text)
         {
             while (!text.empty() && std::isspace(static_cast<unsigned char>(text.front())) != 0)
@@ -288,6 +294,51 @@ namespace PlutoGE::ui
             return options;
         }
 
+        std::vector<AssetReferenceOption> CollectAssetReferenceOptions(const assets::Project *project, assets::ProjectAssetType type)
+        {
+            std::vector<AssetReferenceOption> options;
+            if (!project)
+            {
+                for (const auto &reference : assets::Project::GetBuiltinAssetReferences())
+                {
+                    if (assets::Project::GetAssetTypeForReference(reference) != type)
+                    {
+                        continue;
+                    }
+
+                    options.push_back(AssetReferenceOption{.reference = reference, .displayName = reference});
+                }
+                return options;
+            }
+
+            for (const auto &assetEntry : project->GetManifest().assetEntries)
+            {
+                if (assetEntry.type != type)
+                {
+                    continue;
+                }
+
+                std::string displayName = assetEntry.reference;
+                if (StartsWith(displayName, assets::Project::kProjectAssetScheme))
+                {
+                    displayName.erase(0, assets::Project::kProjectAssetScheme.size());
+                }
+                else if (StartsWith(displayName, assets::Project::kEngineAssetScheme))
+                {
+                    displayName.erase(0, assets::Project::kEngineAssetScheme.size());
+                }
+
+                options.push_back(AssetReferenceOption{.reference = assetEntry.reference, .displayName = std::move(displayName)});
+            }
+
+            std::sort(options.begin(), options.end(),
+                      [](const AssetReferenceOption &left, const AssetReferenceOption &right)
+                      {
+                          return left.displayName < right.displayName;
+                      });
+            return options;
+        }
+
         const ScriptAssetOption *FindScriptAssetOptionForClassName(const std::vector<ScriptAssetOption> &options,
                                                                    std::string_view className)
         {
@@ -472,10 +523,14 @@ namespace PlutoGE::ui
             {
             case AddableComponentType::Mesh:
             {
-                entity.CreateComponent<scene::MeshComponent>(scene::MeshComponentConfig{
+                auto *meshComponent = entity.CreateComponent<scene::MeshComponent>(scene::MeshComponentConfig{
                     .mesh = nullptr,
-                    .material = engine.GetAssetManager().CreateDefaultMaterial(),
+                    .material = engine.GetAssetManager().LoadMaterialAsset(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference)),
                 });
+                if (meshComponent)
+                {
+                    meshComponent->SetMaterialAssetForMaterialSlot(0, std::string(assets::Project::kBuiltinDefaultShadedMaterialReference));
+                }
                 break;
             }
             case AddableComponentType::Camera:
@@ -515,6 +570,7 @@ namespace PlutoGE::ui
     void InspectorPanel::RenderSceneEnvironmentInspector(scene::Scene &scene) const
     {
         auto &engine = core::Engine::GetInstance();
+        auto &editorShell = EditorShell::GetInstance();
         static std::array<char, kInspectorPathBufferSize> environmentPathBuffer{};
         static std::string cachedEnvironmentPath;
 
@@ -558,6 +614,7 @@ namespace PlutoGE::ui
             auto *environmentTexture = engine.GetTextureManager().LoadEnvironmentTextureFromFile(selectedPath.c_str());
             scene.SetEnvironmentMap(environmentTexture, selectedPath);
             cachedEnvironmentPath = scene.GetEnvironmentMapPath();
+            editorShell.MarkSceneDirty();
         }
         ImGui::EndDisabled();
 
@@ -567,12 +624,14 @@ namespace PlutoGE::ui
             scene.ClearEnvironmentMap();
             cachedEnvironmentPath.clear();
             std::fill(environmentPathBuffer.begin(), environmentPathBuffer.end(), '\0');
+            editorShell.MarkSceneDirty();
         }
 
         float environmentIntensity = scene.GetEnvironmentIntensity();
         if (ImGui::DragFloat("Environment Intensity", &environmentIntensity, 0.01f, 0.0f, 32.0f))
         {
             scene.SetEnvironmentIntensity(environmentIntensity);
+            editorShell.MarkSceneDirty();
         }
 
         ImGui::Text("Sky / IBL: %s", scene.HasEnvironmentMap() ? "loaded" : (scene.GetEnvironmentMapPath().empty() ? "not set" : "failed to load"));
@@ -1367,13 +1426,18 @@ namespace PlutoGE::ui
 
             if (ImGui::CollapsingHeader("Transform"))
             {
-                ImGui::DragFloat3("Position", &position.x, 0.01f);
-                ImGui::DragFloat3("Rotation", &rotation.x, 0.1f);
-                ImGui::DragFloat3("Scale", &scale.x, 0.01f);
+                bool transformChanged = false;
+                transformChanged |= ImGui::DragFloat3("Position", &position.x, 0.01f);
+                transformChanged |= ImGui::DragFloat3("Rotation", &rotation.x, 0.1f);
+                transformChanged |= ImGui::DragFloat3("Scale", &scale.x, 0.01f);
 
                 entity->SetPosition(position);
                 entity->SetRotation(rotation);
                 entity->SetScale(scale);
+                if (transformChanged)
+                {
+                    editorShell.MarkSceneDirty();
+                }
             }
 
             // Mesh Import UI (if entity has MeshComponent)
@@ -1383,6 +1447,63 @@ namespace PlutoGE::ui
                 const auto meshImportStatus = engine.GetMeshImportStatus(entity->GetID());
 
                 ImGui::Separator();
+                ImGui::Text("Mesh Asset");
+                const auto meshAssetOptions = CollectAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::Mesh);
+                std::string meshPreview = meshComponent->GetSourceMeshPath().empty() ? "None" : meshComponent->GetSourceMeshPath();
+                for (const auto &option : meshAssetOptions)
+                {
+                    if (option.reference == meshComponent->GetSourceMeshPath())
+                    {
+                        meshPreview = option.displayName;
+                        break;
+                    }
+                }
+
+                if (ImGui::BeginCombo("Source Mesh", meshPreview.c_str()))
+                {
+                    for (const auto &option : meshAssetOptions)
+                    {
+                        const bool selected = option.reference == meshComponent->GetSourceMeshPath();
+                        if (ImGui::Selectable(option.displayName.c_str(), selected))
+                        {
+                            if (assets::Project::IsEngineAssetReference(option.reference))
+                            {
+                                if (auto *mesh = engine.GetAssetManager().LoadMeshAsset(option.reference))
+                                {
+                                    meshComponent->SetMesh(mesh);
+                                    meshComponent->SetSourceMeshPath(option.reference);
+                                    if (!meshComponent->GetMaterialForMaterialSlot(0))
+                                    {
+                                        meshComponent->SetMaterialForMaterialSlot(
+                                            0,
+                                            engine.GetAssetManager().LoadMaterialAsset(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference)));
+                                        meshComponent->SetMaterialAssetForMaterialSlot(0, std::string(assets::Project::kBuiltinDefaultShadedMaterialReference));
+                                    }
+                                    editorShell.MarkSceneDirty();
+                                }
+                            }
+                            else
+                            {
+                                const std::string resolvedPath = engine.GetAssetManager().ResolveMeshAssetSourcePath(option.reference);
+                                auto importedMeshAsset = engine.ImportMeshAsset(resolvedPath);
+                                if (importedMeshAsset.mesh)
+                                {
+                                    meshComponent->SetMesh(importedMeshAsset.mesh);
+                                    meshComponent->SetMaterials(importedMeshAsset.materials);
+                                    meshComponent->SetSourceMeshPath(option.reference);
+                                    editorShell.MarkSceneDirty();
+                                }
+                            }
+                        }
+
+                        if (selected)
+                        {
+                            ImGui::SetItemDefaultFocus();
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+
                 ImGui::Text("Mesh Import");
                 static char meshPath[512] = "";
                 ImGui::InputText("Mesh Path", meshPath, sizeof(meshPath));
@@ -1409,6 +1530,7 @@ namespace PlutoGE::ui
                 if (ImGui::Button("Import Mesh"))
                 {
                     engine.QueueMeshImport(entity->GetID(), meshPath);
+                    editorShell.MarkSceneDirty();
                 }
                 ImGui::EndDisabled();
 
@@ -1439,6 +1561,60 @@ namespace PlutoGE::ui
 
                                 if (material)
                                 {
+                                    const auto materialAssetOptions = CollectAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::Material);
+                                    std::string materialPreview = meshComponent->GetMaterialAssetForSubmesh(submeshIndex);
+                                    if (materialPreview.empty())
+                                    {
+                                        materialPreview = meshComponent->GetMaterialAssetForMaterialSlot(submesh.materialIndex);
+                                    }
+                                    if (materialPreview.empty())
+                                    {
+                                        materialPreview = "Inline Override";
+                                    }
+                                    for (const auto &option : materialAssetOptions)
+                                    {
+                                        if (option.reference == materialPreview)
+                                        {
+                                            materialPreview = option.displayName;
+                                            break;
+                                        }
+                                    }
+
+                                    if (ImGui::BeginCombo("Material Asset", materialPreview.c_str()))
+                                    {
+                                        for (const auto &option : materialAssetOptions)
+                                        {
+                                            const bool selected = option.reference == meshComponent->GetMaterialAssetForSubmesh(submeshIndex) ||
+                                                                  (meshComponent->GetMaterialAssetForSubmesh(submeshIndex).empty() &&
+                                                                   option.reference == meshComponent->GetMaterialAssetForMaterialSlot(submesh.materialIndex));
+                                            if (ImGui::Selectable(option.displayName.c_str(), selected))
+                                            {
+                                                if (auto *materialAsset = engine.GetAssetManager().LoadMaterialAsset(option.reference))
+                                                {
+                                                    meshComponent->SetMaterialForSubmesh(submeshIndex, materialAsset);
+                                                    meshComponent->SetMaterialAssetForSubmesh(submeshIndex, option.reference);
+                                                    editorShell.MarkSceneDirty();
+                                                    material = materialAsset;
+                                                }
+                                            }
+
+                                            if (selected)
+                                            {
+                                                ImGui::SetItemDefaultFocus();
+                                            }
+                                        }
+                                        ImGui::EndCombo();
+                                    }
+
+                                    const bool materialUsesAssetReference =
+                                        !meshComponent->GetMaterialAssetForSubmesh(submeshIndex).empty() ||
+                                        !meshComponent->GetMaterialAssetForMaterialSlot(submesh.materialIndex).empty();
+                                    if (materialUsesAssetReference)
+                                    {
+                                        ImGui::TextDisabled("Using shared material asset. Make it unique to edit inline values.");
+                                        ImGui::BeginDisabled();
+                                    }
+
                                     const auto &materialConfig = material->GetConfig();
                                     float color[4] = {
                                         materialConfig.color.r,
@@ -1449,24 +1625,28 @@ namespace PlutoGE::ui
                                     if (ImGui::ColorEdit4("Color", color))
                                     {
                                         material->SetColor(glm::vec4(color[0], color[1], color[2], color[3]));
+                                        editorShell.MarkSceneDirty();
                                     }
 
                                     float metallic = materialConfig.metallic;
                                     if (ImGui::DragFloat("Metallic", &metallic, 0.01f, 0.0f, 1.0f))
                                     {
                                         material->SetMetallic(metallic);
+                                        editorShell.MarkSceneDirty();
                                     }
 
                                     float roughness = materialConfig.roughness;
                                     if (ImGui::DragFloat("Roughness", &roughness, 0.01f, 0.04f, 1.0f))
                                     {
                                         material->SetRoughness(roughness);
+                                        editorShell.MarkSceneDirty();
                                     }
 
                                     bool flipNormalY = materialConfig.flipNormalY;
                                     if (ImGui::Checkbox("Flip Normal Y", &flipNormalY))
                                     {
                                         material->SetFlipNormalY(flipNormalY);
+                                        editorShell.MarkSceneDirty();
                                     }
 
                                     ImGui::Text("Textures: Albedo %s | Normal %s | Metallic/Roughness %s",
@@ -1516,10 +1696,17 @@ namespace PlutoGE::ui
                                         ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "Baking is using UV0 because TEXCOORD_1 / UV2 is missing. UV2 is still preferred to avoid overlap artifacts.");
                                     }
 
+                                    if (materialUsesAssetReference)
+                                    {
+                                        ImGui::EndDisabled();
+                                    }
+
                                     if (ImGui::Button("Make Unique Override"))
                                     {
                                         auto *overrideMaterial = new render::Material(material->GetConfig());
                                         meshComponent->SetMaterialForSubmesh(submeshIndex, overrideMaterial);
+                                        meshComponent->SetMaterialAssetForSubmesh(submeshIndex, {});
+                                        editorShell.MarkSceneDirty();
                                     }
                                 }
                                 else
@@ -1550,7 +1737,16 @@ namespace PlutoGE::ui
                 ImGui::BeginDisabled(!canAddSelectedComponent);
                 if (ImGui::Button("Add##Component"))
                 {
-                    AddComponentToEntity(*entity, selectedComponentType);
+                    const scene::EntityID entityId = entity->GetID();
+                    editorShell.ExecuteSceneEdit("Add Component",
+                                                 [entityId, selectedComponentType]()
+                                                 {
+                                                     auto *currentScene = core::Engine::GetInstance().GetScene();
+                                                     if (auto *target = currentScene ? currentScene->FindEntityByID(entityId) : nullptr)
+                                                     {
+                                                         AddComponentToEntity(*target, selectedComponentType);
+                                                     }
+                                                 });
                 }
                 ImGui::EndDisabled();
 
@@ -1643,6 +1839,7 @@ namespace PlutoGE::ui
                         if (propertiesChanged)
                         {
                             componentPtr->Deserialize(properties);
+                            editorShell.MarkSceneDirty();
                         }
 
                         ImGui::TreePop();
@@ -1657,7 +1854,16 @@ namespace PlutoGE::ui
 
                 if (componentToRemove)
                 {
-                    entity->RemoveComponent(componentToRemove);
+                    const scene::EntityID entityId = entity->GetID();
+                    editorShell.ExecuteSceneEdit("Remove Component",
+                                                 [entityId, componentToRemove]()
+                                                 {
+                                                     auto *currentScene = core::Engine::GetInstance().GetScene();
+                                                     if (auto *target = currentScene ? currentScene->FindEntityByID(entityId) : nullptr)
+                                                     {
+                                                         target->RemoveComponent(componentToRemove);
+                                                     }
+                                                 });
                 }
             }
         }

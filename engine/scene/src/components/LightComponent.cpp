@@ -12,7 +12,7 @@ namespace PlutoGE::scene
     {
         int ClampCascadeCount(int cascadeCount)
         {
-            return std::clamp(cascadeCount, 1, kDefaultDirectionalShadowCascades);
+            return std::clamp(cascadeCount, 1, kMaxDirectionalShadowCascades);
         }
 
         int ResolveShadowResolution(const Light &light)

@@ -33,7 +33,7 @@ namespace PlutoGE::render
         constexpr int kPreviousLightPropagationVolumeTextureSlot = kLightPropagationVolumeTextureSlot + 1;
         constexpr int kBakedProbeTextureSlot = kPreviousLightPropagationVolumeTextureSlot + 1;
         constexpr int kEnvironmentTextureSlot = kBakedProbeTextureSlot + 1;
-        constexpr int kIblCaptureTextureSlotStart = kDirectionalShadowCascadeTextureStartSlot;
+        constexpr int kIblCaptureTextureSlotStart = kEnvironmentTextureSlot + 1;
         constexpr int kAmbientPassMode = 0;
         constexpr int kLightPassMode = 1;
         constexpr int kIndirectTextureSlot = 0;
@@ -345,23 +345,9 @@ namespace PlutoGE::render
                     return ComputeSingleProjectedShadow(receiverPosition, uShadowMap2D, light.LightSpaceMatrix, depthBias, 1.25);
                 }
 
-                vec3 ComputeViewPositionFromDepthBuffer(vec2 uv)
+                float ComputeViewDepth(vec3 worldPosition)
                 {
-                    float depth = texture(gDepth, uv).r;
-                    vec4 clipPosition = vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
-                    vec4 viewPosition = uInverseProjectionMatrix * clipPosition;
-                    return viewPosition.xyz / max(viewPosition.w, 0.0001);
-                }
-
-                vec3 ComputeWorldPositionFromDepthBuffer(vec2 uv)
-                {
-                    vec3 viewPosition = ComputeViewPositionFromDepthBuffer(uv);
-                    return (uInverseViewMatrix * vec4(viewPosition, 1.0)).xyz;
-                }
-
-                float ComputeCameraDistanceFromDepthBuffer(vec2 uv)
-                {
-                    return length(ComputeViewPositionFromDepthBuffer(uv));
+                    return abs((uViewMatrix * vec4(worldPosition, 1.0)).z);
                 }
 
                 int SelectDirectionalCascadeIndex(Light light, float cameraDistance)
@@ -430,9 +416,9 @@ namespace PlutoGE::render
                     vec3 surfaceNormal = normalize(normal);
                     vec3 lightVector = normalize(-light.Direction);
                     float ndotl = max(dot(surfaceNormal, lightVector), 0.0);
-                    float normalBias = max(0.0015 * (1.0 - ndotl), 0.00015);
+                    float normalBias = max(0.004 * (1.0 - ndotl), 0.00075);
                     vec3 receiverPosition = fragPos + surfaceNormal * normalBias;
-                    float cameraDistance = ComputeCameraDistanceFromDepthBuffer(UV);
+                    float cameraDistance = ComputeViewDepth(fragPos);
 
                     if (cameraDistance > light.CascadeSplits[light.CascadeCount - 1])
                     {
@@ -440,7 +426,9 @@ namespace PlutoGE::render
                     }
 
                     int cascadeIndex = SelectDirectionalCascadeIndex(light, cameraDistance);
-                    float depthBias = max(0.0002 + (1.0 - ndotl) * 0.00035, 0.00005);
+                    float cascadeSplit = light.CascadeSplits[cascadeIndex];
+                    float cascadeBiasScale = clamp(cascadeSplit / max(light.CascadeSplits[0], 0.0001), 1.0, 8.0);
+                    float depthBias = max(0.00012 + (1.0 - ndotl) * 0.00035, 0.00004) * cascadeBiasScale;
                     bool hasCascadeCoverage = false;
                     float shadow = ComputeDirectionalCascadeShadow(receiverPosition, light, cascadeIndex, depthBias, hasCascadeCoverage);
                     sampledCascadeIndex = cascadeIndex;
@@ -459,7 +447,9 @@ namespace PlutoGE::render
                         if (cameraDistance > blendStart)
                         {
                             bool hasNextCascadeCoverage = false;
-                            float nextShadow = ComputeDirectionalCascadeShadow(receiverPosition, light, cascadeIndex + 1, depthBias, hasNextCascadeCoverage);
+                            float nextCascadeBiasScale = clamp(light.CascadeSplits[cascadeIndex + 1] / max(light.CascadeSplits[0], 0.0001), 1.0, 8.0);
+                            float nextDepthBias = max(0.00012 + (1.0 - ndotl) * 0.00035, 0.00004) * nextCascadeBiasScale;
+                            float nextShadow = ComputeDirectionalCascadeShadow(receiverPosition, light, cascadeIndex + 1, nextDepthBias, hasNextCascadeCoverage);
                             if (hasNextCascadeCoverage)
                             {
                                 float blendFactor = clamp((cameraDistance - blendStart) / max(splitDistance - blendStart, 0.0001), 0.0, 1.0);
@@ -595,7 +585,7 @@ namespace PlutoGE::render
             source.fragmentSource += R"(
                 void main()
                 {
-                    vec3 fragPos = ComputeWorldPositionFromDepthBuffer(UV);
+                    vec3 fragPos = texture(gPosition, UV).rgb;
                     vec4 normalRoughness = texture(gNormal, UV);
                     if (dot(normalRoughness.rgb, normalRoughness.rgb) <= 0.000001)
                     {
@@ -778,6 +768,8 @@ namespace PlutoGE::render
 
                     glActiveTexture(GL_TEXTURE0 + kDirectionalShadowCascadeTextureStartSlot + cascadeIndex);
                     glBindTexture(GL_TEXTURE_2D, shadowCascadeMap->GetTextureID());
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
                     boundCascade = true;
                 }
 
@@ -804,6 +796,8 @@ namespace PlutoGE::render
 
                 glActiveTexture(GL_TEXTURE0 + kShadowMapCubeTextureSlot);
                 glBindTexture(GL_TEXTURE_CUBE_MAP, shadowMap->GetTextureID());
+                glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+                glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
                 return true;
             }
 
@@ -814,6 +808,8 @@ namespace PlutoGE::render
 
             glActiveTexture(GL_TEXTURE0 + kShadowMap2DTextureSlot);
             glBindTexture(GL_TEXTURE_2D, shadowMap->GetTextureID());
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
             return true;
         }
 

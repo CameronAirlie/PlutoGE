@@ -814,7 +814,7 @@ float ComputeDirectionalShadow(vec3 fragPos,
     vec3 surfaceNormal = normalize(normal);
     vec3 lightVector = normalize(-light.Direction);
     float ndotl = max(dot(surfaceNormal, lightVector), 0.0);
-    float normalBias = max(0.0015 * (1.0 - ndotl), 0.00015);
+    float normalBias = max(0.004 * (1.0 - ndotl), 0.00075);
     vec3 receiverPosition = fragPos + surfaceNormal * normalBias;
     float viewDepth = abs((uViewMatrix * vec4(fragPos, 1.0)).z);
 
@@ -825,7 +825,7 @@ float ComputeDirectionalShadow(vec3 fragPos,
 
     int cascadeIndex = SelectDirectionalCascadeIndex(light, viewDepth);
     selectedCascadeIndex = cascadeIndex;
-    float depthBias = max(0.0002 + (1.0 - ndotl) * 0.00035, 0.00005);
+    float baseDepthBias = max(0.00012 + (1.0 - ndotl) * 0.00035, 0.00004);
     bool hasCascadeCoverage = false;
     float shadow = 0.0;
     int shadowCascadeIndex = cascadeIndex;
@@ -834,6 +834,8 @@ float ComputeDirectionalShadow(vec3 fragPos,
 
     for (int sampleCascadeIndex = cascadeIndex; sampleCascadeIndex < light.CascadeCount; ++sampleCascadeIndex)
     {
+        float cascadeBiasScale = clamp(light.CascadeSplits[sampleCascadeIndex] / max(light.CascadeSplits[0], 0.0001), 1.0, 8.0);
+        float depthBias = baseDepthBias * cascadeBiasScale;
         shadow = ComputeDirectionalCascadeShadow(receiverPosition, light, sampleCascadeIndex, depthBias, hasCascadeCoverage);
         if (hasCascadeCoverage)
         {
@@ -857,7 +859,8 @@ float ComputeDirectionalShadow(vec3 fragPos,
         if (viewDepth > blendStart)
         {
             bool hasNextCascadeCoverage = false;
-            float nextShadow = ComputeDirectionalCascadeShadow(receiverPosition, light, shadowCascadeIndex + 1, depthBias, hasNextCascadeCoverage);
+            float nextCascadeBiasScale = clamp(light.CascadeSplits[shadowCascadeIndex + 1] / max(light.CascadeSplits[0], 0.0001), 1.0, 8.0);
+            float nextShadow = ComputeDirectionalCascadeShadow(receiverPosition, light, shadowCascadeIndex + 1, baseDepthBias * nextCascadeBiasScale, hasNextCascadeCoverage);
             if (hasNextCascadeCoverage)
             {
                 float blendFactor = clamp((viewDepth - blendStart) / max(splitDistance - blendStart, 0.0001), 0.0, 1.0);
@@ -1361,6 +1364,8 @@ void main()
                     gl_FragDepth = lightDistance / max(uFarPlane, 0.0001);
                     return;
                 }
+
+                gl_FragDepth = gl_FragCoord.z;
             }
         )";
 

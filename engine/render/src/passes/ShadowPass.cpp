@@ -10,8 +10,10 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <cmath>
 #include <functional>
+#include <iostream>
 #include <limits>
 #include <vector>
 
@@ -26,7 +28,6 @@ namespace
     constexpr int kMaxIncrementalShadowSurfaceUpdatesPerFrame = 2;
     constexpr float kDirectionalShadowPadding = 2.0f;
     constexpr float kShadowUpdateMatrixEpsilon = 0.0001f;
-    constexpr float kDefaultDirectionalShadowDistance = 80.0f;
 
     struct FrustumPlane
     {
@@ -201,6 +202,28 @@ namespace
         return command.material && command.material->GetConfig().albedoTexture && command.material->GetConfig().color.a < 0.999f;
     }
 
+    void HashCombine(std::uint64_t &seed, std::uint64_t value)
+    {
+        seed ^= value + 0x9e3779b97f4a7c15ull + (seed << 6) + (seed >> 2);
+    }
+
+    std::uint64_t QuantizeFloatForHash(float value)
+    {
+        return static_cast<std::uint64_t>(static_cast<std::int64_t>(std::round(value * 1000.0f)));
+    }
+
+    bool ValidateShadowFramebuffer(const char *label)
+    {
+        const GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+        if (status == GL_FRAMEBUFFER_COMPLETE)
+        {
+            return true;
+        }
+
+        std::cerr << "Shadow framebuffer incomplete for " << label << ": 0x" << std::hex << status << std::dec << std::endl;
+        return false;
+    }
+
     void BuildShadowCasterEntries(const std::vector<PlutoGE::render::RenderCommand> &renderCommands,
                                   std::vector<ShadowCasterEntry> &shadowCasters,
                                   bool &shadowCastersChanged)
@@ -225,6 +248,26 @@ namespace
                 .hasMoved = hasMoved,
             });
         }
+    }
+
+    std::uint64_t ComputeShadowCasterFingerprint(const std::vector<ShadowCasterEntry> &shadowCasters)
+    {
+        std::uint64_t fingerprint = 1469598103934665603ull;
+        HashCombine(fingerprint, static_cast<std::uint64_t>(shadowCasters.size()));
+
+        for (const auto &shadowCaster : shadowCasters)
+        {
+            const auto *command = shadowCaster.command;
+            HashCombine(fingerprint, reinterpret_cast<std::uintptr_t>(command ? command->mesh : nullptr));
+            HashCombine(fingerprint, reinterpret_cast<std::uintptr_t>(command ? command->material : nullptr));
+            HashCombine(fingerprint, static_cast<std::uint64_t>(command ? command->submeshIndex : 0));
+            HashCombine(fingerprint, QuantizeFloatForHash(shadowCaster.bounds.center.x));
+            HashCombine(fingerprint, QuantizeFloatForHash(shadowCaster.bounds.center.y));
+            HashCombine(fingerprint, QuantizeFloatForHash(shadowCaster.bounds.center.z));
+            HashCombine(fingerprint, QuantizeFloatForHash(shadowCaster.bounds.radius));
+        }
+
+        return fingerprint;
     }
 
     std::vector<const ShadowCasterEntry *> BuildSortedShadowCasters(const std::vector<ShadowCasterEntry> &shadowCasters)
@@ -316,16 +359,19 @@ namespace
     std::array<glm::vec3, 8> BuildCascadeFrustumCorners(const PlutoGE::render::CameraData &cameraData, float cascadeNear, float cascadeFar)
     {
         const auto frustumCorners = BuildCameraFrustumCorners(cameraData);
-        const glm::vec3 cameraPosition = glm::vec3(glm::inverse(cameraData.view)[3]);
         std::array<glm::vec3, 8> cascadeCorners{};
-        const float nearRadius = glm::max(cascadeNear, cameraData.nearPlane);
-        const float farRadius = glm::max(cascadeFar, nearRadius + 0.1f);
+        const float nearDepth = glm::max(cascadeNear, cameraData.nearPlane);
+        const float farDepth = glm::max(cascadeFar, nearDepth + 0.1f);
+        const float cameraDepthRange = glm::max(cameraData.farPlane - cameraData.nearPlane, 0.0001f);
+        const float nearFactor = glm::clamp((nearDepth - cameraData.nearPlane) / cameraDepthRange, 0.0f, 1.0f);
+        const float farFactor = glm::clamp((farDepth - cameraData.nearPlane) / cameraDepthRange, 0.0f, 1.0f);
 
         for (std::size_t index = 0; index < 4; ++index)
         {
-            const glm::vec3 rayDirection = glm::normalize(frustumCorners[index + 4] - cameraPosition);
-            cascadeCorners[index] = cameraPosition + rayDirection * nearRadius;
-            cascadeCorners[index + 4] = cameraPosition + rayDirection * farRadius;
+            const glm::vec3 &cameraNearCorner = frustumCorners[index];
+            const glm::vec3 &cameraFarCorner = frustumCorners[index + 4];
+            cascadeCorners[index] = cameraNearCorner + (cameraFarCorner - cameraNearCorner) * nearFactor;
+            cascadeCorners[index + 4] = cameraNearCorner + (cameraFarCorner - cameraNearCorner) * farFactor;
         }
 
         return cascadeCorners;
@@ -338,7 +384,7 @@ namespace
     {
         std::array<float, PlutoGE::scene::kMaxDirectionalShadowCascades> splits{};
         const float nearRadius = glm::max(cameraData.nearPlane, 0.1f);
-        const float shadowDistance = settings.maxDistance > 0.0f ? settings.maxDistance : kDefaultDirectionalShadowDistance;
+        const float shadowDistance = settings.maxDistance > 0.0f ? settings.maxDistance : cameraData.farPlane;
         const float farRadius = glm::min(cameraData.farPlane, glm::max(shadowDistance, nearRadius + 0.1f));
         const float lambda = glm::clamp(settings.splitLambda, 0.0f, 1.0f);
 
@@ -380,7 +426,8 @@ namespace
     {
         const float safeResolution = static_cast<float>(std::max(shadowResolution, 1));
         const glm::mat4 lightSpaceMatrix = projection * view;
-        const glm::vec4 stableWorldAnchor = lightSpaceMatrix * glm::vec4(-shadowWorldOrigin, 1.0f);
+        (void)shadowWorldOrigin;
+        const glm::vec4 stableWorldAnchor = lightSpaceMatrix * glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
         const glm::vec2 shadowTexelOrigin = glm::vec2(stableWorldAnchor) * (safeResolution * 0.5f);
         const glm::vec2 roundedTexelOrigin = glm::round(shadowTexelOrigin);
         const glm::vec2 shadowTexelOffset = (roundedTexelOrigin - shadowTexelOrigin) * (2.0f / safeResolution);
@@ -465,9 +512,9 @@ namespace
             computeCascadeBounds(view, minBounds, maxBounds);
         }
 
-        SnapDirectionalProjectionBoundsToTexels(minBounds, maxBounds, shadowResolution);
         const float nearPlane = glm::max(0.1f, -maxBounds.z);
         const float farPlane = glm::max(nearPlane + 0.1f, -minBounds.z);
+        SnapDirectionalProjectionBoundsToTexels(minBounds, maxBounds, shadowResolution);
         glm::mat4 projection = glm::ortho(minBounds.x, maxBounds.x, minBounds.y, maxBounds.y, nearPlane, farPlane);
         SnapDirectionalProjectionMatrixToTexels(projection, view, shadowWorldOrigin, shadowResolution);
         return DirectionalCascadeProjection{
@@ -597,8 +644,10 @@ namespace
             return false;
         }
 
-        const glm::vec2 texelRadius = (glm::vec2(radius) / receiverExtent) * static_cast<float>(std::max(shadowResolution, 1));
-        return glm::max(texelRadius.x, texelRadius.y) >= glm::max(minCasterTexelRadius, 0.0f);
+        (void)receiverExtent;
+        (void)shadowResolution;
+        (void)minCasterTexelRadius;
+        return true;
     }
 
     bool IsCommandRelevantForDirectionalCascade(const ShadowCasterEntry &shadowCaster,
@@ -765,6 +814,10 @@ namespace PlutoGE::render
         glDrawBuffer(GL_NONE);
         glReadBuffer(GL_NONE);
         glEnable(GL_DEPTH_TEST);
+        glDepthMask(GL_TRUE);
+        glDepthFunc(GL_LESS);
+        glDepthRange(0.0, 1.0);
+        glClearDepth(1.0);
         glEnable(GL_CULL_FACE);
         glCullFace(GL_BACK);
         glDisable(GL_POLYGON_OFFSET_FILL);
@@ -774,6 +827,13 @@ namespace PlutoGE::render
         std::vector<ShadowCasterEntry> shadowCasters;
         bool shadowCastersChanged = false;
         BuildShadowCasterEntries(*ctx.renderCommands, shadowCasters, shadowCastersChanged);
+        const std::uint64_t shadowCasterFingerprint = ComputeShadowCasterFingerprint(shadowCasters);
+        if (!m_hasShadowCasterFingerprint || shadowCasterFingerprint != m_shadowCasterFingerprint)
+        {
+            shadowCastersChanged = true;
+            m_shadowCasterFingerprint = shadowCasterFingerprint;
+            m_hasShadowCasterFingerprint = true;
+        }
         const auto sortedShadowCasters = BuildSortedShadowCasters(shadowCasters);
         const bool cameraDataChanged = ctx.hasCameraData && (!ctx.hasPreviousCameraData || HasCameraDataChanged(ctx.cameraData, ctx.previousCameraData));
         std::vector<TransformInstanceData> shadowBatchInstances;
@@ -859,6 +919,10 @@ namespace PlutoGE::render
                     }
 
                     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, shadowMap->GetTextureID(), 0);
+                    if (!ValidateShadowFramebuffer("point shadow"))
+                    {
+                        continue;
+                    }
                     glClear(GL_DEPTH_BUFFER_BIT);
                     m_shadowPassShader->SetUniform("uLightSpaceMatrix", shadowMatrices[face]);
                     const ShadowDrawStats drawStats = DrawShadowCasterBatches(
@@ -904,9 +968,8 @@ namespace PlutoGE::render
 
                 light->shadowMatrix = glm::mat4(1.0f);
                 light->shadowFarPlane = cascadeSplits[cascadeCount - 1];
-                glEnable(GL_POLYGON_OFFSET_FILL);
-                glPolygonOffset(1.0f, 2.0f);
-                glCullFace(GL_BACK);
+                glDisable(GL_POLYGON_OFFSET_FILL);
+                glDisable(GL_CULL_FACE);
                 m_shadowPassShader->SetUniform("uShadowPassMode", kProjectedShadowPassMode);
 
                 for (int cascadeIndex = 0; cascadeIndex < cascadeCount; ++cascadeIndex)
@@ -956,7 +1019,7 @@ namespace PlutoGE::render
                                 return IsMovedCommandRelevantForDirectionalCascade(
                                     shadowCaster,
                                     cascadeProjection.lightViewMatrix,
-                                    light->shadowCascadeWorldOrigins[cascadeIndex],
+                                    currentShadowWorldOrigin,
                                     cascadeProjection.receiverMin,
                                     cascadeProjection.receiverMax,
                                     cascadeProjection.receiverExtent,
@@ -979,6 +1042,10 @@ namespace PlutoGE::render
                     glViewport(0, 0, shadowResolution, shadowResolution);
                     m_shadowPassShader->SetUniform("uShadowWorldOrigin", light->shadowCascadeWorldOrigins[cascadeIndex]);
                     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, cascadeMap->GetTextureID(), 0);
+                    if (!ValidateShadowFramebuffer("directional cascade shadow"))
+                    {
+                        continue;
+                    }
                     glClear(GL_DEPTH_BUFFER_BIT);
                     m_shadowPassShader->SetUniform("uLightSpaceMatrix", cascadeMatrix);
                     const ShadowDrawStats drawStats = DrawShadowCasterBatches(
@@ -988,7 +1055,7 @@ namespace PlutoGE::render
                             return IsCommandRelevantForDirectionalCascade(
                                 shadowCaster,
                                 cascadeProjection.lightViewMatrix,
-                                light->shadowCascadeWorldOrigins[cascadeIndex],
+                                currentShadowWorldOrigin,
                                 cascadeProjection.receiverMin,
                                 cascadeProjection.receiverMax,
                                 cascadeProjection.receiverExtent,
@@ -1018,6 +1085,7 @@ namespace PlutoGE::render
 
                 light->isDirty = false;
                 light->shadowRefreshPending = deferredShadowRefresh;
+                glEnable(GL_CULL_FACE);
                 glCullFace(GL_BACK);
                 m_shadowPassShader->SetUniform("uShadowWorldOrigin", glm::vec3(0.0f));
                 continue;
@@ -1067,6 +1135,10 @@ namespace PlutoGE::render
             glPolygonOffset(1.0f, 2.0f);
             glCullFace(GL_FRONT);
             glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, shadowMap->GetTextureID(), 0);
+            if (!ValidateShadowFramebuffer("projected shadow"))
+            {
+                continue;
+            }
             glClear(GL_DEPTH_BUFFER_BIT);
             m_shadowPassShader->SetUniform("uShadowPassMode", kProjectedShadowPassMode);
             m_shadowPassShader->SetUniform("uLightSpaceMatrix", shadowMatrix);

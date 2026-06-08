@@ -465,7 +465,8 @@ namespace
             receiverRadius = glm::max(receiverRadius, glm::length(corner - frustumCenter));
         }
 
-        receiverRadius = glm::max(receiverRadius + kDirectionalShadowPadding, 10.0f);
+        const float minReceiverRadius = glm::clamp(cascadeFar * 0.35f, 2.0f, 10.0f);
+        receiverRadius = glm::max(receiverRadius + kDirectionalShadowPadding, minReceiverRadius);
         const float casterExtrusionDistance = receiverRadius * 2.0f + kDirectionalShadowPadding;
         const glm::vec3 upVector = ResolveUpVector(lightDirection);
 
@@ -984,11 +985,16 @@ namespace PlutoGE::render
                     const float cascadeFar = cascadeSplits[cascadeIndex];
                     const int shadowResolution = cascadeMap->GetWidth() > 0 ? cascadeMap->GetWidth() : GetShadowResolution(*light);
                     const bool cascadeSplitChanged = std::abs(light->shadowCascadeSplits[cascadeIndex] - cascadeFar) > kShadowUpdateMatrixEpsilon;
+                    const bool hasStoredCascadeOrigin = !AreMatricesApproximatelyEqual(light->shadowCascadeMatrices[cascadeIndex], glm::mat4(1.0f)) ||
+                                                        glm::length(light->shadowCascadeWorldOrigins[cascadeIndex]) > kShadowUpdateMatrixEpsilon;
                     const bool cascadeOriginChanged = ShouldRefreshCameraRelativeCascade(
                         currentShadowWorldOrigin,
                         light->shadowCascadeWorldOrigins[cascadeIndex],
                         cascadeNear,
                         cascadeFar);
+                    const glm::vec3 cascadeShadowWorldOrigin = (forceFullCascadeUpdate || !hasStoredCascadeOrigin || cascadeOriginChanged)
+                                                                   ? currentShadowWorldOrigin
+                                                                   : light->shadowCascadeWorldOrigins[cascadeIndex];
                     const bool realtimeCascadeInvalidation = cameraDataChanged || shadowCastersChanged;
 
                     // Split radii drive cascade selection in lighting, so keep them current even when
@@ -1003,7 +1009,7 @@ namespace PlutoGE::render
                         continue;
                     }
 
-                    const auto cascadeProjection = BuildDirectionalCascadeProjection(*light, ctx.cameraData, shadowCasters, currentShadowWorldOrigin, cascadeNear, cascadeFar, shadowResolution);
+                    const auto cascadeProjection = BuildDirectionalCascadeProjection(*light, ctx.cameraData, shadowCasters, cascadeShadowWorldOrigin, cascadeNear, cascadeFar, shadowResolution);
                     const glm::mat4 &cascadeMatrix = cascadeProjection.lightSpaceMatrix;
                     const bool cascadeMatrixChanged = !AreMatricesApproximatelyEqual(cascadeMatrix, light->shadowCascadeMatrices[cascadeIndex]);
                     if (cameraOnlyInvalidation && !cascadeMatrixChanged && !cascadeSplitChanged && !cascadeOriginChanged)
@@ -1019,7 +1025,7 @@ namespace PlutoGE::render
                                 return IsMovedCommandRelevantForDirectionalCascade(
                                     shadowCaster,
                                     cascadeProjection.lightViewMatrix,
-                                    currentShadowWorldOrigin,
+                                    cascadeShadowWorldOrigin,
                                     cascadeProjection.receiverMin,
                                     cascadeProjection.receiverMax,
                                     cascadeProjection.receiverExtent,
@@ -1036,7 +1042,7 @@ namespace PlutoGE::render
                         continue;
                     }
 
-                    light->shadowCascadeWorldOrigins[cascadeIndex] = currentShadowWorldOrigin;
+                    light->shadowCascadeWorldOrigins[cascadeIndex] = cascadeShadowWorldOrigin;
                     light->shadowCascadeMatrices[cascadeIndex] = cascadeMatrix;
 
                     glViewport(0, 0, shadowResolution, shadowResolution);
@@ -1055,7 +1061,7 @@ namespace PlutoGE::render
                             return IsCommandRelevantForDirectionalCascade(
                                 shadowCaster,
                                 cascadeProjection.lightViewMatrix,
-                                currentShadowWorldOrigin,
+                                cascadeShadowWorldOrigin,
                                 cascadeProjection.receiverMin,
                                 cascadeProjection.receiverMax,
                                 cascadeProjection.receiverExtent,

@@ -600,6 +600,18 @@ namespace PlutoGE::render
         ++m_cpuFrameStats.gBufferResizeCount;
     }
 
+    void Renderer::RecordShadowMapUpdate(int surfacePixels, int submittedInstances, int submittedBatches, bool directionalCascade)
+    {
+        ++m_cpuFrameStats.shadowUpdatedSurfaceCount;
+        if (directionalCascade)
+        {
+            ++m_cpuFrameStats.shadowUpdatedDirectionalCascadeCount;
+        }
+        m_cpuFrameStats.shadowUpdatedPixelCount += std::max(surfacePixels, 0);
+        m_cpuFrameStats.shadowSubmittedInstanceCount += std::max(submittedInstances, 0);
+        m_cpuFrameStats.shadowSubmittedBatchCount += std::max(submittedBatches, 0);
+    }
+
     float Renderer::GetTotalGpuPassTimeMs() const
     {
         return std::accumulate(

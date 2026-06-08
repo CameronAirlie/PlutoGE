@@ -144,6 +144,11 @@ namespace PlutoGE::ui
         report << "Intermediate target resizes: " << cpuFrameStats.intermediateTargetResizeCount << "\n";
         report << "GBuffer resize: " << cpuFrameStats.gBufferResizeMs << " ms\n";
         report << "GBuffer resizes: " << cpuFrameStats.gBufferResizeCount << "\n";
+        report << "Shadow updated surfaces: " << cpuFrameStats.shadowUpdatedSurfaceCount << "\n";
+        report << "Shadow updated directional cascades: " << cpuFrameStats.shadowUpdatedDirectionalCascadeCount << "\n";
+        report << "Shadow updated pixels: " << cpuFrameStats.shadowUpdatedPixelCount << "\n";
+        report << "Shadow submitted instances: " << cpuFrameStats.shadowSubmittedInstanceCount << "\n";
+        report << "Shadow submitted batches: " << cpuFrameStats.shadowSubmittedBatchCount << "\n";
         report << "GPU passes total: " << totalGpuPassTimeMs << " ms\n";
         for (const auto &gpuPassTiming : gpuPassTimings)
         {

@@ -400,6 +400,7 @@ struct Light {
     mat4 LightSpaceMatrix;
     float ShadowFarPlane;
     int IsStatic;
+    vec3 CascadeWorldOrigins[MAX_SHADOW_CASCADES];
     mat4 CascadeLightSpaceMatrices[MAX_SHADOW_CASCADES];
     float CascadeSplits[MAX_SHADOW_CASCADES];
     int CascadeCount;
@@ -766,7 +767,7 @@ vec3 GetDirectionalCascadeDebugColor(int cascadeIndex)
 
 bool ProjectDirectionalCascadeCoords(vec3 receiverPosition, Light light, int cascadeIndex, out vec3 projectedCoords)
 {
-    vec4 lightSpacePosition = light.CascadeLightSpaceMatrices[cascadeIndex] * vec4(receiverPosition, 1.0);
+    vec4 lightSpacePosition = light.CascadeLightSpaceMatrices[cascadeIndex] * vec4(receiverPosition - light.CascadeWorldOrigins[cascadeIndex], 1.0);
     projectedCoords = lightSpacePosition.xyz / max(lightSpacePosition.w, 0.0001);
     projectedCoords = projectedCoords * 0.5 + 0.5;
 
@@ -1358,8 +1359,6 @@ void main()
                     gl_FragDepth = lightDistance / max(uFarPlane, 0.0001);
                     return;
                 }
-
-                gl_FragDepth = gl_FragCoord.z;
             }
         )";
 

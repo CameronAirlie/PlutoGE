@@ -26,6 +26,7 @@ namespace
     constexpr int kMaxIncrementalShadowSurfaceUpdatesPerFrame = 2;
     constexpr float kDirectionalShadowPadding = 2.0f;
     constexpr float kShadowUpdateMatrixEpsilon = 0.0001f;
+    constexpr float kDefaultDirectionalShadowDistance = 80.0f;
 
     struct FrustumPlane
     {
@@ -63,6 +64,13 @@ namespace
         glm::mat4 lightViewMatrix{1.0f};
         glm::vec2 receiverMin{0.0f};
         glm::vec2 receiverMax{0.0f};
+        glm::vec2 receiverExtent{1.0f};
+    };
+
+    struct ShadowDrawStats
+    {
+        int submittedInstances = 0;
+        int submittedBatches = 0;
     };
 
     int GetDirectionalCascadeCount(const PlutoGE::scene::Light &light)
@@ -176,9 +184,21 @@ namespace
 
     bool CanBatchShadowCommands(const PlutoGE::render::RenderCommand &a, const PlutoGE::render::RenderCommand &b)
     {
-        return a.material == b.material &&
+        const bool aAlphaTested = a.material && a.material->GetConfig().albedoTexture && a.material->GetConfig().color.a < 0.999f;
+        const bool bAlphaTested = b.material && b.material->GetConfig().albedoTexture && b.material->GetConfig().color.a < 0.999f;
+        if (aAlphaTested != bAlphaTested)
+        {
+            return false;
+        }
+
+        return (!aAlphaTested || a.material == b.material) &&
                a.mesh == b.mesh &&
                a.submeshIndex == b.submeshIndex;
+    }
+
+    bool IsAlphaTestedShadowCaster(const PlutoGE::render::RenderCommand &command)
+    {
+        return command.material && command.material->GetConfig().albedoTexture && command.material->GetConfig().color.a < 0.999f;
     }
 
     void BuildShadowCasterEntries(const std::vector<PlutoGE::render::RenderCommand> &renderCommands,
@@ -205,6 +225,38 @@ namespace
                 .hasMoved = hasMoved,
             });
         }
+    }
+
+    std::vector<const ShadowCasterEntry *> BuildSortedShadowCasters(const std::vector<ShadowCasterEntry> &shadowCasters)
+    {
+        std::vector<const ShadowCasterEntry *> sortedShadowCasters;
+        sortedShadowCasters.reserve(shadowCasters.size());
+        for (const auto &shadowCaster : shadowCasters)
+        {
+            sortedShadowCasters.push_back(&shadowCaster);
+        }
+
+        std::sort(sortedShadowCasters.begin(), sortedShadowCasters.end(), [](const auto *a, const auto *b)
+                  {
+                      const auto *aCommand = a->command;
+                      const auto *bCommand = b->command;
+                      const bool aAlphaTested = IsAlphaTestedShadowCaster(*aCommand);
+                      const bool bAlphaTested = IsAlphaTestedShadowCaster(*bCommand);
+                      if (aAlphaTested != bAlphaTested)
+                      {
+                          return aAlphaTested < bAlphaTested;
+                      }
+                      if (aAlphaTested && aCommand->material != bCommand->material)
+                      {
+                          return std::less<PlutoGE::render::Material *>{}(aCommand->material, bCommand->material);
+                      }
+                      if (aCommand->mesh != bCommand->mesh)
+                      {
+                          return std::less<PlutoGE::render::Mesh *>{}(aCommand->mesh, bCommand->mesh);
+                      }
+                      return aCommand->submeshIndex < bCommand->submeshIndex;
+                  });
+        return sortedShadowCasters;
     }
 
     void ExpandDirectionalCascadeDepthBounds(
@@ -286,7 +338,7 @@ namespace
     {
         std::array<float, PlutoGE::scene::kMaxDirectionalShadowCascades> splits{};
         const float nearRadius = glm::max(cameraData.nearPlane, 0.1f);
-        const float shadowDistance = settings.maxDistance > 0.0f ? settings.maxDistance : cameraData.farPlane;
+        const float shadowDistance = settings.maxDistance > 0.0f ? settings.maxDistance : kDefaultDirectionalShadowDistance;
         const float farRadius = glm::min(cameraData.farPlane, glm::max(shadowDistance, nearRadius + 0.1f));
         const float lambda = glm::clamp(settings.splitLambda, 0.0f, 1.0f);
 
@@ -304,6 +356,37 @@ namespace
         }
 
         return splits;
+    }
+
+    void SnapDirectionalProjectionBoundsToTexels(glm::vec3 &minBounds, glm::vec3 &maxBounds, int shadowResolution)
+    {
+        const float safeResolution = static_cast<float>(std::max(shadowResolution, 1));
+        const glm::vec2 extents = glm::max(glm::vec2(maxBounds.x - minBounds.x, maxBounds.y - minBounds.y), glm::vec2(0.001f));
+        const glm::vec2 texelSize = extents / safeResolution;
+        const glm::vec2 center = (glm::vec2(minBounds.x, minBounds.y) + glm::vec2(maxBounds.x, maxBounds.y)) * 0.5f;
+        const glm::vec2 snappedCenter = glm::round(center / texelSize) * texelSize;
+        const glm::vec2 halfExtents = extents * 0.5f;
+
+        minBounds.x = snappedCenter.x - halfExtents.x;
+        maxBounds.x = snappedCenter.x + halfExtents.x;
+        minBounds.y = snappedCenter.y - halfExtents.y;
+        maxBounds.y = snappedCenter.y + halfExtents.y;
+    }
+
+    void SnapDirectionalProjectionMatrixToTexels(glm::mat4 &projection,
+                                                 const glm::mat4 &view,
+                                                 const glm::vec3 &shadowWorldOrigin,
+                                                 int shadowResolution)
+    {
+        const float safeResolution = static_cast<float>(std::max(shadowResolution, 1));
+        const glm::mat4 lightSpaceMatrix = projection * view;
+        const glm::vec4 stableWorldAnchor = lightSpaceMatrix * glm::vec4(-shadowWorldOrigin, 1.0f);
+        const glm::vec2 shadowTexelOrigin = glm::vec2(stableWorldAnchor) * (safeResolution * 0.5f);
+        const glm::vec2 roundedTexelOrigin = glm::round(shadowTexelOrigin);
+        const glm::vec2 shadowTexelOffset = (roundedTexelOrigin - shadowTexelOrigin) * (2.0f / safeResolution);
+
+        projection[3][0] += shadowTexelOffset.x;
+        projection[3][1] += shadowTexelOffset.y;
     }
 
     DirectionalCascadeProjection BuildDirectionalCascadeProjection(
@@ -338,20 +421,13 @@ namespace
         receiverRadius = glm::max(receiverRadius + kDirectionalShadowPadding, 10.0f);
         const float casterExtrusionDistance = receiverRadius * 2.0f + kDirectionalShadowPadding;
         const glm::vec3 upVector = ResolveUpVector(lightDirection);
-        const glm::mat4 rotationOnlyView = glm::lookAt(glm::vec3(0.0f), lightDirection, upVector);
-        const glm::vec3 lightSpaceCenter = glm::vec3(rotationOnlyView * glm::vec4(frustumCenter, 1.0f));
 
         const glm::vec2 extents(receiverRadius * 2.0f);
         const glm::vec2 texelSize = extents / static_cast<float>(shadowResolution);
-        const glm::vec2 snappedCenterXY = glm::round(glm::vec2(lightSpaceCenter) / texelSize) * texelSize;
         const float pcfGuardTexels = glm::max(light.directionalShadowSettings.softness + 1.0f, 2.0f);
         const glm::vec2 halfExtents = extents * 0.5f + texelSize * pcfGuardTexels;
-        const glm::vec3 lightRight = glm::normalize(glm::cross(lightDirection, upVector));
-        const glm::vec3 lightUp = glm::normalize(glm::cross(lightRight, lightDirection));
 
-        glm::vec3 eye = frustumCenter +
-                        lightRight * (lightSpaceCenter.x - snappedCenterXY.x) +
-                        lightUp * (lightSpaceCenter.y - snappedCenterXY.y);
+        glm::vec3 eye = frustumCenter;
 
         auto computeCascadeBounds = [&](const glm::mat4 &view, glm::vec3 &minBounds, glm::vec3 &maxBounds)
         {
@@ -389,14 +465,17 @@ namespace
             computeCascadeBounds(view, minBounds, maxBounds);
         }
 
+        SnapDirectionalProjectionBoundsToTexels(minBounds, maxBounds, shadowResolution);
         const float nearPlane = glm::max(0.1f, -maxBounds.z);
         const float farPlane = glm::max(nearPlane + 0.1f, -minBounds.z);
-        const glm::mat4 projection = glm::ortho(minBounds.x, maxBounds.x, minBounds.y, maxBounds.y, nearPlane, farPlane);
+        glm::mat4 projection = glm::ortho(minBounds.x, maxBounds.x, minBounds.y, maxBounds.y, nearPlane, farPlane);
+        SnapDirectionalProjectionMatrixToTexels(projection, view, shadowWorldOrigin, shadowResolution);
         return DirectionalCascadeProjection{
             .lightSpaceMatrix = projection * view,
             .lightViewMatrix = view,
             .receiverMin = glm::vec2(minBounds.x, minBounds.y),
             .receiverMax = glm::vec2(maxBounds.x, maxBounds.y),
+            .receiverExtent = glm::max(glm::vec2(maxBounds.x - minBounds.x, maxBounds.y - minBounds.y), glm::vec2(0.001f)),
         };
     }
 
@@ -501,36 +580,51 @@ namespace
                                                const glm::mat4 &lightView,
                                                const glm::vec3 &shadowWorldOrigin,
                                                const glm::vec2 &receiverMin,
-                                               const glm::vec2 &receiverMax)
+                                               const glm::vec2 &receiverMax,
+                                               const glm::vec2 &receiverExtent,
+                                               int shadowResolution,
+                                               float minCasterTexelRadius)
     {
         const glm::vec3 relativeCenter = bounds.center - shadowWorldOrigin;
         const glm::vec3 lightSpaceCenter = glm::vec3(lightView * glm::vec4(relativeCenter, 1.0f));
         const float radius = glm::max(bounds.radius, 0.001f);
 
-        return !(lightSpaceCenter.x + radius < receiverMin.x ||
-                 lightSpaceCenter.x - radius > receiverMax.x ||
-                 lightSpaceCenter.y + radius < receiverMin.y ||
-                 lightSpaceCenter.y - radius > receiverMax.y);
+        if (lightSpaceCenter.x + radius < receiverMin.x ||
+            lightSpaceCenter.x - radius > receiverMax.x ||
+            lightSpaceCenter.y + radius < receiverMin.y ||
+            lightSpaceCenter.y - radius > receiverMax.y)
+        {
+            return false;
+        }
+
+        const glm::vec2 texelRadius = (glm::vec2(radius) / receiverExtent) * static_cast<float>(std::max(shadowResolution, 1));
+        return glm::max(texelRadius.x, texelRadius.y) >= glm::max(minCasterTexelRadius, 0.0f);
     }
 
     bool IsCommandRelevantForDirectionalCascade(const ShadowCasterEntry &shadowCaster,
                                                 const glm::mat4 &lightView,
                                                 const glm::vec3 &shadowWorldOrigin,
                                                 const glm::vec2 &receiverMin,
-                                                const glm::vec2 &receiverMax)
+                                                const glm::vec2 &receiverMax,
+                                                const glm::vec2 &receiverExtent,
+                                                int shadowResolution,
+                                                float minCasterTexelRadius)
     {
-        return IsBoundsRelevantForDirectionalCascade(shadowCaster.bounds, lightView, shadowWorldOrigin, receiverMin, receiverMax);
+        return IsBoundsRelevantForDirectionalCascade(shadowCaster.bounds, lightView, shadowWorldOrigin, receiverMin, receiverMax, receiverExtent, shadowResolution, minCasterTexelRadius);
     }
 
     bool IsMovedCommandRelevantForDirectionalCascade(const ShadowCasterEntry &shadowCaster,
                                                     const glm::mat4 &lightView,
                                                     const glm::vec3 &shadowWorldOrigin,
                                                     const glm::vec2 &receiverMin,
-                                                    const glm::vec2 &receiverMax)
+                                                    const glm::vec2 &receiverMax,
+                                                    const glm::vec2 &receiverExtent,
+                                                    int shadowResolution,
+                                                    float minCasterTexelRadius)
     {
         return shadowCaster.hasMoved &&
-               (IsBoundsRelevantForDirectionalCascade(shadowCaster.bounds, lightView, shadowWorldOrigin, receiverMin, receiverMax) ||
-                IsBoundsRelevantForDirectionalCascade(shadowCaster.previousBounds, lightView, shadowWorldOrigin, receiverMin, receiverMax));
+               (IsBoundsRelevantForDirectionalCascade(shadowCaster.bounds, lightView, shadowWorldOrigin, receiverMin, receiverMax, receiverExtent, shadowResolution, minCasterTexelRadius) ||
+                IsBoundsRelevantForDirectionalCascade(shadowCaster.previousBounds, lightView, shadowWorldOrigin, receiverMin, receiverMax, receiverExtent, shadowResolution, minCasterTexelRadius));
     }
 
     template <typename Predicate>
@@ -550,7 +644,8 @@ namespace
         }
 
         auto *albedoTexture = material->GetConfig().albedoTexture;
-        if (albedoTexture)
+        const bool alphaTested = albedoTexture && material->GetConfig().color.a < 0.999f;
+        if (alphaTested)
         {
             shader->SetUniform("uAlbedoTexture", albedoTexture, 0);
             shader->SetUniform("uHasAlbedoTexture", 1.0f);
@@ -561,47 +656,21 @@ namespace
     }
 
     template <typename Predicate>
-    void DrawShadowCasterBatches(const std::vector<ShadowCasterEntry> &shadowCasters,
-                                 Predicate &&predicate,
-                                 PlutoGE::render::Shader *shader,
-                                 unsigned int &instanceBuffer,
-                                 std::size_t &instanceCapacity,
-                                 std::vector<const PlutoGE::render::RenderCommand *> &visibleCommands,
-                                 std::vector<TransformInstanceData> &batchInstances)
+    ShadowDrawStats DrawShadowCasterBatches(const std::vector<const ShadowCasterEntry *> &sortedShadowCasters,
+                                            Predicate &&predicate,
+                                            PlutoGE::render::Shader *shader,
+                                            unsigned int &instanceBuffer,
+                                            std::size_t &instanceCapacity,
+                                            std::vector<TransformInstanceData> &batchInstances)
     {
+        ShadowDrawStats stats;
         PlutoGE::render::Material *boundMaterial = nullptr;
         PlutoGE::render::Mesh *boundMesh = nullptr;
-        visibleCommands.clear();
         batchInstances.clear();
-        if (visibleCommands.capacity() < shadowCasters.size())
-        {
-            visibleCommands.reserve(shadowCasters.size());
-        }
         if (batchInstances.capacity() < 64)
         {
             batchInstances.reserve(64);
         }
-
-        for (const auto &shadowCaster : shadowCasters)
-        {
-            if (predicate(shadowCaster))
-            {
-                visibleCommands.push_back(shadowCaster.command);
-            }
-        }
-
-        std::sort(visibleCommands.begin(), visibleCommands.end(), [](const auto *a, const auto *b)
-                  {
-                      if (a->material != b->material)
-                      {
-                          return std::less<PlutoGE::render::Material *>{}(a->material, b->material);
-                      }
-                      if (a->mesh != b->mesh)
-                      {
-                          return std::less<PlutoGE::render::Mesh *>{}(a->mesh, b->mesh);
-                      }
-                      return a->submeshIndex < b->submeshIndex;
-                  });
 
         const auto flushBatch = [&](const PlutoGE::render::RenderCommand &batchHead)
         {
@@ -612,7 +681,14 @@ namespace
 
             if (batchHead.material != boundMaterial)
             {
-                BindShadowMaterialState(shader, batchHead.material);
+                if (IsAlphaTestedShadowCaster(batchHead))
+                {
+                    BindShadowMaterialState(shader, batchHead.material);
+                }
+                else
+                {
+                    shader->SetUniform("uHasAlbedoTexture", 0.0f);
+                }
                 boundMaterial = batchHead.material;
             }
 
@@ -624,12 +700,20 @@ namespace
             }
 
             batchHead.mesh->DrawSubmeshInstancedBound(batchHead.submeshIndex, batchInstances.size());
+            stats.submittedInstances += static_cast<int>(batchInstances.size());
+            ++stats.submittedBatches;
             batchInstances.clear();
         };
 
         const PlutoGE::render::RenderCommand *batchHead = nullptr;
-        for (const auto *command : visibleCommands)
+        for (const auto *shadowCaster : sortedShadowCasters)
         {
+            if (!predicate(*shadowCaster))
+            {
+                continue;
+            }
+
+            const auto *command = shadowCaster->command;
             if (batchHead && !CanBatchShadowCommands(*batchHead, *command))
             {
                 flushBatch(*batchHead);
@@ -650,6 +734,8 @@ namespace
         {
             flushBatch(*batchHead);
         }
+
+        return stats;
     }
 }
 
@@ -688,8 +774,8 @@ namespace PlutoGE::render
         std::vector<ShadowCasterEntry> shadowCasters;
         bool shadowCastersChanged = false;
         BuildShadowCasterEntries(*ctx.renderCommands, shadowCasters, shadowCastersChanged);
+        const auto sortedShadowCasters = BuildSortedShadowCasters(shadowCasters);
         const bool cameraDataChanged = ctx.hasCameraData && (!ctx.hasPreviousCameraData || HasCameraDataChanged(ctx.cameraData, ctx.previousCameraData));
-        std::vector<const RenderCommand *> visibleShadowCommands;
         std::vector<TransformInstanceData> shadowBatchInstances;
         int incrementalShadowSurfaceUpdates = 0;
         auto reserveIncrementalShadowSurfaceUpdate = [&]()
@@ -765,7 +851,7 @@ namespace PlutoGE::render
                             continue;
                         }
 
-                        if (!reserveIncrementalShadowSurfaceUpdate())
+                        if (!shadowCastersChanged && !reserveIncrementalShadowSurfaceUpdate())
                         {
                             deferredShadowRefresh = true;
                             continue;
@@ -775,8 +861,8 @@ namespace PlutoGE::render
                     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, shadowMap->GetTextureID(), 0);
                     glClear(GL_DEPTH_BUFFER_BIT);
                     m_shadowPassShader->SetUniform("uLightSpaceMatrix", shadowMatrices[face]);
-                    DrawShadowCasterBatches(
-                        shadowCasters,
+                    const ShadowDrawStats drawStats = DrawShadowCasterBatches(
+                        sortedShadowCasters,
                         [&](const ShadowCasterEntry &shadowCaster)
                         {
                             return IsCommandRelevantForPointLight(shadowCaster, *light) &&
@@ -785,8 +871,15 @@ namespace PlutoGE::render
                         m_shadowPassShader,
                         m_instanceBuffer,
                         m_instanceCapacity,
-                        visibleShadowCommands,
                         shadowBatchInstances);
+                    if (ctx.renderer)
+                    {
+                        ctx.renderer->RecordShadowMapUpdate(
+                            shadowMap->GetWidth() * shadowMap->GetHeight(),
+                            drawStats.submittedInstances,
+                            drawStats.submittedBatches,
+                            false);
+                    }
                 }
 
                 light->isDirty = false;
@@ -833,6 +926,7 @@ namespace PlutoGE::render
                         light->shadowCascadeWorldOrigins[cascadeIndex],
                         cascadeNear,
                         cascadeFar);
+                    const bool realtimeCascadeInvalidation = cameraDataChanged || shadowCastersChanged;
 
                     // Split radii drive cascade selection in lighting, so keep them current even when
                     // this cascade's shadow map redraw is deferred by the update cadence.
@@ -841,7 +935,7 @@ namespace PlutoGE::render
                     const bool forceCascadeUpdate = forceFullCascadeUpdate;
                     const bool cascadeMotionInvalidation = motionDrivenCascadeInvalidation;
                     const bool cadenceWantsUpdate = ShouldUpdateDirectionalCascade(ctx.frameSequence, cascadeIndex, forceCascadeUpdate, cascadeMotionInvalidation);
-                    if (!forceFullCascadeUpdate && !cascadeOriginChanged && !hasPendingIncrementalRefresh && !cadenceWantsUpdate)
+                    if (!forceFullCascadeUpdate && !realtimeCascadeInvalidation && !cascadeOriginChanged && !hasPendingIncrementalRefresh && !cadenceWantsUpdate)
                     {
                         continue;
                     }
@@ -864,13 +958,16 @@ namespace PlutoGE::render
                                     cascadeProjection.lightViewMatrix,
                                     light->shadowCascadeWorldOrigins[cascadeIndex],
                                     cascadeProjection.receiverMin,
-                                    cascadeProjection.receiverMax);
+                                    cascadeProjection.receiverMax,
+                                    cascadeProjection.receiverExtent,
+                                    shadowResolution,
+                                    light->directionalShadowSettings.minCasterTexelRadius);
                             }))
                     {
                         continue;
                     }
 
-                    if (!forceFullCascadeUpdate && !reserveIncrementalShadowSurfaceUpdate())
+                    if (!forceFullCascadeUpdate && !realtimeCascadeInvalidation && !reserveIncrementalShadowSurfaceUpdate())
                     {
                         deferredShadowRefresh = true;
                         continue;
@@ -884,8 +981,8 @@ namespace PlutoGE::render
                     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, cascadeMap->GetTextureID(), 0);
                     glClear(GL_DEPTH_BUFFER_BIT);
                     m_shadowPassShader->SetUniform("uLightSpaceMatrix", cascadeMatrix);
-                    DrawShadowCasterBatches(
-                        shadowCasters,
+                    const ShadowDrawStats drawStats = DrawShadowCasterBatches(
+                        sortedShadowCasters,
                         [&](const ShadowCasterEntry &shadowCaster)
                         {
                             return IsCommandRelevantForDirectionalCascade(
@@ -893,13 +990,23 @@ namespace PlutoGE::render
                                 cascadeProjection.lightViewMatrix,
                                 light->shadowCascadeWorldOrigins[cascadeIndex],
                                 cascadeProjection.receiverMin,
-                                cascadeProjection.receiverMax);
+                                cascadeProjection.receiverMax,
+                                cascadeProjection.receiverExtent,
+                                shadowResolution,
+                                light->directionalShadowSettings.minCasterTexelRadius);
                         },
                         m_shadowPassShader,
                         m_instanceBuffer,
                         m_instanceCapacity,
-                        visibleShadowCommands,
                         shadowBatchInstances);
+                    if (ctx.renderer)
+                    {
+                        ctx.renderer->RecordShadowMapUpdate(
+                            shadowResolution * shadowResolution,
+                            drawStats.submittedInstances,
+                            drawStats.submittedBatches,
+                            true);
+                    }
                 }
 
                 for (int cascadeIndex = cascadeCount; cascadeIndex < scene::kMaxDirectionalShadowCascades; ++cascadeIndex)
@@ -945,7 +1052,7 @@ namespace PlutoGE::render
                     continue;
                 }
 
-                if (!reserveIncrementalShadowSurfaceUpdate())
+                if (!shadowCastersChanged && !reserveIncrementalShadowSurfaceUpdate())
                 {
                     light->shadowRefreshPending = true;
                     continue;
@@ -963,8 +1070,8 @@ namespace PlutoGE::render
             glClear(GL_DEPTH_BUFFER_BIT);
             m_shadowPassShader->SetUniform("uShadowPassMode", kProjectedShadowPassMode);
             m_shadowPassShader->SetUniform("uLightSpaceMatrix", shadowMatrix);
-            DrawShadowCasterBatches(
-                shadowCasters,
+            const ShadowDrawStats drawStats = DrawShadowCasterBatches(
+                sortedShadowCasters,
                 [&](const ShadowCasterEntry &shadowCaster)
                 {
                     return light->type != scene::LightType::Spot ||
@@ -973,8 +1080,15 @@ namespace PlutoGE::render
                 m_shadowPassShader,
                 m_instanceBuffer,
                 m_instanceCapacity,
-                visibleShadowCommands,
                 shadowBatchInstances);
+            if (ctx.renderer)
+            {
+                ctx.renderer->RecordShadowMapUpdate(
+                    shadowMap->GetWidth() * shadowMap->GetHeight(),
+                    drawStats.submittedInstances,
+                    drawStats.submittedBatches,
+                    false);
+            }
 
             light->isDirty = false;
             light->shadowRefreshPending = false;

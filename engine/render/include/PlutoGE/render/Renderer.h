@@ -99,6 +99,11 @@ namespace PlutoGE::render
         int intermediateTargetResizeCount = 0;
         float gBufferResizeMs = 0.0f;
         int gBufferResizeCount = 0;
+        int shadowUpdatedSurfaceCount = 0;
+        int shadowUpdatedDirectionalCascadeCount = 0;
+        int shadowSubmittedInstanceCount = 0;
+        int shadowSubmittedBatchCount = 0;
+        int shadowUpdatedPixelCount = 0;
     };
 
     struct RenderContext
@@ -160,6 +165,7 @@ namespace PlutoGE::render
         void EndPostProcessEffectTiming();
         void SetLightingPassCounters(int lightCount, int shadowedLightCount);
         void RecordGBufferResize(float resizeMs);
+        void RecordShadowMapUpdate(int surfacePixels, int submittedInstances, int submittedBatches, bool directionalCascade);
 
         void SubmitRenderCommand(const RenderCommand &command)
         {

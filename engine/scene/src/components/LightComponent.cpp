@@ -24,11 +24,6 @@ namespace PlutoGE::scene
         {
             const int baseResolution = ResolveShadowResolution(light);
             const int clampedCascadeIndex = std::clamp(cascadeIndex, 0, kMaxDirectionalShadowCascades - 1);
-            if (ClampCascadeCount(light.directionalShadowSettings.cascadeCount) <= 2)
-            {
-                return baseResolution;
-            }
-
             const int divisor = 1 << clampedCascadeIndex;
             return std::max(baseResolution / divisor, 256);
         }
@@ -231,6 +226,7 @@ namespace PlutoGE::scene
             properties.push_back({"Shadow Split Lambda", PropertyType::Float, std::to_string(m_config.directionalShadowSettings.splitLambda)});
             properties.push_back({"Shadow Cascade Blend Distance", PropertyType::Float, std::to_string(m_config.directionalShadowSettings.cascadeBlendDistance)});
             properties.push_back({"Shadow Softness (0 = Hard Shadows)", PropertyType::Float, std::to_string(m_config.directionalShadowSettings.softness)});
+            properties.push_back({"Shadow Min Caster Texel Radius", PropertyType::Float, std::to_string(m_config.directionalShadowSettings.minCasterTexelRadius)});
         }
 
         return properties;
@@ -293,6 +289,10 @@ namespace PlutoGE::scene
             else if (property.name == "Shadow Softness (0 = Hard Shadows)")
             {
                 m_config.directionalShadowSettings.softness = std::max(std::stof(property.value), 0.0f);
+            }
+            else if (property.name == "Shadow Min Caster Texel Radius")
+            {
+                m_config.directionalShadowSettings.minCasterTexelRadius = std::max(std::stof(property.value), 0.0f);
             }
         }
         Initialize(); // Re-initialize to apply any changes that require setup (like shadow map creation)

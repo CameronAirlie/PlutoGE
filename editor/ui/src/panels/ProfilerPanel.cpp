@@ -88,6 +88,8 @@ namespace PlutoGE::ui
         }
         ImGui::Text("Intermediate target resize: %.2f ms (%d)", cpuFrameStats.intermediateTargetResizeMs, cpuFrameStats.intermediateTargetResizeCount);
         ImGui::Text("GBuffer resize: %.2f ms (%d)", cpuFrameStats.gBufferResizeMs, cpuFrameStats.gBufferResizeCount);
+        ImGui::Text("Shadow updates: %d surfaces (%d directional cascades)", cpuFrameStats.shadowUpdatedSurfaceCount, cpuFrameStats.shadowUpdatedDirectionalCascadeCount);
+        ImGui::Text("Shadow workload: %d px, %d instances, %d batches", cpuFrameStats.shadowUpdatedPixelCount, cpuFrameStats.shadowSubmittedInstanceCount, cpuFrameStats.shadowSubmittedBatchCount);
 
         ImGui::Separator();
         ImGui::Text("GPU passes total: %.2f ms", totalGpuPassTimeMs);

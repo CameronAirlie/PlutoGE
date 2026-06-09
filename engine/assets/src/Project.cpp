@@ -488,6 +488,12 @@ namespace PlutoGE::assets
                 continue;
             }
 
+            if (tokens[0] == "GRAPHICS_API" && tokens.size() >= 2)
+            {
+                manifest.graphicsApi = Project::ParseGraphicsApiName(tokens[1]);
+                continue;
+            }
+
             if (tokens[0] == "EDITOR_CAMERA_POSITION" && tokens.size() >= 4)
             {
                 ParseFloat(tokens[1], manifest.editorCamera.positionX);
@@ -690,6 +696,33 @@ namespace PlutoGE::assets
         return ProjectAssetType::Unknown;
     }
 
+    std::string_view Project::GetGraphicsApiName(ProjectGraphicsApi graphicsApi)
+    {
+        switch (graphicsApi)
+        {
+        case ProjectGraphicsApi::D3D12:
+            return "D3D12";
+        case ProjectGraphicsApi::Vulkan:
+            return "Vulkan";
+        case ProjectGraphicsApi::OpenGL:
+        default:
+            return "OpenGL";
+        }
+    }
+
+    ProjectGraphicsApi Project::ParseGraphicsApiName(std::string_view graphicsApiName)
+    {
+        if (graphicsApiName == "D3D12" || graphicsApiName == "Direct3D12" || graphicsApiName == "DirectX12")
+        {
+            return ProjectGraphicsApi::D3D12;
+        }
+        if (graphicsApiName == "Vulkan")
+        {
+            return ProjectGraphicsApi::Vulkan;
+        }
+        return ProjectGraphicsApi::OpenGL;
+    }
+
     bool Project::Save(std::string *errorMessage) const
     {
         std::ofstream output(m_manifestPath, std::ios::out | std::ios::trunc);
@@ -707,6 +740,7 @@ namespace PlutoGE::assets
         output << "WINDOW_TITLE\t" << EscapeText(m_manifest.windowTitle) << '\n';
         output << "WINDOW_SIZE\t" << m_manifest.windowWidth << '\t' << m_manifest.windowHeight << '\n';
         output << "VSYNC\t" << (m_manifest.vSyncEnabled ? 1 : 0) << '\n';
+        output << "GRAPHICS_API\t" << GetGraphicsApiName(m_manifest.graphicsApi) << '\n';
         output << "EDITOR_CAMERA_POSITION\t"
                << m_manifest.editorCamera.positionX << '\t'
                << m_manifest.editorCamera.positionY << '\t'

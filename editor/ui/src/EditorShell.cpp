@@ -1113,6 +1113,23 @@ namespace PlutoGE::ui
         }
     }
 
+    namespace
+    {
+        render::RenderBackend ToRenderBackend(assets::ProjectGraphicsApi graphicsApi)
+        {
+            switch (graphicsApi)
+            {
+            case assets::ProjectGraphicsApi::D3D12:
+                return render::RenderBackend::NvrhiD3D12;
+            case assets::ProjectGraphicsApi::Vulkan:
+                return render::RenderBackend::NvrhiVulkan;
+            case assets::ProjectGraphicsApi::OpenGL:
+            default:
+                return render::RenderBackend::OpenGL;
+            }
+        }
+    }
+
     void EditorShell::MarkSceneDirty()
     {
         if (!m_sceneDirty)
@@ -1769,6 +1786,7 @@ namespace PlutoGE::ui
         int projectWindowWidth = 1280;
         int projectWindowHeight = 720;
         bool projectVSyncEnabled = true;
+        int projectGraphicsApiIndex = 0;
         bool shouldOpenProjectSettingsPopup = false;
 
         auto loadProjectSettingsDraft = [&]()
@@ -1795,6 +1813,19 @@ namespace PlutoGE::ui
             projectWindowWidth = manifest.windowWidth;
             projectWindowHeight = manifest.windowHeight;
             projectVSyncEnabled = manifest.vSyncEnabled;
+            switch (manifest.graphicsApi)
+            {
+            case assets::ProjectGraphicsApi::D3D12:
+                projectGraphicsApiIndex = 1;
+                break;
+            case assets::ProjectGraphicsApi::Vulkan:
+                projectGraphicsApiIndex = 2;
+                break;
+            case assets::ProjectGraphicsApi::OpenGL:
+            default:
+                projectGraphicsApiIndex = 0;
+                break;
+            }
         };
 
         bool editorVSyncEnabled = m_project ? m_project->GetManifest().vSyncEnabled : false;
@@ -2319,6 +2350,7 @@ namespace PlutoGE::ui
                     ImGui::InputText("Window Title", projectWindowTitleBuffer.data(), projectWindowTitleBuffer.size());
                     ImGui::InputInt("Window Width", &projectWindowWidth);
                     ImGui::InputInt("Window Height", &projectWindowHeight);
+                    ImGui::Combo("Graphics API", &projectGraphicsApiIndex, "OpenGL\0DirectX 12\0Vulkan\0");
                     ImGui::Checkbox("VSync", &projectVSyncEnabled);
                     ImGui::InputText("Script Assembly", projectScriptAssemblyBuffer.data(), projectScriptAssemblyBuffer.size());
                     ImGui::SameLine();
@@ -2352,6 +2384,19 @@ namespace PlutoGE::ui
                         manifest.windowWidth = (std::max)(projectWindowWidth, 64);
                         manifest.windowHeight = (std::max)(projectWindowHeight, 64);
                         manifest.vSyncEnabled = projectVSyncEnabled;
+                        switch (projectGraphicsApiIndex)
+                        {
+                        case 1:
+                            manifest.graphicsApi = assets::ProjectGraphicsApi::D3D12;
+                            break;
+                        case 2:
+                            manifest.graphicsApi = assets::ProjectGraphicsApi::Vulkan;
+                            break;
+                        case 0:
+                        default:
+                            manifest.graphicsApi = assets::ProjectGraphicsApi::OpenGL;
+                            break;
+                        }
                         manifest.scriptAssembly = projectScriptAssemblyBuffer[0] == '\0'
                                                       ? std::string{}
                                                       : m_project->MakeAssetReference(projectScriptAssemblyBuffer.data());
@@ -2367,6 +2412,10 @@ namespace PlutoGE::ui
                             editorVSyncEnabled = manifest.vSyncEnabled;
                             appliedEditorVSyncEnabled = editorVSyncEnabled;
                             renderer.SetVSyncEnabled(appliedEditorVSyncEnabled);
+                            if (ToRenderBackend(manifest.graphicsApi) != renderer.GetBackend())
+                            {
+                                m_statusMessage += " Graphics API changes apply when the renderer is recreated.";
+                            }
                             ImGui::CloseCurrentPopup();
                         }
                     }

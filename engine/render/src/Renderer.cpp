@@ -3,6 +3,7 @@
 #include "PlutoGE/render/Shader.h"
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/render/Material.h"
+#include "PlutoGE/render/NvrhiBackend.h"
 #include "PlutoGE/render/Texture.h"
 #include "PlutoGE/render/Graphics.h"
 #include "PlutoGE/render/RenderTarget.h"
@@ -123,6 +124,26 @@ namespace PlutoGE::render
             return false;
         }
 
+        if (IsNvrhiBackend(m_config.backend))
+        {
+            m_nvrhiBackend = std::make_unique<NvrhiBackend>();
+            if (!m_nvrhiBackend->Initialize(NvrhiBackendConfig{
+                    .backend = m_config.backend,
+                    .window = window,
+                    .vSyncEnabled = true,
+                }))
+            {
+                std::cerr << "Failed to initialize " << ToString(m_config.backend)
+                          << " backend: " << m_nvrhiBackend->GetLastError() << std::endl;
+                m_nvrhiBackend.reset();
+                return false;
+            }
+
+            window->SetResizeCallback(nullptr);
+            m_isInitialized = true;
+            return true;
+        }
+
         window->SetContextCurrent();
         window->SetResizeCallback(ResizeCallback);
 
@@ -180,6 +201,12 @@ namespace PlutoGE::render
 
         ++m_frameSequence;
 
+        if (m_nvrhiBackend)
+        {
+            m_nvrhiBackend->BeginFrame();
+            return;
+        }
+
         if (renderTarget)
         {
             Graphics::ClearRenderTarget(renderTarget);
@@ -213,6 +240,9 @@ namespace PlutoGE::render
     void Renderer::UpdateShadowMaps(std::vector<scene::Light *> lights)
     {
         if (!m_isInitialized || !m_shadowPass)
+            return;
+
+        if (m_nvrhiBackend)
             return;
 
         Shader::ResetStateCache();
@@ -256,6 +286,11 @@ namespace PlutoGE::render
     bool Renderer::CaptureSceneCubemap(const glm::vec3 &position, int resolution, float farPlane, Texture *targetCubemap, std::vector<scene::Light *> lights, const scene::Scene *scene)
     {
         if (!m_isInitialized || !targetCubemap || targetCubemap->GetType() != GL_TEXTURE_CUBE_MAP || resolution <= 0)
+        {
+            return false;
+        }
+
+        if (m_nvrhiBackend)
         {
             return false;
         }
@@ -350,6 +385,28 @@ namespace PlutoGE::render
     {
         if (!m_isInitialized)
             return;
+
+        if (m_nvrhiBackend)
+        {
+            int renderWidth = 0;
+            int renderHeight = 0;
+            if (renderTarget)
+            {
+                renderWidth = renderTarget->GetWidth();
+                renderHeight = renderTarget->GetHeight();
+            }
+            else if (m_config.window)
+            {
+                const auto extents = m_config.window->GetExtents();
+                renderWidth = extents.width;
+                renderHeight = extents.height;
+            }
+
+            EnsureRenderCommandsSorted();
+            m_nvrhiBackend->RenderFrame(renderWidth, renderHeight, cameraData, m_renderCommands);
+            ++m_profiledRenderCount;
+            return;
+        }
 
         Shader::ResetStateCache();
 
@@ -456,6 +513,12 @@ namespace PlutoGE::render
             return;
         }
 
+        if (m_nvrhiBackend)
+        {
+            m_nvrhiBackend->EndFrame();
+            return;
+        }
+
         if (m_config.window)
         {
             glfwSwapBuffers(static_cast<GLFWwindow *>(m_config.window->GetWindow()));
@@ -468,6 +531,11 @@ namespace PlutoGE::render
         m_isInitialized = false;
         CleanupResources(renderTarget);
         CleanupFrameResources();
+        if (m_nvrhiBackend)
+        {
+            m_nvrhiBackend->Shutdown();
+            m_nvrhiBackend.reset();
+        }
         if (m_shadowPass)
         {
             delete m_shadowPass;
@@ -475,7 +543,10 @@ namespace PlutoGE::render
         }
         m_lightPropagationVolumePass = nullptr;
         ShutdownGpuTimers();
-        glBindBuffer(GL_ARRAY_BUFFER, 0);
+        if (m_config.backend == RenderBackend::OpenGL)
+        {
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+        }
     }
 
     void Renderer::BeginLightingStageTiming(std::size_t stageIndex)
@@ -643,11 +714,25 @@ namespace PlutoGE::render
 
         if (enabled)
         {
-            glfwSwapInterval(1); // Enable VSync
+            if (m_nvrhiBackend)
+            {
+                m_nvrhiBackend->SetVSyncEnabled(true);
+            }
+            else
+            {
+                glfwSwapInterval(1); // Enable VSync
+            }
         }
         else
         {
-            glfwSwapInterval(0); // Disable VSync
+            if (m_nvrhiBackend)
+            {
+                m_nvrhiBackend->SetVSyncEnabled(false);
+            }
+            else
+            {
+                glfwSwapInterval(0); // Disable VSync
+            }
         }
     }
 

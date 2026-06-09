@@ -8,6 +8,18 @@ target_include_directories(PlutoGE_glad PUBLIC
 )
 
 include(FetchContent)
+
+option(PLUTO_WITH_NVRHI "Fetch and expose NVIDIA NVRHI for the non-OpenGL renderer backends" OFF)
+
+if (PLUTO_WITH_NVRHI)
+FetchContent_Declare(
+    nvrhi
+    GIT_REPOSITORY https://github.com/NVIDIA-RTX/NVRHI.git
+    GIT_TAG        main
+)
+FetchContent_MakeAvailable(nvrhi)
+endif()
+
 FetchContent_Declare(
     glfw
     GIT_REPOSITORY https://github.com/glfw/glfw.git

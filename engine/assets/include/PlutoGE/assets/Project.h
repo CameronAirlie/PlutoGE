@@ -20,6 +20,13 @@ namespace PlutoGE::assets
         Assembly,
     };
 
+    enum class ProjectGraphicsApi
+    {
+        OpenGL,
+        D3D12,
+        Vulkan,
+    };
+
     struct ProjectAssetEntry
     {
         std::string reference;
@@ -63,6 +70,7 @@ namespace PlutoGE::assets
         int windowWidth = 1280;
         int windowHeight = 720;
         bool vSyncEnabled = true;
+        ProjectGraphicsApi graphicsApi = ProjectGraphicsApi::OpenGL;
         ProjectEditorCameraSettings editorCamera;
         std::vector<ProjectPostProcessEffect> editorCameraPostProcessEffects;
         std::vector<ProjectAssetEntry> assetEntries;
@@ -94,6 +102,8 @@ namespace PlutoGE::assets
         static ProjectAssetType GetAssetTypeForReference(std::string_view reference);
         static std::string_view GetAssetTypeName(ProjectAssetType type);
         static ProjectAssetType ParseAssetTypeName(std::string_view typeName);
+        static std::string_view GetGraphicsApiName(ProjectGraphicsApi graphicsApi);
+        static ProjectGraphicsApi ParseGraphicsApiName(std::string_view graphicsApiName);
         static std::vector<std::string> GetBuiltinAssetReferences();
 
         bool Save(std::string *errorMessage = nullptr) const;

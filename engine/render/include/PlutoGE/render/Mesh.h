@@ -138,10 +138,7 @@ namespace PlutoGE::render
             MeshConfig config;
             config.data = std::move(meshData);
 
-            Mesh *mesh = new Mesh(config);
-            mesh->Initialize();
-
-            return mesh;
+            return new Mesh(config);
         }
 
         static Mesh *Quad()
@@ -165,9 +162,7 @@ namespace PlutoGE::render
             MeshConfig config;
             config.data = std::move(meshData);
 
-            Mesh *mesh = new Mesh(config);
-            mesh->Initialize();
-            return mesh;
+            return new Mesh(config);
         }
 
         static Mesh *Plane()
@@ -232,9 +227,7 @@ namespace PlutoGE::render
             MeshConfig config;
             config.data = std::move(meshData);
 
-            Mesh *mesh = new Mesh(config);
-            mesh->Initialize();
-            return mesh;
+            return new Mesh(config);
         }
 
         static Mesh *Cylinder(unsigned int segments = 32)
@@ -301,9 +294,7 @@ namespace PlutoGE::render
             MeshConfig config;
             config.data = std::move(meshData);
 
-            Mesh *mesh = new Mesh(config);
-            mesh->Initialize();
-            return mesh;
+            return new Mesh(config);
         }
 
         static Mesh *FromData(MeshData data, std::vector<Submesh> submeshes = {}, bool hasLightmapUvs = false)
@@ -313,9 +304,7 @@ namespace PlutoGE::render
             config.submeshes = std::move(submeshes);
             config.hasLightmapUvs = hasLightmapUvs;
 
-            Mesh *mesh = new Mesh(config);
-            mesh->Initialize();
-            return mesh;
+            return new Mesh(config);
         }
 
         struct QuadVertex
@@ -363,12 +352,14 @@ namespace PlutoGE::render
             mesh->m_VAO = VAO;
             mesh->m_VBO = VBO;
             mesh->m_EBO = EBO;
+            mesh->m_openGLResourcesInitialized = true;
             mesh->m_config.data.indices = indices;
             return mesh;
         }
 
         void Bind() const
         {
+            Initialize();
             glBindVertexArray(m_VAO);
             glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_EBO);
         }
@@ -493,9 +484,21 @@ namespace PlutoGE::render
         }
         const MeshData &GetMeshData() const { return m_meshData; }
 
-        GLuint GetVAO() const { return m_VAO; }
-        GLuint GetVBO() const { return m_VBO; }
-        GLuint GetEBO() const { return m_EBO; }
+        GLuint GetVAO() const
+        {
+            Initialize();
+            return m_VAO;
+        }
+        GLuint GetVBO() const
+        {
+            Initialize();
+            return m_VBO;
+        }
+        GLuint GetEBO() const
+        {
+            Initialize();
+            return m_EBO;
+        }
 
         // protected:
         //     friend class Graphics;
@@ -703,14 +706,26 @@ namespace PlutoGE::render
         }
 
         MeshConfig m_config;
-        GLuint m_VAO = 0;    // Vertex Array Object
-        GLuint m_VBO = 0;    // Vertex Buffer Object
-        GLuint m_EBO = 0;    // Element Buffer Object (for indexed drawing)
+        mutable GLuint m_VAO = 0;    // Vertex Array Object
+        mutable GLuint m_VBO = 0;    // Vertex Buffer Object
+        mutable GLuint m_EBO = 0;    // Element Buffer Object (for indexed drawing)
+        mutable bool m_openGLResourcesInitialized = false;
         MeshData m_meshData; // Mesh data (vertices and indices)
         MeshBounds m_bounds;
 
-        void Initialize()
+        void Initialize() const
         {
+            if (m_openGLResourcesInitialized)
+            {
+                return;
+            }
+
+            if (m_meshData.vertices.empty() || m_meshData.indices.empty())
+            {
+                m_openGLResourcesInitialized = true;
+                return;
+            }
+
             // Generate and bind VAO, VBO, and EBO here
             glGenVertexArrays(1, &m_VAO);
             glGenBuffers(1, &m_VBO);
@@ -744,6 +759,8 @@ namespace PlutoGE::render
             {
                 std::cerr << "OpenGL error after Mesh buffer setup: " << err << std::endl;
             }
+
+            m_openGLResourcesInitialized = true;
         }
     };
 }

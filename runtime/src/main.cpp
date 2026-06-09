@@ -22,6 +22,20 @@ namespace PlutoGE
 {
     namespace
     {
+        render::RenderBackend ToRenderBackend(assets::ProjectGraphicsApi graphicsApi)
+        {
+            switch (graphicsApi)
+            {
+            case assets::ProjectGraphicsApi::D3D12:
+                return render::RenderBackend::NvrhiD3D12;
+            case assets::ProjectGraphicsApi::Vulkan:
+                return render::RenderBackend::NvrhiVulkan;
+            case assets::ProjectGraphicsApi::OpenGL:
+            default:
+                return render::RenderBackend::OpenGL;
+            }
+        }
+
 #ifdef _WIN32
         struct RuntimeDiagnostics
         {
@@ -302,14 +316,16 @@ int main(int argc, char **argv)
 #endif
 
     PlutoGE::core::EngineConfig config{
-        PlutoGE::platform::WindowConfig{
+        .windowConfig = PlutoGE::platform::WindowConfig{
             .title = project->GetManifest().windowTitle.empty() ? project->GetManifest().name : project->GetManifest().windowTitle,
             .width = project->GetManifest().windowWidth,
             .height = project->GetManifest().windowHeight,
             .resizable = true,
             .visible = true,
             .fullscreen = false,
-        }};
+        },
+        .renderBackend = PlutoGE::ToRenderBackend(project->GetManifest().graphicsApi),
+    };
 
     if (!engine.Initialize(config))
     {

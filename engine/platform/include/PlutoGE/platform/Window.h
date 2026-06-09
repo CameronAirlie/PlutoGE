@@ -9,6 +9,12 @@
 
 namespace PlutoGE::platform
 {
+    enum class WindowGraphicsApi
+    {
+        OpenGL,
+        None,
+    };
+
     struct WindowConfig
     {
         std::string title = "PlutoGE Window";
@@ -17,6 +23,7 @@ namespace PlutoGE::platform
         bool resizable = true;
         bool visible = true;
         bool fullscreen = false;
+        WindowGraphicsApi graphicsApi = WindowGraphicsApi::OpenGL;
         std::function<void(int, int)> resizeCallback = nullptr;
     };
 

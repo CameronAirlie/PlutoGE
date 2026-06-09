@@ -89,6 +89,10 @@ namespace PlutoGE::core
     bool Engine::Initialize(const EngineConfig &config)
     {
         m_config = config;
+        if (render::IsNvrhiBackend(m_config.renderBackend))
+        {
+            m_config.windowConfig.graphicsApi = platform::WindowGraphicsApi::None;
+        }
 
         if (!m_window.Create(m_config.windowConfig))
         {
@@ -98,6 +102,7 @@ namespace PlutoGE::core
 
         render::RendererConfig rendererConfig;
         rendererConfig.window = &m_window;
+        rendererConfig.backend = m_config.renderBackend;
         if (!m_renderer.Initialize(rendererConfig))
         {
             std::cerr << "Failed to initialize renderer." << std::endl;

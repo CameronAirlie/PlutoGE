@@ -4,6 +4,8 @@
 #include "PlutoGE/render/Camera.h"
 #include "PlutoGE/render/GBuffer.h"
 #include "PlutoGE/render/Mesh.h"
+#include "PlutoGE/render/NvrhiBackend.h"
+#include "PlutoGE/render/RenderBackend.h"
 #include "PlutoGE/render/RenderTarget.h"
 #include <array>
 #include <glm/glm.hpp>
@@ -50,8 +52,8 @@ namespace PlutoGE::render
 
     struct RendererConfig
     {
-        // Future configuration options can be added here
         platform::Window *window = nullptr; // Pointer to the Window, set during initialization
+        RenderBackend backend = RenderBackend::OpenGL;
     };
 
     struct RenderCommand
@@ -147,6 +149,7 @@ namespace PlutoGE::render
         void ClearRenderCommands();
 
         void SetVSyncEnabled(bool enabled);
+        [[nodiscard]] RenderBackend GetBackend() const { return m_config.backend; }
         void SetPostProcessDebugView(PostProcessDebugView debugView) { m_postProcessDebugView = debugView; }
         PostProcessDebugView GetPostProcessDebugView() const { return m_postProcessDebugView; }
         [[nodiscard]] const std::vector<CpuPassTiming> &GetCpuPassTimings() const { return m_cpuPassTimings; }
@@ -229,6 +232,7 @@ namespace PlutoGE::render
         std::vector<GpuPassTiming> m_postProcessGpuTimings;
         std::vector<GpuTimerQueryState> m_postProcessGpuTimerQueries;
         std::unordered_map<std::string, std::size_t> m_postProcessGpuTimingIndices;
+        std::unique_ptr<NvrhiBackend> m_nvrhiBackend;
         LightingGpuTiming m_lightingGpuTiming;
         RendererCpuFrameStats m_cpuFrameStats;
         std::size_t m_activePostProcessGpuTimingIndex = 0;

@@ -32,6 +32,12 @@ namespace PlutoGE::platform
             return false;
         }
 
+        glfwDefaultWindowHints();
+        if (m_config.graphicsApi == WindowGraphicsApi::None)
+        {
+            glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+        }
+
         m_window = glfwCreateWindow(m_clientWidth, m_clientHeight, m_config.title.c_str(), m_config.fullscreen ? glfwGetPrimaryMonitor() : nullptr, nullptr);
         if (!m_window)
         {
@@ -40,7 +46,10 @@ namespace PlutoGE::platform
             return false;
         }
 
-        glfwMakeContextCurrent(m_window);
+        if (m_config.graphicsApi == WindowGraphicsApi::OpenGL)
+        {
+            glfwMakeContextCurrent(m_window);
+        }
         glfwSetWindowUserPointer(m_window, this);
         glfwGetFramebufferSize(m_window, &m_clientWidth, &m_clientHeight);
 

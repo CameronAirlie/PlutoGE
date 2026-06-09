@@ -38,8 +38,8 @@ namespace PlutoGE::core
 
     struct EngineConfig
     {
-        // Future configuration options can be added here
         platform::WindowConfig windowConfig; // Configuration for the window, set during initialization
+        render::RenderBackend renderBackend = render::RenderBackend::OpenGL;
     };
 
     struct MeshImportStatus

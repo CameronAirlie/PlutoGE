@@ -6,6 +6,10 @@
 #include <string>
 #include <vector>
 
+#if defined(_WIN32)
+#include <dxgiformat.h>
+#endif
+
 namespace PlutoGE::platform
 {
     class Window;
@@ -27,6 +31,18 @@ namespace PlutoGE::render
         platform::Window *window = nullptr;
         bool vSyncEnabled = true;
     };
+
+#if defined(_WIN32)
+    struct NvrhiD3D12Interop
+    {
+        void *device = nullptr;
+        void *graphicsQueue = nullptr;
+        void *swapChain = nullptr;
+        void *currentBackBuffer = nullptr;
+        DXGI_FORMAT backBufferFormat = DXGI_FORMAT_UNKNOWN;
+        unsigned int bufferCount = 0;
+    };
+#endif
 
     class NvrhiBackend
     {
@@ -50,6 +66,9 @@ namespace PlutoGE::render
         [[nodiscard]] RenderBackend GetBackend() const { return m_config.backend; }
         [[nodiscard]] const std::string &GetLastError() const { return m_lastError; }
         [[nodiscard]] bool IsInitialized() const { return m_impl != nullptr; }
+#if defined(_WIN32)
+        [[nodiscard]] bool GetD3D12Interop(NvrhiD3D12Interop &interop) const;
+#endif
 
     private:
         NvrhiBackendConfig m_config;

@@ -42,6 +42,8 @@ namespace PlutoGE::ui
         bool ShouldRenderFrame() const;
 
         render::RenderTarget *GetRenderTarget() const { return m_renderTarget; }
+        int GetSurfaceWidth() const { return m_surfaceWidth; }
+        int GetSurfaceHeight() const { return m_surfaceHeight; }
         bool IsViewportHovered() const { return m_isViewportHovered; }
         bool IsViewportFocused() const { return m_isViewportFocused; }
         bool IsTransformGizmoUsing() const { return m_isTransformGizmoUsing; }
@@ -66,6 +68,8 @@ namespace PlutoGE::ui
 
     private:
         render::RenderTarget *m_renderTarget = nullptr; // The render target used for rendering the viewport content
+        int m_surfaceWidth = 0;
+        int m_surfaceHeight = 0;
         int m_pendingWidth = 0;
         int m_pendingHeight = 0;
         int m_resizeStableFrames = 0;
@@ -73,5 +77,6 @@ namespace PlutoGE::ui
         bool m_isViewportFocused = false;
         bool m_isTransformGizmoUsing = false;
         bool m_panelControlsEnabled = true;
+        bool m_usesRenderTarget = true;
     };
 }

@@ -142,6 +142,9 @@ namespace PlutoGE::render
         virtual void Shutdown() = 0;
         virtual void SetVSyncEnabled(bool enabled) { m_vSyncEnabled = enabled; }
         [[nodiscard]] virtual nvrhi::IDevice *GetDevice() const = 0;
+#if defined(_WIN32)
+        [[nodiscard]] virtual bool GetD3D12Interop(NvrhiD3D12Interop &) const { return false; }
+#endif
 
     protected:
         struct MeshGpuBuffers
@@ -811,7 +814,9 @@ namespace PlutoGE::render
         bool WrapSwapChainBuffers(std::string &errorMessage)
         {
             m_backBufferTextures.clear();
+            m_backBufferResources.clear();
             m_backBufferTextures.reserve(kSwapChainBufferCount);
+            m_backBufferResources.reserve(kSwapChainBufferCount);
 
             DXGI_SWAP_CHAIN_DESC1 swapChainDesc{};
             if (FAILED(m_swapChain->GetDesc1(&swapChainDesc)))
@@ -819,6 +824,8 @@ namespace PlutoGE::render
                 errorMessage = "Failed to query D3D12 swap chain description.";
                 return false;
             }
+
+            m_backBufferFormat = swapChainDesc.Format;
 
             for (std::uint32_t index = 0; index < kSwapChainBufferCount; ++index)
             {
@@ -851,8 +858,31 @@ namespace PlutoGE::render
                 }
 
                 m_backBufferTextures.push_back(texture);
+                m_backBufferResources.push_back(resource);
             }
 
+            return true;
+        }
+
+        [[nodiscard]] bool GetD3D12Interop(NvrhiD3D12Interop &interop) const override
+        {
+            if (!m_device || !m_graphicsQueue || !m_swapChain || m_backBufferResources.empty())
+            {
+                return false;
+            }
+
+            const auto backBufferIndex = m_swapChain->GetCurrentBackBufferIndex();
+            if (backBufferIndex >= m_backBufferResources.size() || !m_backBufferResources[backBufferIndex])
+            {
+                return false;
+            }
+
+            interop.device = m_device.Get();
+            interop.graphicsQueue = m_graphicsQueue.Get();
+            interop.swapChain = m_swapChain.Get();
+            interop.currentBackBuffer = m_backBufferResources[backBufferIndex].Get();
+            interop.backBufferFormat = m_backBufferFormat;
+            interop.bufferCount = static_cast<unsigned int>(m_backBufferResources.size());
             return true;
         }
 
@@ -865,6 +895,8 @@ namespace PlutoGE::render
         nvrhi::d3d12::DeviceHandle m_nvrhiDevice;
         nvrhi::CommandListHandle m_commandList;
         std::vector<nvrhi::TextureHandle> m_backBufferTextures;
+        std::vector<Microsoft::WRL::ComPtr<ID3D12Resource>> m_backBufferResources;
+        DXGI_FORMAT m_backBufferFormat = DXGI_FORMAT_UNKNOWN;
     };
 #endif
 
@@ -1497,6 +1529,10 @@ namespace PlutoGE::render
         {
             return nullptr;
         }
+        [[nodiscard]] bool GetD3D12Interop(NvrhiD3D12Interop &) const
+        {
+            return false;
+        }
     };
 #endif
 
@@ -1594,4 +1630,11 @@ namespace PlutoGE::render
     {
         return m_impl ? m_impl->GetDevice() : nullptr;
     }
+
+#if defined(_WIN32)
+    bool NvrhiBackend::GetD3D12Interop(NvrhiD3D12Interop &interop) const
+    {
+        return m_impl ? m_impl->GetD3D12Interop(interop) : false;
+    }
+#endif
 }

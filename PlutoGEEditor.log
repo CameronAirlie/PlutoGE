@@ -1,0 +1,13 @@
+main: begin
+main: initialize
+editor: initialize begin
+editor: engine initialized
+editor: scene initialized
+panel_manager: begin
+panel_manager: acquired d3d12 interop
+panel_manager: dx12 backend initialized
+panel_manager: success
+editor: imgui initialized
+main: render
+main: shutdown
+main: end

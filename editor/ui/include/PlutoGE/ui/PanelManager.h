@@ -1,10 +1,17 @@
 #pragma once
 
+#include "PlutoGE/render/RenderBackend.h"
+
 #include <vector>
 
 namespace PlutoGE::platform
 {
     class Window;
+}
+
+namespace PlutoGE::render
+{
+    class Renderer;
 }
 
 namespace PlutoGE::ui
@@ -27,7 +34,7 @@ namespace PlutoGE::ui
         PanelManager() = default;
         ~PanelManager() = default;
 
-        bool InitializeImGui(platform::Window *window);
+        bool InitializeImGui(platform::Window *window, render::Renderer *renderer);
 
         void AddPanel(Panel *panel);
 
@@ -42,6 +49,9 @@ namespace PlutoGE::ui
         [[nodiscard]] const PanelManagerTimingStats &GetTimingStats() const { return m_timingStats; }
 
     private:
+        render::Renderer *m_renderer = nullptr;
+        render::RenderBackend m_backend = render::RenderBackend::OpenGL;
+        bool m_imguiInitialized = false;
         std::vector<Panel *> m_panels;
         PanelManagerTimingStats m_timingStats;
     };

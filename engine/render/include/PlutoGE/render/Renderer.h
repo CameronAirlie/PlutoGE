@@ -150,6 +150,7 @@ namespace PlutoGE::render
 
         void SetVSyncEnabled(bool enabled);
         [[nodiscard]] RenderBackend GetBackend() const { return m_config.backend; }
+        [[nodiscard]] NvrhiBackend *GetNvrhiBackend() { return m_nvrhiBackend.get(); }
         void SetPostProcessDebugView(PostProcessDebugView debugView) { m_postProcessDebugView = debugView; }
         PostProcessDebugView GetPostProcessDebugView() const { return m_postProcessDebugView; }
         [[nodiscard]] const std::vector<CpuPassTiming> &GetCpuPassTimings() const { return m_cpuPassTimings; }

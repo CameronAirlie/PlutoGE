@@ -658,6 +658,12 @@ namespace PlutoGE::ui
     void EditorShell::InitializeEditorCamera()
     {
         m_editorCamera = EditorViewportCamera{};
+
+        if (m_engine.GetRenderer().GetBackend() != render::RenderBackend::OpenGL)
+        {
+            return;
+        }
+
         m_editorCamera.AddPostProcessEffectByType("RSM");
         m_editorCamera.AddPostProcessEffectByType("VolumetricFog");
         m_editorCamera.AddPostProcessEffectByType("LSAO");
@@ -1128,6 +1134,20 @@ namespace PlutoGE::ui
                 return render::RenderBackend::OpenGL;
             }
         }
+
+        std::string BuildRuntimeBackendNotice(const assets::ProjectManifest &manifest,
+                                              render::RenderBackend activeBackend)
+        {
+            const auto requestedBackend = ToRenderBackend(manifest.graphicsApi);
+            if (requestedBackend == activeBackend)
+            {
+                return {};
+            }
+
+            return "Project graphics API is " + std::string(assets::Project::GetGraphicsApiName(manifest.graphicsApi)) +
+                   ", but the editor is running on " + std::string(render::ToString(activeBackend)) +
+                   ". Use Runtime > Build and Run Standalone to test the project backend.";
+        }
     }
 
     void EditorShell::MarkSceneDirty()
@@ -1480,6 +1500,7 @@ namespace PlutoGE::ui
         ApplyProjectEditorCameraSettings(manifest.editorCamera, m_editorCamera);
         ApplyProjectEditorPostProcessEffects(manifest.editorCameraPostProcessEffects, m_editorCamera);
         m_engine.GetRenderer().SetVSyncEnabled(manifest.vSyncEnabled);
+        const std::string runtimeBackendNotice = BuildRuntimeBackendNotice(manifest, m_engine.GetRenderer().GetBackend());
 
         std::string scriptErrorMessage;
         bool scriptScaffoldReady = true;
@@ -1532,6 +1553,17 @@ namespace PlutoGE::ui
             {
                 m_statusMessage += scriptErrorMessage;
             }
+        }
+
+        if (!runtimeBackendNotice.empty())
+        {
+            if (!m_statusMessage.empty())
+            {
+                m_statusMessage += " ";
+            }
+
+            m_statusMessage += runtimeBackendNotice;
+            Log(ConsoleSeverity::Info, runtimeBackendNotice);
         }
 
         UpdateWindowTitle();
@@ -1691,15 +1723,21 @@ namespace PlutoGE::ui
 
     void EditorShell::Initialize()
     {
-        auto config = core::EngineConfig{
-            platform::WindowConfig{
-                .title = "PlutoGE Editor",
-                .width = 1280,
-                .height = 720,
-                .resizable = true,
-                .visible = true,
-                .fullscreen = false,
-            }};
+        core::EngineConfig config{};
+        config.windowConfig = platform::WindowConfig{
+            .title = "PlutoGE Editor",
+            .width = 1280,
+            .height = 720,
+            .resizable = true,
+            .visible = true,
+            .fullscreen = false,
+        };
+#if defined(_WIN32)
+        config.renderBackend = render::RenderBackend::NvrhiD3D12;
+#else
+        config.renderBackend = render::RenderBackend::NvrhiVulkan;
+#endif
+
         if (!m_engine.Initialize(config))
         {
             std::cerr << "Failed to initialize Engine in EditorShell" << std::endl;
@@ -1711,7 +1749,10 @@ namespace PlutoGE::ui
         m_statusMessage = "Ready";
         UpdateWindowTitle();
 
-        m_panelManager.InitializeImGui(&m_engine.GetWindow());
+        if (!m_panelManager.InitializeImGui(&m_engine.GetWindow(), &m_engine.GetRenderer()))
+        {
+            std::cerr << "Failed to initialize the editor UI for the selected render backend." << std::endl;
+        }
     }
 
     glm::vec3 randomColour()
@@ -1850,11 +1891,6 @@ namespace PlutoGE::ui
             viewportPanel->SetPanelControlsEnabled(!isRuntimeRunning);
             viewportPanel2->SetPanelControlsEnabled(!isRuntimeRunning);
 
-            const auto renderTargetWidth = renderTarget->GetWidth();
-            const auto renderTargetHeight = renderTarget->GetHeight();
-            const auto renderTarget2Width = renderTarget2->GetWidth();
-            const auto renderTarget2Height = renderTarget2->GetHeight();
-
             const bool bakeTaskFinished = m_activeBakeTask && m_activeBakeTask->IsFinished();
             if (bakeTaskFinished && m_scene)
             {
@@ -1966,8 +2002,8 @@ namespace PlutoGE::ui
                 ++frameTimingStats.renderedViewportCount;
                 const glm::mat4 editorCameraTransform = GetEditorCameraTransform(m_editorCamera);
                 const auto editorCameraData = m_editorCamera.camera.GetCameraDataForTransform(editorCameraTransform,
-                                                                                              renderTarget->GetWidth(),
-                                                                                              renderTarget->GetHeight());
+                                                                                              viewportPanel->GetSurfaceWidth(),
+                                                                                              viewportPanel->GetSurfaceHeight());
                 std::vector<render::IPostProcessEffect *> editorPostProcessEffects;
                 editorPostProcessEffects.reserve(m_editorCamera.GetPostProcessEffects().size());
                 for (const auto &effect : m_editorCamera.GetPostProcessEffects())
@@ -2269,11 +2305,26 @@ namespace PlutoGE::ui
                 {
                     const bool canRunRuntime = m_scene != nullptr;
                     ImGui::BeginDisabled(!canRunRuntime || m_engine.IsRuntimeRunning());
-                    if (ImGui::MenuItem("Play"))
+                    if (ImGui::MenuItem("Play In Editor"))
                     {
                         m_engine.StartRuntime();
                         window.SetScriptInputEnabled(viewportPanel2->IsViewportFocused());
                         m_statusMessage = "Runtime started.";
+                    }
+                    ImGui::EndDisabled();
+
+                    ImGui::BeginDisabled(m_project == nullptr);
+                    if (ImGui::MenuItem("Build and Run Standalone"))
+                    {
+                        const auto exportPath = GetDefaultExportExecutablePath();
+                        if (exportPath.empty())
+                        {
+                            m_statusMessage = "No project loaded.";
+                        }
+                        else
+                        {
+                            BuildAndRunProjectToPath(exportPath);
+                        }
                     }
                     ImGui::EndDisabled();
 
@@ -2286,6 +2337,17 @@ namespace PlutoGE::ui
                         m_statusMessage = "Runtime stopped.";
                     }
                     ImGui::EndDisabled();
+
+                    if (m_project)
+                    {
+                        const std::string runtimeBackendNotice = BuildRuntimeBackendNotice(m_project->GetManifest(), renderer.GetBackend());
+                        if (!runtimeBackendNotice.empty())
+                        {
+                            ImGui::Separator();
+                            ImGui::TextWrapped("%s", runtimeBackendNotice.c_str());
+                        }
+                    }
+
                     ImGui::EndMenu();
                 }
                 if (ImGui::BeginMenu("Scripts"))
@@ -2412,9 +2474,15 @@ namespace PlutoGE::ui
                             editorVSyncEnabled = manifest.vSyncEnabled;
                             appliedEditorVSyncEnabled = editorVSyncEnabled;
                             renderer.SetVSyncEnabled(appliedEditorVSyncEnabled);
-                            if (ToRenderBackend(manifest.graphicsApi) != renderer.GetBackend())
+                            const std::string runtimeBackendNotice = BuildRuntimeBackendNotice(manifest, renderer.GetBackend());
+                            if (!runtimeBackendNotice.empty())
                             {
-                                m_statusMessage += " Graphics API changes apply when the renderer is recreated.";
+                                if (!m_statusMessage.empty())
+                                {
+                                    m_statusMessage += " ";
+                                }
+
+                                m_statusMessage += runtimeBackendNotice;
                             }
                             ImGui::CloseCurrentPopup();
                         }

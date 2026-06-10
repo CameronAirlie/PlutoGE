@@ -63,15 +63,12 @@ FetchContent_MakeAvailable(imgui)
 
 set(PLUTO_IMGUI_BACKEND_SOURCES
     ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
 )
 
 if (PLUTO_WITH_NVRHI AND WIN32)
     list(APPEND PLUTO_IMGUI_BACKEND_SOURCES
         ${imgui_SOURCE_DIR}/backends/imgui_impl_dx12.cpp
-    )
-else()
-    list(APPEND PLUTO_IMGUI_BACKEND_SOURCES
-        ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
     )
 endif()
 
@@ -86,16 +83,13 @@ add_library(PlutoGE_imgui STATIC
 add_library(PlutoGE::imgui ALIAS PlutoGE_imgui)
 target_link_libraries(PlutoGE_imgui PUBLIC
     PlutoGE::glfw
+    PlutoGE::glad
 )
 
 if (PLUTO_WITH_NVRHI AND WIN32)
     target_link_libraries(PlutoGE_imgui PUBLIC
         d3d12
         dxgi
-    )
-else()
-    target_link_libraries(PlutoGE_imgui PUBLIC
-        PlutoGE::glad
     )
 endif()
 

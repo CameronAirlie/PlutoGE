@@ -9,9 +9,11 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(PLUTO_BUILD_EDITOR "Build the PlutoGE Editor" ON)
 option(PLUTO_BUILD_RUNTIME "Build the PlutoGE Runtime" ON)
 option(PLUTO_BUILD_SAMPLES "Build sample applications" ON)
+option(PLUTOGE_USE_NVRHI "Legacy alias for PLUTO_WITH_NVRHI" OFF)
+option(PLUTO_WITH_NVRHI "Enable NVIDIA NVRHI renderer backends" ${PLUTOGE_USE_NVRHI})
 
-add_subdirectory(engine)
 add_subdirectory(third_party)
+add_subdirectory(engine)
 
 if (PLUTO_BUILD_EDITOR)
     add_subdirectory(editor)

@@ -32,7 +32,7 @@ struct GBufferOutput
     float4 position : SV_Target0;
     float4 normal : SV_Target1;
     float4 albedo : SV_Target2;
-    float4 motion : SV_Target3;
+    float2 motion : SV_Target3;
     float4 bakedLighting : SV_Target4;
 };
 
@@ -53,7 +53,7 @@ GBufferOutput fragmentMain(VertexOutput input)
     output.position = float4(input.worldPosition, 1.0f);
     output.normal = float4(normalize(input.normal) * 0.5f + 0.5f, 1.0f);
     output.albedo = float4(baseColor.rgb, materialFactors.y);
-    output.motion = float4(0.0f, 0.0f, 0.0f, 1.0f);
+    output.motion = float2(0.0f, 0.0f);
     output.bakedLighting = float4(0.0f, 0.0f, 0.0f, 1.0f);
     return output;
 }

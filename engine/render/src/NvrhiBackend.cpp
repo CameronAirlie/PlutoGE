@@ -94,11 +94,83 @@ namespace PlutoGE::render
     class NvrhiBackend::Impl
     {
     public:
+        struct MeshGpuBuffers
+        {
+            nvrhi::BufferHandle vertexBuffer;
+            nvrhi::BufferHandle indexBuffer;
+            uint32_t vertexCount = 0;
+            uint32_t indexCount = 0;
+            uint32_t vertexStride = 0;
+        };
+
+        struct NvrhiGBufferResources
+        {
+            nvrhi::TextureHandle position;
+            nvrhi::TextureHandle normal;
+            nvrhi::TextureHandle albedo;
+            nvrhi::TextureHandle motion;
+            nvrhi::TextureHandle bakedLighting;
+            nvrhi::TextureHandle depth;
+        };
+
+        struct NvrhiFramePassResources
+        {
+            int width = 0;
+            int height = 0;
+            NvrhiGBufferResources gBuffer;
+            nvrhi::FramebufferHandle gBufferFramebuffer;
+            nvrhi::TextureHandle lightingColor;
+            nvrhi::TextureHandle postProcessColor;
+            nvrhi::TextureHandle shadowAtlas;
+            nvrhi::TextureHandle pointShadowArray;
+        };
+
         virtual ~Impl() = default;
         virtual void SetBackend(RenderBackend backend) { m_backend = backend; }
         virtual bool Initialize(const NvrhiBackendConfig &config, std::string &errorMessage) = 0;
         virtual void BeginFrame() {}
         virtual void RenderFrame(int width, int height, const CameraData &cameraData, const std::vector<RenderCommand> &renderCommands)
+        {
+            RenderToResources(m_frameResources, width, height, cameraData, renderCommands);
+        }
+
+        virtual void RenderViewport(std::uint32_t viewportId, int width, int height, const CameraData &cameraData, const std::vector<RenderCommand> &renderCommands)
+        {
+            auto &resources = m_viewportFrameResources[viewportId];
+            RenderToResources(resources, width, height, cameraData, renderCommands);
+            PublishViewportTexture(viewportId, resources);
+        }
+
+        virtual void SetD3D12ImguiSrvHeap(void *, unsigned int, unsigned int, unsigned int) {}
+
+        [[nodiscard]] virtual NvrhiViewportTexture GetViewportTexture(std::uint32_t viewportId) const
+        {
+            if (auto it = m_viewportTextures.find(viewportId); it != m_viewportTextures.end())
+            {
+                return it->second;
+            }
+            return {};
+        }
+
+        virtual void PublishViewportTexture(std::uint32_t viewportId, NvrhiFramePassResources &resources)
+        {
+            m_viewportTextures[viewportId] = NvrhiViewportTexture{
+                .width = resources.width,
+                .height = resources.height,
+                .valid = false,
+            };
+        }
+
+        virtual void EndFrame() {}
+        virtual void Shutdown() = 0;
+        virtual void SetVSyncEnabled(bool enabled) { m_vSyncEnabled = enabled; }
+        [[nodiscard]] virtual nvrhi::IDevice *GetDevice() const = 0;
+#if defined(_WIN32)
+        [[nodiscard]] virtual bool GetD3D12Interop(NvrhiD3D12Interop &) const { return false; }
+#endif
+
+    protected:
+        void RenderToResources(NvrhiFramePassResources &resources, int width, int height, const CameraData &cameraData, const std::vector<RenderCommand> &renderCommands)
         {
             auto *device = GetDevice();
             if (!device || width <= 0 || height <= 0)
@@ -135,48 +207,11 @@ namespace PlutoGE::render
                 device->executeCommandList(uploadCommandList);
             }
 
+            m_activeFrameResources = &resources;
             EnsureFrameResources(width, height);
             ExecuteNvrhiPassStack(cameraData, renderCommands);
+            m_activeFrameResources = nullptr;
         }
-        virtual void EndFrame() {}
-        virtual void Shutdown() = 0;
-        virtual void SetVSyncEnabled(bool enabled) { m_vSyncEnabled = enabled; }
-        [[nodiscard]] virtual nvrhi::IDevice *GetDevice() const = 0;
-#if defined(_WIN32)
-        [[nodiscard]] virtual bool GetD3D12Interop(NvrhiD3D12Interop &) const { return false; }
-#endif
-
-    protected:
-        struct MeshGpuBuffers
-        {
-            nvrhi::BufferHandle vertexBuffer;
-            nvrhi::BufferHandle indexBuffer;
-            uint32_t vertexCount = 0;
-            uint32_t indexCount = 0;
-            uint32_t vertexStride = 0;
-        };
-
-        struct NvrhiGBufferResources
-        {
-            nvrhi::TextureHandle position;
-            nvrhi::TextureHandle normal;
-            nvrhi::TextureHandle albedo;
-            nvrhi::TextureHandle motion;
-            nvrhi::TextureHandle bakedLighting;
-            nvrhi::TextureHandle depth;
-        };
-
-        struct NvrhiFramePassResources
-        {
-            int width = 0;
-            int height = 0;
-            NvrhiGBufferResources gBuffer;
-            nvrhi::FramebufferHandle gBufferFramebuffer;
-            nvrhi::TextureHandle lightingColor;
-            nvrhi::TextureHandle postProcessColor;
-            nvrhi::TextureHandle shadowAtlas;
-            nvrhi::TextureHandle pointShadowArray;
-        };
 
         struct BasicGeometryPipelineResources
         {
@@ -238,39 +273,45 @@ namespace PlutoGE::render
             return device->createTexture(desc);
         }
 
+        NvrhiFramePassResources &ActiveFrameResources()
+        {
+            return m_activeFrameResources ? *m_activeFrameResources : m_frameResources;
+        }
+
         void EnsureFrameResources(int width, int height)
         {
-            if (m_frameResources.width == width && m_frameResources.height == height &&
-                m_frameResources.gBuffer.position && m_frameResources.lightingColor && m_frameResources.postProcessColor)
+            auto &frameResources = ActiveFrameResources();
+            if (frameResources.width == width && frameResources.height == height &&
+                frameResources.gBuffer.position && frameResources.lightingColor && frameResources.postProcessColor)
             {
                 return;
             }
 
-            m_frameResources = {};
-            m_frameResources.width = width;
-            m_frameResources.height = height;
+            frameResources = {};
+            frameResources.width = width;
+            frameResources.height = height;
 
-            m_frameResources.gBuffer.position = CreateTexture2D("NVRHI GBuffer Position", width, height, nvrhi::Format::RGBA16_FLOAT, true, false, nvrhi::ResourceStates::RenderTarget);
-            m_frameResources.gBuffer.normal = CreateTexture2D("NVRHI GBuffer Normal", width, height, nvrhi::Format::RGBA16_FLOAT, true, false, nvrhi::ResourceStates::RenderTarget);
-            m_frameResources.gBuffer.albedo = CreateTexture2D("NVRHI GBuffer Albedo", width, height, nvrhi::Format::RGBA8_UNORM, true, false, nvrhi::ResourceStates::RenderTarget);
-            m_frameResources.gBuffer.motion = CreateTexture2D("NVRHI GBuffer Motion", width, height, nvrhi::Format::RG16_FLOAT, true, false, nvrhi::ResourceStates::RenderTarget);
-            m_frameResources.gBuffer.bakedLighting = CreateTexture2D("NVRHI GBuffer Baked Lighting", width, height, nvrhi::Format::RGBA16_FLOAT, true, false, nvrhi::ResourceStates::RenderTarget);
-            m_frameResources.gBuffer.depth = CreateTexture2D("NVRHI GBuffer Depth", width, height, nvrhi::Format::D24S8, false, true, nvrhi::ResourceStates::DepthWrite);
-            m_frameResources.lightingColor = CreateTexture2D("NVRHI Lighting Color", width, height, nvrhi::Format::RGBA16_FLOAT, true, false, nvrhi::ResourceStates::RenderTarget);
-            m_frameResources.postProcessColor = CreateTexture2D("NVRHI Post Process Color", width, height, nvrhi::Format::RGBA16_FLOAT, true, false, nvrhi::ResourceStates::RenderTarget);
-            m_frameResources.shadowAtlas = CreateTexture2D("NVRHI Shadow Atlas", 4096, 4096, nvrhi::Format::D24S8, false, true, nvrhi::ResourceStates::DepthWrite);
-            m_frameResources.pointShadowArray = CreateTexture2D("NVRHI Point Shadow Array", 1024, 1024, nvrhi::Format::D24S8, false, true, nvrhi::ResourceStates::DepthWrite);
+            frameResources.gBuffer.position = CreateTexture2D("NVRHI GBuffer Position", width, height, nvrhi::Format::RGBA16_FLOAT, true, false, nvrhi::ResourceStates::RenderTarget);
+            frameResources.gBuffer.normal = CreateTexture2D("NVRHI GBuffer Normal", width, height, nvrhi::Format::RGBA16_FLOAT, true, false, nvrhi::ResourceStates::RenderTarget);
+            frameResources.gBuffer.albedo = CreateTexture2D("NVRHI GBuffer Albedo", width, height, nvrhi::Format::RGBA8_UNORM, true, false, nvrhi::ResourceStates::RenderTarget);
+            frameResources.gBuffer.motion = CreateTexture2D("NVRHI GBuffer Motion", width, height, nvrhi::Format::RG16_FLOAT, true, false, nvrhi::ResourceStates::RenderTarget);
+            frameResources.gBuffer.bakedLighting = CreateTexture2D("NVRHI GBuffer Baked Lighting", width, height, nvrhi::Format::RGBA16_FLOAT, true, false, nvrhi::ResourceStates::RenderTarget);
+            frameResources.gBuffer.depth = CreateTexture2D("NVRHI GBuffer Depth", width, height, nvrhi::Format::D24S8, false, true, nvrhi::ResourceStates::DepthWrite);
+            frameResources.lightingColor = CreateTexture2D("NVRHI Lighting Color", width, height, nvrhi::Format::RGBA16_FLOAT, true, false, nvrhi::ResourceStates::RenderTarget);
+            frameResources.postProcessColor = CreateTexture2D("NVRHI Post Process Color", width, height, nvrhi::Format::RGBA16_FLOAT, true, false, nvrhi::ResourceStates::RenderTarget);
+            frameResources.shadowAtlas = CreateTexture2D("NVRHI Shadow Atlas", 4096, 4096, nvrhi::Format::D24S8, false, true, nvrhi::ResourceStates::DepthWrite);
+            frameResources.pointShadowArray = CreateTexture2D("NVRHI Point Shadow Array", 1024, 1024, nvrhi::Format::D24S8, false, true, nvrhi::ResourceStates::DepthWrite);
 
             if (auto *device = GetDevice())
             {
                 nvrhi::FramebufferDesc framebufferDesc{};
-                framebufferDesc.addColorAttachment(m_frameResources.gBuffer.position);
-                framebufferDesc.addColorAttachment(m_frameResources.gBuffer.normal);
-                framebufferDesc.addColorAttachment(m_frameResources.gBuffer.albedo);
-                framebufferDesc.addColorAttachment(m_frameResources.gBuffer.motion);
-                framebufferDesc.addColorAttachment(m_frameResources.gBuffer.bakedLighting);
-                framebufferDesc.setDepthAttachment(m_frameResources.gBuffer.depth);
-                m_frameResources.gBufferFramebuffer = device->createFramebuffer(framebufferDesc);
+                framebufferDesc.addColorAttachment(frameResources.gBuffer.position);
+                framebufferDesc.addColorAttachment(frameResources.gBuffer.normal);
+                framebufferDesc.addColorAttachment(frameResources.gBuffer.albedo);
+                framebufferDesc.addColorAttachment(frameResources.gBuffer.motion);
+                framebufferDesc.addColorAttachment(frameResources.gBuffer.bakedLighting);
+                framebufferDesc.setDepthAttachment(frameResources.gBuffer.depth);
+                frameResources.gBufferFramebuffer = device->createFramebuffer(framebufferDesc);
                 m_basicGeometry.pipeline = nullptr;
             }
         }
@@ -278,7 +319,8 @@ namespace PlutoGE::render
         bool EnsureBasicGeometryPipeline()
         {
             auto *device = GetDevice();
-            if (!device || !m_frameResources.gBufferFramebuffer)
+            auto &frameResources = ActiveFrameResources();
+            if (!device || !frameResources.gBufferFramebuffer)
             {
                 return false;
             }
@@ -341,7 +383,7 @@ namespace PlutoGE::render
             if (!m_basicGeometry.bindingLayout)
             {
                 nvrhi::BindingLayoutDesc layoutDesc{};
-                layoutDesc.setVisibility(nvrhi::ShaderType::Vertex)
+                layoutDesc.setVisibility(nvrhi::ShaderType::AllGraphics)
                     .setRegisterSpaceAndDescriptorSet(0)
                     .addItem(nvrhi::BindingLayoutItem::VolatileConstantBuffer(0))
                     .addItem(nvrhi::BindingLayoutItem::VolatileConstantBuffer(1));
@@ -400,7 +442,7 @@ namespace PlutoGE::render
                 .setRenderState(renderState)
                 .addBindingLayout(m_basicGeometry.bindingLayout);
 
-            m_basicGeometry.pipeline = device->createGraphicsPipeline(pipelineDesc, m_frameResources.gBufferFramebuffer->getFramebufferInfo());
+            m_basicGeometry.pipeline = device->createGraphicsPipeline(pipelineDesc, frameResources.gBufferFramebuffer->getFramebufferInfo());
             return m_basicGeometry.pipeline != nullptr;
         }
 
@@ -442,18 +484,19 @@ namespace PlutoGE::render
                 return;
             }
 
+            auto &frameResources = ActiveFrameResources();
             commandList->open();
-            ClearTexture(*commandList, m_frameResources.gBuffer.position.Get(), nvrhi::Color(0.0f));
-            ClearTexture(*commandList, m_frameResources.gBuffer.normal.Get(), nvrhi::Color(0.0f));
-            ClearTexture(*commandList, m_frameResources.gBuffer.albedo.Get(), nvrhi::Color(0.0f, 0.0f, 0.0f, 1.0f));
-            ClearTexture(*commandList, m_frameResources.gBuffer.motion.Get(), nvrhi::Color(0.0f));
-            ClearTexture(*commandList, m_frameResources.gBuffer.bakedLighting.Get(), nvrhi::Color(0.0f, 0.0f, 0.0f, 1.0f));
-            ClearDepth(*commandList, m_frameResources.gBuffer.depth.Get());
-            ClearDepth(*commandList, m_frameResources.shadowAtlas.Get());
-            ClearDepth(*commandList, m_frameResources.pointShadowArray.Get());
+            ClearTexture(*commandList, frameResources.gBuffer.position.Get(), nvrhi::Color(0.0f));
+            ClearTexture(*commandList, frameResources.gBuffer.normal.Get(), nvrhi::Color(0.0f));
+            ClearTexture(*commandList, frameResources.gBuffer.albedo.Get(), nvrhi::Color(0.0f, 0.0f, 0.0f, 1.0f));
+            ClearTexture(*commandList, frameResources.gBuffer.motion.Get(), nvrhi::Color(0.0f));
+            ClearTexture(*commandList, frameResources.gBuffer.bakedLighting.Get(), nvrhi::Color(0.0f, 0.0f, 0.0f, 1.0f));
+            ClearDepth(*commandList, frameResources.gBuffer.depth.Get());
+            ClearDepth(*commandList, frameResources.shadowAtlas.Get());
+            ClearDepth(*commandList, frameResources.pointShadowArray.Get());
             DrawBasicGeometry(*commandList, cameraData, renderCommands);
-            ClearTexture(*commandList, m_frameResources.lightingColor.Get(), nvrhi::Color(0.0f, 0.0f, 0.0f, 1.0f));
-            ClearTexture(*commandList, m_frameResources.postProcessColor.Get(), nvrhi::Color(0.0f, 0.0f, 0.0f, 1.0f));
+            ClearTexture(*commandList, frameResources.lightingColor.Get(), nvrhi::Color(0.0f, 0.0f, 0.0f, 1.0f));
+            ClearTexture(*commandList, frameResources.postProcessColor.Get(), nvrhi::Color(0.0f, 0.0f, 0.0f, 1.0f));
             commandList->close();
             device->executeCommandList(commandList);
         }
@@ -465,17 +508,18 @@ namespace PlutoGE::render
                 return;
             }
 
+            auto &frameResources = ActiveFrameResources();
             nvrhi::Viewport viewport(
                 0.0f,
-                static_cast<float>(m_frameResources.width),
+                static_cast<float>(frameResources.width),
                 0.0f,
-                static_cast<float>(m_frameResources.height),
+                static_cast<float>(frameResources.height),
                 0.0f,
                 1.0f);
 
             nvrhi::GraphicsState graphicsState{};
             graphicsState.setPipeline(m_basicGeometry.pipeline)
-                .setFramebuffer(m_frameResources.gBufferFramebuffer)
+                .setFramebuffer(frameResources.gBufferFramebuffer)
                 .setViewport(nvrhi::ViewportState().addViewportAndScissorRect(viewport))
                 .addBindingSet(m_basicGeometry.bindingSet);
 
@@ -598,6 +642,9 @@ namespace PlutoGE::render
         NvrhiMessageCallback m_messageCallback;
         std::unordered_map<const Mesh *, MeshGpuBuffers> m_meshBuffers;
         NvrhiFramePassResources m_frameResources;
+        NvrhiFramePassResources *m_activeFrameResources = nullptr;
+        std::unordered_map<std::uint32_t, NvrhiFramePassResources> m_viewportFrameResources;
+        std::unordered_map<std::uint32_t, NvrhiViewportTexture> m_viewportTextures;
         BasicGeometryPipelineResources m_basicGeometry;
         RenderBackend m_backend = RenderBackend::NvrhiD3D12;
         bool m_vSyncEnabled = true;
@@ -864,6 +911,54 @@ namespace PlutoGE::render
             return true;
         }
 
+        void SetD3D12ImguiSrvHeap(void *heap, unsigned int descriptorSize, unsigned int firstUserDescriptor, unsigned int userDescriptorCount) override
+        {
+            m_imguiSrvHeap = static_cast<ID3D12DescriptorHeap *>(heap);
+            m_imguiSrvDescriptorSize = descriptorSize;
+            m_imguiFirstUserDescriptor = firstUserDescriptor;
+            m_imguiUserDescriptorCount = userDescriptorCount;
+            m_viewportTextures.clear();
+        }
+
+        void PublishViewportTexture(std::uint32_t viewportId, NvrhiFramePassResources &resources) override
+        {
+            NvrhiViewportTexture textureInfo{
+                .width = resources.width,
+                .height = resources.height,
+                .valid = false,
+            };
+
+            if (!m_device || !m_imguiSrvHeap || !resources.gBuffer.albedo || m_imguiUserDescriptorCount == 0 || m_imguiSrvDescriptorSize == 0)
+            {
+                m_viewportTextures[viewportId] = textureInfo;
+                return;
+            }
+
+            const std::uint32_t descriptorSlot = m_imguiFirstUserDescriptor + (viewportId % m_imguiUserDescriptorCount);
+            auto cpuHandle = m_imguiSrvHeap->GetCPUDescriptorHandleForHeapStart();
+            cpuHandle.ptr += static_cast<SIZE_T>(descriptorSlot) * static_cast<SIZE_T>(m_imguiSrvDescriptorSize);
+            auto gpuHandle = m_imguiSrvHeap->GetGPUDescriptorHandleForHeapStart();
+            gpuHandle.ptr += static_cast<UINT64>(descriptorSlot) * static_cast<UINT64>(m_imguiSrvDescriptorSize);
+
+            auto *resource = static_cast<ID3D12Resource *>(resources.gBuffer.albedo->getNativeObject(nvrhi::ObjectTypes::D3D12_Resource).pointer);
+            if (!resource)
+            {
+                m_viewportTextures[viewportId] = textureInfo;
+                return;
+            }
+
+            D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+            srvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+            srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+            srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+            srvDesc.Texture2D.MipLevels = 1;
+            m_device->CreateShaderResourceView(resource, &srvDesc, cpuHandle);
+
+            textureInfo.imguiTextureId = static_cast<std::uintptr_t>(gpuHandle.ptr);
+            textureInfo.valid = true;
+            m_viewportTextures[viewportId] = textureInfo;
+        }
+
         [[nodiscard]] bool GetD3D12Interop(NvrhiD3D12Interop &interop) const override
         {
             if (!m_device || !m_graphicsQueue || !m_swapChain || m_backBufferResources.empty())
@@ -881,6 +976,7 @@ namespace PlutoGE::render
             interop.graphicsQueue = m_graphicsQueue.Get();
             interop.swapChain = m_swapChain.Get();
             interop.currentBackBuffer = m_backBufferResources[backBufferIndex].Get();
+            interop.imguiSrvHeap = m_imguiSrvHeap.Get();
             interop.backBufferFormat = m_backBufferFormat;
             interop.bufferCount = static_cast<unsigned int>(m_backBufferResources.size());
             return true;
@@ -897,6 +993,10 @@ namespace PlutoGE::render
         std::vector<nvrhi::TextureHandle> m_backBufferTextures;
         std::vector<Microsoft::WRL::ComPtr<ID3D12Resource>> m_backBufferResources;
         DXGI_FORMAT m_backBufferFormat = DXGI_FORMAT_UNKNOWN;
+        Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> m_imguiSrvHeap;
+        unsigned int m_imguiSrvDescriptorSize = 0;
+        unsigned int m_imguiFirstUserDescriptor = 0;
+        unsigned int m_imguiUserDescriptorCount = 0;
     };
 #endif
 
@@ -1521,9 +1621,12 @@ namespace PlutoGE::render
 
         void BeginFrame() {}
         void RenderFrame(int, int, const CameraData &, const std::vector<RenderCommand> &) {}
+        void RenderViewport(std::uint32_t, int, int, const CameraData &, const std::vector<RenderCommand> &) {}
         void EndFrame() {}
         void Shutdown() {}
         void SetVSyncEnabled(bool) {}
+        void SetD3D12ImguiSrvHeap(void *, unsigned int, unsigned int, unsigned int) {}
+        [[nodiscard]] NvrhiViewportTexture GetViewportTexture(std::uint32_t) const { return {}; }
 
         [[nodiscard]] nvrhi::IDevice *GetDevice() const
         {
@@ -1600,6 +1703,14 @@ namespace PlutoGE::render
         }
     }
 
+    void NvrhiBackend::RenderViewport(std::uint32_t viewportId, int width, int height, const CameraData &cameraData, const std::vector<RenderCommand> &renderCommands)
+    {
+        if (m_impl)
+        {
+            m_impl->RenderViewport(viewportId, width, height, cameraData, renderCommands);
+        }
+    }
+
     void NvrhiBackend::EndFrame()
     {
         if (m_impl)
@@ -1626,9 +1737,22 @@ namespace PlutoGE::render
         }
     }
 
+    void NvrhiBackend::SetD3D12ImguiSrvHeap(void *heap, unsigned int descriptorSize, unsigned int firstUserDescriptor, unsigned int userDescriptorCount)
+    {
+        if (m_impl)
+        {
+            m_impl->SetD3D12ImguiSrvHeap(heap, descriptorSize, firstUserDescriptor, userDescriptorCount);
+        }
+    }
+
     nvrhi::IDevice *NvrhiBackend::GetDevice() const
     {
         return m_impl ? m_impl->GetDevice() : nullptr;
+    }
+
+    NvrhiViewportTexture NvrhiBackend::GetViewportTexture(std::uint32_t viewportId) const
+    {
+        return m_impl ? m_impl->GetViewportTexture(viewportId) : NvrhiViewportTexture{};
     }
 
 #if defined(_WIN32)

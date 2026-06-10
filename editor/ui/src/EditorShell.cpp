@@ -2011,12 +2011,19 @@ namespace PlutoGE::ui
                     editorPostProcessEffects.push_back(effect.get());
                 }
 
-                renderer.RenderFrame(editorCameraData,
-                                     renderTarget,
-                                     m_scene ? m_scene->GetLights() : std::vector<scene::Light *>{},
-                                     &editorPostProcessEffects,
-                                     m_scene.get(),
-                                     viewportPanel->IsGridVisible());
+                if (renderer.GetBackend() == render::RenderBackend::OpenGL)
+                {
+                    renderer.RenderFrame(editorCameraData,
+                                         renderTarget,
+                                         m_scene ? m_scene->GetLights() : std::vector<scene::Light *>{},
+                                         &editorPostProcessEffects,
+                                         m_scene.get(),
+                                         viewportPanel->IsGridVisible());
+                }
+                else
+                {
+                    viewportPanel->RenderFrame(editorCameraData);
+                }
             }
             else
             {

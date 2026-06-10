@@ -144,6 +144,7 @@ namespace PlutoGE::render
         bool CaptureSceneCubemap(const glm::vec3 &position, int resolution, float farPlane, Texture *targetCubemap, std::vector<scene::Light *> lights = {}, const scene::Scene *scene = nullptr);
         void RenderFrame(const scene::CameraComponent &cameraComponent, RenderTarget *renderTarget = nullptr, std::vector<scene::Light *> lights = {});
         void RenderFrame(const CameraData &cameraData, RenderTarget *renderTarget = nullptr, std::vector<scene::Light *> lights = {}, const std::vector<IPostProcessEffect *> *postProcessEffects = nullptr, const scene::Scene *scene = nullptr, bool renderEditorGrid = false);
+        void RenderNvrhiViewport(std::uint32_t viewportId, int width, int height, const CameraData &cameraData);
         void EndFrame(RenderTarget *renderTarget = nullptr);
         void Shutdown(RenderTarget *renderTarget = nullptr);
         void ClearRenderCommands();
@@ -151,6 +152,7 @@ namespace PlutoGE::render
         void SetVSyncEnabled(bool enabled);
         [[nodiscard]] RenderBackend GetBackend() const { return m_config.backend; }
         [[nodiscard]] NvrhiBackend *GetNvrhiBackend() { return m_nvrhiBackend.get(); }
+        [[nodiscard]] NvrhiViewportTexture GetNvrhiViewportTexture(std::uint32_t viewportId) const;
         void SetPostProcessDebugView(PostProcessDebugView debugView) { m_postProcessDebugView = debugView; }
         PostProcessDebugView GetPostProcessDebugView() const { return m_postProcessDebugView; }
         [[nodiscard]] const std::vector<CpuPassTiming> &GetCpuPassTimings() const { return m_cpuPassTimings; }

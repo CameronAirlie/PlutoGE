@@ -5,9 +5,11 @@
 
 #include <ImGuizmo.h>
 #include <glm/glm.hpp>
+#include <cstdint>
 
 namespace PlutoGE::render
 {
+    struct CameraData;
     enum class PostProcessDebugView;
     class RenderTarget;
 }
@@ -37,6 +39,7 @@ namespace PlutoGE::ui
         void Initialize() override;
         void Render() override;
         void ClearFrame();
+        void RenderFrame(const render::CameraData &cameraData);
         void RenderFrame(scene::CameraComponent &cameraComponent);
         void Shutdown() override;
         bool ShouldRenderFrame() const;
@@ -68,6 +71,7 @@ namespace PlutoGE::ui
 
     private:
         render::RenderTarget *m_renderTarget = nullptr; // The render target used for rendering the viewport content
+        std::uint32_t m_nvrhiViewportId = 0;
         int m_surfaceWidth = 0;
         int m_surfaceHeight = 0;
         int m_pendingWidth = 0;

@@ -8,7 +8,7 @@
             "binaryDir": "${sourceDir}/out/build/${presetName}",
             "cacheVariables": {
                 "PLUTO_BUILD_EDITOR": "ON",
-                "PLUTOGE_USE_NVRHI": "ON",
+                "PLUTO_WITH_NVRHI": "ON",
                 "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}",
                 "CMAKE_C_COMPILER": "C:/w64devkit/bin/gcc.exe",
                 "CMAKE_CXX_COMPILER": "C:/w64devkit/bin/g++.exe",

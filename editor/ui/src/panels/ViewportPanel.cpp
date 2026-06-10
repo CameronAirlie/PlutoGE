@@ -34,6 +34,13 @@ namespace PlutoGE::ui
         constexpr float kMinRenderScale = 0.5f;
         constexpr float kMaxRenderScale = 1.0f;
         constexpr float kRayEpsilon = 0.0001f;
+
+        std::uint32_t AllocateNvrhiViewportId()
+        {
+            static std::uint32_t nextViewportId = 0;
+            return nextViewportId++;
+        }
+
         constexpr const char *kDebugViewLabels[] = {
             "Post Process",
             "Quadrants",
@@ -780,6 +787,7 @@ namespace PlutoGE::ui
 
         auto &renderer = EditorShell::GetInstance().GetEngine().GetRenderer();
         m_usesRenderTarget = renderer.GetBackend() == render::RenderBackend::OpenGL;
+        m_nvrhiViewportId = AllocateNvrhiViewportId();
         if (!m_usesRenderTarget)
         {
             return;
@@ -805,6 +813,7 @@ namespace PlutoGE::ui
 
         auto &renderer = EditorShell::GetInstance().GetEngine().GetRenderer();
         const bool usesRenderTarget = m_usesRenderTarget && renderer.GetBackend() == render::RenderBackend::OpenGL;
+        const bool usesNvrhiViewport = !usesRenderTarget && renderer.GetNvrhiBackend() != nullptr;
 
         if (usesRenderTarget && (!m_renderTarget || !m_renderTarget->IsInitialized()))
             return;
@@ -866,10 +875,22 @@ namespace PlutoGE::ui
             ImTextureID texId = (ImTextureID)(uintptr_t)m_renderTarget->GetColorTextureID();
             ImGui::Image(texId, imageSize, ImVec2(0, 1), ImVec2(1, 0));
         }
+        else if (usesNvrhiViewport)
+        {
+            const auto viewportTexture = renderer.GetNvrhiViewportTexture(m_nvrhiViewportId);
+            if (viewportTexture.valid && viewportTexture.imguiTextureId != 0)
+            {
+                ImGui::Image(static_cast<ImTextureID>(viewportTexture.imguiTextureId), imageSize, ImVec2(0, 0), ImVec2(1, 1));
+            }
+            else
+            {
+                ImGui::BeginChild("##NvrhiViewportSurface", imageSize, ImGuiChildFlags_Borders);
+                ImGui::EndChild();
+            }
+        }
         else
         {
             ImGui::BeginChild("##NvrhiViewportSurface", imageSize, ImGuiChildFlags_Borders);
-            ImGui::TextWrapped("The editor is running on the NVRHI backend. Embedded viewport textures are not implemented on this path yet.");
             ImGui::EndChild();
         }
 
@@ -878,7 +899,7 @@ namespace PlutoGE::ui
         m_isViewportHovered = ImGui::IsItemHovered();
         m_isViewportFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
 
-        if (m_config.editorViewport && usesRenderTarget)
+        if (m_config.editorViewport && (usesRenderTarget || usesNvrhiViewport))
         {
             RenderEditorOverlays(viewportMin, imageSize, viewportClicked);
         }
@@ -973,12 +994,18 @@ namespace PlutoGE::ui
     void ViewportPanel::RenderEditorOverlays(const ImVec2 &viewportMin, const ImVec2 &viewportSize, bool viewportClicked)
     {
         m_isTransformGizmoUsing = false;
-        if (!m_renderTarget || !m_renderTarget->IsInitialized() || viewportSize.x <= 0.0f || viewportSize.y <= 0.0f)
+        if (viewportSize.x <= 0.0f || viewportSize.y <= 0.0f)
         {
             return;
         }
 
         auto &editorShell = EditorShell::GetInstance();
+        const bool usesNvrhiViewport = editorShell.GetEngine().GetRenderer().GetBackend() != render::RenderBackend::OpenGL;
+        if (!usesNvrhiViewport && (!m_renderTarget || !m_renderTarget->IsInitialized()))
+        {
+            return;
+        }
+
         if (editorShell.GetEngine().IsRuntimeRunning())
         {
             return;
@@ -988,9 +1015,11 @@ namespace PlutoGE::ui
         const glm::mat4 cameraTransform = glm::translate(glm::mat4(1.0f), editorCamera.position) *
                                           glm::rotate(glm::mat4(1.0f), glm::radians(editorCamera.yawDegrees), glm::vec3(0.0f, 1.0f, 0.0f)) *
                                           glm::rotate(glm::mat4(1.0f), glm::radians(editorCamera.pitchDegrees), glm::vec3(1.0f, 0.0f, 0.0f));
+        const int cameraWidth = usesNvrhiViewport ? m_surfaceWidth : m_renderTarget->GetWidth();
+        const int cameraHeight = usesNvrhiViewport ? m_surfaceHeight : m_renderTarget->GetHeight();
         const render::CameraData cameraData = editorCamera.camera.GetCameraDataForTransform(cameraTransform,
-                                                                                            m_renderTarget->GetWidth(),
-                                                                                            m_renderTarget->GetHeight());
+                                                                                            cameraWidth,
+                                                                                            cameraHeight);
 
         ImGuizmo::SetOrthographic(false);
         ImGuizmo::Enable(true);
@@ -1045,14 +1074,34 @@ namespace PlutoGE::ui
         }
     }
 
+    void ViewportPanel::RenderFrame(const render::CameraData &cameraData)
+    {
+        if (m_usesRenderTarget)
+        {
+            return;
+        }
+
+        auto &renderer = EditorShell::GetInstance().GetEngine().GetRenderer();
+        renderer.RenderNvrhiViewport(m_nvrhiViewportId, m_surfaceWidth, m_surfaceHeight, cameraData);
+    }
+
     void ViewportPanel::RenderFrame(scene::CameraComponent &cameraComponent)
     {
-        if (!m_usesRenderTarget || !m_renderTarget || !m_renderTarget->IsInitialized())
-            return;
-
         auto &editorShell = EditorShell::GetInstance();
         auto *activeScene = editorShell.GetEngine().GetScene();
         auto &renderer = editorShell.GetEngine().GetRenderer();
+        if (!m_usesRenderTarget)
+        {
+            renderer.RenderNvrhiViewport(m_nvrhiViewportId,
+                                         m_surfaceWidth,
+                                         m_surfaceHeight,
+                                         cameraComponent.GetCameraData(m_surfaceWidth, m_surfaceHeight));
+            return;
+        }
+
+        if (!m_renderTarget || !m_renderTarget->IsInitialized())
+            return;
+
         renderer.BeginFrame(m_renderTarget);
         std::vector<render::IPostProcessEffect *> postProcessEffects;
         postProcessEffects.reserve(cameraComponent.GetPostProcessEffects().size());
@@ -1071,12 +1120,27 @@ namespace PlutoGE::ui
 
     bool ViewportPanel::ShouldRenderFrame() const
     {
-        return m_usesRenderTarget && IsOpen() && WasVisibleLastFrame() && m_renderTarget && m_renderTarget->IsInitialized() && m_renderTarget->GetWidth() > 0 && m_renderTarget->GetHeight() > 0;
+        if (!IsOpen() || !WasVisibleLastFrame() || m_surfaceWidth <= 0 || m_surfaceHeight <= 0)
+        {
+            return false;
+        }
+
+        if (!m_usesRenderTarget)
+        {
+            return true;
+        }
+
+        return m_renderTarget && m_renderTarget->IsInitialized() && m_renderTarget->GetWidth() > 0 && m_renderTarget->GetHeight() > 0;
     }
 
     void ViewportPanel::ClearFrame()
     {
-        if (!m_usesRenderTarget || !m_renderTarget || !m_renderTarget->IsInitialized())
+        if (!m_usesRenderTarget)
+        {
+            return;
+        }
+
+        if (!m_renderTarget || !m_renderTarget->IsInitialized())
             return;
 
         auto &renderer = EditorShell::GetInstance().GetEngine().GetRenderer();

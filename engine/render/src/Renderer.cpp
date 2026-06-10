@@ -487,6 +487,23 @@ namespace PlutoGE::render
         frameResources->hasPreviousShadowCameraData = true;
     }
 
+    void Renderer::RenderNvrhiViewport(std::uint32_t viewportId, int width, int height, const CameraData &cameraData)
+    {
+        if (!m_isInitialized || !m_nvrhiBackend || width <= 0 || height <= 0)
+        {
+            return;
+        }
+
+        EnsureRenderCommandsSorted();
+        m_nvrhiBackend->RenderViewport(viewportId, width, height, cameraData, m_renderCommands);
+        ++m_profiledRenderCount;
+    }
+
+    NvrhiViewportTexture Renderer::GetNvrhiViewportTexture(std::uint32_t viewportId) const
+    {
+        return m_nvrhiBackend ? m_nvrhiBackend->GetViewportTexture(viewportId) : NvrhiViewportTexture{};
+    }
+
     void Renderer::ClearRenderCommands()
     {
         m_renderCommands.clear();

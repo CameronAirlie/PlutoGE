@@ -5,13 +5,12 @@
 
 #include <imgui.h>
 #include <backends/imgui_impl_glfw.h>
-#if defined(_WIN32)
+#include <backends/imgui_impl_opengl3.h>
+#if defined(_WIN32) && defined(PLUTOGE_WITH_NVRHI)
 #include <backends/imgui_impl_dx12.h>
 #include <d3d12.h>
 #include <dxgi1_6.h>
 #include <wrl/client.h>
-#elif !defined(_WIN32)
-#include <backends/imgui_impl_opengl3.h>
 #endif
 #include <ImGuizmo.h>
 
@@ -20,10 +19,14 @@
 
 #include <iostream>
 #include <chrono>
+#include <vector>
 
 namespace
 {
-#if defined(_WIN32)
+#if defined(_WIN32) && defined(PLUTOGE_WITH_NVRHI)
+    constexpr UINT kD3D12ImguiSrvDescriptorCount = 16;
+    constexpr UINT kD3D12ImguiFirstUserDescriptor = 1;
+
     struct PanelManagerD3D12State
     {
         Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> srvHeap;
@@ -32,9 +35,8 @@ namespace
         std::vector<Microsoft::WRL::ComPtr<ID3D12CommandAllocator>> commandAllocators;
         std::vector<UINT64> frameFenceValues;
         Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList> commandList;
-        D3D12_CPU_DESCRIPTOR_HANDLE fontCpuHandle{};
-        D3D12_GPU_DESCRIPTOR_HANDLE fontGpuHandle{};
-        bool fontDescriptorAllocated = false;
+        std::vector<bool> srvDescriptorAllocated;
+        UINT srvDescriptorSize = 0;
         UINT rtvDescriptorSize = 0;
         UINT64 nextFenceValue = 1;
         HANDLE fenceEvent = nullptr;
@@ -51,22 +53,43 @@ namespace
                                D3D12_GPU_DESCRIPTOR_HANDLE *outGpuDescHandle)
     {
         auto &state = GetD3D12State();
-        if (!state.fontDescriptorAllocated)
+        const auto backendDescriptorCount = (std::min)(static_cast<std::size_t>(kD3D12ImguiFirstUserDescriptor), state.srvDescriptorAllocated.size());
+        for (std::size_t index = 0; index < backendDescriptorCount; ++index)
         {
-            state.fontCpuHandle = state.srvHeap->GetCPUDescriptorHandleForHeapStart();
-            state.fontGpuHandle = state.srvHeap->GetGPUDescriptorHandleForHeapStart();
-            state.fontDescriptorAllocated = true;
+            if (!state.srvDescriptorAllocated[index])
+            {
+                state.srvDescriptorAllocated[index] = true;
+                auto cpuHandle = state.srvHeap->GetCPUDescriptorHandleForHeapStart();
+                cpuHandle.ptr += static_cast<SIZE_T>(index) * static_cast<SIZE_T>(state.srvDescriptorSize);
+                auto gpuHandle = state.srvHeap->GetGPUDescriptorHandleForHeapStart();
+                gpuHandle.ptr += static_cast<UINT64>(index) * static_cast<UINT64>(state.srvDescriptorSize);
+                *outCpuDescHandle = cpuHandle;
+                *outGpuDescHandle = gpuHandle;
+                (void)info;
+                return;
+            }
         }
 
-        *outCpuDescHandle = state.fontCpuHandle;
-        *outGpuDescHandle = state.fontGpuHandle;
+        *outCpuDescHandle = {};
+        *outGpuDescHandle = {};
         (void)info;
     }
 
     void FreeSrvDescriptor(ImGui_ImplDX12_InitInfo *info,
-                           D3D12_CPU_DESCRIPTOR_HANDLE,
+                           D3D12_CPU_DESCRIPTOR_HANDLE cpuDescHandle,
                            D3D12_GPU_DESCRIPTOR_HANDLE)
     {
+        auto &state = GetD3D12State();
+        if (state.srvHeap && state.srvDescriptorSize > 0 && cpuDescHandle.ptr != 0)
+        {
+            const auto heapStart = state.srvHeap->GetCPUDescriptorHandleForHeapStart();
+            const auto offset = cpuDescHandle.ptr - heapStart.ptr;
+            const auto index = static_cast<std::size_t>(offset / state.srvDescriptorSize);
+            if (index < state.srvDescriptorAllocated.size())
+            {
+                state.srvDescriptorAllocated[index] = false;
+            }
+        }
         (void)info;
     }
 #endif
@@ -104,7 +127,7 @@ namespace PlutoGE::ui
             io.ConfigViewportsNoDecoration = false;
         }
 
-#if defined(_WIN32)
+#if defined(_WIN32) && defined(PLUTOGE_WITH_NVRHI)
         if (m_backend == render::RenderBackend::NvrhiD3D12)
         {
             auto *nvrhiBackend = renderer ? renderer->GetNvrhiBackend() : nullptr;
@@ -128,13 +151,15 @@ namespace PlutoGE::ui
 
             D3D12_DESCRIPTOR_HEAP_DESC srvHeapDesc{};
             srvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-            srvHeapDesc.NumDescriptors = 1;
+            srvHeapDesc.NumDescriptors = kD3D12ImguiSrvDescriptorCount;
             srvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
             if (FAILED(device->CreateDescriptorHeap(&srvHeapDesc, IID_PPV_ARGS(&state.srvHeap))))
             {
                 std::cerr << "Failed to create the D3D12 ImGui SRV descriptor heap." << std::endl;
                 return false;
             }
+            state.srvDescriptorSize = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+            state.srvDescriptorAllocated.assign(kD3D12ImguiSrvDescriptorCount, false);
 
             D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc{};
             rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
@@ -199,11 +224,21 @@ namespace PlutoGE::ui
                 std::cerr << "Failed to initialize the Dear ImGui D3D12 backend." << std::endl;
                 return false;
             }
+
+            if (nvrhiBackend)
+            {
+                nvrhiBackend->SetD3D12ImguiSrvHeap(state.srvHeap.Get(),
+                                                   state.srvDescriptorSize,
+                                                   kD3D12ImguiFirstUserDescriptor,
+                                                   kD3D12ImguiSrvDescriptorCount - kD3D12ImguiFirstUserDescriptor);
+            }
         }
-#else
-        ImGui_ImplGlfw_InitForOpenGL(static_cast<GLFWwindow *>(window->GetWindow()), true);
-        ImGui_ImplOpenGL3_Init("#version 330 core");
 #endif
+        if (m_backend != render::RenderBackend::NvrhiD3D12)
+        {
+            ImGui_ImplGlfw_InitForOpenGL(static_cast<GLFWwindow *>(window->GetWindow()), true);
+            ImGui_ImplOpenGL3_Init("#version 330 core");
+        }
 
         // Setup Platform
         ImGuiStyle &style = ImGui::GetStyle();
@@ -244,7 +279,7 @@ namespace PlutoGE::ui
             return;
         }
 
-#if defined(_WIN32)
+#if defined(_WIN32) && defined(PLUTOGE_WITH_NVRHI)
         if (m_backend == render::RenderBackend::NvrhiD3D12)
         {
             ImGui_ImplDX12_Shutdown();
@@ -261,9 +296,11 @@ namespace PlutoGE::ui
             state.rtvHeap.Reset();
             state.srvHeap.Reset();
         }
-#else
-        ImGui_ImplOpenGL3_Shutdown();
 #endif
+        if (m_backend != render::RenderBackend::NvrhiD3D12)
+        {
+            ImGui_ImplOpenGL3_Shutdown();
+        }
 
         ImGui_ImplGlfw_Shutdown();
         ImGui::DestroyContext();
@@ -277,14 +314,16 @@ namespace PlutoGE::ui
             return;
         }
 
-#if defined(_WIN32)
+#if defined(_WIN32) && defined(PLUTOGE_WITH_NVRHI)
         if (m_backend == render::RenderBackend::NvrhiD3D12)
         {
             ImGui_ImplDX12_NewFrame();
         }
-#else
-        ImGui_ImplOpenGL3_NewFrame();
 #endif
+        if (m_backend != render::RenderBackend::NvrhiD3D12)
+        {
+            ImGui_ImplOpenGL3_NewFrame();
+        }
 
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
@@ -303,7 +342,7 @@ namespace PlutoGE::ui
         const auto imguiRenderStart = std::chrono::high_resolution_clock::now();
         ImGui::Render();
 
-#if defined(_WIN32)
+#if defined(_WIN32) && defined(PLUTOGE_WITH_NVRHI)
         if (m_backend == render::RenderBackend::NvrhiD3D12)
         {
             if (!kEnableDx12ImguiSubmission)
@@ -375,9 +414,11 @@ namespace PlutoGE::ui
                 }
             }
         }
-#else
-        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 #endif
+        if (m_backend != render::RenderBackend::NvrhiD3D12)
+        {
+            ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+        }
 
         const auto imguiRenderEnd = std::chrono::high_resolution_clock::now();
         m_timingStats.imguiRenderMs = DurationMs(imguiRenderStart, imguiRenderEnd);

@@ -281,12 +281,6 @@ namespace PlutoGE::render
             source.fragmentSource += R"(
                 float SampleShadowMapPCF(sampler2D shadowMap, vec3 projectedCoords, float depthBias, float softness)
                 {
-                    if (softness <= 0.001)
-                    {
-                        float closestDepth = texture(shadowMap, projectedCoords.xy).r;
-                        return projectedCoords.z - depthBias > closestDepth ? 1.0 : 0.0;
-                    }
-
                     vec2 texelSize = 1.0 / vec2(textureSize(shadowMap, 0));
                     float receiverDepth = projectedCoords.z - depthBias;
                     if (uOutputShadowMask != 0)
@@ -299,31 +293,8 @@ namespace PlutoGE::render
                         return shadow / 6.0;
                     }
 
-                    float blockerDepth = texture(shadowMap, projectedCoords.xy).r;
-                    float blockerSeparation = max(receiverDepth - blockerDepth, 0.0);
-                    float baseRadius = max(softness * 0.65, 0.75);
-                    float maxRadius = max(softness * 3.25, baseRadius);
-                    float filterRadius = mix(baseRadius, maxRadius, clamp(blockerSeparation * 160.0, 0.0, 1.0));
-                    float rotation = fract(dot(projectedCoords.xy, vec2(37.0, 17.0))) * 6.28318530718;
-                    float s = sin(rotation);
-                    float c = cos(rotation);
-                    mat2 rotationMatrix = mat2(c, -s, s, c);
-                    vec2 poisson[24] = vec2[24](
-                        vec2(-0.326, -0.406), vec2(-0.840, -0.074), vec2(-0.696, 0.457), vec2(-0.203, 0.621),
-                        vec2(0.962, -0.195), vec2(0.473, -0.480), vec2(0.519, 0.767), vec2(0.185, -0.893),
-                        vec2(0.507, 0.064), vec2(0.896, 0.412), vec2(-0.322, -0.933), vec2(-0.792, -0.598),
-                        vec2(-0.094, -0.184), vec2(0.281, -0.205), vec2(-0.435, 0.188), vec2(-0.544, 0.764),
-                        vec2(0.215, 0.391), vec2(0.757, -0.633), vec2(-0.991, 0.147), vec2(0.064, 0.928),
-                        vec2(0.991, 0.001), vec2(-0.139, -0.710), vec2(-0.660, -0.220), vec2(0.419, 0.560)
-                    );
-                    float shadow = 0.0;
-                    for (int sampleIndex = 0; sampleIndex < 24; ++sampleIndex)
-                    {
-                        vec2 sampleUv = projectedCoords.xy + rotationMatrix * poisson[sampleIndex] * texelSize * filterRadius;
-                        shadow += receiverDepth > texture(shadowMap, sampleUv).r ? 1.0 : 0.0;
-                    }
-
-                    return shadow / 24.0;
+                    float closestDepth = texture(shadowMap, projectedCoords.xy).r;
+                    return receiverDepth > closestDepth ? 1.0 : 0.0;
                 }
 
                 float SampleDirectionalCascadeShadow(int cascadeIndex, vec3 projectedCoords, float depthBias, float softness)
@@ -690,6 +661,11 @@ namespace PlutoGE::render
                 uniform sampler2D uScenePositionTexture;
                 uniform sampler2D uSceneNormalTexture;
                 uniform vec2 uDirection;
+                uniform int uFilterRadius;
+                uniform float uDepthScale;
+                uniform float uMinDepthScale;
+                uniform float uNormalThreshold;
+                uniform float uNormalSoftness;
 
                 void main()
                 {
@@ -706,10 +682,15 @@ namespace PlutoGE::render
                     vec2 texelSize = 1.0 / vec2(textureSize(uShadowMaskTexture, 0));
                     float shadow = centerShadow * 0.28;
                     float totalWeight = 0.28;
-                    float depthScale = max(length(centerPosition) * 0.015, 0.05);
+                    float depthScale = max(length(centerPosition) * uDepthScale, uMinDepthScale);
+                    float normalBlendEnd = min(uNormalThreshold + uNormalSoftness, 1.0);
 
                     for (int sampleIndex = 1; sampleIndex <= 4; ++sampleIndex)
                     {
+                        if (sampleIndex > uFilterRadius)
+                        {
+                            continue;
+                        }
                         float baseWeight = sampleIndex == 1 ? 0.22 : (sampleIndex == 2 ? 0.15 : (sampleIndex == 3 ? 0.08 : 0.04));
                         for (int side = -1; side <= 1; side += 2)
                         {
@@ -717,7 +698,7 @@ namespace PlutoGE::render
                             vec3 samplePosition = texture(uScenePositionTexture, sampleUv).rgb;
                             vec3 sampleNormalRaw = texture(uSceneNormalTexture, sampleUv).rgb;
                             vec3 sampleNormal = dot(sampleNormalRaw, sampleNormalRaw) > 0.000001 ? normalize(sampleNormalRaw) : centerNormal;
-                            float normalWeight = smoothstep(0.72, 0.98, dot(centerNormal, sampleNormal));
+                            float normalWeight = smoothstep(uNormalThreshold, normalBlendEnd, dot(centerNormal, sampleNormal));
                             float depthWeight = exp(-length(samplePosition - centerPosition) / depthScale);
                             float weight = baseWeight * normalWeight * depthWeight;
                             shadow += texture(uShadowMaskTexture, sampleUv).r * weight;
@@ -1057,7 +1038,7 @@ namespace PlutoGE::render
         m_directLightingPassShader->SetUniform("uUseFilteredShadowMask", 0);
         glDrawArrays(GL_TRIANGLES, 0, 3);
 
-        if (!filtered)
+        if (!filtered || !light.directionalShadowSettings.screenSpaceFilterEnabled)
         {
             return m_rawShadowMaskTarget.get();
         }
@@ -1073,6 +1054,11 @@ namespace PlutoGE::render
         glBindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetNormalTextureID());
         m_shadowMaskBlurShader->SetUniform("uSceneNormalTexture", kShadowMaskNormalTextureSlot);
         m_shadowMaskBlurShader->SetUniform("uDirection", glm::vec2(1.0f, 0.0f));
+        m_shadowMaskBlurShader->SetUniform("uFilterRadius", std::clamp(light.directionalShadowSettings.screenSpaceFilterRadius, 0, 8));
+        m_shadowMaskBlurShader->SetUniform("uDepthScale", glm::max(light.directionalShadowSettings.screenSpaceFilterDepthScale, 0.0f));
+        m_shadowMaskBlurShader->SetUniform("uMinDepthScale", glm::max(light.directionalShadowSettings.screenSpaceFilterMinDepthScale, 0.001f));
+        m_shadowMaskBlurShader->SetUniform("uNormalThreshold", glm::clamp(light.directionalShadowSettings.screenSpaceFilterNormalThreshold, -1.0f, 1.0f));
+        m_shadowMaskBlurShader->SetUniform("uNormalSoftness", glm::max(light.directionalShadowSettings.screenSpaceFilterNormalSoftness, 0.001f));
 
         Graphics::BindRenderTarget(m_blurredShadowMaskTarget.get());
         glViewport(0, 0, m_blurredShadowMaskTarget->GetWidth(), m_blurredShadowMaskTarget->GetHeight());
@@ -1085,6 +1071,11 @@ namespace PlutoGE::render
         glBindTexture(GL_TEXTURE_2D, m_blurredShadowMaskTarget->GetColorTextureID());
         m_shadowMaskBlurShader->SetUniform("uShadowMaskTexture", kShadowMaskTextureSlot);
         m_shadowMaskBlurShader->SetUniform("uDirection", glm::vec2(0.0f, 1.0f));
+        m_shadowMaskBlurShader->SetUniform("uFilterRadius", std::clamp(light.directionalShadowSettings.screenSpaceFilterRadius, 0, 8));
+        m_shadowMaskBlurShader->SetUniform("uDepthScale", glm::max(light.directionalShadowSettings.screenSpaceFilterDepthScale, 0.0f));
+        m_shadowMaskBlurShader->SetUniform("uMinDepthScale", glm::max(light.directionalShadowSettings.screenSpaceFilterMinDepthScale, 0.001f));
+        m_shadowMaskBlurShader->SetUniform("uNormalThreshold", glm::clamp(light.directionalShadowSettings.screenSpaceFilterNormalThreshold, -1.0f, 1.0f));
+        m_shadowMaskBlurShader->SetUniform("uNormalSoftness", glm::max(light.directionalShadowSettings.screenSpaceFilterNormalSoftness, 0.001f));
 
         Graphics::BindRenderTarget(m_rawShadowMaskTarget.get());
         glViewport(0, 0, m_rawShadowMaskTarget->GetWidth(), m_rawShadowMaskTarget->GetHeight());
@@ -1337,7 +1328,10 @@ namespace PlutoGE::render
 
                 const bool hasShadowMap = BindShadowMapForLight(*light);
                 BindLightUniforms(m_directLightingPassShader, *light, hasShadowMap);
-                if (hasShadowMap && light->type == scene::LightType::Directional && ctx.postProcessDebugView != PostProcessDebugView::ShadowCascades)
+                if (hasShadowMap &&
+                    light->type == scene::LightType::Directional &&
+                    light->directionalShadowSettings.screenSpaceFilterEnabled &&
+                    ctx.postProcessDebugView != PostProcessDebugView::ShadowCascades)
                 {
                     if (RenderTarget *filteredShadowMask = GenerateDirectionalShadowMask(ctx, *light, true))
                     {

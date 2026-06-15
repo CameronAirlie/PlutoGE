@@ -30,6 +30,12 @@ namespace PlutoGE::scene
         float cascadeBlendDistance = 4.0f;
         float softness = 1.5f;
         float minCasterTexelRadius = 0.0f;
+        bool screenSpaceFilterEnabled = true;
+        int screenSpaceFilterRadius = 4;
+        float screenSpaceFilterDepthScale = 0.015f;
+        float screenSpaceFilterMinDepthScale = 0.05f;
+        float screenSpaceFilterNormalThreshold = 0.72f;
+        float screenSpaceFilterNormalSoftness = 0.26f;
     };
 
     struct Light

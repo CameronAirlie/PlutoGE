@@ -26,6 +26,11 @@ namespace PlutoGE::scene
             return ResolveShadowResolution(light);
         }
 
+        bool ParseBool(const std::string &value)
+        {
+            return value == "true" || value == "1";
+        }
+
         void ResetShadowState(Light &light)
         {
             light.shadowMap.reset();
@@ -226,6 +231,12 @@ namespace PlutoGE::scene
             properties.push_back({"Shadow Cascade Blend Distance", PropertyType::Float, std::to_string(m_config.directionalShadowSettings.cascadeBlendDistance)});
             properties.push_back({"Shadow Softness (0 = Hard Shadows)", PropertyType::Float, std::to_string(m_config.directionalShadowSettings.softness)});
             properties.push_back({"Shadow Min Caster Texel Radius", PropertyType::Float, std::to_string(m_config.directionalShadowSettings.minCasterTexelRadius)});
+            properties.push_back({"Shadow Filter Enabled", PropertyType::Bool, m_config.directionalShadowSettings.screenSpaceFilterEnabled ? "true" : "false"});
+            properties.push_back({"Shadow Filter Radius", PropertyType::Int, std::to_string(m_config.directionalShadowSettings.screenSpaceFilterRadius)});
+            properties.push_back({"Shadow Filter Depth Scale", PropertyType::Float, std::to_string(m_config.directionalShadowSettings.screenSpaceFilterDepthScale)});
+            properties.push_back({"Shadow Filter Min Depth Scale", PropertyType::Float, std::to_string(m_config.directionalShadowSettings.screenSpaceFilterMinDepthScale)});
+            properties.push_back({"Shadow Filter Normal Threshold", PropertyType::Float, std::to_string(m_config.directionalShadowSettings.screenSpaceFilterNormalThreshold)});
+            properties.push_back({"Shadow Filter Normal Softness", PropertyType::Float, std::to_string(m_config.directionalShadowSettings.screenSpaceFilterNormalSoftness)});
         }
 
         return properties;
@@ -296,6 +307,30 @@ namespace PlutoGE::scene
             else if (property.name == "Shadow Min Caster Texel Radius")
             {
                 m_config.directionalShadowSettings.minCasterTexelRadius = std::max(std::stof(property.value), 0.0f);
+            }
+            else if (property.name == "Shadow Filter Enabled")
+            {
+                m_config.directionalShadowSettings.screenSpaceFilterEnabled = ParseBool(property.value);
+            }
+            else if (property.name == "Shadow Filter Radius")
+            {
+                m_config.directionalShadowSettings.screenSpaceFilterRadius = std::clamp(std::stoi(property.value), 0, 8);
+            }
+            else if (property.name == "Shadow Filter Depth Scale")
+            {
+                m_config.directionalShadowSettings.screenSpaceFilterDepthScale = std::clamp(std::stof(property.value), 0.0f, 0.25f);
+            }
+            else if (property.name == "Shadow Filter Min Depth Scale")
+            {
+                m_config.directionalShadowSettings.screenSpaceFilterMinDepthScale = std::clamp(std::stof(property.value), 0.001f, 2.0f);
+            }
+            else if (property.name == "Shadow Filter Normal Threshold")
+            {
+                m_config.directionalShadowSettings.screenSpaceFilterNormalThreshold = std::clamp(std::stof(property.value), -1.0f, 1.0f);
+            }
+            else if (property.name == "Shadow Filter Normal Softness")
+            {
+                m_config.directionalShadowSettings.screenSpaceFilterNormalSoftness = std::clamp(std::stof(property.value), 0.001f, 1.0f);
             }
         }
         Initialize(); // Re-initialize to apply any changes that require setup (like shadow map creation)

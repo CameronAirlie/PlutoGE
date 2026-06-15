@@ -25,6 +25,7 @@ namespace PlutoGE::scene
         int cascadeCount = kDefaultDirectionalShadowCascades;
         int resolution = 2048;
         float maxDistance = 150.0f;
+        float nearCascadeDistance = 8.0f;
         float splitLambda = 0.9f;
         float cascadeBlendDistance = 4.0f;
         float softness = 1.5f;

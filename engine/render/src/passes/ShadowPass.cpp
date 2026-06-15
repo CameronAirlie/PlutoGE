@@ -396,6 +396,12 @@ namespace
             splits[cascadeIndex] = glm::mix(uniformSplit, logarithmicSplit, lambda);
         }
 
+        if (cascadeCount > 1 && settings.nearCascadeDistance > 0.0f)
+        {
+            const float nearCascadeFar = glm::clamp(settings.nearCascadeDistance, nearRadius + 0.1f, farRadius - 0.1f);
+            splits[0] = glm::min(splits[0], nearCascadeFar);
+        }
+
         for (int cascadeIndex = cascadeCount; cascadeIndex < PlutoGE::scene::kMaxDirectionalShadowCascades; ++cascadeIndex)
         {
             splits[cascadeIndex] = farRadius;
@@ -459,35 +465,24 @@ namespace
         }
         frustumCenter /= static_cast<float>(cascadeCorners.size());
 
-        float receiverRadius = 0.0f;
-        for (const glm::vec3 &corner : cascadeCorners)
-        {
-            receiverRadius = glm::max(receiverRadius, glm::length(corner - frustumCenter));
-        }
-
-        const float minReceiverRadius = glm::clamp(cascadeFar * 0.35f, 2.0f, 10.0f);
-        receiverRadius = glm::max(receiverRadius + kDirectionalShadowPadding, minReceiverRadius);
-        const float casterExtrusionDistance = receiverRadius * 2.0f + kDirectionalShadowPadding;
+        const float cascadeDepth = glm::max(cascadeFar - cascadeNear, 1.0f);
+        const float casterExtrusionDistance = cascadeDepth * 2.0f + kDirectionalShadowPadding;
         const glm::vec3 upVector = ResolveUpVector(lightDirection);
 
-        const glm::vec2 extents(receiverRadius * 2.0f);
-        const glm::vec2 texelSize = extents / static_cast<float>(shadowResolution);
         const float pcfGuardTexels = glm::max(light.directionalShadowSettings.softness + 1.0f, 2.0f);
-        const glm::vec2 halfExtents = extents * 0.5f + texelSize * pcfGuardTexels;
 
         glm::vec3 eye = frustumCenter;
 
         auto computeCascadeBounds = [&](const glm::mat4 &view, glm::vec3 &minBounds, glm::vec3 &maxBounds)
         {
-            const glm::vec3 centeredLightSpace = glm::vec3(view * glm::vec4(frustumCenter, 1.0f));
-            minBounds = glm::vec3(centeredLightSpace.x - halfExtents.x, centeredLightSpace.y - halfExtents.y, std::numeric_limits<float>::max());
-            maxBounds = glm::vec3(centeredLightSpace.x + halfExtents.x, centeredLightSpace.y + halfExtents.y, std::numeric_limits<float>::lowest());
+            minBounds = glm::vec3(std::numeric_limits<float>::max());
+            maxBounds = glm::vec3(std::numeric_limits<float>::lowest());
 
             for (const glm::vec3 &corner : cascadeCorners)
             {
                 const glm::vec3 lightSpaceCorner = glm::vec3(view * glm::vec4(corner, 1.0f));
-                minBounds.z = glm::min(minBounds.z, lightSpaceCorner.z);
-                maxBounds.z = glm::max(maxBounds.z, lightSpaceCorner.z);
+                minBounds = glm::min(minBounds, lightSpaceCorner);
+                maxBounds = glm::max(maxBounds, lightSpaceCorner);
 
                 const glm::vec3 extrudedCorner = corner - lightDirection * casterExtrusionDistance;
                 const glm::vec3 lightSpaceExtrudedCorner = glm::vec3(view * glm::vec4(extrudedCorner, 1.0f));
@@ -495,8 +490,11 @@ namespace
                 maxBounds.z = glm::max(maxBounds.z, lightSpaceExtrudedCorner.z);
             }
 
-            minBounds -= glm::vec3(0.0f, 0.0f, kDirectionalShadowPadding);
-            maxBounds += glm::vec3(0.0f, 0.0f, kDirectionalShadowPadding);
+            const glm::vec2 receiverExtent = glm::max(glm::vec2(maxBounds.x - minBounds.x, maxBounds.y - minBounds.y), glm::vec2(0.001f));
+            const glm::vec2 texelSize = receiverExtent / static_cast<float>(std::max(shadowResolution, 1));
+            const glm::vec2 xyGuard = texelSize * pcfGuardTexels + glm::vec2(kDirectionalShadowPadding);
+            minBounds -= glm::vec3(xyGuard.x, xyGuard.y, kDirectionalShadowPadding);
+            maxBounds += glm::vec3(xyGuard.x, xyGuard.y, kDirectionalShadowPadding);
             ExpandDirectionalCascadeDepthBounds(view, shadowCasters, shadowWorldOrigin, minBounds, maxBounds);
         };
 

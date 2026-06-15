@@ -223,6 +223,7 @@ namespace PlutoGE::scene
             properties.push_back({"Shadow Cascade Count", PropertyType::Int, std::to_string(m_config.directionalShadowSettings.cascadeCount)});
             properties.push_back({"Shadow Resolution", PropertyType::Int, std::to_string(m_config.directionalShadowSettings.resolution)});
             properties.push_back({"Shadow Distance (0 = Camera Far)", PropertyType::Float, std::to_string(m_config.directionalShadowSettings.maxDistance)});
+            properties.push_back({"Near Shadow Distance (0 = Auto)", PropertyType::Float, std::to_string(m_config.directionalShadowSettings.nearCascadeDistance)});
             properties.push_back({"Shadow Split Lambda", PropertyType::Float, std::to_string(m_config.directionalShadowSettings.splitLambda)});
             properties.push_back({"Shadow Cascade Blend Distance", PropertyType::Float, std::to_string(m_config.directionalShadowSettings.cascadeBlendDistance)});
             properties.push_back({"Shadow Softness (0 = Hard Shadows)", PropertyType::Float, std::to_string(m_config.directionalShadowSettings.softness)});
@@ -269,6 +270,10 @@ namespace PlutoGE::scene
             else if (property.name == "Shadow Distance (0 = Camera Far)")
             {
                 m_config.directionalShadowSettings.maxDistance = std::stof(property.value);
+            }
+            else if (property.name == "Near Shadow Distance (0 = Auto)")
+            {
+                m_config.directionalShadowSettings.nearCascadeDistance = std::max(std::stof(property.value), 0.0f);
             }
             else if (property.name == "Shadow Cascade Count")
             {

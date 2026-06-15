@@ -21,4 +21,12 @@ public abstract class ScriptBehaviour
     public virtual void OnUpdate(float deltaTime)
     {
     }
+
+    public virtual void OnCollisionEnter(GameObject other)
+    {
+    }
+
+    public virtual void OnCollisionExit(GameObject other)
+    {
+    }
 }

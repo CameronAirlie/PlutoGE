@@ -3,6 +3,7 @@
 #include "Component.h"
 #include "PlutoGE/scripting/ScriptTypes.h"
 
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -32,6 +33,8 @@ namespace PlutoGE::scene
         void Start();
         void Stop();
         void Update(float deltaTime) override;
+        void OnCollisionEnter(uint32_t otherEntityId);
+        void OnCollisionExit(uint32_t otherEntityId);
         std::vector<Property> Serialize() const override;
         void Deserialize(const std::vector<Property> &properties) override;
 

@@ -23,6 +23,8 @@ namespace PlutoGE::scripting
 
         virtual void OnCreate() {}
         virtual void OnUpdate(float deltaTime) {}
+        virtual void OnCollisionEnter(uint32_t otherEntityId) { (void)otherEntityId; }
+        virtual void OnCollisionExit(uint32_t otherEntityId) { (void)otherEntityId; }
 
         virtual void ApplyFieldValues(const std::unordered_map<std::string, ScriptFieldValue> &fieldValues)
         {

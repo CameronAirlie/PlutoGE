@@ -1,0 +1,62 @@
+using System.Numerics;
+using PlutoGE.ScriptCore.Native;
+
+namespace PlutoGE.ScriptCore;
+
+public sealed class RigidbodyComponent : ComponentReference
+{
+    internal RigidbodyComponent(uint entityId)
+        : base(entityId)
+    {
+    }
+
+    internal override ScriptBridge.NativeComponentType ComponentType => ScriptBridge.NativeComponentType.Rigidbody;
+
+    public float Mass
+    {
+        get => ScriptBridge.GetRigidbodyMass(EntityId);
+        set => ScriptBridge.SetRigidbodyMass(EntityId, value);
+    }
+
+    public float LinearDrag
+    {
+        get => ScriptBridge.GetRigidbodyLinearDrag(EntityId);
+        set => ScriptBridge.SetRigidbodyLinearDrag(EntityId, value);
+    }
+
+    public float AngularDrag
+    {
+        get => ScriptBridge.GetRigidbodyAngularDrag(EntityId);
+        set => ScriptBridge.SetRigidbodyAngularDrag(EntityId, value);
+    }
+
+    public bool UseGravity
+    {
+        get => ScriptBridge.GetRigidbodyUseGravity(EntityId);
+        set => ScriptBridge.SetRigidbodyUseGravity(EntityId, value);
+    }
+
+    public bool IsKinematic
+    {
+        get => ScriptBridge.GetRigidbodyKinematic(EntityId);
+        set => ScriptBridge.SetRigidbodyKinematic(EntityId, value);
+    }
+
+    public bool FreezeRotation
+    {
+        get => ScriptBridge.GetRigidbodyFreezeRotation(EntityId);
+        set => ScriptBridge.SetRigidbodyFreezeRotation(EntityId, value);
+    }
+
+    public Vector3 Velocity
+    {
+        get => ScriptBridge.GetRigidbodyVelocity(EntityId);
+        set => ScriptBridge.SetRigidbodyVelocity(EntityId, value);
+    }
+
+    public Vector3 AngularVelocity
+    {
+        get => ScriptBridge.GetRigidbodyAngularVelocity(EntityId);
+        set => ScriptBridge.SetRigidbodyAngularVelocity(EntityId, value);
+    }
+}

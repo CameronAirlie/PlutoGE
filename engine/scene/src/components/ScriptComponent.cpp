@@ -235,6 +235,34 @@ namespace PlutoGE::scene
         m_instance->OnUpdate(deltaTime);
     }
 
+    void ScriptComponent::OnCollisionEnter(uint32_t otherEntityId)
+    {
+        if (!core::Engine::GetInstance().IsRuntimeRunning() || m_scriptClass.empty())
+        {
+            return;
+        }
+
+        Start();
+        if (m_instance)
+        {
+            m_instance->OnCollisionEnter(otherEntityId);
+        }
+    }
+
+    void ScriptComponent::OnCollisionExit(uint32_t otherEntityId)
+    {
+        if (!core::Engine::GetInstance().IsRuntimeRunning() || m_scriptClass.empty())
+        {
+            return;
+        }
+
+        Start();
+        if (m_instance)
+        {
+            m_instance->OnCollisionExit(otherEntityId);
+        }
+    }
+
     std::vector<Property> ScriptComponent::Serialize() const
     {
         std::vector<Property> properties;

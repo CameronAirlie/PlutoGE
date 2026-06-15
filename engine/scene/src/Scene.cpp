@@ -187,6 +187,49 @@ namespace PlutoGE::scene
             bool dynamic = false;
         };
 
+        uint64_t MakeCollisionPairKey(EntityID first, EntityID second)
+        {
+            if (first > second)
+            {
+                std::swap(first, second);
+            }
+
+            return (static_cast<uint64_t>(first) << 32) | static_cast<uint64_t>(second);
+        }
+
+        std::pair<EntityID, EntityID> DecodeCollisionPairKey(uint64_t key)
+        {
+            return {
+                static_cast<EntityID>(key >> 32),
+                static_cast<EntityID>(key & 0xffffffffu),
+            };
+        }
+
+        void NotifyCollision(Entity *entity, EntityID otherEntityId, bool entered)
+        {
+            if (!entity || !entity->IsActive())
+            {
+                return;
+            }
+
+            for (auto *scriptComponent : entity->GetComponents<ScriptComponent>())
+            {
+                if (!scriptComponent || !scriptComponent->IsEnabled())
+                {
+                    continue;
+                }
+
+                if (entered)
+                {
+                    scriptComponent->OnCollisionEnter(otherEntityId);
+                }
+                else
+                {
+                    scriptComponent->OnCollisionExit(otherEntityId);
+                }
+            }
+        }
+
         void SyncBodyBackToEntity(BulletStepBody &stepBody)
         {
             if (!stepBody.dynamic || !stepBody.entity || !stepBody.rigidbody)
@@ -561,6 +604,7 @@ namespace PlutoGE::scene
             constructionInfo.m_linearDamping = rigidbody ? rigidbody->GetLinearDrag() : 0.0f;
             constructionInfo.m_angularDamping = rigidbody ? rigidbody->GetAngularDrag() : 0.0f;
             auto body = std::make_unique<btRigidBody>(constructionInfo);
+            body->setUserPointer(entity);
             if (rigidbody)
             {
                 body->setLinearVelocity(ToBullet(rigidbody->GetVelocity()));
@@ -599,11 +643,77 @@ namespace PlutoGE::scene
 
         dynamicsWorld.stepSimulation(step, 0);
 
+        std::unordered_set<uint64_t> currentCollisionPairs;
+        const int manifoldCount = dynamicsWorld.getDispatcher()->getNumManifolds();
+        for (int manifoldIndex = 0; manifoldIndex < manifoldCount; ++manifoldIndex)
+        {
+            auto *manifold = dynamicsWorld.getDispatcher()->getManifoldByIndexInternal(manifoldIndex);
+            if (!manifold || manifold->getNumContacts() <= 0)
+            {
+                continue;
+            }
+
+            const auto *bodyA = static_cast<const btRigidBody *>(manifold->getBody0());
+            const auto *bodyB = static_cast<const btRigidBody *>(manifold->getBody1());
+            auto *entityA = bodyA ? static_cast<Entity *>(bodyA->getUserPointer()) : nullptr;
+            auto *entityB = bodyB ? static_cast<Entity *>(bodyB->getUserPointer()) : nullptr;
+            if (!entityA || !entityB || entityA == entityB)
+            {
+                continue;
+            }
+
+            bool hasContact = false;
+            for (int contactIndex = 0; contactIndex < manifold->getNumContacts(); ++contactIndex)
+            {
+                if (manifold->getContactPoint(contactIndex).getDistance() <= 0.0f)
+                {
+                    hasContact = true;
+                    break;
+                }
+            }
+
+            if (hasContact)
+            {
+                currentCollisionPairs.insert(MakeCollisionPairKey(entityA->GetID(), entityB->GetID()));
+            }
+        }
+
         for (auto &stepBody : stepBodies)
         {
             SyncBodyBackToEntity(stepBody);
             dynamicsWorld.removeRigidBody(stepBody.body.get());
         }
+
+        DispatchCollisionEvents(std::move(currentCollisionPairs));
+    }
+
+    void Scene::DispatchCollisionEvents(std::unordered_set<uint64_t> currentCollisionPairs)
+    {
+        for (const auto pairKey : currentCollisionPairs)
+        {
+            if (m_activeCollisionPairs.contains(pairKey))
+            {
+                continue;
+            }
+
+            const auto [firstId, secondId] = DecodeCollisionPairKey(pairKey);
+            NotifyCollision(FindEntityByID(firstId), secondId, true);
+            NotifyCollision(FindEntityByID(secondId), firstId, true);
+        }
+
+        for (const auto pairKey : m_activeCollisionPairs)
+        {
+            if (currentCollisionPairs.contains(pairKey))
+            {
+                continue;
+            }
+
+            const auto [firstId, secondId] = DecodeCollisionPairKey(pairKey);
+            NotifyCollision(FindEntityByID(firstId), secondId, false);
+            NotifyCollision(FindEntityByID(secondId), firstId, false);
+        }
+
+        m_activeCollisionPairs = std::move(currentCollisionPairs);
     }
 
     void SearchEntityByNameRecursive(Entity *current, const std::string &name, Entity **result)

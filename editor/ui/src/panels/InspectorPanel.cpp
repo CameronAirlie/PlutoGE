@@ -1027,6 +1027,8 @@ namespace PlutoGE::ui
             case scripting::ScriptFieldType::MeshComponent:
             case scripting::ScriptFieldType::CameraComponent:
             case scripting::ScriptFieldType::LightComponent:
+            case scripting::ScriptFieldType::RigidbodyComponent:
+            case scripting::ScriptFieldType::ColliderComponent:
             {
                 uint32_t selectedEntityId = std::get<uint32_t>(*fieldValue);
                 scene::Scene *scene = entity.GetScene();
@@ -1049,6 +1051,10 @@ namespace PlutoGE::ui
                         return candidate.HasComponent<scene::CameraComponent>();
                     case scripting::ScriptFieldType::LightComponent:
                         return candidate.HasComponent<scene::LightComponent>();
+                    case scripting::ScriptFieldType::RigidbodyComponent:
+                        return candidate.HasComponent<scene::RigidbodyComponent>();
+                    case scripting::ScriptFieldType::ColliderComponent:
+                        return candidate.HasComponent<scene::ColliderComponent>();
                     case scripting::ScriptFieldType::EntityId:
                     case scripting::ScriptFieldType::GameObject:
                     default:

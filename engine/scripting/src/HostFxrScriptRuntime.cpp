@@ -5,8 +5,10 @@
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
+#include "PlutoGE/scene/components/ColliderComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
+#include "PlutoGE/scene/components/RigidbodyComponent.h"
 #include "PlutoGE/scene/components/ScriptComponent.h"
 
 #include <algorithm>
@@ -64,6 +66,7 @@ namespace PlutoGE::scripting
         using destroy_script_instance_fn = void(__cdecl *)(int64_t);
         using invoke_on_create_fn = int(__cdecl *)(int64_t);
         using invoke_on_update_fn = int(__cdecl *)(int64_t, float);
+        using invoke_on_collision_fn = int(__cdecl *)(int64_t, uint32_t);
         using apply_field_data_fn = int(__cdecl *)(int64_t, const char *);
         using set_entity_id_fn = int(__cdecl *)(int64_t, uint32_t);
         using register_game_object_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
@@ -71,6 +74,8 @@ namespace PlutoGE::scripting
         using register_camera_component_api_fn = int(__cdecl *)(void *, void *, void *, void *);
         using register_light_component_api_fn = int(__cdecl *)(void *, void *, void *, void *);
         using register_mesh_component_api_fn = int(__cdecl *)(void *, void *);
+        using register_rigidbody_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
+        using register_collider_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_input_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
 
         struct NativeVector3
@@ -97,6 +102,14 @@ namespace PlutoGE::scripting
         using set_light_color_fn = void(__cdecl *)(uint32_t, NativeVector3);
         using get_mesh_static_fn = int(__cdecl *)(uint32_t);
         using set_mesh_static_fn = void(__cdecl *)(uint32_t, int32_t);
+        using get_component_float_fn = float(__cdecl *)(uint32_t);
+        using set_component_float_fn = void(__cdecl *)(uint32_t, float);
+        using get_component_bool_fn = int(__cdecl *)(uint32_t);
+        using set_component_bool_fn = void(__cdecl *)(uint32_t, int32_t);
+        using get_component_int_fn = int(__cdecl *)(uint32_t);
+        using set_component_int_fn = void(__cdecl *)(uint32_t, int32_t);
+        using get_component_vector3_fn = NativeVector3(__cdecl *)(uint32_t);
+        using set_component_vector3_fn = void(__cdecl *)(uint32_t, NativeVector3);
         using get_input_key_fn = int(__cdecl *)(int32_t);
         using get_input_mouse_button_fn = int(__cdecl *)(int32_t);
         using get_input_mouse_vector2_fn = NativeVector3(__cdecl *)();
@@ -118,6 +131,8 @@ namespace PlutoGE::scripting
             Camera = 1,
             Light = 2,
             Script = 3,
+            Rigidbody = 4,
+            Collider = 5,
         };
 
         std::wstring Utf8ToWide(std::string_view text)
@@ -352,7 +367,7 @@ namespace PlutoGE::scripting
         {
             int fieldTypeValue = 0;
             std::from_chars(token.data(), token.data() + token.size(), fieldTypeValue);
-            if (fieldTypeValue < static_cast<int>(ScriptFieldType::None) || fieldTypeValue > static_cast<int>(ScriptFieldType::LightComponent))
+            if (fieldTypeValue < static_cast<int>(ScriptFieldType::None) || fieldTypeValue > static_cast<int>(ScriptFieldType::ColliderComponent))
             {
                 return ScriptFieldType::None;
             }
@@ -413,6 +428,8 @@ namespace PlutoGE::scripting
             case ScriptFieldType::MeshComponent:
             case ScriptFieldType::CameraComponent:
             case ScriptFieldType::LightComponent:
+            case ScriptFieldType::RigidbodyComponent:
+            case ScriptFieldType::ColliderComponent:
             {
                 uint32_t value = 0;
                 std::from_chars(token.data(), token.data() + token.size(), value);
@@ -666,6 +683,10 @@ namespace PlutoGE::scripting
                 return entity->GetComponent<scene::LightComponent>();
             case ManagedComponentKind::Script:
                 return entity->GetComponent<scene::ScriptComponent>();
+            case ManagedComponentKind::Rigidbody:
+                return entity->GetComponent<scene::RigidbodyComponent>();
+            case ManagedComponentKind::Collider:
+                return entity->GetComponent<scene::ColliderComponent>();
             default:
                 return nullptr;
             }
@@ -959,6 +980,98 @@ namespace PlutoGE::scripting
             }
         }
 
+        scene::RigidbodyComponent *FindRigidbody(uint32_t entityId)
+        {
+            auto *entity = FindEntity(entityId);
+            return entity ? entity->GetComponent<scene::RigidbodyComponent>() : nullptr;
+        }
+
+        scene::ColliderComponent *FindCollider(uint32_t entityId)
+        {
+            auto *entity = FindEntity(entityId);
+            return entity ? entity->GetComponent<scene::ColliderComponent>() : nullptr;
+        }
+
+        float GetRigidbodyMass(uint32_t entityId) { auto *component = FindRigidbody(entityId); return component ? component->GetMass() : 0.0f; }
+        void SetRigidbodyMass(uint32_t entityId, float value) { if (auto *component = FindRigidbody(entityId)) component->SetMass(value); }
+        float GetRigidbodyLinearDrag(uint32_t entityId) { auto *component = FindRigidbody(entityId); return component ? component->GetLinearDrag() : 0.0f; }
+        void SetRigidbodyLinearDrag(uint32_t entityId, float value) { if (auto *component = FindRigidbody(entityId)) component->SetLinearDrag(value); }
+        float GetRigidbodyAngularDrag(uint32_t entityId) { auto *component = FindRigidbody(entityId); return component ? component->GetAngularDrag() : 0.0f; }
+        void SetRigidbodyAngularDrag(uint32_t entityId, float value) { if (auto *component = FindRigidbody(entityId)) component->SetAngularDrag(value); }
+        int32_t GetRigidbodyUseGravity(uint32_t entityId) { auto *component = FindRigidbody(entityId); return component && component->UsesGravity() ? 1 : 0; }
+        void SetRigidbodyUseGravity(uint32_t entityId, int32_t value) { if (auto *component = FindRigidbody(entityId)) component->SetUseGravity(value != 0); }
+        int32_t GetRigidbodyKinematic(uint32_t entityId) { auto *component = FindRigidbody(entityId); return component && component->IsKinematic() ? 1 : 0; }
+        void SetRigidbodyKinematic(uint32_t entityId, int32_t value) { if (auto *component = FindRigidbody(entityId)) component->SetKinematic(value != 0); }
+        int32_t GetRigidbodyFreezeRotation(uint32_t entityId) { auto *component = FindRigidbody(entityId); return component && component->HasFreezeRotation() ? 1 : 0; }
+        void SetRigidbodyFreezeRotation(uint32_t entityId, int32_t value) { if (auto *component = FindRigidbody(entityId)) component->SetFreezeRotation(value != 0); }
+        NativeVector3 GetRigidbodyVelocity(uint32_t entityId)
+        {
+            auto *component = FindRigidbody(entityId);
+            const auto value = component ? component->GetVelocity() : glm::vec3{0.0f};
+            return NativeVector3{value.x, value.y, value.z};
+        }
+        void SetRigidbodyVelocity(uint32_t entityId, NativeVector3 value)
+        {
+            if (auto *component = FindRigidbody(entityId); component && IsFiniteVector3(value))
+            {
+                component->SetVelocity(glm::vec3(value.x, value.y, value.z));
+            }
+        }
+        NativeVector3 GetRigidbodyAngularVelocity(uint32_t entityId)
+        {
+            auto *component = FindRigidbody(entityId);
+            const auto value = component ? component->GetAngularVelocity() : glm::vec3{0.0f};
+            return NativeVector3{value.x, value.y, value.z};
+        }
+        void SetRigidbodyAngularVelocity(uint32_t entityId, NativeVector3 value)
+        {
+            if (auto *component = FindRigidbody(entityId); component && IsFiniteVector3(value))
+            {
+                component->SetAngularVelocity(glm::vec3(value.x, value.y, value.z));
+            }
+        }
+
+        int32_t GetColliderShape(uint32_t entityId) { auto *component = FindCollider(entityId); return component ? static_cast<int32_t>(component->GetShape()) : 0; }
+        void SetColliderShape(uint32_t entityId, int32_t value)
+        {
+            if (auto *component = FindCollider(entityId))
+            {
+                component->SetShape(static_cast<scene::ColliderShape>(std::clamp(value, 0, 2)));
+            }
+        }
+        NativeVector3 GetColliderCenter(uint32_t entityId)
+        {
+            auto *component = FindCollider(entityId);
+            const auto value = component ? component->GetCenter() : glm::vec3{0.0f};
+            return NativeVector3{value.x, value.y, value.z};
+        }
+        void SetColliderCenter(uint32_t entityId, NativeVector3 value)
+        {
+            if (auto *component = FindCollider(entityId); component && IsFiniteVector3(value))
+            {
+                component->SetCenter(glm::vec3(value.x, value.y, value.z));
+            }
+        }
+        NativeVector3 GetColliderSize(uint32_t entityId)
+        {
+            auto *component = FindCollider(entityId);
+            const auto value = component ? component->GetSize() : glm::vec3{1.0f};
+            return NativeVector3{value.x, value.y, value.z};
+        }
+        void SetColliderSize(uint32_t entityId, NativeVector3 value)
+        {
+            if (auto *component = FindCollider(entityId); component && IsFiniteVector3(value))
+            {
+                component->SetSize(glm::vec3(value.x, value.y, value.z));
+            }
+        }
+        float GetColliderRadius(uint32_t entityId) { auto *component = FindCollider(entityId); return component ? component->GetRadius() : 0.0f; }
+        void SetColliderRadius(uint32_t entityId, float value) { if (auto *component = FindCollider(entityId)) component->SetRadius(value); }
+        float GetColliderHeight(uint32_t entityId) { auto *component = FindCollider(entityId); return component ? component->GetHeight() : 0.0f; }
+        void SetColliderHeight(uint32_t entityId, float value) { if (auto *component = FindCollider(entityId)) component->SetHeight(value); }
+        int32_t GetColliderTrigger(uint32_t entityId) { auto *component = FindCollider(entityId); return component && component->IsTrigger() ? 1 : 0; }
+        void SetColliderTrigger(uint32_t entityId, int32_t value) { if (auto *component = FindCollider(entityId)) component->SetTrigger(value != 0); }
+
         int32_t GetKeyDown(int32_t keyCode)
         {
             if (!IsScriptInputEnabled())
@@ -1100,6 +1213,8 @@ namespace PlutoGE::scripting
         destroy_script_instance_fn destroyScriptInstance = nullptr;
         invoke_on_create_fn invokeOnCreate = nullptr;
         invoke_on_update_fn invokeOnUpdate = nullptr;
+        invoke_on_collision_fn invokeOnCollisionEnter = nullptr;
+        invoke_on_collision_fn invokeOnCollisionExit = nullptr;
         apply_field_data_fn applyFieldData = nullptr;
         set_entity_id_fn setEntityId = nullptr;
         register_game_object_api_fn registerGameObjectApi = nullptr;
@@ -1107,6 +1222,8 @@ namespace PlutoGE::scripting
         register_camera_component_api_fn registerCameraComponentApi = nullptr;
         register_light_component_api_fn registerLightComponentApi = nullptr;
         register_mesh_component_api_fn registerMeshComponentApi = nullptr;
+        register_rigidbody_component_api_fn registerRigidbodyComponentApi = nullptr;
+        register_collider_component_api_fn registerColliderComponentApi = nullptr;
         register_input_api_fn registerInputApi = nullptr;
         std::filesystem::path bridgeSourceAssemblyPath;
         std::filesystem::path bridgeSourceRuntimeConfigPath;
@@ -1459,6 +1576,8 @@ namespace PlutoGE::scripting
                 LoadManagedExport(impl, L"DestroyScriptInstance", impl.destroyScriptInstance) &&
                 LoadManagedExport(impl, L"InvokeOnCreate", impl.invokeOnCreate) &&
                 LoadManagedExport(impl, L"InvokeOnUpdate", impl.invokeOnUpdate) &&
+                LoadManagedExport(impl, L"InvokeOnCollisionEnter", impl.invokeOnCollisionEnter) &&
+                LoadManagedExport(impl, L"InvokeOnCollisionExit", impl.invokeOnCollisionExit) &&
                 LoadManagedExport(impl, L"ApplyFieldData", impl.applyFieldData) &&
                 LoadManagedExport(impl, L"SetEntityId", impl.setEntityId) &&
                 LoadManagedExport(impl, L"RegisterGameObjectApi", impl.registerGameObjectApi) &&
@@ -1466,6 +1585,8 @@ namespace PlutoGE::scripting
                 LoadManagedExport(impl, L"RegisterCameraComponentApi", impl.registerCameraComponentApi) &&
                 LoadManagedExport(impl, L"RegisterLightComponentApi", impl.registerLightComponentApi) &&
                 LoadManagedExport(impl, L"RegisterMeshComponentApi", impl.registerMeshComponentApi) &&
+                LoadManagedExport(impl, L"RegisterRigidbodyComponentApi", impl.registerRigidbodyComponentApi) &&
+                LoadManagedExport(impl, L"RegisterColliderComponentApi", impl.registerColliderComponentApi) &&
                 LoadManagedExport(impl, L"RegisterInputApi", impl.registerInputApi);
 
             if (!requiredExportsLoaded)
@@ -1539,6 +1660,22 @@ namespace PlutoGE::scripting
                 if (m_impl && m_impl->invokeOnUpdate)
                 {
                     m_impl->invokeOnUpdate(m_instanceHandle, deltaTime);
+                }
+            }
+
+            void OnCollisionEnter(uint32_t otherEntityId) override
+            {
+                if (m_impl && m_impl->invokeOnCollisionEnter)
+                {
+                    m_impl->invokeOnCollisionEnter(m_instanceHandle, otherEntityId);
+                }
+            }
+
+            void OnCollisionExit(uint32_t otherEntityId) override
+            {
+                if (m_impl && m_impl->invokeOnCollisionExit)
+                {
+                    m_impl->invokeOnCollisionExit(m_instanceHandle, otherEntityId);
                 }
             }
 
@@ -1679,6 +1816,48 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(static_cast<set_mesh_static_fn>(&SetMeshStatic))) == 0)
         {
             setManagedBridgeFailure("RegisterMeshComponentApi");
+            return false;
+        }
+
+        if (!m_impl->registerRigidbodyComponentApi ||
+            m_impl->registerRigidbodyComponentApi(
+                reinterpret_cast<void *>(static_cast<get_component_float_fn>(&GetRigidbodyMass)),
+                reinterpret_cast<void *>(static_cast<set_component_float_fn>(&SetRigidbodyMass)),
+                reinterpret_cast<void *>(static_cast<get_component_float_fn>(&GetRigidbodyLinearDrag)),
+                reinterpret_cast<void *>(static_cast<set_component_float_fn>(&SetRigidbodyLinearDrag)),
+                reinterpret_cast<void *>(static_cast<get_component_float_fn>(&GetRigidbodyAngularDrag)),
+                reinterpret_cast<void *>(static_cast<set_component_float_fn>(&SetRigidbodyAngularDrag)),
+                reinterpret_cast<void *>(static_cast<get_component_bool_fn>(&GetRigidbodyUseGravity)),
+                reinterpret_cast<void *>(static_cast<set_component_bool_fn>(&SetRigidbodyUseGravity)),
+                reinterpret_cast<void *>(static_cast<get_component_bool_fn>(&GetRigidbodyKinematic)),
+                reinterpret_cast<void *>(static_cast<set_component_bool_fn>(&SetRigidbodyKinematic)),
+                reinterpret_cast<void *>(static_cast<get_component_bool_fn>(&GetRigidbodyFreezeRotation)),
+                reinterpret_cast<void *>(static_cast<set_component_bool_fn>(&SetRigidbodyFreezeRotation)),
+                reinterpret_cast<void *>(static_cast<get_component_vector3_fn>(&GetRigidbodyVelocity)),
+                reinterpret_cast<void *>(static_cast<set_component_vector3_fn>(&SetRigidbodyVelocity)),
+                reinterpret_cast<void *>(static_cast<get_component_vector3_fn>(&GetRigidbodyAngularVelocity)),
+                reinterpret_cast<void *>(static_cast<set_component_vector3_fn>(&SetRigidbodyAngularVelocity))) == 0)
+        {
+            setManagedBridgeFailure("RegisterRigidbodyComponentApi");
+            return false;
+        }
+
+        if (!m_impl->registerColliderComponentApi ||
+            m_impl->registerColliderComponentApi(
+                reinterpret_cast<void *>(static_cast<get_component_int_fn>(&GetColliderShape)),
+                reinterpret_cast<void *>(static_cast<set_component_int_fn>(&SetColliderShape)),
+                reinterpret_cast<void *>(static_cast<get_component_vector3_fn>(&GetColliderCenter)),
+                reinterpret_cast<void *>(static_cast<set_component_vector3_fn>(&SetColliderCenter)),
+                reinterpret_cast<void *>(static_cast<get_component_vector3_fn>(&GetColliderSize)),
+                reinterpret_cast<void *>(static_cast<set_component_vector3_fn>(&SetColliderSize)),
+                reinterpret_cast<void *>(static_cast<get_component_float_fn>(&GetColliderRadius)),
+                reinterpret_cast<void *>(static_cast<set_component_float_fn>(&SetColliderRadius)),
+                reinterpret_cast<void *>(static_cast<get_component_float_fn>(&GetColliderHeight)),
+                reinterpret_cast<void *>(static_cast<set_component_float_fn>(&SetColliderHeight)),
+                reinterpret_cast<void *>(static_cast<get_component_bool_fn>(&GetColliderTrigger)),
+                reinterpret_cast<void *>(static_cast<set_component_bool_fn>(&SetColliderTrigger))) == 0)
+        {
+            setManagedBridgeFailure("RegisterColliderComponentApi");
             return false;
         }
 

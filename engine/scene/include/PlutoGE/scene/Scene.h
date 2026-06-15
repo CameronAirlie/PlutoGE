@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <glm/glm.hpp>
 #include <memory>
+#include <unordered_set>
 #include <vector>
 #include <string>
 
@@ -115,9 +116,11 @@ namespace PlutoGE::scene
         BakedProbeVolume m_bakedProbeVolume;
         std::unique_ptr<render::Texture> m_bakedProbeTexture;
         std::vector<IblCaptureVolume> m_iblCaptureVolumes;
+        std::unordered_set<uint64_t> m_activeCollisionPairs;
         void CollectEntitySubtree(Entity *entity, std::vector<Entity *> &entities) const;
         bool RemoveEntityRecursive(Entity *current, Entity *target);
         void RebuildBakedProbeTexture();
         void StepPhysics(float deltaTime);
+        void DispatchCollisionEvents(std::unordered_set<uint64_t> currentCollisionPairs);
     };
 }

@@ -105,6 +105,8 @@ namespace PlutoGE::scripting
         case ScriptFieldType::MeshComponent:
         case ScriptFieldType::CameraComponent:
         case ScriptFieldType::LightComponent:
+        case ScriptFieldType::RigidbodyComponent:
+        case ScriptFieldType::ColliderComponent:
             return std::holds_alternative<uint32_t>(value);
         case ScriptFieldType::None:
         default:
@@ -135,6 +137,8 @@ namespace PlutoGE::scripting
         case ScriptFieldType::MeshComponent:
         case ScriptFieldType::CameraComponent:
         case ScriptFieldType::LightComponent:
+        case ScriptFieldType::RigidbodyComponent:
+        case ScriptFieldType::ColliderComponent:
             return uint32_t{0};
         case ScriptFieldType::None:
         default:

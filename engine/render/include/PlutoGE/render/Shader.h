@@ -669,23 +669,28 @@ float SampleShadowMapPCF(sampler2D shadowMap, vec3 projectedCoords, float depthB
     vec2 ts = 1.0 / vec2(textureSize(shadowMap, 0));
     float rd = projectedCoords.z - depthBias;
     float bd = texture(shadowMap, projectedCoords.xy).r;
-    float br = max(softness * 0.35, 0.35);
-    float r = mix(br, max(softness * 2.5, br), clamp(max(rd - bd, 0.0) * 160.0, 0.0, 1.0));
-    float sg = max(r * 0.45, 0.75);
+    float br = max(softness * 0.65, 0.75);
+    float r = mix(br, max(softness * 3.25, br), clamp(max(rd - bd, 0.0) * 160.0, 0.0, 1.0));
+    float rotation = fract(dot(projectedCoords.xy, vec2(37.0, 17.0))) * 6.28318530718;
+    float s = sin(rotation);
+    float c = cos(rotation);
+    mat2 rotationMatrix = mat2(c, -s, s, c);
+    vec2 poisson[24] = vec2[24](
+        vec2(-0.326, -0.406), vec2(-0.840, -0.074), vec2(-0.696, 0.457), vec2(-0.203, 0.621),
+        vec2(0.962, -0.195), vec2(0.473, -0.480), vec2(0.519, 0.767), vec2(0.185, -0.893),
+        vec2(0.507, 0.064), vec2(0.896, 0.412), vec2(-0.322, -0.933), vec2(-0.792, -0.598),
+        vec2(-0.094, -0.184), vec2(0.281, -0.205), vec2(-0.435, 0.188), vec2(-0.544, 0.764),
+        vec2(0.215, 0.391), vec2(0.757, -0.633), vec2(-0.991, 0.147), vec2(0.064, 0.928),
+        vec2(0.991, 0.001), vec2(-0.139, -0.710), vec2(-0.660, -0.220), vec2(0.419, 0.560)
+    );
     float sh = 0.0;
-    float tw = 0.0;
-    for (int y = -3; y <= 3; ++y)
+    for (int sampleIndex = 0; sampleIndex < 24; ++sampleIndex)
     {
-        for (int x = -3; x <= 3; ++x)
-        {
-            vec2 k = vec2(float(x), float(y));
-            float w = exp(-dot(k, k) / (2.0 * sg * sg));
-            sh += (rd > texture(shadowMap, projectedCoords.xy + k * ts * (r / 3.0)).r ? 1.0 : 0.0) * w;
-            tw += w;
-        }
+        vec2 sampleUv = projectedCoords.xy + rotationMatrix * poisson[sampleIndex] * ts * r;
+        sh += rd > texture(shadowMap, sampleUv).r ? 1.0 : 0.0;
     }
 
-    return sh / max(tw, 0.0001);
+    return sh / 24.0;
 }
 
 float SampleDirectionalCascadeShadow(int cascadeIndex, vec3 projectedCoords, float depthBias, float softness)

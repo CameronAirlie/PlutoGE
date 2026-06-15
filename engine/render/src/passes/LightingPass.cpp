@@ -285,22 +285,29 @@ namespace PlutoGE::render
                     float receiverDepth = projectedCoords.z - depthBias;
                     float blockerDepth = texture(shadowMap, projectedCoords.xy).r;
                     float blockerSeparation = max(receiverDepth - blockerDepth, 0.0);
-                    float baseRadius = max(softness * 0.35, 0.35);
-                    float maxRadius = max(softness * 2.5, baseRadius);
+                    float baseRadius = max(softness * 0.65, 0.75);
+                    float maxRadius = max(softness * 3.25, baseRadius);
                     float filterRadius = mix(baseRadius, maxRadius, clamp(blockerSeparation * 160.0, 0.0, 1.0));
-                    float sampleScale = filterRadius * 0.5;
+                    float rotation = fract(dot(projectedCoords.xy, vec2(37.0, 17.0))) * 6.28318530718;
+                    float s = sin(rotation);
+                    float c = cos(rotation);
+                    mat2 rotationMatrix = mat2(c, -s, s, c);
+                    vec2 poisson[24] = vec2[24](
+                        vec2(-0.326, -0.406), vec2(-0.840, -0.074), vec2(-0.696, 0.457), vec2(-0.203, 0.621),
+                        vec2(0.962, -0.195), vec2(0.473, -0.480), vec2(0.519, 0.767), vec2(0.185, -0.893),
+                        vec2(0.507, 0.064), vec2(0.896, 0.412), vec2(-0.322, -0.933), vec2(-0.792, -0.598),
+                        vec2(-0.094, -0.184), vec2(0.281, -0.205), vec2(-0.435, 0.188), vec2(-0.544, 0.764),
+                        vec2(0.215, 0.391), vec2(0.757, -0.633), vec2(-0.991, 0.147), vec2(0.064, 0.928),
+                        vec2(0.991, 0.001), vec2(-0.139, -0.710), vec2(-0.660, -0.220), vec2(0.419, 0.560)
+                    );
                     float shadow = 0.0;
-                    shadow += receiverDepth > texture(shadowMap, projectedCoords.xy).r ? 4.0 : 0.0;
-                    shadow += receiverDepth > texture(shadowMap, projectedCoords.xy + vec2(-1.0, 0.0) * texelSize * sampleScale).r ? 2.0 : 0.0;
-                    shadow += receiverDepth > texture(shadowMap, projectedCoords.xy + vec2(1.0, 0.0) * texelSize * sampleScale).r ? 2.0 : 0.0;
-                    shadow += receiverDepth > texture(shadowMap, projectedCoords.xy + vec2(0.0, -1.0) * texelSize * sampleScale).r ? 2.0 : 0.0;
-                    shadow += receiverDepth > texture(shadowMap, projectedCoords.xy + vec2(0.0, 1.0) * texelSize * sampleScale).r ? 2.0 : 0.0;
-                    shadow += receiverDepth > texture(shadowMap, projectedCoords.xy + vec2(-1.0, -1.0) * texelSize * sampleScale).r ? 1.0 : 0.0;
-                    shadow += receiverDepth > texture(shadowMap, projectedCoords.xy + vec2(1.0, -1.0) * texelSize * sampleScale).r ? 1.0 : 0.0;
-                    shadow += receiverDepth > texture(shadowMap, projectedCoords.xy + vec2(-1.0, 1.0) * texelSize * sampleScale).r ? 1.0 : 0.0;
-                    shadow += receiverDepth > texture(shadowMap, projectedCoords.xy + vec2(1.0, 1.0) * texelSize * sampleScale).r ? 1.0 : 0.0;
+                    for (int sampleIndex = 0; sampleIndex < 24; ++sampleIndex)
+                    {
+                        vec2 sampleUv = projectedCoords.xy + rotationMatrix * poisson[sampleIndex] * texelSize * filterRadius;
+                        shadow += receiverDepth > texture(shadowMap, sampleUv).r ? 1.0 : 0.0;
+                    }
 
-                    return shadow * 0.0625;
+                    return shadow / 24.0;
                 }
 
                 float SampleDirectionalCascadeShadow(int cascadeIndex, vec3 projectedCoords, float depthBias, float softness)

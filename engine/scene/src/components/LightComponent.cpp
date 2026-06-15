@@ -22,10 +22,8 @@ namespace PlutoGE::scene
 
         int ResolveDirectionalCascadeResolution(const Light &light, int cascadeIndex)
         {
-            const int baseResolution = ResolveShadowResolution(light);
-            const int clampedCascadeIndex = std::clamp(cascadeIndex, 0, kMaxDirectionalShadowCascades - 1);
-            const int divisor = 1 << clampedCascadeIndex;
-            return std::max(baseResolution / divisor, 256);
+            (void)cascadeIndex;
+            return ResolveShadowResolution(light);
         }
 
         void ResetShadowState(Light &light)

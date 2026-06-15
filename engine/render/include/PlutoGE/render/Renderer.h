@@ -46,6 +46,8 @@ namespace PlutoGE::render
         Albedo,
         Depth,
         ShadowCascades,
+        DirectionalShadowMaskRaw,
+        DirectionalShadowMaskFiltered,
     };
 
     struct RendererConfig

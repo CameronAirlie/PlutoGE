@@ -34,6 +34,9 @@ namespace PlutoGE::render
         constexpr int kBakedProbeTextureSlot = kPreviousLightPropagationVolumeTextureSlot + 1;
         constexpr int kEnvironmentTextureSlot = kBakedProbeTextureSlot + 1;
         constexpr int kIblCaptureTextureSlotStart = kEnvironmentTextureSlot + 1;
+        constexpr int kShadowMaskTextureSlot = kIblCaptureTextureSlotStart + scene::kMaxIblCaptureVolumes;
+        constexpr int kShadowMaskPositionTextureSlot = kShadowMaskTextureSlot + 1;
+        constexpr int kShadowMaskNormalTextureSlot = kShadowMaskPositionTextureSlot + 1;
         constexpr int kAmbientPassMode = 0;
         constexpr int kLightPassMode = 1;
         constexpr int kIndirectTextureSlot = 0;
@@ -201,6 +204,9 @@ namespace PlutoGE::render
                 uniform sampler2D uShadowCascadeMap2;
                 uniform sampler2D uShadowCascadeMap3;
                 uniform samplerCube uShadowMapCube;
+                uniform sampler2D uFilteredShadowMask;
+                uniform int uOutputShadowMask;
+                uniform int uUseFilteredShadowMask;
                 uniform int uDebugViewMode;
 
                 float DistributionGGX(vec3 normal, vec3 halfwayDir, float roughness)
@@ -283,6 +289,16 @@ namespace PlutoGE::render
 
                     vec2 texelSize = 1.0 / vec2(textureSize(shadowMap, 0));
                     float receiverDepth = projectedCoords.z - depthBias;
+                    if (uOutputShadowMask != 0)
+                    {
+                        float shadow = receiverDepth > texture(shadowMap, projectedCoords.xy).r ? 2.0 : 0.0;
+                        shadow += receiverDepth > texture(shadowMap, projectedCoords.xy + vec2(1.0, 0.0) * texelSize).r ? 1.0 : 0.0;
+                        shadow += receiverDepth > texture(shadowMap, projectedCoords.xy + vec2(-1.0, 0.0) * texelSize).r ? 1.0 : 0.0;
+                        shadow += receiverDepth > texture(shadowMap, projectedCoords.xy + vec2(0.0, 1.0) * texelSize).r ? 1.0 : 0.0;
+                        shadow += receiverDepth > texture(shadowMap, projectedCoords.xy + vec2(0.0, -1.0) * texelSize).r ? 1.0 : 0.0;
+                        return shadow / 6.0;
+                    }
+
                     float blockerDepth = texture(shadowMap, projectedCoords.xy).r;
                     float blockerSeparation = max(receiverDepth - blockerDepth, 0.0);
                     float baseRadius = max(softness * 0.65, 0.75);
@@ -531,7 +547,7 @@ namespace PlutoGE::render
                     return ComputeSpotShadow(fragPos, normal, light);
                 }
 
-                vec3 ComputeLightContribution(vec3 fragPos, vec3 normal, vec3 viewDir, vec3 albedo, float metallic, float roughness, Light light)
+                vec3 ComputeLightContribution(vec3 fragPos, vec3 normal, vec3 viewDir, vec3 albedo, float metallic, float roughness, Light light, float filteredShadow)
                 {
                     vec3 lightDir;
                     float attenuation = 1.0;
@@ -570,13 +586,19 @@ namespace PlutoGE::render
 
                     int sampledCascadeIndex = -1;
                     bool hasAnyCascadeCoverage = false;
-                    float shadow = ComputeShadow(fragPos, normal, light, sampledCascadeIndex, hasAnyCascadeCoverage);
+                    float shadow = filteredShadow >= 0.0 && light.Type == LIGHT_TYPE_DIRECTIONAL
+                                       ? filteredShadow
+                                       : ComputeShadow(fragPos, normal, light, sampledCascadeIndex, hasAnyCascadeCoverage);
 
                     if (uDebugViewMode == DEBUG_VIEW_SHADOW_CASCADES)
                     {
                         if (light.Type != LIGHT_TYPE_DIRECTIONAL || light.CastsShadows == 0)
                         {
                             return vec3(0.0);
+                        }
+                        if (filteredShadow >= 0.0)
+                        {
+                            ComputeShadow(fragPos, normal, light, sampledCascadeIndex, hasAnyCascadeCoverage);
                         }
                         if (!hasAnyCascadeCoverage)
                         {
@@ -605,6 +627,17 @@ namespace PlutoGE::render
                     vec3 albedo = albedoMetallic.rgb;
                     float roughness = clamp(normalRoughness.a, 0.04, 1.0);
                     float metallic = clamp(albedoMetallic.a, 0.0, 1.0);
+                    if (uOutputShadowMask != 0)
+                    {
+                        int sampledCascadeIndex = -1;
+                        bool hasAnyCascadeCoverage = false;
+                        float shadow = uLight.Type == LIGHT_TYPE_DIRECTIONAL
+                                           ? ComputeShadow(fragPos, normal, uLight, sampledCascadeIndex, hasAnyCascadeCoverage)
+                                           : 0.0;
+                        FragColor = vec4(vec3(shadow), 1.0);
+                        return;
+                    }
+
                     if (uLight.IsStatic != 0)
                     {
                         float bakedStaticMask = texture(gBakedLighting, UV).a;
@@ -616,8 +649,83 @@ namespace PlutoGE::render
                     }
 
                     vec3 viewDir = normalize(uViewPos - fragPos);
-                    vec3 lighting = ComputeLightContribution(fragPos, normal, viewDir, albedo, metallic, roughness, uLight);
+                    float filteredShadow = uUseFilteredShadowMask != 0 && uLight.Type == LIGHT_TYPE_DIRECTIONAL
+                                               ? texture(uFilteredShadowMask, UV).r
+                                               : -1.0;
+                    vec3 lighting = ComputeLightContribution(fragPos, normal, viewDir, albedo, metallic, roughness, uLight, filteredShadow);
                     FragColor = vec4(lighting, 1.0);
+                }
+            )";
+
+            return Shader::Create(source);
+        }
+
+        Shader *CreateShadowMaskBlurShader()
+        {
+            ShaderSource source;
+            source.vertexSource = R"(
+                #version 330 core
+
+                out vec2 UV;
+
+                void main()
+                {
+                    vec2 vertices[3] = vec2[3](
+                        vec2(-1.0, -1.0),
+                        vec2(3.0, -1.0),
+                        vec2(-1.0, 3.0)
+                    );
+                    gl_Position = vec4(vertices[gl_VertexID], 0.0, 1.0);
+                    UV = 0.5 * gl_Position.xy + vec2(0.5);
+                }
+            )";
+
+            source.fragmentSource = R"(
+                #version 330 core
+
+                in vec2 UV;
+                out vec4 FragColor;
+
+                uniform sampler2D uShadowMaskTexture;
+                uniform sampler2D uScenePositionTexture;
+                uniform sampler2D uSceneNormalTexture;
+                uniform vec2 uDirection;
+
+                void main()
+                {
+                    vec3 centerPosition = texture(uScenePositionTexture, UV).rgb;
+                    vec3 centerNormalRaw = texture(uSceneNormalTexture, UV).rgb;
+                    float centerShadow = texture(uShadowMaskTexture, UV).r;
+                    if (dot(centerNormalRaw, centerNormalRaw) <= 0.000001)
+                    {
+                        FragColor = vec4(vec3(centerShadow), 1.0);
+                        return;
+                    }
+
+                    vec3 centerNormal = normalize(centerNormalRaw);
+                    vec2 texelSize = 1.0 / vec2(textureSize(uShadowMaskTexture, 0));
+                    float shadow = centerShadow * 0.28;
+                    float totalWeight = 0.28;
+                    float depthScale = max(length(centerPosition) * 0.015, 0.05);
+
+                    for (int sampleIndex = 1; sampleIndex <= 4; ++sampleIndex)
+                    {
+                        float baseWeight = sampleIndex == 1 ? 0.22 : (sampleIndex == 2 ? 0.15 : (sampleIndex == 3 ? 0.08 : 0.04));
+                        for (int side = -1; side <= 1; side += 2)
+                        {
+                            vec2 sampleUv = UV + uDirection * texelSize * float(sampleIndex * side);
+                            vec3 samplePosition = texture(uScenePositionTexture, sampleUv).rgb;
+                            vec3 sampleNormalRaw = texture(uSceneNormalTexture, sampleUv).rgb;
+                            vec3 sampleNormal = dot(sampleNormalRaw, sampleNormalRaw) > 0.000001 ? normalize(sampleNormalRaw) : centerNormal;
+                            float normalWeight = smoothstep(0.72, 0.98, dot(centerNormal, sampleNormal));
+                            float depthWeight = exp(-length(samplePosition - centerPosition) / depthScale);
+                            float weight = baseWeight * normalWeight * depthWeight;
+                            shadow += texture(uShadowMaskTexture, sampleUv).r * weight;
+                            totalWeight += weight;
+                        }
+                    }
+
+                    FragColor = vec4(vec3(shadow / max(totalWeight, 0.0001)), 1.0);
                 }
             )";
 
@@ -849,6 +957,7 @@ namespace PlutoGE::render
     {
         m_lightingPassShader = Shader::CreateLightingPassShader();
         m_directLightingPassShader = CreateDirectLightingAccumulationShader();
+        m_shadowMaskBlurShader = CreateShadowMaskBlurShader();
 
         ShaderSource indirectCompositeSource;
         indirectCompositeSource.vertexSource = R"(
@@ -882,6 +991,108 @@ namespace PlutoGE::render
         )";
 
         m_indirectCompositeShader = Shader::Create(indirectCompositeSource);
+    }
+
+    void LightingPass::EnsureShadowMaskTargets(int width, int height)
+    {
+        width = std::max(width, 1);
+        height = std::max(height, 1);
+
+        if (!m_rawShadowMaskTarget)
+        {
+            RenderTargetConfig config;
+            config.width = width;
+            config.height = height;
+            config.clearColor = glm::vec4(0.0f);
+            m_rawShadowMaskTarget = std::make_unique<RenderTarget>(config);
+        }
+        else
+        {
+            m_rawShadowMaskTarget->Resize(width, height);
+        }
+
+        if (!m_blurredShadowMaskTarget)
+        {
+            RenderTargetConfig config;
+            config.width = width;
+            config.height = height;
+            config.clearColor = glm::vec4(0.0f);
+            m_blurredShadowMaskTarget = std::make_unique<RenderTarget>(config);
+        }
+        else
+        {
+            m_blurredShadowMaskTarget->Resize(width, height);
+        }
+    }
+
+    RenderTarget *LightingPass::GenerateDirectionalShadowMask(const RenderContext &ctx, const scene::Light &light, bool filtered)
+    {
+        if (!m_directLightingPassShader || !m_shadowMaskBlurShader || !ctx.temporaryRenderTarget || !ctx.gBuffer)
+        {
+            return nullptr;
+        }
+
+        EnsureShadowMaskTargets(ctx.temporaryRenderTarget->GetWidth(), ctx.temporaryRenderTarget->GetHeight());
+        if (!m_rawShadowMaskTarget || !m_blurredShadowMaskTarget)
+        {
+            return nullptr;
+        }
+
+        Graphics::BindRenderTarget(m_rawShadowMaskTarget.get());
+        glViewport(0, 0, m_rawShadowMaskTarget->GetWidth(), m_rawShadowMaskTarget->GetHeight());
+        glDisable(GL_BLEND);
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        m_directLightingPassShader->Bind();
+        BindLightingInputs(m_directLightingPassShader, ctx);
+        const bool hasShadowMap = BindShadowMapForLight(light);
+        BindLightUniforms(m_directLightingPassShader, light, hasShadowMap);
+        m_directLightingPassShader->SetUniform("uViewPos", glm::vec3(glm::inverse(ctx.cameraData.view)[3]));
+        m_directLightingPassShader->SetUniform("uViewMatrix", ctx.cameraData.view);
+        m_directLightingPassShader->SetUniform("uInverseViewMatrix", glm::inverse(ctx.cameraData.view));
+        m_directLightingPassShader->SetUniform("uInverseProjectionMatrix", glm::inverse(ctx.cameraData.projection));
+        m_directLightingPassShader->SetUniform("uDebugViewMode", 0);
+        m_directLightingPassShader->SetUniform("uOutputShadowMask", 1);
+        m_directLightingPassShader->SetUniform("uUseFilteredShadowMask", 0);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+
+        if (!filtered)
+        {
+            return m_rawShadowMaskTarget.get();
+        }
+
+        m_shadowMaskBlurShader->Bind();
+        glActiveTexture(GL_TEXTURE0 + kShadowMaskTextureSlot);
+        glBindTexture(GL_TEXTURE_2D, m_rawShadowMaskTarget->GetColorTextureID());
+        m_shadowMaskBlurShader->SetUniform("uShadowMaskTexture", kShadowMaskTextureSlot);
+        glActiveTexture(GL_TEXTURE0 + kShadowMaskPositionTextureSlot);
+        glBindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetPositionTextureID());
+        m_shadowMaskBlurShader->SetUniform("uScenePositionTexture", kShadowMaskPositionTextureSlot);
+        glActiveTexture(GL_TEXTURE0 + kShadowMaskNormalTextureSlot);
+        glBindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetNormalTextureID());
+        m_shadowMaskBlurShader->SetUniform("uSceneNormalTexture", kShadowMaskNormalTextureSlot);
+        m_shadowMaskBlurShader->SetUniform("uDirection", glm::vec2(1.0f, 0.0f));
+
+        Graphics::BindRenderTarget(m_blurredShadowMaskTarget.get());
+        glViewport(0, 0, m_blurredShadowMaskTarget->GetWidth(), m_blurredShadowMaskTarget->GetHeight());
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+
+        m_shadowMaskBlurShader->Bind();
+        glActiveTexture(GL_TEXTURE0 + kShadowMaskTextureSlot);
+        glBindTexture(GL_TEXTURE_2D, m_blurredShadowMaskTarget->GetColorTextureID());
+        m_shadowMaskBlurShader->SetUniform("uShadowMaskTexture", kShadowMaskTextureSlot);
+        m_shadowMaskBlurShader->SetUniform("uDirection", glm::vec2(0.0f, 1.0f));
+
+        Graphics::BindRenderTarget(m_rawShadowMaskTarget.get());
+        glViewport(0, 0, m_rawShadowMaskTarget->GetWidth(), m_rawShadowMaskTarget->GetHeight());
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+
+        return m_rawShadowMaskTarget.get();
     }
 
     void LightingPass::Execute(const RenderContext &ctx)
@@ -1063,6 +1274,44 @@ namespace PlutoGE::render
             ctx.renderer->BeginLightingStageTiming(kLightingAccumulationStage);
         }
 
+        const bool debugRawShadowMask = ctx.postProcessDebugView == PostProcessDebugView::DirectionalShadowMaskRaw;
+        const bool debugFilteredShadowMask = ctx.postProcessDebugView == PostProcessDebugView::DirectionalShadowMaskFiltered;
+        if ((debugRawShadowMask || debugFilteredShadowMask) && m_indirectCompositeShader)
+        {
+            for (auto *light : *ctx.lights)
+            {
+                if (!light || light->type != scene::LightType::Directional || !light->castsShadows || light->activeShadowCascadeCount <= 0)
+                {
+                    continue;
+                }
+
+                if (RenderTarget *shadowMask = GenerateDirectionalShadowMask(ctx, *light, debugFilteredShadowMask))
+                {
+                    Graphics::BindRenderTarget(ctx.temporaryRenderTarget);
+                    glViewport(0, 0, ctx.temporaryRenderTarget->GetWidth(), ctx.temporaryRenderTarget->GetHeight());
+                    glDisable(GL_BLEND);
+                    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+                    glClear(GL_COLOR_BUFFER_BIT);
+
+                    m_indirectCompositeShader->Bind();
+                    glActiveTexture(GL_TEXTURE0 + kIndirectTextureSlot);
+                    glBindTexture(GL_TEXTURE_2D, shadowMask->GetColorTextureID());
+                    m_indirectCompositeShader->SetUniform("uIndirectTexture", kIndirectTextureSlot);
+                    glDrawArrays(GL_TRIANGLES, 0, 3);
+                    break;
+                }
+            }
+
+            if (ctx.renderer)
+            {
+                ctx.renderer->EndLightingStageTiming(kLightingAccumulationStage);
+            }
+
+            glDisable(GL_BLEND);
+            Graphics::UnbindRenderTarget();
+            return;
+        }
+
         if (renderDirectLighting)
         {
             m_directLightingPassShader->Bind();
@@ -1072,6 +1321,8 @@ namespace PlutoGE::render
             m_directLightingPassShader->SetUniform("uInverseViewMatrix", glm::inverse(ctx.cameraData.view));
             m_directLightingPassShader->SetUniform("uInverseProjectionMatrix", glm::inverse(ctx.cameraData.projection));
             m_directLightingPassShader->SetUniform("uDebugViewMode", static_cast<int>(ctx.postProcessDebugView));
+            m_directLightingPassShader->SetUniform("uOutputShadowMask", 0);
+            m_directLightingPassShader->SetUniform("uUseFilteredShadowMask", 0);
 
             glEnable(GL_BLEND);
             glBlendEquation(GL_FUNC_ADD);
@@ -1086,6 +1337,36 @@ namespace PlutoGE::render
 
                 const bool hasShadowMap = BindShadowMapForLight(*light);
                 BindLightUniforms(m_directLightingPassShader, *light, hasShadowMap);
+                if (hasShadowMap && light->type == scene::LightType::Directional && ctx.postProcessDebugView != PostProcessDebugView::ShadowCascades)
+                {
+                    if (RenderTarget *filteredShadowMask = GenerateDirectionalShadowMask(ctx, *light, true))
+                    {
+                        Graphics::BindRenderTarget(ctx.temporaryRenderTarget);
+                        glViewport(0, 0, ctx.temporaryRenderTarget->GetWidth(), ctx.temporaryRenderTarget->GetHeight());
+                        glEnable(GL_BLEND);
+                        glBlendEquation(GL_FUNC_ADD);
+                        glBlendFunc(GL_ONE, GL_ONE);
+
+                        m_directLightingPassShader->Bind();
+                        BindLightingInputs(m_directLightingPassShader, ctx);
+                        BindLightUniforms(m_directLightingPassShader, *light, hasShadowMap);
+                        m_directLightingPassShader->SetUniform("uViewPos", cameraPos);
+                        m_directLightingPassShader->SetUniform("uViewMatrix", ctx.cameraData.view);
+                        m_directLightingPassShader->SetUniform("uInverseViewMatrix", glm::inverse(ctx.cameraData.view));
+                        m_directLightingPassShader->SetUniform("uInverseProjectionMatrix", glm::inverse(ctx.cameraData.projection));
+                        m_directLightingPassShader->SetUniform("uDebugViewMode", static_cast<int>(ctx.postProcessDebugView));
+                        m_directLightingPassShader->SetUniform("uOutputShadowMask", 0);
+                        m_directLightingPassShader->SetUniform("uUseFilteredShadowMask", 1);
+                        glActiveTexture(GL_TEXTURE0 + kShadowMaskTextureSlot);
+                        glBindTexture(GL_TEXTURE_2D, filteredShadowMask->GetColorTextureID());
+                        m_directLightingPassShader->SetUniform("uFilteredShadowMask", kShadowMaskTextureSlot);
+                        glDrawArrays(GL_TRIANGLES, 0, 3);
+                        continue;
+                    }
+                }
+
+                m_directLightingPassShader->SetUniform("uOutputShadowMask", 0);
+                m_directLightingPassShader->SetUniform("uUseFilteredShadowMask", 0);
                 glDrawArrays(GL_TRIANGLES, 0, 3);
             }
         }

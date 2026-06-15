@@ -42,6 +42,8 @@ namespace PlutoGE::ui
             "Albedo",
             "Depth",
             "Shadow Cascades",
+            "Shadow Mask Raw",
+            "Shadow Mask Filtered",
         };
 
         struct PickRay

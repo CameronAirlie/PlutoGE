@@ -146,6 +146,7 @@ internal static unsafe class ScriptBridge
     private static delegate* unmanaged[Cdecl]<int> _getQuitRequested;
     private static delegate* unmanaged[Cdecl]<int> _getCursorLocked;
     private static delegate* unmanaged[Cdecl]<int, void> _setCursorLocked;
+    private static delegate* unmanaged[Cdecl]<int, nint, void> _logMessage;
 
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "LoadScriptAssembly")]
     public static int LoadScriptAssembly(nint assemblyPathPtr)
@@ -463,6 +464,20 @@ internal static unsafe class ScriptBridge
         _getQuitRequested = getQuitRequested;
         _getCursorLocked = getCursorLocked;
         _setCursorLocked = setCursorLocked;
+        _lastError = string.Empty;
+        return 1;
+    }
+
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterDebugApi")]
+    public static int RegisterDebugApi(delegate* unmanaged[Cdecl]<int, nint, void> logMessage)
+    {
+        if (logMessage == null)
+        {
+            SetError("Managed debug API registration received a null function pointer.");
+            return 0;
+        }
+
+        _logMessage = logMessage;
         _lastError = string.Empty;
         return 1;
     }
@@ -959,6 +974,24 @@ internal static unsafe class ScriptBridge
         }
 
         _setCursorLocked(locked ? 1 : 0);
+    }
+
+    internal static void LogMessage(int severity, string? message)
+    {
+        if (_logMessage == null)
+        {
+            return;
+        }
+
+        var textPtr = Marshal.StringToCoTaskMemUTF8(message ?? string.Empty);
+        try
+        {
+            _logMessage(severity, textPtr);
+        }
+        finally
+        {
+            Marshal.FreeCoTaskMem(textPtr);
+        }
     }
 
     private static void ResetLoadedAssembly()

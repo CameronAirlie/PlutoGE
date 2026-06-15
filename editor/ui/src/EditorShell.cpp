@@ -13,6 +13,7 @@
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/scripting/ScriptEngine.h"
+#include "PlutoGE/scripting/ScriptLogging.h"
 #include "PlutoGE/scene/SceneBaker.h"
 #include "PlutoGE/scene/SceneSerializer.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
@@ -1740,6 +1741,27 @@ namespace PlutoGE::ui
             std::cerr << "Failed to initialize Engine in EditorShell" << std::endl;
         }
 
+        scripting::SetScriptLogSink(
+            [this](scripting::ScriptLogSeverity severity, std::string_view message)
+            {
+                ConsoleSeverity consoleSeverity = ConsoleSeverity::Info;
+                switch (severity)
+                {
+                case scripting::ScriptLogSeverity::Warning:
+                    consoleSeverity = ConsoleSeverity::Warning;
+                    break;
+                case scripting::ScriptLogSeverity::Error:
+                    consoleSeverity = ConsoleSeverity::Error;
+                    break;
+                case scripting::ScriptLogSeverity::Info:
+                default:
+                    consoleSeverity = ConsoleSeverity::Info;
+                    break;
+                }
+
+                Log(consoleSeverity, std::string(message));
+            });
+
         InitializeEditorCamera();
         ApplyProjectContext();
         SetScene(CreateEmptyScene());
@@ -2540,6 +2562,7 @@ namespace PlutoGE::ui
         m_scene.reset();
         m_engine.GetAssetManager().ClearProjectContext();
         m_engine.SetScene(nullptr);
+        scripting::ClearScriptLogSink();
         m_panelManager.ShutdownPanels();
         m_engine.Shutdown();
     }

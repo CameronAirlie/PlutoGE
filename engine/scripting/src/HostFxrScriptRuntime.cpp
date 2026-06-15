@@ -2,6 +2,7 @@
 
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/platform/InputState.h"
+#include "PlutoGE/scripting/ScriptLogging.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
@@ -77,6 +78,7 @@ namespace PlutoGE::scripting
         using register_rigidbody_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_collider_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_input_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
+        using register_debug_api_fn = int(__cdecl *)(void *);
 
         struct NativeVector3
         {
@@ -116,6 +118,7 @@ namespace PlutoGE::scripting
         using get_input_quit_requested_fn = int(__cdecl *)();
         using get_input_cursor_locked_fn = int(__cdecl *)();
         using set_input_cursor_locked_fn = void(__cdecl *)(int32_t);
+        using script_log_fn = void(__cdecl *)(int32_t, const char *);
         constexpr std::wstring_view kScriptBridgeType = L"PlutoGE.ScriptCore.Native.ScriptBridge, PlutoGE.ScriptCore";
         constexpr std::wstring_view kScriptCoreAssembly = L"PlutoGE.ScriptCore.dll";
         constexpr std::wstring_view kScriptCoreRuntimeConfig = L"PlutoGE.ScriptCore.runtimeconfig.json";
@@ -245,27 +248,37 @@ namespace PlutoGE::scripting
             std::array<wchar_t, MAX_PATH> modulePath{};
             const DWORD modulePathLength = GetModuleFileNameW(nullptr, modulePath.data(), static_cast<DWORD>(modulePath.size()));
             auto current = std::filesystem::current_path();
+            std::vector<std::filesystem::path> searchRoots;
             if (modulePathLength > 0 && modulePathLength < modulePath.size())
             {
                 current = std::filesystem::path(modulePath.data()).parent_path().lexically_normal();
-                candidates.push_back(current);
+                searchRoots.push_back(current);
+            }
+
+            searchRoots.push_back(std::filesystem::current_path());
+
+            for (auto root : searchRoots)
+            {
+                while (!root.empty())
+                {
+                    candidates.push_back(root / "engine" / "scripting" / "managed" / "PlutoGE.ScriptCore" / "bin" / "Debug" / "net8.0");
+                    candidates.push_back(root / "engine" / "scripting" / "managed" / "PlutoGE.ScriptCore" / "bin" / "Release" / "net8.0");
+
+                    if (root == root.root_path())
+                    {
+                        break;
+                    }
+
+                    root = root.parent_path();
+                }
+            }
+
+            if (modulePathLength > 0 && modulePathLength < modulePath.size())
+            {
+                candidates.push_back(std::filesystem::path(modulePath.data()).parent_path().lexically_normal());
             }
 
             candidates.push_back(std::filesystem::current_path());
-
-            while (!current.empty())
-            {
-                candidates.push_back(current / "engine" / "scripting" / "managed" / "PlutoGE.ScriptCore" / "bin" / "Debug" / "net8.0");
-                candidates.push_back(current / "engine" / "scripting" / "managed" / "PlutoGE.ScriptCore" / "bin" / "Release" / "net8.0");
-
-                if (current == current.root_path())
-                {
-                    break;
-                }
-
-                current = current.parent_path();
-            }
-
             candidates.push_back(assemblyPath.parent_path());
 
             return candidates;
@@ -1191,6 +1204,31 @@ namespace PlutoGE::scripting
         {
             core::Engine::GetInstance().GetWindow().SetCursorLocked(locked != 0);
         }
+
+        void LogScriptMessage(int32_t severity, const char *message)
+        {
+            if (!message)
+            {
+                return;
+            }
+
+            ScriptLogSeverity logSeverity = ScriptLogSeverity::Info;
+            switch (severity)
+            {
+            case 1:
+                logSeverity = ScriptLogSeverity::Warning;
+                break;
+            case 2:
+                logSeverity = ScriptLogSeverity::Error;
+                break;
+            case 0:
+            default:
+                logSeverity = ScriptLogSeverity::Info;
+                break;
+            }
+
+            DispatchScriptLog(logSeverity, message);
+        }
 #endif
     }
 
@@ -1225,6 +1263,7 @@ namespace PlutoGE::scripting
         register_rigidbody_component_api_fn registerRigidbodyComponentApi = nullptr;
         register_collider_component_api_fn registerColliderComponentApi = nullptr;
         register_input_api_fn registerInputApi = nullptr;
+        register_debug_api_fn registerDebugApi = nullptr;
         std::filesystem::path bridgeSourceAssemblyPath;
         std::filesystem::path bridgeSourceRuntimeConfigPath;
         std::filesystem::path bridgeAssemblyPath;
@@ -1285,6 +1324,37 @@ namespace PlutoGE::scripting
             impl.bridgeShadowDirectory.clear();
             impl.bridgeAssemblyPath.clear();
             impl.runtimeConfigPath.clear();
+        }
+
+        void ResetManagedBridge(HostFxrScriptRuntime::Impl &impl)
+        {
+            impl.loadAssemblyAndGetFunctionPointer = nullptr;
+            impl.loadScriptAssembly = nullptr;
+            impl.unloadScriptAssembly = nullptr;
+            impl.getScriptMetadata = nullptr;
+            impl.getFieldData = nullptr;
+            impl.freeMarshaledString = nullptr;
+            impl.getLastError = nullptr;
+            impl.createScriptInstance = nullptr;
+            impl.destroyScriptInstance = nullptr;
+            impl.invokeOnCreate = nullptr;
+            impl.invokeOnUpdate = nullptr;
+            impl.invokeOnCollisionEnter = nullptr;
+            impl.invokeOnCollisionExit = nullptr;
+            impl.applyFieldData = nullptr;
+            impl.setEntityId = nullptr;
+            impl.registerGameObjectApi = nullptr;
+            impl.registerComponentApi = nullptr;
+            impl.registerCameraComponentApi = nullptr;
+            impl.registerLightComponentApi = nullptr;
+            impl.registerMeshComponentApi = nullptr;
+            impl.registerRigidbodyComponentApi = nullptr;
+            impl.registerColliderComponentApi = nullptr;
+            impl.registerInputApi = nullptr;
+            impl.registerDebugApi = nullptr;
+            impl.bridgeSourceAssemblyPath.clear();
+            impl.bridgeSourceRuntimeConfigPath.clear();
+            CleanupBridgeShadowCopy(impl);
         }
 
         bool PrepareShadowCopy(HostFxrScriptRuntime::Impl &impl,
@@ -1587,10 +1657,14 @@ namespace PlutoGE::scripting
                 LoadManagedExport(impl, L"RegisterMeshComponentApi", impl.registerMeshComponentApi) &&
                 LoadManagedExport(impl, L"RegisterRigidbodyComponentApi", impl.registerRigidbodyComponentApi) &&
                 LoadManagedExport(impl, L"RegisterColliderComponentApi", impl.registerColliderComponentApi) &&
-                LoadManagedExport(impl, L"RegisterInputApi", impl.registerInputApi);
+                LoadManagedExport(impl, L"RegisterInputApi", impl.registerInputApi) &&
+                LoadManagedExport(impl, L"RegisterDebugApi", impl.registerDebugApi);
 
             if (!requiredExportsLoaded)
             {
+                const std::string exportError = impl.lastError;
+                ResetManagedBridge(impl);
+                impl.lastError = exportError;
                 return false;
             }
 
@@ -1877,6 +1951,14 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(static_cast<set_input_cursor_locked_fn>(&SetCursorLocked))) == 0)
         {
             setManagedBridgeFailure("RegisterInputApi");
+            return false;
+        }
+
+        if (!m_impl->registerDebugApi ||
+            m_impl->registerDebugApi(
+                reinterpret_cast<void *>(static_cast<script_log_fn>(&LogScriptMessage))) == 0)
+        {
+            setManagedBridgeFailure("RegisterDebugApi");
             return false;
         }
 

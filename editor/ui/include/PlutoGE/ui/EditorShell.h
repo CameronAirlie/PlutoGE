@@ -208,7 +208,9 @@ namespace PlutoGE::ui
         bool BuildProjectToPath(const std::filesystem::path &destinationExecutablePath);
         bool BuildAndRunProjectToPath(const std::filesystem::path &destinationExecutablePath);
         bool CaptureSceneState(std::string &state, std::string *errorMessage = nullptr) const;
-        bool RestoreSceneState(const std::string &state, std::string *errorMessage = nullptr);
+        bool RestoreSceneState(const std::string &state, std::string *errorMessage = nullptr, bool markDirty = true);
+        bool StartEditorRuntime();
+        bool StopEditorRuntime();
         bool ConfirmContinueWithUnsavedChanges();
         void MarkSceneClean();
         void MarkProjectClean();
@@ -232,6 +234,8 @@ namespace PlutoGE::ui
         std::vector<SceneHistoryEntry> m_redoStack;
         std::vector<ConsoleMessage> m_consoleMessages;
         std::string m_activeMaterialAssetReference;
+        std::string m_runtimeSceneSnapshot;
+        bool m_runtimeSceneWasDirty = false;
         bool m_openMaterialEditorRequested = false;
     };
 }

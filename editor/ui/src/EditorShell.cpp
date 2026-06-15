@@ -1163,7 +1163,7 @@ namespace PlutoGE::ui
         return scene::SceneSerializer::SaveToString(*m_scene, state, errorMessage);
     }
 
-    bool EditorShell::RestoreSceneState(const std::string &state, std::string *errorMessage)
+    bool EditorShell::RestoreSceneState(const std::string &state, std::string *errorMessage, bool markDirty)
     {
         auto restoredScene = scene::SceneSerializer::LoadFromString(state, errorMessage);
         if (!restoredScene)
@@ -1174,7 +1174,59 @@ namespace PlutoGE::ui
         const std::string previousPath = m_scene ? m_scene->GetFilePath() : std::string{};
         restoredScene->SetFilePath(previousPath);
         SetScene(std::move(restoredScene));
-        MarkSceneDirty();
+        if (markDirty)
+        {
+            MarkSceneDirty();
+        }
+        return true;
+    }
+
+    bool EditorShell::StartEditorRuntime()
+    {
+        if (m_engine.IsRuntimeRunning())
+        {
+            return true;
+        }
+
+        std::string errorMessage;
+        if (!CaptureSceneState(m_runtimeSceneSnapshot, &errorMessage))
+        {
+            m_statusMessage = errorMessage.empty() ? "Failed to snapshot scene before Play." : errorMessage;
+            Log(ConsoleSeverity::Error, m_statusMessage);
+            return false;
+        }
+
+        m_runtimeSceneWasDirty = m_sceneDirty;
+        m_engine.StartRuntime();
+        m_statusMessage = "Runtime started.";
+        return true;
+    }
+
+    bool EditorShell::StopEditorRuntime()
+    {
+        if (!m_engine.IsRuntimeRunning())
+        {
+            return true;
+        }
+
+        m_engine.StopRuntime();
+
+        if (!m_runtimeSceneSnapshot.empty())
+        {
+            std::string errorMessage;
+            if (!RestoreSceneState(m_runtimeSceneSnapshot, &errorMessage, false))
+            {
+                m_statusMessage = errorMessage.empty() ? "Runtime stopped, but failed to restore pre-Play scene state." : errorMessage;
+                Log(ConsoleSeverity::Error, m_statusMessage);
+                return false;
+            }
+
+            m_runtimeSceneSnapshot.clear();
+        }
+
+        m_sceneDirty = m_runtimeSceneWasDirty;
+        UpdateWindowTitle();
+        m_statusMessage = "Runtime stopped. Restored pre-Play scene state.";
         return true;
     }
 
@@ -1816,7 +1868,7 @@ namespace PlutoGE::ui
                 window.SetCursorLocked(false);
             }
 
-            viewportPanel->SetPanelControlsEnabled(!isRuntimeRunning);
+            viewportPanel->SetPanelControlsEnabled(true);
             viewportPanel2->SetPanelControlsEnabled(!isRuntimeRunning);
 
             const auto renderTargetWidth = renderTarget->GetWidth();
@@ -1906,24 +1958,13 @@ namespace PlutoGE::ui
                 }
             }
 
-            if (isRuntimeRunning)
-            {
-                if (isEditorCameraLookActive)
-                {
-                    SetCursorCapture(windowHandle, false);
-                    isEditorCameraLookActive = false;
-                }
-            }
-            else
-            {
-                UpdateEditorCamera(m_editorCamera,
-                                   windowHandle,
-                                   viewportPanel->IsViewportHovered() || viewportPanel->IsViewportFocused(),
-                                   deltaSeconds,
-                                   isEditorCameraLookActive,
-                                   lastEditorCameraCursorX,
-                                   lastEditorCameraCursorY);
-            }
+            UpdateEditorCamera(m_editorCamera,
+                               windowHandle,
+                               viewportPanel->IsViewportHovered() || viewportPanel->IsViewportFocused(),
+                               deltaSeconds,
+                               isEditorCameraLookActive,
+                               lastEditorCameraCursorX,
+                               lastEditorCameraCursorY);
 
             auto *cameraComponent2 = FindFirstSceneCamera(m_scene.get());
             const bool shouldRenderViewport1 = viewportPanel->ShouldRenderFrame();
@@ -2240,19 +2281,19 @@ namespace PlutoGE::ui
                     ImGui::BeginDisabled(!canRunRuntime || m_engine.IsRuntimeRunning());
                     if (ImGui::MenuItem("Play"))
                     {
-                        m_engine.StartRuntime();
-                        window.SetScriptInputEnabled(viewportPanel2->IsViewportFocused());
-                        m_statusMessage = "Runtime started.";
+                        if (StartEditorRuntime())
+                        {
+                            window.SetScriptInputEnabled(viewportPanel2->IsViewportFocused());
+                        }
                     }
                     ImGui::EndDisabled();
 
                     ImGui::BeginDisabled(!m_engine.IsRuntimeRunning());
                     if (ImGui::MenuItem("Stop"))
                     {
-                        m_engine.StopRuntime();
+                        StopEditorRuntime();
                         window.SetScriptInputEnabled(false);
                         window.SetCursorLocked(false);
-                        m_statusMessage = "Runtime stopped.";
                     }
                     ImGui::EndDisabled();
                     ImGui::EndMenu();
@@ -2432,15 +2473,14 @@ namespace PlutoGE::ui
                 ImGui::BeginDisabled();
             }
 
-            const bool playModePanelsDisabled = m_engine.IsRuntimeRunning();
             viewportPanel->SetInteractionEnabled(true);
-            viewportPanel->SetVisualAlpha(playModePanelsDisabled ? 0.35f : 1.0f);
+            viewportPanel->SetVisualAlpha(1.0f);
             sceneHierarchyPanel->SetInteractionEnabled(true);
-            sceneHierarchyPanel->SetVisualAlpha(playModePanelsDisabled ? 0.35f : 1.0f);
+            sceneHierarchyPanel->SetVisualAlpha(1.0f);
             inspectorPanel->SetInteractionEnabled(true);
-            inspectorPanel->SetVisualAlpha(playModePanelsDisabled ? 0.35f : 1.0f);
+            inspectorPanel->SetVisualAlpha(1.0f);
             profilerPanel->SetInteractionEnabled(true);
-            profilerPanel->SetVisualAlpha(playModePanelsDisabled ? 0.35f : 1.0f);
+            profilerPanel->SetVisualAlpha(1.0f);
             viewportPanel2->SetInteractionEnabled(true);
             viewportPanel2->SetVisualAlpha(1.0f);
 
@@ -2455,7 +2495,6 @@ namespace PlutoGE::ui
             m_panelManager.EndPanelUpdate();
 
             const bool interactiveEdit =
-                !isRuntimeRunning &&
                 (isEditorCameraLookActive ||
                  viewportPanel->IsTransformGizmoUsing() ||
                  viewportPanel2->IsTransformGizmoUsing());

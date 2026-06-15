@@ -5,8 +5,10 @@ add_library(PlutoGEScene
     src/SceneSerializer.cpp
     src/components/MeshComponent.cpp
     src/components/CameraComponent.cpp
+    src/components/ColliderComponent.cpp
     src/components/IblCaptureComponent.cpp
     src/components/LightComponent.cpp
+    src/components/RigidbodyComponent.cpp
     src/components/ScriptComponent.cpp
 )
 
@@ -20,4 +22,5 @@ target_link_libraries(PlutoGEScene PUBLIC
     PlutoGE::Render
     PlutoGE::Assets
     PlutoGE::Scripting
+    PlutoGE::bullet
 )

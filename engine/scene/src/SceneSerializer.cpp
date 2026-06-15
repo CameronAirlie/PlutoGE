@@ -4,9 +4,11 @@
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
+#include "PlutoGE/scene/components/ColliderComponent.h"
 #include "PlutoGE/scene/components/IblCaptureComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
+#include "PlutoGE/scene/components/RigidbodyComponent.h"
 #include "PlutoGE/scene/components/ScriptComponent.h"
 #include "PlutoGE/render/Camera.h"
 
@@ -151,6 +153,14 @@ namespace PlutoGE::scene
             {
                 return "LightComponent";
             }
+            if (dynamic_cast<const RigidbodyComponent *>(&component))
+            {
+                return "RigidbodyComponent";
+            }
+            if (dynamic_cast<const ColliderComponent *>(&component))
+            {
+                return "ColliderComponent";
+            }
             if (dynamic_cast<const IblCaptureComponent *>(&component))
             {
                 return "IblCaptureComponent";
@@ -176,6 +186,14 @@ namespace PlutoGE::scene
             if (componentType == "LightComponent")
             {
                 return std::make_unique<LightComponent>();
+            }
+            if (componentType == "RigidbodyComponent")
+            {
+                return std::make_unique<RigidbodyComponent>();
+            }
+            if (componentType == "ColliderComponent")
+            {
+                return std::make_unique<ColliderComponent>();
             }
             if (componentType == "IblCaptureComponent")
             {

@@ -643,9 +643,18 @@ namespace
             return false;
         }
 
-        (void)receiverExtent;
-        (void)shadowResolution;
-        (void)minCasterTexelRadius;
+        if (minCasterTexelRadius > 0.0f)
+        {
+            const glm::vec2 safeReceiverExtent = glm::max(receiverExtent, glm::vec2(0.001f));
+            const float safeShadowResolution = static_cast<float>(std::max(shadowResolution, 1));
+            const glm::vec2 texelSize = safeReceiverExtent / safeShadowResolution;
+            const float maxTexelSize = glm::max(texelSize.x, texelSize.y);
+            if (maxTexelSize > 0.000001f && radius / maxTexelSize < minCasterTexelRadius)
+            {
+                return false;
+            }
+        }
+
         return true;
     }
 

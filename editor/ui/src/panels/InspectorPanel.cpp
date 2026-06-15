@@ -12,8 +12,10 @@
 #include "PlutoGE/render/postprocess/IPostProcessEffect.h"
 #include "PlutoGE/render/postprocess/PostProcessEffectFactory.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
+#include "PlutoGE/scene/components/ColliderComponent.h"
 #include "PlutoGE/scene/components/IblCaptureComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
+#include "PlutoGE/scene/components/RigidbodyComponent.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
 #include <algorithm>
@@ -44,6 +46,8 @@ namespace PlutoGE::ui
             "Mesh Component",
             "Camera Component",
             "Light Component",
+            "Rigidbody Component",
+            "Collider Component",
             "IBL Capture Component",
             "Script Component",
         };
@@ -53,8 +57,10 @@ namespace PlutoGE::ui
             Mesh = 0,
             Camera = 1,
             Light = 2,
-            IblCapture = 3,
-            Script = 4,
+            Rigidbody = 3,
+            Collider = 4,
+            IblCapture = 5,
+            Script = 6,
         };
 
         struct ScriptAssetOption
@@ -414,6 +420,14 @@ namespace PlutoGE::ui
             {
                 return "Light Component";
             }
+            if (dynamic_cast<const scene::RigidbodyComponent *>(&component))
+            {
+                return "Rigidbody Component";
+            }
+            if (dynamic_cast<const scene::ColliderComponent *>(&component))
+            {
+                return "Collider Component";
+            }
             if (dynamic_cast<const scene::IblCaptureComponent *>(&component))
             {
                 return "IBL Capture Component";
@@ -507,6 +521,10 @@ namespace PlutoGE::ui
                 return !entity.HasComponent<scene::CameraComponent>();
             case AddableComponentType::Light:
                 return !entity.HasComponent<scene::LightComponent>();
+            case AddableComponentType::Rigidbody:
+                return !entity.HasComponent<scene::RigidbodyComponent>();
+            case AddableComponentType::Collider:
+                return !entity.HasComponent<scene::ColliderComponent>();
             case AddableComponentType::IblCapture:
                 return !entity.HasComponent<scene::IblCaptureComponent>();
             case AddableComponentType::Script:
@@ -549,6 +567,12 @@ namespace PlutoGE::ui
             }
             case AddableComponentType::Light:
                 entity.CreateComponent<scene::LightComponent>();
+                break;
+            case AddableComponentType::Rigidbody:
+                entity.CreateComponent<scene::RigidbodyComponent>();
+                break;
+            case AddableComponentType::Collider:
+                entity.CreateComponent<scene::ColliderComponent>();
                 break;
             case AddableComponentType::IblCapture:
                 entity.CreateComponent<scene::IblCaptureComponent>();

@@ -1,12 +1,20 @@
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/Entity.h"
+#include "PlutoGE/scene/components/ColliderComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
+#include "PlutoGE/scene/components/RigidbodyComponent.h"
 #include "PlutoGE/scene/components/ScriptComponent.h"
 #include "PlutoGE/render/Texture.h"
+
+#include <btBulletDynamicsCommon.h>
+
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <memory>
 #include <unordered_set>
+
+#include <glm/gtc/quaternion.hpp>
 
 namespace PlutoGE::scene
 {
@@ -47,6 +55,151 @@ namespace PlutoGE::scene
             }
 
             return scriptComponents;
+        }
+
+        void CollectActiveEntities(Entity *entity, std::vector<Entity *> &entities)
+        {
+            if (!entity || !entity->IsActive())
+            {
+                return;
+            }
+
+            entities.push_back(entity);
+            for (auto *child : entity->GetChildren())
+            {
+                CollectActiveEntities(child, entities);
+            }
+        }
+
+        btVector3 ToBullet(const glm::vec3 &value)
+        {
+            return btVector3(value.x, value.y, value.z);
+        }
+
+        glm::vec3 FromBullet(const btVector3 &value)
+        {
+            return glm::vec3(value.x(), value.y(), value.z());
+        }
+
+        btQuaternion ToBulletRotation(const glm::vec3 &eulerDegrees)
+        {
+            const glm::quat rotation = glm::quat(glm::radians(eulerDegrees));
+            return btQuaternion(rotation.x, rotation.y, rotation.z, rotation.w);
+        }
+
+        btQuaternion ToBulletRotation(const glm::mat4 &transform)
+        {
+            glm::vec3 basisX(transform[0]);
+            glm::vec3 basisY(transform[1]);
+            glm::vec3 basisZ(transform[2]);
+            if (glm::dot(basisX, basisX) <= 0.0f || glm::dot(basisY, basisY) <= 0.0f || glm::dot(basisZ, basisZ) <= 0.0f)
+            {
+                return btQuaternion::getIdentity();
+            }
+
+            basisX = glm::normalize(basisX);
+            basisY = glm::normalize(basisY);
+            basisZ = glm::normalize(basisZ);
+
+            btMatrix3x3 rotationBasis;
+            rotationBasis.setValue(
+                basisX.x, basisY.x, basisZ.x,
+                basisX.y, basisY.y, basisZ.y,
+                basisX.z, basisY.z, basisZ.z);
+
+            btQuaternion rotation;
+            rotationBasis.getRotation(rotation);
+            return rotation;
+        }
+
+        glm::vec3 FromBulletRotation(const btQuaternion &rotation)
+        {
+            const glm::quat glmRotation(rotation.w(), rotation.x(), rotation.y(), rotation.z());
+            return glm::degrees(glm::eulerAngles(glmRotation));
+        }
+
+        struct BulletShapeData
+        {
+            std::unique_ptr<btCollisionShape> shape;
+            std::vector<std::unique_ptr<btCollisionShape>> ownedChildShapes;
+        };
+
+        std::unique_ptr<btCollisionShape> CreateBaseBulletShape(const ColliderComponent &collider, const glm::vec3 &worldScale)
+        {
+            switch (collider.GetShape())
+            {
+            case ColliderShape::Sphere:
+            {
+                const float radius = collider.GetScaledRadius(worldScale);
+                return std::make_unique<btSphereShape>(std::max(radius, 0.0001f));
+            }
+            case ColliderShape::Capsule:
+            {
+                const float radius = collider.GetScaledRadius(worldScale);
+                const float cylinderHeight = std::max(collider.GetScaledHeight(worldScale) - radius * 2.0f, 0.0f);
+                return std::make_unique<btCapsuleShape>(std::max(radius, 0.0001f), cylinderHeight);
+            }
+            case ColliderShape::Box:
+            default:
+            {
+                const glm::vec3 halfExtents = glm::max(collider.GetScaledSize(worldScale) * 0.5f, glm::vec3(0.0001f));
+                return std::make_unique<btBoxShape>(ToBullet(halfExtents));
+            }
+            }
+        }
+
+        BulletShapeData CreateBulletShape(const ColliderComponent &collider, const glm::vec3 &worldScale)
+        {
+            BulletShapeData shapeData;
+            auto baseShape = CreateBaseBulletShape(collider, worldScale);
+            if (!baseShape)
+            {
+                return shapeData;
+            }
+
+            const glm::vec3 scaledCenter = collider.GetScaledCenter(worldScale);
+            if (glm::dot(scaledCenter, scaledCenter) <= 0.0000001f)
+            {
+                shapeData.shape = std::move(baseShape);
+                return shapeData;
+            }
+
+            auto compoundShape = std::make_unique<btCompoundShape>();
+            btTransform childTransform;
+            childTransform.setIdentity();
+            childTransform.setOrigin(ToBullet(scaledCenter));
+            compoundShape->addChildShape(childTransform, baseShape.get());
+
+            shapeData.ownedChildShapes.push_back(std::move(baseShape));
+            shapeData.shape = std::move(compoundShape);
+            return shapeData;
+        }
+
+        struct BulletStepBody
+        {
+            Entity *entity = nullptr;
+            ColliderComponent *collider = nullptr;
+            RigidbodyComponent *rigidbody = nullptr;
+            std::unique_ptr<btCollisionShape> shape;
+            std::vector<std::unique_ptr<btCollisionShape>> childShapes;
+            std::unique_ptr<btDefaultMotionState> motionState;
+            std::unique_ptr<btRigidBody> body;
+            bool dynamic = false;
+        };
+
+        void SyncBodyBackToEntity(BulletStepBody &stepBody)
+        {
+            if (!stepBody.dynamic || !stepBody.entity || !stepBody.rigidbody)
+            {
+                return;
+            }
+
+            btTransform transform;
+            stepBody.body->getMotionState()->getWorldTransform(transform);
+            stepBody.entity->SetPosition(FromBullet(transform.getOrigin()));
+            stepBody.entity->SetRotation(FromBulletRotation(transform.getRotation()));
+            stepBody.rigidbody->SetVelocity(FromBullet(stepBody.body->getLinearVelocity()));
+            stepBody.rigidbody->SetAngularVelocity(FromBullet(stepBody.body->getAngularVelocity()));
         }
     }
 
@@ -341,6 +494,115 @@ namespace PlutoGE::scene
             {
                 rootEntity->Update(deltaTime);
             }
+        }
+
+        StepPhysics(deltaTime);
+    }
+
+    void Scene::StepPhysics(float deltaTime)
+    {
+        if (!m_runtimeStarted)
+        {
+            return;
+        }
+
+        const float step = std::clamp(deltaTime, 0.0f, 0.1f);
+        if (step <= 0.0f)
+        {
+            return;
+        }
+
+        std::vector<Entity *> entities;
+        for (auto *rootEntity : m_rootEntities)
+        {
+            CollectActiveEntities(rootEntity, entities);
+        }
+
+        btDefaultCollisionConfiguration collisionConfiguration;
+        btCollisionDispatcher dispatcher(&collisionConfiguration);
+        btDbvtBroadphase broadphase;
+        btSequentialImpulseConstraintSolver solver;
+        btDiscreteDynamicsWorld dynamicsWorld(&dispatcher, &broadphase, &solver, &collisionConfiguration);
+        dynamicsWorld.setGravity(btVector3(0.0f, -9.81f, 0.0f));
+
+        std::vector<BulletStepBody> stepBodies;
+        stepBodies.reserve(entities.size());
+        for (auto *entity : entities)
+        {
+            auto *collider = entity ? entity->GetComponent<ColliderComponent>() : nullptr;
+            if (!entity || !collider || !collider->IsEnabled() || collider->IsTrigger())
+            {
+                continue;
+            }
+
+            auto *rigidbody = entity->GetComponent<RigidbodyComponent>();
+            const glm::vec3 worldScale = entity->GetWorldScale();
+            auto shapeData = CreateBulletShape(*collider, worldScale);
+            if (!shapeData.shape)
+            {
+                continue;
+            }
+
+            const bool dynamic = rigidbody && rigidbody->IsEnabled() && !rigidbody->IsKinematic();
+            const float mass = dynamic ? rigidbody->GetMass() : 0.0f;
+            btVector3 localInertia(0.0f, 0.0f, 0.0f);
+            if (mass > 0.0f)
+            {
+                shapeData.shape->calculateLocalInertia(mass, localInertia);
+            }
+
+            btTransform startTransform;
+            startTransform.setIdentity();
+            startTransform.setOrigin(ToBullet(entity->GetWorldPosition()));
+            startTransform.setRotation(ToBulletRotation(entity->GetWorldTransform()));
+
+            auto motionState = std::make_unique<btDefaultMotionState>(startTransform);
+            btRigidBody::btRigidBodyConstructionInfo constructionInfo(mass, motionState.get(), shapeData.shape.get(), localInertia);
+            constructionInfo.m_linearDamping = rigidbody ? rigidbody->GetLinearDrag() : 0.0f;
+            constructionInfo.m_angularDamping = rigidbody ? rigidbody->GetAngularDrag() : 0.0f;
+            auto body = std::make_unique<btRigidBody>(constructionInfo);
+            if (rigidbody)
+            {
+                body->setLinearVelocity(ToBullet(rigidbody->GetVelocity()));
+                body->setAngularVelocity(rigidbody->HasFreezeRotation() ? btVector3(0.0f, 0.0f, 0.0f) : ToBullet(rigidbody->GetAngularVelocity()));
+                body->setGravity(rigidbody->UsesGravity() ? dynamicsWorld.getGravity() : btVector3(0.0f, 0.0f, 0.0f));
+                if (rigidbody->HasFreezeRotation())
+                {
+                    body->setAngularFactor(btVector3(0.0f, 0.0f, 0.0f));
+                }
+            }
+
+            if (!dynamic && rigidbody && rigidbody->IsKinematic())
+            {
+                body->setCollisionFlags(body->getCollisionFlags() | btCollisionObject::CF_KINEMATIC_OBJECT);
+                body->setActivationState(DISABLE_DEACTIVATION);
+            }
+            if (dynamic)
+            {
+                body->setCcdMotionThreshold(0.0001f);
+                body->setCcdSweptSphereRadius(std::max(0.05f, collider->GetScaledRadius(worldScale)));
+                body->setActivationState(DISABLE_DEACTIVATION);
+            }
+
+            dynamicsWorld.addRigidBody(body.get());
+            stepBodies.push_back(BulletStepBody{
+                .entity = entity,
+                .collider = collider,
+                .rigidbody = rigidbody && rigidbody->IsEnabled() ? rigidbody : nullptr,
+                .shape = std::move(shapeData.shape),
+                .childShapes = std::move(shapeData.ownedChildShapes),
+                .motionState = std::move(motionState),
+                .body = std::move(body),
+                .dynamic = dynamic,
+            });
+        }
+
+        dynamicsWorld.stepSimulation(step, 0);
+
+        for (auto &stepBody : stepBodies)
+        {
+            SyncBodyBackToEntity(stepBody);
+            dynamicsWorld.removeRigidBody(stepBody.body.get());
         }
     }
 

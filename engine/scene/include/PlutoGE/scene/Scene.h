@@ -118,5 +118,6 @@ namespace PlutoGE::scene
         void CollectEntitySubtree(Entity *entity, std::vector<Entity *> &entities) const;
         bool RemoveEntityRecursive(Entity *current, Entity *target);
         void RebuildBakedProbeTexture();
+        void StepPhysics(float deltaTime);
     };
 }

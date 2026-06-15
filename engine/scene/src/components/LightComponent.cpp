@@ -22,8 +22,10 @@ namespace PlutoGE::scene
 
         int ResolveDirectionalCascadeResolution(const Light &light, int cascadeIndex)
         {
-            (void)cascadeIndex;
-            return ResolveShadowResolution(light);
+            const int baseResolution = ResolveShadowResolution(light);
+            const float falloff = std::clamp(light.directionalShadowSettings.cascadeResolutionFalloff, 0.25f, 1.0f);
+            const float scale = std::pow(falloff, static_cast<float>(std::max(cascadeIndex, 0)));
+            return std::max(static_cast<int>(std::lround(static_cast<float>(baseResolution) * scale)), 256);
         }
 
         bool ParseBool(const std::string &value)
@@ -225,6 +227,7 @@ namespace PlutoGE::scene
         {
             properties.push_back({"Shadow Cascade Count", PropertyType::Int, std::to_string(m_config.directionalShadowSettings.cascadeCount)});
             properties.push_back({"Shadow Resolution", PropertyType::Int, std::to_string(m_config.directionalShadowSettings.resolution)});
+            properties.push_back({"Shadow Cascade Resolution Falloff", PropertyType::Float, std::to_string(m_config.directionalShadowSettings.cascadeResolutionFalloff)});
             properties.push_back({"Shadow Distance (0 = Camera Far)", PropertyType::Float, std::to_string(m_config.directionalShadowSettings.maxDistance)});
             properties.push_back({"Near Shadow Distance (0 = Auto)", PropertyType::Float, std::to_string(m_config.directionalShadowSettings.nearCascadeDistance)});
             properties.push_back({"Shadow Split Lambda", PropertyType::Float, std::to_string(m_config.directionalShadowSettings.splitLambda)});
@@ -232,6 +235,7 @@ namespace PlutoGE::scene
             properties.push_back({"Shadow Softness (0 = Hard Shadows)", PropertyType::Float, std::to_string(m_config.directionalShadowSettings.softness)});
             properties.push_back({"Shadow Min Caster Texel Radius", PropertyType::Float, std::to_string(m_config.directionalShadowSettings.minCasterTexelRadius)});
             properties.push_back({"Shadow Filter Enabled", PropertyType::Bool, m_config.directionalShadowSettings.screenSpaceFilterEnabled ? "true" : "false"});
+            properties.push_back({"Shadow Filter Render Scale", PropertyType::Float, std::to_string(m_config.directionalShadowSettings.screenSpaceFilterRenderScale)});
             properties.push_back({"Shadow Filter Radius", PropertyType::Int, std::to_string(m_config.directionalShadowSettings.screenSpaceFilterRadius)});
             properties.push_back({"Shadow Filter Depth Scale", PropertyType::Float, std::to_string(m_config.directionalShadowSettings.screenSpaceFilterDepthScale)});
             properties.push_back({"Shadow Filter Min Depth Scale", PropertyType::Float, std::to_string(m_config.directionalShadowSettings.screenSpaceFilterMinDepthScale)});
@@ -292,6 +296,10 @@ namespace PlutoGE::scene
             {
                 m_config.directionalShadowSettings.resolution = std::max(std::stoi(property.value), 256);
             }
+            else if (property.name == "Shadow Cascade Resolution Falloff")
+            {
+                m_config.directionalShadowSettings.cascadeResolutionFalloff = std::clamp(std::stof(property.value), 0.25f, 1.0f);
+            }
             else if (property.name == "Shadow Split Lambda")
             {
                 m_config.directionalShadowSettings.splitLambda = std::clamp(std::stof(property.value), 0.0f, 1.0f);
@@ -312,9 +320,13 @@ namespace PlutoGE::scene
             {
                 m_config.directionalShadowSettings.screenSpaceFilterEnabled = ParseBool(property.value);
             }
+            else if (property.name == "Shadow Filter Render Scale")
+            {
+                m_config.directionalShadowSettings.screenSpaceFilterRenderScale = std::clamp(std::stof(property.value), 0.25f, 1.0f);
+            }
             else if (property.name == "Shadow Filter Radius")
             {
-                m_config.directionalShadowSettings.screenSpaceFilterRadius = std::clamp(std::stoi(property.value), 0, 8);
+                m_config.directionalShadowSettings.screenSpaceFilterRadius = std::clamp(std::stoi(property.value), 0, 4);
             }
             else if (property.name == "Shadow Filter Depth Scale")
             {

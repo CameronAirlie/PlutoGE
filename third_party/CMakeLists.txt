@@ -101,3 +101,36 @@ target_link_libraries(PlutoGE_meshoptimizer INTERFACE meshoptimizer)
 target_include_directories(PlutoGE_meshoptimizer INTERFACE
     ${meshoptimizer_SOURCE_DIR}/src
 )
+
+set(BUILD_BULLET2_DEMOS OFF CACHE BOOL "" FORCE)
+set(BUILD_BULLET3 OFF CACHE BOOL "" FORCE)
+set(BUILD_CPU_DEMOS OFF CACHE BOOL "" FORCE)
+set(BUILD_EXTRAS OFF CACHE BOOL "" FORCE)
+set(BUILD_OPENGL3_DEMOS OFF CACHE BOOL "" FORCE)
+set(BUILD_UNIT_TESTS OFF CACHE BOOL "" FORCE)
+set(INSTALL_LIBS OFF CACHE BOOL "" FORCE)
+set(USE_GRAPHICAL_BENCHMARK OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    bullet3
+    GIT_REPOSITORY https://github.com/bulletphysics/bullet3.git
+    GIT_TAG        master
+)
+FetchContent_GetProperties(bullet3)
+if (NOT bullet3_POPULATED)
+    FetchContent_Populate(bullet3)
+endif()
+set(BULLET_PHYSICS_SOURCE_DIR ${bullet3_SOURCE_DIR})
+set(BULLET_VERSION 3.25)
+add_subdirectory(${bullet3_SOURCE_DIR}/src/LinearMath ${bullet3_BINARY_DIR}/src/LinearMath)
+add_subdirectory(${bullet3_SOURCE_DIR}/src/BulletCollision ${bullet3_BINARY_DIR}/src/BulletCollision)
+add_subdirectory(${bullet3_SOURCE_DIR}/src/BulletDynamics ${bullet3_BINARY_DIR}/src/BulletDynamics)
+add_library(PlutoGE_bullet INTERFACE)
+add_library(PlutoGE::bullet ALIAS PlutoGE_bullet)
+target_link_libraries(PlutoGE_bullet INTERFACE
+    BulletDynamics
+    BulletCollision
+    LinearMath
+)
+target_include_directories(PlutoGE_bullet INTERFACE
+    ${bullet3_SOURCE_DIR}/src
+)

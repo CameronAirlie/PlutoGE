@@ -285,12 +285,7 @@ namespace PlutoGE::render
                     float receiverDepth = projectedCoords.z - depthBias;
                     if (uOutputShadowMask != 0)
                     {
-                        float shadow = receiverDepth > texture(shadowMap, projectedCoords.xy).r ? 2.0 : 0.0;
-                        shadow += receiverDepth > texture(shadowMap, projectedCoords.xy + vec2(1.0, 0.0) * texelSize).r ? 1.0 : 0.0;
-                        shadow += receiverDepth > texture(shadowMap, projectedCoords.xy + vec2(-1.0, 0.0) * texelSize).r ? 1.0 : 0.0;
-                        shadow += receiverDepth > texture(shadowMap, projectedCoords.xy + vec2(0.0, 1.0) * texelSize).r ? 1.0 : 0.0;
-                        shadow += receiverDepth > texture(shadowMap, projectedCoords.xy + vec2(0.0, -1.0) * texelSize).r ? 1.0 : 0.0;
-                        return shadow / 6.0;
+                        return receiverDepth > texture(shadowMap, projectedCoords.xy).r ? 1.0 : 0.0;
                     }
 
                     float closestDepth = texture(shadowMap, projectedCoords.xy).r;
@@ -1013,7 +1008,10 @@ namespace PlutoGE::render
             return nullptr;
         }
 
-        EnsureShadowMaskTargets(ctx.temporaryRenderTarget->GetWidth(), ctx.temporaryRenderTarget->GetHeight());
+        const float renderScale = glm::clamp(light.directionalShadowSettings.screenSpaceFilterRenderScale, 0.25f, 1.0f);
+        const int maskWidth = std::max(1, static_cast<int>(std::lround(static_cast<float>(ctx.temporaryRenderTarget->GetWidth()) * renderScale)));
+        const int maskHeight = std::max(1, static_cast<int>(std::lround(static_cast<float>(ctx.temporaryRenderTarget->GetHeight()) * renderScale)));
+        EnsureShadowMaskTargets(maskWidth, maskHeight);
         if (!m_rawShadowMaskTarget || !m_blurredShadowMaskTarget)
         {
             return nullptr;
@@ -1038,7 +1036,8 @@ namespace PlutoGE::render
         m_directLightingPassShader->SetUniform("uUseFilteredShadowMask", 0);
         glDrawArrays(GL_TRIANGLES, 0, 3);
 
-        if (!filtered || !light.directionalShadowSettings.screenSpaceFilterEnabled)
+        const int filterRadius = std::clamp(light.directionalShadowSettings.screenSpaceFilterRadius, 0, 4);
+        if (!filtered || !light.directionalShadowSettings.screenSpaceFilterEnabled || filterRadius <= 0)
         {
             return m_rawShadowMaskTarget.get();
         }
@@ -1054,7 +1053,7 @@ namespace PlutoGE::render
         glBindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetNormalTextureID());
         m_shadowMaskBlurShader->SetUniform("uSceneNormalTexture", kShadowMaskNormalTextureSlot);
         m_shadowMaskBlurShader->SetUniform("uDirection", glm::vec2(1.0f, 0.0f));
-        m_shadowMaskBlurShader->SetUniform("uFilterRadius", std::clamp(light.directionalShadowSettings.screenSpaceFilterRadius, 0, 8));
+        m_shadowMaskBlurShader->SetUniform("uFilterRadius", filterRadius);
         m_shadowMaskBlurShader->SetUniform("uDepthScale", glm::max(light.directionalShadowSettings.screenSpaceFilterDepthScale, 0.0f));
         m_shadowMaskBlurShader->SetUniform("uMinDepthScale", glm::max(light.directionalShadowSettings.screenSpaceFilterMinDepthScale, 0.001f));
         m_shadowMaskBlurShader->SetUniform("uNormalThreshold", glm::clamp(light.directionalShadowSettings.screenSpaceFilterNormalThreshold, -1.0f, 1.0f));
@@ -1071,7 +1070,7 @@ namespace PlutoGE::render
         glBindTexture(GL_TEXTURE_2D, m_blurredShadowMaskTarget->GetColorTextureID());
         m_shadowMaskBlurShader->SetUniform("uShadowMaskTexture", kShadowMaskTextureSlot);
         m_shadowMaskBlurShader->SetUniform("uDirection", glm::vec2(0.0f, 1.0f));
-        m_shadowMaskBlurShader->SetUniform("uFilterRadius", std::clamp(light.directionalShadowSettings.screenSpaceFilterRadius, 0, 8));
+        m_shadowMaskBlurShader->SetUniform("uFilterRadius", filterRadius);
         m_shadowMaskBlurShader->SetUniform("uDepthScale", glm::max(light.directionalShadowSettings.screenSpaceFilterDepthScale, 0.0f));
         m_shadowMaskBlurShader->SetUniform("uMinDepthScale", glm::max(light.directionalShadowSettings.screenSpaceFilterMinDepthScale, 0.001f));
         m_shadowMaskBlurShader->SetUniform("uNormalThreshold", glm::clamp(light.directionalShadowSettings.screenSpaceFilterNormalThreshold, -1.0f, 1.0f));

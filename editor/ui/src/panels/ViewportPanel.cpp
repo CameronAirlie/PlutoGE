@@ -856,8 +856,7 @@ namespace PlutoGE::ui
     {
         const bool allowEditorViewportHotkeys =
             ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
-            !ImGui::GetIO().WantTextInput &&
-            !EditorShell::GetInstance().GetEngine().IsRuntimeRunning();
+            !ImGui::GetIO().WantTextInput;
 
         if (allowEditorViewportHotkeys)
         {
@@ -947,11 +946,6 @@ namespace PlutoGE::ui
         }
 
         auto &editorShell = EditorShell::GetInstance();
-        if (editorShell.GetEngine().IsRuntimeRunning())
-        {
-            return;
-        }
-
         auto &editorCamera = editorShell.GetEditorCamera();
         const glm::mat4 cameraTransform = glm::translate(glm::mat4(1.0f), editorCamera.position) *
                                           glm::rotate(glm::mat4(1.0f), glm::radians(editorCamera.yawDegrees), glm::vec3(0.0f, 1.0f, 0.0f)) *

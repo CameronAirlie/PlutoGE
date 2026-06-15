@@ -13,6 +13,7 @@ namespace PlutoGE::assets
     {
         Unknown,
         Scene,
+        Prefab,
         Script,
         Mesh,
         Material,

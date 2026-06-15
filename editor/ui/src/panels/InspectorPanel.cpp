@@ -17,6 +17,7 @@
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/RigidbodyComponent.h"
 #include "PlutoGE/scene/Entity.h"
+#include "PlutoGE/scene/Prefab.h"
 #include "PlutoGE/scene/Scene.h"
 #include <algorithm>
 #include <array>
@@ -90,6 +91,50 @@ namespace PlutoGE::ui
             }
 
             return text;
+        }
+
+        std::string JoinTags(const std::vector<std::string> &tags)
+        {
+            std::string joined;
+            for (const auto &tag : tags)
+            {
+                if (tag.empty())
+                {
+                    continue;
+                }
+
+                if (!joined.empty())
+                {
+                    joined += ", ";
+                }
+                joined += tag;
+            }
+            return joined;
+        }
+
+        std::vector<std::string> ParseTags(std::string_view text)
+        {
+            std::vector<std::string> tags;
+            while (!text.empty())
+            {
+                const auto comma = text.find(',');
+                auto token = TrimWhitespace(text.substr(0, comma));
+                if (!token.empty())
+                {
+                    const std::string tag(token);
+                    if (std::find(tags.begin(), tags.end(), tag) == tags.end())
+                    {
+                        tags.push_back(tag);
+                    }
+                }
+
+                if (comma == std::string_view::npos)
+                {
+                    break;
+                }
+                text.remove_prefix(comma + 1);
+            }
+            return tags;
         }
 
         bool StartsWith(std::string_view text, std::string_view prefix)
@@ -438,6 +483,25 @@ namespace PlutoGE::ui
             }
 
             return typeid(component).name();
+        }
+
+        std::string GetComponentPrefabTypeName(const scene::Component &component)
+        {
+            if (dynamic_cast<const scene::MeshComponent *>(&component))
+                return "MeshComponent";
+            if (dynamic_cast<const scene::CameraComponent *>(&component))
+                return "CameraComponent";
+            if (dynamic_cast<const scene::LightComponent *>(&component))
+                return "LightComponent";
+            if (dynamic_cast<const scene::RigidbodyComponent *>(&component))
+                return "RigidbodyComponent";
+            if (dynamic_cast<const scene::ColliderComponent *>(&component))
+                return "ColliderComponent";
+            if (dynamic_cast<const scene::IblCaptureComponent *>(&component))
+                return "IblCaptureComponent";
+            if (dynamic_cast<const scene::ScriptComponent *>(&component))
+                return "ScriptComponent";
+            return {};
         }
 
         void CollectEntitiesRecursive(scene::Entity *entity, std::vector<scene::Entity *> &entities)
@@ -1440,19 +1504,112 @@ namespace PlutoGE::ui
         }
 
         ImGui::Text("Entity Name: %s", entity->GetName().c_str());
+        ImGui::SameLine();
+        ImGui::TextDisabled("ID: %u", entity->GetID());
         auto isActive = entity->IsSelfActive();
         if (ImGui::Checkbox("Active", &isActive))
         {
             entity->SetActive(isActive);
+            entity->AddPrefabOverride("Active");
+            editorShell.MarkSceneDirty();
         }
         ImGui::SameLine();
         ImGui::TextDisabled("Hierarchy: %s", entity->IsActive() ? "Active" : "Inactive");
+
+        {
+            static std::unordered_map<scene::EntityID, std::array<char, 256>> tagBuffers;
+            static std::unordered_map<scene::EntityID, std::string> cachedTagText;
+
+            const auto entityId = entity->GetID();
+            const std::string currentTagText = JoinTags(entity->GetTags());
+            auto &cachedText = cachedTagText[entityId];
+            auto &tagBuffer = tagBuffers[entityId];
+            if (cachedText != currentTagText)
+            {
+                cachedText = currentTagText;
+                std::fill(tagBuffer.begin(), tagBuffer.end(), '\0');
+                strncpy_s(tagBuffer.data(), tagBuffer.size(), cachedText.c_str(), _TRUNCATE);
+            }
+
+            if (ImGui::InputText("Tags", tagBuffer.data(), tagBuffer.size(), ImGuiInputTextFlags_EnterReturnsTrue) ||
+                ImGui::IsItemDeactivatedAfterEdit())
+            {
+                const std::string editedText(tagBuffer.data());
+                if (editedText != currentTagText)
+                {
+                    entity->SetTags(ParseTags(editedText));
+                    cachedText = JoinTags(entity->GetTags());
+                    std::fill(tagBuffer.begin(), tagBuffer.end(), '\0');
+                    strncpy_s(tagBuffer.data(), tagBuffer.size(), cachedText.c_str(), _TRUNCATE);
+                    entity->AddPrefabOverride("Tags");
+                    editorShell.MarkSceneDirty();
+                }
+            }
+        }
+
+        if (!entity->GetPrefabSource().empty())
+        {
+            ImGui::Separator();
+            ImGui::Text("Prefab: %s", entity->GetPrefabSource().c_str());
+            ImGui::TextDisabled(entity->IsPrefabInstanceRoot() ? "Instance Root" : "Nested Prefab Entity");
+            ImGui::TextDisabled("Overrides: %zu", entity->GetPrefabOverrides().size());
+            ImGui::BeginDisabled(!entity->IsPrefabInstanceRoot());
+            if (ImGui::Button("Update From Prefab"))
+            {
+                std::string errorMessage;
+                if (scene::Prefab::UpdateInstance(*entity, &errorMessage))
+                {
+                    editorShell.MarkSceneDirty();
+                    editorShell.Log(EditorShell::ConsoleSeverity::Info, "Updated prefab instance.");
+                }
+                else
+                {
+                    editorShell.Log(EditorShell::ConsoleSeverity::Error,
+                                    errorMessage.empty() ? "Failed to update prefab instance." : errorMessage);
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Apply To Prefab"))
+            {
+                std::string errorMessage;
+                if (scene::Prefab::ApplyInstanceToPrefab(*entity, &errorMessage))
+                {
+                    if (auto *project = editorShell.GetProject())
+                    {
+                        project->RefreshAssetRegistry();
+                    }
+                    if (auto *currentScene = core::Engine::GetInstance().GetScene())
+                    {
+                        scene::Prefab::UpdateInstances(*currentScene, entity->GetPrefabSource());
+                    }
+                    entity->ClearPrefabOverridesRecursive();
+                    editorShell.MarkSceneDirty();
+                    editorShell.MarkProjectDirty();
+                    editorShell.Log(EditorShell::ConsoleSeverity::Info, "Applied instance overrides to prefab.");
+                }
+                else
+                {
+                    editorShell.Log(EditorShell::ConsoleSeverity::Error,
+                                    errorMessage.empty() ? "Failed to apply prefab." : errorMessage);
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Unpack"))
+            {
+                entity->ClearPrefabLinkRecursive();
+                editorShell.MarkSceneDirty();
+            }
+            ImGui::EndDisabled();
+        }
 
         {
             // Transform
             auto position = entity->GetPosition();
             auto rotation = entity->GetRotation();
             auto scale = entity->GetScale();
+            const auto originalPosition = position;
+            const auto originalRotation = rotation;
+            const auto originalScale = scale;
 
             if (ImGui::CollapsingHeader("Transform"))
             {
@@ -1466,6 +1623,18 @@ namespace PlutoGE::ui
                 entity->SetScale(scale);
                 if (transformChanged)
                 {
+                    if (position != originalPosition)
+                    {
+                        entity->AddPrefabOverride("Transform.Position");
+                    }
+                    if (rotation != originalRotation)
+                    {
+                        entity->AddPrefabOverride("Transform.Rotation");
+                    }
+                    if (scale != originalScale)
+                    {
+                        entity->AddPrefabOverride("Transform.Scale");
+                    }
                     editorShell.MarkSceneDirty();
                 }
             }
@@ -1814,6 +1983,12 @@ namespace PlutoGE::ui
                         if (ImGui::Checkbox("Enabled", &isEnabled))
                         {
                             componentPtr->SetEnabled(isEnabled);
+                            const auto componentTypeName = GetComponentPrefabTypeName(*componentPtr);
+                            if (!componentTypeName.empty())
+                            {
+                                entity->AddPrefabOverride("Component:" + componentTypeName + ":Enabled");
+                            }
+                            editorShell.MarkSceneDirty();
                         }
 
                         auto properties = componentPtr->Serialize();
@@ -1831,7 +2006,11 @@ namespace PlutoGE::ui
                         }
                         else if (auto *scriptComponent = dynamic_cast<scene::ScriptComponent *>(componentPtr))
                         {
-                            RenderScriptComponentEditor(*scriptComponent, *entity);
+                            if (RenderScriptComponentEditor(*scriptComponent, *entity))
+                            {
+                                entity->AddPrefabOverride("Component:ScriptComponent:Source");
+                                editorShell.MarkSceneDirty();
+                            }
                         }
                         else if (dynamic_cast<scene::LightComponent *>(componentPtr))
                         {
@@ -1869,6 +2048,14 @@ namespace PlutoGE::ui
                         if (propertiesChanged)
                         {
                             componentPtr->Deserialize(properties);
+                            const auto componentTypeName = GetComponentPrefabTypeName(*componentPtr);
+                            if (!componentTypeName.empty())
+                            {
+                                for (const auto &property : properties)
+                                {
+                                    entity->AddPrefabOverride("Component:" + componentTypeName + ":" + property.name);
+                                }
+                            }
                             editorShell.MarkSceneDirty();
                         }
 

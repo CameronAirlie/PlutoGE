@@ -20,6 +20,8 @@ public sealed class GameObject
         set => ScriptBridge.SetEntityPosition(EntityId, value);
     }
 
+    public Vector3 WorldPosition => ScriptBridge.GetEntityWorldPosition(EntityId);
+
     public Vector3 Rotation
     {
         get => ScriptBridge.GetEntityRotation(EntityId);
@@ -40,6 +42,18 @@ public sealed class GameObject
     {
         get => ScriptBridge.GetEntityActive(EntityId);
         set => ScriptBridge.SetEntityActive(EntityId, value);
+    }
+
+    public string[] Tags => ScriptBridge.GetEntityTags(EntityId);
+
+    public bool HasTag(string tag)
+    {
+        return ScriptBridge.HasEntityTag(EntityId, tag);
+    }
+
+    public bool TryInvoke(string methodName)
+    {
+        return ScriptBridge.InvokeEntityMethod(EntityId, methodName);
     }
 
     public bool HasComponent<T>() where T : class

@@ -3,19 +3,81 @@
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
+#include "PlutoGE/scene/Prefab.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/ui/EditorShell.h"
+#include "PlutoGE/ui/panels/ContentBrowserPanel.h"
 
 #include <imgui.h>
 
+#include <cctype>
 #include <cstring>
+#include <filesystem>
 
 namespace PlutoGE::ui
 {
     namespace
     {
         constexpr const char *kHierarchyDragDropPayload = "PLUTOGE_SCENE_ENTITY";
+
+        std::string SanitizePrefabFileName(std::string text)
+        {
+            for (auto &character : text)
+            {
+                const unsigned char value = static_cast<unsigned char>(character);
+                if (std::isalnum(value) == 0 && character != '_' && character != '-')
+                {
+                    character = '_';
+                }
+            }
+            if (text.empty())
+            {
+                text = "Prefab";
+            }
+            return text;
+        }
+
+        bool InstantiatePrefabIntoScene(std::string reference, scene::Entity *parent)
+        {
+            auto *scene = EditorShell::GetInstance().GetEngine().GetScene();
+            if (!scene || assets::Project::GetAssetTypeForReference(reference) != assets::ProjectAssetType::Prefab)
+            {
+                return false;
+            }
+
+            std::string errorMessage;
+            scene::Entity *createdEntity = nullptr;
+            EditorShell::GetInstance().ExecuteSceneEdit("Instantiate Prefab",
+                                                        [scene, parent, reference = std::move(reference), &createdEntity, &errorMessage]()
+                                                        {
+                                                            createdEntity = scene::Prefab::Instantiate(*scene, reference, parent, &errorMessage);
+                                                        });
+            if (createdEntity)
+            {
+                EditorShell::GetInstance().SetSelectedEntity(createdEntity);
+                return true;
+            }
+
+            EditorShell::GetInstance().Log(EditorShell::ConsoleSeverity::Error,
+                                           errorMessage.empty() ? "Failed to instantiate prefab." : errorMessage);
+            return false;
+        }
+
+        void LinkPrefabSubtree(scene::Entity *entity, const std::string &prefabReference, bool isRoot)
+        {
+            if (!entity)
+            {
+                return;
+            }
+
+            entity->SetPrefabLink(prefabReference, entity->GetID(), isRoot);
+            entity->ClearPrefabOverrides();
+            for (auto *child : entity->GetChildren())
+            {
+                LinkPrefabSubtree(child, prefabReference, false);
+            }
+        }
     }
 
     void SceneHierarchyPanel::RenderEntityNode(scene::Entity *entity)
@@ -96,6 +158,11 @@ namespace PlutoGE::ui
                                                                 });
                 }
             }
+            if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kContentBrowserAssetDragDropPayload))
+            {
+                const std::string reference(static_cast<const char *>(payload->Data), payload->DataSize > 0 ? payload->DataSize - 1 : 0);
+                InstantiatePrefabIntoScene(reference, entity);
+            }
             ImGui::EndDragDropTarget();
         }
 
@@ -114,6 +181,30 @@ namespace PlutoGE::ui
                                                             {
                                                                 entity->SetParent(nullptr);
                                                             });
+            }
+            if (ImGui::MenuItem("Save As Prefab"))
+            {
+                if (auto *project = EditorShell::GetInstance().GetProject())
+                {
+                    const auto prefabDirectory = project->GetAssetDirectoryPath() / "Prefabs";
+                    const auto prefabName = SanitizePrefabFileName(entity->GetName().empty() ? "Prefab" : entity->GetName());
+                    const auto prefabPath = prefabDirectory / (prefabName + ".plutoprefab");
+                    const std::string prefabReference = project->MakeAssetReference(prefabPath);
+                    std::string errorMessage;
+                    if (scene::Prefab::SaveFromEntity(*entity, prefabPath, &errorMessage))
+                    {
+                        LinkPrefabSubtree(entity, prefabReference, true);
+                        project->RefreshAssetRegistry();
+                        EditorShell::GetInstance().MarkSceneDirty();
+                        EditorShell::GetInstance().MarkProjectDirty();
+                        EditorShell::GetInstance().Log(EditorShell::ConsoleSeverity::Info, "Saved prefab: " + prefabReference);
+                    }
+                    else
+                    {
+                        EditorShell::GetInstance().Log(EditorShell::ConsoleSeverity::Error,
+                                                       errorMessage.empty() ? "Failed to save prefab." : errorMessage);
+                    }
+                }
             }
             if (ImGui::MenuItem("Delete Entity"))
             {
@@ -210,6 +301,11 @@ namespace PlutoGE::ui
                                                                     draggedEntity->SetParent(nullptr);
                                                                 });
                 }
+            }
+            if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kContentBrowserAssetDragDropPayload))
+            {
+                const std::string reference(static_cast<const char *>(payload->Data), payload->DataSize > 0 ? payload->DataSize - 1 : 0);
+                InstantiatePrefabIntoScene(reference, nullptr);
             }
             ImGui::EndDragDropTarget();
         }

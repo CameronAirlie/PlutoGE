@@ -3,6 +3,7 @@
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/platform/InputState.h"
 #include "PlutoGE/scripting/ScriptLogging.h"
+#include "PlutoGE/render/Material.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
@@ -70,15 +71,15 @@ namespace PlutoGE::scripting
         using invoke_on_collision_fn = int(__cdecl *)(int64_t, uint32_t);
         using apply_field_data_fn = int(__cdecl *)(int64_t, const char *);
         using set_entity_id_fn = int(__cdecl *)(int64_t, uint32_t);
-        using register_game_object_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
+        using register_game_object_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_component_api_fn = int(__cdecl *)(void *, void *, void *);
         using register_camera_component_api_fn = int(__cdecl *)(void *, void *, void *, void *);
         using register_light_component_api_fn = int(__cdecl *)(void *, void *, void *, void *);
-        using register_mesh_component_api_fn = int(__cdecl *)(void *, void *);
+        using register_mesh_component_api_fn = int(__cdecl *)(void *, void *, void *, void *);
         using register_rigidbody_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_collider_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_input_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
-        using register_physics_api_fn = int(__cdecl *)(void *, void *);
+        using register_physics_api_fn = int(__cdecl *)(void *, void *, void *);
         using register_debug_api_fn = int(__cdecl *)(void *);
 
         struct NativeVector3
@@ -100,6 +101,8 @@ namespace PlutoGE::scripting
         using set_entity_vector3_fn = void(__cdecl *)(uint32_t, NativeVector3);
         using get_entity_active_fn = int(__cdecl *)(uint32_t);
         using set_entity_active_fn = void(__cdecl *)(uint32_t, int32_t);
+        using get_entity_tag_count_fn = int(__cdecl *)(uint32_t);
+        using get_entity_tag_fn = const char *(__cdecl *)(uint32_t, int32_t);
         using has_entity_component_fn = int(__cdecl *)(uint32_t, int32_t);
         using get_component_enabled_fn = int(__cdecl *)(uint32_t, int32_t);
         using set_component_enabled_fn = void(__cdecl *)(uint32_t, int32_t, int32_t);
@@ -113,6 +116,8 @@ namespace PlutoGE::scripting
         using set_light_color_fn = void(__cdecl *)(uint32_t, NativeVector3);
         using get_mesh_static_fn = int(__cdecl *)(uint32_t);
         using set_mesh_static_fn = void(__cdecl *)(uint32_t, int32_t);
+        using get_mesh_color_fn = NativeVector3(__cdecl *)(uint32_t);
+        using set_mesh_color_fn = void(__cdecl *)(uint32_t, NativeVector3);
         using get_component_float_fn = float(__cdecl *)(uint32_t);
         using set_component_float_fn = void(__cdecl *)(uint32_t, float);
         using get_component_bool_fn = int(__cdecl *)(uint32_t);
@@ -128,6 +133,7 @@ namespace PlutoGE::scripting
         using get_input_cursor_locked_fn = int(__cdecl *)();
         using set_input_cursor_locked_fn = void(__cdecl *)(int32_t);
         using physics_raycast_fn = int(__cdecl *)(NativeVector3, NativeVector3, float, uint32_t, NativeRaycastHit *);
+        using physics_raycast_tagged_fn = int(__cdecl *)(NativeVector3, NativeVector3, float, uint32_t, const char *, NativeRaycastHit *);
         using physics_move_kinematic_fn = NativeVector3(__cdecl *)(uint32_t, NativeVector3, float);
         using script_log_fn = void(__cdecl *)(int32_t, const char *);
         constexpr std::wstring_view kScriptBridgeType = L"PlutoGE.ScriptCore.Native.ScriptBridge, PlutoGE.ScriptCore";
@@ -745,6 +751,18 @@ namespace PlutoGE::scripting
             return NativeVector3{position.x, position.y, position.z};
         }
 
+        NativeVector3 GetEntityWorldPosition(uint32_t entityId)
+        {
+            auto *entity = FindEntity(entityId);
+            if (!entity)
+            {
+                return {};
+            }
+
+            const auto position = entity->GetWorldPosition();
+            return NativeVector3{position.x, position.y, position.z};
+        }
+
         void SetEntityPosition(uint32_t entityId, NativeVector3 position)
         {
             auto *entity = FindEntity(entityId);
@@ -843,6 +861,27 @@ namespace PlutoGE::scripting
             }
 
             entity->SetActive(active != 0);
+        }
+
+        int32_t GetEntityTagCount(uint32_t entityId)
+        {
+            auto *entity = FindEntity(entityId);
+            return entity ? static_cast<int32_t>(entity->GetTags().size()) : 0;
+        }
+
+        const char *GetEntityTag(uint32_t entityId, int32_t tagIndex)
+        {
+            thread_local std::string tagStorage;
+            tagStorage.clear();
+
+            auto *entity = FindEntity(entityId);
+            if (!entity || tagIndex < 0 || tagIndex >= static_cast<int32_t>(entity->GetTags().size()))
+            {
+                return tagStorage.c_str();
+            }
+
+            tagStorage = entity->GetTags()[static_cast<std::size_t>(tagIndex)];
+            return tagStorage.c_str();
         }
 
         int32_t HasEntityComponent(uint32_t entityId, int32_t componentKind)
@@ -1001,6 +1040,47 @@ namespace PlutoGE::scripting
             if (auto *meshComponent = entity->GetComponent<scene::MeshComponent>())
             {
                 meshComponent->SetStatic(isStatic != 0);
+            }
+        }
+
+        NativeVector3 GetMeshColor(uint32_t entityId)
+        {
+            auto *entity = FindEntity(entityId);
+            auto *meshComponent = entity ? entity->GetComponent<scene::MeshComponent>() : nullptr;
+            auto *material = meshComponent ? meshComponent->GetMaterialForMaterialSlot(0) : nullptr;
+            if (!material)
+            {
+                return NativeVector3{1.0f, 1.0f, 1.0f};
+            }
+
+            const auto color = material->GetConfig().color;
+            return NativeVector3{color.r, color.g, color.b};
+        }
+
+        void SetMeshColor(uint32_t entityId, NativeVector3 color)
+        {
+            auto *entity = FindEntity(entityId);
+            auto *meshComponent = entity ? entity->GetComponent<scene::MeshComponent>() : nullptr;
+            if (!meshComponent || !IsFiniteVector3(color))
+            {
+                return;
+            }
+
+            auto *material = meshComponent->GetMaterialForMaterialSlot(0);
+            if (!material)
+            {
+                material = meshComponent->CreateUniqueMaterialForMaterialSlot(0);
+            }
+            else if (!meshComponent->GetMaterialAssetForMaterialSlot(0).empty())
+            {
+                material = meshComponent->CreateUniqueMaterialForMaterialSlot(0);
+                meshComponent->SetMaterialAssetForMaterialSlot(0, {});
+            }
+
+            if (material)
+            {
+                const auto alpha = material->GetConfig().color.a;
+                material->SetColor(glm::vec4(color.x, color.y, color.z, alpha));
             }
         }
 
@@ -1242,6 +1322,45 @@ namespace PlutoGE::scripting
                                 maxDistance,
                                 hit,
                                 ignoredEntityId))
+            {
+                return 0;
+            }
+
+            nativeHit->entityId = hit.entityId;
+            nativeHit->point = NativeVector3{hit.point.x, hit.point.y, hit.point.z};
+            nativeHit->normal = NativeVector3{hit.normal.x, hit.normal.y, hit.normal.z};
+            nativeHit->distance = hit.distance;
+            return 1;
+        }
+
+        int32_t PhysicsRaycastTagged(NativeVector3 origin,
+                                     NativeVector3 direction,
+                                     float maxDistance,
+                                     uint32_t ignoredEntityId,
+                                     const char *tag,
+                                     NativeRaycastHit *nativeHit)
+        {
+            if (!nativeHit ||
+                !IsFiniteVector3(origin) ||
+                !IsFiniteVector3(direction) ||
+                !std::isfinite(maxDistance))
+            {
+                return 0;
+            }
+
+            auto *scene = core::Engine::GetInstance().GetScene();
+            if (!scene)
+            {
+                return 0;
+            }
+
+            scene::PhysicsRaycastHit hit;
+            if (!scene->RaycastByTag(glm::vec3(origin.x, origin.y, origin.z),
+                                     glm::vec3(direction.x, direction.y, direction.z),
+                                     maxDistance,
+                                     tag ? std::string(tag) : std::string{},
+                                     hit,
+                                     ignoredEntityId))
             {
                 return 0;
             }
@@ -1907,6 +2026,7 @@ namespace PlutoGE::scripting
         if (!m_impl->registerGameObjectApi ||
             m_impl->registerGameObjectApi(
                 reinterpret_cast<void *>(static_cast<get_entity_vector3_fn>(&GetEntityPosition)),
+                reinterpret_cast<void *>(static_cast<get_entity_vector3_fn>(&GetEntityWorldPosition)),
                 reinterpret_cast<void *>(static_cast<set_entity_vector3_fn>(&SetEntityPosition)),
                 reinterpret_cast<void *>(static_cast<get_entity_vector3_fn>(&GetEntityRotation)),
                 reinterpret_cast<void *>(static_cast<set_entity_vector3_fn>(&SetEntityRotation)),
@@ -1915,7 +2035,9 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(static_cast<get_entity_vector3_fn>(&GetEntityForward)),
                 reinterpret_cast<void *>(static_cast<get_entity_vector3_fn>(&GetEntityRight)),
                 reinterpret_cast<void *>(static_cast<get_entity_active_fn>(&GetEntityActive)),
-                reinterpret_cast<void *>(static_cast<set_entity_active_fn>(&SetEntityActive))) == 0)
+                reinterpret_cast<void *>(static_cast<set_entity_active_fn>(&SetEntityActive)),
+                reinterpret_cast<void *>(static_cast<get_entity_tag_count_fn>(&GetEntityTagCount)),
+                reinterpret_cast<void *>(static_cast<get_entity_tag_fn>(&GetEntityTag))) == 0)
         {
             setManagedBridgeFailure("RegisterGameObjectApi");
             return false;
@@ -1956,7 +2078,9 @@ namespace PlutoGE::scripting
         if (!m_impl->registerMeshComponentApi ||
             m_impl->registerMeshComponentApi(
                 reinterpret_cast<void *>(static_cast<get_mesh_static_fn>(&GetMeshStatic)),
-                reinterpret_cast<void *>(static_cast<set_mesh_static_fn>(&SetMeshStatic))) == 0)
+                reinterpret_cast<void *>(static_cast<set_mesh_static_fn>(&SetMeshStatic)),
+                reinterpret_cast<void *>(static_cast<get_mesh_color_fn>(&GetMeshColor)),
+                reinterpret_cast<void *>(static_cast<set_mesh_color_fn>(&SetMeshColor))) == 0)
         {
             setManagedBridgeFailure("RegisterMeshComponentApi");
             return false;
@@ -2026,6 +2150,7 @@ namespace PlutoGE::scripting
         if (!m_impl->registerPhysicsApi ||
             m_impl->registerPhysicsApi(
                 reinterpret_cast<void *>(static_cast<physics_raycast_fn>(&PhysicsRaycast)),
+                reinterpret_cast<void *>(static_cast<physics_raycast_tagged_fn>(&PhysicsRaycastTagged)),
                 reinterpret_cast<void *>(static_cast<physics_move_kinematic_fn>(&PhysicsMoveKinematic))) == 0)
         {
             setManagedBridgeFailure("RegisterPhysicsApi");

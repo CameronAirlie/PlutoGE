@@ -367,6 +367,81 @@ namespace PlutoGE::scene
         return m_isActive && (!m_parent || m_parent->IsActive());
     }
 
+    void Entity::SetPrefabLink(std::string source, EntityID prefabEntityId, bool isRoot)
+    {
+        m_prefabSource = std::move(source);
+        m_prefabEntityId = prefabEntityId;
+        m_isPrefabInstanceRoot = isRoot;
+    }
+
+    void Entity::ClearPrefabLinkRecursive()
+    {
+        m_prefabSource.clear();
+        m_prefabEntityId = 0;
+        m_isPrefabInstanceRoot = false;
+        m_prefabOverrides.clear();
+
+        for (auto *child : m_children)
+        {
+            if (child)
+            {
+                child->ClearPrefabLinkRecursive();
+            }
+        }
+    }
+
+    void Entity::AddPrefabOverride(std::string propertyPath)
+    {
+        if (m_prefabSource.empty() || propertyPath.empty())
+        {
+            return;
+        }
+
+        if (std::find(m_prefabOverrides.begin(), m_prefabOverrides.end(), propertyPath) == m_prefabOverrides.end())
+        {
+            m_prefabOverrides.push_back(std::move(propertyPath));
+        }
+    }
+
+    void Entity::ClearPrefabOverridesRecursive()
+    {
+        m_prefabOverrides.clear();
+        for (auto *child : m_children)
+        {
+            if (child)
+            {
+                child->ClearPrefabOverridesRecursive();
+            }
+        }
+    }
+
+    bool Entity::HasTag(const std::string &tag) const
+    {
+        return std::find(m_tags.begin(), m_tags.end(), tag) != m_tags.end();
+    }
+
+    void Entity::AddTag(std::string tag)
+    {
+        if (tag.empty() || HasTag(tag))
+        {
+            return;
+        }
+
+        m_tags.push_back(std::move(tag));
+    }
+
+    bool Entity::RemoveTag(const std::string &tag)
+    {
+        const auto iterator = std::find(m_tags.begin(), m_tags.end(), tag);
+        if (iterator == m_tags.end())
+        {
+            return false;
+        }
+
+        m_tags.erase(iterator);
+        return true;
+    }
+
     glm::vec3 Entity::GetWorldPosition() const
     {
         return glm::vec3(GetWorldTransform()[3]);

@@ -11,6 +11,7 @@
 
 #include <iostream>
 #include <chrono>
+#include <cfloat>
 
 namespace PlutoGE::ui
 {
@@ -27,6 +28,8 @@ namespace PlutoGE::ui
 
     bool PanelManager::InitializeImGui(platform::Window *window)
     {
+        m_window = window;
+
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
         ImGuiIO &io = ImGui::GetIO();
@@ -78,8 +81,32 @@ namespace PlutoGE::ui
 
     void PanelManager::BeginPanelUpdate()
     {
+        auto &io = ImGui::GetIO();
+        const bool suppressImguiMouse = m_window && m_window->IsCursorLocked();
+        if (suppressImguiMouse)
+        {
+            io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
+        }
+        else
+        {
+            io.ConfigFlags &= ~ImGuiConfigFlags_NoMouseCursorChange;
+        }
+
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
+        if (suppressImguiMouse)
+        {
+            io.MousePos = ImVec2(-FLT_MAX, -FLT_MAX);
+            io.MouseDelta = ImVec2(0.0f, 0.0f);
+            io.MouseWheel = 0.0f;
+            io.MouseWheelH = 0.0f;
+            for (int buttonIndex = 0; buttonIndex < IM_ARRAYSIZE(io.MouseDown); ++buttonIndex)
+            {
+                io.MouseDown[buttonIndex] = false;
+                io.MouseClicked[buttonIndex] = false;
+                io.MouseReleased[buttonIndex] = false;
+            }
+        }
         ImGui::NewFrame();
         ImGuizmo::BeginFrame();
         ImGui::DockSpaceOverViewport(ImGui::GetMainViewport()->ID);

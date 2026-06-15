@@ -1,5 +1,6 @@
 add_library(PlutoGEScene
     src/Entity.cpp
+    src/Prefab.cpp
     src/Scene.cpp
     src/SceneBaker.cpp
     src/SceneSerializer.cpp

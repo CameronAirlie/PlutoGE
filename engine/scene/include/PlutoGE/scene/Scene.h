@@ -81,6 +81,12 @@ namespace PlutoGE::scene
                      float maxDistance,
                      PhysicsRaycastHit &hit,
                      EntityID ignoredEntityId = 0) const;
+        bool RaycastByTag(const glm::vec3 &origin,
+                          const glm::vec3 &direction,
+                          float maxDistance,
+                          const std::string &tag,
+                          PhysicsRaycastHit &hit,
+                          EntityID ignoredEntityId = 0) const;
         glm::vec3 MoveKinematic(Entity &entity, const glm::vec3 &displacement, float skinWidth = 0.02f) const;
 
         std::vector<Light *> GetLights() const; // Get active lights in the scene (for rendering)

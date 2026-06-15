@@ -623,6 +623,10 @@ namespace PlutoGE::assets
         {
             return ProjectAssetType::Scene;
         }
+        if (EndsWithInsensitive(reference, ".plutoprefab"))
+        {
+            return ProjectAssetType::Prefab;
+        }
         if (EndsWithInsensitive(reference, ".cs"))
         {
             return ProjectAssetType::Script;
@@ -657,6 +661,8 @@ namespace PlutoGE::assets
         {
         case ProjectAssetType::Scene:
             return "Scene";
+        case ProjectAssetType::Prefab:
+            return "Prefab";
         case ProjectAssetType::Script:
             return "Script";
         case ProjectAssetType::Mesh:
@@ -677,6 +683,8 @@ namespace PlutoGE::assets
     {
         if (typeName == "Scene")
             return ProjectAssetType::Scene;
+        if (typeName == "Prefab")
+            return ProjectAssetType::Prefab;
         if (typeName == "Script")
             return ProjectAssetType::Script;
         if (typeName == "Mesh")

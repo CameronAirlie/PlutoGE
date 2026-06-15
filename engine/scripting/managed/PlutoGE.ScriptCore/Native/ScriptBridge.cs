@@ -93,6 +93,7 @@ internal static unsafe class ScriptBridge
     private static long _nextInstanceHandle;
     private static string _lastError = string.Empty;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3> _getEntityPosition;
+    private static delegate* unmanaged[Cdecl]<uint, NativeVector3> _getEntityWorldPosition;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3, void> _setEntityPosition;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3> _getEntityRotation;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3, void> _setEntityRotation;
@@ -102,6 +103,8 @@ internal static unsafe class ScriptBridge
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3> _getEntityRight;
     private static delegate* unmanaged[Cdecl]<uint, int> _getEntityActive;
     private static delegate* unmanaged[Cdecl]<uint, int, void> _setEntityActive;
+    private static delegate* unmanaged[Cdecl]<uint, int> _getEntityTagCount;
+    private static delegate* unmanaged[Cdecl]<uint, int, nint> _getEntityTag;
     private static delegate* unmanaged[Cdecl]<uint, int, int> _hasComponent;
     private static delegate* unmanaged[Cdecl]<uint, int, int> _getComponentEnabled;
     private static delegate* unmanaged[Cdecl]<uint, int, int, void> _setComponentEnabled;
@@ -115,6 +118,8 @@ internal static unsafe class ScriptBridge
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3, void> _setLightColor;
     private static delegate* unmanaged[Cdecl]<uint, int> _getMeshStatic;
     private static delegate* unmanaged[Cdecl]<uint, int, void> _setMeshStatic;
+    private static delegate* unmanaged[Cdecl]<uint, NativeVector3> _getMeshColor;
+    private static delegate* unmanaged[Cdecl]<uint, NativeVector3, void> _setMeshColor;
     private static delegate* unmanaged[Cdecl]<uint, float> _getRigidbodyMass;
     private static delegate* unmanaged[Cdecl]<uint, float, void> _setRigidbodyMass;
     private static delegate* unmanaged[Cdecl]<uint, float> _getRigidbodyLinearDrag;
@@ -156,6 +161,7 @@ internal static unsafe class ScriptBridge
     private static delegate* unmanaged[Cdecl]<int> _getCursorLocked;
     private static delegate* unmanaged[Cdecl]<int, void> _setCursorLocked;
     private static delegate* unmanaged[Cdecl]<NativeVector3, NativeVector3, float, uint, NativeRaycastHit*, int> _physicsRaycast;
+    private static delegate* unmanaged[Cdecl]<NativeVector3, NativeVector3, float, uint, nint, NativeRaycastHit*, int> _physicsRaycastTagged;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3, float, NativeVector3> _physicsMoveKinematic;
     private static delegate* unmanaged[Cdecl]<int, nint, void> _logMessage;
 
@@ -227,6 +233,7 @@ internal static unsafe class ScriptBridge
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterGameObjectApi")]
     public static int RegisterGameObjectApi(
         delegate* unmanaged[Cdecl]<uint, NativeVector3> getEntityPosition,
+        delegate* unmanaged[Cdecl]<uint, NativeVector3> getEntityWorldPosition,
         delegate* unmanaged[Cdecl]<uint, NativeVector3, void> setEntityPosition,
         delegate* unmanaged[Cdecl]<uint, NativeVector3> getEntityRotation,
         delegate* unmanaged[Cdecl]<uint, NativeVector3, void> setEntityRotation,
@@ -235,9 +242,12 @@ internal static unsafe class ScriptBridge
         delegate* unmanaged[Cdecl]<uint, NativeVector3> getEntityForward,
         delegate* unmanaged[Cdecl]<uint, NativeVector3> getEntityRight,
         delegate* unmanaged[Cdecl]<uint, int> getEntityActive,
-        delegate* unmanaged[Cdecl]<uint, int, void> setEntityActive)
+        delegate* unmanaged[Cdecl]<uint, int, void> setEntityActive,
+        delegate* unmanaged[Cdecl]<uint, int> getEntityTagCount,
+        delegate* unmanaged[Cdecl]<uint, int, nint> getEntityTag)
     {
         if (getEntityPosition == null ||
+            getEntityWorldPosition == null ||
             setEntityPosition == null ||
             getEntityRotation == null ||
             setEntityRotation == null ||
@@ -246,13 +256,16 @@ internal static unsafe class ScriptBridge
             getEntityForward == null ||
             getEntityRight == null ||
             getEntityActive == null ||
-            setEntityActive == null)
+            setEntityActive == null ||
+            getEntityTagCount == null ||
+            getEntityTag == null)
         {
             SetError("Managed game object API registration received a null function pointer.");
             return 0;
         }
 
         _getEntityPosition = getEntityPosition;
+        _getEntityWorldPosition = getEntityWorldPosition;
         _setEntityPosition = setEntityPosition;
         _getEntityRotation = getEntityRotation;
         _setEntityRotation = setEntityRotation;
@@ -262,6 +275,8 @@ internal static unsafe class ScriptBridge
         _getEntityRight = getEntityRight;
         _getEntityActive = getEntityActive;
         _setEntityActive = setEntityActive;
+        _getEntityTagCount = getEntityTagCount;
+        _getEntityTag = getEntityTag;
         _lastError = string.Empty;
         return 1;
     }
@@ -330,9 +345,11 @@ internal static unsafe class ScriptBridge
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterMeshComponentApi")]
     public static int RegisterMeshComponentApi(
         delegate* unmanaged[Cdecl]<uint, int> getMeshStatic,
-        delegate* unmanaged[Cdecl]<uint, int, void> setMeshStatic)
+        delegate* unmanaged[Cdecl]<uint, int, void> setMeshStatic,
+        delegate* unmanaged[Cdecl]<uint, NativeVector3> getMeshColor,
+        delegate* unmanaged[Cdecl]<uint, NativeVector3, void> setMeshColor)
     {
-        if (getMeshStatic == null || setMeshStatic == null)
+        if (getMeshStatic == null || setMeshStatic == null || getMeshColor == null || setMeshColor == null)
         {
             SetError("Managed mesh component API registration received a null function pointer.");
             return 0;
@@ -340,6 +357,8 @@ internal static unsafe class ScriptBridge
 
         _getMeshStatic = getMeshStatic;
         _setMeshStatic = setMeshStatic;
+        _getMeshColor = getMeshColor;
+        _setMeshColor = setMeshColor;
         _lastError = string.Empty;
         return 1;
     }
@@ -482,15 +501,17 @@ internal static unsafe class ScriptBridge
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterPhysicsApi")]
     public static int RegisterPhysicsApi(
         delegate* unmanaged[Cdecl]<NativeVector3, NativeVector3, float, uint, NativeRaycastHit*, int> raycast,
+        delegate* unmanaged[Cdecl]<NativeVector3, NativeVector3, float, uint, nint, NativeRaycastHit*, int> raycastTagged,
         delegate* unmanaged[Cdecl]<uint, NativeVector3, float, NativeVector3> moveKinematic)
     {
-        if (raycast == null || moveKinematic == null)
+        if (raycast == null || raycastTagged == null || moveKinematic == null)
         {
             SetError("Managed physics API registration received a null function pointer.");
             return 0;
         }
 
         _physicsRaycast = raycast;
+        _physicsRaycastTagged = raycastTagged;
         _physicsMoveKinematic = moveKinematic;
         _lastError = string.Empty;
         return 1;
@@ -731,6 +752,11 @@ internal static unsafe class ScriptBridge
         return _getEntityPosition == null ? Vector3.Zero : _getEntityPosition(entityId).ToManaged();
     }
 
+    internal static Vector3 GetEntityWorldPosition(uint entityId)
+    {
+        return _getEntityWorldPosition == null ? Vector3.Zero : _getEntityWorldPosition(entityId).ToManaged();
+    }
+
     internal static void SetEntityPosition(uint entityId, Vector3 position)
     {
         if (_setEntityPosition == null)
@@ -794,6 +820,83 @@ internal static unsafe class ScriptBridge
         }
 
         _setEntityActive(entityId, active ? 1 : 0);
+    }
+
+    internal static string[] GetEntityTags(uint entityId)
+    {
+        if (_getEntityTagCount == null || _getEntityTag == null)
+        {
+            return [];
+        }
+
+        var tagCount = Math.Max(0, _getEntityTagCount(entityId));
+        var tags = new string[tagCount];
+        for (var index = 0; index < tagCount; ++index)
+        {
+            var tagPtr = _getEntityTag(entityId, index);
+            tags[index] = tagPtr == 0 ? string.Empty : Marshal.PtrToStringUTF8(tagPtr) ?? string.Empty;
+        }
+
+        return tags;
+    }
+
+    internal static bool HasEntityTag(uint entityId, string tag)
+    {
+        if (string.IsNullOrEmpty(tag))
+        {
+            return false;
+        }
+
+        foreach (var candidate in GetEntityTags(entityId))
+        {
+            if (string.Equals(candidate, tag, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    internal static bool InvokeEntityMethod(uint entityId, string methodName)
+    {
+        if (entityId == 0 || string.IsNullOrWhiteSpace(methodName))
+        {
+            return false;
+        }
+
+        var invoked = false;
+        foreach (var instance in Instances.Values)
+        {
+            if (instance.EntityId != entityId)
+            {
+                continue;
+            }
+
+            var method = instance.GetType().GetMethod(
+                methodName,
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+                binder: null,
+                Type.EmptyTypes,
+                modifiers: null);
+
+            if (method is null || method.ReturnType != typeof(void))
+            {
+                continue;
+            }
+
+            try
+            {
+                method.Invoke(instance, null);
+                invoked = true;
+            }
+            catch (Exception ex)
+            {
+                SetError($"Failed to invoke method '{methodName}' on '{instance.GetType().FullName}': {ex.Message}");
+            }
+        }
+
+        return invoked;
     }
 
     internal static bool HasComponent(uint entityId, NativeComponentType componentType)
@@ -889,6 +992,21 @@ internal static unsafe class ScriptBridge
         }
 
         _setMeshStatic(entityId, isStatic ? 1 : 0);
+    }
+
+    internal static Vector3 GetMeshColor(uint entityId)
+    {
+        return _getMeshColor == null ? Vector3.One : _getMeshColor(entityId).ToManaged();
+    }
+
+    internal static void SetMeshColor(uint entityId, Vector3 color)
+    {
+        if (_setMeshColor == null)
+        {
+            return;
+        }
+
+        _setMeshColor(entityId, NativeVector3.FromManaged(color));
     }
 
     internal static float GetRigidbodyMass(uint entityId) => _getRigidbodyMass == null ? 0.0f : _getRigidbodyMass(entityId);
@@ -1020,6 +1138,34 @@ internal static unsafe class ScriptBridge
                 maxDistance,
                 ignoredEntityId,
                 hitPtr) != 0;
+        }
+    }
+
+    internal static bool PhysicsRaycastTagged(Vector3 origin, Vector3 direction, float maxDistance, uint ignoredEntityId, string tag, out NativeRaycastHit hit)
+    {
+        hit = default;
+        if (_physicsRaycastTagged == null)
+        {
+            return false;
+        }
+
+        var tagPtr = Marshal.StringToCoTaskMemUTF8(tag ?? string.Empty);
+        try
+        {
+            fixed (NativeRaycastHit* hitPtr = &hit)
+            {
+                return _physicsRaycastTagged(
+                    NativeVector3.FromManaged(origin),
+                    NativeVector3.FromManaged(direction),
+                    maxDistance,
+                    ignoredEntityId,
+                    tagPtr,
+                    hitPtr) != 0;
+            }
+        }
+        finally
+        {
+            Marshal.FreeCoTaskMem(tagPtr);
         }
     }
 

@@ -6,6 +6,8 @@
 
 namespace PlutoGE::ui
 {
+    inline constexpr const char *kContentBrowserAssetDragDropPayload = "PLUTOGE_CONTENT_BROWSER_ASSET";
+
     class ContentBrowserPanel : public Panel
     {
     public:

@@ -61,10 +61,24 @@ namespace PlutoGE::scene
 
         EntityID GetID() const { return m_id; }
         std::string GetName() const { return m_name; }
-        std::vector<std::string> GetTags() const { return m_tags; }
+        const std::vector<std::string> &GetTags() const { return m_tags; }
+        void SetTags(std::vector<std::string> tags) { m_tags = std::move(tags); }
+        bool HasTag(const std::string &tag) const;
+        void AddTag(std::string tag);
+        bool RemoveTag(const std::string &tag);
 
         bool IsSelfActive() const { return m_isActive; }
         bool IsActive() const;
+
+        const std::string &GetPrefabSource() const { return m_prefabSource; }
+        EntityID GetPrefabEntityID() const { return m_prefabEntityId; }
+        bool IsPrefabInstanceRoot() const { return m_isPrefabInstanceRoot; }
+        const std::vector<std::string> &GetPrefabOverrides() const { return m_prefabOverrides; }
+        void SetPrefabLink(std::string source, EntityID prefabEntityId, bool isRoot);
+        void ClearPrefabLinkRecursive();
+        void AddPrefabOverride(std::string propertyPath);
+        void ClearPrefabOverrides() { m_prefabOverrides.clear(); }
+        void ClearPrefabOverridesRecursive();
 
         Component *AddComponent(Component *component);
         bool RemoveComponent(Component *component);
@@ -222,6 +236,10 @@ namespace PlutoGE::scene
         std::vector<std::string> m_tags; // Optional tags for categorizing entities (e.g., "Player", "Enemy", "Collectible")
         std::vector<std::unique_ptr<Component>> m_componentStorage;
         std::vector<std::vector<Component *>> m_componentBuckets;
+        std::string m_prefabSource;
+        EntityID m_prefabEntityId = 0;
+        bool m_isPrefabInstanceRoot = false;
+        std::vector<std::string> m_prefabOverrides;
         Scene *m_scene = nullptr;
     };
 }

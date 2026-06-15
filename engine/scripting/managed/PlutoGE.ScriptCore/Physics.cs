@@ -31,6 +31,16 @@ public static class Physics
         return Raycast(origin, direction, maxDistance, ignoredEntity?.EntityId ?? 0, out hit);
     }
 
+    public static bool RaycastTagged(Vector3 origin, Vector3 direction, float maxDistance, string tag, out RaycastHit hit)
+    {
+        return RaycastTagged(origin, direction, maxDistance, tag, 0, out hit);
+    }
+
+    public static bool RaycastTagged(Vector3 origin, Vector3 direction, float maxDistance, string tag, GameObject? ignoredEntity, out RaycastHit hit)
+    {
+        return RaycastTagged(origin, direction, maxDistance, tag, ignoredEntity?.EntityId ?? 0, out hit);
+    }
+
     public static Vector3 MoveKinematic(GameObject gameObject, Vector3 displacement, float skinWidth = 0.02f)
     {
         return gameObject.IsValid
@@ -54,6 +64,27 @@ public static class Physics
         }
 
         if (!ScriptBridge.PhysicsRaycast(origin, Vector3.Normalize(direction), maxDistance, ignoredEntityId, out var nativeHit))
+        {
+            return false;
+        }
+
+        hit = new RaycastHit(
+            nativeHit.EntityId,
+            nativeHit.Point.ToManaged(),
+            nativeHit.Normal.ToManaged(),
+            nativeHit.Distance);
+        return true;
+    }
+
+    private static bool RaycastTagged(Vector3 origin, Vector3 direction, float maxDistance, string tag, uint ignoredEntityId, out RaycastHit hit)
+    {
+        hit = default;
+        if (direction.LengthSquared() <= 0.000001f || maxDistance <= 0.0f)
+        {
+            return false;
+        }
+
+        if (!ScriptBridge.PhysicsRaycastTagged(origin, Vector3.Normalize(direction), maxDistance, ignoredEntityId, tag, out var nativeHit))
         {
             return false;
         }

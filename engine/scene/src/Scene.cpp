@@ -739,6 +739,83 @@ namespace PlutoGE::scene
         return true;
     }
 
+    bool Scene::RaycastByTag(const glm::vec3 &origin,
+                             const glm::vec3 &direction,
+                             float maxDistance,
+                             const std::string &tag,
+                             PhysicsRaycastHit &hit,
+                             EntityID ignoredEntityId) const
+    {
+        hit = {};
+        if (tag.empty())
+        {
+            return Raycast(origin, direction, maxDistance, hit, ignoredEntityId);
+        }
+
+        const float directionLength = glm::length(direction);
+        if (directionLength <= std::numeric_limits<float>::epsilon() || maxDistance <= 0.0f)
+        {
+            return false;
+        }
+
+        std::vector<Entity *> entities;
+        for (auto *rootEntity : m_rootEntities)
+        {
+            CollectActiveEntities(rootEntity, entities);
+        }
+
+        auto queryWorld = BuildBulletQueryWorld(entities, ignoredEntityId);
+        const glm::vec3 normalizedDirection = direction / directionLength;
+        const btVector3 from = ToBullet(origin);
+        const btVector3 to = ToBullet(origin + normalizedDirection * maxDistance);
+
+        class TaggedRayResultCallback final : public btCollisionWorld::ClosestRayResultCallback
+        {
+        public:
+            TaggedRayResultCallback(const btVector3 &from, const btVector3 &to, const std::string &tag)
+                : btCollisionWorld::ClosestRayResultCallback(from, to), m_tag(tag)
+            {
+            }
+
+            bool needsCollision(btBroadphaseProxy *proxy) const override
+            {
+                if (!btCollisionWorld::ClosestRayResultCallback::needsCollision(proxy))
+                {
+                    return false;
+                }
+
+                const auto *collisionObject = proxy ? static_cast<const btCollisionObject *>(proxy->m_clientObject) : nullptr;
+                const auto *entity = collisionObject ? static_cast<const Entity *>(collisionObject->getUserPointer()) : nullptr;
+                return entity && entity->HasTag(m_tag);
+            }
+
+        private:
+            const std::string &m_tag;
+        };
+
+        TaggedRayResultCallback callback(from, to, tag);
+        queryWorld->collisionWorld.rayTest(from, to, callback);
+        if (!callback.hasHit())
+        {
+            return false;
+        }
+
+        auto *entity = callback.m_collisionObject
+                           ? static_cast<Entity *>(callback.m_collisionObject->getUserPointer())
+                           : nullptr;
+        if (!entity || !entity->HasTag(tag))
+        {
+            return false;
+        }
+
+        hit.entityId = entity->GetID();
+        hit.point = FromBullet(callback.m_hitPointWorld);
+        hit.normal = glm::normalize(FromBullet(callback.m_hitNormalWorld));
+        hit.distance = glm::length(hit.point - origin);
+        return true;
+
+    }
+
     glm::vec3 Scene::MoveKinematic(Entity &entity, const glm::vec3 &displacement, float skinWidth) const
     {
         auto *collider = entity.GetComponent<ColliderComponent>();

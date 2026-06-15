@@ -43,6 +43,7 @@ namespace PlutoGE::ui
 
     private:
         std::vector<Panel *> m_panels;
+        platform::Window *m_window = nullptr;
         PanelManagerTimingStats m_timingStats;
     };
 }

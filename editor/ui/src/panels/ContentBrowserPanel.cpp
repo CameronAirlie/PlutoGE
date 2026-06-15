@@ -170,10 +170,23 @@ namespace PlutoGE::ui
                 {
                     editorShell.OpenSceneFromPath(resolvedPath);
                 }
+                else if (resolvedPath.extension() == ".plutoprefab")
+                {
+                    editorShell.OpenSceneFromPath(resolvedPath);
+                }
                 else if (asset.type == assets::ProjectAssetType::Material)
                 {
                     editorShell.OpenMaterialAsset(asset.reference);
                 }
+            }
+
+            if (ImGui::BeginDragDropSource())
+            {
+                ImGui::SetDragDropPayload(kContentBrowserAssetDragDropPayload,
+                                          asset.reference.c_str(),
+                                          asset.reference.size() + 1);
+                ImGui::TextUnformatted(displayName.c_str());
+                ImGui::EndDragDropSource();
             }
         }
         ImGui::EndChild();

@@ -17,6 +17,8 @@ public sealed class KinematicFpsController : ScriptBehaviour
     [SerializedField] private float skinWidth = 0.03f;
     [SerializedField] private float shootDistance = 100.0f;
     [SerializedField] private float fireCooldown = 0.12f;
+    [SerializedField] private string damageableTag = "Enemy";
+    [SerializedField] private string damageMethod = "TakeDamage";
 
     private float _yaw;
     private float _pitch;
@@ -105,8 +107,8 @@ public sealed class KinematicFpsController : ScriptBehaviour
         }
 
         var rotationRadians = MathF.PI / 180.0f * _yaw;
-        var forward = new Vector3(MathF.Sin(rotationRadians), 0.0f, -MathF.Cos(rotationRadians));
-        var right = new Vector3(MathF.Cos(rotationRadians), 0.0f, MathF.Sin(rotationRadians));
+        var forward = GameObject.Forward; //  new Vector3(MathF.Sin(rotationRadians), 0.0f, -MathF.Cos(rotationRadians));
+        var right = GameObject.Right; //  new Vector3(MathF.Cos(rotationRadians), 0.0f, MathF.Sin(rotationRadians));
         var speed = moveSpeed * (Input.IsKeyDown(KeyCode.LeftShift) ? sprintMultiplier : 1.0f);
 
         var horizontalVelocity = (right * input.X + forward * input.Z) * speed;
@@ -121,7 +123,7 @@ public sealed class KinematicFpsController : ScriptBehaviour
 
     private bool CheckGrounded()
     {
-        var origin = GameObject.Position + new Vector3(0.0f, groundProbeOffset, 0.0f);
+        var origin = GameObject.WorldPosition + new Vector3(0.0f, groundProbeOffset, 0.0f);
         return Physics.Raycast(origin, -Vector3.UnitY, groundCheckDistance, GameObject, out var hit) &&
                hit.Normal.Y > 0.55f;
     }
@@ -137,11 +139,17 @@ public sealed class KinematicFpsController : ScriptBehaviour
 
         _nextFireTime = _time + fireCooldown;
 
-        var origin = camera is not null ? camera.GameObject.Position : GameObject.Position;
+        var origin = camera is not null ? camera.GameObject.WorldPosition : GameObject.WorldPosition;
         var direction = camera is not null ? camera.GameObject.Forward : GameObject.Forward;
-        if (Physics.Raycast(origin, direction, shootDistance, GameObject, out var hit))
+        if (Physics.RaycastTagged(origin, direction, shootDistance, damageableTag, GameObject, out var hit))
         {
-            Debug.Log($"FPS hit entity {hit.Entity.EntityId} at {hit.Distance:0.00}m");
+            if (!hit.Entity.TryInvoke(damageMethod))
+            {
+                Debug.Log($"Hit entity {hit.Entity.EntityId}, but it has no {damageMethod}() method.");
+                return;
+            }
+
+            Debug.Log($"FPS hit {damageableTag} entity {hit.Entity.EntityId} at {hit.Distance:0.00}m");
         }
     }
 }

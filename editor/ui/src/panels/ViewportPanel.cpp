@@ -1,7 +1,9 @@
 #include "PlutoGE/ui/panels/ViewportPanel.h"
+#include "PlutoGE/assets/Project.h"
 #include "PlutoGE/render/RenderTarget.h"
 #include "PlutoGE/ui/EditorShell.h"
 #include "PlutoGE/scene/Entity.h"
+#include "PlutoGE/scene/Prefab.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/scene/components/IblCaptureComponent.h"
@@ -9,6 +11,7 @@
 #include "PlutoGE/scene/components/CameraComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/render/Renderer.h"
+#include "PlutoGE/ui/panels/ContentBrowserPanel.h"
 #include <ImGuizmo.h>
 #include <iostream>
 
@@ -845,6 +848,38 @@ namespace PlutoGE::ui
         const bool viewportClicked = ImGui::IsItemClicked(ImGuiMouseButton_Left);
         m_isViewportHovered = ImGui::IsItemHovered();
         m_isViewportFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+
+        if (m_config.editorViewport && ImGui::BeginDragDropTarget())
+        {
+            if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kContentBrowserAssetDragDropPayload))
+            {
+                const std::string reference(static_cast<const char *>(payload->Data), payload->DataSize > 0 ? payload->DataSize - 1 : 0);
+                if (assets::Project::GetAssetTypeForReference(reference) == assets::ProjectAssetType::Prefab)
+                {
+                    auto *scene = EditorShell::GetInstance().GetEngine().GetScene();
+                    std::string errorMessage;
+                    scene::Entity *createdEntity = nullptr;
+                    if (scene)
+                    {
+                        EditorShell::GetInstance().ExecuteSceneEdit("Instantiate Prefab",
+                                                                    [scene, reference, &createdEntity, &errorMessage]()
+                                                                    {
+                                                                        createdEntity = scene::Prefab::Instantiate(*scene, reference, nullptr, &errorMessage);
+                                                                    });
+                    }
+
+                    if (createdEntity)
+                    {
+                        EditorShell::GetInstance().SetSelectedEntity(createdEntity);
+                    }
+                    else if (!errorMessage.empty())
+                    {
+                        EditorShell::GetInstance().Log(EditorShell::ConsoleSeverity::Error, errorMessage);
+                    }
+                }
+            }
+            ImGui::EndDragDropTarget();
+        }
 
         if (m_config.editorViewport)
         {

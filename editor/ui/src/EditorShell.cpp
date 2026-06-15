@@ -16,6 +16,7 @@
 #include "PlutoGE/scripting/ScriptLogging.h"
 #include "PlutoGE/scene/SceneBaker.h"
 #include "PlutoGE/scene/SceneSerializer.h"
+#include "PlutoGE/scene/Prefab.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
 #include "PlutoGE/scene/components/IblCaptureComponent.h"
@@ -1362,6 +1363,12 @@ namespace PlutoGE::ui
         }
 
         m_scene = std::move(scene);
+        std::string prefabErrorMessage;
+        const int updatedPrefabCount = scene::Prefab::UpdateInstances(*m_scene, {}, &prefabErrorMessage);
+        if (updatedPrefabCount > 0)
+        {
+            Log(ConsoleSeverity::Info, "Updated " + std::to_string(updatedPrefabCount) + " prefab instance(s).");
+        }
         m_engine.SetScene(m_scene.get());
         ResetSelection();
     }
@@ -1884,7 +1891,7 @@ namespace PlutoGE::ui
             renderer.BeginProfilingFrame();
 
             const bool isRuntimeRunning = m_engine.IsRuntimeRunning();
-            window.SetScriptInputEnabled(isRuntimeRunning && viewportPanel2->IsViewportFocused());
+            window.SetScriptInputEnabled(isRuntimeRunning && (window.IsCursorLocked() || viewportPanel2->IsViewportFocused()));
             if (!isRuntimeRunning)
             {
                 window.SetCursorLocked(false);
@@ -1982,7 +1989,7 @@ namespace PlutoGE::ui
 
             UpdateEditorCamera(m_editorCamera,
                                windowHandle,
-                               viewportPanel->IsViewportHovered() || viewportPanel->IsViewportFocused(),
+                               !isRuntimeRunning && (viewportPanel->IsViewportHovered() || viewportPanel->IsViewportFocused()),
                                deltaSeconds,
                                isEditorCameraLookActive,
                                lastEditorCameraCursorX,
@@ -2508,7 +2515,7 @@ namespace PlutoGE::ui
 
             m_panelManager.UpdatePanels();
 
-            window.SetScriptInputEnabled(m_engine.IsRuntimeRunning() && viewportPanel2->IsViewportFocused());
+            window.SetScriptInputEnabled(m_engine.IsRuntimeRunning() && (window.IsCursorLocked() || viewportPanel2->IsViewportFocused()));
             if (isBakeRunning)
             {
                 ImGui::EndDisabled();

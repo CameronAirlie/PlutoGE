@@ -287,6 +287,31 @@ namespace PlutoGE::scene
                    << SerializeVec3(entity->GetRotation()) << '\t'
                    << SerializeVec3(entity->GetScale()) << '\n';
 
+            if (!entity->GetPrefabSource().empty())
+            {
+                output << "PREFAB\t"
+                       << entity->GetID() << '\t'
+                       << EscapeText(entity->GetPrefabSource()) << '\t'
+                       << entity->GetPrefabEntityID() << '\t'
+                       << (entity->IsPrefabInstanceRoot() ? 1 : 0) << '\t'
+                       << entity->GetPrefabOverrides().size();
+                for (const auto &overridePath : entity->GetPrefabOverrides())
+                {
+                    output << '\t' << EscapeText(overridePath);
+                }
+                output << '\n';
+            }
+
+            if (!entity->GetTags().empty())
+            {
+                output << "TAGS\t" << entity->GetID() << '\t' << entity->GetTags().size();
+                for (const auto &tag : entity->GetTags())
+                {
+                    output << '\t' << EscapeText(tag);
+                }
+                output << '\n';
+            }
+
             for (const auto &bucket : entity->GetComponentBuckets())
             {
                 for (const auto *component : bucket)
@@ -468,6 +493,48 @@ namespace PlutoGE::scene
                     .entityId = static_cast<EntityID>(std::stoul(tokens[1])),
                     .typeName = tokens[2],
                 };
+                continue;
+            }
+
+            if (tokens[0] == "PREFAB" && tokens.size() >= 5)
+            {
+                const EntityID entityId = static_cast<EntityID>(std::stoul(tokens[1]));
+                const auto entityIt = entityMap.find(entityId);
+                if (entityIt != entityMap.end())
+                {
+                    entityIt->second->SetPrefabLink(tokens[2],
+                                                    static_cast<EntityID>(std::stoul(tokens[3])),
+                                                    tokens[4] == "1");
+                    if (tokens.size() >= 6)
+                    {
+                        const int overrideCount = std::stoi(tokens[5]);
+                        for (int overrideIndex = 0; overrideIndex < overrideCount && 6 + overrideIndex < static_cast<int>(tokens.size()); ++overrideIndex)
+                        {
+                            entityIt->second->AddPrefabOverride(tokens[6 + overrideIndex]);
+                        }
+                    }
+                }
+                continue;
+            }
+
+            if (tokens[0] == "TAGS" && tokens.size() >= 3)
+            {
+                const EntityID entityId = static_cast<EntityID>(std::stoul(tokens[1]));
+                const auto entityIt = entityMap.find(entityId);
+                if (entityIt != entityMap.end())
+                {
+                    std::vector<std::string> tags;
+                    const int tagCount = std::stoi(tokens[2]);
+                    tags.reserve(static_cast<std::size_t>(std::max(tagCount, 0)));
+                    for (int tagIndex = 0; tagIndex < tagCount && 3 + tagIndex < static_cast<int>(tokens.size()); ++tagIndex)
+                    {
+                        if (!tokens[3 + tagIndex].empty())
+                        {
+                            tags.push_back(tokens[3 + tagIndex]);
+                        }
+                    }
+                    entityIt->second->SetTags(std::move(tags));
+                }
                 continue;
             }
 

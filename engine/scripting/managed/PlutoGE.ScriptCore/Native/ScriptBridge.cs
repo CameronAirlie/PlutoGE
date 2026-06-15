@@ -36,6 +36,15 @@ internal static unsafe class ScriptBridge
         }
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct NativeRaycastHit
+    {
+        public uint EntityId;
+        public NativeVector3 Point;
+        public NativeVector3 Normal;
+        public float Distance;
+    }
+
     internal enum NativeComponentType
     {
         Mesh = 0,
@@ -146,6 +155,8 @@ internal static unsafe class ScriptBridge
     private static delegate* unmanaged[Cdecl]<int> _getQuitRequested;
     private static delegate* unmanaged[Cdecl]<int> _getCursorLocked;
     private static delegate* unmanaged[Cdecl]<int, void> _setCursorLocked;
+    private static delegate* unmanaged[Cdecl]<NativeVector3, NativeVector3, float, uint, NativeRaycastHit*, int> _physicsRaycast;
+    private static delegate* unmanaged[Cdecl]<uint, NativeVector3, float, NativeVector3> _physicsMoveKinematic;
     private static delegate* unmanaged[Cdecl]<int, nint, void> _logMessage;
 
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "LoadScriptAssembly")]
@@ -464,6 +475,23 @@ internal static unsafe class ScriptBridge
         _getQuitRequested = getQuitRequested;
         _getCursorLocked = getCursorLocked;
         _setCursorLocked = setCursorLocked;
+        _lastError = string.Empty;
+        return 1;
+    }
+
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterPhysicsApi")]
+    public static int RegisterPhysicsApi(
+        delegate* unmanaged[Cdecl]<NativeVector3, NativeVector3, float, uint, NativeRaycastHit*, int> raycast,
+        delegate* unmanaged[Cdecl]<uint, NativeVector3, float, NativeVector3> moveKinematic)
+    {
+        if (raycast == null || moveKinematic == null)
+        {
+            SetError("Managed physics API registration received a null function pointer.");
+            return 0;
+        }
+
+        _physicsRaycast = raycast;
+        _physicsMoveKinematic = moveKinematic;
         _lastError = string.Empty;
         return 1;
     }
@@ -974,6 +1002,35 @@ internal static unsafe class ScriptBridge
         }
 
         _setCursorLocked(locked ? 1 : 0);
+    }
+
+    internal static bool PhysicsRaycast(Vector3 origin, Vector3 direction, float maxDistance, uint ignoredEntityId, out NativeRaycastHit hit)
+    {
+        hit = default;
+        if (_physicsRaycast == null)
+        {
+            return false;
+        }
+
+        fixed (NativeRaycastHit* hitPtr = &hit)
+        {
+            return _physicsRaycast(
+                NativeVector3.FromManaged(origin),
+                NativeVector3.FromManaged(direction),
+                maxDistance,
+                ignoredEntityId,
+                hitPtr) != 0;
+        }
+    }
+
+    internal static Vector3 PhysicsMoveKinematic(uint entityId, Vector3 displacement, float skinWidth)
+    {
+        if (_physicsMoveKinematic == null)
+        {
+            return Vector3.Zero;
+        }
+
+        return _physicsMoveKinematic(entityId, NativeVector3.FromManaged(displacement), skinWidth).ToManaged();
     }
 
     internal static void LogMessage(int severity, string? message)

@@ -11,10 +11,14 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <unordered_set>
 
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtx/euler_angles.hpp>
 #include <glm/gtc/quaternion.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 namespace PlutoGE::scene
 {
@@ -81,9 +85,60 @@ namespace PlutoGE::scene
             return glm::vec3(value.x(), value.y(), value.z());
         }
 
+        struct DecomposedTransform
+        {
+            glm::vec3 position{0.0f};
+            glm::vec3 rotation{0.0f};
+            glm::vec3 scale{1.0f};
+        };
+
+        DecomposedTransform DecomposeTransform(const glm::mat4 &transform)
+        {
+            DecomposedTransform result;
+            result.position = glm::vec3(transform[3]);
+
+            glm::vec3 basisX(transform[0]);
+            glm::vec3 basisY(transform[1]);
+            glm::vec3 basisZ(transform[2]);
+            result.scale = glm::vec3(glm::length(basisX), glm::length(basisY), glm::length(basisZ));
+
+            if (result.scale.x <= std::numeric_limits<float>::epsilon() ||
+                result.scale.y <= std::numeric_limits<float>::epsilon() ||
+                result.scale.z <= std::numeric_limits<float>::epsilon())
+            {
+                return result;
+            }
+
+            basisX /= result.scale.x;
+            basisY /= result.scale.y;
+            basisZ /= result.scale.z;
+
+            if (glm::dot(glm::cross(basisX, basisY), basisZ) < 0.0f)
+            {
+                result.scale.x = -result.scale.x;
+                basisX = -basisX;
+            }
+
+            glm::mat4 rotationMatrix(1.0f);
+            rotationMatrix[0] = glm::vec4(glm::normalize(basisX), 0.0f);
+            rotationMatrix[1] = glm::vec4(glm::normalize(basisY), 0.0f);
+            rotationMatrix[2] = glm::vec4(glm::normalize(basisZ), 0.0f);
+
+            float rotationX = 0.0f;
+            float rotationY = 0.0f;
+            float rotationZ = 0.0f;
+            glm::extractEulerAngleXYZ(rotationMatrix, rotationX, rotationY, rotationZ);
+            result.rotation = glm::degrees(glm::vec3(rotationX, rotationY, rotationZ));
+            return result;
+        }
+
         btQuaternion ToBulletRotation(const glm::vec3 &eulerDegrees)
         {
-            const glm::quat rotation = glm::quat(glm::radians(eulerDegrees));
+            const glm::mat4 rotationMatrix = glm::eulerAngleXYZ(
+                glm::radians(eulerDegrees.x),
+                glm::radians(eulerDegrees.y),
+                glm::radians(eulerDegrees.z));
+            const glm::quat rotation = glm::quat_cast(rotationMatrix);
             return btQuaternion(rotation.x, rotation.y, rotation.z, rotation.w);
         }
 
@@ -115,7 +170,34 @@ namespace PlutoGE::scene
         glm::vec3 FromBulletRotation(const btQuaternion &rotation)
         {
             const glm::quat glmRotation(rotation.w(), rotation.x(), rotation.y(), rotation.z());
-            return glm::degrees(glm::eulerAngles(glmRotation));
+            return DecomposeTransform(glm::mat4_cast(glmRotation)).rotation;
+        }
+
+        void ApplyWorldPhysicsTransform(Entity &entity, const btTransform &transform)
+        {
+            const btQuaternion bulletRotation = transform.getRotation();
+            const glm::quat worldRotation(bulletRotation.w(), bulletRotation.x(), bulletRotation.y(), bulletRotation.z());
+            glm::mat4 worldTransform = glm::translate(glm::mat4(1.0f), FromBullet(transform.getOrigin())) * glm::mat4_cast(worldRotation);
+
+            if (auto *parent = entity.GetParent())
+            {
+                worldTransform = glm::inverse(parent->GetWorldTransform()) * worldTransform;
+            }
+
+            const auto localTransform = DecomposeTransform(worldTransform);
+            entity.SetPosition(localTransform.position);
+            entity.SetRotation(localTransform.rotation);
+        }
+
+        void SetEntityWorldPosition(Entity &entity, const glm::vec3 &worldPosition)
+        {
+            glm::vec3 localPosition = worldPosition;
+            if (auto *parent = entity.GetParent())
+            {
+                localPosition = glm::vec3(glm::inverse(parent->GetWorldTransform()) * glm::vec4(worldPosition, 1.0f));
+            }
+
+            entity.SetPosition(localPosition);
         }
 
         struct BulletShapeData
@@ -187,6 +269,76 @@ namespace PlutoGE::scene
             bool dynamic = false;
         };
 
+        struct BulletQueryBody
+        {
+            Entity *entity = nullptr;
+            std::unique_ptr<btCollisionShape> shape;
+            std::vector<std::unique_ptr<btCollisionShape>> childShapes;
+            std::unique_ptr<btCollisionObject> object;
+        };
+
+        struct BulletQueryWorld
+        {
+            btDefaultCollisionConfiguration collisionConfiguration;
+            btCollisionDispatcher dispatcher{&collisionConfiguration};
+            btDbvtBroadphase broadphase;
+            btCollisionWorld collisionWorld{&dispatcher, &broadphase, &collisionConfiguration};
+            std::vector<BulletQueryBody> bodies;
+
+            ~BulletQueryWorld()
+            {
+                for (auto &body : bodies)
+                {
+                    if (body.object)
+                    {
+                        collisionWorld.removeCollisionObject(body.object.get());
+                    }
+                }
+            }
+        };
+
+        std::unique_ptr<BulletQueryWorld> BuildBulletQueryWorld(const std::vector<Entity *> &entities, EntityID ignoredEntityId = 0)
+        {
+            auto queryWorld = std::make_unique<BulletQueryWorld>();
+            queryWorld->bodies.reserve(entities.size());
+
+            for (auto *entity : entities)
+            {
+                auto *collider = entity ? entity->GetComponent<ColliderComponent>() : nullptr;
+                if (!entity || entity->GetID() == ignoredEntityId || !collider || !collider->IsEnabled() || collider->IsTrigger())
+                {
+                    continue;
+                }
+
+                const glm::vec3 worldScale = entity->GetWorldScale();
+                auto shapeData = CreateBulletShape(*collider, worldScale);
+                if (!shapeData.shape)
+                {
+                    continue;
+                }
+
+                btTransform transform;
+                transform.setIdentity();
+                transform.setOrigin(ToBullet(entity->GetWorldPosition()));
+                transform.setRotation(ToBulletRotation(entity->GetWorldTransform()));
+
+                auto object = std::make_unique<btCollisionObject>();
+                object->setCollisionShape(shapeData.shape.get());
+                object->setWorldTransform(transform);
+                object->setUserPointer(entity);
+                queryWorld->collisionWorld.addCollisionObject(object.get());
+
+                queryWorld->bodies.push_back(BulletQueryBody{
+                    .entity = entity,
+                    .shape = std::move(shapeData.shape),
+                    .childShapes = std::move(shapeData.ownedChildShapes),
+                    .object = std::move(object),
+                });
+            }
+
+            return queryWorld;
+        }
+
         uint64_t MakeCollisionPairKey(EntityID first, EntityID second)
         {
             if (first > second)
@@ -239,8 +391,7 @@ namespace PlutoGE::scene
 
             btTransform transform;
             stepBody.body->getMotionState()->getWorldTransform(transform);
-            stepBody.entity->SetPosition(FromBullet(transform.getOrigin()));
-            stepBody.entity->SetRotation(FromBulletRotation(transform.getRotation()));
+            ApplyWorldPhysicsTransform(*stepBody.entity, transform);
             stepBody.rigidbody->SetVelocity(FromBullet(stepBody.body->getLinearVelocity()));
             stepBody.rigidbody->SetAngularVelocity(FromBullet(stepBody.body->getAngularVelocity()));
         }
@@ -540,6 +691,127 @@ namespace PlutoGE::scene
         }
 
         StepPhysics(deltaTime);
+    }
+
+    bool Scene::Raycast(const glm::vec3 &origin,
+                        const glm::vec3 &direction,
+                        float maxDistance,
+                        PhysicsRaycastHit &hit,
+                        EntityID ignoredEntityId) const
+    {
+        hit = {};
+        const float directionLength = glm::length(direction);
+        if (directionLength <= std::numeric_limits<float>::epsilon() || maxDistance <= 0.0f)
+        {
+            return false;
+        }
+
+        std::vector<Entity *> entities;
+        for (auto *rootEntity : m_rootEntities)
+        {
+            CollectActiveEntities(rootEntity, entities);
+        }
+
+        auto queryWorld = BuildBulletQueryWorld(entities, ignoredEntityId);
+        const glm::vec3 normalizedDirection = direction / directionLength;
+        const btVector3 from = ToBullet(origin);
+        const btVector3 to = ToBullet(origin + normalizedDirection * maxDistance);
+
+        btCollisionWorld::ClosestRayResultCallback callback(from, to);
+        queryWorld->collisionWorld.rayTest(from, to, callback);
+        if (!callback.hasHit())
+        {
+            return false;
+        }
+
+        auto *entity = callback.m_collisionObject
+                           ? static_cast<Entity *>(callback.m_collisionObject->getUserPointer())
+                           : nullptr;
+        if (!entity)
+        {
+            return false;
+        }
+
+        hit.entityId = entity->GetID();
+        hit.point = FromBullet(callback.m_hitPointWorld);
+        hit.normal = glm::normalize(FromBullet(callback.m_hitNormalWorld));
+        hit.distance = glm::length(hit.point - origin);
+        return true;
+    }
+
+    glm::vec3 Scene::MoveKinematic(Entity &entity, const glm::vec3 &displacement, float skinWidth) const
+    {
+        auto *collider = entity.GetComponent<ColliderComponent>();
+        if (!collider || !collider->IsEnabled() || collider->IsTrigger())
+        {
+            SetEntityWorldPosition(entity, entity.GetWorldPosition() + displacement);
+            return displacement;
+        }
+
+        std::vector<Entity *> entities;
+        for (auto *rootEntity : m_rootEntities)
+        {
+            CollectActiveEntities(rootEntity, entities);
+        }
+
+        auto queryWorld = BuildBulletQueryWorld(entities, entity.GetID());
+        auto shapeData = CreateBulletShape(*collider, entity.GetWorldScale());
+        auto *convexShape = dynamic_cast<btConvexShape *>(shapeData.shape.get());
+        if (!convexShape)
+        {
+            SetEntityWorldPosition(entity, entity.GetWorldPosition() + displacement);
+            return displacement;
+        }
+
+        const glm::vec3 startPosition = entity.GetWorldPosition();
+        glm::vec3 currentPosition = startPosition;
+        glm::vec3 remaining = displacement;
+        const btQuaternion rotation = ToBulletRotation(entity.GetWorldTransform());
+        skinWidth = std::max(skinWidth, 0.0f);
+
+        for (int iteration = 0; iteration < 4; ++iteration)
+        {
+            const float remainingLength = glm::length(remaining);
+            if (remainingLength <= 0.00001f)
+            {
+                break;
+            }
+
+            btTransform from;
+            from.setIdentity();
+            from.setOrigin(ToBullet(currentPosition));
+            from.setRotation(rotation);
+
+            btTransform to;
+            to.setIdentity();
+            to.setOrigin(ToBullet(currentPosition + remaining));
+            to.setRotation(rotation);
+
+            btCollisionWorld::ClosestConvexResultCallback callback(from.getOrigin(), to.getOrigin());
+            queryWorld->collisionWorld.convexSweepTest(convexShape, from, to, callback);
+            if (!callback.hasHit())
+            {
+                currentPosition += remaining;
+                break;
+            }
+
+            const float safeFraction = std::max(callback.m_closestHitFraction - skinWidth / remainingLength, 0.0f);
+            currentPosition += remaining * safeFraction;
+
+            glm::vec3 hitNormal = FromBullet(callback.m_hitNormalWorld);
+            const float normalLength = glm::length(hitNormal);
+            if (normalLength <= 0.00001f)
+            {
+                break;
+            }
+
+            hitNormal /= normalLength;
+            const glm::vec3 untraveled = remaining * (1.0f - callback.m_closestHitFraction);
+            remaining = untraveled - hitNormal * glm::dot(untraveled, hitNormal);
+        }
+
+        SetEntityWorldPosition(entity, currentPosition);
+        return currentPosition - startPosition;
     }
 
     void Scene::StepPhysics(float deltaTime)

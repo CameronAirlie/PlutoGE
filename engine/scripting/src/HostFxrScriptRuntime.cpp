@@ -78,6 +78,7 @@ namespace PlutoGE::scripting
         using register_rigidbody_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_collider_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_input_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
+        using register_physics_api_fn = int(__cdecl *)(void *, void *);
         using register_debug_api_fn = int(__cdecl *)(void *);
 
         struct NativeVector3
@@ -85,6 +86,14 @@ namespace PlutoGE::scripting
             float x = 0.0f;
             float y = 0.0f;
             float z = 0.0f;
+        };
+
+        struct NativeRaycastHit
+        {
+            uint32_t entityId = 0;
+            NativeVector3 point{};
+            NativeVector3 normal{};
+            float distance = 0.0f;
         };
 
         using get_entity_vector3_fn = NativeVector3(__cdecl *)(uint32_t);
@@ -118,6 +127,8 @@ namespace PlutoGE::scripting
         using get_input_quit_requested_fn = int(__cdecl *)();
         using get_input_cursor_locked_fn = int(__cdecl *)();
         using set_input_cursor_locked_fn = void(__cdecl *)(int32_t);
+        using physics_raycast_fn = int(__cdecl *)(NativeVector3, NativeVector3, float, uint32_t, NativeRaycastHit *);
+        using physics_move_kinematic_fn = NativeVector3(__cdecl *)(uint32_t, NativeVector3, float);
         using script_log_fn = void(__cdecl *)(int32_t, const char *);
         constexpr std::wstring_view kScriptBridgeType = L"PlutoGE.ScriptCore.Native.ScriptBridge, PlutoGE.ScriptCore";
         constexpr std::wstring_view kScriptCoreAssembly = L"PlutoGE.ScriptCore.dll";
@@ -1205,6 +1216,61 @@ namespace PlutoGE::scripting
             core::Engine::GetInstance().GetWindow().SetCursorLocked(locked != 0);
         }
 
+        int32_t PhysicsRaycast(NativeVector3 origin,
+                               NativeVector3 direction,
+                               float maxDistance,
+                               uint32_t ignoredEntityId,
+                               NativeRaycastHit *nativeHit)
+        {
+            if (!nativeHit ||
+                !IsFiniteVector3(origin) ||
+                !IsFiniteVector3(direction) ||
+                !std::isfinite(maxDistance))
+            {
+                return 0;
+            }
+
+            auto *scene = core::Engine::GetInstance().GetScene();
+            if (!scene)
+            {
+                return 0;
+            }
+
+            scene::PhysicsRaycastHit hit;
+            if (!scene->Raycast(glm::vec3(origin.x, origin.y, origin.z),
+                                glm::vec3(direction.x, direction.y, direction.z),
+                                maxDistance,
+                                hit,
+                                ignoredEntityId))
+            {
+                return 0;
+            }
+
+            nativeHit->entityId = hit.entityId;
+            nativeHit->point = NativeVector3{hit.point.x, hit.point.y, hit.point.z};
+            nativeHit->normal = NativeVector3{hit.normal.x, hit.normal.y, hit.normal.z};
+            nativeHit->distance = hit.distance;
+            return 1;
+        }
+
+        NativeVector3 PhysicsMoveKinematic(uint32_t entityId, NativeVector3 displacement, float skinWidth)
+        {
+            if (!IsFiniteVector3(displacement) || !std::isfinite(skinWidth))
+            {
+                return {};
+            }
+
+            auto *scene = core::Engine::GetInstance().GetScene();
+            auto *entity = FindEntity(entityId);
+            if (!scene || !entity)
+            {
+                return {};
+            }
+
+            const auto applied = scene->MoveKinematic(*entity, glm::vec3(displacement.x, displacement.y, displacement.z), skinWidth);
+            return NativeVector3{applied.x, applied.y, applied.z};
+        }
+
         void LogScriptMessage(int32_t severity, const char *message)
         {
             if (!message)
@@ -1263,6 +1329,7 @@ namespace PlutoGE::scripting
         register_rigidbody_component_api_fn registerRigidbodyComponentApi = nullptr;
         register_collider_component_api_fn registerColliderComponentApi = nullptr;
         register_input_api_fn registerInputApi = nullptr;
+        register_physics_api_fn registerPhysicsApi = nullptr;
         register_debug_api_fn registerDebugApi = nullptr;
         std::filesystem::path bridgeSourceAssemblyPath;
         std::filesystem::path bridgeSourceRuntimeConfigPath;
@@ -1351,6 +1418,7 @@ namespace PlutoGE::scripting
             impl.registerRigidbodyComponentApi = nullptr;
             impl.registerColliderComponentApi = nullptr;
             impl.registerInputApi = nullptr;
+            impl.registerPhysicsApi = nullptr;
             impl.registerDebugApi = nullptr;
             impl.bridgeSourceAssemblyPath.clear();
             impl.bridgeSourceRuntimeConfigPath.clear();
@@ -1658,6 +1726,7 @@ namespace PlutoGE::scripting
                 LoadManagedExport(impl, L"RegisterRigidbodyComponentApi", impl.registerRigidbodyComponentApi) &&
                 LoadManagedExport(impl, L"RegisterColliderComponentApi", impl.registerColliderComponentApi) &&
                 LoadManagedExport(impl, L"RegisterInputApi", impl.registerInputApi) &&
+                LoadManagedExport(impl, L"RegisterPhysicsApi", impl.registerPhysicsApi) &&
                 LoadManagedExport(impl, L"RegisterDebugApi", impl.registerDebugApi);
 
             if (!requiredExportsLoaded)
@@ -1951,6 +2020,15 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(static_cast<set_input_cursor_locked_fn>(&SetCursorLocked))) == 0)
         {
             setManagedBridgeFailure("RegisterInputApi");
+            return false;
+        }
+
+        if (!m_impl->registerPhysicsApi ||
+            m_impl->registerPhysicsApi(
+                reinterpret_cast<void *>(static_cast<physics_raycast_fn>(&PhysicsRaycast)),
+                reinterpret_cast<void *>(static_cast<physics_move_kinematic_fn>(&PhysicsMoveKinematic))) == 0)
+        {
+            setManagedBridgeFailure("RegisterPhysicsApi");
             return false;
         }
 

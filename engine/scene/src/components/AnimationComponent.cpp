@@ -1,8 +1,10 @@
 #include "PlutoGE/scene/components/AnimationComponent.h"
+#include "PlutoGE/core/Engine.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <functional>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 
@@ -107,6 +109,7 @@ namespace PlutoGE::scene
 
         SetTime(m_time + deltaTime * m_speed);
         m_jointMatricesDirty = true;
+        m_nodeMatricesDirty = true;
     }
 
     std::vector<Property> AnimationComponent::Serialize() const
@@ -225,6 +228,23 @@ namespace PlutoGE::scene
         ClampCurrentClipIndex();
         SetTime(m_time);
         m_playing = m_playing && HasCurrentClip();
+
+        if (!m_sourceAnimationPath.empty())
+        {
+            auto &engine = core::Engine::GetInstance();
+            const std::string resolvedPath = engine.GetAssetManager().ResolveMeshAssetSourcePath(m_sourceAnimationPath);
+            const auto importedMeshAsset = engine.ImportMeshAsset(resolvedPath);
+            if (importedMeshAsset.animations && !importedMeshAsset.animations->empty())
+            {
+                const int clipIndex = m_currentClipIndex;
+                const float time = m_time;
+                const bool playing = m_playing;
+                SetClipsFromImportedAnimations(*importedMeshAsset.animations);
+                SetCurrentClipIndex(clipIndex);
+                SetTime(time);
+                m_playing = playing && HasCurrentClip();
+            }
+        }
     }
 
     void AnimationComponent::SetClipsFromImportedAnimations(const std::vector<render::AnimationClip> &animations)
@@ -246,6 +266,7 @@ namespace PlutoGE::scene
         m_startedAutoplay = false;
         m_playing = m_autoplay && HasCurrentClip();
         m_jointMatricesDirty = true;
+        m_nodeMatricesDirty = true;
     }
 
     void AnimationComponent::SetCurrentClipIndex(int clipIndex)
@@ -255,6 +276,7 @@ namespace PlutoGE::scene
         SetTime(0.0f);
         m_startedAutoplay = false;
         m_jointMatricesDirty = true;
+        m_nodeMatricesDirty = true;
     }
 
     int AnimationComponent::FindClipIndex(std::string_view clipName) const
@@ -294,6 +316,7 @@ namespace PlutoGE::scene
         m_playing = false;
         SetTime(0.0f);
         m_jointMatricesDirty = true;
+        m_nodeMatricesDirty = true;
     }
 
     void AnimationComponent::SetTime(float time)
@@ -302,6 +325,7 @@ namespace PlutoGE::scene
         {
             m_time = 0.0f;
             m_jointMatricesDirty = true;
+            m_nodeMatricesDirty = true;
             return;
         }
 
@@ -311,6 +335,7 @@ namespace PlutoGE::scene
             m_time = 0.0f;
             m_playing = false;
             m_jointMatricesDirty = true;
+            m_nodeMatricesDirty = true;
             return;
         }
 
@@ -323,6 +348,7 @@ namespace PlutoGE::scene
                 m_time += duration;
             }
             m_jointMatricesDirty = m_jointMatricesDirty || std::abs(previousTime - m_time) > 0.00001f;
+            m_nodeMatricesDirty = m_nodeMatricesDirty || std::abs(previousTime - m_time) > 0.00001f;
             return;
         }
 
@@ -332,6 +358,7 @@ namespace PlutoGE::scene
             m_playing = false;
         }
         m_jointMatricesDirty = m_jointMatricesDirty || std::abs(previousTime - m_time) > 0.00001f;
+        m_nodeMatricesDirty = m_nodeMatricesDirty || std::abs(previousTime - m_time) > 0.00001f;
     }
 
     float AnimationComponent::GetCurrentClipDuration() const
@@ -363,6 +390,94 @@ namespace PlutoGE::scene
         }
 
         return m_jointMatrices;
+    }
+
+    glm::mat4 AnimationComponent::GetNodeMatrix(const std::vector<render::AnimationNode> &nodes, int nodeIndex)
+    {
+        if (nodeIndex < 0 || nodeIndex >= static_cast<int>(nodes.size()))
+        {
+            return glm::mat4(1.0f);
+        }
+
+        if (m_nodeMatricesDirty || m_nodeMatrices.size() != nodes.size())
+        {
+            EvaluateNodeMatrices(nodes);
+        }
+
+        return nodeIndex < static_cast<int>(m_nodeMatrices.size()) ? m_nodeMatrices[static_cast<size_t>(nodeIndex)] : glm::mat4(1.0f);
+    }
+
+    void AnimationComponent::EvaluateNodeMatrices(const std::vector<render::AnimationNode> &nodes)
+    {
+        m_nodeMatrices.assign(nodes.size(), glm::mat4(1.0f));
+        if (nodes.empty())
+        {
+            m_nodeMatricesDirty = false;
+            return;
+        }
+
+        std::vector<glm::vec3> translations(nodes.size(), glm::vec3(0.0f));
+        std::vector<glm::vec4> rotations(nodes.size(), glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+        std::vector<glm::vec3> scales(nodes.size(), glm::vec3(1.0f));
+        for (size_t nodeIndex = 0; nodeIndex < nodes.size(); ++nodeIndex)
+        {
+            DecomposeTransform(nodes[nodeIndex].localBindTransform, translations[nodeIndex], rotations[nodeIndex], scales[nodeIndex]);
+        }
+
+        if (HasCurrentClip())
+        {
+            const auto &clip = m_clips[static_cast<size_t>(m_currentClipIndex)];
+            for (const auto &channel : clip.channels)
+            {
+                if (channel.nodeIndex < 0 || channel.nodeIndex >= static_cast<int>(nodes.size()))
+                {
+                    continue;
+                }
+
+                const auto sample = SampleChannelValue(channel, m_time);
+                const size_t nodeIndex = static_cast<size_t>(channel.nodeIndex);
+                switch (channel.path)
+                {
+                case render::AnimationTargetPath::Translation:
+                    translations[nodeIndex] = glm::vec3(sample);
+                    break;
+                case render::AnimationTargetPath::Rotation:
+                    rotations[nodeIndex] = sample;
+                    break;
+                case render::AnimationTargetPath::Scale:
+                    scales[nodeIndex] = glm::vec3(sample);
+                    break;
+                }
+            }
+        }
+
+        std::vector<glm::mat4> localTransforms(nodes.size(), glm::mat4(1.0f));
+        for (size_t nodeIndex = 0; nodeIndex < nodes.size(); ++nodeIndex)
+        {
+            localTransforms[nodeIndex] = ComposeTransform(translations[nodeIndex], rotations[nodeIndex], scales[nodeIndex]);
+        }
+
+        std::vector<uint8_t> evaluated(nodes.size(), 0);
+        std::function<glm::mat4(size_t)> evaluateNode = [&](size_t nodeIndex) -> glm::mat4 {
+            if (evaluated[nodeIndex])
+            {
+                return m_nodeMatrices[nodeIndex];
+            }
+
+            const int parentIndex = nodes[nodeIndex].parentNodeIndex;
+            m_nodeMatrices[nodeIndex] = parentIndex >= 0 && parentIndex < static_cast<int>(nodes.size())
+                                            ? evaluateNode(static_cast<size_t>(parentIndex)) * localTransforms[nodeIndex]
+                                            : localTransforms[nodeIndex];
+            evaluated[nodeIndex] = 1;
+            return m_nodeMatrices[nodeIndex];
+        };
+
+        for (size_t nodeIndex = 0; nodeIndex < nodes.size(); ++nodeIndex)
+        {
+            evaluateNode(nodeIndex);
+        }
+
+        m_nodeMatricesDirty = false;
     }
 
     void AnimationComponent::EvaluateJointMatrices(const render::Skeleton &skeleton)

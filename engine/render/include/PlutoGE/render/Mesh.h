@@ -39,6 +39,12 @@ namespace PlutoGE::render
         std::vector<SkeletonJoint> joints;
     };
 
+    struct AnimationNode
+    {
+        int parentNodeIndex = -1;
+        glm::mat4 localBindTransform{1.0f};
+    };
+
     enum class AnimationTargetPath
     {
         Translation,
@@ -55,6 +61,7 @@ namespace PlutoGE::render
     struct AnimationChannel
     {
         int jointIndex = -1;
+        int nodeIndex = -1;
         AnimationTargetPath path = AnimationTargetPath::Translation;
         AnimationInterpolation interpolation = AnimationInterpolation::Linear;
         std::vector<float> times;
@@ -86,6 +93,7 @@ namespace PlutoGE::render
         uint32_t indexOffset = 0;
         uint32_t indexCount = 0;
         uint32_t materialIndex = 0;
+        int animatedNodeIndex = -1;
         MeshBounds bounds;
     };
 
@@ -95,6 +103,7 @@ namespace PlutoGE::render
         std::vector<Submesh> submeshes;
         bool hasLightmapUvs = false;
         Skeleton skeleton;
+        std::vector<AnimationNode> animationNodes;
         std::vector<AnimationClip> animations;
     };
 
@@ -530,6 +539,7 @@ namespace PlutoGE::render
         const MeshBounds &GetBounds() const { return m_bounds; }
         const Skeleton &GetSkeleton() const { return m_config.skeleton; }
         bool HasSkeleton() const { return !m_config.skeleton.joints.empty(); }
+        const std::vector<AnimationNode> &GetAnimationNodes() const { return m_config.animationNodes; }
         const std::vector<AnimationClip> &GetAnimations() const { return m_config.animations; }
         bool HasLightmapUvs() const { return m_config.hasLightmapUvs; }
         bool HasUsablePrimaryUvsForSubmesh(size_t submeshIndex) const

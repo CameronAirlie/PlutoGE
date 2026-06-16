@@ -58,6 +58,9 @@ namespace PlutoGE::assetimport
             uint32_t indexOffset = 0;
             uint32_t vertexCount = 0;
             uint32_t indexCount = 0;
+            int nodeIndex = -1;
+            int animatedNodeIndex = -1;
+            bool usesAnimatedNodeTransform = false;
             size_t slot = 0;
         };
 
@@ -806,7 +809,7 @@ namespace PlutoGE::assetimport
                 auto &previous = mergedSubmeshes.back();
                 const auto &current = submeshes[index];
                 const bool isAdjacent = previous.indexOffset + previous.indexCount == current.indexOffset;
-                if (isAdjacent && previous.materialIndex == current.materialIndex)
+                if (isAdjacent && previous.materialIndex == current.materialIndex && previous.animatedNodeIndex == current.animatedNodeIndex)
                 {
                     previous.indexCount += current.indexCount;
                     continue;
@@ -822,7 +825,9 @@ namespace PlutoGE::assetimport
             const tinygltf::Model &model,
             const tinygltf::Primitive &primitive,
             const glm::mat4 &worldTransform,
-            uint32_t materialIndex)
+            uint32_t materialIndex,
+            int nodeIndex,
+            int animatedNodeIndex)
         {
             if (primitive.mode != TINYGLTF_MODE_TRIANGLES)
             {
@@ -889,10 +894,31 @@ namespace PlutoGE::assetimport
             }
 
             const bool isSkinned = workItem.jointsView.has_value() && workItem.weightsView.has_value();
+            workItem.nodeIndex = nodeIndex;
+            workItem.animatedNodeIndex = animatedNodeIndex;
+            const bool usesAnimatedNodeTransform = animatedNodeIndex >= 0;
+            workItem.usesAnimatedNodeTransform = usesAnimatedNodeTransform;
             workItem.worldTransform = isSkinned ? glm::mat4(1.0f) : worldTransform;
             workItem.normalMatrix = glm::transpose(glm::inverse(glm::mat3(workItem.worldTransform)));
             workItem.materialIndex = materialIndex;
             return workItem;
+        }
+
+        std::unordered_set<int> CollectAnimatedNodeIndices(const tinygltf::Model &model)
+        {
+            std::unordered_set<int> animatedNodes;
+            for (const auto &animation : model.animations)
+            {
+                for (const auto &channel : animation.channels)
+                {
+                    if (channel.target_node >= 0)
+                    {
+                        animatedNodes.insert(channel.target_node);
+                    }
+                }
+            }
+
+            return animatedNodes;
         }
 
         void CollectPrimitiveWorkItems(
@@ -900,6 +926,9 @@ namespace PlutoGE::assetimport
             int nodeIndex,
             const glm::mat4 &parentTransform,
             uint32_t defaultMaterialIndex,
+            const std::unordered_set<int> &animatedNodeIndices,
+            const std::vector<glm::mat4> &nodeGlobals,
+            int activeAnimatedNodeIndex,
             std::unordered_set<int> &visitedNodes,
             std::vector<PrimitiveWorkItem> &primitiveWorkItems)
         {
@@ -915,6 +944,10 @@ namespace PlutoGE::assetimport
 
             const auto &node = model.nodes[nodeIndex];
             const glm::mat4 worldTransform = parentTransform * ComposeNodeTransform(node);
+            const int animatedNodeIndex = animatedNodeIndices.find(nodeIndex) != animatedNodeIndices.end() ? nodeIndex : activeAnimatedNodeIndex;
+            const glm::mat4 primitiveTransform = animatedNodeIndex >= 0 && animatedNodeIndex < static_cast<int>(nodeGlobals.size())
+                                                     ? glm::inverse(nodeGlobals[static_cast<size_t>(animatedNodeIndex)]) * worldTransform
+                                                     : worldTransform;
 
             if (node.mesh >= 0 && node.mesh < static_cast<int>(model.meshes.size()))
             {
@@ -924,7 +957,7 @@ namespace PlutoGE::assetimport
                     const uint32_t materialIndex = primitive.material >= 0 && primitive.material < static_cast<int>(defaultMaterialIndex)
                                                        ? static_cast<uint32_t>(primitive.material)
                                                        : defaultMaterialIndex;
-                    if (auto workItem = CreatePrimitiveWorkItem(model, primitive, worldTransform, materialIndex))
+                    if (auto workItem = CreatePrimitiveWorkItem(model, primitive, primitiveTransform, materialIndex, nodeIndex, animatedNodeIndex))
                     {
                         primitiveWorkItems.push_back(std::move(*workItem));
                     }
@@ -933,7 +966,7 @@ namespace PlutoGE::assetimport
 
             for (const auto childIndex : node.children)
             {
-                CollectPrimitiveWorkItems(model, childIndex, worldTransform, defaultMaterialIndex, visitedNodes, primitiveWorkItems);
+                CollectPrimitiveWorkItems(model, childIndex, worldTransform, defaultMaterialIndex, animatedNodeIndices, nodeGlobals, animatedNodeIndex, visitedNodes, primitiveWorkItems);
             }
         }
 
@@ -958,6 +991,7 @@ namespace PlutoGE::assetimport
                     .indexOffset = workItem.indexOffset,
                     .indexCount = workItem.indexCount,
                     .materialIndex = workItem.materialIndex,
+                    .animatedNodeIndex = workItem.animatedNodeIndex,
                 };
             }
 
@@ -1166,15 +1200,41 @@ namespace PlutoGE::assetimport
             }
         }
 
-        render::Skeleton ParseSkeleton(const tinygltf::Model &model, const std::vector<glm::mat4> &nodeGlobals, const std::vector<int> &nodeParents)
+        std::vector<render::AnimationNode> ParseAnimationNodes(const tinygltf::Model &model, const std::vector<int> &nodeParents)
+        {
+            std::vector<render::AnimationNode> animationNodes(model.nodes.size());
+            for (size_t nodeIndex = 0; nodeIndex < model.nodes.size(); ++nodeIndex)
+            {
+                animationNodes[nodeIndex].parentNodeIndex = nodeIndex < nodeParents.size() ? nodeParents[nodeIndex] : -1;
+                animationNodes[nodeIndex].localBindTransform = ComposeNodeTransform(model.nodes[nodeIndex]);
+            }
+
+            return animationNodes;
+        }
+
+        int FindPrimarySkinIndex(const tinygltf::Model &model)
+        {
+            for (size_t nodeIndex = 0; nodeIndex < model.nodes.size(); ++nodeIndex)
+            {
+                const auto &node = model.nodes[nodeIndex];
+                if (node.mesh >= 0 && node.skin >= 0 && node.skin < static_cast<int>(model.skins.size()))
+                {
+                    return node.skin;
+                }
+            }
+
+            return model.skins.empty() ? -1 : 0;
+        }
+
+        render::Skeleton ParseSkeleton(const tinygltf::Model &model, int skinIndex, const std::vector<glm::mat4> &nodeGlobals, const std::vector<int> &nodeParents)
         {
             render::Skeleton skeleton;
-            if (model.skins.empty())
+            if (skinIndex < 0 || skinIndex >= static_cast<int>(model.skins.size()))
             {
                 return skeleton;
             }
 
-            const auto &skin = model.skins.front();
+            const auto &skin = model.skins[static_cast<size_t>(skinIndex)];
             skeleton.joints.resize(skin.joints.size());
             std::unordered_map<int, int> nodeToJoint;
             for (size_t jointIndex = 0; jointIndex < skin.joints.size(); ++jointIndex)
@@ -1198,6 +1258,7 @@ namespace PlutoGE::assetimport
             const glm::mat4 inverseRoot = skin.skeleton >= 0 && skin.skeleton < static_cast<int>(nodeGlobals.size())
                                               ? glm::inverse(nodeGlobals[static_cast<size_t>(skin.skeleton)])
                                               : glm::mat4(1.0f);
+            (void)inverseRoot;
 
             for (size_t jointIndex = 0; jointIndex < skin.joints.size(); ++jointIndex)
             {
@@ -1206,13 +1267,37 @@ namespace PlutoGE::assetimport
                 joint.nodeIndex = nodeIndex;
                 joint.name = nodeIndex >= 0 && nodeIndex < static_cast<int>(model.nodes.size()) ? model.nodes[static_cast<size_t>(nodeIndex)].name : std::string{};
                 joint.inverseBindMatrix = inverseBindMatrices[jointIndex];
-                joint.inverseRootMatrix = inverseRoot;
-                joint.localBindTransform = nodeIndex >= 0 && nodeIndex < static_cast<int>(model.nodes.size()) ? ComposeNodeTransform(model.nodes[static_cast<size_t>(nodeIndex)]) : glm::mat4(1.0f);
+                joint.inverseRootMatrix = glm::mat4(1.0f);
 
                 if (nodeIndex >= 0 && nodeIndex < static_cast<int>(nodeParents.size()))
                 {
-                    const auto parentJoint = nodeToJoint.find(nodeParents[static_cast<size_t>(nodeIndex)]);
-                    joint.parentJointIndex = parentJoint == nodeToJoint.end() ? -1 : parentJoint->second;
+                    int parentNodeIndex = nodeParents[static_cast<size_t>(nodeIndex)];
+                    while (parentNodeIndex >= 0)
+                    {
+                        const auto parentJoint = nodeToJoint.find(parentNodeIndex);
+                        if (parentJoint != nodeToJoint.end())
+                        {
+                            joint.parentJointIndex = parentJoint->second;
+                            break;
+                        }
+
+                        parentNodeIndex = parentNodeIndex < static_cast<int>(nodeParents.size()) ? nodeParents[static_cast<size_t>(parentNodeIndex)] : -1;
+                    }
+                }
+
+                if (nodeIndex >= 0 && nodeIndex < static_cast<int>(nodeGlobals.size()))
+                {
+                    if (joint.parentJointIndex >= 0)
+                    {
+                        const int parentNodeIndex = skeleton.joints[static_cast<size_t>(joint.parentJointIndex)].nodeIndex;
+                        joint.localBindTransform = parentNodeIndex >= 0 && parentNodeIndex < static_cast<int>(nodeGlobals.size())
+                                                       ? glm::inverse(nodeGlobals[static_cast<size_t>(parentNodeIndex)]) * nodeGlobals[static_cast<size_t>(nodeIndex)]
+                                                       : nodeGlobals[static_cast<size_t>(nodeIndex)];
+                    }
+                    else
+                    {
+                        joint.localBindTransform = nodeGlobals[static_cast<size_t>(nodeIndex)];
+                    }
                 }
             }
 
@@ -1253,7 +1338,32 @@ namespace PlutoGE::assetimport
                 const auto &animation = model.animations[animationIndex];
                 render::AnimationClip clip;
                 clip.name = animation.name.empty() ? "Animation " + std::to_string(animationIndex) : animation.name;
-                clip.channelCount = static_cast<int>(animation.channels.size());
+
+                for (const auto &sampler : animation.samplers)
+                {
+                    if (sampler.input < 0 || sampler.input >= static_cast<int>(model.accessors.size()))
+                    {
+                        continue;
+                    }
+
+                    const auto &timeAccessor = model.accessors[static_cast<size_t>(sampler.input)];
+                    if (!timeAccessor.maxValues.empty())
+                    {
+                        clip.duration = std::max(clip.duration, static_cast<float>(timeAccessor.maxValues.front()));
+                        continue;
+                    }
+
+                    const auto timeView = CreateAccessorView(model, sampler.input);
+                    if (timeView.accessor->componentType != TINYGLTF_COMPONENT_TYPE_FLOAT)
+                    {
+                        continue;
+                    }
+
+                    for (size_t timeIndex = 0; timeIndex < timeView.accessor->count; ++timeIndex)
+                    {
+                        clip.duration = std::max(clip.duration, ReadFloatTuple<1>(timeView, timeIndex)[0]);
+                    }
+                }
 
                 for (const auto &channelSource : animation.channels)
                 {
@@ -1262,8 +1372,7 @@ namespace PlutoGE::assetimport
                         continue;
                     }
 
-                    const auto jointIt = nodeToJoint.find(channelSource.target_node);
-                    if (jointIt == nodeToJoint.end())
+                    if (channelSource.target_node < 0 || channelSource.target_node >= static_cast<int>(model.nodes.size()))
                     {
                         continue;
                     }
@@ -1279,7 +1388,9 @@ namespace PlutoGE::assetimport
                     }
 
                     render::AnimationChannel channel;
-                    channel.jointIndex = jointIt->second;
+                    const auto jointIt = nodeToJoint.find(channelSource.target_node);
+                    channel.jointIndex = jointIt == nodeToJoint.end() ? -1 : jointIt->second;
+                    channel.nodeIndex = channelSource.target_node;
                     channel.path = ParseAnimationTargetPath(channelSource.target_path);
                     channel.interpolation = ParseAnimationInterpolation(sampler.interpolation);
 
@@ -1311,6 +1422,13 @@ namespace PlutoGE::assetimport
                     }
 
                     clip.channels.push_back(std::move(channel));
+                }
+
+                clip.channelCount = static_cast<int>(clip.channels.size());
+                if (clip.duration > 0.0f && clip.channels.empty() && !animation.channels.empty())
+                {
+                    std::cerr << "Mesh import warning: animation clip '" << clip.name
+                              << "' has timing data but no channels mapped to the selected skin joints." << std::endl;
                 }
 
                 clips.push_back(std::move(clip));
@@ -1358,7 +1476,8 @@ namespace PlutoGE::assetimport
             ComputeNodeGlobals(model, nodeGlobals, nodeParents);
 
             ImportedMeshSourceAsset parsedMeshAsset;
-            parsedMeshAsset.skeleton = ParseSkeleton(model, nodeGlobals, nodeParents);
+            parsedMeshAsset.skeleton = ParseSkeleton(model, FindPrimarySkinIndex(model), nodeGlobals, nodeParents);
+            parsedMeshAsset.animationNodes = ParseAnimationNodes(model, nodeParents);
             parsedMeshAsset.animations = ParseAnimations(model, parsedMeshAsset.skeleton);
 
             const auto textureStageStart = ImportClock::now();
@@ -1389,6 +1508,7 @@ namespace PlutoGE::assetimport
             parsedMeshAsset.materials.push_back(ImportedMaterialData{});
 
             std::unordered_set<int> visitedNodes;
+            const auto animatedNodeIndices = CollectAnimatedNodeIndices(model);
             const auto sceneTraversalStart = ImportClock::now();
             std::vector<PrimitiveWorkItem> primitiveWorkItems;
 
@@ -1398,14 +1518,14 @@ namespace PlutoGE::assetimport
                 const auto &scene = model.scenes[defaultSceneIndex];
                 for (const int nodeIndex : scene.nodes)
                 {
-                    CollectPrimitiveWorkItems(model, nodeIndex, glm::mat4(1.0f), defaultMaterialIndex, visitedNodes, primitiveWorkItems);
+                    CollectPrimitiveWorkItems(model, nodeIndex, glm::mat4(1.0f), defaultMaterialIndex, animatedNodeIndices, nodeGlobals, -1, visitedNodes, primitiveWorkItems);
                 }
             }
             else
             {
                 for (int nodeIndex = 0; nodeIndex < static_cast<int>(model.nodes.size()); ++nodeIndex)
                 {
-                    CollectPrimitiveWorkItems(model, nodeIndex, glm::mat4(1.0f), defaultMaterialIndex, visitedNodes, primitiveWorkItems);
+                    CollectPrimitiveWorkItems(model, nodeIndex, glm::mat4(1.0f), defaultMaterialIndex, animatedNodeIndices, nodeGlobals, -1, visitedNodes, primitiveWorkItems);
                 }
             }
 
@@ -1499,6 +1619,7 @@ namespace PlutoGE::assetimport
         meshConfig.submeshes = std::move(meshSourceAsset.submeshes);
         meshConfig.hasLightmapUvs = meshSourceAsset.hasLightmapUvs;
         meshConfig.skeleton = std::move(meshSourceAsset.skeleton);
+        meshConfig.animationNodes = std::move(meshSourceAsset.animationNodes);
         meshConfig.animations = meshSourceAsset.animations;
         cachedImportedMeshAsset.mesh = std::unique_ptr<render::Mesh>(render::Mesh::FromConfig(std::move(meshConfig)));
         cachedImportedMeshAsset.materials = std::move(meshSourceAsset.materials);

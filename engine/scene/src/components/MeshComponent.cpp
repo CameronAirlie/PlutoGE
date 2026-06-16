@@ -297,6 +297,17 @@ namespace PlutoGE::scene
                     SetMesh(importedMeshAsset.mesh);
                     SetMaterials(importedMeshAsset.materials);
                     m_sourceMeshPath = sourceMeshPath;
+                    if (importedMeshAsset.animations && !importedMeshAsset.animations->empty())
+                    {
+                        if (auto *owner = GetOwner())
+                        {
+                            if (auto *animationComponent = owner->GetComponent<AnimationComponent>())
+                            {
+                                animationComponent->SetClipsFromImportedAnimations(*importedMeshAsset.animations);
+                                animationComponent->SetSourceAnimationPath(sourceMeshPath);
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -404,10 +415,16 @@ namespace PlutoGE::scene
         {
             auto entity = GetOwner();
             glm::mat4 modelMatrix = entity->GetWorldTransform();
+            bool hasAnimatedNodeSubmeshes = false;
+            for (size_t submeshIndex = 0; submeshIndex < m_mesh->GetSubmeshCount(); ++submeshIndex)
+            {
+                hasAnimatedNodeSubmeshes = hasAnimatedNodeSubmeshes || m_mesh->GetSubmesh(submeshIndex).animatedNodeIndex >= 0;
+            }
 
             auto &renderer = PlutoGE::core::Engine::GetInstance().GetRenderer();
             if (m_isStatic &&
                 !m_mesh->HasSkeleton() &&
+                !hasAnimatedNodeSubmeshes &&
                 !m_renderCommandCacheDirty &&
                 m_hasCachedRenderCommandModel &&
                 AreMatricesApproximatelyEqual(m_cachedRenderCommandModel, modelMatrix))
@@ -423,16 +440,17 @@ namespace PlutoGE::scene
             }
 
             const size_t submeshCount = std::max<size_t>(m_mesh->GetSubmeshCount(), 1);
+            AnimationComponent *animationComponent = entity->GetComponent<AnimationComponent>();
             const std::vector<glm::mat4> *jointMatrices = nullptr;
             if (m_mesh->HasSkeleton())
             {
-                if (auto *animationComponent = entity->GetComponent<AnimationComponent>())
+                if (animationComponent)
                 {
                     jointMatrices = &animationComponent->GetJointMatrices(m_mesh->GetSkeleton());
                 }
             }
             std::vector<render::RenderCommand> rebuiltCommands;
-            if (m_isStatic && !jointMatrices)
+            if (m_isStatic && !jointMatrices && !hasAnimatedNodeSubmeshes)
             {
                 rebuiltCommands.reserve(submeshCount);
             }
@@ -445,13 +463,20 @@ namespace PlutoGE::scene
                     continue;
                 }
 
+                const auto &submesh = submeshIndex < m_mesh->GetSubmeshCount() ? m_mesh->GetSubmesh(submeshIndex) : render::Submesh{};
+                glm::mat4 submeshModelMatrix = modelMatrix;
+                if (!jointMatrices && animationComponent && submesh.animatedNodeIndex >= 0)
+                {
+                    submeshModelMatrix = modelMatrix * animationComponent->GetNodeMatrix(m_mesh->GetAnimationNodes(), submesh.animatedNodeIndex);
+                }
+
                 render::RenderCommand command;
-                command.model = modelMatrix;
-                command.previousModel = m_hasPreviousModelMatrix ? m_previousModelMatrix : modelMatrix;
+                command.model = submeshModelMatrix;
+                command.previousModel = m_hasPreviousModelMatrix ? m_previousModelMatrix : submeshModelMatrix;
                 command.material = material;
                 command.mesh = m_mesh;
                 command.shader = material->GetShader();
-                command.worldBounds = ComputeWorldBounds(*m_mesh, submeshIndex, modelMatrix);
+                command.worldBounds = ComputeWorldBounds(*m_mesh, submeshIndex, submeshModelMatrix);
                 command.previousWorldBounds = ComputeWorldBounds(*m_mesh, submeshIndex, command.previousModel);
                 command.jointMatrices = jointMatrices;
                 command.submeshIndex = static_cast<uint32_t>(submeshIndex);
@@ -459,13 +484,13 @@ namespace PlutoGE::scene
                 command.usePrimaryUvForLightmap = !m_mesh->HasUsableLightmapUvsForSubmesh(submeshIndex);
 
                 renderer.SubmitRenderCommand(command);
-                if (m_isStatic && !jointMatrices)
+                if (m_isStatic && !jointMatrices && !hasAnimatedNodeSubmeshes)
                 {
                     rebuiltCommands.push_back(command);
                 }
             }
 
-            if (m_isStatic && !jointMatrices)
+            if (m_isStatic && !jointMatrices && !hasAnimatedNodeSubmeshes)
             {
                 m_cachedRenderCommands = std::move(rebuiltCommands);
                 m_cachedRenderCommandModel = modelMatrix;

@@ -47,6 +47,7 @@ namespace PlutoGE::assetimport
         std::vector<ImportedMaterialData> materials;
         std::vector<ImportedTextureData> textures;
         render::Skeleton skeleton;
+        std::vector<render::AnimationNode> animationNodes;
         std::vector<render::AnimationClip> animations;
         bool hasLightmapUvs = false;
         bool requiresMissingNormalFallback = false;

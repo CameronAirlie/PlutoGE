@@ -189,7 +189,7 @@ namespace PlutoGE::render
             uniform mat4 uCurrentViewProjection;
             uniform mat4 uPreviousViewProjection;
             uniform int uUseSkinning = 0;
-            uniform mat4 uJointMatrices[96];
+            uniform mat4 uJointMatrices[48];
 
             out vec3 FragPos;
             out vec3 Normal;
@@ -209,10 +209,10 @@ namespace PlutoGE::render
                     if (totalWeight > 0.0001)
                     {
                         skinMatrix =
-                            uJointMatrices[clamp(aJoints.x, 0, 95)] * aWeights.x +
-                            uJointMatrices[clamp(aJoints.y, 0, 95)] * aWeights.y +
-                            uJointMatrices[clamp(aJoints.z, 0, 95)] * aWeights.z +
-                            uJointMatrices[clamp(aJoints.w, 0, 95)] * aWeights.w;
+                            uJointMatrices[clamp(aJoints.x, 0, 47)] * aWeights.x +
+                            uJointMatrices[clamp(aJoints.y, 0, 47)] * aWeights.y +
+                            uJointMatrices[clamp(aJoints.z, 0, 47)] * aWeights.z +
+                            uJointMatrices[clamp(aJoints.w, 0, 47)] * aWeights.w;
                     }
                 }
 
@@ -1317,16 +1317,34 @@ void main()
             layout(location = 2) in vec2 aUV;
             layout(location = 3) in vec4 aTangent;
             layout(location = 5) in mat4 aModel;
+            layout(location = 14) in ivec4 aJoints;
+            layout(location = 15) in vec4 aWeights;
 
             uniform mat4 uLightSpaceMatrix;
             uniform vec3 uShadowWorldOrigin = vec3(0.0);
+            uniform int uUseSkinning = 0;
+            uniform mat4 uJointMatrices[48];
 
             out vec3 FragPos;
             out vec2 UV;
 
             void main()
             {
-                vec4 worldPosition = aModel * vec4(aPos, 1.0);
+                mat4 skinMatrix = mat4(1.0);
+                if (uUseSkinning != 0)
+                {
+                    float totalWeight = aWeights.x + aWeights.y + aWeights.z + aWeights.w;
+                    if (totalWeight > 0.0001)
+                    {
+                        skinMatrix =
+                            uJointMatrices[clamp(aJoints.x, 0, 47)] * aWeights.x +
+                            uJointMatrices[clamp(aJoints.y, 0, 47)] * aWeights.y +
+                            uJointMatrices[clamp(aJoints.z, 0, 47)] * aWeights.z +
+                            uJointMatrices[clamp(aJoints.w, 0, 47)] * aWeights.w;
+                    }
+                }
+
+                vec4 worldPosition = aModel * (skinMatrix * vec4(aPos, 1.0));
                 FragPos = worldPosition.xyz;
                 UV = aUV;
                 gl_Position = uLightSpaceMatrix * vec4(worldPosition.xyz - uShadowWorldOrigin, 1.0);

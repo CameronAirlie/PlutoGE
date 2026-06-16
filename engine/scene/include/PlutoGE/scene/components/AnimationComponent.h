@@ -27,6 +27,7 @@ namespace PlutoGE::scene
 
         const std::vector<render::AnimationClip> &GetClips() const { return m_clips; }
         const std::vector<glm::mat4> &GetJointMatrices(const render::Skeleton &skeleton);
+        glm::mat4 GetNodeMatrix(const std::vector<render::AnimationNode> &nodes, int nodeIndex);
         int GetClipCount() const { return static_cast<int>(m_clips.size()); }
         int GetCurrentClipIndex() const { return m_currentClipIndex; }
         void SetCurrentClipIndex(int clipIndex);
@@ -53,9 +54,11 @@ namespace PlutoGE::scene
         void ClampCurrentClipIndex();
 
         void EvaluateJointMatrices(const render::Skeleton &skeleton);
+        void EvaluateNodeMatrices(const std::vector<render::AnimationNode> &nodes);
 
         std::vector<render::AnimationClip> m_clips;
         std::vector<glm::mat4> m_jointMatrices;
+        std::vector<glm::mat4> m_nodeMatrices;
         std::string m_sourceAnimationPath;
         int m_currentClipIndex = 0;
         float m_time = 0.0f;
@@ -65,5 +68,6 @@ namespace PlutoGE::scene
         bool m_autoplay = true;
         bool m_startedAutoplay = false;
         bool m_jointMatricesDirty = true;
+        bool m_nodeMatricesDirty = true;
     };
 }

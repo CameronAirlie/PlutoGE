@@ -15,6 +15,7 @@
 #include <functional>
 #include <iostream>
 #include <limits>
+#include <string>
 #include <vector>
 
 #include <glm/ext/matrix_clip_space.hpp>
@@ -185,6 +186,11 @@ namespace
 
     bool CanBatchShadowCommands(const PlutoGE::render::RenderCommand &a, const PlutoGE::render::RenderCommand &b)
     {
+        if (a.jointMatrices || b.jointMatrices)
+        {
+            return false;
+        }
+
         const bool aAlphaTested = a.material && a.material->GetConfig().albedoTexture && a.material->GetConfig().color.a < 0.999f;
         const bool bAlphaTested = b.material && b.material->GetConfig().albedoTexture && b.material->GetConfig().color.a < 0.999f;
         if (aAlphaTested != bAlphaTested)
@@ -703,6 +709,23 @@ namespace
         shader->SetUniform("uHasAlbedoTexture", 0.0f);
     }
 
+    void UploadShadowJointMatrices(PlutoGE::render::Shader *shader, const std::vector<glm::mat4> *jointMatrices)
+    {
+        constexpr size_t kMaxShaderJoints = 48;
+        if (!shader || !jointMatrices || jointMatrices->empty())
+        {
+            shader->SetUniform("uUseSkinning", 0);
+            return;
+        }
+
+        shader->SetUniform("uUseSkinning", 1);
+        const size_t jointCount = std::min(jointMatrices->size(), kMaxShaderJoints);
+        for (size_t jointIndex = 0; jointIndex < jointCount; ++jointIndex)
+        {
+            shader->SetUniform(std::string("uJointMatrices[") + std::to_string(jointIndex) + "]", (*jointMatrices)[jointIndex]);
+        }
+    }
+
     template <typename Predicate>
     ShadowDrawStats DrawShadowCasterBatches(const std::vector<const ShadowCasterEntry *> &sortedShadowCasters,
                                             Predicate &&predicate,
@@ -740,6 +763,7 @@ namespace
                 boundMaterial = batchHead.material;
             }
 
+            shader->SetUniform("uUseSkinning", 0);
             UploadTransformInstances(instanceBuffer, instanceCapacity, batchInstances);
             if (batchHead.mesh != boundMesh)
             {
@@ -762,6 +786,43 @@ namespace
             }
 
             const auto *command = shadowCaster->command;
+            if (command->jointMatrices)
+            {
+                if (batchHead)
+                {
+                    flushBatch(*batchHead);
+                    batchHead = nullptr;
+                }
+
+                if (command->material != boundMaterial)
+                {
+                    if (IsAlphaTestedShadowCaster(*command))
+                    {
+                        BindShadowMaterialState(shader, command->material);
+                    }
+                    else
+                    {
+                        shader->SetUniform("uHasAlbedoTexture", 0.0f);
+                    }
+                    boundMaterial = command->material;
+                }
+
+                UploadShadowJointMatrices(shader, command->jointMatrices);
+                const std::vector<TransformInstanceData> singleInstance{
+                    TransformInstanceData{
+                        .model = command->model,
+                    },
+                };
+                UploadTransformInstances(instanceBuffer, instanceCapacity, singleInstance);
+                BindTransformInstanceAttributes(*command->mesh, instanceBuffer);
+                boundMesh = command->mesh;
+                command->mesh->DrawSubmeshInstancedBound(command->submeshIndex, 1);
+                stats.submittedInstances += 1;
+                ++stats.submittedBatches;
+                shader->SetUniform("uUseSkinning", 0);
+                continue;
+            }
+
             if (batchHead && !CanBatchShadowCommands(*batchHead, *command))
             {
                 flushBatch(*batchHead);

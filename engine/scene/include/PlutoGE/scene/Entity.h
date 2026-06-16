@@ -228,9 +228,14 @@ namespace PlutoGE::scene
         bool IsDescendantOf(const Entity *entity) const;
         void SetSceneRecursive(Scene *scene);
         void MarkShadowSceneDirty();
+        void MarkTransformDirtyRecursive();
 
         bool m_isActive = true;          // Whether the entity is active (can be used to enable/disable rendering and updates)
         Transform m_transform;           // Local transform of the entity
+        mutable glm::mat4 m_cachedLocalTransform = glm::mat4(1.0f);
+        mutable glm::mat4 m_cachedWorldTransform = glm::mat4(1.0f);
+        mutable bool m_localTransformDirty = true;
+        mutable bool m_worldTransformDirty = true;
         EntityID m_id;                   // Unique identifier for the entity
         std::string m_name;              // Optional name for the entity (useful for debugging and editor)
         std::vector<std::string> m_tags; // Optional tags for categorizing entities (e.g., "Player", "Enemy", "Collectible")

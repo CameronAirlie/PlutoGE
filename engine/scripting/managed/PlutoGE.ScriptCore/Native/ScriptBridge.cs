@@ -53,6 +53,7 @@ internal static unsafe class ScriptBridge
         Script = 3,
         Rigidbody = 4,
         Collider = 5,
+        Animation = 6,
     }
 
     private sealed class ScriptLoadContext : AssemblyLoadContext
@@ -105,6 +106,7 @@ internal static unsafe class ScriptBridge
     private static delegate* unmanaged[Cdecl]<uint, int, void> _setEntityActive;
     private static delegate* unmanaged[Cdecl]<uint, int> _getEntityTagCount;
     private static delegate* unmanaged[Cdecl]<uint, int, nint> _getEntityTag;
+    private static delegate* unmanaged[Cdecl]<uint, int> _destroyEntity;
     private static delegate* unmanaged[Cdecl]<uint, int, int> _hasComponent;
     private static delegate* unmanaged[Cdecl]<uint, int, int> _getComponentEnabled;
     private static delegate* unmanaged[Cdecl]<uint, int, int, void> _setComponentEnabled;
@@ -120,6 +122,24 @@ internal static unsafe class ScriptBridge
     private static delegate* unmanaged[Cdecl]<uint, int, void> _setMeshStatic;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3> _getMeshColor;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3, void> _setMeshColor;
+    private static delegate* unmanaged[Cdecl]<uint, int> _getAnimationClipCount;
+    private static delegate* unmanaged[Cdecl]<uint, int> _getAnimationClipIndex;
+    private static delegate* unmanaged[Cdecl]<uint, int, void> _setAnimationClipIndex;
+    private static delegate* unmanaged[Cdecl]<uint, int, nint> _getAnimationClipName;
+    private static delegate* unmanaged[Cdecl]<uint, int, float> _getAnimationClipDuration;
+    private static delegate* unmanaged[Cdecl]<uint, int> _getAnimationPlaying;
+    private static delegate* unmanaged[Cdecl]<uint, int, void> _setAnimationPlaying;
+    private static delegate* unmanaged[Cdecl]<uint, int> _getAnimationLooping;
+    private static delegate* unmanaged[Cdecl]<uint, int, void> _setAnimationLooping;
+    private static delegate* unmanaged[Cdecl]<uint, int> _getAnimationAutoplay;
+    private static delegate* unmanaged[Cdecl]<uint, int, void> _setAnimationAutoplay;
+    private static delegate* unmanaged[Cdecl]<uint, float> _getAnimationSpeed;
+    private static delegate* unmanaged[Cdecl]<uint, float, void> _setAnimationSpeed;
+    private static delegate* unmanaged[Cdecl]<uint, float> _getAnimationTime;
+    private static delegate* unmanaged[Cdecl]<uint, float, void> _setAnimationTime;
+    private static delegate* unmanaged[Cdecl]<uint, void> _animationPlay;
+    private static delegate* unmanaged[Cdecl]<uint, void> _animationPause;
+    private static delegate* unmanaged[Cdecl]<uint, void> _animationStop;
     private static delegate* unmanaged[Cdecl]<uint, float> _getRigidbodyMass;
     private static delegate* unmanaged[Cdecl]<uint, float, void> _setRigidbodyMass;
     private static delegate* unmanaged[Cdecl]<uint, float> _getRigidbodyLinearDrag;
@@ -244,7 +264,8 @@ internal static unsafe class ScriptBridge
         delegate* unmanaged[Cdecl]<uint, int> getEntityActive,
         delegate* unmanaged[Cdecl]<uint, int, void> setEntityActive,
         delegate* unmanaged[Cdecl]<uint, int> getEntityTagCount,
-        delegate* unmanaged[Cdecl]<uint, int, nint> getEntityTag)
+        delegate* unmanaged[Cdecl]<uint, int, nint> getEntityTag,
+        delegate* unmanaged[Cdecl]<uint, int> destroyEntity)
     {
         if (getEntityPosition == null ||
             getEntityWorldPosition == null ||
@@ -258,7 +279,8 @@ internal static unsafe class ScriptBridge
             getEntityActive == null ||
             setEntityActive == null ||
             getEntityTagCount == null ||
-            getEntityTag == null)
+            getEntityTag == null ||
+            destroyEntity == null)
         {
             SetError("Managed game object API registration received a null function pointer.");
             return 0;
@@ -277,6 +299,7 @@ internal static unsafe class ScriptBridge
         _setEntityActive = setEntityActive;
         _getEntityTagCount = getEntityTagCount;
         _getEntityTag = getEntityTag;
+        _destroyEntity = destroyEntity;
         _lastError = string.Empty;
         return 1;
     }
@@ -359,6 +382,58 @@ internal static unsafe class ScriptBridge
         _setMeshStatic = setMeshStatic;
         _getMeshColor = getMeshColor;
         _setMeshColor = setMeshColor;
+        _lastError = string.Empty;
+        return 1;
+    }
+
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterAnimationComponentApi")]
+    public static int RegisterAnimationComponentApi(
+        delegate* unmanaged[Cdecl]<uint, int> getClipCount,
+        delegate* unmanaged[Cdecl]<uint, int> getClipIndex,
+        delegate* unmanaged[Cdecl]<uint, int, void> setClipIndex,
+        delegate* unmanaged[Cdecl]<uint, int, nint> getClipName,
+        delegate* unmanaged[Cdecl]<uint, int, float> getClipDuration,
+        delegate* unmanaged[Cdecl]<uint, int> getPlaying,
+        delegate* unmanaged[Cdecl]<uint, int, void> setPlaying,
+        delegate* unmanaged[Cdecl]<uint, int> getLooping,
+        delegate* unmanaged[Cdecl]<uint, int, void> setLooping,
+        delegate* unmanaged[Cdecl]<uint, int> getAutoplay,
+        delegate* unmanaged[Cdecl]<uint, int, void> setAutoplay,
+        delegate* unmanaged[Cdecl]<uint, float> getSpeed,
+        delegate* unmanaged[Cdecl]<uint, float, void> setSpeed,
+        delegate* unmanaged[Cdecl]<uint, float> getTime,
+        delegate* unmanaged[Cdecl]<uint, float, void> setTime,
+        delegate* unmanaged[Cdecl]<uint, void> play,
+        delegate* unmanaged[Cdecl]<uint, void> pause,
+        delegate* unmanaged[Cdecl]<uint, void> stop)
+    {
+        if (getClipCount == null || getClipIndex == null || setClipIndex == null || getClipName == null || getClipDuration == null ||
+            getPlaying == null || setPlaying == null || getLooping == null || setLooping == null || getAutoplay == null ||
+            setAutoplay == null || getSpeed == null || setSpeed == null || getTime == null || setTime == null ||
+            play == null || pause == null || stop == null)
+        {
+            SetError("Managed animation component API registration received a null function pointer.");
+            return 0;
+        }
+
+        _getAnimationClipCount = getClipCount;
+        _getAnimationClipIndex = getClipIndex;
+        _setAnimationClipIndex = setClipIndex;
+        _getAnimationClipName = getClipName;
+        _getAnimationClipDuration = getClipDuration;
+        _getAnimationPlaying = getPlaying;
+        _setAnimationPlaying = setPlaying;
+        _getAnimationLooping = getLooping;
+        _setAnimationLooping = setLooping;
+        _getAnimationAutoplay = getAutoplay;
+        _setAnimationAutoplay = setAutoplay;
+        _getAnimationSpeed = getSpeed;
+        _setAnimationSpeed = setSpeed;
+        _getAnimationTime = getTime;
+        _setAnimationTime = setTime;
+        _animationPlay = play;
+        _animationPause = pause;
+        _animationStop = stop;
         _lastError = string.Empty;
         return 1;
     }
@@ -858,6 +933,11 @@ internal static unsafe class ScriptBridge
         return false;
     }
 
+    internal static bool DestroyEntity(uint entityId)
+    {
+        return entityId != 0 && _destroyEntity != null && _destroyEntity(entityId) != 0;
+    }
+
     internal static bool InvokeEntityMethod(uint entityId, string methodName)
     {
         if (entityId == 0 || string.IsNullOrWhiteSpace(methodName))
@@ -1008,6 +1088,33 @@ internal static unsafe class ScriptBridge
 
         _setMeshColor(entityId, NativeVector3.FromManaged(color));
     }
+
+    internal static int GetAnimationClipCount(uint entityId) => _getAnimationClipCount == null ? 0 : _getAnimationClipCount(entityId);
+    internal static int GetAnimationClipIndex(uint entityId) => _getAnimationClipIndex == null ? 0 : _getAnimationClipIndex(entityId);
+    internal static void SetAnimationClipIndex(uint entityId, int value) { if (_setAnimationClipIndex != null) _setAnimationClipIndex(entityId, value); }
+    internal static string GetAnimationClipName(uint entityId, int clipIndex)
+    {
+        if (_getAnimationClipName == null)
+        {
+            return string.Empty;
+        }
+
+        return Marshal.PtrToStringUTF8(_getAnimationClipName(entityId, clipIndex)) ?? string.Empty;
+    }
+    internal static float GetAnimationClipDuration(uint entityId, int clipIndex) => _getAnimationClipDuration == null ? 0.0f : _getAnimationClipDuration(entityId, clipIndex);
+    internal static bool GetAnimationPlaying(uint entityId) => _getAnimationPlaying != null && _getAnimationPlaying(entityId) != 0;
+    internal static void SetAnimationPlaying(uint entityId, bool value) { if (_setAnimationPlaying != null) _setAnimationPlaying(entityId, value ? 1 : 0); }
+    internal static bool GetAnimationLooping(uint entityId) => _getAnimationLooping != null && _getAnimationLooping(entityId) != 0;
+    internal static void SetAnimationLooping(uint entityId, bool value) { if (_setAnimationLooping != null) _setAnimationLooping(entityId, value ? 1 : 0); }
+    internal static bool GetAnimationAutoplay(uint entityId) => _getAnimationAutoplay != null && _getAnimationAutoplay(entityId) != 0;
+    internal static void SetAnimationAutoplay(uint entityId, bool value) { if (_setAnimationAutoplay != null) _setAnimationAutoplay(entityId, value ? 1 : 0); }
+    internal static float GetAnimationSpeed(uint entityId) => _getAnimationSpeed == null ? 0.0f : _getAnimationSpeed(entityId);
+    internal static void SetAnimationSpeed(uint entityId, float value) { if (_setAnimationSpeed != null) _setAnimationSpeed(entityId, value); }
+    internal static float GetAnimationTime(uint entityId) => _getAnimationTime == null ? 0.0f : _getAnimationTime(entityId);
+    internal static void SetAnimationTime(uint entityId, float value) { if (_setAnimationTime != null) _setAnimationTime(entityId, value); }
+    internal static void AnimationPlay(uint entityId) { if (_animationPlay != null) _animationPlay(entityId); }
+    internal static void AnimationPause(uint entityId) { if (_animationPause != null) _animationPause(entityId); }
+    internal static void AnimationStop(uint entityId) { if (_animationStop != null) _animationStop(entityId); }
 
     internal static float GetRigidbodyMass(uint entityId) => _getRigidbodyMass == null ? 0.0f : _getRigidbodyMass(entityId);
     internal static void SetRigidbodyMass(uint entityId, float value) { if (_setRigidbodyMass != null) _setRigidbodyMass(entityId, value); }
@@ -1341,6 +1448,11 @@ internal static unsafe class ScriptBridge
             return 14;
         }
 
+        if (type == typeof(AnimationComponent))
+        {
+            return 15;
+        }
+
         return null;
     }
 
@@ -1447,6 +1559,7 @@ internal static unsafe class ScriptBridge
             12 => CreateReferenceValue(memberType, value),
             13 => CreateReferenceValue(memberType, value),
             14 => CreateReferenceValue(memberType, value),
+            15 => CreateReferenceValue(memberType, value),
             _ => null,
         };
     }
@@ -1469,6 +1582,7 @@ internal static unsafe class ScriptBridge
             12 => ExtractEntityId(value).ToString(CultureInfo.InvariantCulture),
             13 => ExtractEntityId(value).ToString(CultureInfo.InvariantCulture),
             14 => ExtractEntityId(value).ToString(CultureInfo.InvariantCulture),
+            15 => ExtractEntityId(value).ToString(CultureInfo.InvariantCulture),
             _ => string.Empty,
         };
     }
@@ -1511,6 +1625,11 @@ internal static unsafe class ScriptBridge
             return new ColliderComponent(entityId);
         }
 
+        if (memberType == typeof(AnimationComponent))
+        {
+            return new AnimationComponent(entityId);
+        }
+
         return entityId;
     }
 
@@ -1526,6 +1645,7 @@ internal static unsafe class ScriptBridge
             LightComponent lightComponent => lightComponent.EntityId,
             RigidbodyComponent rigidbodyComponent => rigidbodyComponent.EntityId,
             ColliderComponent colliderComponent => colliderComponent.EntityId,
+            AnimationComponent animationComponent => animationComponent.EntityId,
             _ => 0u,
         };
     }

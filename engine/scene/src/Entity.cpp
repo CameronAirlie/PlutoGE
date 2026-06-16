@@ -88,6 +88,18 @@ namespace PlutoGE::scene
         }
     }
 
+    void Entity::MarkTransformDirtyRecursive()
+    {
+        m_worldTransformDirty = true;
+        for (auto *child : m_children)
+        {
+            if (child)
+            {
+                child->MarkTransformDirtyRecursive();
+            }
+        }
+    }
+
     void Entity::SetPosition(const glm::vec3 &position)
     {
         if (m_transform.position == position)
@@ -96,6 +108,8 @@ namespace PlutoGE::scene
         }
 
         m_transform.position = position;
+        m_localTransformDirty = true;
+        MarkTransformDirtyRecursive();
     }
 
     void Entity::SetRotation(const glm::vec3 &rotation)
@@ -106,6 +120,8 @@ namespace PlutoGE::scene
         }
 
         m_transform.rotation = rotation;
+        m_localTransformDirty = true;
+        MarkTransformDirtyRecursive();
     }
 
     void Entity::SetScale(const glm::vec3 &scale)
@@ -116,6 +132,8 @@ namespace PlutoGE::scene
         }
 
         m_transform.scale = scale;
+        m_localTransformDirty = true;
+        MarkTransformDirtyRecursive();
     }
 
     void Entity::SetActive(bool active)
@@ -155,6 +173,7 @@ namespace PlutoGE::scene
         m_children.push_back(child);
         child->m_parent = this;
         child->SetSceneRecursive(m_scene);
+        child->MarkTransformDirtyRecursive();
         child->MarkShadowSceneDirty();
     }
 
@@ -174,6 +193,7 @@ namespace PlutoGE::scene
         auto &siblings = m_parent->m_children;
         siblings.erase(std::remove(siblings.begin(), siblings.end(), this), siblings.end());
         m_parent = nullptr;
+        MarkTransformDirtyRecursive();
 
         if (m_scene)
         {
@@ -459,24 +479,38 @@ namespace PlutoGE::scene
 
     glm::mat4 Entity::GetWorldTransform() const
     {
+        if (!m_worldTransformDirty)
+        {
+            return m_cachedWorldTransform;
+        }
+
         if (m_parent)
         {
-            return m_parent->GetWorldTransform() * GetLocalTransform();
+            m_cachedWorldTransform = m_parent->GetWorldTransform() * GetLocalTransform();
         }
         else
         {
-            return GetLocalTransform();
+            m_cachedWorldTransform = GetLocalTransform();
         }
+
+        m_worldTransformDirty = false;
+        return m_cachedWorldTransform;
     }
 
     glm::mat4 Entity::GetLocalTransform() const
     {
-        glm::mat4 localTransform = glm::mat4(1.0f);
-        localTransform = glm::translate(localTransform, m_transform.position);
-        localTransform = glm::rotate(localTransform, glm::radians(m_transform.rotation.x), glm::vec3(1.0f, 0.0f, 0.0f));
-        localTransform = glm::rotate(localTransform, glm::radians(m_transform.rotation.y), glm::vec3(0.0f, 1.0f, 0.0f));
-        localTransform = glm::rotate(localTransform, glm::radians(m_transform.rotation.z), glm::vec3(0.0f, 0.0f, 1.0f));
-        localTransform = glm::scale(localTransform, m_transform.scale);
-        return localTransform;
+        if (!m_localTransformDirty)
+        {
+            return m_cachedLocalTransform;
+        }
+
+        m_cachedLocalTransform = glm::mat4(1.0f);
+        m_cachedLocalTransform = glm::translate(m_cachedLocalTransform, m_transform.position);
+        m_cachedLocalTransform = glm::rotate(m_cachedLocalTransform, glm::radians(m_transform.rotation.x), glm::vec3(1.0f, 0.0f, 0.0f));
+        m_cachedLocalTransform = glm::rotate(m_cachedLocalTransform, glm::radians(m_transform.rotation.y), glm::vec3(0.0f, 1.0f, 0.0f));
+        m_cachedLocalTransform = glm::rotate(m_cachedLocalTransform, glm::radians(m_transform.rotation.z), glm::vec3(0.0f, 0.0f, 1.0f));
+        m_cachedLocalTransform = glm::scale(m_cachedLocalTransform, m_transform.scale);
+        m_localTransformDirty = false;
+        return m_cachedLocalTransform;
     }
 }

@@ -3,6 +3,7 @@
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
+#include "PlutoGE/scene/components/AnimationComponent.h"
 
 #include <chrono>
 #include <cstdlib>
@@ -118,6 +119,7 @@ namespace PlutoGE::core
 
         ImportedRenderMeshAsset importedRenderMeshAsset;
         importedRenderMeshAsset.mesh = importedMeshAsset.mesh;
+        importedRenderMeshAsset.animations = importedMeshAsset.animations;
         if (!importedMeshAsset.mesh)
         {
             return importedRenderMeshAsset;
@@ -304,6 +306,17 @@ namespace PlutoGE::core
                         meshComponent->SetMesh(importedRenderMeshAsset.mesh);
                         meshComponent->SetMaterials(importedRenderMeshAsset.materials);
                         meshComponent->SetSourceMeshPath(job.normalizedPath);
+                        if (importedRenderMeshAsset.animations && !importedRenderMeshAsset.animations->empty())
+                        {
+                            auto *animationComponent = entity->GetComponent<scene::AnimationComponent>();
+                            if (!animationComponent)
+                            {
+                                animationComponent = entity->CreateComponent<scene::AnimationComponent>();
+                            }
+
+                            animationComponent->SetClipsFromImportedAnimations(*importedRenderMeshAsset.animations);
+                            animationComponent->SetSourceAnimationPath(job.normalizedPath);
+                        }
                     }
                     else
                     {

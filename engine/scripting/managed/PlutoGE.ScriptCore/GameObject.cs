@@ -56,6 +56,16 @@ public sealed class GameObject
         return ScriptBridge.InvokeEntityMethod(EntityId, methodName);
     }
 
+    public bool Destroy()
+    {
+        return ScriptBridge.DestroyEntity(EntityId);
+    }
+
+    public static bool Destroy(GameObject? gameObject)
+    {
+        return gameObject is not null && ScriptBridge.DestroyEntity(gameObject.EntityId);
+    }
+
     public bool HasComponent<T>() where T : class
     {
         return typeof(T) switch
@@ -65,6 +75,7 @@ public sealed class GameObject
             var type when type == typeof(LightComponent) => ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.Light),
             var type when type == typeof(RigidbodyComponent) => ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.Rigidbody),
             var type when type == typeof(ColliderComponent) => ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.Collider),
+            var type when type == typeof(AnimationComponent) => ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.Animation),
             _ => false,
         };
     }
@@ -94,6 +105,11 @@ public sealed class GameObject
         if (typeof(T) == typeof(ColliderComponent) && ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.Collider))
         {
             return new ColliderComponent(EntityId) as T;
+        }
+
+        if (typeof(T) == typeof(AnimationComponent) && ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.Animation))
+        {
+            return new AnimationComponent(EntityId) as T;
         }
 
         return null;

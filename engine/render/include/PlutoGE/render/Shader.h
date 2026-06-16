@@ -181,11 +181,15 @@ namespace PlutoGE::render
             layout(location = 5) in mat4 aModel;
             layout(location = 9) in mat4 aPreviousModel;
             layout(location = 13) in vec4 aInstanceFlags;
+            layout(location = 14) in ivec4 aJoints;
+            layout(location = 15) in vec4 aWeights;
 
             uniform mat4 uView;
             uniform mat4 uProjection;
             uniform mat4 uCurrentViewProjection;
             uniform mat4 uPreviousViewProjection;
+            uniform int uUseSkinning = 0;
+            uniform mat4 uJointMatrices[96];
 
             out vec3 FragPos;
             out vec3 Normal;
@@ -198,12 +202,30 @@ namespace PlutoGE::render
 
             void main()
             {
-                vec4 currentWorldPos = aModel * vec4(aPos, 1.0);
-                vec4 previousWorldPos = aPreviousModel * vec4(aPos, 1.0);
+                mat4 skinMatrix = mat4(1.0);
+                if (uUseSkinning != 0)
+                {
+                    float totalWeight = aWeights.x + aWeights.y + aWeights.z + aWeights.w;
+                    if (totalWeight > 0.0001)
+                    {
+                        skinMatrix =
+                            uJointMatrices[clamp(aJoints.x, 0, 95)] * aWeights.x +
+                            uJointMatrices[clamp(aJoints.y, 0, 95)] * aWeights.y +
+                            uJointMatrices[clamp(aJoints.z, 0, 95)] * aWeights.z +
+                            uJointMatrices[clamp(aJoints.w, 0, 95)] * aWeights.w;
+                    }
+                }
+
+                vec4 skinnedPosition = skinMatrix * vec4(aPos, 1.0);
+                vec3 skinnedNormal = mat3(skinMatrix) * aNormal;
+                vec3 skinnedTangent = mat3(skinMatrix) * aTangent.xyz;
+
+                vec4 currentWorldPos = aModel * skinnedPosition;
+                vec4 previousWorldPos = aPreviousModel * skinnedPosition;
                 FragPos = currentWorldPos.xyz;
                 mat3 normalMatrix = transpose(inverse(mat3(aModel)));
-                vec3 worldNormal = normalize(normalMatrix * aNormal);
-                vec3 worldTangent = normalize(normalMatrix * aTangent.xyz);
+                vec3 worldNormal = normalize(normalMatrix * skinnedNormal);
+                vec3 worldTangent = normalize(normalMatrix * skinnedTangent);
                 worldTangent = normalize(worldTangent - dot(worldTangent, worldNormal) * worldNormal);
                 vec3 worldBitangent = cross(worldNormal, worldTangent) * aTangent.w;
 

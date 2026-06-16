@@ -2,6 +2,7 @@
 #include "PlutoGE/ui/panels/InspectorPanel.h"
 #include "PlutoGE/ui/EditorShell.h"
 #include "PlutoGE/assets/Project.h"
+#include "PlutoGE/scene/components/AnimationComponent.h"
 #include "PlutoGE/scene/components/Component.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/scene/components/ScriptComponent.h"
@@ -45,6 +46,7 @@ namespace PlutoGE::ui
         constexpr std::size_t kNewScriptNameBufferSize = 128;
         constexpr const char *kAddableComponentLabels[] = {
             "Mesh Component",
+            "Animation Component",
             "Camera Component",
             "Light Component",
             "Rigidbody Component",
@@ -56,12 +58,13 @@ namespace PlutoGE::ui
         enum class AddableComponentType
         {
             Mesh = 0,
-            Camera = 1,
-            Light = 2,
-            Rigidbody = 3,
-            Collider = 4,
-            IblCapture = 5,
-            Script = 6,
+            Animation = 1,
+            Camera = 2,
+            Light = 3,
+            Rigidbody = 4,
+            Collider = 5,
+            IblCapture = 6,
+            Script = 7,
         };
 
         struct ScriptAssetOption
@@ -457,6 +460,10 @@ namespace PlutoGE::ui
             {
                 return "Mesh Component";
             }
+            if (dynamic_cast<const scene::AnimationComponent *>(&component))
+            {
+                return "Animation Component";
+            }
             if (dynamic_cast<const scene::CameraComponent *>(&component))
             {
                 return "Camera Component";
@@ -489,6 +496,8 @@ namespace PlutoGE::ui
         {
             if (dynamic_cast<const scene::MeshComponent *>(&component))
                 return "MeshComponent";
+            if (dynamic_cast<const scene::AnimationComponent *>(&component))
+                return "AnimationComponent";
             if (dynamic_cast<const scene::CameraComponent *>(&component))
                 return "CameraComponent";
             if (dynamic_cast<const scene::LightComponent *>(&component))
@@ -581,6 +590,8 @@ namespace PlutoGE::ui
             {
             case AddableComponentType::Mesh:
                 return !entity.HasComponent<scene::MeshComponent>();
+            case AddableComponentType::Animation:
+                return !entity.HasComponent<scene::AnimationComponent>();
             case AddableComponentType::Camera:
                 return !entity.HasComponent<scene::CameraComponent>();
             case AddableComponentType::Light:
@@ -629,6 +640,9 @@ namespace PlutoGE::ui
                 }
                 break;
             }
+            case AddableComponentType::Animation:
+                entity.CreateComponent<scene::AnimationComponent>();
+                break;
             case AddableComponentType::Light:
                 entity.CreateComponent<scene::LightComponent>();
                 break;
@@ -1093,6 +1107,7 @@ namespace PlutoGE::ui
             case scripting::ScriptFieldType::LightComponent:
             case scripting::ScriptFieldType::RigidbodyComponent:
             case scripting::ScriptFieldType::ColliderComponent:
+            case scripting::ScriptFieldType::AnimationComponent:
             {
                 uint32_t selectedEntityId = std::get<uint32_t>(*fieldValue);
                 scene::Scene *scene = entity.GetScene();
@@ -1119,6 +1134,8 @@ namespace PlutoGE::ui
                         return candidate.HasComponent<scene::RigidbodyComponent>();
                     case scripting::ScriptFieldType::ColliderComponent:
                         return candidate.HasComponent<scene::ColliderComponent>();
+                    case scripting::ScriptFieldType::AnimationComponent:
+                        return candidate.HasComponent<scene::AnimationComponent>();
                     case scripting::ScriptFieldType::EntityId:
                     case scripting::ScriptFieldType::GameObject:
                     default:
@@ -1690,6 +1707,17 @@ namespace PlutoGE::ui
                                     meshComponent->SetMesh(importedMeshAsset.mesh);
                                     meshComponent->SetMaterials(importedMeshAsset.materials);
                                     meshComponent->SetSourceMeshPath(option.reference);
+                                    if (importedMeshAsset.animations && !importedMeshAsset.animations->empty())
+                                    {
+                                        auto *animationComponent = entity->GetComponent<scene::AnimationComponent>();
+                                        if (!animationComponent)
+                                        {
+                                            animationComponent = entity->CreateComponent<scene::AnimationComponent>();
+                                        }
+
+                                        animationComponent->SetClipsFromImportedAnimations(*importedMeshAsset.animations);
+                                        animationComponent->SetSourceAnimationPath(option.reference);
+                                    }
                                     editorShell.MarkSceneDirty();
                                 }
                             }

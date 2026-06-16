@@ -37,6 +37,54 @@ namespace PlutoGE::render
         constexpr std::size_t kLightingAmbientStage = 1;
         constexpr std::size_t kLightingAccumulationStage = 2;
 
+        struct FrustumPlane
+        {
+            glm::vec3 normal{0.0f};
+            float distance = 0.0f;
+        };
+
+        std::array<FrustumPlane, 6> ExtractFrustumPlanes(const glm::mat4 &viewProjection)
+        {
+            std::array<FrustumPlane, 6> planes = {
+                FrustumPlane{glm::vec3(viewProjection[0][3] + viewProjection[0][0], viewProjection[1][3] + viewProjection[1][0], viewProjection[2][3] + viewProjection[2][0]), viewProjection[3][3] + viewProjection[3][0]},
+                FrustumPlane{glm::vec3(viewProjection[0][3] - viewProjection[0][0], viewProjection[1][3] - viewProjection[1][0], viewProjection[2][3] - viewProjection[2][0]), viewProjection[3][3] - viewProjection[3][0]},
+                FrustumPlane{glm::vec3(viewProjection[0][3] + viewProjection[0][1], viewProjection[1][3] + viewProjection[1][1], viewProjection[2][3] + viewProjection[2][1]), viewProjection[3][3] + viewProjection[3][1]},
+                FrustumPlane{glm::vec3(viewProjection[0][3] - viewProjection[0][1], viewProjection[1][3] - viewProjection[1][1], viewProjection[2][3] - viewProjection[2][1]), viewProjection[3][3] - viewProjection[3][1]},
+                FrustumPlane{glm::vec3(viewProjection[0][3] + viewProjection[0][2], viewProjection[1][3] + viewProjection[1][2], viewProjection[2][3] + viewProjection[2][2]), viewProjection[3][3] + viewProjection[3][2]},
+                FrustumPlane{glm::vec3(viewProjection[0][3] - viewProjection[0][2], viewProjection[1][3] - viewProjection[1][2], viewProjection[2][3] - viewProjection[2][2]), viewProjection[3][3] - viewProjection[3][2]},
+            };
+
+            for (auto &plane : planes)
+            {
+                const float length = glm::length(plane.normal);
+                if (length > 1e-6f)
+                {
+                    plane.normal /= length;
+                    plane.distance /= length;
+                }
+            }
+
+            return planes;
+        }
+
+        bool IsRenderCommandVisible(const RenderCommand &command, const std::array<FrustumPlane, 6> &planes)
+        {
+            if (!command.mesh)
+            {
+                return false;
+            }
+
+            for (const auto &plane : planes)
+            {
+                if (glm::dot(plane.normal, command.worldBounds.center) + plane.distance < -command.worldBounds.radius)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
         Shader *GetRenderCommandShaderKey(const RenderCommand &command)
         {
             return command.shader;
@@ -389,6 +437,17 @@ namespace PlutoGE::render
             activeCameraData = taaEffect->PrepareCameraData(cameraData, renderWidth, renderHeight, m_frameSequence);
         }
 
+        m_visibleRenderCommands.clear();
+        m_visibleRenderCommands.reserve(m_renderCommands.size());
+        const auto frustumPlanes = ExtractFrustumPlanes(activeCameraData.projection * activeCameraData.view);
+        for (const auto &command : m_renderCommands)
+        {
+            if (IsRenderCommandVisible(command, frustumPlanes))
+            {
+                m_visibleRenderCommands.push_back(command);
+            }
+        }
+
         RenderContext ctx{
             .renderer = this,
             .cameraData = activeCameraData,
@@ -401,7 +460,7 @@ namespace PlutoGE::render
             .renderTarget = renderTarget,
             .temporaryRenderTarget = frameResources->temporaryRenderTarget.get(),
             .postProcessIntermediateRenderTarget = frameResources->postProcessIntermediateRenderTarget.get(),
-            .renderCommands = &m_renderCommands,
+            .renderCommands = &m_visibleRenderCommands,
             .lights = &lights,
             .gBuffer = &frameResources->gBuffer,
             .lightPropagationVolumePass = m_lightPropagationVolumePass,
@@ -416,6 +475,7 @@ namespace PlutoGE::render
             shadowCtx.cameraData = cameraData;
             shadowCtx.previousCameraData = frameResources->previousShadowCameraData;
             shadowCtx.hasPreviousCameraData = frameResources->hasPreviousShadowCameraData;
+            shadowCtx.renderCommands = &m_renderCommands;
             ExecutePassWithGpuTiming(*m_shadowPass, shadowCtx, 0);
         }
 

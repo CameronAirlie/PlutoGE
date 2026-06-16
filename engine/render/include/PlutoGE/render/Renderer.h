@@ -65,6 +65,7 @@ namespace PlutoGE::render
         glm::mat4 previousModel = glm::mat4(1.0f);
         MeshBounds worldBounds{};
         MeshBounds previousWorldBounds{};
+        const std::vector<glm::mat4> *jointMatrices = nullptr;
         uint32_t submeshIndex = 0;
         bool isStatic = false;
         bool usePrimaryUvForLightmap = false;
@@ -223,6 +224,7 @@ namespace PlutoGE::render
         LightPropagationVolumePass *m_lightPropagationVolumePass = nullptr;
         std::vector<IRenderPass *> m_renderPasses;
         std::vector<RenderCommand> m_renderCommands;
+        std::vector<RenderCommand> m_visibleRenderCommands;
         std::unordered_map<const RenderTarget *, std::unique_ptr<FrameResources>> m_frameResources;
         std::vector<CpuPassTiming> m_cpuPassTimings;
         std::vector<GpuPassTiming> m_gpuPassTimings;

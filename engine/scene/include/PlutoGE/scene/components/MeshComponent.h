@@ -1,9 +1,11 @@
 #pragma once
 #include "PlutoGE/render/Mesh.h"
+#include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/scene/components/Component.h"
 
 #include <glm/glm.hpp>
 #include <string>
+#include <vector>
 
 namespace PlutoGE::render
 {
@@ -45,7 +47,16 @@ namespace PlutoGE::scene
 
         void SetMesh(render::Mesh *mesh);
         render::Mesh *GetMesh() const { return m_mesh; }
-        void SetStatic(bool isStatic) { m_isStatic = isStatic; }
+        void SetStatic(bool isStatic)
+        {
+            if (m_isStatic == isStatic)
+            {
+                return;
+            }
+
+            m_isStatic = isStatic;
+            MarkRenderCommandsDirty();
+        }
         bool IsStatic() const { return m_isStatic; }
         void SetSourceMeshPath(const std::string &sourceMeshPath) { m_sourceMeshPath = sourceMeshPath; }
         const std::string &GetSourceMeshPath() const { return m_sourceMeshPath; }
@@ -61,6 +72,7 @@ namespace PlutoGE::scene
             {
                 m_materials[0] = material;
             }
+            MarkRenderCommandsDirty();
         }
         render::Material *GetMaterial() const { return m_material; }
         void SetMaterials(const std::vector<render::Material *> &materials)
@@ -70,6 +82,7 @@ namespace PlutoGE::scene
             m_submeshMaterials.clear();
             m_materialAssetReferences.clear();
             m_submeshMaterialAssetReferences.clear();
+            MarkRenderCommandsDirty();
         }
         const std::vector<render::Material *> &GetMaterials() const { return m_materials; }
         render::Material *GetMaterialForMaterialSlot(size_t materialSlotIndex) const
@@ -93,6 +106,7 @@ namespace PlutoGE::scene
             {
                 m_material = material;
             }
+            MarkRenderCommandsDirty();
         }
         void SetMaterialAssetForMaterialSlot(size_t materialSlotIndex, const std::string &materialAssetReference)
         {
@@ -130,6 +144,7 @@ namespace PlutoGE::scene
             }
 
             m_submeshMaterials[submeshIndex] = material;
+            MarkRenderCommandsDirty();
         }
         void SetMaterialAssetForSubmesh(size_t submeshIndex, const std::string &materialAssetReference)
         {
@@ -149,6 +164,9 @@ namespace PlutoGE::scene
         render::Material *CreateUniqueMaterialForSubmesh(size_t submeshIndex);
 
     private:
+        void MarkRenderCommandsDirty();
+        void UpdateCachedPreviousModels(const glm::mat4 &modelMatrix);
+
         render::Mesh *m_mesh = nullptr;
         render::Material *m_material = nullptr;
         std::vector<render::Material *> m_materials;
@@ -158,6 +176,10 @@ namespace PlutoGE::scene
         glm::mat4 m_previousModelMatrix = glm::mat4(1.0f);
         bool m_hasPreviousModelMatrix = false;
         bool m_isStatic = false;
+        bool m_renderCommandCacheDirty = true;
+        bool m_hasCachedRenderCommandModel = false;
+        glm::mat4 m_cachedRenderCommandModel = glm::mat4(1.0f);
+        std::vector<render::RenderCommand> m_cachedRenderCommands;
         std::string m_sourceMeshPath;
     };
 }

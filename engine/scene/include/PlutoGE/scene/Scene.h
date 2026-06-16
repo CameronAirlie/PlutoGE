@@ -66,6 +66,7 @@ namespace PlutoGE::scene
 
         Entity *AddEntity(std::unique_ptr<Entity> entity, Entity *parent = nullptr);
         void RemoveEntity(Entity *entity);
+        bool DestroyEntity(EntityID entityId);
         std::vector<Entity *> GetRootEntities() const { return m_rootEntities; }
 
         void StartRuntime();
@@ -137,8 +138,11 @@ namespace PlutoGE::scene
         std::unique_ptr<render::Texture> m_bakedProbeTexture;
         std::vector<IblCaptureVolume> m_iblCaptureVolumes;
         std::unordered_set<uint64_t> m_activeCollisionPairs;
+        std::vector<EntityID> m_pendingDestroyEntities;
+        std::unordered_set<EntityID> m_pendingDestroyEntityIds;
         void CollectEntitySubtree(Entity *entity, std::vector<Entity *> &entities) const;
         bool RemoveEntityRecursive(Entity *current, Entity *target);
+        void FlushPendingDestroyEntities();
         void RebuildBakedProbeTexture();
         void StepPhysics(float deltaTime);
         void DispatchCollisionEvents(std::unordered_set<uint64_t> currentCollisionPairs);

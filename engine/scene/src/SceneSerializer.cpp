@@ -4,6 +4,7 @@
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
+#include "PlutoGE/scene/components/AnimationComponent.h"
 #include "PlutoGE/scene/components/ColliderComponent.h"
 #include "PlutoGE/scene/components/IblCaptureComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
@@ -145,6 +146,10 @@ namespace PlutoGE::scene
             {
                 return "MeshComponent";
             }
+            if (dynamic_cast<const AnimationComponent *>(&component))
+            {
+                return "AnimationComponent";
+            }
             if (dynamic_cast<const CameraComponent *>(&component))
             {
                 return "CameraComponent";
@@ -179,6 +184,10 @@ namespace PlutoGE::scene
             {
                 return std::make_unique<MeshComponent>(MeshComponentConfig{});
             }
+            if (componentType == "AnimationComponent")
+            {
+                return std::make_unique<AnimationComponent>();
+            }
             if (componentType == "CameraComponent")
             {
                 return std::make_unique<CameraComponent>(new render::Camera(render::CameraConfig{}));
@@ -212,6 +221,10 @@ namespace PlutoGE::scene
             if (componentType == "MeshComponent")
             {
                 return propertyName == "SourceMesh" || propertyName.ends_with("LightmapPath") || propertyName.ends_with("MaterialAsset");
+            }
+            if (componentType == "AnimationComponent")
+            {
+                return propertyName == "SourceAnimation";
             }
 
             return false;

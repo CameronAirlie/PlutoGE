@@ -6,6 +6,7 @@
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
+#include "PlutoGE/scene/components/AnimationComponent.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
 #include "PlutoGE/scene/components/ColliderComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
@@ -71,11 +72,12 @@ namespace PlutoGE::scripting
         using invoke_on_collision_fn = int(__cdecl *)(int64_t, uint32_t);
         using apply_field_data_fn = int(__cdecl *)(int64_t, const char *);
         using set_entity_id_fn = int(__cdecl *)(int64_t, uint32_t);
-        using register_game_object_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
+        using register_game_object_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_component_api_fn = int(__cdecl *)(void *, void *, void *);
         using register_camera_component_api_fn = int(__cdecl *)(void *, void *, void *, void *);
         using register_light_component_api_fn = int(__cdecl *)(void *, void *, void *, void *);
         using register_mesh_component_api_fn = int(__cdecl *)(void *, void *, void *, void *);
+        using register_animation_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_rigidbody_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_collider_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_input_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
@@ -103,6 +105,7 @@ namespace PlutoGE::scripting
         using set_entity_active_fn = void(__cdecl *)(uint32_t, int32_t);
         using get_entity_tag_count_fn = int(__cdecl *)(uint32_t);
         using get_entity_tag_fn = const char *(__cdecl *)(uint32_t, int32_t);
+        using destroy_entity_fn = int(__cdecl *)(uint32_t);
         using has_entity_component_fn = int(__cdecl *)(uint32_t, int32_t);
         using get_component_enabled_fn = int(__cdecl *)(uint32_t, int32_t);
         using set_component_enabled_fn = void(__cdecl *)(uint32_t, int32_t, int32_t);
@@ -124,6 +127,9 @@ namespace PlutoGE::scripting
         using set_component_bool_fn = void(__cdecl *)(uint32_t, int32_t);
         using get_component_int_fn = int(__cdecl *)(uint32_t);
         using set_component_int_fn = void(__cdecl *)(uint32_t, int32_t);
+        using get_component_string_by_index_fn = const char *(__cdecl *)(uint32_t, int32_t);
+        using get_component_float_by_index_fn = float(__cdecl *)(uint32_t, int32_t);
+        using component_action_fn = void(__cdecl *)(uint32_t);
         using get_component_vector3_fn = NativeVector3(__cdecl *)(uint32_t);
         using set_component_vector3_fn = void(__cdecl *)(uint32_t, NativeVector3);
         using get_input_key_fn = int(__cdecl *)(int32_t);
@@ -153,6 +159,7 @@ namespace PlutoGE::scripting
             Script = 3,
             Rigidbody = 4,
             Collider = 5,
+            Animation = 6,
         };
 
         std::wstring Utf8ToWide(std::string_view text)
@@ -397,7 +404,7 @@ namespace PlutoGE::scripting
         {
             int fieldTypeValue = 0;
             std::from_chars(token.data(), token.data() + token.size(), fieldTypeValue);
-            if (fieldTypeValue < static_cast<int>(ScriptFieldType::None) || fieldTypeValue > static_cast<int>(ScriptFieldType::ColliderComponent))
+            if (fieldTypeValue < static_cast<int>(ScriptFieldType::None) || fieldTypeValue > static_cast<int>(ScriptFieldType::AnimationComponent))
             {
                 return ScriptFieldType::None;
             }
@@ -460,6 +467,7 @@ namespace PlutoGE::scripting
             case ScriptFieldType::LightComponent:
             case ScriptFieldType::RigidbodyComponent:
             case ScriptFieldType::ColliderComponent:
+            case ScriptFieldType::AnimationComponent:
             {
                 uint32_t value = 0;
                 std::from_chars(token.data(), token.data() + token.size(), value);
@@ -717,6 +725,8 @@ namespace PlutoGE::scripting
                 return entity->GetComponent<scene::RigidbodyComponent>();
             case ManagedComponentKind::Collider:
                 return entity->GetComponent<scene::ColliderComponent>();
+            case ManagedComponentKind::Animation:
+                return entity->GetComponent<scene::AnimationComponent>();
             default:
                 return nullptr;
             }
@@ -882,6 +892,12 @@ namespace PlutoGE::scripting
 
             tagStorage = entity->GetTags()[static_cast<std::size_t>(tagIndex)];
             return tagStorage.c_str();
+        }
+
+        int32_t DestroyEntity(uint32_t entityId)
+        {
+            auto *scene = core::Engine::GetInstance().GetScene();
+            return scene && scene->DestroyEntity(entityId) ? 1 : 0;
         }
 
         int32_t HasEntityComponent(uint32_t entityId, int32_t componentKind)
@@ -1083,6 +1099,72 @@ namespace PlutoGE::scripting
                 material->SetColor(glm::vec4(color.x, color.y, color.z, alpha));
             }
         }
+
+        scene::AnimationComponent *FindAnimation(uint32_t entityId)
+        {
+            auto *entity = FindEntity(entityId);
+            return entity ? entity->GetComponent<scene::AnimationComponent>() : nullptr;
+        }
+
+        int32_t GetAnimationClipCount(uint32_t entityId)
+        {
+            auto *component = FindAnimation(entityId);
+            return component ? component->GetClipCount() : 0;
+        }
+
+        int32_t GetAnimationClipIndex(uint32_t entityId)
+        {
+            auto *component = FindAnimation(entityId);
+            return component ? component->GetCurrentClipIndex() : 0;
+        }
+
+        void SetAnimationClipIndex(uint32_t entityId, int32_t clipIndex)
+        {
+            if (auto *component = FindAnimation(entityId))
+            {
+                component->SetCurrentClipIndex(clipIndex);
+            }
+        }
+
+        const char *GetAnimationClipName(uint32_t entityId, int32_t clipIndex)
+        {
+            thread_local std::string clipNameStorage;
+            clipNameStorage.clear();
+
+            auto *component = FindAnimation(entityId);
+            if (!component || clipIndex < 0 || clipIndex >= component->GetClipCount())
+            {
+                return clipNameStorage.c_str();
+            }
+
+            clipNameStorage = component->GetClips()[static_cast<size_t>(clipIndex)].name;
+            return clipNameStorage.c_str();
+        }
+
+        float GetAnimationClipDuration(uint32_t entityId, int32_t clipIndex)
+        {
+            auto *component = FindAnimation(entityId);
+            if (!component || clipIndex < 0 || clipIndex >= component->GetClipCount())
+            {
+                return 0.0f;
+            }
+
+            return component->GetClips()[static_cast<size_t>(clipIndex)].duration;
+        }
+
+        int32_t GetAnimationPlaying(uint32_t entityId) { auto *component = FindAnimation(entityId); return component && component->IsPlaying() ? 1 : 0; }
+        void SetAnimationPlaying(uint32_t entityId, int32_t value) { if (auto *component = FindAnimation(entityId)) component->SetPlaying(value != 0); }
+        int32_t GetAnimationLooping(uint32_t entityId) { auto *component = FindAnimation(entityId); return component && component->IsLooping() ? 1 : 0; }
+        void SetAnimationLooping(uint32_t entityId, int32_t value) { if (auto *component = FindAnimation(entityId)) component->SetLooping(value != 0); }
+        int32_t GetAnimationAutoplay(uint32_t entityId) { auto *component = FindAnimation(entityId); return component && component->IsAutoplay() ? 1 : 0; }
+        void SetAnimationAutoplay(uint32_t entityId, int32_t value) { if (auto *component = FindAnimation(entityId)) component->SetAutoplay(value != 0); }
+        float GetAnimationSpeed(uint32_t entityId) { auto *component = FindAnimation(entityId); return component ? component->GetSpeed() : 0.0f; }
+        void SetAnimationSpeed(uint32_t entityId, float value) { if (auto *component = FindAnimation(entityId)) component->SetSpeed(value); }
+        float GetAnimationTime(uint32_t entityId) { auto *component = FindAnimation(entityId); return component ? component->GetTime() : 0.0f; }
+        void SetAnimationTime(uint32_t entityId, float value) { if (auto *component = FindAnimation(entityId)) component->SetTime(value); }
+        void AnimationPlay(uint32_t entityId) { if (auto *component = FindAnimation(entityId)) component->Play(); }
+        void AnimationPause(uint32_t entityId) { if (auto *component = FindAnimation(entityId)) component->Pause(); }
+        void AnimationStop(uint32_t entityId) { if (auto *component = FindAnimation(entityId)) component->Stop(); }
 
         scene::RigidbodyComponent *FindRigidbody(uint32_t entityId)
         {
@@ -1445,6 +1527,7 @@ namespace PlutoGE::scripting
         register_camera_component_api_fn registerCameraComponentApi = nullptr;
         register_light_component_api_fn registerLightComponentApi = nullptr;
         register_mesh_component_api_fn registerMeshComponentApi = nullptr;
+        register_animation_component_api_fn registerAnimationComponentApi = nullptr;
         register_rigidbody_component_api_fn registerRigidbodyComponentApi = nullptr;
         register_collider_component_api_fn registerColliderComponentApi = nullptr;
         register_input_api_fn registerInputApi = nullptr;
@@ -1534,6 +1617,7 @@ namespace PlutoGE::scripting
             impl.registerCameraComponentApi = nullptr;
             impl.registerLightComponentApi = nullptr;
             impl.registerMeshComponentApi = nullptr;
+            impl.registerAnimationComponentApi = nullptr;
             impl.registerRigidbodyComponentApi = nullptr;
             impl.registerColliderComponentApi = nullptr;
             impl.registerInputApi = nullptr;
@@ -1842,6 +1926,7 @@ namespace PlutoGE::scripting
                 LoadManagedExport(impl, L"RegisterCameraComponentApi", impl.registerCameraComponentApi) &&
                 LoadManagedExport(impl, L"RegisterLightComponentApi", impl.registerLightComponentApi) &&
                 LoadManagedExport(impl, L"RegisterMeshComponentApi", impl.registerMeshComponentApi) &&
+                LoadManagedExport(impl, L"RegisterAnimationComponentApi", impl.registerAnimationComponentApi) &&
                 LoadManagedExport(impl, L"RegisterRigidbodyComponentApi", impl.registerRigidbodyComponentApi) &&
                 LoadManagedExport(impl, L"RegisterColliderComponentApi", impl.registerColliderComponentApi) &&
                 LoadManagedExport(impl, L"RegisterInputApi", impl.registerInputApi) &&
@@ -2037,7 +2122,8 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(static_cast<get_entity_active_fn>(&GetEntityActive)),
                 reinterpret_cast<void *>(static_cast<set_entity_active_fn>(&SetEntityActive)),
                 reinterpret_cast<void *>(static_cast<get_entity_tag_count_fn>(&GetEntityTagCount)),
-                reinterpret_cast<void *>(static_cast<get_entity_tag_fn>(&GetEntityTag))) == 0)
+                reinterpret_cast<void *>(static_cast<get_entity_tag_fn>(&GetEntityTag)),
+                reinterpret_cast<void *>(static_cast<destroy_entity_fn>(&DestroyEntity))) == 0)
         {
             setManagedBridgeFailure("RegisterGameObjectApi");
             return false;
@@ -2083,6 +2169,31 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(static_cast<set_mesh_color_fn>(&SetMeshColor))) == 0)
         {
             setManagedBridgeFailure("RegisterMeshComponentApi");
+            return false;
+        }
+
+        if (!m_impl->registerAnimationComponentApi ||
+            m_impl->registerAnimationComponentApi(
+                reinterpret_cast<void *>(static_cast<get_component_int_fn>(&GetAnimationClipCount)),
+                reinterpret_cast<void *>(static_cast<get_component_int_fn>(&GetAnimationClipIndex)),
+                reinterpret_cast<void *>(static_cast<set_component_int_fn>(&SetAnimationClipIndex)),
+                reinterpret_cast<void *>(static_cast<get_component_string_by_index_fn>(&GetAnimationClipName)),
+                reinterpret_cast<void *>(static_cast<get_component_float_by_index_fn>(&GetAnimationClipDuration)),
+                reinterpret_cast<void *>(static_cast<get_component_bool_fn>(&GetAnimationPlaying)),
+                reinterpret_cast<void *>(static_cast<set_component_bool_fn>(&SetAnimationPlaying)),
+                reinterpret_cast<void *>(static_cast<get_component_bool_fn>(&GetAnimationLooping)),
+                reinterpret_cast<void *>(static_cast<set_component_bool_fn>(&SetAnimationLooping)),
+                reinterpret_cast<void *>(static_cast<get_component_bool_fn>(&GetAnimationAutoplay)),
+                reinterpret_cast<void *>(static_cast<set_component_bool_fn>(&SetAnimationAutoplay)),
+                reinterpret_cast<void *>(static_cast<get_component_float_fn>(&GetAnimationSpeed)),
+                reinterpret_cast<void *>(static_cast<set_component_float_fn>(&SetAnimationSpeed)),
+                reinterpret_cast<void *>(static_cast<get_component_float_fn>(&GetAnimationTime)),
+                reinterpret_cast<void *>(static_cast<set_component_float_fn>(&SetAnimationTime)),
+                reinterpret_cast<void *>(static_cast<component_action_fn>(&AnimationPlay)),
+                reinterpret_cast<void *>(static_cast<component_action_fn>(&AnimationPause)),
+                reinterpret_cast<void *>(static_cast<component_action_fn>(&AnimationStop))) == 0)
+        {
+            setManagedBridgeFailure("RegisterAnimationComponentApi");
             return false;
         }
 

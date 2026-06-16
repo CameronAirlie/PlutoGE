@@ -34,6 +34,7 @@ namespace PlutoGE::core
     {
         render::Mesh *mesh = nullptr;
         std::vector<render::Material *> materials;
+        const std::vector<render::AnimationClip> *animations = nullptr;
     };
 
     struct EngineConfig

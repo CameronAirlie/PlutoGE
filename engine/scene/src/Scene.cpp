@@ -655,6 +655,45 @@ namespace PlutoGE::scene
             m_entityStorage.end());
     }
 
+    bool Scene::DestroyEntity(EntityID entityId)
+    {
+        if (entityId == 0 || m_pendingDestroyEntityIds.contains(entityId))
+        {
+            return false;
+        }
+
+        auto *entity = FindEntityByID(entityId);
+        if (!entity)
+        {
+            return false;
+        }
+
+        entity->SetActive(false);
+        m_pendingDestroyEntityIds.insert(entityId);
+        m_pendingDestroyEntities.push_back(entityId);
+        return true;
+    }
+
+    void Scene::FlushPendingDestroyEntities()
+    {
+        if (m_pendingDestroyEntities.empty())
+        {
+            return;
+        }
+
+        auto pendingDestroyEntities = std::move(m_pendingDestroyEntities);
+        m_pendingDestroyEntities.clear();
+        m_pendingDestroyEntityIds.clear();
+
+        for (const auto entityId : pendingDestroyEntities)
+        {
+            if (auto *entity = FindEntityByID(entityId))
+            {
+                RemoveEntity(entity);
+            }
+        }
+    }
+
     bool Scene::RemoveEntityRecursive(Entity *current, Entity *target)
     {
         auto &children = current->m_children;
@@ -690,7 +729,9 @@ namespace PlutoGE::scene
             }
         }
 
+        FlushPendingDestroyEntities();
         StepPhysics(deltaTime);
+        FlushPendingDestroyEntities();
     }
 
     bool Scene::Raycast(const glm::vec3 &origin,

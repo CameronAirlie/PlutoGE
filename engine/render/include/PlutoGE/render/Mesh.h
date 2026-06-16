@@ -20,6 +20,53 @@ namespace PlutoGE::render
         std::array<float, 2> uv;              // Texture coordinates (u, v)
         std::array<float, 4> tangent;         // Vertex tangent (x, y, z, w) - w can be used for handedness
         std::array<float, 2> uv2{0.0f, 0.0f}; // Secondary UVs for baked lightmaps
+        std::array<int, 4> joints{0, 0, 0, 0};
+        std::array<float, 4> weights{0.0f, 0.0f, 0.0f, 0.0f};
+    };
+
+    struct SkeletonJoint
+    {
+        std::string name;
+        int nodeIndex = -1;
+        int parentJointIndex = -1;
+        glm::mat4 localBindTransform{1.0f};
+        glm::mat4 inverseBindMatrix{1.0f};
+        glm::mat4 inverseRootMatrix{1.0f};
+    };
+
+    struct Skeleton
+    {
+        std::vector<SkeletonJoint> joints;
+    };
+
+    enum class AnimationTargetPath
+    {
+        Translation,
+        Rotation,
+        Scale,
+    };
+
+    enum class AnimationInterpolation
+    {
+        Linear,
+        Step,
+    };
+
+    struct AnimationChannel
+    {
+        int jointIndex = -1;
+        AnimationTargetPath path = AnimationTargetPath::Translation;
+        AnimationInterpolation interpolation = AnimationInterpolation::Linear;
+        std::vector<float> times;
+        std::vector<glm::vec4> values;
+    };
+
+    struct AnimationClip
+    {
+        std::string name;
+        float duration = 0.0f;
+        int channelCount = 0;
+        std::vector<AnimationChannel> channels;
     };
 
     struct MeshData
@@ -47,6 +94,8 @@ namespace PlutoGE::render
         MeshData data;
         std::vector<Submesh> submeshes;
         bool hasLightmapUvs = false;
+        Skeleton skeleton;
+        std::vector<AnimationClip> animations;
     };
 
     class Graphics;
@@ -318,6 +367,13 @@ namespace PlutoGE::render
             return mesh;
         }
 
+        static Mesh *FromConfig(MeshConfig config)
+        {
+            Mesh *mesh = new Mesh(config);
+            mesh->Initialize();
+            return mesh;
+        }
+
         struct QuadVertex
         {
             float position[3];
@@ -472,6 +528,9 @@ namespace PlutoGE::render
         size_t GetSubmeshCount() const { return m_config.submeshes.size(); }
         const Submesh &GetSubmesh(size_t index) const { return m_config.submeshes.at(index); }
         const MeshBounds &GetBounds() const { return m_bounds; }
+        const Skeleton &GetSkeleton() const { return m_config.skeleton; }
+        bool HasSkeleton() const { return !m_config.skeleton.joints.empty(); }
+        const std::vector<AnimationClip> &GetAnimations() const { return m_config.animations; }
         bool HasLightmapUvs() const { return m_config.hasLightmapUvs; }
         bool HasUsablePrimaryUvsForSubmesh(size_t submeshIndex) const
         {
@@ -735,6 +794,10 @@ namespace PlutoGE::render
             glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, sizeof(MeshVertexData), (void *)offsetof(MeshVertexData, tangent));
             glEnableVertexAttribArray(4); // Lightmap UVs
             glVertexAttribPointer(4, 2, GL_FLOAT, GL_FALSE, sizeof(MeshVertexData), (void *)offsetof(MeshVertexData, uv2));
+            glEnableVertexAttribArray(14); // Joints
+            glVertexAttribIPointer(14, 4, GL_INT, sizeof(MeshVertexData), (void *)offsetof(MeshVertexData, joints));
+            glEnableVertexAttribArray(15); // Weights
+            glVertexAttribPointer(15, 4, GL_FLOAT, GL_FALSE, sizeof(MeshVertexData), (void *)offsetof(MeshVertexData, weights));
 
             glBindVertexArray(0); // Unbind VAO after setup
 

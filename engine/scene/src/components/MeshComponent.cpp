@@ -2,6 +2,7 @@
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
+#include "PlutoGE/scene/components/AnimationComponent.h"
 
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/Texture.h"
@@ -9,6 +10,7 @@
 #include "PlutoGE/core/Engine.h"
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <cmath>
 #include <iostream>
 #include <map>
 #include <string>
@@ -34,6 +36,23 @@ namespace PlutoGE::scene
                 .center = worldCenter,
                 .radius = bounds.radius * std::max(scaleX, std::max(scaleY, scaleZ)),
             };
+        }
+
+        bool AreMatricesApproximatelyEqual(const glm::mat4 &a, const glm::mat4 &b)
+        {
+            constexpr float epsilon = 0.0001f;
+            for (int column = 0; column < 4; ++column)
+            {
+                for (int row = 0; row < 4; ++row)
+                {
+                    if (std::abs(a[column][row] - b[column][row]) > epsilon)
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            return true;
         }
 
         std::string SerializeVec4(const glm::vec4 &value)
@@ -67,6 +86,7 @@ namespace PlutoGE::scene
         }
 
         m_mesh = mesh;
+        MarkRenderCommandsDirty();
 
         if (auto *owner = GetOwner())
         {
@@ -74,6 +94,22 @@ namespace PlutoGE::scene
             {
                 scene->MarkShadowLightsDirty();
             }
+        }
+    }
+
+    void MeshComponent::MarkRenderCommandsDirty()
+    {
+        m_renderCommandCacheDirty = true;
+        m_hasCachedRenderCommandModel = false;
+        m_cachedRenderCommands.clear();
+    }
+
+    void MeshComponent::UpdateCachedPreviousModels(const glm::mat4 &modelMatrix)
+    {
+        for (auto &command : m_cachedRenderCommands)
+        {
+            command.previousModel = modelMatrix;
+            command.previousWorldBounds = command.worldBounds;
         }
     }
 
@@ -370,7 +406,37 @@ namespace PlutoGE::scene
             glm::mat4 modelMatrix = entity->GetWorldTransform();
 
             auto &renderer = PlutoGE::core::Engine::GetInstance().GetRenderer();
+            if (m_isStatic &&
+                !m_mesh->HasSkeleton() &&
+                !m_renderCommandCacheDirty &&
+                m_hasCachedRenderCommandModel &&
+                AreMatricesApproximatelyEqual(m_cachedRenderCommandModel, modelMatrix))
+            {
+                for (const auto &command : m_cachedRenderCommands)
+                {
+                    renderer.SubmitRenderCommand(command);
+                }
+
+                m_previousModelMatrix = modelMatrix;
+                m_hasPreviousModelMatrix = true;
+                return;
+            }
+
             const size_t submeshCount = std::max<size_t>(m_mesh->GetSubmeshCount(), 1);
+            const std::vector<glm::mat4> *jointMatrices = nullptr;
+            if (m_mesh->HasSkeleton())
+            {
+                if (auto *animationComponent = entity->GetComponent<AnimationComponent>())
+                {
+                    jointMatrices = &animationComponent->GetJointMatrices(m_mesh->GetSkeleton());
+                }
+            }
+            std::vector<render::RenderCommand> rebuiltCommands;
+            if (m_isStatic && !jointMatrices)
+            {
+                rebuiltCommands.reserve(submeshCount);
+            }
+
             for (size_t submeshIndex = 0; submeshIndex < submeshCount; ++submeshIndex)
             {
                 auto *material = GetMaterialForSubmesh(submeshIndex);
@@ -387,11 +453,25 @@ namespace PlutoGE::scene
                 command.shader = material->GetShader();
                 command.worldBounds = ComputeWorldBounds(*m_mesh, submeshIndex, modelMatrix);
                 command.previousWorldBounds = ComputeWorldBounds(*m_mesh, submeshIndex, command.previousModel);
+                command.jointMatrices = jointMatrices;
                 command.submeshIndex = static_cast<uint32_t>(submeshIndex);
                 command.isStatic = m_isStatic;
                 command.usePrimaryUvForLightmap = !m_mesh->HasUsableLightmapUvsForSubmesh(submeshIndex);
 
                 renderer.SubmitRenderCommand(command);
+                if (m_isStatic && !jointMatrices)
+                {
+                    rebuiltCommands.push_back(command);
+                }
+            }
+
+            if (m_isStatic && !jointMatrices)
+            {
+                m_cachedRenderCommands = std::move(rebuiltCommands);
+                m_cachedRenderCommandModel = modelMatrix;
+                m_hasCachedRenderCommandModel = true;
+                m_renderCommandCacheDirty = false;
+                UpdateCachedPreviousModels(modelMatrix);
             }
 
             m_previousModelMatrix = modelMatrix;

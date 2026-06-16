@@ -16,14 +16,6 @@ namespace PlutoGE::render
 {
     namespace
     {
-        constexpr bool kEnableVisibilityCulling = true;
-
-        struct FrustumPlane
-        {
-            glm::vec3 normal{0.0f};
-            float distance = 0.0f;
-        };
-
         struct GeometryInstanceData
         {
             glm::mat4 model{1.0f};
@@ -31,53 +23,33 @@ namespace PlutoGE::render
             glm::vec4 flags{0.0f};
         };
 
-        std::array<FrustumPlane, 6> ExtractFrustumPlanes(const glm::mat4 &viewProjection)
+        bool CanBatchGeometryCommands(const RenderCommand &a, const RenderCommand &b)
         {
-            std::array<FrustumPlane, 6> planes = {
-                FrustumPlane{glm::vec3(viewProjection[0][3] + viewProjection[0][0], viewProjection[1][3] + viewProjection[1][0], viewProjection[2][3] + viewProjection[2][0]), viewProjection[3][3] + viewProjection[3][0]},
-                FrustumPlane{glm::vec3(viewProjection[0][3] - viewProjection[0][0], viewProjection[1][3] - viewProjection[1][0], viewProjection[2][3] - viewProjection[2][0]), viewProjection[3][3] - viewProjection[3][0]},
-                FrustumPlane{glm::vec3(viewProjection[0][3] + viewProjection[0][1], viewProjection[1][3] + viewProjection[1][1], viewProjection[2][3] + viewProjection[2][1]), viewProjection[3][3] + viewProjection[3][1]},
-                FrustumPlane{glm::vec3(viewProjection[0][3] - viewProjection[0][1], viewProjection[1][3] - viewProjection[1][1], viewProjection[2][3] - viewProjection[2][1]), viewProjection[3][3] - viewProjection[3][1]},
-                FrustumPlane{glm::vec3(viewProjection[0][3] + viewProjection[0][2], viewProjection[1][3] + viewProjection[1][2], viewProjection[2][3] + viewProjection[2][2]), viewProjection[3][3] + viewProjection[3][2]},
-                FrustumPlane{glm::vec3(viewProjection[0][3] - viewProjection[0][2], viewProjection[1][3] - viewProjection[1][2], viewProjection[2][3] - viewProjection[2][2]), viewProjection[3][3] - viewProjection[3][2]},
-            };
-
-            for (auto &plane : planes)
-            {
-                const float length = glm::length(plane.normal);
-                if (length > 1e-6f)
-                {
-                    plane.normal /= length;
-                    plane.distance /= length;
-                }
-            }
-
-            return planes;
-        }
-
-        bool IsSubmeshVisible(const RenderCommand &command, const std::array<FrustumPlane, 6> &planes)
-        {
-            if (!command.mesh)
+            if (a.jointMatrices || b.jointMatrices)
             {
                 return false;
             }
 
-            for (const auto &plane : planes)
-            {
-                if (glm::dot(plane.normal, command.worldBounds.center) + plane.distance < -command.worldBounds.radius)
-                {
-                    return false;
-                }
-            }
-
-            return true;
-        }
-
-        bool CanBatchGeometryCommands(const RenderCommand &a, const RenderCommand &b)
-        {
             return a.material == b.material &&
                    a.mesh == b.mesh &&
                    a.submeshIndex == b.submeshIndex;
+        }
+
+        void UploadJointMatrices(Shader *shader, const std::vector<glm::mat4> *jointMatrices)
+        {
+            constexpr size_t kMaxShaderJoints = 96;
+            if (!shader || !jointMatrices || jointMatrices->empty())
+            {
+                shader->SetUniform("uUseSkinning", 0);
+                return;
+            }
+
+            shader->SetUniform("uUseSkinning", 1);
+            const size_t jointCount = std::min(jointMatrices->size(), kMaxShaderJoints);
+            for (size_t jointIndex = 0; jointIndex < jointCount; ++jointIndex)
+            {
+                shader->SetUniform(std::string("uJointMatrices[") + std::to_string(jointIndex) + "]", (*jointMatrices)[jointIndex]);
+            }
         }
 
         void ConfigureMatrixAttributes(unsigned int baseLocation, std::size_t offset, std::size_t stride)
@@ -165,6 +137,8 @@ namespace PlutoGE::render
         glEnable(GL_CULL_FACE);
         glCullFace(GL_BACK);
         glViewport(0, 0, ctx.gBuffer->GetWidth(), ctx.gBuffer->GetHeight());
+        const GLenum allAttachments[5] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3, GL_COLOR_ATTACHMENT4};
+        glDrawBuffers(5, allAttachments);
         glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
@@ -177,7 +151,8 @@ namespace PlutoGE::render
                                                      : currentViewProjection;
         m_geometryPassShader->SetUniform("uCurrentViewProjection", currentViewProjection);
         m_geometryPassShader->SetUniform("uPreviousViewProjection", previousViewProjection);
-        const auto frustumPlanes = ExtractFrustumPlanes(ctx.cameraData.projection * ctx.cameraData.view);
+        m_geometryPassShader->SetUniform("uUseSkinning", 0);
+
         Material *boundMaterial = nullptr;
         Mesh *boundMesh = nullptr;
         std::vector<GeometryInstanceData> batchInstances;
@@ -199,6 +174,7 @@ namespace PlutoGE::render
                 boundMaterial = batchHead->material;
             }
 
+            m_geometryPassShader->SetUniform("uUseSkinning", 0);
             UploadGeometryInstances(m_instanceBuffer, m_instanceCapacity, batchInstances);
             if (batchHead->mesh != boundMesh)
             {
@@ -218,14 +194,35 @@ namespace PlutoGE::render
                 continue;
             }
 
+            if (command.jointMatrices)
+            {
+                flushBatch();
+
+                if (command.material != boundMaterial)
+                {
+                    command.material->Bind(m_geometryPassShader);
+                    boundMaterial = command.material;
+                }
+
+                UploadJointMatrices(m_geometryPassShader, command.jointMatrices);
+                const std::vector<GeometryInstanceData> singleInstance{
+                    GeometryInstanceData{
+                        .model = command.model,
+                        .previousModel = command.previousModel,
+                        .flags = glm::vec4(command.isStatic ? 1.0f : 0.0f, command.usePrimaryUvForLightmap ? 1.0f : 0.0f, 0.0f, 0.0f),
+                    },
+                };
+                UploadGeometryInstances(m_instanceBuffer, m_instanceCapacity, singleInstance);
+                BindGeometryInstanceAttributes(*command.mesh, m_instanceBuffer);
+                boundMesh = command.mesh;
+                command.mesh->DrawSubmeshInstancedBound(command.submeshIndex, 1);
+                m_geometryPassShader->SetUniform("uUseSkinning", 0);
+                continue;
+            }
+
             if (batchHead && !CanBatchGeometryCommands(*batchHead, command))
             {
                 flushBatch();
-            }
-
-            if (kEnableVisibilityCulling && !IsSubmeshVisible(command, frustumPlanes))
-            {
-                continue;
             }
 
             if (!batchHead)

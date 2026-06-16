@@ -4,6 +4,7 @@ add_library(PlutoGEScene
     src/Scene.cpp
     src/SceneBaker.cpp
     src/SceneSerializer.cpp
+    src/components/AnimationComponent.cpp
     src/components/MeshComponent.cpp
     src/components/CameraComponent.cpp
     src/components/ColliderComponent.cpp
@@ -16,6 +17,8 @@ add_library(PlutoGEScene
 add_library(PlutoGE::Scene ALIAS PlutoGEScene)
 target_include_directories(PlutoGEScene PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+    PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../import/include
 )
 
 target_link_libraries(PlutoGEScene PUBLIC

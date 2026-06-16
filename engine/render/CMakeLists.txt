@@ -28,6 +28,7 @@ add_library(PlutoGERender
     src/passes/LightingPass.cpp
     src/passes/ShadowPass.cpp
     src/passes/PostProcessPass.cpp
+    src/passes/RuntimeUIPass.cpp
 )
 
 add_library(PlutoGE::Render ALIAS PlutoGERender)

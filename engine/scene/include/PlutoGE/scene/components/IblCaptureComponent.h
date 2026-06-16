@@ -5,6 +5,7 @@
 
 #include <glm/glm.hpp>
 #include <memory>
+#include <vector>
 
 namespace PlutoGE::render
 {
@@ -21,6 +22,7 @@ namespace PlutoGE::scene
 
         void Update(float deltaTime) override;
         std::vector<Property> Serialize() const override;
+        std::vector<Property> SerializeEditableProperties() const;
         void Deserialize(const std::vector<Property> &properties) override;
 
         void SetSize(const glm::vec3 &size);
@@ -39,6 +41,8 @@ namespace PlutoGE::scene
         bool IsDirty() const { return m_dirty; }
         render::Texture *GetCaptureTexture() const { return m_captureTexture.get(); }
         render::Texture *EnsureCaptureTexture();
+        void DiscardCaptureResult();
+        bool StoreCapturePixelsFromTexture();
         glm::mat4 GetVolumeTransform() const;
         IblCaptureVolume BuildCaptureVolume() const;
 
@@ -50,5 +54,8 @@ namespace PlutoGE::scene
         float m_farPlane = 100.0f;
         bool m_dirty = true;
         std::unique_ptr<render::Texture> m_captureTexture;
+        std::vector<float> m_capturePixels;
+
+        void UploadStoredCapturePixels();
     };
 }

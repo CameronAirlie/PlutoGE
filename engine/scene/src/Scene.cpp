@@ -1,9 +1,11 @@
 #include "PlutoGE/scene/Scene.h"
+#include "PlutoGE/core/Engine.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/components/ColliderComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/RigidbodyComponent.h"
 #include "PlutoGE/scene/components/ScriptComponent.h"
+#include "PlutoGE/scene/components/UIComponent.h"
 #include "PlutoGE/render/Texture.h"
 
 #include <btBulletDynamicsCommon.h>
@@ -72,6 +74,67 @@ namespace PlutoGE::scene
             for (auto *child : entity->GetChildren())
             {
                 CollectActiveEntities(child, entities);
+            }
+        }
+
+        struct UIRect
+        {
+            glm::vec2 min{0.0f};
+            glm::vec2 max{0.0f};
+        };
+
+        UIRect ResolveScreenRect(const RectTransformComponent &rectTransform, const glm::vec2 &canvasSize)
+        {
+            const glm::vec2 anchorPosition = canvasSize * rectTransform.GetAnchorMin();
+            const glm::vec2 size = glm::max(rectTransform.GetSizeDelta(), glm::vec2(0.0f));
+            const glm::vec2 pivotOffset = size * rectTransform.GetPivot();
+            const glm::vec2 min = anchorPosition + rectTransform.GetAnchoredPosition() - pivotOffset;
+            return UIRect{.min = min, .max = min + size};
+        }
+
+        bool ContainsPoint(const UIRect &rect, const glm::vec2 &point)
+        {
+            return point.x >= rect.min.x && point.x <= rect.max.x &&
+                   point.y >= rect.min.y && point.y <= rect.max.y;
+        }
+
+        void UpdateRuntimeUIButtonStates(Entity *entity,
+                                         const CanvasComponent *activeCanvas,
+                                         const glm::vec2 &viewportSize,
+                                         const glm::vec2 &mousePosition,
+                                         bool mousePressed,
+                                         bool mouseReleased)
+        {
+            if (!entity || !entity->IsActive())
+            {
+                return;
+            }
+
+            if (auto *canvas = entity->GetComponent<CanvasComponent>(); canvas && canvas->IsEnabled())
+            {
+                activeCanvas = canvas;
+            }
+
+            auto *button = entity->GetComponent<UIButtonComponent>();
+            auto *rectTransform = entity->GetComponent<RectTransformComponent>();
+            if (button)
+            {
+                bool hovered = false;
+                if (activeCanvas && rectTransform && rectTransform->IsEnabled() && button->IsEnabled() && button->IsInteractable())
+                {
+                    const float scaleFactor = std::max(activeCanvas->GetScaleFactor(), 0.0001f);
+                    auto rect = ResolveScreenRect(*rectTransform, viewportSize / scaleFactor);
+                    rect.min *= scaleFactor;
+                    rect.max *= scaleFactor;
+                    hovered = ContainsPoint(rect, mousePosition);
+                }
+
+                button->SetRuntimeState(hovered, hovered && mousePressed, hovered && mouseReleased, hovered && mouseReleased);
+            }
+
+            for (auto *child : entity->GetChildren())
+            {
+                UpdateRuntimeUIButtonStates(child, activeCanvas, viewportSize, mousePosition, mousePressed, mouseReleased);
             }
         }
 
@@ -720,6 +783,22 @@ namespace PlutoGE::scene
     void Scene::Update(float deltaTime)
     {
         ClearIblCaptureVolumes();
+
+        auto &window = core::Engine::GetInstance().GetWindow();
+        const auto extents = window.GetExtents();
+        if (extents.width > 0 && extents.height > 0)
+        {
+            const auto &input = window.GetInputState();
+            const glm::vec2 canvasSize(static_cast<float>(extents.width), static_cast<float>(extents.height));
+            const glm::vec2 mousePosition(static_cast<float>(input.mouseState.x),
+                                          static_cast<float>(extents.height) - static_cast<float>(input.mouseState.y));
+            const bool mousePressed = input.IsMouseButtonPressed(0);
+            const bool mouseReleased = input.IsMouseButtonReleased(0);
+            for (auto *rootEntity : m_rootEntities)
+            {
+                UpdateRuntimeUIButtonStates(rootEntity, nullptr, canvasSize, mousePosition, mousePressed, mouseReleased);
+            }
+        }
 
         for (auto rootEntity : m_rootEntities)
         {

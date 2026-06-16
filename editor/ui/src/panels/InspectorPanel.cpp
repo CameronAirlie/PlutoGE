@@ -17,6 +17,7 @@
 #include "PlutoGE/scene/components/IblCaptureComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/RigidbodyComponent.h"
+#include "PlutoGE/scene/components/UIComponent.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Prefab.h"
 #include "PlutoGE/scene/Scene.h"
@@ -53,6 +54,11 @@ namespace PlutoGE::ui
             "Collider Component",
             "IBL Capture Component",
             "Script Component",
+            "Canvas Component",
+            "Rect Transform Component",
+            "UI Image Component",
+            "UI Text Component",
+            "UI Button Component",
         };
 
         enum class AddableComponentType
@@ -65,6 +71,11 @@ namespace PlutoGE::ui
             Collider = 5,
             IblCapture = 6,
             Script = 7,
+            Canvas = 8,
+            RectTransform = 9,
+            UIImage = 10,
+            UIText = 11,
+            UIButton = 12,
         };
 
         struct ScriptAssetOption
@@ -488,6 +499,26 @@ namespace PlutoGE::ui
             {
                 return "Script Component";
             }
+            if (dynamic_cast<const scene::CanvasComponent *>(&component))
+            {
+                return "Canvas Component";
+            }
+            if (dynamic_cast<const scene::RectTransformComponent *>(&component))
+            {
+                return "Rect Transform Component";
+            }
+            if (dynamic_cast<const scene::UIImageComponent *>(&component))
+            {
+                return "UI Image Component";
+            }
+            if (dynamic_cast<const scene::UITextComponent *>(&component))
+            {
+                return "UI Text Component";
+            }
+            if (dynamic_cast<const scene::UIButtonComponent *>(&component))
+            {
+                return "UI Button Component";
+            }
 
             return typeid(component).name();
         }
@@ -510,6 +541,16 @@ namespace PlutoGE::ui
                 return "IblCaptureComponent";
             if (dynamic_cast<const scene::ScriptComponent *>(&component))
                 return "ScriptComponent";
+            if (dynamic_cast<const scene::CanvasComponent *>(&component))
+                return "CanvasComponent";
+            if (dynamic_cast<const scene::RectTransformComponent *>(&component))
+                return "RectTransformComponent";
+            if (dynamic_cast<const scene::UIImageComponent *>(&component))
+                return "UIImageComponent";
+            if (dynamic_cast<const scene::UITextComponent *>(&component))
+                return "UITextComponent";
+            if (dynamic_cast<const scene::UIButtonComponent *>(&component))
+                return "UIButtonComponent";
             return {};
         }
 
@@ -604,6 +645,16 @@ namespace PlutoGE::ui
                 return !entity.HasComponent<scene::IblCaptureComponent>();
             case AddableComponentType::Script:
                 return !entity.HasComponent<scene::ScriptComponent>();
+            case AddableComponentType::Canvas:
+                return !entity.HasComponent<scene::CanvasComponent>();
+            case AddableComponentType::RectTransform:
+                return !entity.HasComponent<scene::RectTransformComponent>();
+            case AddableComponentType::UIImage:
+                return !entity.HasComponent<scene::UIImageComponent>();
+            case AddableComponentType::UIText:
+                return !entity.HasComponent<scene::UITextComponent>();
+            case AddableComponentType::UIButton:
+                return !entity.HasComponent<scene::UIButtonComponent>();
             default:
                 return false;
             }
@@ -657,6 +708,21 @@ namespace PlutoGE::ui
                 break;
             case AddableComponentType::Script:
                 entity.CreateComponent<scene::ScriptComponent>(scene::ScriptComponentConfig{});
+                break;
+            case AddableComponentType::Canvas:
+                entity.CreateComponent<scene::CanvasComponent>();
+                break;
+            case AddableComponentType::RectTransform:
+                entity.CreateComponent<scene::RectTransformComponent>();
+                break;
+            case AddableComponentType::UIImage:
+                entity.CreateComponent<scene::UIImageComponent>();
+                break;
+            case AddableComponentType::UIText:
+                entity.CreateComponent<scene::UITextComponent>();
+                break;
+            case AddableComponentType::UIButton:
+                entity.CreateComponent<scene::UIButtonComponent>();
                 break;
             default:
                 break;
@@ -1108,6 +1174,11 @@ namespace PlutoGE::ui
             case scripting::ScriptFieldType::RigidbodyComponent:
             case scripting::ScriptFieldType::ColliderComponent:
             case scripting::ScriptFieldType::AnimationComponent:
+            case scripting::ScriptFieldType::CanvasComponent:
+            case scripting::ScriptFieldType::RectTransformComponent:
+            case scripting::ScriptFieldType::UIImageComponent:
+            case scripting::ScriptFieldType::UITextComponent:
+            case scripting::ScriptFieldType::UIButtonComponent:
             {
                 uint32_t selectedEntityId = std::get<uint32_t>(*fieldValue);
                 scene::Scene *scene = entity.GetScene();
@@ -1136,6 +1207,16 @@ namespace PlutoGE::ui
                         return candidate.HasComponent<scene::ColliderComponent>();
                     case scripting::ScriptFieldType::AnimationComponent:
                         return candidate.HasComponent<scene::AnimationComponent>();
+                    case scripting::ScriptFieldType::CanvasComponent:
+                        return candidate.HasComponent<scene::CanvasComponent>();
+                    case scripting::ScriptFieldType::RectTransformComponent:
+                        return candidate.HasComponent<scene::RectTransformComponent>();
+                    case scripting::ScriptFieldType::UIImageComponent:
+                        return candidate.HasComponent<scene::UIImageComponent>();
+                    case scripting::ScriptFieldType::UITextComponent:
+                        return candidate.HasComponent<scene::UITextComponent>();
+                    case scripting::ScriptFieldType::UIButtonComponent:
+                        return candidate.HasComponent<scene::UIButtonComponent>();
                     case scripting::ScriptFieldType::EntityId:
                     case scripting::ScriptFieldType::GameObject:
                     default:
@@ -2019,7 +2100,8 @@ namespace PlutoGE::ui
                             editorShell.MarkSceneDirty();
                         }
 
-                        auto properties = componentPtr->Serialize();
+                        std::vector<scene::Property> properties;
+                        bool propertiesProvided = false;
                         bool propertiesChanged = false;
 
                         if (auto *cameraComponent = dynamic_cast<scene::CameraComponent *>(componentPtr))
@@ -2046,6 +2128,8 @@ namespace PlutoGE::ui
                         }
                         else if (auto *iblCaptureComponent = dynamic_cast<scene::IblCaptureComponent *>(componentPtr))
                         {
+                            properties = iblCaptureComponent->SerializeEditableProperties();
+                            propertiesProvided = true;
                             const bool hasCapture = iblCaptureComponent->GetCaptureTexture() != nullptr;
                             ImGui::Text("Captured HDRI: %s", hasCapture ? "ready" : "not captured");
                             if (ImGui::Button("Capture Scene"))
@@ -2058,6 +2142,11 @@ namespace PlutoGE::ui
                             {
                                 iblCaptureComponent->MarkDirty();
                             }
+                        }
+
+                        if (!propertiesProvided)
+                        {
+                            properties = componentPtr->Serialize();
                         }
 
                         int propertyIndex = 0;

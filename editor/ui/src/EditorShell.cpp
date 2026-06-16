@@ -1891,7 +1891,16 @@ namespace PlutoGE::ui
             renderer.BeginProfilingFrame();
 
             const bool isRuntimeRunning = m_engine.IsRuntimeRunning();
-            window.SetScriptInputEnabled(isRuntimeRunning && (window.IsCursorLocked() || viewportPanel2->IsViewportFocused()));
+            auto shouldEnableRuntimeInput = [&]()
+            {
+                return m_engine.IsRuntimeRunning() &&
+                       (window.IsCursorLocked() ||
+                        window.IsCursorLockRequested() ||
+                        viewportPanel2->IsViewportFocused() ||
+                        viewportPanel2->IsViewportHovered());
+            };
+
+            window.SetScriptInputEnabled(shouldEnableRuntimeInput());
             if (!isRuntimeRunning)
             {
                 window.SetCursorLocked(false);
@@ -1961,6 +1970,9 @@ namespace PlutoGE::ui
                         continue;
                     }
 
+                    iblCaptureComponent->DiscardCaptureResult();
+                    m_scene->ClearIblCaptureVolumes();
+
                     auto *captureTexture = iblCaptureComponent->EnsureCaptureTexture();
                     if (!captureTexture)
                     {
@@ -1981,9 +1993,13 @@ namespace PlutoGE::ui
                         continue;
                     }
 
-                    iblCaptureComponent->ClearDirty();
+                    const bool storedCapturePixels = iblCaptureComponent->StoreCapturePixelsFromTexture();
+                    if (storedCapturePixels)
+                    {
+                        iblCaptureComponent->ClearDirty();
+                    }
                     m_scene->AddIblCaptureVolume(iblCaptureComponent->BuildCaptureVolume());
-                    m_statusMessage = "IBL capture complete.";
+                    m_statusMessage = storedCapturePixels ? "IBL capture complete." : "IBL capture complete, but could not store pixels.";
                 }
             }
 
@@ -2312,7 +2328,7 @@ namespace PlutoGE::ui
                     {
                         if (StartEditorRuntime())
                         {
-                            window.SetScriptInputEnabled(viewportPanel2->IsViewportFocused());
+                            window.SetScriptInputEnabled(shouldEnableRuntimeInput());
                         }
                     }
                     ImGui::EndDisabled();
@@ -2515,7 +2531,7 @@ namespace PlutoGE::ui
 
             m_panelManager.UpdatePanels();
 
-            window.SetScriptInputEnabled(m_engine.IsRuntimeRunning() && (window.IsCursorLocked() || viewportPanel2->IsViewportFocused()));
+            window.SetScriptInputEnabled(shouldEnableRuntimeInput());
             if (isBakeRunning)
             {
                 ImGui::EndDisabled();

@@ -13,6 +13,7 @@
 #include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/scene/components/RigidbodyComponent.h"
 #include "PlutoGE/scene/components/ScriptComponent.h"
+#include "PlutoGE/scene/components/UIComponent.h"
 
 #include <algorithm>
 #include <charconv>
@@ -80,6 +81,7 @@ namespace PlutoGE::scripting
         using register_animation_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_rigidbody_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_collider_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
+        using register_runtime_ui_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_input_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_physics_api_fn = int(__cdecl *)(void *, void *, void *);
         using register_debug_api_fn = int(__cdecl *)(void *);
@@ -128,10 +130,12 @@ namespace PlutoGE::scripting
         using get_component_int_fn = int(__cdecl *)(uint32_t);
         using set_component_int_fn = void(__cdecl *)(uint32_t, int32_t);
         using get_component_string_by_index_fn = const char *(__cdecl *)(uint32_t, int32_t);
+        using get_component_string_fn = const char *(__cdecl *)(uint32_t);
         using get_component_float_by_index_fn = float(__cdecl *)(uint32_t, int32_t);
         using component_action_fn = void(__cdecl *)(uint32_t);
         using get_component_vector3_fn = NativeVector3(__cdecl *)(uint32_t);
         using set_component_vector3_fn = void(__cdecl *)(uint32_t, NativeVector3);
+        using set_component_string_fn = void(__cdecl *)(uint32_t, const char *);
         using get_input_key_fn = int(__cdecl *)(int32_t);
         using get_input_mouse_button_fn = int(__cdecl *)(int32_t);
         using get_input_mouse_vector2_fn = NativeVector3(__cdecl *)();
@@ -160,6 +164,11 @@ namespace PlutoGE::scripting
             Rigidbody = 4,
             Collider = 5,
             Animation = 6,
+            Canvas = 7,
+            RectTransform = 8,
+            UIImage = 9,
+            UIText = 10,
+            UIButton = 11,
         };
 
         std::wstring Utf8ToWide(std::string_view text)
@@ -404,7 +413,7 @@ namespace PlutoGE::scripting
         {
             int fieldTypeValue = 0;
             std::from_chars(token.data(), token.data() + token.size(), fieldTypeValue);
-            if (fieldTypeValue < static_cast<int>(ScriptFieldType::None) || fieldTypeValue > static_cast<int>(ScriptFieldType::AnimationComponent))
+            if (fieldTypeValue < static_cast<int>(ScriptFieldType::None) || fieldTypeValue > static_cast<int>(ScriptFieldType::UIButtonComponent))
             {
                 return ScriptFieldType::None;
             }
@@ -468,6 +477,11 @@ namespace PlutoGE::scripting
             case ScriptFieldType::RigidbodyComponent:
             case ScriptFieldType::ColliderComponent:
             case ScriptFieldType::AnimationComponent:
+            case ScriptFieldType::CanvasComponent:
+            case ScriptFieldType::RectTransformComponent:
+            case ScriptFieldType::UIImageComponent:
+            case ScriptFieldType::UITextComponent:
+            case ScriptFieldType::UIButtonComponent:
             {
                 uint32_t value = 0;
                 std::from_chars(token.data(), token.data() + token.size(), value);
@@ -727,6 +741,16 @@ namespace PlutoGE::scripting
                 return entity->GetComponent<scene::ColliderComponent>();
             case ManagedComponentKind::Animation:
                 return entity->GetComponent<scene::AnimationComponent>();
+            case ManagedComponentKind::Canvas:
+                return entity->GetComponent<scene::CanvasComponent>();
+            case ManagedComponentKind::RectTransform:
+                return entity->GetComponent<scene::RectTransformComponent>();
+            case ManagedComponentKind::UIImage:
+                return entity->GetComponent<scene::UIImageComponent>();
+            case ManagedComponentKind::UIText:
+                return entity->GetComponent<scene::UITextComponent>();
+            case ManagedComponentKind::UIButton:
+                return entity->GetComponent<scene::UIButtonComponent>();
             default:
                 return nullptr;
             }
@@ -1258,6 +1282,105 @@ namespace PlutoGE::scripting
         int32_t GetColliderTrigger(uint32_t entityId) { auto *component = FindCollider(entityId); return component && component->IsTrigger() ? 1 : 0; }
         void SetColliderTrigger(uint32_t entityId, int32_t value) { if (auto *component = FindCollider(entityId)) component->SetTrigger(value != 0); }
 
+        scene::CanvasComponent *FindCanvas(uint32_t entityId) { auto *entity = FindEntity(entityId); return entity ? entity->GetComponent<scene::CanvasComponent>() : nullptr; }
+        scene::RectTransformComponent *FindRectTransform(uint32_t entityId) { auto *entity = FindEntity(entityId); return entity ? entity->GetComponent<scene::RectTransformComponent>() : nullptr; }
+        scene::UIImageComponent *FindUIImage(uint32_t entityId) { auto *entity = FindEntity(entityId); return entity ? entity->GetComponent<scene::UIImageComponent>() : nullptr; }
+        scene::UITextComponent *FindUIText(uint32_t entityId) { auto *entity = FindEntity(entityId); return entity ? entity->GetComponent<scene::UITextComponent>() : nullptr; }
+        scene::UIButtonComponent *FindUIButton(uint32_t entityId) { auto *entity = FindEntity(entityId); return entity ? entity->GetComponent<scene::UIButtonComponent>() : nullptr; }
+
+        float GetCanvasScaleFactor(uint32_t entityId) { auto *component = FindCanvas(entityId); return component ? component->GetScaleFactor() : 1.0f; }
+        void SetCanvasScaleFactor(uint32_t entityId, float value) { if (auto *component = FindCanvas(entityId)) component->SetScaleFactor(value); }
+        int32_t GetCanvasSortingOrder(uint32_t entityId) { auto *component = FindCanvas(entityId); return component ? component->GetSortingOrder() : 0; }
+        void SetCanvasSortingOrder(uint32_t entityId, int32_t value) { if (auto *component = FindCanvas(entityId)) component->SetSortingOrder(value); }
+
+        NativeVector3 GetRectAnchoredPosition(uint32_t entityId)
+        {
+            auto *component = FindRectTransform(entityId);
+            const auto value = component ? component->GetAnchoredPosition() : glm::vec2{0.0f};
+            return NativeVector3{value.x, value.y, 0.0f};
+        }
+        void SetRectAnchoredPosition(uint32_t entityId, NativeVector3 value)
+        {
+            if (auto *component = FindRectTransform(entityId); component && std::isfinite(value.x) && std::isfinite(value.y))
+            {
+                component->SetAnchoredPosition(glm::vec2(value.x, value.y));
+            }
+        }
+        NativeVector3 GetRectSizeDelta(uint32_t entityId)
+        {
+            auto *component = FindRectTransform(entityId);
+            const auto value = component ? component->GetSizeDelta() : glm::vec2{0.0f};
+            return NativeVector3{value.x, value.y, 0.0f};
+        }
+        void SetRectSizeDelta(uint32_t entityId, NativeVector3 value)
+        {
+            if (auto *component = FindRectTransform(entityId); component && std::isfinite(value.x) && std::isfinite(value.y))
+            {
+                component->SetSizeDelta(glm::vec2(value.x, value.y));
+            }
+        }
+        int32_t GetRectAnchorPreset(uint32_t entityId) { auto *component = FindRectTransform(entityId); return component ? static_cast<int32_t>(component->GetAnchorPreset()) : 4; }
+        void SetRectAnchorPreset(uint32_t entityId, int32_t value)
+        {
+            if (auto *component = FindRectTransform(entityId))
+            {
+                component->SetAnchorPreset(static_cast<scene::UIAnchorPreset>(std::clamp(value, 0, 9)));
+            }
+        }
+
+        NativeVector3 GetUIImageColor(uint32_t entityId)
+        {
+            auto *component = FindUIImage(entityId);
+            const auto value = component ? component->GetColor() : glm::vec4{1.0f};
+            return NativeVector3{value.r, value.g, value.b};
+        }
+        void SetUIImageColor(uint32_t entityId, NativeVector3 value)
+        {
+            if (auto *component = FindUIImage(entityId); component && IsFiniteVector3(value))
+            {
+                const float alpha = component->GetColor().a;
+                component->SetColor(glm::vec4(value.x, value.y, value.z, alpha));
+            }
+        }
+
+        const char *GetUIText(uint32_t entityId)
+        {
+            thread_local std::string textStorage;
+            auto *component = FindUIText(entityId);
+            textStorage = component ? component->GetText() : std::string{};
+            return textStorage.c_str();
+        }
+        void SetUIText(uint32_t entityId, const char *text)
+        {
+            if (auto *component = FindUIText(entityId))
+            {
+                component->SetText(text ? text : "");
+            }
+        }
+        NativeVector3 GetUITextColor(uint32_t entityId)
+        {
+            auto *component = FindUIText(entityId);
+            const auto value = component ? component->GetColor() : glm::vec4{1.0f};
+            return NativeVector3{value.r, value.g, value.b};
+        }
+        void SetUITextColor(uint32_t entityId, NativeVector3 value)
+        {
+            if (auto *component = FindUIText(entityId); component && IsFiniteVector3(value))
+            {
+                const float alpha = component->GetColor().a;
+                component->SetColor(glm::vec4(value.x, value.y, value.z, alpha));
+            }
+        }
+        float GetUITextFontSize(uint32_t entityId) { auto *component = FindUIText(entityId); return component ? component->GetFontSize() : 0.0f; }
+        void SetUITextFontSize(uint32_t entityId, float value) { if (auto *component = FindUIText(entityId)) component->SetFontSize(value); }
+
+        int32_t GetUIButtonInteractable(uint32_t entityId) { auto *component = FindUIButton(entityId); return component && component->IsInteractable() ? 1 : 0; }
+        void SetUIButtonInteractable(uint32_t entityId, int32_t value) { if (auto *component = FindUIButton(entityId)) component->SetInteractable(value != 0); }
+        int32_t GetUIButtonHovered(uint32_t entityId) { auto *component = FindUIButton(entityId); return component && component->IsHovered() ? 1 : 0; }
+        int32_t GetUIButtonPressed(uint32_t entityId) { auto *component = FindUIButton(entityId); return component && component->WasPressed() ? 1 : 0; }
+        int32_t GetUIButtonReleased(uint32_t entityId) { auto *component = FindUIButton(entityId); return component && component->WasReleased() ? 1 : 0; }
+        int32_t GetUIButtonClicked(uint32_t entityId) { auto *component = FindUIButton(entityId); return component && component->WasClicked() ? 1 : 0; }
+
         int32_t GetKeyDown(int32_t keyCode)
         {
             if (!IsScriptInputEnabled())
@@ -1370,7 +1493,8 @@ namespace PlutoGE::scripting
 
         int32_t GetCursorLocked()
         {
-            return IsScriptInputEnabled() && core::Engine::GetInstance().GetWindow().IsCursorLocked() ? 1 : 0;
+            const auto &window = core::Engine::GetInstance().GetWindow();
+            return IsScriptInputEnabled() && (window.IsCursorLocked() || window.IsCursorLockRequested()) ? 1 : 0;
         }
 
         void SetCursorLocked(int32_t locked)
@@ -1530,6 +1654,7 @@ namespace PlutoGE::scripting
         register_animation_component_api_fn registerAnimationComponentApi = nullptr;
         register_rigidbody_component_api_fn registerRigidbodyComponentApi = nullptr;
         register_collider_component_api_fn registerColliderComponentApi = nullptr;
+        register_runtime_ui_api_fn registerRuntimeUIApi = nullptr;
         register_input_api_fn registerInputApi = nullptr;
         register_physics_api_fn registerPhysicsApi = nullptr;
         register_debug_api_fn registerDebugApi = nullptr;
@@ -1620,6 +1745,7 @@ namespace PlutoGE::scripting
             impl.registerAnimationComponentApi = nullptr;
             impl.registerRigidbodyComponentApi = nullptr;
             impl.registerColliderComponentApi = nullptr;
+            impl.registerRuntimeUIApi = nullptr;
             impl.registerInputApi = nullptr;
             impl.registerPhysicsApi = nullptr;
             impl.registerDebugApi = nullptr;
@@ -1929,6 +2055,7 @@ namespace PlutoGE::scripting
                 LoadManagedExport(impl, L"RegisterAnimationComponentApi", impl.registerAnimationComponentApi) &&
                 LoadManagedExport(impl, L"RegisterRigidbodyComponentApi", impl.registerRigidbodyComponentApi) &&
                 LoadManagedExport(impl, L"RegisterColliderComponentApi", impl.registerColliderComponentApi) &&
+                LoadManagedExport(impl, L"RegisterRuntimeUIApi", impl.registerRuntimeUIApi) &&
                 LoadManagedExport(impl, L"RegisterInputApi", impl.registerInputApi) &&
                 LoadManagedExport(impl, L"RegisterPhysicsApi", impl.registerPhysicsApi) &&
                 LoadManagedExport(impl, L"RegisterDebugApi", impl.registerDebugApi);
@@ -2236,6 +2363,37 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(static_cast<set_component_bool_fn>(&SetColliderTrigger))) == 0)
         {
             setManagedBridgeFailure("RegisterColliderComponentApi");
+            return false;
+        }
+
+        if (!m_impl->registerRuntimeUIApi ||
+            m_impl->registerRuntimeUIApi(
+                reinterpret_cast<void *>(static_cast<get_component_float_fn>(&GetCanvasScaleFactor)),
+                reinterpret_cast<void *>(static_cast<set_component_float_fn>(&SetCanvasScaleFactor)),
+                reinterpret_cast<void *>(static_cast<get_component_int_fn>(&GetCanvasSortingOrder)),
+                reinterpret_cast<void *>(static_cast<set_component_int_fn>(&SetCanvasSortingOrder)),
+                reinterpret_cast<void *>(static_cast<get_component_vector3_fn>(&GetRectAnchoredPosition)),
+                reinterpret_cast<void *>(static_cast<set_component_vector3_fn>(&SetRectAnchoredPosition)),
+                reinterpret_cast<void *>(static_cast<get_component_vector3_fn>(&GetRectSizeDelta)),
+                reinterpret_cast<void *>(static_cast<set_component_vector3_fn>(&SetRectSizeDelta)),
+                reinterpret_cast<void *>(static_cast<get_component_int_fn>(&GetRectAnchorPreset)),
+                reinterpret_cast<void *>(static_cast<set_component_int_fn>(&SetRectAnchorPreset)),
+                reinterpret_cast<void *>(static_cast<get_component_vector3_fn>(&GetUIImageColor)),
+                reinterpret_cast<void *>(static_cast<set_component_vector3_fn>(&SetUIImageColor)),
+                reinterpret_cast<void *>(static_cast<get_component_string_fn>(&GetUIText)),
+                reinterpret_cast<void *>(static_cast<set_component_string_fn>(&SetUIText)),
+                reinterpret_cast<void *>(static_cast<get_component_vector3_fn>(&GetUITextColor)),
+                reinterpret_cast<void *>(static_cast<set_component_vector3_fn>(&SetUITextColor)),
+                reinterpret_cast<void *>(static_cast<get_component_float_fn>(&GetUITextFontSize)),
+                reinterpret_cast<void *>(static_cast<set_component_float_fn>(&SetUITextFontSize)),
+                reinterpret_cast<void *>(static_cast<get_component_bool_fn>(&GetUIButtonInteractable)),
+                reinterpret_cast<void *>(static_cast<set_component_bool_fn>(&SetUIButtonInteractable)),
+                reinterpret_cast<void *>(static_cast<get_component_bool_fn>(&GetUIButtonHovered)),
+                reinterpret_cast<void *>(static_cast<get_component_bool_fn>(&GetUIButtonPressed)),
+                reinterpret_cast<void *>(static_cast<get_component_bool_fn>(&GetUIButtonReleased)),
+                reinterpret_cast<void *>(static_cast<get_component_bool_fn>(&GetUIButtonClicked))) == 0)
+        {
+            setManagedBridgeFailure("RegisterRuntimeUIApi");
             return false;
         }
 

@@ -36,6 +36,14 @@ namespace PlutoGE::scene
             case scripting::ScriptFieldType::MeshComponent:
             case scripting::ScriptFieldType::CameraComponent:
             case scripting::ScriptFieldType::LightComponent:
+            case scripting::ScriptFieldType::RigidbodyComponent:
+            case scripting::ScriptFieldType::ColliderComponent:
+            case scripting::ScriptFieldType::AnimationComponent:
+            case scripting::ScriptFieldType::CanvasComponent:
+            case scripting::ScriptFieldType::RectTransformComponent:
+            case scripting::ScriptFieldType::UIImageComponent:
+            case scripting::ScriptFieldType::UITextComponent:
+            case scripting::ScriptFieldType::UIButtonComponent:
                 return scene::PropertyType::Entity;
             case scripting::ScriptFieldType::None:
             default:

@@ -162,6 +162,11 @@ namespace PlutoGE::scripting
         case ScriptFieldType::RigidbodyComponent:
         case ScriptFieldType::ColliderComponent:
         case ScriptFieldType::AnimationComponent:
+        case ScriptFieldType::CanvasComponent:
+        case ScriptFieldType::RectTransformComponent:
+        case ScriptFieldType::UIImageComponent:
+        case ScriptFieldType::UITextComponent:
+        case ScriptFieldType::UIButtonComponent:
             return std::holds_alternative<uint32_t>(value);
         case ScriptFieldType::None:
         default:
@@ -195,6 +200,11 @@ namespace PlutoGE::scripting
         case ScriptFieldType::RigidbodyComponent:
         case ScriptFieldType::ColliderComponent:
         case ScriptFieldType::AnimationComponent:
+        case ScriptFieldType::CanvasComponent:
+        case ScriptFieldType::RectTransformComponent:
+        case ScriptFieldType::UIImageComponent:
+        case ScriptFieldType::UITextComponent:
+        case ScriptFieldType::UIButtonComponent:
             return uint32_t{0};
         case ScriptFieldType::None:
         default:

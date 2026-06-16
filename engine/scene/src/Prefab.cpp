@@ -10,6 +10,7 @@
 #include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/scene/components/RigidbodyComponent.h"
 #include "PlutoGE/scene/components/ScriptComponent.h"
+#include "PlutoGE/scene/components/UIComponent.h"
 #include "PlutoGE/render/Camera.h"
 
 #include <algorithm>
@@ -53,6 +54,16 @@ namespace PlutoGE::scene
                 return "IblCaptureComponent";
             if (dynamic_cast<const ScriptComponent *>(&component))
                 return "ScriptComponent";
+            if (dynamic_cast<const CanvasComponent *>(&component))
+                return "CanvasComponent";
+            if (dynamic_cast<const RectTransformComponent *>(&component))
+                return "RectTransformComponent";
+            if (dynamic_cast<const UIImageComponent *>(&component))
+                return "UIImageComponent";
+            if (dynamic_cast<const UITextComponent *>(&component))
+                return "UITextComponent";
+            if (dynamic_cast<const UIButtonComponent *>(&component))
+                return "UIButtonComponent";
             return {};
         }
 
@@ -72,6 +83,16 @@ namespace PlutoGE::scene
                 return std::make_unique<IblCaptureComponent>();
             if (componentType == "ScriptComponent")
                 return std::make_unique<ScriptComponent>(ScriptComponentConfig{});
+            if (componentType == "CanvasComponent")
+                return std::make_unique<CanvasComponent>();
+            if (componentType == "RectTransformComponent")
+                return std::make_unique<RectTransformComponent>();
+            if (componentType == "UIImageComponent")
+                return std::make_unique<UIImageComponent>();
+            if (componentType == "UITextComponent")
+                return std::make_unique<UITextComponent>();
+            if (componentType == "UIButtonComponent")
+                return std::make_unique<UIButtonComponent>();
             return nullptr;
         }
 

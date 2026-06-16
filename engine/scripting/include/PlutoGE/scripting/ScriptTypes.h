@@ -28,6 +28,11 @@ namespace PlutoGE::scripting
         RigidbodyComponent,
         ColliderComponent,
         AnimationComponent,
+        CanvasComponent,
+        RectTransformComponent,
+        UIImageComponent,
+        UITextComponent,
+        UIButtonComponent,
     };
 
     using ScriptFieldValue = std::variant<std::monostate, bool, int32_t, float, double, std::string, glm::vec2, glm::vec3, uint32_t>;

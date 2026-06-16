@@ -12,6 +12,7 @@ add_library(PlutoGEScene
     src/components/LightComponent.cpp
     src/components/RigidbodyComponent.cpp
     src/components/ScriptComponent.cpp
+    src/components/UIComponent.cpp
 )
 
 add_library(PlutoGE::Scene ALIAS PlutoGEScene)

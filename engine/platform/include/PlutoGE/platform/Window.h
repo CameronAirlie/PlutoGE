@@ -41,6 +41,7 @@ namespace PlutoGE::platform
         [[nodiscard]] void *GetWindow() const;
         [[nodiscard]] InputState &GetInputState() { return m_inputState; }
         [[nodiscard]] bool IsCursorLocked() const;
+        [[nodiscard]] bool IsCursorLockRequested() const { return m_requestedScriptCursorLocked; }
         [[nodiscard]] bool IsScriptInputEnabled() const { return m_isScriptInputEnabled; }
 
         void SetResizeCallback(const std::function<void(int, int)> &callback);

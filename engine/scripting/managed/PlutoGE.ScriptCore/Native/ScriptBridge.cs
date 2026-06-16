@@ -54,6 +54,11 @@ internal static unsafe class ScriptBridge
         Rigidbody = 4,
         Collider = 5,
         Animation = 6,
+        Canvas = 7,
+        RectTransform = 8,
+        UIImage = 9,
+        UIText = 10,
+        UIButton = 11,
     }
 
     private sealed class ScriptLoadContext : AssemblyLoadContext
@@ -168,6 +173,30 @@ internal static unsafe class ScriptBridge
     private static delegate* unmanaged[Cdecl]<uint, float, void> _setColliderHeight;
     private static delegate* unmanaged[Cdecl]<uint, int> _getColliderTrigger;
     private static delegate* unmanaged[Cdecl]<uint, int, void> _setColliderTrigger;
+    private static delegate* unmanaged[Cdecl]<uint, float> _getCanvasScaleFactor;
+    private static delegate* unmanaged[Cdecl]<uint, float, void> _setCanvasScaleFactor;
+    private static delegate* unmanaged[Cdecl]<uint, int> _getCanvasSortingOrder;
+    private static delegate* unmanaged[Cdecl]<uint, int, void> _setCanvasSortingOrder;
+    private static delegate* unmanaged[Cdecl]<uint, NativeVector3> _getRectAnchoredPosition;
+    private static delegate* unmanaged[Cdecl]<uint, NativeVector3, void> _setRectAnchoredPosition;
+    private static delegate* unmanaged[Cdecl]<uint, NativeVector3> _getRectSizeDelta;
+    private static delegate* unmanaged[Cdecl]<uint, NativeVector3, void> _setRectSizeDelta;
+    private static delegate* unmanaged[Cdecl]<uint, int> _getRectAnchorPreset;
+    private static delegate* unmanaged[Cdecl]<uint, int, void> _setRectAnchorPreset;
+    private static delegate* unmanaged[Cdecl]<uint, NativeVector3> _getUIImageColor;
+    private static delegate* unmanaged[Cdecl]<uint, NativeVector3, void> _setUIImageColor;
+    private static delegate* unmanaged[Cdecl]<uint, nint> _getUIText;
+    private static delegate* unmanaged[Cdecl]<uint, nint, void> _setUIText;
+    private static delegate* unmanaged[Cdecl]<uint, NativeVector3> _getUITextColor;
+    private static delegate* unmanaged[Cdecl]<uint, NativeVector3, void> _setUITextColor;
+    private static delegate* unmanaged[Cdecl]<uint, float> _getUITextFontSize;
+    private static delegate* unmanaged[Cdecl]<uint, float, void> _setUITextFontSize;
+    private static delegate* unmanaged[Cdecl]<uint, int> _getUIButtonInteractable;
+    private static delegate* unmanaged[Cdecl]<uint, int, void> _setUIButtonInteractable;
+    private static delegate* unmanaged[Cdecl]<uint, int> _getUIButtonHovered;
+    private static delegate* unmanaged[Cdecl]<uint, int> _getUIButtonPressed;
+    private static delegate* unmanaged[Cdecl]<uint, int> _getUIButtonReleased;
+    private static delegate* unmanaged[Cdecl]<uint, int> _getUIButtonClicked;
     private static delegate* unmanaged[Cdecl]<int, int> _getKeyDown;
     private static delegate* unmanaged[Cdecl]<int, int> _getKeyPressed;
     private static delegate* unmanaged[Cdecl]<int, int> _getKeyReleased;
@@ -521,6 +550,78 @@ internal static unsafe class ScriptBridge
         _setColliderHeight = setHeight;
         _getColliderTrigger = getTrigger;
         _setColliderTrigger = setTrigger;
+        _lastError = string.Empty;
+        return 1;
+    }
+
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterRuntimeUIApi")]
+    public static int RegisterRuntimeUIApi(
+        delegate* unmanaged[Cdecl]<uint, float> getCanvasScaleFactor,
+        delegate* unmanaged[Cdecl]<uint, float, void> setCanvasScaleFactor,
+        delegate* unmanaged[Cdecl]<uint, int> getCanvasSortingOrder,
+        delegate* unmanaged[Cdecl]<uint, int, void> setCanvasSortingOrder,
+        delegate* unmanaged[Cdecl]<uint, NativeVector3> getRectAnchoredPosition,
+        delegate* unmanaged[Cdecl]<uint, NativeVector3, void> setRectAnchoredPosition,
+        delegate* unmanaged[Cdecl]<uint, NativeVector3> getRectSizeDelta,
+        delegate* unmanaged[Cdecl]<uint, NativeVector3, void> setRectSizeDelta,
+        delegate* unmanaged[Cdecl]<uint, int> getRectAnchorPreset,
+        delegate* unmanaged[Cdecl]<uint, int, void> setRectAnchorPreset,
+        delegate* unmanaged[Cdecl]<uint, NativeVector3> getUIImageColor,
+        delegate* unmanaged[Cdecl]<uint, NativeVector3, void> setUIImageColor,
+        delegate* unmanaged[Cdecl]<uint, nint> getUIText,
+        delegate* unmanaged[Cdecl]<uint, nint, void> setUIText,
+        delegate* unmanaged[Cdecl]<uint, NativeVector3> getUITextColor,
+        delegate* unmanaged[Cdecl]<uint, NativeVector3, void> setUITextColor,
+        delegate* unmanaged[Cdecl]<uint, float> getUITextFontSize,
+        delegate* unmanaged[Cdecl]<uint, float, void> setUITextFontSize,
+        delegate* unmanaged[Cdecl]<uint, int> getUIButtonInteractable,
+        delegate* unmanaged[Cdecl]<uint, int, void> setUIButtonInteractable,
+        delegate* unmanaged[Cdecl]<uint, int> getUIButtonHovered,
+        delegate* unmanaged[Cdecl]<uint, int> getUIButtonPressed,
+        delegate* unmanaged[Cdecl]<uint, int> getUIButtonReleased,
+        delegate* unmanaged[Cdecl]<uint, int> getUIButtonClicked)
+    {
+        if (getCanvasScaleFactor == null || setCanvasScaleFactor == null ||
+            getCanvasSortingOrder == null || setCanvasSortingOrder == null ||
+            getRectAnchoredPosition == null || setRectAnchoredPosition == null ||
+            getRectSizeDelta == null || setRectSizeDelta == null ||
+            getRectAnchorPreset == null || setRectAnchorPreset == null ||
+            getUIImageColor == null || setUIImageColor == null ||
+            getUIText == null || setUIText == null ||
+            getUITextColor == null || setUITextColor == null ||
+            getUITextFontSize == null || setUITextFontSize == null ||
+            getUIButtonInteractable == null || setUIButtonInteractable == null ||
+            getUIButtonHovered == null || getUIButtonPressed == null ||
+            getUIButtonReleased == null || getUIButtonClicked == null)
+        {
+            SetError("Managed runtime UI API registration received a null function pointer.");
+            return 0;
+        }
+
+        _getCanvasScaleFactor = getCanvasScaleFactor;
+        _setCanvasScaleFactor = setCanvasScaleFactor;
+        _getCanvasSortingOrder = getCanvasSortingOrder;
+        _setCanvasSortingOrder = setCanvasSortingOrder;
+        _getRectAnchoredPosition = getRectAnchoredPosition;
+        _setRectAnchoredPosition = setRectAnchoredPosition;
+        _getRectSizeDelta = getRectSizeDelta;
+        _setRectSizeDelta = setRectSizeDelta;
+        _getRectAnchorPreset = getRectAnchorPreset;
+        _setRectAnchorPreset = setRectAnchorPreset;
+        _getUIImageColor = getUIImageColor;
+        _setUIImageColor = setUIImageColor;
+        _getUIText = getUIText;
+        _setUIText = setUIText;
+        _getUITextColor = getUITextColor;
+        _setUITextColor = setUITextColor;
+        _getUITextFontSize = getUITextFontSize;
+        _setUITextFontSize = setUITextFontSize;
+        _getUIButtonInteractable = getUIButtonInteractable;
+        _setUIButtonInteractable = setUIButtonInteractable;
+        _getUIButtonHovered = getUIButtonHovered;
+        _getUIButtonPressed = getUIButtonPressed;
+        _getUIButtonReleased = getUIButtonReleased;
+        _getUIButtonClicked = getUIButtonClicked;
         _lastError = string.Empty;
         return 1;
     }
@@ -938,13 +1039,14 @@ internal static unsafe class ScriptBridge
         return entityId != 0 && _destroyEntity != null && _destroyEntity(entityId) != 0;
     }
 
-    internal static bool InvokeEntityMethod(uint entityId, string methodName)
+    internal static bool InvokeEntityMethod(uint entityId, string methodName, object?[]? args)
     {
         if (entityId == 0 || string.IsNullOrWhiteSpace(methodName))
         {
             return false;
         }
 
+        args ??= [];
         var invoked = false;
         foreach (var instance in Instances.Values)
         {
@@ -953,21 +1055,14 @@ internal static unsafe class ScriptBridge
                 continue;
             }
 
-            var method = instance.GetType().GetMethod(
-                methodName,
-                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
-                binder: null,
-                Type.EmptyTypes,
-                modifiers: null);
-
-            if (method is null || method.ReturnType != typeof(void))
+            if (!TryFindInvokableMethod(instance.GetType(), methodName, args, out var method, out var convertedArgs))
             {
                 continue;
             }
 
             try
             {
-                method.Invoke(instance, null);
+                method.Invoke(instance, convertedArgs);
                 invoked = true;
             }
             catch (Exception ex)
@@ -977,6 +1072,91 @@ internal static unsafe class ScriptBridge
         }
 
         return invoked;
+    }
+
+    private static bool TryFindInvokableMethod(Type instanceType, string methodName, object?[] args, out MethodInfo method, out object?[] convertedArgs)
+    {
+        foreach (var candidate in instanceType.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
+        {
+            if (!string.Equals(candidate.Name, methodName, StringComparison.Ordinal) ||
+                candidate.ReturnType != typeof(void))
+            {
+                continue;
+            }
+
+            var parameters = candidate.GetParameters();
+            if (parameters.Length != args.Length)
+            {
+                continue;
+            }
+
+            var currentArgs = new object?[args.Length];
+            var compatible = true;
+            for (var index = 0; index < parameters.Length; ++index)
+            {
+                if (!TryConvertInvokeArgument(args[index], parameters[index].ParameterType, out currentArgs[index]))
+                {
+                    compatible = false;
+                    break;
+                }
+            }
+
+            if (!compatible)
+            {
+                continue;
+            }
+
+            method = candidate;
+            convertedArgs = currentArgs;
+            return true;
+        }
+
+        method = null!;
+        convertedArgs = [];
+        return false;
+    }
+
+    private static bool TryConvertInvokeArgument(object? value, Type targetType, out object? convertedValue)
+    {
+        var nullableType = Nullable.GetUnderlyingType(targetType);
+        var effectiveTargetType = nullableType ?? targetType;
+
+        if (value is null)
+        {
+            convertedValue = null;
+            return !effectiveTargetType.IsValueType || nullableType is not null;
+        }
+
+        if (effectiveTargetType.IsInstanceOfType(value))
+        {
+            convertedValue = value;
+            return true;
+        }
+
+        if (effectiveTargetType == typeof(GameObject) && value is uint entityId)
+        {
+            convertedValue = new GameObject(entityId);
+            return true;
+        }
+
+        try
+        {
+            if (effectiveTargetType.IsEnum)
+            {
+                convertedValue = value is string enumName
+                    ? Enum.Parse(effectiveTargetType, enumName, ignoreCase: true)
+                    : Enum.ToObject(effectiveTargetType, value);
+                return true;
+            }
+
+            convertedValue = Convert.ChangeType(value, effectiveTargetType, CultureInfo.InvariantCulture);
+            return true;
+        }
+        catch
+        {
+            convertedValue = null;
+            return false;
+        }
     }
 
     internal static bool HasComponent(uint entityId, NativeComponentType componentType)
@@ -1145,6 +1325,70 @@ internal static unsafe class ScriptBridge
     internal static void SetColliderHeight(uint entityId, float value) { if (_setColliderHeight != null) _setColliderHeight(entityId, value); }
     internal static bool GetColliderTrigger(uint entityId) => _getColliderTrigger != null && _getColliderTrigger(entityId) != 0;
     internal static void SetColliderTrigger(uint entityId, bool value) { if (_setColliderTrigger != null) _setColliderTrigger(entityId, value ? 1 : 0); }
+
+    internal static float GetCanvasScaleFactor(uint entityId) => _getCanvasScaleFactor == null ? 1.0f : _getCanvasScaleFactor(entityId);
+    internal static void SetCanvasScaleFactor(uint entityId, float value) { if (_setCanvasScaleFactor != null) _setCanvasScaleFactor(entityId, value); }
+    internal static int GetCanvasSortingOrder(uint entityId) => _getCanvasSortingOrder == null ? 0 : _getCanvasSortingOrder(entityId);
+    internal static void SetCanvasSortingOrder(uint entityId, int value) { if (_setCanvasSortingOrder != null) _setCanvasSortingOrder(entityId, value); }
+
+    internal static Vector2 GetRectAnchoredPosition(uint entityId)
+    {
+        var value = _getRectAnchoredPosition == null ? new NativeVector3() : _getRectAnchoredPosition(entityId);
+        return new Vector2(value.X, value.Y);
+    }
+
+    internal static void SetRectAnchoredPosition(uint entityId, Vector2 value)
+    {
+        if (_setRectAnchoredPosition != null) _setRectAnchoredPosition(entityId, new NativeVector3(value.X, value.Y, 0.0f));
+    }
+
+    internal static Vector2 GetRectSizeDelta(uint entityId)
+    {
+        var value = _getRectSizeDelta == null ? new NativeVector3() : _getRectSizeDelta(entityId);
+        return new Vector2(value.X, value.Y);
+    }
+
+    internal static void SetRectSizeDelta(uint entityId, Vector2 value)
+    {
+        if (_setRectSizeDelta != null) _setRectSizeDelta(entityId, new NativeVector3(value.X, value.Y, 0.0f));
+    }
+
+    internal static int GetRectAnchorPreset(uint entityId) => _getRectAnchorPreset == null ? 4 : _getRectAnchorPreset(entityId);
+    internal static void SetRectAnchorPreset(uint entityId, int value) { if (_setRectAnchorPreset != null) _setRectAnchorPreset(entityId, value); }
+
+    internal static Vector3 GetUIImageColor(uint entityId) => _getUIImageColor == null ? Vector3.One : _getUIImageColor(entityId).ToManaged();
+    internal static void SetUIImageColor(uint entityId, Vector3 value) { if (_setUIImageColor != null) _setUIImageColor(entityId, NativeVector3.FromManaged(value)); }
+
+    internal static string GetUIText(uint entityId)
+    {
+        return _getUIText == null ? string.Empty : Marshal.PtrToStringUTF8(_getUIText(entityId)) ?? string.Empty;
+    }
+
+    internal static void SetUIText(uint entityId, string value)
+    {
+        if (_setUIText == null)
+        {
+            return;
+        }
+
+        var textBytes = Encoding.UTF8.GetBytes((value ?? string.Empty) + '\0');
+        fixed (byte* textPtr = textBytes)
+        {
+            _setUIText(entityId, (nint)textPtr);
+        }
+    }
+
+    internal static Vector3 GetUITextColor(uint entityId) => _getUITextColor == null ? Vector3.One : _getUITextColor(entityId).ToManaged();
+    internal static void SetUITextColor(uint entityId, Vector3 value) { if (_setUITextColor != null) _setUITextColor(entityId, NativeVector3.FromManaged(value)); }
+    internal static float GetUITextFontSize(uint entityId) => _getUITextFontSize == null ? 0.0f : _getUITextFontSize(entityId);
+    internal static void SetUITextFontSize(uint entityId, float value) { if (_setUITextFontSize != null) _setUITextFontSize(entityId, value); }
+
+    internal static bool GetUIButtonInteractable(uint entityId) => _getUIButtonInteractable != null && _getUIButtonInteractable(entityId) != 0;
+    internal static void SetUIButtonInteractable(uint entityId, bool value) { if (_setUIButtonInteractable != null) _setUIButtonInteractable(entityId, value ? 1 : 0); }
+    internal static bool GetUIButtonHovered(uint entityId) => _getUIButtonHovered != null && _getUIButtonHovered(entityId) != 0;
+    internal static bool GetUIButtonPressed(uint entityId) => _getUIButtonPressed != null && _getUIButtonPressed(entityId) != 0;
+    internal static bool GetUIButtonReleased(uint entityId) => _getUIButtonReleased != null && _getUIButtonReleased(entityId) != 0;
+    internal static bool GetUIButtonClicked(uint entityId) => _getUIButtonClicked != null && _getUIButtonClicked(entityId) != 0;
 
     internal static bool GetKeyDown(int keyCode)
     {
@@ -1453,6 +1697,31 @@ internal static unsafe class ScriptBridge
             return 15;
         }
 
+        if (type == typeof(CanvasComponent))
+        {
+            return 16;
+        }
+
+        if (type == typeof(RectTransformComponent))
+        {
+            return 17;
+        }
+
+        if (type == typeof(UIImageComponent))
+        {
+            return 18;
+        }
+
+        if (type == typeof(UITextComponent))
+        {
+            return 19;
+        }
+
+        if (type == typeof(UIButtonComponent))
+        {
+            return 20;
+        }
+
         return null;
     }
 
@@ -1560,6 +1829,11 @@ internal static unsafe class ScriptBridge
             13 => CreateReferenceValue(memberType, value),
             14 => CreateReferenceValue(memberType, value),
             15 => CreateReferenceValue(memberType, value),
+            16 => CreateReferenceValue(memberType, value),
+            17 => CreateReferenceValue(memberType, value),
+            18 => CreateReferenceValue(memberType, value),
+            19 => CreateReferenceValue(memberType, value),
+            20 => CreateReferenceValue(memberType, value),
             _ => null,
         };
     }
@@ -1583,6 +1857,11 @@ internal static unsafe class ScriptBridge
             13 => ExtractEntityId(value).ToString(CultureInfo.InvariantCulture),
             14 => ExtractEntityId(value).ToString(CultureInfo.InvariantCulture),
             15 => ExtractEntityId(value).ToString(CultureInfo.InvariantCulture),
+            16 => ExtractEntityId(value).ToString(CultureInfo.InvariantCulture),
+            17 => ExtractEntityId(value).ToString(CultureInfo.InvariantCulture),
+            18 => ExtractEntityId(value).ToString(CultureInfo.InvariantCulture),
+            19 => ExtractEntityId(value).ToString(CultureInfo.InvariantCulture),
+            20 => ExtractEntityId(value).ToString(CultureInfo.InvariantCulture),
             _ => string.Empty,
         };
     }
@@ -1630,6 +1909,31 @@ internal static unsafe class ScriptBridge
             return new AnimationComponent(entityId);
         }
 
+        if (memberType == typeof(CanvasComponent))
+        {
+            return new CanvasComponent(entityId);
+        }
+
+        if (memberType == typeof(RectTransformComponent))
+        {
+            return new RectTransformComponent(entityId);
+        }
+
+        if (memberType == typeof(UIImageComponent))
+        {
+            return new UIImageComponent(entityId);
+        }
+
+        if (memberType == typeof(UITextComponent))
+        {
+            return new UITextComponent(entityId);
+        }
+
+        if (memberType == typeof(UIButtonComponent))
+        {
+            return new UIButtonComponent(entityId);
+        }
+
         return entityId;
     }
 
@@ -1646,6 +1950,11 @@ internal static unsafe class ScriptBridge
             RigidbodyComponent rigidbodyComponent => rigidbodyComponent.EntityId,
             ColliderComponent colliderComponent => colliderComponent.EntityId,
             AnimationComponent animationComponent => animationComponent.EntityId,
+            CanvasComponent canvasComponent => canvasComponent.EntityId,
+            RectTransformComponent rectTransformComponent => rectTransformComponent.EntityId,
+            UIImageComponent imageComponent => imageComponent.EntityId,
+            UITextComponent textComponent => textComponent.EntityId,
+            UIButtonComponent buttonComponent => buttonComponent.EntityId,
             _ => 0u,
         };
     }

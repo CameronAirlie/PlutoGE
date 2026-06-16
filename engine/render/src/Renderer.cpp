@@ -12,6 +12,7 @@
 #include "PlutoGE/render/passes/LightingPass.h"
 #include "PlutoGE/render/passes/LightPropagationVolumePass.h"
 #include "PlutoGE/render/passes/PostProcessPass.h"
+#include "PlutoGE/render/passes/RuntimeUIPass.h"
 #include "PlutoGE/render/passes/ShadowPass.h"
 #include "PlutoGE/render/postprocess/IPostProcessEffect.h"
 #include "PlutoGE/render/postprocess/TAAEffect.h"
@@ -209,6 +210,10 @@ namespace PlutoGE::render
         auto postProcessPass = new PostProcessPass();
         postProcessPass->Initialize();
         m_renderPasses.push_back(postProcessPass);
+
+        auto runtimeUIPass = new RuntimeUIPass();
+        runtimeUIPass->Initialize();
+        m_renderPasses.push_back(runtimeUIPass);
 
         InitializeGpuTimers();
 

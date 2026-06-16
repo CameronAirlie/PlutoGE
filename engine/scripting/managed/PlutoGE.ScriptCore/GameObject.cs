@@ -51,9 +51,9 @@ public sealed class GameObject
         return ScriptBridge.HasEntityTag(EntityId, tag);
     }
 
-    public bool TryInvoke(string methodName)
+    public bool TryInvoke(string methodName, params object?[] args)
     {
-        return ScriptBridge.InvokeEntityMethod(EntityId, methodName);
+        return ScriptBridge.InvokeEntityMethod(EntityId, methodName, args);
     }
 
     public bool Destroy()
@@ -76,6 +76,11 @@ public sealed class GameObject
             var type when type == typeof(RigidbodyComponent) => ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.Rigidbody),
             var type when type == typeof(ColliderComponent) => ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.Collider),
             var type when type == typeof(AnimationComponent) => ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.Animation),
+            var type when type == typeof(CanvasComponent) => ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.Canvas),
+            var type when type == typeof(RectTransformComponent) => ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.RectTransform),
+            var type when type == typeof(UIImageComponent) => ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.UIImage),
+            var type when type == typeof(UITextComponent) => ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.UIText),
+            var type when type == typeof(UIButtonComponent) => ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.UIButton),
             _ => false,
         };
     }
@@ -110,6 +115,31 @@ public sealed class GameObject
         if (typeof(T) == typeof(AnimationComponent) && ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.Animation))
         {
             return new AnimationComponent(EntityId) as T;
+        }
+
+        if (typeof(T) == typeof(CanvasComponent) && ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.Canvas))
+        {
+            return new CanvasComponent(EntityId) as T;
+        }
+
+        if (typeof(T) == typeof(RectTransformComponent) && ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.RectTransform))
+        {
+            return new RectTransformComponent(EntityId) as T;
+        }
+
+        if (typeof(T) == typeof(UIImageComponent) && ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.UIImage))
+        {
+            return new UIImageComponent(EntityId) as T;
+        }
+
+        if (typeof(T) == typeof(UITextComponent) && ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.UIText))
+        {
+            return new UITextComponent(EntityId) as T;
+        }
+
+        if (typeof(T) == typeof(UIButtonComponent) && ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.UIButton))
+        {
+            return new UIButtonComponent(EntityId) as T;
         }
 
         return null;

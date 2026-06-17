@@ -78,6 +78,7 @@ namespace PlutoGE::ui
                 LinkPrefabSubtree(child, prefabReference, false);
             }
         }
+
     }
 
     void SceneHierarchyPanel::RenderEntityNode(scene::Entity *entity)
@@ -181,6 +182,21 @@ namespace PlutoGE::ui
                                                             {
                                                                 entity->SetParent(nullptr);
                                                             });
+            }
+            if (auto *meshComponent = entity->GetComponent<scene::MeshComponent>();
+                meshComponent && meshComponent->GetMesh() && meshComponent->GetMesh()->GetSubmeshCount() > 1)
+            {
+                if (ImGui::MenuItem("Create Submesh Entities"))
+                {
+                    EditorShell::GetInstance().ExecuteSceneEdit("Create Submesh Entities",
+                                                                [entity]()
+                                                                {
+                                                                    if (auto *meshComponent = entity->GetComponent<scene::MeshComponent>())
+                                                                    {
+                                                                        meshComponent->CreateSubmeshChildEntities();
+                                                                    }
+                                                                });
+                }
             }
             if (ImGui::MenuItem("Save As Prefab"))
             {

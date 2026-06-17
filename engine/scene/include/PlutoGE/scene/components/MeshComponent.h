@@ -58,6 +58,28 @@ namespace PlutoGE::scene
             MarkRenderCommandsDirty();
         }
         bool IsStatic() const { return m_isStatic; }
+        void SetVisible(bool visible)
+        {
+            if (m_visible == visible)
+            {
+                return;
+            }
+
+            m_visible = visible;
+            MarkRenderCommandsDirty();
+        }
+        bool IsVisible() const { return m_visible; }
+        void SetSubmeshIndex(int submeshIndex)
+        {
+            if (m_submeshIndex == submeshIndex)
+            {
+                return;
+            }
+
+            m_submeshIndex = submeshIndex;
+            MarkRenderCommandsDirty();
+        }
+        int GetSubmeshIndex() const { return m_submeshIndex; }
         void SetSourceMeshPath(const std::string &sourceMeshPath) { m_sourceMeshPath = sourceMeshPath; }
         const std::string &GetSourceMeshPath() const { return m_sourceMeshPath; }
 
@@ -162,6 +184,7 @@ namespace PlutoGE::scene
         }
         render::Material *CreateUniqueMaterialForMaterialSlot(size_t materialSlotIndex);
         render::Material *CreateUniqueMaterialForSubmesh(size_t submeshIndex);
+        bool CreateSubmeshChildEntities();
 
     private:
         void MarkRenderCommandsDirty();
@@ -181,5 +204,7 @@ namespace PlutoGE::scene
         glm::mat4 m_cachedRenderCommandModel = glm::mat4(1.0f);
         std::vector<render::RenderCommand> m_cachedRenderCommands;
         std::string m_sourceMeshPath;
+        int m_submeshIndex = -1;
+        bool m_visible = true;
     };
 }

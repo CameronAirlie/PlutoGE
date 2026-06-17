@@ -64,6 +64,7 @@ namespace PlutoGE::assets
         int windowWidth = 1280;
         int windowHeight = 720;
         bool vSyncEnabled = true;
+        float editorFontSize = 15.0f;
         ProjectEditorCameraSettings editorCamera;
         std::vector<ProjectPostProcessEffect> editorCameraPostProcessEffects;
         std::vector<ProjectAssetEntry> assetEntries;

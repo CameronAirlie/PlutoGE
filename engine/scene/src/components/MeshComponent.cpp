@@ -13,6 +13,7 @@
 #include <cmath>
 #include <iostream>
 #include <map>
+#include <memory>
 #include <string>
 
 namespace PlutoGE::scene
@@ -53,6 +54,19 @@ namespace PlutoGE::scene
             }
 
             return true;
+        }
+
+        AnimationComponent *FindAnimationComponent(Entity *entity)
+        {
+            for (auto *current = entity; current != nullptr; current = current->GetParent())
+            {
+                if (auto *animationComponent = current->GetComponent<AnimationComponent>())
+                {
+                    return animationComponent;
+                }
+            }
+
+            return nullptr;
         }
 
         std::string SerializeVec4(const glm::vec4 &value)
@@ -129,10 +143,61 @@ namespace PlutoGE::scene
         return uniqueMaterial;
     }
 
+    bool MeshComponent::CreateSubmeshChildEntities()
+    {
+        auto *owner = GetOwner();
+        auto *scene = owner ? owner->GetScene() : nullptr;
+        if (!owner || !scene || !m_mesh || m_mesh->GetSubmeshCount() <= 1 || m_submeshIndex >= 0)
+        {
+            return false;
+        }
+
+        for (auto *child : owner->GetChildren())
+        {
+            auto *childMeshComponent = child ? child->GetComponent<MeshComponent>() : nullptr;
+            if (childMeshComponent &&
+                childMeshComponent->GetMesh() == m_mesh &&
+                childMeshComponent->GetSubmeshIndex() >= 0)
+            {
+                return false;
+            }
+        }
+
+        SetVisible(false);
+        for (size_t submeshIndex = 0; submeshIndex < m_mesh->GetSubmeshCount(); ++submeshIndex)
+        {
+            auto child = std::make_unique<Entity>(EntityConfig{
+                .name = "Submesh " + std::to_string(submeshIndex),
+            });
+            auto *childPtr = child.get();
+            auto *childMeshComponent = childPtr->CreateComponent<MeshComponent>(MeshComponentConfig{
+                .mesh = m_mesh,
+                .material = m_material,
+                .materials = m_materials,
+            });
+            childMeshComponent->SetSourceMeshPath(m_sourceMeshPath);
+            childMeshComponent->SetStatic(m_isStatic);
+            childMeshComponent->SetSubmeshIndex(static_cast<int>(submeshIndex));
+            if (submeshIndex < m_submeshMaterials.size() && m_submeshMaterials[submeshIndex])
+            {
+                childMeshComponent->SetMaterialForSubmesh(submeshIndex, m_submeshMaterials[submeshIndex]);
+            }
+            if (submeshIndex < m_submeshMaterialAssetReferences.size() && !m_submeshMaterialAssetReferences[submeshIndex].empty())
+            {
+                childMeshComponent->SetMaterialAssetForSubmesh(submeshIndex, m_submeshMaterialAssetReferences[submeshIndex]);
+            }
+            scene->AddEntity(std::move(child), owner);
+        }
+
+        return true;
+    }
+
     std::vector<Property> MeshComponent::Serialize() const
     {
         std::vector<Property> properties{
             {"Static", PropertyType::Bool, m_isStatic ? "true" : "false"},
+            {"Visible", PropertyType::Bool, m_visible ? "true" : "false"},
+            {"SubmeshIndex", PropertyType::Int, std::to_string(m_submeshIndex)},
             {"SourceMesh", PropertyType::String, m_sourceMeshPath},
             {"MaterialSlotCount", PropertyType::Int, std::to_string(m_materials.size())},
         };
@@ -197,6 +262,14 @@ namespace PlutoGE::scene
             if (property.name == "Static")
             {
                 m_isStatic = (property.value == "true");
+            }
+            else if (property.name == "Visible")
+            {
+                m_visible = (property.value == "true");
+            }
+            else if (property.name == "SubmeshIndex")
+            {
+                m_submeshIndex = std::stoi(property.value);
             }
             else if (property.name == "SourceMesh")
             {
@@ -411,7 +484,7 @@ namespace PlutoGE::scene
 
     void MeshComponent::Update(float deltaTime)
     {
-        if (m_mesh)
+        if (m_mesh && m_visible)
         {
             auto entity = GetOwner();
             glm::mat4 modelMatrix = entity->GetWorldTransform();
@@ -439,8 +512,10 @@ namespace PlutoGE::scene
                 return;
             }
 
-            const size_t submeshCount = std::max<size_t>(m_mesh->GetSubmeshCount(), 1);
-            AnimationComponent *animationComponent = entity->GetComponent<AnimationComponent>();
+            const size_t meshSubmeshCount = std::max<size_t>(m_mesh->GetSubmeshCount(), 1);
+            const size_t submeshBegin = m_submeshIndex >= 0 ? static_cast<size_t>(m_submeshIndex) : 0;
+            const size_t submeshEnd = m_submeshIndex >= 0 ? std::min(submeshBegin + 1, meshSubmeshCount) : meshSubmeshCount;
+            AnimationComponent *animationComponent = FindAnimationComponent(entity);
             const std::vector<glm::mat4> *jointMatrices = nullptr;
             if (m_mesh->HasSkeleton())
             {
@@ -452,10 +527,10 @@ namespace PlutoGE::scene
             std::vector<render::RenderCommand> rebuiltCommands;
             if (m_isStatic && !jointMatrices && !hasAnimatedNodeSubmeshes)
             {
-                rebuiltCommands.reserve(submeshCount);
+                rebuiltCommands.reserve(submeshEnd - submeshBegin);
             }
 
-            for (size_t submeshIndex = 0; submeshIndex < submeshCount; ++submeshIndex)
+            for (size_t submeshIndex = submeshBegin; submeshIndex < submeshEnd; ++submeshIndex)
             {
                 auto *material = GetMaterialForSubmesh(submeshIndex);
                 if (!material)

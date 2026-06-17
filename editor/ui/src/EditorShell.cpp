@@ -1520,6 +1520,7 @@ namespace PlutoGE::ui
         m_project->RefreshAssetRegistry();
 
         const auto &manifest = m_project->GetManifest();
+        m_panelManager.SetEditorFontSize(manifest.editorFontSize);
         ApplyProjectEditorCameraSettings(manifest.editorCamera, m_editorCamera);
         ApplyProjectEditorPostProcessEffects(manifest.editorCameraPostProcessEffects, m_editorCamera);
         m_engine.GetRenderer().SetVSyncEnabled(manifest.vSyncEnabled);
@@ -1599,6 +1600,7 @@ namespace PlutoGE::ui
 
         m_project = std::move(createdProject);
         ApplyProjectContext();
+        m_project->GetManifest().editorFontSize = m_panelManager.GetEditorFontSize();
         SetScene(CreateEmptyScene());
 
         std::string scriptErrorMessage;
@@ -1850,6 +1852,7 @@ namespace PlutoGE::ui
         int projectWindowWidth = 1280;
         int projectWindowHeight = 720;
         bool projectVSyncEnabled = true;
+        float projectEditorFontSize = m_panelManager.GetEditorFontSize();
         bool shouldOpenProjectSettingsPopup = false;
 
         auto loadProjectSettingsDraft = [&]()
@@ -1876,6 +1879,7 @@ namespace PlutoGE::ui
             projectWindowWidth = manifest.windowWidth;
             projectWindowHeight = manifest.windowHeight;
             projectVSyncEnabled = manifest.vSyncEnabled;
+            projectEditorFontSize = manifest.editorFontSize;
         };
 
         bool editorVSyncEnabled = m_project ? m_project->GetManifest().vSyncEnabled : false;
@@ -2406,6 +2410,10 @@ namespace PlutoGE::ui
                     ImGui::InputInt("Window Width", &projectWindowWidth);
                     ImGui::InputInt("Window Height", &projectWindowHeight);
                     ImGui::Checkbox("VSync", &projectVSyncEnabled);
+                    if (ImGui::SliderFloat("Editor Font Size", &projectEditorFontSize, 10.0f, 24.0f, "%.1f px"))
+                    {
+                        m_panelManager.SetEditorFontSize(projectEditorFontSize);
+                    }
                     ImGui::InputText("Script Assembly", projectScriptAssemblyBuffer.data(), projectScriptAssemblyBuffer.size());
                     ImGui::SameLine();
                     if (ImGui::Button("...##ScriptAssembly"))
@@ -2438,6 +2446,7 @@ namespace PlutoGE::ui
                         manifest.windowWidth = (std::max)(projectWindowWidth, 64);
                         manifest.windowHeight = (std::max)(projectWindowHeight, 64);
                         manifest.vSyncEnabled = projectVSyncEnabled;
+                        manifest.editorFontSize = std::clamp(projectEditorFontSize, 10.0f, 24.0f);
                         manifest.scriptAssembly = projectScriptAssemblyBuffer[0] == '\0'
                                                       ? std::string{}
                                                       : m_project->MakeAssetReference(projectScriptAssemblyBuffer.data());
@@ -2453,12 +2462,15 @@ namespace PlutoGE::ui
                             editorVSyncEnabled = manifest.vSyncEnabled;
                             appliedEditorVSyncEnabled = editorVSyncEnabled;
                             renderer.SetVSyncEnabled(appliedEditorVSyncEnabled);
+                            m_panelManager.SetEditorFontSize(manifest.editorFontSize);
                             ImGui::CloseCurrentPopup();
                         }
                     }
                     ImGui::SameLine();
                     if (ImGui::Button("Cancel"))
                     {
+                        m_panelManager.SetEditorFontSize(manifest.editorFontSize);
+                        projectEditorFontSize = manifest.editorFontSize;
                         ImGui::CloseCurrentPopup();
                     }
 

@@ -309,6 +309,7 @@ namespace PlutoGE::core
                         meshComponent->SetMesh(importedRenderMeshAsset.mesh);
                         meshComponent->SetMaterials(importedRenderMeshAsset.materials);
                         meshComponent->SetSourceMeshPath(job.normalizedPath);
+                        meshComponent->CreateSubmeshChildEntities();
                         if (importedRenderMeshAsset.animations && !importedRenderMeshAsset.animations->empty())
                         {
                             auto *animationComponent = entity->GetComponent<scene::AnimationComponent>();

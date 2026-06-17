@@ -1776,6 +1776,7 @@ namespace PlutoGE::ui
                                             engine.GetAssetManager().LoadMaterialAsset(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference)));
                                         meshComponent->SetMaterialAssetForMaterialSlot(0, std::string(assets::Project::kBuiltinDefaultShadedMaterialReference));
                                     }
+                                    meshComponent->CreateSubmeshChildEntities();
                                     editorShell.MarkSceneDirty();
                                 }
                             }
@@ -1788,6 +1789,7 @@ namespace PlutoGE::ui
                                     meshComponent->SetMesh(importedMeshAsset.mesh);
                                     meshComponent->SetMaterials(importedMeshAsset.materials);
                                     meshComponent->SetSourceMeshPath(option.reference);
+                                    meshComponent->CreateSubmeshChildEntities();
                                     if (importedMeshAsset.animations && !importedMeshAsset.animations->empty())
                                     {
                                         auto *animationComponent = entity->GetComponent<scene::AnimationComponent>();
@@ -1851,7 +1853,7 @@ namespace PlutoGE::ui
                     ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f), "%s", meshImportStatus.errorMessage.c_str());
                 }
 
-                if (meshComponent->GetMesh() && meshComponent->GetMesh()->GetSubmeshCount() > 0)
+                if (meshComponent->GetMesh() && meshComponent->GetMesh()->GetSubmeshCount() > 1)
                 {
                     ImGui::Separator();
                     if (ImGui::CollapsingHeader("Submesh Materials"))

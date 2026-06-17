@@ -50,7 +50,7 @@ namespace PlutoGE::ui
         static const char *GetDebugViewLabel(render::PostProcessDebugView debugView);
 
     private:
-        void RenderEditorToolbar();
+        bool RenderViewportSettingsOverlay(const ImVec2 &viewportMin, const ImVec2 &viewportSize);
         void RenderEditorOverlays(const ImVec2 &viewportMin, const ImVec2 &viewportSize, bool viewportClicked);
 
         ViewportPanelConfig m_config;

@@ -39,11 +39,15 @@ namespace PlutoGE::ui
 
         void EndPanelUpdate();
 
+        void SetEditorFontSize(float fontSize);
+        [[nodiscard]] float GetEditorFontSize() const { return m_editorFontSize; }
+
         [[nodiscard]] const PanelManagerTimingStats &GetTimingStats() const { return m_timingStats; }
 
     private:
         std::vector<Panel *> m_panels;
         platform::Window *m_window = nullptr;
         PanelManagerTimingStats m_timingStats;
+        float m_editorFontSize = 15.0f;
     };
 }

@@ -792,29 +792,6 @@ namespace PlutoGE::ui
         if (!m_renderTarget || !m_renderTarget->IsInitialized())
             return;
 
-        auto &renderer = EditorShell::GetInstance().GetEngine().GetRenderer();
-        int debugView = static_cast<int>(renderer.GetPostProcessDebugView());
-        if (m_panelControlsEnabled)
-        {
-            ImGui::SetNextItemWidth(180.0f);
-            if (ImGui::Combo("Debug View", &debugView, kDebugViewLabels, IM_ARRAYSIZE(kDebugViewLabels)))
-            {
-                renderer.SetPostProcessDebugView(static_cast<render::PostProcessDebugView>(debugView));
-            }
-            if (m_config.editorViewport)
-            {
-                ImGui::Separator();
-                RenderEditorToolbar();
-            }
-            ImGui::SetNextItemWidth(180.0f);
-            if (ImGui::SliderFloat("Render Scale", &m_renderScale, kMinRenderScale, kMaxRenderScale, "%.2fx"))
-            {
-                m_renderScale = glm::clamp(m_renderScale, kMinRenderScale, kMaxRenderScale);
-                m_resizeStableFrames = kResizeDebounceFrames;
-            }
-            ImGui::Separator();
-        }
-
         const ImVec2 panelSize = ImGui::GetContentRegionAvail();
         const int newWidth = static_cast<int>(panelSize.x);
         const int newHeight = static_cast<int>(panelSize.y);
@@ -881,15 +858,23 @@ namespace PlutoGE::ui
             ImGui::EndDragDropTarget();
         }
 
+        bool controlsHovered = false;
+        if (m_panelControlsEnabled)
+        {
+            controlsHovered = RenderViewportSettingsOverlay(viewportMin, imageSize);
+            m_isViewportHovered = m_isViewportHovered && !controlsHovered;
+        }
+
         if (m_config.editorViewport)
         {
-            RenderEditorOverlays(viewportMin, imageSize, viewportClicked);
+            RenderEditorOverlays(viewportMin, imageSize, viewportClicked && !controlsHovered);
         }
     }
 
-    void ViewportPanel::RenderEditorToolbar()
+    bool ViewportPanel::RenderViewportSettingsOverlay(const ImVec2 &viewportMin, const ImVec2 &viewportSize)
     {
         const bool allowEditorViewportHotkeys =
+            m_config.editorViewport &&
             ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
             !ImGui::GetIO().WantTextInput;
 
@@ -913,63 +898,133 @@ namespace PlutoGE::ui
             }
         }
 
-        ImGui::TextUnformatted("Transform");
-        ImGui::SameLine();
-        if (ImGui::RadioButton("Position (W)", m_gizmoOperation == ImGuizmo::TRANSLATE))
-        {
-            m_gizmoOperation = ImGuizmo::TRANSLATE;
-        }
-        ImGui::SameLine();
-        if (ImGui::RadioButton("Rotation (E)", m_gizmoOperation == ImGuizmo::ROTATE))
-        {
-            m_gizmoOperation = ImGuizmo::ROTATE;
-        }
-        ImGui::SameLine();
-        if (ImGui::RadioButton("Scale (R)", m_gizmoOperation == ImGuizmo::SCALE))
-        {
-            m_gizmoOperation = ImGuizmo::SCALE;
-        }
+        auto &renderer = EditorShell::GetInstance().GetEngine().GetRenderer();
+        int debugView = static_cast<int>(renderer.GetPostProcessDebugView());
 
-        ImGui::TextUnformatted("Space");
-        ImGui::SameLine();
-        if (ImGui::RadioButton("Local", m_gizmoMode == ImGuizmo::LOCAL))
-        {
-            m_gizmoMode = ImGuizmo::LOCAL;
-        }
-        ImGui::SameLine();
-        if (ImGui::RadioButton("World", m_gizmoMode == ImGuizmo::WORLD))
-        {
-            m_gizmoMode = ImGuizmo::WORLD;
-        }
-        ImGui::SameLine();
-        ImGui::Checkbox("Grid", &m_showGrid);
-        ImGui::SameLine();
-        ImGui::Checkbox("Debug Shapes", &m_showDebugShapes);
+        const ImVec2 overlayPos(viewportMin.x + viewportSize.x - 10.0f, viewportMin.y + 10.0f);
+        ImGui::SetNextWindowPos(overlayPos, ImGuiCond_Always, ImVec2(1.0f, 0.0f));
+        ImGui::SetNextWindowBgAlpha(0.92f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 6.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(7.0f, 4.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f);
 
-        ImGui::Checkbox("Snap", &m_enableSnap);
-        if (m_enableSnap)
+        const ImGuiWindowFlags flags =
+            ImGuiWindowFlags_NoDecoration |
+            ImGuiWindowFlags_AlwaysAutoResize |
+            ImGuiWindowFlags_NoSavedSettings |
+            ImGuiWindowFlags_NoDocking |
+            ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoNav;
+
+        const std::string overlayName = "##ViewportSettingsOverlay" + m_config.name;
+        ImGui::Begin(overlayName.c_str(), nullptr, flags);
+        if (m_config.editorViewport)
         {
-            switch (m_gizmoOperation)
+            if (m_gizmoOperation == ImGuizmo::TRANSLATE)
             {
-            case ImGuizmo::TRANSLATE:
-                ImGui::SetNextItemWidth(240.0f);
-                ImGui::DragFloat3("Move Snap", &m_translateSnap.x, 0.05f, 0.01f, 100.0f, "%.2f");
-                break;
-            case ImGuizmo::ROTATE:
-                ImGui::SetNextItemWidth(180.0f);
-                ImGui::DragFloat("Rotate Snap", &m_rotateSnapDegrees, 0.5f, 0.1f, 180.0f, "%.1f deg");
-                break;
-            case ImGuizmo::SCALE:
-                ImGui::SetNextItemWidth(180.0f);
-                ImGui::DragFloat("Scale Snap", &m_scaleSnap, 0.01f, 0.01f, 10.0f, "%.2f");
-                break;
-            case ImGuizmo::BOUNDS:
-            default:
-                break;
+                ImGui::TextUnformatted("Move");
+            }
+            else if (m_gizmoOperation == ImGuizmo::ROTATE)
+            {
+                ImGui::TextUnformatted("Rotate");
+            }
+            else
+            {
+                ImGui::TextUnformatted("Scale");
+            }
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s", m_gizmoMode == ImGuizmo::LOCAL ? "Local" : "World");
+            ImGui::SameLine();
+            ImGui::TextDisabled("|");
+            ImGui::SameLine();
+
+            if (ImGui::BeginMenu("Transform"))
+            {
+                if (ImGui::MenuItem("Move", "W", m_gizmoOperation == ImGuizmo::TRANSLATE))
+                {
+                    m_gizmoOperation = ImGuizmo::TRANSLATE;
+                }
+                if (ImGui::MenuItem("Rotate", "E", m_gizmoOperation == ImGuizmo::ROTATE))
+                {
+                    m_gizmoOperation = ImGuizmo::ROTATE;
+                }
+                if (ImGui::MenuItem("Scale", "R", m_gizmoOperation == ImGuizmo::SCALE))
+                {
+                    m_gizmoOperation = ImGuizmo::SCALE;
+                }
+                ImGui::Separator();
+                if (ImGui::MenuItem("Local Space", nullptr, m_gizmoMode == ImGuizmo::LOCAL))
+                {
+                    m_gizmoMode = ImGuizmo::LOCAL;
+                }
+                if (ImGui::MenuItem("World Space", nullptr, m_gizmoMode == ImGuizmo::WORLD))
+                {
+                    m_gizmoMode = ImGuizmo::WORLD;
+                }
+                ImGui::Separator();
+                if (ImGui::MenuItem("Frame Selected", "F"))
+                {
+                    FrameSelectedEntity(EditorShell::GetInstance());
+                }
+                ImGui::EndMenu();
+            }
+
+            ImGui::SameLine();
+        }
+
+        if (ImGui::BeginMenu("View"))
+        {
+            if (m_config.editorViewport)
+            {
+                ImGui::MenuItem("Grid", nullptr, &m_showGrid);
+                ImGui::MenuItem("Debug Shapes", nullptr, &m_showDebugShapes);
+                ImGui::Separator();
+            }
+            ImGui::SetNextItemWidth(180.0f);
+            if (ImGui::Combo("Debug View", &debugView, kDebugViewLabels, IM_ARRAYSIZE(kDebugViewLabels)))
+            {
+                renderer.SetPostProcessDebugView(static_cast<render::PostProcessDebugView>(debugView));
+            }
+            ImGui::EndMenu();
+        }
+
+        ImGui::SameLine();
+        if (ImGui::BeginMenu("Quality"))
+        {
+            ImGui::SetNextItemWidth(180.0f);
+            if (ImGui::SliderFloat("Render Scale", &m_renderScale, kMinRenderScale, kMaxRenderScale, "%.2fx"))
+            {
+                m_renderScale = glm::clamp(m_renderScale, kMinRenderScale, kMaxRenderScale);
+                m_resizeStableFrames = kResizeDebounceFrames;
+            }
+            ImGui::EndMenu();
+        }
+
+        if (m_config.editorViewport)
+        {
+            ImGui::SameLine();
+            if (ImGui::BeginMenu("Snap"))
+            {
+                ImGui::MenuItem("Enabled", nullptr, &m_enableSnap);
+                ImGui::BeginDisabled(!m_enableSnap);
+                ImGui::SetNextItemWidth(210.0f);
+                ImGui::DragFloat3("Move", &m_translateSnap.x, 0.05f, 0.01f, 100.0f, "%.2f");
+                ImGui::SetNextItemWidth(160.0f);
+                ImGui::DragFloat("Rotate", &m_rotateSnapDegrees, 0.5f, 0.1f, 180.0f, "%.1f deg");
+                ImGui::SetNextItemWidth(160.0f);
+                ImGui::DragFloat("Scale", &m_scaleSnap, 0.01f, 0.01f, 10.0f, "%.2f");
+                ImGui::EndDisabled();
+                ImGui::EndMenu();
             }
         }
 
-        ImGui::Separator();
+        const bool hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup | ImGuiHoveredFlags_ChildWindows) ||
+                             ImGui::IsAnyItemHovered() ||
+                             ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId);
+        ImGui::End();
+        ImGui::PopStyleVar(3);
+
+        return hovered;
     }
 
     void ViewportPanel::RenderEditorOverlays(const ImVec2 &viewportMin, const ImVec2 &viewportSize, bool viewportClicked)

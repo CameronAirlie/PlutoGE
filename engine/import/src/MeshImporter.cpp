@@ -1847,9 +1847,15 @@ namespace PlutoGE::assetimport
             }
 
             float opacity = 1.0f;
+            bool hasPartialOpacityFactor = false;
             if (AI_SUCCESS == aiGetMaterialFloat(&material, AI_MATKEY_OPACITY, &opacity))
             {
-                importedMaterial.color.a *= std::clamp(opacity, 0.0f, 1.0f);
+                opacity = std::clamp(opacity, 0.0f, 1.0f);
+                if (opacity > 0.001f && opacity < 0.999f)
+                {
+                    importedMaterial.color.a *= opacity;
+                    hasPartialOpacityFactor = true;
+                }
             }
 
             float transparency = 0.0f;
@@ -1869,9 +1875,9 @@ namespace PlutoGE::assetimport
             if (AI_SUCCESS == aiGetMaterialColor(&material, AI_MATKEY_COLOR_TRANSPARENT, &transparentColor))
             {
                 const float transparentStrength = std::max({transparentColor.r, transparentColor.g, transparentColor.b, transparentColor.a});
-                if (transparentStrength > 0.001f)
+                if (transparentStrength > 0.001f && transparentStrength < 0.999f)
                 {
-                    importedMaterial.color.a *= transparentStrength >= 0.999f ? 0.35f : 1.0f - transparentStrength;
+                    importedMaterial.color.a *= 1.0f - transparentStrength;
                     hasTransparentColor = true;
                 }
             }
@@ -1919,7 +1925,7 @@ namespace PlutoGE::assetimport
                 importedMaterial.color.a = 0.5f;
             }
 
-            if (importedMaterial.color.a < 0.999f || hasTransparentAlbedo || hasPartialTransparencyFactor || hasTransparentColor || hasOpacityTexture)
+            if (importedMaterial.color.a < 0.999f || hasTransparentAlbedo || hasPartialOpacityFactor || hasPartialTransparencyFactor || hasTransparentColor || hasOpacityTexture)
             {
                 importedMaterial.alphaMode = render::AlphaMode::Blend;
                 importedMaterial.castsShadow = false;

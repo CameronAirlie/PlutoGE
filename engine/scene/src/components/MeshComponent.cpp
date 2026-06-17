@@ -155,8 +155,12 @@ namespace PlutoGE::scene
         for (auto *child : owner->GetChildren())
         {
             auto *childMeshComponent = child ? child->GetComponent<MeshComponent>() : nullptr;
+            const bool sameMesh = childMeshComponent && childMeshComponent->GetMesh() == m_mesh;
+            const bool sameSourceMesh = childMeshComponent &&
+                                        !m_sourceMeshPath.empty() &&
+                                        childMeshComponent->GetSourceMeshPath() == m_sourceMeshPath;
             if (childMeshComponent &&
-                childMeshComponent->GetMesh() == m_mesh &&
+                (sameMesh || sameSourceMesh) &&
                 childMeshComponent->GetSubmeshIndex() >= 0)
             {
                 return false;

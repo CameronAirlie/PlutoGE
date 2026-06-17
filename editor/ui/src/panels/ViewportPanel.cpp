@@ -9,6 +9,7 @@
 #include "PlutoGE/scene/components/IblCaptureComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
+#include "PlutoGE/scene/components/ColliderComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/ui/panels/ContentBrowserPanel.h"
@@ -446,12 +447,70 @@ namespace PlutoGE::ui
             DrawWorldLine(drawList, center, coneCenter - bitangent * radius, cameraData, viewportMin, viewportSize, color);
         }
 
+        glm::vec3 SafeNormalizedAxis(const glm::vec3 &axis, const glm::vec3 &fallback)
+        {
+            return glm::dot(axis, axis) > 0.000001f ? glm::normalize(axis) : fallback;
+        }
+
+        void DrawColliderShape(ImDrawList *drawList,
+                               const scene::Entity &entity,
+                               const scene::ColliderComponent &colliderComponent,
+                               const render::CameraData &cameraData,
+                               const ImVec2 &viewportMin,
+                               const ImVec2 &viewportSize)
+        {
+            const ImU32 color = colliderComponent.IsTrigger()
+                                    ? IM_COL32(255, 185, 80, 230)
+                                    : IM_COL32(116, 232, 255, 230);
+            const glm::mat4 worldTransform = entity.GetWorldTransform();
+            const glm::vec3 worldScale = entity.GetWorldScale();
+            if (colliderComponent.GetShape() == scene::ColliderShape::Box)
+            {
+                const glm::mat4 colliderTransform =
+                    worldTransform *
+                    glm::translate(glm::mat4(1.0f), colliderComponent.GetCenter()) *
+                    glm::scale(glm::mat4(1.0f), colliderComponent.GetSize());
+                DrawWireBox(drawList, colliderTransform, cameraData, viewportMin, viewportSize, color, 1.75f);
+                return;
+            }
+
+            const glm::vec3 center = glm::vec3(worldTransform * glm::vec4(colliderComponent.GetCenter(), 1.0f));
+            const glm::vec3 right = SafeNormalizedAxis(glm::vec3(worldTransform[0]), glm::vec3(1.0f, 0.0f, 0.0f));
+            const glm::vec3 up = SafeNormalizedAxis(glm::vec3(worldTransform[1]), glm::vec3(0.0f, 1.0f, 0.0f));
+            const glm::vec3 forward = SafeNormalizedAxis(glm::vec3(worldTransform[2]), glm::vec3(0.0f, 0.0f, 1.0f));
+            const float radius = std::max(colliderComponent.GetScaledRadius(worldScale), 0.0001f);
+
+            if (colliderComponent.GetShape() == scene::ColliderShape::Sphere)
+            {
+                DrawWorldCircle(drawList, center, right * radius, up * radius, cameraData, viewportMin, viewportSize, color);
+                DrawWorldCircle(drawList, center, right * radius, forward * radius, cameraData, viewportMin, viewportSize, color);
+                DrawWorldCircle(drawList, center, up * radius, forward * radius, cameraData, viewportMin, viewportSize, color);
+                return;
+            }
+
+            const float height = std::max(colliderComponent.GetScaledHeight(worldScale), radius * 2.0f);
+            const float cylinderHalfHeight = std::max((height * 0.5f) - radius, 0.0f);
+            const glm::vec3 topCenter = center + up * cylinderHalfHeight;
+            const glm::vec3 bottomCenter = center - up * cylinderHalfHeight;
+
+            DrawWorldCircle(drawList, topCenter, right * radius, forward * radius, cameraData, viewportMin, viewportSize, color);
+            DrawWorldCircle(drawList, bottomCenter, right * radius, forward * radius, cameraData, viewportMin, viewportSize, color);
+            DrawWorldCircle(drawList, center, right * radius, up * (radius + cylinderHalfHeight), cameraData, viewportMin, viewportSize, color);
+            DrawWorldCircle(drawList, center, forward * radius, up * (radius + cylinderHalfHeight), cameraData, viewportMin, viewportSize, color);
+
+            DrawWorldLine(drawList, topCenter + right * radius, bottomCenter + right * radius, cameraData, viewportMin, viewportSize, color, 1.75f);
+            DrawWorldLine(drawList, topCenter - right * radius, bottomCenter - right * radius, cameraData, viewportMin, viewportSize, color, 1.75f);
+            DrawWorldLine(drawList, topCenter + forward * radius, bottomCenter + forward * radius, cameraData, viewportMin, viewportSize, color, 1.75f);
+            DrawWorldLine(drawList, topCenter - forward * radius, bottomCenter - forward * radius, cameraData, viewportMin, viewportSize, color, 1.75f);
+        }
+
         void DrawEditorDebugShapes(scene::Scene *scene,
+                                   scene::Entity *selectedEntity,
                                    const render::CameraData &cameraData,
                                    const ImVec2 &viewportMin,
                                    const ImVec2 &viewportSize)
         {
-            if (!scene)
+            if (!scene || !selectedEntity)
             {
                 return;
             }
@@ -468,7 +527,7 @@ namespace PlutoGE::ui
                                    true);
             for (auto *entity : entities)
             {
-                if (!entity || !entity->IsActive())
+                if (!entity || entity != selectedEntity || !entity->IsActive())
                 {
                     continue;
                 }
@@ -497,6 +556,14 @@ namespace PlutoGE::ui
                     if (lightComponent->IsEnabled())
                     {
                         DrawLightShape(drawList, *entity, *lightComponent, cameraData, viewportMin, viewportSize);
+                    }
+                }
+
+                if (auto *colliderComponent = entity->GetComponent<scene::ColliderComponent>())
+                {
+                    if (colliderComponent->IsEnabled())
+                    {
+                        DrawColliderShape(drawList, *entity, *colliderComponent, cameraData, viewportMin, viewportSize);
                     }
                 }
             }
@@ -1051,7 +1118,7 @@ namespace PlutoGE::ui
 
         if (m_showDebugShapes)
         {
-            DrawEditorDebugShapes(editorShell.GetEngine().GetScene(), cameraData, viewportMin, viewportSize);
+            DrawEditorDebugShapes(editorShell.GetEngine().GetScene(), editorShell.GetSelectedEntity(), cameraData, viewportMin, viewportSize);
         }
 
         if (auto *selectedEntity = editorShell.GetSelectedEntity())

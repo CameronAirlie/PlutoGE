@@ -191,8 +191,8 @@ namespace
             return false;
         }
 
-        const bool aAlphaTested = a.material && a.material->GetConfig().albedoTexture && a.material->GetConfig().color.a < 0.999f;
-        const bool bAlphaTested = b.material && b.material->GetConfig().albedoTexture && b.material->GetConfig().color.a < 0.999f;
+        const bool aAlphaTested = a.material && a.material->GetConfig().albedoTexture && a.material->GetConfig().alphaMode == PlutoGE::render::AlphaMode::Mask;
+        const bool bAlphaTested = b.material && b.material->GetConfig().albedoTexture && b.material->GetConfig().alphaMode == PlutoGE::render::AlphaMode::Mask;
         if (aAlphaTested != bAlphaTested)
         {
             return false;
@@ -205,7 +205,14 @@ namespace
 
     bool IsAlphaTestedShadowCaster(const PlutoGE::render::RenderCommand &command)
     {
-        return command.material && command.material->GetConfig().albedoTexture && command.material->GetConfig().color.a < 0.999f;
+        return command.material && command.material->GetConfig().albedoTexture && command.material->GetConfig().alphaMode == PlutoGE::render::AlphaMode::Mask;
+    }
+
+    bool CastsShadow(const PlutoGE::render::RenderCommand &command)
+    {
+        return command.material &&
+               command.material->GetConfig().castsShadow &&
+               command.material->GetConfig().alphaMode != PlutoGE::render::AlphaMode::Blend;
     }
 
     void HashCombine(std::uint64_t &seed, std::uint64_t value)
@@ -241,6 +248,11 @@ namespace
         for (const auto &command : renderCommands)
         {
             if (!command.mesh || !command.material)
+            {
+                continue;
+            }
+
+            if (!CastsShadow(command))
             {
                 continue;
             }
@@ -703,6 +715,7 @@ namespace
         {
             shader->SetUniform("uAlbedoTexture", albedoTexture, 0);
             shader->SetUniform("uHasAlbedoTexture", 1.0f);
+            shader->SetUniform("uAlphaCutoff", material->GetConfig().alphaCutoff);
             return;
         }
 

@@ -265,6 +265,8 @@ namespace PlutoGE::render
             uniform sampler2D uAlbedoTexture;
             uniform float uHasAlbedoTexture = 0.0;
             uniform vec4 uColor = vec4(1.0, 1.0, 1.0, 1.0); // Placeholder color
+            uniform int uAlphaMode = 0;
+            uniform float uAlphaCutoff = 0.5;
             
             uniform sampler2D uNormalTexture;
             uniform float uHasNormalTexture = 0.0;
@@ -316,9 +318,12 @@ namespace PlutoGE::render
                 {
                     vec4 texAlbedo = texture(uAlbedoTexture, UV);
                     opacity *= texAlbedo.a;
-                    if (opacity < 0.1)
-                        discard;
                     albedo *= texAlbedo.rgb;
+                }
+
+                if (uAlphaMode == 1 && opacity < uAlphaCutoff)
+                {
+                    discard;
                 }
                 
                 if (uHasNormalTexture > 0.5)
@@ -1359,6 +1364,7 @@ void main()
 
             uniform sampler2D uAlbedoTexture;
             uniform float uHasAlbedoTexture = 0.0;
+            uniform float uAlphaCutoff = 0.5;
             uniform int uShadowPassMode = 0;
             uniform vec3 uLightPosition = vec3(0.0);
             uniform float uFarPlane = 1.0;
@@ -1368,7 +1374,7 @@ void main()
                 if (uHasAlbedoTexture > 0.5)
                 {
                     vec4 albedo = texture(uAlbedoTexture, UV);
-                    if (albedo.a < 0.1)
+                    if (albedo.a < uAlphaCutoff)
                     {
                         discard;
                     }
@@ -1382,6 +1388,78 @@ void main()
                 }
 
                 gl_FragDepth = gl_FragCoord.z;
+            }
+        )";
+
+            return CreateShaderFromSource(source);
+        }
+
+        static Shader *CreateTransparentPassShader()
+        {
+            ShaderSource source;
+
+            source.vertexSource = R"(
+            #version 330 core
+            layout(location = 0) in vec3 aPos;
+            layout(location = 1) in vec3 aNormal;
+            layout(location = 2) in vec2 aUV;
+            layout(location = 5) in mat4 aModel;
+            layout(location = 14) in ivec4 aJoints;
+            layout(location = 15) in vec4 aWeights;
+
+            uniform mat4 uView;
+            uniform mat4 uProjection;
+            uniform int uUseSkinning = 0;
+            uniform mat4 uJointMatrices[48];
+
+            out vec2 UV;
+
+            void main()
+            {
+                mat4 skinMatrix = mat4(1.0);
+                if (uUseSkinning != 0)
+                {
+                    float totalWeight = aWeights.x + aWeights.y + aWeights.z + aWeights.w;
+                    if (totalWeight > 0.0001)
+                    {
+                        skinMatrix =
+                            uJointMatrices[clamp(aJoints.x, 0, 47)] * aWeights.x +
+                            uJointMatrices[clamp(aJoints.y, 0, 47)] * aWeights.y +
+                            uJointMatrices[clamp(aJoints.z, 0, 47)] * aWeights.z +
+                            uJointMatrices[clamp(aJoints.w, 0, 47)] * aWeights.w;
+                    }
+                }
+
+                UV = aUV;
+                gl_Position = uProjection * uView * aModel * skinMatrix * vec4(aPos, 1.0);
+            }
+        )";
+
+            source.fragmentSource = R"(
+            #version 330 core
+            out vec4 FragColor;
+
+            in vec2 UV;
+
+            uniform sampler2D uAlbedoTexture;
+            uniform float uHasAlbedoTexture = 0.0;
+            uniform vec4 uColor = vec4(1.0);
+            uniform float uAlphaCutoff = 0.01;
+
+            void main()
+            {
+                vec4 color = uColor;
+                if (uHasAlbedoTexture > 0.5)
+                {
+                    color *= texture(uAlbedoTexture, UV);
+                }
+
+                if (color.a <= uAlphaCutoff)
+                {
+                    discard;
+                }
+
+                FragColor = color;
             }
         )";
 

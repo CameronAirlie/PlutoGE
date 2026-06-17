@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PlutoGE/render/Mesh.h"
+#include "PlutoGE/render/Material.h"
 
 #include <glm/glm.hpp>
 #include <memory>
@@ -23,6 +24,9 @@ namespace PlutoGE::assetimport
     struct ImportedMaterialData
     {
         glm::vec4 color{1.0f};
+        render::AlphaMode alphaMode = render::AlphaMode::Opaque;
+        float alphaCutoff = 0.5f;
+        bool castsShadow = true;
         float metallic = 0.0f;
         float roughness = 1.0f;
         int albedoTextureIndex = -1;

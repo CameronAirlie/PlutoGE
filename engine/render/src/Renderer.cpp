@@ -14,6 +14,7 @@
 #include "PlutoGE/render/passes/PostProcessPass.h"
 #include "PlutoGE/render/passes/RuntimeUIPass.h"
 #include "PlutoGE/render/passes/ShadowPass.h"
+#include "PlutoGE/render/passes/TransparentPass.h"
 #include "PlutoGE/render/postprocess/IPostProcessEffect.h"
 #include "PlutoGE/render/postprocess/TAAEffect.h"
 #include "PlutoGE/scene/components/LightComponent.h"
@@ -202,6 +203,10 @@ namespace PlutoGE::render
         auto lightingPass = new LightingPass();
         lightingPass->Initialize();
         m_renderPasses.push_back(lightingPass);
+
+        auto transparentPass = new TransparentPass();
+        transparentPass->Initialize();
+        m_renderPasses.push_back(transparentPass);
 
         auto gridPass = new GridPass();
         gridPass->Initialize();

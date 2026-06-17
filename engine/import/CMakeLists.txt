@@ -13,5 +13,6 @@ target_link_libraries(PlutoGEImport PUBLIC
     PlutoGE::glad
     PlutoGE::glm
     PlutoGE::tinygltf
+    PlutoGE::assimp
     PlutoGE::meshoptimizer
 )

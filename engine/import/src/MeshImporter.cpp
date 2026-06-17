@@ -10,6 +10,9 @@
 #define TINYGLTF_NO_STB_IMAGE_WRITE
 #include <tiny_gltf.h>
 #include <meshoptimizer.h>
+#include <assimp/Importer.hpp>
+#include <assimp/postprocess.h>
+#include <assimp/scene.h>
 
 #include <algorithm>
 #include <array>
@@ -340,6 +343,17 @@ namespace PlutoGE::assetimport
                     static_cast<float>(material.pbrMetallicRoughness.baseColorFactor[1]),
                     static_cast<float>(material.pbrMetallicRoughness.baseColorFactor[2]),
                     static_cast<float>(material.pbrMetallicRoughness.baseColorFactor[3]));
+            }
+
+            if (material.alphaMode == "MASK")
+            {
+                parsedMaterial.alphaMode = render::AlphaMode::Mask;
+                parsedMaterial.alphaCutoff = static_cast<float>(material.alphaCutoff);
+            }
+            else if (material.alphaMode == "BLEND")
+            {
+                parsedMaterial.alphaMode = render::AlphaMode::Blend;
+                parsedMaterial.castsShadow = false;
             }
 
             parsedMaterial.albedoTextureIndex = ResolveImageIndex(model, material.pbrMetallicRoughness.baseColorTexture.index);
@@ -819,6 +833,82 @@ namespace PlutoGE::assetimport
             }
 
             submeshes = std::move(mergedSubmeshes);
+        }
+
+        void CompactSubmeshesByMaterialAndNode(render::MeshData &meshData, std::vector<render::Submesh> &submeshes)
+        {
+            if (submeshes.size() < 2 || meshData.indices.empty())
+            {
+                return;
+            }
+
+            struct GroupKey
+            {
+                uint32_t materialIndex = 0;
+                int animatedNodeIndex = -1;
+            };
+
+            std::vector<GroupKey> groups;
+            std::vector<std::vector<unsigned int>> groupedIndices;
+            groups.reserve(submeshes.size());
+            groupedIndices.reserve(submeshes.size());
+
+            for (const auto &submesh : submeshes)
+            {
+                if (submesh.indexCount == 0 || submesh.indexOffset + submesh.indexCount > meshData.indices.size())
+                {
+                    continue;
+                }
+
+                const GroupKey key{submesh.materialIndex, submesh.animatedNodeIndex};
+                auto groupIt = std::find_if(groups.begin(), groups.end(), [&](const GroupKey &group)
+                                            { return group.materialIndex == key.materialIndex && group.animatedNodeIndex == key.animatedNodeIndex; });
+                size_t groupIndex = 0;
+                if (groupIt == groups.end())
+                {
+                    groupIndex = groups.size();
+                    groups.push_back(key);
+                    groupedIndices.emplace_back();
+                }
+                else
+                {
+                    groupIndex = static_cast<size_t>(std::distance(groups.begin(), groupIt));
+                }
+
+                auto &indices = groupedIndices[groupIndex];
+                indices.insert(
+                    indices.end(),
+                    meshData.indices.begin() + static_cast<std::ptrdiff_t>(submesh.indexOffset),
+                    meshData.indices.begin() + static_cast<std::ptrdiff_t>(submesh.indexOffset + submesh.indexCount));
+            }
+
+            std::vector<unsigned int> compactedIndices;
+            std::vector<render::Submesh> compactedSubmeshes;
+            compactedIndices.reserve(meshData.indices.size());
+            compactedSubmeshes.reserve(groups.size());
+            for (size_t groupIndex = 0; groupIndex < groups.size(); ++groupIndex)
+            {
+                auto &indices = groupedIndices[groupIndex];
+                if (indices.empty())
+                {
+                    continue;
+                }
+
+                const uint32_t indexOffset = static_cast<uint32_t>(compactedIndices.size());
+                compactedIndices.insert(compactedIndices.end(), indices.begin(), indices.end());
+                compactedSubmeshes.push_back(render::Submesh{
+                    .indexOffset = indexOffset,
+                    .indexCount = static_cast<uint32_t>(indices.size()),
+                    .materialIndex = groups[groupIndex].materialIndex,
+                    .animatedNodeIndex = groups[groupIndex].animatedNodeIndex,
+                });
+            }
+
+            if (!compactedSubmeshes.empty())
+            {
+                meshData.indices = std::move(compactedIndices);
+                submeshes = std::move(compactedSubmeshes);
+            }
         }
 
         std::optional<PrimitiveWorkItem> CreatePrimitiveWorkItem(
@@ -1437,11 +1527,913 @@ namespace PlutoGE::assetimport
             return clips;
         }
 
+        glm::mat4 ToGlmMatrix(const aiMatrix4x4 &matrix)
+        {
+            glm::mat4 result(1.0f);
+            result[0][0] = matrix.a1;
+            result[1][0] = matrix.a2;
+            result[2][0] = matrix.a3;
+            result[3][0] = matrix.a4;
+            result[0][1] = matrix.b1;
+            result[1][1] = matrix.b2;
+            result[2][1] = matrix.b3;
+            result[3][1] = matrix.b4;
+            result[0][2] = matrix.c1;
+            result[1][2] = matrix.c2;
+            result[2][2] = matrix.c3;
+            result[3][2] = matrix.c4;
+            result[0][3] = matrix.d1;
+            result[1][3] = matrix.d2;
+            result[2][3] = matrix.d3;
+            result[3][3] = matrix.d4;
+            return result;
+        }
+
+        std::string ToStdString(const aiString &value)
+        {
+            return std::string(value.C_Str());
+        }
+
+        struct AssimpNodeInfo
+        {
+            const aiNode *node = nullptr;
+            int parentNodeIndex = -1;
+            glm::mat4 localTransform{1.0f};
+            glm::mat4 globalTransform{1.0f};
+            std::string name;
+        };
+
+        void CollectAssimpNodes(
+            const aiNode *node,
+            int parentNodeIndex,
+            const glm::mat4 &parentTransform,
+            std::vector<AssimpNodeInfo> &nodes,
+            std::unordered_map<const aiNode *, int> &nodeToIndex,
+            std::unordered_map<std::string, int> &nameToNodeIndex)
+        {
+            if (!node)
+            {
+                return;
+            }
+
+            const int nodeIndex = static_cast<int>(nodes.size());
+            const glm::mat4 localTransform = ToGlmMatrix(node->mTransformation);
+            const glm::mat4 globalTransform = parentTransform * localTransform;
+            nodeToIndex[node] = nodeIndex;
+            nameToNodeIndex[ToStdString(node->mName)] = nodeIndex;
+            nodes.push_back(AssimpNodeInfo{
+                .node = node,
+                .parentNodeIndex = parentNodeIndex,
+                .localTransform = localTransform,
+                .globalTransform = globalTransform,
+                .name = ToStdString(node->mName),
+            });
+
+            for (unsigned int childIndex = 0; childIndex < node->mNumChildren; ++childIndex)
+            {
+                CollectAssimpNodes(node->mChildren[childIndex], nodeIndex, globalTransform, nodes, nodeToIndex, nameToNodeIndex);
+            }
+        }
+
+        std::vector<render::AnimationNode> BuildAssimpAnimationNodes(const std::vector<AssimpNodeInfo> &nodes)
+        {
+            std::vector<render::AnimationNode> animationNodes(nodes.size());
+            for (size_t nodeIndex = 0; nodeIndex < nodes.size(); ++nodeIndex)
+            {
+                animationNodes[nodeIndex].parentNodeIndex = nodes[nodeIndex].parentNodeIndex;
+                animationNodes[nodeIndex].localBindTransform = nodes[nodeIndex].localTransform;
+            }
+            return animationNodes;
+        }
+
+        std::string ResolveAssimpTextureSourcePath(const std::string &filePath, const aiString &texturePath)
+        {
+            const std::filesystem::path sourcePath(texturePath.C_Str());
+            if (sourcePath.empty() || sourcePath.string().front() == '*')
+            {
+                return {};
+            }
+
+            if (sourcePath.is_absolute())
+            {
+                return sourcePath.lexically_normal().string();
+            }
+
+            return (std::filesystem::path(filePath).parent_path() / sourcePath).lexically_normal().string();
+        }
+
+        const aiTexture *FindEmbeddedAssimpTexture(const aiScene &scene, const aiString &texturePath)
+        {
+            const std::string path = texturePath.C_Str();
+            if (path.empty())
+            {
+                return nullptr;
+            }
+
+            if (const aiTexture *texture = scene.GetEmbeddedTexture(path.c_str()))
+            {
+                return texture;
+            }
+
+            if (path.front() != '*')
+            {
+                return nullptr;
+            }
+
+            char *end = nullptr;
+            const long textureIndex = std::strtol(path.c_str() + 1, &end, 10);
+            if (end == path.c_str() + 1 || textureIndex < 0 || textureIndex >= static_cast<long>(scene.mNumTextures))
+            {
+                return nullptr;
+            }
+
+            return scene.mTextures[textureIndex];
+        }
+
+        int AddAssimpTexture(
+            const aiScene &scene,
+            const std::string &filePath,
+            const aiString &texturePath,
+            std::unordered_map<std::string, int> &textureIndexByKey,
+            std::vector<ImportedTextureData> &textures)
+        {
+            const std::string path = texturePath.C_Str();
+            if (path.empty())
+            {
+                return -1;
+            }
+
+            if (const aiTexture *embeddedTexture = FindEmbeddedAssimpTexture(scene, texturePath))
+            {
+                const std::string cacheKey = NormalizePath(filePath) + "#fbx-texture:" + path;
+                if (const auto cachedIt = textureIndexByKey.find(cacheKey); cachedIt != textureIndexByKey.end())
+                {
+                    return cachedIt->second;
+                }
+
+                ImportedTextureData importedTexture;
+                importedTexture.cacheKey = cacheKey;
+                if (embeddedTexture->mHeight == 0)
+                {
+                    int width = 0;
+                    int height = 0;
+                    int channels = 0;
+                    unsigned char *pixels = stbi_load_from_memory(
+                        reinterpret_cast<const unsigned char *>(embeddedTexture->pcData),
+                        static_cast<int>(embeddedTexture->mWidth),
+                        &width,
+                        &height,
+                        &channels,
+                        0);
+                    if (!pixels)
+                    {
+                        return -1;
+                    }
+
+                    importedTexture.width = width;
+                    importedTexture.height = height;
+                    importedTexture.channels = channels;
+                    importedTexture.pixels.assign(pixels, pixels + static_cast<size_t>(width) * static_cast<size_t>(height) * static_cast<size_t>(channels));
+                    stbi_image_free(pixels);
+                }
+                else
+                {
+                    importedTexture.width = static_cast<int>(embeddedTexture->mWidth);
+                    importedTexture.height = static_cast<int>(embeddedTexture->mHeight);
+                    importedTexture.channels = 4;
+                    importedTexture.pixels.resize(static_cast<size_t>(importedTexture.width) * static_cast<size_t>(importedTexture.height) * 4);
+                    for (size_t texelIndex = 0; texelIndex < static_cast<size_t>(importedTexture.width) * static_cast<size_t>(importedTexture.height); ++texelIndex)
+                    {
+                        const aiTexel &texel = embeddedTexture->pcData[texelIndex];
+                        importedTexture.pixels[texelIndex * 4 + 0] = texel.r;
+                        importedTexture.pixels[texelIndex * 4 + 1] = texel.g;
+                        importedTexture.pixels[texelIndex * 4 + 2] = texel.b;
+                        importedTexture.pixels[texelIndex * 4 + 3] = texel.a;
+                    }
+                }
+
+                const int textureIndex = static_cast<int>(textures.size());
+                textures.push_back(std::move(importedTexture));
+                textureIndexByKey[cacheKey] = textureIndex;
+                return textureIndex;
+            }
+
+            const std::string sourcePath = ResolveAssimpTextureSourcePath(filePath, texturePath);
+            if (sourcePath.empty())
+            {
+                return -1;
+            }
+
+            const std::string cacheKey = NormalizePath(sourcePath);
+            if (const auto cachedIt = textureIndexByKey.find(cacheKey); cachedIt != textureIndexByKey.end())
+            {
+                return cachedIt->second;
+            }
+
+            ImportedTextureData importedTexture;
+            importedTexture.cacheKey = cacheKey;
+            importedTexture.sourcePath = sourcePath;
+            const int textureIndex = static_cast<int>(textures.size());
+            textures.push_back(std::move(importedTexture));
+            textureIndexByKey[cacheKey] = textureIndex;
+            return textureIndex;
+        }
+
+        int FindAssimpMaterialTexture(
+            const aiScene &scene,
+            const aiMaterial &material,
+            const std::string &filePath,
+            const std::initializer_list<aiTextureType> textureTypes,
+            std::unordered_map<std::string, int> &textureIndexByKey,
+            std::vector<ImportedTextureData> &textures,
+            unsigned int *uvChannel = nullptr)
+        {
+            for (const aiTextureType textureType : textureTypes)
+            {
+                aiString texturePath;
+                unsigned int textureUvChannel = 0;
+                if (material.GetTexture(textureType, 0, &texturePath, nullptr, &textureUvChannel) == AI_SUCCESS)
+                {
+                    const int textureIndex = AddAssimpTexture(scene, filePath, texturePath, textureIndexByKey, textures);
+                    if (textureIndex >= 0)
+                    {
+                        if (uvChannel)
+                        {
+                            *uvChannel = textureUvChannel;
+                        }
+                        return textureIndex;
+                    }
+                }
+            }
+
+            return -1;
+        }
+
+        bool PixelsHaveTransparentAlpha(const unsigned char *pixels, int width, int height, int channels)
+        {
+            if (!pixels || width <= 0 || height <= 0 || channels < 4)
+            {
+                return false;
+            }
+
+            const std::size_t pixelCount = static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
+            const std::size_t sampleStep = std::max<std::size_t>(1, pixelCount / 4096);
+            for (std::size_t pixelIndex = 0; pixelIndex < pixelCount; pixelIndex += sampleStep)
+            {
+                if (pixels[pixelIndex * static_cast<std::size_t>(channels) + 3] < 250)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        bool ImportedTextureHasTransparentAlpha(const std::vector<ImportedTextureData> &textures, int textureIndex)
+        {
+            if (textureIndex < 0 || textureIndex >= static_cast<int>(textures.size()))
+            {
+                return false;
+            }
+
+            const auto &texture = textures[static_cast<size_t>(textureIndex)];
+            if (!texture.pixels.empty())
+            {
+                return PixelsHaveTransparentAlpha(texture.pixels.data(), texture.width, texture.height, texture.channels);
+            }
+
+            if (texture.sourcePath.empty())
+            {
+                return false;
+            }
+
+            int width = 0;
+            int height = 0;
+            int channels = 0;
+            unsigned char *pixels = stbi_load(texture.sourcePath.c_str(), &width, &height, &channels, 0);
+            if (!pixels)
+            {
+                return false;
+            }
+
+            const bool hasTransparentAlpha = PixelsHaveTransparentAlpha(pixels, width, height, channels);
+            stbi_image_free(pixels);
+            return hasTransparentAlpha;
+        }
+
+        ImportedMaterialData ParseAssimpMaterial(
+            const aiScene &scene,
+            const aiMaterial &material,
+            const std::string &filePath,
+            std::unordered_map<std::string, int> &textureIndexByKey,
+            std::vector<ImportedTextureData> &textures,
+            unsigned int *primaryUvChannel = nullptr)
+        {
+            ImportedMaterialData importedMaterial;
+            aiColor4D diffuseColor;
+            if (AI_SUCCESS == aiGetMaterialColor(&material, AI_MATKEY_COLOR_DIFFUSE, &diffuseColor))
+            {
+                importedMaterial.color = glm::vec4(diffuseColor.r, diffuseColor.g, diffuseColor.b, diffuseColor.a);
+                if (importedMaterial.color.a <= 0.001f)
+                {
+                    importedMaterial.color.a = 1.0f;
+                }
+            }
+
+            float shininess = 0.0f;
+            if (AI_SUCCESS == aiGetMaterialFloat(&material, AI_MATKEY_SHININESS, &shininess) && shininess > 0.0f)
+            {
+                importedMaterial.roughness = std::clamp(1.0f - shininess / 256.0f, 0.05f, 1.0f);
+            }
+
+            float opacity = 1.0f;
+            if (AI_SUCCESS == aiGetMaterialFloat(&material, AI_MATKEY_OPACITY, &opacity))
+            {
+                importedMaterial.color.a *= std::clamp(opacity, 0.0f, 1.0f);
+            }
+
+            float transparency = 0.0f;
+            bool hasPartialTransparencyFactor = false;
+            if (AI_SUCCESS == aiGetMaterialFloat(&material, AI_MATKEY_TRANSPARENCYFACTOR, &transparency))
+            {
+                transparency = std::clamp(transparency, 0.0f, 1.0f);
+                if (transparency > 0.001f && transparency < 0.999f)
+                {
+                    importedMaterial.color.a *= 1.0f - transparency;
+                    hasPartialTransparencyFactor = true;
+                }
+            }
+
+            aiColor4D transparentColor;
+            bool hasTransparentColor = false;
+            if (AI_SUCCESS == aiGetMaterialColor(&material, AI_MATKEY_COLOR_TRANSPARENT, &transparentColor))
+            {
+                const float transparentStrength = std::max({transparentColor.r, transparentColor.g, transparentColor.b, transparentColor.a});
+                if (transparentStrength > 0.001f && transparentStrength < 0.999f)
+                {
+                    importedMaterial.color.a *= 1.0f - transparentStrength;
+                    hasTransparentColor = true;
+                }
+            }
+
+            unsigned int albedoUvChannel = 0;
+            importedMaterial.albedoTextureIndex = FindAssimpMaterialTexture(
+                scene,
+                material,
+                filePath,
+                {aiTextureType_BASE_COLOR, aiTextureType_DIFFUSE},
+                textureIndexByKey,
+                textures,
+                &albedoUvChannel);
+            if (primaryUvChannel)
+            {
+                *primaryUvChannel = albedoUvChannel;
+            }
+            importedMaterial.normalTextureIndex = FindAssimpMaterialTexture(
+                scene,
+                material,
+                filePath,
+                {aiTextureType_NORMALS, aiTextureType_HEIGHT},
+                textureIndexByKey,
+                textures);
+            importedMaterial.metallicRoughnessTextureIndex = FindAssimpMaterialTexture(
+                scene,
+                material,
+                filePath,
+                {aiTextureType_METALNESS, aiTextureType_DIFFUSE_ROUGHNESS, aiTextureType_UNKNOWN},
+                textureIndexByKey,
+                textures);
+            importedMaterial.metallicRoughnessTextureHasMetallicChannel = importedMaterial.metallicRoughnessTextureIndex >= 0;
+
+            const bool hasTransparentAlbedo = ImportedTextureHasTransparentAlpha(textures, importedMaterial.albedoTextureIndex);
+            if (importedMaterial.color.a < 0.999f || hasTransparentAlbedo || hasPartialTransparencyFactor || hasTransparentColor)
+            {
+                importedMaterial.alphaMode = render::AlphaMode::Blend;
+                importedMaterial.castsShadow = false;
+            }
+
+            return importedMaterial;
+        }
+
+        void AddBoneWeight(render::MeshVertexData &vertex, int jointIndex, float weight)
+        {
+            if (jointIndex < 0 || weight <= 0.0f)
+            {
+                return;
+            }
+
+            for (size_t slot = 0; slot < vertex.weights.size(); ++slot)
+            {
+                if (vertex.weights[slot] <= 0.0f)
+                {
+                    vertex.joints[slot] = jointIndex;
+                    vertex.weights[slot] = weight;
+                    return;
+                }
+            }
+
+            size_t smallestSlot = 0;
+            for (size_t slot = 1; slot < vertex.weights.size(); ++slot)
+            {
+                if (vertex.weights[slot] < vertex.weights[smallestSlot])
+                {
+                    smallestSlot = slot;
+                }
+            }
+
+            if (weight > vertex.weights[smallestSlot])
+            {
+                vertex.joints[smallestSlot] = jointIndex;
+                vertex.weights[smallestSlot] = weight;
+            }
+        }
+
+        void NormalizeVertexWeights(render::MeshVertexData &vertex)
+        {
+            const float weightSum = vertex.weights[0] + vertex.weights[1] + vertex.weights[2] + vertex.weights[3];
+            if (weightSum <= 0.000001f)
+            {
+                return;
+            }
+
+            for (auto &weight : vertex.weights)
+            {
+                weight /= weightSum;
+            }
+        }
+
+        render::Skeleton BuildAssimpSkeleton(
+            const aiScene &scene,
+            const std::vector<AssimpNodeInfo> &nodes,
+            const std::unordered_map<std::string, int> &nameToNodeIndex,
+            std::unordered_map<std::string, int> &boneNameToJointIndex)
+        {
+            render::Skeleton skeleton;
+            for (unsigned int meshIndex = 0; meshIndex < scene.mNumMeshes; ++meshIndex)
+            {
+                const aiMesh *mesh = scene.mMeshes[meshIndex];
+                if (!mesh)
+                {
+                    continue;
+                }
+
+                for (unsigned int boneIndex = 0; boneIndex < mesh->mNumBones; ++boneIndex)
+                {
+                    const aiBone *bone = mesh->mBones[boneIndex];
+                    if (!bone)
+                    {
+                        continue;
+                    }
+
+                    const std::string boneName = ToStdString(bone->mName);
+                    if (boneNameToJointIndex.find(boneName) != boneNameToJointIndex.end())
+                    {
+                        continue;
+                    }
+
+                    render::SkeletonJoint joint;
+                    joint.name = boneName;
+                    const auto nodeIt = nameToNodeIndex.find(boneName);
+                    joint.nodeIndex = nodeIt == nameToNodeIndex.end() ? -1 : nodeIt->second;
+                    joint.inverseBindMatrix = ToGlmMatrix(bone->mOffsetMatrix);
+                    joint.inverseRootMatrix = glm::mat4(1.0f);
+                    if (joint.nodeIndex >= 0 && joint.nodeIndex < static_cast<int>(nodes.size()))
+                    {
+                        joint.localBindTransform = nodes[static_cast<size_t>(joint.nodeIndex)].localTransform;
+                    }
+
+                    const int jointIndex = static_cast<int>(skeleton.joints.size());
+                    boneNameToJointIndex[boneName] = jointIndex;
+                    skeleton.joints.push_back(std::move(joint));
+                }
+            }
+
+            for (size_t jointIndex = 0; jointIndex < skeleton.joints.size(); ++jointIndex)
+            {
+                auto &joint = skeleton.joints[jointIndex];
+                int parentNodeIndex = joint.nodeIndex >= 0 && joint.nodeIndex < static_cast<int>(nodes.size())
+                                          ? nodes[static_cast<size_t>(joint.nodeIndex)].parentNodeIndex
+                                          : -1;
+                while (parentNodeIndex >= 0)
+                {
+                    const auto parentJointIt = boneNameToJointIndex.find(nodes[static_cast<size_t>(parentNodeIndex)].name);
+                    if (parentJointIt != boneNameToJointIndex.end())
+                    {
+                        joint.parentJointIndex = parentJointIt->second;
+                        break;
+                    }
+
+                    parentNodeIndex = nodes[static_cast<size_t>(parentNodeIndex)].parentNodeIndex;
+                }
+            }
+
+            return skeleton;
+        }
+
+        std::unordered_set<int> CollectAssimpAnimatedNodeIndices(
+            const aiScene &scene,
+            const std::unordered_map<std::string, int> &nameToNodeIndex)
+        {
+            std::unordered_set<int> animatedNodes;
+            for (unsigned int animationIndex = 0; animationIndex < scene.mNumAnimations; ++animationIndex)
+            {
+                const aiAnimation *animation = scene.mAnimations[animationIndex];
+                if (!animation)
+                {
+                    continue;
+                }
+
+                for (unsigned int channelIndex = 0; channelIndex < animation->mNumChannels; ++channelIndex)
+                {
+                    const aiNodeAnim *channel = animation->mChannels[channelIndex];
+                    if (!channel)
+                    {
+                        continue;
+                    }
+
+                    const auto nodeIt = nameToNodeIndex.find(ToStdString(channel->mNodeName));
+                    if (nodeIt != nameToNodeIndex.end())
+                    {
+                        animatedNodes.insert(nodeIt->second);
+                    }
+                }
+            }
+
+            return animatedNodes;
+        }
+
+        void AppendAssimpMesh(
+            const aiMesh &sourceMesh,
+            uint32_t materialIndex,
+            unsigned int primaryUvChannel,
+            const glm::mat4 &transform,
+            int animatedNodeIndex,
+            const std::unordered_map<std::string, int> &boneNameToJointIndex,
+            ImportedMeshSourceAsset &asset)
+        {
+            if (!sourceMesh.HasPositions())
+            {
+                return;
+            }
+
+            const bool hasSkinning = sourceMesh.HasBones();
+            const uint32_t baseVertex = static_cast<uint32_t>(asset.meshData.vertices.size());
+            const uint32_t indexOffset = static_cast<uint32_t>(asset.meshData.indices.size());
+            const glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(transform)));
+
+            asset.meshData.vertices.resize(asset.meshData.vertices.size() + sourceMesh.mNumVertices);
+            for (unsigned int vertexIndex = 0; vertexIndex < sourceMesh.mNumVertices; ++vertexIndex)
+            {
+                auto &vertex = asset.meshData.vertices[static_cast<size_t>(baseVertex) + vertexIndex];
+                const aiVector3D sourcePosition = sourceMesh.mVertices[vertexIndex];
+                const glm::vec4 position = transform * glm::vec4(sourcePosition.x, sourcePosition.y, sourcePosition.z, 1.0f);
+                vertex.position = {position.x, position.y, position.z};
+
+                vertex.normal = {0.0f, 0.0f, 0.0f};
+                if (sourceMesh.HasNormals())
+                {
+                    const aiVector3D sourceNormal = sourceMesh.mNormals[vertexIndex];
+                    glm::vec3 normal = normalMatrix * glm::vec3(sourceNormal.x, sourceNormal.y, sourceNormal.z);
+                    if (SquaredLength(normal) > 1e-12f)
+                    {
+                        normal = glm::normalize(normal);
+                    }
+                    vertex.normal = {normal.x, normal.y, normal.z};
+                }
+                else
+                {
+                    asset.requiresMissingNormalFallback = true;
+                }
+
+                vertex.uv = {0.0f, 0.0f};
+                if (primaryUvChannel < AI_MAX_NUMBER_OF_TEXTURECOORDS && sourceMesh.HasTextureCoords(primaryUvChannel))
+                {
+                    const aiVector3D uv = sourceMesh.mTextureCoords[primaryUvChannel][vertexIndex];
+                    vertex.uv = {uv.x, uv.y};
+                }
+
+                vertex.uv2 = {0.0f, 0.0f};
+                if (sourceMesh.HasTextureCoords(1))
+                {
+                    const aiVector3D uv = sourceMesh.mTextureCoords[1][vertexIndex];
+                    vertex.uv2 = {uv.x, uv.y};
+                    asset.hasLightmapUvs = true;
+                }
+
+                vertex.tangent = {0.0f, 0.0f, 0.0f, 1.0f};
+                if (sourceMesh.HasTangentsAndBitangents())
+                {
+                    const aiVector3D sourceTangent = sourceMesh.mTangents[vertexIndex];
+                    glm::vec3 tangent = normalMatrix * glm::vec3(sourceTangent.x, sourceTangent.y, sourceTangent.z);
+                    if (SquaredLength(tangent) > 1e-12f)
+                    {
+                        tangent = glm::normalize(tangent);
+                    }
+                    vertex.tangent = {tangent.x, tangent.y, tangent.z, 1.0f};
+                }
+
+                vertex.joints = {0, 0, 0, 0};
+                vertex.weights = {0.0f, 0.0f, 0.0f, 0.0f};
+            }
+
+            if (hasSkinning)
+            {
+                for (unsigned int boneIndex = 0; boneIndex < sourceMesh.mNumBones; ++boneIndex)
+                {
+                    const aiBone *bone = sourceMesh.mBones[boneIndex];
+                    if (!bone)
+                    {
+                        continue;
+                    }
+
+                    const auto jointIt = boneNameToJointIndex.find(ToStdString(bone->mName));
+                    if (jointIt == boneNameToJointIndex.end())
+                    {
+                        continue;
+                    }
+
+                    for (unsigned int weightIndex = 0; weightIndex < bone->mNumWeights; ++weightIndex)
+                    {
+                        const auto &weight = bone->mWeights[weightIndex];
+                        if (weight.mVertexId >= sourceMesh.mNumVertices)
+                        {
+                            continue;
+                        }
+
+                        AddBoneWeight(asset.meshData.vertices[static_cast<size_t>(baseVertex) + weight.mVertexId], jointIt->second, weight.mWeight);
+                    }
+                }
+
+                for (unsigned int vertexIndex = 0; vertexIndex < sourceMesh.mNumVertices; ++vertexIndex)
+                {
+                    NormalizeVertexWeights(asset.meshData.vertices[static_cast<size_t>(baseVertex) + vertexIndex]);
+                }
+            }
+
+            for (unsigned int faceIndex = 0; faceIndex < sourceMesh.mNumFaces; ++faceIndex)
+            {
+                const aiFace &face = sourceMesh.mFaces[faceIndex];
+                if (face.mNumIndices != 3)
+                {
+                    continue;
+                }
+
+                asset.meshData.indices.push_back(baseVertex + face.mIndices[0]);
+                asset.meshData.indices.push_back(baseVertex + face.mIndices[1]);
+                asset.meshData.indices.push_back(baseVertex + face.mIndices[2]);
+            }
+
+            const uint32_t indexCount = static_cast<uint32_t>(asset.meshData.indices.size()) - indexOffset;
+            if (indexCount > 0)
+            {
+                asset.submeshes.push_back(render::Submesh{
+                    .indexOffset = indexOffset,
+                    .indexCount = indexCount,
+                    .materialIndex = materialIndex,
+                    .animatedNodeIndex = hasSkinning ? -1 : animatedNodeIndex,
+                });
+            }
+        }
+
+        void AppendAssimpNodeMeshes(
+            const aiScene &scene,
+            const std::vector<AssimpNodeInfo> &nodes,
+            const std::unordered_map<const aiNode *, int> &nodeToIndex,
+            int nodeIndex,
+            const std::unordered_set<int> &animatedNodeIndices,
+            int activeAnimatedNodeIndex,
+            const std::vector<unsigned int> &materialPrimaryUvChannels,
+            const std::unordered_map<std::string, int> &boneNameToJointIndex,
+            ImportedMeshSourceAsset &asset)
+        {
+            if (nodeIndex < 0 || nodeIndex >= static_cast<int>(nodes.size()))
+            {
+                return;
+            }
+
+            const auto &nodeInfo = nodes[static_cast<size_t>(nodeIndex)];
+            const aiNode *node = nodeInfo.node;
+            if (!node)
+            {
+                return;
+            }
+
+            const int animatedNodeIndex = animatedNodeIndices.find(nodeIndex) != animatedNodeIndices.end() ? nodeIndex : activeAnimatedNodeIndex;
+            const glm::mat4 staticTransform = animatedNodeIndex >= 0
+                                                  ? glm::inverse(nodes[static_cast<size_t>(animatedNodeIndex)].globalTransform) * nodeInfo.globalTransform
+                                                  : nodeInfo.globalTransform;
+
+            for (unsigned int meshSlot = 0; meshSlot < node->mNumMeshes; ++meshSlot)
+            {
+                const unsigned int meshIndex = node->mMeshes[meshSlot];
+                if (meshIndex >= scene.mNumMeshes || !scene.mMeshes[meshIndex])
+                {
+                    continue;
+                }
+
+                const aiMesh &sourceMesh = *scene.mMeshes[meshIndex];
+                const uint32_t materialIndex = sourceMesh.mMaterialIndex < asset.materials.size()
+                                                   ? sourceMesh.mMaterialIndex
+                                                   : static_cast<uint32_t>(asset.materials.empty() ? 0 : asset.materials.size() - 1);
+                const unsigned int primaryUvChannel = materialIndex < materialPrimaryUvChannels.size() ? materialPrimaryUvChannels[materialIndex] : 0;
+                const glm::mat4 meshTransform = sourceMesh.HasBones() ? glm::mat4(1.0f) : staticTransform;
+                AppendAssimpMesh(sourceMesh, materialIndex, primaryUvChannel, meshTransform, animatedNodeIndex, boneNameToJointIndex, asset);
+            }
+
+            for (unsigned int childIndex = 0; childIndex < node->mNumChildren; ++childIndex)
+            {
+                const aiNode *child = node->mChildren[childIndex];
+                const auto childIt = nodeToIndex.find(child);
+                if (childIt != nodeToIndex.end())
+                {
+                    AppendAssimpNodeMeshes(scene, nodes, nodeToIndex, childIt->second, animatedNodeIndices, animatedNodeIndex, materialPrimaryUvChannels, boneNameToJointIndex, asset);
+                }
+            }
+        }
+
+        void AddAssimpVectorChannel(
+            render::AnimationClip &clip,
+            int nodeIndex,
+            int jointIndex,
+            render::AnimationTargetPath path,
+            const aiVectorKey *keys,
+            unsigned int keyCount,
+            double ticksPerSecond)
+        {
+            if (!keys || keyCount == 0 || ticksPerSecond <= 0.0)
+            {
+                return;
+            }
+
+            render::AnimationChannel channel;
+            channel.nodeIndex = nodeIndex;
+            channel.jointIndex = jointIndex;
+            channel.path = path;
+            channel.interpolation = render::AnimationInterpolation::Linear;
+            channel.times.reserve(keyCount);
+            channel.values.reserve(keyCount);
+            for (unsigned int keyIndex = 0; keyIndex < keyCount; ++keyIndex)
+            {
+                const float time = static_cast<float>(keys[keyIndex].mTime / ticksPerSecond);
+                channel.times.push_back(time);
+                channel.values.push_back(glm::vec4(keys[keyIndex].mValue.x, keys[keyIndex].mValue.y, keys[keyIndex].mValue.z, 0.0f));
+                clip.duration = std::max(clip.duration, time);
+            }
+            clip.channels.push_back(std::move(channel));
+        }
+
+        void AddAssimpRotationChannel(
+            render::AnimationClip &clip,
+            int nodeIndex,
+            int jointIndex,
+            const aiQuatKey *keys,
+            unsigned int keyCount,
+            double ticksPerSecond)
+        {
+            if (!keys || keyCount == 0 || ticksPerSecond <= 0.0)
+            {
+                return;
+            }
+
+            render::AnimationChannel channel;
+            channel.nodeIndex = nodeIndex;
+            channel.jointIndex = jointIndex;
+            channel.path = render::AnimationTargetPath::Rotation;
+            channel.interpolation = render::AnimationInterpolation::Linear;
+            channel.times.reserve(keyCount);
+            channel.values.reserve(keyCount);
+            for (unsigned int keyIndex = 0; keyIndex < keyCount; ++keyIndex)
+            {
+                const float time = static_cast<float>(keys[keyIndex].mTime / ticksPerSecond);
+                channel.times.push_back(time);
+                channel.values.push_back(glm::vec4(keys[keyIndex].mValue.x, keys[keyIndex].mValue.y, keys[keyIndex].mValue.z, keys[keyIndex].mValue.w));
+                clip.duration = std::max(clip.duration, time);
+            }
+            clip.channels.push_back(std::move(channel));
+        }
+
+        std::vector<render::AnimationClip> ParseAssimpAnimations(
+            const aiScene &scene,
+            const std::unordered_map<std::string, int> &nameToNodeIndex,
+            const std::unordered_map<std::string, int> &boneNameToJointIndex)
+        {
+            std::vector<render::AnimationClip> clips;
+            clips.reserve(scene.mNumAnimations);
+            for (unsigned int animationIndex = 0; animationIndex < scene.mNumAnimations; ++animationIndex)
+            {
+                const aiAnimation *animation = scene.mAnimations[animationIndex];
+                if (!animation)
+                {
+                    continue;
+                }
+
+                const double ticksPerSecond = animation->mTicksPerSecond > 0.0 ? animation->mTicksPerSecond : 25.0;
+                render::AnimationClip clip;
+                clip.name = animation->mName.length > 0 ? ToStdString(animation->mName) : "Animation " + std::to_string(animationIndex);
+                clip.duration = static_cast<float>(animation->mDuration / ticksPerSecond);
+
+                for (unsigned int channelIndex = 0; channelIndex < animation->mNumChannels; ++channelIndex)
+                {
+                    const aiNodeAnim *sourceChannel = animation->mChannels[channelIndex];
+                    if (!sourceChannel)
+                    {
+                        continue;
+                    }
+
+                    const std::string nodeName = ToStdString(sourceChannel->mNodeName);
+                    const auto nodeIt = nameToNodeIndex.find(nodeName);
+                    if (nodeIt == nameToNodeIndex.end())
+                    {
+                        continue;
+                    }
+
+                    const auto jointIt = boneNameToJointIndex.find(nodeName);
+                    const int jointIndex = jointIt == boneNameToJointIndex.end() ? -1 : jointIt->second;
+                    AddAssimpVectorChannel(clip, nodeIt->second, jointIndex, render::AnimationTargetPath::Translation, sourceChannel->mPositionKeys, sourceChannel->mNumPositionKeys, ticksPerSecond);
+                    AddAssimpRotationChannel(clip, nodeIt->second, jointIndex, sourceChannel->mRotationKeys, sourceChannel->mNumRotationKeys, ticksPerSecond);
+                    AddAssimpVectorChannel(clip, nodeIt->second, jointIndex, render::AnimationTargetPath::Scale, sourceChannel->mScalingKeys, sourceChannel->mNumScalingKeys, ticksPerSecond);
+                }
+
+                clip.channelCount = static_cast<int>(clip.channels.size());
+                clips.push_back(std::move(clip));
+            }
+
+            return clips;
+        }
+
+        ImportedMeshSourceAsset ParseAssimpMeshAsset(const std::string &filePath)
+        {
+            Assimp::Importer importer;
+            const unsigned int flags =
+                aiProcess_Triangulate |
+                aiProcess_GenSmoothNormals |
+                aiProcess_CalcTangentSpace |
+                aiProcess_FlipUVs |
+                aiProcess_ImproveCacheLocality |
+                aiProcess_LimitBoneWeights |
+                aiProcess_ValidateDataStructure |
+                aiProcess_GlobalScale;
+
+            const aiScene *scene = importer.ReadFile(filePath, flags);
+            if (!scene)
+            {
+                throw std::runtime_error(importer.GetErrorString());
+            }
+            if (!scene->mRootNode)
+            {
+                throw std::runtime_error("FBX file does not contain a scene root.");
+            }
+
+            std::vector<AssimpNodeInfo> nodes;
+            std::unordered_map<const aiNode *, int> nodeToIndex;
+            std::unordered_map<std::string, int> nameToNodeIndex;
+            CollectAssimpNodes(scene->mRootNode, -1, glm::mat4(1.0f), nodes, nodeToIndex, nameToNodeIndex);
+
+            ImportedMeshSourceAsset asset;
+            asset.animationNodes = BuildAssimpAnimationNodes(nodes);
+            asset.materials.reserve(scene->mNumMaterials + 1);
+            std::vector<unsigned int> materialPrimaryUvChannels;
+            materialPrimaryUvChannels.reserve(scene->mNumMaterials + 1);
+            std::unordered_map<std::string, int> textureIndexByKey;
+            for (unsigned int materialIndex = 0; materialIndex < scene->mNumMaterials; ++materialIndex)
+            {
+                unsigned int primaryUvChannel = 0;
+                asset.materials.push_back(scene->mMaterials[materialIndex] ? ParseAssimpMaterial(*scene, *scene->mMaterials[materialIndex], filePath, textureIndexByKey, asset.textures, &primaryUvChannel) : ImportedMaterialData{});
+                materialPrimaryUvChannels.push_back(primaryUvChannel);
+            }
+            asset.materials.push_back(ImportedMaterialData{});
+            materialPrimaryUvChannels.push_back(0);
+
+            std::unordered_map<std::string, int> boneNameToJointIndex;
+            asset.skeleton = BuildAssimpSkeleton(*scene, nodes, nameToNodeIndex, boneNameToJointIndex);
+            asset.animations = ParseAssimpAnimations(*scene, nameToNodeIndex, boneNameToJointIndex);
+
+            const auto animatedNodeIndices = CollectAssimpAnimatedNodeIndices(*scene, nameToNodeIndex);
+            AppendAssimpNodeMeshes(*scene, nodes, nodeToIndex, 0, animatedNodeIndices, -1, materialPrimaryUvChannels, boneNameToJointIndex, asset);
+
+            if (asset.meshData.vertices.empty() || asset.meshData.indices.empty())
+            {
+                throw std::runtime_error("No triangle mesh data was found in the FBX file.");
+            }
+
+            FinalizeMissingNormals(asset.meshData, asset.requiresMissingNormalFallback);
+            MergeAdjacentSubmeshes(asset.submeshes);
+            CompactSubmeshesByMaterialAndNode(asset.meshData, asset.submeshes);
+            OptimizeMeshData(asset.meshData, asset.submeshes);
+            return asset;
+        }
+
         ImportedMeshSourceAsset ParseMeshAsset(const std::string &filePath)
         {
             if (!MeshImporter().SupportsFileType(filePath))
             {
-                throw std::runtime_error("Unsupported mesh format. Use glTF 2.0 (.glb or .gltf).");
+                throw std::runtime_error("Unsupported mesh format. Use glTF 2.0 (.glb or .gltf) or FBX (.fbx).");
+            }
+
+            const auto extension = ToLower(std::filesystem::path(filePath).extension().string());
+            if (extension == ".fbx")
+            {
+                return ParseAssimpMeshAsset(filePath);
             }
 
             MeshImportProfile profile;
@@ -1454,7 +2446,6 @@ namespace PlutoGE::assetimport
             std::string warnings;
             std::string errors;
 
-            const auto extension = ToLower(std::filesystem::path(filePath).extension().string());
             const auto loadStart = ImportClock::now();
             const bool loaded = extension == ".glb"
                                     ? loader.LoadBinaryFromFile(&model, &errors, &warnings, filePath)
@@ -1578,6 +2569,7 @@ namespace PlutoGE::assetimport
 
             const auto mergeSubmeshesStart = ImportClock::now();
             MergeAdjacentSubmeshes(parsedMeshAsset.submeshes);
+            CompactSubmeshesByMaterialAndNode(parsedMeshAsset.meshData, parsedMeshAsset.submeshes);
 
             profile.submeshMergeMs = ElapsedMilliseconds(mergeSubmeshesStart);
 
@@ -1591,7 +2583,7 @@ namespace PlutoGE::assetimport
     bool MeshImporter::SupportsFileType(std::string_view filePath) const
     {
         const std::string extension = ToLower(std::filesystem::path(filePath).extension().string());
-        return extension == ".glb" || extension == ".gltf";
+        return extension == ".glb" || extension == ".gltf" || extension == ".fbx";
     }
 
     ImportedMeshSourceAsset MeshImporter::ImportMeshSourceAsset(const std::string &filePath) const

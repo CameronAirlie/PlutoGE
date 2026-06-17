@@ -199,6 +199,9 @@ namespace PlutoGE::core
                 {
                     render::MaterialConfig config;
                     config.color = material.color;
+                    config.alphaMode = material.alphaMode;
+                    config.alphaCutoff = material.alphaCutoff;
+                    config.castsShadow = material.castsShadow;
                     config.metallic = material.metallic;
                     config.roughness = material.roughness;
                     config.albedoTexture = loadImportedTexture(material.albedoTextureIndex);

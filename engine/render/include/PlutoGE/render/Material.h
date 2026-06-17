@@ -12,6 +12,13 @@ namespace PlutoGE::render
         Alpha = 3,
     };
 
+    enum class AlphaMode
+    {
+        Opaque = 0,
+        Mask = 1,
+        Blend = 2,
+    };
+
     class Texture;
     class Shader;
     struct CameraData;
@@ -19,6 +26,9 @@ namespace PlutoGE::render
     {
         glm::vec4 color{1.0f, 1.0f, 1.0f, 1.0f}; // Base color (default to white)
         Texture *albedoTexture = nullptr;        // Pointer to an albedo texture (if any)
+        AlphaMode alphaMode = AlphaMode::Opaque;
+        float alphaCutoff = 0.5f;
+        bool castsShadow = true;
 
         Texture *normalTexture = nullptr; // Pointer to a normal map texture (if any)
         bool flipNormalY = false;         // Flip green channel for DirectX-style normal maps
@@ -48,6 +58,9 @@ namespace PlutoGE::render
 
         void SetColor(const glm::vec4 &color) { m_config.color = color; }
         void SetAlbedoTexture(Texture *texture) { m_config.albedoTexture = texture; }
+        void SetAlphaMode(AlphaMode alphaMode) { m_config.alphaMode = alphaMode; }
+        void SetAlphaCutoff(float alphaCutoff) { m_config.alphaCutoff = alphaCutoff; }
+        void SetCastsShadow(bool castsShadow) { m_config.castsShadow = castsShadow; }
         void SetNormalTexture(Texture *texture) { m_config.normalTexture = texture; }
         void SetFlipNormalY(bool flipNormalY) { m_config.flipNormalY = flipNormalY; }
         void SetMetallic(float metallic) { m_config.metallic = metallic; }

@@ -35,6 +35,11 @@ namespace PlutoGE::render
                    a.submeshIndex == b.submeshIndex;
         }
 
+        bool IsBlendMaterial(const Material *material)
+        {
+            return material && material->GetConfig().alphaMode == AlphaMode::Blend;
+        }
+
         void UploadJointMatrices(Shader *shader, const std::vector<glm::mat4> *jointMatrices)
         {
             constexpr size_t kMaxShaderJoints = 48;
@@ -190,6 +195,11 @@ namespace PlutoGE::render
         for (const auto &command : *ctx.renderCommands)
         {
             if (!command.material || !command.mesh)
+            {
+                continue;
+            }
+
+            if (IsBlendMaterial(command.material))
             {
                 continue;
             }

@@ -37,6 +37,8 @@ namespace PlutoGE::render
         };
 
         setVec4("uColor", m_config.color);
+        setInt("uAlphaMode", static_cast<int>(m_config.alphaMode));
+        setFloat("uAlphaCutoff", m_config.alphaCutoff);
         setFloat("uMetallicFactor", m_config.metallic);
         setFloat("uRoughnessFactor", m_config.roughness);
         setFloat("uFlipNormalY", m_config.flipNormalY ? 1.0f : 0.0f);

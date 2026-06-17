@@ -1869,9 +1869,9 @@ namespace PlutoGE::assetimport
             if (AI_SUCCESS == aiGetMaterialColor(&material, AI_MATKEY_COLOR_TRANSPARENT, &transparentColor))
             {
                 const float transparentStrength = std::max({transparentColor.r, transparentColor.g, transparentColor.b, transparentColor.a});
-                if (transparentStrength > 0.001f && transparentStrength < 0.999f)
+                if (transparentStrength > 0.001f)
                 {
-                    importedMaterial.color.a *= 1.0f - transparentStrength;
+                    importedMaterial.color.a *= transparentStrength >= 0.999f ? 0.35f : 1.0f - transparentStrength;
                     hasTransparentColor = true;
                 }
             }
@@ -1905,8 +1905,21 @@ namespace PlutoGE::assetimport
                 textures);
             importedMaterial.metallicRoughnessTextureHasMetallicChannel = importedMaterial.metallicRoughnessTextureIndex >= 0;
 
+            const int opacityTextureIndex = FindAssimpMaterialTexture(
+                scene,
+                material,
+                filePath,
+                {aiTextureType_OPACITY},
+                textureIndexByKey,
+                textures);
             const bool hasTransparentAlbedo = ImportedTextureHasTransparentAlpha(textures, importedMaterial.albedoTextureIndex);
-            if (importedMaterial.color.a < 0.999f || hasTransparentAlbedo || hasPartialTransparencyFactor || hasTransparentColor)
+            const bool hasOpacityTexture = opacityTextureIndex >= 0;
+            if (hasOpacityTexture && importedMaterial.color.a >= 0.999f)
+            {
+                importedMaterial.color.a = 0.5f;
+            }
+
+            if (importedMaterial.color.a < 0.999f || hasTransparentAlbedo || hasPartialTransparencyFactor || hasTransparentColor || hasOpacityTexture)
             {
                 importedMaterial.alphaMode = render::AlphaMode::Blend;
                 importedMaterial.castsShadow = false;

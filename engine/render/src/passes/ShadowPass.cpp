@@ -1067,7 +1067,7 @@ namespace PlutoGE::render
                     const glm::vec3 cascadeShadowWorldOrigin = (forceFullCascadeUpdate || !hasStoredCascadeOrigin || cascadeOriginChanged)
                                                                    ? currentShadowWorldOrigin
                                                                    : light->shadowCascadeWorldOrigins[cascadeIndex];
-                    const bool realtimeCascadeInvalidation = cameraDataChanged || shadowCastersChanged;
+                    const bool realtimeCascadeInvalidation = shadowCastersChanged || light->isDirty;
 
                     // Split radii drive cascade selection in lighting, so keep them current even when
                     // this cascade's shadow map redraw is deferred by the update cadence.

@@ -114,7 +114,17 @@ namespace PlutoGE::render
                               return a.mesh < b.mesh;
                           }
 
-                          return a.submeshIndex < b.submeshIndex;
+                          if (a.submeshIndex != b.submeshIndex)
+                          {
+                              return a.submeshIndex < b.submeshIndex;
+                          }
+
+                          if (a.lodIndex != b.lodIndex)
+                          {
+                              return a.lodIndex < b.lodIndex;
+                          }
+
+                          return false;
                       });
         }
 
@@ -439,13 +449,14 @@ namespace PlutoGE::render
             return;
         }
 
-        EnsureRenderCommandsSorted();
-
         CameraData activeCameraData = cameraData;
         if (auto *taaEffect = FindActiveTAAEffect(postProcessEffects))
         {
             activeCameraData = taaEffect->PrepareCameraData(cameraData, renderWidth, renderHeight, m_frameSequence);
         }
+
+        UpdateRenderCommandLods(activeCameraData);
+        EnsureRenderCommandsSorted();
 
         m_visibleRenderCommands.clear();
         m_visibleRenderCommands.reserve(m_renderCommands.size());
@@ -516,6 +527,34 @@ namespace PlutoGE::render
 
         SortRenderCommands(m_renderCommands);
         m_renderCommandsDirty = false;
+    }
+
+    void Renderer::UpdateRenderCommandLods(const CameraData &cameraData)
+    {
+        const glm::mat4 inverseView = glm::inverse(cameraData.view);
+        const glm::vec3 cameraPosition = glm::vec3(inverseView[3]);
+        bool changed = false;
+
+        for (auto &command : m_renderCommands)
+        {
+            if (!command.mesh)
+            {
+                continue;
+            }
+
+            const float distance = glm::length(command.worldBounds.center - cameraPosition);
+            const uint32_t lodIndex = static_cast<uint32_t>(command.mesh->SelectSubmeshLod(command.submeshIndex, distance));
+            if (command.lodIndex != lodIndex)
+            {
+                command.lodIndex = lodIndex;
+                changed = true;
+            }
+        }
+
+        if (changed)
+        {
+            m_renderCommandsDirty = true;
+        }
     }
 
     void Renderer::EndFrame(RenderTarget *renderTarget)

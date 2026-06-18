@@ -83,6 +83,7 @@ namespace PlutoGE::render
                 hash = HashValue(command.material, hash);
                 hash = HashValue(command.mesh, hash);
                 hash = HashValue(command.submeshIndex, hash);
+                hash = HashValue(command.lodIndex, hash);
                 hash = HashBytes(glm::value_ptr(command.model), sizeof(glm::mat4), hash);
             }
 
@@ -185,7 +186,8 @@ namespace PlutoGE::render
         {
             return a.material == b.material &&
                    a.mesh == b.mesh &&
-                   a.submeshIndex == b.submeshIndex;
+                   a.submeshIndex == b.submeshIndex &&
+                   a.lodIndex == b.lodIndex;
         }
 
         glm::vec3 ResolveUpVector(const glm::vec3 &direction)
@@ -1277,7 +1279,7 @@ namespace PlutoGE::render
                 boundMesh = batchHead->mesh;
             }
 
-            batchHead->mesh->DrawSubmeshInstancedBound(batchHead->submeshIndex, batchInstances.size());
+            batchHead->mesh->DrawSubmeshInstancedBound(batchHead->submeshIndex, batchInstances.size(), batchHead->lodIndex);
             batchHead = nullptr;
             batchInstances.clear();
         };

@@ -22,6 +22,7 @@ namespace PlutoGE::scene
     {
         constexpr const char *kMaterialSlotPrefix = "MaterialSlots.";
         constexpr const char *kSubmeshOverridePrefix = "SubmeshOverrides.";
+        constexpr size_t kMaxAutomaticSubmeshChildren = 256;
 
         render::MeshBounds ComputeWorldBounds(const render::Mesh &mesh, std::size_t submeshIndex, const glm::mat4 &modelMatrix)
         {
@@ -167,11 +168,21 @@ namespace PlutoGE::scene
             }
         }
 
+        if (m_mesh->GetSubmeshCount() > kMaxAutomaticSubmeshChildren)
+        {
+            SetVisible(true);
+            return false;
+        }
+
         SetVisible(false);
         for (size_t submeshIndex = 0; submeshIndex < m_mesh->GetSubmeshCount(); ++submeshIndex)
         {
+            const auto &submesh = m_mesh->GetSubmesh(submeshIndex);
+            const std::string childName = submesh.name.empty()
+                                              ? "Submesh " + std::to_string(submeshIndex)
+                                              : submesh.name;
             auto child = std::make_unique<Entity>(EntityConfig{
-                .name = "Submesh " + std::to_string(submeshIndex),
+                .name = childName,
             });
             auto *childPtr = child.get();
             auto *childMeshComponent = childPtr->CreateComponent<MeshComponent>(MeshComponentConfig{

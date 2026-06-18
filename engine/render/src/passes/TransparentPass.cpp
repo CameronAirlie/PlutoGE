@@ -162,7 +162,7 @@ namespace PlutoGE::render
             };
             UploadTransparentInstances(m_instanceBuffer, m_instanceCapacity, instance);
             BindTransparentInstanceAttributes(*command->mesh, m_instanceBuffer);
-            command->mesh->DrawSubmeshInstancedBound(command->submeshIndex, 1);
+            command->mesh->DrawSubmeshInstancedBound(command->submeshIndex, 1, command->lodIndex);
         }
 
         m_transparentShader->SetUniform("uUseSkinning", 0);

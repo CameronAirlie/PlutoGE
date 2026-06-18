@@ -48,6 +48,7 @@ namespace PlutoGE::render
         ShadowCascades,
         DirectionalShadowMaskRaw,
         DirectionalShadowMaskFiltered,
+        Lod,
     };
 
     struct RendererConfig
@@ -67,6 +68,7 @@ namespace PlutoGE::render
         MeshBounds previousWorldBounds{};
         const std::vector<glm::mat4> *jointMatrices = nullptr;
         uint32_t submeshIndex = 0;
+        uint32_t lodIndex = 0;
         bool isStatic = false;
         bool usePrimaryUvForLightmap = false;
     };
@@ -208,6 +210,7 @@ namespace PlutoGE::render
         FrameResources *GetOrCreateFrameResources(RenderTarget *renderTarget, int width, int height);
         void CleanupFrameResources();
         void EnsureRenderCommandsSorted();
+        void UpdateRenderCommandLods(const CameraData &cameraData);
         void InitializeGpuTimers();
         void ShutdownGpuTimers();
         void ExecutePassWithGpuTiming(IRenderPass &renderPass, const RenderContext &ctx, std::size_t timingIndex);

@@ -198,7 +198,7 @@ namespace PlutoGE::render
             out mat3 TBN;
             out vec4 CurrentClipPos;
             out vec4 PreviousClipPos;
-            flat out vec2 InstanceFlags;
+            flat out vec4 InstanceFlags;
 
             void main()
             {
@@ -235,7 +235,7 @@ namespace PlutoGE::render
                 CurrentClipPos = uCurrentViewProjection * currentWorldPos;
                 PreviousClipPos = uPreviousViewProjection * previousWorldPos;
                 gl_Position = CurrentClipPos;
-                InstanceFlags = aInstanceFlags.xy;
+                InstanceFlags = aInstanceFlags;
                 TBN = mat3(
                     worldTangent,
                     normalize(worldBitangent),
@@ -252,6 +252,7 @@ namespace PlutoGE::render
             layout (location = 2) out vec4 gAlbedoMetallic;
             layout (location = 3) out vec2 gMotionVector;
             layout (location = 4) out vec4 gBakedLighting;
+            layout (location = 5) out float gDebug;
             
             in vec3 FragPos;
             in vec3 Normal;
@@ -260,7 +261,7 @@ namespace PlutoGE::render
             in mat3 TBN;
             in vec4 CurrentClipPos;
             in vec4 PreviousClipPos;
-            flat in vec2 InstanceFlags;
+            flat in vec4 InstanceFlags;
 
             uniform sampler2D uAlbedoTexture;
             uniform float uHasAlbedoTexture = 0.0;
@@ -350,6 +351,7 @@ namespace PlutoGE::render
                 gNormalRoughness = vec4(normalize(normal), clamp(roughness, 0.04, 1.0));
                 gAlbedoMetallic = vec4(albedo, clamp(metallic, 0.0, 1.0));
                 gBakedLighting = vec4(0.0);
+                gDebug = InstanceFlags.w <= 0.5 ? -1.0 : clamp(InstanceFlags.z / InstanceFlags.w, 0.0, 1.0);
 
                 if (InstanceFlags.x > 0.5 && uHasLightmapTexture > 0.5)
                 {
@@ -407,6 +409,7 @@ uniform sampler2D gDepth;
 uniform sampler2D gNormal;
 uniform sampler2D gAlbedoSpec;
 uniform sampler2D gBakedLighting;
+uniform sampler2D gDebug;
 uniform sampler2D uEnvironmentMap;
 
 const float PI = 3.14159265359;
@@ -416,6 +419,7 @@ const int LIGHT_TYPE_DIRECTIONAL = 1;
 const int LIGHT_TYPE_SPOT = 2;
 const int MAX_SHADOW_CASCADES = 4;
 const int DEBUG_VIEW_SHADOW_CASCADES = 6;
+const int DEBUG_VIEW_LOD = 9;
 
 struct Light {
     vec3 Position;
@@ -473,6 +477,25 @@ uniform float uIblCaptureBlendDistances[4];
 uniform float uIblCaptureMaxMipLevels[4];
 uniform int uAmbientOutputMode;
 uniform int uDebugViewMode;
+
+vec3 GetLodDebugColor(float normalizedLod)
+{
+    if (normalizedLod < 0.0)
+    {
+        return vec3(0.28, 0.28, 0.28);
+    }
+
+    float lod = clamp(normalizedLod, 0.0, 1.0);
+    if (lod < 0.3333)
+    {
+        return mix(vec3(0.05, 0.28, 1.0), vec3(0.1, 0.85, 0.25), lod / 0.3333);
+    }
+    if (lod < 0.6667)
+    {
+        return mix(vec3(0.1, 0.85, 0.25), vec3(1.0, 0.78, 0.15), (lod - 0.3333) / 0.3334);
+    }
+    return mix(vec3(1.0, 0.78, 0.15), vec3(1.0, 0.1, 0.08), (lod - 0.6667) / 0.3333);
+}
 
 const int AMBIENT_OUTPUT_FULL = 0;
 const int AMBIENT_OUTPUT_LPV_ONLY = 1;
@@ -1130,6 +1153,11 @@ void main()
     vec4 bakedLightingMask = texture(gBakedLighting, UV);
     vec3 bakedIrradiance = bakedLightingMask.rgb;
     float bakedStaticMask = bakedLightingMask.a;
+    if (uDebugViewMode == DEBUG_VIEW_LOD)
+    {
+        FragColor = vec4(GetLodDebugColor(texture(gDebug, UV).r), 1.0);
+        return;
+    }
     vec3 viewDir = normalize(uViewPos - fragPos);
     float ndotv = max(dot(normal, viewDir), 0.0);
     vec3 f0 = mix(vec3(0.04), albedo, metallic);

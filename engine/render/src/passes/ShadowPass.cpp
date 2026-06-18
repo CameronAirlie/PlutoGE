@@ -200,7 +200,8 @@ namespace
 
         return (!aAlphaTested || a.material == b.material) &&
                a.mesh == b.mesh &&
-               a.submeshIndex == b.submeshIndex;
+               a.submeshIndex == b.submeshIndex &&
+               a.lodIndex == b.lodIndex;
     }
 
     bool IsAlphaTestedShadowCaster(const PlutoGE::render::RenderCommand &command)
@@ -279,6 +280,7 @@ namespace
             HashCombine(fingerprint, reinterpret_cast<std::uintptr_t>(command ? command->mesh : nullptr));
             HashCombine(fingerprint, reinterpret_cast<std::uintptr_t>(command ? command->material : nullptr));
             HashCombine(fingerprint, static_cast<std::uint64_t>(command ? command->submeshIndex : 0));
+            HashCombine(fingerprint, static_cast<std::uint64_t>(command ? command->lodIndex : 0));
             HashCombine(fingerprint, QuantizeFloatForHash(shadowCaster.bounds.center.x));
             HashCombine(fingerprint, QuantizeFloatForHash(shadowCaster.bounds.center.y));
             HashCombine(fingerprint, QuantizeFloatForHash(shadowCaster.bounds.center.z));
@@ -315,7 +317,11 @@ namespace
                       {
                           return std::less<PlutoGE::render::Mesh *>{}(aCommand->mesh, bCommand->mesh);
                       }
-                      return aCommand->submeshIndex < bCommand->submeshIndex;
+                      if (aCommand->submeshIndex != bCommand->submeshIndex)
+                      {
+                          return aCommand->submeshIndex < bCommand->submeshIndex;
+                      }
+                      return aCommand->lodIndex < bCommand->lodIndex;
                   });
         return sortedShadowCasters;
     }
@@ -784,7 +790,7 @@ namespace
                 boundMesh = batchHead.mesh;
             }
 
-            batchHead.mesh->DrawSubmeshInstancedBound(batchHead.submeshIndex, batchInstances.size());
+            batchHead.mesh->DrawSubmeshInstancedBound(batchHead.submeshIndex, batchInstances.size(), batchHead.lodIndex);
             stats.submittedInstances += static_cast<int>(batchInstances.size());
             ++stats.submittedBatches;
             batchInstances.clear();
@@ -829,7 +835,7 @@ namespace
                 UploadTransformInstances(instanceBuffer, instanceCapacity, singleInstance);
                 BindTransformInstanceAttributes(*command->mesh, instanceBuffer);
                 boundMesh = command->mesh;
-                command->mesh->DrawSubmeshInstancedBound(command->submeshIndex, 1);
+                command->mesh->DrawSubmeshInstancedBound(command->submeshIndex, 1, command->lodIndex);
                 stats.submittedInstances += 1;
                 ++stats.submittedBatches;
                 shader->SetUniform("uUseSkinning", 0);

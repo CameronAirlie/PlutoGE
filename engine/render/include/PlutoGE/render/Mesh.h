@@ -95,6 +95,15 @@ namespace PlutoGE::render
         uint32_t materialIndex = 0;
         int animatedNodeIndex = -1;
         MeshBounds bounds;
+        std::string name;
+
+        struct LodRange
+        {
+            uint32_t indexOffset = 0;
+            uint32_t indexCount = 0;
+            float minDistanceFactor = 0.0f;
+        };
+        std::vector<LodRange> lods;
     };
 
     struct MeshConfig
@@ -470,19 +479,19 @@ namespace PlutoGE::render
                 static_cast<GLsizei>(instanceCount));
         }
 
-        void DrawSubmesh(size_t submeshIndex) const
+        void DrawSubmesh(size_t submeshIndex, size_t lodIndex = 0) const
         {
             Bind();
-            DrawSubmeshBound(submeshIndex);
+            DrawSubmeshBound(submeshIndex, lodIndex);
         }
 
-        void DrawSubmeshInstanced(size_t submeshIndex, std::size_t instanceCount) const
+        void DrawSubmeshInstanced(size_t submeshIndex, std::size_t instanceCount, size_t lodIndex = 0) const
         {
             Bind();
-            DrawSubmeshInstancedBound(submeshIndex, instanceCount);
+            DrawSubmeshInstancedBound(submeshIndex, instanceCount, lodIndex);
         }
 
-        void DrawSubmeshBound(size_t submeshIndex) const
+        void DrawSubmeshBound(size_t submeshIndex, size_t lodIndex = 0) const
         {
             if (submeshIndex >= m_config.submeshes.size())
             {
@@ -491,19 +500,20 @@ namespace PlutoGE::render
             }
 
             const auto &submesh = m_config.submeshes[submeshIndex];
-            if (submesh.indexCount == 0)
+            const auto range = ResolveSubmeshLodRange(submesh, lodIndex);
+            if (range.indexCount == 0)
             {
                 return;
             }
 
             glDrawElements(
                 GL_TRIANGLES,
-                static_cast<GLsizei>(submesh.indexCount),
+                static_cast<GLsizei>(range.indexCount),
                 GL_UNSIGNED_INT,
-                reinterpret_cast<const void *>(static_cast<uintptr_t>(submesh.indexOffset) * sizeof(unsigned int)));
+                reinterpret_cast<const void *>(static_cast<uintptr_t>(range.indexOffset) * sizeof(unsigned int)));
         }
 
-        void DrawSubmeshInstancedBound(size_t submeshIndex, std::size_t instanceCount) const
+        void DrawSubmeshInstancedBound(size_t submeshIndex, std::size_t instanceCount, size_t lodIndex = 0) const
         {
             if (instanceCount == 0)
             {
@@ -517,16 +527,17 @@ namespace PlutoGE::render
             }
 
             const auto &submesh = m_config.submeshes[submeshIndex];
-            if (submesh.indexCount == 0)
+            const auto range = ResolveSubmeshLodRange(submesh, lodIndex);
+            if (range.indexCount == 0)
             {
                 return;
             }
 
             glDrawElementsInstanced(
                 GL_TRIANGLES,
-                static_cast<GLsizei>(submesh.indexCount),
+                static_cast<GLsizei>(range.indexCount),
                 GL_UNSIGNED_INT,
-                reinterpret_cast<const void *>(static_cast<uintptr_t>(submesh.indexOffset) * sizeof(unsigned int)),
+                reinterpret_cast<const void *>(static_cast<uintptr_t>(range.indexOffset) * sizeof(unsigned int)),
                 static_cast<GLsizei>(instanceCount));
         }
 
@@ -536,6 +547,36 @@ namespace PlutoGE::render
         size_t GetIndexCount() const { return m_config.data.indices.size(); }
         size_t GetSubmeshCount() const { return m_config.submeshes.size(); }
         const Submesh &GetSubmesh(size_t index) const { return m_config.submeshes.at(index); }
+        size_t GetSubmeshLodCount(size_t submeshIndex) const
+        {
+            if (submeshIndex >= m_config.submeshes.size())
+            {
+                return 1;
+            }
+
+            return std::max<size_t>(m_config.submeshes[submeshIndex].lods.size(), 1);
+        }
+        size_t SelectSubmeshLod(size_t submeshIndex, float cameraDistance) const
+        {
+            if (submeshIndex >= m_config.submeshes.size())
+            {
+                return 0;
+            }
+
+            const auto &submesh = m_config.submeshes[submeshIndex];
+            size_t selectedLod = 0;
+            const float radius = std::max(submesh.bounds.radius, 0.001f);
+            const float distanceFactor = cameraDistance / radius;
+            for (size_t lodIndex = 0; lodIndex < submesh.lods.size(); ++lodIndex)
+            {
+                if (distanceFactor >= submesh.lods[lodIndex].minDistanceFactor)
+                {
+                    selectedLod = lodIndex;
+                }
+            }
+
+            return selectedLod;
+        }
         const MeshBounds &GetBounds() const { return m_bounds; }
         const Skeleton &GetSkeleton() const { return m_config.skeleton; }
         bool HasSkeleton() const { return !m_config.skeleton.joints.empty(); }
@@ -643,6 +684,20 @@ namespace PlutoGE::render
             }
 
             return false;
+        }
+
+        static Submesh::LodRange ResolveSubmeshLodRange(const Submesh &submesh, size_t lodIndex)
+        {
+            if (lodIndex < submesh.lods.size())
+            {
+                return submesh.lods[lodIndex];
+            }
+
+            return Submesh::LodRange{
+                .indexOffset = submesh.indexOffset,
+                .indexCount = submesh.indexCount,
+                .minDistanceFactor = 0.0f,
+            };
         }
 
         static MeshBounds ComputeBounds(const MeshData &meshData)

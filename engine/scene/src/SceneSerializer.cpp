@@ -650,15 +650,6 @@ namespace PlutoGE::scene
             parentIt->second->AddChild(entityIt->second);
         }
 
-        for (const auto &[entityId, entity] : entityMap)
-        {
-            (void)entityId;
-            if (auto *meshComponent = entity ? entity->GetComponent<MeshComponent>() : nullptr)
-            {
-                meshComponent->CreateSubmeshChildEntities();
-            }
-        }
-
         if (bakedProbeVolume.IsValid())
         {
             scene->SetBakedProbeVolume(std::move(bakedProbeVolume));

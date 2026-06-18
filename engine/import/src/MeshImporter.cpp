@@ -63,11 +63,13 @@ namespace PlutoGE::assetimport
             uint32_t indexCount = 0;
             int nodeIndex = -1;
             int animatedNodeIndex = -1;
+            std::string name;
             bool usesAnimatedNodeTransform = false;
             size_t slot = 0;
         };
 
         constexpr size_t kLargeMeshOverdrawThreshold = 1'000'000;
+        constexpr uint32_t kLodTriangleThreshold = 2000;
 
         std::array<int, 4> ReadJointTupleUnchecked(const AccessorView &view, size_t elementIndex);
         void ValidateJointAccessorView(const AccessorView &view);
@@ -807,6 +809,93 @@ namespace PlutoGE::assetimport
             }
         }
 
+        std::string MakeFallbackSubmeshName(size_t index)
+        {
+            return "Submesh " + std::to_string(index);
+        }
+
+        std::string MergeDisplayNames(const std::string &existing, const std::string &next)
+        {
+            if (existing.empty())
+            {
+                return next;
+            }
+
+            if (next.empty() || next == existing || existing.find(" + more") != std::string::npos)
+            {
+                return existing;
+            }
+
+            return existing + " + more";
+        }
+
+        uint32_t AlignIndexCountToTriangles(uint32_t indexCount)
+        {
+            return (indexCount / 3) * 3;
+        }
+
+        void GenerateSubmeshLods(render::MeshData &meshData, std::vector<render::Submesh> &submeshes)
+        {
+            if (meshData.vertices.empty() || meshData.indices.empty())
+            {
+                return;
+            }
+
+            for (auto &submesh : submeshes)
+            {
+                submesh.lods.clear();
+                submesh.lods.push_back(render::Submesh::LodRange{
+                    .indexOffset = submesh.indexOffset,
+                    .indexCount = submesh.indexCount,
+                    .minDistanceFactor = 0.0f,
+                });
+
+                if (submesh.indexCount < kLodTriangleThreshold * 3 ||
+                    submesh.indexOffset + submesh.indexCount > meshData.indices.size())
+                {
+                    continue;
+                }
+
+                const std::array<std::pair<float, float>, 1> lodTargets{{
+                    {0.25f, 14.0f},
+                }};
+
+                for (const auto &[targetRatio, minDistanceFactor] : lodTargets)
+                {
+                    const uint32_t targetIndexCount = AlignIndexCountToTriangles(static_cast<uint32_t>(static_cast<float>(submesh.indexCount) * targetRatio));
+                    if (targetIndexCount < 3 || targetIndexCount >= submesh.indexCount)
+                    {
+                        continue;
+                    }
+
+                    std::vector<unsigned int> simplified(submesh.indexCount);
+                    const size_t simplifiedIndexCount = meshopt_simplify(
+                        simplified.data(),
+                        meshData.indices.data() + submesh.indexOffset,
+                        submesh.indexCount,
+                        reinterpret_cast<const float *>(meshData.vertices.data()),
+                        meshData.vertices.size(),
+                        sizeof(render::MeshVertexData),
+                        targetIndexCount,
+                        0.02f);
+
+                    const uint32_t alignedSimplifiedIndexCount = AlignIndexCountToTriangles(static_cast<uint32_t>(simplifiedIndexCount));
+                    if (alignedSimplifiedIndexCount < 3 || alignedSimplifiedIndexCount >= submesh.lods.back().indexCount)
+                    {
+                        continue;
+                    }
+
+                    const uint32_t lodIndexOffset = static_cast<uint32_t>(meshData.indices.size());
+                    meshData.indices.insert(meshData.indices.end(), simplified.begin(), simplified.begin() + alignedSimplifiedIndexCount);
+                    submesh.lods.push_back(render::Submesh::LodRange{
+                        .indexOffset = lodIndexOffset,
+                        .indexCount = alignedSimplifiedIndexCount,
+                        .minDistanceFactor = minDistanceFactor,
+                    });
+                }
+            }
+        }
+
         void MergeAdjacentSubmeshes(std::vector<render::Submesh> &submeshes)
         {
             if (submeshes.empty())
@@ -823,9 +912,12 @@ namespace PlutoGE::assetimport
                 auto &previous = mergedSubmeshes.back();
                 const auto &current = submeshes[index];
                 const bool isAdjacent = previous.indexOffset + previous.indexCount == current.indexOffset;
-                if (isAdjacent && previous.materialIndex == current.materialIndex && previous.animatedNodeIndex == current.animatedNodeIndex)
+                if (isAdjacent &&
+                    previous.materialIndex == current.materialIndex &&
+                    previous.animatedNodeIndex == current.animatedNodeIndex)
                 {
                     previous.indexCount += current.indexCount;
+                    previous.name = MergeDisplayNames(previous.name, current.name);
                     continue;
                 }
 
@@ -849,8 +941,10 @@ namespace PlutoGE::assetimport
             };
 
             std::vector<GroupKey> groups;
+            std::vector<std::string> groupNames;
             std::vector<std::vector<unsigned int>> groupedIndices;
             groups.reserve(submeshes.size());
+            groupNames.reserve(submeshes.size());
             groupedIndices.reserve(submeshes.size());
 
             for (const auto &submesh : submeshes)
@@ -868,11 +962,13 @@ namespace PlutoGE::assetimport
                 {
                     groupIndex = groups.size();
                     groups.push_back(key);
+                    groupNames.push_back(submesh.name);
                     groupedIndices.emplace_back();
                 }
                 else
                 {
                     groupIndex = static_cast<size_t>(std::distance(groups.begin(), groupIt));
+                    groupNames[groupIndex] = MergeDisplayNames(groupNames[groupIndex], submesh.name);
                 }
 
                 auto &indices = groupedIndices[groupIndex];
@@ -901,6 +997,7 @@ namespace PlutoGE::assetimport
                     .indexCount = static_cast<uint32_t>(indices.size()),
                     .materialIndex = groups[groupIndex].materialIndex,
                     .animatedNodeIndex = groups[groupIndex].animatedNodeIndex,
+                    .name = groupNames[groupIndex].empty() ? MakeFallbackSubmeshName(groupIndex) : groupNames[groupIndex],
                 });
             }
 
@@ -986,6 +1083,15 @@ namespace PlutoGE::assetimport
             const bool isSkinned = workItem.jointsView.has_value() && workItem.weightsView.has_value();
             workItem.nodeIndex = nodeIndex;
             workItem.animatedNodeIndex = animatedNodeIndex;
+            if (nodeIndex >= 0 && nodeIndex < static_cast<int>(model.nodes.size()))
+            {
+                const auto &node = model.nodes[static_cast<size_t>(nodeIndex)];
+                workItem.name = !node.name.empty() ? node.name : std::string{};
+                if (workItem.name.empty() && node.mesh >= 0 && node.mesh < static_cast<int>(model.meshes.size()))
+                {
+                    workItem.name = model.meshes[static_cast<size_t>(node.mesh)].name;
+                }
+            }
             const bool usesAnimatedNodeTransform = animatedNodeIndex >= 0;
             workItem.usesAnimatedNodeTransform = usesAnimatedNodeTransform;
             workItem.worldTransform = isSkinned ? glm::mat4(1.0f) : worldTransform;
@@ -1082,6 +1188,7 @@ namespace PlutoGE::assetimport
                     .indexCount = workItem.indexCount,
                     .materialIndex = workItem.materialIndex,
                     .animatedNodeIndex = workItem.animatedNodeIndex,
+                    .name = workItem.name.empty() ? MakeFallbackSubmeshName(index) : workItem.name,
                 };
             }
 
@@ -2087,6 +2194,7 @@ namespace PlutoGE::assetimport
             unsigned int primaryUvChannel,
             const glm::mat4 &transform,
             int animatedNodeIndex,
+            const std::string &submeshName,
             const std::unordered_map<std::string, int> &boneNameToJointIndex,
             ImportedMeshSourceAsset &asset)
         {
@@ -2210,6 +2318,7 @@ namespace PlutoGE::assetimport
                     .indexCount = indexCount,
                     .materialIndex = materialIndex,
                     .animatedNodeIndex = hasSkinning ? -1 : animatedNodeIndex,
+                    .name = submeshName,
                 });
             }
         }
@@ -2256,7 +2365,12 @@ namespace PlutoGE::assetimport
                                                    : static_cast<uint32_t>(asset.materials.empty() ? 0 : asset.materials.size() - 1);
                 const unsigned int primaryUvChannel = materialIndex < materialPrimaryUvChannels.size() ? materialPrimaryUvChannels[materialIndex] : 0;
                 const glm::mat4 meshTransform = sourceMesh.HasBones() ? glm::mat4(1.0f) : staticTransform;
-                AppendAssimpMesh(sourceMesh, materialIndex, primaryUvChannel, meshTransform, animatedNodeIndex, boneNameToJointIndex, asset);
+                std::string submeshName = ToStdString(node->mName);
+                if (submeshName.empty() && sourceMesh.mName.length > 0)
+                {
+                    submeshName = ToStdString(sourceMesh.mName);
+                }
+                AppendAssimpMesh(sourceMesh, materialIndex, primaryUvChannel, meshTransform, animatedNodeIndex, submeshName, boneNameToJointIndex, asset);
             }
 
             for (unsigned int childIndex = 0; childIndex < node->mNumChildren; ++childIndex)
@@ -2439,6 +2553,7 @@ namespace PlutoGE::assetimport
             MergeAdjacentSubmeshes(asset.submeshes);
             CompactSubmeshesByMaterialAndNode(asset.meshData, asset.submeshes);
             OptimizeMeshData(asset.meshData, asset.submeshes);
+            GenerateSubmeshLods(asset.meshData, asset.submeshes);
             return asset;
         }
 
@@ -2594,6 +2709,7 @@ namespace PlutoGE::assetimport
 
             const auto optimizeStart = ImportClock::now();
             OptimizeMeshData(parsedMeshAsset.meshData, parsedMeshAsset.submeshes, &profile);
+            GenerateSubmeshLods(parsedMeshAsset.meshData, parsedMeshAsset.submeshes);
             profile.optimizeMs = ElapsedMilliseconds(optimizeStart);
             return parsedMeshAsset;
         }

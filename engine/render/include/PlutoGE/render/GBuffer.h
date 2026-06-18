@@ -15,6 +15,7 @@ namespace PlutoGE::render
         GLuint GetAlbedoTextureID() const { return m_albedoTexture; }
         GLuint GetMotionTextureID() const { return m_motionTexture; }
         GLuint GetBakedLightingTextureID() const { return m_bakedLightingTexture; }
+        GLuint GetDebugTextureID() const { return m_debugTexture; }
         GLuint GetDepthTextureID() const { return m_depthTexture; }
 
         bool Initialize(int width, int height);
@@ -40,6 +41,7 @@ namespace PlutoGE::render
         GLuint m_albedoTexture = 0;
         GLuint m_motionTexture = 0;
         GLuint m_bakedLightingTexture = 0;
+        GLuint m_debugTexture = 0;
         GLuint m_depthTexture = 0;
     };
 }

@@ -249,6 +249,7 @@ namespace PlutoGE::render
                 hash = HashValue(command.material, hash);
                 hash = HashValue(command.mesh, hash);
                 hash = HashValue(command.submeshIndex, hash);
+                hash = HashValue(command.lodIndex, hash);
                 hash = HashBytes(glm::value_ptr(command.model), sizeof(glm::mat4), hash);
             }
 

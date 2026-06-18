@@ -1864,7 +1864,10 @@ namespace PlutoGE::ui
                             auto *material = meshComponent->GetMaterialForSubmesh(submeshIndex);
 
                             ImGui::PushID(static_cast<int>(submeshIndex));
-                            if (ImGui::TreeNode((std::string("Submesh ") + std::to_string(submeshIndex)).c_str()))
+                            const std::string submeshLabel = submesh.name.empty()
+                                                                 ? std::string("Submesh ") + std::to_string(submeshIndex)
+                                                                 : submesh.name;
+                            if (ImGui::TreeNode(submeshLabel.c_str()))
                             {
                                 ImGui::Text("Material Slot: %u", submesh.materialIndex);
                                 ImGui::Text("Indices: %u", submesh.indexCount);

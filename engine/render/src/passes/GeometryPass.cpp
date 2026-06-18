@@ -32,12 +32,23 @@ namespace PlutoGE::render
 
             return a.material == b.material &&
                    a.mesh == b.mesh &&
-                   a.submeshIndex == b.submeshIndex;
+                   a.submeshIndex == b.submeshIndex &&
+                   a.lodIndex == b.lodIndex;
         }
 
         bool IsBlendMaterial(const Material *material)
         {
             return material && material->GetConfig().alphaMode == AlphaMode::Blend;
+        }
+
+        glm::vec4 BuildInstanceFlags(const RenderCommand &command)
+        {
+            const float lodMaxIndex = command.mesh ? static_cast<float>(command.mesh->GetSubmeshLodCount(command.submeshIndex) - 1) : 0.0f;
+            return glm::vec4(
+                command.isStatic ? 1.0f : 0.0f,
+                command.usePrimaryUvForLightmap ? 1.0f : 0.0f,
+                static_cast<float>(command.lodIndex),
+                lodMaxIndex);
         }
 
         void UploadJointMatrices(Shader *shader, const std::vector<glm::mat4> *jointMatrices)
@@ -142,10 +153,17 @@ namespace PlutoGE::render
         glEnable(GL_CULL_FACE);
         glCullFace(GL_BACK);
         glViewport(0, 0, ctx.gBuffer->GetWidth(), ctx.gBuffer->GetHeight());
-        const GLenum allAttachments[5] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3, GL_COLOR_ATTACHMENT4};
-        glDrawBuffers(5, allAttachments);
+        const GLenum defaultAttachments[5] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3, GL_COLOR_ATTACHMENT4};
+        const GLenum debugAttachments[6] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3, GL_COLOR_ATTACHMENT4, GL_COLOR_ATTACHMENT5};
+        const bool writeLodDebug = ctx.postProcessDebugView == PostProcessDebugView::Lod;
+        glDrawBuffers(writeLodDebug ? 6 : 5, writeLodDebug ? debugAttachments : defaultAttachments);
         glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        if (writeLodDebug)
+        {
+            const GLfloat noLodDebugValue[4] = {-1.0f, 0.0f, 0.0f, 0.0f};
+            glClearBufferfv(GL_COLOR, 5, noLodDebugValue);
+        }
 
         m_geometryPassShader->Bind();
         m_geometryPassShader->SetUniform("uView", ctx.cameraData.view);
@@ -187,7 +205,7 @@ namespace PlutoGE::render
                 boundMesh = batchHead->mesh;
             }
 
-            batchHead->mesh->DrawSubmeshInstancedBound(batchHead->submeshIndex, batchInstances.size());
+            batchHead->mesh->DrawSubmeshInstancedBound(batchHead->submeshIndex, batchInstances.size(), batchHead->lodIndex);
             batchHead = nullptr;
             batchInstances.clear();
         };
@@ -219,13 +237,13 @@ namespace PlutoGE::render
                     GeometryInstanceData{
                         .model = command.model,
                         .previousModel = command.previousModel,
-                        .flags = glm::vec4(command.isStatic ? 1.0f : 0.0f, command.usePrimaryUvForLightmap ? 1.0f : 0.0f, 0.0f, 0.0f),
+                        .flags = BuildInstanceFlags(command),
                     },
                 };
                 UploadGeometryInstances(m_instanceBuffer, m_instanceCapacity, singleInstance);
                 BindGeometryInstanceAttributes(*command.mesh, m_instanceBuffer);
                 boundMesh = command.mesh;
-                command.mesh->DrawSubmeshInstancedBound(command.submeshIndex, 1);
+                command.mesh->DrawSubmeshInstancedBound(command.submeshIndex, 1, command.lodIndex);
                 m_geometryPassShader->SetUniform("uUseSkinning", 0);
                 continue;
             }
@@ -243,7 +261,7 @@ namespace PlutoGE::render
             batchInstances.push_back(GeometryInstanceData{
                 .model = command.model,
                 .previousModel = command.previousModel,
-                .flags = glm::vec4(command.isStatic ? 1.0f : 0.0f, command.usePrimaryUvForLightmap ? 1.0f : 0.0f, 0.0f, 0.0f),
+                .flags = BuildInstanceFlags(command),
             });
         }
 

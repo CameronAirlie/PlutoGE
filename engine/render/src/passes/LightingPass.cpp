@@ -26,7 +26,8 @@ namespace PlutoGE::render
         constexpr int kAlbedoTextureSlot = 2;
         constexpr int kBakedLightingTextureSlot = 3;
         constexpr int kDepthTextureSlot = 4;
-        constexpr int kDirectionalShadowCascadeTextureStartSlot = 5;
+        constexpr int kDebugTextureSlot = 5;
+        constexpr int kDirectionalShadowCascadeTextureStartSlot = 6;
         constexpr int kShadowMap2DTextureSlot = kDirectionalShadowCascadeTextureStartSlot + scene::kMaxDirectionalShadowCascades;
         constexpr int kShadowMapCubeTextureSlot = kShadowMap2DTextureSlot + 1;
         constexpr int kLightPropagationVolumeTextureSlot = kShadowMapCubeTextureSlot + 1;
@@ -166,6 +167,7 @@ namespace PlutoGE::render
                 uniform sampler2D gNormal;
                 uniform sampler2D gAlbedoSpec;
                 uniform sampler2D gBakedLighting;
+                uniform sampler2D gDebug;
 
                 const float PI = 3.14159265359;
                 const int LIGHT_TYPE_POINT = 0;
@@ -173,6 +175,7 @@ namespace PlutoGE::render
                 const int LIGHT_TYPE_SPOT = 2;
                 const int MAX_SHADOW_CASCADES = 4;
                 const int DEBUG_VIEW_SHADOW_CASCADES = 6;
+                const int DEBUG_VIEW_LOD = 9;
 
                 struct Light {
                     vec3 Position;
@@ -208,6 +211,25 @@ namespace PlutoGE::render
                 uniform int uOutputShadowMask;
                 uniform int uUseFilteredShadowMask;
                 uniform int uDebugViewMode;
+
+                vec3 GetLodDebugColor(float normalizedLod)
+                {
+                    if (normalizedLod < 0.0)
+                    {
+                        return vec3(0.28, 0.28, 0.28);
+                    }
+
+                    float lod = clamp(normalizedLod, 0.0, 1.0);
+                    if (lod < 0.3333)
+                    {
+                        return mix(vec3(0.05, 0.28, 1.0), vec3(0.1, 0.85, 0.25), lod / 0.3333);
+                    }
+                    if (lod < 0.6667)
+                    {
+                        return mix(vec3(0.1, 0.85, 0.25), vec3(1.0, 0.78, 0.15), (lod - 0.3333) / 0.3334);
+                    }
+                    return mix(vec3(1.0, 0.78, 0.15), vec3(1.0, 0.1, 0.08), (lod - 0.6667) / 0.3333);
+                }
 
                 float DistributionGGX(vec3 normal, vec3 halfwayDir, float roughness)
                 {
@@ -593,6 +615,11 @@ namespace PlutoGE::render
                     vec3 albedo = albedoMetallic.rgb;
                     float roughness = clamp(normalRoughness.a, 0.04, 1.0);
                     float metallic = clamp(albedoMetallic.a, 0.0, 1.0);
+                    if (uDebugViewMode == DEBUG_VIEW_LOD)
+                    {
+                        FragColor = vec4(GetLodDebugColor(texture(gDebug, UV).r), 1.0);
+                        return;
+                    }
                     if (uOutputShadowMask != 0)
                     {
                         int sampledCascadeIndex = -1;
@@ -737,6 +764,13 @@ namespace PlutoGE::render
             if (shader->HasUniform("gBakedLighting"))
             {
                 shader->SetUniform("gBakedLighting", kBakedLightingTextureSlot);
+            }
+
+            glActiveTexture(GL_TEXTURE0 + kDebugTextureSlot);
+            glBindTexture(GL_TEXTURE_2D, gBuffer->GetDebugTextureID());
+            if (shader->HasUniform("gDebug"))
+            {
+                shader->SetUniform("gDebug", kDebugTextureSlot);
             }
 
             glActiveTexture(GL_TEXTURE0 + kDepthTextureSlot);
@@ -1209,6 +1243,16 @@ namespace PlutoGE::render
         default:
             renderRsm = useRsm;
             break;
+        }
+
+        if (ctx.postProcessDebugView == PostProcessDebugView::Lod)
+        {
+            renderDirectLighting = false;
+            renderRsm = false;
+            renderSsgi = false;
+            compositeRsmOnly = false;
+            compositeSsgiOnly = false;
+            ambientOutputMode = kAmbientOutputFull;
         }
 
         m_lightingPassShader->SetUniform("uViewPos", cameraPos);

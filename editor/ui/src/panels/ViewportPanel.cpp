@@ -48,6 +48,7 @@ namespace PlutoGE::ui
             "Shadow Cascades",
             "Shadow Mask Raw",
             "Shadow Mask Filtered",
+            "LOD",
         };
 
         struct PickRay
@@ -657,6 +658,8 @@ namespace PlutoGE::ui
                                   const ImVec2 &viewportMin,
                                   const ImVec2 &viewportSize)
         {
+            constexpr std::size_t kMaxExactPickTrianglesPerSubmesh = 250000;
+
             if (!scene)
             {
                 return nullptr;
@@ -684,7 +687,7 @@ namespace PlutoGE::ui
                 }
 
                 auto *meshComponent = entity->GetComponent<scene::MeshComponent>();
-                if (!meshComponent || !meshComponent->GetMesh())
+                if (!meshComponent || !meshComponent->IsVisible() || !meshComponent->GetMesh())
                 {
                     continue;
                 }
@@ -712,39 +715,68 @@ namespace PlutoGE::ui
                     continue;
                 }
 
-                for (std::size_t index = 0; index + 2 < meshData.indices.size(); index += 3)
+                const size_t meshSubmeshCount = std::max<size_t>(mesh->GetSubmeshCount(), 1);
+                const size_t submeshBegin = meshComponent->GetSubmeshIndex() >= 0 ? static_cast<size_t>(meshComponent->GetSubmeshIndex()) : 0;
+                const size_t submeshEnd = meshComponent->GetSubmeshIndex() >= 0 ? std::min(submeshBegin + 1, meshSubmeshCount) : meshSubmeshCount;
+
+                for (size_t submeshIndex = submeshBegin; submeshIndex < submeshEnd; ++submeshIndex)
                 {
-                    const auto firstIndex = meshData.indices[index];
-                    const auto secondIndex = meshData.indices[index + 1];
-                    const auto thirdIndex = meshData.indices[index + 2];
-                    if (firstIndex >= meshData.vertices.size() ||
-                        secondIndex >= meshData.vertices.size() ||
-                        thirdIndex >= meshData.vertices.size())
+                    const auto &submesh = submeshIndex < mesh->GetSubmeshCount() ? mesh->GetSubmesh(submeshIndex) : render::Submesh{};
+                    if (submesh.indexCount < 3 ||
+                        submesh.indexOffset + submesh.indexCount > meshData.indices.size() ||
+                        !IntersectBounds(submesh.bounds, localOrigin, localDirection))
                     {
                         continue;
                     }
 
-                    const auto &firstVertex = meshData.vertices[firstIndex];
-                    const auto &secondVertex = meshData.vertices[secondIndex];
-                    const auto &thirdVertex = meshData.vertices[thirdIndex];
-
-                    const glm::vec3 v0(firstVertex.position[0], firstVertex.position[1], firstVertex.position[2]);
-                    const glm::vec3 v1(secondVertex.position[0], secondVertex.position[1], secondVertex.position[2]);
-                    const glm::vec3 v2(thirdVertex.position[0], thirdVertex.position[1], thirdVertex.position[2]);
-
-                    float localDistance = 0.0f;
-                    if (!IntersectTriangle(localOrigin, localDirection, v0, v1, v2, localDistance))
+                    const std::size_t triangleCount = submesh.indexCount / 3;
+                    if (triangleCount > kMaxExactPickTrianglesPerSubmesh)
                     {
+                        const glm::vec3 worldCenter = glm::vec3(worldTransform * glm::vec4(submesh.bounds.center, 1.0f));
+                        const float approximateDistance = glm::length(worldCenter - ray->origin);
+                        if (approximateDistance < selectedDistance)
+                        {
+                            selectedDistance = approximateDistance;
+                            selectedEntity = entity;
+                        }
                         continue;
                     }
 
-                    const glm::vec3 localHitPoint = localOrigin + localDirection * localDistance;
-                    const glm::vec3 worldHitPoint = glm::vec3(worldTransform * glm::vec4(localHitPoint, 1.0f));
-                    const float worldDistance = glm::length(worldHitPoint - ray->origin);
-                    if (worldDistance < selectedDistance)
+                    const std::size_t indexEnd = submesh.indexOffset + submesh.indexCount;
+                    for (std::size_t index = submesh.indexOffset; index + 2 < indexEnd; index += 3)
                     {
-                        selectedDistance = worldDistance;
-                        selectedEntity = entity;
+                        const auto firstIndex = meshData.indices[index];
+                        const auto secondIndex = meshData.indices[index + 1];
+                        const auto thirdIndex = meshData.indices[index + 2];
+                        if (firstIndex >= meshData.vertices.size() ||
+                            secondIndex >= meshData.vertices.size() ||
+                            thirdIndex >= meshData.vertices.size())
+                        {
+                            continue;
+                        }
+
+                        const auto &firstVertex = meshData.vertices[firstIndex];
+                        const auto &secondVertex = meshData.vertices[secondIndex];
+                        const auto &thirdVertex = meshData.vertices[thirdIndex];
+
+                        const glm::vec3 v0(firstVertex.position[0], firstVertex.position[1], firstVertex.position[2]);
+                        const glm::vec3 v1(secondVertex.position[0], secondVertex.position[1], secondVertex.position[2]);
+                        const glm::vec3 v2(thirdVertex.position[0], thirdVertex.position[1], thirdVertex.position[2]);
+
+                        float localDistance = 0.0f;
+                        if (!IntersectTriangle(localOrigin, localDirection, v0, v1, v2, localDistance))
+                        {
+                            continue;
+                        }
+
+                        const glm::vec3 localHitPoint = localOrigin + localDirection * localDistance;
+                        const glm::vec3 worldHitPoint = glm::vec3(worldTransform * glm::vec4(localHitPoint, 1.0f));
+                        const float worldDistance = glm::length(worldHitPoint - ray->origin);
+                        if (worldDistance < selectedDistance)
+                        {
+                            selectedDistance = worldDistance;
+                            selectedEntity = entity;
+                        }
                     }
                 }
             }
@@ -1005,7 +1037,11 @@ namespace PlutoGE::ui
             ImGui::TextDisabled("|");
             ImGui::SameLine();
 
-            if (ImGui::BeginMenu("Transform"))
+            if (ImGui::SmallButton("Transform"))
+            {
+                ImGui::OpenPopup("TransformPopup");
+            }
+            if (ImGui::BeginPopup("TransformPopup"))
             {
                 if (ImGui::MenuItem("Move", "W", m_gizmoOperation == ImGuizmo::TRANSLATE))
                 {
@@ -1033,13 +1069,17 @@ namespace PlutoGE::ui
                 {
                     FrameSelectedEntity(EditorShell::GetInstance());
                 }
-                ImGui::EndMenu();
+                ImGui::EndPopup();
             }
 
             ImGui::SameLine();
         }
 
-        if (ImGui::BeginMenu("View"))
+        if (ImGui::SmallButton("View"))
+        {
+            ImGui::OpenPopup("ViewPopup");
+        }
+        if (ImGui::BeginPopup("ViewPopup"))
         {
             if (m_config.editorViewport)
             {
@@ -1047,16 +1087,27 @@ namespace PlutoGE::ui
                 ImGui::MenuItem("Debug Shapes", nullptr, &m_showDebugShapes);
                 ImGui::Separator();
             }
-            ImGui::SetNextItemWidth(180.0f);
-            if (ImGui::Combo("Debug View", &debugView, kDebugViewLabels, IM_ARRAYSIZE(kDebugViewLabels)))
+            ImGui::TextUnformatted("Debug View");
+            ImGui::Separator();
+            for (int viewIndex = 0; viewIndex < IM_ARRAYSIZE(kDebugViewLabels); ++viewIndex)
             {
-                renderer.SetPostProcessDebugView(static_cast<render::PostProcessDebugView>(debugView));
+                if (ImGui::MenuItem(kDebugViewLabels[viewIndex], nullptr, debugView == viewIndex))
+                {
+                    renderer.SetPostProcessDebugView(static_cast<render::PostProcessDebugView>(viewIndex));
+                    debugView = viewIndex;
+                }
             }
-            ImGui::EndMenu();
+            ImGui::EndPopup();
         }
 
         ImGui::SameLine();
-        if (ImGui::BeginMenu("Quality"))
+        ImGui::TextDisabled("Debug: %s", GetDebugViewLabel(static_cast<render::PostProcessDebugView>(debugView)));
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Quality"))
+        {
+            ImGui::OpenPopup("QualityPopup");
+        }
+        if (ImGui::BeginPopup("QualityPopup"))
         {
             ImGui::SetNextItemWidth(180.0f);
             if (ImGui::SliderFloat("Render Scale", &m_renderScale, kMinRenderScale, kMaxRenderScale, "%.2fx"))
@@ -1064,13 +1115,17 @@ namespace PlutoGE::ui
                 m_renderScale = glm::clamp(m_renderScale, kMinRenderScale, kMaxRenderScale);
                 m_resizeStableFrames = kResizeDebounceFrames;
             }
-            ImGui::EndMenu();
+            ImGui::EndPopup();
         }
 
         if (m_config.editorViewport)
         {
             ImGui::SameLine();
-            if (ImGui::BeginMenu("Snap"))
+            if (ImGui::SmallButton("Snap"))
+            {
+                ImGui::OpenPopup("SnapPopup");
+            }
+            if (ImGui::BeginPopup("SnapPopup"))
             {
                 ImGui::MenuItem("Enabled", nullptr, &m_enableSnap);
                 ImGui::BeginDisabled(!m_enableSnap);
@@ -1081,7 +1136,7 @@ namespace PlutoGE::ui
                 ImGui::SetNextItemWidth(160.0f);
                 ImGui::DragFloat("Scale", &m_scaleSnap, 0.01f, 0.01f, 10.0f, "%.2f");
                 ImGui::EndDisabled();
-                ImGui::EndMenu();
+                ImGui::EndPopup();
             }
         }
 

@@ -53,8 +53,16 @@ namespace PlutoGE::render
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT4, GL_TEXTURE_2D, m_bakedLightingTexture, 0);
 
-        GLuint attachments[5] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3, GL_COLOR_ATTACHMENT4};
-        glDrawBuffers(5, attachments);
+        // Debug data
+        glGenTextures(1, &m_debugTexture);
+        glBindTexture(GL_TEXTURE_2D, m_debugTexture);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_R16F, width, height, 0, GL_RED, GL_FLOAT, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT5, GL_TEXTURE_2D, m_debugTexture, 0);
+
+        GLuint attachments[6] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3, GL_COLOR_ATTACHMENT4, GL_COLOR_ATTACHMENT5};
+        glDrawBuffers(6, attachments);
 
         // Depth
         glGenTextures(1, &m_depthTexture);
@@ -113,6 +121,12 @@ namespace PlutoGE::render
         {
             glDeleteTextures(1, &m_bakedLightingTexture);
             m_bakedLightingTexture = 0;
+        }
+
+        if (m_debugTexture)
+        {
+            glDeleteTextures(1, &m_debugTexture);
+            m_debugTexture = 0;
         }
 
         if (m_depthTexture)

@@ -63,6 +63,7 @@ namespace PlutoGE::scene
         bool isStatic = false;       // Static lights only refresh shadow data when dirty
         bool isDirty = true;         // Dirty lights need their shadow data refreshed
         bool shadowRefreshPending = false;
+        int nextShadowCascadeToRefresh = 0;
     };
 
     class LightComponent : public TypedComponent<LightComponent>

@@ -82,6 +82,15 @@ namespace PlutoGE::ui
         ImGui::Separator();
         ImGui::Text("Profiled renders: %d", m_renderer->GetProfiledRenderCount());
         ImGui::Text("CPU passes total: %.2f ms", m_renderer->GetTotalCpuPassTimeMs());
+        ImGui::Text("Render commands: %d submitted, %d submission culled", cpuFrameStats.submittedRenderCommandCount, cpuFrameStats.submissionCulledRenderCommandCount);
+        ImGui::Text("Visible commands: %d visible, %d frustum culled", cpuFrameStats.visibleRenderCommandCount, cpuFrameStats.frustumCulledRenderCommandCount);
+        ImGui::Text("Render command sorts: %d", cpuFrameStats.renderCommandSortCount);
+        ImGui::Text("Geometry workload: %d batches, %d instances, %d triangles", cpuFrameStats.geometrySubmittedBatchCount, cpuFrameStats.geometrySubmittedInstanceCount, cpuFrameStats.geometrySubmittedTriangleCount);
+        ImGui::Text("Geometry LOD triangles: L0 %d, L1 %d, L2 %d, L3+ %d",
+                    cpuFrameStats.geometrySubmittedTrianglesByLod[0],
+                    cpuFrameStats.geometrySubmittedTrianglesByLod[1],
+                    cpuFrameStats.geometrySubmittedTrianglesByLod[2],
+                    cpuFrameStats.geometrySubmittedTrianglesByLod[3]);
         for (const auto &cpuPassTiming : cpuPassTimings)
         {
             ImGui::Text("%s CPU: %.2f ms", cpuPassTiming.name.c_str(), cpuPassTiming.cpuTimeMs);
@@ -89,7 +98,7 @@ namespace PlutoGE::ui
         ImGui::Text("Intermediate target resize: %.2f ms (%d)", cpuFrameStats.intermediateTargetResizeMs, cpuFrameStats.intermediateTargetResizeCount);
         ImGui::Text("GBuffer resize: %.2f ms (%d)", cpuFrameStats.gBufferResizeMs, cpuFrameStats.gBufferResizeCount);
         ImGui::Text("Shadow updates: %d surfaces (%d directional cascades)", cpuFrameStats.shadowUpdatedSurfaceCount, cpuFrameStats.shadowUpdatedDirectionalCascadeCount);
-        ImGui::Text("Shadow workload: %d px, %d instances, %d batches", cpuFrameStats.shadowUpdatedPixelCount, cpuFrameStats.shadowSubmittedInstanceCount, cpuFrameStats.shadowSubmittedBatchCount);
+        ImGui::Text("Shadow workload: %d px, %d batches, %d instances, %d triangles", cpuFrameStats.shadowUpdatedPixelCount, cpuFrameStats.shadowSubmittedBatchCount, cpuFrameStats.shadowSubmittedInstanceCount, cpuFrameStats.shadowSubmittedTriangleCount);
 
         ImGui::Separator();
         ImGui::Text("GPU passes total: %.2f ms", totalGpuPassTimeMs);

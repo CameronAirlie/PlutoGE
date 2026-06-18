@@ -26,9 +26,11 @@ namespace
 {
     constexpr int kProjectedShadowPassMode = 0;
     constexpr int kPointShadowPassMode = 1;
-    constexpr int kMaxIncrementalShadowSurfaceUpdatesPerFrame = 2;
+    constexpr int kMaxIncrementalShadowSurfaceUpdatesPerFrame = 1;
     constexpr float kDirectionalShadowPadding = 2.0f;
     constexpr float kShadowUpdateMatrixEpsilon = 0.0001f;
+    constexpr float kNearCascadeMinCasterTexelRadius = 0.35f;
+    constexpr float kFarCascadeMinCasterTexelRadius = 1.0f;
 
     struct FrustumPlane
     {
@@ -73,6 +75,7 @@ namespace
     {
         int submittedInstances = 0;
         int submittedBatches = 0;
+        int submittedTriangles = 0;
     };
 
     int GetDirectionalCascadeCount(const PlutoGE::scene::Light &light)
@@ -184,7 +187,10 @@ namespace
         glBindBuffer(GL_ARRAY_BUFFER, 0);
     }
 
-    bool CanBatchShadowCommands(const PlutoGE::render::RenderCommand &a, const PlutoGE::render::RenderCommand &b)
+    bool CanBatchShadowCommands(const PlutoGE::render::RenderCommand &a,
+                                const PlutoGE::render::RenderCommand &b,
+                                std::size_t aLodIndex,
+                                std::size_t bLodIndex)
     {
         if (a.jointMatrices || b.jointMatrices)
         {
@@ -201,7 +207,29 @@ namespace
         return (!aAlphaTested || a.material == b.material) &&
                a.mesh == b.mesh &&
                a.submeshIndex == b.submeshIndex &&
-               a.lodIndex == b.lodIndex;
+               aLodIndex == bLodIndex;
+    }
+
+    std::size_t ClampShadowLodIndex(const PlutoGE::render::RenderCommand &command, std::size_t lodIndex)
+    {
+        if (!command.mesh)
+        {
+            return lodIndex;
+        }
+
+        const std::size_t lodCount = command.mesh->GetSubmeshLodCount(command.submeshIndex);
+        return lodCount > 0 ? std::min(lodIndex, lodCount - 1) : 0;
+    }
+
+    std::size_t SelectDefaultShadowLod(const PlutoGE::render::RenderCommand &command)
+    {
+        return ClampShadowLodIndex(command, command.lodIndex);
+    }
+
+    std::size_t SelectDirectionalShadowLod(const PlutoGE::render::RenderCommand &command, int cascadeIndex, int shadowResolution)
+    {
+        const std::size_t minimumShadowLod = (cascadeIndex > 0 || shadowResolution <= 1024) ? 1u : 0u;
+        return ClampShadowLodIndex(command, std::max<std::size_t>(command.lodIndex, minimumShadowLod));
     }
 
     bool IsAlphaTestedShadowCaster(const PlutoGE::render::RenderCommand &command)
@@ -745,9 +773,10 @@ namespace
         }
     }
 
-    template <typename Predicate>
+    template <typename Predicate, typename LodSelector>
     ShadowDrawStats DrawShadowCasterBatches(const std::vector<const ShadowCasterEntry *> &sortedShadowCasters,
                                             Predicate &&predicate,
+                                            LodSelector &&lodSelector,
                                             PlutoGE::render::Shader *shader,
                                             unsigned int &instanceBuffer,
                                             std::size_t &instanceCapacity,
@@ -762,7 +791,7 @@ namespace
             batchInstances.reserve(64);
         }
 
-        const auto flushBatch = [&](const PlutoGE::render::RenderCommand &batchHead)
+        const auto flushBatch = [&](const PlutoGE::render::RenderCommand &batchHead, std::size_t batchLodIndex)
         {
             if (batchInstances.empty())
             {
@@ -790,13 +819,16 @@ namespace
                 boundMesh = batchHead.mesh;
             }
 
-            batchHead.mesh->DrawSubmeshInstancedBound(batchHead.submeshIndex, batchInstances.size(), batchHead.lodIndex);
+            batchHead.mesh->DrawSubmeshInstancedBound(batchHead.submeshIndex, batchInstances.size(), batchLodIndex);
+            const auto indexCount = batchHead.mesh->GetSubmeshLodIndexCount(batchHead.submeshIndex, batchLodIndex);
             stats.submittedInstances += static_cast<int>(batchInstances.size());
+            stats.submittedTriangles += static_cast<int>((indexCount / 3) * batchInstances.size());
             ++stats.submittedBatches;
             batchInstances.clear();
         };
 
         const PlutoGE::render::RenderCommand *batchHead = nullptr;
+        std::size_t batchLodIndex = 0;
         for (const auto *shadowCaster : sortedShadowCasters)
         {
             if (!predicate(*shadowCaster))
@@ -805,11 +837,12 @@ namespace
             }
 
             const auto *command = shadowCaster->command;
+            const std::size_t selectedLodIndex = lodSelector(*shadowCaster);
             if (command->jointMatrices)
             {
                 if (batchHead)
                 {
-                    flushBatch(*batchHead);
+                    flushBatch(*batchHead, batchLodIndex);
                     batchHead = nullptr;
                 }
 
@@ -835,22 +868,24 @@ namespace
                 UploadTransformInstances(instanceBuffer, instanceCapacity, singleInstance);
                 BindTransformInstanceAttributes(*command->mesh, instanceBuffer);
                 boundMesh = command->mesh;
-                command->mesh->DrawSubmeshInstancedBound(command->submeshIndex, 1, command->lodIndex);
+                command->mesh->DrawSubmeshInstancedBound(command->submeshIndex, 1, selectedLodIndex);
+                stats.submittedTriangles += static_cast<int>(command->mesh->GetSubmeshLodIndexCount(command->submeshIndex, selectedLodIndex) / 3);
                 stats.submittedInstances += 1;
                 ++stats.submittedBatches;
                 shader->SetUniform("uUseSkinning", 0);
                 continue;
             }
 
-            if (batchHead && !CanBatchShadowCommands(*batchHead, *command))
+            if (batchHead && !CanBatchShadowCommands(*batchHead, *command, batchLodIndex, selectedLodIndex))
             {
-                flushBatch(*batchHead);
+                flushBatch(*batchHead, batchLodIndex);
                 batchHead = nullptr;
             }
 
             if (!batchHead)
             {
                 batchHead = command;
+                batchLodIndex = selectedLodIndex;
             }
 
             batchInstances.push_back(TransformInstanceData{
@@ -860,7 +895,7 @@ namespace
 
         if (batchHead)
         {
-            flushBatch(*batchHead);
+            flushBatch(*batchHead, batchLodIndex);
         }
 
         return stats;
@@ -1011,6 +1046,10 @@ namespace PlutoGE::render
                             return IsCommandRelevantForPointLight(shadowCaster, *light) &&
                                    IsCommandRelevantForProjectedLight(shadowCaster, faceFrustumPlanes);
                         },
+                        [](const ShadowCasterEntry &shadowCaster)
+                        {
+                            return SelectDefaultShadowLod(*shadowCaster.command);
+                        },
                         m_shadowPassShader,
                         m_instanceBuffer,
                         m_instanceCapacity,
@@ -1021,6 +1060,7 @@ namespace PlutoGE::render
                             shadowMap->GetWidth() * shadowMap->GetHeight(),
                             drawStats.submittedInstances,
                             drawStats.submittedBatches,
+                            drawStats.submittedTriangles,
                             false);
                     }
                 }
@@ -1044,6 +1084,10 @@ namespace PlutoGE::render
                 const bool motionDrivenCascadeInvalidation = !light->isDirty && (shadowCastersChanged || hasPendingIncrementalRefresh);
                 const bool casterOnlyCascadeInvalidation = shadowCastersChanged && !light->isDirty && !cameraDataChanged && !hasPendingIncrementalRefresh;
                 const bool cameraOnlyInvalidation = cameraDataChanged && !light->isDirty && !shadowCastersChanged;
+                const int scheduledFullRefreshCascade = forceFullCascadeUpdate
+                                                            ? std::clamp(light->nextShadowCascadeToRefresh, 0, cascadeCount - 1)
+                                                            : -1;
+                int directionalCascadeUpdatesThisLight = 0;
 
                 light->shadowMatrix = glm::mat4(1.0f);
                 light->shadowFarPlane = cascadeSplits[cascadeCount - 1];
@@ -1063,6 +1107,9 @@ namespace PlutoGE::render
                     const float cascadeFar = cascadeSplits[cascadeIndex];
                     const int shadowResolution = cascadeMap->GetWidth() > 0 ? cascadeMap->GetWidth() : GetShadowResolution(*light);
                     const bool cascadeSplitChanged = std::abs(light->shadowCascadeSplits[cascadeIndex] - cascadeFar) > kShadowUpdateMatrixEpsilon;
+                    const float effectiveMinCasterTexelRadius = glm::max(
+                        light->directionalShadowSettings.minCasterTexelRadius,
+                        cascadeIndex == 0 ? kNearCascadeMinCasterTexelRadius : kFarCascadeMinCasterTexelRadius);
                     const bool hasStoredCascadeOrigin = !AreMatricesApproximatelyEqual(light->shadowCascadeMatrices[cascadeIndex], glm::mat4(1.0f)) ||
                                                         glm::length(light->shadowCascadeWorldOrigins[cascadeIndex]) > kShadowUpdateMatrixEpsilon;
                     const bool cascadeOriginChanged = ShouldRefreshCameraRelativeCascade(
@@ -1078,6 +1125,12 @@ namespace PlutoGE::render
                     // Split radii drive cascade selection in lighting, so keep them current even when
                     // this cascade's shadow map redraw is deferred by the update cadence.
                     light->shadowCascadeSplits[cascadeIndex] = cascadeFar;
+
+                    if (forceFullCascadeUpdate && cascadeIndex != scheduledFullRefreshCascade)
+                    {
+                        deferredShadowRefresh = true;
+                        continue;
+                    }
 
                     const bool forceCascadeUpdate = forceFullCascadeUpdate;
                     const bool cascadeMotionInvalidation = motionDrivenCascadeInvalidation;
@@ -1108,9 +1161,15 @@ namespace PlutoGE::render
                                     cascadeProjection.receiverMax,
                                     cascadeProjection.receiverExtent,
                                     shadowResolution,
-                                    light->directionalShadowSettings.minCasterTexelRadius);
+                                    effectiveMinCasterTexelRadius);
                             }))
                     {
+                        continue;
+                    }
+
+                    if (directionalCascadeUpdatesThisLight >= 1)
+                    {
+                        deferredShadowRefresh = true;
                         continue;
                     }
 
@@ -1144,7 +1203,11 @@ namespace PlutoGE::render
                                 cascadeProjection.receiverMax,
                                 cascadeProjection.receiverExtent,
                                 shadowResolution,
-                                light->directionalShadowSettings.minCasterTexelRadius);
+                                effectiveMinCasterTexelRadius);
+                        },
+                        [&](const ShadowCasterEntry &shadowCaster)
+                        {
+                            return SelectDirectionalShadowLod(*shadowCaster.command, cascadeIndex, shadowResolution);
                         },
                         m_shadowPassShader,
                         m_instanceBuffer,
@@ -1156,7 +1219,17 @@ namespace PlutoGE::render
                             shadowResolution * shadowResolution,
                             drawStats.submittedInstances,
                             drawStats.submittedBatches,
+                            drawStats.submittedTriangles,
                             true);
+                    }
+                    ++directionalCascadeUpdatesThisLight;
+                    if (forceFullCascadeUpdate)
+                    {
+                        light->nextShadowCascadeToRefresh = (cascadeIndex + 1) % cascadeCount;
+                        if (light->nextShadowCascadeToRefresh != 0)
+                        {
+                            deferredShadowRefresh = true;
+                        }
                     }
                 }
 
@@ -1167,7 +1240,7 @@ namespace PlutoGE::render
                     light->shadowCascadeSplits[cascadeIndex] = light->shadowFarPlane;
                 }
 
-                light->isDirty = false;
+                light->isDirty = forceFullCascadeUpdate && light->nextShadowCascadeToRefresh != 0;
                 light->shadowRefreshPending = deferredShadowRefresh;
                 glEnable(GL_CULL_FACE);
                 glCullFace(GL_BACK);
@@ -1233,6 +1306,10 @@ namespace PlutoGE::render
                     return light->type != scene::LightType::Spot ||
                            IsCommandRelevantForProjectedLight(shadowCaster, shadowFrustumPlanes);
                 },
+                [](const ShadowCasterEntry &shadowCaster)
+                {
+                    return SelectDefaultShadowLod(*shadowCaster.command);
+                },
                 m_shadowPassShader,
                 m_instanceBuffer,
                 m_instanceCapacity,
@@ -1243,6 +1320,7 @@ namespace PlutoGE::render
                     shadowMap->GetWidth() * shadowMap->GetHeight(),
                     drawStats.submittedInstances,
                     drawStats.submittedBatches,
+                    drawStats.submittedTriangles,
                     false);
             }
 

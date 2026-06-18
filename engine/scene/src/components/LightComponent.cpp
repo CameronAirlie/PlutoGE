@@ -52,6 +52,12 @@ namespace PlutoGE::scene
             light.shadowCascadeSplits.fill(0.0f);
             light.activeShadowCascadeCount = 0;
             light.shadowFarPlane = 0.0f;
+            light.nextShadowCascadeToRefresh = 0;
+        }
+
+        bool ApproximatelyEqual(const glm::vec3 &a, const glm::vec3 &b, float epsilon = 0.0001f)
+        {
+            return glm::dot(a - b, a - b) <= epsilon * epsilon;
         }
 
         GLenum GetExpectedShadowTextureType(const Light &light)
@@ -198,6 +204,7 @@ namespace PlutoGE::scene
     {
         m_config.isDirty = true;
         m_config.shadowRefreshPending = false;
+        m_config.nextShadowCascadeToRefresh = 0;
     }
 
     void LightComponent::ClearDirty()
@@ -444,7 +451,8 @@ namespace PlutoGE::scene
             direction.z = -cos(rotationRadians.y) * cos(rotationRadians.x);
             m_config.direction = glm::normalize(direction);
 
-            if (m_config.position != previousPosition || m_config.direction != previousDirection)
+            if (!ApproximatelyEqual(m_config.position, previousPosition) ||
+                !ApproximatelyEqual(m_config.direction, previousDirection))
             {
                 MarkDirty();
             }

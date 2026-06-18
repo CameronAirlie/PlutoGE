@@ -136,6 +136,18 @@ namespace PlutoGE::ui
         report << "Context restore: " << timingStats.contextRestoreMs << " ms\n";
         report << "Platform viewports: " << timingStats.platformViewportCount << "\n";
         report << "CPU passes total: " << totalCpuPassTimeMs << " ms\n";
+        report << "Render commands submitted: " << cpuFrameStats.submittedRenderCommandCount << "\n";
+        report << "Render commands submission culled: " << cpuFrameStats.submissionCulledRenderCommandCount << "\n";
+        report << "Render commands visible: " << cpuFrameStats.visibleRenderCommandCount << "\n";
+        report << "Render commands frustum culled: " << cpuFrameStats.frustumCulledRenderCommandCount << "\n";
+        report << "Render command sorts: " << cpuFrameStats.renderCommandSortCount << "\n";
+        report << "Geometry submitted batches: " << cpuFrameStats.geometrySubmittedBatchCount << "\n";
+        report << "Geometry submitted instances: " << cpuFrameStats.geometrySubmittedInstanceCount << "\n";
+        report << "Geometry submitted triangles: " << cpuFrameStats.geometrySubmittedTriangleCount << "\n";
+        report << "Geometry LOD0 triangles: " << cpuFrameStats.geometrySubmittedTrianglesByLod[0] << "\n";
+        report << "Geometry LOD1 triangles: " << cpuFrameStats.geometrySubmittedTrianglesByLod[1] << "\n";
+        report << "Geometry LOD2 triangles: " << cpuFrameStats.geometrySubmittedTrianglesByLod[2] << "\n";
+        report << "Geometry LOD3+ triangles: " << cpuFrameStats.geometrySubmittedTrianglesByLod[3] << "\n";
         for (const auto &cpuPassTiming : cpuPassTimings)
         {
             report << cpuPassTiming.name << " CPU: " << cpuPassTiming.cpuTimeMs << " ms\n";
@@ -149,6 +161,7 @@ namespace PlutoGE::ui
         report << "Shadow updated pixels: " << cpuFrameStats.shadowUpdatedPixelCount << "\n";
         report << "Shadow submitted instances: " << cpuFrameStats.shadowSubmittedInstanceCount << "\n";
         report << "Shadow submitted batches: " << cpuFrameStats.shadowSubmittedBatchCount << "\n";
+        report << "Shadow submitted triangles: " << cpuFrameStats.shadowSubmittedTriangleCount << "\n";
         report << "GPU passes total: " << totalGpuPassTimeMs << " ms\n";
         for (const auto &gpuPassTiming : gpuPassTimings)
         {

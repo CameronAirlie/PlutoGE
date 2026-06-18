@@ -848,6 +848,7 @@ namespace PlutoGE::assetimport
                     .indexOffset = submesh.indexOffset,
                     .indexCount = submesh.indexCount,
                     .minDistanceFactor = 0.0f,
+                    .maxScreenRadiusPixels = std::numeric_limits<float>::max(),
                 });
 
                 if (submesh.indexCount < kLodTriangleThreshold * 3 ||
@@ -856,13 +857,23 @@ namespace PlutoGE::assetimport
                     continue;
                 }
 
-                const std::array<std::pair<float, float>, 1> lodTargets{{
-                    {0.25f, 14.0f},
+                struct LodTarget
+                {
+                    float targetRatio = 1.0f;
+                    float minDistanceFactor = 0.0f;
+                    float maxScreenRadiusPixels = std::numeric_limits<float>::max();
+                    float error = 0.02f;
+                };
+
+                const std::array<LodTarget, 3> lodTargets{{
+                    {.targetRatio = 0.50f, .minDistanceFactor = 7.0f, .maxScreenRadiusPixels = 220.0f, .error = 0.015f},
+                    {.targetRatio = 0.25f, .minDistanceFactor = 14.0f, .maxScreenRadiusPixels = 120.0f, .error = 0.02f},
+                    {.targetRatio = 0.10f, .minDistanceFactor = 28.0f, .maxScreenRadiusPixels = 60.0f, .error = 0.04f},
                 }};
 
-                for (const auto &[targetRatio, minDistanceFactor] : lodTargets)
+                for (const auto &lodTarget : lodTargets)
                 {
-                    const uint32_t targetIndexCount = AlignIndexCountToTriangles(static_cast<uint32_t>(static_cast<float>(submesh.indexCount) * targetRatio));
+                    const uint32_t targetIndexCount = AlignIndexCountToTriangles(static_cast<uint32_t>(static_cast<float>(submesh.indexCount) * lodTarget.targetRatio));
                     if (targetIndexCount < 3 || targetIndexCount >= submesh.indexCount)
                     {
                         continue;
@@ -877,7 +888,7 @@ namespace PlutoGE::assetimport
                         meshData.vertices.size(),
                         sizeof(render::MeshVertexData),
                         targetIndexCount,
-                        0.02f);
+                        lodTarget.error);
 
                     const uint32_t alignedSimplifiedIndexCount = AlignIndexCountToTriangles(static_cast<uint32_t>(simplifiedIndexCount));
                     if (alignedSimplifiedIndexCount < 3 || alignedSimplifiedIndexCount >= submesh.lods.back().indexCount)
@@ -890,7 +901,8 @@ namespace PlutoGE::assetimport
                     submesh.lods.push_back(render::Submesh::LodRange{
                         .indexOffset = lodIndexOffset,
                         .indexCount = alignedSimplifiedIndexCount,
-                        .minDistanceFactor = minDistanceFactor,
+                        .minDistanceFactor = lodTarget.minDistanceFactor,
+                        .maxScreenRadiusPixels = lodTarget.maxScreenRadiusPixels,
                     });
                 }
             }
@@ -2502,7 +2514,6 @@ namespace PlutoGE::assetimport
                 aiProcess_GenSmoothNormals |
                 aiProcess_CalcTangentSpace |
                 aiProcess_FlipUVs |
-                aiProcess_ImproveCacheLocality |
                 aiProcess_LimitBoneWeights |
                 aiProcess_ValidateDataStructure |
                 aiProcess_GlobalScale;
@@ -2729,7 +2740,7 @@ namespace PlutoGE::assetimport
     ImportedMeshAsset MeshImporter::FinalizeImportedMeshAsset(const std::string &filePath, ImportedMeshSourceAsset meshSourceAsset)
     {
         // LRU cache for meshes
-        constexpr size_t kMaxMeshCacheSize = 8;
+        constexpr size_t kMaxMeshCacheSize = 32;
         const auto normalizedPath = NormalizePath(filePath);
         const auto cachedMesh = m_meshCache.find(normalizedPath);
         if (cachedMesh != m_meshCache.end())

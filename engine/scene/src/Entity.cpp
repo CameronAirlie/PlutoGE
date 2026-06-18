@@ -265,6 +265,7 @@ namespace PlutoGE::scene
 
             if (dynamic_cast<MeshComponent *>(component))
             {
+                m_scene->RegisterMeshComponent(static_cast<MeshComponent *>(component));
                 m_scene->MarkShadowLightsDirty();
             }
         }
@@ -288,6 +289,7 @@ namespace PlutoGE::scene
 
             if (dynamic_cast<MeshComponent *>(component))
             {
+                m_scene->UnregisterMeshComponent(static_cast<MeshComponent *>(component));
                 m_scene->MarkShadowLightsDirty();
             }
         }
@@ -325,6 +327,14 @@ namespace PlutoGE::scene
                     m_scene->RemoveLight(&lightComponent->GetLight());
                 }
             }
+
+            for (auto *meshComponent : GetComponents<MeshComponent>())
+            {
+                if (meshComponent)
+                {
+                    m_scene->UnregisterMeshComponent(meshComponent);
+                }
+            }
         }
 
         m_scene = scene;
@@ -336,6 +346,14 @@ namespace PlutoGE::scene
                 if (lightComponent)
                 {
                     m_scene->AddLight(&lightComponent->GetLight());
+                }
+            }
+
+            for (auto *meshComponent : GetComponents<MeshComponent>())
+            {
+                if (meshComponent)
+                {
+                    m_scene->RegisterMeshComponent(meshComponent);
                 }
             }
         }

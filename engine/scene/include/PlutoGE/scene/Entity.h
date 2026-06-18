@@ -53,8 +53,8 @@ namespace PlutoGE::scene
         void Update(float deltaTime); // Update function to be called every frame (for components to update)
 
         void AddChild(Entity *child);
-        std::vector<Entity *> GetChildren() { return m_children; }
-        std::vector<Entity *> GetChildren() const { return m_children; }
+        std::vector<Entity *> &GetChildren() { return m_children; }
+        const std::vector<Entity *> &GetChildren() const { return m_children; }
         Entity *GetParent() const { return m_parent; }
         Scene *GetScene() const { return m_scene; }
         void SetParent(Entity *parent);
@@ -83,7 +83,7 @@ namespace PlutoGE::scene
         Component *AddComponent(Component *component);
         bool RemoveComponent(Component *component);
 
-        std::vector<std::vector<Component *>> GetComponentBuckets() const { return m_componentBuckets; }
+        const std::vector<std::vector<Component *>> &GetComponentBuckets() const { return m_componentBuckets; }
 
         template <typename T>
         T *AddComponent(T *component)

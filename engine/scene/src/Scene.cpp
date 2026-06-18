@@ -3,6 +3,7 @@
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/components/ColliderComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
+#include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/scene/components/RigidbodyComponent.h"
 #include "PlutoGE/scene/components/ScriptComponent.h"
 #include "PlutoGE/scene/components/UIComponent.h"
@@ -603,6 +604,8 @@ namespace PlutoGE::scene
             if (light && light->castsShadows)
             {
                 light->isDirty = true;
+                light->shadowRefreshPending = false;
+                light->nextShadowCascadeToRefresh = 0;
             }
         }
     }
@@ -808,9 +811,53 @@ namespace PlutoGE::scene
             }
         }
 
+        SubmitRenderCommands();
+
         FlushPendingDestroyEntities();
         StepPhysics(deltaTime);
         FlushPendingDestroyEntities();
+    }
+
+    void Scene::SubmitRenderCommands()
+    {
+        for (auto *meshComponent : m_meshComponents)
+        {
+            if (!meshComponent || !meshComponent->IsEnabled())
+            {
+                continue;
+            }
+
+            auto *owner = meshComponent->GetOwner();
+            if (!owner || !owner->IsActive())
+            {
+                continue;
+            }
+
+            meshComponent->SubmitRenderCommands();
+        }
+    }
+
+    void Scene::RegisterMeshComponent(MeshComponent *meshComponent)
+    {
+        if (!meshComponent)
+        {
+            return;
+        }
+
+        if (std::find(m_meshComponents.begin(), m_meshComponents.end(), meshComponent) == m_meshComponents.end())
+        {
+            m_meshComponents.push_back(meshComponent);
+        }
+    }
+
+    void Scene::UnregisterMeshComponent(MeshComponent *meshComponent)
+    {
+        if (!meshComponent)
+        {
+            return;
+        }
+
+        m_meshComponents.erase(std::remove(m_meshComponents.begin(), m_meshComponents.end(), meshComponent), m_meshComponents.end());
     }
 
     bool Scene::Raycast(const glm::vec3 &origin,

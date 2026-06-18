@@ -92,40 +92,50 @@ namespace PlutoGE::render
             return command.shader;
         }
 
+        bool CompareRenderCommandKeysImpl(const RenderCommand &a, const RenderCommand &b)
+        {
+            const auto *aShader = GetRenderCommandShaderKey(a);
+            const auto *bShader = GetRenderCommandShaderKey(b);
+            if (aShader != bShader)
+            {
+                return aShader < bShader;
+            }
+
+            if (a.material != b.material)
+            {
+                return a.material < b.material;
+            }
+
+            if (a.mesh != b.mesh)
+            {
+                return a.mesh < b.mesh;
+            }
+
+            if (a.submeshIndex != b.submeshIndex)
+            {
+                return a.submeshIndex < b.submeshIndex;
+            }
+
+            if (a.lodIndex != b.lodIndex)
+            {
+                return a.lodIndex < b.lodIndex;
+            }
+
+            return false;
+        }
+
         void SortRenderCommands(std::vector<RenderCommand> &renderCommands)
         {
             std::sort(renderCommands.begin(), renderCommands.end(),
                       [](const RenderCommand &a, const RenderCommand &b)
                       {
-                          const auto *aShader = GetRenderCommandShaderKey(a);
-                          const auto *bShader = GetRenderCommandShaderKey(b);
-                          if (aShader != bShader)
-                          {
-                              return aShader < bShader;
-                          }
-
-                          if (a.material != b.material)
-                          {
-                              return a.material < b.material;
-                          }
-
-                          if (a.mesh != b.mesh)
-                          {
-                              return a.mesh < b.mesh;
-                          }
-
-                          if (a.submeshIndex != b.submeshIndex)
-                          {
-                              return a.submeshIndex < b.submeshIndex;
-                          }
-
-                          if (a.lodIndex != b.lodIndex)
-                          {
-                              return a.lodIndex < b.lodIndex;
-                          }
-
-                          return false;
+                          return CompareRenderCommandKeysImpl(a, b);
                       });
+        }
+
+        glm::vec4 ToSubmissionPlane(const FrustumPlane &plane)
+        {
+            return glm::vec4(plane.normal, plane.distance);
         }
 
         bool EnsureRenderTargetSize(RenderTarget *renderTarget, int width, int height)
@@ -455,7 +465,7 @@ namespace PlutoGE::render
             activeCameraData = taaEffect->PrepareCameraData(cameraData, renderWidth, renderHeight, m_frameSequence);
         }
 
-        UpdateRenderCommandLods(activeCameraData);
+        UpdateRenderCommandLods(activeCameraData, renderHeight);
         EnsureRenderCommandsSorted();
 
         m_visibleRenderCommands.clear();
@@ -468,6 +478,8 @@ namespace PlutoGE::render
                 m_visibleRenderCommands.push_back(command);
             }
         }
+        m_cpuFrameStats.visibleRenderCommandCount = static_cast<int>(m_visibleRenderCommands.size());
+        m_cpuFrameStats.frustumCulledRenderCommandCount = static_cast<int>(m_renderCommands.size() - m_visibleRenderCommands.size());
 
         RenderContext ctx{
             .renderer = this,
@@ -515,6 +527,28 @@ namespace PlutoGE::render
     {
         m_renderCommands.clear();
         m_renderCommandsDirty = false;
+        ClearSubmissionCullingCameras();
+    }
+
+    void Renderer::SetSubmissionCullingCameras(const std::vector<CameraData> &cameraDatas)
+    {
+        m_submissionFrustums.clear();
+        m_submissionFrustums.reserve(cameraDatas.size());
+        for (const auto &cameraData : cameraDatas)
+        {
+            SubmissionFrustum frustum;
+            const auto planes = ExtractFrustumPlanes(cameraData.projection * cameraData.view);
+            for (std::size_t index = 0; index < planes.size(); ++index)
+            {
+                frustum.planes[index] = ToSubmissionPlane(planes[index]);
+            }
+            m_submissionFrustums.push_back(frustum);
+        }
+    }
+
+    void Renderer::ClearSubmissionCullingCameras()
+    {
+        m_submissionFrustums.clear();
     }
 
     void Renderer::EnsureRenderCommandsSorted()
@@ -526,13 +560,16 @@ namespace PlutoGE::render
         }
 
         SortRenderCommands(m_renderCommands);
+        ++m_cpuFrameStats.renderCommandSortCount;
         m_renderCommandsDirty = false;
     }
 
-    void Renderer::UpdateRenderCommandLods(const CameraData &cameraData)
+    void Renderer::UpdateRenderCommandLods(const CameraData &cameraData, int viewportHeight)
     {
         const glm::mat4 inverseView = glm::inverse(cameraData.view);
         const glm::vec3 cameraPosition = glm::vec3(inverseView[3]);
+        const float projectionScaleY = std::abs(cameraData.projection[1][1]);
+        const float halfViewportHeight = static_cast<float>(std::max(viewportHeight, 1)) * 0.5f;
         bool changed = false;
 
         for (auto &command : m_renderCommands)
@@ -543,7 +580,9 @@ namespace PlutoGE::render
             }
 
             const float distance = glm::length(command.worldBounds.center - cameraPosition);
-            const uint32_t lodIndex = static_cast<uint32_t>(command.mesh->SelectSubmeshLod(command.submeshIndex, distance));
+            const float safeDistance = std::max(distance, 0.001f);
+            const float projectedRadiusPixels = (std::max(command.worldBounds.radius, 0.001f) / safeDistance) * projectionScaleY * halfViewportHeight;
+            const uint32_t lodIndex = static_cast<uint32_t>(command.mesh->SelectSubmeshLodByProjectedRadius(command.submeshIndex, projectedRadiusPixels));
             if (command.lodIndex != lodIndex)
             {
                 command.lodIndex = lodIndex;
@@ -555,6 +594,39 @@ namespace PlutoGE::render
         {
             m_renderCommandsDirty = true;
         }
+    }
+
+    bool Renderer::IsRenderCommandAcceptedForSubmission(const RenderCommand &command) const
+    {
+        if (m_submissionFrustums.empty())
+        {
+            return true;
+        }
+
+        for (const auto &frustum : m_submissionFrustums)
+        {
+            bool visible = true;
+            for (const auto &plane : frustum.planes)
+            {
+                if (glm::dot(glm::vec3(plane), command.worldBounds.center) + plane.w < -command.worldBounds.radius)
+                {
+                    visible = false;
+                    break;
+                }
+            }
+
+            if (visible)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    bool Renderer::CompareRenderCommandKeys(const RenderCommand &a, const RenderCommand &b)
+    {
+        return CompareRenderCommandKeysImpl(a, b);
     }
 
     void Renderer::EndFrame(RenderTarget *renderTarget)
@@ -709,7 +781,7 @@ namespace PlutoGE::render
         ++m_cpuFrameStats.gBufferResizeCount;
     }
 
-    void Renderer::RecordShadowMapUpdate(int surfacePixels, int submittedInstances, int submittedBatches, bool directionalCascade)
+    void Renderer::RecordShadowMapUpdate(int surfacePixels, int submittedInstances, int submittedBatches, int submittedTriangles, bool directionalCascade)
     {
         ++m_cpuFrameStats.shadowUpdatedSurfaceCount;
         if (directionalCascade)
@@ -719,6 +791,16 @@ namespace PlutoGE::render
         m_cpuFrameStats.shadowUpdatedPixelCount += std::max(surfacePixels, 0);
         m_cpuFrameStats.shadowSubmittedInstanceCount += std::max(submittedInstances, 0);
         m_cpuFrameStats.shadowSubmittedBatchCount += std::max(submittedBatches, 0);
+        m_cpuFrameStats.shadowSubmittedTriangleCount += std::max(submittedTriangles, 0);
+    }
+
+    void Renderer::RecordGeometryBatch(int submittedInstances, int submittedTriangles, std::size_t lodIndex)
+    {
+        m_cpuFrameStats.geometrySubmittedInstanceCount += std::max(submittedInstances, 0);
+        m_cpuFrameStats.geometrySubmittedTriangleCount += std::max(submittedTriangles, 0);
+        const std::size_t clampedLodIndex = std::min(lodIndex, m_cpuFrameStats.geometrySubmittedTrianglesByLod.size() - 1);
+        m_cpuFrameStats.geometrySubmittedTrianglesByLod[clampedLodIndex] += std::max(submittedTriangles, 0);
+        ++m_cpuFrameStats.geometrySubmittedBatchCount;
     }
 
     float Renderer::GetTotalGpuPassTimeMs() const

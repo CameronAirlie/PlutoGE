@@ -16,6 +16,7 @@ namespace PlutoGE::render
 namespace PlutoGE::scene
 {
     class Entity;
+    class MeshComponent;
     struct Light;
 
     using EntityID = uint32_t;
@@ -67,7 +68,7 @@ namespace PlutoGE::scene
         Entity *AddEntity(std::unique_ptr<Entity> entity, Entity *parent = nullptr);
         void RemoveEntity(Entity *entity);
         bool DestroyEntity(EntityID entityId);
-        std::vector<Entity *> GetRootEntities() const { return m_rootEntities; }
+        const std::vector<Entity *> &GetRootEntities() const { return m_rootEntities; }
 
         void StartRuntime();
         void StopRuntime();
@@ -92,6 +93,7 @@ namespace PlutoGE::scene
 
         std::vector<Light *> GetLights() const; // Get active lights in the scene (for rendering)
         void MarkShadowLightsDirty();
+        void SubmitRenderCommands();
         const std::string &GetFilePath() const { return m_filePath; }
         void SetFilePath(const std::string &filePath) { m_filePath = filePath; }
         const std::string &GetEnvironmentMapPath() const { return m_environmentMapPath; }
@@ -123,11 +125,14 @@ namespace PlutoGE::scene
                 m_lights.erase(it);
             }
         }
+        void RegisterMeshComponent(MeshComponent *meshComponent);
+        void UnregisterMeshComponent(MeshComponent *meshComponent);
 
     private:
         std::string m_name;
         std::vector<std::unique_ptr<Entity>> m_entityStorage;
         std::vector<Entity *> m_rootEntities;
+        std::vector<MeshComponent *> m_meshComponents;
         std::vector<Light *> m_lights;
         std::string m_filePath;
         std::string m_environmentMapPath;

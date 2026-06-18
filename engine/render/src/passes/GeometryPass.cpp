@@ -206,6 +206,11 @@ namespace PlutoGE::render
             }
 
             batchHead->mesh->DrawSubmeshInstancedBound(batchHead->submeshIndex, batchInstances.size(), batchHead->lodIndex);
+            if (ctx.renderer)
+            {
+                const auto indexCount = batchHead->mesh->GetSubmeshLodIndexCount(batchHead->submeshIndex, batchHead->lodIndex);
+                ctx.renderer->RecordGeometryBatch(static_cast<int>(batchInstances.size()), static_cast<int>((indexCount / 3) * batchInstances.size()), batchHead->lodIndex);
+            }
             batchHead = nullptr;
             batchInstances.clear();
         };
@@ -244,6 +249,11 @@ namespace PlutoGE::render
                 BindGeometryInstanceAttributes(*command.mesh, m_instanceBuffer);
                 boundMesh = command.mesh;
                 command.mesh->DrawSubmeshInstancedBound(command.submeshIndex, 1, command.lodIndex);
+                if (ctx.renderer)
+                {
+                    const auto indexCount = command.mesh->GetSubmeshLodIndexCount(command.submeshIndex, command.lodIndex);
+                    ctx.renderer->RecordGeometryBatch(1, static_cast<int>(indexCount / 3), command.lodIndex);
+                }
                 m_geometryPassShader->SetUniform("uUseSkinning", 0);
                 continue;
             }

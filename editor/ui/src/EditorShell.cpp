@@ -1917,6 +1917,36 @@ namespace PlutoGE::ui
             const auto renderTargetHeight = renderTarget->GetHeight();
             const auto renderTarget2Width = renderTarget2->GetWidth();
             const auto renderTarget2Height = renderTarget2->GetHeight();
+            UpdateEditorCamera(m_editorCamera,
+                               windowHandle,
+                               !isRuntimeRunning && (viewportPanel->IsViewportHovered() || viewportPanel->IsViewportFocused()),
+                               deltaSeconds,
+                               isEditorCameraLookActive,
+                               lastEditorCameraCursorX,
+                               lastEditorCameraCursorY);
+
+            auto *cameraComponent2 = FindFirstSceneCamera(m_scene.get());
+            const bool shouldRenderViewport1 = viewportPanel->ShouldRenderFrame();
+            const bool shouldRenderViewport2 = viewportPanel2->ShouldRenderFrame() && IsCameraActiveInScene(m_scene.get(), cameraComponent2);
+            render::CameraData editorCameraData{};
+            bool hasEditorCameraData = false;
+            render::CameraData gameCameraData{};
+            bool hasGameCameraData = false;
+
+            if (shouldRenderViewport1)
+            {
+                const glm::mat4 editorCameraTransform = GetEditorCameraTransform(m_editorCamera);
+                editorCameraData = m_editorCamera.camera.GetCameraDataForTransform(editorCameraTransform,
+                                                                                   renderTargetWidth,
+                                                                                   renderTargetHeight);
+                hasEditorCameraData = true;
+            }
+
+            if (shouldRenderViewport2 && cameraComponent2)
+            {
+                gameCameraData = cameraComponent2->GetCameraData(renderTarget2Width, renderTarget2Height);
+                hasGameCameraData = true;
+            }
 
             const bool bakeTaskFinished = m_activeBakeTask && m_activeBakeTask->IsFinished();
             if (bakeTaskFinished && m_scene)
@@ -1955,6 +1985,23 @@ namespace PlutoGE::ui
                 m_engine.UpdateAsyncMeshImports();
                 if (m_scene)
                 {
+                    if (!isRuntimeRunning)
+                    {
+                        std::vector<render::CameraData> submissionCullingCameras;
+                        if (hasEditorCameraData)
+                        {
+                            submissionCullingCameras.push_back(editorCameraData);
+                        }
+                        if (hasGameCameraData)
+                        {
+                            submissionCullingCameras.push_back(gameCameraData);
+                        }
+                        renderer.SetSubmissionCullingCameras(submissionCullingCameras);
+                    }
+                    else
+                    {
+                        renderer.ClearSubmissionCullingCameras();
+                    }
                     m_scene->Update(deltaTime.count());
                 }
             }
@@ -2007,26 +2054,10 @@ namespace PlutoGE::ui
                 }
             }
 
-            UpdateEditorCamera(m_editorCamera,
-                               windowHandle,
-                               !isRuntimeRunning && (viewportPanel->IsViewportHovered() || viewportPanel->IsViewportFocused()),
-                               deltaSeconds,
-                               isEditorCameraLookActive,
-                               lastEditorCameraCursorX,
-                               lastEditorCameraCursorY);
-
-            auto *cameraComponent2 = FindFirstSceneCamera(m_scene.get());
-            const bool shouldRenderViewport1 = viewportPanel->ShouldRenderFrame();
-            const bool shouldRenderViewport2 = viewportPanel2->ShouldRenderFrame() && IsCameraActiveInScene(m_scene.get(), cameraComponent2);
-
             const auto viewportRenderStart = std::chrono::high_resolution_clock::now();
             if (shouldRenderViewport1)
             {
                 ++frameTimingStats.renderedViewportCount;
-                const glm::mat4 editorCameraTransform = GetEditorCameraTransform(m_editorCamera);
-                const auto editorCameraData = m_editorCamera.camera.GetCameraDataForTransform(editorCameraTransform,
-                                                                                              renderTarget->GetWidth(),
-                                                                                              renderTarget->GetHeight());
                 std::vector<render::IPostProcessEffect *> editorPostProcessEffects;
                 editorPostProcessEffects.reserve(m_editorCamera.GetPostProcessEffects().size());
                 for (const auto &effect : m_editorCamera.GetPostProcessEffects())

@@ -9,6 +9,8 @@
 #include <array>
 #include <random>
 
+#include <glm/gtc/matrix_inverse.hpp>
+
 namespace PlutoGE::render
 {
     namespace
@@ -209,6 +211,7 @@ namespace PlutoGE::render
             uniform sampler2D uSceneNormalTexture;
             uniform sampler2D uNoiseTexture;
             uniform mat4 uView;
+            uniform mat4 uInverseView;
             uniform mat4 uViewProjection;
             uniform vec3 uSamples[32];
             uniform int uSampleCount;
@@ -230,7 +233,6 @@ namespace PlutoGE::render
 
                 vec3 fragViewPos = vec3(uView * vec4(fragPos, 1.0));
                 vec3 normal = normalize(mat3(uView) * worldNormal);
-                mat4 inverseView = inverse(uView);
 
                 vec2 noiseScale = vec2(textureSize(uScenePositionTexture, 0)) / vec2(textureSize(uNoiseTexture, 0));
                 vec3 randomVec = normalize(texture(uNoiseTexture, UV * noiseScale).xyz * 2.0 - 1.0);
@@ -251,7 +253,7 @@ namespace PlutoGE::render
                     }
 
                     vec3 sampleViewPos = fragViewPos + (tbn * uSamples[sampleIndex]) * uRadius;
-                    vec4 sampleWorldPos = inverseView * vec4(sampleViewPos, 1.0);
+                    vec4 sampleWorldPos = uInverseView * vec4(sampleViewPos, 1.0);
                     vec4 clipPos = uViewProjection * sampleWorldPos;
                     if (clipPos.w <= 0.0001)
                     {
@@ -492,6 +494,7 @@ namespace PlutoGE::render
         glDisable(GL_CULL_FACE);
 
         const glm::mat4 viewProjection = renderContext.cameraData.projection * renderContext.cameraData.view;
+        const glm::mat4 inverseView = glm::inverse(renderContext.cameraData.view);
         const PostProcessContext internalContext{
             .renderContext = renderContext,
             .sourceRenderTarget = m_rawAoRenderTarget.get(),
@@ -509,6 +512,7 @@ namespace PlutoGE::render
         glBindTexture(GL_TEXTURE_2D, m_noiseTexture);
         m_ssaoShader->SetUniform("uNoiseTexture", 5);
         m_ssaoShader->SetUniform("uView", renderContext.cameraData.view);
+        m_ssaoShader->SetUniform("uInverseView", inverseView);
         m_ssaoShader->SetUniform("uViewProjection", viewProjection);
         m_ssaoShader->SetUniform("uSampleCount", m_sampleCount);
         m_ssaoShader->SetUniform("uRadius", m_radius);

@@ -499,6 +499,11 @@ namespace PlutoGE::scene
 
     void MeshComponent::Update(float deltaTime)
     {
+        (void)deltaTime;
+    }
+
+    void MeshComponent::SubmitRenderCommands()
+    {
         if (m_mesh && m_visible)
         {
             auto entity = GetOwner();

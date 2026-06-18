@@ -20,6 +20,7 @@
 #include <optional>
 #include <sstream>
 #include <string_view>
+#include <system_error>
 #include <unordered_map>
 
 namespace PlutoGE::scene
@@ -57,6 +58,8 @@ namespace PlutoGE::scene
         {
             std::vector<std::string> parts;
             std::string current;
+            parts.reserve(8);
+            current.reserve(text.size());
             bool escaping = false;
 
             for (const char character : text)
@@ -103,6 +106,30 @@ namespace PlutoGE::scene
             return parts;
         }
 
+        std::string_view NextCsvToken(std::string_view &value)
+        {
+            const auto delimiter = value.find(',');
+            if (delimiter == std::string_view::npos)
+            {
+                const std::string_view token = value;
+                value = {};
+                return token;
+            }
+
+            const std::string_view token = value.substr(0, delimiter);
+            value.remove_prefix(delimiter + 1);
+            return token;
+        }
+
+        template <typename T>
+        bool ParseNumber(std::string_view token, T &output)
+        {
+            const char *begin = token.data();
+            const char *end = begin + token.size();
+            const auto result = std::from_chars(begin, end, output);
+            return result.ec == std::errc{} && result.ptr == end;
+        }
+
         std::string SerializeVec3(const glm::vec3 &value)
         {
             return std::to_string(value.x) + "," + std::to_string(value.y) + "," + std::to_string(value.z);
@@ -111,14 +138,18 @@ namespace PlutoGE::scene
         glm::vec3 ParseVec3(std::string_view value)
         {
             glm::vec3 parsedValue{0.0f};
-            std::sscanf(std::string(value).c_str(), "%f,%f,%f", &parsedValue.x, &parsedValue.y, &parsedValue.z);
+            ParseNumber(NextCsvToken(value), parsedValue.x);
+            ParseNumber(NextCsvToken(value), parsedValue.y);
+            ParseNumber(NextCsvToken(value), parsedValue.z);
             return parsedValue;
         }
 
         glm::ivec3 ParseIVec3(std::string_view value)
         {
             glm::ivec3 parsedValue{0};
-            std::sscanf(std::string(value).c_str(), "%d,%d,%d", &parsedValue.x, &parsedValue.y, &parsedValue.z);
+            ParseNumber(NextCsvToken(value), parsedValue.x);
+            ParseNumber(NextCsvToken(value), parsedValue.y);
+            ParseNumber(NextCsvToken(value), parsedValue.z);
             return parsedValue;
         }
 

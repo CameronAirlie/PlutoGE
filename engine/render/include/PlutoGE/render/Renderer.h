@@ -108,7 +108,17 @@ namespace PlutoGE::render
         int shadowUpdatedDirectionalCascadeCount = 0;
         int shadowSubmittedInstanceCount = 0;
         int shadowSubmittedBatchCount = 0;
+        int shadowSubmittedTriangleCount = 0;
         int shadowUpdatedPixelCount = 0;
+        int submittedRenderCommandCount = 0;
+        int submissionCulledRenderCommandCount = 0;
+        int visibleRenderCommandCount = 0;
+        int frustumCulledRenderCommandCount = 0;
+        int renderCommandSortCount = 0;
+        int geometrySubmittedInstanceCount = 0;
+        int geometrySubmittedBatchCount = 0;
+        int geometrySubmittedTriangleCount = 0;
+        std::array<int, 4> geometrySubmittedTrianglesByLod{};
     };
 
     struct RenderContext
@@ -150,6 +160,8 @@ namespace PlutoGE::render
         void EndFrame(RenderTarget *renderTarget = nullptr);
         void Shutdown(RenderTarget *renderTarget = nullptr);
         void ClearRenderCommands();
+        void SetSubmissionCullingCameras(const std::vector<CameraData> &cameraDatas);
+        void ClearSubmissionCullingCameras();
 
         void SetVSyncEnabled(bool enabled);
         void SetPostProcessDebugView(PostProcessDebugView debugView) { m_postProcessDebugView = debugView; }
@@ -170,15 +182,31 @@ namespace PlutoGE::render
         void EndPostProcessEffectTiming();
         void SetLightingPassCounters(int lightCount, int shadowedLightCount);
         void RecordGBufferResize(float resizeMs);
-        void RecordShadowMapUpdate(int surfacePixels, int submittedInstances, int submittedBatches, bool directionalCascade);
+        void RecordShadowMapUpdate(int surfacePixels, int submittedInstances, int submittedBatches, int submittedTriangles, bool directionalCascade);
+        void RecordGeometryBatch(int submittedInstances, int submittedTriangles, std::size_t lodIndex);
 
         void SubmitRenderCommand(const RenderCommand &command)
         {
+            if (!IsRenderCommandAcceptedForSubmission(command))
+            {
+                ++m_cpuFrameStats.submissionCulledRenderCommandCount;
+                return;
+            }
+
+            if (!m_renderCommands.empty() && CompareRenderCommandKeys(command, m_renderCommands.back()))
+            {
+                m_renderCommandsDirty = true;
+            }
             m_renderCommands.push_back(command);
-            m_renderCommandsDirty = true;
+            ++m_cpuFrameStats.submittedRenderCommandCount;
         }
 
     private:
+        struct SubmissionFrustum
+        {
+            std::array<glm::vec4, 6> planes{};
+        };
+
         struct FrameResources
         {
             std::unique_ptr<RenderTarget> temporaryRenderTarget;
@@ -210,7 +238,9 @@ namespace PlutoGE::render
         FrameResources *GetOrCreateFrameResources(RenderTarget *renderTarget, int width, int height);
         void CleanupFrameResources();
         void EnsureRenderCommandsSorted();
-        void UpdateRenderCommandLods(const CameraData &cameraData);
+        void UpdateRenderCommandLods(const CameraData &cameraData, int viewportHeight);
+        bool IsRenderCommandAcceptedForSubmission(const RenderCommand &command) const;
+        static bool CompareRenderCommandKeys(const RenderCommand &a, const RenderCommand &b);
         void InitializeGpuTimers();
         void ShutdownGpuTimers();
         void ExecutePassWithGpuTiming(IRenderPass &renderPass, const RenderContext &ctx, std::size_t timingIndex);
@@ -228,6 +258,7 @@ namespace PlutoGE::render
         std::vector<IRenderPass *> m_renderPasses;
         std::vector<RenderCommand> m_renderCommands;
         std::vector<RenderCommand> m_visibleRenderCommands;
+        std::vector<SubmissionFrustum> m_submissionFrustums;
         std::unordered_map<const RenderTarget *, std::unique_ptr<FrameResources>> m_frameResources;
         std::vector<CpuPassTiming> m_cpuPassTimings;
         std::vector<GpuPassTiming> m_gpuPassTimings;

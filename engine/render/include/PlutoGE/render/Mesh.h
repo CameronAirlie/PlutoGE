@@ -102,6 +102,7 @@ namespace PlutoGE::render
             uint32_t indexOffset = 0;
             uint32_t indexCount = 0;
             float minDistanceFactor = 0.0f;
+            float maxScreenRadiusPixels = std::numeric_limits<float>::max();
         };
         std::vector<LodRange> lods;
     };
@@ -556,6 +557,15 @@ namespace PlutoGE::render
 
             return std::max<size_t>(m_config.submeshes[submeshIndex].lods.size(), 1);
         }
+        uint32_t GetSubmeshLodIndexCount(size_t submeshIndex, size_t lodIndex = 0) const
+        {
+            if (submeshIndex >= m_config.submeshes.size())
+            {
+                return static_cast<uint32_t>(m_config.data.indices.size());
+            }
+
+            return ResolveSubmeshLodRange(m_config.submeshes[submeshIndex], lodIndex).indexCount;
+        }
         size_t SelectSubmeshLod(size_t submeshIndex, float cameraDistance) const
         {
             if (submeshIndex >= m_config.submeshes.size())
@@ -570,6 +580,25 @@ namespace PlutoGE::render
             for (size_t lodIndex = 0; lodIndex < submesh.lods.size(); ++lodIndex)
             {
                 if (distanceFactor >= submesh.lods[lodIndex].minDistanceFactor)
+                {
+                    selectedLod = lodIndex;
+                }
+            }
+
+            return selectedLod;
+        }
+        size_t SelectSubmeshLodByProjectedRadius(size_t submeshIndex, float projectedRadiusPixels) const
+        {
+            if (submeshIndex >= m_config.submeshes.size())
+            {
+                return 0;
+            }
+
+            const auto &submesh = m_config.submeshes[submeshIndex];
+            size_t selectedLod = 0;
+            for (size_t lodIndex = 0; lodIndex < submesh.lods.size(); ++lodIndex)
+            {
+                if (projectedRadiusPixels <= submesh.lods[lodIndex].maxScreenRadiusPixels)
                 {
                     selectedLod = lodIndex;
                 }
@@ -697,6 +726,7 @@ namespace PlutoGE::render
                 .indexOffset = submesh.indexOffset,
                 .indexCount = submesh.indexCount,
                 .minDistanceFactor = 0.0f,
+                .maxScreenRadiusPixels = std::numeric_limits<float>::max(),
             };
         }
 

@@ -32,7 +32,7 @@ namespace PlutoGE::scene
         float softness = 1.5f;
         float minCasterTexelRadius = 0.0f;
         bool screenSpaceFilterEnabled = true;
-        float screenSpaceFilterRenderScale = 0.5f;
+        float screenSpaceFilterRenderScale = 1.0f;
         int screenSpaceFilterRadius = 4;
         float screenSpaceFilterDepthScale = 0.015f;
         float screenSpaceFilterMinDepthScale = 0.05f;

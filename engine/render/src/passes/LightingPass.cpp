@@ -682,12 +682,18 @@ namespace PlutoGE::render
                 uniform sampler2D uShadowMaskTexture;
                 uniform sampler2D uScenePositionTexture;
                 uniform sampler2D uSceneNormalTexture;
+                uniform mat4 uViewMatrix;
                 uniform vec2 uDirection;
                 uniform int uFilterRadius;
                 uniform float uDepthScale;
                 uniform float uMinDepthScale;
                 uniform float uNormalThreshold;
                 uniform float uNormalSoftness;
+
+                float ComputeViewDepth(vec3 worldPosition)
+                {
+                    return abs((uViewMatrix * vec4(worldPosition, 1.0)).z);
+                }
 
                 void main()
                 {
@@ -701,10 +707,11 @@ namespace PlutoGE::render
                     }
 
                     vec3 centerNormal = normalize(centerNormalRaw);
+                    float centerViewDepth = ComputeViewDepth(centerPosition);
                     vec2 texelSize = 1.0 / vec2(textureSize(uShadowMaskTexture, 0));
                     float shadow = centerShadow * 0.28;
                     float totalWeight = 0.28;
-                    float depthScale = max(length(centerPosition) * uDepthScale, uMinDepthScale);
+                    float depthScale = max(centerViewDepth * uDepthScale, uMinDepthScale);
                     float normalBlendEnd = min(uNormalThreshold + uNormalSoftness, 1.0);
 
                     for (int sampleIndex = 1; sampleIndex <= 4; ++sampleIndex)
@@ -719,9 +726,22 @@ namespace PlutoGE::render
                             vec2 sampleUv = UV + uDirection * texelSize * float(sampleIndex * side);
                             vec3 samplePosition = texture(uScenePositionTexture, sampleUv).rgb;
                             vec3 sampleNormalRaw = texture(uSceneNormalTexture, sampleUv).rgb;
-                            vec3 sampleNormal = dot(sampleNormalRaw, sampleNormalRaw) > 0.000001 ? normalize(sampleNormalRaw) : centerNormal;
+                            if (dot(sampleNormalRaw, sampleNormalRaw) <= 0.000001)
+                            {
+                                continue;
+                            }
+
+                            vec3 sampleNormal = normalize(sampleNormalRaw);
+                            float sampleViewDepth = ComputeViewDepth(samplePosition);
+                            float depthDelta = abs(sampleViewDepth - centerViewDepth);
+                            float edgeStop = 1.0 - smoothstep(depthScale, depthScale * 2.0, depthDelta);
+                            if (edgeStop <= 0.0001)
+                            {
+                                continue;
+                            }
+
                             float normalWeight = smoothstep(uNormalThreshold, normalBlendEnd, dot(centerNormal, sampleNormal));
-                            float depthWeight = exp(-length(samplePosition - centerPosition) / depthScale);
+                            float depthWeight = exp(-depthDelta / max(depthScale, 0.0001)) * edgeStop;
                             float weight = baseWeight * normalWeight * depthWeight;
                             shadow += texture(uShadowMaskTexture, sampleUv).r * weight;
                             totalWeight += weight;
@@ -1042,7 +1062,8 @@ namespace PlutoGE::render
             return nullptr;
         }
 
-        const float renderScale = glm::clamp(light.directionalShadowSettings.screenSpaceFilterRenderScale, 0.25f, 1.0f);
+        const float configuredRenderScale = glm::clamp(light.directionalShadowSettings.screenSpaceFilterRenderScale, 0.25f, 1.0f);
+        const float renderScale = filtered ? 1.0f : configuredRenderScale;
         const int maskWidth = std::max(1, static_cast<int>(std::lround(static_cast<float>(ctx.temporaryRenderTarget->GetWidth()) * renderScale)));
         const int maskHeight = std::max(1, static_cast<int>(std::lround(static_cast<float>(ctx.temporaryRenderTarget->GetHeight()) * renderScale)));
         EnsureShadowMaskTargets(maskWidth, maskHeight);
@@ -1050,6 +1071,14 @@ namespace PlutoGE::render
         {
             return nullptr;
         }
+
+        glBindTexture(GL_TEXTURE_2D, m_rawShadowMaskTarget->GetColorTextureID());
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glBindTexture(GL_TEXTURE_2D, m_blurredShadowMaskTarget->GetColorTextureID());
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glBindTexture(GL_TEXTURE_2D, 0);
 
         Graphics::BindRenderTarget(m_rawShadowMaskTarget.get());
         glViewport(0, 0, m_rawShadowMaskTarget->GetWidth(), m_rawShadowMaskTarget->GetHeight());
@@ -1086,6 +1115,7 @@ namespace PlutoGE::render
         glActiveTexture(GL_TEXTURE0 + kShadowMaskNormalTextureSlot);
         glBindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetNormalTextureID());
         m_shadowMaskBlurShader->SetUniform("uSceneNormalTexture", kShadowMaskNormalTextureSlot);
+        m_shadowMaskBlurShader->SetUniform("uViewMatrix", ctx.cameraData.view);
         m_shadowMaskBlurShader->SetUniform("uDirection", glm::vec2(1.0f, 0.0f));
         m_shadowMaskBlurShader->SetUniform("uFilterRadius", filterRadius);
         m_shadowMaskBlurShader->SetUniform("uDepthScale", glm::max(light.directionalShadowSettings.screenSpaceFilterDepthScale, 0.0f));
@@ -1103,6 +1133,7 @@ namespace PlutoGE::render
         glActiveTexture(GL_TEXTURE0 + kShadowMaskTextureSlot);
         glBindTexture(GL_TEXTURE_2D, m_blurredShadowMaskTarget->GetColorTextureID());
         m_shadowMaskBlurShader->SetUniform("uShadowMaskTexture", kShadowMaskTextureSlot);
+        m_shadowMaskBlurShader->SetUniform("uViewMatrix", ctx.cameraData.view);
         m_shadowMaskBlurShader->SetUniform("uDirection", glm::vec2(0.0f, 1.0f));
         m_shadowMaskBlurShader->SetUniform("uFilterRadius", filterRadius);
         m_shadowMaskBlurShader->SetUniform("uDepthScale", glm::max(light.directionalShadowSettings.screenSpaceFilterDepthScale, 0.0f));

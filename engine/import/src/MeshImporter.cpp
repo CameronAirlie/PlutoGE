@@ -23,11 +23,13 @@
 #include <cstring>
 #include <execution>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string_view>
+#include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -152,6 +154,567 @@ namespace PlutoGE::assetimport
         std::string NormalizePath(const std::string &filePath)
         {
             return std::filesystem::absolute(std::filesystem::path(filePath)).lexically_normal().string();
+        }
+
+        struct MeshSourceStamp
+        {
+            uint64_t fileSize = 0;
+            int64_t writeTime = 0;
+        };
+
+        constexpr uint32_t kCookedMeshCacheMagic = 0x434d4750; // PGMC
+        constexpr uint32_t kCookedMeshCacheVersion = 1;
+
+        bool IsMeshDiskCacheEnabled()
+        {
+            static const bool enabled = []()
+            {
+#ifdef _WIN32
+                char *value = nullptr;
+                size_t valueLength = 0;
+                const errno_t result = _dupenv_s(&value, &valueLength, "PLUTOGE_DISABLE_MESH_DISK_CACHE");
+                const bool isDisabled = result == 0 && value != nullptr && value[0] != '\0' && value[0] != '0';
+                std::free(value);
+                return !isDisabled;
+#else
+                const char *value = std::getenv("PLUTOGE_DISABLE_MESH_DISK_CACHE");
+                return value == nullptr || value[0] == '\0' || value[0] == '0';
+#endif
+            }();
+            return enabled;
+        }
+
+        std::optional<MeshSourceStamp> ReadMeshSourceStamp(const std::string &filePath)
+        {
+            std::error_code error;
+            const auto size = std::filesystem::file_size(filePath, error);
+            if (error)
+            {
+                return std::nullopt;
+            }
+
+            const auto writeTime = std::filesystem::last_write_time(filePath, error);
+            if (error)
+            {
+                return std::nullopt;
+            }
+
+            return MeshSourceStamp{
+                .fileSize = static_cast<uint64_t>(size),
+                .writeTime = static_cast<int64_t>(writeTime.time_since_epoch().count()),
+            };
+        }
+
+        uint64_t HashCacheKey(std::string_view value)
+        {
+            uint64_t hash = 1469598103934665603ull;
+            for (const char character : value)
+            {
+                hash ^= static_cast<unsigned char>(character);
+                hash *= 1099511628211ull;
+            }
+            return hash;
+        }
+
+        std::filesystem::path BuildCookedMeshCachePath(const std::string &filePath)
+        {
+            const std::string normalizedPath = NormalizePath(filePath);
+            const auto sourcePath = std::filesystem::path(normalizedPath);
+            const auto hash = HashCacheKey(normalizedPath);
+            return sourcePath.parent_path() / ".plutoge-cache" / "meshes" / (std::to_string(hash) + ".pmesh");
+        }
+
+        template <typename T>
+        void WritePod(std::ostream &output, const T &value)
+        {
+            static_assert(std::is_trivially_copyable_v<T>);
+            output.write(reinterpret_cast<const char *>(&value), sizeof(T));
+            if (!output.good())
+            {
+                throw std::runtime_error("Failed to write cooked mesh cache.");
+            }
+        }
+
+        template <typename T>
+        T ReadPod(std::istream &input)
+        {
+            static_assert(std::is_trivially_copyable_v<T>);
+            T value{};
+            input.read(reinterpret_cast<char *>(&value), sizeof(T));
+            if (!input.good())
+            {
+                throw std::runtime_error("Failed to read cooked mesh cache.");
+            }
+            return value;
+        }
+
+        void WriteBool(std::ostream &output, bool value)
+        {
+            WritePod<uint8_t>(output, value ? 1u : 0u);
+        }
+
+        bool ReadBool(std::istream &input)
+        {
+            return ReadPod<uint8_t>(input) != 0;
+        }
+
+        void WriteString(std::ostream &output, const std::string &value)
+        {
+            const uint64_t size = static_cast<uint64_t>(value.size());
+            WritePod(output, size);
+            if (size > 0)
+            {
+                output.write(value.data(), static_cast<std::streamsize>(size));
+                if (!output.good())
+                {
+                    throw std::runtime_error("Failed to write cooked mesh cache string.");
+                }
+            }
+        }
+
+        std::string ReadString(std::istream &input)
+        {
+            const uint64_t size = ReadPod<uint64_t>(input);
+            std::string value(size, '\0');
+            if (size > 0)
+            {
+                input.read(value.data(), static_cast<std::streamsize>(size));
+                if (!input.good())
+                {
+                    throw std::runtime_error("Failed to read cooked mesh cache string.");
+                }
+            }
+            return value;
+        }
+
+        template <typename T>
+        void WritePodVector(std::ostream &output, const std::vector<T> &values)
+        {
+            static_assert(std::is_trivially_copyable_v<T>);
+            const uint64_t count = static_cast<uint64_t>(values.size());
+            WritePod(output, count);
+            if (!values.empty())
+            {
+                output.write(reinterpret_cast<const char *>(values.data()), static_cast<std::streamsize>(values.size() * sizeof(T)));
+                if (!output.good())
+                {
+                    throw std::runtime_error("Failed to write cooked mesh cache vector.");
+                }
+            }
+        }
+
+        template <typename T>
+        std::vector<T> ReadPodVector(std::istream &input)
+        {
+            static_assert(std::is_trivially_copyable_v<T>);
+            const uint64_t count = ReadPod<uint64_t>(input);
+            std::vector<T> values(static_cast<size_t>(count));
+            if (!values.empty())
+            {
+                input.read(reinterpret_cast<char *>(values.data()), static_cast<std::streamsize>(values.size() * sizeof(T)));
+                if (!input.good())
+                {
+                    throw std::runtime_error("Failed to read cooked mesh cache vector.");
+                }
+            }
+            return values;
+        }
+
+        void WriteVec4(std::ostream &output, const glm::vec4 &value)
+        {
+            WritePod(output, value.x);
+            WritePod(output, value.y);
+            WritePod(output, value.z);
+            WritePod(output, value.w);
+        }
+
+        glm::vec4 ReadVec4(std::istream &input)
+        {
+            return glm::vec4(
+                ReadPod<float>(input),
+                ReadPod<float>(input),
+                ReadPod<float>(input),
+                ReadPod<float>(input));
+        }
+
+        void WriteMat4(std::ostream &output, const glm::mat4 &value)
+        {
+            for (int column = 0; column < 4; ++column)
+            {
+                for (int row = 0; row < 4; ++row)
+                {
+                    WritePod(output, value[column][row]);
+                }
+            }
+        }
+
+        glm::mat4 ReadMat4(std::istream &input)
+        {
+            glm::mat4 value{1.0f};
+            for (int column = 0; column < 4; ++column)
+            {
+                for (int row = 0; row < 4; ++row)
+                {
+                    value[column][row] = ReadPod<float>(input);
+                }
+            }
+            return value;
+        }
+
+        void WriteBounds(std::ostream &output, const render::MeshBounds &bounds)
+        {
+            WritePod(output, bounds.center.x);
+            WritePod(output, bounds.center.y);
+            WritePod(output, bounds.center.z);
+            WritePod(output, bounds.radius);
+        }
+
+        render::MeshBounds ReadBounds(std::istream &input)
+        {
+            render::MeshBounds bounds;
+            bounds.center.x = ReadPod<float>(input);
+            bounds.center.y = ReadPod<float>(input);
+            bounds.center.z = ReadPod<float>(input);
+            bounds.radius = ReadPod<float>(input);
+            return bounds;
+        }
+
+        void WriteSubmesh(std::ostream &output, const render::Submesh &submesh)
+        {
+            WritePod(output, submesh.indexOffset);
+            WritePod(output, submesh.indexCount);
+            WritePod(output, submesh.materialIndex);
+            WritePod(output, submesh.animatedNodeIndex);
+            WriteBounds(output, submesh.bounds);
+            WriteString(output, submesh.name);
+            WritePodVector(output, submesh.lods);
+        }
+
+        render::Submesh ReadSubmesh(std::istream &input)
+        {
+            render::Submesh submesh;
+            submesh.indexOffset = ReadPod<uint32_t>(input);
+            submesh.indexCount = ReadPod<uint32_t>(input);
+            submesh.materialIndex = ReadPod<uint32_t>(input);
+            submesh.animatedNodeIndex = ReadPod<int>(input);
+            submesh.bounds = ReadBounds(input);
+            submesh.name = ReadString(input);
+            submesh.lods = ReadPodVector<render::Submesh::LodRange>(input);
+            return submesh;
+        }
+
+        void WriteImportedMaterial(std::ostream &output, const ImportedMaterialData &material)
+        {
+            WriteVec4(output, material.color);
+            WritePod(output, static_cast<uint32_t>(material.alphaMode));
+            WritePod(output, material.alphaCutoff);
+            WriteBool(output, material.castsShadow);
+            WritePod(output, material.metallic);
+            WritePod(output, material.roughness);
+            WritePod(output, material.albedoTextureIndex);
+            WritePod(output, material.normalTextureIndex);
+            WritePod(output, material.metallicRoughnessTextureIndex);
+            WriteBool(output, material.metallicRoughnessTextureHasMetallicChannel);
+            WriteBool(output, material.flipNormalY);
+        }
+
+        ImportedMaterialData ReadImportedMaterial(std::istream &input)
+        {
+            ImportedMaterialData material;
+            material.color = ReadVec4(input);
+            material.alphaMode = static_cast<render::AlphaMode>(ReadPod<uint32_t>(input));
+            material.alphaCutoff = ReadPod<float>(input);
+            material.castsShadow = ReadBool(input);
+            material.metallic = ReadPod<float>(input);
+            material.roughness = ReadPod<float>(input);
+            material.albedoTextureIndex = ReadPod<int>(input);
+            material.normalTextureIndex = ReadPod<int>(input);
+            material.metallicRoughnessTextureIndex = ReadPod<int>(input);
+            material.metallicRoughnessTextureHasMetallicChannel = ReadBool(input);
+            material.flipNormalY = ReadBool(input);
+            return material;
+        }
+
+        void WriteImportedTexture(std::ostream &output, const ImportedTextureData &texture)
+        {
+            WriteString(output, texture.cacheKey);
+            WriteString(output, texture.sourcePath);
+            WritePod(output, texture.width);
+            WritePod(output, texture.height);
+            WritePod(output, texture.channels);
+            WritePodVector(output, texture.pixels);
+        }
+
+        ImportedTextureData ReadImportedTexture(std::istream &input)
+        {
+            ImportedTextureData texture;
+            texture.cacheKey = ReadString(input);
+            texture.sourcePath = ReadString(input);
+            texture.width = ReadPod<int>(input);
+            texture.height = ReadPod<int>(input);
+            texture.channels = ReadPod<int>(input);
+            texture.pixels = ReadPodVector<unsigned char>(input);
+            return texture;
+        }
+
+        void WriteSkeleton(std::ostream &output, const render::Skeleton &skeleton)
+        {
+            WritePod<uint64_t>(output, static_cast<uint64_t>(skeleton.joints.size()));
+            for (const auto &joint : skeleton.joints)
+            {
+                WriteString(output, joint.name);
+                WritePod(output, joint.nodeIndex);
+                WritePod(output, joint.parentJointIndex);
+                WriteMat4(output, joint.localBindTransform);
+                WriteMat4(output, joint.inverseBindMatrix);
+                WriteMat4(output, joint.inverseRootMatrix);
+            }
+        }
+
+        render::Skeleton ReadSkeleton(std::istream &input)
+        {
+            render::Skeleton skeleton;
+            const uint64_t jointCount = ReadPod<uint64_t>(input);
+            skeleton.joints.reserve(static_cast<size_t>(jointCount));
+            for (uint64_t index = 0; index < jointCount; ++index)
+            {
+                render::SkeletonJoint joint;
+                joint.name = ReadString(input);
+                joint.nodeIndex = ReadPod<int>(input);
+                joint.parentJointIndex = ReadPod<int>(input);
+                joint.localBindTransform = ReadMat4(input);
+                joint.inverseBindMatrix = ReadMat4(input);
+                joint.inverseRootMatrix = ReadMat4(input);
+                skeleton.joints.push_back(std::move(joint));
+            }
+            return skeleton;
+        }
+
+        void WriteAnimationNode(std::ostream &output, const render::AnimationNode &node)
+        {
+            WritePod(output, node.parentNodeIndex);
+            WriteMat4(output, node.localBindTransform);
+        }
+
+        render::AnimationNode ReadAnimationNode(std::istream &input)
+        {
+            render::AnimationNode node;
+            node.parentNodeIndex = ReadPod<int>(input);
+            node.localBindTransform = ReadMat4(input);
+            return node;
+        }
+
+        void WriteAnimationClip(std::ostream &output, const render::AnimationClip &clip)
+        {
+            WriteString(output, clip.name);
+            WritePod(output, clip.duration);
+            WritePod(output, clip.channelCount);
+            WritePod<uint64_t>(output, static_cast<uint64_t>(clip.channels.size()));
+            for (const auto &channel : clip.channels)
+            {
+                WritePod(output, channel.jointIndex);
+                WritePod(output, channel.nodeIndex);
+                WritePod(output, static_cast<uint32_t>(channel.path));
+                WritePod(output, static_cast<uint32_t>(channel.interpolation));
+                WritePodVector(output, channel.times);
+                WritePodVector(output, channel.values);
+            }
+        }
+
+        render::AnimationClip ReadAnimationClip(std::istream &input)
+        {
+            render::AnimationClip clip;
+            clip.name = ReadString(input);
+            clip.duration = ReadPod<float>(input);
+            clip.channelCount = ReadPod<int>(input);
+            const uint64_t channelCount = ReadPod<uint64_t>(input);
+            clip.channels.reserve(static_cast<size_t>(channelCount));
+            for (uint64_t index = 0; index < channelCount; ++index)
+            {
+                render::AnimationChannel channel;
+                channel.jointIndex = ReadPod<int>(input);
+                channel.nodeIndex = ReadPod<int>(input);
+                channel.path = static_cast<render::AnimationTargetPath>(ReadPod<uint32_t>(input));
+                channel.interpolation = static_cast<render::AnimationInterpolation>(ReadPod<uint32_t>(input));
+                channel.times = ReadPodVector<float>(input);
+                channel.values = ReadPodVector<glm::vec4>(input);
+                clip.channels.push_back(std::move(channel));
+            }
+            return clip;
+        }
+
+        void WriteCookedMeshAsset(std::ostream &output, const ImportedMeshSourceAsset &asset)
+        {
+            WritePodVector(output, asset.meshData.vertices);
+            WritePodVector(output, asset.meshData.indices);
+
+            WritePod<uint64_t>(output, static_cast<uint64_t>(asset.submeshes.size()));
+            for (const auto &submesh : asset.submeshes)
+            {
+                WriteSubmesh(output, submesh);
+            }
+
+            WritePod<uint64_t>(output, static_cast<uint64_t>(asset.materials.size()));
+            for (const auto &material : asset.materials)
+            {
+                WriteImportedMaterial(output, material);
+            }
+
+            WritePod<uint64_t>(output, static_cast<uint64_t>(asset.textures.size()));
+            for (const auto &texture : asset.textures)
+            {
+                WriteImportedTexture(output, texture);
+            }
+
+            WriteSkeleton(output, asset.skeleton);
+
+            WritePod<uint64_t>(output, static_cast<uint64_t>(asset.animationNodes.size()));
+            for (const auto &node : asset.animationNodes)
+            {
+                WriteAnimationNode(output, node);
+            }
+
+            WritePod<uint64_t>(output, static_cast<uint64_t>(asset.animations.size()));
+            for (const auto &clip : asset.animations)
+            {
+                WriteAnimationClip(output, clip);
+            }
+
+            WriteBool(output, asset.hasLightmapUvs);
+            WriteBool(output, asset.requiresMissingNormalFallback);
+        }
+
+        ImportedMeshSourceAsset ReadCookedMeshAsset(std::istream &input)
+        {
+            ImportedMeshSourceAsset asset;
+            asset.meshData.vertices = ReadPodVector<render::MeshVertexData>(input);
+            asset.meshData.indices = ReadPodVector<unsigned int>(input);
+
+            const uint64_t submeshCount = ReadPod<uint64_t>(input);
+            asset.submeshes.reserve(static_cast<size_t>(submeshCount));
+            for (uint64_t index = 0; index < submeshCount; ++index)
+            {
+                asset.submeshes.push_back(ReadSubmesh(input));
+            }
+
+            const uint64_t materialCount = ReadPod<uint64_t>(input);
+            asset.materials.reserve(static_cast<size_t>(materialCount));
+            for (uint64_t index = 0; index < materialCount; ++index)
+            {
+                asset.materials.push_back(ReadImportedMaterial(input));
+            }
+
+            const uint64_t textureCount = ReadPod<uint64_t>(input);
+            asset.textures.reserve(static_cast<size_t>(textureCount));
+            for (uint64_t index = 0; index < textureCount; ++index)
+            {
+                asset.textures.push_back(ReadImportedTexture(input));
+            }
+
+            asset.skeleton = ReadSkeleton(input);
+
+            const uint64_t animationNodeCount = ReadPod<uint64_t>(input);
+            asset.animationNodes.reserve(static_cast<size_t>(animationNodeCount));
+            for (uint64_t index = 0; index < animationNodeCount; ++index)
+            {
+                asset.animationNodes.push_back(ReadAnimationNode(input));
+            }
+
+            const uint64_t animationCount = ReadPod<uint64_t>(input);
+            asset.animations.reserve(static_cast<size_t>(animationCount));
+            for (uint64_t index = 0; index < animationCount; ++index)
+            {
+                asset.animations.push_back(ReadAnimationClip(input));
+            }
+
+            asset.hasLightmapUvs = ReadBool(input);
+            asset.requiresMissingNormalFallback = ReadBool(input);
+            return asset;
+        }
+
+        std::optional<ImportedMeshSourceAsset> TryLoadCookedMeshAsset(const std::string &filePath)
+        {
+            if (!IsMeshDiskCacheEnabled())
+            {
+                return std::nullopt;
+            }
+
+            const auto sourceStamp = ReadMeshSourceStamp(filePath);
+            if (!sourceStamp)
+            {
+                return std::nullopt;
+            }
+
+            try
+            {
+                std::ifstream input(BuildCookedMeshCachePath(filePath), std::ios::binary);
+                if (!input.is_open())
+                {
+                    return std::nullopt;
+                }
+
+                if (ReadPod<uint32_t>(input) != kCookedMeshCacheMagic ||
+                    ReadPod<uint32_t>(input) != kCookedMeshCacheVersion)
+                {
+                    return std::nullopt;
+                }
+
+                const std::string cachedSourcePath = ReadString(input);
+                const auto cachedStamp = MeshSourceStamp{
+                    .fileSize = ReadPod<uint64_t>(input),
+                    .writeTime = ReadPod<int64_t>(input),
+                };
+
+                if (cachedSourcePath != NormalizePath(filePath) ||
+                    cachedStamp.fileSize != sourceStamp->fileSize ||
+                    cachedStamp.writeTime != sourceStamp->writeTime)
+                {
+                    return std::nullopt;
+                }
+
+                return ReadCookedMeshAsset(input);
+            }
+            catch (const std::exception &exception)
+            {
+                std::cerr << "Ignoring cooked mesh cache for '" << filePath << "': " << exception.what() << std::endl;
+                return std::nullopt;
+            }
+        }
+
+        void StoreCookedMeshAsset(const std::string &filePath, const ImportedMeshSourceAsset &asset)
+        {
+            if (!IsMeshDiskCacheEnabled())
+            {
+                return;
+            }
+
+            const auto sourceStamp = ReadMeshSourceStamp(filePath);
+            if (!sourceStamp)
+            {
+                return;
+            }
+
+            try
+            {
+                const auto cachePath = BuildCookedMeshCachePath(filePath);
+                std::filesystem::create_directories(cachePath.parent_path());
+                std::ofstream output(cachePath, std::ios::binary | std::ios::trunc);
+                if (!output.is_open())
+                {
+                    return;
+                }
+
+                WritePod(output, kCookedMeshCacheMagic);
+                WritePod(output, kCookedMeshCacheVersion);
+                WriteString(output, NormalizePath(filePath));
+                WritePod(output, sourceStamp->fileSize);
+                WritePod(output, sourceStamp->writeTime);
+                WriteCookedMeshAsset(output, asset);
+            }
+            catch (const std::exception &exception)
+            {
+                std::cerr << "Failed to write cooked mesh cache for '" << filePath << "': " << exception.what() << std::endl;
+            }
         }
 
         std::string ToLower(std::string value)
@@ -2575,10 +3138,17 @@ namespace PlutoGE::assetimport
                 throw std::runtime_error("Unsupported mesh format. Use glTF 2.0 (.glb or .gltf) or FBX (.fbx).");
             }
 
+            if (auto cookedAsset = TryLoadCookedMeshAsset(filePath))
+            {
+                return std::move(*cookedAsset);
+            }
+
             const auto extension = ToLower(std::filesystem::path(filePath).extension().string());
             if (extension == ".fbx")
             {
-                return ParseAssimpMeshAsset(filePath);
+                auto asset = ParseAssimpMeshAsset(filePath);
+                StoreCookedMeshAsset(filePath, asset);
+                return asset;
             }
 
             MeshImportProfile profile;
@@ -2722,6 +3292,7 @@ namespace PlutoGE::assetimport
             OptimizeMeshData(parsedMeshAsset.meshData, parsedMeshAsset.submeshes, &profile);
             GenerateSubmeshLods(parsedMeshAsset.meshData, parsedMeshAsset.submeshes);
             profile.optimizeMs = ElapsedMilliseconds(optimizeStart);
+            StoreCookedMeshAsset(filePath, parsedMeshAsset);
             return parsedMeshAsset;
         }
     }

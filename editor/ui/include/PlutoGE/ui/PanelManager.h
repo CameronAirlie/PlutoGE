@@ -48,6 +48,6 @@ namespace PlutoGE::ui
         std::vector<Panel *> m_panels;
         platform::Window *m_window = nullptr;
         PanelManagerTimingStats m_timingStats;
-        float m_editorFontSize = 15.0f;
+        float m_editorFontSize = 12.0f;
     };
 }

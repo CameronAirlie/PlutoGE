@@ -163,23 +163,51 @@ namespace PlutoGE::assetimport
         };
 
         constexpr uint32_t kCookedMeshCacheMagic = 0x434d4750; // PGMC
-        constexpr uint32_t kCookedMeshCacheVersion = 1;
+        constexpr uint32_t kCookedMeshCacheVersion = 2;
+
+        bool ReadBooleanEnvironmentFlag(const char *name, bool defaultValue)
+        {
+#ifdef _WIN32
+            char *value = nullptr;
+            size_t valueLength = 0;
+            const errno_t result = _dupenv_s(&value, &valueLength, name);
+            const bool hasValue = result == 0 && value != nullptr && value[0] != '\0';
+            const bool isEnabled = hasValue ? value[0] != '0' : defaultValue;
+            std::free(value);
+            return isEnabled;
+#else
+            const char *value = std::getenv(name);
+            return value != nullptr && value[0] != '\0' ? value[0] != '0' : defaultValue;
+#endif
+        }
+
+        struct MeshCookOptions
+        {
+            bool generateLods = false;
+            bool optimizeOverdraw = false;
+
+            uint32_t ToFlags() const
+            {
+                uint32_t flags = 0;
+                flags |= generateLods ? 1u : 0u;
+                flags |= optimizeOverdraw ? 2u : 0u;
+                return flags;
+            }
+        };
+
+        MeshCookOptions ResolveMeshCookOptions()
+        {
+            return MeshCookOptions{
+                .generateLods = ReadBooleanEnvironmentFlag("PLUTOGE_GENERATE_MESH_LODS", true),
+                .optimizeOverdraw = ReadBooleanEnvironmentFlag("PLUTOGE_OPTIMIZE_MESH_OVERDRAW", true),
+            };
+        }
 
         bool IsMeshDiskCacheEnabled()
         {
             static const bool enabled = []()
             {
-#ifdef _WIN32
-                char *value = nullptr;
-                size_t valueLength = 0;
-                const errno_t result = _dupenv_s(&value, &valueLength, "PLUTOGE_DISABLE_MESH_DISK_CACHE");
-                const bool isDisabled = result == 0 && value != nullptr && value[0] != '\0' && value[0] != '0';
-                std::free(value);
-                return !isDisabled;
-#else
-                const char *value = std::getenv("PLUTOGE_DISABLE_MESH_DISK_CACHE");
-                return value == nullptr || value[0] == '\0' || value[0] == '0';
-#endif
+                return !ReadBooleanEnvironmentFlag("PLUTOGE_DISABLE_MESH_DISK_CACHE", false);
             }();
             return enabled;
         }
@@ -632,7 +660,7 @@ namespace PlutoGE::assetimport
             return asset;
         }
 
-        std::optional<ImportedMeshSourceAsset> TryLoadCookedMeshAsset(const std::string &filePath)
+        std::optional<ImportedMeshSourceAsset> TryLoadCookedMeshAsset(const std::string &filePath, const MeshCookOptions &cookOptions)
         {
             if (!IsMeshDiskCacheEnabled())
             {
@@ -664,10 +692,12 @@ namespace PlutoGE::assetimport
                     .fileSize = ReadPod<uint64_t>(input),
                     .writeTime = ReadPod<int64_t>(input),
                 };
+                const uint32_t cachedCookFlags = ReadPod<uint32_t>(input);
 
                 if (cachedSourcePath != NormalizePath(filePath) ||
                     cachedStamp.fileSize != sourceStamp->fileSize ||
-                    cachedStamp.writeTime != sourceStamp->writeTime)
+                    cachedStamp.writeTime != sourceStamp->writeTime ||
+                    cachedCookFlags != cookOptions.ToFlags())
                 {
                     return std::nullopt;
                 }
@@ -681,7 +711,7 @@ namespace PlutoGE::assetimport
             }
         }
 
-        void StoreCookedMeshAsset(const std::string &filePath, const ImportedMeshSourceAsset &asset)
+        void StoreCookedMeshAsset(const std::string &filePath, const MeshCookOptions &cookOptions, const ImportedMeshSourceAsset &asset)
         {
             if (!IsMeshDiskCacheEnabled())
             {
@@ -709,6 +739,7 @@ namespace PlutoGE::assetimport
                 WriteString(output, NormalizePath(filePath));
                 WritePod(output, sourceStamp->fileSize);
                 WritePod(output, sourceStamp->writeTime);
+                WritePod(output, cookOptions.ToFlags());
                 WriteCookedMeshAsset(output, asset);
             }
             catch (const std::exception &exception)
@@ -1239,7 +1270,7 @@ namespace PlutoGE::assetimport
             }
         }
 
-        void OptimizeMeshData(render::MeshData &meshData, const std::vector<render::Submesh> &submeshes, MeshImportProfile *profile = nullptr)
+        void OptimizeMeshData(render::MeshData &meshData, const std::vector<render::Submesh> &submeshes, bool optimizeOverdraw, MeshImportProfile *profile = nullptr)
         {
             if (meshData.vertices.empty() || meshData.indices.empty())
             {
@@ -1318,7 +1349,7 @@ namespace PlutoGE::assetimport
                     profile->optimizeVertexCacheMs += vertexCacheMs;
                 }
 
-                if (submesh.indexCount <= kLargeMeshOverdrawThreshold)
+                if (optimizeOverdraw && submesh.indexCount <= kLargeMeshOverdrawThreshold)
                 {
                     const auto overdrawStart = ImportClock::now();
                     meshopt_optimizeOverdraw(
@@ -1397,12 +1428,40 @@ namespace PlutoGE::assetimport
             return (indexCount / 3) * 3;
         }
 
-        void GenerateSubmeshLods(render::MeshData &meshData, std::vector<render::Submesh> &submeshes)
+        void GenerateSubmeshLods(render::MeshData &meshData, std::vector<render::Submesh> &submeshes, bool generateSimplifiedLods)
         {
             if (meshData.vertices.empty() || meshData.indices.empty())
             {
                 return;
             }
+
+            struct LodTarget
+            {
+                float targetRatio = 1.0f;
+                float minDistanceFactor = 0.0f;
+                float maxScreenRadiusPixels = std::numeric_limits<float>::max();
+                float error = 0.02f;
+            };
+
+            struct PendingLodRange
+            {
+                uint32_t localIndexOffset = 0;
+                uint32_t indexCount = 0;
+                float minDistanceFactor = 0.0f;
+                float maxScreenRadiusPixels = std::numeric_limits<float>::max();
+            };
+
+            struct PendingSubmeshLods
+            {
+                std::vector<unsigned int> indices;
+                std::vector<PendingLodRange> lods;
+            };
+
+            constexpr std::array<LodTarget, 3> kLodTargets{{
+                {.targetRatio = 0.50f, .minDistanceFactor = 7.0f, .maxScreenRadiusPixels = 220.0f, .error = 0.015f},
+                {.targetRatio = 0.25f, .minDistanceFactor = 14.0f, .maxScreenRadiusPixels = 120.0f, .error = 0.02f},
+                {.targetRatio = 0.10f, .minDistanceFactor = 28.0f, .maxScreenRadiusPixels = 60.0f, .error = 0.04f},
+            }};
 
             for (auto &submesh : submeshes)
             {
@@ -1413,28 +1472,37 @@ namespace PlutoGE::assetimport
                     .minDistanceFactor = 0.0f,
                     .maxScreenRadiusPixels = std::numeric_limits<float>::max(),
                 });
+            }
 
-                if (submesh.indexCount < kLodTriangleThreshold * 3 ||
-                    submesh.indexOffset + submesh.indexCount > meshData.indices.size())
+            if (!generateSimplifiedLods)
+            {
+                return;
+            }
+
+            std::vector<size_t> eligibleSubmeshIndices;
+            eligibleSubmeshIndices.reserve(submeshes.size());
+            for (size_t submeshIndex = 0; submeshIndex < submeshes.size(); ++submeshIndex)
+            {
+                const auto &submesh = submeshes[submeshIndex];
+                if (submesh.indexCount >= kLodTriangleThreshold * 3 &&
+                    submesh.indexOffset + submesh.indexCount <= meshData.indices.size())
                 {
-                    continue;
+                    eligibleSubmeshIndices.push_back(submeshIndex);
                 }
+            }
 
-                struct LodTarget
-                {
-                    float targetRatio = 1.0f;
-                    float minDistanceFactor = 0.0f;
-                    float maxScreenRadiusPixels = std::numeric_limits<float>::max();
-                    float error = 0.02f;
-                };
+            if (eligibleSubmeshIndices.empty())
+            {
+                return;
+            }
 
-                const std::array<LodTarget, 3> lodTargets{{
-                    {.targetRatio = 0.50f, .minDistanceFactor = 7.0f, .maxScreenRadiusPixels = 220.0f, .error = 0.015f},
-                    {.targetRatio = 0.25f, .minDistanceFactor = 14.0f, .maxScreenRadiusPixels = 120.0f, .error = 0.02f},
-                    {.targetRatio = 0.10f, .minDistanceFactor = 28.0f, .maxScreenRadiusPixels = 60.0f, .error = 0.04f},
-                }};
-
-                for (const auto &lodTarget : lodTargets)
+            std::vector<PendingSubmeshLods> pendingLods(submeshes.size());
+            const auto generateSubmeshLods = [&](size_t submeshIndex)
+            {
+                const auto &submesh = submeshes[submeshIndex];
+                auto &pending = pendingLods[submeshIndex];
+                uint32_t previousIndexCount = submesh.indexCount;
+                for (const auto &lodTarget : kLodTargets)
                 {
                     const uint32_t targetIndexCount = AlignIndexCountToTriangles(static_cast<uint32_t>(static_cast<float>(submesh.indexCount) * lodTarget.targetRatio));
                     if (targetIndexCount < 3 || targetIndexCount >= submesh.indexCount)
@@ -1454,18 +1522,50 @@ namespace PlutoGE::assetimport
                         lodTarget.error);
 
                     const uint32_t alignedSimplifiedIndexCount = AlignIndexCountToTriangles(static_cast<uint32_t>(simplifiedIndexCount));
-                    if (alignedSimplifiedIndexCount < 3 || alignedSimplifiedIndexCount >= submesh.lods.back().indexCount)
+                    if (alignedSimplifiedIndexCount < 3 || alignedSimplifiedIndexCount >= previousIndexCount)
                     {
                         continue;
                     }
 
-                    const uint32_t lodIndexOffset = static_cast<uint32_t>(meshData.indices.size());
-                    meshData.indices.insert(meshData.indices.end(), simplified.begin(), simplified.begin() + alignedSimplifiedIndexCount);
-                    submesh.lods.push_back(render::Submesh::LodRange{
-                        .indexOffset = lodIndexOffset,
+                    const uint32_t localIndexOffset = static_cast<uint32_t>(pending.indices.size());
+                    pending.indices.insert(pending.indices.end(), simplified.begin(), simplified.begin() + alignedSimplifiedIndexCount);
+                    pending.lods.push_back(PendingLodRange{
+                        .localIndexOffset = localIndexOffset,
                         .indexCount = alignedSimplifiedIndexCount,
                         .minDistanceFactor = lodTarget.minDistanceFactor,
                         .maxScreenRadiusPixels = lodTarget.maxScreenRadiusPixels,
+                    });
+                    previousIndexCount = alignedSimplifiedIndexCount;
+                }
+            };
+
+            if (eligibleSubmeshIndices.size() > 1)
+            {
+                std::for_each(std::execution::par, eligibleSubmeshIndices.begin(), eligibleSubmeshIndices.end(), generateSubmeshLods);
+            }
+            else
+            {
+                generateSubmeshLods(eligibleSubmeshIndices.front());
+            }
+
+            for (size_t submeshIndex = 0; submeshIndex < submeshes.size(); ++submeshIndex)
+            {
+                auto &pending = pendingLods[submeshIndex];
+                if (pending.indices.empty())
+                {
+                    continue;
+                }
+
+                const uint32_t globalIndexOffset = static_cast<uint32_t>(meshData.indices.size());
+                meshData.indices.insert(meshData.indices.end(), pending.indices.begin(), pending.indices.end());
+                auto &submesh = submeshes[submeshIndex];
+                for (const auto &pendingLod : pending.lods)
+                {
+                    submesh.lods.push_back(render::Submesh::LodRange{
+                        .indexOffset = globalIndexOffset + pendingLod.localIndexOffset,
+                        .indexCount = pendingLod.indexCount,
+                        .minDistanceFactor = pendingLod.minDistanceFactor,
+                        .maxScreenRadiusPixels = pendingLod.maxScreenRadiusPixels,
                     });
                 }
             }
@@ -3069,7 +3169,7 @@ namespace PlutoGE::assetimport
             return clips;
         }
 
-        ImportedMeshSourceAsset ParseAssimpMeshAsset(const std::string &filePath)
+        ImportedMeshSourceAsset ParseAssimpMeshAsset(const std::string &filePath, const MeshCookOptions &cookOptions)
         {
             Assimp::Importer importer;
             const unsigned int flags =
@@ -3126,8 +3226,8 @@ namespace PlutoGE::assetimport
             FinalizeMissingNormals(asset.meshData, asset.requiresMissingNormalFallback);
             MergeAdjacentSubmeshes(asset.submeshes);
             CompactSubmeshesByMaterialAndNode(asset.meshData, asset.submeshes);
-            OptimizeMeshData(asset.meshData, asset.submeshes);
-            GenerateSubmeshLods(asset.meshData, asset.submeshes);
+            OptimizeMeshData(asset.meshData, asset.submeshes, cookOptions.optimizeOverdraw);
+            GenerateSubmeshLods(asset.meshData, asset.submeshes, cookOptions.generateLods);
             return asset;
         }
 
@@ -3138,7 +3238,8 @@ namespace PlutoGE::assetimport
                 throw std::runtime_error("Unsupported mesh format. Use glTF 2.0 (.glb or .gltf) or FBX (.fbx).");
             }
 
-            if (auto cookedAsset = TryLoadCookedMeshAsset(filePath))
+            const MeshCookOptions cookOptions = ResolveMeshCookOptions();
+            if (auto cookedAsset = TryLoadCookedMeshAsset(filePath, cookOptions))
             {
                 return std::move(*cookedAsset);
             }
@@ -3146,8 +3247,8 @@ namespace PlutoGE::assetimport
             const auto extension = ToLower(std::filesystem::path(filePath).extension().string());
             if (extension == ".fbx")
             {
-                auto asset = ParseAssimpMeshAsset(filePath);
-                StoreCookedMeshAsset(filePath, asset);
+                auto asset = ParseAssimpMeshAsset(filePath, cookOptions);
+                StoreCookedMeshAsset(filePath, cookOptions, asset);
                 return asset;
             }
 
@@ -3289,10 +3390,10 @@ namespace PlutoGE::assetimport
             profile.submeshMergeMs = ElapsedMilliseconds(mergeSubmeshesStart);
 
             const auto optimizeStart = ImportClock::now();
-            OptimizeMeshData(parsedMeshAsset.meshData, parsedMeshAsset.submeshes, &profile);
-            GenerateSubmeshLods(parsedMeshAsset.meshData, parsedMeshAsset.submeshes);
+            OptimizeMeshData(parsedMeshAsset.meshData, parsedMeshAsset.submeshes, cookOptions.optimizeOverdraw, &profile);
+            GenerateSubmeshLods(parsedMeshAsset.meshData, parsedMeshAsset.submeshes, cookOptions.generateLods);
             profile.optimizeMs = ElapsedMilliseconds(optimizeStart);
-            StoreCookedMeshAsset(filePath, parsedMeshAsset);
+            StoreCookedMeshAsset(filePath, cookOptions, parsedMeshAsset);
             return parsedMeshAsset;
         }
     }

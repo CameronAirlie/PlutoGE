@@ -1954,12 +1954,51 @@ namespace PlutoGE::ui
                 }
 
                 const auto materialAssetOptions = CollectAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::Material);
+                const int isolatedSubmeshIndex = meshComponent->GetSubmeshIndex();
+                const bool editingIsolatedSubmesh = isolatedSubmeshIndex >= 0 && meshComponent->GetMesh() &&
+                                                   static_cast<size_t>(isolatedSubmeshIndex) < meshComponent->GetMesh()->GetSubmeshCount();
+                if (meshComponent->GetMesh() && meshComponent->GetMesh()->GetSubmeshCount() > 1)
+                {
+                    if (editingIsolatedSubmesh)
+                    {
+                        const auto &submesh = meshComponent->GetMesh()->GetSubmesh(static_cast<size_t>(isolatedSubmeshIndex));
+                        ImGui::TextDisabled("Editing submesh %d, material slot %u.", isolatedSubmeshIndex, submesh.materialIndex);
+                    }
+                    else
+                    {
+                        if (ImGui::Button("Create Selectable Submesh Entities"))
+                        {
+                            if (meshComponent->CreateSubmeshChildEntities())
+                            {
+                                editorShell.MarkSceneDirty();
+                            }
+                        }
+                        ImGui::SameLine();
+                        ImGui::TextDisabled("Use this to pick visible model parts in the viewport/hierarchy.");
+                    }
+                }
+
                 ImGui::Separator();
                 if (ImGui::CollapsingHeader("Material Slots", ImGuiTreeNodeFlags_DefaultOpen))
                 {
-                    const size_t materialSlotCount = GetMaterialSlotCount(*meshComponent);
-                    for (size_t materialSlotIndex = 0; materialSlotIndex < materialSlotCount; ++materialSlotIndex)
+                    std::vector<size_t> materialSlotIndices;
+                    if (editingIsolatedSubmesh)
                     {
+                        materialSlotIndices.push_back(static_cast<size_t>(meshComponent->GetMesh()->GetSubmesh(static_cast<size_t>(isolatedSubmeshIndex)).materialIndex));
+                    }
+                    else
+                    {
+                        const size_t materialSlotCount = GetMaterialSlotCount(*meshComponent);
+                        materialSlotIndices.reserve(materialSlotCount);
+                        for (size_t materialSlotIndex = 0; materialSlotIndex < materialSlotCount; ++materialSlotIndex)
+                        {
+                            materialSlotIndices.push_back(materialSlotIndex);
+                        }
+                    }
+
+                    for (size_t materialSlotListIndex = 0; materialSlotListIndex < materialSlotIndices.size(); ++materialSlotListIndex)
+                    {
+                        const size_t materialSlotIndex = materialSlotIndices[materialSlotListIndex];
                         ImGui::PushID(static_cast<int>(materialSlotIndex));
                         ImGui::Text("Slot %zu", materialSlotIndex);
                         ImGui::SameLine();
@@ -1996,7 +2035,7 @@ namespace PlutoGE::ui
                             }
                         }
 
-                        if (materialSlotIndex + 1 < materialSlotCount)
+                        if (materialSlotListIndex + 1 < materialSlotIndices.size())
                         {
                             ImGui::Spacing();
                         }
@@ -2007,9 +2046,12 @@ namespace PlutoGE::ui
                 if (meshComponent->GetMesh() && meshComponent->GetMesh()->GetSubmeshCount() > 1)
                 {
                     ImGui::Separator();
-                    if (ImGui::CollapsingHeader("Submesh Materials"))
+                    if (ImGui::CollapsingHeader(editingIsolatedSubmesh ? "Selected Submesh Material" : "Submesh Materials",
+                                                editingIsolatedSubmesh ? ImGuiTreeNodeFlags_DefaultOpen : 0))
                     {
-                        for (size_t submeshIndex = 0; submeshIndex < meshComponent->GetMesh()->GetSubmeshCount(); ++submeshIndex)
+                        const size_t submeshBegin = editingIsolatedSubmesh ? static_cast<size_t>(isolatedSubmeshIndex) : 0;
+                        const size_t submeshEnd = editingIsolatedSubmesh ? submeshBegin + 1 : meshComponent->GetMesh()->GetSubmeshCount();
+                        for (size_t submeshIndex = submeshBegin; submeshIndex < submeshEnd; ++submeshIndex)
                         {
                             const auto &submesh = meshComponent->GetMesh()->GetSubmesh(submeshIndex);
                             auto *material = meshComponent->GetMaterialForSubmesh(submeshIndex);

@@ -285,11 +285,11 @@ namespace PlutoGE::render
                     const unsigned int a = latitude * stride + longitude;
                     const unsigned int b = a + stride;
                     indices.push_back(a);
-                    indices.push_back(b);
-                    indices.push_back(a + 1);
                     indices.push_back(a + 1);
                     indices.push_back(b);
+                    indices.push_back(a + 1);
                     indices.push_back(b + 1);
+                    indices.push_back(b);
                 }
             }
 
@@ -355,11 +355,11 @@ namespace PlutoGE::render
             {
                 const unsigned int next = (segment + 1) % segments;
                 indices.push_back(bottomCenter);
-                indices.push_back(capStart + next * 2);
                 indices.push_back(capStart + segment * 2);
+                indices.push_back(capStart + next * 2);
                 indices.push_back(topCenter);
-                indices.push_back(capStart + segment * 2 + 1);
                 indices.push_back(capStart + next * 2 + 1);
+                indices.push_back(capStart + segment * 2 + 1);
             }
 
             MeshData meshData;

@@ -40,6 +40,17 @@ namespace PlutoGE::scene
             };
         }
 
+        std::string BuildSubmeshEntityName(const render::Submesh &submesh, size_t submeshIndex)
+        {
+            std::string childName = "Submesh " + std::to_string(submeshIndex);
+            if (!submesh.name.empty())
+            {
+                childName += " - " + submesh.name;
+            }
+            childName += " (Slot " + std::to_string(submesh.materialIndex) + ")";
+            return childName;
+        }
+
         bool AreMatricesApproximatelyEqual(const glm::mat4 &a, const glm::mat4 &b)
         {
             constexpr float epsilon = 0.0001f;
@@ -340,6 +351,7 @@ namespace PlutoGE::scene
             return false;
         }
 
+        bool hasExistingSubmeshChildren = false;
         for (auto *child : owner->GetChildren())
         {
             auto *childMeshComponent = child ? child->GetComponent<MeshComponent>() : nullptr;
@@ -351,8 +363,17 @@ namespace PlutoGE::scene
                 (sameMesh || sameSourceMesh) &&
                 childMeshComponent->GetSubmeshIndex() >= 0)
             {
-                return false;
+                const auto childSubmeshIndex = static_cast<size_t>(childMeshComponent->GetSubmeshIndex());
+                if (childSubmeshIndex < m_mesh->GetSubmeshCount())
+                {
+                    child->SetName(BuildSubmeshEntityName(m_mesh->GetSubmesh(childSubmeshIndex), childSubmeshIndex));
+                }
+                hasExistingSubmeshChildren = true;
             }
+        }
+        if (hasExistingSubmeshChildren)
+        {
+            return false;
         }
 
         if (m_mesh->GetSubmeshCount() > kMaxAutomaticSubmeshChildren)
@@ -365,11 +386,8 @@ namespace PlutoGE::scene
         for (size_t submeshIndex = 0; submeshIndex < m_mesh->GetSubmeshCount(); ++submeshIndex)
         {
             const auto &submesh = m_mesh->GetSubmesh(submeshIndex);
-            const std::string childName = submesh.name.empty()
-                                              ? "Submesh " + std::to_string(submeshIndex)
-                                              : submesh.name;
             auto child = std::make_unique<Entity>(EntityConfig{
-                .name = childName,
+                .name = BuildSubmeshEntityName(submesh, submeshIndex),
             });
             auto *childPtr = child.get();
             auto *childMeshComponent = childPtr->CreateComponent<MeshComponent>(MeshComponentConfig{

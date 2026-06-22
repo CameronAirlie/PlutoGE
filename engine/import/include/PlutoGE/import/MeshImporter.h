@@ -24,11 +24,17 @@ namespace PlutoGE::assetimport
     struct ImportedMaterialData
     {
         glm::vec4 color{1.0f};
+        render::MaterialSurfaceType surfaceType = render::MaterialSurfaceType::Standard;
         render::AlphaMode alphaMode = render::AlphaMode::Opaque;
         float alphaCutoff = 0.5f;
         bool castsShadow = true;
         float metallic = 0.0f;
         float roughness = 1.0f;
+        float transmission = 0.0f;
+        float ior = 1.45f;
+        float thickness = 0.01f;
+        glm::vec3 attenuationColor{1.0f, 1.0f, 1.0f};
+        float attenuationDistance = 1.0f;
         int albedoTextureIndex = -1;
         int normalTextureIndex = -1;
         int metallicRoughnessTextureIndex = -1;

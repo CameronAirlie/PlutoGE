@@ -75,6 +75,11 @@ namespace PlutoGE::scene
             return std::to_string(value.r) + "," + std::to_string(value.g) + "," + std::to_string(value.b) + "," + std::to_string(value.a);
         }
 
+        std::string SerializeVec3(const glm::vec3 &value)
+        {
+            return std::to_string(value.r) + "," + std::to_string(value.g) + "," + std::to_string(value.b);
+        }
+
         glm::vec4 ParseVec4(const std::string &value, const glm::vec4 &fallback = glm::vec4(1.0f))
         {
             glm::vec4 parsedValue = fallback;
@@ -82,15 +87,197 @@ namespace PlutoGE::scene
             return parsedValue;
         }
 
+        glm::vec3 ParseVec3(const std::string &value, const glm::vec3 &fallback = glm::vec3(1.0f))
+        {
+            glm::vec3 parsedValue = fallback;
+            std::sscanf(value.c_str(), "%f,%f,%f", &parsedValue.r, &parsedValue.g, &parsedValue.b);
+            return parsedValue;
+        }
+
+        const char *ToString(render::MaterialSurfaceType surfaceType)
+        {
+            return surfaceType == render::MaterialSurfaceType::Glass ? "Glass" : "Standard";
+        }
+
+        render::MaterialSurfaceType ParseSurfaceType(const std::string &value)
+        {
+            return value == "Glass" || value == "glass" || value == "1"
+                       ? render::MaterialSurfaceType::Glass
+                       : render::MaterialSurfaceType::Standard;
+        }
+
         struct SerializedMaterialData
         {
             std::optional<std::string> materialAsset;
             std::optional<glm::vec4> color;
+            std::optional<render::MaterialSurfaceType> surfaceType;
+            std::optional<render::AlphaMode> alphaMode;
+            std::optional<float> alphaCutoff;
+            std::optional<bool> castsShadow;
             std::optional<float> metallic;
             std::optional<float> roughness;
+            std::optional<float> transmission;
+            std::optional<float> ior;
+            std::optional<float> thickness;
+            std::optional<glm::vec3> attenuationColor;
+            std::optional<float> attenuationDistance;
             std::optional<bool> flipNormalY;
             std::optional<std::string> lightmapPath;
         };
+
+        void SerializeInlineMaterialProperties(std::vector<Property> &properties, const std::string &prefix, const render::MaterialConfig &config)
+        {
+            properties.push_back({prefix + "Color", PropertyType::String, SerializeVec4(config.color)});
+            properties.push_back({prefix + "SurfaceType", PropertyType::String, ToString(config.surfaceType)});
+            properties.push_back({prefix + "AlphaMode", PropertyType::String, config.alphaMode == render::AlphaMode::Blend ? "Blend" : config.alphaMode == render::AlphaMode::Mask ? "Mask" : "Opaque"});
+            properties.push_back({prefix + "AlphaCutoff", PropertyType::Float, std::to_string(config.alphaCutoff)});
+            properties.push_back({prefix + "CastsShadow", PropertyType::Bool, config.castsShadow ? "true" : "false"});
+            properties.push_back({prefix + "Metallic", PropertyType::Float, std::to_string(config.metallic)});
+            properties.push_back({prefix + "Roughness", PropertyType::Float, std::to_string(config.roughness)});
+            properties.push_back({prefix + "Transmission", PropertyType::Float, std::to_string(config.transmission)});
+            properties.push_back({prefix + "Ior", PropertyType::Float, std::to_string(config.ior)});
+            properties.push_back({prefix + "Thickness", PropertyType::Float, std::to_string(config.thickness)});
+            properties.push_back({prefix + "AttenuationColor", PropertyType::String, SerializeVec3(config.attenuationColor)});
+            properties.push_back({prefix + "AttenuationDistance", PropertyType::Float, std::to_string(config.attenuationDistance)});
+            properties.push_back({prefix + "FlipNormalY", PropertyType::Bool, config.flipNormalY ? "true" : "false"});
+            properties.push_back({prefix + "LightmapPath", PropertyType::String, config.lightmapTexture ? config.lightmapTexture->GetFilePath() : std::string{}});
+        }
+
+        void DeserializeInlineMaterialField(SerializedMaterialData &serializedMaterial, const std::string &fieldName, const std::string &value)
+        {
+            if (fieldName == "MaterialAsset")
+            {
+                serializedMaterial.materialAsset = value;
+            }
+            else if (fieldName == "Color")
+            {
+                serializedMaterial.color = ParseVec4(value);
+            }
+            else if (fieldName == "SurfaceType")
+            {
+                serializedMaterial.surfaceType = ParseSurfaceType(value);
+            }
+            else if (fieldName == "AlphaMode")
+            {
+                serializedMaterial.alphaMode = value == "Blend" || value == "blend" || value == "2"
+                                                   ? render::AlphaMode::Blend
+                                                   : value == "Mask" || value == "mask" || value == "1"
+                                                         ? render::AlphaMode::Mask
+                                                         : render::AlphaMode::Opaque;
+            }
+            else if (fieldName == "AlphaCutoff")
+            {
+                serializedMaterial.alphaCutoff = std::stof(value);
+            }
+            else if (fieldName == "CastsShadow")
+            {
+                serializedMaterial.castsShadow = (value == "true" || value == "1");
+            }
+            else if (fieldName == "Metallic")
+            {
+                serializedMaterial.metallic = std::stof(value);
+            }
+            else if (fieldName == "Roughness")
+            {
+                serializedMaterial.roughness = std::stof(value);
+            }
+            else if (fieldName == "Transmission")
+            {
+                serializedMaterial.transmission = std::stof(value);
+            }
+            else if (fieldName == "Ior")
+            {
+                serializedMaterial.ior = std::stof(value);
+            }
+            else if (fieldName == "Thickness")
+            {
+                serializedMaterial.thickness = std::stof(value);
+            }
+            else if (fieldName == "AttenuationColor")
+            {
+                serializedMaterial.attenuationColor = ParseVec3(value);
+            }
+            else if (fieldName == "AttenuationDistance")
+            {
+                serializedMaterial.attenuationDistance = std::stof(value);
+            }
+            else if (fieldName == "FlipNormalY")
+            {
+                serializedMaterial.flipNormalY = (value == "true");
+            }
+            else if (fieldName == "LightmapPath")
+            {
+                serializedMaterial.lightmapPath = value;
+            }
+        }
+
+        void ApplySerializedMaterialData(render::Material &material, const SerializedMaterialData &serializedMaterial)
+        {
+            if (serializedMaterial.color.has_value())
+            {
+                material.SetColor(*serializedMaterial.color);
+            }
+            if (serializedMaterial.surfaceType.has_value())
+            {
+                material.SetSurfaceType(*serializedMaterial.surfaceType);
+            }
+            if (serializedMaterial.alphaMode.has_value())
+            {
+                material.SetAlphaMode(*serializedMaterial.alphaMode);
+            }
+            if (serializedMaterial.alphaCutoff.has_value())
+            {
+                material.SetAlphaCutoff(*serializedMaterial.alphaCutoff);
+            }
+            if (serializedMaterial.castsShadow.has_value())
+            {
+                material.SetCastsShadow(*serializedMaterial.castsShadow);
+            }
+            if (serializedMaterial.metallic.has_value())
+            {
+                material.SetMetallic(*serializedMaterial.metallic);
+            }
+            if (serializedMaterial.roughness.has_value())
+            {
+                material.SetRoughness(*serializedMaterial.roughness);
+            }
+            if (serializedMaterial.transmission.has_value())
+            {
+                material.SetTransmission(*serializedMaterial.transmission);
+            }
+            if (serializedMaterial.ior.has_value())
+            {
+                material.SetIor(*serializedMaterial.ior);
+            }
+            if (serializedMaterial.thickness.has_value())
+            {
+                material.SetThickness(*serializedMaterial.thickness);
+            }
+            if (serializedMaterial.attenuationColor.has_value())
+            {
+                material.SetAttenuationColor(*serializedMaterial.attenuationColor);
+            }
+            if (serializedMaterial.attenuationDistance.has_value())
+            {
+                material.SetAttenuationDistance(*serializedMaterial.attenuationDistance);
+            }
+            if (serializedMaterial.flipNormalY.has_value())
+            {
+                material.SetFlipNormalY(*serializedMaterial.flipNormalY);
+            }
+            if (serializedMaterial.lightmapPath.has_value())
+            {
+                if (serializedMaterial.lightmapPath->empty())
+                {
+                    material.SetLightmapTexture(nullptr);
+                }
+                else
+                {
+                    auto *lightmapTexture = core::Engine::GetInstance().GetTextureManager().LoadLightmapFromFile(serializedMaterial.lightmapPath->c_str());
+                    material.SetLightmapTexture(lightmapTexture);
+                }
+            }
+        }
     }
 
     void MeshComponent::SetMesh(render::Mesh *mesh)
@@ -233,11 +420,7 @@ namespace PlutoGE::scene
                 properties.push_back({prefix + "MaterialAsset", PropertyType::String, materialAssetReference});
                 continue;
             }
-            properties.push_back({prefix + "Color", PropertyType::String, SerializeVec4(config.color)});
-            properties.push_back({prefix + "Metallic", PropertyType::Float, std::to_string(config.metallic)});
-            properties.push_back({prefix + "Roughness", PropertyType::Float, std::to_string(config.roughness)});
-            properties.push_back({prefix + "FlipNormalY", PropertyType::Bool, config.flipNormalY ? "true" : "false"});
-            properties.push_back({prefix + "LightmapPath", PropertyType::String, config.lightmapTexture ? config.lightmapTexture->GetFilePath() : std::string{}});
+            SerializeInlineMaterialProperties(properties, prefix, config);
         }
 
         for (size_t submeshIndex = 0; submeshIndex < m_submeshMaterials.size(); ++submeshIndex)
@@ -256,11 +439,7 @@ namespace PlutoGE::scene
                 properties.push_back({prefix + "MaterialAsset", PropertyType::String, materialAssetReference});
                 continue;
             }
-            properties.push_back({prefix + "Color", PropertyType::String, SerializeVec4(config.color)});
-            properties.push_back({prefix + "Metallic", PropertyType::Float, std::to_string(config.metallic)});
-            properties.push_back({prefix + "Roughness", PropertyType::Float, std::to_string(config.roughness)});
-            properties.push_back({prefix + "FlipNormalY", PropertyType::Bool, config.flipNormalY ? "true" : "false"});
-            properties.push_back({prefix + "LightmapPath", PropertyType::String, config.lightmapTexture ? config.lightmapTexture->GetFilePath() : std::string{}});
+            SerializeInlineMaterialProperties(properties, prefix, config);
         }
 
         return properties;
@@ -302,30 +481,7 @@ namespace PlutoGE::scene
                 const size_t materialSlotIndex = static_cast<size_t>(std::stoul(remainder.substr(0, separatorIndex)));
                 const std::string fieldName = remainder.substr(separatorIndex + 1);
                 auto &serializedMaterial = serializedMaterials[materialSlotIndex];
-                if (fieldName == "MaterialAsset")
-                {
-                    serializedMaterial.materialAsset = property.value;
-                }
-                else if (fieldName == "Color")
-                {
-                    serializedMaterial.color = ParseVec4(property.value);
-                }
-                else if (fieldName == "Metallic")
-                {
-                    serializedMaterial.metallic = std::stof(property.value);
-                }
-                else if (fieldName == "Roughness")
-                {
-                    serializedMaterial.roughness = std::stof(property.value);
-                }
-                else if (fieldName == "FlipNormalY")
-                {
-                    serializedMaterial.flipNormalY = (property.value == "true");
-                }
-                else if (fieldName == "LightmapPath")
-                {
-                    serializedMaterial.lightmapPath = property.value;
-                }
+                DeserializeInlineMaterialField(serializedMaterial, fieldName, property.value);
             }
             else if (property.name.rfind(kSubmeshOverridePrefix, 0) == 0)
             {
@@ -339,30 +495,7 @@ namespace PlutoGE::scene
                 const size_t submeshIndex = static_cast<size_t>(std::stoul(remainder.substr(0, separatorIndex)));
                 const std::string fieldName = remainder.substr(separatorIndex + 1);
                 auto &serializedMaterial = serializedSubmeshMaterials[submeshIndex];
-                if (fieldName == "MaterialAsset")
-                {
-                    serializedMaterial.materialAsset = property.value;
-                }
-                else if (fieldName == "Color")
-                {
-                    serializedMaterial.color = ParseVec4(property.value);
-                }
-                else if (fieldName == "Metallic")
-                {
-                    serializedMaterial.metallic = std::stof(property.value);
-                }
-                else if (fieldName == "Roughness")
-                {
-                    serializedMaterial.roughness = std::stof(property.value);
-                }
-                else if (fieldName == "FlipNormalY")
-                {
-                    serializedMaterial.flipNormalY = (property.value == "true");
-                }
-                else if (fieldName == "LightmapPath")
-                {
-                    serializedMaterial.lightmapPath = property.value;
-                }
+                DeserializeInlineMaterialField(serializedMaterial, fieldName, property.value);
             }
         }
 
@@ -418,34 +551,7 @@ namespace PlutoGE::scene
                 }
             }
 
-            if (serializedMaterial.color.has_value())
-            {
-                material->SetColor(*serializedMaterial.color);
-            }
-            if (serializedMaterial.metallic.has_value())
-            {
-                material->SetMetallic(*serializedMaterial.metallic);
-            }
-            if (serializedMaterial.roughness.has_value())
-            {
-                material->SetRoughness(*serializedMaterial.roughness);
-            }
-            if (serializedMaterial.flipNormalY.has_value())
-            {
-                material->SetFlipNormalY(*serializedMaterial.flipNormalY);
-            }
-            if (serializedMaterial.lightmapPath.has_value())
-            {
-                if (serializedMaterial.lightmapPath->empty())
-                {
-                    material->SetLightmapTexture(nullptr);
-                }
-                else
-                {
-                    auto *lightmapTexture = core::Engine::GetInstance().GetTextureManager().LoadLightmapFromFile(serializedMaterial.lightmapPath->c_str());
-                    material->SetLightmapTexture(lightmapTexture);
-                }
-            }
+            ApplySerializedMaterialData(*material, serializedMaterial);
         }
 
         for (const auto &[submeshIndex, serializedMaterial] : serializedSubmeshMaterials)
@@ -466,34 +572,7 @@ namespace PlutoGE::scene
                 }
             }
 
-            if (serializedMaterial.color.has_value())
-            {
-                material->SetColor(*serializedMaterial.color);
-            }
-            if (serializedMaterial.metallic.has_value())
-            {
-                material->SetMetallic(*serializedMaterial.metallic);
-            }
-            if (serializedMaterial.roughness.has_value())
-            {
-                material->SetRoughness(*serializedMaterial.roughness);
-            }
-            if (serializedMaterial.flipNormalY.has_value())
-            {
-                material->SetFlipNormalY(*serializedMaterial.flipNormalY);
-            }
-            if (serializedMaterial.lightmapPath.has_value())
-            {
-                if (serializedMaterial.lightmapPath->empty())
-                {
-                    material->SetLightmapTexture(nullptr);
-                }
-                else
-                {
-                    auto *lightmapTexture = core::Engine::GetInstance().GetTextureManager().LoadLightmapFromFile(serializedMaterial.lightmapPath->c_str());
-                    material->SetLightmapTexture(lightmapTexture);
-                }
-            }
+            ApplySerializedMaterialData(*material, serializedMaterial);
         }
     }
 

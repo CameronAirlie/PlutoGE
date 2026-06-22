@@ -37,11 +37,20 @@ namespace PlutoGE::render
         };
 
         setVec4("uColor", m_config.color);
+        setInt("uSurfaceType", static_cast<int>(m_config.surfaceType));
         setInt("uAlphaMode", static_cast<int>(m_config.alphaMode));
         setFloat("uAlphaCutoff", m_config.alphaCutoff);
         setFloat("uMetallicFactor", m_config.metallic);
         setFloat("uRoughnessFactor", m_config.roughness);
         setFloat("uFlipNormalY", m_config.flipNormalY ? 1.0f : 0.0f);
+        setFloat("uTransmissionFactor", m_config.transmission);
+        setFloat("uIor", m_config.ior);
+        setFloat("uThickness", m_config.thickness);
+        if (activeShader->HasUniform("uAttenuationColor"))
+        {
+            activeShader->SetUniform("uAttenuationColor", m_config.attenuationColor);
+        }
+        setFloat("uAttenuationDistance", m_config.attenuationDistance);
 
         // Set common uniforms (camera and model data)
         // shader->SetUniform("uModel", modelMatrix);

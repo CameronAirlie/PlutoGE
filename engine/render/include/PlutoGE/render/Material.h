@@ -19,12 +19,19 @@ namespace PlutoGE::render
         Blend = 2,
     };
 
+    enum class MaterialSurfaceType
+    {
+        Standard = 0,
+        Glass = 1,
+    };
+
     class Texture;
     class Shader;
     struct CameraData;
     struct MaterialConfig
     {
         glm::vec4 color{1.0f, 1.0f, 1.0f, 1.0f}; // Base color (default to white)
+        MaterialSurfaceType surfaceType = MaterialSurfaceType::Standard;
         Texture *albedoTexture = nullptr;        // Pointer to an albedo texture (if any)
         AlphaMode alphaMode = AlphaMode::Opaque;
         float alphaCutoff = 0.5f;
@@ -40,6 +47,12 @@ namespace PlutoGE::render
         float roughness = 1.0f;              // Roughness factor (0.0 = smooth, 1.0 = rough)
         Texture *roughnessTexture = nullptr; // Pointer to a roughness texture (if any)
         TextureChannel roughnessTextureChannel = TextureChannel::Red;
+
+        float transmission = 0.0f;                        // Transmitted light amount for glass-like materials
+        float ior = 1.45f;                                // Index of refraction; common window glass is around 1.45-1.52
+        float thickness = 0.01f;                          // Approximate material thickness in scene units
+        glm::vec3 attenuationColor{1.0f, 1.0f, 1.0f};     // Color retained after passing through the material
+        float attenuationDistance = 1.0f;                 // Distance at which attenuationColor is reached
 
         Texture *lightmapTexture = nullptr; // Optional baked lighting texture sampled with UV2
     };
@@ -57,6 +70,7 @@ namespace PlutoGE::render
         void Bind(Shader *shader = nullptr);
 
         void SetColor(const glm::vec4 &color) { m_config.color = color; }
+        void SetSurfaceType(MaterialSurfaceType surfaceType) { m_config.surfaceType = surfaceType; }
         void SetAlbedoTexture(Texture *texture) { m_config.albedoTexture = texture; }
         void SetAlphaMode(AlphaMode alphaMode) { m_config.alphaMode = alphaMode; }
         void SetAlphaCutoff(float alphaCutoff) { m_config.alphaCutoff = alphaCutoff; }
@@ -69,6 +83,11 @@ namespace PlutoGE::render
         void SetRoughness(float roughness) { m_config.roughness = roughness; }
         void SetRoughnessTexture(Texture *texture) { m_config.roughnessTexture = texture; }
         void SetRoughnessTextureChannel(TextureChannel channel) { m_config.roughnessTextureChannel = channel; }
+        void SetTransmission(float transmission) { m_config.transmission = transmission; }
+        void SetIor(float ior) { m_config.ior = ior; }
+        void SetThickness(float thickness) { m_config.thickness = thickness; }
+        void SetAttenuationColor(const glm::vec3 &color) { m_config.attenuationColor = color; }
+        void SetAttenuationDistance(float distance) { m_config.attenuationDistance = distance; }
         void SetLightmapTexture(Texture *texture) { m_config.lightmapTexture = texture; }
         MaterialConfig &GetConfig() { return m_config; }
         const MaterialConfig &GetConfig() const { return m_config; }

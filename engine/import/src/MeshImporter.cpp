@@ -163,7 +163,7 @@ namespace PlutoGE::assetimport
         };
 
         constexpr uint32_t kCookedMeshCacheMagic = 0x434d4750; // PGMC
-        constexpr uint32_t kCookedMeshCacheVersion = 2;
+        constexpr uint32_t kCookedMeshCacheVersion = 3;
 
         bool ReadBooleanEnvironmentFlag(const char *name, bool defaultValue)
         {
@@ -434,11 +434,19 @@ namespace PlutoGE::assetimport
         void WriteImportedMaterial(std::ostream &output, const ImportedMaterialData &material)
         {
             WriteVec4(output, material.color);
+            WritePod(output, static_cast<uint32_t>(material.surfaceType));
             WritePod(output, static_cast<uint32_t>(material.alphaMode));
             WritePod(output, material.alphaCutoff);
             WriteBool(output, material.castsShadow);
             WritePod(output, material.metallic);
             WritePod(output, material.roughness);
+            WritePod(output, material.transmission);
+            WritePod(output, material.ior);
+            WritePod(output, material.thickness);
+            WritePod(output, material.attenuationColor.r);
+            WritePod(output, material.attenuationColor.g);
+            WritePod(output, material.attenuationColor.b);
+            WritePod(output, material.attenuationDistance);
             WritePod(output, material.albedoTextureIndex);
             WritePod(output, material.normalTextureIndex);
             WritePod(output, material.metallicRoughnessTextureIndex);
@@ -450,11 +458,19 @@ namespace PlutoGE::assetimport
         {
             ImportedMaterialData material;
             material.color = ReadVec4(input);
+            material.surfaceType = static_cast<render::MaterialSurfaceType>(ReadPod<uint32_t>(input));
             material.alphaMode = static_cast<render::AlphaMode>(ReadPod<uint32_t>(input));
             material.alphaCutoff = ReadPod<float>(input);
             material.castsShadow = ReadBool(input);
             material.metallic = ReadPod<float>(input);
             material.roughness = ReadPod<float>(input);
+            material.transmission = ReadPod<float>(input);
+            material.ior = ReadPod<float>(input);
+            material.thickness = ReadPod<float>(input);
+            material.attenuationColor.r = ReadPod<float>(input);
+            material.attenuationColor.g = ReadPod<float>(input);
+            material.attenuationColor.b = ReadPod<float>(input);
+            material.attenuationDistance = ReadPod<float>(input);
             material.albedoTextureIndex = ReadPod<int>(input);
             material.normalTextureIndex = ReadPod<int>(input);
             material.metallicRoughnessTextureIndex = ReadPod<int>(input);
@@ -932,6 +948,45 @@ namespace PlutoGE::assetimport
             MeshImportProfile *profile = nullptr)
         {
             ImportedMaterialData parsedMaterial;
+            const auto readExtensionNumber = [&material](const char *extensionName, const char *propertyName, float fallback)
+            {
+                const auto extensionIt = material.extensions.find(extensionName);
+                if (extensionIt == material.extensions.end() || !extensionIt->second.IsObject() || !extensionIt->second.Has(propertyName))
+                {
+                    return fallback;
+                }
+
+                const auto &value = extensionIt->second.Get(propertyName);
+                return value.IsNumber() ? static_cast<float>(value.Get<double>()) : fallback;
+            };
+
+            const auto readExtensionVec3 = [&material](const char *extensionName, const char *propertyName, const glm::vec3 &fallback)
+            {
+                const auto extensionIt = material.extensions.find(extensionName);
+                if (extensionIt == material.extensions.end() || !extensionIt->second.IsObject() || !extensionIt->second.Has(propertyName))
+                {
+                    return fallback;
+                }
+
+                const auto &value = extensionIt->second.Get(propertyName);
+                if (!value.IsArray() || value.ArrayLen() < 3)
+                {
+                    return fallback;
+                }
+
+                glm::vec3 parsedValue = fallback;
+                for (int component = 0; component < 3; ++component)
+                {
+                    const auto &componentValue = value.Get(static_cast<size_t>(component));
+                    if (!componentValue.IsNumber())
+                    {
+                        return fallback;
+                    }
+                    parsedValue[component] = static_cast<float>(componentValue.Get<double>());
+                }
+                return parsedValue;
+            };
+
             if (material.pbrMetallicRoughness.baseColorFactor.size() == 4)
             {
                 parsedMaterial.color = glm::vec4(
@@ -979,6 +1034,22 @@ namespace PlutoGE::assetimport
             }
 
             parsedMaterial.roughness = static_cast<float>(material.pbrMetallicRoughness.roughnessFactor);
+
+            parsedMaterial.transmission = std::clamp(readExtensionNumber("KHR_materials_transmission", "transmissionFactor", 0.0f), 0.0f, 1.0f);
+            parsedMaterial.ior = std::clamp(readExtensionNumber("KHR_materials_ior", "ior", 1.45f), 1.0f, 2.5f);
+            parsedMaterial.thickness = std::max(readExtensionNumber("KHR_materials_volume", "thicknessFactor", 0.01f), 0.0f);
+            parsedMaterial.attenuationColor = glm::clamp(
+                readExtensionVec3("KHR_materials_volume", "attenuationColor", glm::vec3(1.0f)),
+                glm::vec3(0.0f),
+                glm::vec3(1.0f));
+            parsedMaterial.attenuationDistance = std::max(readExtensionNumber("KHR_materials_volume", "attenuationDistance", 1.0f), 0.0001f);
+            if (parsedMaterial.transmission > 0.001f)
+            {
+                parsedMaterial.surfaceType = render::MaterialSurfaceType::Glass;
+                parsedMaterial.alphaMode = render::AlphaMode::Blend;
+                parsedMaterial.castsShadow = false;
+                parsedMaterial.metallic = 0.0f;
+            }
             return parsedMaterial;
         }
 
@@ -2711,6 +2782,13 @@ namespace PlutoGE::assetimport
             {
                 importedMaterial.alphaMode = render::AlphaMode::Blend;
                 importedMaterial.castsShadow = false;
+                if (importedMaterial.roughness <= 0.25f || hasPartialTransparencyFactor || hasTransparentColor)
+                {
+                    importedMaterial.surfaceType = render::MaterialSurfaceType::Glass;
+                    importedMaterial.transmission = std::clamp(1.0f - importedMaterial.color.a, 0.0f, 1.0f);
+                    importedMaterial.ior = 1.45f;
+                    importedMaterial.metallic = 0.0f;
+                }
             }
 
             return importedMaterial;

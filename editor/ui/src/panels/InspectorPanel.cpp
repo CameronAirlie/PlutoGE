@@ -1,6 +1,7 @@
 
 #include "PlutoGE/ui/panels/InspectorPanel.h"
 #include "PlutoGE/ui/EditorShell.h"
+#include "PlutoGE/ui/panels/ContentBrowserPanel.h"
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/scene/components/AnimationComponent.h"
 #include "PlutoGE/scene/components/Component.h"
@@ -402,6 +403,105 @@ namespace PlutoGE::ui
                           return left.displayName < right.displayName;
                       });
             return options;
+        }
+
+        std::string GetAssetReferencePreview(const std::vector<AssetReferenceOption> &options,
+                                             const std::string &reference,
+                                             std::string fallback)
+        {
+            if (reference.empty())
+            {
+                return fallback;
+            }
+
+            for (const auto &option : options)
+            {
+                if (option.reference == reference)
+                {
+                    return option.displayName;
+                }
+            }
+
+            return reference;
+        }
+
+        std::optional<std::string> AcceptDroppedMaterialAssetReference()
+        {
+            std::optional<std::string> droppedReference;
+            if (ImGui::BeginDragDropTarget())
+            {
+                if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kContentBrowserAssetDragDropPayload))
+                {
+                    if (payload->Data && payload->DataSize > 0)
+                    {
+                        const auto *data = static_cast<const char *>(payload->Data);
+                        const std::string reference(data, data + payload->DataSize - 1);
+                        if (assets::Project::GetAssetTypeForReference(reference) == assets::ProjectAssetType::Material)
+                        {
+                            droppedReference = reference;
+                        }
+                    }
+                }
+                ImGui::EndDragDropTarget();
+            }
+
+            return droppedReference;
+        }
+
+        bool AssignMaterialAssetToSlot(scene::MeshComponent &meshComponent,
+                                       size_t materialSlotIndex,
+                                       const std::string &materialAssetReference,
+                                       core::Engine &engine)
+        {
+            if (assets::Project::GetAssetTypeForReference(materialAssetReference) != assets::ProjectAssetType::Material)
+            {
+                return false;
+            }
+
+            auto *materialAsset = engine.GetAssetManager().LoadMaterialAsset(materialAssetReference);
+            if (!materialAsset)
+            {
+                return false;
+            }
+
+            meshComponent.SetMaterialForMaterialSlot(materialSlotIndex, materialAsset);
+            meshComponent.SetMaterialAssetForMaterialSlot(materialSlotIndex, materialAssetReference);
+            return true;
+        }
+
+        bool AssignMaterialAssetToSubmesh(scene::MeshComponent &meshComponent,
+                                          size_t submeshIndex,
+                                          const std::string &materialAssetReference,
+                                          core::Engine &engine)
+        {
+            if (assets::Project::GetAssetTypeForReference(materialAssetReference) != assets::ProjectAssetType::Material)
+            {
+                return false;
+            }
+
+            auto *materialAsset = engine.GetAssetManager().LoadMaterialAsset(materialAssetReference);
+            if (!materialAsset)
+            {
+                return false;
+            }
+
+            meshComponent.SetMaterialForSubmesh(submeshIndex, materialAsset);
+            meshComponent.SetMaterialAssetForSubmesh(submeshIndex, materialAssetReference);
+            return true;
+        }
+
+        size_t GetMaterialSlotCount(const scene::MeshComponent &meshComponent)
+        {
+            size_t materialSlotCount = meshComponent.GetMaterials().size();
+            if (const auto *mesh = meshComponent.GetMesh())
+            {
+                for (size_t submeshIndex = 0; submeshIndex < mesh->GetSubmeshCount(); ++submeshIndex)
+                {
+                    materialSlotCount = (std::max)(materialSlotCount, static_cast<size_t>(mesh->GetSubmesh(submeshIndex).materialIndex) + 1);
+                }
+            }
+
+            return (std::max)(materialSlotCount, static_cast<size_t>(1));
         }
 
         const ScriptAssetOption *FindScriptAssetOptionForClassName(const std::vector<ScriptAssetOption> &options,
@@ -1853,6 +1953,57 @@ namespace PlutoGE::ui
                     ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f), "%s", meshImportStatus.errorMessage.c_str());
                 }
 
+                const auto materialAssetOptions = CollectAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::Material);
+                ImGui::Separator();
+                if (ImGui::CollapsingHeader("Material Slots", ImGuiTreeNodeFlags_DefaultOpen))
+                {
+                    const size_t materialSlotCount = GetMaterialSlotCount(*meshComponent);
+                    for (size_t materialSlotIndex = 0; materialSlotIndex < materialSlotCount; ++materialSlotIndex)
+                    {
+                        ImGui::PushID(static_cast<int>(materialSlotIndex));
+                        ImGui::Text("Slot %zu", materialSlotIndex);
+                        ImGui::SameLine();
+                        ImGui::TextDisabled("(drop a material asset here)");
+
+                        const std::string materialAssetReference = meshComponent->GetMaterialAssetForMaterialSlot(materialSlotIndex);
+                        const std::string materialPreview = GetAssetReferencePreview(materialAssetOptions, materialAssetReference, "Inline / Imported");
+                        if (ImGui::BeginCombo("Material Asset", materialPreview.c_str()))
+                        {
+                            for (const auto &option : materialAssetOptions)
+                            {
+                                const bool selected = option.reference == materialAssetReference;
+                                if (ImGui::Selectable(option.displayName.c_str(), selected))
+                                {
+                                    if (AssignMaterialAssetToSlot(*meshComponent, materialSlotIndex, option.reference, engine))
+                                    {
+                                        editorShell.MarkSceneDirty();
+                                    }
+                                }
+
+                                if (selected)
+                                {
+                                    ImGui::SetItemDefaultFocus();
+                                }
+                            }
+                            ImGui::EndCombo();
+                        }
+
+                        if (auto droppedMaterialReference = AcceptDroppedMaterialAssetReference())
+                        {
+                            if (AssignMaterialAssetToSlot(*meshComponent, materialSlotIndex, *droppedMaterialReference, engine))
+                            {
+                                editorShell.MarkSceneDirty();
+                            }
+                        }
+
+                        if (materialSlotIndex + 1 < materialSlotCount)
+                        {
+                            ImGui::Spacing();
+                        }
+                        ImGui::PopID();
+                    }
+                }
+
                 if (meshComponent->GetMesh() && meshComponent->GetMesh()->GetSubmeshCount() > 1)
                 {
                     ImGui::Separator();
@@ -1874,40 +2025,25 @@ namespace PlutoGE::ui
 
                                 if (material)
                                 {
-                                    const auto materialAssetOptions = CollectAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::Material);
-                                    std::string materialPreview = meshComponent->GetMaterialAssetForSubmesh(submeshIndex);
-                                    if (materialPreview.empty())
-                                    {
-                                        materialPreview = meshComponent->GetMaterialAssetForMaterialSlot(submesh.materialIndex);
-                                    }
-                                    if (materialPreview.empty())
-                                    {
-                                        materialPreview = "Inline Override";
-                                    }
-                                    for (const auto &option : materialAssetOptions)
-                                    {
-                                        if (option.reference == materialPreview)
-                                        {
-                                            materialPreview = option.displayName;
-                                            break;
-                                        }
-                                    }
+                                    const std::string submeshMaterialAssetReference = meshComponent->GetMaterialAssetForSubmesh(submeshIndex);
+                                    const std::string inheritedMaterialAssetReference = meshComponent->GetMaterialAssetForMaterialSlot(submesh.materialIndex);
+                                    const std::string activeMaterialAssetReference = submeshMaterialAssetReference.empty() ? inheritedMaterialAssetReference : submeshMaterialAssetReference;
+                                    const std::string materialPreview = GetAssetReferencePreview(
+                                        materialAssetOptions,
+                                        activeMaterialAssetReference,
+                                        submeshMaterialAssetReference.empty() ? "Inherits Material Slot" : "Inline Override");
 
                                     if (ImGui::BeginCombo("Material Asset", materialPreview.c_str()))
                                     {
                                         for (const auto &option : materialAssetOptions)
                                         {
-                                            const bool selected = option.reference == meshComponent->GetMaterialAssetForSubmesh(submeshIndex) ||
-                                                                  (meshComponent->GetMaterialAssetForSubmesh(submeshIndex).empty() &&
-                                                                   option.reference == meshComponent->GetMaterialAssetForMaterialSlot(submesh.materialIndex));
+                                            const bool selected = option.reference == activeMaterialAssetReference;
                                             if (ImGui::Selectable(option.displayName.c_str(), selected))
                                             {
-                                                if (auto *materialAsset = engine.GetAssetManager().LoadMaterialAsset(option.reference))
+                                                if (AssignMaterialAssetToSubmesh(*meshComponent, submeshIndex, option.reference, engine))
                                                 {
-                                                    meshComponent->SetMaterialForSubmesh(submeshIndex, materialAsset);
-                                                    meshComponent->SetMaterialAssetForSubmesh(submeshIndex, option.reference);
                                                     editorShell.MarkSceneDirty();
-                                                    material = materialAsset;
+                                                    material = meshComponent->GetMaterialForSubmesh(submeshIndex);
                                                 }
                                             }
 
@@ -1917,6 +2053,15 @@ namespace PlutoGE::ui
                                             }
                                         }
                                         ImGui::EndCombo();
+                                    }
+
+                                    if (auto droppedMaterialReference = AcceptDroppedMaterialAssetReference())
+                                    {
+                                        if (AssignMaterialAssetToSubmesh(*meshComponent, submeshIndex, *droppedMaterialReference, engine))
+                                        {
+                                            editorShell.MarkSceneDirty();
+                                            material = meshComponent->GetMaterialForSubmesh(submeshIndex);
+                                        }
                                     }
 
                                     const bool materialUsesAssetReference =

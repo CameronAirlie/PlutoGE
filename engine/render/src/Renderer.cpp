@@ -224,10 +224,6 @@ namespace PlutoGE::render
         lightingPass->Initialize();
         m_renderPasses.push_back(lightingPass);
 
-        auto transparentPass = new TransparentPass();
-        transparentPass->Initialize();
-        m_renderPasses.push_back(transparentPass);
-
         auto gridPass = new GridPass();
         gridPass->Initialize();
         m_renderPasses.push_back(gridPass);
@@ -235,6 +231,10 @@ namespace PlutoGE::render
         auto postProcessPass = new PostProcessPass();
         postProcessPass->Initialize();
         m_renderPasses.push_back(postProcessPass);
+
+        auto transparentPass = new TransparentPass();
+        transparentPass->Initialize();
+        m_renderPasses.push_back(transparentPass);
 
         auto runtimeUIPass = new RuntimeUIPass();
         runtimeUIPass->Initialize();

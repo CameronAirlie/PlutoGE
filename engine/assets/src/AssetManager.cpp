@@ -163,6 +163,26 @@ namespace PlutoGE::assets
             std::istringstream input(copy);
             return (input >> value.r >> value.g >> value.b >> value.a) ? true : false;
         }
+
+        bool ParseVec3(std::string_view text, glm::vec3 &value)
+        {
+            std::string copy(text);
+            std::replace(copy.begin(), copy.end(), ',', ' ');
+            std::istringstream input(copy);
+            return (input >> value.r >> value.g >> value.b) ? true : false;
+        }
+
+        render::MaterialSurfaceType ParseSurfaceType(std::string_view value)
+        {
+            return value == "Glass" || value == "glass" || value == "1"
+                       ? render::MaterialSurfaceType::Glass
+                       : render::MaterialSurfaceType::Standard;
+        }
+
+        const char *ToString(render::MaterialSurfaceType surfaceType)
+        {
+            return surfaceType == render::MaterialSurfaceType::Glass ? "Glass" : "Standard";
+        }
     }
 
     render::Material *AssetManager::LoadMaterialAsset(const std::string &assetReference)
@@ -209,6 +229,26 @@ namespace PlutoGE::assets
                     {
                         ParseVec4(value, config.color);
                     }
+                    else if (key == "SurfaceType")
+                    {
+                        config.surfaceType = ParseSurfaceType(value);
+                    }
+                    else if (key == "AlphaMode")
+                    {
+                        config.alphaMode = value == "Blend" || value == "blend" || value == "2"
+                                               ? render::AlphaMode::Blend
+                                               : value == "Mask" || value == "mask" || value == "1"
+                                                     ? render::AlphaMode::Mask
+                                                     : render::AlphaMode::Opaque;
+                    }
+                    else if (key == "AlphaCutoff")
+                    {
+                        ParseFloat(value, config.alphaCutoff);
+                    }
+                    else if (key == "CastsShadow")
+                    {
+                        config.castsShadow = value == "true" || value == "1";
+                    }
                     else if (key == "Metallic")
                     {
                         ParseFloat(value, config.metallic);
@@ -216,6 +256,26 @@ namespace PlutoGE::assets
                     else if (key == "Roughness")
                     {
                         ParseFloat(value, config.roughness);
+                    }
+                    else if (key == "Transmission")
+                    {
+                        ParseFloat(value, config.transmission);
+                    }
+                    else if (key == "Ior")
+                    {
+                        ParseFloat(value, config.ior);
+                    }
+                    else if (key == "Thickness")
+                    {
+                        ParseFloat(value, config.thickness);
+                    }
+                    else if (key == "AttenuationColor")
+                    {
+                        ParseVec3(value, config.attenuationColor);
+                    }
+                    else if (key == "AttenuationDistance")
+                    {
+                        ParseFloat(value, config.attenuationDistance);
                     }
                     else if (key == "FlipNormalY")
                     {
@@ -276,8 +336,17 @@ namespace PlutoGE::assets
         }
 
         output << "Color=" << config.color.r << "," << config.color.g << "," << config.color.b << "," << config.color.a << "\n";
+        output << "SurfaceType=" << ToString(config.surfaceType) << "\n";
+        output << "AlphaMode=" << (config.alphaMode == render::AlphaMode::Blend ? "Blend" : config.alphaMode == render::AlphaMode::Mask ? "Mask" : "Opaque") << "\n";
+        output << "AlphaCutoff=" << config.alphaCutoff << "\n";
+        output << "CastsShadow=" << (config.castsShadow ? "true" : "false") << "\n";
         output << "Metallic=" << config.metallic << "\n";
         output << "Roughness=" << config.roughness << "\n";
+        output << "Transmission=" << config.transmission << "\n";
+        output << "Ior=" << config.ior << "\n";
+        output << "Thickness=" << config.thickness << "\n";
+        output << "AttenuationColor=" << config.attenuationColor.r << "," << config.attenuationColor.g << "," << config.attenuationColor.b << "\n";
+        output << "AttenuationDistance=" << config.attenuationDistance << "\n";
         output << "FlipNormalY=" << (config.flipNormalY ? "true" : "false") << "\n";
 
         if (auto cachedMaterial = m_materialCache.find(assetReference); cachedMaterial != m_materialCache.end() && cachedMaterial->second)

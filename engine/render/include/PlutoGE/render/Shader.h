@@ -1431,6 +1431,7 @@ void main()
             layout(location = 0) in vec3 aPos;
             layout(location = 1) in vec3 aNormal;
             layout(location = 2) in vec2 aUV;
+            layout(location = 3) in vec4 aTangent;
             layout(location = 5) in mat4 aModel;
             layout(location = 14) in ivec4 aJoints;
             layout(location = 15) in vec4 aWeights;
@@ -1440,7 +1441,11 @@ void main()
             uniform int uUseSkinning = 0;
             uniform mat4 uJointMatrices[48];
 
+            out vec3 FragPos;
+            out vec3 Normal;
             out vec2 UV;
+            out mat3 TBN;
+            out vec4 ClipPos;
 
             void main()
             {
@@ -1458,8 +1463,22 @@ void main()
                     }
                 }
 
+                vec4 skinnedPosition = skinMatrix * vec4(aPos, 1.0);
+                vec3 skinnedNormal = mat3(skinMatrix) * aNormal;
+                vec3 skinnedTangent = mat3(skinMatrix) * aTangent.xyz;
+                vec4 worldPosition = aModel * skinnedPosition;
+                mat3 normalMatrix = transpose(inverse(mat3(aModel)));
+                vec3 worldNormal = normalize(normalMatrix * skinnedNormal);
+                vec3 worldTangent = normalize(normalMatrix * skinnedTangent);
+                worldTangent = normalize(worldTangent - dot(worldTangent, worldNormal) * worldNormal);
+                vec3 worldBitangent = cross(worldNormal, worldTangent) * aTangent.w;
+
+                FragPos = worldPosition.xyz;
+                Normal = worldNormal;
                 UV = aUV;
-                gl_Position = uProjection * uView * aModel * skinMatrix * vec4(aPos, 1.0);
+                TBN = mat3(worldTangent, normalize(worldBitangent), worldNormal);
+                ClipPos = uProjection * uView * worldPosition;
+                gl_Position = ClipPos;
             }
         )";
 
@@ -1467,12 +1486,295 @@ void main()
             #version 330 core
             out vec4 FragColor;
 
+            in vec3 FragPos;
+            in vec3 Normal;
             in vec2 UV;
+            in mat3 TBN;
+            in vec4 ClipPos;
 
             uniform sampler2D uAlbedoTexture;
             uniform float uHasAlbedoTexture = 0.0;
             uniform vec4 uColor = vec4(1.0);
+            uniform int uSurfaceType = 0;
             uniform float uAlphaCutoff = 0.01;
+            uniform sampler2D uNormalTexture;
+            uniform float uHasNormalTexture = 0.0;
+            uniform float uFlipNormalY = 0.0;
+            uniform sampler2D uMetallicTexture;
+            uniform float uHasMetallicTexture = 0.0;
+            uniform float uMetallicFactor = 0.0;
+            uniform int uMetallicTextureChannel = 0;
+            uniform sampler2D uRoughnessTexture;
+            uniform float uHasRoughnessTexture = 0.0;
+            uniform float uRoughnessFactor = 1.0;
+            uniform int uRoughnessTextureChannel = 0;
+            uniform float uTransmissionFactor = 0.0;
+            uniform float uIor = 1.45;
+            uniform float uThickness = 0.01;
+            uniform vec3 uAttenuationColor = vec3(1.0);
+            uniform float uAttenuationDistance = 1.0;
+            uniform vec3 uViewPos;
+            uniform mat4 uView;
+            uniform sampler2D uSceneColorTexture;
+            uniform int uSceneColorEnabled = 0;
+            uniform vec2 uSceneColorTextureSize = vec2(1.0);
+            uniform float uSceneColorMaxMipLevel = 0.0;
+            uniform sampler2D uEnvironmentMap;
+            uniform samplerCube uIblCaptureMaps[4];
+            uniform vec3 uIblCaptureOrigins[4];
+            uniform vec3 uIblCaptureSizes[4];
+            uniform int uEnvironmentEnabled = 0;
+            uniform int uIblCaptureEnabled[4];
+            uniform int uIblCaptureCount = 0;
+            uniform float uEnvironmentIntensity = 1.0;
+            uniform float uEnvironmentMaxMipLevel = 0.0;
+            uniform float uIblCaptureIntensities[4];
+            uniform float uIblCaptureBlendDistances[4];
+            uniform float uIblCaptureMaxMipLevels[4];
+            struct TransparentLight
+            {
+                vec3 Position;
+                vec3 Color;
+                float Intensity;
+                float Range;
+                vec3 Direction;
+                int Type;
+            };
+            uniform int uLightCount = 0;
+            uniform TransparentLight uLights[16];
+
+            const float PI = 3.14159265359;
+            const int SURFACE_STANDARD = 0;
+            const int SURFACE_GLASS = 1;
+            const int LIGHT_TYPE_POINT = 0;
+            const int LIGHT_TYPE_DIRECTIONAL = 1;
+            const int LIGHT_TYPE_SPOT = 2;
+
+            float ReadTextureChannel(vec4 value, int channel)
+            {
+                if (channel == 1)
+                {
+                    return value.g;
+                }
+
+                if (channel == 2)
+                {
+                    return value.b;
+                }
+
+                if (channel == 3)
+                {
+                    return value.a;
+                }
+
+                return value.r;
+            }
+
+            vec3 FresnelSchlickRoughness(float cosTheta, vec3 f0, float roughness)
+            {
+                return f0 + (max(vec3(1.0 - roughness), f0) - f0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+            }
+
+            vec3 FresnelSchlick(float cosTheta, vec3 f0)
+            {
+                return f0 + (1.0 - f0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+            }
+
+            float DistributionGGX(vec3 normal, vec3 halfwayDir, float roughness)
+            {
+                float alpha = roughness * roughness;
+                float alphaSq = alpha * alpha;
+                float ndoth = max(dot(normal, halfwayDir), 0.0);
+                float ndothSq = ndoth * ndoth;
+                float denominator = ndothSq * (alphaSq - 1.0) + 1.0;
+                return alphaSq / max(PI * denominator * denominator, 0.0001);
+            }
+
+            float GeometrySchlickGGX(float ndotv, float roughness)
+            {
+                float r = roughness + 1.0;
+                float k = (r * r) / 8.0;
+                return ndotv / max(ndotv * (1.0 - k) + k, 0.0001);
+            }
+
+            float GeometrySmith(vec3 normal, vec3 viewDir, vec3 lightDir, float roughness)
+            {
+                return GeometrySchlickGGX(max(dot(normal, viewDir), 0.0), roughness) *
+                       GeometrySchlickGGX(max(dot(normal, lightDir), 0.0), roughness);
+            }
+
+            float ComputePointAttenuation(vec3 fragPos, TransparentLight light)
+            {
+                float distanceToLight = length(light.Position - fragPos);
+                float normalizedDistance = light.Range > 0.0001 ? distanceToLight / light.Range : 1.0;
+                float attenuation = clamp(1.0 - normalizedDistance, 0.0, 1.0);
+                return attenuation * attenuation;
+            }
+
+            float ComputeSpotAttenuation(vec3 fragPos, vec3 lightDir, TransparentLight light)
+            {
+                float pointAttenuation = ComputePointAttenuation(fragPos, light);
+                float spotCos = dot(-lightDir, normalize(light.Direction));
+                float spotFactor = smoothstep(0.9, 0.975, spotCos);
+                return pointAttenuation * spotFactor;
+            }
+
+            vec3 ComputeTransparentLightSpecular(vec3 fragPos, vec3 normal, vec3 viewDir, float roughness, vec3 f0)
+            {
+                vec3 specularLighting = vec3(0.0);
+                for (int lightIndex = 0; lightIndex < 16; ++lightIndex)
+                {
+                    if (lightIndex >= uLightCount)
+                    {
+                        break;
+                    }
+
+                    TransparentLight light = uLights[lightIndex];
+                    vec3 lightDir;
+                    float attenuation = 1.0;
+                    if (light.Type == LIGHT_TYPE_DIRECTIONAL)
+                    {
+                        lightDir = normalize(-light.Direction);
+                    }
+                    else
+                    {
+                        lightDir = normalize(light.Position - fragPos);
+                        attenuation = light.Type == LIGHT_TYPE_SPOT
+                                          ? ComputeSpotAttenuation(fragPos, lightDir, light)
+                                          : ComputePointAttenuation(fragPos, light);
+                    }
+
+                    float ndotl = max(dot(normal, lightDir), 0.0);
+                    if (ndotl <= 0.0001 || attenuation <= 0.0001)
+                    {
+                        continue;
+                    }
+
+                    vec3 halfwayDir = normalize(viewDir + lightDir);
+                    vec3 fresnel = FresnelSchlick(max(dot(halfwayDir, viewDir), 0.0), f0);
+                    float distribution = DistributionGGX(normal, halfwayDir, roughness);
+                    float geometry = GeometrySmith(normal, viewDir, lightDir, roughness);
+                    vec3 specular = distribution * geometry * fresnel / max(4.0 * max(dot(normal, viewDir), 0.0) * ndotl, 0.0001);
+                    vec3 radiance = light.Color * light.Intensity * attenuation;
+                    specularLighting += specular * radiance * ndotl;
+                }
+
+                return specularLighting;
+            }
+
+            vec2 DirectionToEquirectangularUv(vec3 direction)
+            {
+                const float invPi = 0.31830988618;
+                const float invTwoPi = 0.15915494309;
+                vec3 normalizedDirection = normalize(direction);
+                return vec2(atan(normalizedDirection.z, normalizedDirection.x) * invTwoPi + 0.5,
+                            acos(clamp(normalizedDirection.y, -1.0, 1.0)) * invPi);
+            }
+
+            vec3 SampleEnvironment(vec3 direction, float lod)
+            {
+                if (uEnvironmentEnabled == 0)
+                {
+                    return vec3(0.0);
+                }
+
+                return max(textureLod(uEnvironmentMap, DirectionToEquirectangularUv(direction), clamp(lod, 0.0, uEnvironmentMaxMipLevel)).rgb, vec3(0.0)) * uEnvironmentIntensity;
+            }
+
+            vec3 SampleIblCaptureMap(int captureIndex, vec3 direction, float lod)
+            {
+                if (captureIndex == 0)
+                {
+                    return max(textureLod(uIblCaptureMaps[0], direction, clamp(lod, 0.0, uIblCaptureMaxMipLevels[0])).rgb, vec3(0.0)) * uIblCaptureIntensities[0];
+                }
+                if (captureIndex == 1)
+                {
+                    return max(textureLod(uIblCaptureMaps[1], direction, clamp(lod, 0.0, uIblCaptureMaxMipLevels[1])).rgb, vec3(0.0)) * uIblCaptureIntensities[1];
+                }
+                if (captureIndex == 2)
+                {
+                    return max(textureLod(uIblCaptureMaps[2], direction, clamp(lod, 0.0, uIblCaptureMaxMipLevels[2])).rgb, vec3(0.0)) * uIblCaptureIntensities[2];
+                }
+
+                return max(textureLod(uIblCaptureMaps[3], direction, clamp(lod, 0.0, uIblCaptureMaxMipLevels[3])).rgb, vec3(0.0)) * uIblCaptureIntensities[3];
+            }
+
+            float ComputeIblCaptureWeight(vec3 fragPos, int captureIndex)
+            {
+                if (captureIndex >= uIblCaptureCount || uIblCaptureEnabled[captureIndex] == 0)
+                {
+                    return 0.0;
+                }
+
+                vec3 captureSize = max(uIblCaptureSizes[captureIndex], vec3(0.0001));
+                vec3 captureUv = (fragPos - uIblCaptureOrigins[captureIndex]) / captureSize;
+                if (any(lessThan(captureUv, vec3(0.0))) || any(greaterThan(captureUv, vec3(1.0))))
+                {
+                    return 0.0;
+                }
+
+                vec3 edgeDistance = min(captureUv, vec3(1.0) - captureUv);
+                float minHalfExtent = max(min(min(captureSize.x, captureSize.y), captureSize.z) * 0.5, 0.0001);
+                float normalizedEdgeDistance = min(min(edgeDistance.x * captureSize.x, edgeDistance.y * captureSize.y), edgeDistance.z * captureSize.z) / minHalfExtent;
+                float normalizedBlendDistance = clamp(uIblCaptureBlendDistances[captureIndex] / minHalfExtent, 0.0, 1.0);
+                return normalizedBlendDistance <= 0.0001 ? 1.0 : smoothstep(0.0, normalizedBlendDistance, normalizedEdgeDistance);
+            }
+
+            vec3 BoxProjectIblDirection(vec3 fragPos, vec3 direction, int captureIndex)
+            {
+                vec3 boxMin = uIblCaptureOrigins[captureIndex];
+                vec3 boxMax = uIblCaptureOrigins[captureIndex] + max(uIblCaptureSizes[captureIndex], vec3(0.0001));
+                vec3 safeDirection = mix(vec3(0.0001), direction, greaterThan(abs(direction), vec3(0.0001)));
+                vec3 firstPlane = (boxMax - fragPos) / safeDirection;
+                vec3 secondPlane = (boxMin - fragPos) / safeDirection;
+                vec3 furthestPlane = max(firstPlane, secondPlane);
+                float distanceToBox = min(min(furthestPlane.x, furthestPlane.y), furthestPlane.z);
+                vec3 boxHit = fragPos + direction * max(distanceToBox, 0.0);
+                vec3 boxCenter = (boxMin + boxMax) * 0.5;
+                return normalize(boxHit - boxCenter);
+            }
+
+            vec3 SampleIblEnvironment(vec3 fragPos, vec3 direction, float lod)
+            {
+                vec3 capturedColor = vec3(0.0);
+                float captureWeight = 0.0;
+                for (int captureIndex = 0; captureIndex < 4; ++captureIndex)
+                {
+                    float weight = ComputeIblCaptureWeight(fragPos, captureIndex);
+                    if (weight <= 0.0)
+                    {
+                        continue;
+                    }
+
+                    capturedColor += SampleIblCaptureMap(captureIndex, BoxProjectIblDirection(fragPos, direction, captureIndex), lod) * weight;
+                    captureWeight += weight;
+                }
+
+                float captureCoverage = clamp(captureWeight, 0.0, 1.0);
+                vec3 blendedCaptureColor = captureWeight > 0.0001 ? capturedColor / captureWeight : vec3(0.0);
+                return blendedCaptureColor * captureCoverage + SampleEnvironment(direction, lod) * (1.0 - captureCoverage);
+            }
+
+            vec2 GetScreenUv()
+            {
+                if (abs(ClipPos.w) <= 0.0001)
+                {
+                    return vec2(0.5);
+                }
+
+                return ClipPos.xy / ClipPos.w * 0.5 + 0.5;
+            }
+
+            vec3 SampleSceneColor(vec2 uv, float lod)
+            {
+                if (uSceneColorEnabled == 0)
+                {
+                    return vec3(0.0);
+                }
+
+                vec2 clampedUv = clamp(uv, vec2(0.001), vec2(0.999));
+                return max(textureLod(uSceneColorTexture, clampedUv, clamp(lod, 0.0, uSceneColorMaxMipLevel)).rgb, vec3(0.0));
+            }
 
             void main()
             {
@@ -1487,7 +1789,93 @@ void main()
                     discard;
                 }
 
-                FragColor = color;
+                vec3 normal = normalize(Normal);
+                if (uHasNormalTexture > 0.5)
+                {
+                    normal = texture(uNormalTexture, UV).rgb;
+                    if (uFlipNormalY > 0.5)
+                    {
+                        normal.g = 1.0 - normal.g;
+                    }
+                    normal = normalize(normal * 2.0 - 1.0);
+                    normal = normalize(TBN * normal);
+                }
+
+                float metallic = clamp(uMetallicFactor, 0.0, 1.0);
+                float roughness = clamp(uRoughnessFactor, 0.04, 1.0);
+                if (uHasMetallicTexture > 0.5)
+                {
+                    metallic *= ReadTextureChannel(texture(uMetallicTexture, UV), uMetallicTextureChannel);
+                }
+                if (uHasRoughnessTexture > 0.5)
+                {
+                    roughness *= ReadTextureChannel(texture(uRoughnessTexture, UV), uRoughnessTextureChannel);
+                }
+                roughness = clamp(roughness, 0.04, 1.0);
+
+                vec3 viewDir = normalize(uViewPos - FragPos);
+                if (dot(normal, viewDir) < 0.0)
+                {
+                    normal = -normal;
+                }
+                float ndotv = max(dot(normal, viewDir), 0.0);
+                vec3 f0 = mix(vec3(0.04), color.rgb, metallic);
+                if (uSurfaceType == SURFACE_GLASS)
+                {
+                    float ior = clamp(uIor, 1.0, 2.5);
+                    float reflectance = pow((ior - 1.0) / (ior + 1.0), 2.0);
+                    f0 = vec3(clamp(reflectance, 0.0, 1.0));
+                    metallic = 0.0;
+                }
+                vec3 fresnel = FresnelSchlickRoughness(ndotv, f0, roughness);
+                vec3 reflectionDir = reflect(-viewDir, normal);
+                vec3 environmentSpecular = SampleIblEnvironment(FragPos, reflectionDir, roughness * uEnvironmentMaxMipLevel) * fresnel;
+                vec3 directSpecular = ComputeTransparentLightSpecular(FragPos, normal, viewDir, roughness, f0);
+
+                float outputAlpha = color.a;
+                vec3 baseColor = color.rgb;
+                if (uSurfaceType == SURFACE_GLASS)
+                {
+                    float ior = clamp(uIor, 1.01, 2.5);
+                    float transmission = clamp(uTransmissionFactor, 0.0, 1.0);
+                    roughness = clamp(roughness, 0.02, 1.0);
+
+                    float attenuationDistance = max(uAttenuationDistance, 0.0001);
+                    float attenuationAmount = clamp(max(uThickness, 0.0) / attenuationDistance, 0.0, 1.0);
+                    vec3 attenuationTint = mix(vec3(1.0), clamp(uAttenuationColor, vec3(0.0), vec3(1.0)), attenuationAmount);
+                    vec3 glassTint = mix(vec3(1.0), color.rgb * attenuationTint, clamp(0.15 + attenuationAmount, 0.0, 1.0));
+
+                    vec2 sceneUv = GetScreenUv();
+                    vec3 viewNormal = normalize(mat3(uView) * normal);
+                    float eta = 1.0 / ior;
+                    float refractionStrength = (1.0 - eta) * transmission * mix(0.075, 0.025, roughness);
+                    vec2 texelSize = 1.0 / max(uSceneColorTextureSize, vec2(1.0));
+                    vec2 refractedUv = sceneUv + viewNormal.xy * refractionStrength;
+                    refractedUv += texelSize * viewNormal.xy * 2.0;
+
+                    float transmissionLod = roughness * uSceneColorMaxMipLevel * 0.65;
+                    vec3 sceneTransmission = SampleSceneColor(refractedUv, transmissionLod);
+                    if (uSceneColorEnabled == 0)
+                    {
+                        vec3 refractionDir = refract(-viewDir, normal, eta);
+                        sceneTransmission = SampleIblEnvironment(FragPos, length(refractionDir) > 0.001 ? refractionDir : -viewDir, transmissionLod);
+                    }
+                    sceneTransmission *= glassTint;
+
+                    vec3 reflectance = FresnelSchlick(ndotv, f0);
+                    float fresnelAlpha = max(max(reflectance.r, reflectance.g), reflectance.b);
+                    vec3 reflectedGlass = SampleIblEnvironment(FragPos, reflectionDir, roughness * uEnvironmentMaxMipLevel) * reflectance;
+                    vec3 glassDirectSpecular = ComputeTransparentLightSpecular(FragPos, normal, viewDir, roughness, f0);
+                    float reflectionWeight = clamp(fresnelAlpha + roughness * 0.08, 0.02, 0.95);
+                    baseColor = mix(color.rgb * glassTint, sceneTransmission, transmission);
+                    baseColor = mix(baseColor, reflectedGlass, reflectionWeight);
+                    baseColor += glassDirectSpecular;
+                    environmentSpecular = vec3(0.0);
+                    directSpecular = vec3(0.0);
+                    outputAlpha = uSceneColorEnabled != 0 ? 1.0 : clamp(max(color.a * (1.0 - transmission * 0.65), fresnelAlpha * 0.55), 0.04, color.a);
+                }
+
+                FragColor = vec4(baseColor + environmentSpecular + directSpecular, outputAlpha);
             }
         )";
 

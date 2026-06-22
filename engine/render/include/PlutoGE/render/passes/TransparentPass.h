@@ -4,9 +4,11 @@
 
 #include <cstddef>
 #include <glad/glad.h>
+#include <memory>
 
 namespace PlutoGE::render
 {
+    class RenderTarget;
     class Shader;
 
     class TransparentPass : public IRenderPass
@@ -21,6 +23,7 @@ namespace PlutoGE::render
 
     private:
         Shader *m_transparentShader = nullptr;
+        std::unique_ptr<RenderTarget> m_sceneColorCopy;
         GLuint m_instanceBuffer = 0;
         std::size_t m_instanceCapacity = 0;
     };

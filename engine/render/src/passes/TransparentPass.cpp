@@ -41,6 +41,19 @@ namespace PlutoGE::render
                    command.material->GetConfig().alphaMode == AlphaMode::Blend;
         }
 
+        bool CanBatchTransparentCommands(const RenderCommand &a, const RenderCommand &b)
+        {
+            if (a.jointMatrices || b.jointMatrices)
+            {
+                return false;
+            }
+
+            return a.material == b.material &&
+                   a.mesh == b.mesh &&
+                   a.mesh->GetSubmeshLodRange(a.submeshIndex, a.lodIndex).indexOffset == b.mesh->GetSubmeshLodRange(b.submeshIndex, b.lodIndex).indexOffset &&
+                   a.mesh->GetSubmeshLodRange(a.submeshIndex, a.lodIndex).indexCount == b.mesh->GetSubmeshLodRange(b.submeshIndex, b.lodIndex).indexCount;
+        }
+
         void ConfigureMatrixAttributes(unsigned int baseLocation, std::size_t offset, std::size_t stride)
         {
             for (unsigned int column = 0; column < 4; ++column)
@@ -370,17 +383,58 @@ namespace PlutoGE::render
         BindTransparentEnvironment(m_transparentShader, ctx);
         BindTransparentLights(m_transparentShader, ctx);
 
+        std::vector<TransparentInstanceData> batchInstances;
+        batchInstances.reserve(64);
+        const RenderCommand *batchHead = nullptr;
+
+        const auto flushBatch = [&]()
+        {
+            if (!batchHead || batchInstances.empty())
+            {
+                batchHead = nullptr;
+                batchInstances.clear();
+                return;
+            }
+
+            batchHead->material->Bind(m_transparentShader);
+            UploadJointMatrices(m_transparentShader, batchHead->jointMatrices);
+            UploadTransparentInstances(m_instanceBuffer, m_instanceCapacity, batchInstances);
+            BindTransparentInstanceAttributes(*batchHead->mesh, m_instanceBuffer);
+            batchHead->mesh->DrawSubmeshInstancedBound(batchHead->submeshIndex, batchInstances.size(), batchHead->lodIndex);
+            batchHead = nullptr;
+            batchInstances.clear();
+        };
+
         for (const auto *command : transparentCommands)
         {
-            command->material->Bind(m_transparentShader);
-            UploadJointMatrices(m_transparentShader, command->jointMatrices);
-            const std::vector<TransparentInstanceData> instance{
-                TransparentInstanceData{.model = command->model},
-            };
-            UploadTransparentInstances(m_instanceBuffer, m_instanceCapacity, instance);
-            BindTransparentInstanceAttributes(*command->mesh, m_instanceBuffer);
-            command->mesh->DrawSubmeshInstancedBound(command->submeshIndex, 1, command->lodIndex);
+            if (command->jointMatrices)
+            {
+                flushBatch();
+                command->material->Bind(m_transparentShader);
+                UploadJointMatrices(m_transparentShader, command->jointMatrices);
+                const std::vector<TransparentInstanceData> instance{
+                    TransparentInstanceData{.model = command->model},
+                };
+                UploadTransparentInstances(m_instanceBuffer, m_instanceCapacity, instance);
+                BindTransparentInstanceAttributes(*command->mesh, m_instanceBuffer);
+                command->mesh->DrawSubmeshInstancedBound(command->submeshIndex, 1, command->lodIndex);
+                continue;
+            }
+
+            if (batchHead && !CanBatchTransparentCommands(*batchHead, *command))
+            {
+                flushBatch();
+            }
+
+            if (!batchHead)
+            {
+                batchHead = command;
+            }
+
+            batchInstances.push_back(TransparentInstanceData{.model = command->model});
         }
+
+        flushBatch();
 
         m_transparentShader->SetUniform("uUseSkinning", 0);
         m_transparentShader->Unbind();

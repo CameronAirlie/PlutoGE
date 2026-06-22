@@ -257,6 +257,13 @@ namespace PlutoGE::core
         return BuildImportedRenderMeshAsset(normalizedPath, importedMeshAsset);
     }
 
+    ImportedRenderMeshAsset Engine::GenerateMeshAssetLods(const std::string &filePath)
+    {
+        const auto normalizedPath = NormalizePath(filePath);
+        const auto importedMeshAsset = m_meshImporter.GenerateMeshLods(normalizedPath);
+        return BuildImportedRenderMeshAsset(normalizedPath, importedMeshAsset);
+    }
+
     render::Mesh *Engine::ImportMesh(const std::string &filePath)
     {
         return m_meshImporter.ImportMesh(filePath);

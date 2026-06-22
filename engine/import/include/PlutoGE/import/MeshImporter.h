@@ -70,6 +70,7 @@ namespace PlutoGE::assetimport
         ~MeshImporter() = default;
 
         ImportedMeshSourceAsset ImportMeshSourceAsset(const std::string &filePath) const;
+        ImportedMeshAsset GenerateMeshLods(const std::string &filePath);
         ImportedMeshAsset FinalizeImportedMeshAsset(const std::string &filePath, ImportedMeshSourceAsset meshSourceAsset);
         ImportedMeshAsset ImportMeshAsset(const std::string &filePath);
         render::Mesh *ImportMesh(const std::string &filePath);

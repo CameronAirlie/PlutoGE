@@ -201,6 +201,34 @@ namespace PlutoGE::render
             ++m_cpuFrameStats.submittedRenderCommandCount;
         }
 
+        void SubmitSortedRenderCommands(const std::vector<RenderCommand> &commands, bool applySubmissionCulling = true)
+        {
+            if (commands.empty())
+            {
+                return;
+            }
+
+            m_renderCommands.reserve(m_renderCommands.size() + commands.size());
+            bool insertedAny = false;
+            for (const auto &command : commands)
+            {
+                if (applySubmissionCulling && !IsRenderCommandAcceptedForSubmission(command))
+                {
+                    ++m_cpuFrameStats.submissionCulledRenderCommandCount;
+                    continue;
+                }
+
+                if (!insertedAny && !m_renderCommands.empty() && CompareRenderCommandKeys(command, m_renderCommands.back()))
+                {
+                    m_renderCommandsDirty = true;
+                }
+
+                m_renderCommands.push_back(command);
+                ++m_cpuFrameStats.submittedRenderCommandCount;
+                insertedAny = true;
+            }
+        }
+
     private:
         struct SubmissionFrustum
         {

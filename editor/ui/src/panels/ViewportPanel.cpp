@@ -717,7 +717,7 @@ namespace PlutoGE::ui
 
                 const size_t meshSubmeshCount = std::max<size_t>(mesh->GetSubmeshCount(), 1);
                 const size_t submeshBegin = meshComponent->GetSubmeshIndex() >= 0 ? static_cast<size_t>(meshComponent->GetSubmeshIndex()) : 0;
-                const size_t submeshEnd = meshComponent->GetSubmeshIndex() >= 0 ? std::min(submeshBegin + 1, meshSubmeshCount) : meshSubmeshCount;
+                const size_t submeshEnd = meshComponent->GetSubmeshIndex() >= 0 ? std::min(submeshBegin + static_cast<size_t>(std::max(1, meshComponent->GetSubmeshRangeCount())), meshSubmeshCount) : meshSubmeshCount;
 
                 for (size_t submeshIndex = submeshBegin; submeshIndex < submeshEnd; ++submeshIndex)
                 {
@@ -952,6 +952,18 @@ namespace PlutoGE::ui
                     {
                         EditorShell::GetInstance().Log(EditorShell::ConsoleSeverity::Error, errorMessage);
                     }
+                }
+                else if (assets::Project::GetAssetTypeForReference(reference) == assets::ProjectAssetType::Mesh)
+                {
+                    InstantiateMeshAssetIntoScene(reference, nullptr);
+                }
+            }
+            if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kContentBrowserMeshSubassetDragDropPayload))
+            {
+                const auto *meshPayload = static_cast<const ContentBrowserMeshSubassetPayload *>(payload->Data);
+                if (meshPayload)
+                {
+                    InstantiateMeshAssetIntoScene(meshPayload->sourceReference, nullptr, meshPayload->submeshIndex, meshPayload->submeshCount, meshPayload->materialSlot);
                 }
             }
             ImGui::EndDragDropTarget();

@@ -78,6 +78,7 @@ namespace PlutoGE::core
         void StopRuntime();
         [[nodiscard]] bool IsRuntimeRunning() const { return m_isRuntimeRunning; }
         ImportedRenderMeshAsset ImportMeshAsset(const std::string &filePath);
+        ImportedRenderMeshAsset GenerateMeshAssetLods(const std::string &filePath);
         render::Mesh *ImportMesh(const std::string &filePath);
         void QueueMeshImport(scene::EntityID entityId, const std::string &filePath);
         void UpdateAsyncMeshImports();

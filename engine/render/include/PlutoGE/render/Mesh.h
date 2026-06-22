@@ -566,6 +566,20 @@ namespace PlutoGE::render
 
             return ResolveSubmeshLodRange(m_config.submeshes[submeshIndex], lodIndex).indexCount;
         }
+        Submesh::LodRange GetSubmeshLodRange(size_t submeshIndex, size_t lodIndex = 0) const
+        {
+            if (submeshIndex >= m_config.submeshes.size())
+            {
+                return Submesh::LodRange{
+                    .indexOffset = 0,
+                    .indexCount = static_cast<uint32_t>(m_config.data.indices.size()),
+                    .minDistanceFactor = 0.0f,
+                    .maxScreenRadiusPixels = std::numeric_limits<float>::max(),
+                };
+            }
+
+            return ResolveSubmeshLodRange(m_config.submeshes[submeshIndex], lodIndex);
+        }
         size_t SelectSubmeshLod(size_t submeshIndex, float cameraDistance) const
         {
             if (submeshIndex >= m_config.submeshes.size())

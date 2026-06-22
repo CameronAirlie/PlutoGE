@@ -162,7 +162,18 @@ namespace PlutoGE::ui
             if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kContentBrowserAssetDragDropPayload))
             {
                 const std::string reference(static_cast<const char *>(payload->Data), payload->DataSize > 0 ? payload->DataSize - 1 : 0);
-                InstantiatePrefabIntoScene(reference, entity);
+                if (!InstantiatePrefabIntoScene(reference, entity))
+                {
+                    InstantiateMeshAssetIntoScene(reference, entity);
+                }
+            }
+            if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kContentBrowserMeshSubassetDragDropPayload))
+            {
+                const auto *meshPayload = static_cast<const ContentBrowserMeshSubassetPayload *>(payload->Data);
+                if (meshPayload)
+                {
+                    InstantiateMeshAssetIntoScene(meshPayload->sourceReference, entity, meshPayload->submeshIndex, meshPayload->submeshCount, meshPayload->materialSlot);
+                }
             }
             ImGui::EndDragDropTarget();
         }
@@ -321,7 +332,18 @@ namespace PlutoGE::ui
             if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kContentBrowserAssetDragDropPayload))
             {
                 const std::string reference(static_cast<const char *>(payload->Data), payload->DataSize > 0 ? payload->DataSize - 1 : 0);
-                InstantiatePrefabIntoScene(reference, nullptr);
+                if (!InstantiatePrefabIntoScene(reference, nullptr))
+                {
+                    InstantiateMeshAssetIntoScene(reference, nullptr);
+                }
+            }
+            if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kContentBrowserMeshSubassetDragDropPayload))
+            {
+                const auto *meshPayload = static_cast<const ContentBrowserMeshSubassetPayload *>(payload->Data);
+                if (meshPayload)
+                {
+                    InstantiateMeshAssetIntoScene(meshPayload->sourceReference, nullptr, meshPayload->submeshIndex, meshPayload->submeshCount, meshPayload->materialSlot);
+                }
             }
             ImGui::EndDragDropTarget();
         }

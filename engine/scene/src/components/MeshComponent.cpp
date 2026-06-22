@@ -10,6 +10,7 @@
 #include "PlutoGE/core/Engine.h"
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <map>
@@ -68,6 +69,43 @@ namespace PlutoGE::scene
             return true;
         }
 
+        bool CompareRenderCommandKeys(const render::RenderCommand &a, const render::RenderCommand &b)
+        {
+            if (a.shader != b.shader)
+            {
+                return a.shader < b.shader;
+            }
+
+            if (a.material != b.material)
+            {
+                return a.material < b.material;
+            }
+
+            if (a.mesh != b.mesh)
+            {
+                return a.mesh < b.mesh;
+            }
+
+            const auto aRange = a.mesh ? a.mesh->GetSubmeshLodRange(a.submeshIndex, a.lodIndex) : render::Submesh::LodRange{};
+            const auto bRange = b.mesh ? b.mesh->GetSubmeshLodRange(b.submeshIndex, b.lodIndex) : render::Submesh::LodRange{};
+            if (aRange.indexOffset != bRange.indexOffset)
+            {
+                return aRange.indexOffset < bRange.indexOffset;
+            }
+
+            if (aRange.indexCount != bRange.indexCount)
+            {
+                return aRange.indexCount < bRange.indexCount;
+            }
+
+            if (a.submeshIndex != b.submeshIndex)
+            {
+                return a.submeshIndex < b.submeshIndex;
+            }
+
+            return false;
+        }
+
         AnimationComponent *FindAnimationComponent(Entity *entity)
         {
             for (auto *current = entity; current != nullptr; current = current->GetParent())
@@ -79,6 +117,29 @@ namespace PlutoGE::scene
             }
 
             return nullptr;
+        }
+
+        glm::mat4 ComputeAnimationNodeBindMatrix(const std::vector<render::AnimationNode> &nodes, int nodeIndex)
+        {
+            if (nodeIndex < 0 || nodeIndex >= static_cast<int>(nodes.size()))
+            {
+                return glm::mat4(1.0f);
+            }
+
+            std::vector<int> chain;
+            for (int currentNodeIndex = nodeIndex;
+                 currentNodeIndex >= 0 && currentNodeIndex < static_cast<int>(nodes.size());
+                 currentNodeIndex = nodes[static_cast<size_t>(currentNodeIndex)].parentNodeIndex)
+            {
+                chain.push_back(currentNodeIndex);
+            }
+
+            glm::mat4 transform(1.0f);
+            for (auto iterator = chain.rbegin(); iterator != chain.rend(); ++iterator)
+            {
+                transform *= nodes[static_cast<size_t>(*iterator)].localBindTransform;
+            }
+            return transform;
         }
 
         std::string SerializeVec4(const glm::vec4 &value)
@@ -418,6 +479,7 @@ namespace PlutoGE::scene
             {"Static", PropertyType::Bool, m_isStatic ? "true" : "false"},
             {"Visible", PropertyType::Bool, m_visible ? "true" : "false"},
             {"SubmeshIndex", PropertyType::Int, std::to_string(m_submeshIndex)},
+            {"SubmeshCount", PropertyType::Int, std::to_string(m_submeshCount)},
             {"SourceMesh", PropertyType::String, m_sourceMeshPath},
             {"MaterialSlotCount", PropertyType::Int, std::to_string(m_materials.size())},
         };
@@ -482,6 +544,10 @@ namespace PlutoGE::scene
             else if (property.name == "SubmeshIndex")
             {
                 m_submeshIndex = std::stoi(property.value);
+            }
+            else if (property.name == "SubmeshCount")
+            {
+                m_submeshCount = std::max(1, std::stoi(property.value));
             }
             else if (property.name == "SourceMesh")
             {
@@ -611,27 +677,6 @@ namespace PlutoGE::scene
                 hasAnimatedNodeSubmeshes = hasAnimatedNodeSubmeshes || m_mesh->GetSubmesh(submeshIndex).animatedNodeIndex >= 0;
             }
 
-            auto &renderer = PlutoGE::core::Engine::GetInstance().GetRenderer();
-            if (m_isStatic &&
-                !m_mesh->HasSkeleton() &&
-                !hasAnimatedNodeSubmeshes &&
-                !m_renderCommandCacheDirty &&
-                m_hasCachedRenderCommandModel &&
-                AreMatricesApproximatelyEqual(m_cachedRenderCommandModel, modelMatrix))
-            {
-                for (const auto &command : m_cachedRenderCommands)
-                {
-                    renderer.SubmitRenderCommand(command);
-                }
-
-                m_previousModelMatrix = modelMatrix;
-                m_hasPreviousModelMatrix = true;
-                return;
-            }
-
-            const size_t meshSubmeshCount = std::max<size_t>(m_mesh->GetSubmeshCount(), 1);
-            const size_t submeshBegin = m_submeshIndex >= 0 ? static_cast<size_t>(m_submeshIndex) : 0;
-            const size_t submeshEnd = m_submeshIndex >= 0 ? std::min(submeshBegin + 1, meshSubmeshCount) : meshSubmeshCount;
             AnimationComponent *animationComponent = FindAnimationComponent(entity);
             const std::vector<glm::mat4> *jointMatrices = nullptr;
             if (m_mesh->HasSkeleton())
@@ -641,8 +686,28 @@ namespace PlutoGE::scene
                     jointMatrices = &animationComponent->GetJointMatrices(m_mesh->GetSkeleton());
                 }
             }
+            const bool canCacheStaticRenderCommands = m_isStatic &&
+                                                      !jointMatrices &&
+                                                      (!hasAnimatedNodeSubmeshes || !animationComponent || animationComponent->GetClipCount() == 0);
+
+            auto &renderer = PlutoGE::core::Engine::GetInstance().GetRenderer();
+            if (canCacheStaticRenderCommands &&
+                !m_renderCommandCacheDirty &&
+                m_hasCachedRenderCommandModel &&
+                AreMatricesApproximatelyEqual(m_cachedRenderCommandModel, modelMatrix))
+            {
+                renderer.SubmitSortedRenderCommands(m_cachedRenderCommands, false);
+
+                m_previousModelMatrix = modelMatrix;
+                m_hasPreviousModelMatrix = true;
+                return;
+            }
+
+            const size_t meshSubmeshCount = std::max<size_t>(m_mesh->GetSubmeshCount(), 1);
+            const size_t submeshBegin = m_submeshIndex >= 0 ? static_cast<size_t>(m_submeshIndex) : 0;
+            const size_t submeshEnd = m_submeshIndex >= 0 ? std::min(submeshBegin + static_cast<size_t>(std::max(1, m_submeshCount)), meshSubmeshCount) : meshSubmeshCount;
             std::vector<render::RenderCommand> rebuiltCommands;
-            if (m_isStatic && !jointMatrices && !hasAnimatedNodeSubmeshes)
+            if (canCacheStaticRenderCommands)
             {
                 rebuiltCommands.reserve(submeshEnd - submeshBegin);
             }
@@ -657,9 +722,11 @@ namespace PlutoGE::scene
 
                 const auto &submesh = submeshIndex < m_mesh->GetSubmeshCount() ? m_mesh->GetSubmesh(submeshIndex) : render::Submesh{};
                 glm::mat4 submeshModelMatrix = modelMatrix;
-                if (!jointMatrices && animationComponent && submesh.animatedNodeIndex >= 0)
+                if (!jointMatrices && submesh.animatedNodeIndex >= 0)
                 {
-                    submeshModelMatrix = modelMatrix * animationComponent->GetNodeMatrix(m_mesh->GetAnimationNodes(), submesh.animatedNodeIndex);
+                    submeshModelMatrix = modelMatrix * (animationComponent && animationComponent->GetClipCount() > 0
+                                                            ? animationComponent->GetNodeMatrix(m_mesh->GetAnimationNodes(), submesh.animatedNodeIndex)
+                                                            : ComputeAnimationNodeBindMatrix(m_mesh->GetAnimationNodes(), submesh.animatedNodeIndex));
                 }
 
                 render::RenderCommand command;
@@ -676,14 +743,15 @@ namespace PlutoGE::scene
                 command.usePrimaryUvForLightmap = !m_mesh->HasUsableLightmapUvsForSubmesh(submeshIndex);
 
                 renderer.SubmitRenderCommand(command);
-                if (m_isStatic && !jointMatrices && !hasAnimatedNodeSubmeshes)
+                if (canCacheStaticRenderCommands)
                 {
                     rebuiltCommands.push_back(command);
                 }
             }
 
-            if (m_isStatic && !jointMatrices && !hasAnimatedNodeSubmeshes)
+            if (canCacheStaticRenderCommands)
             {
+                std::sort(rebuiltCommands.begin(), rebuiltCommands.end(), CompareRenderCommandKeys);
                 m_cachedRenderCommands = std::move(rebuiltCommands);
                 m_cachedRenderCommandModel = modelMatrix;
                 m_hasCachedRenderCommandModel = true;

@@ -25,6 +25,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <mutex>
 #include <optional>
 #include <stdexcept>
@@ -71,7 +72,7 @@ namespace PlutoGE::assetimport
         };
 
         constexpr size_t kLargeMeshOverdrawThreshold = 1'000'000;
-        constexpr uint32_t kLodTriangleThreshold = 2000;
+        constexpr uint32_t kLodTriangleThreshold = 50;
 
         std::array<int, 4> ReadJointTupleUnchecked(const AccessorView &view, size_t elementIndex);
         void ValidateJointAccessorView(const AccessorView &view);
@@ -98,6 +99,11 @@ namespace PlutoGE::assetimport
             double metallicChannelCheckMs = 0.0;
             size_t metallicChannelCheckCount = 0;
             size_t metallicChannelDecodeCount = 0;
+            double assimpReadMs = 0.0;
+            double assimpMaterialMs = 0.0;
+            double assimpSkeletonMs = 0.0;
+            double assimpAnimationMs = 0.0;
+            double assimpMeshAssemblyMs = 0.0;
 
             ~MeshImportProfile()
             {
@@ -122,7 +128,12 @@ namespace PlutoGE::assetimport
                     << "overdraw=" << optimizeOverdrawMs << "ms, "
                     << "vfetch=" << optimizeVertexFetchMs << "ms), "
                     << "metallicChecks=" << metallicChannelCheckCount << " (" << metallicChannelCheckMs << "ms, "
-                    << metallicChannelDecodeCount << " file decodes)"
+                    << metallicChannelDecodeCount << " file decodes), "
+                    << "assimp=(read=" << assimpReadMs << "ms, "
+                    << "materials=" << assimpMaterialMs << "ms, "
+                    << "skeleton=" << assimpSkeletonMs << "ms, "
+                    << "animations=" << assimpAnimationMs << "ms, "
+                    << "meshes=" << assimpMeshAssemblyMs << "ms)"
                     << std::endl;
             }
         };
@@ -163,7 +174,7 @@ namespace PlutoGE::assetimport
         };
 
         constexpr uint32_t kCookedMeshCacheMagic = 0x434d4750; // PGMC
-        constexpr uint32_t kCookedMeshCacheVersion = 3;
+        constexpr uint32_t kCookedMeshCacheVersion = 10;
 
         bool ReadBooleanEnvironmentFlag(const char *name, bool defaultValue)
         {
@@ -184,13 +195,19 @@ namespace PlutoGE::assetimport
         struct MeshCookOptions
         {
             bool generateLods = false;
+            bool generateTangents = false;
+            bool optimizeVertexCache = false;
             bool optimizeOverdraw = false;
+            bool assimpQualityPostProcess = false;
 
             uint32_t ToFlags() const
             {
                 uint32_t flags = 0;
                 flags |= generateLods ? 1u : 0u;
                 flags |= optimizeOverdraw ? 2u : 0u;
+                flags |= assimpQualityPostProcess ? 4u : 0u;
+                flags |= generateTangents ? 8u : 0u;
+                flags |= optimizeVertexCache ? 16u : 0u;
                 return flags;
             }
         };
@@ -198,8 +215,11 @@ namespace PlutoGE::assetimport
         MeshCookOptions ResolveMeshCookOptions()
         {
             return MeshCookOptions{
-                .generateLods = ReadBooleanEnvironmentFlag("PLUTOGE_GENERATE_MESH_LODS", true),
-                .optimizeOverdraw = ReadBooleanEnvironmentFlag("PLUTOGE_OPTIMIZE_MESH_OVERDRAW", true),
+                .generateLods = ReadBooleanEnvironmentFlag("PLUTOGE_GENERATE_MESH_LODS", false),
+                .generateTangents = ReadBooleanEnvironmentFlag("PLUTOGE_GENERATE_MESH_TANGENTS", false),
+                .optimizeVertexCache = ReadBooleanEnvironmentFlag("PLUTOGE_OPTIMIZE_MESH_VERTEX_CACHE", false),
+                .optimizeOverdraw = ReadBooleanEnvironmentFlag("PLUTOGE_OPTIMIZE_MESH_OVERDRAW", false),
+                .assimpQualityPostProcess = ReadBooleanEnvironmentFlag("PLUTOGE_ASSIMP_QUALITY_POSTPROCESS", false),
             };
         }
 
@@ -1341,9 +1361,42 @@ namespace PlutoGE::assetimport
             }
         }
 
-        void OptimizeMeshData(render::MeshData &meshData, const std::vector<render::Submesh> &submeshes, bool optimizeOverdraw, MeshImportProfile *profile = nullptr)
+        glm::vec3 BuildFallbackTangent(const glm::vec3 &normal)
         {
-            if (meshData.vertices.empty() || meshData.indices.empty())
+            const glm::vec3 referenceAxis = std::abs(normal.z) < 0.999f
+                                                ? glm::vec3(0.0f, 0.0f, 1.0f)
+                                                : glm::vec3(0.0f, 1.0f, 0.0f);
+            return glm::normalize(glm::cross(referenceAxis, normal));
+        }
+
+        void FillMissingTangentsWithFallbacks(render::MeshData &meshData)
+        {
+            for (auto &vertex : meshData.vertices)
+            {
+                glm::vec3 tangent(vertex.tangent[0], vertex.tangent[1], vertex.tangent[2]);
+                if (SquaredLength(tangent) > 1e-8f && std::abs(vertex.tangent[3]) >= 0.5f)
+                {
+                    continue;
+                }
+
+                glm::vec3 normal(vertex.normal[0], vertex.normal[1], vertex.normal[2]);
+                if (SquaredLength(normal) <= 1e-12f)
+                {
+                    normal = glm::vec3(0.0f, 1.0f, 0.0f);
+                }
+                else
+                {
+                    normal = glm::normalize(normal);
+                }
+
+                tangent = BuildFallbackTangent(normal);
+                vertex.tangent = {tangent.x, tangent.y, tangent.z, 1.0f};
+            }
+        }
+
+        void OptimizeMeshData(render::MeshData &meshData, const std::vector<render::Submesh> &submeshes, bool optimizeVertexCache, bool optimizeOverdraw, MeshImportProfile *profile = nullptr)
+        {
+            if (meshData.vertices.empty() || meshData.indices.empty() || (!optimizeVertexCache && !optimizeOverdraw))
             {
                 return;
             }
@@ -1528,6 +1581,27 @@ namespace PlutoGE::assetimport
                 std::vector<PendingLodRange> lods;
             };
 
+            struct SourceRangeKey
+            {
+                uint32_t indexOffset = 0;
+                uint32_t indexCount = 0;
+
+                bool operator==(const SourceRangeKey &other) const
+                {
+                    return indexOffset == other.indexOffset && indexCount == other.indexCount;
+                }
+            };
+
+            struct SourceRangeKeyHash
+            {
+                size_t operator()(const SourceRangeKey &key) const
+                {
+                    const size_t offsetHash = std::hash<uint32_t>{}(key.indexOffset);
+                    const size_t countHash = std::hash<uint32_t>{}(key.indexCount);
+                    return offsetHash ^ (countHash + 0x9e3779b9u + (offsetHash << 6u) + (offsetHash >> 2u));
+                }
+            };
+
             constexpr std::array<LodTarget, 3> kLodTargets{{
                 {.targetRatio = 0.50f, .minDistanceFactor = 7.0f, .maxScreenRadiusPixels = 220.0f, .error = 0.015f},
                 {.targetRatio = 0.25f, .minDistanceFactor = 14.0f, .maxScreenRadiusPixels = 120.0f, .error = 0.02f},
@@ -1552,13 +1626,18 @@ namespace PlutoGE::assetimport
 
             std::vector<size_t> eligibleSubmeshIndices;
             eligibleSubmeshIndices.reserve(submeshes.size());
+            std::unordered_map<SourceRangeKey, size_t, SourceRangeKeyHash> firstSubmeshForSourceRange;
             for (size_t submeshIndex = 0; submeshIndex < submeshes.size(); ++submeshIndex)
             {
                 const auto &submesh = submeshes[submeshIndex];
                 if (submesh.indexCount >= kLodTriangleThreshold * 3 &&
                     submesh.indexOffset + submesh.indexCount <= meshData.indices.size())
                 {
-                    eligibleSubmeshIndices.push_back(submeshIndex);
+                    const SourceRangeKey key{submesh.indexOffset, submesh.indexCount};
+                    if (firstSubmeshForSourceRange.emplace(key, submeshIndex).second)
+                    {
+                        eligibleSubmeshIndices.push_back(submeshIndex);
+                    }
                 }
             }
 
@@ -1638,6 +1717,28 @@ namespace PlutoGE::assetimport
                         .minDistanceFactor = pendingLod.minDistanceFactor,
                         .maxScreenRadiusPixels = pendingLod.maxScreenRadiusPixels,
                     });
+                }
+            }
+
+            for (size_t submeshIndex = 0; submeshIndex < submeshes.size(); ++submeshIndex)
+            {
+                auto &submesh = submeshes[submeshIndex];
+                if (submesh.lods.size() > 1)
+                {
+                    continue;
+                }
+
+                const SourceRangeKey key{submesh.indexOffset, submesh.indexCount};
+                const auto sourceIt = firstSubmeshForSourceRange.find(key);
+                if (sourceIt == firstSubmeshForSourceRange.end() || sourceIt->second == submeshIndex)
+                {
+                    continue;
+                }
+
+                const auto &sourceSubmesh = submeshes[sourceIt->second];
+                if (sourceSubmesh.lods.size() > 1)
+                {
+                    submesh.lods = sourceSubmesh.lods;
                 }
             }
         }
@@ -2416,6 +2517,24 @@ namespace PlutoGE::assetimport
             std::string name;
         };
 
+        struct AssimpMeshWorkItem
+        {
+            const aiMesh *sourceMesh = nullptr;
+            glm::mat4 transform{1.0f};
+            glm::mat3 normalMatrix{1.0f};
+            uint32_t materialIndex = 0;
+            uint32_t baseVertex = 0;
+            uint32_t indexOffset = 0;
+            uint32_t vertexCount = 0;
+            uint32_t indexCount = 0;
+            unsigned int primaryUvChannel = 0;
+            int animatedNodeIndex = -1;
+            std::string name;
+            bool hasSkinning = false;
+            bool writesGeometry = true;
+            size_t slot = 0;
+        };
+
         void CollectAssimpNodes(
             const aiNode *node,
             int parentNodeIndex,
@@ -2941,6 +3060,358 @@ namespace PlutoGE::assetimport
             return animatedNodes;
         }
 
+        void ReserveAssimpMeshStorage(const aiScene &scene, ImportedMeshSourceAsset &asset)
+        {
+            size_t vertexCount = 0;
+            size_t indexCount = 0;
+            size_t submeshCount = 0;
+
+            for (unsigned int meshIndex = 0; meshIndex < scene.mNumMeshes; ++meshIndex)
+            {
+                const aiMesh *mesh = scene.mMeshes[meshIndex];
+                if (!mesh || !mesh->HasPositions())
+                {
+                    continue;
+                }
+
+                vertexCount += mesh->mNumVertices;
+                ++submeshCount;
+                for (unsigned int faceIndex = 0; faceIndex < mesh->mNumFaces; ++faceIndex)
+                {
+                    const aiFace &face = mesh->mFaces[faceIndex];
+                    if (face.mNumIndices == 3)
+                    {
+                        indexCount += 3;
+                    }
+                }
+            }
+
+            asset.meshData.vertices.reserve(vertexCount);
+            asset.meshData.indices.reserve(indexCount);
+            asset.submeshes.reserve(submeshCount);
+        }
+
+        uint32_t CountAssimpTriangleIndices(const aiMesh &mesh)
+        {
+            uint32_t indexCount = 0;
+            for (unsigned int faceIndex = 0; faceIndex < mesh.mNumFaces; ++faceIndex)
+            {
+                if (mesh.mFaces[faceIndex].mNumIndices == 3)
+                {
+                    indexCount += 3;
+                }
+            }
+            return indexCount;
+        }
+
+        void CollectAssimpMeshWorkItems(
+            const aiScene &scene,
+            const std::vector<AssimpNodeInfo> &nodes,
+            const std::unordered_map<const aiNode *, int> &nodeToIndex,
+            int nodeIndex,
+            const std::unordered_set<int> &animatedNodeIndices,
+            int activeAnimatedNodeIndex,
+            const std::vector<unsigned int> &materialPrimaryUvChannels,
+            std::vector<AssimpMeshWorkItem> &workItems)
+        {
+            if (nodeIndex < 0 || nodeIndex >= static_cast<int>(nodes.size()))
+            {
+                return;
+            }
+
+            const auto &nodeInfo = nodes[static_cast<size_t>(nodeIndex)];
+            const aiNode *node = nodeInfo.node;
+            if (!node)
+            {
+                return;
+            }
+
+            const int animatedNodeIndex = animatedNodeIndices.find(nodeIndex) != animatedNodeIndices.end() ? nodeIndex : activeAnimatedNodeIndex;
+            const glm::mat4 staticTransform = animatedNodeIndex >= 0
+                                                  ? glm::inverse(nodes[static_cast<size_t>(animatedNodeIndex)].globalTransform) * nodeInfo.globalTransform
+                                                  : nodeInfo.globalTransform;
+
+            for (unsigned int meshSlot = 0; meshSlot < node->mNumMeshes; ++meshSlot)
+            {
+                const unsigned int meshIndex = node->mMeshes[meshSlot];
+                if (meshIndex >= scene.mNumMeshes || !scene.mMeshes[meshIndex])
+                {
+                    continue;
+                }
+
+                const aiMesh &sourceMesh = *scene.mMeshes[meshIndex];
+                if (!sourceMesh.HasPositions())
+                {
+                    continue;
+                }
+
+                const uint32_t indexCount = CountAssimpTriangleIndices(sourceMesh);
+                if (indexCount == 0)
+                {
+                    continue;
+                }
+
+                const uint32_t materialIndex = sourceMesh.mMaterialIndex < materialPrimaryUvChannels.size()
+                                                   ? sourceMesh.mMaterialIndex
+                                                   : static_cast<uint32_t>(materialPrimaryUvChannels.empty() ? 0 : materialPrimaryUvChannels.size() - 1);
+                const unsigned int primaryUvChannel = materialIndex < materialPrimaryUvChannels.size() ? materialPrimaryUvChannels[materialIndex] : 0;
+                const bool hasSkinning = sourceMesh.HasBones();
+                const glm::mat4 meshTransform = glm::mat4(1.0f);
+                std::string submeshName = ToStdString(node->mName);
+                if (submeshName.empty() && sourceMesh.mName.length > 0)
+                {
+                    submeshName = ToStdString(sourceMesh.mName);
+                }
+
+                workItems.push_back(AssimpMeshWorkItem{
+                    .sourceMesh = &sourceMesh,
+                    .transform = meshTransform,
+                    .normalMatrix = glm::transpose(glm::inverse(glm::mat3(meshTransform))),
+                    .materialIndex = materialIndex,
+                    .vertexCount = sourceMesh.mNumVertices,
+                    .indexCount = indexCount,
+                    .primaryUvChannel = primaryUvChannel,
+                    .animatedNodeIndex = hasSkinning ? -1 : nodeIndex,
+                    .name = std::move(submeshName),
+                    .hasSkinning = hasSkinning,
+                    .slot = workItems.size(),
+                });
+            }
+
+            for (unsigned int childIndex = 0; childIndex < node->mNumChildren; ++childIndex)
+            {
+                const aiNode *child = node->mChildren[childIndex];
+                const auto childIt = nodeToIndex.find(child);
+                if (childIt != nodeToIndex.end())
+                {
+                    CollectAssimpMeshWorkItems(scene, nodes, nodeToIndex, childIt->second, animatedNodeIndices, animatedNodeIndex, materialPrimaryUvChannels, workItems);
+                }
+            }
+        }
+
+        void AssignAssimpMeshWorkItemStorage(std::vector<AssimpMeshWorkItem> &workItems, ImportedMeshSourceAsset &asset)
+        {
+            struct SharedMeshKey
+            {
+                const aiMesh *mesh = nullptr;
+                unsigned int primaryUvChannel = 0;
+
+                bool operator==(const SharedMeshKey &other) const
+                {
+                    return mesh == other.mesh && primaryUvChannel == other.primaryUvChannel;
+                }
+            };
+
+            struct SharedMeshKeyHash
+            {
+                size_t operator()(const SharedMeshKey &key) const
+                {
+                    const auto pointerHash = std::hash<const aiMesh *>{}(key.mesh);
+                    const auto uvHash = std::hash<unsigned int>{}(key.primaryUvChannel);
+                    return pointerHash ^ (uvHash + 0x9e3779b9u + (pointerHash << 6u) + (pointerHash >> 2u));
+                }
+            };
+
+            struct SharedMeshRange
+            {
+                uint32_t baseVertex = 0;
+                uint32_t indexOffset = 0;
+            };
+
+            std::unordered_map<SharedMeshKey, SharedMeshRange, SharedMeshKeyHash> sharedMeshRanges;
+            asset.submeshes.resize(workItems.size());
+
+            uint64_t nextBaseVertex = 0;
+            uint64_t nextIndexOffset = 0;
+            for (size_t index = 0; index < workItems.size(); ++index)
+            {
+                auto &workItem = workItems[index];
+                workItem.slot = index;
+
+                const aiMesh *sourceMesh = workItem.sourceMesh;
+                const bool canShareGeometry = sourceMesh && !workItem.hasSkinning;
+                if (canShareGeometry)
+                {
+                    const SharedMeshKey key{sourceMesh, workItem.primaryUvChannel};
+                    if (const auto sharedIt = sharedMeshRanges.find(key); sharedIt != sharedMeshRanges.end())
+                    {
+                        workItem.baseVertex = sharedIt->second.baseVertex;
+                        workItem.indexOffset = sharedIt->second.indexOffset;
+                        workItem.writesGeometry = false;
+                    }
+                    else
+                    {
+                        workItem.baseVertex = static_cast<uint32_t>(nextBaseVertex);
+                        workItem.indexOffset = static_cast<uint32_t>(nextIndexOffset);
+                        workItem.writesGeometry = true;
+                        sharedMeshRanges.emplace(key, SharedMeshRange{workItem.baseVertex, workItem.indexOffset});
+                        nextBaseVertex += workItem.vertexCount;
+                        nextIndexOffset += workItem.indexCount;
+                    }
+                }
+                else
+                {
+                    workItem.baseVertex = static_cast<uint32_t>(nextBaseVertex);
+                    workItem.indexOffset = static_cast<uint32_t>(nextIndexOffset);
+                    workItem.writesGeometry = true;
+                    nextBaseVertex += workItem.vertexCount;
+                    nextIndexOffset += workItem.indexCount;
+                }
+
+                if (nextBaseVertex > std::numeric_limits<uint32_t>::max() ||
+                    nextIndexOffset > std::numeric_limits<uint32_t>::max())
+                {
+                    throw std::runtime_error("FBX mesh is too large for 32-bit mesh buffers after import expansion.");
+                }
+
+                asset.hasLightmapUvs = asset.hasLightmapUvs || (sourceMesh && sourceMesh->HasTextureCoords(1));
+                asset.requiresMissingNormalFallback = asset.requiresMissingNormalFallback || !sourceMesh || !sourceMesh->HasNormals();
+                asset.submeshes[index] = render::Submesh{
+                    .indexOffset = workItem.indexOffset,
+                    .indexCount = workItem.indexCount,
+                    .materialIndex = workItem.materialIndex,
+                    .animatedNodeIndex = workItem.animatedNodeIndex,
+                    .name = workItem.name.empty() ? MakeFallbackSubmeshName(index) : workItem.name,
+                };
+            }
+
+            try
+            {
+                asset.meshData.vertices.resize(static_cast<size_t>(nextBaseVertex));
+                asset.meshData.indices.resize(static_cast<size_t>(nextIndexOffset));
+            }
+            catch (const std::bad_alloc &)
+            {
+                const uint64_t vertexBytes = nextBaseVertex * static_cast<uint64_t>(sizeof(render::MeshVertexData));
+                const uint64_t indexBytes = nextIndexOffset * static_cast<uint64_t>(sizeof(unsigned int));
+                throw std::runtime_error(
+                    "Out of memory allocating imported FBX mesh buffers: vertices=" + std::to_string(nextBaseVertex) +
+                    " (" + std::to_string(vertexBytes / (1024ull * 1024ull)) + " MiB), indices=" + std::to_string(nextIndexOffset) +
+                    " (" + std::to_string(indexBytes / (1024ull * 1024ull)) + " MiB), submeshes=" + std::to_string(workItems.size()) + ".");
+            }
+        }
+
+        void WriteAssimpMesh(
+            const AssimpMeshWorkItem &workItem,
+            const std::unordered_map<std::string, int> &boneNameToJointIndex,
+            render::MeshData &meshData,
+            bool &requiresMissingNormalFallback)
+        {
+            const aiMesh *sourceMesh = workItem.sourceMesh;
+            if (!sourceMesh || !workItem.writesGeometry)
+            {
+                return;
+            }
+
+            auto *vertexDestination = meshData.vertices.data() + workItem.baseVertex;
+            auto *indexDestination = meshData.indices.data() + workItem.indexOffset;
+
+            for (unsigned int vertexIndex = 0; vertexIndex < sourceMesh->mNumVertices; ++vertexIndex)
+            {
+                auto &vertex = vertexDestination[vertexIndex];
+                const aiVector3D sourcePosition = sourceMesh->mVertices[vertexIndex];
+                const glm::vec4 position = workItem.transform * glm::vec4(sourcePosition.x, sourcePosition.y, sourcePosition.z, 1.0f);
+                vertex.position = {position.x, position.y, position.z};
+
+                vertex.normal = {0.0f, 0.0f, 0.0f};
+                if (sourceMesh->HasNormals())
+                {
+                    const aiVector3D sourceNormal = sourceMesh->mNormals[vertexIndex];
+                    glm::vec3 normal = workItem.normalMatrix * glm::vec3(sourceNormal.x, sourceNormal.y, sourceNormal.z);
+                    if (SquaredLength(normal) > 1e-12f)
+                    {
+                        normal = glm::normalize(normal);
+                    }
+                    else
+                    {
+                        requiresMissingNormalFallback = true;
+                    }
+                    vertex.normal = {normal.x, normal.y, normal.z};
+                }
+                else
+                {
+                    requiresMissingNormalFallback = true;
+                }
+
+                vertex.uv = {0.0f, 0.0f};
+                if (workItem.primaryUvChannel < AI_MAX_NUMBER_OF_TEXTURECOORDS && sourceMesh->HasTextureCoords(workItem.primaryUvChannel))
+                {
+                    const aiVector3D uv = sourceMesh->mTextureCoords[workItem.primaryUvChannel][vertexIndex];
+                    vertex.uv = {uv.x, uv.y};
+                }
+
+                vertex.uv2 = {0.0f, 0.0f};
+                if (sourceMesh->HasTextureCoords(1))
+                {
+                    const aiVector3D uv = sourceMesh->mTextureCoords[1][vertexIndex];
+                    vertex.uv2 = {uv.x, uv.y};
+                }
+
+                vertex.tangent = {0.0f, 0.0f, 0.0f, 1.0f};
+                if (sourceMesh->HasTangentsAndBitangents())
+                {
+                    const aiVector3D sourceTangent = sourceMesh->mTangents[vertexIndex];
+                    glm::vec3 tangent = workItem.normalMatrix * glm::vec3(sourceTangent.x, sourceTangent.y, sourceTangent.z);
+                    if (SquaredLength(tangent) > 1e-12f)
+                    {
+                        tangent = glm::normalize(tangent);
+                    }
+                    vertex.tangent = {tangent.x, tangent.y, tangent.z, 1.0f};
+                }
+
+                vertex.joints = {0, 0, 0, 0};
+                vertex.weights = {0.0f, 0.0f, 0.0f, 0.0f};
+            }
+
+            if (workItem.hasSkinning)
+            {
+                for (unsigned int boneIndex = 0; boneIndex < sourceMesh->mNumBones; ++boneIndex)
+                {
+                    const aiBone *bone = sourceMesh->mBones[boneIndex];
+                    if (!bone)
+                    {
+                        continue;
+                    }
+
+                    const auto jointIt = boneNameToJointIndex.find(ToStdString(bone->mName));
+                    if (jointIt == boneNameToJointIndex.end())
+                    {
+                        continue;
+                    }
+
+                    for (unsigned int weightIndex = 0; weightIndex < bone->mNumWeights; ++weightIndex)
+                    {
+                        const auto &weight = bone->mWeights[weightIndex];
+                        if (weight.mVertexId >= sourceMesh->mNumVertices)
+                        {
+                            continue;
+                        }
+
+                        AddBoneWeight(vertexDestination[weight.mVertexId], jointIt->second, weight.mWeight);
+                    }
+                }
+
+                for (unsigned int vertexIndex = 0; vertexIndex < sourceMesh->mNumVertices; ++vertexIndex)
+                {
+                    NormalizeVertexWeights(vertexDestination[vertexIndex]);
+                }
+            }
+
+            uint32_t writtenIndexCount = 0;
+            for (unsigned int faceIndex = 0; faceIndex < sourceMesh->mNumFaces; ++faceIndex)
+            {
+                const aiFace &face = sourceMesh->mFaces[faceIndex];
+                if (face.mNumIndices != 3)
+                {
+                    continue;
+                }
+
+                indexDestination[writtenIndexCount++] = workItem.baseVertex + face.mIndices[0];
+                indexDestination[writtenIndexCount++] = workItem.baseVertex + face.mIndices[1];
+                indexDestination[writtenIndexCount++] = workItem.baseVertex + face.mIndices[2];
+            }
+        }
+
         void AppendAssimpMesh(
             const aiMesh &sourceMesh,
             uint32_t materialIndex,
@@ -3247,19 +3718,28 @@ namespace PlutoGE::assetimport
             return clips;
         }
 
-        ImportedMeshSourceAsset ParseAssimpMeshAsset(const std::string &filePath, const MeshCookOptions &cookOptions)
+        ImportedMeshSourceAsset ParseAssimpMeshAsset(const std::string &filePath, const MeshCookOptions &cookOptions, MeshImportProfile *profile)
         {
             Assimp::Importer importer;
-            const unsigned int flags =
+            unsigned int flags =
                 aiProcess_Triangulate |
-                aiProcess_GenSmoothNormals |
-                aiProcess_CalcTangentSpace |
                 aiProcess_FlipUVs |
-                aiProcess_LimitBoneWeights |
-                aiProcess_ValidateDataStructure |
                 aiProcess_GlobalScale;
+            if (cookOptions.assimpQualityPostProcess)
+            {
+                flags |= aiProcess_GenSmoothNormals |
+                         aiProcess_CalcTangentSpace |
+                         aiProcess_LimitBoneWeights |
+                         aiProcess_ValidateDataStructure;
+            }
 
+            const auto readStart = ImportClock::now();
             const aiScene *scene = importer.ReadFile(filePath, flags);
+            if (profile && profile->enabled)
+            {
+                profile->assimpReadMs = ElapsedMilliseconds(readStart);
+                profile->loadMs = profile->assimpReadMs;
+            }
             if (!scene)
             {
                 throw std::runtime_error(importer.GetErrorString());
@@ -3280,6 +3760,7 @@ namespace PlutoGE::assetimport
             std::vector<unsigned int> materialPrimaryUvChannels;
             materialPrimaryUvChannels.reserve(scene->mNumMaterials + 1);
             std::unordered_map<std::string, int> textureIndexByKey;
+            const auto materialStart = ImportClock::now();
             for (unsigned int materialIndex = 0; materialIndex < scene->mNumMaterials; ++materialIndex)
             {
                 unsigned int primaryUvChannel = 0;
@@ -3288,35 +3769,95 @@ namespace PlutoGE::assetimport
             }
             asset.materials.push_back(ImportedMaterialData{});
             materialPrimaryUvChannels.push_back(0);
+            if (profile && profile->enabled)
+            {
+                profile->assimpMaterialMs = ElapsedMilliseconds(materialStart);
+                profile->materialStageMs = profile->assimpMaterialMs;
+            }
 
             std::unordered_map<std::string, int> boneNameToJointIndex;
+            const auto skeletonStart = ImportClock::now();
             asset.skeleton = BuildAssimpSkeleton(*scene, nodes, nameToNodeIndex, boneNameToJointIndex);
+            if (profile && profile->enabled)
+            {
+                profile->assimpSkeletonMs = ElapsedMilliseconds(skeletonStart);
+            }
+            const auto animationStart = ImportClock::now();
             asset.animations = ParseAssimpAnimations(*scene, nameToNodeIndex, boneNameToJointIndex);
+            if (profile && profile->enabled)
+            {
+                profile->assimpAnimationMs = ElapsedMilliseconds(animationStart);
+            }
 
             const auto animatedNodeIndices = CollectAssimpAnimatedNodeIndices(*scene, nameToNodeIndex);
-            AppendAssimpNodeMeshes(*scene, nodes, nodeToIndex, 0, animatedNodeIndices, -1, materialPrimaryUvChannels, boneNameToJointIndex, asset);
+            const auto meshAssemblyStart = ImportClock::now();
+            std::vector<AssimpMeshWorkItem> meshWorkItems;
+            meshWorkItems.reserve(scene->mNumMeshes);
+            CollectAssimpMeshWorkItems(*scene, nodes, nodeToIndex, 0, animatedNodeIndices, -1, materialPrimaryUvChannels, meshWorkItems);
+            AssignAssimpMeshWorkItemStorage(meshWorkItems, asset);
+
+            std::vector<uint8_t> meshMissingNormalFallbacks(meshWorkItems.size(), 0);
+            auto writeMesh = [&](const AssimpMeshWorkItem &workItem)
+            {
+                bool requiresMissingNormalFallback = false;
+                WriteAssimpMesh(workItem, boneNameToJointIndex, asset.meshData, requiresMissingNormalFallback);
+                meshMissingNormalFallbacks[workItem.slot] = requiresMissingNormalFallback ? 1u : 0u;
+            };
+
+            if (meshWorkItems.size() > 1)
+            {
+                std::for_each(std::execution::par, meshWorkItems.begin(), meshWorkItems.end(), writeMesh);
+            }
+            else
+            {
+                for (const auto &workItem : meshWorkItems)
+                {
+                    writeMesh(workItem);
+                }
+            }
+
+            for (const uint8_t requiresMissingNormalFallback : meshMissingNormalFallbacks)
+            {
+                asset.requiresMissingNormalFallback = asset.requiresMissingNormalFallback || requiresMissingNormalFallback != 0;
+            }
+            if (profile && profile->enabled)
+            {
+                profile->assimpMeshAssemblyMs = ElapsedMilliseconds(meshAssemblyStart);
+                profile->sceneTraversalMs = profile->assimpMeshAssemblyMs;
+            }
 
             if (asset.meshData.vertices.empty() || asset.meshData.indices.empty())
             {
                 throw std::runtime_error("No triangle mesh data was found in the FBX file.");
             }
 
+            const auto missingNormalsStart = ImportClock::now();
             FinalizeMissingNormals(asset.meshData, asset.requiresMissingNormalFallback);
-            MergeAdjacentSubmeshes(asset.submeshes);
-            CompactSubmeshesByMaterialAndNode(asset.meshData, asset.submeshes);
-            OptimizeMeshData(asset.meshData, asset.submeshes, cookOptions.optimizeOverdraw);
+            if (profile && profile->enabled)
+            {
+                profile->missingNormalsMs = ElapsedMilliseconds(missingNormalsStart);
+            }
+            if (!cookOptions.generateTangents)
+            {
+                FillMissingTangentsWithFallbacks(asset.meshData);
+            }
+            const auto optimizeStart = ImportClock::now();
+            OptimizeMeshData(asset.meshData, asset.submeshes, cookOptions.optimizeVertexCache, cookOptions.optimizeOverdraw, profile);
+            if (profile && profile->enabled)
+            {
+                profile->optimizeMs = ElapsedMilliseconds(optimizeStart);
+            }
             GenerateSubmeshLods(asset.meshData, asset.submeshes, cookOptions.generateLods);
             return asset;
         }
 
-        ImportedMeshSourceAsset ParseMeshAsset(const std::string &filePath)
+        ImportedMeshSourceAsset ParseMeshAsset(const std::string &filePath, const MeshCookOptions &cookOptions)
         {
             if (!MeshImporter().SupportsFileType(filePath))
             {
                 throw std::runtime_error("Unsupported mesh format. Use glTF 2.0 (.glb or .gltf) or FBX (.fbx).");
             }
 
-            const MeshCookOptions cookOptions = ResolveMeshCookOptions();
             if (auto cookedAsset = TryLoadCookedMeshAsset(filePath, cookOptions))
             {
                 return std::move(*cookedAsset);
@@ -3325,7 +3866,11 @@ namespace PlutoGE::assetimport
             const auto extension = ToLower(std::filesystem::path(filePath).extension().string());
             if (extension == ".fbx")
             {
-                auto asset = ParseAssimpMeshAsset(filePath, cookOptions);
+                MeshImportProfile profile;
+                profile.enabled = IsMeshImportProfilingEnabled();
+                profile.filePath = filePath;
+
+                auto asset = ParseAssimpMeshAsset(filePath, cookOptions, &profile);
                 StoreCookedMeshAsset(filePath, cookOptions, asset);
                 return asset;
             }
@@ -3461,18 +4006,23 @@ namespace PlutoGE::assetimport
             FinalizeMissingNormals(parsedMeshAsset.meshData, parsedMeshAsset.requiresMissingNormalFallback);
             profile.missingNormalsMs = ElapsedMilliseconds(missingNormalsStart);
 
-            const auto mergeSubmeshesStart = ImportClock::now();
-            MergeAdjacentSubmeshes(parsedMeshAsset.submeshes);
-            CompactSubmeshesByMaterialAndNode(parsedMeshAsset.meshData, parsedMeshAsset.submeshes);
-
-            profile.submeshMergeMs = ElapsedMilliseconds(mergeSubmeshesStart);
+            profile.submeshMergeMs = 0.0;
 
             const auto optimizeStart = ImportClock::now();
-            OptimizeMeshData(parsedMeshAsset.meshData, parsedMeshAsset.submeshes, cookOptions.optimizeOverdraw, &profile);
+            if (!cookOptions.generateTangents)
+            {
+                FillMissingTangentsWithFallbacks(parsedMeshAsset.meshData);
+            }
+            OptimizeMeshData(parsedMeshAsset.meshData, parsedMeshAsset.submeshes, cookOptions.optimizeVertexCache, cookOptions.optimizeOverdraw, &profile);
             GenerateSubmeshLods(parsedMeshAsset.meshData, parsedMeshAsset.submeshes, cookOptions.generateLods);
             profile.optimizeMs = ElapsedMilliseconds(optimizeStart);
             StoreCookedMeshAsset(filePath, cookOptions, parsedMeshAsset);
             return parsedMeshAsset;
+        }
+
+        ImportedMeshSourceAsset ParseMeshAsset(const std::string &filePath)
+        {
+            return ParseMeshAsset(filePath, ResolveMeshCookOptions());
         }
     }
 
@@ -3485,6 +4035,15 @@ namespace PlutoGE::assetimport
     ImportedMeshSourceAsset MeshImporter::ImportMeshSourceAsset(const std::string &filePath) const
     {
         return ParseMeshAsset(filePath);
+    }
+
+    ImportedMeshAsset MeshImporter::GenerateMeshLods(const std::string &filePath)
+    {
+        const auto normalizedPath = NormalizePath(filePath);
+        MeshCookOptions cookOptions = ResolveMeshCookOptions();
+        cookOptions.generateLods = true;
+        m_meshCache.erase(normalizedPath);
+        return FinalizeImportedMeshAsset(normalizedPath, ParseMeshAsset(normalizedPath, cookOptions));
     }
 
     ImportedMeshAsset MeshImporter::FinalizeImportedMeshAsset(const std::string &filePath, ImportedMeshSourceAsset meshSourceAsset)

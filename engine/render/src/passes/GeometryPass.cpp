@@ -32,8 +32,8 @@ namespace PlutoGE::render
 
             return a.material == b.material &&
                    a.mesh == b.mesh &&
-                   a.submeshIndex == b.submeshIndex &&
-                   a.lodIndex == b.lodIndex;
+                   a.mesh->GetSubmeshLodRange(a.submeshIndex, a.lodIndex).indexOffset == b.mesh->GetSubmeshLodRange(b.submeshIndex, b.lodIndex).indexOffset &&
+                   a.mesh->GetSubmeshLodRange(a.submeshIndex, a.lodIndex).indexCount == b.mesh->GetSubmeshLodRange(b.submeshIndex, b.lodIndex).indexCount;
         }
 
         bool IsBlendMaterial(const Material *material)

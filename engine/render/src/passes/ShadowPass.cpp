@@ -207,8 +207,8 @@ namespace
 
         return (!aAlphaTested || a.material == b.material) &&
                a.mesh == b.mesh &&
-               a.submeshIndex == b.submeshIndex &&
-               aLodIndex == bLodIndex;
+               a.mesh->GetSubmeshLodRange(a.submeshIndex, aLodIndex).indexOffset == b.mesh->GetSubmeshLodRange(b.submeshIndex, bLodIndex).indexOffset &&
+               a.mesh->GetSubmeshLodRange(a.submeshIndex, aLodIndex).indexCount == b.mesh->GetSubmeshLodRange(b.submeshIndex, bLodIndex).indexCount;
     }
 
     std::size_t ClampShadowLodIndex(const PlutoGE::render::RenderCommand &command, std::size_t lodIndex)
@@ -918,6 +918,20 @@ namespace PlutoGE::render
     void ShadowPass::Execute(const RenderContext &ctx)
     {
         if (!m_shadowPassShader || !ctx.lights || !ctx.renderCommands || m_shadowFramebuffer == 0)
+        {
+            return;
+        }
+
+        bool hasShadowWork = false;
+        for (auto *light : *ctx.lights)
+        {
+            if (light && light->castsShadows)
+            {
+                hasShadowWork = true;
+                break;
+            }
+        }
+        if (!hasShadowWork)
         {
             return;
         }

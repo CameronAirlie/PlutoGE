@@ -1914,6 +1914,30 @@ namespace PlutoGE::ui
                     ImGui::EndCombo();
                 }
 
+                const bool canGenerateLodsForMesh = !meshComponent->GetSourceMeshPath().empty() &&
+                                                    !assets::Project::IsEngineAssetReference(meshComponent->GetSourceMeshPath());
+                ImGui::BeginDisabled(!canGenerateLodsForMesh);
+                if (ImGui::Button("Generate Mesh LODs"))
+                {
+                    try
+                    {
+                        const std::string resolvedPath = engine.GetAssetManager().ResolveMeshAssetSourcePath(meshComponent->GetSourceMeshPath());
+                        auto importedMeshAsset = engine.GenerateMeshAssetLods(resolvedPath);
+                        if (importedMeshAsset.mesh)
+                        {
+                            meshComponent->SetMesh(importedMeshAsset.mesh);
+                            meshComponent->SetMaterials(importedMeshAsset.materials);
+                            editorShell.MarkSceneDirty();
+                            editorShell.Log(EditorShell::ConsoleSeverity::Info, "Generated mesh LODs: " + meshComponent->GetSourceMeshPath());
+                        }
+                    }
+                    catch (const std::exception &exception)
+                    {
+                        editorShell.Log(EditorShell::ConsoleSeverity::Error, exception.what());
+                    }
+                }
+                ImGui::EndDisabled();
+
                 ImGui::Text("Mesh Import");
                 static char meshPath[512] = "";
                 ImGui::InputText("Mesh Path", meshPath, sizeof(meshPath));
@@ -1925,7 +1949,7 @@ namespace PlutoGE::ui
                     char fileName[MAX_PATH] = "";
                     ofn.lStructSize = sizeof(ofn);
                     ofn.hwndOwner = nullptr;
-                    ofn.lpstrFilter = "glTF Files\0*.glb;*.gltf\0All Files\0*.*\0";
+                    ofn.lpstrFilter = "Mesh Files\0*.glb;*.gltf;*.fbx\0glTF Files\0*.glb;*.gltf\0FBX Files\0*.fbx\0All Files\0*.*\0";
                     ofn.lpstrFile = fileName;
                     ofn.nMaxFile = MAX_PATH;
                     ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;

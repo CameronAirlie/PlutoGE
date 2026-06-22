@@ -87,6 +87,26 @@ namespace PlutoGE::render
             return true;
         }
 
+        bool PassesStaticProjectedSizeCull(
+            const RenderCommand &command,
+            const glm::vec3 &cameraPosition,
+            float projectionScaleY,
+            float halfViewportHeight)
+        {
+            constexpr float kStaticSubmeshPixelCullThreshold = 1.0f;
+            if (!command.isStatic || kStaticSubmeshPixelCullThreshold <= 0.0f)
+            {
+                return true;
+            }
+
+            const float distance = glm::length(command.worldBounds.center - cameraPosition);
+            const float safeDistance = std::max(distance, 0.001f);
+            const float projectedRadiusPixels = (std::max(command.worldBounds.radius, 0.001f) / safeDistance) *
+                                                projectionScaleY *
+                                                halfViewportHeight;
+            return projectedRadiusPixels >= kStaticSubmeshPixelCullThreshold;
+        }
+
         Shader *GetRenderCommandShaderKey(const RenderCommand &command)
         {
             return command.shader;
@@ -111,14 +131,21 @@ namespace PlutoGE::render
                 return a.mesh < b.mesh;
             }
 
+            const auto aRange = a.mesh ? a.mesh->GetSubmeshLodRange(a.submeshIndex, a.lodIndex) : Submesh::LodRange{};
+            const auto bRange = b.mesh ? b.mesh->GetSubmeshLodRange(b.submeshIndex, b.lodIndex) : Submesh::LodRange{};
+            if (aRange.indexOffset != bRange.indexOffset)
+            {
+                return aRange.indexOffset < bRange.indexOffset;
+            }
+
+            if (aRange.indexCount != bRange.indexCount)
+            {
+                return aRange.indexCount < bRange.indexCount;
+            }
+
             if (a.submeshIndex != b.submeshIndex)
             {
                 return a.submeshIndex < b.submeshIndex;
-            }
-
-            if (a.lodIndex != b.lodIndex)
-            {
-                return a.lodIndex < b.lodIndex;
             }
 
             return false;
@@ -471,9 +498,13 @@ namespace PlutoGE::render
         m_visibleRenderCommands.clear();
         m_visibleRenderCommands.reserve(m_renderCommands.size());
         const auto frustumPlanes = ExtractFrustumPlanes(activeCameraData.projection * activeCameraData.view);
+        const glm::vec3 cameraPosition = glm::vec3(glm::inverse(activeCameraData.view)[3]);
+        const float projectionScaleY = std::abs(activeCameraData.projection[1][1]);
+        const float halfViewportHeight = static_cast<float>(std::max(renderHeight, 1)) * 0.5f;
         for (const auto &command : m_renderCommands)
         {
-            if (IsRenderCommandVisible(command, frustumPlanes))
+            if (IsRenderCommandVisible(command, frustumPlanes) &&
+                PassesStaticProjectedSizeCull(command, cameraPosition, projectionScaleY, halfViewportHeight))
             {
                 m_visibleRenderCommands.push_back(command);
             }
@@ -575,6 +606,11 @@ namespace PlutoGE::render
         for (auto &command : m_renderCommands)
         {
             if (!command.mesh)
+            {
+                continue;
+            }
+
+            if (command.mesh->GetSubmeshLodCount(command.submeshIndex) <= 1)
             {
                 continue;
             }

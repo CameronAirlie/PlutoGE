@@ -4,6 +4,7 @@
 #include "PlutoGE/scene/components/Component.h"
 
 #include <glm/glm.hpp>
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -81,6 +82,19 @@ namespace PlutoGE::scene
             MarkRenderCommandsDirty();
         }
         int GetSubmeshIndex() const { return m_submeshIndex; }
+        void SetSubmeshRange(int submeshIndex, int submeshCount)
+        {
+            const int normalizedCount = submeshIndex >= 0 ? std::max(1, submeshCount) : 1;
+            if (m_submeshIndex == submeshIndex && m_submeshCount == normalizedCount)
+            {
+                return;
+            }
+
+            m_submeshIndex = submeshIndex;
+            m_submeshCount = normalizedCount;
+            MarkRenderCommandsDirty();
+        }
+        int GetSubmeshRangeCount() const { return m_submeshCount; }
         void SetSourceMeshPath(const std::string &sourceMeshPath) { m_sourceMeshPath = sourceMeshPath; }
         const std::string &GetSourceMeshPath() const { return m_sourceMeshPath; }
 
@@ -206,6 +220,7 @@ namespace PlutoGE::scene
         std::vector<render::RenderCommand> m_cachedRenderCommands;
         std::string m_sourceMeshPath;
         int m_submeshIndex = -1;
+        int m_submeshCount = 1;
         bool m_visible = true;
     };
 }

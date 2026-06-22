@@ -1531,17 +1531,21 @@ void main()
             uniform float uIblCaptureIntensities[4];
             uniform float uIblCaptureBlendDistances[4];
             uniform float uIblCaptureMaxMipLevels[4];
-            struct TransparentLight
-            {
-                vec3 Position;
-                vec3 Color;
-                float Intensity;
-                float Range;
-                vec3 Direction;
-                int Type;
-            };
             uniform int uLightCount = 0;
-            uniform TransparentLight uLights[16];
+            uniform vec3 uLightPositions[16];
+            uniform vec3 uLightColors[16];
+            uniform float uLightIntensities[16];
+            uniform float uLightRanges[16];
+            uniform vec3 uLightDirections[16];
+            uniform int uLightTypes[16];
+            uniform int uLightCastsShadows[16];
+            uniform int uLightShadowMapBase[16];
+            uniform int uLightCascadeCount[16];
+            uniform vec4 uLightCascadeSplits[16];
+            uniform float uLightCascadeBlendDistances[16];
+            uniform mat4 uLightCascadeMatrices[64];
+            uniform vec3 uLightCascadeOrigins[64];
+            uniform sampler2D uDirectionalShadowMaps[16];
 
             const float PI = 3.14159265359;
             const int SURFACE_STANDARD = 0;
@@ -1603,20 +1607,139 @@ void main()
                        GeometrySchlickGGX(max(dot(normal, lightDir), 0.0), roughness);
             }
 
-            float ComputePointAttenuation(vec3 fragPos, TransparentLight light)
+            float ComputePointAttenuation(vec3 fragPos, int lightIndex)
             {
-                float distanceToLight = length(light.Position - fragPos);
-                float normalizedDistance = light.Range > 0.0001 ? distanceToLight / light.Range : 1.0;
+                float distanceToLight = length(uLightPositions[lightIndex] - fragPos);
+                float normalizedDistance = uLightRanges[lightIndex] > 0.0001 ? distanceToLight / uLightRanges[lightIndex] : 1.0;
                 float attenuation = clamp(1.0 - normalizedDistance, 0.0, 1.0);
                 return attenuation * attenuation;
             }
 
-            float ComputeSpotAttenuation(vec3 fragPos, vec3 lightDir, TransparentLight light)
+            float ComputeSpotAttenuation(vec3 fragPos, vec3 lightDir, int lightIndex)
             {
-                float pointAttenuation = ComputePointAttenuation(fragPos, light);
-                float spotCos = dot(-lightDir, normalize(light.Direction));
+                float pointAttenuation = ComputePointAttenuation(fragPos, lightIndex);
+                float spotCos = dot(-lightDir, normalize(uLightDirections[lightIndex]));
                 float spotFactor = smoothstep(0.9, 0.975, spotCos);
                 return pointAttenuation * spotFactor;
+            }
+
+            float ComputeViewDepth(vec3 fragPos)
+            {
+                return max(-(uView * vec4(fragPos, 1.0)).z, 0.0);
+            }
+
+            float ReadCascadeSplit(int lightIndex, int cascadeIndex)
+            {
+                if (cascadeIndex == 0)
+                {
+                    return uLightCascadeSplits[lightIndex].x;
+                }
+                if (cascadeIndex == 1)
+                {
+                    return uLightCascadeSplits[lightIndex].y;
+                }
+                if (cascadeIndex == 2)
+                {
+                    return uLightCascadeSplits[lightIndex].z;
+                }
+                return uLightCascadeSplits[lightIndex].w;
+            }
+
+            int SelectTransparentCascade(int lightIndex, float cameraDistance)
+            {
+                int cascadeCount = clamp(uLightCascadeCount[lightIndex], 0, 4);
+                for (int cascadeIndex = 0; cascadeIndex < 4; ++cascadeIndex)
+                {
+                    if (cascadeIndex >= cascadeCount)
+                    {
+                        break;
+                    }
+
+                    if (cameraDistance <= ReadCascadeSplit(lightIndex, cascadeIndex))
+                    {
+                        return cascadeIndex;
+                    }
+                }
+
+                return max(cascadeCount - 1, 0);
+            }
+
+            float SampleTransparentDirectionalShadowMap(int shadowMapIndex, vec2 uv)
+            {
+                if (shadowMapIndex == 0) return texture(uDirectionalShadowMaps[0], uv).r;
+                if (shadowMapIndex == 1) return texture(uDirectionalShadowMaps[1], uv).r;
+                if (shadowMapIndex == 2) return texture(uDirectionalShadowMaps[2], uv).r;
+                if (shadowMapIndex == 3) return texture(uDirectionalShadowMaps[3], uv).r;
+                if (shadowMapIndex == 4) return texture(uDirectionalShadowMaps[4], uv).r;
+                if (shadowMapIndex == 5) return texture(uDirectionalShadowMaps[5], uv).r;
+                if (shadowMapIndex == 6) return texture(uDirectionalShadowMaps[6], uv).r;
+                if (shadowMapIndex == 7) return texture(uDirectionalShadowMaps[7], uv).r;
+                if (shadowMapIndex == 8) return texture(uDirectionalShadowMaps[8], uv).r;
+                if (shadowMapIndex == 9) return texture(uDirectionalShadowMaps[9], uv).r;
+                if (shadowMapIndex == 10) return texture(uDirectionalShadowMaps[10], uv).r;
+                if (shadowMapIndex == 11) return texture(uDirectionalShadowMaps[11], uv).r;
+                if (shadowMapIndex == 12) return texture(uDirectionalShadowMaps[12], uv).r;
+                if (shadowMapIndex == 13) return texture(uDirectionalShadowMaps[13], uv).r;
+                if (shadowMapIndex == 14) return texture(uDirectionalShadowMaps[14], uv).r;
+                return texture(uDirectionalShadowMaps[15], uv).r;
+            }
+
+            float ComputeTransparentDirectionalLightVisibility(vec3 fragPos, vec3 normal, int lightIndex)
+            {
+                if (uLightCastsShadows[lightIndex] == 0 ||
+                    uLightTypes[lightIndex] != LIGHT_TYPE_DIRECTIONAL ||
+                    uLightShadowMapBase[lightIndex] < 0 ||
+                    uLightCascadeCount[lightIndex] <= 0)
+                {
+                    return 1.0;
+                }
+
+                float cameraDistance = ComputeViewDepth(fragPos);
+                int cascadeIndex = SelectTransparentCascade(lightIndex, cameraDistance);
+                if (cameraDistance > ReadCascadeSplit(lightIndex, uLightCascadeCount[lightIndex] - 1))
+                {
+                    return 1.0;
+                }
+
+                vec3 lightDir = normalize(-uLightDirections[lightIndex]);
+                float ndotl = max(dot(normal, lightDir), 0.0);
+                float normalBias = max(0.004 * (1.0 - ndotl), 0.00075);
+                float depthBias = max(0.00012 + (1.0 - ndotl) * 0.00035, 0.00004);
+                int cascadeUniformIndex = lightIndex * 4 + cascadeIndex;
+                vec3 receiverPosition = fragPos + normal * normalBias;
+                vec4 lightSpacePosition = uLightCascadeMatrices[cascadeUniformIndex] *
+                                          vec4(receiverPosition - uLightCascadeOrigins[cascadeUniformIndex], 1.0);
+                vec3 projectedCoords = lightSpacePosition.xyz / max(lightSpacePosition.w, 0.0001);
+                projectedCoords = projectedCoords * 0.5 + 0.5;
+                if (projectedCoords.z < 0.0 || projectedCoords.z > 1.0 ||
+                    projectedCoords.x < 0.0 || projectedCoords.x > 1.0 ||
+                    projectedCoords.y < 0.0 || projectedCoords.y > 1.0)
+                {
+                    return 1.0;
+                }
+
+                int shadowMapIndex = uLightShadowMapBase[lightIndex] + cascadeIndex;
+                float visibility = 0.0;
+                vec2 texelSize = vec2(1.0) / vec2(textureSize(uDirectionalShadowMaps[0], 0));
+                for (int y = -1; y <= 1; ++y)
+                {
+                    for (int x = -1; x <= 1; ++x)
+                    {
+                        float closestDepth = SampleTransparentDirectionalShadowMap(shadowMapIndex, projectedCoords.xy + vec2(x, y) * texelSize);
+                        visibility += projectedCoords.z - depthBias > closestDepth ? 0.0 : 1.0;
+                    }
+                }
+                return visibility / 9.0;
+            }
+
+            float ComputeLightVisibility(vec3 fragPos, vec3 normal, int lightIndex)
+            {
+                if (uLightTypes[lightIndex] == LIGHT_TYPE_DIRECTIONAL)
+                {
+                    return ComputeTransparentDirectionalLightVisibility(fragPos, normal, lightIndex);
+                }
+
+                return 1.0;
             }
 
             vec3 ComputeTransparentLightSpecular(vec3 fragPos, vec3 normal, vec3 viewDir, float roughness, vec3 f0)
@@ -1629,23 +1752,28 @@ void main()
                         break;
                     }
 
-                    TransparentLight light = uLights[lightIndex];
                     vec3 lightDir;
                     float attenuation = 1.0;
-                    if (light.Type == LIGHT_TYPE_DIRECTIONAL)
+                    if (uLightTypes[lightIndex] == LIGHT_TYPE_DIRECTIONAL)
                     {
-                        lightDir = normalize(-light.Direction);
+                        lightDir = normalize(-uLightDirections[lightIndex]);
                     }
                     else
                     {
-                        lightDir = normalize(light.Position - fragPos);
-                        attenuation = light.Type == LIGHT_TYPE_SPOT
-                                          ? ComputeSpotAttenuation(fragPos, lightDir, light)
-                                          : ComputePointAttenuation(fragPos, light);
+                        lightDir = normalize(uLightPositions[lightIndex] - fragPos);
+                        attenuation = uLightTypes[lightIndex] == LIGHT_TYPE_SPOT
+                                          ? ComputeSpotAttenuation(fragPos, lightDir, lightIndex)
+                                          : ComputePointAttenuation(fragPos, lightIndex);
                     }
 
                     float ndotl = max(dot(normal, lightDir), 0.0);
                     if (ndotl <= 0.0001 || attenuation <= 0.0001)
+                    {
+                        continue;
+                    }
+
+                    float visibility = ComputeLightVisibility(fragPos, normal, lightIndex);
+                    if (visibility <= 0.0001)
                     {
                         continue;
                     }
@@ -1655,8 +1783,57 @@ void main()
                     float distribution = DistributionGGX(normal, halfwayDir, roughness);
                     float geometry = GeometrySmith(normal, viewDir, lightDir, roughness);
                     vec3 specular = distribution * geometry * fresnel / max(4.0 * max(dot(normal, viewDir), 0.0) * ndotl, 0.0001);
-                    vec3 radiance = light.Color * light.Intensity * attenuation;
-                    specularLighting += specular * radiance * ndotl;
+                    vec3 radiance = uLightColors[lightIndex] * uLightIntensities[lightIndex] * attenuation;
+                    specularLighting += specular * radiance * ndotl * visibility;
+                }
+
+                return specularLighting;
+            }
+
+            vec3 ComputeGlassLightSpecular(vec3 fragPos, vec3 normal, vec3 viewDir, float roughness, vec3 f0)
+            {
+                vec3 specularLighting = vec3(0.0);
+                float glossPower = mix(256.0, 24.0, clamp(roughness, 0.0, 1.0));
+                float glossScale = mix(3.0, 0.75, clamp(roughness, 0.0, 1.0));
+
+                for (int lightIndex = 0; lightIndex < 16; ++lightIndex)
+                {
+                    if (lightIndex >= uLightCount)
+                    {
+                        break;
+                    }
+
+                    vec3 lightDir;
+                    float attenuation = 1.0;
+                    if (uLightTypes[lightIndex] == LIGHT_TYPE_DIRECTIONAL)
+                    {
+                        lightDir = normalize(-uLightDirections[lightIndex]);
+                    }
+                    else
+                    {
+                        lightDir = normalize(uLightPositions[lightIndex] - fragPos);
+                        attenuation = uLightTypes[lightIndex] == LIGHT_TYPE_SPOT
+                                          ? ComputeSpotAttenuation(fragPos, lightDir, lightIndex)
+                                          : ComputePointAttenuation(fragPos, lightIndex);
+                    }
+
+                    float ndotl = max(dot(normal, lightDir), 0.0);
+                    if (ndotl <= 0.0001 || attenuation <= 0.0001)
+                    {
+                        continue;
+                    }
+
+                    float visibility = ComputeLightVisibility(fragPos, normal, lightIndex);
+                    if (visibility <= 0.0001)
+                    {
+                        continue;
+                    }
+
+                    vec3 reflectedLight = reflect(-lightDir, normal);
+                    float specularLobe = pow(max(dot(reflectedLight, viewDir), 0.0), glossPower);
+                    vec3 fresnel = FresnelSchlick(max(dot(normalize(viewDir + lightDir), viewDir), 0.0), f0);
+                    vec3 radiance = uLightColors[lightIndex] * uLightIntensities[lightIndex] * attenuation;
+                    specularLighting += radiance * fresnel * specularLobe * ndotl * glossScale * visibility;
                 }
 
                 return specularLighting;
@@ -1820,17 +1997,19 @@ void main()
                 }
                 float ndotv = max(dot(normal, viewDir), 0.0);
                 vec3 f0 = mix(vec3(0.04), color.rgb, metallic);
+                vec3 directSpecularF0 = f0;
                 if (uSurfaceType == SURFACE_GLASS)
                 {
                     float ior = clamp(uIor, 1.0, 2.5);
                     float reflectance = pow((ior - 1.0) / (ior + 1.0), 2.0);
                     f0 = vec3(clamp(reflectance, 0.0, 1.0));
+                    directSpecularF0 = max(f0, vec3(0.04));
                     metallic = 0.0;
                 }
                 vec3 fresnel = FresnelSchlickRoughness(ndotv, f0, roughness);
                 vec3 reflectionDir = reflect(-viewDir, normal);
                 vec3 environmentSpecular = SampleIblEnvironment(FragPos, reflectionDir, roughness * uEnvironmentMaxMipLevel) * fresnel;
-                vec3 directSpecular = ComputeTransparentLightSpecular(FragPos, normal, viewDir, roughness, f0);
+                vec3 directSpecular = ComputeTransparentLightSpecular(FragPos, normal, viewDir, roughness, directSpecularF0);
 
                 float outputAlpha = color.a;
                 vec3 baseColor = color.rgb;
@@ -1848,12 +2027,12 @@ void main()
                     vec2 sceneUv = GetScreenUv();
                     vec3 viewNormal = normalize(mat3(uView) * normal);
                     float eta = 1.0 / ior;
-                    float refractionStrength = (1.0 - eta) * transmission * mix(0.075, 0.025, roughness);
+                    float refractionStrength = (1.0 - eta) * transmission * mix(0.045, 0.012, roughness);
                     vec2 texelSize = 1.0 / max(uSceneColorTextureSize, vec2(1.0));
                     vec2 refractedUv = sceneUv + viewNormal.xy * refractionStrength;
                     refractedUv += texelSize * viewNormal.xy * 2.0;
 
-                    float transmissionLod = roughness * uSceneColorMaxMipLevel * 0.65;
+                    float transmissionLod = min(roughness * uSceneColorMaxMipLevel * 0.18, 1.5);
                     vec3 sceneTransmission = SampleSceneColor(refractedUv, transmissionLod);
                     if (uSceneColorEnabled == 0)
                     {
@@ -1865,7 +2044,8 @@ void main()
                     vec3 reflectance = FresnelSchlick(ndotv, f0);
                     float fresnelAlpha = max(max(reflectance.r, reflectance.g), reflectance.b);
                     vec3 reflectedGlass = SampleIblEnvironment(FragPos, reflectionDir, roughness * uEnvironmentMaxMipLevel) * reflectance;
-                    vec3 glassDirectSpecular = ComputeTransparentLightSpecular(FragPos, normal, viewDir, roughness, f0);
+                    vec3 glassDirectSpecular = ComputeTransparentLightSpecular(FragPos, normal, viewDir, roughness, directSpecularF0) +
+                                               ComputeGlassLightSpecular(FragPos, normal, viewDir, roughness, directSpecularF0);
                     float reflectionWeight = clamp(fresnelAlpha + roughness * 0.08, 0.02, 0.95);
                     baseColor = mix(color.rgb * glassTint, sceneTransmission, transmission);
                     baseColor = mix(baseColor, reflectedGlass, reflectionWeight);

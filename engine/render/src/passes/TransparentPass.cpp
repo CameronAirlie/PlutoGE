@@ -29,7 +29,10 @@ namespace PlutoGE::render
         constexpr int kTransparentEnvironmentTextureSlot = 8;
         constexpr int kTransparentIblCaptureTextureSlotStart = 9;
         constexpr int kTransparentSceneColorTextureSlot = 13;
+        constexpr int kTransparentShadowTextureSlotStart = 14;
         constexpr int kMaxTransparentLights = 16;
+        constexpr int kMaxTransparentShadowMaps = 16;
+        constexpr int kMaxTransparentShadowCascades = scene::kMaxDirectionalShadowCascades;
 
         bool IsTransparentCommand(const RenderCommand &command)
         {
@@ -147,6 +150,7 @@ namespace PlutoGE::render
         void BindTransparentLights(Shader *shader, const RenderContext &ctx)
         {
             const int lightCount = std::min(kMaxTransparentLights, ctx.lights ? static_cast<int>(ctx.lights->size()) : 0);
+            int shadowMapCount = 0;
             shader->SetUniform("uLightCount", lightCount);
             for (int lightIndex = 0; lightIndex < lightCount; ++lightIndex)
             {
@@ -156,13 +160,73 @@ namespace PlutoGE::render
                     continue;
                 }
 
-                const std::string prefix = "uLights[" + std::to_string(lightIndex) + "]";
-                shader->SetUniform(prefix + ".Position", light->position);
-                shader->SetUniform(prefix + ".Color", light->color);
-                shader->SetUniform(prefix + ".Intensity", light->intensity);
-                shader->SetUniform(prefix + ".Range", light->range);
-                shader->SetUniform(prefix + ".Direction", light->direction);
-                shader->SetUniform(prefix + ".Type", static_cast<int>(light->type));
+                const std::string index = "[" + std::to_string(lightIndex) + "]";
+                shader->SetUniform("uLightPositions" + index, light->position);
+                shader->SetUniform("uLightColors" + index, light->color);
+                shader->SetUniform("uLightIntensities" + index, light->intensity);
+                shader->SetUniform("uLightRanges" + index, light->range);
+                shader->SetUniform("uLightDirections" + index, light->direction);
+                shader->SetUniform("uLightTypes" + index, static_cast<int>(light->type));
+                shader->SetUniform("uLightCastsShadows" + index, 0);
+                shader->SetUniform("uLightShadowMapBase" + index, -1);
+                shader->SetUniform("uLightCascadeCount" + index, 0);
+                shader->SetUniform("uLightCascadeSplits" + index, glm::vec4(0.0f));
+                shader->SetUniform("uLightCascadeBlendDistances" + index, light->directionalShadowSettings.cascadeBlendDistance);
+
+                const bool hasDirectionalShadows =
+                    light->type == scene::LightType::Directional &&
+                    light->castsShadows &&
+                    light->activeShadowCascadeCount > 0;
+                if (!hasDirectionalShadows)
+                {
+                    continue;
+                }
+
+                const int cascadeCount = std::min(kMaxTransparentShadowCascades, light->activeShadowCascadeCount);
+                if (shadowMapCount + cascadeCount > kMaxTransparentShadowMaps)
+                {
+                    continue;
+                }
+
+                bool hasAllCascadeMaps = true;
+                for (int cascadeIndex = 0; cascadeIndex < cascadeCount; ++cascadeIndex)
+                {
+                    if (!light->shadowCascadeMaps[cascadeIndex])
+                    {
+                        hasAllCascadeMaps = false;
+                        break;
+                    }
+                }
+                if (!hasAllCascadeMaps)
+                {
+                    continue;
+                }
+
+                const int shadowMapBase = shadowMapCount;
+                shader->SetUniform("uLightCastsShadows" + index, 1);
+                shader->SetUniform("uLightShadowMapBase" + index, shadowMapBase);
+                shader->SetUniform("uLightCascadeCount" + index, cascadeCount);
+                shader->SetUniform("uLightCascadeSplits" + index, glm::vec4(
+                                                                      light->shadowCascadeSplits[0],
+                                                                      light->shadowCascadeSplits[1],
+                                                                      light->shadowCascadeSplits[2],
+                                                                      light->shadowCascadeSplits[3]));
+                for (int cascadeIndex = 0; cascadeIndex < cascadeCount; ++cascadeIndex)
+                {
+                    const int shadowMapIndex = shadowMapBase + cascadeIndex;
+                    const int textureSlot = kTransparentShadowTextureSlotStart + shadowMapIndex;
+                    glActiveTexture(GL_TEXTURE0 + textureSlot);
+                    glBindTexture(GL_TEXTURE_2D, light->shadowCascadeMaps[cascadeIndex]->GetTextureID());
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+                    shader->SetUniform("uDirectionalShadowMaps[" + std::to_string(shadowMapIndex) + "]", textureSlot);
+                    const int cascadeUniformIndex = lightIndex * kMaxTransparentShadowCascades + cascadeIndex;
+                    shader->SetUniform("uLightCascadeMatrices[" + std::to_string(cascadeUniformIndex) + "]", light->shadowCascadeMatrices[cascadeIndex]);
+                    shader->SetUniform("uLightCascadeOrigins[" + std::to_string(cascadeUniformIndex) + "]", light->shadowCascadeWorldOrigins[cascadeIndex]);
+                }
+
+                shadowMapCount += cascadeCount;
             }
         }
 

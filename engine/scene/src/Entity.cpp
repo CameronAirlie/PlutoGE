@@ -3,6 +3,8 @@
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
+#include "PlutoGE/scene/components/TerrainComponent.h"
+#include "PlutoGE/scene/components/FoliageComponent.h"
 
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/euler_angles.hpp>
@@ -268,6 +270,18 @@ namespace PlutoGE::scene
                 m_scene->RegisterMeshComponent(static_cast<MeshComponent *>(component));
                 m_scene->MarkShadowLightsDirty();
             }
+
+            if (dynamic_cast<TerrainComponent *>(component))
+            {
+                m_scene->RegisterTerrainComponent(static_cast<TerrainComponent *>(component));
+                m_scene->MarkShadowLightsDirty();
+            }
+
+            if (dynamic_cast<FoliageComponent *>(component))
+            {
+                m_scene->RegisterFoliageComponent(static_cast<FoliageComponent *>(component));
+                m_scene->MarkShadowLightsDirty();
+            }
         }
 
         return component;
@@ -290,6 +304,18 @@ namespace PlutoGE::scene
             if (dynamic_cast<MeshComponent *>(component))
             {
                 m_scene->UnregisterMeshComponent(static_cast<MeshComponent *>(component));
+                m_scene->MarkShadowLightsDirty();
+            }
+
+            if (dynamic_cast<TerrainComponent *>(component))
+            {
+                m_scene->UnregisterTerrainComponent(static_cast<TerrainComponent *>(component));
+                m_scene->MarkShadowLightsDirty();
+            }
+
+            if (dynamic_cast<FoliageComponent *>(component))
+            {
+                m_scene->UnregisterFoliageComponent(static_cast<FoliageComponent *>(component));
                 m_scene->MarkShadowLightsDirty();
             }
         }
@@ -335,6 +361,22 @@ namespace PlutoGE::scene
                     m_scene->UnregisterMeshComponent(meshComponent);
                 }
             }
+
+            for (auto *terrainComponent : GetComponents<TerrainComponent>())
+            {
+                if (terrainComponent)
+                {
+                    m_scene->UnregisterTerrainComponent(terrainComponent);
+                }
+            }
+
+            for (auto *foliageComponent : GetComponents<FoliageComponent>())
+            {
+                if (foliageComponent)
+                {
+                    m_scene->UnregisterFoliageComponent(foliageComponent);
+                }
+            }
         }
 
         m_scene = scene;
@@ -354,6 +396,22 @@ namespace PlutoGE::scene
                 if (meshComponent)
                 {
                     m_scene->RegisterMeshComponent(meshComponent);
+                }
+            }
+
+            for (auto *terrainComponent : GetComponents<TerrainComponent>())
+            {
+                if (terrainComponent)
+                {
+                    m_scene->RegisterTerrainComponent(terrainComponent);
+                }
+            }
+
+            for (auto *foliageComponent : GetComponents<FoliageComponent>())
+            {
+                if (foliageComponent)
+                {
+                    m_scene->RegisterFoliageComponent(foliageComponent);
                 }
             }
         }

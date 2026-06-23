@@ -172,6 +172,9 @@ namespace PlutoGE::ui
         [[nodiscard]] bool CanUndo() const { return !m_undoStack.empty(); }
         [[nodiscard]] bool CanRedo() const { return !m_redoStack.empty(); }
         void ExecuteSceneEdit(std::string label, const std::function<void()> &edit);
+        bool BeginSceneEdit(std::string label);
+        bool EndSceneEdit();
+        void CancelSceneEdit();
         bool Undo();
         bool Redo();
 
@@ -232,6 +235,9 @@ namespace PlutoGE::ui
         bool m_projectDirty = false;
         std::vector<SceneHistoryEntry> m_undoStack;
         std::vector<SceneHistoryEntry> m_redoStack;
+        bool m_sceneEditInProgress = false;
+        std::string m_sceneEditLabel;
+        std::string m_sceneEditBeforeState;
         std::vector<ConsoleMessage> m_consoleMessages;
         std::string m_activeMaterialAssetReference;
         std::string m_runtimeSceneSnapshot;

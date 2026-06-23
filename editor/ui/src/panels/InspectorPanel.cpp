@@ -5,8 +5,10 @@
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/scene/components/AnimationComponent.h"
 #include "PlutoGE/scene/components/Component.h"
+#include "PlutoGE/scene/components/FoliageComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/scene/components/ScriptComponent.h"
+#include "PlutoGE/scene/components/TerrainComponent.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/scripting/ScriptEngine.h"
 #include "PlutoGE/render/Camera.h"
@@ -48,6 +50,8 @@ namespace PlutoGE::ui
         constexpr std::size_t kNewScriptNameBufferSize = 128;
         constexpr const char *kAddableComponentLabels[] = {
             "Mesh Component",
+            "Terrain Component",
+            "Foliage Component",
             "Animation Component",
             "Camera Component",
             "Light Component",
@@ -65,18 +69,20 @@ namespace PlutoGE::ui
         enum class AddableComponentType
         {
             Mesh = 0,
-            Animation = 1,
-            Camera = 2,
-            Light = 3,
-            Rigidbody = 4,
-            Collider = 5,
-            IblCapture = 6,
-            Script = 7,
-            Canvas = 8,
-            RectTransform = 9,
-            UIImage = 10,
-            UIText = 11,
-            UIButton = 12,
+            Terrain = 1,
+            Foliage = 2,
+            Animation = 3,
+            Camera = 4,
+            Light = 5,
+            Rigidbody = 6,
+            Collider = 7,
+            IblCapture = 8,
+            Script = 9,
+            Canvas = 10,
+            RectTransform = 11,
+            UIImage = 12,
+            UIText = 13,
+            UIButton = 14,
         };
 
         struct ScriptAssetOption
@@ -448,6 +454,29 @@ namespace PlutoGE::ui
             return droppedReference;
         }
 
+        std::optional<std::string> AcceptDroppedTextureAssetReference()
+        {
+            std::optional<std::string> droppedReference;
+            if (ImGui::BeginDragDropTarget())
+            {
+                if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kContentBrowserAssetDragDropPayload))
+                {
+                    if (payload->Data && payload->DataSize > 0)
+                    {
+                        const auto *data = static_cast<const char *>(payload->Data);
+                        const std::string reference(data, data + payload->DataSize - 1);
+                        if (assets::Project::GetAssetTypeForReference(reference) == assets::ProjectAssetType::Texture)
+                        {
+                            droppedReference = reference;
+                        }
+                    }
+                }
+                ImGui::EndDragDropTarget();
+            }
+
+            return droppedReference;
+        }
+
         bool AssignMaterialAssetToSlot(scene::MeshComponent &meshComponent,
                                        size_t materialSlotIndex,
                                        const std::string &materialAssetReference,
@@ -487,6 +516,26 @@ namespace PlutoGE::ui
 
             meshComponent.SetMaterialForSubmesh(submeshIndex, materialAsset);
             meshComponent.SetMaterialAssetForSubmesh(submeshIndex, materialAssetReference);
+            return true;
+        }
+
+        bool AssignMaterialAssetToTerrain(scene::TerrainComponent &terrainComponent,
+                                          const std::string &materialAssetReference,
+                                          core::Engine &engine)
+        {
+            if (assets::Project::GetAssetTypeForReference(materialAssetReference) != assets::ProjectAssetType::Material)
+            {
+                return false;
+            }
+
+            auto *materialAsset = engine.GetAssetManager().LoadMaterialAsset(materialAssetReference);
+            if (!materialAsset)
+            {
+                return false;
+            }
+
+            terrainComponent.SetMaterial(materialAsset);
+            terrainComponent.SetMaterialAssetReference(materialAssetReference);
             return true;
         }
 
@@ -565,11 +614,31 @@ namespace PlutoGE::ui
             return lightmapPathBuffers[key];
         }
 
+        std::array<char, kInspectorPathBufferSize> &GetTerrainHeightMapPathBuffer(const scene::Entity &entity)
+        {
+            static std::unordered_map<scene::EntityID, std::array<char, kInspectorPathBufferSize>> heightMapPathBuffers;
+            return heightMapPathBuffers[entity.GetID()];
+        }
+
+        std::array<char, 128> &GetFoliageTypeNameBuffer(scene::EntityID entityId, std::size_t typeIndex)
+        {
+            static std::unordered_map<std::string, std::array<char, 128>> nameBuffers;
+            return nameBuffers[std::to_string(entityId) + ":" + std::to_string(typeIndex)];
+        }
+
         const char *GetComponentDisplayName(const scene::Component &component)
         {
             if (dynamic_cast<const scene::MeshComponent *>(&component))
             {
                 return "Mesh Component";
+            }
+            if (dynamic_cast<const scene::TerrainComponent *>(&component))
+            {
+                return "Terrain Component";
+            }
+            if (dynamic_cast<const scene::FoliageComponent *>(&component))
+            {
+                return "Foliage Component";
             }
             if (dynamic_cast<const scene::AnimationComponent *>(&component))
             {
@@ -627,6 +696,10 @@ namespace PlutoGE::ui
         {
             if (dynamic_cast<const scene::MeshComponent *>(&component))
                 return "MeshComponent";
+            if (dynamic_cast<const scene::TerrainComponent *>(&component))
+                return "TerrainComponent";
+            if (dynamic_cast<const scene::FoliageComponent *>(&component))
+                return "FoliageComponent";
             if (dynamic_cast<const scene::AnimationComponent *>(&component))
                 return "AnimationComponent";
             if (dynamic_cast<const scene::CameraComponent *>(&component))
@@ -731,6 +804,10 @@ namespace PlutoGE::ui
             {
             case AddableComponentType::Mesh:
                 return !entity.HasComponent<scene::MeshComponent>();
+            case AddableComponentType::Terrain:
+                return !entity.HasComponent<scene::TerrainComponent>();
+            case AddableComponentType::Foliage:
+                return !entity.HasComponent<scene::FoliageComponent>();
             case AddableComponentType::Animation:
                 return !entity.HasComponent<scene::AnimationComponent>();
             case AddableComponentType::Camera:
@@ -777,6 +854,26 @@ namespace PlutoGE::ui
                 }
                 break;
             }
+            case AddableComponentType::Terrain:
+            {
+                auto *terrainComponent = entity.CreateComponent<scene::TerrainComponent>(scene::TerrainComponentConfig{
+                    .material = engine.GetAssetManager().LoadMaterialAsset(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference)),
+                });
+                if (terrainComponent)
+                {
+                    terrainComponent->SetMaterialAssetReference(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference));
+                }
+                break;
+            }
+            case AddableComponentType::Foliage:
+            {
+                auto *foliageComponent = entity.CreateComponent<scene::FoliageComponent>();
+                if (foliageComponent)
+                {
+                    foliageComponent->SetMaterialAssetReference(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference));
+                }
+                break;
+            }
             case AddableComponentType::Camera:
             {
                 const bool sceneAlreadyHasCamera = SceneHasAnyCamera(entity.GetScene());
@@ -801,7 +898,9 @@ namespace PlutoGE::ui
                 entity.CreateComponent<scene::RigidbodyComponent>();
                 break;
             case AddableComponentType::Collider:
-                entity.CreateComponent<scene::ColliderComponent>();
+                entity.CreateComponent<scene::ColliderComponent>(scene::ColliderComponentConfig{
+                    .shape = entity.HasComponent<scene::TerrainComponent>() ? scene::ColliderShape::Terrain : scene::ColliderShape::Box,
+                });
                 break;
             case AddableComponentType::IblCapture:
                 entity.CreateComponent<scene::IblCaptureComponent>();
@@ -983,8 +1082,31 @@ namespace PlutoGE::ui
         }
         case scene::PropertyType::Enum:
         {
-            int currentIndex = std::stoi(property.value);
-            if (ImGui::BeginCombo(property.name.c_str(), property.enumOptions[currentIndex].c_str()))
+            if (property.enumOptions.empty())
+            {
+                ImGui::Text("%s: <No options>", property.name.c_str());
+                break;
+            }
+
+            int currentIndex = 0;
+            try
+            {
+                currentIndex = std::stoi(property.value);
+            }
+            catch (...)
+            {
+                const auto option = std::find(property.enumOptions.begin(), property.enumOptions.end(), property.value);
+                currentIndex = option != property.enumOptions.end() ? static_cast<int>(std::distance(property.enumOptions.begin(), option)) : 0;
+                property.value = std::to_string(currentIndex);
+            }
+
+            currentIndex = std::clamp(currentIndex, 0, static_cast<int>(property.enumOptions.size()) - 1);
+            if (property.value != std::to_string(currentIndex))
+            {
+                property.value = std::to_string(currentIndex);
+            }
+
+            if (ImGui::BeginCombo(property.name.c_str(), property.enumOptions[static_cast<size_t>(currentIndex)].c_str()))
             {
                 for (size_t i = 0; i < property.enumOptions.size(); ++i)
                 {
@@ -1927,6 +2049,19 @@ namespace PlutoGE::ui
                         {
                             meshComponent->SetMesh(importedMeshAsset.mesh);
                             meshComponent->SetMaterials(importedMeshAsset.materials);
+                            meshComponent->CreateSubmeshChildEntities();
+                            if (meshComponent->GetSubmeshIndex() >= 0)
+                            {
+                                if (auto *parent = entity->GetParent())
+                                {
+                                    if (auto *parentMeshComponent = parent->GetComponent<scene::MeshComponent>())
+                                    {
+                                        parentMeshComponent->SetMesh(importedMeshAsset.mesh);
+                                        parentMeshComponent->SetMaterials(importedMeshAsset.materials);
+                                        parentMeshComponent->CreateSubmeshChildEntities();
+                                    }
+                                }
+                            }
                             editorShell.MarkSceneDirty();
                             editorShell.Log(EditorShell::ConsoleSeverity::Info, "Generated mesh LODs: " + meshComponent->GetSourceMeshPath());
                         }
@@ -2359,6 +2494,405 @@ namespace PlutoGE::ui
                                 iblCaptureComponent->MarkDirty();
                             }
                         }
+                        else if (auto *terrainComponent = dynamic_cast<scene::TerrainComponent *>(componentPtr))
+                        {
+                            propertiesProvided = true;
+                            properties = {
+                                {"CellSize", scene::PropertyType::Float, std::to_string(terrainComponent->GetCellSize())},
+                                {"HeightScale", scene::PropertyType::Float, std::to_string(terrainComponent->GetHeightScale())},
+                                {"SurfaceSmoothing", scene::PropertyType::Float, std::to_string(terrainComponent->GetSurfaceSmoothing())},
+                                {"ChunkSize", scene::PropertyType::Int, std::to_string(terrainComponent->GetChunkSize())},
+                                {"LodCount", scene::PropertyType::Int, std::to_string(terrainComponent->GetLodCount())},
+                                {"PaintEnabled", scene::PropertyType::Bool, terrainComponent->IsPaintEnabled() ? "true" : "false"},
+                            };
+
+                            ImGui::Text("Resolution: %d x %d", terrainComponent->GetWidth(), terrainComponent->GetDepth());
+
+                            auto &heightMapPathBuffer = GetTerrainHeightMapPathBuffer(*entity);
+                            static std::unordered_map<scene::EntityID, std::string> cachedTerrainHeightMapPaths;
+                            auto &cachedHeightMapPath = cachedTerrainHeightMapPaths[entity->GetID()];
+                            if (cachedHeightMapPath != terrainComponent->GetHeightMapPath())
+                            {
+                                std::fill(heightMapPathBuffer.begin(), heightMapPathBuffer.end(), '\0');
+                                strncpy_s(heightMapPathBuffer.data(), heightMapPathBuffer.size(), terrainComponent->GetHeightMapPath().c_str(), _TRUNCATE);
+                                cachedHeightMapPath = terrainComponent->GetHeightMapPath();
+                            }
+
+                            ImGui::InputText("Height Map", heightMapPathBuffer.data(), heightMapPathBuffer.size());
+                            if (auto droppedReference = AcceptDroppedTextureAssetReference())
+                            {
+                                std::fill(heightMapPathBuffer.begin(), heightMapPathBuffer.end(), '\0');
+                                strncpy_s(heightMapPathBuffer.data(), heightMapPathBuffer.size(), droppedReference->c_str(), _TRUNCATE);
+                                if (terrainComponent->LoadHeightMap(*droppedReference))
+                                {
+                                    cachedHeightMapPath = terrainComponent->GetHeightMapPath();
+                                    entity->AddPrefabOverride("Component:TerrainComponent:HeightMap");
+                                    entity->AddPrefabOverride("Component:TerrainComponent:HeightSamples");
+                                    editorShell.MarkSceneDirty();
+                                }
+                                else
+                                {
+                                    editorShell.Log(EditorShell::ConsoleSeverity::Error, "Failed to load terrain height map: " + *droppedReference);
+                                }
+                            }
+
+                            ImGui::SameLine();
+                            if (ImGui::Button("...##TerrainHeightMap"))
+                            {
+#ifdef _WIN32
+                                OPENFILENAMEA ofn = {};
+                                char fileName[MAX_PATH] = "";
+                                ofn.lStructSize = sizeof(ofn);
+                                ofn.hwndOwner = nullptr;
+                                ofn.lpstrFilter = "Height Maps\0*.png;*.jpg;*.jpeg;*.tga;*.bmp\0All Files\0*.*\0";
+                                ofn.lpstrFile = fileName;
+                                ofn.nMaxFile = MAX_PATH;
+                                ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+                                if (GetOpenFileNameA(&ofn))
+                                {
+                                    strncpy_s(heightMapPathBuffer.data(), heightMapPathBuffer.size(), fileName, _TRUNCATE);
+                                }
+#endif
+                            }
+
+                            ImGui::SameLine();
+                            ImGui::BeginDisabled(std::strlen(heightMapPathBuffer.data()) == 0);
+                            if (ImGui::Button("Load##TerrainHeightMap"))
+                            {
+                                const std::string heightMapPath = heightMapPathBuffer.data();
+                                if (terrainComponent->LoadHeightMap(heightMapPath))
+                                {
+                                    cachedHeightMapPath = terrainComponent->GetHeightMapPath();
+                                    entity->AddPrefabOverride("Component:TerrainComponent:HeightMap");
+                                    entity->AddPrefabOverride("Component:TerrainComponent:HeightSamples");
+                                    editorShell.MarkSceneDirty();
+                                }
+                                else
+                                {
+                                    editorShell.Log(EditorShell::ConsoleSeverity::Error, "Failed to load terrain height map: " + heightMapPath);
+                                }
+                            }
+                            ImGui::EndDisabled();
+
+                            const auto materialAssetOptions = CollectAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::Material);
+                            const std::string materialPreview = GetAssetReferencePreview(
+                                materialAssetOptions,
+                                terrainComponent->GetMaterialAssetReference(),
+                                "Default Shaded");
+                            if (ImGui::BeginCombo("Material Asset", materialPreview.c_str()))
+                            {
+                                for (const auto &option : materialAssetOptions)
+                                {
+                                    const bool selected = option.reference == terrainComponent->GetMaterialAssetReference();
+                                    if (ImGui::Selectable(option.displayName.c_str(), selected))
+                                    {
+                                        if (AssignMaterialAssetToTerrain(*terrainComponent, option.reference, core::Engine::GetInstance()))
+                                        {
+                                            entity->AddPrefabOverride("Component:TerrainComponent:MaterialAsset");
+                                            editorShell.MarkSceneDirty();
+                                        }
+                                    }
+
+                                    if (selected)
+                                    {
+                                        ImGui::SetItemDefaultFocus();
+                                    }
+                                }
+                                ImGui::EndCombo();
+                            }
+
+                            if (auto droppedReference = AcceptDroppedMaterialAssetReference())
+                            {
+                                if (AssignMaterialAssetToTerrain(*terrainComponent, *droppedReference, core::Engine::GetInstance()))
+                                {
+                                    entity->AddPrefabOverride("Component:TerrainComponent:MaterialAsset");
+                                    editorShell.MarkSceneDirty();
+                                }
+                            }
+                        }
+                        else if (auto *foliageComponent = dynamic_cast<scene::FoliageComponent *>(componentPtr))
+                        {
+                            propertiesProvided = true;
+                            properties = {
+                                {"PaintEnabled", scene::PropertyType::Bool, foliageComponent->IsPaintEnabled() ? "true" : "false"},
+                                {"BrushRadius", scene::PropertyType::Float, std::to_string(foliageComponent->GetBrushRadius())},
+                                {"Density", scene::PropertyType::Int, std::to_string(foliageComponent->GetDensity())},
+                                {"MinScale", scene::PropertyType::Float, std::to_string(foliageComponent->GetMinScale())},
+                                {"MaxScale", scene::PropertyType::Float, std::to_string(foliageComponent->GetMaxScale())},
+                                {"MaxDrawDistance", scene::PropertyType::Float, std::to_string(foliageComponent->GetMaxDrawDistance())},
+                                {"MaxShadowDistance", scene::PropertyType::Float, std::to_string(foliageComponent->GetMaxShadowDistance())},
+                                {"MinRenderLod", scene::PropertyType::Int, std::to_string(foliageComponent->GetMinRenderLod())},
+                                {"MinShadowLod", scene::PropertyType::Int, std::to_string(foliageComponent->GetMinShadowLod())},
+                                {"CastShadows", scene::PropertyType::Bool, foliageComponent->GetCastShadows() ? "true" : "false"},
+                            };
+
+                            const std::size_t selectedTypeIndex = static_cast<std::size_t>((std::max)(0, foliageComponent->GetSelectedTypeIndex()));
+                            auto *selectedType = foliageComponent->GetSelectedType();
+
+                            ImGui::Text("Instances: %zu total, %zu selected", foliageComponent->GetTotalInstanceCount(), foliageComponent->GetSelectedTypeInstanceCount());
+                            if (selectedType && selectedType->mesh)
+                            {
+                                std::size_t maxLodCount = 1;
+                                for (std::size_t submeshIndex = 0; submeshIndex < selectedType->mesh->GetSubmeshCount(); ++submeshIndex)
+                                {
+                                    maxLodCount = (std::max)(maxLodCount, selectedType->mesh->GetSubmeshLodCount(submeshIndex));
+                                }
+                                ImGui::Text("Mesh LODs: %zu", maxLodCount);
+                            }
+
+                            if (ImGui::BeginCombo("Foliage Type", selectedType ? selectedType->name.c_str() : "None"))
+                            {
+                                for (std::size_t typeIndex = 0; typeIndex < foliageComponent->GetTypeCount(); ++typeIndex)
+                                {
+                                    const auto *type = foliageComponent->GetType(typeIndex);
+                                    const bool selected = static_cast<int>(typeIndex) == foliageComponent->GetSelectedTypeIndex();
+                                    const std::string label = type ? type->name : ("Foliage " + std::to_string(typeIndex + 1));
+                                    if (ImGui::Selectable(label.c_str(), selected))
+                                    {
+                                        foliageComponent->SetSelectedTypeIndex(static_cast<int>(typeIndex));
+                                        entity->AddPrefabOverride("Component:FoliageComponent:SelectedType");
+                                        editorShell.MarkSceneDirty();
+                                    }
+                                    if (selected)
+                                    {
+                                        ImGui::SetItemDefaultFocus();
+                                    }
+                                }
+                                ImGui::EndCombo();
+                            }
+
+                            if (ImGui::Button("Add Type"))
+                            {
+                                foliageComponent->AddType();
+                                entity->AddPrefabOverride("Component:FoliageComponent:FoliageTypeCount");
+                                entity->AddPrefabOverride("Component:FoliageComponent:SelectedType");
+                                editorShell.MarkSceneDirty();
+                            }
+                            ImGui::SameLine();
+                            ImGui::BeginDisabled(foliageComponent->GetTypeCount() <= 1);
+                            if (ImGui::Button("Remove Type"))
+                            {
+                                foliageComponent->RemoveType(selectedTypeIndex);
+                                entity->AddPrefabOverride("Component:FoliageComponent:FoliageTypeCount");
+                                entity->AddPrefabOverride("Component:FoliageComponent:SelectedType");
+                                editorShell.MarkSceneDirty();
+                            }
+                            ImGui::EndDisabled();
+
+                            selectedType = foliageComponent->GetSelectedType();
+                            if (selectedType)
+                            {
+                                auto &nameBuffer = GetFoliageTypeNameBuffer(entity->GetID(), selectedTypeIndex);
+                                static std::unordered_map<std::string, std::string> cachedFoliageTypeNames;
+                                const std::string typeNameKey = std::to_string(entity->GetID()) + ":" + std::to_string(selectedTypeIndex);
+                                if (cachedFoliageTypeNames[typeNameKey] != selectedType->name)
+                                {
+                                    std::fill(nameBuffer.begin(), nameBuffer.end(), '\0');
+                                    strncpy_s(nameBuffer.data(), nameBuffer.size(), selectedType->name.c_str(), _TRUNCATE);
+                                    cachedFoliageTypeNames[typeNameKey] = selectedType->name;
+                                }
+                                if (ImGui::InputText("Type Name", nameBuffer.data(), nameBuffer.size()))
+                                {
+                                    foliageComponent->SetTypeName(selectedTypeIndex, nameBuffer.data());
+                                    cachedFoliageTypeNames[typeNameKey] = nameBuffer.data();
+                                    entity->AddPrefabOverride("Component:FoliageComponent:Type." + std::to_string(selectedTypeIndex) + ".Name");
+                                    editorShell.MarkSceneDirty();
+                                }
+                            }
+
+                            auto &engine = core::Engine::GetInstance();
+                            const auto meshAssetOptions = CollectAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::Mesh);
+                            std::string meshPreview = !selectedType || selectedType->sourceMeshPath.empty() ? "None" : selectedType->sourceMeshPath;
+                            for (const auto &option : meshAssetOptions)
+                            {
+                                if (selectedType && option.reference == selectedType->sourceMeshPath)
+                                {
+                                    meshPreview = option.displayName;
+                                    break;
+                                }
+                            }
+
+                            if (ImGui::BeginCombo("Foliage Mesh", meshPreview.c_str()))
+                            {
+                                for (const auto &option : meshAssetOptions)
+                                {
+                                    const bool selected = selectedType && option.reference == selectedType->sourceMeshPath;
+                                    if (ImGui::Selectable(option.displayName.c_str(), selected))
+                                    {
+                                        if (assets::Project::IsEngineAssetReference(option.reference))
+                                        {
+                                            if (auto *mesh = engine.GetAssetManager().LoadMeshAsset(option.reference))
+                                            {
+                                                foliageComponent->SetTypeMeshAndMaterials(
+                                                    selectedTypeIndex,
+                                                    mesh,
+                                                    {engine.GetAssetManager().LoadMaterialAsset(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference))},
+                                                    option.reference);
+                                                entity->AddPrefabOverride("Component:FoliageComponent:Type." + std::to_string(selectedTypeIndex) + ".SourceMesh");
+                                                editorShell.MarkSceneDirty();
+                                            }
+                                        }
+                                        else
+                                        {
+                                            const std::string resolvedPath = engine.GetAssetManager().ResolveMeshAssetSourcePath(option.reference);
+                                            auto importedMeshAsset = engine.ImportMeshAsset(resolvedPath);
+                                            if (importedMeshAsset.mesh)
+                                            {
+                                                foliageComponent->SetTypeMeshAndMaterials(
+                                                    selectedTypeIndex,
+                                                    importedMeshAsset.mesh,
+                                                    importedMeshAsset.materials,
+                                                    option.reference);
+                                                entity->AddPrefabOverride("Component:FoliageComponent:Type." + std::to_string(selectedTypeIndex) + ".SourceMesh");
+                                                editorShell.MarkSceneDirty();
+                                            }
+                                        }
+                                    }
+                                    if (selected)
+                                    {
+                                        ImGui::SetItemDefaultFocus();
+                                    }
+                                }
+                                ImGui::EndCombo();
+                            }
+
+                            selectedType = foliageComponent->GetSelectedType();
+                            if (selectedType && selectedType->mesh && selectedType->mesh->GetSubmeshCount() > 1)
+                            {
+                                const char *submeshPreview = selectedType->submeshIndex < 0 ? "All Submeshes" : nullptr;
+                                std::string selectedSubmeshLabel;
+                                if (!submeshPreview)
+                                {
+                                    const std::size_t submeshIndex = static_cast<std::size_t>(std::clamp(selectedType->submeshIndex, 0, static_cast<int>(selectedType->mesh->GetSubmeshCount()) - 1));
+                                    const auto &submesh = selectedType->mesh->GetSubmesh(submeshIndex);
+                                    selectedSubmeshLabel = submesh.name.empty()
+                                                               ? "Submesh " + std::to_string(submeshIndex)
+                                                               : submesh.name + " (" + std::to_string(submeshIndex) + ")";
+                                    submeshPreview = selectedSubmeshLabel.c_str();
+                                }
+
+                                if (ImGui::BeginCombo("Submesh", submeshPreview))
+                                {
+                                    const bool allSelected = selectedType->submeshIndex < 0;
+                                    if (ImGui::Selectable("All Submeshes", allSelected))
+                                    {
+                                        foliageComponent->SetTypeSubmeshIndex(selectedTypeIndex, -1);
+                                        entity->AddPrefabOverride("Component:FoliageComponent:Type." + std::to_string(selectedTypeIndex) + ".SubmeshIndex");
+                                        editorShell.MarkSceneDirty();
+                                    }
+                                    if (allSelected)
+                                    {
+                                        ImGui::SetItemDefaultFocus();
+                                    }
+
+                                    for (std::size_t submeshIndex = 0; submeshIndex < selectedType->mesh->GetSubmeshCount(); ++submeshIndex)
+                                    {
+                                        const auto &submesh = selectedType->mesh->GetSubmesh(submeshIndex);
+                                        const std::string label = submesh.name.empty()
+                                                                      ? "Submesh " + std::to_string(submeshIndex)
+                                                                      : submesh.name + " (" + std::to_string(submeshIndex) + ")";
+                                        const bool selected = selectedType->submeshIndex == static_cast<int>(submeshIndex);
+                                        if (ImGui::Selectable(label.c_str(), selected))
+                                        {
+                                            foliageComponent->SetTypeSubmeshIndex(selectedTypeIndex, static_cast<int>(submeshIndex));
+                                            entity->AddPrefabOverride("Component:FoliageComponent:Type." + std::to_string(selectedTypeIndex) + ".SubmeshIndex");
+                                            editorShell.MarkSceneDirty();
+                                        }
+                                        if (selected)
+                                        {
+                                            ImGui::SetItemDefaultFocus();
+                                        }
+                                    }
+                                    ImGui::EndCombo();
+                                }
+                            }
+
+                            selectedType = foliageComponent->GetSelectedType();
+                            const bool canGenerateLodsForFoliage = selectedType &&
+                                                                    !selectedType->sourceMeshPath.empty() &&
+                                                                    !assets::Project::IsEngineAssetReference(selectedType->sourceMeshPath);
+                            ImGui::BeginDisabled(!canGenerateLodsForFoliage);
+                            if (ImGui::Button("Generate Foliage LODs"))
+                            {
+                                try
+                                {
+                                    const std::string resolvedPath = engine.GetAssetManager().ResolveMeshAssetSourcePath(selectedType->sourceMeshPath);
+                                    auto importedMeshAsset = engine.GenerateMeshAssetLods(resolvedPath);
+                                    if (importedMeshAsset.mesh)
+                                    {
+                                        foliageComponent->SetTypeMeshAndMaterials(
+                                            selectedTypeIndex,
+                                            importedMeshAsset.mesh,
+                                            importedMeshAsset.materials,
+                                            selectedType->sourceMeshPath);
+                                        entity->AddPrefabOverride("Component:FoliageComponent:Type." + std::to_string(selectedTypeIndex) + ".SourceMesh");
+                                        editorShell.MarkSceneDirty();
+                                        editorShell.Log(EditorShell::ConsoleSeverity::Info, "Generated foliage LODs: " + selectedType->sourceMeshPath);
+                                    }
+                                }
+                                catch (const std::exception &exception)
+                                {
+                                    editorShell.Log(EditorShell::ConsoleSeverity::Error, std::string("Failed to generate foliage LODs: ") + exception.what());
+                                }
+                                catch (...)
+                                {
+                                    editorShell.Log(EditorShell::ConsoleSeverity::Error, "Failed to generate foliage LODs.");
+                                }
+                            }
+                            ImGui::EndDisabled();
+
+                            const auto materialAssetOptions = CollectAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::Material);
+                            const std::string materialPreview = GetAssetReferencePreview(
+                                materialAssetOptions,
+                                selectedType ? selectedType->materialAssetReference : std::string{},
+                                selectedType && selectedType->materialAssetReference.empty() ? "Auto From Mesh" : "Default Shaded");
+                            if (ImGui::BeginCombo("Material Override", materialPreview.c_str()))
+                            {
+                                for (const auto &option : materialAssetOptions)
+                                {
+                                    const bool selected = selectedType && option.reference == selectedType->materialAssetReference;
+                                    if (ImGui::Selectable(option.displayName.c_str(), selected))
+                                    {
+                                        foliageComponent->SetTypeMaterialAssetReference(selectedTypeIndex, option.reference);
+                                        entity->AddPrefabOverride("Component:FoliageComponent:Type." + std::to_string(selectedTypeIndex) + ".MaterialAsset");
+                                        editorShell.MarkSceneDirty();
+                                    }
+
+                                    if (selected)
+                                    {
+                                        ImGui::SetItemDefaultFocus();
+                                    }
+                                }
+                                ImGui::EndCombo();
+                            }
+                            ImGui::SameLine();
+                            ImGui::BeginDisabled(!selectedType || selectedType->materialAssetReference.empty());
+                            if (ImGui::Button("Auto##FoliageMaterial"))
+                            {
+                                foliageComponent->ClearTypeMaterialAssetReference(selectedTypeIndex);
+                                entity->AddPrefabOverride("Component:FoliageComponent:Type." + std::to_string(selectedTypeIndex) + ".MaterialAsset");
+                                editorShell.MarkSceneDirty();
+                            }
+                            ImGui::EndDisabled();
+
+                            ImGui::BeginDisabled(foliageComponent->GetSelectedTypeInstanceCount() == 0);
+                            if (ImGui::Button("Clear Selected Type"))
+                            {
+                                foliageComponent->ClearSelectedTypeInstances();
+                                entity->AddPrefabOverride("Component:FoliageComponent:Type." + std::to_string(selectedTypeIndex) + ".Instances");
+                                editorShell.MarkSceneDirty();
+                            }
+                            ImGui::EndDisabled();
+                            ImGui::SameLine();
+                            ImGui::BeginDisabled(foliageComponent->GetTotalInstanceCount() == 0);
+                            if (ImGui::Button("Clear All Foliage"))
+                            {
+                                foliageComponent->ClearInstances();
+                                entity->AddPrefabOverride("Component:FoliageComponent:Instances");
+                                editorShell.MarkSceneDirty();
+                            }
+                            ImGui::EndDisabled();
+                        }
 
                         if (!propertiesProvided)
                         {
@@ -2372,6 +2906,35 @@ namespace PlutoGE::ui
                             {
                                 continue;
                             }
+                            if (dynamic_cast<scene::TerrainComponent *>(componentPtr) &&
+                                (property.name == "MaterialAsset" ||
+                                 property.name == "HeightMap" ||
+                                 property.name == "HeightSamples" ||
+                                 property.name == "PaintMode" ||
+                                 property.name == "BrushRadius" ||
+                                 property.name == "BrushStrength" ||
+                                 property.name == "FlattenHeight"))
+                            {
+                                continue;
+                            }
+                            if (dynamic_cast<scene::FoliageComponent *>(componentPtr) &&
+                                (property.name == "SourceMesh" ||
+                                 property.name == "MaterialAsset" ||
+                                 property.name == "Instances"))
+                            {
+                                continue;
+                            }
+                            if (auto *colliderComponent = dynamic_cast<scene::ColliderComponent *>(componentPtr))
+                            {
+                                if (colliderComponent->GetShape() == scene::ColliderShape::Terrain &&
+                                    (property.name == "Center" ||
+                                     property.name == "Size" ||
+                                     property.name == "Radius" ||
+                                     property.name == "Height"))
+                                {
+                                    continue;
+                                }
+                            }
 
                             ImGui::PushID(propertyIndex++);
                             propertiesChanged |= RenderPropertyEditor(property);
@@ -2380,7 +2943,36 @@ namespace PlutoGE::ui
 
                         if (propertiesChanged)
                         {
-                            componentPtr->Deserialize(properties);
+                            if (auto *foliageComponent = dynamic_cast<scene::FoliageComponent *>(componentPtr))
+                            {
+                                for (const auto &property : properties)
+                                {
+                                    if (property.name == "PaintEnabled")
+                                        foliageComponent->SetPaintEnabled(property.value == "true" || property.value == "1");
+                                    else if (property.name == "BrushRadius")
+                                        foliageComponent->SetBrushRadius(std::stof(property.value));
+                                    else if (property.name == "Density")
+                                        foliageComponent->SetDensity(std::stoi(property.value));
+                                    else if (property.name == "MinScale")
+                                        foliageComponent->SetScaleRange(std::stof(property.value), foliageComponent->GetMaxScale());
+                                    else if (property.name == "MaxScale")
+                                        foliageComponent->SetScaleRange(foliageComponent->GetMinScale(), std::stof(property.value));
+                                    else if (property.name == "MaxDrawDistance")
+                                        foliageComponent->SetMaxDrawDistance(std::stof(property.value));
+                                    else if (property.name == "MaxShadowDistance")
+                                        foliageComponent->SetMaxShadowDistance(std::stof(property.value));
+                                    else if (property.name == "MinRenderLod")
+                                        foliageComponent->SetMinRenderLod(std::stoi(property.value));
+                                    else if (property.name == "MinShadowLod")
+                                        foliageComponent->SetMinShadowLod(std::stoi(property.value));
+                                    else if (property.name == "CastShadows")
+                                        foliageComponent->SetCastShadows(property.value == "true" || property.value == "1");
+                                }
+                            }
+                            else
+                            {
+                                componentPtr->Deserialize(properties);
+                            }
                             const auto componentTypeName = GetComponentPrefabTypeName(*componentPtr);
                             if (!componentTypeName.empty())
                             {

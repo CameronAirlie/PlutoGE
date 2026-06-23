@@ -2,14 +2,17 @@
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/components/ColliderComponent.h"
+#include "PlutoGE/scene/components/FoliageComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/scene/components/RigidbodyComponent.h"
 #include "PlutoGE/scene/components/ScriptComponent.h"
+#include "PlutoGE/scene/components/TerrainComponent.h"
 #include "PlutoGE/scene/components/UIComponent.h"
 #include "PlutoGE/render/Texture.h"
 
 #include <btBulletDynamicsCommon.h>
+#include <BulletCollision/CollisionShapes/btHeightfieldTerrainShape.h>
 
 #include <algorithm>
 #include <cmath>
@@ -268,6 +271,7 @@ namespace PlutoGE::scene
         {
             std::unique_ptr<btCollisionShape> shape;
             std::vector<std::unique_ptr<btCollisionShape>> ownedChildShapes;
+            std::vector<float> ownedHeightfieldData;
         };
 
         std::unique_ptr<btCollisionShape> CreateBaseBulletShape(const ColliderComponent &collider, const glm::vec3 &worldScale)
@@ -292,6 +296,66 @@ namespace PlutoGE::scene
                 return std::make_unique<btBoxShape>(ToBullet(halfExtents));
             }
             }
+        }
+
+        BulletShapeData CreateTerrainBulletShape(const TerrainComponent &terrain, const glm::vec3 &worldScale)
+        {
+            BulletShapeData shapeData;
+            const int width = terrain.GetWidth();
+            const int depth = terrain.GetDepth();
+            const auto &heightSamples = terrain.GetHeightSamples();
+            const std::size_t expectedHeightCount = static_cast<std::size_t>(width) * static_cast<std::size_t>(depth);
+            if (width < 2 || depth < 2 || heightSamples.size() != expectedHeightCount)
+            {
+                return shapeData;
+            }
+
+            shapeData.ownedHeightfieldData = heightSamples;
+            float minHeight = std::numeric_limits<float>::max();
+            float maxHeight = std::numeric_limits<float>::lowest();
+            for (const float height : shapeData.ownedHeightfieldData)
+            {
+                minHeight = std::min(minHeight, height);
+                maxHeight = std::max(maxHeight, height);
+            }
+            if (!std::isfinite(minHeight) || !std::isfinite(maxHeight))
+            {
+                return {};
+            }
+            if (std::abs(maxHeight - minHeight) <= 0.0001f)
+            {
+                maxHeight = minHeight + 0.0001f;
+            }
+
+            auto shape = std::make_unique<btHeightfieldTerrainShape>(
+                width,
+                depth,
+                shapeData.ownedHeightfieldData.data(),
+                1.0f,
+                minHeight,
+                maxHeight,
+                1,
+                PHY_FLOAT,
+                false);
+
+            const float scaleX = std::max(terrain.GetCellSize() * std::abs(worldScale.x), 0.0001f);
+            const float scaleY = std::max(std::abs(worldScale.y), 0.0001f);
+            const float scaleZ = std::max(terrain.GetCellSize() * std::abs(worldScale.z), 0.0001f);
+            shape->setLocalScaling(btVector3(scaleX, scaleY, scaleZ));
+            shape->setUseDiamondSubdivision(true);
+
+            auto compoundShape = std::make_unique<btCompoundShape>();
+            btTransform childTransform;
+            childTransform.setIdentity();
+            childTransform.setOrigin(btVector3(
+                static_cast<btScalar>((width - 1) * scaleX * 0.5f),
+                static_cast<btScalar>((minHeight + maxHeight) * scaleY * 0.5f),
+                static_cast<btScalar>((depth - 1) * scaleZ * 0.5f)));
+            compoundShape->addChildShape(childTransform, shape.get());
+
+            shapeData.ownedChildShapes.push_back(std::move(shape));
+            shapeData.shape = std::move(compoundShape);
+            return shapeData;
         }
 
         BulletShapeData CreateBulletShape(const ColliderComponent &collider, const glm::vec3 &worldScale)
@@ -321,6 +385,21 @@ namespace PlutoGE::scene
             return shapeData;
         }
 
+        BulletShapeData CreateBulletShapeForEntity(const Entity &entity, const ColliderComponent &collider)
+        {
+            const glm::vec3 worldScale = entity.GetWorldScale();
+            if (collider.GetShape() == ColliderShape::Terrain)
+            {
+                if (const auto *terrain = entity.GetComponent<TerrainComponent>())
+                {
+                    return CreateTerrainBulletShape(*terrain, worldScale);
+                }
+                return {};
+            }
+
+            return CreateBulletShape(collider, worldScale);
+        }
+
         struct BulletStepBody
         {
             Entity *entity = nullptr;
@@ -328,6 +407,7 @@ namespace PlutoGE::scene
             RigidbodyComponent *rigidbody = nullptr;
             std::unique_ptr<btCollisionShape> shape;
             std::vector<std::unique_ptr<btCollisionShape>> childShapes;
+            std::vector<float> heightfieldData;
             std::unique_ptr<btDefaultMotionState> motionState;
             std::unique_ptr<btRigidBody> body;
             bool dynamic = false;
@@ -338,6 +418,7 @@ namespace PlutoGE::scene
             Entity *entity = nullptr;
             std::unique_ptr<btCollisionShape> shape;
             std::vector<std::unique_ptr<btCollisionShape>> childShapes;
+            std::vector<float> heightfieldData;
             std::unique_ptr<btCollisionObject> object;
         };
 
@@ -374,8 +455,7 @@ namespace PlutoGE::scene
                     continue;
                 }
 
-                const glm::vec3 worldScale = entity->GetWorldScale();
-                auto shapeData = CreateBulletShape(*collider, worldScale);
+                auto shapeData = CreateBulletShapeForEntity(*entity, *collider);
                 if (!shapeData.shape)
                 {
                     continue;
@@ -396,6 +476,7 @@ namespace PlutoGE::scene
                     .entity = entity,
                     .shape = std::move(shapeData.shape),
                     .childShapes = std::move(shapeData.ownedChildShapes),
+                    .heightfieldData = std::move(shapeData.ownedHeightfieldData),
                     .object = std::move(object),
                 });
             }
@@ -835,6 +916,38 @@ namespace PlutoGE::scene
 
             meshComponent->SubmitRenderCommands();
         }
+
+        for (auto *terrainComponent : m_terrainComponents)
+        {
+            if (!terrainComponent || !terrainComponent->IsEnabled())
+            {
+                continue;
+            }
+
+            auto *owner = terrainComponent->GetOwner();
+            if (!owner || !owner->IsActive())
+            {
+                continue;
+            }
+
+            terrainComponent->SubmitRenderCommands();
+        }
+
+        for (auto *foliageComponent : m_foliageComponents)
+        {
+            if (!foliageComponent || !foliageComponent->IsEnabled())
+            {
+                continue;
+            }
+
+            auto *owner = foliageComponent->GetOwner();
+            if (!owner || !owner->IsActive())
+            {
+                continue;
+            }
+
+            foliageComponent->SubmitRenderCommands();
+        }
     }
 
     void Scene::RegisterMeshComponent(MeshComponent *meshComponent)
@@ -858,6 +971,52 @@ namespace PlutoGE::scene
         }
 
         m_meshComponents.erase(std::remove(m_meshComponents.begin(), m_meshComponents.end(), meshComponent), m_meshComponents.end());
+    }
+
+    void Scene::RegisterTerrainComponent(TerrainComponent *terrainComponent)
+    {
+        if (!terrainComponent)
+        {
+            return;
+        }
+
+        if (std::find(m_terrainComponents.begin(), m_terrainComponents.end(), terrainComponent) == m_terrainComponents.end())
+        {
+            m_terrainComponents.push_back(terrainComponent);
+        }
+    }
+
+    void Scene::UnregisterTerrainComponent(TerrainComponent *terrainComponent)
+    {
+        if (!terrainComponent)
+        {
+            return;
+        }
+
+        m_terrainComponents.erase(std::remove(m_terrainComponents.begin(), m_terrainComponents.end(), terrainComponent), m_terrainComponents.end());
+    }
+
+    void Scene::RegisterFoliageComponent(FoliageComponent *foliageComponent)
+    {
+        if (!foliageComponent)
+        {
+            return;
+        }
+
+        if (std::find(m_foliageComponents.begin(), m_foliageComponents.end(), foliageComponent) == m_foliageComponents.end())
+        {
+            m_foliageComponents.push_back(foliageComponent);
+        }
+    }
+
+    void Scene::UnregisterFoliageComponent(FoliageComponent *foliageComponent)
+    {
+        if (!foliageComponent)
+        {
+            return;
+        }
+
+        m_foliageComponents.erase(std::remove(m_foliageComponents.begin(), m_foliageComponents.end(), foliageComponent), m_foliageComponents.end());
     }
 
     bool Scene::Raycast(const glm::vec3 &origin,
@@ -999,7 +1158,7 @@ namespace PlutoGE::scene
         }
 
         auto queryWorld = BuildBulletQueryWorld(entities, entity.GetID());
-        auto shapeData = CreateBulletShape(*collider, entity.GetWorldScale());
+        auto shapeData = CreateBulletShapeForEntity(entity, *collider);
         auto *convexShape = dynamic_cast<btConvexShape *>(shapeData.shape.get());
         if (!convexShape)
         {
@@ -1096,7 +1255,7 @@ namespace PlutoGE::scene
 
             auto *rigidbody = entity->GetComponent<RigidbodyComponent>();
             const glm::vec3 worldScale = entity->GetWorldScale();
-            auto shapeData = CreateBulletShape(*collider, worldScale);
+            auto shapeData = CreateBulletShapeForEntity(*entity, *collider);
             if (!shapeData.shape)
             {
                 continue;
@@ -1151,6 +1310,7 @@ namespace PlutoGE::scene
                 .rigidbody = rigidbody && rigidbody->IsEnabled() ? rigidbody : nullptr,
                 .shape = std::move(shapeData.shape),
                 .childShapes = std::move(shapeData.ownedChildShapes),
+                .heightfieldData = std::move(shapeData.ownedHeightfieldData),
                 .motionState = std::move(motionState),
                 .body = std::move(body),
                 .dynamic = dynamic,

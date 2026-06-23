@@ -105,7 +105,13 @@ namespace PlutoGE::core
         render::TextureManager m_textureManager;
         scripting::ScriptEngine m_scriptEngine;
         scene::Scene *m_scene = nullptr;
-        std::unordered_map<std::string, std::vector<std::unique_ptr<render::Material>>> m_importedMaterialCache;
+        struct ImportedMaterialCacheEntry
+        {
+            uint64_t fingerprint = 0;
+            std::vector<std::unique_ptr<render::Material>> materials;
+        };
+        std::unordered_map<std::string, ImportedMaterialCacheEntry> m_importedMaterialCache;
+        std::vector<ImportedMaterialCacheEntry> m_retiredImportedMaterialCache;
         std::unordered_map<scene::EntityID, PendingMeshImportJob> m_pendingMeshImports;
         std::unordered_map<scene::EntityID, std::string> m_meshImportErrors;
 

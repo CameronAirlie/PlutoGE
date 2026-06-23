@@ -8,10 +8,12 @@ add_library(PlutoGEScene
     src/components/MeshComponent.cpp
     src/components/CameraComponent.cpp
     src/components/ColliderComponent.cpp
+    src/components/FoliageComponent.cpp
     src/components/IblCaptureComponent.cpp
     src/components/LightComponent.cpp
     src/components/RigidbodyComponent.cpp
     src/components/ScriptComponent.cpp
+    src/components/TerrainComponent.cpp
     src/components/UIComponent.cpp
 )
 
@@ -28,4 +30,5 @@ target_link_libraries(PlutoGEScene PUBLIC
     PlutoGE::Assets
     PlutoGE::Scripting
     PlutoGE::bullet
+    PlutoGE::stb_image
 )

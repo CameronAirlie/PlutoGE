@@ -84,6 +84,8 @@ namespace PlutoGE::assetimport
             std::vector<ImportedMaterialData> materials;
             std::vector<ImportedTextureData> textures;
             std::vector<render::AnimationClip> animations;
+            uint64_t sourceFileSize = 0;
+            int64_t sourceWriteTime = 0;
 
             ImportedMeshAsset ToImportedMeshAsset() const
             {
@@ -97,5 +99,6 @@ namespace PlutoGE::assetimport
         };
 
         std::unordered_map<std::string, CachedImportedMeshAsset> m_meshCache;
+        std::vector<CachedImportedMeshAsset> m_retiredMeshCache;
     };
 }

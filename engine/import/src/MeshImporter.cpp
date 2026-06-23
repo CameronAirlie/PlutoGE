@@ -72,7 +72,7 @@ namespace PlutoGE::assetimport
         };
 
         constexpr size_t kLargeMeshOverdrawThreshold = 1'000'000;
-        constexpr uint32_t kLodTriangleThreshold = 50;
+        constexpr uint32_t kLodTriangleThreshold = 8;
 
         std::array<int, 4> ReadJointTupleUnchecked(const AccessorView &view, size_t elementIndex);
         void ValidateJointAccessorView(const AccessorView &view);
@@ -174,7 +174,7 @@ namespace PlutoGE::assetimport
         };
 
         constexpr uint32_t kCookedMeshCacheMagic = 0x434d4750; // PGMC
-        constexpr uint32_t kCookedMeshCacheVersion = 10;
+        constexpr uint32_t kCookedMeshCacheVersion = 14;
 
         bool ReadBooleanEnvironmentFlag(const char *name, bool defaultValue)
         {
@@ -810,9 +810,19 @@ namespace PlutoGE::assetimport
             return true;
         }
 
+        std::string BuildSourceStampedCacheKey(const std::string &filePath)
+        {
+            std::string cacheKey = NormalizePath(filePath);
+            if (const auto sourceStamp = ReadMeshSourceStamp(filePath))
+            {
+                cacheKey += "#stamp:" + std::to_string(sourceStamp->fileSize) + ":" + std::to_string(sourceStamp->writeTime);
+            }
+            return cacheKey;
+        }
+
         std::string BuildImageCacheKey(const std::string &filePath, int imageIndex)
         {
-            return NormalizePath(filePath) + "#image:" + std::to_string(imageIndex);
+            return BuildSourceStampedCacheKey(filePath) + "#image:" + std::to_string(imageIndex);
         }
 
         std::string ResolveImageSourcePath(const std::string &filePath, const tinygltf::Image &image)
@@ -1603,11 +1613,10 @@ namespace PlutoGE::assetimport
             };
 
             constexpr std::array<LodTarget, 3> kLodTargets{{
-                {.targetRatio = 0.50f, .minDistanceFactor = 7.0f, .maxScreenRadiusPixels = 220.0f, .error = 0.015f},
-                {.targetRatio = 0.25f, .minDistanceFactor = 14.0f, .maxScreenRadiusPixels = 120.0f, .error = 0.02f},
-                {.targetRatio = 0.10f, .minDistanceFactor = 28.0f, .maxScreenRadiusPixels = 60.0f, .error = 0.04f},
+                {.targetRatio = 0.55f, .minDistanceFactor = 8.0f, .maxScreenRadiusPixels = 260.0f, .error = 0.012f},
+                {.targetRatio = 0.30f, .minDistanceFactor = 16.0f, .maxScreenRadiusPixels = 150.0f, .error = 0.020f},
+                {.targetRatio = 0.12f, .minDistanceFactor = 32.0f, .maxScreenRadiusPixels = 80.0f, .error = 0.040f},
             }};
-
             for (auto &submesh : submeshes)
             {
                 submesh.lods.clear();
@@ -1741,6 +1750,7 @@ namespace PlutoGE::assetimport
                     submesh.lods = sourceSubmesh.lods;
                 }
             }
+
         }
 
         void MergeAdjacentSubmeshes(std::vector<render::Submesh> &submeshes)
@@ -2637,7 +2647,7 @@ namespace PlutoGE::assetimport
 
             if (const aiTexture *embeddedTexture = FindEmbeddedAssimpTexture(scene, texturePath))
             {
-                const std::string cacheKey = NormalizePath(filePath) + "#fbx-texture:" + path;
+                const std::string cacheKey = BuildSourceStampedCacheKey(filePath) + "#fbx-texture:" + path;
                 if (const auto cachedIt = textureIndexByKey.find(cacheKey); cachedIt != textureIndexByKey.end())
                 {
                     return cachedIt->second;
@@ -4042,7 +4052,6 @@ namespace PlutoGE::assetimport
         const auto normalizedPath = NormalizePath(filePath);
         MeshCookOptions cookOptions = ResolveMeshCookOptions();
         cookOptions.generateLods = true;
-        m_meshCache.erase(normalizedPath);
         return FinalizeImportedMeshAsset(normalizedPath, ParseMeshAsset(normalizedPath, cookOptions));
     }
 
@@ -4054,11 +4063,21 @@ namespace PlutoGE::assetimport
         const auto cachedMesh = m_meshCache.find(normalizedPath);
         if (cachedMesh != m_meshCache.end())
         {
-            return cachedMesh->second.ToImportedMeshAsset();
+            auto retiredNode = m_meshCache.extract(cachedMesh);
+            m_retiredMeshCache.push_back(std::move(retiredNode.mapped()));
+            if (m_retiredMeshCache.size() > kMaxMeshCacheSize)
+            {
+                m_retiredMeshCache.erase(m_retiredMeshCache.begin());
+            }
         }
         if (m_meshCache.size() >= kMaxMeshCacheSize)
         {
-            m_meshCache.erase(m_meshCache.begin());
+            auto retiredNode = m_meshCache.extract(m_meshCache.begin());
+            m_retiredMeshCache.push_back(std::move(retiredNode.mapped()));
+            if (m_retiredMeshCache.size() > kMaxMeshCacheSize)
+            {
+                m_retiredMeshCache.erase(m_retiredMeshCache.begin());
+            }
         }
         CachedImportedMeshAsset cachedImportedMeshAsset;
         render::MeshConfig meshConfig;
@@ -4072,6 +4091,11 @@ namespace PlutoGE::assetimport
         cachedImportedMeshAsset.materials = std::move(meshSourceAsset.materials);
         cachedImportedMeshAsset.textures = std::move(meshSourceAsset.textures);
         cachedImportedMeshAsset.animations = std::move(meshSourceAsset.animations);
+        if (const auto sourceStamp = ReadMeshSourceStamp(normalizedPath))
+        {
+            cachedImportedMeshAsset.sourceFileSize = sourceStamp->fileSize;
+            cachedImportedMeshAsset.sourceWriteTime = sourceStamp->writeTime;
+        }
         auto [iterator, inserted] = m_meshCache.emplace(normalizedPath, std::move(cachedImportedMeshAsset));
         return iterator->second.ToImportedMeshAsset();
     }
@@ -4087,7 +4111,20 @@ namespace PlutoGE::assetimport
         const auto cachedMesh = m_meshCache.find(normalizedPath);
         if (cachedMesh != m_meshCache.end())
         {
-            return cachedMesh->second.ToImportedMeshAsset();
+            const auto sourceStamp = ReadMeshSourceStamp(normalizedPath);
+            if (sourceStamp &&
+                cachedMesh->second.sourceFileSize == sourceStamp->fileSize &&
+                cachedMesh->second.sourceWriteTime == sourceStamp->writeTime)
+            {
+                return cachedMesh->second.ToImportedMeshAsset();
+            }
+
+            auto retiredNode = m_meshCache.extract(cachedMesh);
+            m_retiredMeshCache.push_back(std::move(retiredNode.mapped()));
+            if (m_retiredMeshCache.size() > 32)
+            {
+                m_retiredMeshCache.erase(m_retiredMeshCache.begin());
+            }
         }
 
         try

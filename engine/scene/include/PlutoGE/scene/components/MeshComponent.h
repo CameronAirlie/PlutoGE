@@ -197,6 +197,10 @@ namespace PlutoGE::scene
             static const std::string empty;
             return submeshIndex < m_submeshMaterialAssetReferences.size() ? m_submeshMaterialAssetReferences[submeshIndex] : empty;
         }
+        bool HasMaterialOverrideForSubmesh(size_t submeshIndex) const
+        {
+            return submeshIndex < m_submeshMaterials.size() && m_submeshMaterials[submeshIndex] != nullptr;
+        }
         render::Material *CreateUniqueMaterialForMaterialSlot(size_t materialSlotIndex);
         render::Material *CreateUniqueMaterialForSubmesh(size_t submeshIndex);
         bool CreateSubmeshChildEntities();

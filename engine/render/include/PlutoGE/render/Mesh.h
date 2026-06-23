@@ -501,7 +501,7 @@ namespace PlutoGE::render
             }
 
             const auto &submesh = m_config.submeshes[submeshIndex];
-            const auto range = ResolveSubmeshLodRange(submesh, lodIndex);
+            const auto range = ResolveSubmeshLodRange(submesh, lodIndex, m_config.data.indices.size());
             if (range.indexCount == 0)
             {
                 return;
@@ -528,7 +528,7 @@ namespace PlutoGE::render
             }
 
             const auto &submesh = m_config.submeshes[submeshIndex];
-            const auto range = ResolveSubmeshLodRange(submesh, lodIndex);
+            const auto range = ResolveSubmeshLodRange(submesh, lodIndex, m_config.data.indices.size());
             if (range.indexCount == 0)
             {
                 return;
@@ -564,7 +564,7 @@ namespace PlutoGE::render
                 return static_cast<uint32_t>(m_config.data.indices.size());
             }
 
-            return ResolveSubmeshLodRange(m_config.submeshes[submeshIndex], lodIndex).indexCount;
+            return ResolveSubmeshLodRange(m_config.submeshes[submeshIndex], lodIndex, m_config.data.indices.size()).indexCount;
         }
         Submesh::LodRange GetSubmeshLodRange(size_t submeshIndex, size_t lodIndex = 0) const
         {
@@ -578,7 +578,7 @@ namespace PlutoGE::render
                 };
             }
 
-            return ResolveSubmeshLodRange(m_config.submeshes[submeshIndex], lodIndex);
+            return ResolveSubmeshLodRange(m_config.submeshes[submeshIndex], lodIndex, m_config.data.indices.size());
         }
         size_t SelectSubmeshLod(size_t submeshIndex, float cameraDistance) const
         {
@@ -729,11 +729,17 @@ namespace PlutoGE::render
             return false;
         }
 
-        static Submesh::LodRange ResolveSubmeshLodRange(const Submesh &submesh, size_t lodIndex)
+        static Submesh::LodRange ResolveSubmeshLodRange(const Submesh &submesh, size_t lodIndex, size_t totalIndexCount)
         {
             if (lodIndex < submesh.lods.size())
             {
-                return submesh.lods[lodIndex];
+                const auto &lod = submesh.lods[lodIndex];
+                if (lod.indexCount > 0 &&
+                    lod.indexOffset <= totalIndexCount &&
+                    static_cast<size_t>(lod.indexCount) <= totalIndexCount - lod.indexOffset)
+                {
+                    return lod;
+                }
             }
 
             return Submesh::LodRange{

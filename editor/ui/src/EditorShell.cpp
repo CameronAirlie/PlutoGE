@@ -1267,6 +1267,70 @@ namespace PlutoGE::ui
         MarkSceneDirty();
     }
 
+    bool EditorShell::BeginSceneEdit(std::string label)
+    {
+        if (m_sceneEditInProgress)
+        {
+            return false;
+        }
+
+        std::string errorMessage;
+        if (!CaptureSceneState(m_sceneEditBeforeState, &errorMessage))
+        {
+            m_sceneEditBeforeState.clear();
+            Log(ConsoleSeverity::Warning, errorMessage.empty() ? "Started scene edit without undo snapshot." : errorMessage);
+            return false;
+        }
+
+        m_sceneEditLabel = std::move(label);
+        m_sceneEditInProgress = true;
+        return true;
+    }
+
+    bool EditorShell::EndSceneEdit()
+    {
+        if (!m_sceneEditInProgress)
+        {
+            return false;
+        }
+
+        const std::string label = std::move(m_sceneEditLabel);
+        const std::string beforeState = std::move(m_sceneEditBeforeState);
+        m_sceneEditInProgress = false;
+        m_sceneEditLabel.clear();
+        m_sceneEditBeforeState.clear();
+
+        std::string afterState;
+        std::string errorMessage;
+        if (beforeState.empty() || !CaptureSceneState(afterState, &errorMessage))
+        {
+            MarkSceneDirty();
+            return false;
+        }
+
+        if (beforeState == afterState)
+        {
+            return false;
+        }
+
+        m_undoStack.push_back(SceneHistoryEntry{.label = label.empty() ? "Scene Edit" : label, .beforeState = beforeState, .afterState = std::move(afterState)});
+        constexpr std::size_t kMaxUndoEntries = 80;
+        if (m_undoStack.size() > kMaxUndoEntries)
+        {
+            m_undoStack.erase(m_undoStack.begin());
+        }
+        m_redoStack.clear();
+        MarkSceneDirty();
+        return true;
+    }
+
+    void EditorShell::CancelSceneEdit()
+    {
+        m_sceneEditInProgress = false;
+        m_sceneEditLabel.clear();
+        m_sceneEditBeforeState.clear();
+    }
+
     bool EditorShell::Undo()
     {
         if (m_undoStack.empty())

@@ -5,11 +5,13 @@
 #include "PlutoGE/scene/SceneSerializer.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
 #include "PlutoGE/scene/components/ColliderComponent.h"
+#include "PlutoGE/scene/components/FoliageComponent.h"
 #include "PlutoGE/scene/components/IblCaptureComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/scene/components/RigidbodyComponent.h"
 #include "PlutoGE/scene/components/ScriptComponent.h"
+#include "PlutoGE/scene/components/TerrainComponent.h"
 #include "PlutoGE/scene/components/UIComponent.h"
 #include "PlutoGE/render/Camera.h"
 
@@ -42,6 +44,10 @@ namespace PlutoGE::scene
         {
             if (dynamic_cast<const MeshComponent *>(&component))
                 return "MeshComponent";
+            if (dynamic_cast<const TerrainComponent *>(&component))
+                return "TerrainComponent";
+            if (dynamic_cast<const FoliageComponent *>(&component))
+                return "FoliageComponent";
             if (dynamic_cast<const CameraComponent *>(&component))
                 return "CameraComponent";
             if (dynamic_cast<const LightComponent *>(&component))
@@ -71,6 +77,10 @@ namespace PlutoGE::scene
         {
             if (componentType == "MeshComponent")
                 return std::make_unique<MeshComponent>(MeshComponentConfig{});
+            if (componentType == "TerrainComponent")
+                return std::make_unique<TerrainComponent>(TerrainComponentConfig{});
+            if (componentType == "FoliageComponent")
+                return std::make_unique<FoliageComponent>();
             if (componentType == "CameraComponent")
                 return std::make_unique<CameraComponent>(new render::Camera(render::CameraConfig{}));
             if (componentType == "LightComponent")

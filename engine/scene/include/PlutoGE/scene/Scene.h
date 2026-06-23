@@ -16,7 +16,9 @@ namespace PlutoGE::render
 namespace PlutoGE::scene
 {
     class Entity;
+    class FoliageComponent;
     class MeshComponent;
+    class TerrainComponent;
     struct Light;
 
     using EntityID = uint32_t;
@@ -127,12 +129,18 @@ namespace PlutoGE::scene
         }
         void RegisterMeshComponent(MeshComponent *meshComponent);
         void UnregisterMeshComponent(MeshComponent *meshComponent);
+        void RegisterTerrainComponent(TerrainComponent *terrainComponent);
+        void UnregisterTerrainComponent(TerrainComponent *terrainComponent);
+        void RegisterFoliageComponent(FoliageComponent *foliageComponent);
+        void UnregisterFoliageComponent(FoliageComponent *foliageComponent);
 
     private:
         std::string m_name;
         std::vector<std::unique_ptr<Entity>> m_entityStorage;
         std::vector<Entity *> m_rootEntities;
         std::vector<MeshComponent *> m_meshComponents;
+        std::vector<TerrainComponent *> m_terrainComponents;
+        std::vector<FoliageComponent *> m_foliageComponents;
         std::vector<Light *> m_lights;
         std::string m_filePath;
         std::string m_environmentMapPath;

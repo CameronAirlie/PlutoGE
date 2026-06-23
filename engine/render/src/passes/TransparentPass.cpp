@@ -54,6 +54,21 @@ namespace PlutoGE::render
                    a.mesh->GetSubmeshLodRange(a.submeshIndex, a.lodIndex).indexCount == b.mesh->GetSubmeshLodRange(b.submeshIndex, b.lodIndex).indexCount;
         }
 
+        void AppendTransparentInstances(const RenderCommand &command, std::vector<TransparentInstanceData> &instances)
+        {
+            if (!command.instanceModels || command.instanceModels->empty())
+            {
+                instances.push_back(TransparentInstanceData{.model = command.model});
+                return;
+            }
+
+            instances.reserve(instances.size() + command.instanceModels->size());
+            for (const auto &model : *command.instanceModels)
+            {
+                instances.push_back(TransparentInstanceData{.model = model});
+            }
+        }
+
         void ConfigureMatrixAttributes(unsigned int baseLocation, std::size_t offset, std::size_t stride)
         {
             for (unsigned int column = 0; column < 4; ++column)
@@ -412,12 +427,11 @@ namespace PlutoGE::render
                 flushBatch();
                 command->material->Bind(m_transparentShader);
                 UploadJointMatrices(m_transparentShader, command->jointMatrices);
-                const std::vector<TransparentInstanceData> instance{
-                    TransparentInstanceData{.model = command->model},
-                };
+                std::vector<TransparentInstanceData> instance;
+                AppendTransparentInstances(*command, instance);
                 UploadTransparentInstances(m_instanceBuffer, m_instanceCapacity, instance);
                 BindTransparentInstanceAttributes(*command->mesh, m_instanceBuffer);
-                command->mesh->DrawSubmeshInstancedBound(command->submeshIndex, 1, command->lodIndex);
+                command->mesh->DrawSubmeshInstancedBound(command->submeshIndex, instance.size(), command->lodIndex);
                 continue;
             }
 
@@ -431,7 +445,7 @@ namespace PlutoGE::render
                 batchHead = command;
             }
 
-            batchInstances.push_back(TransparentInstanceData{.model = command->model});
+            AppendTransparentInstances(*command, batchInstances);
         }
 
         flushBatch();

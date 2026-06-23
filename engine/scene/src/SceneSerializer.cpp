@@ -6,11 +6,13 @@
 #include "PlutoGE/scene/components/CameraComponent.h"
 #include "PlutoGE/scene/components/AnimationComponent.h"
 #include "PlutoGE/scene/components/ColliderComponent.h"
+#include "PlutoGE/scene/components/FoliageComponent.h"
 #include "PlutoGE/scene/components/IblCaptureComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/scene/components/RigidbodyComponent.h"
 #include "PlutoGE/scene/components/ScriptComponent.h"
+#include "PlutoGE/scene/components/TerrainComponent.h"
 #include "PlutoGE/scene/components/UIComponent.h"
 #include "PlutoGE/render/Camera.h"
 
@@ -178,6 +180,14 @@ namespace PlutoGE::scene
             {
                 return "MeshComponent";
             }
+            if (dynamic_cast<const TerrainComponent *>(&component))
+            {
+                return "TerrainComponent";
+            }
+            if (dynamic_cast<const FoliageComponent *>(&component))
+            {
+                return "FoliageComponent";
+            }
             if (dynamic_cast<const AnimationComponent *>(&component))
             {
                 return "AnimationComponent";
@@ -236,6 +246,14 @@ namespace PlutoGE::scene
             {
                 return std::make_unique<MeshComponent>(MeshComponentConfig{});
             }
+            if (componentType == "TerrainComponent")
+            {
+                return std::make_unique<TerrainComponent>(TerrainComponentConfig{});
+            }
+            if (componentType == "FoliageComponent")
+            {
+                return std::make_unique<FoliageComponent>();
+            }
             if (componentType == "AnimationComponent")
             {
                 return std::make_unique<AnimationComponent>();
@@ -293,6 +311,17 @@ namespace PlutoGE::scene
             if (componentType == "MeshComponent")
             {
                 return propertyName == "SourceMesh" || propertyName.ends_with("LightmapPath") || propertyName.ends_with("MaterialAsset");
+            }
+            if (componentType == "TerrainComponent")
+            {
+                return propertyName == "HeightMap" || propertyName == "MaterialAsset";
+            }
+            if (componentType == "FoliageComponent")
+            {
+                return propertyName == "SourceMesh" ||
+                       propertyName == "MaterialAsset" ||
+                       propertyName.ends_with(".SourceMesh") ||
+                       propertyName.ends_with(".MaterialAsset");
             }
             if (componentType == "AnimationComponent")
             {

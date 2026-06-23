@@ -27,6 +27,7 @@
 #include <vector>
 #include <algorithm>
 #include <chrono>
+#include <limits>
 #include <numeric>
 #include <string_view>
 
@@ -105,6 +106,17 @@ namespace PlutoGE::render
                                                 projectionScaleY *
                                                 halfViewportHeight;
             return projectedRadiusPixels >= kStaticSubmeshPixelCullThreshold;
+        }
+
+        bool PassesDistanceCull(const RenderCommand &command, const glm::vec3 &cameraPosition, float maxDistance)
+        {
+            if (maxDistance <= 0.0f || maxDistance == std::numeric_limits<float>::max())
+            {
+                return true;
+            }
+
+            const float radius = std::max(command.worldBounds.radius, 0.0f);
+            return glm::length(command.worldBounds.center - cameraPosition) <= maxDistance + radius;
         }
 
         Shader *GetRenderCommandShaderKey(const RenderCommand &command)
@@ -504,6 +516,7 @@ namespace PlutoGE::render
         for (const auto &command : m_renderCommands)
         {
             if (IsRenderCommandVisible(command, frustumPlanes) &&
+                PassesDistanceCull(command, cameraPosition, command.maxDrawDistance) &&
                 PassesStaticProjectedSizeCull(command, cameraPosition, projectionScaleY, halfViewportHeight))
             {
                 m_visibleRenderCommands.push_back(command);
@@ -535,11 +548,21 @@ namespace PlutoGE::render
 
         if (m_shadowPass)
         {
+            std::vector<RenderCommand> shadowRenderCommands;
+            shadowRenderCommands.reserve(m_renderCommands.size());
+            for (const auto &command : m_renderCommands)
+            {
+                if (PassesDistanceCull(command, cameraPosition, command.maxShadowDistance))
+                {
+                    shadowRenderCommands.push_back(command);
+                }
+            }
+
             RenderContext shadowCtx = ctx;
             shadowCtx.cameraData = cameraData;
             shadowCtx.previousCameraData = frameResources->previousShadowCameraData;
             shadowCtx.hasPreviousCameraData = frameResources->hasPreviousShadowCameraData;
-            shadowCtx.renderCommands = &m_renderCommands;
+            shadowCtx.renderCommands = &shadowRenderCommands;
             ExecutePassWithGpuTiming(*m_shadowPass, shadowCtx, 0);
         }
 
@@ -618,7 +641,10 @@ namespace PlutoGE::render
             const float distance = glm::length(command.worldBounds.center - cameraPosition);
             const float safeDistance = std::max(distance, 0.001f);
             const float projectedRadiusPixels = (std::max(command.worldBounds.radius, 0.001f) / safeDistance) * projectionScaleY * halfViewportHeight;
-            const uint32_t lodIndex = static_cast<uint32_t>(command.mesh->SelectSubmeshLodByProjectedRadius(command.submeshIndex, projectedRadiusPixels));
+            const uint32_t selectedLodIndex = static_cast<uint32_t>(command.mesh->SelectSubmeshLodByProjectedRadius(command.submeshIndex, projectedRadiusPixels));
+            const std::size_t lodCount = command.mesh->GetSubmeshLodCount(command.submeshIndex);
+            const uint32_t minLodIndex = lodCount > 0 ? std::min(command.minLodIndex, static_cast<uint32_t>(lodCount - 1)) : 0u;
+            const uint32_t lodIndex = std::max(selectedLodIndex, minLodIndex);
             if (command.lodIndex != lodIndex)
             {
                 command.lodIndex = lodIndex;

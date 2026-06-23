@@ -281,6 +281,48 @@ namespace PlutoGE::assets
                     {
                         config.flipNormalY = value == "true" || value == "1";
                     }
+                    else if (key == "AlbedoTexture")
+                    {
+                        const std::string texturePath = ResolveAssetPath(value);
+                        config.albedoTexture = texturePath.empty() ? nullptr : render::Texture::LoadFromFile(texturePath.c_str());
+                    }
+                    else if (key == "NormalTexture")
+                    {
+                        const std::string texturePath = ResolveAssetPath(value);
+                        config.normalTexture = texturePath.empty() ? nullptr : render::Texture::LoadFromFile(texturePath.c_str());
+                    }
+                    else if (key == "MetallicTexture")
+                    {
+                        const std::string texturePath = ResolveAssetPath(value);
+                        config.metallicTexture = texturePath.empty() ? nullptr : render::Texture::LoadFromFile(texturePath.c_str());
+                    }
+                    else if (key == "MetallicTextureChannel")
+                    {
+                        try
+                        {
+                            const int channel = std::stoi(value);
+                            config.metallicTextureChannel = static_cast<render::TextureChannel>(std::clamp(channel, 0, 3));
+                        }
+                        catch (...)
+                        {
+                        }
+                    }
+                    else if (key == "RoughnessTexture")
+                    {
+                        const std::string texturePath = ResolveAssetPath(value);
+                        config.roughnessTexture = texturePath.empty() ? nullptr : render::Texture::LoadFromFile(texturePath.c_str());
+                    }
+                    else if (key == "RoughnessTextureChannel")
+                    {
+                        try
+                        {
+                            const int channel = std::stoi(value);
+                            config.roughnessTextureChannel = static_cast<render::TextureChannel>(std::clamp(channel, 0, 3));
+                        }
+                        catch (...)
+                        {
+                        }
+                    }
                 }
                 material = new render::Material(config);
             }
@@ -348,6 +390,12 @@ namespace PlutoGE::assets
         output << "AttenuationColor=" << config.attenuationColor.r << "," << config.attenuationColor.g << "," << config.attenuationColor.b << "\n";
         output << "AttenuationDistance=" << config.attenuationDistance << "\n";
         output << "FlipNormalY=" << (config.flipNormalY ? "true" : "false") << "\n";
+        output << "AlbedoTexture=" << (config.albedoTexture ? PersistAssetPath(config.albedoTexture->GetFilePath()) : std::string{}) << "\n";
+        output << "NormalTexture=" << (config.normalTexture ? PersistAssetPath(config.normalTexture->GetFilePath()) : std::string{}) << "\n";
+        output << "MetallicTexture=" << (config.metallicTexture ? PersistAssetPath(config.metallicTexture->GetFilePath()) : std::string{}) << "\n";
+        output << "MetallicTextureChannel=" << static_cast<int>(config.metallicTextureChannel) << "\n";
+        output << "RoughnessTexture=" << (config.roughnessTexture ? PersistAssetPath(config.roughnessTexture->GetFilePath()) : std::string{}) << "\n";
+        output << "RoughnessTextureChannel=" << static_cast<int>(config.roughnessTextureChannel) << "\n";
 
         if (auto cachedMaterial = m_materialCache.find(assetReference); cachedMaterial != m_materialCache.end() && cachedMaterial->second)
         {

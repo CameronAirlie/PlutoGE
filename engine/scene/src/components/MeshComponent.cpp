@@ -427,6 +427,23 @@ namespace PlutoGE::scene
                 const auto childSubmeshIndex = static_cast<size_t>(childMeshComponent->GetSubmeshIndex());
                 if (childSubmeshIndex < m_mesh->GetSubmeshCount())
                 {
+                    auto *submeshMaterialOverride = childMeshComponent->HasMaterialOverrideForSubmesh(childSubmeshIndex)
+                                                        ? childMeshComponent->GetMaterialForSubmesh(childSubmeshIndex)
+                                                        : nullptr;
+                    const std::string submeshMaterialAssetOverride = childMeshComponent->GetMaterialAssetForSubmesh(childSubmeshIndex);
+                    childMeshComponent->SetMesh(m_mesh);
+                    childMeshComponent->SetMaterials(m_materials);
+                    childMeshComponent->SetSourceMeshPath(m_sourceMeshPath);
+                    childMeshComponent->SetStatic(m_isStatic);
+                    childMeshComponent->SetVisible(true);
+                    if (submeshMaterialOverride)
+                    {
+                        childMeshComponent->SetMaterialForSubmesh(childSubmeshIndex, submeshMaterialOverride);
+                    }
+                    if (!submeshMaterialAssetOverride.empty())
+                    {
+                        childMeshComponent->SetMaterialAssetForSubmesh(childSubmeshIndex, submeshMaterialAssetOverride);
+                    }
                     child->SetName(BuildSubmeshEntityName(m_mesh->GetSubmesh(childSubmeshIndex), childSubmeshIndex));
                 }
                 hasExistingSubmeshChildren = true;

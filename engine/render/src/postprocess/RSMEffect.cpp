@@ -1257,6 +1257,21 @@ namespace PlutoGE::render
         batchInstances.reserve(64);
         const RenderCommand *batchHead = nullptr;
 
+        const auto appendInstances = [](const RenderCommand &command, std::vector<CaptureInstanceData> &instances)
+        {
+            if (!command.instanceModels || command.instanceModels->empty())
+            {
+                instances.push_back(CaptureInstanceData{.model = command.model});
+                return;
+            }
+
+            instances.reserve(instances.size() + command.instanceModels->size());
+            for (const auto &model : *command.instanceModels)
+            {
+                instances.push_back(CaptureInstanceData{.model = model});
+            }
+        };
+
         const auto flushBatch = [&]()
         {
             if (!batchHead || batchInstances.empty())
@@ -1306,9 +1321,7 @@ namespace PlutoGE::render
                 batchHead = &command;
             }
 
-            batchInstances.push_back(CaptureInstanceData{
-                .model = command.model,
-            });
+            appendInstances(command, batchInstances);
         }
 
         flushBatch();

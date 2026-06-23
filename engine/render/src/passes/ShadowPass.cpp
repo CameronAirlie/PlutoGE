@@ -224,13 +224,13 @@ namespace
 
     std::size_t SelectDefaultShadowLod(const PlutoGE::render::RenderCommand &command)
     {
-        return ClampShadowLodIndex(command, command.lodIndex);
+        return ClampShadowLodIndex(command, std::max<std::size_t>(command.lodIndex, command.minShadowLodIndex));
     }
 
     std::size_t SelectDirectionalShadowLod(const PlutoGE::render::RenderCommand &command, int cascadeIndex, int shadowResolution)
     {
         const std::size_t minimumShadowLod = (cascadeIndex > 0 || shadowResolution <= 1024) ? 1u : 0u;
-        return ClampShadowLodIndex(command, std::max<std::size_t>(command.lodIndex, minimumShadowLod));
+        return ClampShadowLodIndex(command, std::max<std::size_t>(std::max<std::size_t>(command.lodIndex, minimumShadowLod), command.minShadowLodIndex));
     }
 
     bool IsAlphaTestedShadowCaster(const PlutoGE::render::RenderCommand &command)
@@ -241,6 +241,7 @@ namespace
     bool CastsShadow(const PlutoGE::render::RenderCommand &command)
     {
         return command.material &&
+               command.castsShadow &&
                command.material->GetConfig().castsShadow &&
                command.material->GetConfig().alphaMode != PlutoGE::render::AlphaMode::Blend;
     }
@@ -792,6 +793,21 @@ namespace
             batchInstances.reserve(64);
         }
 
+        const auto appendInstances = [](const PlutoGE::render::RenderCommand &command, std::vector<TransformInstanceData> &instances)
+        {
+            if (!command.instanceModels || command.instanceModels->empty())
+            {
+                instances.push_back(TransformInstanceData{.model = command.model});
+                return;
+            }
+
+            instances.reserve(instances.size() + command.instanceModels->size());
+            for (const auto &model : *command.instanceModels)
+            {
+                instances.push_back(TransformInstanceData{.model = model});
+            }
+        };
+
         const auto flushBatch = [&](const PlutoGE::render::RenderCommand &batchHead, std::size_t batchLodIndex)
         {
             if (batchInstances.empty())
@@ -861,17 +877,14 @@ namespace
                 }
 
                 UploadShadowJointMatrices(shader, command->jointMatrices);
-                const std::vector<TransformInstanceData> singleInstance{
-                    TransformInstanceData{
-                        .model = command->model,
-                    },
-                };
+                std::vector<TransformInstanceData> singleInstance;
+                appendInstances(*command, singleInstance);
                 UploadTransformInstances(instanceBuffer, instanceCapacity, singleInstance);
                 BindTransformInstanceAttributes(*command->mesh, instanceBuffer);
                 boundMesh = command->mesh;
-                command->mesh->DrawSubmeshInstancedBound(command->submeshIndex, 1, selectedLodIndex);
-                stats.submittedTriangles += static_cast<int>(command->mesh->GetSubmeshLodIndexCount(command->submeshIndex, selectedLodIndex) / 3);
-                stats.submittedInstances += 1;
+                command->mesh->DrawSubmeshInstancedBound(command->submeshIndex, singleInstance.size(), selectedLodIndex);
+                stats.submittedTriangles += static_cast<int>((command->mesh->GetSubmeshLodIndexCount(command->submeshIndex, selectedLodIndex) / 3) * singleInstance.size());
+                stats.submittedInstances += static_cast<int>(singleInstance.size());
                 ++stats.submittedBatches;
                 shader->SetUniform("uUseSkinning", 0);
                 continue;
@@ -889,9 +902,7 @@ namespace
                 batchLodIndex = selectedLodIndex;
             }
 
-            batchInstances.push_back(TransformInstanceData{
-                .model = command->model,
-            });
+            appendInstances(*command, batchInstances);
         }
 
         if (batchHead)

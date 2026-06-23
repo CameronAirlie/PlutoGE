@@ -51,6 +51,33 @@ namespace PlutoGE::render
                 lodMaxIndex);
         }
 
+        void AppendGeometryInstances(const RenderCommand &command, std::vector<GeometryInstanceData> &instances)
+        {
+            if (!command.instanceModels || command.instanceModels->empty())
+            {
+                instances.push_back(GeometryInstanceData{
+                    .model = command.model,
+                    .previousModel = command.previousModel,
+                    .flags = BuildInstanceFlags(command),
+                });
+                return;
+            }
+
+            instances.reserve(instances.size() + command.instanceModels->size());
+            for (std::size_t index = 0; index < command.instanceModels->size(); ++index)
+            {
+                const glm::mat4 &model = (*command.instanceModels)[index];
+                const glm::mat4 &previousModel = command.previousInstanceModels && index < command.previousInstanceModels->size()
+                                                     ? (*command.previousInstanceModels)[index]
+                                                     : model;
+                instances.push_back(GeometryInstanceData{
+                    .model = model,
+                    .previousModel = previousModel,
+                    .flags = BuildInstanceFlags(command),
+                });
+            }
+        }
+
         void UploadJointMatrices(Shader *shader, const std::vector<glm::mat4> *jointMatrices)
         {
             constexpr size_t kMaxShaderJoints = 48;
@@ -238,21 +265,16 @@ namespace PlutoGE::render
                 }
 
                 UploadJointMatrices(m_geometryPassShader, command.jointMatrices);
-                const std::vector<GeometryInstanceData> singleInstance{
-                    GeometryInstanceData{
-                        .model = command.model,
-                        .previousModel = command.previousModel,
-                        .flags = BuildInstanceFlags(command),
-                    },
-                };
+                std::vector<GeometryInstanceData> singleInstance;
+                AppendGeometryInstances(command, singleInstance);
                 UploadGeometryInstances(m_instanceBuffer, m_instanceCapacity, singleInstance);
                 BindGeometryInstanceAttributes(*command.mesh, m_instanceBuffer);
                 boundMesh = command.mesh;
-                command.mesh->DrawSubmeshInstancedBound(command.submeshIndex, 1, command.lodIndex);
+                command.mesh->DrawSubmeshInstancedBound(command.submeshIndex, singleInstance.size(), command.lodIndex);
                 if (ctx.renderer)
                 {
                     const auto indexCount = command.mesh->GetSubmeshLodIndexCount(command.submeshIndex, command.lodIndex);
-                    ctx.renderer->RecordGeometryBatch(1, static_cast<int>(indexCount / 3), command.lodIndex);
+                    ctx.renderer->RecordGeometryBatch(static_cast<int>(singleInstance.size()), static_cast<int>((indexCount / 3) * singleInstance.size()), command.lodIndex);
                 }
                 m_geometryPassShader->SetUniform("uUseSkinning", 0);
                 continue;
@@ -268,11 +290,7 @@ namespace PlutoGE::render
                 batchHead = &command;
             }
 
-            batchInstances.push_back(GeometryInstanceData{
-                .model = command.model,
-                .previousModel = command.previousModel,
-                .flags = BuildInstanceFlags(command),
-            });
+            AppendGeometryInstances(command, batchInstances);
         }
 
         flushBatch();

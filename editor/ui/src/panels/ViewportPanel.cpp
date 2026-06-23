@@ -10,7 +10,9 @@
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
 #include "PlutoGE/scene/components/ColliderComponent.h"
+#include "PlutoGE/scene/components/FoliageComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
+#include "PlutoGE/scene/components/TerrainComponent.h"
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/ui/panels/ContentBrowserPanel.h"
 #include <ImGuizmo.h>
@@ -62,6 +64,119 @@ namespace PlutoGE::ui
             ImVec2 screen;
             bool visible = false;
         };
+
+        const char *GetTerrainPaintModeLabel(scene::TerrainPaintMode mode)
+        {
+            switch (mode)
+            {
+            case scene::TerrainPaintMode::Lower:
+                return "Lower";
+            case scene::TerrainPaintMode::Smooth:
+                return "Smooth";
+            case scene::TerrainPaintMode::Flatten:
+                return "Flatten";
+            case scene::TerrainPaintMode::Raise:
+            default:
+                return "Raise";
+            }
+        }
+
+        void RenderTerrainPaintToolbar(scene::TerrainComponent &terrainComponent)
+        {
+            ImGui::Separator();
+            ImGui::TextUnformatted("Terrain Paint");
+            ImGui::SameLine();
+
+            const char *currentMode = GetTerrainPaintModeLabel(terrainComponent.GetPaintMode());
+            ImGui::SetNextItemWidth(120.0f);
+            if (ImGui::BeginCombo("Mode##TerrainPaint", currentMode))
+            {
+                constexpr scene::TerrainPaintMode modes[] = {
+                    scene::TerrainPaintMode::Raise,
+                    scene::TerrainPaintMode::Lower,
+                    scene::TerrainPaintMode::Smooth,
+                    scene::TerrainPaintMode::Flatten,
+                };
+                for (auto mode : modes)
+                {
+                    const bool selected = terrainComponent.GetPaintMode() == mode;
+                    if (ImGui::Selectable(GetTerrainPaintModeLabel(mode), selected))
+                    {
+                        terrainComponent.SetPaintMode(mode);
+                    }
+                    if (selected)
+                    {
+                        ImGui::SetItemDefaultFocus();
+                    }
+                }
+                ImGui::EndCombo();
+            }
+
+            ImGui::SameLine();
+            float radius = terrainComponent.GetBrushRadius();
+            ImGui::SetNextItemWidth(110.0f);
+            if (ImGui::DragFloat("Radius##TerrainPaint", &radius, 0.05f, 0.05f, 512.0f, "%.2f"))
+            {
+                terrainComponent.SetBrushRadius(radius);
+            }
+
+            ImGui::SameLine();
+            float strength = terrainComponent.GetBrushStrength();
+            ImGui::SetNextItemWidth(110.0f);
+            if (ImGui::DragFloat("Strength##TerrainPaint", &strength, 0.05f, 0.0f, 128.0f, "%.2f"))
+            {
+                terrainComponent.SetBrushStrength(strength);
+            }
+
+            if (terrainComponent.GetPaintMode() == scene::TerrainPaintMode::Flatten)
+            {
+                ImGui::SameLine();
+                float flattenHeight = terrainComponent.GetFlattenHeight();
+                ImGui::SetNextItemWidth(120.0f);
+                if (ImGui::DragFloat("Height##TerrainPaint", &flattenHeight, 0.05f, 0.0f, terrainComponent.GetHeightScale(), "%.2f"))
+                {
+                    terrainComponent.SetFlattenHeight(flattenHeight);
+                }
+            }
+        }
+
+        void RenderFoliagePaintToolbar(scene::FoliageComponent &foliageComponent)
+        {
+            ImGui::Separator();
+            ImGui::TextUnformatted("Foliage Paint");
+            ImGui::SameLine();
+
+            bool enabled = foliageComponent.IsPaintEnabled();
+            if (ImGui::Checkbox("Enable##FoliagePaint", &enabled))
+            {
+                foliageComponent.SetPaintEnabled(enabled);
+            }
+
+            ImGui::SameLine();
+            float radius = foliageComponent.GetBrushRadius();
+            ImGui::SetNextItemWidth(110.0f);
+            if (ImGui::DragFloat("Radius##FoliagePaint", &radius, 0.05f, 0.05f, 512.0f, "%.2f"))
+            {
+                foliageComponent.SetBrushRadius(radius);
+            }
+
+            ImGui::SameLine();
+            int density = foliageComponent.GetDensity();
+            ImGui::SetNextItemWidth(90.0f);
+            if (ImGui::DragInt("Density##FoliagePaint", &density, 1.0f, 1, 100))
+            {
+                foliageComponent.SetDensity(density);
+            }
+
+            ImGui::SameLine();
+            float minScale = foliageComponent.GetMinScale();
+            float maxScale = foliageComponent.GetMaxScale();
+            ImGui::SetNextItemWidth(150.0f);
+            if (ImGui::DragFloatRange2("Scale##FoliagePaint", &minScale, &maxScale, 0.01f, 0.01f, 50.0f, "%.2f", "%.2f"))
+            {
+                foliageComponent.SetScaleRange(minScale, maxScale);
+            }
+        }
 
         void CollectEntitiesRecursive(scene::Entity *entity, std::vector<scene::Entity *> &entities)
         {
@@ -687,6 +802,26 @@ namespace PlutoGE::ui
                 }
 
                 auto *meshComponent = entity->GetComponent<scene::MeshComponent>();
+                auto *terrainComponent = entity->GetComponent<scene::TerrainComponent>();
+                if ((!meshComponent || !meshComponent->IsVisible() || !meshComponent->GetMesh()) && !terrainComponent)
+                {
+                    continue;
+                }
+
+                if (terrainComponent && terrainComponent->IsEnabled())
+                {
+                    glm::vec3 hitPoint{0.0f};
+                    if (terrainComponent->Raycast(ray->origin, ray->direction, hitPoint))
+                    {
+                        const float worldDistance = glm::length(hitPoint - ray->origin);
+                        if (worldDistance < selectedDistance)
+                        {
+                            selectedDistance = worldDistance;
+                            selectedEntity = entity;
+                        }
+                    }
+                }
+
                 if (!meshComponent || !meshComponent->IsVisible() || !meshComponent->GetMesh())
                 {
                     continue;
@@ -1150,6 +1285,24 @@ namespace PlutoGE::ui
                 ImGui::EndDisabled();
                 ImGui::EndPopup();
             }
+
+            if (auto *selectedEntity = EditorShell::GetInstance().GetSelectedEntity())
+            {
+                if (auto *terrainComponent = selectedEntity->GetComponent<scene::TerrainComponent>())
+                {
+                    if (terrainComponent->IsEnabled() && terrainComponent->IsPaintEnabled())
+                    {
+                        RenderTerrainPaintToolbar(*terrainComponent);
+                    }
+                }
+                if (auto *foliageComponent = selectedEntity->GetComponent<scene::FoliageComponent>())
+                {
+                    if (foliageComponent->IsEnabled())
+                    {
+                        RenderFoliagePaintToolbar(*foliageComponent);
+                    }
+                }
+            }
         }
 
         const bool hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup | ImGuiHoveredFlags_ChildWindows) ||
@@ -1190,6 +1343,93 @@ namespace PlutoGE::ui
 
         if (auto *selectedEntity = editorShell.GetSelectedEntity())
         {
+            bool terrainPaintActive = false;
+            bool foliagePaintActive = false;
+            static bool s_terrainStrokeActive = false;
+            static bool s_foliageStrokeActive = false;
+            if (auto *terrainComponent = selectedEntity->GetComponent<scene::TerrainComponent>())
+            {
+                auto *foliageComponent = selectedEntity->GetComponent<scene::FoliageComponent>();
+                const bool canTerrainPaint = terrainComponent->IsEnabled() && terrainComponent->IsPaintEnabled();
+                const bool canFoliagePaint = terrainComponent->IsEnabled() &&
+                                             foliageComponent &&
+                                             foliageComponent->IsEnabled() &&
+                                             foliageComponent->IsPaintEnabled();
+                if (canTerrainPaint || canFoliagePaint)
+                {
+                    if (const auto ray = BuildPickRay(cameraData, viewportMin, viewportSize))
+                    {
+                        glm::vec3 hitPoint{0.0f};
+                        if (terrainComponent->Raycast(ray->origin, ray->direction, hitPoint))
+                        {
+                            const glm::mat4 worldTransform = selectedEntity->GetWorldTransform();
+                            const glm::vec3 right = SafeNormalizedAxis(glm::vec3(worldTransform[0]), glm::vec3(1.0f, 0.0f, 0.0f));
+                            const glm::vec3 forward = SafeNormalizedAxis(glm::vec3(worldTransform[2]), glm::vec3(0.0f, 0.0f, 1.0f));
+                            auto *drawList = ImGui::GetWindowDrawList();
+                            drawList->PushClipRect(viewportMin, ImVec2(viewportMin.x + viewportSize.x, viewportMin.y + viewportSize.y), true);
+                            DrawWorldCircle(drawList,
+                                            hitPoint,
+                                            right * (canFoliagePaint ? foliageComponent->GetBrushRadius() : terrainComponent->GetBrushRadius()),
+                                            forward * (canFoliagePaint ? foliageComponent->GetBrushRadius() : terrainComponent->GetBrushRadius()),
+                                            cameraData,
+                                            viewportMin,
+                                            viewportSize,
+                                            canFoliagePaint ? IM_COL32(100, 180, 255, 230) : IM_COL32(120, 220, 140, 230));
+                            drawList->PopClipRect();
+
+                            const bool brushActive = m_isViewportHovered &&
+                                                     !ImGuizmo::IsOver() &&
+                                                     !ImGuizmo::IsUsing() &&
+                                                     ImGui::IsMouseDown(ImGuiMouseButton_Left);
+                            terrainPaintActive = canTerrainPaint && brushActive && !canFoliagePaint;
+                            foliagePaintActive = canFoliagePaint && brushActive;
+                            if (terrainPaintActive && !s_terrainStrokeActive)
+                            {
+                                editorShell.BeginSceneEdit("Paint Terrain");
+                                s_terrainStrokeActive = true;
+                            }
+                            if (foliagePaintActive && !s_foliageStrokeActive)
+                            {
+                                editorShell.BeginSceneEdit("Paint Foliage");
+                                s_foliageStrokeActive = true;
+                            }
+                            if (terrainPaintActive && terrainComponent->PaintAtWorldPosition(hitPoint, ImGui::GetIO().DeltaTime))
+                            {
+                                editorShell.MarkSceneDirty();
+                            }
+                            if (foliagePaintActive &&
+                                foliageComponent->PaintAtWorldPosition(
+                                    hitPoint,
+                                    glm::vec3(worldTransform[1]),
+                                    [terrainComponent](float localX, float localZ)
+                                    {
+                                        return terrainComponent->GetHeightAtLocalPosition(localX, localZ);
+                                    }))
+                            {
+                                selectedEntity->AddPrefabOverride("Component:FoliageComponent:Instances");
+                                editorShell.MarkSceneDirty();
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (s_terrainStrokeActive && !ImGui::IsMouseDown(ImGuiMouseButton_Left))
+            {
+                editorShell.EndSceneEdit();
+                s_terrainStrokeActive = false;
+            }
+            if (s_foliageStrokeActive && !ImGui::IsMouseDown(ImGuiMouseButton_Left))
+            {
+                editorShell.EndSceneEdit();
+                s_foliageStrokeActive = false;
+            }
+
+            if (terrainPaintActive || foliagePaintActive)
+            {
+                return;
+            }
+
             glm::mat4 entityTransform = selectedEntity->GetWorldTransform();
             float *snapValues = nullptr;
             if (m_enableSnap)

@@ -9,6 +9,7 @@
 #include <glm/glm.hpp>
 #include <iostream>
 
+#include <limits>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -67,9 +68,16 @@ namespace PlutoGE::render
         MeshBounds worldBounds{};
         MeshBounds previousWorldBounds{};
         const std::vector<glm::mat4> *jointMatrices = nullptr;
+        std::shared_ptr<const std::vector<glm::mat4>> instanceModels;
+        std::shared_ptr<const std::vector<glm::mat4>> previousInstanceModels;
         uint32_t submeshIndex = 0;
         uint32_t lodIndex = 0;
+        uint32_t minLodIndex = 0;
+        uint32_t minShadowLodIndex = 0;
+        float maxDrawDistance = std::numeric_limits<float>::max();
+        float maxShadowDistance = std::numeric_limits<float>::max();
         bool isStatic = false;
+        bool castsShadow = true;
         bool usePrimaryUvForLightmap = false;
     };
 

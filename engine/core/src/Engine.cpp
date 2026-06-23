@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
+#include <type_traits>
 
 #include "PlutoGE/platform/Window.h"
 
@@ -85,6 +86,88 @@ namespace PlutoGE::core
         {
             return future.valid() && future.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
         }
+
+        void HashCombine(uint64_t &seed, uint64_t value)
+        {
+            seed ^= value + 0x9e3779b97f4a7c15ull + (seed << 6ull) + (seed >> 2ull);
+        }
+
+        template <typename T>
+        void HashValue(uint64_t &seed, const T &value)
+        {
+            static_assert(std::is_trivially_copyable_v<T>);
+            uint64_t hash = 1469598103934665603ull;
+            const auto *bytes = reinterpret_cast<const unsigned char *>(&value);
+            for (size_t index = 0; index < sizeof(T); ++index)
+            {
+                hash ^= bytes[index];
+                hash *= 1099511628211ull;
+            }
+            HashCombine(seed, hash);
+        }
+
+        void HashString(uint64_t &seed, const std::string &value)
+        {
+            uint64_t hash = 1469598103934665603ull;
+            for (const char character : value)
+            {
+                hash ^= static_cast<unsigned char>(character);
+                hash *= 1099511628211ull;
+            }
+            HashCombine(seed, hash);
+        }
+
+        uint64_t BuildImportedMaterialFingerprint(const assetimport::ImportedMeshAsset &importedMeshAsset)
+        {
+            uint64_t fingerprint = 1469598103934665603ull;
+            const size_t materialCount = importedMeshAsset.materials ? importedMeshAsset.materials->size() : 0;
+            HashValue(fingerprint, materialCount);
+            if (importedMeshAsset.materials)
+            {
+                for (const auto &material : *importedMeshAsset.materials)
+                {
+                    HashValue(fingerprint, material.color.r);
+                    HashValue(fingerprint, material.color.g);
+                    HashValue(fingerprint, material.color.b);
+                    HashValue(fingerprint, material.color.a);
+                    HashValue(fingerprint, material.surfaceType);
+                    HashValue(fingerprint, material.alphaMode);
+                    HashValue(fingerprint, material.alphaCutoff);
+                    HashValue(fingerprint, material.castsShadow);
+                    HashValue(fingerprint, material.metallic);
+                    HashValue(fingerprint, material.roughness);
+                    HashValue(fingerprint, material.transmission);
+                    HashValue(fingerprint, material.ior);
+                    HashValue(fingerprint, material.thickness);
+                    HashValue(fingerprint, material.attenuationColor.r);
+                    HashValue(fingerprint, material.attenuationColor.g);
+                    HashValue(fingerprint, material.attenuationColor.b);
+                    HashValue(fingerprint, material.attenuationDistance);
+                    HashValue(fingerprint, material.albedoTextureIndex);
+                    HashValue(fingerprint, material.normalTextureIndex);
+                    HashValue(fingerprint, material.metallicRoughnessTextureIndex);
+                    HashValue(fingerprint, material.metallicRoughnessTextureHasMetallicChannel);
+                    HashValue(fingerprint, material.flipNormalY);
+                }
+            }
+
+            const size_t textureCount = importedMeshAsset.textures ? importedMeshAsset.textures->size() : 0;
+            HashValue(fingerprint, textureCount);
+            if (importedMeshAsset.textures)
+            {
+                for (const auto &texture : *importedMeshAsset.textures)
+                {
+                    HashString(fingerprint, texture.cacheKey);
+                    HashString(fingerprint, texture.sourcePath);
+                    HashValue(fingerprint, texture.width);
+                    HashValue(fingerprint, texture.height);
+                    HashValue(fingerprint, texture.channels);
+                    HashValue(fingerprint, texture.pixels.size());
+                }
+            }
+
+            return fingerprint;
+        }
     }
 
     bool Engine::Initialize(const EngineConfig &config)
@@ -127,13 +210,30 @@ namespace PlutoGE::core
 
         // LRU cache for imported materials
         constexpr size_t kMaxMaterialCacheSize = 8;
+        const uint64_t materialFingerprint = BuildImportedMaterialFingerprint(importedMeshAsset);
         auto cachedMaterials = m_importedMaterialCache.find(normalizedPath);
+        if (cachedMaterials != m_importedMaterialCache.end() && cachedMaterials->second.fingerprint != materialFingerprint)
+        {
+            auto retiredNode = m_importedMaterialCache.extract(cachedMaterials);
+            m_retiredImportedMaterialCache.push_back(std::move(retiredNode.mapped()));
+            if (m_retiredImportedMaterialCache.size() > kMaxMaterialCacheSize)
+            {
+                m_retiredImportedMaterialCache.erase(m_retiredImportedMaterialCache.begin());
+            }
+            cachedMaterials = m_importedMaterialCache.end();
+        }
+
         if (cachedMaterials == m_importedMaterialCache.end())
         {
             // Evict oldest if over limit
             if (m_importedMaterialCache.size() >= kMaxMaterialCacheSize)
             {
-                m_importedMaterialCache.erase(m_importedMaterialCache.begin());
+                auto retiredNode = m_importedMaterialCache.extract(m_importedMaterialCache.begin());
+                m_retiredImportedMaterialCache.push_back(std::move(retiredNode.mapped()));
+                if (m_retiredImportedMaterialCache.size() > kMaxMaterialCacheSize)
+                {
+                    m_retiredImportedMaterialCache.erase(m_retiredImportedMaterialCache.begin());
+                }
             }
             std::vector<std::unique_ptr<render::Material>> importedMaterials;
             importedMaterials.reserve(importedMeshAsset.materials ? importedMeshAsset.materials->size() : 0);
@@ -228,15 +328,18 @@ namespace PlutoGE::core
                 }
                 profile.materialCreateMs = ElapsedMilliseconds(materialCreateStart);
             }
-            cachedMaterials = m_importedMaterialCache.emplace(normalizedPath, std::move(importedMaterials)).first;
+            ImportedMaterialCacheEntry cacheEntry;
+            cacheEntry.fingerprint = materialFingerprint;
+            cacheEntry.materials = std::move(importedMaterials);
+            cachedMaterials = m_importedMaterialCache.emplace(normalizedPath, std::move(cacheEntry)).first;
         }
         else
         {
             profile.materialCacheHit = true;
         }
 
-        importedRenderMeshAsset.materials.reserve(cachedMaterials->second.size());
-        for (const auto &material : cachedMaterials->second)
+        importedRenderMeshAsset.materials.reserve(cachedMaterials->second.materials.size());
+        for (const auto &material : cachedMaterials->second.materials)
         {
             importedRenderMeshAsset.materials.push_back(material.get());
         }

@@ -434,6 +434,7 @@ namespace PlutoGE::scene
                     childMeshComponent->SetMesh(m_mesh);
                     childMeshComponent->SetMaterials(m_materials);
                     childMeshComponent->SetSourceMeshPath(m_sourceMeshPath);
+                    childMeshComponent->SetUseGeneratedLods(m_useGeneratedLods);
                     childMeshComponent->SetStatic(m_isStatic);
                     childMeshComponent->SetVisible(true);
                     if (submeshMaterialOverride)
@@ -474,6 +475,7 @@ namespace PlutoGE::scene
                 .materials = m_materials,
             });
             childMeshComponent->SetSourceMeshPath(m_sourceMeshPath);
+            childMeshComponent->SetUseGeneratedLods(m_useGeneratedLods);
             childMeshComponent->SetStatic(m_isStatic);
             childMeshComponent->SetSubmeshIndex(static_cast<int>(submeshIndex));
             if (submeshIndex < m_submeshMaterials.size() && m_submeshMaterials[submeshIndex])
@@ -498,6 +500,7 @@ namespace PlutoGE::scene
             {"SubmeshIndex", PropertyType::Int, std::to_string(m_submeshIndex)},
             {"SubmeshCount", PropertyType::Int, std::to_string(m_submeshCount)},
             {"SourceMesh", PropertyType::String, m_sourceMeshPath},
+            {"UseGeneratedLods", PropertyType::Bool, m_useGeneratedLods ? "true" : "false"},
             {"MaterialSlotCount", PropertyType::Int, std::to_string(m_materials.size())},
         };
 
@@ -547,6 +550,7 @@ namespace PlutoGE::scene
         std::map<size_t, SerializedMaterialData> serializedMaterials;
         std::map<size_t, SerializedMaterialData> serializedSubmeshMaterials;
         std::string sourceMeshPath = m_sourceMeshPath;
+        bool useGeneratedLods = m_useGeneratedLods;
 
         for (const auto &property : properties)
         {
@@ -569,6 +573,10 @@ namespace PlutoGE::scene
             else if (property.name == "SourceMesh")
             {
                 sourceMeshPath = property.value;
+            }
+            else if (property.name == "UseGeneratedLods")
+            {
+                useGeneratedLods = property.value == "true" || property.value == "1";
             }
             else if (property.name.rfind(kMaterialSlotPrefix, 0) == 0)
             {
@@ -609,16 +617,18 @@ namespace PlutoGE::scene
                 SetMaterials({engine.GetAssetManager().LoadMaterialAsset(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference))});
                 SetMaterialAssetForMaterialSlot(0, std::string(assets::Project::kBuiltinDefaultShadedMaterialReference));
                 m_sourceMeshPath = sourceMeshPath;
+                m_useGeneratedLods = false;
             }
             else
             {
                 const std::string resolvedMeshPath = engine.GetAssetManager().ResolveMeshAssetSourcePath(sourceMeshPath);
-                auto importedMeshAsset = engine.ImportMeshAsset(resolvedMeshPath);
+                auto importedMeshAsset = useGeneratedLods ? engine.GenerateMeshAssetLods(resolvedMeshPath) : engine.ImportMeshAsset(resolvedMeshPath);
                 if (importedMeshAsset.mesh)
                 {
                     SetMesh(importedMeshAsset.mesh);
                     SetMaterials(importedMeshAsset.materials);
                     m_sourceMeshPath = sourceMeshPath;
+                    m_useGeneratedLods = useGeneratedLods;
                     if (importedMeshAsset.animations && !importedMeshAsset.animations->empty())
                     {
                         if (auto *owner = GetOwner())

@@ -6,6 +6,7 @@
 
 #include <glm/glm.hpp>
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -31,8 +32,11 @@ namespace PlutoGE::scene
         render::Mesh *mesh = nullptr;
         render::Material *materialOverride = nullptr;
         std::vector<render::Material *> materials;
+        std::vector<std::unique_ptr<render::Material>> ownedMaterials;
         std::vector<FoliageInstance> instances;
         int submeshIndex = -1;
+        std::vector<int> submeshIndices;
+        bool useGeneratedLods = false;
     };
 
     class FoliageComponent : public TypedComponent<FoliageComponent>
@@ -97,6 +101,8 @@ namespace PlutoGE::scene
         void RemoveType(std::size_t index);
         void SetTypeName(std::size_t index, const std::string &name);
         void SetTypeSubmeshIndex(std::size_t index, int submeshIndex);
+        void SetTypeSubmeshIndices(std::size_t index, const std::vector<int> &submeshIndices);
+        void SetTypeUseGeneratedLods(std::size_t index, bool useGeneratedLods);
         void SetTypeSourceMeshPath(std::size_t index, const std::string &sourceMeshPath);
         void SetTypeMaterialAssetReference(std::size_t index, const std::string &materialAssetReference);
         void ClearTypeMaterialAssetReference(std::size_t index);

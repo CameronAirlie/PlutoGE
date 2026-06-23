@@ -97,6 +97,8 @@ namespace PlutoGE::scene
         int GetSubmeshRangeCount() const { return m_submeshCount; }
         void SetSourceMeshPath(const std::string &sourceMeshPath) { m_sourceMeshPath = sourceMeshPath; }
         const std::string &GetSourceMeshPath() const { return m_sourceMeshPath; }
+        void SetUseGeneratedLods(bool useGeneratedLods) { m_useGeneratedLods = useGeneratedLods; }
+        bool GetUseGeneratedLods() const { return m_useGeneratedLods; }
 
         void SetMaterial(render::Material *material)
         {
@@ -226,5 +228,6 @@ namespace PlutoGE::scene
         int m_submeshIndex = -1;
         int m_submeshCount = 1;
         bool m_visible = true;
+        bool m_useGeneratedLods = false;
     };
 }

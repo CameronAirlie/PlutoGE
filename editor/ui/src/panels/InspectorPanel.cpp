@@ -31,6 +31,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <optional>
 #include <string_view>
 #include <unordered_map>
@@ -98,6 +99,103 @@ namespace PlutoGE::ui
             std::string reference;
             std::string displayName;
         };
+
+        struct FoliageSubmeshChoice
+        {
+            std::string label;
+            std::vector<int> indices;
+            bool isGroup = false;
+        };
+
+        std::string GetFoliageSubmeshGroupName(std::string name)
+        {
+            const auto trimToken = [](std::string token) {
+                while (!token.empty() && std::isspace(static_cast<unsigned char>(token.front())) != 0)
+                {
+                    token.erase(token.begin());
+                }
+                while (!token.empty() && std::isspace(static_cast<unsigned char>(token.back())) != 0)
+                {
+                    token.pop_back();
+                }
+                return token;
+            };
+
+            name = trimToken(std::move(name));
+            const auto delimiter = name.find_first_of("_-. ");
+            if (delimiter != std::string::npos && delimiter > 0)
+            {
+                return trimToken(name.substr(0, delimiter));
+            }
+
+            while (!name.empty() && std::isdigit(static_cast<unsigned char>(name.back())) != 0)
+            {
+                name.pop_back();
+            }
+            return trimToken(name);
+        }
+
+        bool FoliageSubmeshSelectionMatches(const scene::FoliageType &type, const std::vector<int> &indices)
+        {
+            if (indices.empty())
+            {
+                return type.submeshIndex < 0 && type.submeshIndices.empty();
+            }
+
+            std::vector<int> current = type.submeshIndices;
+            if (current.empty() && type.submeshIndex >= 0)
+            {
+                current.push_back(type.submeshIndex);
+            }
+
+            auto sortedCurrent = current;
+            auto sortedIndices = indices;
+            std::sort(sortedCurrent.begin(), sortedCurrent.end());
+            std::sort(sortedIndices.begin(), sortedIndices.end());
+            return sortedCurrent == sortedIndices;
+        }
+
+        std::vector<FoliageSubmeshChoice> BuildFoliageSubmeshChoices(const render::Mesh &mesh)
+        {
+            std::vector<FoliageSubmeshChoice> choices;
+            std::map<std::string, std::vector<int>> groupedIndices;
+            for (std::size_t submeshIndex = 0; submeshIndex < mesh.GetSubmeshCount(); ++submeshIndex)
+            {
+                const auto &submesh = mesh.GetSubmesh(submeshIndex);
+                const std::string groupName = GetFoliageSubmeshGroupName(submesh.name);
+                if (!groupName.empty())
+                {
+                    groupedIndices[groupName].push_back(static_cast<int>(submeshIndex));
+                }
+            }
+
+            for (const auto &[groupName, indices] : groupedIndices)
+            {
+                if (indices.size() <= 1)
+                {
+                    continue;
+                }
+                choices.push_back(FoliageSubmeshChoice{
+                    .label = groupName + " (" + std::to_string(indices.size()) + " submeshes)",
+                    .indices = indices,
+                    .isGroup = true,
+                });
+            }
+
+            for (std::size_t submeshIndex = 0; submeshIndex < mesh.GetSubmeshCount(); ++submeshIndex)
+            {
+                const auto &submesh = mesh.GetSubmesh(submeshIndex);
+                choices.push_back(FoliageSubmeshChoice{
+                    .label = submesh.name.empty()
+                                 ? "Submesh " + std::to_string(submeshIndex)
+                                 : submesh.name + " (" + std::to_string(submeshIndex) + ")",
+                    .indices = {static_cast<int>(submeshIndex)},
+                    .isGroup = false,
+                });
+            }
+
+            return choices;
+        }
 
         std::string_view TrimWhitespace(std::string_view text)
         {
@@ -1991,6 +2089,7 @@ namespace PlutoGE::ui
                                 {
                                     meshComponent->SetMesh(mesh);
                                     meshComponent->SetSourceMeshPath(option.reference);
+                                    meshComponent->SetUseGeneratedLods(false);
                                     if (!meshComponent->GetMaterialForMaterialSlot(0))
                                     {
                                         meshComponent->SetMaterialForMaterialSlot(
@@ -2011,6 +2110,7 @@ namespace PlutoGE::ui
                                     meshComponent->SetMesh(importedMeshAsset.mesh);
                                     meshComponent->SetMaterials(importedMeshAsset.materials);
                                     meshComponent->SetSourceMeshPath(option.reference);
+                                    meshComponent->SetUseGeneratedLods(false);
                                     meshComponent->CreateSubmeshChildEntities();
                                     if (importedMeshAsset.animations && !importedMeshAsset.animations->empty())
                                     {
@@ -2049,6 +2149,7 @@ namespace PlutoGE::ui
                         {
                             meshComponent->SetMesh(importedMeshAsset.mesh);
                             meshComponent->SetMaterials(importedMeshAsset.materials);
+                            meshComponent->SetUseGeneratedLods(true);
                             meshComponent->CreateSubmeshChildEntities();
                             if (meshComponent->GetSubmeshIndex() >= 0)
                             {
@@ -2058,6 +2159,7 @@ namespace PlutoGE::ui
                                     {
                                         parentMeshComponent->SetMesh(importedMeshAsset.mesh);
                                         parentMeshComponent->SetMaterials(importedMeshAsset.materials);
+                                        parentMeshComponent->SetUseGeneratedLods(true);
                                         parentMeshComponent->CreateSubmeshChildEntities();
                                     }
                                 }
@@ -2728,7 +2830,9 @@ namespace PlutoGE::ui
                                                     mesh,
                                                     {engine.GetAssetManager().LoadMaterialAsset(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference))},
                                                     option.reference);
+                                                foliageComponent->SetTypeUseGeneratedLods(selectedTypeIndex, false);
                                                 entity->AddPrefabOverride("Component:FoliageComponent:Type." + std::to_string(selectedTypeIndex) + ".SourceMesh");
+                                                entity->AddPrefabOverride("Component:FoliageComponent:Type." + std::to_string(selectedTypeIndex) + ".UseGeneratedLods");
                                                 editorShell.MarkSceneDirty();
                                             }
                                         }
@@ -2743,7 +2847,9 @@ namespace PlutoGE::ui
                                                     importedMeshAsset.mesh,
                                                     importedMeshAsset.materials,
                                                     option.reference);
+                                                foliageComponent->SetTypeUseGeneratedLods(selectedTypeIndex, false);
                                                 entity->AddPrefabOverride("Component:FoliageComponent:Type." + std::to_string(selectedTypeIndex) + ".SourceMesh");
+                                                entity->AddPrefabOverride("Component:FoliageComponent:Type." + std::to_string(selectedTypeIndex) + ".UseGeneratedLods");
                                                 editorShell.MarkSceneDirty();
                                             }
                                         }
@@ -2759,25 +2865,25 @@ namespace PlutoGE::ui
                             selectedType = foliageComponent->GetSelectedType();
                             if (selectedType && selectedType->mesh && selectedType->mesh->GetSubmeshCount() > 1)
                             {
-                                const char *submeshPreview = selectedType->submeshIndex < 0 ? "All Submeshes" : nullptr;
-                                std::string selectedSubmeshLabel;
-                                if (!submeshPreview)
+                                const auto submeshChoices = BuildFoliageSubmeshChoices(*selectedType->mesh);
+                                std::string submeshPreview = "All Mesh Parts";
+                                for (const auto &choice : submeshChoices)
                                 {
-                                    const std::size_t submeshIndex = static_cast<std::size_t>(std::clamp(selectedType->submeshIndex, 0, static_cast<int>(selectedType->mesh->GetSubmeshCount()) - 1));
-                                    const auto &submesh = selectedType->mesh->GetSubmesh(submeshIndex);
-                                    selectedSubmeshLabel = submesh.name.empty()
-                                                               ? "Submesh " + std::to_string(submeshIndex)
-                                                               : submesh.name + " (" + std::to_string(submeshIndex) + ")";
-                                    submeshPreview = selectedSubmeshLabel.c_str();
+                                    if (FoliageSubmeshSelectionMatches(*selectedType, choice.indices))
+                                    {
+                                        submeshPreview = choice.isGroup ? "Group: " + choice.label : choice.label;
+                                        break;
+                                    }
                                 }
 
-                                if (ImGui::BeginCombo("Submesh", submeshPreview))
+                                if (ImGui::BeginCombo("Mesh Part", submeshPreview.c_str()))
                                 {
-                                    const bool allSelected = selectedType->submeshIndex < 0;
-                                    if (ImGui::Selectable("All Submeshes", allSelected))
+                                    const bool allSelected = FoliageSubmeshSelectionMatches(*selectedType, {});
+                                    if (ImGui::Selectable("All Mesh Parts", allSelected))
                                     {
                                         foliageComponent->SetTypeSubmeshIndex(selectedTypeIndex, -1);
                                         entity->AddPrefabOverride("Component:FoliageComponent:Type." + std::to_string(selectedTypeIndex) + ".SubmeshIndex");
+                                        entity->AddPrefabOverride("Component:FoliageComponent:Type." + std::to_string(selectedTypeIndex) + ".SubmeshIndices");
                                         editorShell.MarkSceneDirty();
                                     }
                                     if (allSelected)
@@ -2785,17 +2891,22 @@ namespace PlutoGE::ui
                                         ImGui::SetItemDefaultFocus();
                                     }
 
-                                    for (std::size_t submeshIndex = 0; submeshIndex < selectedType->mesh->GetSubmeshCount(); ++submeshIndex)
+                                    bool drewSeparator = false;
+                                    for (const auto &choice : submeshChoices)
                                     {
-                                        const auto &submesh = selectedType->mesh->GetSubmesh(submeshIndex);
-                                        const std::string label = submesh.name.empty()
-                                                                      ? "Submesh " + std::to_string(submeshIndex)
-                                                                      : submesh.name + " (" + std::to_string(submeshIndex) + ")";
-                                        const bool selected = selectedType->submeshIndex == static_cast<int>(submeshIndex);
+                                        if (!choice.isGroup && !drewSeparator)
+                                        {
+                                            ImGui::Separator();
+                                            drewSeparator = true;
+                                        }
+
+                                        const std::string label = choice.isGroup ? "Group: " + choice.label : choice.label;
+                                        const bool selected = FoliageSubmeshSelectionMatches(*selectedType, choice.indices);
                                         if (ImGui::Selectable(label.c_str(), selected))
                                         {
-                                            foliageComponent->SetTypeSubmeshIndex(selectedTypeIndex, static_cast<int>(submeshIndex));
+                                            foliageComponent->SetTypeSubmeshIndices(selectedTypeIndex, choice.indices);
                                             entity->AddPrefabOverride("Component:FoliageComponent:Type." + std::to_string(selectedTypeIndex) + ".SubmeshIndex");
+                                            entity->AddPrefabOverride("Component:FoliageComponent:Type." + std::to_string(selectedTypeIndex) + ".SubmeshIndices");
                                             editorShell.MarkSceneDirty();
                                         }
                                         if (selected)
@@ -2825,7 +2936,9 @@ namespace PlutoGE::ui
                                             importedMeshAsset.mesh,
                                             importedMeshAsset.materials,
                                             selectedType->sourceMeshPath);
+                                        foliageComponent->SetTypeUseGeneratedLods(selectedTypeIndex, true);
                                         entity->AddPrefabOverride("Component:FoliageComponent:Type." + std::to_string(selectedTypeIndex) + ".SourceMesh");
+                                        entity->AddPrefabOverride("Component:FoliageComponent:Type." + std::to_string(selectedTypeIndex) + ".UseGeneratedLods");
                                         editorShell.MarkSceneDirty();
                                         editorShell.Log(EditorShell::ConsoleSeverity::Info, "Generated foliage LODs: " + selectedType->sourceMeshPath);
                                     }

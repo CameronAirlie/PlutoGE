@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <memory>
 #include <random>
 #include <sstream>
 #include <unordered_map>
@@ -79,6 +80,38 @@ namespace PlutoGE::scene
                 begin = end + 1;
             }
             return instances;
+        }
+
+        std::string SerializeSubmeshIndices(const std::vector<int> &indices)
+        {
+            std::ostringstream output;
+            for (std::size_t index = 0; index < indices.size(); ++index)
+            {
+                if (index > 0)
+                {
+                    output << ',';
+                }
+                output << indices[index];
+            }
+            return output.str();
+        }
+
+        std::vector<int> DeserializeSubmeshIndices(const std::string &value)
+        {
+            std::vector<int> indices;
+            std::stringstream stream(value);
+            std::string token;
+            while (std::getline(stream, token, ','))
+            {
+                try
+                {
+                    indices.push_back(std::stoi(token));
+                }
+                catch (...)
+                {
+                }
+            }
+            return indices;
         }
 
         glm::mat4 ComposeInstanceTransform(const glm::mat4 &ownerTransform, const FoliageInstance &instance, const glm::vec3 &localOriginOffset)
@@ -225,6 +258,178 @@ namespace PlutoGE::scene
             return count > 0 ? average / static_cast<float>(count) : submesh.bounds.center;
         }
 
+        std::vector<std::size_t> ResolveSelectedSubmeshes(const FoliageType &type)
+        {
+            std::vector<std::size_t> selectedSubmeshes;
+            if (!type.mesh)
+            {
+                return selectedSubmeshes;
+            }
+
+            const std::size_t submeshCount = type.mesh->GetSubmeshCount();
+            if (!type.submeshIndices.empty())
+            {
+                selectedSubmeshes.reserve(type.submeshIndices.size());
+                for (const int submeshIndex : type.submeshIndices)
+                {
+                    if (submeshIndex >= 0 && static_cast<std::size_t>(submeshIndex) < submeshCount)
+                    {
+                        const auto resolved = static_cast<std::size_t>(submeshIndex);
+                        if (std::find(selectedSubmeshes.begin(), selectedSubmeshes.end(), resolved) == selectedSubmeshes.end())
+                        {
+                            selectedSubmeshes.push_back(resolved);
+                        }
+                    }
+                }
+            }
+            else if (type.submeshIndex >= 0 && static_cast<std::size_t>(type.submeshIndex) < submeshCount)
+            {
+                selectedSubmeshes.push_back(static_cast<std::size_t>(type.submeshIndex));
+            }
+
+            if (selectedSubmeshes.empty())
+            {
+                selectedSubmeshes.reserve(submeshCount);
+                for (std::size_t submeshIndex = 0; submeshIndex < submeshCount; ++submeshIndex)
+                {
+                    selectedSubmeshes.push_back(submeshIndex);
+                }
+            }
+
+            return selectedSubmeshes;
+        }
+
+        glm::vec3 ComputeSubmeshGroupCenterOfMass(const render::Mesh &mesh, const std::vector<std::size_t> &submeshIndices)
+        {
+            if (submeshIndices.empty() || submeshIndices.size() == mesh.GetSubmeshCount())
+            {
+                return glm::vec3(0.0f);
+            }
+
+            glm::vec3 weightedCenter(0.0f);
+            float totalWeight = 0.0f;
+            for (const std::size_t submeshIndex : submeshIndices)
+            {
+                if (submeshIndex >= mesh.GetSubmeshCount())
+                {
+                    continue;
+                }
+
+                const auto &submesh = mesh.GetSubmesh(submeshIndex);
+                const float weight = (std::max)(1.0f, submesh.bounds.radius * submesh.bounds.radius);
+                weightedCenter += ComputeSubmeshCenterOfMass(mesh, submeshIndex) * weight;
+                totalWeight += weight;
+            }
+
+            return totalWeight > 0.0f ? weightedCenter / totalWeight : glm::vec3(0.0f);
+        }
+
+        render::MeshBounds CombineSubmeshBounds(const render::Mesh &mesh, const std::vector<std::size_t> &submeshIndices)
+        {
+            if (submeshIndices.empty() || submeshIndices.size() == mesh.GetSubmeshCount())
+            {
+                return mesh.GetBounds();
+            }
+
+            glm::vec3 minPoint(std::numeric_limits<float>::max());
+            glm::vec3 maxPoint(-std::numeric_limits<float>::max());
+            bool hasBounds = false;
+            for (const std::size_t submeshIndex : submeshIndices)
+            {
+                if (submeshIndex >= mesh.GetSubmeshCount())
+                {
+                    continue;
+                }
+
+                const auto &bounds = mesh.GetSubmesh(submeshIndex).bounds;
+                minPoint = glm::min(minPoint, bounds.center - glm::vec3(bounds.radius));
+                maxPoint = glm::max(maxPoint, bounds.center + glm::vec3(bounds.radius));
+                hasBounds = true;
+            }
+
+            if (!hasBounds)
+            {
+                return mesh.GetBounds();
+            }
+
+            const glm::vec3 center = (minPoint + maxPoint) * 0.5f;
+            float radius = 0.0f;
+            for (const std::size_t submeshIndex : submeshIndices)
+            {
+                if (submeshIndex >= mesh.GetSubmeshCount())
+                {
+                    continue;
+                }
+                const auto &bounds = mesh.GetSubmesh(submeshIndex).bounds;
+                radius = (std::max)(radius, glm::length(bounds.center - center) + bounds.radius);
+            }
+
+            return render::MeshBounds{.center = center, .radius = radius};
+        }
+
+        void SanitizeTypeSubmeshSelection(FoliageType &type)
+        {
+            if (!type.mesh)
+            {
+                type.submeshIndex = -1;
+                type.submeshIndices.clear();
+                return;
+            }
+
+            const int maxSubmeshIndex = static_cast<int>((std::max<std::size_t>)(type.mesh->GetSubmeshCount(), 1) - 1);
+            if (type.submeshIndex > maxSubmeshIndex)
+            {
+                type.submeshIndex = -1;
+            }
+
+            std::vector<int> sanitizedIndices;
+            sanitizedIndices.reserve(type.submeshIndices.size());
+            for (const int submeshIndex : type.submeshIndices)
+            {
+                if (submeshIndex < 0 || submeshIndex > maxSubmeshIndex)
+                {
+                    continue;
+                }
+                if (std::find(sanitizedIndices.begin(), sanitizedIndices.end(), submeshIndex) == sanitizedIndices.end())
+                {
+                    sanitizedIndices.push_back(submeshIndex);
+                }
+            }
+
+            type.submeshIndices = std::move(sanitizedIndices);
+            if (!type.submeshIndices.empty())
+            {
+                type.submeshIndex = type.submeshIndices.size() == 1 ? type.submeshIndices.front() : -1;
+            }
+        }
+
+        void AssignFoliageMaterials(FoliageType &type, const std::vector<render::Material *> &materials)
+        {
+            type.ownedMaterials.clear();
+            type.materials.clear();
+            type.ownedMaterials.reserve(materials.size());
+            type.materials.reserve(materials.size());
+
+            for (auto *material : materials)
+            {
+                if (!material)
+                {
+                    type.materials.push_back(nullptr);
+                    continue;
+                }
+
+                auto config = material->GetConfig();
+                if (config.alphaMode == render::AlphaMode::Blend && config.albedoTexture)
+                {
+                    config.alphaMode = render::AlphaMode::Mask;
+                    config.alphaCutoff = (std::max)(config.alphaCutoff, 0.35f);
+                }
+
+                type.ownedMaterials.push_back(std::make_unique<render::Material>(config));
+                type.materials.push_back(type.ownedMaterials.back().get());
+            }
+        }
+
         std::string DefaultTypeName(std::size_t index)
         {
             return "Foliage " + std::to_string(index + 1);
@@ -318,17 +523,14 @@ namespace PlutoGE::scene
                 continue;
             }
 
-            const std::size_t submeshCount = (std::max<std::size_t>)(type.mesh->GetSubmeshCount(), 1);
-            const bool usesSingleSubmesh = type.submeshIndex >= 0;
-            const std::size_t selectedSubmeshIndex = usesSingleSubmesh
-                                                        ? static_cast<std::size_t>(std::min(type.submeshIndex, static_cast<int>(submeshCount - 1)))
-                                                        : 0;
-            const glm::vec3 localOriginOffset = usesSingleSubmesh && selectedSubmeshIndex < type.mesh->GetSubmeshCount()
-                                                    ? ComputeSubmeshCenterOfMass(*type.mesh, selectedSubmeshIndex)
-                                                    : glm::vec3(0.0f);
-            const render::MeshBounds clusterSourceBounds = usesSingleSubmesh && selectedSubmeshIndex < type.mesh->GetSubmeshCount()
-                                                               ? type.mesh->GetSubmesh(selectedSubmeshIndex).bounds
-                                                               : type.mesh->GetBounds();
+            const auto selectedSubmeshes = ResolveSelectedSubmeshes(type);
+            if (selectedSubmeshes.empty())
+            {
+                continue;
+            }
+
+            const glm::vec3 localOriginOffset = ComputeSubmeshGroupCenterOfMass(*type.mesh, selectedSubmeshes);
+            const render::MeshBounds clusterSourceBounds = CombineSubmeshBounds(*type.mesh, selectedSubmeshes);
 
             std::unordered_map<FoliageClusterKey, FoliageCluster, FoliageClusterKeyHash> clusters;
             for (const auto &instance : type.instances)
@@ -350,9 +552,7 @@ namespace PlutoGE::scene
                 }
 
                 cluster.bounds = ComputeClusterBounds(*cluster.models, clusterSourceBounds);
-                const std::size_t submeshBegin = usesSingleSubmesh ? selectedSubmeshIndex : 0;
-                const std::size_t submeshEnd = usesSingleSubmesh ? submeshBegin + 1 : submeshCount;
-                for (std::size_t submeshIndex = submeshBegin; submeshIndex < submeshEnd; ++submeshIndex)
+                for (const std::size_t submeshIndex : selectedSubmeshes)
                 {
                     auto *material = GetMaterialForTypeSubmesh(type, submeshIndex);
                     if (!material)
@@ -414,6 +614,8 @@ namespace PlutoGE::scene
             properties.push_back({prefix + "SourceMesh", PropertyType::String, type.sourceMeshPath});
             properties.push_back({prefix + "MaterialAsset", PropertyType::String, type.materialAssetReference});
             properties.push_back({prefix + "SubmeshIndex", PropertyType::Int, std::to_string(type.submeshIndex)});
+            properties.push_back({prefix + "SubmeshIndices", PropertyType::String, SerializeSubmeshIndices(type.submeshIndices)});
+            properties.push_back({prefix + "UseGeneratedLods", PropertyType::Bool, type.useGeneratedLods ? "true" : "false"});
             properties.push_back({prefix + "Instances", PropertyType::String, SerializeInstances(type.instances)});
         }
 
@@ -484,6 +686,10 @@ namespace PlutoGE::scene
                     type.materialAssetReference = property.value;
                 else if (fieldName == "SubmeshIndex")
                     type.submeshIndex = std::stoi(property.value);
+                else if (fieldName == "SubmeshIndices")
+                    type.submeshIndices = DeserializeSubmeshIndices(property.value);
+                else if (fieldName == "UseGeneratedLods")
+                    type.useGeneratedLods = property.value == "true" || property.value == "1";
                 else if (fieldName == "Instances")
                     type.instances = DeserializeInstances(property.value);
             }
@@ -781,12 +987,61 @@ namespace PlutoGE::scene
             if (!type->mesh || submeshIndex < 0)
             {
                 type->submeshIndex = -1;
+                type->submeshIndices.clear();
             }
             else
             {
                 const int maxSubmeshIndex = static_cast<int>((std::max<std::size_t>)(type->mesh->GetSubmeshCount(), 1) - 1);
                 type->submeshIndex = std::clamp(submeshIndex, 0, maxSubmeshIndex);
+                type->submeshIndices = {type->submeshIndex};
             }
+            MarkRenderCommandsDirty();
+        }
+    }
+
+    void FoliageComponent::SetTypeSubmeshIndices(std::size_t index, const std::vector<int> &submeshIndices)
+    {
+        if (auto *type = GetType(index))
+        {
+            type->submeshIndices.clear();
+            if (!type->mesh || submeshIndices.empty())
+            {
+                type->submeshIndex = -1;
+                MarkRenderCommandsDirty();
+                return;
+            }
+
+            const int maxSubmeshIndex = static_cast<int>((std::max<std::size_t>)(type->mesh->GetSubmeshCount(), 1) - 1);
+            for (const int requestedIndex : submeshIndices)
+            {
+                if (requestedIndex < 0)
+                {
+                    continue;
+                }
+                const int clampedIndex = std::clamp(requestedIndex, 0, maxSubmeshIndex);
+                if (std::find(type->submeshIndices.begin(), type->submeshIndices.end(), clampedIndex) == type->submeshIndices.end())
+                {
+                    type->submeshIndices.push_back(clampedIndex);
+                }
+            }
+
+            type->submeshIndex = type->submeshIndices.size() == 1 ? type->submeshIndices.front() : -1;
+            MarkRenderCommandsDirty();
+        }
+    }
+
+    void FoliageComponent::SetTypeUseGeneratedLods(std::size_t index, bool useGeneratedLods)
+    {
+        if (auto *type = GetType(index))
+        {
+            if (type->useGeneratedLods == useGeneratedLods)
+            {
+                return;
+            }
+
+            type->useGeneratedLods = useGeneratedLods;
+            RebuildTypeMeshFromReference(*type);
+            RebuildTypeMaterialFromReference(*type);
             MarkRenderCommandsDirty();
         }
     }
@@ -830,12 +1085,9 @@ namespace PlutoGE::scene
         if (auto *type = GetType(index))
         {
             type->mesh = mesh;
-            type->materials = materials;
+            AssignFoliageMaterials(*type, materials);
             type->sourceMeshPath = sourceMeshPath;
-            if (!type->mesh || type->submeshIndex >= static_cast<int>((std::max<std::size_t>)(type->mesh->GetSubmeshCount(), 1)))
-            {
-                type->submeshIndex = -1;
-            }
+            SanitizeTypeSubmeshSelection(*type);
             if (type->materialAssetReference.empty())
             {
                 type->materialOverride = nullptr;
@@ -922,6 +1174,7 @@ namespace PlutoGE::scene
     {
         type.mesh = nullptr;
         type.materials.clear();
+        type.ownedMaterials.clear();
         if (type.sourceMeshPath.empty())
         {
             return;
@@ -931,21 +1184,15 @@ namespace PlutoGE::scene
         if (auto *mesh = engine.GetAssetManager().LoadMeshAsset(type.sourceMeshPath))
         {
             type.mesh = mesh;
-            type.materials = {engine.GetAssetManager().LoadMaterialAsset(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference))};
-            if (type.submeshIndex >= static_cast<int>((std::max<std::size_t>)(type.mesh->GetSubmeshCount(), 1)))
-            {
-                type.submeshIndex = -1;
-            }
+            AssignFoliageMaterials(type, {engine.GetAssetManager().LoadMaterialAsset(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference))});
+            SanitizeTypeSubmeshSelection(type);
             return;
         }
 
         const std::string resolvedPath = engine.GetAssetManager().ResolveMeshAssetSourcePath(type.sourceMeshPath);
-        auto imported = engine.ImportMeshAsset(resolvedPath);
+        auto imported = type.useGeneratedLods ? engine.GenerateMeshAssetLods(resolvedPath) : engine.ImportMeshAsset(resolvedPath);
         type.mesh = imported.mesh;
-        type.materials = imported.materials;
-        if (!type.mesh || type.submeshIndex >= static_cast<int>((std::max<std::size_t>)(type.mesh->GetSubmeshCount(), 1)))
-        {
-            type.submeshIndex = -1;
-        }
+        AssignFoliageMaterials(type, imported.materials);
+        SanitizeTypeSubmeshSelection(type);
     }
 }

@@ -1741,7 +1741,9 @@ void main()
 
                 return 1.0;
             }
+        )";
 
+            source.fragmentSource += R"(
             vec3 ComputeTransparentLightSpecular(vec3 fragPos, vec3 normal, vec3 viewDir, float roughness, vec3 f0)
             {
                 vec3 specularLighting = vec3(0.0);
@@ -1952,7 +1954,9 @@ void main()
                 vec2 clampedUv = clamp(uv, vec2(0.001), vec2(0.999));
                 return max(textureLod(uSceneColorTexture, clampedUv, clamp(lod, 0.0, uSceneColorMaxMipLevel)).rgb, vec3(0.0));
             }
+        )";
 
+            source.fragmentSource += R"(
             void main()
             {
                 vec4 color = uColor;

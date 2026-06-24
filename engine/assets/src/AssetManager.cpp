@@ -172,6 +172,14 @@ namespace PlutoGE::assets
             return (input >> value.r >> value.g >> value.b) ? true : false;
         }
 
+        bool ParseVec2(std::string_view text, glm::vec2 &value)
+        {
+            std::string copy(text);
+            std::replace(copy.begin(), copy.end(), ',', ' ');
+            std::istringstream input(copy);
+            return (input >> value.x >> value.y) ? true : false;
+        }
+
         render::MaterialSurfaceType ParseSurfaceType(std::string_view value)
         {
             return value == "Glass" || value == "glass" || value == "1"
@@ -248,6 +256,10 @@ namespace PlutoGE::assets
                     else if (key == "CastsShadow")
                     {
                         config.castsShadow = value == "true" || value == "1";
+                    }
+                    else if (key == "UvScale")
+                    {
+                        ParseVec2(value, config.uvScale);
                     }
                     else if (key == "Metallic")
                     {
@@ -382,6 +394,7 @@ namespace PlutoGE::assets
         output << "AlphaMode=" << (config.alphaMode == render::AlphaMode::Blend ? "Blend" : config.alphaMode == render::AlphaMode::Mask ? "Mask" : "Opaque") << "\n";
         output << "AlphaCutoff=" << config.alphaCutoff << "\n";
         output << "CastsShadow=" << (config.castsShadow ? "true" : "false") << "\n";
+        output << "UvScale=" << config.uvScale.x << "," << config.uvScale.y << "\n";
         output << "Metallic=" << config.metallic << "\n";
         output << "Roughness=" << config.roughness << "\n";
         output << "Transmission=" << config.transmission << "\n";

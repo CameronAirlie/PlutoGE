@@ -33,6 +33,7 @@ namespace PlutoGE::render
         glm::vec4 color{1.0f, 1.0f, 1.0f, 1.0f}; // Base color (default to white)
         MaterialSurfaceType surfaceType = MaterialSurfaceType::Standard;
         Texture *albedoTexture = nullptr;        // Pointer to an albedo texture (if any)
+        glm::vec2 uvScale{1.0f, 1.0f};
         AlphaMode alphaMode = AlphaMode::Opaque;
         float alphaCutoff = 0.5f;
         bool castsShadow = true;
@@ -72,6 +73,7 @@ namespace PlutoGE::render
         void SetColor(const glm::vec4 &color) { m_config.color = color; }
         void SetSurfaceType(MaterialSurfaceType surfaceType) { m_config.surfaceType = surfaceType; }
         void SetAlbedoTexture(Texture *texture) { m_config.albedoTexture = texture; }
+        void SetUvScale(const glm::vec2 &uvScale) { m_config.uvScale = uvScale; }
         void SetAlphaMode(AlphaMode alphaMode) { m_config.alphaMode = alphaMode; }
         void SetAlphaCutoff(float alphaCutoff) { m_config.alphaCutoff = alphaCutoff; }
         void SetCastsShadow(bool castsShadow) { m_config.castsShadow = castsShadow; }

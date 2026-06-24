@@ -190,6 +190,7 @@ namespace PlutoGE::render
             uniform mat4 uPreviousViewProjection;
             uniform int uUseSkinning = 0;
             uniform mat4 uJointMatrices[48];
+            uniform vec2 uUVScale = vec2(1.0, 1.0);
 
             out vec3 FragPos;
             out vec3 Normal;
@@ -230,8 +231,8 @@ namespace PlutoGE::render
                 vec3 worldBitangent = cross(worldNormal, worldTangent) * aTangent.w;
 
                 Normal = worldNormal;
-                UV = aUV;
-                UV2 = aUV2;
+                UV = aUV * uUVScale;
+                UV2 = aUV2 * uUVScale;
                 CurrentClipPos = uCurrentViewProjection * currentWorldPos;
                 PreviousClipPos = uPreviousViewProjection * previousWorldPos;
                 gl_Position = CurrentClipPos;
@@ -2080,6 +2081,7 @@ void main()
         bool TrySetUniform(const std::string &name, float value) const;
         bool TrySetUniform(const std::string &name, int value) const;
         bool TrySetUniform(const std::string &name, const Texture *texture, int slot) const;
+        bool TrySetUniform(const std::string &name, const glm::vec2 &value) const;
 
     protected:
         friend class Graphics;

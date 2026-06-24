@@ -385,4 +385,16 @@ namespace PlutoGE::render
         glUniform1i(location, slot);
         return true;
     }
+    
+    bool Shader::TrySetUniform(const std::string &name, const glm::vec2 &value) const
+    {
+        const GLint location = ResolveUniformLocation(name, false);
+        if (location == -1)
+        {
+            return false;
+        }
+
+        glUniform2f(location, value.x, value.y);
+        return true;
+    }
 }

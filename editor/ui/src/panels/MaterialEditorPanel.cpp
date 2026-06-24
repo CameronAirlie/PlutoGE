@@ -19,6 +19,10 @@
 #include <commdlg.h>
 #endif
 
+#ifdef max
+#undef max
+#endif
+
 namespace PlutoGE::ui
 {
     namespace
@@ -189,6 +193,70 @@ namespace PlutoGE::ui
         }
     }
 
+    bool RenderVector2Control(const char *label, glm::vec2 &value, float resetValue = 0.0f, float columnWidth = 100.0f)
+    {
+        bool changed = false;
+        ImGuiStyle &style = ImGui::GetStyle();
+
+        ImGui::PushID(label);
+
+        ImGui::Columns(2);
+        ImGui::SetColumnWidth(0, columnWidth);
+
+        ImGui::TextUnformatted(label);
+        ImGui::NextColumn();
+
+        ImVec2 buttonSize = {28.0f, 28.0f};
+        float spacing = style.ItemSpacing.x;
+
+        float availableWidth = ImGui::GetContentRegionAvail().x;
+
+        // Layout:
+        // [X button] spacing [X drag] spacing [Y button] spacing [Y drag]
+        float dragWidth = (availableWidth - buttonSize.x * 2.0f - spacing * 3.0f) / 2.0f;
+
+        // Avoid negative/silly widths in narrow panels
+        dragWidth = std::max(dragWidth, 20.0f);
+
+        // X component
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.1f, 0.15f, 1.0f));
+        if (ImGui::Button("X", buttonSize))
+        {
+            value.x = resetValue;
+            changed = true;
+        }
+        ImGui::PopStyleColor();
+
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(dragWidth);
+        if (ImGui::DragFloat("##X", &value.x, 0.1f))
+        {
+            changed = true;
+        }
+
+        // Y component
+        ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.7f, 0.2f, 1.0f));
+        if (ImGui::Button("Y", buttonSize))
+        {
+            value.y = resetValue;
+            changed = true;
+        }
+        ImGui::PopStyleColor();
+
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(dragWidth);
+        if (ImGui::DragFloat("##Y", &value.y, 0.1f))
+        {
+            changed = true;
+        }
+
+        ImGui::Columns(1);
+        ImGui::PopID();
+
+        return changed;
+    }
+
     void MaterialEditorPanel::LoadActiveMaterial()
     {
         auto &editorShell = EditorShell::GetInstance();
@@ -217,6 +285,7 @@ namespace PlutoGE::ui
             m_thickness = 0.01f;
             m_attenuationColor = glm::vec3(1.0f);
             m_attenuationDistance = 1.0f;
+            m_uvScale = glm::vec2(1.0f, 1.0f);
             m_flipNormalY = false;
             return;
         }
@@ -240,6 +309,7 @@ namespace PlutoGE::ui
         m_thickness = config.thickness;
         m_attenuationColor = config.attenuationColor;
         m_attenuationDistance = config.attenuationDistance;
+        m_uvScale = config.uvScale;
         m_flipNormalY = config.flipNormalY;
     }
 
@@ -350,6 +420,10 @@ namespace PlutoGE::ui
         {
             m_dirty = true;
         }
+        if (RenderVector2Control("UV Scale", m_uvScale, 0.2f))
+        {
+            m_dirty = true;
+        }
 
         if (m_surfaceType == render::MaterialSurfaceType::Glass)
         {
@@ -411,6 +485,7 @@ namespace PlutoGE::ui
             config.thickness = (std::max)(m_thickness, 0.0f);
             config.attenuationColor = glm::clamp(m_attenuationColor, glm::vec3(0.0f), glm::vec3(1.0f));
             config.attenuationDistance = (std::max)(m_attenuationDistance, 0.0001f);
+            config.uvScale = glm::max(m_uvScale, glm::vec2(0.0001f));
             config.flipNormalY = m_flipNormalY;
 
             std::string errorMessage;

@@ -17,6 +17,8 @@
 
 #include <glm/gtc/constants.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtx/norm.hpp>
 
 namespace PlutoGE::scene
 {
@@ -593,6 +595,7 @@ namespace PlutoGE::scene
     {
         std::vector<Property> properties = {
             {"PaintEnabled", PropertyType::Bool, m_paintEnabled ? "true" : "false"},
+            {"BrushMode", PropertyType::String, m_brushMode == FoliageBrushMode::Remove ? "Remove" : "Add"},
             {"BrushRadius", PropertyType::Float, std::to_string(m_brushRadius)},
             {"Density", PropertyType::Int, std::to_string(m_density)},
             {"MinScale", PropertyType::Float, std::to_string(m_minScale)},
@@ -634,6 +637,8 @@ namespace PlutoGE::scene
         {
             if (property.name == "PaintEnabled")
                 m_paintEnabled = property.value == "true" || property.value == "1";
+            else if (property.name == "BrushMode")
+                m_brushMode = property.value == "Remove" ? FoliageBrushMode::Remove : FoliageBrushMode::Add;
             else if (property.name == "BrushRadius")
                 SetBrushRadius(std::stof(property.value));
             else if (property.name == "Density")
@@ -794,7 +799,7 @@ namespace PlutoGE::scene
 
     void FoliageComponent::SetScaleRange(float minScale, float maxScale)
     {
-        m_minScale = (std::max)(0.01f, (std::min)(minScale, maxScale));
+        m_minScale = (std::max)(0.0001f, (std::min)(minScale, maxScale));
         m_maxScale = (std::max)(m_minScale, (std::max)(minScale, maxScale));
     }
 
@@ -826,6 +831,21 @@ namespace PlutoGE::scene
     {
         m_castShadows = castShadows;
         MarkRenderCommandsDirty();
+    }
+
+    bool FoliageComponent::ApplyBrushAtWorldPosition(const glm::vec3 &worldPosition,
+                                                     const glm::vec3 &terrainNormal,
+                                                     const std::function<float(float, float)> &sampleTerrainHeight)
+    {
+        if (m_brushMode == FoliageBrushMode::Add)
+        {
+            return PaintAtWorldPosition(worldPosition, terrainNormal, sampleTerrainHeight);
+        }
+        else if (m_brushMode == FoliageBrushMode::Remove)
+        {
+            return RemoveInstancesAtWorldPosition(worldPosition, m_brushRadius);
+        }
+        return false;
     }
 
     bool FoliageComponent::PaintAtWorldPosition(const glm::vec3 &worldPosition,
@@ -869,6 +889,34 @@ namespace PlutoGE::scene
                 .scale = {scale, scale, scale},
             });
         }
+        const bool changed = type.instances.size() != startCount;
+        if (changed)
+        {
+            MarkRenderCommandsDirty();
+        }
+        return changed;
+    }
+
+    bool FoliageComponent::RemoveInstancesAtWorldPosition(const glm::vec3 &worldPosition, float radius)
+    {
+        auto *owner = GetOwner();
+        auto &type = EnsureSelectedType();
+        if (!owner || !type.mesh || radius <= 0.0f)
+        {
+            return false;
+        }
+
+        const glm::mat4 inverseWorld = glm::inverse(owner->GetWorldTransform());
+        const glm::vec3 localCenter = glm::vec3(inverseWorld * glm::vec4(worldPosition, 1.0f));
+        const float radiusSquared = radius * radius;
+
+        const auto startCount = type.instances.size();
+        type.instances.erase(std::remove_if(type.instances.begin(), type.instances.end(),
+                                            [&](const FoliageInstance &instance)
+                                            {
+                                                return glm::distance2(instance.position, localCenter) <= radiusSquared;
+                                            }),
+                             type.instances.end());
         const bool changed = type.instances.size() != startCount;
         if (changed)
         {

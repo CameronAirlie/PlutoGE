@@ -39,6 +39,12 @@ namespace PlutoGE::scene
         bool useGeneratedLods = false;
     };
 
+    enum class FoliageBrushMode
+    {
+        Add,
+        Remove,
+    };
+
     class FoliageComponent : public TypedComponent<FoliageComponent>
     {
     public:
@@ -63,6 +69,8 @@ namespace PlutoGE::scene
 
         void SetPaintEnabled(bool enabled) { m_paintEnabled = enabled; }
         bool IsPaintEnabled() const { return m_paintEnabled; }
+        void SetBrushMode(FoliageBrushMode mode) { m_brushMode = mode; }
+        FoliageBrushMode GetBrushMode() const { return m_brushMode; }
         void SetBrushRadius(float radius);
         float GetBrushRadius() const { return m_brushRadius; }
         void SetDensity(int density);
@@ -81,9 +89,11 @@ namespace PlutoGE::scene
         void SetCastShadows(bool castShadows);
         bool GetCastShadows() const { return m_castShadows; }
 
-        bool PaintAtWorldPosition(const glm::vec3 &worldPosition,
-                                  const glm::vec3 &terrainNormal,
-                                  const std::function<float(float, float)> &sampleTerrainHeight);
+        bool ApplyBrushAtWorldPosition(
+            const glm::vec3 &worldPosition,
+            const glm::vec3 &terrainNormal,
+            const std::function<float(float, float)> &sampleTerrainHeight);
+
         void ClearInstances();
         void ClearSelectedTypeInstances();
         const std::vector<FoliageInstance> &GetInstances() const;
@@ -120,6 +130,11 @@ namespace PlutoGE::scene
         void RebuildTypeMaterialFromReference(FoliageType &type);
         void RebuildTypeMeshFromReference(FoliageType &type);
 
+        bool PaintAtWorldPosition(const glm::vec3 &worldPosition,
+                                  const glm::vec3 &terrainNormal,
+                                  const std::function<float(float, float)> &sampleTerrainHeight);
+        bool RemoveInstancesAtWorldPosition(const glm::vec3 &worldPosition, float radius);
+
         render::Material *m_material = nullptr;
         std::vector<FoliageType> m_types;
         int m_selectedTypeIndex = 0;
@@ -130,6 +145,7 @@ namespace PlutoGE::scene
         bool m_hasCachedRenderCommandModel = false;
 
         bool m_paintEnabled = false;
+        FoliageBrushMode m_brushMode = FoliageBrushMode::Add;
         float m_brushRadius = 5.0f;
         int m_density = 3;
         float m_minScale = 0.8f;

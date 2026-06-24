@@ -153,6 +153,14 @@ namespace PlutoGE::ui
             }
 
             ImGui::SameLine();
+            scene::FoliageBrushMode brushMode = foliageComponent.GetBrushMode();
+            ImGui::SetNextItemWidth(120.0f);
+            if (ImGui::Combo("Brush Mode##FoliagePaint", reinterpret_cast<int *>(&brushMode), "Add\0Remove\0"))
+            {
+                foliageComponent.SetBrushMode(brushMode);
+            }
+
+            ImGui::SameLine();
             float radius = foliageComponent.GetBrushRadius();
             ImGui::SetNextItemWidth(110.0f);
             if (ImGui::DragFloat("Radius##FoliagePaint", &radius, 0.05f, 0.05f, 512.0f, "%.2f"))
@@ -458,9 +466,18 @@ namespace PlutoGE::ui
             }
 
             constexpr int kEdges[12][2] = {
-                {0, 1}, {1, 3}, {3, 2}, {2, 0},
-                {4, 5}, {5, 7}, {7, 6}, {6, 4},
-                {0, 4}, {1, 5}, {2, 6}, {3, 7},
+                {0, 1},
+                {1, 3},
+                {3, 2},
+                {2, 0},
+                {4, 5},
+                {5, 7},
+                {7, 6},
+                {6, 4},
+                {0, 4},
+                {1, 5},
+                {2, 6},
+                {3, 7},
             };
             for (const auto &edge : kEdges)
             {
@@ -1398,7 +1415,7 @@ namespace PlutoGE::ui
                                 editorShell.MarkSceneDirty();
                             }
                             if (foliagePaintActive &&
-                                foliageComponent->PaintAtWorldPosition(
+                                foliageComponent->ApplyBrushAtWorldPosition(
                                     hitPoint,
                                     glm::vec3(worldTransform[1]),
                                     [terrainComponent](float localX, float localZ)

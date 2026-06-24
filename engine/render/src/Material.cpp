@@ -65,13 +65,9 @@ namespace PlutoGE::render
         // Set material-specific uniforms
         if (activeShader->HasUniform("uUVScale"))
         {
-            std::cout << "Setting uUVScale uniform to: (" << m_config.uvScale.x << ", " << m_config.uvScale.y << ")" << std::endl;
             activeShader->SetUniform("uUVScale", m_config.uvScale);
         }
-        else
-        {
-            std::cerr << "Shader does not have uniform 'uUVScale'!" << std::endl;
-        }
+
         if (m_config.albedoTexture)
         {
             setTexture("uAlbedoTexture", m_config.albedoTexture, 0);

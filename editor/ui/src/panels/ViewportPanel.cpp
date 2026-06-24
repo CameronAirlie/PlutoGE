@@ -154,7 +154,7 @@ namespace PlutoGE::ui
 
             ImGui::SameLine();
             scene::FoliageBrushMode brushMode = foliageComponent.GetBrushMode();
-            ImGui::SetNextItemWidth(120.0f);
+            ImGui::SetNextItemWidth(80.0f);
             if (ImGui::Combo("Brush Mode##FoliagePaint", reinterpret_cast<int *>(&brushMode), "Add\0Remove\0"))
             {
                 foliageComponent.SetBrushMode(brushMode);
@@ -1138,7 +1138,7 @@ namespace PlutoGE::ui
     {
         const bool allowEditorViewportHotkeys =
             m_config.editorViewport &&
-            ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
+            // ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
             !ImGui::GetIO().WantTextInput;
 
         if (allowEditorViewportHotkeys)

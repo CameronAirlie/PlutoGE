@@ -152,6 +152,11 @@ namespace PlutoGE::scene
             return std::to_string(value.r) + "," + std::to_string(value.g) + "," + std::to_string(value.b);
         }
 
+        std::string SerializeVec2(const glm::vec2 &value)
+        {
+            return std::to_string(value.x) + "," + std::to_string(value.y);
+        }
+
         glm::vec4 ParseVec4(const std::string &value, const glm::vec4 &fallback = glm::vec4(1.0f))
         {
             glm::vec4 parsedValue = fallback;
@@ -163,6 +168,13 @@ namespace PlutoGE::scene
         {
             glm::vec3 parsedValue = fallback;
             std::sscanf(value.c_str(), "%f,%f,%f", &parsedValue.r, &parsedValue.g, &parsedValue.b);
+            return parsedValue;
+        }
+
+        glm::vec2 ParseVec2(const std::string &value, const glm::vec2 &fallback = glm::vec2(1.0f))
+        {
+            glm::vec2 parsedValue = fallback;
+            std::sscanf(value.c_str(), "%f,%f", &parsedValue.x, &parsedValue.y);
             return parsedValue;
         }
 
@@ -186,6 +198,7 @@ namespace PlutoGE::scene
             std::optional<render::AlphaMode> alphaMode;
             std::optional<float> alphaCutoff;
             std::optional<bool> castsShadow;
+            std::optional<glm::vec2> uvScale;
             std::optional<float> metallic;
             std::optional<float> roughness;
             std::optional<float> transmission;
@@ -204,6 +217,7 @@ namespace PlutoGE::scene
             properties.push_back({prefix + "AlphaMode", PropertyType::String, config.alphaMode == render::AlphaMode::Blend ? "Blend" : config.alphaMode == render::AlphaMode::Mask ? "Mask" : "Opaque"});
             properties.push_back({prefix + "AlphaCutoff", PropertyType::Float, std::to_string(config.alphaCutoff)});
             properties.push_back({prefix + "CastsShadow", PropertyType::Bool, config.castsShadow ? "true" : "false"});
+            properties.push_back({prefix + "UvScale", PropertyType::String, SerializeVec2(config.uvScale)});
             properties.push_back({prefix + "Metallic", PropertyType::Float, std::to_string(config.metallic)});
             properties.push_back({prefix + "Roughness", PropertyType::Float, std::to_string(config.roughness)});
             properties.push_back({prefix + "Transmission", PropertyType::Float, std::to_string(config.transmission)});
@@ -244,6 +258,10 @@ namespace PlutoGE::scene
             else if (fieldName == "CastsShadow")
             {
                 serializedMaterial.castsShadow = (value == "true" || value == "1");
+            }
+            else if (fieldName == "UvScale")
+            {
+                serializedMaterial.uvScale = ParseVec2(value);
             }
             else if (fieldName == "Metallic")
             {
@@ -304,6 +322,10 @@ namespace PlutoGE::scene
             if (serializedMaterial.castsShadow.has_value())
             {
                 material.SetCastsShadow(*serializedMaterial.castsShadow);
+            }
+            if (serializedMaterial.uvScale.has_value())
+            {
+                material.SetUvScale(*serializedMaterial.uvScale);
             }
             if (serializedMaterial.metallic.has_value())
             {

@@ -40,6 +40,7 @@ namespace PlutoGE::ui
         glm::vec3 m_attenuationColor{1.0f};
         float m_attenuationDistance = 1.0f;
         bool m_flipNormalY = false;
+        glm::vec2 m_uvScale{1.0f, 1.0f};
         bool m_dirty = false;
     };
 }

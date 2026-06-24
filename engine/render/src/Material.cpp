@@ -26,6 +26,11 @@ namespace PlutoGE::render
             activeShader->TrySetUniform(name, value);
         };
 
+        const auto setVec2 = [activeShader](const char *name, const glm::vec2 &value)
+        {
+            activeShader->TrySetUniform(name, value);
+        };
+
         const auto setInt = [activeShader](const char *name, int value)
         {
             activeShader->TrySetUniform(name, value);
@@ -58,6 +63,11 @@ namespace PlutoGE::render
         // shader->SetUniform("uProjection", cameraData.projection);
 
         // Set material-specific uniforms
+        if (activeShader->HasUniform("uUVScale"))
+        {
+            activeShader->SetUniform("uUVScale", m_config.uvScale);
+        }
+
         if (m_config.albedoTexture)
         {
             setTexture("uAlbedoTexture", m_config.albedoTexture, 0);

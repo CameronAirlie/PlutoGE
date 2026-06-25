@@ -3,6 +3,7 @@
 #include "PlutoGE/ui/panels/ConsolePanel.h"
 #include "PlutoGE/ui/panels/ContentBrowserPanel.h"
 #include "PlutoGE/ui/panels/MaterialEditorPanel.h"
+#include "PlutoGE/ui/panels/MeshEditorPanel.h"
 #include "PlutoGE/ui/panels/ViewportPanel.h"
 #include "PlutoGE/ui/panels/SceneHierarchyPanel.h"
 #include "PlutoGE/ui/panels/InspectorPanel.h"
@@ -1373,6 +1374,147 @@ namespace PlutoGE::ui
         return true;
     }
 
+    bool EditorShell::CopySelectedEntity()
+    {
+        if (!m_selectedEntity)
+        {
+            return false;
+        }
+
+        auto clipboardScene = std::make_unique<scene::Scene>();
+        auto *copiedRoot = scene::Prefab::DuplicateEntity(*clipboardScene, *m_selectedEntity, nullptr, true);
+        if (!copiedRoot)
+        {
+            return false;
+        }
+
+        m_entityClipboardRootId = copiedRoot->GetID();
+        m_entityClipboardScene = std::move(clipboardScene);
+        Log(ConsoleSeverity::Info, "Copied entity: " + m_selectedEntity->GetName());
+        return true;
+    }
+
+    bool EditorShell::PasteCopiedEntity()
+    {
+        if (!m_scene || !HasCopiedEntity())
+        {
+            return false;
+        }
+
+        auto *sourceRoot = m_entityClipboardScene->FindEntityByID(m_entityClipboardRootId);
+        if (!sourceRoot)
+        {
+            return false;
+        }
+
+        scene::Entity *createdEntity = nullptr;
+        scene::Entity *parent = m_selectedEntity ? m_selectedEntity->GetParent() : nullptr;
+        ExecuteSceneEdit("Paste Entity",
+                         [&]()
+                         {
+                             createdEntity = scene::Prefab::DuplicateEntity(*m_scene, *sourceRoot, parent, true);
+                             if (createdEntity)
+                             {
+                                 createdEntity->SetPosition(createdEntity->GetPosition() + glm::vec3(0.25f, 0.0f, 0.25f));
+                             }
+                         });
+
+        if (createdEntity)
+        {
+            SetSelectedEntity(createdEntity);
+            return true;
+        }
+
+        return false;
+    }
+
+    bool EditorShell::DuplicateSelectedEntity()
+    {
+        if (!m_scene || !m_selectedEntity)
+        {
+            return false;
+        }
+
+        auto *sourceEntity = m_selectedEntity;
+        auto *parent = sourceEntity->GetParent();
+        scene::Entity *createdEntity = nullptr;
+        ExecuteSceneEdit("Duplicate Entity",
+                         [&]()
+                         {
+                             createdEntity = scene::Prefab::DuplicateEntity(*m_scene, *sourceEntity, parent, true);
+                             if (createdEntity)
+                             {
+                                 createdEntity->SetName(sourceEntity->GetName() + " Copy");
+                                 createdEntity->SetPosition(sourceEntity->GetPosition() + glm::vec3(0.25f, 0.0f, 0.25f));
+                             }
+                         });
+
+        if (createdEntity)
+        {
+            SetSelectedEntity(createdEntity);
+            return true;
+        }
+
+        return false;
+    }
+
+    bool EditorShell::DeleteSelectedEntity()
+    {
+        if (!m_scene || !m_selectedEntity)
+        {
+            return false;
+        }
+
+        auto *entity = m_selectedEntity;
+        ExecuteSceneEdit("Delete Entity",
+                         [&]()
+                         {
+                             m_scene->RemoveEntity(entity);
+                         });
+        SetSelectedEntity(nullptr);
+        return true;
+    }
+
+    void EditorShell::HandleEditorShortcuts(bool isRuntimeRunning)
+    {
+        const ImGuiIO &io = ImGui::GetIO();
+        if (isRuntimeRunning || io.WantTextInput)
+        {
+            return;
+        }
+
+        const bool command = io.KeyCtrl || io.KeySuper;
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape))
+        {
+            SetSelectedEntity(nullptr);
+        }
+        if (command && ImGui::IsKeyPressed(ImGuiKey_Z))
+        {
+            Undo();
+        }
+        if ((command && ImGui::IsKeyPressed(ImGuiKey_Y)) ||
+            (command && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z)))
+        {
+            Redo();
+        }
+        if (command && ImGui::IsKeyPressed(ImGuiKey_C))
+        {
+            CopySelectedEntity();
+        }
+        if (command && ImGui::IsKeyPressed(ImGuiKey_V))
+        {
+            PasteCopiedEntity();
+        }
+        if (command && ImGui::IsKeyPressed(ImGuiKey_D))
+        {
+            DuplicateSelectedEntity();
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_Delete) || ImGui::IsKeyPressed(ImGuiKey_Backspace))
+        {
+            DeleteSelectedEntity();
+        }
+    }
+
     bool EditorShell::ConfirmContinueWithUnsavedChanges()
     {
         if (!m_sceneDirty && !m_projectDirty)
@@ -1565,6 +1707,18 @@ namespace PlutoGE::ui
         m_activeMaterialAssetReference = std::move(materialAssetReference);
         m_openMaterialEditorRequested = true;
         Log(ConsoleSeverity::Info, "Opened material: " + m_activeMaterialAssetReference);
+    }
+
+    void EditorShell::OpenMeshAsset(std::string meshAssetReference)
+    {
+        if (meshAssetReference.empty())
+        {
+            return;
+        }
+
+        m_activeMeshAssetReference = std::move(meshAssetReference);
+        m_openMeshEditorRequested = true;
+        Log(ConsoleSeverity::Info, "Opened mesh: " + m_activeMeshAssetReference);
     }
 
     bool EditorShell::LoadProjectFromPath(const std::filesystem::path &manifestPath)
@@ -1901,6 +2055,10 @@ namespace PlutoGE::ui
         materialEditorPanel->Initialize();
         m_panelManager.AddPanel(materialEditorPanel);
 
+        auto meshEditorPanel = new MeshEditorPanel(PanelConfig{"Mesh Editor", false});
+        meshEditorPanel->Initialize();
+        m_panelManager.AddPanel(meshEditorPanel);
+
         auto profilerPanel = new ProfilerPanel(PanelConfig{"Profiler"}, &m_profiler, &m_panelManager, &renderer);
         profilerPanel->Initialize();
         m_panelManager.AddPanel(profilerPanel);
@@ -2164,20 +2322,7 @@ namespace PlutoGE::ui
 
             m_panelManager.BeginPanelUpdate();
 
-            if (!isRuntimeRunning && ImGui::IsKeyPressed(ImGuiKey_Escape) && !ImGui::GetIO().WantTextInput)
-            {
-                SetSelectedEntity(nullptr);
-            }
-
-            const ImGuiIO &io = ImGui::GetIO();
-            if (!isRuntimeRunning && !io.WantTextInput && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z))
-            {
-                Undo();
-            }
-            if (!isRuntimeRunning && !io.WantTextInput && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Y))
-            {
-                Redo();
-            }
+            HandleEditorShortcuts(isRuntimeRunning);
 
             auto sanitizeBakeSettings = [](scene::SceneBakeSettings &settings)
             {
@@ -2220,6 +2365,10 @@ namespace PlutoGE::ui
                 if (ConsumeMaterialEditorOpenRequest())
                 {
                     materialEditorPanel->SetOpen(true);
+                }
+                if (ConsumeMeshEditorOpenRequest())
+                {
+                    meshEditorPanel->SetOpen(true);
                 }
 
                 if (ImGui::BeginMenu("File"))
@@ -2412,6 +2561,10 @@ namespace PlutoGE::ui
                     if (ImGui::MenuItem("Material Editor", NULL, materialEditorPanel->IsOpen()))
                     {
                         materialEditorPanel->SetOpen(!materialEditorPanel->IsOpen());
+                    }
+                    if (ImGui::MenuItem("Mesh Editor", NULL, meshEditorPanel->IsOpen()))
+                    {
+                        meshEditorPanel->SetOpen(!meshEditorPanel->IsOpen());
                     }
                     if (ImGui::MenuItem("Profiler", NULL, profilerPanel->IsOpen()))
                     {

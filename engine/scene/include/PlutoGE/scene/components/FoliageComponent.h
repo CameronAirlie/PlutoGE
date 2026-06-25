@@ -97,6 +97,13 @@ namespace PlutoGE::scene
         void ClearInstances();
         void ClearSelectedTypeInstances();
         const std::vector<FoliageInstance> &GetInstances() const;
+        FoliageInstance *GetSelectedTypeInstance(std::size_t instanceIndex);
+        const FoliageInstance *GetSelectedTypeInstance(std::size_t instanceIndex) const;
+        bool SetSelectedTypeInstanceTransform(std::size_t instanceIndex,
+                                              const glm::vec3 &position,
+                                              const glm::vec3 &rotationDegrees,
+                                              const glm::vec3 &scale);
+        bool RemoveSelectedTypeInstance(std::size_t instanceIndex);
         std::size_t GetTotalInstanceCount() const;
         std::size_t GetSelectedTypeInstanceCount() const;
 

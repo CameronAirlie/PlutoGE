@@ -5,9 +5,12 @@
 #include <PlutoGE/render/Shader.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+
+#include <glm/gtc/type_ptr.hpp>
 
 namespace PlutoGE::assets
 {
@@ -51,6 +54,17 @@ namespace PlutoGE::assets
             relativePath = normalizedRelativePath;
             return true;
         }
+
+        template <typename T>
+        void WritePod(std::ostream &output, const T &value);
+
+        template <typename T>
+        T ReadPod(std::istream &input);
+
+        void WriteAnimationClip(std::ostream &output, const render::AnimationClip &clip);
+        render::AnimationClip ReadAnimationClip(std::istream &input);
+        bool WriteGeneratedMeshAsset(std::ostream &output, const render::MeshConfig &config, const std::vector<std::string> &materialReferences);
+        bool ReadGeneratedMeshAsset(std::istream &input, render::MeshConfig &config, std::vector<std::string> &materialReferences);
     }
 
     render::Texture *AssetManager::LoadTexture(const char *filePath)
@@ -105,12 +119,195 @@ namespace PlutoGE::assets
         {
             mesh = render::Mesh::Quad();
         }
+        else
+        {
+            const std::string meshPath = ResolveAssetPath(assetReference);
+            if (std::filesystem::path(meshPath).extension() == ".plutomesh")
+            {
+                std::ifstream input(meshPath, std::ios::binary);
+                if (input.is_open())
+                {
+                    render::MeshConfig config;
+                    std::vector<std::string> materialReferences;
+                    if (ReadGeneratedMeshAsset(input, config, materialReferences))
+                    {
+                        mesh = render::Mesh::FromConfig(std::move(config));
+                        m_meshMaterialReferenceCache[assetReference] = std::move(materialReferences);
+                    }
+                }
+            }
+        }
 
         if (mesh)
         {
             m_meshCache[assetReference] = mesh;
         }
         return mesh;
+    }
+
+    const std::vector<std::string> &AssetManager::GetMeshAssetMaterialReferences(const std::string &assetReference)
+    {
+        static const std::vector<std::string> empty;
+        if (assetReference.empty())
+        {
+            return empty;
+        }
+
+        if (m_meshMaterialReferenceCache.find(assetReference) == m_meshMaterialReferenceCache.end())
+        {
+            LoadMeshAsset(assetReference);
+        }
+
+        const auto found = m_meshMaterialReferenceCache.find(assetReference);
+        return found == m_meshMaterialReferenceCache.end() ? empty : found->second;
+    }
+
+    bool AssetManager::SaveMeshAsset(const std::string &assetReference,
+                                     const render::MeshConfig &config,
+                                     const std::vector<std::string> &materialReferences,
+                                     std::string *errorMessage)
+    {
+        if (assetReference.empty() || Project::IsEngineAssetReference(assetReference))
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Cannot save an empty or engine mesh asset reference.";
+            }
+            return false;
+        }
+
+        const std::string meshPath = ResolveAssetPath(assetReference);
+        if (meshPath.empty())
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Could not resolve mesh asset path.";
+            }
+            return false;
+        }
+
+        std::error_code errorCode;
+        std::filesystem::create_directories(std::filesystem::path(meshPath).parent_path(), errorCode);
+        if (errorCode)
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Failed to create mesh asset directory: " + errorCode.message();
+            }
+            return false;
+        }
+
+        std::ofstream output(meshPath, std::ios::binary | std::ios::trunc);
+        if (!output.is_open() || !WriteGeneratedMeshAsset(output, config, materialReferences))
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Failed to write mesh asset.";
+            }
+            return false;
+        }
+
+        m_meshCache.erase(assetReference);
+        m_meshMaterialReferenceCache[assetReference] = materialReferences;
+        return true;
+    }
+
+    bool AssetManager::LoadAnimationAsset(const std::string &assetReference, std::vector<render::AnimationClip> &clips) const
+    {
+        clips.clear();
+        const std::string animationPath = ResolveAssetPath(assetReference);
+        if (animationPath.empty() || std::filesystem::path(animationPath).extension() != ".plutoanim")
+        {
+            return false;
+        }
+
+        std::ifstream input(animationPath, std::ios::binary);
+        if (!input.is_open())
+        {
+            return false;
+        }
+
+        constexpr std::uint32_t kMagic = 0x4147504c; // LPGA
+        const auto magic = ReadPod<std::uint32_t>(input);
+        const auto version = ReadPod<std::uint32_t>(input);
+        if (magic != kMagic || version != 1)
+        {
+            return false;
+        }
+
+        const auto clipCount = ReadPod<std::uint64_t>(input);
+        clips.reserve(static_cast<std::size_t>(clipCount));
+        for (std::uint64_t index = 0; index < clipCount; ++index)
+        {
+            clips.push_back(ReadAnimationClip(input));
+        }
+
+        return input.good();
+    }
+
+    bool AssetManager::SaveAnimationAsset(const std::string &assetReference,
+                                          const std::vector<render::AnimationClip> &clips,
+                                          std::string *errorMessage)
+    {
+        if (assetReference.empty() || Project::IsEngineAssetReference(assetReference))
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Cannot save an empty or engine animation asset reference.";
+            }
+            return false;
+        }
+
+        const std::string animationPath = ResolveAssetPath(assetReference);
+        if (animationPath.empty())
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Could not resolve animation asset path.";
+            }
+            return false;
+        }
+
+        std::error_code errorCode;
+        std::filesystem::create_directories(std::filesystem::path(animationPath).parent_path(), errorCode);
+        if (errorCode)
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Failed to create animation asset directory: " + errorCode.message();
+            }
+            return false;
+        }
+
+        std::ofstream output(animationPath, std::ios::binary | std::ios::trunc);
+        if (!output.is_open())
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Failed to open animation asset for writing.";
+            }
+            return false;
+        }
+
+        constexpr std::uint32_t kMagic = 0x4147504c; // LPGA
+        constexpr std::uint32_t kVersion = 1;
+        WritePod(output, kMagic);
+        WritePod(output, kVersion);
+        WritePod<std::uint64_t>(output, static_cast<std::uint64_t>(clips.size()));
+        for (const auto &clip : clips)
+        {
+            WriteAnimationClip(output, clip);
+        }
+
+        if (!output.good())
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Failed to write animation asset.";
+            }
+            return false;
+        }
+        return true;
     }
 
     render::Material *AssetManager::CreateMaterial()
@@ -190,6 +387,237 @@ namespace PlutoGE::assets
         const char *ToString(render::MaterialSurfaceType surfaceType)
         {
             return surfaceType == render::MaterialSurfaceType::Glass ? "Glass" : "Standard";
+        }
+
+        template <typename T>
+        void WritePod(std::ostream &output, const T &value)
+        {
+            output.write(reinterpret_cast<const char *>(&value), sizeof(T));
+        }
+
+        template <typename T>
+        T ReadPod(std::istream &input)
+        {
+            T value{};
+            input.read(reinterpret_cast<char *>(&value), sizeof(T));
+            return value;
+        }
+
+        void WriteString(std::ostream &output, const std::string &value)
+        {
+            WritePod<std::uint64_t>(output, static_cast<std::uint64_t>(value.size()));
+            output.write(value.data(), static_cast<std::streamsize>(value.size()));
+        }
+
+        std::string ReadString(std::istream &input)
+        {
+            const auto size = ReadPod<std::uint64_t>(input);
+            std::string value(static_cast<std::size_t>(size), '\0');
+            if (size > 0)
+            {
+                input.read(value.data(), static_cast<std::streamsize>(size));
+            }
+            return value;
+        }
+
+        void WriteMat4(std::ostream &output, const glm::mat4 &value)
+        {
+            output.write(reinterpret_cast<const char *>(glm::value_ptr(value)), sizeof(float) * 16);
+        }
+
+        glm::mat4 ReadMat4(std::istream &input)
+        {
+            glm::mat4 value{1.0f};
+            input.read(reinterpret_cast<char *>(glm::value_ptr(value)), sizeof(float) * 16);
+            return value;
+        }
+
+        void WriteAnimationClip(std::ostream &output, const render::AnimationClip &clip)
+        {
+            WriteString(output, clip.name);
+            WritePod(output, clip.duration);
+            WritePod(output, clip.channelCount);
+            WritePod<std::uint64_t>(output, static_cast<std::uint64_t>(clip.channels.size()));
+            for (const auto &channel : clip.channels)
+            {
+                WritePod(output, channel.jointIndex);
+                WritePod(output, channel.nodeIndex);
+                WritePod<std::uint32_t>(output, static_cast<std::uint32_t>(channel.path));
+                WritePod<std::uint32_t>(output, static_cast<std::uint32_t>(channel.interpolation));
+                WritePod<std::uint64_t>(output, static_cast<std::uint64_t>(channel.times.size()));
+                if (!channel.times.empty())
+                {
+                    output.write(reinterpret_cast<const char *>(channel.times.data()), static_cast<std::streamsize>(channel.times.size() * sizeof(float)));
+                }
+                WritePod<std::uint64_t>(output, static_cast<std::uint64_t>(channel.values.size()));
+                if (!channel.values.empty())
+                {
+                    output.write(reinterpret_cast<const char *>(channel.values.data()), static_cast<std::streamsize>(channel.values.size() * sizeof(glm::vec4)));
+                }
+            }
+        }
+
+        render::AnimationClip ReadAnimationClip(std::istream &input)
+        {
+            render::AnimationClip clip;
+            clip.name = ReadString(input);
+            clip.duration = ReadPod<float>(input);
+            clip.channelCount = ReadPod<int>(input);
+            const auto channelCount = ReadPod<std::uint64_t>(input);
+            clip.channels.reserve(static_cast<std::size_t>(channelCount));
+            for (std::uint64_t index = 0; index < channelCount; ++index)
+            {
+                render::AnimationChannel channel;
+                channel.jointIndex = ReadPod<int>(input);
+                channel.nodeIndex = ReadPod<int>(input);
+                channel.path = static_cast<render::AnimationTargetPath>(ReadPod<std::uint32_t>(input));
+                channel.interpolation = static_cast<render::AnimationInterpolation>(ReadPod<std::uint32_t>(input));
+                channel.times.resize(static_cast<std::size_t>(ReadPod<std::uint64_t>(input)));
+                if (!channel.times.empty())
+                {
+                    input.read(reinterpret_cast<char *>(channel.times.data()), static_cast<std::streamsize>(channel.times.size() * sizeof(float)));
+                }
+                channel.values.resize(static_cast<std::size_t>(ReadPod<std::uint64_t>(input)));
+                if (!channel.values.empty())
+                {
+                    input.read(reinterpret_cast<char *>(channel.values.data()), static_cast<std::streamsize>(channel.values.size() * sizeof(glm::vec4)));
+                }
+                clip.channels.push_back(std::move(channel));
+            }
+            return clip;
+        }
+
+        bool WriteGeneratedMeshAsset(std::ostream &output, const render::MeshConfig &config, const std::vector<std::string> &materialReferences)
+        {
+            constexpr std::uint32_t kMagic = 0x4d47504c; // LPGM
+            constexpr std::uint32_t kVersion = 1;
+            WritePod(output, kMagic);
+            WritePod(output, kVersion);
+
+            WritePod<std::uint64_t>(output, static_cast<std::uint64_t>(config.data.vertices.size()));
+            if (!config.data.vertices.empty())
+            {
+                output.write(reinterpret_cast<const char *>(config.data.vertices.data()), static_cast<std::streamsize>(config.data.vertices.size() * sizeof(render::MeshVertexData)));
+            }
+            WritePod<std::uint64_t>(output, static_cast<std::uint64_t>(config.data.indices.size()));
+            if (!config.data.indices.empty())
+            {
+                output.write(reinterpret_cast<const char *>(config.data.indices.data()), static_cast<std::streamsize>(config.data.indices.size() * sizeof(unsigned int)));
+            }
+
+            WritePod<std::uint64_t>(output, static_cast<std::uint64_t>(config.submeshes.size()));
+            for (const auto &submesh : config.submeshes)
+            {
+                WritePod(output, submesh.indexOffset);
+                WritePod(output, submesh.indexCount);
+                WritePod(output, submesh.materialIndex);
+                WritePod(output, submesh.animatedNodeIndex);
+                WritePod(output, submesh.bounds.center);
+                WritePod(output, submesh.bounds.radius);
+                WriteString(output, submesh.name);
+                WritePod<std::uint64_t>(output, static_cast<std::uint64_t>(submesh.lods.size()));
+                for (const auto &lod : submesh.lods)
+                {
+                    WritePod(output, lod.indexOffset);
+                    WritePod(output, lod.indexCount);
+                    WritePod(output, lod.minDistanceFactor);
+                    WritePod(output, lod.maxScreenRadiusPixels);
+                }
+            }
+
+            WritePod<std::uint8_t>(output, config.hasLightmapUvs ? 1 : 0);
+            WritePod<std::uint64_t>(output, static_cast<std::uint64_t>(config.skeleton.joints.size()));
+            for (const auto &joint : config.skeleton.joints)
+            {
+                WriteString(output, joint.name);
+                WritePod(output, joint.nodeIndex);
+                WritePod(output, joint.parentJointIndex);
+                WriteMat4(output, joint.localBindTransform);
+                WriteMat4(output, joint.inverseBindMatrix);
+                WriteMat4(output, joint.inverseRootMatrix);
+            }
+
+            WritePod<std::uint64_t>(output, static_cast<std::uint64_t>(config.animationNodes.size()));
+            for (const auto &node : config.animationNodes)
+            {
+                WritePod(output, node.parentNodeIndex);
+                WriteMat4(output, node.localBindTransform);
+            }
+
+            WritePod<std::uint64_t>(output, static_cast<std::uint64_t>(materialReferences.size()));
+            for (const auto &materialReference : materialReferences)
+            {
+                WriteString(output, materialReference);
+            }
+            return output.good();
+        }
+
+        bool ReadGeneratedMeshAsset(std::istream &input, render::MeshConfig &config, std::vector<std::string> &materialReferences)
+        {
+            constexpr std::uint32_t kMagic = 0x4d47504c; // LPGM
+            const auto magic = ReadPod<std::uint32_t>(input);
+            const auto version = ReadPod<std::uint32_t>(input);
+            if (magic != kMagic || version != 1)
+            {
+                return false;
+            }
+
+            config.data.vertices.resize(static_cast<std::size_t>(ReadPod<std::uint64_t>(input)));
+            if (!config.data.vertices.empty())
+            {
+                input.read(reinterpret_cast<char *>(config.data.vertices.data()), static_cast<std::streamsize>(config.data.vertices.size() * sizeof(render::MeshVertexData)));
+            }
+            config.data.indices.resize(static_cast<std::size_t>(ReadPod<std::uint64_t>(input)));
+            if (!config.data.indices.empty())
+            {
+                input.read(reinterpret_cast<char *>(config.data.indices.data()), static_cast<std::streamsize>(config.data.indices.size() * sizeof(unsigned int)));
+            }
+
+            config.submeshes.resize(static_cast<std::size_t>(ReadPod<std::uint64_t>(input)));
+            for (auto &submesh : config.submeshes)
+            {
+                submesh.indexOffset = ReadPod<std::uint32_t>(input);
+                submesh.indexCount = ReadPod<std::uint32_t>(input);
+                submesh.materialIndex = ReadPod<std::uint32_t>(input);
+                submesh.animatedNodeIndex = ReadPod<int>(input);
+                submesh.bounds.center = ReadPod<glm::vec3>(input);
+                submesh.bounds.radius = ReadPod<float>(input);
+                submesh.name = ReadString(input);
+                submesh.lods.resize(static_cast<std::size_t>(ReadPod<std::uint64_t>(input)));
+                for (auto &lod : submesh.lods)
+                {
+                    lod.indexOffset = ReadPod<std::uint32_t>(input);
+                    lod.indexCount = ReadPod<std::uint32_t>(input);
+                    lod.minDistanceFactor = ReadPod<float>(input);
+                    lod.maxScreenRadiusPixels = ReadPod<float>(input);
+                }
+            }
+
+            config.hasLightmapUvs = ReadPod<std::uint8_t>(input) != 0;
+            config.skeleton.joints.resize(static_cast<std::size_t>(ReadPod<std::uint64_t>(input)));
+            for (auto &joint : config.skeleton.joints)
+            {
+                joint.name = ReadString(input);
+                joint.nodeIndex = ReadPod<int>(input);
+                joint.parentJointIndex = ReadPod<int>(input);
+                joint.localBindTransform = ReadMat4(input);
+                joint.inverseBindMatrix = ReadMat4(input);
+                joint.inverseRootMatrix = ReadMat4(input);
+            }
+
+            config.animationNodes.resize(static_cast<std::size_t>(ReadPod<std::uint64_t>(input)));
+            for (auto &node : config.animationNodes)
+            {
+                node.parentNodeIndex = ReadPod<int>(input);
+                node.localBindTransform = ReadMat4(input);
+            }
+
+            materialReferences.resize(static_cast<std::size_t>(ReadPod<std::uint64_t>(input)));
+            for (auto &materialReference : materialReferences)
+            {
+                materialReference = ReadString(input);
+            }
+            return input.good();
         }
     }
 

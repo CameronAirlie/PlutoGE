@@ -49,6 +49,8 @@ namespace PlutoGE::ui
     {
         constexpr std::size_t kInspectorPathBufferSize = 512;
         constexpr std::size_t kNewScriptNameBufferSize = 128;
+        constexpr const char *kPostProcessEffectDragDropPayload = "PGE_PP_FX";
+        constexpr const char *kEditorPostProcessEffectDragDropPayload = "PGE_ED_PP_FX";
         constexpr const char *kAddableComponentLabels[] = {
             "Mesh Component",
             "Terrain Component",
@@ -552,6 +554,52 @@ namespace PlutoGE::ui
             return droppedReference;
         }
 
+        std::optional<std::string> AcceptDroppedMeshAssetReference()
+        {
+            std::optional<std::string> droppedReference;
+            if (ImGui::BeginDragDropTarget())
+            {
+                if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kContentBrowserAssetDragDropPayload))
+                {
+                    if (payload->Data && payload->DataSize > 0)
+                    {
+                        const auto *data = static_cast<const char *>(payload->Data);
+                        const std::string reference(data, data + payload->DataSize - 1);
+                        if (assets::Project::GetAssetTypeForReference(reference) == assets::ProjectAssetType::Mesh)
+                        {
+                            droppedReference = reference;
+                        }
+                    }
+                }
+                ImGui::EndDragDropTarget();
+            }
+
+            return droppedReference;
+        }
+
+        std::optional<std::string> AcceptDroppedAnimationAssetReference()
+        {
+            std::optional<std::string> droppedReference;
+            if (ImGui::BeginDragDropTarget())
+            {
+                if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kContentBrowserAssetDragDropPayload))
+                {
+                    if (payload->Data && payload->DataSize > 0)
+                    {
+                        const auto *data = static_cast<const char *>(payload->Data);
+                        const std::string reference(data, data + payload->DataSize - 1);
+                        if (assets::Project::GetAssetTypeForReference(reference) == assets::ProjectAssetType::Animation)
+                        {
+                            droppedReference = reference;
+                        }
+                    }
+                }
+                ImGui::EndDragDropTarget();
+            }
+
+            return droppedReference;
+        }
+
         std::optional<std::string> AcceptDroppedTextureAssetReference()
         {
             std::optional<std::string> droppedReference;
@@ -594,6 +642,55 @@ namespace PlutoGE::ui
             meshComponent.SetMaterialForMaterialSlot(materialSlotIndex, materialAsset);
             meshComponent.SetMaterialAssetForMaterialSlot(materialSlotIndex, materialAssetReference);
             return true;
+        }
+
+        bool AssignMeshAsset(scene::MeshComponent &meshComponent,
+                             const std::string &meshAssetReference,
+                             core::Engine &engine)
+        {
+            if (assets::Project::GetAssetTypeForReference(meshAssetReference) != assets::ProjectAssetType::Mesh)
+            {
+                return false;
+            }
+
+            auto *mesh = engine.GetAssetManager().LoadMeshAsset(meshAssetReference);
+            if (!mesh)
+            {
+                return false;
+            }
+
+            meshComponent.SetMesh(mesh);
+            meshComponent.SetMeshAssetReference(meshAssetReference);
+            meshComponent.SetUseGeneratedLods(false);
+
+            const auto &materialReferences = engine.GetAssetManager().GetMeshAssetMaterialReferences(meshAssetReference);
+            std::vector<render::Material *> loadedMaterials;
+            loadedMaterials.reserve((std::max<std::size_t>)(materialReferences.size(), 1));
+            for (const auto &materialReference : materialReferences)
+            {
+                loadedMaterials.push_back(engine.GetAssetManager().LoadMaterialAsset(materialReference));
+            }
+            if (loadedMaterials.empty())
+            {
+                loadedMaterials.push_back(engine.GetAssetManager().LoadMaterialAsset(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference)));
+            }
+            meshComponent.SetMaterials(loadedMaterials);
+            for (size_t materialSlotIndex = 0; materialSlotIndex < materialReferences.size(); ++materialSlotIndex)
+            {
+                meshComponent.SetMaterialAssetForMaterialSlot(materialSlotIndex, materialReferences[materialSlotIndex]);
+            }
+            return true;
+        }
+
+        bool AssignAnimationAsset(scene::AnimationComponent &animationComponent,
+                                  const std::string &animationAssetReference)
+        {
+            if (assets::Project::GetAssetTypeForReference(animationAssetReference) != assets::ProjectAssetType::Animation)
+            {
+                return false;
+            }
+
+            return animationComponent.SetAnimationAssetReference(animationAssetReference);
         }
 
         bool AssignMaterialAssetToSubmesh(scene::MeshComponent &meshComponent,
@@ -649,6 +746,46 @@ namespace PlutoGE::ui
             }
 
             return (std::max)(materialSlotCount, static_cast<size_t>(1));
+        }
+
+        std::string BuildMaterialSlotUsageSummary(const scene::MeshComponent &meshComponent, size_t materialSlotIndex)
+        {
+            const auto *mesh = meshComponent.GetMesh();
+            if (!mesh)
+            {
+                return {};
+            }
+
+            std::string summary;
+            size_t usageCount = 0;
+            for (size_t submeshIndex = 0; submeshIndex < mesh->GetSubmeshCount(); ++submeshIndex)
+            {
+                const auto &submesh = mesh->GetSubmesh(submeshIndex);
+                if (static_cast<size_t>(submesh.materialIndex) != materialSlotIndex)
+                {
+                    continue;
+                }
+
+                if (usageCount < 3)
+                {
+                    if (!summary.empty())
+                    {
+                        summary += ", ";
+                    }
+                    summary += submesh.name.empty() ? "Submesh " + std::to_string(submeshIndex) : submesh.name;
+                }
+                ++usageCount;
+            }
+
+            if (usageCount == 0)
+            {
+                return "Unused by this mesh";
+            }
+            if (usageCount > 3)
+            {
+                summary += ", +" + std::to_string(usageCount - 3) + " more";
+            }
+            return "Used by " + std::to_string(usageCount) + " submesh" + (usageCount == 1 ? ": " : "es: ") + summary;
         }
 
         const ScriptAssetOption *FindScriptAssetOptionForClassName(const std::vector<ScriptAssetOption> &options,
@@ -1653,7 +1790,38 @@ namespace PlutoGE::ui
             }
 
             ImGui::PushID(static_cast<int>(effectIndex));
-            if (ImGui::TreeNode(effect->GetDisplayName().c_str()))
+            const bool effectTreeOpen = ImGui::TreeNode(effect->GetDisplayName().c_str());
+            if (ImGui::BeginDragDropSource())
+            {
+                const size_t draggedIndex = effectIndex;
+                ImGui::SetDragDropPayload(kPostProcessEffectDragDropPayload, &draggedIndex, sizeof(draggedIndex));
+                ImGui::TextUnformatted(effect->GetDisplayName().c_str());
+                ImGui::EndDragDropSource();
+            }
+            bool reorderedEffect = false;
+            if (ImGui::BeginDragDropTarget())
+            {
+                if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kPostProcessEffectDragDropPayload))
+                {
+                    const size_t draggedIndex = *static_cast<const size_t *>(payload->Data);
+                    if (draggedIndex != effectIndex)
+                    {
+                        cameraComponent.MovePostProcessEffect(draggedIndex, effectIndex);
+                        reorderedEffect = true;
+                    }
+                }
+                ImGui::EndDragDropTarget();
+            }
+            if (reorderedEffect)
+            {
+                if (effectTreeOpen)
+                {
+                    ImGui::TreePop();
+                }
+                ImGui::PopID();
+                break;
+            }
+            if (effectTreeOpen)
             {
                 bool isEnabled = effect->IsEnabled();
                 if (ImGui::Checkbox("Enabled", &isEnabled))
@@ -1816,7 +1984,38 @@ namespace PlutoGE::ui
             }
 
             ImGui::PushID(static_cast<int>(effectIndex));
-            if (ImGui::TreeNode(effect->GetDisplayName().c_str()))
+            const bool effectTreeOpen = ImGui::TreeNode(effect->GetDisplayName().c_str());
+            if (ImGui::BeginDragDropSource())
+            {
+                const size_t draggedIndex = effectIndex;
+                ImGui::SetDragDropPayload(kEditorPostProcessEffectDragDropPayload, &draggedIndex, sizeof(draggedIndex));
+                ImGui::TextUnformatted(effect->GetDisplayName().c_str());
+                ImGui::EndDragDropSource();
+            }
+            bool reorderedEffect = false;
+            if (ImGui::BeginDragDropTarget())
+            {
+                if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kEditorPostProcessEffectDragDropPayload))
+                {
+                    const size_t draggedIndex = *static_cast<const size_t *>(payload->Data);
+                    if (draggedIndex != effectIndex)
+                    {
+                        camera.MovePostProcessEffect(draggedIndex, effectIndex);
+                        reorderedEffect = true;
+                    }
+                }
+                ImGui::EndDragDropTarget();
+            }
+            if (reorderedEffect)
+            {
+                if (effectTreeOpen)
+                {
+                    ImGui::TreePop();
+                }
+                ImGui::PopID();
+                break;
+            }
+            if (effectTreeOpen)
             {
                 bool isEnabled = effect->IsEnabled();
                 if (ImGui::Checkbox("Enabled", &isEnabled))
@@ -2061,70 +2260,31 @@ namespace PlutoGE::ui
             if (auto *meshComponent = entity->GetComponent<PlutoGE::scene::MeshComponent>())
             {
                 auto &engine = PlutoGE::core::Engine::GetInstance();
-                const auto meshImportStatus = engine.GetMeshImportStatus(entity->GetID());
 
                 ImGui::Separator();
-                ImGui::Text("Mesh Asset");
+                ImGui::Text("Static Mesh");
                 const auto meshAssetOptions = CollectAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::Mesh);
-                std::string meshPreview = meshComponent->GetSourceMeshPath().empty() ? "None" : meshComponent->GetSourceMeshPath();
+                std::string meshPreview = meshComponent->GetMeshAssetReference().empty() ? "None" : meshComponent->GetMeshAssetReference();
                 for (const auto &option : meshAssetOptions)
                 {
-                    if (option.reference == meshComponent->GetSourceMeshPath())
+                    if (option.reference == meshComponent->GetMeshAssetReference())
                     {
                         meshPreview = option.displayName;
                         break;
                     }
                 }
 
-                if (ImGui::BeginCombo("Source Mesh", meshPreview.c_str()))
+                if (ImGui::BeginCombo("Mesh Asset", meshPreview.c_str()))
                 {
                     for (const auto &option : meshAssetOptions)
                     {
-                        const bool selected = option.reference == meshComponent->GetSourceMeshPath();
+                        const bool selected = option.reference == meshComponent->GetMeshAssetReference();
                         if (ImGui::Selectable(option.displayName.c_str(), selected))
                         {
-                            if (assets::Project::IsEngineAssetReference(option.reference))
+                            if (AssignMeshAsset(*meshComponent, option.reference, engine))
                             {
-                                if (auto *mesh = engine.GetAssetManager().LoadMeshAsset(option.reference))
-                                {
-                                    meshComponent->SetMesh(mesh);
-                                    meshComponent->SetSourceMeshPath(option.reference);
-                                    meshComponent->SetUseGeneratedLods(false);
-                                    if (!meshComponent->GetMaterialForMaterialSlot(0))
-                                    {
-                                        meshComponent->SetMaterialForMaterialSlot(
-                                            0,
-                                            engine.GetAssetManager().LoadMaterialAsset(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference)));
-                                        meshComponent->SetMaterialAssetForMaterialSlot(0, std::string(assets::Project::kBuiltinDefaultShadedMaterialReference));
-                                    }
-                                    meshComponent->CreateSubmeshChildEntities();
-                                    editorShell.MarkSceneDirty();
-                                }
-                            }
-                            else
-                            {
-                                const std::string resolvedPath = engine.GetAssetManager().ResolveMeshAssetSourcePath(option.reference);
-                                auto importedMeshAsset = engine.ImportMeshAsset(resolvedPath);
-                                if (importedMeshAsset.mesh)
-                                {
-                                    meshComponent->SetMesh(importedMeshAsset.mesh);
-                                    meshComponent->SetMaterials(importedMeshAsset.materials);
-                                    meshComponent->SetSourceMeshPath(option.reference);
-                                    meshComponent->SetUseGeneratedLods(false);
-                                    meshComponent->CreateSubmeshChildEntities();
-                                    if (importedMeshAsset.animations && !importedMeshAsset.animations->empty())
-                                    {
-                                        auto *animationComponent = entity->GetComponent<scene::AnimationComponent>();
-                                        if (!animationComponent)
-                                        {
-                                            animationComponent = entity->CreateComponent<scene::AnimationComponent>();
-                                        }
-
-                                        animationComponent->SetClipsFromImportedAnimations(*importedMeshAsset.animations);
-                                        animationComponent->SetSourceAnimationPath(option.reference);
-                                    }
-                                    editorShell.MarkSceneDirty();
-                                }
+                                meshComponent->CreateSubmeshChildEntities();
+                                editorShell.MarkSceneDirty();
                             }
                         }
 
@@ -2136,83 +2296,37 @@ namespace PlutoGE::ui
                     ImGui::EndCombo();
                 }
 
-                const bool canGenerateLodsForMesh = !meshComponent->GetSourceMeshPath().empty() &&
-                                                    !assets::Project::IsEngineAssetReference(meshComponent->GetSourceMeshPath());
-                ImGui::BeginDisabled(!canGenerateLodsForMesh);
-                if (ImGui::Button("Generate Mesh LODs"))
+                if (auto droppedMeshReference = AcceptDroppedMeshAssetReference())
                 {
-                    try
+                    if (AssignMeshAsset(*meshComponent, *droppedMeshReference, engine))
                     {
-                        const std::string resolvedPath = engine.GetAssetManager().ResolveMeshAssetSourcePath(meshComponent->GetSourceMeshPath());
-                        auto importedMeshAsset = engine.GenerateMeshAssetLods(resolvedPath);
-                        if (importedMeshAsset.mesh)
-                        {
-                            meshComponent->SetMesh(importedMeshAsset.mesh);
-                            meshComponent->SetMaterials(importedMeshAsset.materials);
-                            meshComponent->SetUseGeneratedLods(true);
-                            meshComponent->CreateSubmeshChildEntities();
-                            if (meshComponent->GetSubmeshIndex() >= 0)
-                            {
-                                if (auto *parent = entity->GetParent())
-                                {
-                                    if (auto *parentMeshComponent = parent->GetComponent<scene::MeshComponent>())
-                                    {
-                                        parentMeshComponent->SetMesh(importedMeshAsset.mesh);
-                                        parentMeshComponent->SetMaterials(importedMeshAsset.materials);
-                                        parentMeshComponent->SetUseGeneratedLods(true);
-                                        parentMeshComponent->CreateSubmeshChildEntities();
-                                    }
-                                }
-                            }
-                            editorShell.MarkSceneDirty();
-                            editorShell.Log(EditorShell::ConsoleSeverity::Info, "Generated mesh LODs: " + meshComponent->GetSourceMeshPath());
-                        }
+                        meshComponent->CreateSubmeshChildEntities();
+                        editorShell.MarkSceneDirty();
                     }
-                    catch (const std::exception &exception)
+                }
+
+                if (meshComponent->GetMesh())
+                {
+                    const auto *mesh = meshComponent->GetMesh();
+                    ImGui::TextDisabled("Submeshes: %zu | Material Slots: %zu",
+                                        mesh->GetSubmeshCount(),
+                                        GetMaterialSlotCount(*meshComponent));
+                    ImGui::TextDisabled("Reference: %s", meshComponent->GetMeshAssetReference().empty() ? "Runtime Mesh" : meshComponent->GetMeshAssetReference().c_str());
+                }
+                else
+                {
+                    ImGui::TextDisabled("Assign a generated .plutomesh asset from the content browser.");
+                }
+
+                ImGui::BeginDisabled(meshComponent->GetMeshAssetReference().empty());
+                if (ImGui::Button("Reset Materials To Mesh Defaults"))
+                {
+                    if (AssignMeshAsset(*meshComponent, meshComponent->GetMeshAssetReference(), engine))
                     {
-                        editorShell.Log(EditorShell::ConsoleSeverity::Error, exception.what());
+                        editorShell.MarkSceneDirty();
                     }
                 }
                 ImGui::EndDisabled();
-
-                ImGui::Text("Mesh Import");
-                static char meshPath[512] = "";
-                ImGui::InputText("Mesh Path", meshPath, sizeof(meshPath));
-                ImGui::SameLine();
-                if (ImGui::Button("..."))
-                {
-#ifdef _WIN32
-                    OPENFILENAMEA ofn = {};
-                    char fileName[MAX_PATH] = "";
-                    ofn.lStructSize = sizeof(ofn);
-                    ofn.hwndOwner = nullptr;
-                    ofn.lpstrFilter = "Mesh Files\0*.glb;*.gltf;*.fbx\0glTF Files\0*.glb;*.gltf\0FBX Files\0*.fbx\0All Files\0*.*\0";
-                    ofn.lpstrFile = fileName;
-                    ofn.nMaxFile = MAX_PATH;
-                    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
-                    if (GetOpenFileNameA(&ofn))
-                    {
-                        strncpy_s(meshPath, sizeof(meshPath), fileName, _TRUNCATE);
-                    }
-#endif
-                }
-                ImGui::SameLine();
-                ImGui::BeginDisabled(meshImportStatus.pending || strlen(meshPath) == 0);
-                if (ImGui::Button("Import Mesh"))
-                {
-                    engine.QueueMeshImport(entity->GetID(), meshPath);
-                    editorShell.MarkSceneDirty();
-                }
-                ImGui::EndDisabled();
-
-                if (meshImportStatus.pending)
-                {
-                    ImGui::TextUnformatted("Importing mesh on background thread...");
-                }
-                else if (!meshImportStatus.errorMessage.empty())
-                {
-                    ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f), "%s", meshImportStatus.errorMessage.c_str());
-                }
 
                 const auto materialAssetOptions = CollectAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::Material);
                 const int isolatedSubmeshIndex = meshComponent->GetSubmeshIndex();
@@ -2264,6 +2378,11 @@ namespace PlutoGE::ui
                         ImGui::Text("Slot %zu", materialSlotIndex);
                         ImGui::SameLine();
                         ImGui::TextDisabled("(drop a material asset here)");
+                        const std::string slotUsageSummary = BuildMaterialSlotUsageSummary(*meshComponent, materialSlotIndex);
+                        if (!slotUsageSummary.empty())
+                        {
+                            ImGui::TextDisabled("%s", slotUsageSummary.c_str());
+                        }
 
                         const std::string materialAssetReference = meshComponent->GetMaterialAssetForMaterialSlot(materialSlotIndex);
                         const std::string materialPreview = GetAssetReferencePreview(materialAssetOptions, materialAssetReference, "Inline / Imported");
@@ -2295,6 +2414,19 @@ namespace PlutoGE::ui
                                 editorShell.MarkSceneDirty();
                             }
                         }
+
+                        const auto &meshDefaultMaterialReferences = engine.GetAssetManager().GetMeshAssetMaterialReferences(meshComponent->GetMeshAssetReference());
+                        const bool hasMeshDefaultMaterial = materialSlotIndex < meshDefaultMaterialReferences.size() &&
+                                                            !meshDefaultMaterialReferences[materialSlotIndex].empty();
+                        ImGui::BeginDisabled(!hasMeshDefaultMaterial || materialAssetReference == meshDefaultMaterialReferences[materialSlotIndex]);
+                        if (ImGui::Button("Use Mesh Default"))
+                        {
+                            if (AssignMaterialAssetToSlot(*meshComponent, materialSlotIndex, meshDefaultMaterialReferences[materialSlotIndex], engine))
+                            {
+                                editorShell.MarkSceneDirty();
+                            }
+                        }
+                        ImGui::EndDisabled();
 
                         if (materialSlotListIndex + 1 < materialSlotIndices.size())
                         {
@@ -2479,6 +2611,80 @@ namespace PlutoGE::ui
                             }
                             ImGui::PopID();
                         }
+                    }
+                }
+            }
+
+            if (auto *animationComponent = entity->GetComponent<PlutoGE::scene::AnimationComponent>())
+            {
+                ImGui::Separator();
+                ImGui::Text("Animation");
+                const auto animationAssetOptions = CollectAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::Animation);
+                std::string animationPreview = GetAssetReferencePreview(animationAssetOptions,
+                                                                        animationComponent->GetSourceAnimationPath(),
+                                                                        "None");
+                if (ImGui::BeginCombo("Animation Asset", animationPreview.c_str()))
+                {
+                    for (const auto &option : animationAssetOptions)
+                    {
+                        const bool selected = option.reference == animationComponent->GetSourceAnimationPath();
+                        if (ImGui::Selectable(option.displayName.c_str(), selected))
+                        {
+                            if (AssignAnimationAsset(*animationComponent, option.reference))
+                            {
+                                entity->AddPrefabOverride("Component:AnimationComponent:SourceAnimation");
+                                editorShell.MarkSceneDirty();
+                            }
+                        }
+
+                        if (selected)
+                        {
+                            ImGui::SetItemDefaultFocus();
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+
+                if (auto droppedAnimationReference = AcceptDroppedAnimationAssetReference())
+                {
+                    if (AssignAnimationAsset(*animationComponent, *droppedAnimationReference))
+                    {
+                        entity->AddPrefabOverride("Component:AnimationComponent:SourceAnimation");
+                        editorShell.MarkSceneDirty();
+                    }
+                }
+
+                ImGui::TextDisabled("Clips: %d", animationComponent->GetClipCount());
+                if (animationComponent->GetClipCount() > 0)
+                {
+                    std::vector<std::string> clipNames;
+                    clipNames.reserve(animationComponent->GetClips().size());
+                    for (const auto &clip : animationComponent->GetClips())
+                    {
+                        clipNames.push_back(clip.name.empty() ? "Unnamed" : clip.name);
+                    }
+
+                    int currentClipIndex = animationComponent->GetCurrentClipIndex();
+                    const char *currentClipLabel = currentClipIndex >= 0 && currentClipIndex < static_cast<int>(clipNames.size())
+                                                       ? clipNames[static_cast<size_t>(currentClipIndex)].c_str()
+                                                       : "None";
+                    if (ImGui::BeginCombo("Clip", currentClipLabel))
+                    {
+                        for (int clipIndex = 0; clipIndex < static_cast<int>(clipNames.size()); ++clipIndex)
+                        {
+                            const bool selected = currentClipIndex == clipIndex;
+                            if (ImGui::Selectable(clipNames[static_cast<size_t>(clipIndex)].c_str(), selected))
+                            {
+                                animationComponent->SetCurrentClipIndex(clipIndex);
+                                entity->AddPrefabOverride("Component:AnimationComponent:CurrentClipIndex");
+                                editorShell.MarkSceneDirty();
+                            }
+                            if (selected)
+                            {
+                                ImGui::SetItemDefaultFocus();
+                            }
+                        }
+                        ImGui::EndCombo();
                     }
                 }
             }
@@ -2821,37 +3027,28 @@ namespace PlutoGE::ui
                                     const bool selected = selectedType && option.reference == selectedType->sourceMeshPath;
                                     if (ImGui::Selectable(option.displayName.c_str(), selected))
                                     {
-                                        if (assets::Project::IsEngineAssetReference(option.reference))
+                                        if (auto *mesh = engine.GetAssetManager().LoadMeshAsset(option.reference))
                                         {
-                                            if (auto *mesh = engine.GetAssetManager().LoadMeshAsset(option.reference))
+                                            const auto &materialReferences = engine.GetAssetManager().GetMeshAssetMaterialReferences(option.reference);
+                                            std::vector<render::Material *> loadedMaterials;
+                                            loadedMaterials.reserve((std::max<std::size_t>)(materialReferences.size(), 1));
+                                            for (const auto &materialReference : materialReferences)
                                             {
-                                                foliageComponent->SetTypeMeshAndMaterials(
-                                                    selectedTypeIndex,
-                                                    mesh,
-                                                    {engine.GetAssetManager().LoadMaterialAsset(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference))},
-                                                    option.reference);
-                                                foliageComponent->SetTypeUseGeneratedLods(selectedTypeIndex, false);
-                                                entity->AddPrefabOverride("Component:FoliageComponent:Type." + std::to_string(selectedTypeIndex) + ".SourceMesh");
-                                                entity->AddPrefabOverride("Component:FoliageComponent:Type." + std::to_string(selectedTypeIndex) + ".UseGeneratedLods");
-                                                editorShell.MarkSceneDirty();
+                                                loadedMaterials.push_back(engine.GetAssetManager().LoadMaterialAsset(materialReference));
                                             }
-                                        }
-                                        else
-                                        {
-                                            const std::string resolvedPath = engine.GetAssetManager().ResolveMeshAssetSourcePath(option.reference);
-                                            auto importedMeshAsset = engine.ImportMeshAsset(resolvedPath);
-                                            if (importedMeshAsset.mesh)
+                                            if (loadedMaterials.empty())
                                             {
-                                                foliageComponent->SetTypeMeshAndMaterials(
-                                                    selectedTypeIndex,
-                                                    importedMeshAsset.mesh,
-                                                    importedMeshAsset.materials,
-                                                    option.reference);
-                                                foliageComponent->SetTypeUseGeneratedLods(selectedTypeIndex, false);
-                                                entity->AddPrefabOverride("Component:FoliageComponent:Type." + std::to_string(selectedTypeIndex) + ".SourceMesh");
-                                                entity->AddPrefabOverride("Component:FoliageComponent:Type." + std::to_string(selectedTypeIndex) + ".UseGeneratedLods");
-                                                editorShell.MarkSceneDirty();
+                                                loadedMaterials.push_back(engine.GetAssetManager().LoadMaterialAsset(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference)));
                                             }
+                                            foliageComponent->SetTypeMeshAndMaterials(
+                                                selectedTypeIndex,
+                                                mesh,
+                                                loadedMaterials,
+                                                option.reference);
+                                            foliageComponent->SetTypeUseGeneratedLods(selectedTypeIndex, false);
+                                            entity->AddPrefabOverride("Component:FoliageComponent:Type." + std::to_string(selectedTypeIndex) + ".SourceMesh");
+                                            entity->AddPrefabOverride("Component:FoliageComponent:Type." + std::to_string(selectedTypeIndex) + ".UseGeneratedLods");
+                                            editorShell.MarkSceneDirty();
                                         }
                                     }
                                     if (selected)
@@ -3005,6 +3202,64 @@ namespace PlutoGE::ui
                                 editorShell.MarkSceneDirty();
                             }
                             ImGui::EndDisabled();
+
+                            selectedType = foliageComponent->GetSelectedType();
+                            if (selectedType && !selectedType->instances.empty() && ImGui::TreeNode("Foliage Instances"))
+                            {
+                                static std::unordered_map<std::string, int> selectedFoliageInstances;
+                                const std::string instanceSelectionKey = std::to_string(entity->GetID()) + ":" + std::to_string(selectedTypeIndex);
+                                int &selectedInstanceIndex = selectedFoliageInstances[instanceSelectionKey];
+                                selectedInstanceIndex = std::clamp(selectedInstanceIndex, 0, static_cast<int>(selectedType->instances.size()) - 1);
+
+                                ImGui::SetNextItemWidth(220.0f);
+                                if (ImGui::BeginCombo("Instance", ("#" + std::to_string(selectedInstanceIndex)).c_str()))
+                                {
+                                    for (int instanceIndex = 0; instanceIndex < static_cast<int>(selectedType->instances.size()); ++instanceIndex)
+                                    {
+                                        const bool selected = selectedInstanceIndex == instanceIndex;
+                                        const std::string label = "#" + std::to_string(instanceIndex);
+                                        if (ImGui::Selectable(label.c_str(), selected))
+                                        {
+                                            selectedInstanceIndex = instanceIndex;
+                                        }
+                                        if (selected)
+                                        {
+                                            ImGui::SetItemDefaultFocus();
+                                        }
+                                    }
+                                    ImGui::EndCombo();
+                                }
+
+                                if (auto *instance = foliageComponent->GetSelectedTypeInstance(static_cast<std::size_t>(selectedInstanceIndex)))
+                                {
+                                    glm::vec3 position = instance->position;
+                                    glm::vec3 rotation = instance->rotationDegrees;
+                                    glm::vec3 scale = instance->scale;
+                                    bool transformChanged = false;
+                                    transformChanged |= ImGui::DragFloat3("Instance Position", &position.x, 0.05f);
+                                    transformChanged |= ImGui::DragFloat3("Instance Rotation", &rotation.x, 0.25f);
+                                    transformChanged |= ImGui::DragFloat3("Instance Scale", &scale.x, 0.01f, 0.0001f, 100.0f);
+
+                                    if (transformChanged &&
+                                        foliageComponent->SetSelectedTypeInstanceTransform(static_cast<std::size_t>(selectedInstanceIndex), position, rotation, scale))
+                                    {
+                                        entity->AddPrefabOverride("Component:FoliageComponent:Type." + std::to_string(selectedTypeIndex) + ".Instances");
+                                        entity->AddPrefabOverride("Component:FoliageComponent:Instances");
+                                        editorShell.MarkSceneDirty();
+                                    }
+
+                                    if (ImGui::Button("Delete Instance") &&
+                                        foliageComponent->RemoveSelectedTypeInstance(static_cast<std::size_t>(selectedInstanceIndex)))
+                                    {
+                                        selectedInstanceIndex = std::clamp(selectedInstanceIndex, 0, static_cast<int>(foliageComponent->GetSelectedTypeInstanceCount()) - 1);
+                                        entity->AddPrefabOverride("Component:FoliageComponent:Type." + std::to_string(selectedTypeIndex) + ".Instances");
+                                        entity->AddPrefabOverride("Component:FoliageComponent:Instances");
+                                        editorShell.MarkSceneDirty();
+                                    }
+                                }
+
+                                ImGui::TreePop();
+                            }
                         }
 
                         if (!propertiesProvided)
@@ -3034,6 +3289,14 @@ namespace PlutoGE::ui
                                 (property.name == "SourceMesh" ||
                                  property.name == "MaterialAsset" ||
                                  property.name == "Instances"))
+                            {
+                                continue;
+                            }
+                            if (dynamic_cast<scene::AnimationComponent *>(componentPtr) &&
+                                (property.name == "SourceAnimation" ||
+                                 property.name == "CurrentClipIndex" ||
+                                 property.name == "ClipCount" ||
+                                 property.name.rfind("Clips.", 0) == 0))
                             {
                                 continue;
                             }

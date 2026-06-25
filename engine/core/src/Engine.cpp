@@ -273,8 +273,6 @@ namespace PlutoGE::core
                         texture.width,
                         texture.height,
                         texture.channels);
-                    // Clear pixel buffer after upload
-                    std::vector<unsigned char>().swap(texture.pixels);
                     profile.textureResolveMs += ElapsedMilliseconds(textureResolveStart);
                     profile.memoryTextureUploads += 1;
                     resolvedTextures[textureIndex] = tex;

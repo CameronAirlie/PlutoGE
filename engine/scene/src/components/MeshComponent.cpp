@@ -521,7 +521,7 @@ namespace PlutoGE::scene
             {"Visible", PropertyType::Bool, m_visible ? "true" : "false"},
             {"SubmeshIndex", PropertyType::Int, std::to_string(m_submeshIndex)},
             {"SubmeshCount", PropertyType::Int, std::to_string(m_submeshCount)},
-            {"SourceMesh", PropertyType::String, m_sourceMeshPath},
+            {"MeshAsset", PropertyType::String, m_sourceMeshPath},
             {"UseGeneratedLods", PropertyType::Bool, m_useGeneratedLods ? "true" : "false"},
             {"MaterialSlotCount", PropertyType::Int, std::to_string(m_materials.size())},
         };
@@ -592,7 +592,7 @@ namespace PlutoGE::scene
             {
                 m_submeshCount = std::max(1, std::stoi(property.value));
             }
-            else if (property.name == "SourceMesh")
+            else if (property.name == "MeshAsset" || property.name == "SourceMesh")
             {
                 sourceMeshPath = property.value;
             }
@@ -636,8 +636,22 @@ namespace PlutoGE::scene
             if (auto *builtinMesh = engine.GetAssetManager().LoadMeshAsset(sourceMeshPath))
             {
                 SetMesh(builtinMesh);
-                SetMaterials({engine.GetAssetManager().LoadMaterialAsset(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference))});
-                SetMaterialAssetForMaterialSlot(0, std::string(assets::Project::kBuiltinDefaultShadedMaterialReference));
+                const auto &materialReferences = engine.GetAssetManager().GetMeshAssetMaterialReferences(sourceMeshPath);
+                std::vector<render::Material *> loadedMaterials;
+                loadedMaterials.reserve((std::max<std::size_t>)(materialReferences.size(), 1));
+                for (const auto &materialReference : materialReferences)
+                {
+                    loadedMaterials.push_back(engine.GetAssetManager().LoadMaterialAsset(materialReference));
+                }
+                if (loadedMaterials.empty())
+                {
+                    loadedMaterials.push_back(engine.GetAssetManager().LoadMaterialAsset(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference)));
+                }
+                SetMaterials(loadedMaterials);
+                for (size_t materialSlotIndex = 0; materialSlotIndex < materialReferences.size(); ++materialSlotIndex)
+                {
+                    SetMaterialAssetForMaterialSlot(materialSlotIndex, materialReferences[materialSlotIndex]);
+                }
                 m_sourceMeshPath = sourceMeshPath;
                 m_useGeneratedLods = false;
             }
@@ -732,7 +746,7 @@ namespace PlutoGE::scene
             {
                 if (animationComponent)
                 {
-                    jointMatrices = &animationComponent->GetJointMatrices(m_mesh->GetSkeleton());
+                    jointMatrices = &animationComponent->GetJointMatrices(m_mesh->GetSkeleton(), m_mesh->GetAnimationNodes());
                 }
             }
             const bool canCacheStaticRenderCommands = m_isStatic &&

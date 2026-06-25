@@ -3,6 +3,7 @@
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/SceneSerializer.h"
+#include "PlutoGE/scene/components/AnimationComponent.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
 #include "PlutoGE/scene/components/ColliderComponent.h"
 #include "PlutoGE/scene/components/FoliageComponent.h"
@@ -48,6 +49,8 @@ namespace PlutoGE::scene
                 return "TerrainComponent";
             if (dynamic_cast<const FoliageComponent *>(&component))
                 return "FoliageComponent";
+            if (dynamic_cast<const AnimationComponent *>(&component))
+                return "AnimationComponent";
             if (dynamic_cast<const CameraComponent *>(&component))
                 return "CameraComponent";
             if (dynamic_cast<const LightComponent *>(&component))
@@ -81,6 +84,8 @@ namespace PlutoGE::scene
                 return std::make_unique<TerrainComponent>(TerrainComponentConfig{});
             if (componentType == "FoliageComponent")
                 return std::make_unique<FoliageComponent>();
+            if (componentType == "AnimationComponent")
+                return std::make_unique<AnimationComponent>();
             if (componentType == "CameraComponent")
                 return std::make_unique<CameraComponent>(new render::Camera(render::CameraConfig{}));
             if (componentType == "LightComponent")
@@ -247,6 +252,32 @@ namespace PlutoGE::scene
                 if (sourceChild)
                 {
                     CloneEntityTreeIntoScenePreservingIds(scene, *sourceChild, clonePtr);
+                }
+            }
+
+            return clonePtr;
+        }
+
+        Entity *DuplicateEntityTreeIntoScene(Scene &scene, const Entity &source, Entity *parent, bool preservePrefabLink)
+        {
+            auto clone = std::make_unique<Entity>(EntityConfig{.name = source.GetName()});
+            auto *clonePtr = clone.get();
+            scene.AddEntity(std::move(clone), parent);
+            CopyEntityFields(*clonePtr, source);
+            if (preservePrefabLink && !source.GetPrefabSource().empty())
+            {
+                clonePtr->SetPrefabLink(source.GetPrefabSource(), source.GetPrefabEntityID(), source.IsPrefabInstanceRoot());
+                for (const auto &overridePath : source.GetPrefabOverrides())
+                {
+                    clonePtr->AddPrefabOverride(overridePath);
+                }
+            }
+
+            for (auto *sourceChild : source.GetChildren())
+            {
+                if (sourceChild)
+                {
+                    DuplicateEntityTreeIntoScene(scene, *sourceChild, clonePtr, preservePrefabLink);
                 }
             }
 
@@ -575,6 +606,14 @@ namespace PlutoGE::scene
         }
 
         return CloneEntityTreeIntoScene(scene, *roots.front(), prefabReference, parent, true);
+    }
+
+    Entity *Prefab::DuplicateEntity(Scene &scene,
+                                    const Entity &source,
+                                    Entity *parent,
+                                    bool preservePrefabLink)
+    {
+        return DuplicateEntityTreeIntoScene(scene, source, parent, preservePrefabLink);
     }
 
     bool Prefab::UpdateInstance(Entity &instanceRoot, std::string *errorMessage)

@@ -115,7 +115,7 @@ namespace PlutoGE::render
 
         void UploadJointMatrices(Shader *shader, const std::vector<glm::mat4> *jointMatrices)
         {
-            constexpr size_t kMaxShaderJoints = 48;
+            constexpr size_t kMaxShaderJoints = 128;
             if (!shader || !jointMatrices || jointMatrices->empty())
             {
                 shader->SetUniform("uUseSkinning", 0);

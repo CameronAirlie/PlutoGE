@@ -189,7 +189,7 @@ namespace PlutoGE::render
             uniform mat4 uCurrentViewProjection;
             uniform mat4 uPreviousViewProjection;
             uniform int uUseSkinning = 0;
-            uniform mat4 uJointMatrices[48];
+            uniform mat4 uJointMatrices[128];
             uniform vec2 uUVScale = vec2(1.0, 1.0);
 
             out vec3 FragPos;
@@ -210,10 +210,10 @@ namespace PlutoGE::render
                     if (totalWeight > 0.0001)
                     {
                         skinMatrix =
-                            uJointMatrices[clamp(aJoints.x, 0, 47)] * aWeights.x +
-                            uJointMatrices[clamp(aJoints.y, 0, 47)] * aWeights.y +
-                            uJointMatrices[clamp(aJoints.z, 0, 47)] * aWeights.z +
-                            uJointMatrices[clamp(aJoints.w, 0, 47)] * aWeights.w;
+                            uJointMatrices[clamp(aJoints.x, 0, 127)] * aWeights.x +
+                            uJointMatrices[clamp(aJoints.y, 0, 127)] * aWeights.y +
+                            uJointMatrices[clamp(aJoints.z, 0, 127)] * aWeights.z +
+                            uJointMatrices[clamp(aJoints.w, 0, 127)] * aWeights.w;
                     }
                 }
 
@@ -1357,7 +1357,7 @@ void main()
             uniform mat4 uLightSpaceMatrix;
             uniform vec3 uShadowWorldOrigin = vec3(0.0);
             uniform int uUseSkinning = 0;
-            uniform mat4 uJointMatrices[48];
+            uniform mat4 uJointMatrices[128];
 
             out vec3 FragPos;
             out vec2 UV;
@@ -1371,10 +1371,10 @@ void main()
                     if (totalWeight > 0.0001)
                     {
                         skinMatrix =
-                            uJointMatrices[clamp(aJoints.x, 0, 47)] * aWeights.x +
-                            uJointMatrices[clamp(aJoints.y, 0, 47)] * aWeights.y +
-                            uJointMatrices[clamp(aJoints.z, 0, 47)] * aWeights.z +
-                            uJointMatrices[clamp(aJoints.w, 0, 47)] * aWeights.w;
+                            uJointMatrices[clamp(aJoints.x, 0, 127)] * aWeights.x +
+                            uJointMatrices[clamp(aJoints.y, 0, 127)] * aWeights.y +
+                            uJointMatrices[clamp(aJoints.z, 0, 127)] * aWeights.z +
+                            uJointMatrices[clamp(aJoints.w, 0, 127)] * aWeights.w;
                     }
                 }
 
@@ -1440,7 +1440,7 @@ void main()
             uniform mat4 uView;
             uniform mat4 uProjection;
             uniform int uUseSkinning = 0;
-            uniform mat4 uJointMatrices[48];
+            uniform mat4 uJointMatrices[128];
 
             out vec3 FragPos;
             out vec3 Normal;
@@ -1457,10 +1457,10 @@ void main()
                     if (totalWeight > 0.0001)
                     {
                         skinMatrix =
-                            uJointMatrices[clamp(aJoints.x, 0, 47)] * aWeights.x +
-                            uJointMatrices[clamp(aJoints.y, 0, 47)] * aWeights.y +
-                            uJointMatrices[clamp(aJoints.z, 0, 47)] * aWeights.z +
-                            uJointMatrices[clamp(aJoints.w, 0, 47)] * aWeights.w;
+                            uJointMatrices[clamp(aJoints.x, 0, 127)] * aWeights.x +
+                            uJointMatrices[clamp(aJoints.y, 0, 127)] * aWeights.y +
+                            uJointMatrices[clamp(aJoints.z, 0, 127)] * aWeights.z +
+                            uJointMatrices[clamp(aJoints.w, 0, 127)] * aWeights.w;
                     }
                 }
 

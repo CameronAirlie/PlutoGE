@@ -4,6 +4,7 @@
 
 #include <unordered_map>
 #include <string>
+#include <vector>
 
 namespace PlutoGE::render
 {
@@ -12,6 +13,8 @@ namespace PlutoGE::render
     class Material;
     class Shader;
     struct MaterialConfig;
+    struct MeshConfig;
+    struct AnimationClip;
     struct ShaderSource;
 }
 
@@ -30,6 +33,15 @@ namespace PlutoGE::assets
 
         render::Texture *LoadTexture(const char *filePath);
         render::Mesh *LoadMeshAsset(const std::string &assetReference);
+        const std::vector<std::string> &GetMeshAssetMaterialReferences(const std::string &assetReference);
+        bool SaveMeshAsset(const std::string &assetReference,
+                           const render::MeshConfig &config,
+                           const std::vector<std::string> &materialReferences,
+                           std::string *errorMessage = nullptr);
+        bool LoadAnimationAsset(const std::string &assetReference, std::vector<render::AnimationClip> &clips) const;
+        bool SaveAnimationAsset(const std::string &assetReference,
+                                const std::vector<render::AnimationClip> &clips,
+                                std::string *errorMessage = nullptr);
         render::Material *LoadMaterialAsset(const std::string &assetReference);
         bool SaveMaterialAsset(const std::string &assetReference, const render::MaterialConfig &config, std::string *errorMessage = nullptr);
         render::Material *CreateMaterial();
@@ -50,6 +62,7 @@ namespace PlutoGE::assets
         std::string m_projectAssetDirectory = "Assets";
         std::unordered_map<std::string, render::Texture *> m_textureCache;   // Cache for loaded textures
         std::unordered_map<std::string, render::Mesh *> m_meshCache;
+        std::unordered_map<std::string, std::vector<std::string>> m_meshMaterialReferenceCache;
         std::unordered_map<std::string, render::Material *> m_materialCache; // Cache for loaded materials
     };
 }

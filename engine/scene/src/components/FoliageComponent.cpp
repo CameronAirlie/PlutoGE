@@ -946,6 +946,61 @@ namespace PlutoGE::scene
         return type ? type->instances : m_emptyInstances;
     }
 
+    FoliageInstance *FoliageComponent::GetSelectedTypeInstance(std::size_t instanceIndex)
+    {
+        auto *type = GetSelectedType();
+        return type && instanceIndex < type->instances.size() ? &type->instances[instanceIndex] : nullptr;
+    }
+
+    const FoliageInstance *FoliageComponent::GetSelectedTypeInstance(std::size_t instanceIndex) const
+    {
+        const auto *type = GetSelectedType();
+        return type && instanceIndex < type->instances.size() ? &type->instances[instanceIndex] : nullptr;
+    }
+
+    bool FoliageComponent::SetSelectedTypeInstanceTransform(std::size_t instanceIndex,
+                                                            const glm::vec3 &position,
+                                                            const glm::vec3 &rotationDegrees,
+                                                            const glm::vec3 &scale)
+    {
+        auto *instance = GetSelectedTypeInstance(instanceIndex);
+        if (!instance)
+        {
+            return false;
+        }
+
+        const glm::vec3 sanitizedScale{
+            (std::max)(scale.x, 0.0001f),
+            (std::max)(scale.y, 0.0001f),
+            (std::max)(scale.z, 0.0001f),
+        };
+        if (instance->position == position &&
+            instance->rotationDegrees == rotationDegrees &&
+            instance->scale == sanitizedScale)
+        {
+            return false;
+        }
+
+        instance->position = position;
+        instance->rotationDegrees = rotationDegrees;
+        instance->scale = sanitizedScale;
+        MarkRenderCommandsDirty();
+        return true;
+    }
+
+    bool FoliageComponent::RemoveSelectedTypeInstance(std::size_t instanceIndex)
+    {
+        auto *type = GetSelectedType();
+        if (!type || instanceIndex >= type->instances.size())
+        {
+            return false;
+        }
+
+        type->instances.erase(type->instances.begin() + static_cast<std::ptrdiff_t>(instanceIndex));
+        MarkRenderCommandsDirty();
+        return true;
+    }
+
     std::size_t FoliageComponent::GetTotalInstanceCount() const
     {
         std::size_t count = 0;
@@ -1232,7 +1287,18 @@ namespace PlutoGE::scene
         if (auto *mesh = engine.GetAssetManager().LoadMeshAsset(type.sourceMeshPath))
         {
             type.mesh = mesh;
-            AssignFoliageMaterials(type, {engine.GetAssetManager().LoadMaterialAsset(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference))});
+            const auto &materialReferences = engine.GetAssetManager().GetMeshAssetMaterialReferences(type.sourceMeshPath);
+            std::vector<render::Material *> loadedMaterials;
+            loadedMaterials.reserve((std::max<std::size_t>)(materialReferences.size(), 1));
+            for (const auto &materialReference : materialReferences)
+            {
+                loadedMaterials.push_back(engine.GetAssetManager().LoadMaterialAsset(materialReference));
+            }
+            if (loadedMaterials.empty())
+            {
+                loadedMaterials.push_back(engine.GetAssetManager().LoadMaterialAsset(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference)));
+            }
+            AssignFoliageMaterials(type, loadedMaterials);
             SanitizeTypeSubmeshSelection(type);
             return;
         }

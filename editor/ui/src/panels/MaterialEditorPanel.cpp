@@ -335,6 +335,27 @@ namespace PlutoGE::ui
             ImGui::TextDisabled("Engine material assets are read-only.");
         }
 
+        ImGui::SeparatorText("Preview");
+        const ImVec2 previewSize((std::min)(ImGui::GetContentRegionAvail().x, 280.0f), 96.0f);
+        const ImVec2 previewMin = ImGui::GetCursorScreenPos();
+        const ImVec2 previewMax(previewMin.x + previewSize.x, previewMin.y + previewSize.y);
+        const ImU32 previewColor = ImGui::ColorConvertFloat4ToU32(ImVec4(m_color.r, m_color.g, m_color.b, m_color.a));
+        ImDrawList *drawList = ImGui::GetWindowDrawList();
+        drawList->AddRectFilled(previewMin, previewMax, previewColor, 6.0f);
+        drawList->AddRect(previewMin, previewMax, ImGui::GetColorU32(ImGuiCol_Border), 6.0f);
+        ImGui::Dummy(previewSize);
+        ImGui::TextDisabled("%s | %s | Metallic %.2f | Roughness %.2f",
+                            m_surfaceType == render::MaterialSurfaceType::Glass ? "Glass" : "Standard",
+                            m_alphaMode == render::AlphaMode::Blend ? "Blend" : m_alphaMode == render::AlphaMode::Mask ? "Mask"
+                                                                                                                        : "Opaque",
+                            m_metallic,
+                            m_roughness);
+        ImGui::TextDisabled("Textures: Albedo %s | Normal %s | Metallic %s | Roughness %s",
+                            m_albedoTexturePath.empty() ? "none" : "set",
+                            m_normalTexturePath.empty() ? "none" : "set",
+                            m_metallicTexturePath.empty() ? "none" : "set",
+                            m_roughnessTexturePath.empty() ? "none" : "set");
+
         ImGui::Separator();
         if (engineMaterial)
         {

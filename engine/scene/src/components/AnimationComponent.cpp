@@ -231,20 +231,50 @@ namespace PlutoGE::scene
 
         if (!m_sourceAnimationPath.empty())
         {
-            auto &engine = core::Engine::GetInstance();
-            const std::string resolvedPath = engine.GetAssetManager().ResolveMeshAssetSourcePath(m_sourceAnimationPath);
+            SetAnimationAssetReference(m_sourceAnimationPath);
+        }
+    }
+
+    bool AnimationComponent::SetAnimationAssetReference(std::string animationAssetReference)
+    {
+        if (animationAssetReference.empty())
+        {
+            m_sourceAnimationPath.clear();
+            m_clips.clear();
+            m_currentClipIndex = 0;
+            SetTime(0.0f);
+            m_playing = false;
+            m_jointMatricesDirty = true;
+            m_nodeMatricesDirty = true;
+            return true;
+        }
+
+        auto &engine = core::Engine::GetInstance();
+        std::vector<render::AnimationClip> animationClips;
+        if (!engine.GetAssetManager().LoadAnimationAsset(animationAssetReference, animationClips) || animationClips.empty())
+        {
+            const std::string resolvedPath = engine.GetAssetManager().ResolveMeshAssetSourcePath(animationAssetReference);
             const auto importedMeshAsset = engine.ImportMeshAsset(resolvedPath);
-            if (importedMeshAsset.animations && !importedMeshAsset.animations->empty())
+            if (importedMeshAsset.animations)
             {
-                const int clipIndex = m_currentClipIndex;
-                const float time = m_time;
-                const bool playing = m_playing;
-                SetClipsFromImportedAnimations(*importedMeshAsset.animations);
-                SetCurrentClipIndex(clipIndex);
-                SetTime(time);
-                m_playing = playing && HasCurrentClip();
+                animationClips = *importedMeshAsset.animations;
             }
         }
+
+        if (animationClips.empty())
+        {
+            return false;
+        }
+
+        const int clipIndex = m_currentClipIndex;
+        const float time = m_time;
+        const bool playing = m_playing;
+        m_sourceAnimationPath = std::move(animationAssetReference);
+        SetClipsFromImportedAnimations(animationClips);
+        SetCurrentClipIndex(clipIndex);
+        SetTime(time);
+        m_playing = playing && HasCurrentClip();
+        return true;
     }
 
     void AnimationComponent::SetClipsFromImportedAnimations(const std::vector<render::AnimationClip> &animations)
@@ -392,6 +422,49 @@ namespace PlutoGE::scene
         return m_jointMatrices;
     }
 
+    const std::vector<glm::mat4> &AnimationComponent::GetJointMatrices(const render::Skeleton &skeleton, const std::vector<render::AnimationNode> &nodes)
+    {
+        if (nodes.empty())
+        {
+            return GetJointMatrices(skeleton);
+        }
+
+        if (m_jointMatricesDirty || m_jointMatrices.size() != skeleton.joints.size())
+        {
+            if (m_nodeMatricesDirty || m_nodeMatrices.size() != nodes.size())
+            {
+                EvaluateNodeMatrices(nodes);
+            }
+
+            m_jointMatrices.assign(skeleton.joints.size(), glm::mat4(1.0f));
+            bool usedNodeHierarchy = false;
+            for (size_t jointIndex = 0; jointIndex < skeleton.joints.size(); ++jointIndex)
+            {
+                const auto &joint = skeleton.joints[jointIndex];
+                if (joint.nodeIndex < 0 || joint.nodeIndex >= static_cast<int>(m_nodeMatrices.size()))
+                {
+                    continue;
+                }
+
+                m_jointMatrices[jointIndex] = joint.inverseRootMatrix *
+                                              m_nodeMatrices[static_cast<size_t>(joint.nodeIndex)] *
+                                              joint.inverseBindMatrix;
+                usedNodeHierarchy = true;
+            }
+
+            if (!usedNodeHierarchy)
+            {
+                EvaluateJointMatrices(skeleton);
+            }
+            else
+            {
+                m_jointMatricesDirty = false;
+            }
+        }
+
+        return m_jointMatrices;
+    }
+
     glm::mat4 AnimationComponent::GetNodeMatrix(const std::vector<render::AnimationNode> &nodes, int nodeIndex)
     {
         if (nodeIndex < 0 || nodeIndex >= static_cast<int>(nodes.size()))
@@ -416,16 +489,19 @@ namespace PlutoGE::scene
             return;
         }
 
-        std::vector<glm::vec3> translations(nodes.size(), glm::vec3(0.0f));
-        std::vector<glm::vec4> rotations(nodes.size(), glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
-        std::vector<glm::vec3> scales(nodes.size(), glm::vec3(1.0f));
+        std::vector<glm::mat4> localTransforms(nodes.size(), glm::mat4(1.0f));
         for (size_t nodeIndex = 0; nodeIndex < nodes.size(); ++nodeIndex)
         {
-            DecomposeTransform(nodes[nodeIndex].localBindTransform, translations[nodeIndex], rotations[nodeIndex], scales[nodeIndex]);
+            localTransforms[nodeIndex] = nodes[nodeIndex].localBindTransform;
         }
 
         if (HasCurrentClip())
         {
+            std::vector<glm::vec3> translations(nodes.size(), glm::vec3(0.0f));
+            std::vector<glm::vec4> rotations(nodes.size(), glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+            std::vector<glm::vec3> scales(nodes.size(), glm::vec3(1.0f));
+            std::vector<uint8_t> animatedLocals(nodes.size(), 0);
+
             const auto &clip = m_clips[static_cast<size_t>(m_currentClipIndex)];
             for (const auto &channel : clip.channels)
             {
@@ -436,6 +512,12 @@ namespace PlutoGE::scene
 
                 const auto sample = SampleChannelValue(channel, m_time);
                 const size_t nodeIndex = static_cast<size_t>(channel.nodeIndex);
+                if (!animatedLocals[nodeIndex])
+                {
+                    DecomposeTransform(nodes[nodeIndex].localBindTransform, translations[nodeIndex], rotations[nodeIndex], scales[nodeIndex]);
+                    animatedLocals[nodeIndex] = 1;
+                }
+
                 switch (channel.path)
                 {
                 case render::AnimationTargetPath::Translation:
@@ -449,12 +531,14 @@ namespace PlutoGE::scene
                     break;
                 }
             }
-        }
 
-        std::vector<glm::mat4> localTransforms(nodes.size(), glm::mat4(1.0f));
-        for (size_t nodeIndex = 0; nodeIndex < nodes.size(); ++nodeIndex)
-        {
-            localTransforms[nodeIndex] = ComposeTransform(translations[nodeIndex], rotations[nodeIndex], scales[nodeIndex]);
+            for (size_t nodeIndex = 0; nodeIndex < nodes.size(); ++nodeIndex)
+            {
+                if (animatedLocals[nodeIndex])
+                {
+                    localTransforms[nodeIndex] = ComposeTransform(translations[nodeIndex], rotations[nodeIndex], scales[nodeIndex]);
+                }
+            }
         }
 
         std::vector<uint8_t> evaluated(nodes.size(), 0);
@@ -489,16 +573,19 @@ namespace PlutoGE::scene
             return;
         }
 
-        std::vector<glm::vec3> translations(skeleton.joints.size(), glm::vec3(0.0f));
-        std::vector<glm::vec4> rotations(skeleton.joints.size(), glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
-        std::vector<glm::vec3> scales(skeleton.joints.size(), glm::vec3(1.0f));
+        std::vector<glm::mat4> localTransforms(skeleton.joints.size(), glm::mat4(1.0f));
         for (size_t jointIndex = 0; jointIndex < skeleton.joints.size(); ++jointIndex)
         {
-            DecomposeTransform(skeleton.joints[jointIndex].localBindTransform, translations[jointIndex], rotations[jointIndex], scales[jointIndex]);
+            localTransforms[jointIndex] = skeleton.joints[jointIndex].localBindTransform;
         }
 
         if (HasCurrentClip())
         {
+            std::vector<glm::vec3> translations(skeleton.joints.size(), glm::vec3(0.0f));
+            std::vector<glm::vec4> rotations(skeleton.joints.size(), glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+            std::vector<glm::vec3> scales(skeleton.joints.size(), glm::vec3(1.0f));
+            std::vector<uint8_t> animatedLocals(skeleton.joints.size(), 0);
+
             const auto &clip = m_clips[static_cast<size_t>(m_currentClipIndex)];
             for (const auto &channel : clip.channels)
             {
@@ -509,6 +596,12 @@ namespace PlutoGE::scene
 
                 const auto sample = SampleChannelValue(channel, m_time);
                 const size_t jointIndex = static_cast<size_t>(channel.jointIndex);
+                if (!animatedLocals[jointIndex])
+                {
+                    DecomposeTransform(skeleton.joints[jointIndex].localBindTransform, translations[jointIndex], rotations[jointIndex], scales[jointIndex]);
+                    animatedLocals[jointIndex] = 1;
+                }
+
                 switch (channel.path)
                 {
                 case render::AnimationTargetPath::Translation:
@@ -522,16 +615,23 @@ namespace PlutoGE::scene
                     break;
                 }
             }
+
+            for (size_t jointIndex = 0; jointIndex < skeleton.joints.size(); ++jointIndex)
+            {
+                if (animatedLocals[jointIndex])
+                {
+                    localTransforms[jointIndex] = ComposeTransform(translations[jointIndex], rotations[jointIndex], scales[jointIndex]);
+                }
+            }
         }
 
         std::vector<glm::mat4> globalTransforms(skeleton.joints.size(), glm::mat4(1.0f));
         for (size_t jointIndex = 0; jointIndex < skeleton.joints.size(); ++jointIndex)
         {
-            const glm::mat4 localTransform = ComposeTransform(translations[jointIndex], rotations[jointIndex], scales[jointIndex]);
             const int parentIndex = skeleton.joints[jointIndex].parentJointIndex;
             globalTransforms[jointIndex] = parentIndex >= 0 && parentIndex < static_cast<int>(globalTransforms.size())
-                                               ? globalTransforms[static_cast<size_t>(parentIndex)] * localTransform
-                                               : localTransform;
+                                               ? globalTransforms[static_cast<size_t>(parentIndex)] * localTransforms[jointIndex]
+                                               : localTransforms[jointIndex];
             m_jointMatrices[jointIndex] = skeleton.joints[jointIndex].inverseRootMatrix * globalTransforms[jointIndex] * skeleton.joints[jointIndex].inverseBindMatrix;
         }
 

@@ -5,6 +5,7 @@ add_library(PlutoGEEditorUI
     src/panels/ConsolePanel.cpp
     src/panels/ContentBrowserPanel.cpp
     src/panels/MaterialEditorPanel.cpp
+    src/panels/MeshEditorPanel.cpp
     src/panels/ProfilerPanel.cpp
     src/panels/ViewportPanel.cpp
     src/panels/SceneHierarchyPanel.cpp

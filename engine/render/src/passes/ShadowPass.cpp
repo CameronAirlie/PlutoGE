@@ -745,13 +745,14 @@ namespace
             return;
         }
 
-        auto *albedoTexture = material->GetConfig().albedoTexture;
-        const bool alphaTested = albedoTexture && material->GetConfig().color.a < 0.999f;
+        const auto &config = material->GetConfig();
+        auto *albedoTexture = config.albedoTexture;
+        const bool alphaTested = albedoTexture && config.alphaMode == PlutoGE::render::AlphaMode::Mask;
         if (alphaTested)
         {
             shader->SetUniform("uAlbedoTexture", albedoTexture, 0);
             shader->SetUniform("uHasAlbedoTexture", 1.0f);
-            shader->SetUniform("uAlphaCutoff", material->GetConfig().alphaCutoff);
+            shader->SetUniform("uAlphaCutoff", config.alphaCutoff);
             return;
         }
 
@@ -760,7 +761,7 @@ namespace
 
     void UploadShadowJointMatrices(PlutoGE::render::Shader *shader, const std::vector<glm::mat4> *jointMatrices)
     {
-        constexpr size_t kMaxShaderJoints = 48;
+        constexpr size_t kMaxShaderJoints = 128;
         if (!shader || !jointMatrices || jointMatrices->empty())
         {
             shader->SetUniform("uUseSkinning", 0);

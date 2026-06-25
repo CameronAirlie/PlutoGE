@@ -553,6 +553,17 @@ namespace PlutoGE::scene
         m_material = material;
     }
 
+    void TerrainComponent::SetMaterialAssetReference(const std::string &materialAssetReference)
+    {
+        if (m_materialAssetReference == materialAssetReference && m_material)
+        {
+            return;
+        }
+
+        m_materialAssetReference = materialAssetReference;
+        RebuildMaterialFromReference();
+    }
+
     float TerrainComponent::GetHeightSample(int x, int z) const
     {
         x = glm::clamp(x, 0, m_width - 1);

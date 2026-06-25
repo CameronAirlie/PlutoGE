@@ -10,6 +10,7 @@
 #define TINYGLTF_NO_STB_IMAGE_WRITE
 #include <tiny_gltf.h>
 #include <meshoptimizer.h>
+#include <assimp/config.h>
 #include <assimp/Importer.hpp>
 #include <assimp/postprocess.h>
 #include <assimp/scene.h>
@@ -174,7 +175,7 @@ namespace PlutoGE::assetimport
         };
 
         constexpr uint32_t kCookedMeshCacheMagic = 0x434d4750; // PGMC
-        constexpr uint32_t kCookedMeshCacheVersion = 14;
+        constexpr uint32_t kCookedMeshCacheVersion = 21;
 
         bool ReadBooleanEnvironmentFlag(const char *name, bool defaultValue)
         {
@@ -1750,7 +1751,6 @@ namespace PlutoGE::assetimport
                     submesh.lods = sourceSubmesh.lods;
                 }
             }
-
         }
 
         void MergeAdjacentSubmeshes(std::vector<render::Submesh> &submeshes)
@@ -2312,7 +2312,6 @@ namespace PlutoGE::assetimport
             const glm::mat4 inverseRoot = skin.skeleton >= 0 && skin.skeleton < static_cast<int>(nodeGlobals.size())
                                               ? glm::inverse(nodeGlobals[static_cast<size_t>(skin.skeleton)])
                                               : glm::mat4(1.0f);
-            (void)inverseRoot;
 
             for (size_t jointIndex = 0; jointIndex < skin.joints.size(); ++jointIndex)
             {
@@ -2321,7 +2320,7 @@ namespace PlutoGE::assetimport
                 joint.nodeIndex = nodeIndex;
                 joint.name = nodeIndex >= 0 && nodeIndex < static_cast<int>(model.nodes.size()) ? model.nodes[static_cast<size_t>(nodeIndex)].name : std::string{};
                 joint.inverseBindMatrix = inverseBindMatrices[jointIndex];
-                joint.inverseRootMatrix = glm::mat4(1.0f);
+                joint.inverseRootMatrix = inverseRoot;
 
                 if (nodeIndex >= 0 && nodeIndex < static_cast<int>(nodeParents.size()))
                 {
@@ -2588,20 +2587,118 @@ namespace PlutoGE::assetimport
             return animationNodes;
         }
 
+        bool IsTextureFileExtension(const std::filesystem::path &path)
+        {
+            std::string extension = path.extension().string();
+            std::transform(extension.begin(), extension.end(), extension.begin(),
+                           [](unsigned char character)
+                           {
+                               return static_cast<char>(std::tolower(character));
+                           });
+            return extension == ".png" || extension == ".jpg" || extension == ".jpeg" ||
+                   extension == ".tga" || extension == ".bmp" || extension == ".psd" ||
+                   extension == ".dds" || extension == ".tif" || extension == ".tiff" ||
+                   extension == ".webp" || extension == ".hdr" || extension == ".exr";
+        }
+
+        std::string NormalizeAssimpTexturePathString(std::string path)
+        {
+            constexpr std::string_view fileUriPrefix = "file://";
+            if (path.rfind(fileUriPrefix, 0) == 0)
+            {
+                path.erase(0, fileUriPrefix.size());
+                if (path.size() >= 3 && path[0] == '/' && std::isalpha(static_cast<unsigned char>(path[1])) != 0 && path[2] == ':')
+                {
+                    path.erase(path.begin());
+                }
+            }
+
+            while (!path.empty() && (path.front() == '"' || path.front() == '\''))
+            {
+                path.erase(path.begin());
+            }
+            while (!path.empty() && (path.back() == '"' || path.back() == '\''))
+            {
+                path.pop_back();
+            }
+            return path;
+        }
+
+        bool IsLikelyAssimpTextureProperty(const aiMaterialProperty &property)
+        {
+            std::string key = property.mKey.C_Str();
+            std::transform(key.begin(), key.end(), key.begin(),
+                           [](unsigned char character)
+                           {
+                               return static_cast<char>(std::tolower(character));
+                           });
+            return key.find("$tex") != std::string::npos ||
+                   key.find("texture") != std::string::npos ||
+                   key.find("filename") != std::string::npos ||
+                   key.find("file") != std::string::npos ||
+                   key.find("path") != std::string::npos;
+        }
+
+        std::optional<std::filesystem::path> FindTextureFileByName(const std::filesystem::path &searchRoot, const std::filesystem::path &requestedPath)
+        {
+            if (requestedPath.filename().empty() || !std::filesystem::exists(searchRoot))
+            {
+                return std::nullopt;
+            }
+
+            const auto requestedFilename = requestedPath.filename();
+            std::error_code errorCode;
+            for (std::filesystem::recursive_directory_iterator iterator(searchRoot, errorCode), end; iterator != end && !errorCode; iterator.increment(errorCode))
+            {
+                if (!iterator->is_regular_file(errorCode) || errorCode)
+                {
+                    errorCode.clear();
+                    continue;
+                }
+
+                if (iterator->path().filename() == requestedFilename)
+                {
+                    return iterator->path().lexically_normal();
+                }
+            }
+            return std::nullopt;
+        }
+
         std::string ResolveAssimpTextureSourcePath(const std::string &filePath, const aiString &texturePath)
         {
-            const std::filesystem::path sourcePath(texturePath.C_Str());
-            if (sourcePath.empty() || sourcePath.string().front() == '*')
+            const std::string normalizedTexturePath = NormalizeAssimpTexturePathString(texturePath.C_Str());
+            const std::filesystem::path sourcePath(normalizedTexturePath);
+            if (sourcePath.empty() || normalizedTexturePath.front() == '*')
             {
                 return {};
             }
 
             if (sourcePath.is_absolute())
             {
+                if (std::filesystem::exists(sourcePath))
+                {
+                    return sourcePath.lexically_normal().string();
+                }
+
+                if (auto found = FindTextureFileByName(std::filesystem::path(filePath).parent_path(), sourcePath))
+                {
+                    return found->string();
+                }
                 return sourcePath.lexically_normal().string();
             }
 
-            return (std::filesystem::path(filePath).parent_path() / sourcePath).lexically_normal().string();
+            const auto modelDirectory = std::filesystem::path(filePath).parent_path();
+            const auto resolvedPath = (modelDirectory / sourcePath).lexically_normal();
+            if (std::filesystem::exists(resolvedPath))
+            {
+                return resolvedPath.string();
+            }
+
+            if (auto found = FindTextureFileByName(modelDirectory, sourcePath))
+            {
+                return found->string();
+            }
+            return resolvedPath.string();
         }
 
         const aiTexture *FindEmbeddedAssimpTexture(const aiScene &scene, const aiString &texturePath)
@@ -2705,6 +2802,11 @@ namespace PlutoGE::assetimport
             {
                 return -1;
             }
+            if (!std::filesystem::exists(sourcePath))
+            {
+                std::cerr << "Mesh import warning for '" << filePath << "': referenced FBX texture '"
+                          << path << "' resolved to missing file '" << sourcePath << "'." << std::endl;
+            }
 
             const std::string cacheKey = NormalizePath(sourcePath);
             if (const auto cachedIt = textureIndexByKey.find(cacheKey); cachedIt != textureIndexByKey.end())
@@ -2721,6 +2823,23 @@ namespace PlutoGE::assetimport
             return textureIndex;
         }
 
+        int AddAssimpEmbeddedTextureByIndex(
+            const aiScene &scene,
+            const std::string &filePath,
+            unsigned int embeddedTextureIndex,
+            std::unordered_map<std::string, int> &textureIndexByKey,
+            std::vector<ImportedTextureData> &textures)
+        {
+            if (embeddedTextureIndex >= scene.mNumTextures)
+            {
+                return -1;
+            }
+
+            aiString texturePath;
+            texturePath.Set(("*" + std::to_string(embeddedTextureIndex)).c_str());
+            return AddAssimpTexture(scene, filePath, texturePath, textureIndexByKey, textures);
+        }
+
         int FindAssimpMaterialTexture(
             const aiScene &scene,
             const aiMaterial &material,
@@ -2732,19 +2851,105 @@ namespace PlutoGE::assetimport
         {
             for (const aiTextureType textureType : textureTypes)
             {
-                aiString texturePath;
-                unsigned int textureUvChannel = 0;
-                if (material.GetTexture(textureType, 0, &texturePath, nullptr, &textureUvChannel) == AI_SUCCESS)
+                const unsigned int textureCount = std::max(1u, material.GetTextureCount(textureType));
+                for (unsigned int textureSlot = 0; textureSlot < textureCount; ++textureSlot)
                 {
-                    const int textureIndex = AddAssimpTexture(scene, filePath, texturePath, textureIndexByKey, textures);
-                    if (textureIndex >= 0)
+                    aiString texturePath;
+                    unsigned int textureUvChannel = 0;
+                    if (material.GetTexture(textureType, textureSlot, &texturePath, nullptr, &textureUvChannel) == AI_SUCCESS)
                     {
-                        if (uvChannel)
+                        const int textureIndex = AddAssimpTexture(scene, filePath, texturePath, textureIndexByKey, textures);
+                        if (textureIndex >= 0)
                         {
-                            *uvChannel = textureUvChannel;
+                            if (uvChannel)
+                            {
+                                *uvChannel = textureUvChannel;
+                            }
+                            return textureIndex;
                         }
-                        return textureIndex;
                     }
+                }
+            }
+
+            return -1;
+        }
+
+        int FindAssimpFallbackTexture(
+            const aiScene &scene,
+            const aiMaterial &material,
+            const std::string &filePath,
+            std::unordered_map<std::string, int> &textureIndexByKey,
+            std::vector<ImportedTextureData> &textures,
+            unsigned int *uvChannel = nullptr)
+        {
+            constexpr aiTextureType textureTypes[] = {
+                aiTextureType_BASE_COLOR,
+                aiTextureType_DIFFUSE,
+                aiTextureType_NORMALS,
+                aiTextureType_HEIGHT,
+                aiTextureType_EMISSIVE,
+                aiTextureType_OPACITY,
+                aiTextureType_METALNESS,
+                aiTextureType_DIFFUSE_ROUGHNESS,
+                aiTextureType_AMBIENT,
+                aiTextureType_SPECULAR,
+                aiTextureType_UNKNOWN,
+            };
+
+            for (const auto textureType : textureTypes)
+            {
+                const int textureIndex = FindAssimpMaterialTexture(scene, material, filePath, {textureType}, textureIndexByKey, textures, uvChannel);
+                if (textureIndex >= 0)
+                {
+                    return textureIndex;
+                }
+            }
+
+            for (unsigned int propertyIndex = 0; propertyIndex < material.mNumProperties; ++propertyIndex)
+            {
+                const auto *property = material.mProperties[propertyIndex];
+                if (!property || property->mDataLength == 0 || !property->mData)
+                {
+                    continue;
+                }
+
+                const bool maybeString = property->mType == aiPTI_String || property->mType == aiPTI_Buffer;
+                if (!maybeString)
+                {
+                    continue;
+                }
+
+                std::string value;
+                if (property->mType == aiPTI_String && property->mDataLength > sizeof(uint32_t))
+                {
+                    const auto *assimpString = reinterpret_cast<const aiString *>(property->mData);
+                    value.assign(assimpString->C_Str());
+                }
+                else
+                {
+                    value.assign(property->mData, property->mData + property->mDataLength);
+                    value.erase(std::find(value.begin(), value.end(), '\0'), value.end());
+                }
+
+                value = NormalizeAssimpTexturePathString(value);
+                if (value.empty())
+                {
+                    continue;
+                }
+
+                const bool embeddedReference = value.front() == '*';
+                const bool textureFilename = IsTextureFileExtension(std::filesystem::path(value));
+                if (!embeddedReference && !textureFilename && !IsLikelyAssimpTextureProperty(*property))
+                {
+                    continue;
+                }
+
+                aiString texturePath;
+                texturePath.Set(value);
+                const int textureIndex = AddAssimpTexture(scene, filePath, texturePath, textureIndexByKey, textures);
+                if (textureIndex >= 0)
+                {
+                    return textureIndex;
                 }
             }
 
@@ -2873,6 +3078,20 @@ namespace PlutoGE::assetimport
                 textureIndexByKey,
                 textures,
                 &albedoUvChannel);
+            if (importedMaterial.albedoTextureIndex < 0)
+            {
+                importedMaterial.albedoTextureIndex = FindAssimpFallbackTexture(
+                    scene,
+                    material,
+                    filePath,
+                    textureIndexByKey,
+                    textures,
+                    &albedoUvChannel);
+            }
+            if (importedMaterial.albedoTextureIndex < 0 && scene.mNumTextures > 0)
+            {
+                importedMaterial.albedoTextureIndex = AddAssimpEmbeddedTextureByIndex(scene, filePath, 0, textureIndexByKey, textures);
+            }
             if (primaryUvChannel)
             {
                 *primaryUvChannel = albedoUvChannel;
@@ -2977,6 +3196,9 @@ namespace PlutoGE::assetimport
             std::unordered_map<std::string, int> &boneNameToJointIndex)
         {
             render::Skeleton skeleton;
+            const glm::mat4 inverseRootTransform = nodes.empty()
+                                                       ? glm::mat4(1.0f)
+                                                       : glm::inverse(nodes.front().globalTransform);
             for (unsigned int meshIndex = 0; meshIndex < scene.mNumMeshes; ++meshIndex)
             {
                 const aiMesh *mesh = scene.mMeshes[meshIndex];
@@ -3004,7 +3226,7 @@ namespace PlutoGE::assetimport
                     const auto nodeIt = nameToNodeIndex.find(boneName);
                     joint.nodeIndex = nodeIt == nameToNodeIndex.end() ? -1 : nodeIt->second;
                     joint.inverseBindMatrix = ToGlmMatrix(bone->mOffsetMatrix);
-                    joint.inverseRootMatrix = glm::mat4(1.0f);
+                    joint.inverseRootMatrix = inverseRootTransform;
                     if (joint.nodeIndex >= 0 && joint.nodeIndex < static_cast<int>(nodes.size()))
                     {
                         joint.localBindTransform = nodes[static_cast<size_t>(joint.nodeIndex)].localTransform;
@@ -3166,7 +3388,7 @@ namespace PlutoGE::assetimport
                                                    : static_cast<uint32_t>(materialPrimaryUvChannels.empty() ? 0 : materialPrimaryUvChannels.size() - 1);
                 const unsigned int primaryUvChannel = materialIndex < materialPrimaryUvChannels.size() ? materialPrimaryUvChannels[materialIndex] : 0;
                 const bool hasSkinning = sourceMesh.HasBones();
-                const glm::mat4 meshTransform = glm::mat4(1.0f);
+                const glm::mat4 meshTransform = hasSkinning ? glm::mat4(1.0f) : staticTransform;
                 std::string submeshName = ToStdString(node->mName);
                 if (submeshName.empty() && sourceMesh.mName.length > 0)
                 {
@@ -3731,6 +3953,7 @@ namespace PlutoGE::assetimport
         ImportedMeshSourceAsset ParseAssimpMeshAsset(const std::string &filePath, const MeshCookOptions &cookOptions, MeshImportProfile *profile)
         {
             Assimp::Importer importer;
+            importer.SetPropertyBool(AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS, false);
             unsigned int flags =
                 aiProcess_Triangulate |
                 aiProcess_FlipUVs |

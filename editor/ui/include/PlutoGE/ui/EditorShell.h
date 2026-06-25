@@ -155,11 +155,19 @@ namespace PlutoGE::ui
         bool BuildProjectScripts();
         bool OpenSceneFromPath(const std::filesystem::path &scenePath);
         void OpenMaterialAsset(std::string materialAssetReference);
+        void OpenMeshAsset(std::string meshAssetReference);
         const std::string &GetActiveMaterialAssetReference() const { return m_activeMaterialAssetReference; }
+        const std::string &GetActiveMeshAssetReference() const { return m_activeMeshAssetReference; }
         bool ConsumeMaterialEditorOpenRequest()
         {
             const bool requested = m_openMaterialEditorRequested;
             m_openMaterialEditorRequested = false;
+            return requested;
+        }
+        bool ConsumeMeshEditorOpenRequest()
+        {
+            const bool requested = m_openMeshEditorRequested;
+            m_openMeshEditorRequested = false;
             return requested;
         }
         void Log(ConsoleSeverity severity, std::string message);
@@ -177,6 +185,11 @@ namespace PlutoGE::ui
         void CancelSceneEdit();
         bool Undo();
         bool Redo();
+        bool CopySelectedEntity();
+        bool PasteCopiedEntity();
+        bool DuplicateSelectedEntity();
+        bool DeleteSelectedEntity();
+        bool HasCopiedEntity() const { return m_entityClipboardScene != nullptr && m_entityClipboardRootId != 0; }
 
     private:
         struct SceneHistoryEntry
@@ -217,6 +230,7 @@ namespace PlutoGE::ui
         bool ConfirmContinueWithUnsavedChanges();
         void MarkSceneClean();
         void MarkProjectClean();
+        void HandleEditorShortcuts(bool isRuntimeRunning);
 
         core::Engine &m_engine = core::Engine::GetInstance();
         PanelManager m_panelManager;
@@ -227,6 +241,8 @@ namespace PlutoGE::ui
         EditorViewportCamera m_editorCamera;
         std::unique_ptr<assets::Project> m_project;
         std::unique_ptr<scene::Scene> m_scene;
+        std::unique_ptr<scene::Scene> m_entityClipboardScene;
+        scene::EntityID m_entityClipboardRootId = 0;
         std::unique_ptr<scene::SceneBakeTask> m_activeBakeTask;
         scene::SceneBakeSettings m_customBakeSettings = scene::SceneBakeSettings::BalancedPreview();
         std::vector<scene::EntityID> m_pendingIblCaptureEntities;
@@ -240,8 +256,10 @@ namespace PlutoGE::ui
         std::string m_sceneEditBeforeState;
         std::vector<ConsoleMessage> m_consoleMessages;
         std::string m_activeMaterialAssetReference;
+        std::string m_activeMeshAssetReference;
         std::string m_runtimeSceneSnapshot;
         bool m_runtimeSceneWasDirty = false;
         bool m_openMaterialEditorRequested = false;
+        bool m_openMeshEditorRequested = false;
     };
 }

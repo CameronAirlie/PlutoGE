@@ -2,6 +2,8 @@
 
 #include "PlutoGE/render/Shader.h"
 
+#include <algorithm>
+
 namespace PlutoGE::render
 {
     std::vector<PostProcessParameter> ToneMappingEffect::GetParameters() const
@@ -30,7 +32,7 @@ namespace PlutoGE::render
             }
             else if (parameter.name == "Gamma")
             {
-                m_gamma = std::stof(parameter.value);
+                m_gamma = (std::max)(std::stof(parameter.value), 0.001f);
             }
         }
     }
@@ -88,7 +90,7 @@ namespace PlutoGE::render
                 // 3. Apply ACES tonemapping
                 vec3 mapped = aces(hdrColor);
                 // 4. Gamma correction for sRGB
-                mapped = pow(mapped, vec3(1.0 / uGamma));
+                mapped = pow(max(mapped, vec3(0.0)), vec3(1.0 / max(uGamma, 0.001)));
                 FragColor = vec4(mapped, 1.0);
             }
         )";

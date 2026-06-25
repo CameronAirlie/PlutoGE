@@ -95,8 +95,10 @@ namespace PlutoGE::scene
             MarkRenderCommandsDirty();
         }
         int GetSubmeshRangeCount() const { return m_submeshCount; }
-        void SetSourceMeshPath(const std::string &sourceMeshPath) { m_sourceMeshPath = sourceMeshPath; }
-        const std::string &GetSourceMeshPath() const { return m_sourceMeshPath; }
+        void SetMeshAssetReference(const std::string &meshAssetReference) { m_sourceMeshPath = meshAssetReference; }
+        const std::string &GetMeshAssetReference() const { return m_sourceMeshPath; }
+        void SetSourceMeshPath(const std::string &sourceMeshPath) { SetMeshAssetReference(sourceMeshPath); }
+        const std::string &GetSourceMeshPath() const { return GetMeshAssetReference(); }
         void SetUseGeneratedLods(bool useGeneratedLods) { m_useGeneratedLods = useGeneratedLods; }
         bool GetUseGeneratedLods() const { return m_useGeneratedLods; }
 

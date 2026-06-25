@@ -3,6 +3,7 @@
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/render/Material.h"
+#include "PlutoGE/render/Texture.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/AnimationComponent.h"
@@ -13,6 +14,7 @@
 #include <array>
 #include <cctype>
 #include <cstring>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -20,6 +22,17 @@
 #include <unordered_map>
 
 #include <imgui.h>
+#ifdef _WIN32
+#include <windows.h>
+#include <commdlg.h>
+#endif
+
+#ifdef max
+#undef max
+#endif
+#ifdef min
+#undef min
+#endif
 
 namespace PlutoGE::ui
 {
@@ -98,6 +111,340 @@ namespace PlutoGE::ui
                    extension == ".GLTF" || extension == ".GLB" || extension == ".FBX";
         }
 
+        std::string BrowseSourceModelPath()
+        {
+#ifdef _WIN32
+            OPENFILENAMEA openFileName{};
+            char fileName[MAX_PATH] = "";
+            openFileName.lStructSize = sizeof(openFileName);
+            openFileName.hwndOwner = nullptr;
+            openFileName.lpstrFilter = "Model Files\0*.gltf;*.glb;*.fbx\0glTF Files\0*.gltf;*.glb\0FBX Files\0*.fbx\0All Files\0*.*\0";
+            openFileName.lpstrFile = fileName;
+            openFileName.nMaxFile = MAX_PATH;
+            openFileName.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+            if (!GetOpenFileNameA(&openFileName))
+            {
+                return {};
+            }
+            return std::filesystem::path(fileName).lexically_normal().string();
+#else
+            return {};
+#endif
+        }
+
+        bool CopySourceModelPackageToAssets(const assets::Project &project,
+                                            const std::filesystem::path &sourcePath,
+                                            std::filesystem::path &importedSourcePath,
+                                            std::string *errorMessage)
+        {
+            std::error_code errorCode;
+            const auto normalizedSourcePath = std::filesystem::weakly_canonical(sourcePath, errorCode);
+            const auto sourceFilePath = errorCode ? sourcePath.lexically_normal() : normalizedSourcePath;
+            if (!std::filesystem::exists(sourceFilePath))
+            {
+                if (errorMessage)
+                {
+                    *errorMessage = "Selected model does not exist.";
+                }
+                return false;
+            }
+
+            if (!IsSupportedImportedModelReference(sourceFilePath.string()))
+            {
+                if (errorMessage)
+                {
+                    *errorMessage = "Selected file is not a supported source model. Use .gltf, .glb, or .fbx.";
+                }
+                return false;
+            }
+
+            if (project.IsInAssetDirectory(sourceFilePath))
+            {
+                importedSourcePath = sourceFilePath;
+                return true;
+            }
+
+            std::string packageName = SanitizeAssetFileName(sourceFilePath.stem().string());
+            if (packageName.empty())
+            {
+                packageName = "ImportedModel";
+            }
+            const auto packageDirectory = project.GetAssetDirectoryPath() / "SourceModels" / packageName;
+            std::filesystem::create_directories(packageDirectory, errorCode);
+            if (errorCode)
+            {
+                if (errorMessage)
+                {
+                    *errorMessage = "Failed to create source model directory: " + errorCode.message();
+                }
+                return false;
+            }
+
+            const auto sourceParent = sourceFilePath.parent_path();
+            for (std::filesystem::recursive_directory_iterator iterator(sourceParent, errorCode), end; iterator != end && !errorCode; iterator.increment(errorCode))
+            {
+                const auto &entry = *iterator;
+                if (!entry.is_regular_file(errorCode) || errorCode)
+                {
+                    errorCode.clear();
+                    continue;
+                }
+
+                const auto relativePath = std::filesystem::relative(entry.path(), sourceParent, errorCode);
+                if (errorCode)
+                {
+                    break;
+                }
+
+                const auto destinationPath = packageDirectory / relativePath;
+                std::filesystem::create_directories(destinationPath.parent_path(), errorCode);
+                if (errorCode)
+                {
+                    break;
+                }
+
+                std::filesystem::copy_file(entry.path(), destinationPath, std::filesystem::copy_options::overwrite_existing, errorCode);
+                if (errorCode)
+                {
+                    break;
+                }
+            }
+
+            if (errorCode)
+            {
+                if (errorMessage)
+                {
+                    *errorMessage = "Failed to copy source model package: " + errorCode.message();
+                }
+                return false;
+            }
+
+            importedSourcePath = packageDirectory / sourceFilePath.filename();
+            return true;
+        }
+
+        bool WriteTextureTga(const std::filesystem::path &path,
+                             const assetimport::ImportedTextureData &texture,
+                             std::string *errorMessage)
+        {
+            if (texture.width <= 0 || texture.height <= 0 || texture.channels <= 0 || texture.pixels.empty())
+            {
+                if (errorMessage)
+                {
+                    *errorMessage = "Imported texture has no pixel data.";
+                }
+                return false;
+            }
+
+            std::error_code errorCode;
+            std::filesystem::create_directories(path.parent_path(), errorCode);
+            if (errorCode)
+            {
+                if (errorMessage)
+                {
+                    *errorMessage = "Failed to create texture directory: " + errorCode.message();
+                }
+                return false;
+            }
+
+            std::ofstream output(path, std::ios::binary | std::ios::trunc);
+            if (!output.is_open())
+            {
+                if (errorMessage)
+                {
+                    *errorMessage = "Failed to write texture asset: " + path.string();
+                }
+                return false;
+            }
+
+            const unsigned char header[18] = {
+                0, 0, 2,
+                0, 0, 0, 0, 0,
+                0, 0, 0, 0,
+                static_cast<unsigned char>(texture.width & 0xff),
+                static_cast<unsigned char>((texture.width >> 8) & 0xff),
+                static_cast<unsigned char>(texture.height & 0xff),
+                static_cast<unsigned char>((texture.height >> 8) & 0xff),
+                32,
+                0x20 | 0x08,
+            };
+            output.write(reinterpret_cast<const char *>(header), sizeof(header));
+
+            const std::size_t sourceChannels = static_cast<std::size_t>(texture.channels);
+            const std::size_t pixelCount = static_cast<std::size_t>(texture.width) * static_cast<std::size_t>(texture.height);
+            for (std::size_t pixelIndex = 0; pixelIndex < pixelCount; ++pixelIndex)
+            {
+                const std::size_t sourceOffset = pixelIndex * sourceChannels;
+                const unsigned char red = texture.pixels[sourceOffset + 0];
+                const unsigned char green = sourceChannels > 1 ? texture.pixels[sourceOffset + 1] : red;
+                const unsigned char blue = sourceChannels > 2 ? texture.pixels[sourceOffset + 2] : red;
+                const unsigned char alpha = sourceChannels > 3 ? texture.pixels[sourceOffset + 3] : 255;
+                const unsigned char bgra[4] = {blue, green, red, alpha};
+                output.write(reinterpret_cast<const char *>(bgra), sizeof(bgra));
+            }
+
+            return output.good();
+        }
+
+        std::string SanitizeImportedAssetName(std::string text)
+        {
+            for (auto &character : text)
+            {
+                const unsigned char value = static_cast<unsigned char>(character);
+                if (std::isalnum(value) == 0 && character != '_' && character != '-')
+                {
+                    character = '_';
+                }
+            }
+            return text.empty() ? "Asset" : text;
+        }
+
+        std::string ImportTextureAsset(const assets::Project &project,
+                                       const std::filesystem::path &importDirectory,
+                                       const assetimport::ImportedTextureData &texture,
+                                       int textureIndex,
+                                       std::string *errorMessage)
+        {
+            const auto textureDirectory = importDirectory / "Textures";
+            if (!texture.sourcePath.empty() && std::filesystem::exists(texture.sourcePath))
+            {
+                const auto sourcePath = std::filesystem::path(texture.sourcePath);
+                const auto destinationPath = textureDirectory / sourcePath.filename();
+                std::error_code errorCode;
+                std::filesystem::create_directories(destinationPath.parent_path(), errorCode);
+                if (!errorCode)
+                {
+                    std::filesystem::copy_file(sourcePath, destinationPath, std::filesystem::copy_options::overwrite_existing, errorCode);
+                }
+                if (errorCode)
+                {
+                    if (errorMessage)
+                    {
+                        *errorMessage = "Failed to copy imported texture: " + errorCode.message();
+                    }
+                    return {};
+                }
+                return project.MakeAssetReference(destinationPath);
+            }
+
+            const auto texturePath = textureDirectory / ("T_" + std::to_string(textureIndex) + ".tga");
+            if (!WriteTextureTga(texturePath, texture, errorMessage))
+            {
+                return {};
+            }
+            return project.MakeAssetReference(texturePath);
+        }
+
+        render::MaterialConfig BuildGeneratedMaterialConfig(const assetimport::ImportedMaterialData &material,
+                                                            const std::vector<std::string> &textureReferences,
+                                                            std::deque<render::Texture> &textureHandles)
+        {
+            render::MaterialConfig config;
+            config.color = material.color;
+            config.surfaceType = material.surfaceType;
+            config.alphaMode = material.alphaMode;
+            config.alphaCutoff = material.alphaCutoff;
+            config.castsShadow = material.castsShadow;
+            config.metallic = material.metallic;
+            config.roughness = material.roughness;
+            config.transmission = material.transmission;
+            config.ior = material.ior;
+            config.thickness = material.thickness;
+            config.attenuationColor = material.attenuationColor;
+            config.attenuationDistance = material.attenuationDistance;
+            config.flipNormalY = material.flipNormalY;
+
+            auto assignTexture = [&](int textureIndex) -> render::Texture *
+            {
+                if (textureIndex < 0 || static_cast<std::size_t>(textureIndex) >= textureReferences.size() || textureReferences[static_cast<std::size_t>(textureIndex)].empty())
+                {
+                    return nullptr;
+                }
+                render::TextureConfig textureConfig;
+                textureConfig.filePath = textureReferences[static_cast<std::size_t>(textureIndex)];
+                textureHandles.emplace_back(textureConfig);
+                return &textureHandles.back();
+            };
+
+            config.albedoTexture = assignTexture(material.albedoTextureIndex);
+            config.normalTexture = assignTexture(material.normalTextureIndex);
+            if (auto *packedTexture = assignTexture(material.metallicRoughnessTextureIndex))
+            {
+                config.roughnessTexture = packedTexture;
+                config.roughnessTextureChannel = render::TextureChannel::Green;
+                if (material.metallicRoughnessTextureHasMetallicChannel)
+                {
+                    config.metallicTexture = packedTexture;
+                    config.metallicTextureChannel = render::TextureChannel::Blue;
+                }
+            }
+            return config;
+        }
+
+        std::vector<render::Material *> LoadMaterialReferences(core::Engine &engine, const std::vector<std::string> &materialReferences)
+        {
+            std::vector<render::Material *> materials;
+            materials.reserve(materialReferences.size());
+            for (const auto &materialReference : materialReferences)
+            {
+                auto *material = materialReference.empty()
+                                     ? engine.GetAssetManager().LoadMaterialAsset(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference))
+                                     : engine.GetAssetManager().LoadMaterialAsset(materialReference);
+                materials.push_back(material);
+            }
+            if (materials.empty())
+            {
+                materials.push_back(engine.GetAssetManager().LoadMaterialAsset(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference)));
+            }
+            return materials;
+        }
+
+        std::string FindSiblingAnimationAssetReference(const assets::Project *project, const std::string &meshReference)
+        {
+            if (!project || meshReference.empty() || assets::Project::IsEngineAssetReference(meshReference))
+            {
+                return {};
+            }
+
+            const auto meshPath = project->ResolveAssetReference(meshReference);
+            const auto expectedAnimationPath = meshPath.parent_path() / (meshPath.stem().string() + ".plutoanim");
+            if (std::filesystem::exists(expectedAnimationPath))
+            {
+                return project->MakeAssetReference(expectedAnimationPath);
+            }
+
+            for (const auto &asset : project->GetManifest().assetEntries)
+            {
+                if (asset.type != assets::ProjectAssetType::Animation)
+                {
+                    continue;
+                }
+
+                const auto animationPath = project->ResolveAssetReference(asset.reference);
+                if (animationPath.parent_path() == meshPath.parent_path())
+                {
+                    return asset.reference;
+                }
+            }
+            return {};
+        }
+
+        void AttachAnimationAsset(scene::Entity &entity, const std::string &animationReference)
+        {
+            if (animationReference.empty())
+            {
+                return;
+            }
+
+            auto *animationComponent = entity.GetComponent<scene::AnimationComponent>();
+            if (!animationComponent)
+            {
+                animationComponent = entity.CreateComponent<scene::AnimationComponent>();
+            }
+
+            animationComponent->SetAnimationAssetReference(animationReference);
+        }
+
         void AttachImportedAnimations(scene::Entity &entity,
                                       const std::string &sourceReference,
                                       const core::ImportedRenderMeshAsset &importedMeshAsset)
@@ -132,40 +479,34 @@ namespace PlutoGE::ui
             auto &engine = core::Engine::GetInstance();
             auto *meshComponent = entity.CreateComponent<scene::MeshComponent>(scene::MeshComponentConfig{});
 
-            if (assets::Project::IsEngineAssetReference(reference))
+            if (auto *mesh = engine.GetAssetManager().LoadMeshAsset(reference))
             {
-                auto *mesh = engine.GetAssetManager().LoadMeshAsset(reference);
-                if (!mesh)
-                {
-                    if (errorMessage)
-                    {
-                        *errorMessage = "Failed to load mesh asset: " + reference;
-                    }
-                    return false;
-                }
-
                 meshComponent->SetMesh(mesh);
                 meshComponent->SetSourceMeshPath(reference);
-                meshComponent->SetMaterialForMaterialSlot(
-                    0,
-                    engine.GetAssetManager().LoadMaterialAsset(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference)));
-                meshComponent->SetMaterialAssetForMaterialSlot(0, std::string(assets::Project::kBuiltinDefaultShadedMaterialReference));
+                const auto &materialReferences = engine.GetAssetManager().GetMeshAssetMaterialReferences(reference);
+                const auto materials = LoadMaterialReferences(engine, materialReferences);
+                meshComponent->SetMaterials(materials);
+                for (size_t materialSlotIndex = 0; materialSlotIndex < materialReferences.size(); ++materialSlotIndex)
+                {
+                    meshComponent->SetMaterialAssetForMaterialSlot(materialSlotIndex, materialReferences[materialSlotIndex]);
+                }
                 if (submeshIndex >= 0)
                 {
                     meshComponent->SetSubmeshRange(submeshIndex, submeshCount);
                     if (static_cast<size_t>(submeshIndex) < mesh->GetSubmeshCount())
                     {
-                        meshComponent->SetMaterialForSubmesh(
-                            static_cast<size_t>(submeshIndex),
-                            engine.GetAssetManager().LoadMaterialAsset(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference)));
-                        meshComponent->SetMaterialAssetForSubmesh(static_cast<size_t>(submeshIndex),
-                                                                  std::string(assets::Project::kBuiltinDefaultShadedMaterialReference));
+                        const auto materialSlot = static_cast<size_t>(mesh->GetSubmesh(static_cast<size_t>(submeshIndex)).materialIndex);
+                        if (materialSlot < materials.size())
+                        {
+                            meshComponent->SetMaterialForSubmesh(static_cast<size_t>(submeshIndex), materials[materialSlot]);
+                        }
                     }
                 }
                 else
                 {
                     meshComponent->CreateSubmeshChildEntities();
                 }
+                AttachAnimationAsset(entity, FindSiblingAnimationAssetReference(EditorShell::GetInstance().GetProject(), reference));
                 return true;
             }
 
@@ -226,6 +567,126 @@ namespace PlutoGE::ui
             return true;
         }
 
+        bool ImportSourceModelAsset(const assets::Project &project, const assets::ProjectAssetEntry &asset, std::string *errorMessage)
+        {
+            if (asset.type != assets::ProjectAssetType::SourceModel)
+            {
+                return false;
+            }
+
+            auto &engine = core::Engine::GetInstance();
+            const auto sourcePath = project.ResolveAssetReference(asset.reference);
+            auto importedMeshAsset = engine.ImportMeshAsset(sourcePath.string());
+            auto rawImportedMeshAsset = engine.GetMeshImporter().ImportMeshAsset(sourcePath.string());
+            if (!importedMeshAsset.mesh)
+            {
+                if (errorMessage)
+                {
+                    *errorMessage = "Failed to import source model: " + asset.reference;
+                }
+                return false;
+            }
+
+            const auto importDirectory = project.GetAssetDirectoryPath() / "Imported" / sourcePath.stem();
+            const std::string meshReference = project.MakeAssetReference(importDirectory / (sourcePath.stem().string() + ".plutomesh"));
+            std::vector<std::string> textureReferences;
+            if (rawImportedMeshAsset.textures)
+            {
+                textureReferences.reserve(rawImportedMeshAsset.textures->size());
+                for (std::size_t textureIndex = 0; textureIndex < rawImportedMeshAsset.textures->size(); ++textureIndex)
+                {
+                    const auto &texture = (*rawImportedMeshAsset.textures)[textureIndex];
+                    textureReferences.push_back(ImportTextureAsset(project, importDirectory, texture, static_cast<int>(textureIndex), errorMessage));
+                    if (textureReferences.back().empty() && (!texture.sourcePath.empty() || !texture.pixels.empty()))
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            std::vector<std::string> materialReferences;
+            if (rawImportedMeshAsset.materials && !rawImportedMeshAsset.materials->empty())
+            {
+                materialReferences.reserve(rawImportedMeshAsset.materials->size());
+                std::deque<render::Texture> textureHandles;
+                for (size_t materialIndex = 0; materialIndex < rawImportedMeshAsset.materials->size(); ++materialIndex)
+                {
+                    const std::string materialName = "M_" + sourcePath.stem().string() + "_" + std::to_string(materialIndex);
+                    const std::string materialReference = project.MakeAssetReference(importDirectory / (materialName + ".plutomaterial"));
+                    std::string materialError;
+                    const auto materialConfig = BuildGeneratedMaterialConfig((*rawImportedMeshAsset.materials)[materialIndex], textureReferences, textureHandles);
+                    if (!engine.GetAssetManager().SaveMaterialAsset(materialReference, materialConfig, &materialError))
+                    {
+                        if (errorMessage)
+                        {
+                            *errorMessage = materialError.empty() ? "Failed to save imported material." : materialError;
+                        }
+                        return false;
+                    }
+                    materialReferences.push_back(materialReference);
+                }
+            }
+
+            render::MeshConfig meshConfig;
+            meshConfig.data = importedMeshAsset.mesh->GetMeshData();
+            meshConfig.hasLightmapUvs = importedMeshAsset.mesh->HasLightmapUvs();
+            meshConfig.skeleton = importedMeshAsset.mesh->GetSkeleton();
+            meshConfig.animationNodes = importedMeshAsset.mesh->GetAnimationNodes();
+            for (size_t submeshIndex = 0; submeshIndex < importedMeshAsset.mesh->GetSubmeshCount(); ++submeshIndex)
+            {
+                meshConfig.submeshes.push_back(importedMeshAsset.mesh->GetSubmesh(submeshIndex));
+            }
+
+            if (!engine.GetAssetManager().SaveMeshAsset(meshReference, meshConfig, materialReferences, errorMessage))
+            {
+                return false;
+            }
+
+            if (importedMeshAsset.animations && !importedMeshAsset.animations->empty())
+            {
+                const std::string animationReference = project.MakeAssetReference(importDirectory / (sourcePath.stem().string() + ".plutoanim"));
+                if (!engine.GetAssetManager().SaveAnimationAsset(animationReference, *importedMeshAsset.animations, errorMessage))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        bool ImportExternalSourceModelIntoAssets(assets::Project &project, std::string *importedReference, std::string *errorMessage)
+        {
+            const std::string selectedPath = BrowseSourceModelPath();
+            if (selectedPath.empty())
+            {
+                return false;
+            }
+
+            std::filesystem::path importedSourcePath;
+            if (!CopySourceModelPackageToAssets(project, selectedPath, importedSourcePath, errorMessage))
+            {
+                return false;
+            }
+
+            const std::string sourceReference = project.MakeAssetReference(importedSourcePath);
+            assets::ProjectAssetEntry sourceAsset{};
+            sourceAsset.reference = sourceReference;
+            sourceAsset.type = assets::ProjectAssetType::SourceModel;
+            std::error_code errorCode;
+            sourceAsset.size = std::filesystem::file_size(importedSourcePath, errorCode);
+
+            if (!ImportSourceModelAsset(project, sourceAsset, errorMessage))
+            {
+                return false;
+            }
+
+            if (importedReference)
+            {
+                *importedReference = sourceReference;
+            }
+            return true;
+        }
+
         render::Mesh *GetOrCreateIsolatedSubmeshRuntimeMesh(const std::string &reference,
                                                             int submeshIndex,
                                                             int submeshCount,
@@ -256,6 +717,9 @@ namespace PlutoGE::ui
             config.data = sourceMesh.GetMeshData();
             config.submeshes = std::move(submeshes);
             config.hasLightmapUvs = sourceMesh.HasLightmapUvs();
+            config.skeleton = sourceMesh.GetSkeleton();
+            config.animationNodes = sourceMesh.GetAnimationNodes();
+            config.animations = sourceMesh.GetAnimations();
             auto mesh = std::unique_ptr<render::Mesh>(render::Mesh::FromConfig(std::move(config)));
             auto *meshPtr = mesh.get();
             isolatedMeshes.emplace(key, std::move(mesh));
@@ -330,6 +794,22 @@ namespace PlutoGE::ui
             editorShell.Log(EditorShell::ConsoleSeverity::Info, "Refreshed project assets.");
         }
         ImGui::SameLine();
+        if (ImGui::Button("Import Model"))
+        {
+            std::string importedReference;
+            std::string errorMessage;
+            if (ImportExternalSourceModelIntoAssets(*project, &importedReference, &errorMessage))
+            {
+                project->RefreshAssetRegistry();
+                editorShell.MarkProjectDirty();
+                editorShell.Log(EditorShell::ConsoleSeverity::Info, "Imported model into assets: " + importedReference);
+            }
+            else if (!errorMessage.empty())
+            {
+                editorShell.Log(EditorShell::ConsoleSeverity::Error, errorMessage);
+            }
+        }
+        ImGui::SameLine();
         if (ImGui::Button("Create Material"))
         {
             m_newMaterialNameBuffer.fill('\0');
@@ -399,8 +879,7 @@ namespace PlutoGE::ui
 
             const bool selected = m_selectedAssetIndex == index;
             const bool canExpandMesh = asset.type == assets::ProjectAssetType::Mesh &&
-                                       !assets::Project::IsEngineAssetReference(asset.reference) &&
-                                       IsSupportedImportedModelReference(asset.reference);
+                                       !assets::Project::IsEngineAssetReference(asset.reference);
             bool rowActivated = false;
             bool treeOpen = false;
             ImGui::PushID(index);
@@ -438,6 +917,10 @@ namespace PlutoGE::ui
                 {
                     editorShell.OpenMaterialAsset(asset.reference);
                 }
+                else if (asset.type == assets::ProjectAssetType::Mesh)
+                {
+                    editorShell.OpenMeshAsset(asset.reference);
+                }
             }
 
             if (ImGui::BeginDragDropSource())
@@ -453,9 +936,7 @@ namespace PlutoGE::ui
             {
                 try
                 {
-                    const std::string resolvedPath = editorShell.GetEngine().GetAssetManager().ResolveMeshAssetSourcePath(asset.reference);
-                    auto importedMeshAsset = editorShell.GetEngine().ImportMeshAsset(resolvedPath);
-                    auto *mesh = importedMeshAsset.mesh;
+                    auto *mesh = editorShell.GetEngine().GetAssetManager().LoadMeshAsset(asset.reference);
                     if (!mesh || mesh->GetSubmeshCount() == 0)
                     {
                         ImGui::TextDisabled("No mesh children.");
@@ -553,6 +1034,31 @@ namespace PlutoGE::ui
                 if (ImGui::Button("Open Material"))
                 {
                     editorShell.OpenMaterialAsset(asset.reference);
+                }
+            }
+            else if (asset.type == assets::ProjectAssetType::Mesh)
+            {
+                if (ImGui::Button("Open Mesh"))
+                {
+                    editorShell.OpenMeshAsset(asset.reference);
+                }
+            }
+            else if (asset.type == assets::ProjectAssetType::SourceModel)
+            {
+                if (ImGui::Button("Import Model"))
+                {
+                    std::string errorMessage;
+                    if (ImportSourceModelAsset(*project, asset, &errorMessage))
+                    {
+                        project->RefreshAssetRegistry();
+                        editorShell.MarkProjectDirty();
+                        editorShell.Log(EditorShell::ConsoleSeverity::Info, "Imported model assets: " + asset.reference);
+                    }
+                    else
+                    {
+                        editorShell.Log(EditorShell::ConsoleSeverity::Error,
+                                        errorMessage.empty() ? "Failed to import model." : errorMessage);
+                    }
                 }
             }
         }

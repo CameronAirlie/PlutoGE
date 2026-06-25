@@ -186,6 +186,14 @@ namespace PlutoGE::ui
             {
                 BeginRename(entity);
             }
+            if (ImGui::MenuItem("Copy", "Ctrl+C"))
+            {
+                EditorShell::GetInstance().CopySelectedEntity();
+            }
+            if (ImGui::MenuItem("Duplicate", "Ctrl+D"))
+            {
+                EditorShell::GetInstance().DuplicateSelectedEntity();
+            }
             if (entity->GetParent() && ImGui::MenuItem("Unparent"))
             {
                 EditorShell::GetInstance().ExecuteSceneEdit("Unparent Entity",
@@ -233,25 +241,14 @@ namespace PlutoGE::ui
                     }
                 }
             }
-            if (ImGui::MenuItem("Delete Entity"))
+            if (ImGui::MenuItem("Delete Entity", "Del"))
             {
-                auto scene = EditorShell::GetInstance().GetEngine().GetScene();
-                if (scene)
+                const scene::EntityID deletedEntityId = entity->GetID();
+                if (EditorShell::GetInstance().DeleteSelectedEntity())
                 {
-                    const scene::EntityID deletedEntityId = entity->GetID();
-                    const bool deletedSelection = EditorShell::GetInstance().GetSelectedEntity() == entity;
-                    EditorShell::GetInstance().ExecuteSceneEdit("Delete Entity",
-                                                                [scene, entity]()
-                                                                {
-                                                                    scene->RemoveEntity(entity);
-                                                                });
                     if (m_renamingEntityId == deletedEntityId)
                     {
                         EndRename(false);
-                    }
-                    if (deletedSelection)
-                    {
-                        EditorShell::GetInstance().SetSelectedEntity(nullptr); // Clear selection if the selected entity is deleted
                     }
                 }
             }
@@ -397,6 +394,13 @@ namespace PlutoGE::ui
     {
         if (ImGui::BeginPopupContextWindow("PanelContextMenu", ImGuiPopupFlags_NoOpenOverItems))
         {
+            ImGui::BeginDisabled(!EditorShell::GetInstance().HasCopiedEntity());
+            if (ImGui::MenuItem("Paste", "Ctrl+V"))
+            {
+                EditorShell::GetInstance().PasteCopiedEntity();
+            }
+            ImGui::EndDisabled();
+            ImGui::Separator();
             if (ImGui::MenuItem("Create Empty Entity"))
             {
                 auto scene = ui::EditorShell::GetInstance().GetEngine().GetScene();

@@ -70,7 +70,7 @@ namespace PlutoGE::scene
 
         void SetMaterial(render::Material *material);
         render::Material *GetMaterial() const { return m_material; }
-        void SetMaterialAssetReference(const std::string &materialAssetReference) { m_materialAssetReference = materialAssetReference; }
+        void SetMaterialAssetReference(const std::string &materialAssetReference);
         const std::string &GetMaterialAssetReference() const { return m_materialAssetReference; }
         const std::string &GetHeightMapPath() const { return m_heightMapPath; }
 

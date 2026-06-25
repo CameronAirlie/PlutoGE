@@ -646,11 +646,17 @@ namespace PlutoGE::assets
         {
             return ProjectAssetType::Material;
         }
-        if (EndsWithInsensitive(reference, ".plutomesh") || EndsWithInsensitive(reference, ".gltf") ||
-            EndsWithInsensitive(reference, ".glb") || EndsWithInsensitive(reference, ".obj") ||
-            EndsWithInsensitive(reference, ".fbx"))
+        if (EndsWithInsensitive(reference, ".plutomesh") || EndsWithInsensitive(reference, ".obj"))
         {
             return ProjectAssetType::Mesh;
+        }
+        if (EndsWithInsensitive(reference, ".plutoanim"))
+        {
+            return ProjectAssetType::Animation;
+        }
+        if (EndsWithInsensitive(reference, ".gltf") || EndsWithInsensitive(reference, ".glb") || EndsWithInsensitive(reference, ".fbx"))
+        {
+            return ProjectAssetType::SourceModel;
         }
         if (EndsWithInsensitive(reference, ".png") || EndsWithInsensitive(reference, ".jpg") ||
             EndsWithInsensitive(reference, ".jpeg") || EndsWithInsensitive(reference, ".tga") ||
@@ -674,6 +680,10 @@ namespace PlutoGE::assets
             return "Script";
         case ProjectAssetType::Mesh:
             return "Mesh";
+        case ProjectAssetType::Animation:
+            return "Animation";
+        case ProjectAssetType::SourceModel:
+            return "Source Model";
         case ProjectAssetType::Material:
             return "Material";
         case ProjectAssetType::Texture:
@@ -696,6 +706,10 @@ namespace PlutoGE::assets
             return ProjectAssetType::Script;
         if (typeName == "Mesh")
             return ProjectAssetType::Mesh;
+        if (typeName == "Animation")
+            return ProjectAssetType::Animation;
+        if (typeName == "Source Model" || typeName == "SourceModel")
+            return ProjectAssetType::SourceModel;
         if (typeName == "Material")
             return ProjectAssetType::Material;
         if (typeName == "Texture")

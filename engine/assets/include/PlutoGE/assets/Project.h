@@ -16,6 +16,8 @@ namespace PlutoGE::assets
         Prefab,
         Script,
         Mesh,
+        Animation,
+        SourceModel,
         Material,
         Texture,
         Assembly,

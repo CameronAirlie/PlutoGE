@@ -22,6 +22,10 @@ namespace PlutoGE::scene
                                    std::string prefabReference,
                                    Entity *parent = nullptr,
                                    std::string *errorMessage = nullptr);
+        static Entity *DuplicateEntity(Scene &scene,
+                                       const Entity &source,
+                                       Entity *parent = nullptr,
+                                       bool preservePrefabLink = true);
         static bool UpdateInstance(Entity &instanceRoot, std::string *errorMessage = nullptr);
         static int UpdateInstances(Scene &scene,
                                    std::string_view prefabReference = {},

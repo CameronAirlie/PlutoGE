@@ -22,11 +22,13 @@ namespace PlutoGE::scene
         void Deserialize(const std::vector<Property> &properties) override;
 
         void SetClipsFromImportedAnimations(const std::vector<render::AnimationClip> &animations);
+        bool SetAnimationAssetReference(std::string animationAssetReference);
         void SetSourceAnimationPath(std::string sourceAnimationPath) { m_sourceAnimationPath = std::move(sourceAnimationPath); }
         const std::string &GetSourceAnimationPath() const { return m_sourceAnimationPath; }
 
         const std::vector<render::AnimationClip> &GetClips() const { return m_clips; }
         const std::vector<glm::mat4> &GetJointMatrices(const render::Skeleton &skeleton);
+        const std::vector<glm::mat4> &GetJointMatrices(const render::Skeleton &skeleton, const std::vector<render::AnimationNode> &nodes);
         glm::mat4 GetNodeMatrix(const std::vector<render::AnimationNode> &nodes, int nodeIndex);
         int GetClipCount() const { return static_cast<int>(m_clips.size()); }
         int GetCurrentClipIndex() const { return m_currentClipIndex; }

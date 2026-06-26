@@ -30,7 +30,9 @@ namespace PlutoGE::ui
         GraphEditor::ViewState m_graphViewState;
         GraphEditor::FitOnScreen m_graphFit = GraphEditor::Fit_AllNodes;
         std::unordered_map<int, ImRect> m_nodeScreenRects;
+        ImVec2 m_addNodePosition{60.0f, 60.0f};
         int m_resizingNodeId = 0;
+        bool m_openAddNodePopup = false;
         bool m_dirty = false;
     };
 }

@@ -146,6 +146,17 @@ namespace PlutoGE::render
             case ShaderGraphNodeKind::Normalize:
                 expression = "normalize(" + input("Value", "graphNormal") + ")";
                 break;
+            case ShaderGraphNodeKind::NoiseTexture:
+            {
+                const std::string scaleFallback = FloatLiteral(node->value.x <= 0.0f ? 8.0f : node->value.x);
+                const std::string strengthFallback = FloatLiteral(node->value.y <= 0.0f ? 1.0f : node->value.y);
+                const std::string uv = "ToVec2(" + input("UV", "UV") + ")";
+                const std::string scale = "ToFloat(" + input("Scale", scaleFallback.c_str()) + ")";
+                const std::string strength = "ToFloat(" + input("Strength", strengthFallback.c_str()) + ")";
+                const std::string noise = "(ShaderGraphNoise(" + uv + " * " + scale + ") * " + strength + ")";
+                expression = pin == "Color" ? "vec4(vec3(" + noise + "), 1.0)" : noise;
+                break;
+            }
             case ShaderGraphNodeKind::Output:
                 if (const auto *link = FindInputLink(graph, nodeId, pin))
                 {
@@ -247,10 +258,31 @@ namespace PlutoGE::render
             float ToFloat(vec2 value) { return value.x; }
             float ToFloat(vec3 value) { return value.x; }
             float ToFloat(vec4 value) { return value.x; }
+            vec2 ToVec2(float value) { return vec2(value); }
+            vec2 ToVec2(vec2 value) { return value; }
+            vec2 ToVec2(vec3 value) { return value.xy; }
+            vec2 ToVec2(vec4 value) { return value.xy; }
             vec3 ToVec3(float value) { return vec3(value); }
             vec3 ToVec3(vec2 value) { return vec3(value, 0.0); }
             vec3 ToVec3(vec3 value) { return value; }
             vec3 ToVec3(vec4 value) { return value.rgb; }
+
+            float ShaderGraphHash(vec2 value)
+            {
+                return fract(sin(dot(value, vec2(127.1, 311.7))) * 43758.5453123);
+            }
+
+            float ShaderGraphNoise(vec2 value)
+            {
+                vec2 cell = floor(value);
+                vec2 local = fract(value);
+                vec2 curve = local * local * (3.0 - 2.0 * local);
+                float bottomLeft = ShaderGraphHash(cell);
+                float bottomRight = ShaderGraphHash(cell + vec2(1.0, 0.0));
+                float topLeft = ShaderGraphHash(cell + vec2(0.0, 1.0));
+                float topRight = ShaderGraphHash(cell + vec2(1.0, 1.0));
+                return mix(mix(bottomLeft, bottomRight, curve.x), mix(topLeft, topRight, curve.x), curve.y);
+            }
 
             void main()
             {
@@ -485,6 +517,8 @@ namespace PlutoGE::render
             return "Clamp";
         case ShaderGraphNodeKind::Normalize:
             return "Normalize";
+        case ShaderGraphNodeKind::NoiseTexture:
+            return "NoiseTexture";
         case ShaderGraphNodeKind::Output:
             return "Output";
         default:
@@ -525,6 +559,7 @@ namespace PlutoGE::render
         if (value == "Lerp") return ShaderGraphNodeKind::Lerp;
         if (value == "Clamp") return ShaderGraphNodeKind::Clamp;
         if (value == "Normalize") return ShaderGraphNodeKind::Normalize;
+        if (value == "NoiseTexture") return ShaderGraphNodeKind::NoiseTexture;
         if (value == "Output") return ShaderGraphNodeKind::Output;
         return ShaderGraphNodeKind::Float;
     }

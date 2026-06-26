@@ -28,6 +28,8 @@ namespace PlutoGE::ui
         constexpr const char *kPinsLerp[] = {"A", "B", "T"};
         constexpr const char *kPinsClamp[] = {"Value", "Min", "Max"};
         constexpr const char *kPinsValue[] = {"Value"};
+        constexpr const char *kPinsNoise[] = {"UV", "Scale", "Strength"};
+        constexpr const char *kPinsNoiseOutput[] = {"Value", "Color"};
         constexpr const char *kPinsOutput[] = {"Albedo", "Normal", "Metallic", "Roughness", "Opacity"};
 
         ImU32 *NoPinColors()
@@ -54,6 +56,9 @@ namespace PlutoGE::ui
             case render::ShaderGraphNodeKind::Normalize:
                 count = 1;
                 return const_cast<const char **>(kPinsValue);
+            case render::ShaderGraphNodeKind::NoiseTexture:
+                count = 3;
+                return const_cast<const char **>(kPinsNoise);
             case render::ShaderGraphNodeKind::Output:
                 count = 5;
                 return const_cast<const char **>(kPinsOutput);
@@ -65,6 +70,12 @@ namespace PlutoGE::ui
 
         const char **OutputPins(render::ShaderGraphNodeKind kind, ImU8 &count)
         {
+            if (kind == render::ShaderGraphNodeKind::NoiseTexture)
+            {
+                count = 2;
+                return const_cast<const char **>(kPinsNoiseOutput);
+            }
+
             if (kind == render::ShaderGraphNodeKind::Output)
             {
                 count = 0;
@@ -185,7 +196,8 @@ namespace PlutoGE::ui
             else if (kind == render::ShaderGraphNodeKind::Float ||
                      kind == render::ShaderGraphNodeKind::Vec2 ||
                      kind == render::ShaderGraphNodeKind::Vec3 ||
-                     kind == render::ShaderGraphNodeKind::Color)
+                     kind == render::ShaderGraphNodeKind::Color ||
+                     kind == render::ShaderGraphNodeKind::NoiseTexture)
             {
                 headerColor = IM_COL32(96, 76, 124, 255);
                 backgroundColor = IM_COL32(49, 42, 61, 255);
@@ -319,8 +331,26 @@ namespace PlutoGE::ui
         class ShaderGraphDelegate : public GraphEditor::Delegate
         {
         public:
-            ShaderGraphDelegate(render::ShaderGraph &graph, std::vector<int> &selectedNodeIds, int &selectedNodeId, std::unordered_map<int, ImRect> &nodeScreenRects, int &resizingNodeId, bool &dirty)
-                : m_graph(graph), m_selectedNodeIds(selectedNodeIds), m_selectedNodeId(selectedNodeId), m_nodeScreenRects(nodeScreenRects), m_resizingNodeId(resizingNodeId), m_dirty(dirty)
+            ShaderGraphDelegate(render::ShaderGraph &graph,
+                                std::vector<int> &selectedNodeIds,
+                                int &selectedNodeId,
+                                std::unordered_map<int, ImRect> &nodeScreenRects,
+                                const GraphEditor::ViewState &viewState,
+                                const ImVec2 &canvasScreenPos,
+                                ImVec2 &addNodePosition,
+                                int &resizingNodeId,
+                                bool &openAddNodePopup,
+                                bool &dirty)
+                : m_graph(graph),
+                  m_selectedNodeIds(selectedNodeIds),
+                  m_selectedNodeId(selectedNodeId),
+                  m_nodeScreenRects(nodeScreenRects),
+                  m_viewState(viewState),
+                  m_canvasScreenPos(canvasScreenPos),
+                  m_addNodePosition(addNodePosition),
+                  m_resizingNodeId(resizingNodeId),
+                  m_openAddNodePopup(openAddNodePopup),
+                  m_dirty(dirty)
             {
             }
 
@@ -572,7 +602,14 @@ namespace PlutoGE::ui
                 if (nodeIndex < m_graph.nodes.size())
                 {
                     m_selectedNodeId = m_graph.nodes[nodeIndex].id;
+                    return;
                 }
+
+                const ImVec2 mouse = ImGui::GetIO().MousePos;
+                const float factor = std::max(0.001f, m_viewState.mFactor);
+                m_addNodePosition = ImVec2((mouse.x - m_canvasScreenPos.x) / factor - m_viewState.mPosition.x,
+                                           (mouse.y - m_canvasScreenPos.y) / factor - m_viewState.mPosition.y);
+                m_openAddNodePopup = true;
             }
 
             const size_t GetTemplateCount() override
@@ -628,17 +665,21 @@ namespace PlutoGE::ui
                 return static_cast<GraphEditor::TemplateIndex>(std::clamp(static_cast<int>(node.kind), 0, static_cast<int>(m_templates.size() - 1)));
             }
 
-            static const std::array<GraphEditor::Template, 13> m_templates;
+            static const std::array<GraphEditor::Template, 14> m_templates;
 
             render::ShaderGraph &m_graph;
             std::vector<int> &m_selectedNodeIds;
             int &m_selectedNodeId;
             std::unordered_map<int, ImRect> &m_nodeScreenRects;
+            const GraphEditor::ViewState &m_viewState;
+            ImVec2 m_canvasScreenPos;
+            ImVec2 &m_addNodePosition;
             int &m_resizingNodeId;
+            bool &m_openAddNodePopup;
             bool &m_dirty;
         };
 
-        const std::array<GraphEditor::Template, 13> ShaderGraphDelegate::m_templates = {
+        const std::array<GraphEditor::Template, 14> ShaderGraphDelegate::m_templates = {
             BuildTemplate(render::ShaderGraphNodeKind::MaterialInput),
             BuildTemplate(render::ShaderGraphNodeKind::Float),
             BuildTemplate(render::ShaderGraphNodeKind::Vec2),
@@ -651,6 +692,7 @@ namespace PlutoGE::ui
             BuildTemplate(render::ShaderGraphNodeKind::Lerp),
             BuildTemplate(render::ShaderGraphNodeKind::Clamp),
             BuildTemplate(render::ShaderGraphNodeKind::Normalize),
+            BuildTemplate(render::ShaderGraphNodeKind::NoiseTexture),
             BuildTemplate(render::ShaderGraphNodeKind::Output),
         };
 
@@ -661,7 +703,7 @@ namespace PlutoGE::ui
 
         render::ShaderGraphNode MakeNode(render::ShaderGraph &graph, render::ShaderGraphNodeKind kind, const char *name)
         {
-            return render::ShaderGraphNode{
+            render::ShaderGraphNode node{
                 .id = NextNodeId(graph),
                 .kind = kind,
                 .name = name,
@@ -669,6 +711,33 @@ namespace PlutoGE::ui
                              60.0f + static_cast<float>(graph.nodes.size() % 7) * 28.0f},
                 .size = {kDefaultNodeWidth, NodeHeight(kind)},
             };
+
+            if (kind == render::ShaderGraphNodeKind::NoiseTexture)
+            {
+                node.value.x = 8.0f;
+                node.value.y = 1.0f;
+            }
+
+            return node;
+        }
+
+        render::ShaderGraphNode MakeNodeAt(render::ShaderGraph &graph, render::ShaderGraphNodeKind kind, const char *name, const ImVec2 &position)
+        {
+            render::ShaderGraphNode node = MakeNode(graph, kind, name);
+            node.position = {position.x, position.y};
+            return node;
+        }
+
+        bool AddNodeMenuItem(const char *label, render::ShaderGraph &graph, render::ShaderGraphNodeKind kind, const char *name, const ImVec2 &position, bool &dirty)
+        {
+            if (!ImGui::MenuItem(label))
+            {
+                return false;
+            }
+
+            graph.nodes.push_back(MakeNodeAt(graph, kind, name, position));
+            dirty = true;
+            return true;
         }
     }
 
@@ -689,6 +758,9 @@ namespace PlutoGE::ui
             m_selectedNodeIds.push_back(m_selectedNodeId);
         }
         m_graphFit = GraphEditor::Fit_AllNodes;
+        m_nodeScreenRects.clear();
+        m_openAddNodePopup = false;
+        m_resizingNodeId = 0;
         m_dirty = false;
     }
 
@@ -727,36 +799,6 @@ namespace PlutoGE::ui
         }
 
         ImGui::BeginDisabled(engineGraph);
-        if (ImGui::Button("Material Input"))
-        {
-            m_graph.nodes.push_back(MakeNode(m_graph, render::ShaderGraphNodeKind::MaterialInput, "Material Input"));
-            m_dirty = true;
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Float"))
-        {
-            m_graph.nodes.push_back(MakeNode(m_graph, render::ShaderGraphNodeKind::Float, "Float"));
-            m_dirty = true;
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Color"))
-        {
-            m_graph.nodes.push_back(MakeNode(m_graph, render::ShaderGraphNodeKind::Color, "Color"));
-            m_dirty = true;
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Multiply"))
-        {
-            m_graph.nodes.push_back(MakeNode(m_graph, render::ShaderGraphNodeKind::Multiply, "Multiply"));
-            m_dirty = true;
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Add"))
-        {
-            m_graph.nodes.push_back(MakeNode(m_graph, render::ShaderGraphNodeKind::Add, "Add"));
-            m_dirty = true;
-        }
-        ImGui::SameLine();
         if (ImGui::Button("Fit"))
         {
             m_graphFit = GraphEditor::Fit_AllNodes;
@@ -766,10 +808,65 @@ namespace PlutoGE::ui
         ImGui::Separator();
         ImGui::Columns(2, "ShaderGraphEditorColumns", true);
 
-        ShaderGraphDelegate delegate(m_graph, m_selectedNodeIds, m_selectedNodeId, m_nodeScreenRects, m_resizingNodeId, m_dirty);
         const ImVec2 graphSize(ImGui::GetContentRegionAvail().x, std::max(360.0f, ImGui::GetContentRegionAvail().y - 62.0f));
         ImGui::BeginChild("ShaderGraphCanvasHost", graphSize, true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+        const ImVec2 canvasScreenPos = ImGui::GetCursorScreenPos();
+        ShaderGraphDelegate delegate(m_graph,
+                                     m_selectedNodeIds,
+                                     m_selectedNodeId,
+                                     m_nodeScreenRects,
+                                     m_graphViewState,
+                                     canvasScreenPos,
+                                     m_addNodePosition,
+                                     m_resizingNodeId,
+                                     m_openAddNodePopup,
+                                     m_dirty);
         GraphEditor::Show(delegate, m_graphOptions, m_graphViewState, !engineGraph, &m_graphFit);
+        if (m_openAddNodePopup)
+        {
+            ImGui::OpenPopup("ShaderGraphAddNodePopup");
+            m_openAddNodePopup = false;
+        }
+        ImGui::BeginDisabled(engineGraph);
+        if (ImGui::BeginPopup("ShaderGraphAddNodePopup"))
+        {
+            if (ImGui::BeginMenu("Inputs"))
+            {
+                AddNodeMenuItem("Material Input", m_graph, render::ShaderGraphNodeKind::MaterialInput, "Material Input", m_addNodePosition, m_dirty);
+                ImGui::EndMenu();
+            }
+            if (ImGui::BeginMenu("Values"))
+            {
+                AddNodeMenuItem("Float", m_graph, render::ShaderGraphNodeKind::Float, "Float", m_addNodePosition, m_dirty);
+                AddNodeMenuItem("Vec2", m_graph, render::ShaderGraphNodeKind::Vec2, "Vec2", m_addNodePosition, m_dirty);
+                AddNodeMenuItem("Vec3", m_graph, render::ShaderGraphNodeKind::Vec3, "Vec3", m_addNodePosition, m_dirty);
+                AddNodeMenuItem("Color", m_graph, render::ShaderGraphNodeKind::Color, "Color", m_addNodePosition, m_dirty);
+                ImGui::EndMenu();
+            }
+            if (ImGui::BeginMenu("Textures"))
+            {
+                AddNodeMenuItem("Noise Texture", m_graph, render::ShaderGraphNodeKind::NoiseTexture, "Noise Texture", m_addNodePosition, m_dirty);
+                ImGui::EndMenu();
+            }
+            if (ImGui::BeginMenu("Math"))
+            {
+                AddNodeMenuItem("Add", m_graph, render::ShaderGraphNodeKind::Add, "Add", m_addNodePosition, m_dirty);
+                AddNodeMenuItem("Subtract", m_graph, render::ShaderGraphNodeKind::Subtract, "Subtract", m_addNodePosition, m_dirty);
+                AddNodeMenuItem("Multiply", m_graph, render::ShaderGraphNodeKind::Multiply, "Multiply", m_addNodePosition, m_dirty);
+                AddNodeMenuItem("Divide", m_graph, render::ShaderGraphNodeKind::Divide, "Divide", m_addNodePosition, m_dirty);
+                AddNodeMenuItem("Lerp", m_graph, render::ShaderGraphNodeKind::Lerp, "Lerp", m_addNodePosition, m_dirty);
+                AddNodeMenuItem("Clamp", m_graph, render::ShaderGraphNodeKind::Clamp, "Clamp", m_addNodePosition, m_dirty);
+                AddNodeMenuItem("Normalize", m_graph, render::ShaderGraphNodeKind::Normalize, "Normalize", m_addNodePosition, m_dirty);
+                ImGui::EndMenu();
+            }
+            if (ImGui::BeginMenu("Output"))
+            {
+                AddNodeMenuItem("Geometry Output", m_graph, render::ShaderGraphNodeKind::Output, "Geometry Output", m_addNodePosition, m_dirty);
+                ImGui::EndMenu();
+            }
+            ImGui::EndPopup();
+        }
+        ImGui::EndDisabled();
         ImGui::EndChild();
 
         ImGui::NextColumn();
@@ -833,9 +930,34 @@ namespace PlutoGE::ui
                     m_dirty = true;
                 }
             }
+            else if (selectedNode->kind == render::ShaderGraphNodeKind::Vec2)
+            {
+                if (ImGui::DragFloat2("Value", &selectedNode->value.x, 0.01f))
+                {
+                    m_dirty = true;
+                }
+            }
+            else if (selectedNode->kind == render::ShaderGraphNodeKind::Vec3)
+            {
+                if (ImGui::DragFloat3("Value", &selectedNode->value.x, 0.01f))
+                {
+                    m_dirty = true;
+                }
+            }
             else if (selectedNode->kind == render::ShaderGraphNodeKind::Color)
             {
                 if (ImGui::ColorEdit4("Value", &selectedNode->value.x))
+                {
+                    m_dirty = true;
+                }
+            }
+            else if (selectedNode->kind == render::ShaderGraphNodeKind::NoiseTexture)
+            {
+                if (ImGui::DragFloat("Scale", &selectedNode->value.x, 0.1f, 0.01f, 512.0f))
+                {
+                    m_dirty = true;
+                }
+                if (ImGui::DragFloat("Strength", &selectedNode->value.y, 0.01f, 0.0f, 8.0f))
                 {
                     m_dirty = true;
                 }

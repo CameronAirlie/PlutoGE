@@ -9,6 +9,7 @@
 #include <cstring>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 
 #include <imgui.h>
 
@@ -22,8 +23,15 @@ namespace PlutoGE::ui
         constexpr float kCollapsedNodeHeight = 52.0f;
         constexpr float kResizeGripSize = 16.0f;
         constexpr float kSlotVerticalSpacing = 26.0f;
+        constexpr float kPreviewHeight = 48.0f;
 
         constexpr const char *kPinOut[] = {"Out"};
+        constexpr const char *kPinsVec2Packed[] = {"Vec2"};
+        constexpr const char *kPinsVec3Packed[] = {"Vec3"};
+        constexpr const char *kPinsColorPacked[] = {"Color"};
+        constexpr const char *kPinsVec2Components[] = {"X", "Y"};
+        constexpr const char *kPinsVec3Components[] = {"X", "Y", "Z"};
+        constexpr const char *kPinsColorComponents[] = {"R", "G", "B", "A"};
         constexpr const char *kPinsBinary[] = {"A", "B"};
         constexpr const char *kPinsLerp[] = {"A", "B", "T"};
         constexpr const char *kPinsClamp[] = {"Value", "Min", "Max"};
@@ -49,14 +57,33 @@ namespace PlutoGE::ui
         ImU32 kPinLerpColors[] = {kPinAnyColor, kPinAnyColor, kPinFloatColor};
         ImU32 kPinClampColors[] = {kPinAnyColor, kPinAnyColor, kPinAnyColor};
         ImU32 kPinNormalizeColors[] = {kPinVec3Color};
+        ImU32 kPinVec2ComponentColors[] = {kPinFloatColor, kPinFloatColor};
+        ImU32 kPinVec3ComponentColors[] = {kPinFloatColor, kPinFloatColor, kPinFloatColor};
+        ImU32 kPinColorComponentColors[] = {kPinFloatColor, kPinFloatColor, kPinFloatColor, kPinFloatColor};
         ImU32 kPinNoiseInputColors[] = {kPinVec2Color, kPinFloatColor, kPinFloatColor};
         ImU32 kPinNoiseOutputColors[] = {kPinFloatColor, kPinColorColor};
         ImU32 kPinOutputColors[] = {kPinColorColor, kPinVec3Color, kPinFloatColor, kPinFloatColor, kPinFloatColor};
 
-        const char **InputPins(render::ShaderGraphNodeKind kind, ImU8 &count)
+        bool SupportsComponentPins(render::ShaderGraphNodeKind kind)
+        {
+            return kind == render::ShaderGraphNodeKind::Vec2 ||
+                   kind == render::ShaderGraphNodeKind::Vec3 ||
+                   kind == render::ShaderGraphNodeKind::Color;
+        }
+
+        const char **InputPins(render::ShaderGraphNodeKind kind, bool componentPins, ImU8 &count)
         {
             switch (kind)
             {
+            case render::ShaderGraphNodeKind::Vec2:
+                count = componentPins ? 2 : 1;
+                return componentPins ? const_cast<const char **>(kPinsVec2Components) : const_cast<const char **>(kPinsVec2Packed);
+            case render::ShaderGraphNodeKind::Vec3:
+                count = componentPins ? 3 : 1;
+                return componentPins ? const_cast<const char **>(kPinsVec3Components) : const_cast<const char **>(kPinsVec3Packed);
+            case render::ShaderGraphNodeKind::Color:
+                count = componentPins ? 4 : 1;
+                return componentPins ? const_cast<const char **>(kPinsColorComponents) : const_cast<const char **>(kPinsColorPacked);
             case render::ShaderGraphNodeKind::Add:
             case render::ShaderGraphNodeKind::Subtract:
             case render::ShaderGraphNodeKind::Multiply:
@@ -84,8 +111,31 @@ namespace PlutoGE::ui
             }
         }
 
-        const char **OutputPins(render::ShaderGraphNodeKind kind, ImU8 &count)
+        const char **InputPins(const render::ShaderGraphNode &node, ImU8 &count)
         {
+            return InputPins(node.kind, node.componentPins, count);
+        }
+
+        const char **OutputPins(render::ShaderGraphNodeKind kind, bool componentPins, ImU8 &count)
+        {
+            if (kind == render::ShaderGraphNodeKind::Vec2)
+            {
+                count = componentPins ? 2 : 1;
+                return componentPins ? const_cast<const char **>(kPinsVec2Components) : const_cast<const char **>(kPinsVec2Packed);
+            }
+
+            if (kind == render::ShaderGraphNodeKind::Vec3)
+            {
+                count = componentPins ? 3 : 1;
+                return componentPins ? const_cast<const char **>(kPinsVec3Components) : const_cast<const char **>(kPinsVec3Packed);
+            }
+
+            if (kind == render::ShaderGraphNodeKind::Color)
+            {
+                count = componentPins ? 4 : 1;
+                return componentPins ? const_cast<const char **>(kPinsColorComponents) : const_cast<const char **>(kPinsColorPacked);
+            }
+
             if (kind == render::ShaderGraphNodeKind::NoiseTexture)
             {
                 count = 2;
@@ -102,24 +152,35 @@ namespace PlutoGE::ui
             return const_cast<const char **>(kPinOut);
         }
 
-        const char *InputPinName(render::ShaderGraphNodeKind kind, GraphEditor::SlotIndex index)
+        const char **OutputPins(const render::ShaderGraphNode &node, ImU8 &count)
+        {
+            return OutputPins(node.kind, node.componentPins, count);
+        }
+
+        const char *InputPinName(const render::ShaderGraphNode &node, GraphEditor::SlotIndex index)
         {
             ImU8 count = 0;
-            const char **pins = InputPins(kind, count);
+            const char **pins = InputPins(node, count);
             return index < count ? pins[index] : "";
         }
 
-        const char *OutputPinName(render::ShaderGraphNodeKind kind, GraphEditor::SlotIndex index)
+        const char *OutputPinName(const render::ShaderGraphNode &node, GraphEditor::SlotIndex index)
         {
             ImU8 count = 0;
-            const char **pins = OutputPins(kind, count);
+            const char **pins = OutputPins(node, count);
             return index < count ? pins[index] : "";
         }
 
-        ImU32 *InputPinColors(render::ShaderGraphNodeKind kind)
+        ImU32 *InputPinColors(render::ShaderGraphNodeKind kind, bool componentPins)
         {
             switch (kind)
             {
+            case render::ShaderGraphNodeKind::Vec2:
+                return componentPins ? kPinVec2ComponentColors : kPinOutVec2Colors;
+            case render::ShaderGraphNodeKind::Vec3:
+                return componentPins ? kPinVec3ComponentColors : kPinOutVec3Colors;
+            case render::ShaderGraphNodeKind::Color:
+                return componentPins ? kPinColorComponentColors : kPinOutColorColors;
             case render::ShaderGraphNodeKind::Add:
             case render::ShaderGraphNodeKind::Subtract:
             case render::ShaderGraphNodeKind::Multiply:
@@ -140,19 +201,20 @@ namespace PlutoGE::ui
             }
         }
 
-        ImU32 *OutputPinColors(render::ShaderGraphNodeKind kind)
+        ImU32 *OutputPinColors(render::ShaderGraphNodeKind kind, bool componentPins)
         {
             switch (kind)
             {
             case render::ShaderGraphNodeKind::Float:
                 return kPinOutFloatColors;
             case render::ShaderGraphNodeKind::Vec2:
+                return componentPins ? kPinVec2ComponentColors : kPinOutVec2Colors;
             case render::ShaderGraphNodeKind::MeshUV:
                 return kPinOutVec2Colors;
             case render::ShaderGraphNodeKind::Vec3:
-                return kPinOutVec3Colors;
+                return componentPins ? kPinVec3ComponentColors : kPinOutVec3Colors;
             case render::ShaderGraphNodeKind::Color:
-                return kPinOutColorColors;
+                return componentPins ? kPinColorComponentColors : kPinOutColorColors;
             case render::ShaderGraphNodeKind::NoiseTexture:
                 return kPinNoiseOutputColors;
             case render::ShaderGraphNodeKind::MaterialInput:
@@ -169,18 +231,18 @@ namespace PlutoGE::ui
             }
         }
 
-        int PinCount(render::ShaderGraphNodeKind kind)
+        int PinCount(render::ShaderGraphNodeKind kind, bool componentPins = false)
         {
             ImU8 inputCount = 0;
             ImU8 outputCount = 0;
-            InputPins(kind, inputCount);
-            OutputPins(kind, outputCount);
+            InputPins(kind, componentPins, inputCount);
+            OutputPins(kind, componentPins, outputCount);
             return std::max(static_cast<int>(inputCount), static_cast<int>(outputCount));
         }
 
-        float NodeHeight(render::ShaderGraphNodeKind kind)
+        float NodeHeight(render::ShaderGraphNodeKind kind, bool componentPins = false)
         {
-            return std::max(kNodeMinHeight, 42.0f + static_cast<float>(std::max(1, PinCount(kind))) * kSlotVerticalSpacing);
+            return std::max(kNodeMinHeight, 42.0f + static_cast<float>(std::max(1, PinCount(kind, componentPins))) * kSlotVerticalSpacing);
         }
 
         float NodeWidth(const render::ShaderGraphNode &node)
@@ -195,13 +257,13 @@ namespace PlutoGE::ui
                 return kCollapsedNodeHeight;
             }
 
-            const float defaultHeight = NodeHeight(node.kind);
+            const float defaultHeight = NodeHeight(node.kind, node.componentPins);
             return std::max(defaultHeight, node.size.y > 0.0f ? node.size.y : defaultHeight);
         }
 
         float MinimumNodeHeight(const render::ShaderGraphNode &node)
         {
-            return node.collapsed ? kCollapsedNodeHeight : NodeHeight(node.kind);
+            return node.collapsed ? kCollapsedNodeHeight : NodeHeight(node.kind, node.componentPins);
         }
 
         float MeasureTextWidth(std::string_view text, float fontSize)
@@ -240,12 +302,376 @@ namespace PlutoGE::ui
             drawList->AddText(ImGui::GetFont(), fontSize, position, color, text.c_str());
         }
 
-        GraphEditor::Template BuildTemplate(render::ShaderGraphNodeKind kind)
+        ImU32 ColorFromVec4(const glm::vec4 &value)
+        {
+            return ImGui::ColorConvertFloat4ToU32(ImVec4(std::clamp(value.x, 0.0f, 1.0f),
+                                                        std::clamp(value.y, 0.0f, 1.0f),
+                                                        std::clamp(value.z, 0.0f, 1.0f),
+                                                        std::clamp(value.w, 0.0f, 1.0f)));
+        }
+
+        float PreviewNoise(int x, int y, float seed)
+        {
+            const int n = x * 15731 + y * 789221 + static_cast<int>(seed * 131.0f);
+            return static_cast<float>((n * (n * n * 15731 + 789221) + 1376312589) & 0x7fffffff) / 2147483647.0f;
+        }
+
+        float PreviewHash(float x, float y)
+        {
+            const float value = sinf(x * 127.1f + y * 311.7f) * 43758.5453f;
+            return value - floorf(value);
+        }
+
+        float PreviewShaderNoise(const glm::vec2 &value)
+        {
+            const glm::vec2 cell(floorf(value.x), floorf(value.y));
+            const glm::vec2 local(value.x - cell.x, value.y - cell.y);
+            const glm::vec2 curve(local.x * local.x * (3.0f - 2.0f * local.x),
+                                  local.y * local.y * (3.0f - 2.0f * local.y));
+            const float bottomLeft = PreviewHash(cell.x, cell.y);
+            const float bottomRight = PreviewHash(cell.x + 1.0f, cell.y);
+            const float topLeft = PreviewHash(cell.x, cell.y + 1.0f);
+            const float topRight = PreviewHash(cell.x + 1.0f, cell.y + 1.0f);
+            const float bottom = bottomLeft + (bottomRight - bottomLeft) * curve.x;
+            const float top = topLeft + (topRight - topLeft) * curve.x;
+            return bottom + (top - bottom) * curve.y;
+        }
+
+        const render::ShaderGraphNode *FindPreviewNode(const render::ShaderGraph &graph, int nodeId)
+        {
+            const auto found = std::find_if(graph.nodes.begin(), graph.nodes.end(),
+                                            [nodeId](const render::ShaderGraphNode &node)
+                                            {
+                                                return node.id == nodeId;
+                                            });
+            return found == graph.nodes.end() ? nullptr : &*found;
+        }
+
+        const render::ShaderGraphLink *FindPreviewInputLink(const render::ShaderGraph &graph, int nodeId, std::string_view pin)
+        {
+            const auto found = std::find_if(graph.links.begin(), graph.links.end(),
+                                            [nodeId, pin](const render::ShaderGraphLink &link)
+                                            {
+                                                return link.toNodeId == nodeId && link.toPin == pin;
+                                            });
+            return found == graph.links.end() ? nullptr : &*found;
+        }
+
+        glm::vec4 ToPreviewVec4(const glm::vec4 &value, int components)
+        {
+            if (components <= 1)
+            {
+                return glm::vec4(value.x, value.x, value.x, 1.0f);
+            }
+            if (components == 2)
+            {
+                return glm::vec4(value.x, value.y, 0.0f, 1.0f);
+            }
+            if (components == 3)
+            {
+                return glm::vec4(value.x, value.y, value.z, 1.0f);
+            }
+            return value;
+        }
+
+        float ToPreviewFloat(const glm::vec4 &value)
+        {
+            return value.x;
+        }
+
+        glm::vec2 ToPreviewVec2(const glm::vec4 &value, int components)
+        {
+            if (components <= 1)
+            {
+                return glm::vec2(value.x);
+            }
+            return glm::vec2(value.x, value.y);
+        }
+
+        struct PreviewSample
+        {
+            glm::vec4 value{0.0f, 0.0f, 0.0f, 1.0f};
+            int components = 4;
+        };
+
+        PreviewSample EvaluatePreviewNode(const render::ShaderGraph &graph,
+                                          int nodeId,
+                                          std::string_view pin,
+                                          const glm::vec2 &uv,
+                                          std::unordered_set<int> &visiting);
+
+        PreviewSample EvaluatePreviewInput(const render::ShaderGraph &graph,
+                                           int nodeId,
+                                           const char *pin,
+                                           const glm::vec2 &uv,
+                                           const PreviewSample &fallback,
+                                           std::unordered_set<int> &visiting)
+        {
+            if (const auto *link = FindPreviewInputLink(graph, nodeId, pin))
+            {
+                return EvaluatePreviewNode(graph, link->fromNodeId, link->fromPin, uv, visiting);
+            }
+            return fallback;
+        }
+
+        PreviewSample EvaluatePreviewMaterialInput(render::ShaderGraphMaterialInput input, const glm::vec2 &uv)
+        {
+            switch (input)
+            {
+            case render::ShaderGraphMaterialInput::Normal:
+                return PreviewSample{glm::vec4(0.5f + (uv.x - 0.5f) * 0.35f, 0.5f + (uv.y - 0.5f) * 0.35f, 1.0f, 1.0f), 3};
+            case render::ShaderGraphMaterialInput::Metallic:
+                return PreviewSample{glm::vec4(0.0f), 1};
+            case render::ShaderGraphMaterialInput::Roughness:
+                return PreviewSample{glm::vec4(1.0f), 1};
+            case render::ShaderGraphMaterialInput::Opacity:
+                return PreviewSample{glm::vec4(1.0f), 1};
+            case render::ShaderGraphMaterialInput::UV:
+                return PreviewSample{glm::vec4(uv.x, uv.y, 0.0f, 1.0f), 2};
+            case render::ShaderGraphMaterialInput::Color:
+            default:
+                return PreviewSample{glm::vec4(uv.x, uv.y, 1.0f - uv.x * 0.5f, 1.0f), 4};
+            }
+        }
+
+        PreviewSample EvaluatePreviewNode(const render::ShaderGraph &graph,
+                                          int nodeId,
+                                          std::string_view pin,
+                                          const glm::vec2 &uv,
+                                          std::unordered_set<int> &visiting)
+        {
+            const auto *node = FindPreviewNode(graph, nodeId);
+            if (!node || visiting.find(nodeId) != visiting.end())
+            {
+                return PreviewSample{};
+            }
+
+            visiting.insert(nodeId);
+            PreviewSample result;
+            switch (node->kind)
+            {
+            case render::ShaderGraphNodeKind::MaterialInput:
+                result = EvaluatePreviewMaterialInput(node->materialInput, uv);
+                break;
+            case render::ShaderGraphNodeKind::Float:
+                result = PreviewSample{glm::vec4(node->value.x), 1};
+                break;
+            case render::ShaderGraphNodeKind::Vec2:
+                if (node->componentPins)
+                {
+                    if (pin == "X")
+                    {
+                        result = EvaluatePreviewInput(graph, nodeId, "X", uv, PreviewSample{glm::vec4(node->value.x), 1}, visiting);
+                    }
+                    else
+                    {
+                        result = EvaluatePreviewInput(graph, nodeId, "Y", uv, PreviewSample{glm::vec4(node->value.y), 1}, visiting);
+                    }
+                }
+                else
+                {
+                    result = EvaluatePreviewInput(graph, nodeId, "Vec2", uv, PreviewSample{glm::vec4(node->value.x, node->value.y, 0.0f, 1.0f), 2}, visiting);
+                }
+                break;
+            case render::ShaderGraphNodeKind::Vec3:
+                if (node->componentPins)
+                {
+                    const char *component = pin == "Y" ? "Y" : pin == "Z" ? "Z" : "X";
+                    const float fallback = component[0] == 'Y' ? node->value.y : component[0] == 'Z' ? node->value.z : node->value.x;
+                    result = EvaluatePreviewInput(graph, nodeId, component, uv, PreviewSample{glm::vec4(fallback), 1}, visiting);
+                }
+                else
+                {
+                    result = EvaluatePreviewInput(graph, nodeId, "Vec3", uv, PreviewSample{glm::vec4(node->value.x, node->value.y, node->value.z, 1.0f), 3}, visiting);
+                }
+                break;
+            case render::ShaderGraphNodeKind::Color:
+                if (node->componentPins)
+                {
+                    const char *component = pin == "G" ? "G" : pin == "B" ? "B" : pin == "A" ? "A" : "R";
+                    const float fallback = component[0] == 'G' ? node->value.y : component[0] == 'B' ? node->value.z : component[0] == 'A' ? node->value.w : node->value.x;
+                    result = EvaluatePreviewInput(graph, nodeId, component, uv, PreviewSample{glm::vec4(fallback), 1}, visiting);
+                }
+                else
+                {
+                    result = EvaluatePreviewInput(graph, nodeId, "Color", uv, PreviewSample{node->value, 4}, visiting);
+                }
+                break;
+            case render::ShaderGraphNodeKind::Add:
+            case render::ShaderGraphNodeKind::Subtract:
+            case render::ShaderGraphNodeKind::Multiply:
+            case render::ShaderGraphNodeKind::Divide:
+            {
+                const PreviewSample a = EvaluatePreviewInput(graph, nodeId, "A", uv, PreviewSample{glm::vec4(node->kind == render::ShaderGraphNodeKind::Multiply || node->kind == render::ShaderGraphNodeKind::Divide ? 1.0f : 0.0f), 1}, visiting);
+                const PreviewSample b = EvaluatePreviewInput(graph, nodeId, "B", uv, PreviewSample{glm::vec4(node->kind == render::ShaderGraphNodeKind::Multiply || node->kind == render::ShaderGraphNodeKind::Divide ? 1.0f : 0.0f), 1}, visiting);
+                if (node->kind == render::ShaderGraphNodeKind::Add)
+                {
+                    result = PreviewSample{a.value + b.value, std::max(a.components, b.components)};
+                }
+                else if (node->kind == render::ShaderGraphNodeKind::Subtract)
+                {
+                    result = PreviewSample{a.value - b.value, std::max(a.components, b.components)};
+                }
+                else if (node->kind == render::ShaderGraphNodeKind::Multiply)
+                {
+                    result = PreviewSample{a.value * b.value, std::max(a.components, b.components)};
+                }
+                else
+                {
+                    result = PreviewSample{a.value / glm::max(b.value, glm::vec4(0.0001f)), std::max(a.components, b.components)};
+                }
+                break;
+            }
+            case render::ShaderGraphNodeKind::Lerp:
+            {
+                const PreviewSample a = EvaluatePreviewInput(graph, nodeId, "A", uv, PreviewSample{glm::vec4(0.0f), 1}, visiting);
+                const PreviewSample b = EvaluatePreviewInput(graph, nodeId, "B", uv, PreviewSample{glm::vec4(1.0f), 1}, visiting);
+                const PreviewSample t = EvaluatePreviewInput(graph, nodeId, "T", uv, PreviewSample{glm::vec4(0.5f), 1}, visiting);
+                result = PreviewSample{a.value + (b.value - a.value) * glm::clamp(t.value, glm::vec4(0.0f), glm::vec4(1.0f)), std::max(a.components, b.components)};
+                break;
+            }
+            case render::ShaderGraphNodeKind::Clamp:
+            {
+                const PreviewSample value = EvaluatePreviewInput(graph, nodeId, "Value", uv, PreviewSample{glm::vec4(0.0f), 1}, visiting);
+                const PreviewSample minValue = EvaluatePreviewInput(graph, nodeId, "Min", uv, PreviewSample{glm::vec4(0.0f), 1}, visiting);
+                const PreviewSample maxValue = EvaluatePreviewInput(graph, nodeId, "Max", uv, PreviewSample{glm::vec4(1.0f), 1}, visiting);
+                result = PreviewSample{glm::clamp(value.value, minValue.value, maxValue.value), value.components};
+                break;
+            }
+            case render::ShaderGraphNodeKind::Normalize:
+            {
+                const PreviewSample value = EvaluatePreviewInput(graph, nodeId, "Value", uv, PreviewSample{glm::vec4(0.0f, 0.0f, 1.0f, 1.0f), 3}, visiting);
+                const glm::vec3 normalized = glm::normalize(glm::vec3(value.value));
+                result = PreviewSample{glm::vec4(normalized, 1.0f), 3};
+                break;
+            }
+            case render::ShaderGraphNodeKind::NoiseTexture:
+            {
+                const PreviewSample uvInput = EvaluatePreviewInput(graph, nodeId, "UV", uv, PreviewSample{glm::vec4(uv.x, uv.y, 0.0f, 1.0f), 2}, visiting);
+                const PreviewSample scaleInput = EvaluatePreviewInput(graph, nodeId, "Scale", uv, PreviewSample{glm::vec4(node->value.x <= 0.0f ? 8.0f : node->value.x), 1}, visiting);
+                const PreviewSample strengthInput = EvaluatePreviewInput(graph, nodeId, "Strength", uv, PreviewSample{glm::vec4(node->value.y <= 0.0f ? 1.0f : node->value.y), 1}, visiting);
+                const glm::vec2 noiseUv = ToPreviewVec2(uvInput.value, uvInput.components) * ToPreviewFloat(scaleInput.value);
+                const float value = PreviewShaderNoise(noiseUv) * ToPreviewFloat(strengthInput.value);
+                result = pin == "Color" ? PreviewSample{glm::vec4(value, value, value, 1.0f), 4} : PreviewSample{glm::vec4(value), 1};
+                break;
+            }
+            case render::ShaderGraphNodeKind::MeshUV:
+                result = PreviewSample{glm::vec4(uv.x, uv.y, 0.0f, 1.0f), 2};
+                break;
+            case render::ShaderGraphNodeKind::Output:
+            {
+                const PreviewSample albedo = EvaluatePreviewInput(graph, nodeId, "Albedo", uv, EvaluatePreviewMaterialInput(render::ShaderGraphMaterialInput::Color, uv), visiting);
+                const PreviewSample normal = EvaluatePreviewInput(graph, nodeId, "Normal", uv, EvaluatePreviewMaterialInput(render::ShaderGraphMaterialInput::Normal, uv), visiting);
+                const PreviewSample metallic = EvaluatePreviewInput(graph, nodeId, "Metallic", uv, EvaluatePreviewMaterialInput(render::ShaderGraphMaterialInput::Metallic, uv), visiting);
+                const PreviewSample roughness = EvaluatePreviewInput(graph, nodeId, "Roughness", uv, EvaluatePreviewMaterialInput(render::ShaderGraphMaterialInput::Roughness, uv), visiting);
+                const PreviewSample opacity = EvaluatePreviewInput(graph, nodeId, "Opacity", uv, EvaluatePreviewMaterialInput(render::ShaderGraphMaterialInput::Opacity, uv), visiting);
+                const glm::vec3 lightDir = glm::normalize(glm::vec3(-0.35f, 0.55f, 1.0f));
+                const glm::vec3 previewNormal = glm::normalize(glm::vec3(normal.value) * 2.0f - glm::vec3(1.0f));
+                const float diffuse = std::clamp(glm::dot(previewNormal, lightDir) * 0.5f + 0.5f, 0.0f, 1.0f);
+                const float metal = std::clamp(metallic.value.x, 0.0f, 1.0f);
+                const float rough = std::clamp(roughness.value.x, 0.04f, 1.0f);
+                const glm::vec3 baseColor = glm::vec3(albedo.value);
+                const glm::vec3 shaded = baseColor * (0.22f + 0.78f * diffuse) + glm::vec3(1.0f - rough) * metal * 0.18f;
+                result = PreviewSample{glm::vec4(glm::clamp(shaded, glm::vec3(0.0f), glm::vec3(1.0f)), std::clamp(opacity.value.x, 0.0f, 1.0f)), 4};
+                break;
+            }
+            }
+
+            visiting.erase(nodeId);
+            result.value = ToPreviewVec4(result.value, result.components);
+            return result;
+        }
+
+        void DrawPreviewBars(ImDrawList *drawList, const ImRect &rect, const float *values, const ImU32 *colors, int count)
+        {
+            const float padding = std::clamp(rect.GetHeight() * 0.12f, 1.0f, 5.0f);
+            const float gap = std::max(1.0f, rect.GetHeight() * 0.05f);
+            const float barHeight = (rect.GetHeight() - padding * 2.0f - gap * static_cast<float>(std::max(0, count - 1))) / static_cast<float>(count);
+            for (int index = 0; index < count; ++index)
+            {
+                const float y0 = rect.Min.y + padding + (barHeight + gap) * static_cast<float>(index);
+                const ImRect barRect(ImVec2(rect.Min.x + padding, y0), ImVec2(rect.Max.x - padding, y0 + std::max(1.0f, barHeight)));
+                drawList->AddRectFilled(barRect.Min, barRect.Max, IM_COL32(42, 47, 58, 255), 2.0f);
+                const float fill = std::clamp(values[index], 0.0f, 1.0f);
+                drawList->AddRectFilled(barRect.Min, ImVec2(barRect.Min.x + barRect.GetWidth() * fill, barRect.Max.y), colors[index], 2.0f);
+            }
+        }
+
+        void DrawPreviewStripes(ImDrawList *drawList, const ImRect &rect, const ImU32 *colors, int count)
+        {
+            const float stripeWidth = rect.GetWidth() / static_cast<float>(count);
+            for (int index = 0; index < count; ++index)
+            {
+                drawList->AddRectFilled(ImVec2(rect.Min.x + stripeWidth * static_cast<float>(index), rect.Min.y),
+                                        ImVec2(rect.Min.x + stripeWidth * static_cast<float>(index + 1), rect.Max.y),
+                                        colors[index]);
+            }
+        }
+
+        const char *PreviewPrimaryPin(const render::ShaderGraphNode &node)
+        {
+            if (node.kind == render::ShaderGraphNodeKind::NoiseTexture)
+            {
+                return "Color";
+            }
+            if (node.kind == render::ShaderGraphNodeKind::Color)
+            {
+                return node.componentPins ? "R" : "Color";
+            }
+            if (node.kind == render::ShaderGraphNodeKind::Vec2)
+            {
+                return node.componentPins ? "X" : "Vec2";
+            }
+            if (node.kind == render::ShaderGraphNodeKind::Vec3)
+            {
+                return node.componentPins ? "X" : "Vec3";
+            }
+            if (node.kind == render::ShaderGraphNodeKind::Output)
+            {
+                return "Albedo";
+            }
+            return "Out";
+        }
+
+        void DrawNodePreview(ImDrawList *drawList, const render::ShaderGraph &graph, const render::ShaderGraphNode &node, const ImRect &rect, float zoomFactor)
+        {
+            if (rect.GetWidth() < 18.0f || rect.GetHeight() < 10.0f)
+            {
+                return;
+            }
+
+            const float rounding = std::max(1.0f, 4.0f * zoomFactor);
+            const ImRect inner(ImVec2(rect.Min.x + 2.0f, rect.Min.y + 2.0f),
+                               ImVec2(rect.Max.x - 2.0f, rect.Max.y - 2.0f));
+
+            drawList->AddRectFilled(rect.Min, rect.Max, IM_COL32(20, 23, 29, 210), rounding);
+            drawList->AddRect(rect.Min, rect.Max, IM_COL32(90, 100, 118, 180), rounding);
+
+            const int columns = std::clamp(static_cast<int>(inner.GetWidth() / 5.0f), 4, 24);
+            const int rows = std::clamp(static_cast<int>(inner.GetHeight() / 5.0f), 2, 12);
+            const float cellWidth = inner.GetWidth() / static_cast<float>(columns);
+            const float cellHeight = inner.GetHeight() / static_cast<float>(rows);
+            for (int y = 0; y < rows; ++y)
+            {
+                for (int x = 0; x < columns; ++x)
+                {
+                    const glm::vec2 uv((static_cast<float>(x) + 0.5f) / static_cast<float>(columns),
+                                       (static_cast<float>(y) + 0.5f) / static_cast<float>(rows));
+                    std::unordered_set<int> visiting;
+                    const PreviewSample sample = EvaluatePreviewNode(graph, node.id, PreviewPrimaryPin(node), uv, visiting);
+                    drawList->AddRectFilled(ImVec2(inner.Min.x + cellWidth * static_cast<float>(x), inner.Min.y + cellHeight * static_cast<float>(y)),
+                                            ImVec2(inner.Min.x + cellWidth * static_cast<float>(x + 1), inner.Min.y + cellHeight * static_cast<float>(y + 1)),
+                                            ColorFromVec4(sample.value));
+                }
+            }
+        }
+
+        GraphEditor::Template BuildTemplate(render::ShaderGraphNodeKind kind, bool componentPins = false)
         {
             ImU8 inputCount = 0;
             ImU8 outputCount = 0;
-            const char **inputs = InputPins(kind, inputCount);
-            const char **outputs = OutputPins(kind, outputCount);
+            const char **inputs = InputPins(kind, componentPins, inputCount);
+            const char **outputs = OutputPins(kind, componentPins, outputCount);
             ImU32 headerColor = IM_COL32(68, 86, 117, 255);
             ImU32 backgroundColor = IM_COL32(38, 44, 55, 255);
             ImU32 backgroundColorOver = IM_COL32(48, 57, 72, 255);
@@ -280,10 +706,10 @@ namespace PlutoGE::ui
                 backgroundColorOver,
                 inputCount,
                 inputs,
-                InputPinColors(kind),
+                InputPinColors(kind, componentPins),
                 outputCount,
                 outputs,
-                OutputPinColors(kind),
+                OutputPinColors(kind, componentPins),
             };
         }
 
@@ -361,7 +787,7 @@ namespace PlutoGE::ui
         GraphEditor::SlotIndex InputSlotForPin(const render::ShaderGraphNode &node, const std::string &pinName)
         {
             ImU8 count = 0;
-            const char **pins = InputPins(node.kind, count);
+            const char **pins = InputPins(node, count);
             for (GraphEditor::SlotIndex index = 0; index < count; ++index)
             {
                 if (pinName == pins[index])
@@ -375,7 +801,7 @@ namespace PlutoGE::ui
         GraphEditor::SlotIndex OutputSlotForPin(const render::ShaderGraphNode &node, const std::string &pinName)
         {
             ImU8 count = 0;
-            const char **pins = OutputPins(node.kind, count);
+            const char **pins = OutputPins(node, count);
             for (GraphEditor::SlotIndex index = 0; index < count; ++index)
             {
                 if (pinName == pins[index])
@@ -398,6 +824,16 @@ namespace PlutoGE::ui
             return graph.nodes[outputNodeIndex].kind != render::ShaderGraphNodeKind::Output;
         }
 
+        void RemoveLinksForNode(render::ShaderGraph &graph, int nodeId)
+        {
+            graph.links.erase(std::remove_if(graph.links.begin(), graph.links.end(),
+                                             [nodeId](const render::ShaderGraphLink &link)
+                                             {
+                                                 return link.fromNodeId == nodeId || link.toNodeId == nodeId;
+                                             }),
+                              graph.links.end());
+        }
+
         class ShaderGraphDelegate : public GraphEditor::Delegate
         {
         public:
@@ -410,6 +846,7 @@ namespace PlutoGE::ui
                                 ImVec2 &addNodePosition,
                                 int &resizingNodeId,
                                 bool &openAddNodePopup,
+                                bool showNodePreviews,
                                 bool &dirty)
                 : m_graph(graph),
                   m_selectedNodeIds(selectedNodeIds),
@@ -420,6 +857,7 @@ namespace PlutoGE::ui
                   m_addNodePosition(addNodePosition),
                   m_resizingNodeId(resizingNodeId),
                   m_openAddNodePopup(openAddNodePopup),
+                  m_showNodePreviews(showNodePreviews),
                   m_dirty(dirty)
             {
             }
@@ -452,7 +890,7 @@ namespace PlutoGE::ui
                             }
                             if (node.size.y <= 0.0f)
                             {
-                                node.size.y = NodeHeight(node.kind);
+                                node.size.y = NodeHeight(node.kind, node.componentPins);
                             }
                             m_dirty = true;
                         }
@@ -515,7 +953,7 @@ namespace PlutoGE::ui
                         }
                         else if (node->size.y <= 0.0f)
                         {
-                            node->size.y = NodeHeight(node->kind);
+                            node->size.y = NodeHeight(node->kind, node->componentPins);
                         }
                         m_dirty = true;
                     }
@@ -546,7 +984,7 @@ namespace PlutoGE::ui
 
                 const auto &outputNode = m_graph.nodes[inputNodeIndex];
                 const auto &inputNode = m_graph.nodes[outputNodeIndex];
-                const std::string inputPin = InputPinName(inputNode.kind, outputSlotIndex);
+                const std::string inputPin = InputPinName(inputNode, outputSlotIndex);
                 m_graph.links.erase(std::remove_if(m_graph.links.begin(), m_graph.links.end(),
                                                    [&inputNode, &inputPin](const render::ShaderGraphLink &link)
                                                    {
@@ -556,7 +994,7 @@ namespace PlutoGE::ui
                 m_graph.links.push_back(render::ShaderGraphLink{
                     .id = NextLinkId(m_graph),
                     .fromNodeId = outputNode.id,
-                    .fromPin = OutputPinName(outputNode.kind, inputSlotIndex),
+                    .fromPin = OutputPinName(outputNode, inputSlotIndex),
                     .toNodeId = inputNode.id,
                     .toPin = inputPin,
                 });
@@ -625,8 +1063,8 @@ namespace PlutoGE::ui
                     drawList->PushClipRect(rectangle.Min, rectangle.Max, true);
                     ImU8 inputCount = 0;
                     ImU8 outputCount = 0;
-                    const char **inputPins = InputPins(node.kind, inputCount);
-                    const char **outputPins = OutputPins(node.kind, outputCount);
+                    const char **inputPins = InputPins(node, inputCount);
+                    const char **outputPins = OutputPins(node, outputCount);
                     const float nodeTop = rectangle.Min.y - 23.0f;
                     const float nodeHeight = rectangle.GetHeight() + 26.0f;
                     const float labelPadding = 16.0f * zoomFactor;
@@ -651,6 +1089,19 @@ namespace PlutoGE::ui
                         drawList->AddText(ImGui::GetFont(), pinFontSize, ImVec2(std::max(rectangle.Min.x + labelPadding, rightLimit - textWidth), y), IM_COL32(190, 198, 210, 255), label.c_str());
                     }
                     drawList->PopClipRect();
+
+                    if (m_showNodePreviews)
+                    {
+                        const float sidePadding = std::max(8.0f, 52.0f * zoomFactor);
+                        const float bottomPadding = std::max(3.0f, 8.0f * zoomFactor);
+                        const float previewHeight = std::max(14.0f, kPreviewHeight * zoomFactor);
+                        const ImRect previewRect(ImVec2(rectangle.Min.x + sidePadding, rectangle.Max.y - bottomPadding - previewHeight),
+                                                 ImVec2(rectangle.Max.x - sidePadding, rectangle.Max.y - bottomPadding));
+                        if (previewRect.Min.y > rectangle.Min.y + 4.0f && previewRect.GetWidth() >= 18.0f)
+                        {
+                            DrawNodePreview(drawList, m_graph, node, previewRect, zoomFactor);
+                        }
+                    }
                 }
 
                 const float gripSize = std::max(10.0f, kResizeGripSize * zoomFactor);
@@ -732,10 +1183,25 @@ namespace PlutoGE::ui
         private:
             GraphEditor::TemplateIndex TemplateIndexForNode(const render::ShaderGraphNode &node) const
             {
+                if (node.componentPins)
+                {
+                    if (node.kind == render::ShaderGraphNodeKind::Vec2)
+                    {
+                        return 15;
+                    }
+                    if (node.kind == render::ShaderGraphNodeKind::Vec3)
+                    {
+                        return 16;
+                    }
+                    if (node.kind == render::ShaderGraphNodeKind::Color)
+                    {
+                        return 17;
+                    }
+                }
                 return static_cast<GraphEditor::TemplateIndex>(std::clamp(static_cast<int>(node.kind), 0, static_cast<int>(m_templates.size() - 1)));
             }
 
-            static const std::array<GraphEditor::Template, 15> m_templates;
+            static const std::array<GraphEditor::Template, 18> m_templates;
 
             render::ShaderGraph &m_graph;
             std::vector<int> &m_selectedNodeIds;
@@ -746,10 +1212,11 @@ namespace PlutoGE::ui
             ImVec2 &m_addNodePosition;
             int &m_resizingNodeId;
             bool &m_openAddNodePopup;
+            bool m_showNodePreviews = true;
             bool &m_dirty;
         };
 
-        const std::array<GraphEditor::Template, 15> ShaderGraphDelegate::m_templates = {
+        const std::array<GraphEditor::Template, 18> ShaderGraphDelegate::m_templates = {
             BuildTemplate(render::ShaderGraphNodeKind::MaterialInput),
             BuildTemplate(render::ShaderGraphNodeKind::Float),
             BuildTemplate(render::ShaderGraphNodeKind::Vec2),
@@ -765,6 +1232,9 @@ namespace PlutoGE::ui
             BuildTemplate(render::ShaderGraphNodeKind::NoiseTexture),
             BuildTemplate(render::ShaderGraphNodeKind::MeshUV),
             BuildTemplate(render::ShaderGraphNodeKind::Output),
+            BuildTemplate(render::ShaderGraphNodeKind::Vec2, true),
+            BuildTemplate(render::ShaderGraphNodeKind::Vec3, true),
+            BuildTemplate(render::ShaderGraphNodeKind::Color, true),
         };
 
         bool IsOutputNode(const render::ShaderGraphNode &node)
@@ -874,6 +1344,8 @@ namespace PlutoGE::ui
         {
             m_graphFit = GraphEditor::Fit_AllNodes;
         }
+        ImGui::SameLine();
+        ImGui::Checkbox("Previews", &m_showNodePreviews);
         ImGui::EndDisabled();
 
         ImGui::Separator();
@@ -891,6 +1363,7 @@ namespace PlutoGE::ui
                                      m_addNodePosition,
                                      m_resizingNodeId,
                                      m_openAddNodePopup,
+                                     m_showNodePreviews,
                                      m_dirty);
         GraphEditor::Show(delegate, m_graphOptions, m_graphViewState, !engineGraph, &m_graphFit);
         if (m_openAddNodePopup)
@@ -972,17 +1445,29 @@ namespace PlutoGE::ui
                 }
                 if (selectedNode->size.y <= 0.0f)
                 {
-                    selectedNode->size.y = NodeHeight(selectedNode->kind);
+                    selectedNode->size.y = NodeHeight(selectedNode->kind, selectedNode->componentPins);
                 }
                 m_dirty = true;
             }
 
-            float size[2] = {NodeWidth(*selectedNode), selectedNode->collapsed ? std::max(NodeHeight(selectedNode->kind), selectedNode->size.y) : NodeHeight(*selectedNode)};
+            float size[2] = {NodeWidth(*selectedNode), selectedNode->collapsed ? std::max(NodeHeight(selectedNode->kind, selectedNode->componentPins), selectedNode->size.y) : NodeHeight(*selectedNode)};
             if (ImGui::DragFloat2("Size", size, 1.0f, 0.0f, 0.0f, "%.0f"))
             {
                 selectedNode->size.x = std::max(kNodeMinWidth, size[0]);
-                selectedNode->size.y = std::max(NodeHeight(selectedNode->kind), size[1]);
+                selectedNode->size.y = std::max(NodeHeight(selectedNode->kind, selectedNode->componentPins), size[1]);
                 m_dirty = true;
+            }
+
+            if (SupportsComponentPins(selectedNode->kind))
+            {
+                bool componentPins = selectedNode->componentPins;
+                if (ImGui::Checkbox("Component Pins", &componentPins))
+                {
+                    selectedNode->componentPins = componentPins;
+                    selectedNode->size.y = std::max(selectedNode->size.y, NodeHeight(selectedNode->kind, selectedNode->componentPins));
+                    RemoveLinksForNode(m_graph, selectedNode->id);
+                    m_dirty = true;
+                }
             }
 
             if (selectedNode->kind == render::ShaderGraphNodeKind::MaterialInput)

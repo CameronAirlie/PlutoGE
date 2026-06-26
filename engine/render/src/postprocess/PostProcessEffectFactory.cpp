@@ -6,6 +6,7 @@
 #include "PlutoGE/render/postprocess/FXAAEffect.h"
 #include "PlutoGE/render/postprocess/GammaCorrectionEffect.h"
 #include "PlutoGE/render/postprocess/IPostProcessEffect.h"
+#include "PlutoGE/render/postprocess/LensFlareEffect.h"
 #include "PlutoGE/render/postprocess/LPVEffect.h"
 #include "PlutoGE/render/postprocess/LSAOEffect.h"
 #include "PlutoGE/render/postprocess/MotionBlurEffect.h"
@@ -32,6 +33,7 @@ namespace PlutoGE::render
             "TAA",
             "MotionBlur",
             "DepthOfField",
+            "LensFlare",
             "ToneMapping",
             "ColorGrading",
             "SceneComposite",
@@ -95,6 +97,11 @@ namespace PlutoGE::render
         if (typeName == "DepthOfField")
         {
             return std::make_unique<DepthOfFieldEffect>();
+        }
+
+        if (typeName == "LensFlare")
+        {
+            return std::make_unique<LensFlareEffect>();
         }
 
         if (typeName == "ColorGrading")

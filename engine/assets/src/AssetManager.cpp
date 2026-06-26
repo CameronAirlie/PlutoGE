@@ -753,6 +753,10 @@ namespace PlutoGE::assets
                 {
                     node.size = ParseVec2Or(fields[7], glm::vec2(0.0f));
                 }
+                if (fields.size() >= 9)
+                {
+                    node.componentPins = fields[8] == "1" || fields[8] == "true" || fields[8] == "True";
+                }
                 if (node.id != 0)
                 {
                     graph.nodes.push_back(std::move(node));
@@ -855,7 +859,8 @@ namespace PlutoGE::assets
                    << node.value.x << ',' << node.value.y << ',' << node.value.z << ',' << node.value.w << '|'
                    << render::ToString(node.materialInput) << '|'
                    << (node.collapsed ? "1" : "0") << '|'
-                   << node.size.x << ',' << node.size.y << "\n";
+                   << node.size.x << ',' << node.size.y << '|'
+                   << (node.componentPins ? "1" : "0") << "\n";
         }
         for (const auto &link : graph.links)
         {

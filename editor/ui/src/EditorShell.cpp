@@ -674,6 +674,10 @@ namespace PlutoGE::ui
         {
             m_editorCamera.GetPostProcessEffect(m_editorCamera.GetPostProcessEffects().size() - 1)->SetEnabled(false);
         }
+        if (m_editorCamera.AddPostProcessEffectByType("LensFlare"))
+        {
+            m_editorCamera.GetPostProcessEffect(m_editorCamera.GetPostProcessEffects().size() - 1)->SetEnabled(false);
+        }
         m_editorCamera.AddPostProcessEffectByType("ToneMapping");
         m_editorCamera.AddPostProcessEffectByType("ColorGrading");
         m_editorCamera.AddPostProcessEffectByType("SceneComposite");

@@ -33,6 +33,7 @@ namespace PlutoGE::ui
         ImVec2 m_addNodePosition{60.0f, 60.0f};
         int m_resizingNodeId = 0;
         bool m_openAddNodePopup = false;
+        bool m_showNodePreviews = true;
         bool m_dirty = false;
     };
 }

@@ -101,6 +101,10 @@ namespace PlutoGE::scene
         {
             GetPostProcessEffect(m_postProcessEffects.size() - 1)->SetEnabled(false);
         }
+        if (AddPostProcessEffectByType("LensFlare"))
+        {
+            GetPostProcessEffect(m_postProcessEffects.size() - 1)->SetEnabled(false);
+        }
         EmplacePostProcessEffect<render::ToneMappingEffect>();
         AddPostProcessEffectByType("ColorGrading");
         EmplacePostProcessEffect<render::SceneCompositeEffect>();

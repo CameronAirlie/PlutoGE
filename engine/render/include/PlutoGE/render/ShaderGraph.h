@@ -56,6 +56,7 @@ namespace PlutoGE::render
         glm::vec4 value{1.0f};
         glm::vec2 position{0.0f};
         glm::vec2 size{0.0f};
+        bool componentPins = false;
         bool collapsed = false;
     };
 

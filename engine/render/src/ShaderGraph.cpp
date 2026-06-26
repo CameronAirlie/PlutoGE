@@ -77,6 +77,24 @@ namespace PlutoGE::render
             }
         }
 
+        const char *ComponentName(int index)
+        {
+            constexpr const char *kNames[] = {"X", "Y", "Z", "W"};
+            return index >= 0 && index < 4 ? kNames[index] : "X";
+        }
+
+        std::string BuildComponentExpression(const ShaderGraphNode &node, std::string_view pin, int componentCount)
+        {
+            for (int index = 0; index < componentCount; ++index)
+            {
+                if (pin == ComponentName(index))
+                {
+                    return FloatLiteral(node.value[index]);
+                }
+            }
+            return FloatLiteral(node.value.x);
+        }
+
         std::string BuildExpression(const ShaderGraph &graph,
                                     int nodeId,
                                     std::string_view pin,
@@ -117,13 +135,46 @@ namespace PlutoGE::render
                 expression = FloatLiteral(node->value.x);
                 break;
             case ShaderGraphNodeKind::Vec2:
-                expression = VecLiteral(node->value, 2);
+                if (node->componentPins)
+                {
+                    expression = input(std::string(pin).c_str(), BuildComponentExpression(*node, pin, 2).c_str());
+                }
+                else
+                {
+                    expression = input("Vec2", VecLiteral(node->value, 2).c_str());
+                }
                 break;
             case ShaderGraphNodeKind::Vec3:
-                expression = VecLiteral(node->value, 3);
+                if (node->componentPins)
+                {
+                    expression = input(std::string(pin).c_str(), BuildComponentExpression(*node, pin, 3).c_str());
+                }
+                else
+                {
+                    expression = input("Vec3", VecLiteral(node->value, 3).c_str());
+                }
                 break;
             case ShaderGraphNodeKind::Color:
-                expression = VecLiteral(node->value, 4);
+                if (node->componentPins)
+                {
+                    const char *componentNames[] = {"R", "G", "B", "A"};
+                    for (int index = 0; index < 4; ++index)
+                    {
+                        if (pin == componentNames[index])
+                        {
+                            expression = input(componentNames[index], FloatLiteral(node->value[index]).c_str());
+                            break;
+                        }
+                    }
+                    if (expression.empty())
+                    {
+                        expression = FloatLiteral(node->value.x);
+                    }
+                }
+                else
+                {
+                    expression = input("Color", VecLiteral(node->value, 4).c_str());
+                }
                 break;
             case ShaderGraphNodeKind::Add:
                 expression = "(" + input("A", "0.0") + " + " + input("B", "0.0") + ")";
@@ -395,6 +446,7 @@ namespace PlutoGE::render
             mix(static_cast<std::uint64_t>(node.id));
             mix(static_cast<std::uint64_t>(node.kind));
             mix(static_cast<std::uint64_t>(node.materialInput));
+            mix(node.componentPins ? 1ull : 0ull);
             for (int index = 0; index < 4; ++index)
             {
                 mix(static_cast<std::uint64_t>(std::hash<float>{}(node.value[index])));

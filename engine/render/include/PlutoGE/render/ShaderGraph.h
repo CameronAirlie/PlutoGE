@@ -53,6 +53,8 @@ namespace PlutoGE::render
         ShaderGraphMaterialInput materialInput = ShaderGraphMaterialInput::Color;
         glm::vec4 value{1.0f};
         glm::vec2 position{0.0f};
+        glm::vec2 size{0.0f};
+        bool collapsed = false;
     };
 
     struct ShaderGraphLink

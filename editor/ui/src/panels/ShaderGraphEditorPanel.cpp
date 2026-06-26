@@ -16,8 +16,11 @@ namespace PlutoGE::ui
 {
     namespace
     {
-        constexpr float kNodeWidth = 260.0f;
+        constexpr float kDefaultNodeWidth = 260.0f;
+        constexpr float kNodeMinWidth = 180.0f;
         constexpr float kNodeMinHeight = 128.0f;
+        constexpr float kCollapsedNodeHeight = 52.0f;
+        constexpr float kResizeGripSize = 16.0f;
         constexpr float kSlotVerticalSpacing = 26.0f;
 
         constexpr const char *kPinOut[] = {"Out"};
@@ -98,6 +101,27 @@ namespace PlutoGE::ui
         float NodeHeight(render::ShaderGraphNodeKind kind)
         {
             return std::max(kNodeMinHeight, 42.0f + static_cast<float>(std::max(1, PinCount(kind))) * kSlotVerticalSpacing);
+        }
+
+        float NodeWidth(const render::ShaderGraphNode &node)
+        {
+            return std::max(kNodeMinWidth, node.size.x > 0.0f ? node.size.x : kDefaultNodeWidth);
+        }
+
+        float NodeHeight(const render::ShaderGraphNode &node)
+        {
+            if (node.collapsed)
+            {
+                return kCollapsedNodeHeight;
+            }
+
+            const float defaultHeight = NodeHeight(node.kind);
+            return std::max(defaultHeight, node.size.y > 0.0f ? node.size.y : defaultHeight);
+        }
+
+        float MinimumNodeHeight(const render::ShaderGraphNode &node)
+        {
+            return node.collapsed ? kCollapsedNodeHeight : NodeHeight(node.kind);
         }
 
         float MeasureTextWidth(std::string_view text, float fontSize)
@@ -226,6 +250,20 @@ namespace PlutoGE::ui
             return std::find(selectedNodeIds.begin(), selectedNodeIds.end(), nodeId) != selectedNodeIds.end();
         }
 
+        ImRect ResizeGripRect(const ImRect &nodeRect, float zoomFactor)
+        {
+            const float gripSize = std::max(10.0f, kResizeGripSize * zoomFactor);
+            return ImRect(ImVec2(nodeRect.Max.x - gripSize, nodeRect.Max.y - gripSize),
+                          ImVec2(nodeRect.Max.x + 2.0f * zoomFactor, nodeRect.Max.y + 2.0f * zoomFactor));
+        }
+
+        ImRect CollapseToggleRect(const ImRect &nodeRect, float zoomFactor)
+        {
+            const float toggleSize = std::max(10.0f, 15.0f * zoomFactor);
+            return ImRect(ImVec2(nodeRect.Min.x + 4.0f * zoomFactor, nodeRect.Min.y + 2.0f * zoomFactor),
+                          ImVec2(nodeRect.Min.x + 4.0f * zoomFactor + toggleSize, nodeRect.Min.y + 2.0f * zoomFactor + toggleSize));
+        }
+
         std::size_t NodeIndexForId(const render::ShaderGraph &graph, int nodeId)
         {
             for (std::size_t index = 0; index < graph.nodes.size(); ++index)
@@ -281,8 +319,8 @@ namespace PlutoGE::ui
         class ShaderGraphDelegate : public GraphEditor::Delegate
         {
         public:
-            ShaderGraphDelegate(render::ShaderGraph &graph, std::vector<int> &selectedNodeIds, int &selectedNodeId, bool &dirty)
-                : m_graph(graph), m_selectedNodeIds(selectedNodeIds), m_selectedNodeId(selectedNodeId), m_dirty(dirty)
+            ShaderGraphDelegate(render::ShaderGraph &graph, std::vector<int> &selectedNodeIds, int &selectedNodeId, std::unordered_map<int, ImRect> &nodeScreenRects, int &resizingNodeId, bool &dirty)
+                : m_graph(graph), m_selectedNodeIds(selectedNodeIds), m_selectedNodeId(selectedNodeId), m_nodeScreenRects(nodeScreenRects), m_resizingNodeId(resizingNodeId), m_dirty(dirty)
             {
             }
 
@@ -299,6 +337,28 @@ namespace PlutoGE::ui
                 }
 
                 const int nodeId = m_graph.nodes[nodeIndex].id;
+                if (selected && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+                {
+                    if (const auto rect = m_nodeScreenRects.find(nodeId); rect != m_nodeScreenRects.end())
+                    {
+                        const float zoomFactor = std::clamp((rect->second.GetWidth() + 8.0f) / NodeWidth(m_graph.nodes[nodeIndex]), 0.35f, 1.5f);
+                        if (CollapseToggleRect(rect->second, zoomFactor).Contains(ImGui::GetIO().MouseClickedPos[0]))
+                        {
+                            auto &node = m_graph.nodes[nodeIndex];
+                            node.collapsed = !node.collapsed;
+                            if (node.size.x <= 0.0f)
+                            {
+                                node.size.x = kDefaultNodeWidth;
+                            }
+                            if (node.size.y <= 0.0f)
+                            {
+                                node.size.y = NodeHeight(node.kind);
+                            }
+                            m_dirty = true;
+                        }
+                    }
+                }
+
                 if (selected)
                 {
                     if (!IsSelected(m_selectedNodeIds, nodeId))
@@ -319,6 +379,49 @@ namespace PlutoGE::ui
 
             void MoveSelectedNodes(const ImVec2 delta) override
             {
+                const ImVec2 clickPosition = ImGui::GetIO().MouseClickedPos[0];
+                if (m_resizingNodeId == 0)
+                {
+                    for (auto &node : m_graph.nodes)
+                    {
+                        if (!IsSelected(m_selectedNodeIds, node.id))
+                        {
+                            continue;
+                        }
+
+                        const auto rect = m_nodeScreenRects.find(node.id);
+                        if (rect == m_nodeScreenRects.end())
+                        {
+                            continue;
+                        }
+
+                        const float zoomFactor = std::clamp((rect->second.GetWidth() + 8.0f) / NodeWidth(node), 0.35f, 1.5f);
+                        if (ResizeGripRect(rect->second, zoomFactor).Contains(clickPosition))
+                        {
+                            m_resizingNodeId = node.id;
+                            break;
+                        }
+                    }
+                }
+
+                if (m_resizingNodeId != 0)
+                {
+                    if (auto *node = FindNode(m_graph, m_resizingNodeId))
+                    {
+                        node->size.x = std::max(kNodeMinWidth, NodeWidth(*node) + delta.x);
+                        if (!node->collapsed)
+                        {
+                            node->size.y = std::max(MinimumNodeHeight(*node), NodeHeight(*node) + delta.y);
+                        }
+                        else if (node->size.y <= 0.0f)
+                        {
+                            node->size.y = NodeHeight(node->kind);
+                        }
+                        m_dirty = true;
+                    }
+                    return;
+                }
+
                 for (auto &node : m_graph.nodes)
                 {
                     if (!IsSelected(m_selectedNodeIds, node.id))
@@ -377,50 +480,91 @@ namespace PlutoGE::ui
                     return;
                 }
 
-                const auto &node = m_graph.nodes[nodeIndex];
-                const float zoomFactor = std::clamp((rectangle.GetWidth() + 8.0f) / kNodeWidth, 0.35f, 1.5f);
+                auto &node = m_graph.nodes[nodeIndex];
+                const float zoomFactor = std::clamp((rectangle.GetWidth() + 8.0f) / NodeWidth(node), 0.35f, 1.5f);
                 const float titleFontSize = std::max(8.0f, ImGui::GetFontSize() * zoomFactor);
                 const float pinFontSize = std::max(7.0f, 13.0f * zoomFactor);
-                const ImVec2 titleMin(rectangle.Min.x - 3.0f, rectangle.Min.y - 23.0f);
-                const ImVec2 titleMax(rectangle.Max.x + 3.0f, rectangle.Min.y - 3.0f);
+                const ImRect nodeRect(ImVec2(rectangle.Min.x - 3.0f, rectangle.Min.y - 23.0f),
+                                      ImVec2(rectangle.Max.x + 3.0f, rectangle.Max.y + 3.0f));
+                const ImVec2 titleMin = nodeRect.Min;
+                const ImVec2 titleMax(nodeRect.Max.x, nodeRect.Min.y + 20.0f);
+                const ImRect toggleRect = CollapseToggleRect(nodeRect, zoomFactor);
+                const float toggleSize = toggleRect.GetWidth();
+                m_nodeScreenRects[node.id] = nodeRect;
+
+                const ImVec2 toggleCenter((toggleRect.Min.x + toggleRect.Max.x) * 0.5f,
+                                          (toggleRect.Min.y + toggleRect.Max.y) * 0.5f);
+                const float toggleHalf = toggleSize * 0.32f;
+                drawList->AddRect(ImVec2(toggleCenter.x - toggleHalf, toggleCenter.y - toggleHalf),
+                                  ImVec2(toggleCenter.x + toggleHalf, toggleCenter.y + toggleHalf),
+                                  IM_COL32(210, 216, 226, 230),
+                                  2.0f * zoomFactor);
+                drawList->AddLine(ImVec2(toggleCenter.x - toggleHalf * 0.55f, toggleCenter.y),
+                                  ImVec2(toggleCenter.x + toggleHalf * 0.55f, toggleCenter.y),
+                                  IM_COL32(210, 216, 226, 230),
+                                  1.2f * zoomFactor);
+                if (node.collapsed)
+                {
+                    drawList->AddLine(ImVec2(toggleCenter.x, toggleCenter.y - toggleHalf * 0.55f),
+                                      ImVec2(toggleCenter.x, toggleCenter.y + toggleHalf * 0.55f),
+                                      IM_COL32(210, 216, 226, 230),
+                                      1.2f * zoomFactor);
+                }
+
                 drawList->PushClipRect(titleMin, titleMax, true);
                 DrawFittedText(drawList,
-                               ImVec2(titleMin.x + 5.0f * zoomFactor, titleMin.y + 2.0f * zoomFactor),
+                               ImVec2(titleMin.x + 4.0f * zoomFactor + toggleSize + 6.0f * zoomFactor, titleMin.y + 2.0f * zoomFactor),
                                IM_COL32(238, 240, 245, 255),
                                node.name.empty() ? render::ToString(node.kind) : node.name,
-                               std::max(0.0f, titleMax.x - titleMin.x - 10.0f * zoomFactor),
+                               std::max(0.0f, titleMax.x - titleMin.x - toggleSize - 16.0f * zoomFactor),
                                titleFontSize);
                 drawList->PopClipRect();
 
-                drawList->PushClipRect(rectangle.Min, rectangle.Max, true);
-                ImU8 inputCount = 0;
-                ImU8 outputCount = 0;
-                const char **inputPins = InputPins(node.kind, inputCount);
-                const char **outputPins = OutputPins(node.kind, outputCount);
-                const float nodeTop = rectangle.Min.y - 23.0f;
-                const float nodeHeight = rectangle.GetHeight() + 26.0f;
-                const float labelPadding = 16.0f * zoomFactor;
-                const float labelYAdjust = pinFontSize * 0.5f;
-                const float leftLabelX = rectangle.Min.x + labelPadding;
-                const float rightLimit = rectangle.Max.x - labelPadding;
-                const float inputLabelWidth = std::max(0.0f, rectangle.GetWidth() * 0.45f);
-                const float outputLabelWidth = std::max(0.0f, rectangle.GetWidth() * 0.45f);
-
-                for (ImU8 index = 0; index < inputCount; ++index)
+                if (!node.collapsed)
                 {
-                    const float y = nodeTop + nodeHeight * (static_cast<float>(index) + 1.0f) / (static_cast<float>(inputCount) + 1.0f) + 8.0f - labelYAdjust;
-                    DrawFittedText(drawList, ImVec2(leftLabelX, y), IM_COL32(190, 198, 210, 255), inputPins[index], inputLabelWidth, pinFontSize);
+                    drawList->PushClipRect(rectangle.Min, rectangle.Max, true);
+                    ImU8 inputCount = 0;
+                    ImU8 outputCount = 0;
+                    const char **inputPins = InputPins(node.kind, inputCount);
+                    const char **outputPins = OutputPins(node.kind, outputCount);
+                    const float nodeTop = rectangle.Min.y - 23.0f;
+                    const float nodeHeight = rectangle.GetHeight() + 26.0f;
+                    const float labelPadding = 16.0f * zoomFactor;
+                    const float labelYAdjust = pinFontSize * 0.5f;
+                    const float leftLabelX = rectangle.Min.x + labelPadding;
+                    const float rightLimit = rectangle.Max.x - labelPadding;
+                    const float inputLabelWidth = std::max(0.0f, rectangle.GetWidth() * 0.45f);
+                    const float outputLabelWidth = std::max(0.0f, rectangle.GetWidth() * 0.45f);
+
+                    for (ImU8 index = 0; index < inputCount; ++index)
+                    {
+                        const float y = nodeTop + nodeHeight * (static_cast<float>(index) + 1.0f) / (static_cast<float>(inputCount) + 1.0f) + 8.0f - labelYAdjust;
+                        DrawFittedText(drawList, ImVec2(leftLabelX, y), IM_COL32(190, 198, 210, 255), inputPins[index], inputLabelWidth, pinFontSize);
+                    }
+
+                    for (ImU8 index = 0; index < outputCount; ++index)
+                    {
+                        std::string label = outputPins[index] ? outputPins[index] : "";
+                        label = EllipsizeText(std::move(label), outputLabelWidth, pinFontSize);
+                        const float textWidth = MeasureTextWidth(label, pinFontSize);
+                        const float y = nodeTop + nodeHeight * (static_cast<float>(index) + 1.0f) / (static_cast<float>(outputCount) + 1.0f) + 8.0f - labelYAdjust;
+                        drawList->AddText(ImGui::GetFont(), pinFontSize, ImVec2(std::max(rectangle.Min.x + labelPadding, rightLimit - textWidth), y), IM_COL32(190, 198, 210, 255), label.c_str());
+                    }
+                    drawList->PopClipRect();
                 }
 
-                for (ImU8 index = 0; index < outputCount; ++index)
-                {
-                    std::string label = outputPins[index] ? outputPins[index] : "";
-                    label = EllipsizeText(std::move(label), outputLabelWidth, pinFontSize);
-                    const float textWidth = MeasureTextWidth(label, pinFontSize);
-                    const float y = nodeTop + nodeHeight * (static_cast<float>(index) + 1.0f) / (static_cast<float>(outputCount) + 1.0f) + 8.0f - labelYAdjust;
-                    drawList->AddText(ImGui::GetFont(), pinFontSize, ImVec2(std::max(rectangle.Min.x + labelPadding, rightLimit - textWidth), y), IM_COL32(190, 198, 210, 255), label.c_str());
-                }
-                drawList->PopClipRect();
+                const float gripSize = std::max(10.0f, kResizeGripSize * zoomFactor);
+                const ImRect gripRect = ResizeGripRect(nodeRect, zoomFactor);
+                const ImVec2 gripMin = gripRect.Min;
+                const ImVec2 gripMax = gripRect.Max;
+                drawList->AddTriangleFilled(ImVec2(gripMax.x, gripMax.y),
+                                            ImVec2(gripMin.x, gripMax.y),
+                                            ImVec2(gripMax.x, gripMin.y),
+                                            IM_COL32(210, 216, 226, 120));
+                drawList->AddLine(ImVec2(gripMax.x - gripSize * 0.35f, gripMax.y - 2.0f * zoomFactor),
+                                  ImVec2(gripMax.x - 2.0f * zoomFactor, gripMax.y - gripSize * 0.35f),
+                                  IM_COL32(210, 216, 226, 190),
+                                  1.0f * zoomFactor);
             }
 
             void RightClick(GraphEditor::NodeIndex nodeIndex, GraphEditor::SlotIndex, GraphEditor::SlotIndex) override
@@ -453,7 +597,7 @@ namespace PlutoGE::ui
                     "",
                     TemplateIndexForNode(node),
                     ImRect(ImVec2(node.position.x, node.position.y),
-                           ImVec2(node.position.x + kNodeWidth, node.position.y + NodeHeight(node.kind))),
+                           ImVec2(node.position.x + NodeWidth(node), node.position.y + NodeHeight(node))),
                     IsSelected(m_selectedNodeIds, node.id),
                 };
             }
@@ -489,6 +633,8 @@ namespace PlutoGE::ui
             render::ShaderGraph &m_graph;
             std::vector<int> &m_selectedNodeIds;
             int &m_selectedNodeId;
+            std::unordered_map<int, ImRect> &m_nodeScreenRects;
+            int &m_resizingNodeId;
             bool &m_dirty;
         };
 
@@ -521,6 +667,7 @@ namespace PlutoGE::ui
                 .name = name,
                 .position = {60.0f + static_cast<float>(graph.nodes.size() % 5) * 34.0f,
                              60.0f + static_cast<float>(graph.nodes.size() % 7) * 28.0f},
+                .size = {kDefaultNodeWidth, NodeHeight(kind)},
             };
         }
     }
@@ -559,13 +706,18 @@ namespace PlutoGE::ui
         {
             LoadActiveGraph();
         }
+        if (!ImGui::IsMouseDown(ImGuiMouseButton_Left))
+        {
+            m_resizingNodeId = 0;
+        }
 
         m_graphOptions.mMinimap = ImRect(ImVec2(0.0f, 0.0f), ImVec2(0.0f, 0.0f));
         m_graphOptions.mNodeSlotRadius = 5.5f;
         m_graphOptions.mLineThickness = 3.0f;
         m_graphOptions.mBorderThickness = 2.0f;
         m_graphOptions.mBorderSelectionThickness = 3.0f;
-        m_graphOptions.mDrawIONameOnHover = true;
+        m_graphOptions.mDrawIONameOnHover = false;
+        m_graphOptions.mDisplayLinksAsCurves = false;
 
         const bool engineGraph = assets::Project::IsEngineAssetReference(reference);
         ImGui::TextWrapped("Shader Graph: %s", reference.c_str());
@@ -614,7 +766,7 @@ namespace PlutoGE::ui
         ImGui::Separator();
         ImGui::Columns(2, "ShaderGraphEditorColumns", true);
 
-        ShaderGraphDelegate delegate(m_graph, m_selectedNodeIds, m_selectedNodeId, m_dirty);
+        ShaderGraphDelegate delegate(m_graph, m_selectedNodeIds, m_selectedNodeId, m_nodeScreenRects, m_resizingNodeId, m_dirty);
         const ImVec2 graphSize(ImGui::GetContentRegionAvail().x, std::max(360.0f, ImGui::GetContentRegionAvail().y - 62.0f));
         ImGui::BeginChild("ShaderGraphCanvasHost", graphSize, true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
         GraphEditor::Show(delegate, m_graphOptions, m_graphViewState, !engineGraph, &m_graphFit);
@@ -638,6 +790,29 @@ namespace PlutoGE::ui
             if (ImGui::DragFloat2("Position", position, 1.0f))
             {
                 selectedNode->position = {position[0], position[1]};
+                m_dirty = true;
+            }
+
+            bool collapsed = selectedNode->collapsed;
+            if (ImGui::Checkbox("Collapsed", &collapsed))
+            {
+                selectedNode->collapsed = collapsed;
+                if (selectedNode->size.x <= 0.0f)
+                {
+                    selectedNode->size.x = kDefaultNodeWidth;
+                }
+                if (selectedNode->size.y <= 0.0f)
+                {
+                    selectedNode->size.y = NodeHeight(selectedNode->kind);
+                }
+                m_dirty = true;
+            }
+
+            float size[2] = {NodeWidth(*selectedNode), selectedNode->collapsed ? std::max(NodeHeight(selectedNode->kind), selectedNode->size.y) : NodeHeight(*selectedNode)};
+            if (ImGui::DragFloat2("Size", size, 1.0f, 0.0f, 0.0f, "%.0f"))
+            {
+                selectedNode->size.x = std::max(kNodeMinWidth, size[0]);
+                selectedNode->size.y = std::max(NodeHeight(selectedNode->kind), size[1]);
                 m_dirty = true;
             }
 
@@ -694,32 +869,6 @@ namespace PlutoGE::ui
             ImGui::TextDisabled("Select a node in the graph.");
         }
 
-        ImGui::SeparatorText("Links");
-        ImGui::BeginChild("ShaderGraphLinkList", ImVec2(0.0f, 150.0f), true);
-        for (auto linkIt = m_graph.links.begin(); linkIt != m_graph.links.end();)
-        {
-            ImGui::PushID(linkIt->id);
-            ImGui::Text("%d.%s -> %d.%s", linkIt->fromNodeId, linkIt->fromPin.c_str(), linkIt->toNodeId, linkIt->toPin.c_str());
-            ImGui::SameLine();
-            bool erase = false;
-            ImGui::BeginDisabled(engineGraph);
-            if (ImGui::SmallButton("Remove"))
-            {
-                erase = true;
-            }
-            ImGui::EndDisabled();
-            ImGui::PopID();
-            if (erase)
-            {
-                linkIt = m_graph.links.erase(linkIt);
-                m_dirty = true;
-            }
-            else
-            {
-                ++linkIt;
-            }
-        }
-        ImGui::EndChild();
         ImGui::Columns(1);
 
         ImGui::Separator();

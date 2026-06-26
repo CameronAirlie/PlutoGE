@@ -748,6 +748,11 @@ namespace PlutoGE::assets
                 node.position = ParseVec2Or(fields[3], glm::vec2(0.0f));
                 node.value = ParseVec4Or(fields[4], glm::vec4(1.0f));
                 node.materialInput = render::ParseShaderGraphMaterialInput(fields[5]);
+                node.collapsed = fields[6] == "1" || fields[6] == "true" || fields[6] == "True";
+                if (fields.size() >= 8)
+                {
+                    node.size = ParseVec2Or(fields[7], glm::vec2(0.0f));
+                }
                 if (node.id != 0)
                 {
                     graph.nodes.push_back(std::move(node));
@@ -849,7 +854,8 @@ namespace PlutoGE::assets
                    << node.position.x << ',' << node.position.y << '|'
                    << node.value.x << ',' << node.value.y << ',' << node.value.z << ',' << node.value.w << '|'
                    << render::ToString(node.materialInput) << '|'
-                   << "0\n";
+                   << (node.collapsed ? "1" : "0") << '|'
+                   << node.size.x << ',' << node.size.y << "\n";
         }
         for (const auto &link : graph.links)
         {

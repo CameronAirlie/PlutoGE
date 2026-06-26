@@ -6,6 +6,7 @@
 #include <GraphEditor.h>
 
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace PlutoGE::ui
@@ -28,6 +29,8 @@ namespace PlutoGE::ui
         GraphEditor::Options m_graphOptions;
         GraphEditor::ViewState m_graphViewState;
         GraphEditor::FitOnScreen m_graphFit = GraphEditor::Fit_AllNodes;
+        std::unordered_map<int, ImRect> m_nodeScreenRects;
+        int m_resizingNodeId = 0;
         bool m_dirty = false;
     };
 }

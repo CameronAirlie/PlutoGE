@@ -655,6 +655,10 @@ namespace PlutoGE::assets
         {
             return ProjectAssetType::ShaderGraph;
         }
+        if (EndsWithInsensitive(reference, ".plutoanimgraph"))
+        {
+            return ProjectAssetType::AnimationGraph;
+        }
         if (EndsWithInsensitive(reference, ".plutomesh") || EndsWithInsensitive(reference, ".obj"))
         {
             return ProjectAssetType::Mesh;
@@ -662,6 +666,10 @@ namespace PlutoGE::assets
         if (EndsWithInsensitive(reference, ".plutoanim"))
         {
             return ProjectAssetType::Animation;
+        }
+        if (EndsWithInsensitive(reference, ".plutoclip"))
+        {
+            return ProjectAssetType::AnimationClip;
         }
         if (EndsWithInsensitive(reference, ".gltf") || EndsWithInsensitive(reference, ".glb") || EndsWithInsensitive(reference, ".fbx"))
         {
@@ -691,12 +699,16 @@ namespace PlutoGE::assets
             return "Mesh";
         case ProjectAssetType::Animation:
             return "Animation";
+        case ProjectAssetType::AnimationClip:
+            return "Animation Clip";
         case ProjectAssetType::SourceModel:
             return "Source Model";
         case ProjectAssetType::Material:
             return "Material";
         case ProjectAssetType::ShaderGraph:
             return "Shader Graph";
+        case ProjectAssetType::AnimationGraph:
+            return "Animation Graph";
         case ProjectAssetType::Texture:
             return "Texture";
         case ProjectAssetType::Assembly:
@@ -719,12 +731,16 @@ namespace PlutoGE::assets
             return ProjectAssetType::Mesh;
         if (typeName == "Animation")
             return ProjectAssetType::Animation;
+        if (typeName == "Animation Clip" || typeName == "AnimationClip")
+            return ProjectAssetType::AnimationClip;
         if (typeName == "Source Model" || typeName == "SourceModel")
             return ProjectAssetType::SourceModel;
         if (typeName == "Material")
             return ProjectAssetType::Material;
         if (typeName == "Shader Graph" || typeName == "ShaderGraph")
             return ProjectAssetType::ShaderGraph;
+        if (typeName == "Animation Graph" || typeName == "AnimationGraph")
+            return ProjectAssetType::AnimationGraph;
         if (typeName == "Texture")
             return ProjectAssetType::Texture;
         if (typeName == "Assembly")

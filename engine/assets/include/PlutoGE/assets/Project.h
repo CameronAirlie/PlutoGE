@@ -17,9 +17,11 @@ namespace PlutoGE::assets
         Script,
         Mesh,
         Animation,
+        AnimationClip,
         SourceModel,
         Material,
         ShaderGraph,
+        AnimationGraph,
         Texture,
         Assembly,
     };

@@ -90,4 +90,34 @@ public sealed class AnimationComponent : ComponentReference
     {
         ScriptBridge.AnimationStop(EntityId);
     }
+
+    public void PlayState(string stateName)
+    {
+        ScriptBridge.AnimationPlayState(EntityId, stateName);
+    }
+
+    public void SetBool(string parameterName, bool value)
+    {
+        ScriptBridge.SetAnimationBoolParameter(EntityId, parameterName, value);
+    }
+
+    public void SetFloat(string parameterName, float value)
+    {
+        ScriptBridge.SetAnimationFloatParameter(EntityId, parameterName, value);
+    }
+
+    public void SetInteger(string parameterName, int value)
+    {
+        ScriptBridge.SetAnimationIntParameter(EntityId, parameterName, value);
+    }
+
+    public void SetTrigger(string parameterName)
+    {
+        ScriptBridge.SetAnimationTriggerParameter(EntityId, parameterName);
+    }
+
+    public void ResetTrigger(string parameterName)
+    {
+        ScriptBridge.ResetAnimationTriggerParameter(EntityId, parameterName);
+    }
 }

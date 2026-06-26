@@ -218,9 +218,21 @@ namespace PlutoGE::assets
     {
         clips.clear();
         const std::string animationPath = ResolveAssetPath(assetReference);
-        if (animationPath.empty() || std::filesystem::path(animationPath).extension() != ".plutoanim")
+        const auto extension = std::filesystem::path(animationPath).extension();
+        if (animationPath.empty() || (extension != ".plutoanim" && extension != ".plutoclip"))
         {
             return false;
+        }
+
+        if (extension == ".plutoclip")
+        {
+            render::AnimationClip clip;
+            if (!LoadAnimationClipAsset(assetReference, clip))
+            {
+                return false;
+            }
+            clips.push_back(std::move(clip));
+            return true;
         }
 
         std::ifstream input(animationPath, std::ios::binary);
@@ -231,6 +243,27 @@ namespace PlutoGE::assets
 
         constexpr std::uint32_t kMagic = 0x4147504c; // LPGA
         const auto magic = ReadPod<std::uint32_t>(input);
+        if (magic != kMagic)
+        {
+            input.close();
+            std::vector<std::string> clipReferences;
+            if (!LoadAnimationClipReferences(assetReference, clipReferences))
+            {
+                return false;
+            }
+
+            clips.reserve(clipReferences.size());
+            for (const auto &clipReference : clipReferences)
+            {
+                render::AnimationClip clip;
+                if (LoadAnimationClipAsset(clipReference, clip))
+                {
+                    clips.push_back(std::move(clip));
+                }
+            }
+            return !clips.empty() || clipReferences.empty();
+        }
+
         const auto version = ReadPod<std::uint32_t>(input);
         if (magic != kMagic || version < 1 || version > 2)
         {
@@ -245,6 +278,73 @@ namespace PlutoGE::assets
         }
 
         return input.good();
+    }
+
+    bool AssetManager::LoadAnimationClipAsset(const std::string &assetReference, render::AnimationClip &clip) const
+    {
+        const std::string clipPath = ResolveAssetPath(assetReference);
+        if (clipPath.empty() || std::filesystem::path(clipPath).extension() != ".plutoclip")
+        {
+            return false;
+        }
+
+        std::ifstream input(clipPath, std::ios::binary);
+        if (!input.is_open())
+        {
+            return false;
+        }
+
+        constexpr std::uint32_t kMagic = 0x4347504c; // LPGC
+        constexpr std::uint32_t kVersion = 1;
+        const auto magic = ReadPod<std::uint32_t>(input);
+        const auto version = ReadPod<std::uint32_t>(input);
+        if (magic != kMagic || version != kVersion)
+        {
+            return false;
+        }
+
+        clip = ReadAnimationClip(input, 2);
+        return input.good();
+    }
+
+    bool AssetManager::LoadAnimationClipReferences(const std::string &assetReference, std::vector<std::string> &clipReferences) const
+    {
+        clipReferences.clear();
+        const std::string animationPath = ResolveAssetPath(assetReference);
+        if (animationPath.empty() || std::filesystem::path(animationPath).extension() != ".plutoanim")
+        {
+            return false;
+        }
+
+        std::ifstream input(animationPath);
+        if (!input.is_open())
+        {
+            return false;
+        }
+
+        bool sawHeader = false;
+        std::string line;
+        while (std::getline(input, line))
+        {
+            const auto delimiter = line.find('=');
+            if (delimiter == std::string::npos)
+            {
+                continue;
+            }
+
+            const std::string key = line.substr(0, delimiter);
+            const std::string value = line.substr(delimiter + 1);
+            if (key == "AnimationSetVersion")
+            {
+                sawHeader = true;
+            }
+            else if (key == "Clip")
+            {
+                clipReferences.push_back(value);
+            }
+        }
+
+        return sawHeader;
     }
 
     bool AssetManager::SaveAnimationAsset(const std::string &assetReference,
@@ -306,6 +406,128 @@ namespace PlutoGE::assets
             if (errorMessage)
             {
                 *errorMessage = "Failed to write animation asset.";
+            }
+            return false;
+        }
+        return true;
+    }
+
+    bool AssetManager::SaveAnimationAssetReferences(const std::string &assetReference,
+                                                    const std::vector<std::string> &clipReferences,
+                                                    std::string *errorMessage)
+    {
+        if (assetReference.empty() || Project::IsEngineAssetReference(assetReference))
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Cannot save an empty or engine animation asset reference.";
+            }
+            return false;
+        }
+
+        const std::string animationPath = ResolveAssetPath(assetReference);
+        if (animationPath.empty() || std::filesystem::path(animationPath).extension() != ".plutoanim")
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Animation reference assets must use the .plutoanim extension.";
+            }
+            return false;
+        }
+
+        std::error_code errorCode;
+        std::filesystem::create_directories(std::filesystem::path(animationPath).parent_path(), errorCode);
+        if (errorCode)
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Failed to create animation asset directory: " + errorCode.message();
+            }
+            return false;
+        }
+
+        std::ofstream output(animationPath, std::ios::out | std::ios::trunc);
+        if (!output.is_open())
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Failed to open animation asset for writing.";
+            }
+            return false;
+        }
+
+        output << "AnimationSetVersion=1\n";
+        for (const auto &clipReference : clipReferences)
+        {
+            output << "Clip=" << clipReference << "\n";
+        }
+
+        if (!output.good())
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Failed to write animation asset.";
+            }
+            return false;
+        }
+        return true;
+    }
+
+    bool AssetManager::SaveAnimationClipAsset(const std::string &assetReference,
+                                              const render::AnimationClip &clip,
+                                              std::string *errorMessage)
+    {
+        if (assetReference.empty() || Project::IsEngineAssetReference(assetReference))
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Cannot save an empty or engine animation clip asset reference.";
+            }
+            return false;
+        }
+
+        const std::string clipPath = ResolveAssetPath(assetReference);
+        if (clipPath.empty() || std::filesystem::path(clipPath).extension() != ".plutoclip")
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Animation clips must use the .plutoclip extension.";
+            }
+            return false;
+        }
+
+        std::error_code errorCode;
+        std::filesystem::create_directories(std::filesystem::path(clipPath).parent_path(), errorCode);
+        if (errorCode)
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Failed to create animation clip directory: " + errorCode.message();
+            }
+            return false;
+        }
+
+        std::ofstream output(clipPath, std::ios::binary | std::ios::trunc);
+        if (!output.is_open())
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Failed to open animation clip asset for writing.";
+            }
+            return false;
+        }
+
+        constexpr std::uint32_t kMagic = 0x4347504c; // LPGC
+        constexpr std::uint32_t kVersion = 1;
+        WritePod(output, kMagic);
+        WritePod(output, kVersion);
+        WriteAnimationClip(output, clip);
+
+        if (!output.good())
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Failed to write animation clip asset.";
             }
             return false;
         }
@@ -411,6 +633,109 @@ namespace PlutoGE::assets
             {
                 return fallback;
             }
+        }
+
+        float ParseFloatOr(std::string_view text, float fallback)
+        {
+            try
+            {
+                return std::stof(std::string(text));
+            }
+            catch (...)
+            {
+                return fallback;
+            }
+        }
+
+        bool ParseBoolOr(std::string_view text, bool fallback)
+        {
+            if (text == "1" || text == "true" || text == "True")
+            {
+                return true;
+            }
+            if (text == "0" || text == "false" || text == "False")
+            {
+                return false;
+            }
+            return fallback;
+        }
+
+        const char *ToString(AnimationGraphParameterType type)
+        {
+            switch (type)
+            {
+            case AnimationGraphParameterType::Int:
+                return "Int";
+            case AnimationGraphParameterType::Bool:
+                return "Bool";
+            case AnimationGraphParameterType::Trigger:
+                return "Trigger";
+            case AnimationGraphParameterType::Float:
+            default:
+                return "Float";
+            }
+        }
+
+        AnimationGraphParameterType ParseAnimationGraphParameterType(std::string_view text)
+        {
+            if (text == "Int" || text == "1")
+            {
+                return AnimationGraphParameterType::Int;
+            }
+            if (text == "Bool" || text == "2")
+            {
+                return AnimationGraphParameterType::Bool;
+            }
+            if (text == "Trigger" || text == "3")
+            {
+                return AnimationGraphParameterType::Trigger;
+            }
+            return AnimationGraphParameterType::Float;
+        }
+
+        const char *ToString(AnimationGraphConditionMode mode)
+        {
+            switch (mode)
+            {
+            case AnimationGraphConditionMode::IfNot:
+                return "IfNot";
+            case AnimationGraphConditionMode::Greater:
+                return "Greater";
+            case AnimationGraphConditionMode::Less:
+                return "Less";
+            case AnimationGraphConditionMode::Equals:
+                return "Equals";
+            case AnimationGraphConditionMode::NotEqual:
+                return "NotEqual";
+            case AnimationGraphConditionMode::If:
+            default:
+                return "If";
+            }
+        }
+
+        AnimationGraphConditionMode ParseAnimationGraphConditionMode(std::string_view text)
+        {
+            if (text == "IfNot" || text == "1")
+            {
+                return AnimationGraphConditionMode::IfNot;
+            }
+            if (text == "Greater" || text == "2")
+            {
+                return AnimationGraphConditionMode::Greater;
+            }
+            if (text == "Less" || text == "3")
+            {
+                return AnimationGraphConditionMode::Less;
+            }
+            if (text == "Equals" || text == "4")
+            {
+                return AnimationGraphConditionMode::Equals;
+            }
+            if (text == "NotEqual" || text == "5")
+            {
+                return AnimationGraphConditionMode::NotEqual;
+            }
+            return AnimationGraphConditionMode::If;
         }
 
         glm::vec4 ParseVec4Or(std::string_view text, const glm::vec4 &fallback)
@@ -889,6 +1214,288 @@ namespace PlutoGE::assets
         m_shaderGraphCache[assetReference] = graph;
         m_shaderGraphShaderCache.erase(assetReference);
         RefreshCachedMaterialsForShaderGraph(assetReference);
+        return true;
+    }
+
+    AnimationGraphAsset CreateDefaultAnimationGraphAsset()
+    {
+        AnimationGraphAsset graph;
+        graph.defaultStateId = 1;
+        graph.states.push_back(AnimationGraphState{
+            .id = 1,
+            .name = "Idle",
+            .clipName = "Idle",
+            .clipIndex = 0,
+            .positionX = 80.0f,
+            .positionY = 120.0f,
+            .speed = 1.0f,
+            .loop = true,
+        });
+        graph.states.push_back(AnimationGraphState{
+            .id = 2,
+            .name = "Walk",
+            .clipName = "Walk",
+            .clipIndex = 1,
+            .positionX = 360.0f,
+            .positionY = 120.0f,
+            .speed = 1.0f,
+            .loop = true,
+        });
+        graph.states.push_back(AnimationGraphState{
+            .id = 3,
+            .name = "Jump",
+            .clipName = "Jump",
+            .clipIndex = 2,
+            .positionX = 220.0f,
+            .positionY = 340.0f,
+            .speed = 1.0f,
+            .loop = false,
+        });
+        graph.parameters.push_back(AnimationGraphParameter{
+            .id = 1,
+            .name = "Speed",
+            .type = AnimationGraphParameterType::Float,
+        });
+        graph.parameters.push_back(AnimationGraphParameter{
+            .id = 2,
+            .name = "Jump",
+            .type = AnimationGraphParameterType::Trigger,
+        });
+        return graph;
+    }
+
+    AnimationGraphAsset AssetManager::LoadAnimationGraphAsset(const std::string &assetReference, bool *loaded)
+    {
+        if (loaded)
+        {
+            *loaded = false;
+        }
+
+        if (assetReference.empty())
+        {
+            return CreateDefaultAnimationGraphAsset();
+        }
+
+        if (auto cached = m_animationGraphCache.find(assetReference); cached != m_animationGraphCache.end())
+        {
+            if (loaded)
+            {
+                *loaded = true;
+            }
+            return cached->second;
+        }
+
+        const std::string graphPath = ResolveAssetPath(assetReference);
+        std::ifstream input(graphPath);
+        if (!input.is_open())
+        {
+            return CreateDefaultAnimationGraphAsset();
+        }
+
+        AnimationGraphAsset graph;
+        std::unordered_map<int, std::size_t> transitionIndexById;
+        std::string line;
+        while (std::getline(input, line))
+        {
+            const auto delimiter = line.find('=');
+            if (delimiter == std::string::npos)
+            {
+                continue;
+            }
+
+            const std::string key = line.substr(0, delimiter);
+            const std::string value = line.substr(delimiter + 1);
+            if (key == "DefaultStateId")
+            {
+                graph.defaultStateId = ParseIntOr(value, 0);
+            }
+            else if (key == "Parameter")
+            {
+                const auto fields = SplitFields(value);
+                if (fields.size() < 6)
+                {
+                    continue;
+                }
+
+                graph.parameters.push_back(AnimationGraphParameter{
+                    .id = ParseIntOr(fields[0], 0),
+                    .name = fields[1],
+                    .type = ParseAnimationGraphParameterType(fields[2]),
+                    .floatValue = ParseFloatOr(fields[3], 0.0f),
+                    .intValue = ParseIntOr(fields[4], 0),
+                    .boolValue = ParseBoolOr(fields[5], false),
+                });
+            }
+            else if (key == "State")
+            {
+                const auto fields = SplitFields(value);
+                if (fields.size() < 8)
+                {
+                    continue;
+                }
+
+                graph.states.push_back(AnimationGraphState{
+                    .id = ParseIntOr(fields[0], 0),
+                    .name = fields[1],
+                    .clipReference = fields.size() >= 9 ? fields[8] : std::string{},
+                    .clipName = fields[2],
+                    .clipIndex = ParseIntOr(fields[3], 0),
+                    .positionX = ParseFloatOr(fields[4], 60.0f),
+                    .positionY = ParseFloatOr(fields[5], 60.0f),
+                    .speed = ParseFloatOr(fields[6], 1.0f),
+                    .loop = ParseBoolOr(fields[7], true),
+                });
+            }
+            else if (key == "Transition")
+            {
+                const auto fields = SplitFields(value);
+                if (fields.size() < 6)
+                {
+                    continue;
+                }
+
+                graph.transitions.push_back(AnimationGraphTransition{
+                    .id = ParseIntOr(fields[0], 0),
+                    .fromStateId = ParseIntOr(fields[1], 0),
+                    .toStateId = ParseIntOr(fields[2], 0),
+                    .duration = ParseFloatOr(fields[3], 0.15f),
+                    .hasExitTime = ParseBoolOr(fields[4], false),
+                    .exitTime = ParseFloatOr(fields[5], 0.9f),
+                });
+                transitionIndexById[graph.transitions.back().id] = graph.transitions.size() - 1;
+            }
+            else if (key == "Condition")
+            {
+                const auto fields = SplitFields(value);
+                if (fields.size() < 4)
+                {
+                    continue;
+                }
+
+                const int transitionId = ParseIntOr(fields[0], 0);
+                auto transitionIt = transitionIndexById.find(transitionId);
+                if (transitionIt == transitionIndexById.end() || transitionIt->second >= graph.transitions.size())
+                {
+                    continue;
+                }
+
+                graph.transitions[transitionIt->second].conditions.push_back(AnimationGraphCondition{
+                    .parameterName = fields[1],
+                    .mode = ParseAnimationGraphConditionMode(fields[2]),
+                    .threshold = ParseFloatOr(fields[3], 0.0f),
+                });
+            }
+        }
+
+        if (graph.states.empty())
+        {
+            graph = CreateDefaultAnimationGraphAsset();
+        }
+        if (graph.defaultStateId == 0 && !graph.states.empty())
+        {
+            graph.defaultStateId = graph.states.front().id;
+        }
+
+        m_animationGraphCache[assetReference] = graph;
+        if (loaded)
+        {
+            *loaded = true;
+        }
+        return graph;
+    }
+
+    bool AssetManager::SaveAnimationGraphAsset(const std::string &assetReference, const AnimationGraphAsset &graph, std::string *errorMessage)
+    {
+        if (assetReference.empty() || Project::IsEngineAssetReference(assetReference))
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Cannot save an empty or engine animation graph asset reference.";
+            }
+            return false;
+        }
+
+        const std::string graphPath = ResolveAssetPath(assetReference);
+        if (graphPath.empty())
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Could not resolve animation graph asset path.";
+            }
+            return false;
+        }
+
+        std::error_code errorCode;
+        std::filesystem::create_directories(std::filesystem::path(graphPath).parent_path(), errorCode);
+        if (errorCode)
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Failed to create animation graph directory: " + errorCode.message();
+            }
+            return false;
+        }
+
+        std::ofstream output(graphPath, std::ios::out | std::ios::trunc);
+        if (!output.is_open())
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Failed to open animation graph asset for writing.";
+            }
+            return false;
+        }
+
+        output << "AnimationGraphVersion=1\n";
+        output << "DefaultStateId=" << graph.defaultStateId << "\n";
+        for (const auto &parameter : graph.parameters)
+        {
+            output << "Parameter=" << parameter.id << '|'
+                   << parameter.name << '|'
+                   << ToString(parameter.type) << '|'
+                   << parameter.floatValue << '|'
+                   << parameter.intValue << '|'
+                   << (parameter.boolValue ? "1" : "0") << "\n";
+        }
+        for (const auto &state : graph.states)
+        {
+            output << "State=" << state.id << '|'
+                   << state.name << '|'
+                   << state.clipName << '|'
+                   << state.clipIndex << '|'
+                   << state.positionX << '|'
+                   << state.positionY << '|'
+                   << state.speed << '|'
+                   << (state.loop ? "1" : "0") << '|'
+                   << state.clipReference << "\n";
+        }
+        for (const auto &transition : graph.transitions)
+        {
+            output << "Transition=" << transition.id << '|'
+                   << transition.fromStateId << '|'
+                   << transition.toStateId << '|'
+                   << transition.duration << '|'
+                   << (transition.hasExitTime ? "1" : "0") << '|'
+                   << transition.exitTime << "\n";
+            for (const auto &condition : transition.conditions)
+            {
+                output << "Condition=" << transition.id << '|'
+                       << condition.parameterName << '|'
+                       << ToString(condition.mode) << '|'
+                       << condition.threshold << "\n";
+            }
+        }
+
+        if (!output.good())
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Failed to write animation graph asset.";
+            }
+            return false;
+        }
+
+        m_animationGraphCache[assetReference] = graph;
         return true;
     }
 

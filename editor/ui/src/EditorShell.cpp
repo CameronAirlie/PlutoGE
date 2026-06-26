@@ -2,6 +2,7 @@
 #include "PlutoGE/ui/panels/ProfilerPanel.h"
 #include "PlutoGE/ui/panels/ConsolePanel.h"
 #include "PlutoGE/ui/panels/ContentBrowserPanel.h"
+#include "PlutoGE/ui/panels/AnimationGraphEditorPanel.h"
 #include "PlutoGE/ui/panels/MaterialEditorPanel.h"
 #include "PlutoGE/ui/panels/MeshEditorPanel.h"
 #include "PlutoGE/ui/panels/ShaderGraphEditorPanel.h"
@@ -1738,6 +1739,18 @@ namespace PlutoGE::ui
         Log(ConsoleSeverity::Info, "Opened shader graph: " + m_activeShaderGraphAssetReference);
     }
 
+    void EditorShell::OpenAnimationGraphAsset(std::string animationGraphAssetReference)
+    {
+        if (animationGraphAssetReference.empty())
+        {
+            return;
+        }
+
+        m_activeAnimationGraphAssetReference = std::move(animationGraphAssetReference);
+        m_openAnimationGraphEditorRequested = true;
+        Log(ConsoleSeverity::Info, "Opened animation graph: " + m_activeAnimationGraphAssetReference);
+    }
+
     bool EditorShell::LoadProjectFromPath(const std::filesystem::path &manifestPath)
     {
         constexpr std::string_view kMissingScriptAssemblyPrefix = "Project script assembly was not found: ";
@@ -2080,6 +2093,10 @@ namespace PlutoGE::ui
         shaderGraphEditorPanel->Initialize();
         m_panelManager.AddPanel(shaderGraphEditorPanel);
 
+        auto animationGraphEditorPanel = new AnimationGraphEditorPanel(PanelConfig{"Animation Graph Editor", false});
+        animationGraphEditorPanel->Initialize();
+        m_panelManager.AddPanel(animationGraphEditorPanel);
+
         auto profilerPanel = new ProfilerPanel(PanelConfig{"Profiler"}, &m_profiler, &m_panelManager, &renderer);
         profilerPanel->Initialize();
         m_panelManager.AddPanel(profilerPanel);
@@ -2394,6 +2411,10 @@ namespace PlutoGE::ui
                 if (ConsumeShaderGraphEditorOpenRequest())
                 {
                     shaderGraphEditorPanel->SetOpen(true);
+                }
+                if (ConsumeAnimationGraphEditorOpenRequest())
+                {
+                    animationGraphEditorPanel->SetOpen(true);
                 }
 
                 if (ImGui::BeginMenu("File"))

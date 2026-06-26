@@ -145,6 +145,12 @@ internal static unsafe class ScriptBridge
     private static delegate* unmanaged[Cdecl]<uint, void> _animationPlay;
     private static delegate* unmanaged[Cdecl]<uint, void> _animationPause;
     private static delegate* unmanaged[Cdecl]<uint, void> _animationStop;
+    private static delegate* unmanaged[Cdecl]<uint, byte*, int, void> _setAnimationBoolParameter;
+    private static delegate* unmanaged[Cdecl]<uint, byte*, float, void> _setAnimationFloatParameter;
+    private static delegate* unmanaged[Cdecl]<uint, byte*, int, void> _setAnimationIntParameter;
+    private static delegate* unmanaged[Cdecl]<uint, byte*, void> _setAnimationTriggerParameter;
+    private static delegate* unmanaged[Cdecl]<uint, byte*, void> _resetAnimationTriggerParameter;
+    private static delegate* unmanaged[Cdecl]<uint, byte*, void> _animationPlayState;
     private static delegate* unmanaged[Cdecl]<uint, float> _getRigidbodyMass;
     private static delegate* unmanaged[Cdecl]<uint, float, void> _setRigidbodyMass;
     private static delegate* unmanaged[Cdecl]<uint, float> _getRigidbodyLinearDrag;
@@ -434,12 +440,19 @@ internal static unsafe class ScriptBridge
         delegate* unmanaged[Cdecl]<uint, float, void> setTime,
         delegate* unmanaged[Cdecl]<uint, void> play,
         delegate* unmanaged[Cdecl]<uint, void> pause,
-        delegate* unmanaged[Cdecl]<uint, void> stop)
+        delegate* unmanaged[Cdecl]<uint, void> stop,
+        delegate* unmanaged[Cdecl]<uint, byte*, int, void> setBoolParameter,
+        delegate* unmanaged[Cdecl]<uint, byte*, float, void> setFloatParameter,
+        delegate* unmanaged[Cdecl]<uint, byte*, int, void> setIntParameter,
+        delegate* unmanaged[Cdecl]<uint, byte*, void> setTriggerParameter,
+        delegate* unmanaged[Cdecl]<uint, byte*, void> resetTriggerParameter,
+        delegate* unmanaged[Cdecl]<uint, byte*, void> playState)
     {
         if (getClipCount == null || getClipIndex == null || setClipIndex == null || getClipName == null || getClipDuration == null ||
             getPlaying == null || setPlaying == null || getLooping == null || setLooping == null || getAutoplay == null ||
             setAutoplay == null || getSpeed == null || setSpeed == null || getTime == null || setTime == null ||
-            play == null || pause == null || stop == null)
+            play == null || pause == null || stop == null || setBoolParameter == null || setFloatParameter == null ||
+            setIntParameter == null || setTriggerParameter == null || resetTriggerParameter == null || playState == null)
         {
             SetError("Managed animation component API registration received a null function pointer.");
             return 0;
@@ -463,6 +476,12 @@ internal static unsafe class ScriptBridge
         _animationPlay = play;
         _animationPause = pause;
         _animationStop = stop;
+        _setAnimationBoolParameter = setBoolParameter;
+        _setAnimationFloatParameter = setFloatParameter;
+        _setAnimationIntParameter = setIntParameter;
+        _setAnimationTriggerParameter = setTriggerParameter;
+        _resetAnimationTriggerParameter = resetTriggerParameter;
+        _animationPlayState = playState;
         _lastError = string.Empty;
         return 1;
     }
@@ -1295,6 +1314,72 @@ internal static unsafe class ScriptBridge
     internal static void AnimationPlay(uint entityId) { if (_animationPlay != null) _animationPlay(entityId); }
     internal static void AnimationPause(uint entityId) { if (_animationPause != null) _animationPause(entityId); }
     internal static void AnimationStop(uint entityId) { if (_animationStop != null) _animationStop(entityId); }
+    internal static void SetAnimationBoolParameter(uint entityId, string name, bool value)
+    {
+        if (_setAnimationBoolParameter == null)
+            return;
+
+        var nameBytes = Encoding.UTF8.GetBytes((name ?? string.Empty) + '\0');
+        fixed (byte* namePtr = nameBytes)
+        {
+            _setAnimationBoolParameter(entityId, namePtr, value ? 1 : 0);
+        }
+    }
+    internal static void SetAnimationFloatParameter(uint entityId, string name, float value)
+    {
+        if (_setAnimationFloatParameter == null)
+            return;
+
+        var nameBytes = Encoding.UTF8.GetBytes((name ?? string.Empty) + '\0');
+        fixed (byte* namePtr = nameBytes)
+        {
+            _setAnimationFloatParameter(entityId, namePtr, value);
+        }
+    }
+    internal static void SetAnimationIntParameter(uint entityId, string name, int value)
+    {
+        if (_setAnimationIntParameter == null)
+            return;
+
+        var nameBytes = Encoding.UTF8.GetBytes((name ?? string.Empty) + '\0');
+        fixed (byte* namePtr = nameBytes)
+        {
+            _setAnimationIntParameter(entityId, namePtr, value);
+        }
+    }
+    internal static void SetAnimationTriggerParameter(uint entityId, string name)
+    {
+        if (_setAnimationTriggerParameter == null)
+            return;
+
+        var nameBytes = Encoding.UTF8.GetBytes((name ?? string.Empty) + '\0');
+        fixed (byte* namePtr = nameBytes)
+        {
+            _setAnimationTriggerParameter(entityId, namePtr);
+        }
+    }
+    internal static void ResetAnimationTriggerParameter(uint entityId, string name)
+    {
+        if (_resetAnimationTriggerParameter == null)
+            return;
+
+        var nameBytes = Encoding.UTF8.GetBytes((name ?? string.Empty) + '\0');
+        fixed (byte* namePtr = nameBytes)
+        {
+            _resetAnimationTriggerParameter(entityId, namePtr);
+        }
+    }
+    internal static void AnimationPlayState(uint entityId, string name)
+    {
+        if (_animationPlayState == null)
+            return;
+
+        var nameBytes = Encoding.UTF8.GetBytes((name ?? string.Empty) + '\0');
+        fixed (byte* namePtr = nameBytes)
+        {
+            _animationPlayState(entityId, namePtr);
+        }
+    }
 
     internal static float GetRigidbodyMass(uint entityId) => _getRigidbodyMass == null ? 0.0f : _getRigidbodyMass(entityId);
     internal static void SetRigidbodyMass(uint entityId, float value) { if (_setRigidbodyMass != null) _setRigidbodyMass(entityId, value); }

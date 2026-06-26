@@ -37,6 +37,7 @@ namespace PlutoGE::ui
         std::array<char, 160> m_filterBuffer{};
         std::array<char, 96> m_newMaterialNameBuffer{};
         std::array<char, 96> m_newShaderGraphNameBuffer{};
+        std::array<char, 96> m_newAnimationGraphNameBuffer{};
         int m_selectedAssetIndex = -1;
     };
 }

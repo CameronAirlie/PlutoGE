@@ -157,9 +157,11 @@ namespace PlutoGE::ui
         void OpenMaterialAsset(std::string materialAssetReference);
         void OpenMeshAsset(std::string meshAssetReference);
         void OpenShaderGraphAsset(std::string shaderGraphAssetReference);
+        void OpenAnimationGraphAsset(std::string animationGraphAssetReference);
         const std::string &GetActiveMaterialAssetReference() const { return m_activeMaterialAssetReference; }
         const std::string &GetActiveMeshAssetReference() const { return m_activeMeshAssetReference; }
         const std::string &GetActiveShaderGraphAssetReference() const { return m_activeShaderGraphAssetReference; }
+        const std::string &GetActiveAnimationGraphAssetReference() const { return m_activeAnimationGraphAssetReference; }
         bool ConsumeMaterialEditorOpenRequest()
         {
             const bool requested = m_openMaterialEditorRequested;
@@ -176,6 +178,12 @@ namespace PlutoGE::ui
         {
             const bool requested = m_openShaderGraphEditorRequested;
             m_openShaderGraphEditorRequested = false;
+            return requested;
+        }
+        bool ConsumeAnimationGraphEditorOpenRequest()
+        {
+            const bool requested = m_openAnimationGraphEditorRequested;
+            m_openAnimationGraphEditorRequested = false;
             return requested;
         }
         void Log(ConsoleSeverity severity, std::string message);
@@ -266,10 +274,12 @@ namespace PlutoGE::ui
         std::string m_activeMaterialAssetReference;
         std::string m_activeMeshAssetReference;
         std::string m_activeShaderGraphAssetReference;
+        std::string m_activeAnimationGraphAssetReference;
         std::string m_runtimeSceneSnapshot;
         bool m_runtimeSceneWasDirty = false;
         bool m_openMaterialEditorRequested = false;
         bool m_openMeshEditorRequested = false;
         bool m_openShaderGraphEditorRequested = false;
+        bool m_openAnimationGraphEditorRequested = false;
     };
 }

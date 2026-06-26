@@ -78,7 +78,7 @@ namespace PlutoGE::scripting
         using register_camera_component_api_fn = int(__cdecl *)(void *, void *, void *, void *);
         using register_light_component_api_fn = int(__cdecl *)(void *, void *, void *, void *);
         using register_mesh_component_api_fn = int(__cdecl *)(void *, void *, void *, void *);
-        using register_animation_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
+        using register_animation_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_rigidbody_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_collider_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_runtime_ui_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
@@ -136,6 +136,9 @@ namespace PlutoGE::scripting
         using get_component_vector3_fn = NativeVector3(__cdecl *)(uint32_t);
         using set_component_vector3_fn = void(__cdecl *)(uint32_t, NativeVector3);
         using set_component_string_fn = void(__cdecl *)(uint32_t, const char *);
+        using set_animation_bool_parameter_fn = void(__cdecl *)(uint32_t, const char *, int32_t);
+        using set_animation_float_parameter_fn = void(__cdecl *)(uint32_t, const char *, float);
+        using set_animation_int_parameter_fn = void(__cdecl *)(uint32_t, const char *, int32_t);
         using get_input_key_fn = int(__cdecl *)(int32_t);
         using get_input_mouse_button_fn = int(__cdecl *)(int32_t);
         using get_input_mouse_vector2_fn = NativeVector3(__cdecl *)();
@@ -1189,6 +1192,48 @@ namespace PlutoGE::scripting
         void AnimationPlay(uint32_t entityId) { if (auto *component = FindAnimation(entityId)) component->Play(); }
         void AnimationPause(uint32_t entityId) { if (auto *component = FindAnimation(entityId)) component->Pause(); }
         void AnimationStop(uint32_t entityId) { if (auto *component = FindAnimation(entityId)) component->Stop(); }
+        void SetAnimationBoolParameter(uint32_t entityId, const char *name, int32_t value)
+        {
+            if (auto *component = FindAnimation(entityId); component && name)
+            {
+                component->SetBool(name, value != 0);
+            }
+        }
+        void SetAnimationFloatParameter(uint32_t entityId, const char *name, float value)
+        {
+            if (auto *component = FindAnimation(entityId); component && name)
+            {
+                component->SetFloat(name, value);
+            }
+        }
+        void SetAnimationIntParameter(uint32_t entityId, const char *name, int32_t value)
+        {
+            if (auto *component = FindAnimation(entityId); component && name)
+            {
+                component->SetInt(name, value);
+            }
+        }
+        void SetAnimationTriggerParameter(uint32_t entityId, const char *name)
+        {
+            if (auto *component = FindAnimation(entityId); component && name)
+            {
+                component->SetTrigger(name);
+            }
+        }
+        void ResetAnimationTriggerParameter(uint32_t entityId, const char *name)
+        {
+            if (auto *component = FindAnimation(entityId); component && name)
+            {
+                component->ResetTrigger(name);
+            }
+        }
+        void AnimationPlayState(uint32_t entityId, const char *name)
+        {
+            if (auto *component = FindAnimation(entityId); component && name)
+            {
+                component->PlayState(name);
+            }
+        }
 
         scene::RigidbodyComponent *FindRigidbody(uint32_t entityId)
         {
@@ -2318,7 +2363,13 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(static_cast<set_component_float_fn>(&SetAnimationTime)),
                 reinterpret_cast<void *>(static_cast<component_action_fn>(&AnimationPlay)),
                 reinterpret_cast<void *>(static_cast<component_action_fn>(&AnimationPause)),
-                reinterpret_cast<void *>(static_cast<component_action_fn>(&AnimationStop))) == 0)
+                reinterpret_cast<void *>(static_cast<component_action_fn>(&AnimationStop)),
+                reinterpret_cast<void *>(static_cast<set_animation_bool_parameter_fn>(&SetAnimationBoolParameter)),
+                reinterpret_cast<void *>(static_cast<set_animation_float_parameter_fn>(&SetAnimationFloatParameter)),
+                reinterpret_cast<void *>(static_cast<set_animation_int_parameter_fn>(&SetAnimationIntParameter)),
+                reinterpret_cast<void *>(static_cast<set_component_string_fn>(&SetAnimationTriggerParameter)),
+                reinterpret_cast<void *>(static_cast<set_component_string_fn>(&ResetAnimationTriggerParameter)),
+                reinterpret_cast<void *>(static_cast<set_component_string_fn>(&AnimationPlayState))) == 0)
         {
             setManagedBridgeFailure("RegisterAnimationComponentApi");
             return false;

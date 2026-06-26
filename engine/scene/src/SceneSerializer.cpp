@@ -334,7 +334,7 @@ namespace PlutoGE::scene
             }
             if (componentType == "AnimationComponent")
             {
-                return propertyName == "SourceAnimation";
+                return propertyName == "SourceAnimation" || propertyName == "AnimationGraph";
             }
             if (componentType == "UIImageComponent")
             {

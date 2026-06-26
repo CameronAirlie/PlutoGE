@@ -467,6 +467,116 @@ namespace PlutoGE::ui
             animationComponent->SetSourceAnimationPath(sourceReference);
         }
 
+        std::string MakeClipAssetFileName(const std::filesystem::path &sourcePath, const render::AnimationClip &clip, std::size_t clipIndex)
+        {
+            std::string clipName = SanitizeAssetFileName(clip.name);
+            if (clipName.empty())
+            {
+                clipName = "Clip_" + std::to_string(clipIndex);
+            }
+            return sourcePath.stem().string() + "_" + clipName + "_" + std::to_string(clipIndex) + ".plutoclip";
+        }
+
+        bool SaveImportedAnimationClips(const assets::Project &project,
+                                        const std::filesystem::path &clipDirectory,
+                                        const std::filesystem::path &sourcePath,
+                                        const std::vector<render::AnimationClip> &clips,
+                                        std::vector<std::string> &clipReferences,
+                                        std::string *errorMessage)
+        {
+            auto &assetManager = core::Engine::GetInstance().GetAssetManager();
+            for (std::size_t clipIndex = 0; clipIndex < clips.size(); ++clipIndex)
+            {
+                const auto clipPath = clipDirectory / MakeClipAssetFileName(sourcePath, clips[clipIndex], clipIndex);
+                const std::string clipReference = project.MakeAssetReference(clipPath);
+                if (!assetManager.SaveAnimationClipAsset(clipReference, clips[clipIndex], errorMessage))
+                {
+                    return false;
+                }
+                if (std::find(clipReferences.begin(), clipReferences.end(), clipReference) == clipReferences.end())
+                {
+                    clipReferences.push_back(clipReference);
+                }
+            }
+            return true;
+        }
+
+        bool EnsureAnimationAssetUsesClipReferences(const assets::Project &project,
+                                                   const std::string &animationReference,
+                                                   std::vector<std::string> &clipReferences,
+                                                   std::string *errorMessage)
+        {
+            auto &assetManager = core::Engine::GetInstance().GetAssetManager();
+            if (assetManager.LoadAnimationClipReferences(animationReference, clipReferences))
+            {
+                return true;
+            }
+
+            std::vector<render::AnimationClip> embeddedClips;
+            if (!assetManager.LoadAnimationAsset(animationReference, embeddedClips))
+            {
+                if (errorMessage)
+                {
+                    *errorMessage = "Failed to load animation asset: " + animationReference;
+                }
+                return false;
+            }
+
+            const auto animationPath = project.ResolveAssetReference(animationReference);
+            const auto clipDirectory = animationPath.parent_path() / "Clips";
+            if (!SaveImportedAnimationClips(project, clipDirectory, animationPath, embeddedClips, clipReferences, errorMessage))
+            {
+                return false;
+            }
+
+            return assetManager.SaveAnimationAssetReferences(animationReference, clipReferences, errorMessage);
+        }
+
+        bool AddClipsFromSourceModelToAnimationAsset(const assets::Project &project,
+                                                    const std::string &animationReference,
+                                                    const std::filesystem::path &sourcePath,
+                                                    std::string *errorMessage)
+        {
+            auto &engine = core::Engine::GetInstance();
+            assetimport::ImportedMeshSourceAsset importedSourceAsset;
+            try
+            {
+                importedSourceAsset = engine.GetMeshImporter().ImportMeshSourceAsset(sourcePath.string());
+            }
+            catch (const std::exception &exception)
+            {
+                if (errorMessage)
+                {
+                    *errorMessage = "Failed to import animation source '" + sourcePath.string() + "': " + exception.what();
+                }
+                return false;
+            }
+
+            if (importedSourceAsset.animations.empty())
+            {
+                if (errorMessage)
+                {
+                    *errorMessage = "Source model contained no animation clips: " + sourcePath.string();
+                }
+                return false;
+            }
+
+            std::vector<std::string> clipReferences;
+            if (!EnsureAnimationAssetUsesClipReferences(project, animationReference, clipReferences, errorMessage))
+            {
+                return false;
+            }
+
+            const auto animationPath = project.ResolveAssetReference(animationReference);
+            const auto clipDirectory = animationPath.parent_path() / "Clips";
+            if (!SaveImportedAnimationClips(project, clipDirectory, sourcePath, importedSourceAsset.animations, clipReferences, errorMessage))
+            {
+                return false;
+            }
+
+            return engine.GetAssetManager().SaveAnimationAssetReferences(animationReference, clipReferences, errorMessage);
+        }
+
         render::Mesh *GetOrCreateIsolatedSubmeshRuntimeMesh(const std::string &reference,
                                                             int submeshIndex,
                                                             int submeshCount,
@@ -665,7 +775,12 @@ namespace PlutoGE::ui
             if (hasAnimations)
             {
                 const std::string animationReference = project.MakeAssetReference(importDirectory / (sourcePath.stem().string() + ".plutoanim"));
-                if (!engine.GetAssetManager().SaveAnimationAsset(animationReference, importedSourceAsset.animations, errorMessage))
+                std::vector<std::string> clipReferences;
+                if (!SaveImportedAnimationClips(project, importDirectory / "Clips", sourcePath, importedSourceAsset.animations, clipReferences, errorMessage))
+                {
+                    return false;
+                }
+                if (!engine.GetAssetManager().SaveAnimationAssetReferences(animationReference, clipReferences, errorMessage))
                 {
                     return false;
                 }
@@ -841,6 +956,12 @@ namespace PlutoGE::ui
             m_newShaderGraphNameBuffer.fill('\0');
             ImGui::OpenPopup("Create Shader Graph Asset");
         }
+        ImGui::SameLine();
+        if (ImGui::Button("Create Anim Graph"))
+        {
+            m_newAnimationGraphNameBuffer.fill('\0');
+            ImGui::OpenPopup("Create Animation Graph Asset");
+        }
 
         if (ImGui::BeginPopupModal("Create Material Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
         {
@@ -931,6 +1052,48 @@ namespace PlutoGE::ui
             ImGui::EndPopup();
         }
 
+        if (ImGui::BeginPopupModal("Create Animation Graph Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        {
+            ImGui::InputText("Name", m_newAnimationGraphNameBuffer.data(), m_newAnimationGraphNameBuffer.size());
+            const std::string sanitizedName = SanitizeAssetFileName(m_newAnimationGraphNameBuffer.data());
+            if (!sanitizedName.empty())
+            {
+                ImGui::TextDisabled("Creates AnimGraphs/%s.plutoanimgraph", sanitizedName.c_str());
+            }
+            else
+            {
+                ImGui::TextDisabled("Enter an animation graph name.");
+            }
+
+            ImGui::BeginDisabled(sanitizedName.empty());
+            if (ImGui::Button("Create"))
+            {
+                const auto graphPath = project->GetAssetDirectoryPath() / "AnimGraphs" / (sanitizedName + ".plutoanimgraph");
+                const std::string reference = project->MakeAssetReference(graphPath);
+                std::string errorMessage;
+                if (core::Engine::GetInstance().GetAssetManager().SaveAnimationGraphAsset(reference, assets::CreateDefaultAnimationGraphAsset(), &errorMessage))
+                {
+                    project->RefreshAssetRegistry();
+                    editorShell.OpenAnimationGraphAsset(reference);
+                    editorShell.MarkProjectDirty();
+                    editorShell.Log(EditorShell::ConsoleSeverity::Info, "Created animation graph: " + reference);
+                    ImGui::CloseCurrentPopup();
+                }
+                else
+                {
+                    editorShell.Log(EditorShell::ConsoleSeverity::Error, errorMessage.empty() ? "Failed to create animation graph." : errorMessage);
+                }
+            }
+            ImGui::EndDisabled();
+
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel"))
+            {
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+
         ImGui::TextDisabled("Assets: %zu", project->GetManifest().assetEntries.size());
         ImGui::Separator();
 
@@ -992,6 +1155,10 @@ namespace PlutoGE::ui
                 else if (asset.type == assets::ProjectAssetType::ShaderGraph)
                 {
                     editorShell.OpenShaderGraphAsset(asset.reference);
+                }
+                else if (asset.type == assets::ProjectAssetType::AnimationGraph)
+                {
+                    editorShell.OpenAnimationGraphAsset(asset.reference);
                 }
             }
 
@@ -1108,6 +1275,28 @@ namespace PlutoGE::ui
                     editorShell.OpenMaterialAsset(asset.reference);
                 }
             }
+            else if (asset.type == assets::ProjectAssetType::Animation)
+            {
+                if (ImGui::Button("Add Clips From Model"))
+                {
+                    const std::string selectedPath = BrowseSourceModelPath();
+                    if (!selectedPath.empty())
+                    {
+                        std::string errorMessage;
+                        if (AddClipsFromSourceModelToAnimationAsset(*project, asset.reference, selectedPath, &errorMessage))
+                        {
+                            project->RefreshAssetRegistry();
+                            editorShell.MarkProjectDirty();
+                            editorShell.Log(EditorShell::ConsoleSeverity::Info, "Added animation clips to: " + asset.reference);
+                        }
+                        else
+                        {
+                            editorShell.Log(EditorShell::ConsoleSeverity::Error,
+                                            errorMessage.empty() ? "Failed to add animation clips." : errorMessage);
+                        }
+                    }
+                }
+            }
             else if (asset.type == assets::ProjectAssetType::Mesh)
             {
                 if (ImGui::Button("Open Mesh"))
@@ -1120,6 +1309,13 @@ namespace PlutoGE::ui
                 if (ImGui::Button("Open Shader Graph"))
                 {
                     editorShell.OpenShaderGraphAsset(asset.reference);
+                }
+            }
+            else if (asset.type == assets::ProjectAssetType::AnimationGraph)
+            {
+                if (ImGui::Button("Open Animation Graph"))
+                {
+                    editorShell.OpenAnimationGraphAsset(asset.reference);
                 }
             }
             else if (asset.type == assets::ProjectAssetType::SourceModel)

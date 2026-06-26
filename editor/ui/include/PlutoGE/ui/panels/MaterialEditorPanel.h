@@ -21,6 +21,7 @@ namespace PlutoGE::ui
         void LoadActiveMaterial();
 
         std::string m_loadedReference;
+        std::string m_shaderGraphReference;
         glm::vec4 m_color{1.0f};
         render::MaterialSurfaceType m_surfaceType = render::MaterialSurfaceType::Standard;
         render::AlphaMode m_alphaMode = render::AlphaMode::Opaque;

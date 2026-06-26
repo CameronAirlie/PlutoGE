@@ -12,6 +12,8 @@
 #include <cstring>
 #include <optional>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 #include <imgui.h>
 #ifdef _WIN32
@@ -100,6 +102,129 @@ namespace PlutoGE::ui
                 ImGui::EndDragDropTarget();
             }
             return droppedReference;
+        }
+
+        std::optional<std::string> AcceptDroppedShaderGraphAssetReference()
+        {
+            std::optional<std::string> droppedReference;
+            if (ImGui::BeginDragDropTarget())
+            {
+                if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kContentBrowserAssetDragDropPayload))
+                {
+                    if (payload->Data && payload->DataSize > 0)
+                    {
+                        const auto *data = static_cast<const char *>(payload->Data);
+                        const std::string reference(data, data + payload->DataSize - 1);
+                        if (assets::Project::GetAssetTypeForReference(reference) == assets::ProjectAssetType::ShaderGraph)
+                        {
+                            droppedReference = reference;
+                        }
+                    }
+                }
+                ImGui::EndDragDropTarget();
+            }
+            return droppedReference;
+        }
+
+        bool RenderShaderGraphReferenceControl(const std::string &materialReference, std::string &reference)
+        {
+            bool changed = false;
+            constexpr std::size_t kShaderGraphPathBufferSize = 512;
+            static std::unordered_map<std::string, std::array<char, kShaderGraphPathBufferSize>> buffers;
+            static std::unordered_map<std::string, std::string> cachedReferences;
+
+            std::vector<std::pair<std::string, std::string>> shaderGraphs;
+            shaderGraphs.emplace_back("Default Lit", std::string(assets::Project::kBuiltinDefaultShaderGraphReference));
+            if (auto *project = EditorShell::GetInstance().GetProject())
+            {
+                for (const auto &asset : project->GetManifest().assetEntries)
+                {
+                    if (asset.type != assets::ProjectAssetType::ShaderGraph)
+                    {
+                        continue;
+                    }
+
+                    std::string displayName = asset.reference;
+                    if (displayName.rfind(assets::Project::kProjectAssetScheme, 0) == 0)
+                    {
+                        displayName.erase(0, assets::Project::kProjectAssetScheme.size());
+                    }
+                    else if (displayName == assets::Project::kBuiltinDefaultShaderGraphReference)
+                    {
+                        continue;
+                    }
+                    shaderGraphs.emplace_back(std::move(displayName), asset.reference);
+                }
+            }
+
+            const std::string effectiveReference = reference.empty()
+                                                       ? std::string(assets::Project::kBuiltinDefaultShaderGraphReference)
+                                                       : reference;
+            std::string currentDisplay = effectiveReference;
+            for (const auto &[displayName, shaderGraphReference] : shaderGraphs)
+            {
+                if (shaderGraphReference == effectiveReference)
+                {
+                    currentDisplay = displayName;
+                    break;
+                }
+            }
+
+            if (ImGui::BeginCombo("Shader Graph", currentDisplay.c_str()))
+            {
+                for (const auto &[displayName, shaderGraphReference] : shaderGraphs)
+                {
+                    const bool selected = shaderGraphReference == effectiveReference;
+                    if (ImGui::Selectable(displayName.c_str(), selected))
+                    {
+                        reference = shaderGraphReference;
+                        changed = true;
+                    }
+                    if (selected)
+                    {
+                        ImGui::SetItemDefaultFocus();
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            if (auto droppedReference = AcceptDroppedShaderGraphAssetReference())
+            {
+                reference = *droppedReference;
+                changed = true;
+            }
+
+            ImGui::SameLine();
+            if (ImGui::Button("Default##ShaderGraph"))
+            {
+                reference = std::string(assets::Project::kBuiltinDefaultShaderGraphReference);
+                changed = true;
+            }
+
+            auto &buffer = buffers[materialReference + ":ShaderGraph"];
+            auto &cachedReference = cachedReferences[materialReference];
+            if (cachedReference != reference)
+            {
+                std::fill(buffer.begin(), buffer.end(), '\0');
+                strncpy_s(buffer.data(), buffer.size(), reference.c_str(), _TRUNCATE);
+                cachedReference = reference;
+            }
+
+            ImGui::InputText("Shader Graph Reference", buffer.data(), buffer.size());
+            if (ImGui::IsItemDeactivatedAfterEdit())
+            {
+                reference = buffer.data();
+                cachedReference = reference;
+                changed = true;
+            }
+            if (auto droppedReference = AcceptDroppedShaderGraphAssetReference())
+            {
+                reference = *droppedReference;
+                std::fill(buffer.begin(), buffer.end(), '\0');
+                strncpy_s(buffer.data(), buffer.size(), reference.c_str(), _TRUNCATE);
+                cachedReference = reference;
+                changed = true;
+            }
+            return changed;
         }
 
         bool BrowseTexturePath(std::array<char, kTexturePathBufferSize> &buffer)
@@ -268,6 +393,7 @@ namespace PlutoGE::ui
         if (!material)
         {
             m_color = glm::vec4(1.0f);
+            m_shaderGraphReference = std::string(assets::Project::kBuiltinDefaultShaderGraphReference);
             m_surfaceType = render::MaterialSurfaceType::Standard;
             m_alphaMode = render::AlphaMode::Opaque;
             m_alphaCutoff = 0.5f;
@@ -291,6 +417,9 @@ namespace PlutoGE::ui
         }
 
         const auto &config = material->GetConfig();
+        m_shaderGraphReference = config.shaderGraphReference.empty()
+                                     ? std::string(assets::Project::kBuiltinDefaultShaderGraphReference)
+                                     : config.shaderGraphReference;
         m_color = config.color;
         m_surfaceType = config.surfaceType;
         m_alphaMode = config.alphaMode;
@@ -360,6 +489,11 @@ namespace PlutoGE::ui
         if (engineMaterial)
         {
             ImGui::BeginDisabled();
+        }
+
+        if (RenderShaderGraphReferenceControl(reference, m_shaderGraphReference))
+        {
+            m_dirty = true;
         }
 
         float color[4] = {m_color.r, m_color.g, m_color.b, m_color.a};
@@ -488,6 +622,10 @@ namespace PlutoGE::ui
         if (ImGui::Button("Save"))
         {
             render::MaterialConfig config;
+            config.shaderGraphReference = m_shaderGraphReference.empty()
+                                              ? std::string(assets::Project::kBuiltinDefaultShaderGraphReference)
+                                              : m_shaderGraphReference;
+            config.compiledShaderGraph = core::Engine::GetInstance().GetAssetManager().CompileShaderGraphAsset(config.shaderGraphReference);
             config.color = m_color;
             config.surfaceType = m_surfaceType;
             config.alphaMode = m_alphaMode;

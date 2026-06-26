@@ -4,6 +4,7 @@
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/import/MeshImporter.h"
 #include "PlutoGE/render/Material.h"
+#include "PlutoGE/render/ShaderGraph.h"
 #include "PlutoGE/render/Texture.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
@@ -834,6 +835,12 @@ namespace PlutoGE::ui
             m_newMaterialNameBuffer.fill('\0');
             ImGui::OpenPopup("Create Material Asset");
         }
+        ImGui::SameLine();
+        if (ImGui::Button("Create Shader Graph"))
+        {
+            m_newShaderGraphNameBuffer.fill('\0');
+            ImGui::OpenPopup("Create Shader Graph Asset");
+        }
 
         if (ImGui::BeginPopupModal("Create Material Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
         {
@@ -870,6 +877,48 @@ namespace PlutoGE::ui
                 else
                 {
                     editorShell.Log(EditorShell::ConsoleSeverity::Error, errorMessage.empty() ? "Failed to create material." : errorMessage);
+                }
+            }
+            ImGui::EndDisabled();
+
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel"))
+            {
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+
+        if (ImGui::BeginPopupModal("Create Shader Graph Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        {
+            ImGui::InputText("Name", m_newShaderGraphNameBuffer.data(), m_newShaderGraphNameBuffer.size());
+            const std::string sanitizedName = SanitizeAssetFileName(m_newShaderGraphNameBuffer.data());
+            if (!sanitizedName.empty())
+            {
+                ImGui::TextDisabled("Creates Shaders/%s.plutoshadergraph", sanitizedName.c_str());
+            }
+            else
+            {
+                ImGui::TextDisabled("Enter a shader graph name.");
+            }
+
+            ImGui::BeginDisabled(sanitizedName.empty());
+            if (ImGui::Button("Create"))
+            {
+                const auto graphPath = project->GetAssetDirectoryPath() / "Shaders" / (sanitizedName + ".plutoshadergraph");
+                const std::string reference = project->MakeAssetReference(graphPath);
+                std::string errorMessage;
+                if (core::Engine::GetInstance().GetAssetManager().SaveShaderGraphAsset(reference, render::CreateDefaultShaderGraph(), &errorMessage))
+                {
+                    project->RefreshAssetRegistry();
+                    editorShell.OpenShaderGraphAsset(reference);
+                    editorShell.MarkProjectDirty();
+                    editorShell.Log(EditorShell::ConsoleSeverity::Info, "Created shader graph: " + reference);
+                    ImGui::CloseCurrentPopup();
+                }
+                else
+                {
+                    editorShell.Log(EditorShell::ConsoleSeverity::Error, errorMessage.empty() ? "Failed to create shader graph." : errorMessage);
                 }
             }
             ImGui::EndDisabled();
@@ -939,6 +988,10 @@ namespace PlutoGE::ui
                 else if (asset.type == assets::ProjectAssetType::Mesh)
                 {
                     editorShell.OpenMeshAsset(asset.reference);
+                }
+                else if (asset.type == assets::ProjectAssetType::ShaderGraph)
+                {
+                    editorShell.OpenShaderGraphAsset(asset.reference);
                 }
             }
 
@@ -1060,6 +1113,13 @@ namespace PlutoGE::ui
                 if (ImGui::Button("Open Mesh"))
                 {
                     editorShell.OpenMeshAsset(asset.reference);
+                }
+            }
+            else if (asset.type == assets::ProjectAssetType::ShaderGraph)
+            {
+                if (ImGui::Button("Open Shader Graph"))
+                {
+                    editorShell.OpenShaderGraphAsset(asset.reference);
                 }
             }
             else if (asset.type == assets::ProjectAssetType::SourceModel)

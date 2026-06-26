@@ -4,6 +4,7 @@
 #include "PlutoGE/ui/panels/ContentBrowserPanel.h"
 #include "PlutoGE/ui/panels/MaterialEditorPanel.h"
 #include "PlutoGE/ui/panels/MeshEditorPanel.h"
+#include "PlutoGE/ui/panels/ShaderGraphEditorPanel.h"
 #include "PlutoGE/ui/panels/ViewportPanel.h"
 #include "PlutoGE/ui/panels/SceneHierarchyPanel.h"
 #include "PlutoGE/ui/panels/InspectorPanel.h"
@@ -1721,6 +1722,18 @@ namespace PlutoGE::ui
         Log(ConsoleSeverity::Info, "Opened mesh: " + m_activeMeshAssetReference);
     }
 
+    void EditorShell::OpenShaderGraphAsset(std::string shaderGraphAssetReference)
+    {
+        if (shaderGraphAssetReference.empty())
+        {
+            return;
+        }
+
+        m_activeShaderGraphAssetReference = std::move(shaderGraphAssetReference);
+        m_openShaderGraphEditorRequested = true;
+        Log(ConsoleSeverity::Info, "Opened shader graph: " + m_activeShaderGraphAssetReference);
+    }
+
     bool EditorShell::LoadProjectFromPath(const std::filesystem::path &manifestPath)
     {
         constexpr std::string_view kMissingScriptAssemblyPrefix = "Project script assembly was not found: ";
@@ -2059,6 +2072,10 @@ namespace PlutoGE::ui
         meshEditorPanel->Initialize();
         m_panelManager.AddPanel(meshEditorPanel);
 
+        auto shaderGraphEditorPanel = new ShaderGraphEditorPanel(PanelConfig{"Shader Graph Editor", false});
+        shaderGraphEditorPanel->Initialize();
+        m_panelManager.AddPanel(shaderGraphEditorPanel);
+
         auto profilerPanel = new ProfilerPanel(PanelConfig{"Profiler"}, &m_profiler, &m_panelManager, &renderer);
         profilerPanel->Initialize();
         m_panelManager.AddPanel(profilerPanel);
@@ -2369,6 +2386,10 @@ namespace PlutoGE::ui
                 if (ConsumeMeshEditorOpenRequest())
                 {
                     meshEditorPanel->SetOpen(true);
+                }
+                if (ConsumeShaderGraphEditorOpenRequest())
+                {
+                    shaderGraphEditorPanel->SetOpen(true);
                 }
 
                 if (ImGui::BeginMenu("File"))

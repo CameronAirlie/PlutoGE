@@ -454,9 +454,11 @@ namespace PlutoGE::scene
 
         bool CompareRenderCommandKeys(const render::RenderCommand &a, const render::RenderCommand &b)
         {
-            if (a.shader != b.shader)
+            auto *aShader = a.material ? a.material->GetShader() : a.shader;
+            auto *bShader = b.material ? b.material->GetShader() : b.shader;
+            if (aShader != bShader)
             {
-                return a.shader < b.shader;
+                return aShader < bShader;
             }
             if (a.material != b.material)
             {

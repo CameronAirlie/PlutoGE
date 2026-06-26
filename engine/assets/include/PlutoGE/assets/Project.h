@@ -19,6 +19,7 @@ namespace PlutoGE::assets
         Animation,
         SourceModel,
         Material,
+        ShaderGraph,
         Texture,
         Assembly,
     };
@@ -84,6 +85,7 @@ namespace PlutoGE::assets
         static constexpr std::string_view kBuiltinQuadMeshReference = "engine://builtin/mesh/quad";
         static constexpr std::string_view kBuiltinDefaultMaterialReference = "engine://builtin/material/default";
         static constexpr std::string_view kBuiltinDefaultShadedMaterialReference = "engine://builtin/material/default-shaded";
+        static constexpr std::string_view kBuiltinDefaultShaderGraphReference = "engine://builtin/shadergraph/default-lit";
 
         Project(std::filesystem::path manifestPath, ProjectManifest manifest);
 

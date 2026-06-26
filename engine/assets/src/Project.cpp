@@ -589,6 +589,7 @@ namespace PlutoGE::assets
             std::string(kBuiltinQuadMeshReference),
             std::string(kBuiltinDefaultMaterialReference),
             std::string(kBuiltinDefaultShadedMaterialReference),
+            std::string(kBuiltinDefaultShaderGraphReference),
         };
     }
 
@@ -626,6 +627,10 @@ namespace PlutoGE::assets
         {
             return ProjectAssetType::Material;
         }
+        if (reference.rfind("engine://builtin/shadergraph/", 0) == 0)
+        {
+            return ProjectAssetType::ShaderGraph;
+        }
         if (EndsWithInsensitive(reference, ".plutoscene"))
         {
             return ProjectAssetType::Scene;
@@ -645,6 +650,10 @@ namespace PlutoGE::assets
         if (EndsWithInsensitive(reference, ".plutomaterial") || EndsWithInsensitive(reference, ".mat"))
         {
             return ProjectAssetType::Material;
+        }
+        if (EndsWithInsensitive(reference, ".plutoshadergraph"))
+        {
+            return ProjectAssetType::ShaderGraph;
         }
         if (EndsWithInsensitive(reference, ".plutomesh") || EndsWithInsensitive(reference, ".obj"))
         {
@@ -686,6 +695,8 @@ namespace PlutoGE::assets
             return "Source Model";
         case ProjectAssetType::Material:
             return "Material";
+        case ProjectAssetType::ShaderGraph:
+            return "Shader Graph";
         case ProjectAssetType::Texture:
             return "Texture";
         case ProjectAssetType::Assembly:
@@ -712,6 +723,8 @@ namespace PlutoGE::assets
             return ProjectAssetType::SourceModel;
         if (typeName == "Material")
             return ProjectAssetType::Material;
+        if (typeName == "Shader Graph" || typeName == "ShaderGraph")
+            return ProjectAssetType::ShaderGraph;
         if (typeName == "Texture")
             return ProjectAssetType::Texture;
         if (typeName == "Assembly")

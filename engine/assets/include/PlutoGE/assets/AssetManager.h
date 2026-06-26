@@ -1,8 +1,11 @@
 #pragma once
 
 #include "PlutoGE/assets/Project.h"
+#include "PlutoGE/render/ShaderGraph.h"
 
+#include <cstdint>
 #include <unordered_map>
+#include <utility>
 #include <string>
 #include <vector>
 
@@ -16,6 +19,7 @@ namespace PlutoGE::render
     struct MeshConfig;
     struct AnimationClip;
     struct ShaderSource;
+    struct ShaderGraph;
 }
 
 namespace PlutoGE::assets
@@ -44,6 +48,9 @@ namespace PlutoGE::assets
                                 std::string *errorMessage = nullptr);
         render::Material *LoadMaterialAsset(const std::string &assetReference);
         bool SaveMaterialAsset(const std::string &assetReference, const render::MaterialConfig &config, std::string *errorMessage = nullptr);
+        render::ShaderGraph LoadShaderGraphAsset(const std::string &assetReference, bool *loaded = nullptr);
+        bool SaveShaderGraphAsset(const std::string &assetReference, const render::ShaderGraph &graph, std::string *errorMessage = nullptr);
+        render::Shader *CompileShaderGraphAsset(const std::string &assetReference, std::string *errorMessage = nullptr);
         render::Material *CreateMaterial();
         render::Material *CreateDefaultMaterial();
         render::Material *CreateDefaultShadedMaterial();
@@ -64,5 +71,9 @@ namespace PlutoGE::assets
         std::unordered_map<std::string, render::Mesh *> m_meshCache;
         std::unordered_map<std::string, std::vector<std::string>> m_meshMaterialReferenceCache;
         std::unordered_map<std::string, render::Material *> m_materialCache; // Cache for loaded materials
+        std::unordered_map<std::string, render::ShaderGraph> m_shaderGraphCache;
+        std::unordered_map<std::string, std::pair<std::uint64_t, render::Shader *>> m_shaderGraphShaderCache;
+
+        void RefreshCachedMaterialsForShaderGraph(const std::string &shaderGraphReference);
     };
 }

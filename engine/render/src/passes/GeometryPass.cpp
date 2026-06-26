@@ -192,16 +192,30 @@ namespace PlutoGE::render
             glClearBufferfv(GL_COLOR, 5, noLodDebugValue);
         }
 
-        m_geometryPassShader->Bind();
-        m_geometryPassShader->SetUniform("uView", ctx.cameraData.view);
-        m_geometryPassShader->SetUniform("uProjection", ctx.cameraData.projection);
         const glm::mat4 currentViewProjection = ctx.cameraData.projection * ctx.cameraData.view;
         const glm::mat4 previousViewProjection = ctx.hasPreviousCameraData
                                                      ? ctx.previousCameraData.projection * ctx.previousCameraData.view
                                                      : currentViewProjection;
-        m_geometryPassShader->SetUniform("uCurrentViewProjection", currentViewProjection);
-        m_geometryPassShader->SetUniform("uPreviousViewProjection", previousViewProjection);
-        m_geometryPassShader->SetUniform("uUseSkinning", 0);
+        Shader *activeShader = nullptr;
+        const auto bindGeometryShader = [&](Shader *shader)
+        {
+            shader = shader ? shader : m_geometryPassShader;
+            if (activeShader == shader)
+            {
+                return shader;
+            }
+
+            shader->Bind();
+            shader->SetUniform("uView", ctx.cameraData.view);
+            shader->SetUniform("uProjection", ctx.cameraData.projection);
+            shader->SetUniform("uCurrentViewProjection", currentViewProjection);
+            shader->SetUniform("uPreviousViewProjection", previousViewProjection);
+            shader->SetUniform("uUseSkinning", 0);
+            activeShader = shader;
+            return shader;
+        };
+
+        bindGeometryShader(m_geometryPassShader);
 
         Material *boundMaterial = nullptr;
         Mesh *boundMesh = nullptr;
@@ -220,11 +234,12 @@ namespace PlutoGE::render
 
             if (batchHead->material != boundMaterial)
             {
-                batchHead->material->Bind(m_geometryPassShader);
+                Shader *shader = bindGeometryShader(batchHead->material->GetShader());
+                batchHead->material->Bind(shader);
                 boundMaterial = batchHead->material;
             }
 
-            m_geometryPassShader->SetUniform("uUseSkinning", 0);
+            activeShader->SetUniform("uUseSkinning", 0);
             UploadGeometryInstances(m_instanceBuffer, m_instanceCapacity, batchInstances);
             if (batchHead->mesh != boundMesh)
             {
@@ -260,11 +275,12 @@ namespace PlutoGE::render
 
                 if (command.material != boundMaterial)
                 {
-                    command.material->Bind(m_geometryPassShader);
+                    Shader *shader = bindGeometryShader(command.material->GetShader());
+                    command.material->Bind(shader);
                     boundMaterial = command.material;
                 }
 
-                UploadJointMatrices(m_geometryPassShader, command.jointMatrices);
+                UploadJointMatrices(activeShader, command.jointMatrices);
                 std::vector<GeometryInstanceData> singleInstance;
                 AppendGeometryInstances(command, singleInstance);
                 UploadGeometryInstances(m_instanceBuffer, m_instanceCapacity, singleInstance);
@@ -276,7 +292,7 @@ namespace PlutoGE::render
                     const auto indexCount = command.mesh->GetSubmeshLodIndexCount(command.submeshIndex, command.lodIndex);
                     ctx.renderer->RecordGeometryBatch(static_cast<int>(singleInstance.size()), static_cast<int>((indexCount / 3) * singleInstance.size()), command.lodIndex);
                 }
-                m_geometryPassShader->SetUniform("uUseSkinning", 0);
+                activeShader->SetUniform("uUseSkinning", 0);
                 continue;
             }
 
@@ -295,7 +311,10 @@ namespace PlutoGE::render
 
         flushBatch();
 
-        m_geometryPassShader->Unbind();
+        if (activeShader)
+        {
+            activeShader->Unbind();
+        }
         ctx.gBuffer->Unbind();
     }
 }

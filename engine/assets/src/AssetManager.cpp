@@ -3,6 +3,7 @@
 #include <PlutoGE/render/Texture.h>
 #include <PlutoGE/render/Material.h>
 #include <PlutoGE/render/Shader.h>
+#include <PlutoGE/render/ShaderGraph.h>
 
 #include <algorithm>
 #include <cstdint>
@@ -324,6 +325,8 @@ namespace PlutoGE::assets
         // Create a default material with some basic properties
         render::MaterialConfig defaultConfig;
         defaultConfig.color = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f); // Default to white color
+        defaultConfig.shaderGraphReference = std::string(Project::kBuiltinDefaultShaderGraphReference);
+        defaultConfig.compiledShaderGraph = CompileShaderGraphAsset(defaultConfig.shaderGraphReference);
         render::Material *material = new render::Material(defaultConfig);
         // render::Shader *defaultShader = render::Shader::CreateDefault();
         // material->SetShader(defaultShader);
@@ -336,6 +339,8 @@ namespace PlutoGE::assets
         defaultConfig.color = glm::vec4(0.82f, 0.84f, 0.88f, 1.0f);
         defaultConfig.metallic = 0.0f;
         defaultConfig.roughness = 0.55f;
+        defaultConfig.shaderGraphReference = std::string(Project::kBuiltinDefaultShaderGraphReference);
+        defaultConfig.compiledShaderGraph = CompileShaderGraphAsset(defaultConfig.shaderGraphReference);
         return new render::Material(defaultConfig);
     }
 
@@ -376,6 +381,50 @@ namespace PlutoGE::assets
             std::replace(copy.begin(), copy.end(), ',', ' ');
             std::istringstream input(copy);
             return (input >> value.x >> value.y) ? true : false;
+        }
+
+        std::vector<std::string> SplitFields(std::string_view text, char delimiter = '|')
+        {
+            std::vector<std::string> fields;
+            std::size_t start = 0;
+            while (start <= text.size())
+            {
+                const std::size_t end = text.find(delimiter, start);
+                if (end == std::string_view::npos)
+                {
+                    fields.emplace_back(text.substr(start));
+                    break;
+                }
+                fields.emplace_back(text.substr(start, end - start));
+                start = end + 1;
+            }
+            return fields;
+        }
+
+        int ParseIntOr(std::string_view text, int fallback)
+        {
+            try
+            {
+                return std::stoi(std::string(text));
+            }
+            catch (...)
+            {
+                return fallback;
+            }
+        }
+
+        glm::vec4 ParseVec4Or(std::string_view text, const glm::vec4 &fallback)
+        {
+            glm::vec4 value = fallback;
+            ParseVec4(text, value);
+            return value;
+        }
+
+        glm::vec2 ParseVec2Or(std::string_view text, const glm::vec2 &fallback)
+        {
+            glm::vec2 value = fallback;
+            ParseVec2(text, value);
+            return value;
         }
 
         render::MaterialSurfaceType ParseSurfaceType(std::string_view value)
@@ -632,6 +681,258 @@ namespace PlutoGE::assets
         }
     }
 
+    render::ShaderGraph AssetManager::LoadShaderGraphAsset(const std::string &assetReference, bool *loaded)
+    {
+        if (loaded)
+        {
+            *loaded = false;
+        }
+
+        if (assetReference.empty() || assetReference == Project::kBuiltinDefaultShaderGraphReference)
+        {
+            if (loaded)
+            {
+                *loaded = true;
+            }
+            return render::CreateDefaultShaderGraph();
+        }
+
+        if (auto cached = m_shaderGraphCache.find(assetReference); cached != m_shaderGraphCache.end())
+        {
+            if (loaded)
+            {
+                *loaded = true;
+            }
+            return cached->second;
+        }
+
+        const std::string graphPath = ResolveAssetPath(assetReference);
+        std::ifstream input(graphPath);
+        if (!input.is_open())
+        {
+            return render::CreateDefaultShaderGraph();
+        }
+
+        render::ShaderGraph graph;
+        graph.nodes.clear();
+        graph.links.clear();
+        graph.variables.clear();
+
+        std::string line;
+        while (std::getline(input, line))
+        {
+            const auto delimiter = line.find('=');
+            if (delimiter == std::string::npos)
+            {
+                continue;
+            }
+
+            const std::string key = line.substr(0, delimiter);
+            const std::string value = line.substr(delimiter + 1);
+            if (key == "ShaderGraphVersion")
+            {
+                graph.version = ParseIntOr(value, 1);
+            }
+            else if (key == "Node")
+            {
+                const auto fields = SplitFields(value);
+                if (fields.size() < 7)
+                {
+                    continue;
+                }
+
+                render::ShaderGraphNode node;
+                node.id = ParseIntOr(fields[0], 0);
+                node.kind = render::ParseShaderGraphNodeKind(fields[1]);
+                node.name = fields[2];
+                node.position = ParseVec2Or(fields[3], glm::vec2(0.0f));
+                node.value = ParseVec4Or(fields[4], glm::vec4(1.0f));
+                node.materialInput = render::ParseShaderGraphMaterialInput(fields[5]);
+                if (node.id != 0)
+                {
+                    graph.nodes.push_back(std::move(node));
+                }
+            }
+            else if (key == "Link")
+            {
+                const auto fields = SplitFields(value);
+                if (fields.size() < 5)
+                {
+                    continue;
+                }
+
+                graph.links.push_back(render::ShaderGraphLink{
+                    .id = ParseIntOr(fields[0], 0),
+                    .fromNodeId = ParseIntOr(fields[1], 0),
+                    .fromPin = fields[2],
+                    .toNodeId = ParseIntOr(fields[3], 0),
+                    .toPin = fields[4],
+                });
+            }
+            else if (key == "Variable")
+            {
+                const auto fields = SplitFields(value);
+                if (fields.size() < 3)
+                {
+                    continue;
+                }
+
+                graph.variables.push_back(render::ShaderGraphVariable{
+                    .name = fields[0],
+                    .type = static_cast<render::ShaderGraphValueType>(std::clamp(ParseIntOr(fields[1], 0), 0, 3)),
+                    .value = ParseVec4Or(fields[2], glm::vec4(0.0f)),
+                });
+            }
+        }
+
+        if (graph.nodes.empty())
+        {
+            graph = render::CreateDefaultShaderGraph();
+        }
+
+        m_shaderGraphCache[assetReference] = graph;
+        if (loaded)
+        {
+            *loaded = true;
+        }
+        return graph;
+    }
+
+    bool AssetManager::SaveShaderGraphAsset(const std::string &assetReference, const render::ShaderGraph &graph, std::string *errorMessage)
+    {
+        if (assetReference.empty() || Project::IsEngineAssetReference(assetReference))
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Cannot save an empty or engine shader graph asset reference.";
+            }
+            return false;
+        }
+
+        const std::string graphPath = ResolveAssetPath(assetReference);
+        if (graphPath.empty())
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Could not resolve shader graph asset path.";
+            }
+            return false;
+        }
+
+        std::error_code errorCode;
+        std::filesystem::create_directories(std::filesystem::path(graphPath).parent_path(), errorCode);
+        if (errorCode)
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Failed to create shader graph directory: " + errorCode.message();
+            }
+            return false;
+        }
+
+        std::ofstream output(graphPath, std::ios::out | std::ios::trunc);
+        if (!output.is_open())
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Failed to open shader graph asset for writing.";
+            }
+            return false;
+        }
+
+        output << "ShaderGraphVersion=1\n";
+        for (const auto &node : graph.nodes)
+        {
+            output << "Node=" << node.id << '|'
+                   << render::ToString(node.kind) << '|'
+                   << node.name << '|'
+                   << node.position.x << ',' << node.position.y << '|'
+                   << node.value.x << ',' << node.value.y << ',' << node.value.z << ',' << node.value.w << '|'
+                   << render::ToString(node.materialInput) << '|'
+                   << "0\n";
+        }
+        for (const auto &link : graph.links)
+        {
+            output << "Link=" << link.id << '|'
+                   << link.fromNodeId << '|'
+                   << link.fromPin << '|'
+                   << link.toNodeId << '|'
+                   << link.toPin << "\n";
+        }
+        for (const auto &variable : graph.variables)
+        {
+            output << "Variable=" << variable.name << '|'
+                   << static_cast<int>(variable.type) << '|'
+                   << variable.value.x << ',' << variable.value.y << ',' << variable.value.z << ',' << variable.value.w << "\n";
+        }
+
+        if (!output.good())
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Failed to write shader graph asset.";
+            }
+            return false;
+        }
+
+        m_shaderGraphCache[assetReference] = graph;
+        m_shaderGraphShaderCache.erase(assetReference);
+        RefreshCachedMaterialsForShaderGraph(assetReference);
+        return true;
+    }
+
+    void AssetManager::RefreshCachedMaterialsForShaderGraph(const std::string &shaderGraphReference)
+    {
+        for (auto &[materialReference, material] : m_materialCache)
+        {
+            (void)materialReference;
+            if (!material)
+            {
+                continue;
+            }
+
+            auto &config = material->GetConfig();
+            const std::string effectiveReference = config.shaderGraphReference.empty()
+                                                       ? std::string(Project::kBuiltinDefaultShaderGraphReference)
+                                                       : config.shaderGraphReference;
+            if (effectiveReference == shaderGraphReference)
+            {
+                config.shaderGraphReference = effectiveReference;
+                config.compiledShaderGraph = CompileShaderGraphAsset(effectiveReference);
+            }
+        }
+    }
+
+    render::Shader *AssetManager::CompileShaderGraphAsset(const std::string &assetReference, std::string *errorMessage)
+    {
+        bool loaded = false;
+        render::ShaderGraph graph = LoadShaderGraphAsset(assetReference.empty() ? std::string(Project::kBuiltinDefaultShaderGraphReference) : assetReference, &loaded);
+        if (!loaded)
+        {
+            graph = render::CreateDefaultShaderGraph();
+        }
+
+        const std::uint64_t hash = render::HashShaderGraph(graph);
+        const std::string cacheKey = assetReference.empty() ? std::string(Project::kBuiltinDefaultShaderGraphReference) : assetReference;
+        if (auto cached = m_shaderGraphShaderCache.find(cacheKey); cached != m_shaderGraphShaderCache.end() && cached->second.first == hash)
+        {
+            return cached->second.second;
+        }
+
+        render::Shader *shader = render::CompileShaderGraphToGeometryShader(graph, errorMessage);
+        if (!shader && cacheKey != Project::kBuiltinDefaultShaderGraphReference)
+        {
+            graph = render::CreateDefaultShaderGraph();
+            shader = render::CompileShaderGraphToGeometryShader(graph, errorMessage);
+        }
+
+        if (shader)
+        {
+            m_shaderGraphShaderCache[cacheKey] = {hash, shader};
+        }
+        return shader;
+    }
+
     render::Material *AssetManager::LoadMaterialAsset(const std::string &assetReference)
     {
         if (assetReference.empty())
@@ -774,7 +1075,28 @@ namespace PlutoGE::assets
                         {
                         }
                     }
+                    else if (key == "ShaderGraph")
+                    {
+                        config.shaderGraphReference = value;
+                    }
+                    else if (key == "ShaderGraphVariable")
+                    {
+                        const auto fields = SplitFields(value);
+                        if (fields.size() >= 3)
+                        {
+                            config.shaderGraphVariables.push_back(render::ShaderGraphVariable{
+                                .name = fields[0],
+                                .type = static_cast<render::ShaderGraphValueType>(std::clamp(ParseIntOr(fields[1], 0), 0, 3)),
+                                .value = ParseVec4Or(fields[2], glm::vec4(0.0f)),
+                            });
+                        }
+                    }
                 }
+                if (config.shaderGraphReference.empty())
+                {
+                    config.shaderGraphReference = std::string(Project::kBuiltinDefaultShaderGraphReference);
+                }
+                config.compiledShaderGraph = CompileShaderGraphAsset(config.shaderGraphReference);
                 material = new render::Material(config);
             }
         }
@@ -848,6 +1170,13 @@ namespace PlutoGE::assets
         output << "MetallicTextureChannel=" << static_cast<int>(config.metallicTextureChannel) << "\n";
         output << "RoughnessTexture=" << (config.roughnessTexture ? PersistAssetPath(config.roughnessTexture->GetFilePath()) : std::string{}) << "\n";
         output << "RoughnessTextureChannel=" << static_cast<int>(config.roughnessTextureChannel) << "\n";
+        output << "ShaderGraph=" << (config.shaderGraphReference.empty() ? std::string(Project::kBuiltinDefaultShaderGraphReference) : config.shaderGraphReference) << "\n";
+        for (const auto &variable : config.shaderGraphVariables)
+        {
+            output << "ShaderGraphVariable=" << variable.name << '|'
+                   << static_cast<int>(variable.type) << '|'
+                   << variable.value.x << ',' << variable.value.y << ',' << variable.value.z << ',' << variable.value.w << "\n";
+        }
 
         if (auto cachedMaterial = m_materialCache.find(assetReference); cachedMaterial != m_materialCache.end() && cachedMaterial->second)
         {
@@ -880,6 +1209,11 @@ namespace PlutoGE::assets
             cachedConfig.metallicTexture = reloadTexture(config.metallicTexture);
             cachedConfig.roughnessTexture = reloadTexture(config.roughnessTexture);
             cachedConfig.lightmapTexture = nullptr;
+            if (cachedConfig.shaderGraphReference.empty())
+            {
+                cachedConfig.shaderGraphReference = std::string(Project::kBuiltinDefaultShaderGraphReference);
+            }
+            cachedConfig.compiledShaderGraph = CompileShaderGraphAsset(cachedConfig.shaderGraphReference);
             cachedMaterial->second->GetConfig() = cachedConfig;
         }
 

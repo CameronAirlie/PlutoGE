@@ -1,6 +1,11 @@
 #pragma once
 
+#include "PlutoGE/render/ShaderGraph.h"
+
 #include <glm/glm.hpp>
+
+#include <string>
+#include <vector>
 
 namespace PlutoGE::render
 {
@@ -56,6 +61,10 @@ namespace PlutoGE::render
         float attenuationDistance = 1.0f;                 // Distance at which attenuationColor is reached
 
         Texture *lightmapTexture = nullptr; // Optional baked lighting texture sampled with UV2
+
+        std::string shaderGraphReference;
+        std::vector<ShaderGraphVariable> shaderGraphVariables;
+        Shader *compiledShaderGraph = nullptr;
     };
 
     class Material
@@ -66,7 +75,7 @@ namespace PlutoGE::render
         ~Material() = default;
 
         void SetShader(Shader *shader) { m_overrideShader = shader; }
-        Shader *GetShader() const { return m_overrideShader; }
+        Shader *GetShader() const { return m_overrideShader ? m_overrideShader : m_config.compiledShaderGraph; }
 
         void Bind(Shader *shader = nullptr);
 

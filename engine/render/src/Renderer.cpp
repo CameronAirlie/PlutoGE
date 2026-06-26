@@ -121,7 +121,7 @@ namespace PlutoGE::render
 
         Shader *GetRenderCommandShaderKey(const RenderCommand &command)
         {
-            return command.shader;
+            return command.material ? command.material->GetShader() : command.shader;
         }
 
         bool CompareRenderCommandKeysImpl(const RenderCommand &a, const RenderCommand &b)

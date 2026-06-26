@@ -157,6 +157,9 @@ namespace PlutoGE::render
                 expression = pin == "Color" ? "vec4(vec3(" + noise + "), 1.0)" : noise;
                 break;
             }
+            case ShaderGraphNodeKind::MeshUV:
+                expression = "UV";
+                break;
             case ShaderGraphNodeKind::Output:
                 if (const auto *link = FindInputLink(graph, nodeId, pin))
                 {
@@ -519,6 +522,8 @@ namespace PlutoGE::render
             return "Normalize";
         case ShaderGraphNodeKind::NoiseTexture:
             return "NoiseTexture";
+        case ShaderGraphNodeKind::MeshUV:
+            return "MeshUV";
         case ShaderGraphNodeKind::Output:
             return "Output";
         default:
@@ -560,6 +565,7 @@ namespace PlutoGE::render
         if (value == "Clamp") return ShaderGraphNodeKind::Clamp;
         if (value == "Normalize") return ShaderGraphNodeKind::Normalize;
         if (value == "NoiseTexture") return ShaderGraphNodeKind::NoiseTexture;
+        if (value == "MeshUV") return ShaderGraphNodeKind::MeshUV;
         if (value == "Output") return ShaderGraphNodeKind::Output;
         return ShaderGraphNodeKind::Float;
     }

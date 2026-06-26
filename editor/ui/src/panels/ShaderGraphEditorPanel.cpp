@@ -32,10 +32,26 @@ namespace PlutoGE::ui
         constexpr const char *kPinsNoiseOutput[] = {"Value", "Color"};
         constexpr const char *kPinsOutput[] = {"Albedo", "Normal", "Metallic", "Roughness", "Opacity"};
 
-        ImU32 *NoPinColors()
-        {
-            return nullptr;
-        }
+        constexpr ImU32 kPinAnyColor = IM_COL32(170, 176, 188, 255);
+        constexpr ImU32 kPinFloatColor = IM_COL32(230, 190, 92, 255);
+        constexpr ImU32 kPinVec2Color = IM_COL32(84, 190, 210, 255);
+        constexpr ImU32 kPinVec3Color = IM_COL32(96, 145, 230, 255);
+        constexpr ImU32 kPinVec4Color = IM_COL32(214, 112, 206, 255);
+        constexpr ImU32 kPinColorColor = IM_COL32(236, 118, 104, 255);
+
+        ImU32 kPinOutAnyColors[] = {kPinAnyColor};
+        ImU32 kPinOutFloatColors[] = {kPinFloatColor};
+        ImU32 kPinOutVec2Colors[] = {kPinVec2Color};
+        ImU32 kPinOutVec3Colors[] = {kPinVec3Color};
+        ImU32 kPinOutVec4Colors[] = {kPinVec4Color};
+        ImU32 kPinOutColorColors[] = {kPinColorColor};
+        ImU32 kPinBinaryColors[] = {kPinAnyColor, kPinAnyColor};
+        ImU32 kPinLerpColors[] = {kPinAnyColor, kPinAnyColor, kPinFloatColor};
+        ImU32 kPinClampColors[] = {kPinAnyColor, kPinAnyColor, kPinAnyColor};
+        ImU32 kPinNormalizeColors[] = {kPinVec3Color};
+        ImU32 kPinNoiseInputColors[] = {kPinVec2Color, kPinFloatColor, kPinFloatColor};
+        ImU32 kPinNoiseOutputColors[] = {kPinFloatColor, kPinColorColor};
+        ImU32 kPinOutputColors[] = {kPinColorColor, kPinVec3Color, kPinFloatColor, kPinFloatColor, kPinFloatColor};
 
         const char **InputPins(render::ShaderGraphNodeKind kind, ImU8 &count)
         {
@@ -98,6 +114,59 @@ namespace PlutoGE::ui
             ImU8 count = 0;
             const char **pins = OutputPins(kind, count);
             return index < count ? pins[index] : "";
+        }
+
+        ImU32 *InputPinColors(render::ShaderGraphNodeKind kind)
+        {
+            switch (kind)
+            {
+            case render::ShaderGraphNodeKind::Add:
+            case render::ShaderGraphNodeKind::Subtract:
+            case render::ShaderGraphNodeKind::Multiply:
+            case render::ShaderGraphNodeKind::Divide:
+                return kPinBinaryColors;
+            case render::ShaderGraphNodeKind::Lerp:
+                return kPinLerpColors;
+            case render::ShaderGraphNodeKind::Clamp:
+                return kPinClampColors;
+            case render::ShaderGraphNodeKind::Normalize:
+                return kPinNormalizeColors;
+            case render::ShaderGraphNodeKind::NoiseTexture:
+                return kPinNoiseInputColors;
+            case render::ShaderGraphNodeKind::Output:
+                return kPinOutputColors;
+            default:
+                return nullptr;
+            }
+        }
+
+        ImU32 *OutputPinColors(render::ShaderGraphNodeKind kind)
+        {
+            switch (kind)
+            {
+            case render::ShaderGraphNodeKind::Float:
+                return kPinOutFloatColors;
+            case render::ShaderGraphNodeKind::Vec2:
+            case render::ShaderGraphNodeKind::MeshUV:
+                return kPinOutVec2Colors;
+            case render::ShaderGraphNodeKind::Vec3:
+                return kPinOutVec3Colors;
+            case render::ShaderGraphNodeKind::Color:
+                return kPinOutColorColors;
+            case render::ShaderGraphNodeKind::NoiseTexture:
+                return kPinNoiseOutputColors;
+            case render::ShaderGraphNodeKind::MaterialInput:
+            case render::ShaderGraphNodeKind::Add:
+            case render::ShaderGraphNodeKind::Subtract:
+            case render::ShaderGraphNodeKind::Multiply:
+            case render::ShaderGraphNodeKind::Divide:
+            case render::ShaderGraphNodeKind::Lerp:
+            case render::ShaderGraphNodeKind::Clamp:
+            case render::ShaderGraphNodeKind::Normalize:
+                return kPinOutAnyColors;
+            default:
+                return nullptr;
+            }
         }
 
         int PinCount(render::ShaderGraphNodeKind kind)
@@ -187,7 +256,8 @@ namespace PlutoGE::ui
                 backgroundColor = IM_COL32(55, 44, 34, 255);
                 backgroundColorOver = IM_COL32(72, 55, 40, 255);
             }
-            else if (kind == render::ShaderGraphNodeKind::MaterialInput)
+            else if (kind == render::ShaderGraphNodeKind::MaterialInput ||
+                     kind == render::ShaderGraphNodeKind::MeshUV)
             {
                 headerColor = IM_COL32(58, 102, 75, 255);
                 backgroundColor = IM_COL32(35, 55, 43, 255);
@@ -210,10 +280,10 @@ namespace PlutoGE::ui
                 backgroundColorOver,
                 inputCount,
                 inputs,
-                NoPinColors(),
+                InputPinColors(kind),
                 outputCount,
                 outputs,
-                NoPinColors(),
+                OutputPinColors(kind),
             };
         }
 
@@ -665,7 +735,7 @@ namespace PlutoGE::ui
                 return static_cast<GraphEditor::TemplateIndex>(std::clamp(static_cast<int>(node.kind), 0, static_cast<int>(m_templates.size() - 1)));
             }
 
-            static const std::array<GraphEditor::Template, 14> m_templates;
+            static const std::array<GraphEditor::Template, 15> m_templates;
 
             render::ShaderGraph &m_graph;
             std::vector<int> &m_selectedNodeIds;
@@ -679,7 +749,7 @@ namespace PlutoGE::ui
             bool &m_dirty;
         };
 
-        const std::array<GraphEditor::Template, 14> ShaderGraphDelegate::m_templates = {
+        const std::array<GraphEditor::Template, 15> ShaderGraphDelegate::m_templates = {
             BuildTemplate(render::ShaderGraphNodeKind::MaterialInput),
             BuildTemplate(render::ShaderGraphNodeKind::Float),
             BuildTemplate(render::ShaderGraphNodeKind::Vec2),
@@ -693,6 +763,7 @@ namespace PlutoGE::ui
             BuildTemplate(render::ShaderGraphNodeKind::Clamp),
             BuildTemplate(render::ShaderGraphNodeKind::Normalize),
             BuildTemplate(render::ShaderGraphNodeKind::NoiseTexture),
+            BuildTemplate(render::ShaderGraphNodeKind::MeshUV),
             BuildTemplate(render::ShaderGraphNodeKind::Output),
         };
 
@@ -833,6 +904,7 @@ namespace PlutoGE::ui
             if (ImGui::BeginMenu("Inputs"))
             {
                 AddNodeMenuItem("Material Input", m_graph, render::ShaderGraphNodeKind::MaterialInput, "Material Input", m_addNodePosition, m_dirty);
+                AddNodeMenuItem("Mesh UV", m_graph, render::ShaderGraphNodeKind::MeshUV, "Mesh UV", m_addNodePosition, m_dirty);
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Values"))

@@ -33,7 +33,8 @@ namespace PlutoGE::render
         Clamp = 10,
         Normalize = 11,
         NoiseTexture = 12,
-        Output = 13,
+        MeshUV = 13,
+        Output = 14,
     };
 
     enum class ShaderGraphMaterialInput

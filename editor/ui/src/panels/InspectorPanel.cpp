@@ -8,6 +8,7 @@
 #include "PlutoGE/scene/components/FoliageComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/scene/components/ScriptComponent.h"
+#include "PlutoGE/scene/components/SkeletonAttachmentComponent.h"
 #include "PlutoGE/scene/components/TerrainComponent.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/scripting/ScriptEngine.h"
@@ -879,6 +880,10 @@ namespace PlutoGE::ui
             {
                 return "Animation Component";
             }
+            if (dynamic_cast<const scene::SkeletonAttachmentComponent *>(&component))
+            {
+                return "Skeleton Attachment Component";
+            }
             if (dynamic_cast<const scene::CameraComponent *>(&component))
             {
                 return "Camera Component";
@@ -937,6 +942,8 @@ namespace PlutoGE::ui
                 return "FoliageComponent";
             if (dynamic_cast<const scene::AnimationComponent *>(&component))
                 return "AnimationComponent";
+            if (dynamic_cast<const scene::SkeletonAttachmentComponent *>(&component))
+                return "SkeletonAttachmentComponent";
             if (dynamic_cast<const scene::CameraComponent *>(&component))
                 return "CameraComponent";
             if (dynamic_cast<const scene::LightComponent *>(&component))

@@ -12,6 +12,7 @@
 #include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/scene/components/RigidbodyComponent.h"
 #include "PlutoGE/scene/components/ScriptComponent.h"
+#include "PlutoGE/scene/components/SkeletonAttachmentComponent.h"
 #include "PlutoGE/scene/components/TerrainComponent.h"
 #include "PlutoGE/scene/components/UIComponent.h"
 #include "PlutoGE/render/Camera.h"
@@ -51,6 +52,8 @@ namespace PlutoGE::scene
                 return "FoliageComponent";
             if (dynamic_cast<const AnimationComponent *>(&component))
                 return "AnimationComponent";
+            if (dynamic_cast<const SkeletonAttachmentComponent *>(&component))
+                return "SkeletonAttachmentComponent";
             if (dynamic_cast<const CameraComponent *>(&component))
                 return "CameraComponent";
             if (dynamic_cast<const LightComponent *>(&component))
@@ -86,6 +89,8 @@ namespace PlutoGE::scene
                 return std::make_unique<FoliageComponent>();
             if (componentType == "AnimationComponent")
                 return std::make_unique<AnimationComponent>();
+            if (componentType == "SkeletonAttachmentComponent")
+                return std::make_unique<SkeletonAttachmentComponent>();
             if (componentType == "CameraComponent")
                 return std::make_unique<CameraComponent>(new render::Camera(render::CameraConfig{}));
             if (componentType == "LightComponent")

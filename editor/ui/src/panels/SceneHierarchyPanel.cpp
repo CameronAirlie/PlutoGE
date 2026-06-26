@@ -214,6 +214,21 @@ namespace PlutoGE::ui
                                                                     {
                                                                         meshComponent->CreateSubmeshChildEntities();
                                                                     }
+                    });
+                }
+            }
+            if (auto *meshComponent = entity->GetComponent<scene::MeshComponent>();
+                meshComponent && meshComponent->GetMesh() && meshComponent->GetMesh()->HasSkeleton())
+            {
+                if (ImGui::MenuItem("Create Skeleton Attachment Entities"))
+                {
+                    EditorShell::GetInstance().ExecuteSceneEdit("Create Skeleton Attachment Entities",
+                                                                [entity]()
+                                                                {
+                                                                    if (auto *meshComponent = entity->GetComponent<scene::MeshComponent>())
+                                                                    {
+                                                                        meshComponent->CreateSkeletonAttachmentEntities();
+                                                                    }
                                                                 });
                 }
             }

@@ -3,6 +3,7 @@
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/AnimationComponent.h"
+#include "PlutoGE/scene/components/SkeletonAttachmentComponent.h"
 
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/Texture.h"
@@ -49,6 +50,16 @@ namespace PlutoGE::scene
                 childName += " - " + submesh.name;
             }
             childName += " (Slot " + std::to_string(submesh.materialIndex) + ")";
+            return childName;
+        }
+
+        std::string BuildSkeletonAttachmentEntityName(const render::SkeletonJoint &joint, size_t jointIndex)
+        {
+            std::string childName = "Joint " + std::to_string(jointIndex);
+            if (!joint.name.empty())
+            {
+                childName += " - " + joint.name;
+            }
             return childName;
         }
 
@@ -509,6 +520,67 @@ namespace PlutoGE::scene
                 childMeshComponent->SetMaterialAssetForSubmesh(submeshIndex, m_submeshMaterialAssetReferences[submeshIndex]);
             }
             scene->AddEntity(std::move(child), owner);
+        }
+
+        return true;
+    }
+
+    bool MeshComponent::CreateSkeletonAttachmentEntities()
+    {
+        auto *owner = GetOwner();
+        auto *scene = owner ? owner->GetScene() : nullptr;
+        if (!owner || !scene || !m_mesh || !m_mesh->HasSkeleton() || m_submeshIndex >= 0)
+        {
+            return false;
+        }
+
+        const auto &skeleton = m_mesh->GetSkeleton();
+        if (skeleton.joints.empty())
+        {
+            return false;
+        }
+
+        bool hasExistingAttachmentChildren = false;
+        for (auto *child : owner->GetChildren())
+        {
+            if (child && child->GetComponent<SkeletonAttachmentComponent>())
+            {
+                hasExistingAttachmentChildren = true;
+                break;
+            }
+        }
+        if (hasExistingAttachmentChildren)
+        {
+            return false;
+        }
+
+        std::vector<Entity *> jointEntities(skeleton.joints.size(), nullptr);
+        for (size_t jointIndex = 0; jointIndex < skeleton.joints.size(); ++jointIndex)
+        {
+            const auto &joint = skeleton.joints[jointIndex];
+            auto child = std::make_unique<Entity>(EntityConfig{
+                .name = BuildSkeletonAttachmentEntityName(joint, jointIndex),
+                .tags = {"SkeletonAttachment"},
+            });
+            auto *childPtr = child.get();
+            childPtr->CreateComponent<SkeletonAttachmentComponent>(joint.nodeIndex, joint.name);
+            jointEntities[jointIndex] = scene->AddEntity(std::move(child), owner);
+        }
+
+        for (size_t jointIndex = 0; jointIndex < skeleton.joints.size(); ++jointIndex)
+        {
+            const auto &joint = skeleton.joints[jointIndex];
+            if (joint.parentJointIndex < 0 || joint.parentJointIndex >= static_cast<int>(jointEntities.size()))
+            {
+                continue;
+            }
+
+            auto *jointEntity = jointEntities[jointIndex];
+            auto *parentJointEntity = jointEntities[static_cast<size_t>(joint.parentJointIndex)];
+            if (jointEntity && parentJointEntity)
+            {
+                jointEntity->SetParent(parentJointEntity);
+            }
         }
 
         return true;

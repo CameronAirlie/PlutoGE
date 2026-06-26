@@ -41,6 +41,7 @@ namespace PlutoGE::render
 
     struct AnimationNode
     {
+        std::string name;
         int parentNodeIndex = -1;
         glm::mat4 localBindTransform{1.0f};
     };
@@ -62,6 +63,7 @@ namespace PlutoGE::render
     {
         int jointIndex = -1;
         int nodeIndex = -1;
+        std::string targetName;
         AnimationTargetPath path = AnimationTargetPath::Translation;
         AnimationInterpolation interpolation = AnimationInterpolation::Linear;
         std::vector<float> times;

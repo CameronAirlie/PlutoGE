@@ -2,6 +2,7 @@
 
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/import/MeshImporter.h"
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/Texture.h"
 #include "PlutoGE/scene/Entity.h"
@@ -15,6 +16,7 @@
 #include <cctype>
 #include <cstring>
 #include <deque>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -576,13 +578,29 @@ namespace PlutoGE::ui
 
             auto &engine = core::Engine::GetInstance();
             const auto sourcePath = project.ResolveAssetReference(asset.reference);
-            auto importedMeshAsset = engine.ImportMeshAsset(sourcePath.string());
-            auto rawImportedMeshAsset = engine.GetMeshImporter().ImportMeshAsset(sourcePath.string());
-            if (!importedMeshAsset.mesh)
+            assetimport::ImportedMeshSourceAsset importedSourceAsset;
+            try
+            {
+                importedSourceAsset = engine.GetMeshImporter().ImportMeshSourceAsset(sourcePath.string());
+            }
+            catch (const std::exception &exception)
             {
                 if (errorMessage)
                 {
-                    *errorMessage = "Failed to import source model: " + asset.reference;
+                    *errorMessage = "Failed to import source model '" + asset.reference + "': " + exception.what();
+                }
+                return false;
+            }
+
+            const bool hasMesh = !importedSourceAsset.meshData.vertices.empty() && !importedSourceAsset.meshData.indices.empty();
+            const bool hasAnimations = !importedSourceAsset.animations.empty();
+            const bool hasTextures = !importedSourceAsset.textures.empty();
+            const bool hasAuthoredMaterials = importedSourceAsset.materials.size() > 1;
+            if (!hasMesh && !hasAnimations && !hasTextures && !hasAuthoredMaterials)
+            {
+                if (errorMessage)
+                {
+                    *errorMessage = "Source model contained no mesh, materials, textures, or animations: " + asset.reference;
                 }
                 return false;
             }
@@ -590,12 +608,12 @@ namespace PlutoGE::ui
             const auto importDirectory = project.GetAssetDirectoryPath() / "Imported" / sourcePath.stem();
             const std::string meshReference = project.MakeAssetReference(importDirectory / (sourcePath.stem().string() + ".plutomesh"));
             std::vector<std::string> textureReferences;
-            if (rawImportedMeshAsset.textures)
+            if (!importedSourceAsset.textures.empty())
             {
-                textureReferences.reserve(rawImportedMeshAsset.textures->size());
-                for (std::size_t textureIndex = 0; textureIndex < rawImportedMeshAsset.textures->size(); ++textureIndex)
+                textureReferences.reserve(importedSourceAsset.textures.size());
+                for (std::size_t textureIndex = 0; textureIndex < importedSourceAsset.textures.size(); ++textureIndex)
                 {
-                    const auto &texture = (*rawImportedMeshAsset.textures)[textureIndex];
+                    const auto &texture = importedSourceAsset.textures[textureIndex];
                     textureReferences.push_back(ImportTextureAsset(project, importDirectory, texture, static_cast<int>(textureIndex), errorMessage));
                     if (textureReferences.back().empty() && (!texture.sourcePath.empty() || !texture.pixels.empty()))
                     {
@@ -605,16 +623,16 @@ namespace PlutoGE::ui
             }
 
             std::vector<std::string> materialReferences;
-            if (rawImportedMeshAsset.materials && !rawImportedMeshAsset.materials->empty())
+            if (hasMesh ? !importedSourceAsset.materials.empty() : hasAuthoredMaterials)
             {
-                materialReferences.reserve(rawImportedMeshAsset.materials->size());
+                materialReferences.reserve(importedSourceAsset.materials.size());
                 std::deque<render::Texture> textureHandles;
-                for (size_t materialIndex = 0; materialIndex < rawImportedMeshAsset.materials->size(); ++materialIndex)
+                for (size_t materialIndex = 0; materialIndex < importedSourceAsset.materials.size(); ++materialIndex)
                 {
                     const std::string materialName = "M_" + sourcePath.stem().string() + "_" + std::to_string(materialIndex);
                     const std::string materialReference = project.MakeAssetReference(importDirectory / (materialName + ".plutomaterial"));
                     std::string materialError;
-                    const auto materialConfig = BuildGeneratedMaterialConfig((*rawImportedMeshAsset.materials)[materialIndex], textureReferences, textureHandles);
+                    const auto materialConfig = BuildGeneratedMaterialConfig(importedSourceAsset.materials[materialIndex], textureReferences, textureHandles);
                     if (!engine.GetAssetManager().SaveMaterialAsset(materialReference, materialConfig, &materialError))
                     {
                         if (errorMessage)
@@ -627,25 +645,26 @@ namespace PlutoGE::ui
                 }
             }
 
-            render::MeshConfig meshConfig;
-            meshConfig.data = importedMeshAsset.mesh->GetMeshData();
-            meshConfig.hasLightmapUvs = importedMeshAsset.mesh->HasLightmapUvs();
-            meshConfig.skeleton = importedMeshAsset.mesh->GetSkeleton();
-            meshConfig.animationNodes = importedMeshAsset.mesh->GetAnimationNodes();
-            for (size_t submeshIndex = 0; submeshIndex < importedMeshAsset.mesh->GetSubmeshCount(); ++submeshIndex)
+            if (hasMesh)
             {
-                meshConfig.submeshes.push_back(importedMeshAsset.mesh->GetSubmesh(submeshIndex));
+                render::MeshConfig meshConfig;
+                meshConfig.data = importedSourceAsset.meshData;
+                meshConfig.submeshes = importedSourceAsset.submeshes;
+                meshConfig.hasLightmapUvs = importedSourceAsset.hasLightmapUvs;
+                meshConfig.skeleton = importedSourceAsset.skeleton;
+                meshConfig.animationNodes = importedSourceAsset.animationNodes;
+                meshConfig.animations = importedSourceAsset.animations;
+
+                if (!engine.GetAssetManager().SaveMeshAsset(meshReference, meshConfig, materialReferences, errorMessage))
+                {
+                    return false;
+                }
             }
 
-            if (!engine.GetAssetManager().SaveMeshAsset(meshReference, meshConfig, materialReferences, errorMessage))
-            {
-                return false;
-            }
-
-            if (importedMeshAsset.animations && !importedMeshAsset.animations->empty())
+            if (hasAnimations)
             {
                 const std::string animationReference = project.MakeAssetReference(importDirectory / (sourcePath.stem().string() + ".plutoanim"));
-                if (!engine.GetAssetManager().SaveAnimationAsset(animationReference, *importedMeshAsset.animations, errorMessage))
+                if (!engine.GetAssetManager().SaveAnimationAsset(animationReference, importedSourceAsset.animations, errorMessage))
                 {
                     return false;
                 }

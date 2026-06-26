@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <unordered_map>
 
 #include <glm/gtc/type_ptr.hpp>
 
@@ -62,7 +63,7 @@ namespace PlutoGE::assets
         T ReadPod(std::istream &input);
 
         void WriteAnimationClip(std::ostream &output, const render::AnimationClip &clip);
-        render::AnimationClip ReadAnimationClip(std::istream &input);
+        render::AnimationClip ReadAnimationClip(std::istream &input, std::uint32_t version = 2);
         bool WriteGeneratedMeshAsset(std::ostream &output, const render::MeshConfig &config, const std::vector<std::string> &materialReferences);
         bool ReadGeneratedMeshAsset(std::istream &input, render::MeshConfig &config, std::vector<std::string> &materialReferences);
     }
@@ -230,7 +231,7 @@ namespace PlutoGE::assets
         constexpr std::uint32_t kMagic = 0x4147504c; // LPGA
         const auto magic = ReadPod<std::uint32_t>(input);
         const auto version = ReadPod<std::uint32_t>(input);
-        if (magic != kMagic || version != 1)
+        if (magic != kMagic || version < 1 || version > 2)
         {
             return false;
         }
@@ -239,7 +240,7 @@ namespace PlutoGE::assets
         clips.reserve(static_cast<std::size_t>(clipCount));
         for (std::uint64_t index = 0; index < clipCount; ++index)
         {
-            clips.push_back(ReadAnimationClip(input));
+            clips.push_back(ReadAnimationClip(input, version));
         }
 
         return input.good();
@@ -290,7 +291,7 @@ namespace PlutoGE::assets
         }
 
         constexpr std::uint32_t kMagic = 0x4147504c; // LPGA
-        constexpr std::uint32_t kVersion = 1;
+        constexpr std::uint32_t kVersion = 2;
         WritePod(output, kMagic);
         WritePod(output, kVersion);
         WritePod<std::uint64_t>(output, static_cast<std::uint64_t>(clips.size()));
@@ -442,6 +443,7 @@ namespace PlutoGE::assets
             {
                 WritePod(output, channel.jointIndex);
                 WritePod(output, channel.nodeIndex);
+                WriteString(output, channel.targetName);
                 WritePod<std::uint32_t>(output, static_cast<std::uint32_t>(channel.path));
                 WritePod<std::uint32_t>(output, static_cast<std::uint32_t>(channel.interpolation));
                 WritePod<std::uint64_t>(output, static_cast<std::uint64_t>(channel.times.size()));
@@ -457,7 +459,7 @@ namespace PlutoGE::assets
             }
         }
 
-        render::AnimationClip ReadAnimationClip(std::istream &input)
+        render::AnimationClip ReadAnimationClip(std::istream &input, std::uint32_t version)
         {
             render::AnimationClip clip;
             clip.name = ReadString(input);
@@ -470,6 +472,10 @@ namespace PlutoGE::assets
                 render::AnimationChannel channel;
                 channel.jointIndex = ReadPod<int>(input);
                 channel.nodeIndex = ReadPod<int>(input);
+                if (version >= 2)
+                {
+                    channel.targetName = ReadString(input);
+                }
                 channel.path = static_cast<render::AnimationTargetPath>(ReadPod<std::uint32_t>(input));
                 channel.interpolation = static_cast<render::AnimationInterpolation>(ReadPod<std::uint32_t>(input));
                 channel.times.resize(static_cast<std::size_t>(ReadPod<std::uint64_t>(input)));
@@ -490,7 +496,7 @@ namespace PlutoGE::assets
         bool WriteGeneratedMeshAsset(std::ostream &output, const render::MeshConfig &config, const std::vector<std::string> &materialReferences)
         {
             constexpr std::uint32_t kMagic = 0x4d47504c; // LPGM
-            constexpr std::uint32_t kVersion = 1;
+            constexpr std::uint32_t kVersion = 2;
             WritePod(output, kMagic);
             WritePod(output, kVersion);
 
@@ -540,6 +546,7 @@ namespace PlutoGE::assets
             WritePod<std::uint64_t>(output, static_cast<std::uint64_t>(config.animationNodes.size()));
             for (const auto &node : config.animationNodes)
             {
+                WriteString(output, node.name);
                 WritePod(output, node.parentNodeIndex);
                 WriteMat4(output, node.localBindTransform);
             }
@@ -557,7 +564,7 @@ namespace PlutoGE::assets
             constexpr std::uint32_t kMagic = 0x4d47504c; // LPGM
             const auto magic = ReadPod<std::uint32_t>(input);
             const auto version = ReadPod<std::uint32_t>(input);
-            if (magic != kMagic || version != 1)
+            if (magic != kMagic || version < 1 || version > 2)
             {
                 return false;
             }
@@ -608,6 +615,10 @@ namespace PlutoGE::assets
             config.animationNodes.resize(static_cast<std::size_t>(ReadPod<std::uint64_t>(input)));
             for (auto &node : config.animationNodes)
             {
+                if (version >= 2)
+                {
+                    node.name = ReadString(input);
+                }
                 node.parentNodeIndex = ReadPod<int>(input);
                 node.localBindTransform = ReadMat4(input);
             }
@@ -840,7 +851,36 @@ namespace PlutoGE::assets
 
         if (auto cachedMaterial = m_materialCache.find(assetReference); cachedMaterial != m_materialCache.end() && cachedMaterial->second)
         {
-            cachedMaterial->second->GetConfig() = config;
+            render::MaterialConfig cachedConfig = config;
+            std::unordered_map<std::string, render::Texture *> reloadedTextures;
+            auto reloadTexture = [&](render::Texture *texture) -> render::Texture *
+            {
+                if (!texture)
+                {
+                    return nullptr;
+                }
+
+                const std::string persistedPath = PersistAssetPath(texture->GetFilePath());
+                const std::string resolvedPath = ResolveAssetPath(persistedPath);
+                if (resolvedPath.empty())
+                {
+                    return nullptr;
+                }
+
+                auto [textureIt, inserted] = reloadedTextures.emplace(resolvedPath, nullptr);
+                if (inserted)
+                {
+                    textureIt->second = render::Texture::LoadFromFile(resolvedPath.c_str());
+                }
+                return textureIt->second;
+            };
+
+            cachedConfig.albedoTexture = reloadTexture(config.albedoTexture);
+            cachedConfig.normalTexture = reloadTexture(config.normalTexture);
+            cachedConfig.metallicTexture = reloadTexture(config.metallicTexture);
+            cachedConfig.roughnessTexture = reloadTexture(config.roughnessTexture);
+            cachedConfig.lightmapTexture = nullptr;
+            cachedMaterial->second->GetConfig() = cachedConfig;
         }
 
         return true;

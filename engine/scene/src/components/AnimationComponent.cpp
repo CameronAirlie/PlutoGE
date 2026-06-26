@@ -7,6 +7,7 @@
 #include <functional>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
+#include <string_view>
 
 namespace PlutoGE::scene
 {
@@ -85,6 +86,70 @@ namespace PlutoGE::scene
             rotationMatrix[2] = basisZ;
             const glm::quat q = glm::normalize(glm::quat_cast(rotationMatrix));
             rotation = glm::vec4(q.x, q.y, q.z, q.w);
+        }
+
+        std::string_view CanonicalTargetName(std::string_view name)
+        {
+            const size_t separator = name.find_last_of(":|/");
+            return separator == std::string_view::npos ? name : name.substr(separator + 1);
+        }
+
+        bool TargetNamesMatch(std::string_view a, std::string_view b)
+        {
+            if (a.empty() || b.empty())
+            {
+                return false;
+            }
+
+            return a == b || CanonicalTargetName(a) == CanonicalTargetName(b);
+        }
+
+        int ResolveChannelNodeIndex(const render::AnimationChannel &channel, const std::vector<render::AnimationNode> &nodes)
+        {
+            if (!channel.targetName.empty())
+            {
+                for (size_t nodeIndex = 0; nodeIndex < nodes.size(); ++nodeIndex)
+                {
+                    if (nodes[nodeIndex].name == channel.targetName)
+                    {
+                        return static_cast<int>(nodeIndex);
+                    }
+                }
+
+                for (size_t nodeIndex = 0; nodeIndex < nodes.size(); ++nodeIndex)
+                {
+                    if (TargetNamesMatch(nodes[nodeIndex].name, channel.targetName))
+                    {
+                        return static_cast<int>(nodeIndex);
+                    }
+                }
+            }
+
+            return channel.nodeIndex >= 0 && channel.nodeIndex < static_cast<int>(nodes.size()) ? channel.nodeIndex : -1;
+        }
+
+        int ResolveChannelJointIndex(const render::AnimationChannel &channel, const render::Skeleton &skeleton)
+        {
+            if (!channel.targetName.empty())
+            {
+                for (size_t jointIndex = 0; jointIndex < skeleton.joints.size(); ++jointIndex)
+                {
+                    if (skeleton.joints[jointIndex].name == channel.targetName)
+                    {
+                        return static_cast<int>(jointIndex);
+                    }
+                }
+
+                for (size_t jointIndex = 0; jointIndex < skeleton.joints.size(); ++jointIndex)
+                {
+                    if (TargetNamesMatch(skeleton.joints[jointIndex].name, channel.targetName))
+                    {
+                        return static_cast<int>(jointIndex);
+                    }
+                }
+            }
+
+            return channel.jointIndex >= 0 && channel.jointIndex < static_cast<int>(skeleton.joints.size()) ? channel.jointIndex : -1;
         }
     }
 
@@ -505,13 +570,14 @@ namespace PlutoGE::scene
             const auto &clip = m_clips[static_cast<size_t>(m_currentClipIndex)];
             for (const auto &channel : clip.channels)
             {
-                if (channel.nodeIndex < 0 || channel.nodeIndex >= static_cast<int>(nodes.size()))
+                const int resolvedNodeIndex = ResolveChannelNodeIndex(channel, nodes);
+                if (resolvedNodeIndex < 0)
                 {
                     continue;
                 }
 
                 const auto sample = SampleChannelValue(channel, m_time);
-                const size_t nodeIndex = static_cast<size_t>(channel.nodeIndex);
+                const size_t nodeIndex = static_cast<size_t>(resolvedNodeIndex);
                 if (!animatedLocals[nodeIndex])
                 {
                     DecomposeTransform(nodes[nodeIndex].localBindTransform, translations[nodeIndex], rotations[nodeIndex], scales[nodeIndex]);
@@ -589,13 +655,14 @@ namespace PlutoGE::scene
             const auto &clip = m_clips[static_cast<size_t>(m_currentClipIndex)];
             for (const auto &channel : clip.channels)
             {
-                if (channel.jointIndex < 0 || channel.jointIndex >= static_cast<int>(skeleton.joints.size()))
+                const int resolvedJointIndex = ResolveChannelJointIndex(channel, skeleton);
+                if (resolvedJointIndex < 0)
                 {
                     continue;
                 }
 
                 const auto sample = SampleChannelValue(channel, m_time);
-                const size_t jointIndex = static_cast<size_t>(channel.jointIndex);
+                const size_t jointIndex = static_cast<size_t>(resolvedJointIndex);
                 if (!animatedLocals[jointIndex])
                 {
                     DecomposeTransform(skeleton.joints[jointIndex].localBindTransform, translations[jointIndex], rotations[jointIndex], scales[jointIndex]);

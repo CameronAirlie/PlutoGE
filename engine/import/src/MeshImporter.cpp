@@ -175,7 +175,7 @@ namespace PlutoGE::assetimport
         };
 
         constexpr uint32_t kCookedMeshCacheMagic = 0x434d4750; // PGMC
-        constexpr uint32_t kCookedMeshCacheVersion = 21;
+        constexpr uint32_t kCookedMeshCacheVersion = 22;
 
         bool ReadBooleanEnvironmentFlag(const char *name, bool defaultValue)
         {
@@ -557,6 +557,7 @@ namespace PlutoGE::assetimport
 
         void WriteAnimationNode(std::ostream &output, const render::AnimationNode &node)
         {
+            WriteString(output, node.name);
             WritePod(output, node.parentNodeIndex);
             WriteMat4(output, node.localBindTransform);
         }
@@ -564,6 +565,7 @@ namespace PlutoGE::assetimport
         render::AnimationNode ReadAnimationNode(std::istream &input)
         {
             render::AnimationNode node;
+            node.name = ReadString(input);
             node.parentNodeIndex = ReadPod<int>(input);
             node.localBindTransform = ReadMat4(input);
             return node;
@@ -579,6 +581,7 @@ namespace PlutoGE::assetimport
             {
                 WritePod(output, channel.jointIndex);
                 WritePod(output, channel.nodeIndex);
+                WriteString(output, channel.targetName);
                 WritePod(output, static_cast<uint32_t>(channel.path));
                 WritePod(output, static_cast<uint32_t>(channel.interpolation));
                 WritePodVector(output, channel.times);
@@ -599,6 +602,7 @@ namespace PlutoGE::assetimport
                 render::AnimationChannel channel;
                 channel.jointIndex = ReadPod<int>(input);
                 channel.nodeIndex = ReadPod<int>(input);
+                channel.targetName = ReadString(input);
                 channel.path = static_cast<render::AnimationTargetPath>(ReadPod<uint32_t>(input));
                 channel.interpolation = static_cast<render::AnimationInterpolation>(ReadPod<uint32_t>(input));
                 channel.times = ReadPodVector<float>(input);
@@ -2259,6 +2263,7 @@ namespace PlutoGE::assetimport
             std::vector<render::AnimationNode> animationNodes(model.nodes.size());
             for (size_t nodeIndex = 0; nodeIndex < model.nodes.size(); ++nodeIndex)
             {
+                animationNodes[nodeIndex].name = model.nodes[nodeIndex].name;
                 animationNodes[nodeIndex].parentNodeIndex = nodeIndex < nodeParents.size() ? nodeParents[nodeIndex] : -1;
                 animationNodes[nodeIndex].localBindTransform = ComposeNodeTransform(model.nodes[nodeIndex]);
             }
@@ -2444,6 +2449,11 @@ namespace PlutoGE::assetimport
                     const auto jointIt = nodeToJoint.find(channelSource.target_node);
                     channel.jointIndex = jointIt == nodeToJoint.end() ? -1 : jointIt->second;
                     channel.nodeIndex = channelSource.target_node;
+                    channel.targetName = model.nodes[static_cast<size_t>(channelSource.target_node)].name;
+                    if (channel.targetName.empty() && channel.jointIndex >= 0)
+                    {
+                        channel.targetName = skeleton.joints[static_cast<size_t>(channel.jointIndex)].name;
+                    }
                     channel.path = ParseAnimationTargetPath(channelSource.target_path);
                     channel.interpolation = ParseAnimationInterpolation(sampler.interpolation);
 
@@ -2581,6 +2591,7 @@ namespace PlutoGE::assetimport
             std::vector<render::AnimationNode> animationNodes(nodes.size());
             for (size_t nodeIndex = 0; nodeIndex < nodes.size(); ++nodeIndex)
             {
+                animationNodes[nodeIndex].name = nodes[nodeIndex].name;
                 animationNodes[nodeIndex].parentNodeIndex = nodes[nodeIndex].parentNodeIndex;
                 animationNodes[nodeIndex].localBindTransform = nodes[nodeIndex].localTransform;
             }
@@ -3844,6 +3855,7 @@ namespace PlutoGE::assetimport
             render::AnimationClip &clip,
             int nodeIndex,
             int jointIndex,
+            const std::string &targetName,
             render::AnimationTargetPath path,
             const aiVectorKey *keys,
             unsigned int keyCount,
@@ -3857,6 +3869,7 @@ namespace PlutoGE::assetimport
             render::AnimationChannel channel;
             channel.nodeIndex = nodeIndex;
             channel.jointIndex = jointIndex;
+            channel.targetName = targetName;
             channel.path = path;
             channel.interpolation = render::AnimationInterpolation::Linear;
             channel.times.reserve(keyCount);
@@ -3875,6 +3888,7 @@ namespace PlutoGE::assetimport
             render::AnimationClip &clip,
             int nodeIndex,
             int jointIndex,
+            const std::string &targetName,
             const aiQuatKey *keys,
             unsigned int keyCount,
             double ticksPerSecond)
@@ -3887,6 +3901,7 @@ namespace PlutoGE::assetimport
             render::AnimationChannel channel;
             channel.nodeIndex = nodeIndex;
             channel.jointIndex = jointIndex;
+            channel.targetName = targetName;
             channel.path = render::AnimationTargetPath::Rotation;
             channel.interpolation = render::AnimationInterpolation::Linear;
             channel.times.reserve(keyCount);
@@ -3938,9 +3953,9 @@ namespace PlutoGE::assetimport
 
                     const auto jointIt = boneNameToJointIndex.find(nodeName);
                     const int jointIndex = jointIt == boneNameToJointIndex.end() ? -1 : jointIt->second;
-                    AddAssimpVectorChannel(clip, nodeIt->second, jointIndex, render::AnimationTargetPath::Translation, sourceChannel->mPositionKeys, sourceChannel->mNumPositionKeys, ticksPerSecond);
-                    AddAssimpRotationChannel(clip, nodeIt->second, jointIndex, sourceChannel->mRotationKeys, sourceChannel->mNumRotationKeys, ticksPerSecond);
-                    AddAssimpVectorChannel(clip, nodeIt->second, jointIndex, render::AnimationTargetPath::Scale, sourceChannel->mScalingKeys, sourceChannel->mNumScalingKeys, ticksPerSecond);
+                    AddAssimpVectorChannel(clip, nodeIt->second, jointIndex, nodeName, render::AnimationTargetPath::Translation, sourceChannel->mPositionKeys, sourceChannel->mNumPositionKeys, ticksPerSecond);
+                    AddAssimpRotationChannel(clip, nodeIt->second, jointIndex, nodeName, sourceChannel->mRotationKeys, sourceChannel->mNumRotationKeys, ticksPerSecond);
+                    AddAssimpVectorChannel(clip, nodeIt->second, jointIndex, nodeName, render::AnimationTargetPath::Scale, sourceChannel->mScalingKeys, sourceChannel->mNumScalingKeys, ticksPerSecond);
                 }
 
                 clip.channelCount = static_cast<int>(clip.channels.size());
@@ -4061,7 +4076,7 @@ namespace PlutoGE::assetimport
 
             if (asset.meshData.vertices.empty() || asset.meshData.indices.empty())
             {
-                throw std::runtime_error("No triangle mesh data was found in the FBX file.");
+                return asset;
             }
 
             const auto missingNormalsStart = ImportClock::now();
@@ -4303,14 +4318,18 @@ namespace PlutoGE::assetimport
             }
         }
         CachedImportedMeshAsset cachedImportedMeshAsset;
-        render::MeshConfig meshConfig;
-        meshConfig.data = std::move(meshSourceAsset.meshData);
-        meshConfig.submeshes = std::move(meshSourceAsset.submeshes);
-        meshConfig.hasLightmapUvs = meshSourceAsset.hasLightmapUvs;
-        meshConfig.skeleton = std::move(meshSourceAsset.skeleton);
-        meshConfig.animationNodes = std::move(meshSourceAsset.animationNodes);
-        meshConfig.animations = meshSourceAsset.animations;
-        cachedImportedMeshAsset.mesh = std::unique_ptr<render::Mesh>(render::Mesh::FromConfig(std::move(meshConfig)));
+        const bool hasMeshGeometry = !meshSourceAsset.meshData.vertices.empty() && !meshSourceAsset.meshData.indices.empty();
+        if (hasMeshGeometry)
+        {
+            render::MeshConfig meshConfig;
+            meshConfig.data = std::move(meshSourceAsset.meshData);
+            meshConfig.submeshes = std::move(meshSourceAsset.submeshes);
+            meshConfig.hasLightmapUvs = meshSourceAsset.hasLightmapUvs;
+            meshConfig.skeleton = std::move(meshSourceAsset.skeleton);
+            meshConfig.animationNodes = std::move(meshSourceAsset.animationNodes);
+            meshConfig.animations = meshSourceAsset.animations;
+            cachedImportedMeshAsset.mesh = std::unique_ptr<render::Mesh>(render::Mesh::FromConfig(std::move(meshConfig)));
+        }
         cachedImportedMeshAsset.materials = std::move(meshSourceAsset.materials);
         cachedImportedMeshAsset.textures = std::move(meshSourceAsset.textures);
         cachedImportedMeshAsset.animations = std::move(meshSourceAsset.animations);

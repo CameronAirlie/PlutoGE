@@ -3967,6 +3967,17 @@ namespace PlutoGE::assetimport
 
         ImportedMeshSourceAsset ParseAssimpMeshAsset(const std::string &filePath, const MeshCookOptions &cookOptions, MeshImportProfile *profile)
         {
+            std::error_code fileError;
+            const auto fileSize = std::filesystem::file_size(filePath, fileError);
+            if (fileError)
+            {
+                throw std::runtime_error("Could not read FBX file size for '" + filePath + "': " + fileError.message());
+            }
+            if (fileSize == 0)
+            {
+                throw std::runtime_error("FBX file is empty: " + filePath);
+            }
+
             Assimp::Importer importer;
             importer.SetPropertyBool(AI_CONFIG_IMPORT_FBX_PRESERVE_PIVOTS, false);
             unsigned int flags =
@@ -3990,7 +4001,13 @@ namespace PlutoGE::assetimport
             }
             if (!scene)
             {
-                throw std::runtime_error(importer.GetErrorString());
+                const std::string assimpError = importer.GetErrorString();
+                if (ToLower(assimpError).find("unexpected end of file") != std::string::npos)
+                {
+                    throw std::runtime_error("FBX parser reached an unexpected end of file while reading '" + filePath +
+                                             "'. The file is likely incomplete, truncated, or not a valid FBX export. Try re-exporting the animation as binary FBX and import the new file.");
+                }
+                throw std::runtime_error(assimpError);
             }
             if (!scene->mRootNode)
             {

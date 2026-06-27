@@ -439,49 +439,52 @@ namespace PlutoGE::scene
             properties.push_back({prefix + "ChannelCount", PropertyType::Int, std::to_string(clip.channelCount)});
         }
 
-        properties.push_back({"Graph.DefaultStateIndex", PropertyType::Int, std::to_string(m_defaultStateIndex)});
-        properties.push_back({"Graph.CurrentStateIndex", PropertyType::Int, std::to_string(m_graphCurrentStateIndex)});
-        properties.push_back({"Graph.StateTime", PropertyType::Float, std::to_string(m_graphStateTime)});
-        properties.push_back({"Graph.StateCount", PropertyType::Int, std::to_string(m_states.size())});
-        for (size_t stateIndex = 0; stateIndex < m_states.size(); ++stateIndex)
+        if (m_animationGraphAssetReference.empty())
         {
-            const auto &state = m_states[stateIndex];
-            const std::string prefix = std::string(kStatePrefix) + std::to_string(stateIndex) + ".";
-            properties.push_back({prefix + "Name", PropertyType::String, state.name});
-            properties.push_back({prefix + "ClipIndex", PropertyType::Int, std::to_string(state.clipIndex)});
-            properties.push_back({prefix + "Speed", PropertyType::Float, std::to_string(state.speed)});
-            properties.push_back({prefix + "Loop", PropertyType::Bool, state.loop ? "true" : "false"});
-            properties.push_back({prefix + "TransitionCount", PropertyType::Int, std::to_string(state.transitions.size())});
-            for (size_t transitionIndex = 0; transitionIndex < state.transitions.size(); ++transitionIndex)
+            properties.push_back({"Graph.DefaultStateIndex", PropertyType::Int, std::to_string(m_defaultStateIndex)});
+            properties.push_back({"Graph.CurrentStateIndex", PropertyType::Int, std::to_string(m_graphCurrentStateIndex)});
+            properties.push_back({"Graph.StateTime", PropertyType::Float, std::to_string(m_graphStateTime)});
+            properties.push_back({"Graph.StateCount", PropertyType::Int, std::to_string(m_states.size())});
+            for (size_t stateIndex = 0; stateIndex < m_states.size(); ++stateIndex)
             {
-                const auto &transition = state.transitions[transitionIndex];
-                const std::string transitionPrefix = prefix + "Transitions." + std::to_string(transitionIndex) + ".";
-                properties.push_back({transitionPrefix + "DestinationStateIndex", PropertyType::Int, std::to_string(transition.destinationStateIndex)});
-                properties.push_back({transitionPrefix + "Duration", PropertyType::Float, std::to_string(transition.duration)});
-                properties.push_back({transitionPrefix + "HasExitTime", PropertyType::Bool, transition.hasExitTime ? "true" : "false"});
-                properties.push_back({transitionPrefix + "ExitTime", PropertyType::Float, std::to_string(transition.exitTime)});
-                properties.push_back({transitionPrefix + "ConditionCount", PropertyType::Int, std::to_string(transition.conditions.size())});
-                for (size_t conditionIndex = 0; conditionIndex < transition.conditions.size(); ++conditionIndex)
+                const auto &state = m_states[stateIndex];
+                const std::string prefix = std::string(kStatePrefix) + std::to_string(stateIndex) + ".";
+                properties.push_back({prefix + "Name", PropertyType::String, state.name});
+                properties.push_back({prefix + "ClipIndex", PropertyType::Int, std::to_string(state.clipIndex)});
+                properties.push_back({prefix + "Speed", PropertyType::Float, std::to_string(state.speed)});
+                properties.push_back({prefix + "Loop", PropertyType::Bool, state.loop ? "true" : "false"});
+                properties.push_back({prefix + "TransitionCount", PropertyType::Int, std::to_string(state.transitions.size())});
+                for (size_t transitionIndex = 0; transitionIndex < state.transitions.size(); ++transitionIndex)
                 {
-                    const auto &condition = transition.conditions[conditionIndex];
-                    const std::string conditionPrefix = transitionPrefix + "Conditions." + std::to_string(conditionIndex) + ".";
-                    properties.push_back({conditionPrefix + "Parameter", PropertyType::String, condition.parameterName});
-                    properties.push_back({conditionPrefix + "Mode", PropertyType::String, ConditionModeName(condition.mode)});
-                    properties.push_back({conditionPrefix + "Threshold", PropertyType::Float, std::to_string(condition.threshold)});
+                    const auto &transition = state.transitions[transitionIndex];
+                    const std::string transitionPrefix = prefix + "Transitions." + std::to_string(transitionIndex) + ".";
+                    properties.push_back({transitionPrefix + "DestinationStateIndex", PropertyType::Int, std::to_string(transition.destinationStateIndex)});
+                    properties.push_back({transitionPrefix + "Duration", PropertyType::Float, std::to_string(transition.duration)});
+                    properties.push_back({transitionPrefix + "HasExitTime", PropertyType::Bool, transition.hasExitTime ? "true" : "false"});
+                    properties.push_back({transitionPrefix + "ExitTime", PropertyType::Float, std::to_string(transition.exitTime)});
+                    properties.push_back({transitionPrefix + "ConditionCount", PropertyType::Int, std::to_string(transition.conditions.size())});
+                    for (size_t conditionIndex = 0; conditionIndex < transition.conditions.size(); ++conditionIndex)
+                    {
+                        const auto &condition = transition.conditions[conditionIndex];
+                        const std::string conditionPrefix = transitionPrefix + "Conditions." + std::to_string(conditionIndex) + ".";
+                        properties.push_back({conditionPrefix + "Parameter", PropertyType::String, condition.parameterName});
+                        properties.push_back({conditionPrefix + "Mode", PropertyType::String, ConditionModeName(condition.mode)});
+                        properties.push_back({conditionPrefix + "Threshold", PropertyType::Float, std::to_string(condition.threshold)});
+                    }
                 }
             }
-        }
 
-        properties.push_back({"Graph.ParameterCount", PropertyType::Int, std::to_string(m_parameters.size())});
-        for (size_t parameterIndex = 0; parameterIndex < m_parameters.size(); ++parameterIndex)
-        {
-            const auto &parameter = m_parameters[parameterIndex];
-            const std::string prefix = std::string(kParameterPrefix) + std::to_string(parameterIndex) + ".";
-            properties.push_back({prefix + "Name", PropertyType::String, parameter.name});
-            properties.push_back({prefix + "Type", PropertyType::String, ParameterTypeName(parameter.type)});
-            properties.push_back({prefix + "Float", PropertyType::Float, std::to_string(parameter.floatValue)});
-            properties.push_back({prefix + "Int", PropertyType::Int, std::to_string(parameter.intValue)});
-            properties.push_back({prefix + "Bool", PropertyType::Bool, parameter.boolValue ? "true" : "false"});
+            properties.push_back({"Graph.ParameterCount", PropertyType::Int, std::to_string(m_parameters.size())});
+            for (size_t parameterIndex = 0; parameterIndex < m_parameters.size(); ++parameterIndex)
+            {
+                const auto &parameter = m_parameters[parameterIndex];
+                const std::string prefix = std::string(kParameterPrefix) + std::to_string(parameterIndex) + ".";
+                properties.push_back({prefix + "Name", PropertyType::String, parameter.name});
+                properties.push_back({prefix + "Type", PropertyType::String, ParameterTypeName(parameter.type)});
+                properties.push_back({prefix + "Float", PropertyType::Float, std::to_string(parameter.floatValue)});
+                properties.push_back({prefix + "Int", PropertyType::Int, std::to_string(parameter.intValue)});
+                properties.push_back({prefix + "Bool", PropertyType::Bool, parameter.boolValue ? "true" : "false"});
+            }
         }
 
         return properties;
@@ -747,6 +750,13 @@ namespace PlutoGE::scene
         SetTime(m_time);
         m_playing = m_playing && HasCurrentClip();
 
+        const bool hasSerializedGraph = stateCount >= 0 || parameterCount >= 0;
+        auto serializedStates = m_states;
+        auto serializedParameters = m_parameters;
+        const int serializedDefaultStateIndex = m_defaultStateIndex;
+        const int serializedCurrentStateIndex = m_graphCurrentStateIndex;
+        const float serializedGraphStateTime = m_graphStateTime;
+
         if (!m_sourceAnimationPath.empty())
         {
             SetAnimationAssetReference(m_sourceAnimationPath);
@@ -756,8 +766,26 @@ namespace PlutoGE::scene
         {
             SetAnimationGraphAssetReference(m_animationGraphAssetReference);
         }
+        else if (hasSerializedGraph)
+        {
+            m_states = std::move(serializedStates);
+            m_parameters = std::move(serializedParameters);
+            m_defaultStateIndex = serializedDefaultStateIndex;
+            m_graphCurrentStateIndex = serializedCurrentStateIndex;
+            m_graphStateTime = serializedGraphStateTime;
+            m_transition = {};
+            m_graphStarted = true;
+            ClampGraph();
+            if (!m_states.empty())
+            {
+                m_currentClipIndex = m_states[static_cast<size_t>(m_graphCurrentStateIndex)].clipIndex;
+                m_time = m_graphStateTime;
+            }
+        }
 
         EnsureDefaultGraph();
+        m_jointMatricesDirty = true;
+        m_nodeMatricesDirty = true;
     }
 
     bool AnimationComponent::SetAnimationAssetReference(std::string animationAssetReference)
@@ -1101,16 +1129,8 @@ namespace PlutoGE::scene
                         {
                             clip.name = assetState.clipName;
                         }
-                        const int existingClipIndex = FindClipIndex(clip.name);
-                        if (existingClipIndex >= 0)
-                        {
-                            state.clipIndex = existingClipIndex;
-                        }
-                        else
-                        {
-                            m_clips.push_back(std::move(clip));
-                            state.clipIndex = static_cast<int>(m_clips.size()) - 1;
-                        }
+                        m_clips.push_back(std::move(clip));
+                        state.clipIndex = static_cast<int>(m_clips.size()) - 1;
                         clipIndexByReference[assetState.clipReference] = state.clipIndex;
                     }
                 }
@@ -1376,18 +1396,21 @@ namespace PlutoGE::scene
             auto &state = m_states[static_cast<size_t>(m_graphCurrentStateIndex)];
             bool finished = false;
             m_graphStateTime = AdvanceClipTime(state.clipIndex, m_graphStateTime, deltaTime, state.speed, state.loop, &finished);
-            if (finished && !state.loop)
-            {
-                m_playing = false;
-            }
 
+            bool startedTransition = false;
             for (const auto &transition : state.transitions)
             {
                 if (IsTransitionReady(transition, state))
                 {
                     StartTransition(m_graphCurrentStateIndex, transition);
+                    startedTransition = true;
                     break;
                 }
+            }
+
+            if (finished && !state.loop && !startedTransition)
+            {
+                m_playing = false;
             }
         }
 

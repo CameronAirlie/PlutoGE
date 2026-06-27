@@ -145,6 +145,8 @@ namespace PlutoGE::ui
         }
         [[nodiscard]] bool IsEditorCameraSelected() const { return m_isEditorCameraSelected; }
         [[nodiscard]] EditorViewportCamera &GetEditorCamera() { return m_editorCamera; }
+        [[nodiscard]] scene::Scene *GetScene() { return m_scene.get(); }
+        [[nodiscard]] const scene::Scene *GetScene() const { return m_scene.get(); }
         [[nodiscard]] assets::Project *GetProject() { return m_project.get(); }
         [[nodiscard]] const assets::Project *GetProject() const { return m_project.get(); }
         void RequestIblCapture(scene::IblCaptureComponent *captureComponent);

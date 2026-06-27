@@ -223,6 +223,35 @@ namespace PlutoGE::ui
             }
 
             importedSourcePath = packageDirectory / sourceFilePath.filename();
+            const auto sourceSize = std::filesystem::file_size(sourceFilePath, errorCode);
+            if (errorCode)
+            {
+                if (errorMessage)
+                {
+                    *errorMessage = "Failed to read selected model size: " + errorCode.message();
+                }
+                return false;
+            }
+
+            const auto importedSize = std::filesystem::file_size(importedSourcePath, errorCode);
+            if (errorCode)
+            {
+                if (errorMessage)
+                {
+                    *errorMessage = "Failed to read copied model size: " + errorCode.message();
+                }
+                return false;
+            }
+
+            if (importedSize == 0 || importedSize != sourceSize)
+            {
+                if (errorMessage)
+                {
+                    *errorMessage = "Copied model file is incomplete. Source size=" + std::to_string(sourceSize) +
+                                    " bytes, copied size=" + std::to_string(importedSize) + " bytes.";
+                }
+                return false;
+            }
             return true;
         }
 

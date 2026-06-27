@@ -1397,6 +1397,7 @@ namespace PlutoGE::assets
         }
 
         m_animationGraphCache[assetReference] = graph;
+        m_animationGraphCache[graphPath] = graph;
         if (loaded)
         {
             *loaded = true;
@@ -1496,6 +1497,7 @@ namespace PlutoGE::assets
         }
 
         m_animationGraphCache[assetReference] = graph;
+        m_animationGraphCache[graphPath] = graph;
         return true;
     }
 

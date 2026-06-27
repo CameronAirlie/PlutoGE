@@ -2,6 +2,8 @@
 
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/scene/Entity.h"
+#include "PlutoGE/scene/components/AnimationComponent.h"
 #include "PlutoGE/ui/EditorShell.h"
 
 #include <algorithm>
@@ -206,6 +208,42 @@ namespace PlutoGE::ui
                                });
         }
 
+        void RefreshAnimationGraphComponents(scene::Entity &entity, const std::string &animationGraphReference)
+        {
+            auto &assetManager = core::Engine::GetInstance().GetAssetManager();
+            const std::string resolvedAnimationGraphPath = assetManager.ResolveAssetPath(animationGraphReference);
+            if (auto *animationComponent = entity.GetComponent<scene::AnimationComponent>();
+                animationComponent && !animationComponent->GetAnimationGraphAssetReference().empty())
+            {
+                const std::string componentGraphReference = animationComponent->GetAnimationGraphAssetReference();
+                const std::string resolvedComponentGraphPath = assetManager.ResolveAssetPath(componentGraphReference);
+                if (componentGraphReference == animationGraphReference ||
+                    (!resolvedAnimationGraphPath.empty() && resolvedComponentGraphPath == resolvedAnimationGraphPath))
+                {
+                    animationComponent->SetAnimationGraphAssetReference(componentGraphReference);
+                }
+            }
+
+            for (auto *child : entity.GetChildren())
+            {
+                if (child)
+                {
+                    RefreshAnimationGraphComponents(*child, animationGraphReference);
+                }
+            }
+        }
+
+        void RefreshSceneAnimationGraphComponents(scene::Scene &scene, const std::string &animationGraphReference)
+        {
+            for (auto *rootEntity : scene.GetRootEntities())
+            {
+                if (rootEntity)
+                {
+                    RefreshAnimationGraphComponents(*rootEntity, animationGraphReference);
+                }
+            }
+        }
+
         GraphEditor::Template BuildStateTemplate()
         {
             static const char *inputs[] = {"In"};
@@ -330,13 +368,9 @@ namespace PlutoGE::ui
                 {
                     return;
                 }
-                const int removedId = m_graph.transitions[linkIndex].id;
-                m_graph.transitions.erase(m_graph.transitions.begin() + static_cast<std::ptrdiff_t>(linkIndex));
-                if (m_selectedTransitionId == removedId)
-                {
-                    m_selectedTransitionId = 0;
-                }
-                m_dirty = true;
+                // GraphEditor treats input slots as single-link and calls DelLink before
+                // adding a new link. Animation states allow multiple incoming transitions,
+                // so deletion is handled explicitly from the transition inspector instead.
             }
 
             void CustomDraw(ImDrawList *drawList, ImRect rectangle, GraphEditor::NodeIndex nodeIndex) override
@@ -643,10 +677,7 @@ namespace PlutoGE::ui
                     if (ImGui::Selectable(option.displayName.c_str(), selected))
                     {
                         state->clipReference = option.reference;
-                        if (state->clipName.empty())
-                        {
-                            state->clipName = ClipNameFromReference(option.reference);
-                        }
+                        state->clipName = ClipNameFromReference(option.reference);
                         m_dirty = true;
                     }
                     if (selected)
@@ -855,6 +886,10 @@ namespace PlutoGE::ui
             std::string errorMessage;
             if (core::Engine::GetInstance().GetAssetManager().SaveAnimationGraphAsset(reference, m_graph, &errorMessage))
             {
+                if (auto *scene = editorShell.GetScene())
+                {
+                    RefreshSceneAnimationGraphComponents(*scene, reference);
+                }
                 m_dirty = false;
                 editorShell.MarkProjectDirty();
                 editorShell.MarkSceneDirty();

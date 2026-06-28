@@ -20,7 +20,9 @@
 #include "PlutoGE/render/postprocess/IPostProcessEffect.h"
 #include "PlutoGE/render/postprocess/TAAEffect.h"
 #include "PlutoGE/scene/components/LightComponent.h"
+#include "PlutoGE/scene/components/VolumetricCloudComponent.h"
 #include "PlutoGE/scene/Entity.h"
+#include "PlutoGE/scene/Scene.h"
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -215,6 +217,40 @@ namespace PlutoGE::render
             }
 
             return nullptr;
+        }
+
+        void ExpandCaptureFarPlaneForClouds(const scene::Entity *entity,
+                                            const glm::vec3 &capturePosition,
+                                            float &farPlane)
+        {
+            if (!entity || !entity->IsActive())
+                return;
+
+            for (const auto *cloud : entity->GetComponents<scene::VolumetricCloudComponent>())
+            {
+                if (!cloud || !cloud->IsEnabled() || cloud->GetDensity() <= 0.0f || cloud->GetCoverage() <= 0.0f)
+                    continue;
+
+                const glm::vec3 scaledSize = glm::abs(cloud->GetSize() * entity->GetWorldScale());
+                const float boundingRadius = glm::length(scaledSize) * 0.5f;
+                const float requiredDistance = glm::length(entity->GetWorldPosition() - capturePosition) + boundingRadius;
+                farPlane = std::max(farPlane, requiredDistance + 1.0f);
+            }
+
+            for (const auto *child : entity->GetChildren())
+                ExpandCaptureFarPlaneForClouds(child, capturePosition, farPlane);
+        }
+
+        float ResolveEnvironmentCaptureFarPlane(const scene::Scene *scene,
+                                                const glm::vec3 &capturePosition,
+                                                float requestedFarPlane)
+        {
+            float resolvedFarPlane = std::max(requestedFarPlane, 1.0f);
+            if (!scene)
+                return resolvedFarPlane;
+            for (const auto *root : scene->GetRootEntities())
+                ExpandCaptureFarPlaneForClouds(root, capturePosition, resolvedFarPlane);
+            return resolvedFarPlane;
         }
     }
 
@@ -412,14 +448,15 @@ namespace PlutoGE::render
 
         const auto previousDebugView = m_postProcessDebugView;
         m_postProcessDebugView = PostProcessDebugView::None;
+        const float captureFarPlane = ResolveEnvironmentCaptureFarPlane(scene, position, farPlane);
 
         for (int faceIndex = 0; faceIndex < 6; ++faceIndex)
         {
             CameraData cameraData;
             cameraData.view = glm::lookAt(position, position + directions[faceIndex], upVectors[faceIndex]);
-            cameraData.projection = glm::perspective(glm::radians(90.0f), 1.0f, 0.1f, std::max(farPlane, 1.0f));
+            cameraData.projection = glm::perspective(glm::radians(90.0f), 1.0f, 0.1f, captureFarPlane);
             cameraData.nearPlane = 0.1f;
-            cameraData.farPlane = std::max(farPlane, 1.0f);
+            cameraData.farPlane = captureFarPlane;
 
             RenderFrame(cameraData, &captureTarget, lights, nullptr, scene, false);
 

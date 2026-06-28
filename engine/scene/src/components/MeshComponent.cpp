@@ -816,10 +816,14 @@ namespace PlutoGE::scene
 
             AnimationComponent *animationComponent = FindAnimationComponent(entity);
             const std::vector<glm::mat4> *jointMatrices = nullptr;
+            bool skinningPoseChanged = false;
             if (m_mesh->HasSkeleton())
             {
                 if (animationComponent)
                 {
+                    // Capture this before GetJointMatrices evaluates the pose
+                    // and clears the animation component's dirty flag.
+                    skinningPoseChanged = animationComponent->IsJointPoseDirty();
                     jointMatrices = &animationComponent->GetJointMatrices(m_mesh->GetSkeleton(), m_mesh->GetAnimationNodes());
                 }
             }
@@ -875,6 +879,7 @@ namespace PlutoGE::scene
                 command.worldBounds = ComputeWorldBounds(*m_mesh, submeshIndex, submeshModelMatrix);
                 command.previousWorldBounds = ComputeWorldBounds(*m_mesh, submeshIndex, command.previousModel);
                 command.jointMatrices = jointMatrices;
+                command.skinningPoseChanged = skinningPoseChanged;
                 command.submeshIndex = static_cast<uint32_t>(submeshIndex);
                 command.isStatic = m_isStatic;
                 command.usePrimaryUvForLightmap = !m_mesh->HasUsableLightmapUvsForSubmesh(submeshIndex);

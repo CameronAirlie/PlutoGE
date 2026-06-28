@@ -30,6 +30,12 @@ public sealed class RigidbodyComponent : ComponentReference
         set => ScriptBridge.SetRigidbodyAngularDrag(EntityId, value);
     }
 
+    public float Friction
+    {
+        get => ScriptBridge.GetRigidbodyFriction(EntityId);
+        set => ScriptBridge.SetRigidbodyFriction(EntityId, value);
+    }
+
     public bool UseGravity
     {
         get => ScriptBridge.GetRigidbodyUseGravity(EntityId);

@@ -157,6 +157,8 @@ internal static unsafe class ScriptBridge
     private static delegate* unmanaged[Cdecl]<uint, float, void> _setRigidbodyLinearDrag;
     private static delegate* unmanaged[Cdecl]<uint, float> _getRigidbodyAngularDrag;
     private static delegate* unmanaged[Cdecl]<uint, float, void> _setRigidbodyAngularDrag;
+    private static delegate* unmanaged[Cdecl]<uint, float> _getRigidbodyFriction;
+    private static delegate* unmanaged[Cdecl]<uint, float, void> _setRigidbodyFriction;
     private static delegate* unmanaged[Cdecl]<uint, int> _getRigidbodyUseGravity;
     private static delegate* unmanaged[Cdecl]<uint, int, void> _setRigidbodyUseGravity;
     private static delegate* unmanaged[Cdecl]<uint, int> _getRigidbodyKinematic;
@@ -494,6 +496,8 @@ internal static unsafe class ScriptBridge
         delegate* unmanaged[Cdecl]<uint, float, void> setLinearDrag,
         delegate* unmanaged[Cdecl]<uint, float> getAngularDrag,
         delegate* unmanaged[Cdecl]<uint, float, void> setAngularDrag,
+        delegate* unmanaged[Cdecl]<uint, float> getFriction,
+        delegate* unmanaged[Cdecl]<uint, float, void> setFriction,
         delegate* unmanaged[Cdecl]<uint, int> getUseGravity,
         delegate* unmanaged[Cdecl]<uint, int, void> setUseGravity,
         delegate* unmanaged[Cdecl]<uint, int> getKinematic,
@@ -506,7 +510,8 @@ internal static unsafe class ScriptBridge
         delegate* unmanaged[Cdecl]<uint, NativeVector3, void> setAngularVelocity)
     {
         if (getMass == null || setMass == null || getLinearDrag == null || setLinearDrag == null ||
-            getAngularDrag == null || setAngularDrag == null || getUseGravity == null || setUseGravity == null ||
+            getAngularDrag == null || setAngularDrag == null || getFriction == null || setFriction == null ||
+            getUseGravity == null || setUseGravity == null ||
             getKinematic == null || setKinematic == null || getFreezeRotation == null || setFreezeRotation == null ||
             getVelocity == null || setVelocity == null || getAngularVelocity == null || setAngularVelocity == null)
         {
@@ -520,6 +525,8 @@ internal static unsafe class ScriptBridge
         _setRigidbodyLinearDrag = setLinearDrag;
         _getRigidbodyAngularDrag = getAngularDrag;
         _setRigidbodyAngularDrag = setAngularDrag;
+        _getRigidbodyFriction = getFriction;
+        _setRigidbodyFriction = setFriction;
         _getRigidbodyUseGravity = getUseGravity;
         _setRigidbodyUseGravity = setUseGravity;
         _getRigidbodyKinematic = getKinematic;
@@ -1387,6 +1394,8 @@ internal static unsafe class ScriptBridge
     internal static void SetRigidbodyLinearDrag(uint entityId, float value) { if (_setRigidbodyLinearDrag != null) _setRigidbodyLinearDrag(entityId, value); }
     internal static float GetRigidbodyAngularDrag(uint entityId) => _getRigidbodyAngularDrag == null ? 0.0f : _getRigidbodyAngularDrag(entityId);
     internal static void SetRigidbodyAngularDrag(uint entityId, float value) { if (_setRigidbodyAngularDrag != null) _setRigidbodyAngularDrag(entityId, value); }
+    internal static float GetRigidbodyFriction(uint entityId) => _getRigidbodyFriction == null ? 0.0f : _getRigidbodyFriction(entityId);
+    internal static void SetRigidbodyFriction(uint entityId, float value) { if (_setRigidbodyFriction != null) _setRigidbodyFriction(entityId, value); }
     internal static bool GetRigidbodyUseGravity(uint entityId) => _getRigidbodyUseGravity != null && _getRigidbodyUseGravity(entityId) != 0;
     internal static void SetRigidbodyUseGravity(uint entityId, bool value) { if (_setRigidbodyUseGravity != null) _setRigidbodyUseGravity(entityId, value ? 1 : 0); }
     internal static bool GetRigidbodyKinematic(uint entityId) => _getRigidbodyKinematic != null && _getRigidbodyKinematic(entityId) != 0;

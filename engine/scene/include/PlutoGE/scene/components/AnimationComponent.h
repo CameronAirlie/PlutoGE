@@ -83,6 +83,7 @@ namespace PlutoGE::scene
         const std::string &GetAnimationGraphAssetReference() const { return m_animationGraphAssetReference; }
 
         const std::vector<render::AnimationClip> &GetClips() const { return m_clips; }
+        bool IsJointPoseDirty() const { return m_jointMatricesDirty; }
         const std::vector<glm::mat4> &GetJointMatrices(const render::Skeleton &skeleton);
         const std::vector<glm::mat4> &GetJointMatrices(const render::Skeleton &skeleton, const std::vector<render::AnimationNode> &nodes);
         glm::mat4 GetNodeMatrix(const std::vector<render::AnimationNode> &nodes, int nodeIndex);

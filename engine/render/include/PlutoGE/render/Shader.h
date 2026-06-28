@@ -691,7 +691,11 @@ vec3 EvaluatePbrLighting(vec3 normal, vec3 viewDir, vec3 albedo, float metallic,
     float ndotv = max(dot(normal, viewDir), 0.0);
     float ndotl = max(dot(normal, lightDir), 0.0);
 
-    if (ndotl <= 0.0 || ndotv <= 0.0)
+    // Diffuse lighting is independent of the view direction. Smooth shading
+    // normals can cross the view hemisphere near silhouettes (especially on
+    // terrain), but that must not switch the entire direct-light contribution
+    // off. GeometrySmith already reduces the specular term to zero there.
+    if (ndotl <= 0.0)
     {
         return vec3(0.0);
     }

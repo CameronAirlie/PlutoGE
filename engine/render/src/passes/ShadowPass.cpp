@@ -32,6 +32,8 @@ namespace
     constexpr float kShadowUpdateMatrixEpsilon = 0.0001f;
     constexpr float kNearCascadeMinCasterTexelRadius = 0.35f;
     constexpr float kFarCascadeMinCasterTexelRadius = 1.0f;
+    constexpr float kDirectionalShadowSlopeBias = 1.5f;
+    constexpr float kDirectionalShadowConstantBias = 2.0f;
 
     struct FrustumPlane
     {
@@ -288,7 +290,11 @@ namespace
                 continue;
             }
 
-            const bool hasMoved = !AreMatricesApproximatelyEqual(command.model, command.previousModel);
+            // Skeletal animation changes vertex positions without changing the
+            // model matrix. Treat a newly evaluated skinning pose as caster
+            // motion so cached shadow maps redraw with the current bones.
+            const bool hasMoved = command.skinningPoseChanged ||
+                                  !AreMatricesApproximatelyEqual(command.model, command.previousModel);
             shadowCastersChanged = shadowCastersChanged || hasMoved;
             shadowCasters.push_back(ShadowCasterEntry{
                 .command = &command,
@@ -1118,7 +1124,11 @@ namespace PlutoGE::render
 
                 light->shadowMatrix = glm::mat4(1.0f);
                 light->shadowFarPlane = cascadeSplits[cascadeCount - 1];
-                glDisable(GL_POLYGON_OFFSET_FILL);
+                // Directional cascades need raster-space slope bias. Receiver
+                // normal bias alone loses effectiveness as a surface becomes
+                // parallel to the light and produces acne on steep terrain.
+                glEnable(GL_POLYGON_OFFSET_FILL);
+                glPolygonOffset(kDirectionalShadowSlopeBias, kDirectionalShadowConstantBias);
                 glDisable(GL_CULL_FACE);
                 m_shadowPassShader->SetUniform("uShadowPassMode", kProjectedShadowPassMode);
 
@@ -1256,6 +1266,7 @@ namespace PlutoGE::render
 
                 light->isDirty = false;
                 light->shadowRefreshPending = deferredShadowRefresh;
+                glDisable(GL_POLYGON_OFFSET_FILL);
                 glEnable(GL_CULL_FACE);
                 glCullFace(GL_BACK);
                 m_shadowPassShader->SetUniform("uShadowWorldOrigin", glm::vec3(0.0f));

@@ -68,6 +68,7 @@ namespace PlutoGE::render
         MeshBounds worldBounds{};
         MeshBounds previousWorldBounds{};
         const std::vector<glm::mat4> *jointMatrices = nullptr;
+        bool skinningPoseChanged = false;
         std::shared_ptr<const std::vector<glm::mat4>> instanceModels;
         std::shared_ptr<const std::vector<glm::mat4>> previousInstanceModels;
         uint32_t submeshIndex = 0;

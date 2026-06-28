@@ -281,7 +281,10 @@ namespace PlutoGE::render
                     float ndotv = max(dot(normal, viewDir), 0.0);
                     float ndotl = max(dot(normal, lightDir), 0.0);
 
-                    if (ndotl <= 0.0 || ndotv <= 0.0)
+                    // Keep Lambertian diffuse independent of the view angle.
+                    // Interpolated normals can fall just behind the view
+                    // hemisphere at silhouettes; only specular should vanish.
+                    if (ndotl <= 0.0)
                     {
                         return vec3(0.0);
                     }

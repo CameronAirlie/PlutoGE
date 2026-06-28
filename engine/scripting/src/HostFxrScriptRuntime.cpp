@@ -79,7 +79,7 @@ namespace PlutoGE::scripting
         using register_light_component_api_fn = int(__cdecl *)(void *, void *, void *, void *);
         using register_mesh_component_api_fn = int(__cdecl *)(void *, void *, void *, void *);
         using register_animation_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
-        using register_rigidbody_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
+        using register_rigidbody_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_collider_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_runtime_ui_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_input_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
@@ -1253,6 +1253,8 @@ namespace PlutoGE::scripting
         void SetRigidbodyLinearDrag(uint32_t entityId, float value) { if (auto *component = FindRigidbody(entityId)) component->SetLinearDrag(value); }
         float GetRigidbodyAngularDrag(uint32_t entityId) { auto *component = FindRigidbody(entityId); return component ? component->GetAngularDrag() : 0.0f; }
         void SetRigidbodyAngularDrag(uint32_t entityId, float value) { if (auto *component = FindRigidbody(entityId)) component->SetAngularDrag(value); }
+        float GetRigidbodyFriction(uint32_t entityId) { auto *component = FindRigidbody(entityId); return component ? component->GetFriction() : 0.0f; }
+        void SetRigidbodyFriction(uint32_t entityId, float value) { if (auto *component = FindRigidbody(entityId)) component->SetFriction(value); }
         int32_t GetRigidbodyUseGravity(uint32_t entityId) { auto *component = FindRigidbody(entityId); return component && component->UsesGravity() ? 1 : 0; }
         void SetRigidbodyUseGravity(uint32_t entityId, int32_t value) { if (auto *component = FindRigidbody(entityId)) component->SetUseGravity(value != 0); }
         int32_t GetRigidbodyKinematic(uint32_t entityId) { auto *component = FindRigidbody(entityId); return component && component->IsKinematic() ? 1 : 0; }
@@ -2383,6 +2385,8 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(static_cast<set_component_float_fn>(&SetRigidbodyLinearDrag)),
                 reinterpret_cast<void *>(static_cast<get_component_float_fn>(&GetRigidbodyAngularDrag)),
                 reinterpret_cast<void *>(static_cast<set_component_float_fn>(&SetRigidbodyAngularDrag)),
+                reinterpret_cast<void *>(static_cast<get_component_float_fn>(&GetRigidbodyFriction)),
+                reinterpret_cast<void *>(static_cast<set_component_float_fn>(&SetRigidbodyFriction)),
                 reinterpret_cast<void *>(static_cast<get_component_bool_fn>(&GetRigidbodyUseGravity)),
                 reinterpret_cast<void *>(static_cast<set_component_bool_fn>(&SetRigidbodyUseGravity)),
                 reinterpret_cast<void *>(static_cast<get_component_bool_fn>(&GetRigidbodyKinematic)),

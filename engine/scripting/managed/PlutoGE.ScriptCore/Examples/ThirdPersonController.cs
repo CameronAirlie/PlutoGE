@@ -14,8 +14,8 @@ public sealed class ThirdPersonController : ScriptBehaviour
 
     [SerializedField] private float walkSpeed = 5.5f;
     [SerializedField] private float sprintSpeed = 8.0f;
-    [SerializedField] private float acceleration = 24.0f;
-    [SerializedField] private float deceleration = 30.0f;
+    [SerializedField] private float acceleration = 35.0f;
+    [SerializedField] private float airControl = 0.35f;
     [SerializedField] private float turnSharpness = 14.0f;
 
     [SerializedField] private float jumpHeight = 1.35f;
@@ -35,8 +35,9 @@ public sealed class ThirdPersonController : ScriptBehaviour
     private float _cameraYaw;
     private float _cameraPitch;
     private float _verticalVelocity;
-    private float _currentSpeed;
+    private Vector3 _horizontalVelocity;
     private bool _grounded;
+    private RigidbodyComponent? _rigidbody;
 
     public override void OnCreate()
     {
@@ -48,12 +49,12 @@ public sealed class ThirdPersonController : ScriptBehaviour
             minimumPitch,
             maximumPitch);
 
-        var rigidbody = GameObject.GetComponent<RigidbodyComponent>();
-        if (rigidbody is not null)
+        _rigidbody = GameObject.GetComponent<RigidbodyComponent>();
+        if (_rigidbody is not null)
         {
-            rigidbody.IsKinematic = true;
-            rigidbody.UseGravity = false;
-            rigidbody.FreezeRotation = true;
+            _rigidbody.IsKinematic = true;
+            _rigidbody.UseGravity = false;
+            _rigidbody.FreezeRotation = true;
         }
 
         var collider = GameObject.GetComponent<ColliderComponent>();
@@ -143,8 +144,20 @@ public sealed class ThirdPersonController : ScriptBehaviour
         var hasInput = moveDirection.LengthSquared() > 0.0001f;
         var sprinting = hasInput && Input.IsKeyDown(KeyCode.LeftShift);
         var targetSpeed = hasInput ? (sprinting ? sprintSpeed : walkSpeed) : 0.0f;
-        var speedChange = targetSpeed > _currentSpeed ? acceleration : deceleration;
-        _currentSpeed = MoveTowards(_currentSpeed, targetSpeed, speedChange * deltaTime);
+        var targetVelocity = hasInput ? moveDirection * targetSpeed : Vector3.Zero;
+        // Kinematic bodies are moved by sweeps rather than Bullet impulses, so
+        // apply the rigidbody's friction coefficient as physical deceleration.
+        var frictionDeceleration = (_rigidbody?.Friction ?? 1.8f) * MathF.Abs(gravity);
+        var velocityChange = hasInput ? acceleration : frictionDeceleration;
+        if (!_grounded)
+        {
+            velocityChange *= Math.Clamp(airControl, 0.0f, 1.0f);
+        }
+
+        _horizontalVelocity = MoveTowards(
+            _horizontalVelocity,
+            targetVelocity,
+            MathF.Max(velocityChange, 0.0f) * deltaTime);
 
         // Fortnite-style free movement: face travel normally, but face the camera
         // while aiming so backwards and sideways input become strafing.
@@ -159,12 +172,16 @@ public sealed class ThirdPersonController : ScriptBehaviour
             Rotation = new Vector3(0.0f, newYaw, 0.0f);
         }
 
-        var horizontalVelocity = hasInput ? moveDirection * _currentSpeed : Vector3.Zero;
-        var displacement = horizontalVelocity * deltaTime;
-        displacement.Y = _verticalVelocity * deltaTime;
+        // Keep horizontal intent separate from gravity. Combining them in one
+        // sweep lets the collision solver project the downward ground-stick
+        // velocity along a terrain slope, which looks like frictionless sliding.
+        var horizontalDisplacement = _horizontalVelocity * deltaTime;
+        Physics.MoveKinematic(GameObject, horizontalDisplacement, skinWidth);
 
-        var applied = Physics.MoveKinematic(GameObject, displacement, skinWidth);
-        if (displacement.Y < 0.0f && MathF.Abs(applied.Y) < MathF.Abs(displacement.Y) * 0.5f)
+        var verticalDisplacement = new Vector3(0.0f, _verticalVelocity * deltaTime, 0.0f);
+        var appliedVertical = Physics.MoveKinematic(GameObject, verticalDisplacement, skinWidth);
+        if (verticalDisplacement.Y < 0.0f &&
+            MathF.Abs(appliedVertical.Y) < MathF.Abs(verticalDisplacement.Y) * 0.5f)
         {
             _verticalVelocity = -2.0f;
         }
@@ -242,14 +259,16 @@ public sealed class ThirdPersonController : ScriptBehaviour
                hit.Normal.Y > 0.55f;
     }
 
-    private static float MoveTowards(float current, float target, float maxDelta)
+    private static Vector3 MoveTowards(Vector3 current, Vector3 target, float maxDelta)
     {
-        if (MathF.Abs(target - current) <= maxDelta)
+        var difference = target - current;
+        var distance = difference.Length();
+        if (distance <= maxDelta || distance <= 0.00001f)
         {
             return target;
         }
 
-        return current + MathF.CopySign(maxDelta, target - current);
+        return current + difference / distance * maxDelta;
     }
 
     private static float LerpAngle(float from, float to, float amount)

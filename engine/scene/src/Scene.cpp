@@ -1209,7 +1209,24 @@ namespace PlutoGE::scene
             }
 
             hitNormal /= normalLength;
-            const glm::vec3 untraveled = remaining * (1.0f - callback.m_closestHitFraction);
+            const glm::vec2 horizontalRemaining(remaining.x, remaining.z);
+            const bool downwardOnly = remaining.y < 0.0f &&
+                                      glm::dot(horizontalRemaining, horizontalRemaining) <= 0.0000001f;
+            const auto *rigidbody = entity.GetComponent<RigidbodyComponent>();
+            const float friction = rigidbody ? rigidbody->GetFriction() : 1.5f;
+            const float minimumSupportNormalY = 1.0f / std::sqrt(1.0f + friction * friction);
+            if (downwardOnly && hitNormal.y >= minimumSupportNormalY)
+            {
+                // A grounding/gravity sweep should stop on a walkable surface.
+                // Coulomb friction can hold while tan(slope) <= friction;
+                // otherwise projection intentionally permits downhill sliding.
+                break;
+            }
+
+            // Continue from the position we actually advanced to. Using the raw
+            // hit fraction here discarded the skin-width portion on every
+            // contact, causing frame- and surface-dependent movement speed.
+            const glm::vec3 untraveled = remaining * (1.0f - safeFraction);
             remaining = untraveled - hitNormal * glm::dot(untraveled, hitNormal);
         }
 
@@ -1282,6 +1299,7 @@ namespace PlutoGE::scene
             body->setUserPointer(entity);
             if (rigidbody)
             {
+                body->setFriction(rigidbody->GetFriction());
                 body->setLinearVelocity(ToBullet(rigidbody->GetVelocity()));
                 body->setAngularVelocity(rigidbody->HasFreezeRotation() ? btVector3(0.0f, 0.0f, 0.0f) : ToBullet(rigidbody->GetAngularVelocity()));
                 body->setGravity(rigidbody->UsesGravity() ? dynamicsWorld.getGravity() : btVector3(0.0f, 0.0f, 0.0f));

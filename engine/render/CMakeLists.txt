@@ -30,7 +30,9 @@ add_library(PlutoGERender
     src/passes/LightingPass.cpp
     src/passes/ShadowPass.cpp
     src/passes/TransparentPass.cpp
+    src/passes/VolumetricCloudPass.cpp
     src/passes/PostProcessPass.cpp
+    src/passes/PhysicalSkyPass.cpp
     src/passes/RuntimeUIPass.cpp
 )
 

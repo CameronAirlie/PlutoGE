@@ -12,9 +12,11 @@
 #include "PlutoGE/render/passes/LightingPass.h"
 #include "PlutoGE/render/passes/LightPropagationVolumePass.h"
 #include "PlutoGE/render/passes/PostProcessPass.h"
+#include "PlutoGE/render/passes/PhysicalSkyPass.h"
 #include "PlutoGE/render/passes/RuntimeUIPass.h"
 #include "PlutoGE/render/passes/ShadowPass.h"
 #include "PlutoGE/render/passes/TransparentPass.h"
+#include "PlutoGE/render/passes/VolumetricCloudPass.h"
 #include "PlutoGE/render/postprocess/IPostProcessEffect.h"
 #include "PlutoGE/render/postprocess/TAAEffect.h"
 #include "PlutoGE/scene/components/LightComponent.h"
@@ -263,9 +265,17 @@ namespace PlutoGE::render
         lightingPass->Initialize();
         m_renderPasses.push_back(lightingPass);
 
+        auto physicalSkyPass = new PhysicalSkyPass();
+        physicalSkyPass->Initialize();
+        m_renderPasses.push_back(physicalSkyPass);
+
         auto gridPass = new GridPass();
         gridPass->Initialize();
         m_renderPasses.push_back(gridPass);
+
+        auto volumetricCloudPass = new VolumetricCloudPass();
+        volumetricCloudPass->Initialize();
+        m_renderPasses.push_back(volumetricCloudPass);
 
         auto postProcessPass = new PostProcessPass();
         postProcessPass->Initialize();

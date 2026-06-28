@@ -20,8 +20,10 @@
 #include "PlutoGE/scene/components/ColliderComponent.h"
 #include "PlutoGE/scene/components/IblCaptureComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
+#include "PlutoGE/scene/components/PhysicalSkyComponent.h"
 #include "PlutoGE/scene/components/RigidbodyComponent.h"
 #include "PlutoGE/scene/components/UIComponent.h"
+#include "PlutoGE/scene/components/VolumetricCloudComponent.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Prefab.h"
 #include "PlutoGE/scene/Scene.h"
@@ -62,6 +64,8 @@ namespace PlutoGE::ui
             "Rigidbody Component",
             "Collider Component",
             "IBL Capture Component",
+            "Physical Sky Component",
+            "Volumetric Cloud Component",
             "Script Component",
             "Canvas Component",
             "Rect Transform Component",
@@ -81,12 +85,14 @@ namespace PlutoGE::ui
             Rigidbody = 6,
             Collider = 7,
             IblCapture = 8,
-            Script = 9,
-            Canvas = 10,
-            RectTransform = 11,
-            UIImage = 12,
-            UIText = 13,
-            UIButton = 14,
+            PhysicalSky = 9,
+            VolumetricCloud = 10,
+            Script = 11,
+            Canvas = 12,
+            RectTransform = 13,
+            UIImage = 14,
+            UIText = 15,
+            UIButton = 16,
         };
 
         struct ScriptAssetOption
@@ -942,6 +948,14 @@ namespace PlutoGE::ui
             {
                 return "IBL Capture Component";
             }
+            if (dynamic_cast<const scene::VolumetricCloudComponent *>(&component))
+            {
+                return "Volumetric Cloud Component";
+            }
+            if (dynamic_cast<const scene::PhysicalSkyComponent *>(&component))
+            {
+                return "Physical Sky Component";
+            }
             if (dynamic_cast<const scene::ScriptComponent *>(&component))
             {
                 return "Script Component";
@@ -992,6 +1006,10 @@ namespace PlutoGE::ui
                 return "ColliderComponent";
             if (dynamic_cast<const scene::IblCaptureComponent *>(&component))
                 return "IblCaptureComponent";
+            if (dynamic_cast<const scene::VolumetricCloudComponent *>(&component))
+                return "VolumetricCloudComponent";
+            if (dynamic_cast<const scene::PhysicalSkyComponent *>(&component))
+                return "PhysicalSkyComponent";
             if (dynamic_cast<const scene::ScriptComponent *>(&component))
                 return "ScriptComponent";
             if (dynamic_cast<const scene::CanvasComponent *>(&component))
@@ -1100,6 +1118,10 @@ namespace PlutoGE::ui
                 return !entity.HasComponent<scene::ColliderComponent>();
             case AddableComponentType::IblCapture:
                 return !entity.HasComponent<scene::IblCaptureComponent>();
+            case AddableComponentType::PhysicalSky:
+                return !entity.HasComponent<scene::PhysicalSkyComponent>();
+            case AddableComponentType::VolumetricCloud:
+                return !entity.HasComponent<scene::VolumetricCloudComponent>();
             case AddableComponentType::Script:
                 return !entity.HasComponent<scene::ScriptComponent>();
             case AddableComponentType::Canvas:
@@ -1184,6 +1206,12 @@ namespace PlutoGE::ui
                 break;
             case AddableComponentType::IblCapture:
                 entity.CreateComponent<scene::IblCaptureComponent>();
+                break;
+            case AddableComponentType::PhysicalSky:
+                entity.CreateComponent<scene::PhysicalSkyComponent>();
+                break;
+            case AddableComponentType::VolumetricCloud:
+                entity.CreateComponent<scene::VolumetricCloudComponent>();
                 break;
             case AddableComponentType::Script:
                 entity.CreateComponent<scene::ScriptComponent>(scene::ScriptComponentConfig{});

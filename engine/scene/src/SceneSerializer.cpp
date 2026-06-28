@@ -10,11 +10,13 @@
 #include "PlutoGE/scene/components/IblCaptureComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
+#include "PlutoGE/scene/components/PhysicalSkyComponent.h"
 #include "PlutoGE/scene/components/RigidbodyComponent.h"
 #include "PlutoGE/scene/components/ScriptComponent.h"
 #include "PlutoGE/scene/components/SkeletonAttachmentComponent.h"
 #include "PlutoGE/scene/components/TerrainComponent.h"
 #include "PlutoGE/scene/components/UIComponent.h"
+#include "PlutoGE/scene/components/VolumetricCloudComponent.h"
 #include "PlutoGE/render/Camera.h"
 
 #include <charconv>
@@ -241,6 +243,14 @@ namespace PlutoGE::scene
             {
                 return "UIButtonComponent";
             }
+            if (dynamic_cast<const VolumetricCloudComponent *>(&component))
+            {
+                return "VolumetricCloudComponent";
+            }
+            if (dynamic_cast<const PhysicalSkyComponent *>(&component))
+            {
+                return "PhysicalSkyComponent";
+            }
 
             return {};
         }
@@ -310,6 +320,14 @@ namespace PlutoGE::scene
             if (componentType == "UIButtonComponent")
             {
                 return std::make_unique<UIButtonComponent>();
+            }
+            if (componentType == "VolumetricCloudComponent")
+            {
+                return std::make_unique<VolumetricCloudComponent>();
+            }
+            if (componentType == "PhysicalSkyComponent")
+            {
+                return std::make_unique<PhysicalSkyComponent>();
             }
 
             return nullptr;

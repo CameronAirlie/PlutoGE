@@ -12,10 +12,12 @@ add_library(PlutoGEScene
     src/components/FoliageComponent.cpp
     src/components/IblCaptureComponent.cpp
     src/components/LightComponent.cpp
+    src/components/PhysicalSkyComponent.cpp
     src/components/RigidbodyComponent.cpp
     src/components/ScriptComponent.cpp
     src/components/TerrainComponent.cpp
     src/components/UIComponent.cpp
+    src/components/VolumetricCloudComponent.cpp
 )
 
 add_library(PlutoGE::Scene ALIAS PlutoGEScene)

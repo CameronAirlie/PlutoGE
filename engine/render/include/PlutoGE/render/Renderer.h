@@ -37,6 +37,7 @@ namespace PlutoGE::render
     class Shader;
     class Texture;
     class LightPropagationVolumePass;
+    class PhysicalSkyPass;
 
     enum class PostProcessDebugView
     {
@@ -194,6 +195,12 @@ namespace PlutoGE::render
         void RecordShadowMapUpdate(int surfacePixels, int submittedInstances, int submittedBatches, int submittedTriangles, bool directionalCascade);
         void RecordGeometryBatch(int submittedInstances, int submittedTriangles, std::size_t lodIndex);
 
+        bool PreparePhysicalSkyEnvironment(const RenderContext &ctx);
+        GLuint GetPhysicalSkyEnvironmentTextureID() const;
+        int GetPhysicalSkyEnvironmentWidth() const;
+        int GetPhysicalSkyEnvironmentHeight() const;
+        float GetPhysicalSkyDirectionalLightVisibility(const scene::Light *light) const;
+
         void SubmitRenderCommand(const RenderCommand &command)
         {
             if (!IsRenderCommandAcceptedForSubmission(command))
@@ -292,6 +299,7 @@ namespace PlutoGE::render
         void ResolveGpuTiming(GpuTimerQueryState &queryState, float &gpuTimeMs, bool &hasResult, std::size_t queryIndex);
         IRenderPass *m_shadowPass = nullptr;
         LightPropagationVolumePass *m_lightPropagationVolumePass = nullptr;
+        PhysicalSkyPass *m_physicalSkyPass = nullptr;
         std::vector<IRenderPass *> m_renderPasses;
         std::vector<RenderCommand> m_renderCommands;
         std::vector<RenderCommand> m_visibleRenderCommands;

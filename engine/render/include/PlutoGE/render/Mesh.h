@@ -1,5 +1,7 @@
 #pragma once
 
+#include "PlutoGE/render/HumanoidRig.h"
+
 #include <glad/glad.h>
 #include <glm/glm.hpp>
 #include <string>
@@ -37,6 +39,7 @@ namespace PlutoGE::render
     struct Skeleton
     {
         std::vector<SkeletonJoint> joints;
+        std::vector<HumanoidBoneMapping> humanoidBoneMappings;
     };
 
     struct AnimationNode
@@ -64,6 +67,8 @@ namespace PlutoGE::render
         int jointIndex = -1;
         int nodeIndex = -1;
         std::string targetName;
+        glm::mat4 sourceLocalBindTransform{1.0f};
+        bool hasSourceLocalBindTransform = false;
         AnimationTargetPath path = AnimationTargetPath::Translation;
         AnimationInterpolation interpolation = AnimationInterpolation::Linear;
         std::vector<float> times;

@@ -303,6 +303,7 @@ namespace PlutoGE::render
 
         auto physicalSkyPass = new PhysicalSkyPass();
         physicalSkyPass->Initialize();
+        m_physicalSkyPass = physicalSkyPass;
         m_renderPasses.push_back(physicalSkyPass);
 
         auto gridPass = new GridPass();
@@ -764,8 +765,34 @@ namespace PlutoGE::render
             m_shadowPass = nullptr;
         }
         m_lightPropagationVolumePass = nullptr;
+        m_physicalSkyPass = nullptr;
         ShutdownGpuTimers();
         glBindBuffer(GL_ARRAY_BUFFER, 0);
+    }
+
+    bool Renderer::PreparePhysicalSkyEnvironment(const RenderContext &ctx)
+    {
+        return m_physicalSkyPass && m_physicalSkyPass->PrepareEnvironment(ctx);
+    }
+
+    GLuint Renderer::GetPhysicalSkyEnvironmentTextureID() const
+    {
+        return m_physicalSkyPass ? m_physicalSkyPass->GetEnvironmentTextureID() : 0;
+    }
+
+    int Renderer::GetPhysicalSkyEnvironmentWidth() const
+    {
+        return m_physicalSkyPass ? m_physicalSkyPass->GetEnvironmentWidth() : 0;
+    }
+
+    int Renderer::GetPhysicalSkyEnvironmentHeight() const
+    {
+        return m_physicalSkyPass ? m_physicalSkyPass->GetEnvironmentHeight() : 0;
+    }
+
+    float Renderer::GetPhysicalSkyDirectionalLightVisibility(const scene::Light *light) const
+    {
+        return m_physicalSkyPass ? m_physicalSkyPass->GetDirectionalLightVisibility(light) : 1.0f;
     }
 
     void Renderer::BeginLightingStageTiming(std::size_t stageIndex)

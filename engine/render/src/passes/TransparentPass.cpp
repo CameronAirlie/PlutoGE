@@ -143,13 +143,16 @@ namespace PlutoGE::render
         void BindTransparentEnvironment(Shader *shader, const RenderContext &ctx)
         {
             const auto *environmentTexture = ctx.scene ? ctx.scene->GetEnvironmentMapTexture() : nullptr;
+            const GLuint physicalSkyTexture = ctx.renderer ? ctx.renderer->GetPhysicalSkyEnvironmentTextureID() : 0;
             glActiveTexture(GL_TEXTURE0 + kTransparentEnvironmentTextureSlot);
-            glBindTexture(GL_TEXTURE_2D, environmentTexture ? environmentTexture->GetTextureID() : 0);
+            glBindTexture(GL_TEXTURE_2D, physicalSkyTexture ? physicalSkyTexture : (environmentTexture ? environmentTexture->GetTextureID() : 0));
             shader->SetUniform("uEnvironmentMap", kTransparentEnvironmentTextureSlot);
-            shader->SetUniform("uEnvironmentEnabled", environmentTexture ? 1 : 0);
+            shader->SetUniform("uEnvironmentEnabled", physicalSkyTexture || environmentTexture ? 1 : 0);
             shader->SetUniform("uEnvironmentIntensity", ctx.scene ? ctx.scene->GetEnvironmentIntensity() : 1.0f);
 
-            float reflectionMaxMipLevel = ResolveMaxMipLevel(environmentTexture);
+            float reflectionMaxMipLevel = physicalSkyTexture
+                ? ResolveMaxMipLevel(ctx.renderer->GetPhysicalSkyEnvironmentWidth(), ctx.renderer->GetPhysicalSkyEnvironmentHeight())
+                : ResolveMaxMipLevel(environmentTexture);
             const auto &iblCaptureVolumes = ctx.scene ? ctx.scene->GetIblCaptureVolumes() : std::vector<scene::IblCaptureVolume>{};
             const int iblCaptureCount = std::min(scene::kMaxIblCaptureVolumes, static_cast<int>(iblCaptureVolumes.size()));
             for (int captureIndex = 0; captureIndex < scene::kMaxIblCaptureVolumes; ++captureIndex)
@@ -191,7 +194,8 @@ namespace PlutoGE::render
                 const std::string index = "[" + std::to_string(lightIndex) + "]";
                 shader->SetUniform("uLightPositions" + index, light->position);
                 shader->SetUniform("uLightColors" + index, light->color);
-                shader->SetUniform("uLightIntensities" + index, light->intensity);
+                const float skyVisibility = ctx.renderer ? ctx.renderer->GetPhysicalSkyDirectionalLightVisibility(light) : 1.0f;
+                shader->SetUniform("uLightIntensities" + index, light->intensity * skyVisibility);
                 shader->SetUniform("uLightRanges" + index, light->range);
                 shader->SetUniform("uLightDirections" + index, light->direction);
                 shader->SetUniform("uLightTypes" + index, static_cast<int>(light->type));

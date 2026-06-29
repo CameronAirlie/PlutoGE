@@ -8,8 +8,11 @@
 #include "PlutoGE/ui/EditorShell.h"
 
 #include <algorithm>
+#include <array>
+#include <cstring>
 #include <filesystem>
 #include <limits>
+#include <unordered_set>
 
 #include <imgui.h>
 
@@ -76,6 +79,211 @@ namespace PlutoGE::ui
                     .maxScreenRadiusPixels = std::numeric_limits<float>::max(),
                 });
             }
+        }
+
+        render::HumanoidBoneMapping *FindHumanoidMapping(render::Skeleton &skeleton, render::HumanoidBone bone)
+        {
+            for (auto &mapping : skeleton.humanoidBoneMappings)
+            {
+                if (mapping.bone == bone)
+                    return &mapping;
+            }
+            return nullptr;
+        }
+
+        void EnsureHumanoidMappings(render::Skeleton &skeleton)
+        {
+            skeleton.humanoidBoneMappings.erase(
+                std::remove_if(skeleton.humanoidBoneMappings.begin(), skeleton.humanoidBoneMappings.end(),
+                               [](const render::HumanoidBoneMapping &mapping)
+                               {
+                                   return static_cast<std::size_t>(mapping.bone) >= render::kHumanoidBoneCount;
+                               }),
+                skeleton.humanoidBoneMappings.end());
+
+            for (std::size_t index = 0; index < render::kHumanoidBoneCount; ++index)
+            {
+                const auto bone = static_cast<render::HumanoidBone>(index);
+                if (!FindHumanoidMapping(skeleton, bone))
+                {
+                    skeleton.humanoidBoneMappings.push_back(render::HumanoidBoneMapping{
+                        .bone = bone,
+                        .copyTranslation = bone == render::HumanoidBone::Hips,
+                    });
+                }
+            }
+        }
+
+        void AutoMapHumanoidRig(render::Skeleton &skeleton)
+        {
+            EnsureHumanoidMappings(skeleton);
+            for (std::size_t jointIndex = 0; jointIndex < skeleton.joints.size(); ++jointIndex)
+            {
+                const auto guessedBone = render::GuessHumanoidBone(skeleton.joints[jointIndex].name);
+                if (!guessedBone)
+                    continue;
+
+                if (auto *mapping = FindHumanoidMapping(skeleton, *guessedBone); mapping && mapping->targetJointIndex < 0)
+                {
+                    mapping->targetJointIndex = static_cast<int>(jointIndex);
+                }
+            }
+        }
+
+        bool IsRequiredHumanoidBone(render::HumanoidBone bone)
+        {
+            switch (bone)
+            {
+            case render::HumanoidBone::Hips:
+            case render::HumanoidBone::Spine:
+            case render::HumanoidBone::Head:
+            case render::HumanoidBone::LeftUpperArm:
+            case render::HumanoidBone::LeftLowerArm:
+            case render::HumanoidBone::LeftHand:
+            case render::HumanoidBone::RightUpperArm:
+            case render::HumanoidBone::RightLowerArm:
+            case render::HumanoidBone::RightHand:
+            case render::HumanoidBone::LeftUpperLeg:
+            case render::HumanoidBone::LeftLowerLeg:
+            case render::HumanoidBone::LeftFoot:
+            case render::HumanoidBone::RightUpperLeg:
+            case render::HumanoidBone::RightLowerLeg:
+            case render::HumanoidBone::RightFoot:
+                return true;
+            default:
+                return false;
+            }
+        }
+
+        void DrawHumanoidRigEditor(render::Skeleton &skeleton, bool readOnly, bool &dirty)
+        {
+            ImGui::SeparatorText("Humanoid Rig");
+            if (skeleton.joints.empty())
+            {
+                ImGui::TextDisabled("This mesh has no skeleton.");
+                return;
+            }
+
+            if (skeleton.humanoidBoneMappings.empty())
+            {
+                ImGui::TextWrapped("Configure a humanoid map to retarget clips whose bone names or joint order differ from this mesh.");
+                ImGui::BeginDisabled(readOnly);
+                if (ImGui::Button("Configure and Auto Map"))
+                {
+                    AutoMapHumanoidRig(skeleton);
+                    dirty = true;
+                }
+                ImGui::EndDisabled();
+                return;
+            }
+
+            EnsureHumanoidMappings(skeleton);
+            ImGui::BeginDisabled(readOnly);
+            if (ImGui::Button("Auto Map Missing"))
+            {
+                AutoMapHumanoidRig(skeleton);
+                dirty = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Disable Retargeting"))
+            {
+                skeleton.humanoidBoneMappings.clear();
+                dirty = true;
+                ImGui::EndDisabled();
+                return;
+            }
+            ImGui::EndDisabled();
+
+            int requiredMapped = 0;
+            int requiredCount = 0;
+            bool duplicateTarget = false;
+            std::unordered_set<int> assignedTargets;
+            for (const auto &mapping : skeleton.humanoidBoneMappings)
+            {
+                if (IsRequiredHumanoidBone(mapping.bone))
+                {
+                    ++requiredCount;
+                    if (mapping.targetJointIndex >= 0 && mapping.targetJointIndex < static_cast<int>(skeleton.joints.size()))
+                        ++requiredMapped;
+                }
+                if (mapping.targetJointIndex >= 0 && !assignedTargets.insert(mapping.targetJointIndex).second)
+                    duplicateTarget = true;
+            }
+
+            if (requiredMapped == requiredCount && !duplicateTarget)
+                ImGui::TextColored(ImVec4(0.35f, 0.9f, 0.45f, 1.0f), "Rig Ready (%d/%d required bones)", requiredMapped, requiredCount);
+            else
+                ImGui::TextColored(ImVec4(1.0f, 0.65f, 0.2f, 1.0f), "Needs Attention (%d/%d required bones)%s", requiredMapped, requiredCount, duplicateTarget ? " - duplicate target joints" : "");
+
+            ImGui::TextWrapped("Source Override is optional. Set it when an animation uses a name the automatic Mixamo/Unreal/common aliases do not recognize.");
+            ImGui::Columns(3, "HumanoidRigColumns", true);
+            ImGui::TextUnformatted("Humanoid Bone"); ImGui::NextColumn();
+            ImGui::TextUnformatted("Target Joint"); ImGui::NextColumn();
+            ImGui::TextUnformatted("Source Override"); ImGui::NextColumn();
+            ImGui::Separator();
+
+            for (std::size_t boneIndex = 0; boneIndex < render::kHumanoidBoneCount; ++boneIndex)
+            {
+                const auto bone = static_cast<render::HumanoidBone>(boneIndex);
+                auto *mapping = FindHumanoidMapping(skeleton, bone);
+                if (!mapping)
+                    continue;
+
+                ImGui::PushID(static_cast<int>(boneIndex));
+                ImGui::Text("%s%s", render::HumanoidBoneName(bone), IsRequiredHumanoidBone(bone) ? " *" : "");
+                ImGui::NextColumn();
+
+                const char *preview = mapping->targetJointIndex >= 0 && mapping->targetJointIndex < static_cast<int>(skeleton.joints.size())
+                                          ? skeleton.joints[static_cast<std::size_t>(mapping->targetJointIndex)].name.c_str()
+                                          : "Unassigned";
+                ImGui::BeginDisabled(readOnly);
+                if (ImGui::BeginCombo("##TargetJoint", preview))
+                {
+                    if (ImGui::Selectable("Unassigned", mapping->targetJointIndex < 0))
+                    {
+                        mapping->targetJointIndex = -1;
+                        dirty = true;
+                    }
+                    for (std::size_t jointIndex = 0; jointIndex < skeleton.joints.size(); ++jointIndex)
+                    {
+                        const bool selected = mapping->targetJointIndex == static_cast<int>(jointIndex);
+                        if (ImGui::Selectable(skeleton.joints[jointIndex].name.c_str(), selected))
+                        {
+                            mapping->targetJointIndex = static_cast<int>(jointIndex);
+                            dirty = true;
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+                ImGui::EndDisabled();
+                ImGui::NextColumn();
+
+                char sourceName[128]{};
+                strncpy_s(sourceName, mapping->sourceBoneName.c_str(), _TRUNCATE);
+                ImGui::BeginDisabled(readOnly);
+                if (ImGui::InputTextWithHint("##SourceName", "Auto aliases", sourceName, sizeof(sourceName)))
+                {
+                    mapping->sourceBoneName = sourceName;
+                    dirty = true;
+                }
+                if (ImGui::DragFloat3("Rotation Offset", &mapping->rotationOffsetDegrees.x, 0.25f, -180.0f, 180.0f, "%.1f deg"))
+                {
+                    dirty = true;
+                }
+                if (ImGui::Checkbox("Copy Translation", &mapping->copyTranslation))
+                {
+                    dirty = true;
+                }
+                if (mapping->copyTranslation && ImGui::DragFloat("Translation Scale", &mapping->translationScale, 0.01f, 0.0f, 10.0f))
+                {
+                    dirty = true;
+                }
+                ImGui::EndDisabled();
+                ImGui::NextColumn();
+                ImGui::PopID();
+            }
+            ImGui::Columns(1);
+            ImGui::TextDisabled("* Required bone");
         }
 
         bool ApplyLodThreshold(render::MeshConfig &config, size_t lodIndex, float maxScreenRadiusPixels)
@@ -259,6 +467,8 @@ namespace PlutoGE::ui
             ImGui::PopID();
         }
 
+        DrawHumanoidRigEditor(m_config.skeleton, engineMesh, m_dirty);
+
         ImGui::SeparatorText("LOD Settings");
         auto *project = editorShell.GetProject();
         const bool canGenerateLods = project && !engineMesh && !FindSourceModelForMesh(*project, reference).empty();
@@ -269,7 +479,9 @@ namespace PlutoGE::ui
             auto importedMeshAsset = editorShell.GetEngine().GenerateMeshAssetLods(sourcePath.string());
             if (importedMeshAsset.mesh)
             {
+                auto humanoidBoneMappings = std::move(m_config.skeleton.humanoidBoneMappings);
                 m_config = BuildMeshConfigFromMesh(*importedMeshAsset.mesh);
+                m_config.skeleton.humanoidBoneMappings = std::move(humanoidBoneMappings);
                 EnsureBaseLodRanges(m_config);
                 m_dirty = true;
                 editorShell.Log(EditorShell::ConsoleSeverity::Info, "Generated LODs for mesh asset: " + reference);

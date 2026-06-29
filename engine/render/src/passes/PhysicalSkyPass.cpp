@@ -90,6 +90,7 @@ namespace PlutoGE::render
                 uniform float uStarIntensity;
                 uniform float uMoonIntensity;
                 uniform float uMoonAngularRadius;
+                uniform int uEnvironmentCapture;
 
                 const float PI = 3.14159265359;
 
@@ -108,6 +109,13 @@ namespace PlutoGE::render
 
                 vec3 WorldDirection(vec2 uv)
                 {
+                    if (uEnvironmentCapture != 0)
+                    {
+                        float azimuth = (uv.x - 0.5) * 2.0 * PI;
+                        float elevation = uv.y * PI;
+                        float horizontal = sin(elevation);
+                        return normalize(vec3(cos(azimuth) * horizontal, cos(elevation), sin(azimuth) * horizontal));
+                    }
                     vec4 view = uInverseProjection * vec4(uv * 2.0 - 1.0, 1.0, 1.0);
                     return normalize((uInverseView * vec4(normalize(view.xyz / max(view.w, 0.0001)), 0.0)).xyz);
                 }
@@ -189,13 +197,61 @@ namespace PlutoGE::render
 
                 void main()
                 {
-                    if (texture(uSceneDepth, vUv).r < 0.999999)
+                    if (uEnvironmentCapture == 0 && texture(uSceneDepth, vUv).r < 0.999999)
                         discard;
                     FragColor = vec4(max(Atmosphere(WorldDirection(vUv)), vec3(0.0)), 1.0);
                 }
             )";
             return Shader::Create(source);
         }
+
+        const scene::PhysicalSkyComponent *FindSceneSky(const scene::Scene *scene)
+        {
+            if (!scene)
+                return nullptr;
+            for (const auto *root : scene->GetRootEntities())
+            {
+                if (const auto *sky = FindSky(root))
+                    return sky;
+            }
+            return nullptr;
+        }
+
+        glm::vec3 ResolveSunDirection(const RenderContext &ctx)
+        {
+            const scene::Light *sun = FindPrimaryDirectionalLight(ctx);
+            glm::vec3 direction = sun ? -sun->direction : glm::vec3(0.25f, 0.8f, 0.4f);
+            return glm::dot(direction, direction) > 0.000001f ? glm::normalize(direction) : glm::vec3(0.0f, 1.0f, 0.0f);
+        }
+
+        void SetSkyUniforms(Shader &shader, const scene::PhysicalSkyComponent &sky, const glm::vec3 &sunDirection)
+        {
+            shader.SetUniform("uSunDirection", sunDirection);
+            shader.SetUniform("uSunColor", sky.GetSunColor());
+            shader.SetUniform("uMoonColor", sky.GetMoonColor());
+            shader.SetUniform("uGroundColor", sky.GetGroundColor());
+            shader.SetUniform("uRayleighStrength", sky.GetRayleighStrength());
+            shader.SetUniform("uMieStrength", sky.GetMieStrength());
+            shader.SetUniform("uMieAnisotropy", sky.GetMieAnisotropy());
+            shader.SetUniform("uOzoneStrength", sky.GetOzoneStrength());
+            shader.SetUniform("uSunIntensity", sky.GetSunIntensity());
+            shader.SetUniform("uSunAngularRadius", sky.GetSunAngularRadius());
+            shader.SetUniform("uExposure", sky.GetExposure());
+            shader.SetUniform("uNightIntensity", sky.GetNightIntensity());
+            shader.SetUniform("uStarIntensity", sky.GetStarIntensity());
+            shader.SetUniform("uMoonIntensity", sky.GetMoonIntensity());
+            shader.SetUniform("uMoonAngularRadius", sky.GetMoonAngularRadius());
+        }
+    }
+
+    PhysicalSkyPass::~PhysicalSkyPass()
+    {
+        if (m_environmentFramebuffer)
+            glDeleteFramebuffers(1, &m_environmentFramebuffer);
+        if (m_environmentTexture)
+            glDeleteTextures(1, &m_environmentTexture);
+        if (m_vao)
+            glDeleteVertexArrays(1, &m_vao);
     }
 
     void PhysicalSkyPass::Initialize()
@@ -204,26 +260,98 @@ namespace PlutoGE::render
         glGenVertexArrays(1, &m_vao);
     }
 
+    bool PhysicalSkyPass::PrepareEnvironment(const RenderContext &ctx)
+    {
+        const auto *sky = FindSceneSky(ctx.scene);
+        if (!m_shader || !m_vao || !sky)
+        {
+            m_environmentAvailable = false;
+            m_environmentSun = nullptr;
+            m_environmentSunVisibility = 1.0f;
+            return false;
+        }
+
+        if (m_environmentAvailable && m_lastEnvironmentFrame == ctx.frameSequence && m_lastEnvironmentScene == ctx.scene)
+            return true;
+
+        if (!m_environmentTexture)
+        {
+            glGenTextures(1, &m_environmentTexture);
+            glBindTexture(GL_TEXTURE_2D, m_environmentTexture);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, m_environmentWidth, m_environmentHeight, 0, GL_RGBA, GL_FLOAT, nullptr);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            glGenerateMipmap(GL_TEXTURE_2D);
+        }
+        if (!m_environmentFramebuffer)
+            glGenFramebuffers(1, &m_environmentFramebuffer);
+
+        GLint previousDrawFramebuffer = 0;
+        GLint previousReadFramebuffer = 0;
+        GLint previousViewport[4]{};
+        glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &previousDrawFramebuffer);
+        glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previousReadFramebuffer);
+        glGetIntegerv(GL_VIEWPORT, previousViewport);
+
+        glBindFramebuffer(GL_FRAMEBUFFER, m_environmentFramebuffer);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_environmentTexture, 0);
+        if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+        {
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(previousDrawFramebuffer));
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(previousReadFramebuffer));
+            glViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
+            m_environmentAvailable = false;
+            return false;
+        }
+
+        m_environmentSun = FindPrimaryDirectionalLight(ctx);
+        const glm::vec3 sunDirection = ResolveSunDirection(ctx);
+        m_environmentSunVisibility = glm::smoothstep(-0.02f, 0.03f, sunDirection.y);
+
+        glViewport(0, 0, m_environmentWidth, m_environmentHeight);
+        glDisable(GL_DEPTH_TEST);
+        glDepthMask(GL_FALSE);
+        glDisable(GL_CULL_FACE);
+        glDisable(GL_BLEND);
+        m_shader->Bind();
+        m_shader->SetUniform("uEnvironmentCapture", 1);
+        SetSkyUniforms(*m_shader, *sky, sunDirection);
+        glBindVertexArray(m_vao);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        glBindVertexArray(0);
+        m_shader->Unbind();
+
+        glBindTexture(GL_TEXTURE_2D, m_environmentTexture);
+        glGenerateMipmap(GL_TEXTURE_2D);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(previousDrawFramebuffer));
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(previousReadFramebuffer));
+        glViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
+        glDepthMask(GL_TRUE);
+
+        m_lastEnvironmentFrame = ctx.frameSequence;
+        m_lastEnvironmentScene = ctx.scene;
+        m_environmentAvailable = true;
+        return true;
+    }
+
+    float PhysicalSkyPass::GetDirectionalLightVisibility(const scene::Light *light) const
+    {
+        return m_environmentAvailable && light && light == m_environmentSun ? m_environmentSunVisibility : 1.0f;
+    }
+
     void PhysicalSkyPass::Execute(const RenderContext &ctx)
     {
         if (!m_shader || !m_vao || !ctx.scene || !ctx.temporaryRenderTarget || !ctx.hasCameraData)
             return;
 
-        const scene::PhysicalSkyComponent *sky = nullptr;
-        for (const auto *root : ctx.scene->GetRootEntities())
-        {
-            sky = FindSky(root);
-            if (sky) break;
-        }
+        const scene::PhysicalSkyComponent *sky = FindSceneSky(ctx.scene);
         if (!sky)
             return;
 
-        const scene::Light *sun = FindPrimaryDirectionalLight(ctx);
-        glm::vec3 sunDirection = sun ? -sun->direction : glm::vec3(0.25f, 0.8f, 0.4f);
-        if (glm::dot(sunDirection, sunDirection) <= 0.000001f)
-            sunDirection = glm::vec3(0.0f, 1.0f, 0.0f);
-        else
-            sunDirection = glm::normalize(sunDirection);
+        const glm::vec3 sunDirection = ResolveSunDirection(ctx);
 
         Graphics::BindRenderTarget(ctx.temporaryRenderTarget);
         glViewport(0, 0, ctx.temporaryRenderTarget->GetWidth(), ctx.temporaryRenderTarget->GetHeight());
@@ -232,23 +360,10 @@ namespace PlutoGE::render
         glDisable(GL_CULL_FACE);
         glDisable(GL_BLEND);
         m_shader->Bind();
+        m_shader->SetUniform("uEnvironmentCapture", 0);
         m_shader->SetUniform("uInverseView", glm::inverse(ctx.cameraData.view));
         m_shader->SetUniform("uInverseProjection", glm::inverse(ctx.cameraData.projection));
-        m_shader->SetUniform("uSunDirection", sunDirection);
-        m_shader->SetUniform("uSunColor", sky->GetSunColor());
-        m_shader->SetUniform("uMoonColor", sky->GetMoonColor());
-        m_shader->SetUniform("uGroundColor", sky->GetGroundColor());
-        m_shader->SetUniform("uRayleighStrength", sky->GetRayleighStrength());
-        m_shader->SetUniform("uMieStrength", sky->GetMieStrength());
-        m_shader->SetUniform("uMieAnisotropy", sky->GetMieAnisotropy());
-        m_shader->SetUniform("uOzoneStrength", sky->GetOzoneStrength());
-        m_shader->SetUniform("uSunIntensity", sky->GetSunIntensity());
-        m_shader->SetUniform("uSunAngularRadius", sky->GetSunAngularRadius());
-        m_shader->SetUniform("uExposure", sky->GetExposure());
-        m_shader->SetUniform("uNightIntensity", sky->GetNightIntensity());
-        m_shader->SetUniform("uStarIntensity", sky->GetStarIntensity());
-        m_shader->SetUniform("uMoonIntensity", sky->GetMoonIntensity());
-        m_shader->SetUniform("uMoonAngularRadius", sky->GetMoonAngularRadius());
+        SetSkyUniforms(*m_shader, *sky, sunDirection);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, ctx.temporaryRenderTarget->GetDepthTextureID());
         m_shader->SetUniform("uSceneDepth", 0);

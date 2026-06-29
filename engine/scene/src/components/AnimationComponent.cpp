@@ -130,8 +130,41 @@ namespace PlutoGE::scene
             return channel.nodeIndex >= 0 && channel.nodeIndex < static_cast<int>(nodes.size()) ? channel.nodeIndex : -1;
         }
 
+        const render::HumanoidBoneMapping *FindHumanoidMappingForChannel(const render::AnimationChannel &channel,
+                                                                         const render::Skeleton &skeleton)
+        {
+            if (channel.targetName.empty())
+                return nullptr;
+
+            for (const auto &mapping : skeleton.humanoidBoneMappings)
+            {
+                if (!mapping.sourceBoneName.empty() && TargetNamesMatch(mapping.sourceBoneName, channel.targetName))
+                    return &mapping;
+            }
+
+            if (const auto humanoidBone = render::GuessHumanoidBone(channel.targetName))
+            {
+                for (const auto &mapping : skeleton.humanoidBoneMappings)
+                {
+                    if (mapping.bone == *humanoidBone)
+                        return &mapping;
+                }
+            }
+            return nullptr;
+        }
+
         int ResolveChannelJointIndex(const render::AnimationChannel &channel, const render::Skeleton &skeleton)
         {
+            if (!skeleton.humanoidBoneMappings.empty() && !channel.targetName.empty())
+            {
+                if (const auto *mapping = FindHumanoidMappingForChannel(channel, skeleton);
+                    mapping && mapping->targetJointIndex >= 0 &&
+                    mapping->targetJointIndex < static_cast<int>(skeleton.joints.size()))
+                {
+                    return mapping->targetJointIndex;
+                }
+            }
+
             if (!channel.targetName.empty())
             {
                 for (size_t jointIndex = 0; jointIndex < skeleton.joints.size(); ++jointIndex)
@@ -151,7 +184,12 @@ namespace PlutoGE::scene
                 }
             }
 
-            return channel.jointIndex >= 0 && channel.jointIndex < static_cast<int>(skeleton.joints.size()) ? channel.jointIndex : -1;
+            // Indices are only safe when no cross-rig mapping is configured.
+            // Source and target skeletons commonly use different joint orders.
+            return skeleton.humanoidBoneMappings.empty() &&
+                           channel.jointIndex >= 0 && channel.jointIndex < static_cast<int>(skeleton.joints.size())
+                       ? channel.jointIndex
+                       : -1;
         }
 
         int ParseIntSafe(const std::string &value, int fallback = 0)
@@ -340,6 +378,109 @@ namespace PlutoGE::scene
                 }
             }
 
+            return localTransforms;
+        }
+
+        std::vector<glm::mat4> SampleRetargetedJointTransforms(
+            const std::vector<render::AnimationClip> &clips,
+            int clipIndex,
+            float time,
+            const render::Skeleton &skeleton)
+        {
+            std::vector<glm::mat4> localTransforms;
+            localTransforms.reserve(skeleton.joints.size());
+            for (const auto &joint : skeleton.joints)
+                localTransforms.push_back(joint.localBindTransform);
+
+            if (clipIndex < 0 || clipIndex >= static_cast<int>(clips.size()))
+                return localTransforms;
+
+            std::vector<glm::vec3> translations(skeleton.joints.size(), glm::vec3(0.0f));
+            std::vector<glm::vec4> rotations(skeleton.joints.size(), glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+            std::vector<glm::vec3> scales(skeleton.joints.size(), glm::vec3(1.0f));
+            std::vector<uint8_t> animatedLocals(skeleton.joints.size(), 0);
+
+            for (const auto &channel : clips[static_cast<size_t>(clipIndex)].channels)
+            {
+                const int resolvedIndex = ResolveChannelJointIndex(channel, skeleton);
+                if (resolvedIndex < 0 || resolvedIndex >= static_cast<int>(skeleton.joints.size()))
+                    continue;
+
+                const auto *mapping = FindHumanoidMappingForChannel(channel, skeleton);
+                if (mapping && channel.path == render::AnimationTargetPath::Translation && !mapping->copyTranslation)
+                    continue;
+
+                const size_t jointIndex = static_cast<size_t>(resolvedIndex);
+                if (!animatedLocals[jointIndex])
+                {
+                    DecomposeTransform(skeleton.joints[jointIndex].localBindTransform,
+                                       translations[jointIndex], rotations[jointIndex], scales[jointIndex]);
+                    animatedLocals[jointIndex] = 1;
+                }
+
+                glm::vec4 sample = SampleChannelValue(channel, time);
+                glm::vec3 sourceBindTranslation{0.0f};
+                glm::vec4 sourceBindRotation{0.0f, 0.0f, 0.0f, 1.0f};
+                glm::vec3 sourceBindScale{1.0f};
+                const bool applyBindRelativeRetarget = mapping && channel.hasSourceLocalBindTransform;
+                if (applyBindRelativeRetarget)
+                {
+                    DecomposeTransform(channel.sourceLocalBindTransform, sourceBindTranslation, sourceBindRotation, sourceBindScale);
+                }
+                switch (channel.path)
+                {
+                case render::AnimationTargetPath::Translation:
+                    if (applyBindRelativeRetarget)
+                    {
+                        translations[jointIndex] += (glm::vec3(sample) - sourceBindTranslation) * mapping->translationScale;
+                    }
+                    else
+                    {
+                        translations[jointIndex] = glm::vec3(sample) * (mapping ? mapping->translationScale : 1.0f);
+                    }
+                    break;
+                case render::AnimationTargetPath::Rotation:
+                    if (applyBindRelativeRetarget)
+                    {
+                        const glm::quat sourceBind(sourceBindRotation.w, sourceBindRotation.x, sourceBindRotation.y, sourceBindRotation.z);
+                        const glm::quat sourceAnimated(sample.w, sample.x, sample.y, sample.z);
+                        const glm::quat targetBind(rotations[jointIndex].w, rotations[jointIndex].x, rotations[jointIndex].y, rotations[jointIndex].z);
+                        const glm::quat correction = glm::quat(glm::radians(mapping->rotationOffsetDegrees));
+                        const glm::quat sourceDelta = glm::normalize(glm::inverse(sourceBind) * sourceAnimated);
+                        const glm::quat corrected = glm::normalize(targetBind * correction * sourceDelta);
+                        sample = glm::vec4(corrected.x, corrected.y, corrected.z, corrected.w);
+                    }
+                    else if (mapping)
+                    {
+                        const glm::quat source(sample.w, sample.x, sample.y, sample.z);
+                        const glm::quat correction = glm::quat(glm::radians(mapping->rotationOffsetDegrees));
+                        const glm::quat corrected = glm::normalize(correction * source);
+                        sample = glm::vec4(corrected.x, corrected.y, corrected.z, corrected.w);
+                    }
+                    rotations[jointIndex] = sample;
+                    break;
+                case render::AnimationTargetPath::Scale:
+                    if (applyBindRelativeRetarget)
+                    {
+                        const glm::vec3 safeSourceBindScale(
+                            std::abs(sourceBindScale.x) > 0.000001f ? sourceBindScale.x : 1.0f,
+                            std::abs(sourceBindScale.y) > 0.000001f ? sourceBindScale.y : 1.0f,
+                            std::abs(sourceBindScale.z) > 0.000001f ? sourceBindScale.z : 1.0f);
+                        scales[jointIndex] *= glm::vec3(sample) / safeSourceBindScale;
+                    }
+                    else
+                    {
+                        scales[jointIndex] = glm::vec3(sample);
+                    }
+                    break;
+                }
+            }
+
+            for (size_t index = 0; index < skeleton.joints.size(); ++index)
+            {
+                if (animatedLocals[index])
+                    localTransforms[index] = ComposeTransform(translations[index], rotations[index], scales[index]);
+            }
             return localTransforms;
         }
 
@@ -1700,7 +1841,7 @@ namespace PlutoGE::scene
 
     const std::vector<glm::mat4> &AnimationComponent::GetJointMatrices(const render::Skeleton &skeleton, const std::vector<render::AnimationNode> &nodes)
     {
-        if (nodes.empty())
+        if (nodes.empty() || !skeleton.humanoidBoneMappings.empty())
         {
             return GetJointMatrices(skeleton);
         }
@@ -1845,50 +1986,14 @@ namespace PlutoGE::scene
             return;
         }
 
-        auto localTransforms = SampleLocalTransforms(
-            m_clips,
-            m_currentClipIndex,
-            m_time,
-            skeleton.joints.size(),
-            [&skeleton](const render::AnimationChannel &channel)
-            {
-                return ResolveChannelJointIndex(channel, skeleton);
-            },
-            [&skeleton](size_t jointIndex)
-            {
-                return skeleton.joints[jointIndex].localBindTransform;
-            });
+        auto localTransforms = SampleRetargetedJointTransforms(m_clips, m_currentClipIndex, m_time, skeleton);
 
         if (m_transition.active)
         {
             const auto &source = m_states[static_cast<size_t>(m_transition.sourceStateIndex)];
             const auto &destination = m_states[static_cast<size_t>(m_transition.destinationStateIndex)];
-            const auto sourceTransforms = SampleLocalTransforms(
-                m_clips,
-                source.clipIndex,
-                m_transition.sourceTime,
-                skeleton.joints.size(),
-                [&skeleton](const render::AnimationChannel &channel)
-                {
-                    return ResolveChannelJointIndex(channel, skeleton);
-                },
-                [&skeleton](size_t jointIndex)
-                {
-                    return skeleton.joints[jointIndex].localBindTransform;
-                });
-            const auto destinationTransforms = SampleLocalTransforms(
-                m_clips,
-                destination.clipIndex,
-                m_transition.destinationTime,
-                skeleton.joints.size(),
-                [&skeleton](const render::AnimationChannel &channel)
-                {
-                    return ResolveChannelJointIndex(channel, skeleton);
-                },
-                [&skeleton](size_t jointIndex)
-                {
-                    return skeleton.joints[jointIndex].localBindTransform;
-                });
+            const auto sourceTransforms = SampleRetargetedJointTransforms(m_clips, source.clipIndex, m_transition.sourceTime, skeleton);
+            const auto destinationTransforms = SampleRetargetedJointTransforms(m_clips, destination.clipIndex, m_transition.destinationTime, skeleton);
             const float blend = m_transition.duration > 0.0f ? std::clamp(m_transition.elapsed / m_transition.duration, 0.0f, 1.0f) : 1.0f;
             localTransforms = BlendLocalTransforms(sourceTransforms, destinationTransforms, blend);
         }

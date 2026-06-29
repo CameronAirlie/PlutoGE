@@ -175,7 +175,7 @@ namespace PlutoGE::assetimport
         };
 
         constexpr uint32_t kCookedMeshCacheMagic = 0x434d4750; // PGMC
-        constexpr uint32_t kCookedMeshCacheVersion = 22;
+        constexpr uint32_t kCookedMeshCacheVersion = 23;
 
         bool ReadBooleanEnvironmentFlag(const char *name, bool defaultValue)
         {
@@ -582,6 +582,11 @@ namespace PlutoGE::assetimport
                 WritePod(output, channel.jointIndex);
                 WritePod(output, channel.nodeIndex);
                 WriteString(output, channel.targetName);
+                WriteBool(output, channel.hasSourceLocalBindTransform);
+                if (channel.hasSourceLocalBindTransform)
+                {
+                    WriteMat4(output, channel.sourceLocalBindTransform);
+                }
                 WritePod(output, static_cast<uint32_t>(channel.path));
                 WritePod(output, static_cast<uint32_t>(channel.interpolation));
                 WritePodVector(output, channel.times);
@@ -603,6 +608,11 @@ namespace PlutoGE::assetimport
                 channel.jointIndex = ReadPod<int>(input);
                 channel.nodeIndex = ReadPod<int>(input);
                 channel.targetName = ReadString(input);
+                channel.hasSourceLocalBindTransform = ReadBool(input);
+                if (channel.hasSourceLocalBindTransform)
+                {
+                    channel.sourceLocalBindTransform = ReadMat4(input);
+                }
                 channel.path = static_cast<render::AnimationTargetPath>(ReadPod<uint32_t>(input));
                 channel.interpolation = static_cast<render::AnimationInterpolation>(ReadPod<uint32_t>(input));
                 channel.times = ReadPodVector<float>(input);
@@ -2450,6 +2460,8 @@ namespace PlutoGE::assetimport
                     channel.jointIndex = jointIt == nodeToJoint.end() ? -1 : jointIt->second;
                     channel.nodeIndex = channelSource.target_node;
                     channel.targetName = model.nodes[static_cast<size_t>(channelSource.target_node)].name;
+                    channel.sourceLocalBindTransform = ComposeNodeTransform(model.nodes[static_cast<size_t>(channelSource.target_node)]);
+                    channel.hasSourceLocalBindTransform = true;
                     if (channel.targetName.empty() && channel.jointIndex >= 0)
                     {
                         channel.targetName = skeleton.joints[static_cast<size_t>(channel.jointIndex)].name;
@@ -3856,6 +3868,7 @@ namespace PlutoGE::assetimport
             int nodeIndex,
             int jointIndex,
             const std::string &targetName,
+            const glm::mat4 &sourceLocalBindTransform,
             render::AnimationTargetPath path,
             const aiVectorKey *keys,
             unsigned int keyCount,
@@ -3870,6 +3883,8 @@ namespace PlutoGE::assetimport
             channel.nodeIndex = nodeIndex;
             channel.jointIndex = jointIndex;
             channel.targetName = targetName;
+            channel.sourceLocalBindTransform = sourceLocalBindTransform;
+            channel.hasSourceLocalBindTransform = true;
             channel.path = path;
             channel.interpolation = render::AnimationInterpolation::Linear;
             channel.times.reserve(keyCount);
@@ -3889,6 +3904,7 @@ namespace PlutoGE::assetimport
             int nodeIndex,
             int jointIndex,
             const std::string &targetName,
+            const glm::mat4 &sourceLocalBindTransform,
             const aiQuatKey *keys,
             unsigned int keyCount,
             double ticksPerSecond)
@@ -3902,6 +3918,8 @@ namespace PlutoGE::assetimport
             channel.nodeIndex = nodeIndex;
             channel.jointIndex = jointIndex;
             channel.targetName = targetName;
+            channel.sourceLocalBindTransform = sourceLocalBindTransform;
+            channel.hasSourceLocalBindTransform = true;
             channel.path = render::AnimationTargetPath::Rotation;
             channel.interpolation = render::AnimationInterpolation::Linear;
             channel.times.reserve(keyCount);
@@ -3918,6 +3936,7 @@ namespace PlutoGE::assetimport
 
         std::vector<render::AnimationClip> ParseAssimpAnimations(
             const aiScene &scene,
+            const std::vector<AssimpNodeInfo> &nodes,
             const std::unordered_map<std::string, int> &nameToNodeIndex,
             const std::unordered_map<std::string, int> &boneNameToJointIndex)
         {
@@ -3953,9 +3972,12 @@ namespace PlutoGE::assetimport
 
                     const auto jointIt = boneNameToJointIndex.find(nodeName);
                     const int jointIndex = jointIt == boneNameToJointIndex.end() ? -1 : jointIt->second;
-                    AddAssimpVectorChannel(clip, nodeIt->second, jointIndex, nodeName, render::AnimationTargetPath::Translation, sourceChannel->mPositionKeys, sourceChannel->mNumPositionKeys, ticksPerSecond);
-                    AddAssimpRotationChannel(clip, nodeIt->second, jointIndex, nodeName, sourceChannel->mRotationKeys, sourceChannel->mNumRotationKeys, ticksPerSecond);
-                    AddAssimpVectorChannel(clip, nodeIt->second, jointIndex, nodeName, render::AnimationTargetPath::Scale, sourceChannel->mScalingKeys, sourceChannel->mNumScalingKeys, ticksPerSecond);
+                    const glm::mat4 sourceLocalBindTransform = nodeIt->second >= 0 && nodeIt->second < static_cast<int>(nodes.size())
+                                                                      ? nodes[static_cast<size_t>(nodeIt->second)].localTransform
+                                                                      : glm::mat4(1.0f);
+                    AddAssimpVectorChannel(clip, nodeIt->second, jointIndex, nodeName, sourceLocalBindTransform, render::AnimationTargetPath::Translation, sourceChannel->mPositionKeys, sourceChannel->mNumPositionKeys, ticksPerSecond);
+                    AddAssimpRotationChannel(clip, nodeIt->second, jointIndex, nodeName, sourceLocalBindTransform, sourceChannel->mRotationKeys, sourceChannel->mNumRotationKeys, ticksPerSecond);
+                    AddAssimpVectorChannel(clip, nodeIt->second, jointIndex, nodeName, sourceLocalBindTransform, render::AnimationTargetPath::Scale, sourceChannel->mScalingKeys, sourceChannel->mNumScalingKeys, ticksPerSecond);
                 }
 
                 clip.channelCount = static_cast<int>(clip.channels.size());
@@ -4048,7 +4070,7 @@ namespace PlutoGE::assetimport
                 profile->assimpSkeletonMs = ElapsedMilliseconds(skeletonStart);
             }
             const auto animationStart = ImportClock::now();
-            asset.animations = ParseAssimpAnimations(*scene, nameToNodeIndex, boneNameToJointIndex);
+            asset.animations = ParseAssimpAnimations(*scene, nodes, nameToNodeIndex, boneNameToJointIndex);
             if (profile && profile->enabled)
             {
                 profile->assimpAnimationMs = ElapsedMilliseconds(animationStart);

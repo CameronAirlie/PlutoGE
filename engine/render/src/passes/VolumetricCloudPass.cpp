@@ -366,9 +366,18 @@ namespace PlutoGE::render
 
         std::sort(clouds.begin(), clouds.end(), [](const CloudDraw &a, const CloudDraw &b) { return a.distanceSquared > b.distanceSquared; });
         const scene::Light *sun = FindSun(ctx);
-        const glm::vec3 lightDirection = sun ? glm::normalize(-sun->direction) : glm::vec3(0.0f, 1.0f, 0.0f);
+        glm::vec3 lightDirection = sun ? -sun->direction : glm::vec3(0.0f, 1.0f, 0.0f);
+        if (glm::dot(lightDirection, lightDirection) > 0.000001f)
+            lightDirection = glm::normalize(lightDirection);
+        else
+            lightDirection = glm::vec3(0.0f, 1.0f, 0.0f);
         const glm::vec3 lightColor = sun ? glm::max(sun->color, glm::vec3(0.0f)) : glm::vec3(1.0f);
-        const float lightIntensity = sun ? std::max(sun->intensity, 0.0f) : 0.0f;
+        // A physical sun below the horizon must not illuminate cloud undersides
+        // through the terrain. Fade it out across the horizon to avoid popping.
+        const float horizonVisibility = ctx.renderer
+            ? ctx.renderer->GetPhysicalSkyDirectionalLightVisibility(sun)
+            : glm::smoothstep(-0.02f, 0.03f, lightDirection.y);
+        const float lightIntensity = sun ? std::max(sun->intensity, 0.0f) * horizonVisibility : 0.0f;
         bool hasTemporalAA = false;
         if (ctx.postProcessEffects)
         {

@@ -855,8 +855,9 @@ namespace PlutoGE::render
             }
 
             auto *environmentTexture = ctx.scene ? ctx.scene->GetEnvironmentMapTexture() : nullptr;
+            const GLuint physicalSkyTexture = ctx.renderer ? ctx.renderer->GetPhysicalSkyEnvironmentTextureID() : 0;
             glActiveTexture(GL_TEXTURE0 + kEnvironmentTextureSlot);
-            glBindTexture(GL_TEXTURE_2D, environmentTexture ? environmentTexture->GetTextureID() : 0);
+            glBindTexture(GL_TEXTURE_2D, physicalSkyTexture ? physicalSkyTexture : (environmentTexture ? environmentTexture->GetTextureID() : 0));
             if (shader->HasUniform("uEnvironmentMap"))
             {
                 shader->SetUniform("uEnvironmentMap", kEnvironmentTextureSlot);
@@ -961,11 +962,11 @@ namespace PlutoGE::render
             return true;
         }
 
-        void BindLightUniforms(Shader *shader, const scene::Light &light, bool hasShadowMap)
+        void BindLightUniforms(Shader *shader, const scene::Light &light, bool hasShadowMap, float intensityScale = 1.0f)
         {
             shader->SetUniform("uLight.Position", light.position);
             shader->SetUniform("uLight.Color", light.color);
-            shader->SetUniform("uLight.Intensity", light.intensity);
+            shader->SetUniform("uLight.Intensity", light.intensity * intensityScale);
             shader->SetUniform("uLight.Range", light.range);
             shader->SetUniform("uLight.Direction", light.direction);
             shader->SetUniform("uLight.Type", static_cast<int>(light.type));
@@ -1160,6 +1161,8 @@ namespace PlutoGE::render
             return;
         }
 
+        const bool hasPhysicalSkyEnvironment = ctx.renderer && ctx.renderer->PreparePhysicalSkyEnvironment(ctx);
+
         if (ctx.renderer)
         {
             int lightCount = 0;
@@ -1303,7 +1306,7 @@ namespace PlutoGE::render
         m_lightingPassShader->SetUniform("uBakedProbeEnabled", ctx.scene && ctx.scene->HasBakedProbeVolume() ? 1 : 0);
         m_lightingPassShader->SetUniform("uBakedProbeOrigin", ctx.scene ? ctx.scene->GetBakedProbeVolume().origin : glm::vec3(0.0f));
         m_lightingPassShader->SetUniform("uBakedProbeSize", ctx.scene ? ctx.scene->GetBakedProbeVolume().size : glm::vec3(1.0f));
-        m_lightingPassShader->SetUniform("uEnvironmentEnabled", ctx.scene && ctx.scene->GetEnvironmentMapTexture() ? 1 : 0);
+        m_lightingPassShader->SetUniform("uEnvironmentEnabled", hasPhysicalSkyEnvironment || (ctx.scene && ctx.scene->GetEnvironmentMapTexture()) ? 1 : 0);
         m_lightingPassShader->SetUniform("uEnvironmentIntensity", ctx.scene ? ctx.scene->GetEnvironmentIntensity() : 1.0f);
         m_lightingPassShader->SetUniform("uDebugViewMode", static_cast<int>(ctx.postProcessDebugView));
         const auto resolveMaxMipLevel = [](const Texture *texture)
@@ -1312,7 +1315,9 @@ namespace PlutoGE::render
         };
 
         const auto *environmentTexture = ctx.scene ? ctx.scene->GetEnvironmentMapTexture() : nullptr;
-        const float environmentMaxMipLevel = resolveMaxMipLevel(environmentTexture);
+        const float environmentMaxMipLevel = hasPhysicalSkyEnvironment
+            ? static_cast<float>(std::max(0, static_cast<int>(std::floor(std::log2(static_cast<float>(std::max(ctx.renderer->GetPhysicalSkyEnvironmentWidth(), ctx.renderer->GetPhysicalSkyEnvironmentHeight())))))))
+            : resolveMaxMipLevel(environmentTexture);
         m_lightingPassShader->SetUniform("uEnvironmentMaxMipLevel", environmentMaxMipLevel);
         const auto &iblCaptureVolumes = ctx.scene ? ctx.scene->GetIblCaptureVolumes() : std::vector<scene::IblCaptureVolume>{};
         const int iblCaptureCount = std::min(scene::kMaxIblCaptureVolumes, static_cast<int>(iblCaptureVolumes.size()));
@@ -1404,7 +1409,8 @@ namespace PlutoGE::render
                 }
 
                 const bool hasShadowMap = BindShadowMapForLight(*light);
-                BindLightUniforms(m_directLightingPassShader, *light, hasShadowMap);
+                const float skyVisibility = ctx.renderer ? ctx.renderer->GetPhysicalSkyDirectionalLightVisibility(light) : 1.0f;
+                BindLightUniforms(m_directLightingPassShader, *light, hasShadowMap, skyVisibility);
                 if (hasShadowMap &&
                     light->type == scene::LightType::Directional &&
                     light->directionalShadowSettings.screenSpaceFilterEnabled &&
@@ -1420,7 +1426,7 @@ namespace PlutoGE::render
 
                         m_directLightingPassShader->Bind();
                         BindLightingInputs(m_directLightingPassShader, ctx);
-                        BindLightUniforms(m_directLightingPassShader, *light, hasShadowMap);
+                        BindLightUniforms(m_directLightingPassShader, *light, hasShadowMap, skyVisibility);
                         m_directLightingPassShader->SetUniform("uViewPos", cameraPos);
                         m_directLightingPassShader->SetUniform("uViewMatrix", ctx.cameraData.view);
                         m_directLightingPassShader->SetUniform("uInverseViewMatrix", glm::inverse(ctx.cameraData.view));

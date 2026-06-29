@@ -265,7 +265,7 @@ namespace PlutoGE::assets
         }
 
         const auto version = ReadPod<std::uint32_t>(input);
-        if (magic != kMagic || version < 1 || version > 2)
+        if (magic != kMagic || version < 1 || version > 3)
         {
             return false;
         }
@@ -295,15 +295,15 @@ namespace PlutoGE::assets
         }
 
         constexpr std::uint32_t kMagic = 0x4347504c; // LPGC
-        constexpr std::uint32_t kVersion = 1;
+        constexpr std::uint32_t kVersion = 2;
         const auto magic = ReadPod<std::uint32_t>(input);
         const auto version = ReadPod<std::uint32_t>(input);
-        if (magic != kMagic || version != kVersion)
+        if (magic != kMagic || version < 1 || version > kVersion)
         {
             return false;
         }
 
-        clip = ReadAnimationClip(input, 2);
+        clip = ReadAnimationClip(input, version >= 2 ? 3 : 2);
         return input.good();
     }
 
@@ -392,7 +392,7 @@ namespace PlutoGE::assets
         }
 
         constexpr std::uint32_t kMagic = 0x4147504c; // LPGA
-        constexpr std::uint32_t kVersion = 2;
+        constexpr std::uint32_t kVersion = 3;
         WritePod(output, kMagic);
         WritePod(output, kVersion);
         WritePod<std::uint64_t>(output, static_cast<std::uint64_t>(clips.size()));
@@ -518,7 +518,7 @@ namespace PlutoGE::assets
         }
 
         constexpr std::uint32_t kMagic = 0x4347504c; // LPGC
-        constexpr std::uint32_t kVersion = 1;
+        constexpr std::uint32_t kVersion = 2;
         WritePod(output, kMagic);
         WritePod(output, kVersion);
         WriteAnimationClip(output, clip);
@@ -818,6 +818,11 @@ namespace PlutoGE::assets
                 WritePod(output, channel.jointIndex);
                 WritePod(output, channel.nodeIndex);
                 WriteString(output, channel.targetName);
+                WritePod<std::uint8_t>(output, channel.hasSourceLocalBindTransform ? 1 : 0);
+                if (channel.hasSourceLocalBindTransform)
+                {
+                    WriteMat4(output, channel.sourceLocalBindTransform);
+                }
                 WritePod<std::uint32_t>(output, static_cast<std::uint32_t>(channel.path));
                 WritePod<std::uint32_t>(output, static_cast<std::uint32_t>(channel.interpolation));
                 WritePod<std::uint64_t>(output, static_cast<std::uint64_t>(channel.times.size()));
@@ -850,6 +855,14 @@ namespace PlutoGE::assets
                 {
                     channel.targetName = ReadString(input);
                 }
+                if (version >= 3)
+                {
+                    channel.hasSourceLocalBindTransform = ReadPod<std::uint8_t>(input) != 0;
+                    if (channel.hasSourceLocalBindTransform)
+                    {
+                        channel.sourceLocalBindTransform = ReadMat4(input);
+                    }
+                }
                 channel.path = static_cast<render::AnimationTargetPath>(ReadPod<std::uint32_t>(input));
                 channel.interpolation = static_cast<render::AnimationInterpolation>(ReadPod<std::uint32_t>(input));
                 channel.times.resize(static_cast<std::size_t>(ReadPod<std::uint64_t>(input)));
@@ -870,7 +883,7 @@ namespace PlutoGE::assets
         bool WriteGeneratedMeshAsset(std::ostream &output, const render::MeshConfig &config, const std::vector<std::string> &materialReferences)
         {
             constexpr std::uint32_t kMagic = 0x4d47504c; // LPGM
-            constexpr std::uint32_t kVersion = 2;
+            constexpr std::uint32_t kVersion = 3;
             WritePod(output, kMagic);
             WritePod(output, kVersion);
 
@@ -917,6 +930,17 @@ namespace PlutoGE::assets
                 WriteMat4(output, joint.inverseRootMatrix);
             }
 
+            WritePod<std::uint64_t>(output, static_cast<std::uint64_t>(config.skeleton.humanoidBoneMappings.size()));
+            for (const auto &mapping : config.skeleton.humanoidBoneMappings)
+            {
+                WritePod<std::uint8_t>(output, static_cast<std::uint8_t>(mapping.bone));
+                WriteString(output, mapping.sourceBoneName);
+                WritePod(output, mapping.targetJointIndex);
+                WritePod(output, mapping.rotationOffsetDegrees);
+                WritePod<std::uint8_t>(output, mapping.copyTranslation ? 1 : 0);
+                WritePod(output, mapping.translationScale);
+            }
+
             WritePod<std::uint64_t>(output, static_cast<std::uint64_t>(config.animationNodes.size()));
             for (const auto &node : config.animationNodes)
             {
@@ -938,7 +962,7 @@ namespace PlutoGE::assets
             constexpr std::uint32_t kMagic = 0x4d47504c; // LPGM
             const auto magic = ReadPod<std::uint32_t>(input);
             const auto version = ReadPod<std::uint32_t>(input);
-            if (magic != kMagic || version < 1 || version > 2)
+            if (magic != kMagic || version < 1 || version > 3)
             {
                 return false;
             }
@@ -984,6 +1008,26 @@ namespace PlutoGE::assets
                 joint.localBindTransform = ReadMat4(input);
                 joint.inverseBindMatrix = ReadMat4(input);
                 joint.inverseRootMatrix = ReadMat4(input);
+            }
+
+            if (version >= 3)
+            {
+                const auto mappingCount = ReadPod<std::uint64_t>(input);
+                config.skeleton.humanoidBoneMappings.reserve(static_cast<std::size_t>(mappingCount));
+                for (std::uint64_t index = 0; index < mappingCount; ++index)
+                {
+                    render::HumanoidBoneMapping mapping;
+                    mapping.bone = static_cast<render::HumanoidBone>(ReadPod<std::uint8_t>(input));
+                    mapping.sourceBoneName = ReadString(input);
+                    mapping.targetJointIndex = ReadPod<int>(input);
+                    mapping.rotationOffsetDegrees = ReadPod<glm::vec3>(input);
+                    mapping.copyTranslation = ReadPod<std::uint8_t>(input) != 0;
+                    mapping.translationScale = ReadPod<float>(input);
+                    if (static_cast<std::size_t>(mapping.bone) < render::kHumanoidBoneCount)
+                    {
+                        config.skeleton.humanoidBoneMappings.push_back(std::move(mapping));
+                    }
+                }
             }
 
             config.animationNodes.resize(static_cast<std::size_t>(ReadPod<std::uint64_t>(input)));

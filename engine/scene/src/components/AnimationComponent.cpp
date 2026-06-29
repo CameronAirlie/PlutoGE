@@ -720,6 +720,72 @@ namespace PlutoGE::scene
 
             return blended;
         }
+
+        std::vector<glm::mat4> BlendMaskedLocalTransforms(
+            const std::vector<glm::mat4> &base,
+            const std::vector<glm::mat4> &layer,
+            const std::vector<glm::mat4> &reference,
+            const std::vector<float> &mask,
+            float layerWeight,
+            assets::AnimationGraphLayerBlendMode mode)
+        {
+            std::vector<glm::mat4> result = base;
+            const size_t count = std::min({base.size(), layer.size(), reference.size(), mask.size()});
+            for (size_t index = 0; index < count; ++index)
+            {
+                const float weight = std::clamp(mask[index] * layerWeight, 0.0f, 1.0f);
+                if (weight <= 0.00001f)
+                    continue;
+
+                glm::vec3 baseTranslation, layerTranslation, referenceTranslation;
+                glm::vec4 baseRotation, layerRotation, referenceRotation;
+                glm::vec3 baseScale, layerScale, referenceScale;
+                DecomposeTransform(base[index], baseTranslation, baseRotation, baseScale);
+                DecomposeTransform(layer[index], layerTranslation, layerRotation, layerScale);
+                DecomposeTransform(reference[index], referenceTranslation, referenceRotation, referenceScale);
+
+                const glm::quat baseQuat(baseRotation.w, baseRotation.x, baseRotation.y, baseRotation.z);
+                const glm::quat layerQuat(layerRotation.w, layerRotation.x, layerRotation.y, layerRotation.z);
+                if (mode == assets::AnimationGraphLayerBlendMode::Override)
+                {
+                    const glm::quat rotation = glm::normalize(glm::slerp(baseQuat, layerQuat, weight));
+                    result[index] = ComposeTransform(
+                        glm::mix(baseTranslation, layerTranslation, weight),
+                        glm::vec4(rotation.x, rotation.y, rotation.z, rotation.w),
+                        glm::mix(baseScale, layerScale, weight));
+                    continue;
+                }
+
+                const glm::quat referenceQuat(referenceRotation.w, referenceRotation.x, referenceRotation.y, referenceRotation.z);
+                const glm::quat deltaRotation = glm::normalize(glm::inverse(referenceQuat) * layerQuat);
+                const glm::quat weightedDelta = glm::normalize(glm::slerp(glm::quat(1.0f, 0.0f, 0.0f, 0.0f), deltaRotation, weight));
+                const glm::vec3 safeReferenceScale(
+                    std::abs(referenceScale.x) > 0.000001f ? referenceScale.x : 1.0f,
+                    std::abs(referenceScale.y) > 0.000001f ? referenceScale.y : 1.0f,
+                    std::abs(referenceScale.z) > 0.000001f ? referenceScale.z : 1.0f);
+                result[index] = ComposeTransform(
+                    baseTranslation + (layerTranslation - referenceTranslation) * weight,
+                    glm::vec4((baseQuat * weightedDelta).x, (baseQuat * weightedDelta).y,
+                              (baseQuat * weightedDelta).z, (baseQuat * weightedDelta).w),
+                    baseScale * glm::mix(glm::vec3(1.0f), layerScale / safeReferenceScale, weight));
+            }
+            return result;
+        }
+
+        bool IsDescendantOf(int candidate, int ancestor, const std::function<int(int)> &parentOf, int count)
+        {
+            int current = candidate;
+            for (int guard = 0; guard < count && current >= 0 && current < count; ++guard)
+            {
+                if (current == ancestor)
+                    return true;
+                const int parent = parentOf(current);
+                if (parent == current)
+                    break;
+                current = parent;
+            }
+            return false;
+        }
     }
 
     void AnimationComponent::Update(float deltaTime)
@@ -742,6 +808,8 @@ namespace PlutoGE::scene
             return;
         }
 
+        m_layerTriggersToReset.clear();
+        UpdateLayers(deltaTime);
         if (!m_states.empty())
         {
             UpdateGraph(deltaTime);
@@ -749,6 +817,11 @@ namespace PlutoGE::scene
         else
         {
             SetTime(m_time + deltaTime * m_speed);
+        }
+        for (const size_t parameterIndex : m_layerTriggersToReset)
+        {
+            if (parameterIndex < m_parameters.size() && m_parameters[parameterIndex].type == AnimationParameterType::Trigger)
+                m_parameters[parameterIndex].boolValue = false;
         }
         m_jointMatricesDirty = true;
         m_nodeMatricesDirty = true;
@@ -1146,6 +1219,8 @@ namespace PlutoGE::scene
             m_states.clear();
             m_parameters.clear();
             m_parameterLookup.clear();
+            m_boneMasks.clear();
+            m_layers.clear();
             m_retargetBindingSkeleton = nullptr;
             m_retargetClipCaches.clear();
             m_transition = {};
@@ -1441,6 +1516,39 @@ namespace PlutoGE::scene
             }
         }
 
+        for (auto &layer : m_layers)
+        {
+            if (!layer.graphReference.empty())
+            {
+                layer.graphDefaultStateIndex = layer.graphStates.empty() ? 0 : std::clamp(
+                    layer.graphDefaultStateIndex, 0, static_cast<int>(layer.graphStates.size()) - 1);
+                layer.graphCurrentStateIndex = layer.graphStates.empty() ? 0 : std::clamp(
+                    layer.graphCurrentStateIndex, 0, static_cast<int>(layer.graphStates.size()) - 1);
+                for (auto &state : layer.graphStates)
+                {
+                    state.clipIndex = m_clips.empty() ? 0 : std::clamp(state.clipIndex, 0, static_cast<int>(m_clips.size()) - 1);
+                    state.speed = std::max(0.0f, state.speed);
+                    for (auto &transition : state.transitions)
+                    {
+                        transition.duration = std::max(0.0f, transition.duration);
+                        transition.exitTime = std::max(0.0f, transition.exitTime);
+                        if (transition.destinationStateIndex < 0 ||
+                            transition.destinationStateIndex >= static_cast<int>(layer.graphStates.size()))
+                            transition.destinationStateIndex = -1;
+                    }
+                }
+                layer.clipValid = !layer.graphStates.empty() && !m_clips.empty();
+            }
+            else
+            {
+                layer.clipValid = layer.clipIndex >= 0 && layer.clipIndex < static_cast<int>(m_clips.size());
+            }
+            layer.weight = std::clamp(layer.weight, 0.0f, 1.0f);
+            layer.speed = std::max(0.0f, layer.speed);
+            layer.fadeIn = std::max(0.0f, layer.fadeIn);
+            layer.fadeOut = std::max(0.0f, layer.fadeOut);
+        }
+
         m_parameterLookup.clear();
         for (size_t parameterIndex = 0; parameterIndex < m_parameters.size(); ++parameterIndex)
         {
@@ -1456,62 +1564,138 @@ namespace PlutoGE::scene
         m_states.clear();
         m_parameters.clear();
         m_parameterLookup.clear();
+        m_boneMasks = graph.boneMasks;
+        m_layers.clear();
 
         auto &assetManager = core::Engine::GetInstance().GetAssetManager();
         std::unordered_map<std::string, int> clipIndexByReference;
+        auto addParameterIfMissing = [this](const assets::AnimationGraphParameter &assetParameter)
+        {
+            const bool exists = std::any_of(m_parameters.begin(), m_parameters.end(),
+                                            [&assetParameter](const AnimationParameter &parameter)
+                                            { return parameter.name == assetParameter.name; });
+            if (exists || assetParameter.name.empty())
+                return;
+            m_parameters.push_back(AnimationParameter{
+                .name = assetParameter.name,
+                .type = ConvertParameterType(assetParameter.type),
+                .floatValue = assetParameter.floatValue,
+                .intValue = assetParameter.intValue,
+                .boolValue = assetParameter.boolValue,
+            });
+        };
+        for (const auto &assetParameter : graph.parameters)
+            addParameterIfMissing(assetParameter);
+
+        auto resolveClipIndex = [this, &assetManager, &clipIndexByReference](
+                                    const std::string &clipReference,
+                                    const std::string &clipName,
+                                    int fallbackIndex)
+        {
+            int clipIndex = fallbackIndex;
+            if (!clipReference.empty())
+            {
+                const auto cached = clipIndexByReference.find(clipReference);
+                if (cached != clipIndexByReference.end())
+                    return cached->second;
+                render::AnimationClip clip;
+                if (assetManager.LoadAnimationClipAsset(clipReference, clip))
+                {
+                    if (!clipName.empty())
+                        clip.name = clipName;
+                    m_clips.push_back(std::move(clip));
+                    clipIndex = static_cast<int>(m_clips.size()) - 1;
+                    clipIndexByReference[clipReference] = clipIndex;
+                }
+            }
+            else if (!clipName.empty())
+            {
+                const int namedClipIndex = FindClipIndex(clipName);
+                if (namedClipIndex >= 0)
+                    clipIndex = namedClipIndex;
+            }
+            return clipIndex;
+        };
+
         std::unordered_map<int, int> stateIndexById;
         m_states.reserve(graph.states.size());
         for (const auto &assetState : graph.states)
         {
             AnimationState state;
             state.name = assetState.name.empty() ? "State " + std::to_string(m_states.size()) : assetState.name;
-            state.clipIndex = assetState.clipIndex;
-            if (!assetState.clipReference.empty())
-            {
-                const auto cachedClipIt = clipIndexByReference.find(assetState.clipReference);
-                if (cachedClipIt != clipIndexByReference.end())
-                {
-                    state.clipIndex = cachedClipIt->second;
-                }
-                else
-                {
-                    render::AnimationClip clip;
-                    if (assetManager.LoadAnimationClipAsset(assetState.clipReference, clip))
-                    {
-                        if (!assetState.clipName.empty())
-                        {
-                            clip.name = assetState.clipName;
-                        }
-                        m_clips.push_back(std::move(clip));
-                        state.clipIndex = static_cast<int>(m_clips.size()) - 1;
-                        clipIndexByReference[assetState.clipReference] = state.clipIndex;
-                    }
-                }
-            }
-            else if (!assetState.clipName.empty())
-            {
-                const int namedClipIndex = FindClipIndex(assetState.clipName);
-                if (namedClipIndex >= 0)
-                {
-                    state.clipIndex = namedClipIndex;
-                }
-            }
+            state.clipIndex = resolveClipIndex(assetState.clipReference, assetState.clipName, assetState.clipIndex);
             state.speed = assetState.speed;
             state.loop = assetState.loop;
             stateIndexById[assetState.id] = static_cast<int>(m_states.size());
             m_states.push_back(std::move(state));
         }
 
-        m_parameters.reserve(graph.parameters.size());
-        for (const auto &assetParameter : graph.parameters)
+        m_layers.reserve(graph.layers.size());
+        for (const auto &assetLayer : graph.layers)
         {
-            AnimationParameter parameter;
-            parameter.name = assetParameter.name;
-            parameter.type = ConvertParameterType(assetParameter.type);
-            parameter.floatValue = assetParameter.floatValue;
-            parameter.intValue = assetParameter.intValue;
-            parameter.boolValue = assetParameter.boolValue;
-            m_parameters.push_back(std::move(parameter));
+            AnimationLayer layer;
+            layer.name = assetLayer.name.empty() ? "Layer " + std::to_string(m_layers.size() + 1) : assetLayer.name;
+            layer.graphReference = assetLayer.graphReference;
+            layer.clipIndex = layer.graphReference.empty()
+                                  ? resolveClipIndex(assetLayer.clipReference, assetLayer.clipName, assetLayer.clipIndex)
+                                  : assetLayer.clipIndex;
+            if (!layer.graphReference.empty())
+            {
+                bool graphLoaded = false;
+                const auto layerGraph = assetManager.LoadAnimationGraphAsset(layer.graphReference, &graphLoaded);
+                if (graphLoaded)
+                {
+                    for (const auto &parameter : layerGraph.parameters)
+                        addParameterIfMissing(parameter);
+
+                    std::unordered_map<int, int> layerStateIndexById;
+                    layer.graphStates.reserve(layerGraph.states.size());
+                    for (const auto &assetState : layerGraph.states)
+                    {
+                        AnimationState state;
+                        state.name = assetState.name.empty() ? "State " + std::to_string(layer.graphStates.size()) : assetState.name;
+                        state.clipIndex = resolveClipIndex(assetState.clipReference, assetState.clipName, assetState.clipIndex);
+                        state.speed = assetState.speed;
+                        state.loop = assetState.loop;
+                        layerStateIndexById[assetState.id] = static_cast<int>(layer.graphStates.size());
+                        layer.graphStates.push_back(std::move(state));
+                    }
+                    for (const auto &assetTransition : layerGraph.transitions)
+                    {
+                        const auto fromIt = layerStateIndexById.find(assetTransition.fromStateId);
+                        const auto toIt = layerStateIndexById.find(assetTransition.toStateId);
+                        if (fromIt == layerStateIndexById.end() || toIt == layerStateIndexById.end())
+                            continue;
+                        AnimationTransition transition;
+                        transition.destinationStateIndex = toIt->second;
+                        transition.duration = assetTransition.duration;
+                        transition.hasExitTime = assetTransition.hasExitTime;
+                        transition.exitTime = assetTransition.exitTime;
+                        for (const auto &condition : assetTransition.conditions)
+                            transition.conditions.push_back(AnimationCondition{
+                                .parameterName = condition.parameterName,
+                                .mode = ConvertConditionMode(condition.mode),
+                                .threshold = condition.threshold,
+                            });
+                        layer.graphStates[static_cast<size_t>(fromIt->second)].transitions.push_back(std::move(transition));
+                    }
+                    const auto defaultState = layerStateIndexById.find(layerGraph.defaultStateId);
+                    layer.graphDefaultStateIndex = defaultState == layerStateIndexById.end() ? 0 : defaultState->second;
+                    layer.graphCurrentStateIndex = layer.graphDefaultStateIndex;
+                }
+            }
+            layer.maskId = assetLayer.maskId;
+            layer.blendMode = assetLayer.blendMode;
+            layer.weight = std::clamp(assetLayer.weight, 0.0f, 1.0f);
+            layer.weightParameter = assetLayer.weightParameter;
+            layer.activationParameter = assetLayer.activationParameter;
+            layer.speed = std::max(0.0f, assetLayer.speed);
+            layer.fadeIn = std::max(0.0f, assetLayer.fadeIn);
+            layer.fadeOut = std::max(0.0f, assetLayer.fadeOut);
+            layer.loop = assetLayer.loop;
+            layer.restartOnActivation = assetLayer.restartOnActivation;
+            layer.enabled = assetLayer.enabled;
+            m_layers.push_back(std::move(layer));
         }
 
         for (const auto &assetTransition : graph.transitions)
@@ -1556,6 +1740,21 @@ namespace PlutoGE::scene
         m_graphStateTime = 0.0f;
         m_transition = {};
         m_graphStarted = true;
+        for (auto &layer : m_layers)
+        {
+            layer.time = 0.0f;
+            layer.graphCurrentStateIndex = layer.graphDefaultStateIndex;
+            layer.graphStateTime = 0.0f;
+            layer.graphTransitionActive = false;
+            layer.graphTransitionSourceStateIndex = -1;
+            layer.graphTransitionDestinationStateIndex = -1;
+            layer.graphTransitionSourceTime = 0.0f;
+            layer.graphTransitionDestinationTime = 0.0f;
+            layer.graphTransitionElapsed = 0.0f;
+            layer.currentWeight = 0.0f;
+            layer.playing = layer.enabled && layer.clipValid && layer.activationParameter.empty();
+            layer.wasActive = false;
+        }
         if (!m_states.empty())
         {
             m_currentClipIndex = m_states[static_cast<size_t>(m_graphCurrentStateIndex)].clipIndex;
@@ -1619,14 +1818,17 @@ namespace PlutoGE::scene
     bool AnimationComponent::IsTransitionReady(const AnimationTransition &transition, const AnimationState &state) const
     {
         if (transition.destinationStateIndex < 0 || transition.destinationStateIndex >= static_cast<int>(m_states.size()))
-        {
             return false;
-        }
 
+        return IsTransitionReadyAtTime(transition, state, m_graphStateTime);
+    }
+
+    bool AnimationComponent::IsTransitionReadyAtTime(const AnimationTransition &transition, const AnimationState &state, float stateTime) const
+    {
         if (transition.hasExitTime)
         {
             const float duration = GetClipDuration(state.clipIndex);
-            if (duration > 0.0f && (m_graphStateTime / duration) < transition.exitTime)
+            if (duration > 0.0f && (stateTime / duration) < transition.exitTime)
             {
                 return false;
             }
@@ -1689,11 +1891,9 @@ namespace PlutoGE::scene
                 continue;
             }
 
-            auto &parameter = m_parameters[parameterIt->second];
+            const auto &parameter = m_parameters[parameterIt->second];
             if (parameter.type == AnimationParameterType::Trigger)
-            {
-                parameter.boolValue = false;
-            }
+                m_layerTriggersToReset.push_back(parameterIt->second);
         }
     }
 
@@ -1778,6 +1978,139 @@ namespace PlutoGE::scene
                                                  : m_states[static_cast<size_t>(m_graphCurrentStateIndex)];
         m_currentClipIndex = visibleState.clipIndex;
         m_time = m_transition.active ? m_transition.destinationTime : m_graphStateTime;
+    }
+
+    void AnimationComponent::UpdateLayers(float deltaTime)
+    {
+        for (auto &layer : m_layers)
+        {
+            const auto activationIt = m_parameterLookup.find(layer.activationParameter);
+            const AnimationParameter *activation = activationIt != m_parameterLookup.end()
+                                                       ? &m_parameters[activationIt->second]
+                                                       : nullptr;
+            const bool triggerFired = activation && activation->type == AnimationParameterType::Trigger && activation->boolValue;
+            bool active = layer.activationParameter.empty();
+            if (activation)
+            {
+                active = activation->type == AnimationParameterType::Bool || activation->type == AnimationParameterType::Trigger
+                             ? activation->boolValue
+                             : activation->type == AnimationParameterType::Int
+                                   ? activation->intValue != 0
+                                   : std::abs(activation->floatValue) > 0.0001f;
+            }
+            if (triggerFired)
+                m_layerTriggersToReset.push_back(activationIt->second);
+
+            const bool activatedThisFrame = active && !layer.wasActive;
+            if (layer.enabled && layer.clipValid && (triggerFired || activatedThisFrame))
+            {
+                if (layer.restartOnActivation || !layer.playing)
+                {
+                    layer.time = 0.0f;
+                    layer.graphCurrentStateIndex = layer.graphDefaultStateIndex;
+                    layer.graphStateTime = 0.0f;
+                    layer.graphTransitionActive = false;
+                }
+                layer.playing = true;
+            }
+
+            bool finished = false;
+            if (layer.playing && layer.enabled && layer.clipValid)
+            {
+                if (layer.graphReference.empty())
+                    layer.time = AdvanceClipTime(layer.clipIndex, layer.time, deltaTime, layer.speed, layer.loop, &finished);
+                else
+                    UpdateLayerGraph(layer, deltaTime);
+            }
+            if (layer.graphReference.empty() && finished && !layer.loop)
+                layer.playing = false;
+
+            float targetWeight = layer.enabled && layer.clipValid && layer.playing ? layer.weight : 0.0f;
+            // Bool parameters describe sustained layers; releasing the bool
+            // fades the layer out even when its clip itself is non-looping.
+            // Triggers intentionally continue their one-shot to completion.
+            if (layer.enabled && activation && activation->type == AnimationParameterType::Bool && !active)
+            {
+                layer.playing = false;
+                targetWeight = 0.0f;
+            }
+            if (!layer.weightParameter.empty())
+            {
+                const auto weightIt = m_parameterLookup.find(layer.weightParameter);
+                if (weightIt != m_parameterLookup.end())
+                    targetWeight *= std::clamp(GetFloat(layer.weightParameter), 0.0f, 1.0f);
+            }
+
+            const float fadeDuration = targetWeight > layer.currentWeight ? layer.fadeIn : layer.fadeOut;
+            if (fadeDuration <= 0.00001f)
+                layer.currentWeight = targetWeight;
+            else
+            {
+                const float step = std::max(0.0f, deltaTime) / fadeDuration;
+                layer.currentWeight += std::clamp(targetWeight - layer.currentWeight, -step, step);
+            }
+            layer.wasActive = active;
+        }
+    }
+
+    void AnimationComponent::StartLayerTransition(AnimationLayer &layer, int sourceStateIndex, const AnimationTransition &transition)
+    {
+        if (sourceStateIndex < 0 || sourceStateIndex >= static_cast<int>(layer.graphStates.size()) ||
+            transition.destinationStateIndex < 0 || transition.destinationStateIndex >= static_cast<int>(layer.graphStates.size()))
+            return;
+
+        layer.graphTransitionActive = true;
+        layer.graphTransitionSourceStateIndex = sourceStateIndex;
+        layer.graphTransitionDestinationStateIndex = transition.destinationStateIndex;
+        layer.graphTransitionSourceTime = layer.graphStateTime;
+        layer.graphTransitionDestinationTime = 0.0f;
+        layer.graphTransitionElapsed = 0.0f;
+        layer.graphTransitionDuration = std::max(0.0f, transition.duration);
+        ConsumeTransitionTriggers(transition);
+        if (layer.graphTransitionDuration <= 0.0f)
+        {
+            layer.graphCurrentStateIndex = transition.destinationStateIndex;
+            layer.graphStateTime = 0.0f;
+            layer.graphTransitionActive = false;
+        }
+    }
+
+    void AnimationComponent::UpdateLayerGraph(AnimationLayer &layer, float deltaTime)
+    {
+        if (layer.graphStates.empty())
+            return;
+
+        if (layer.graphTransitionActive)
+        {
+            const auto &source = layer.graphStates[static_cast<size_t>(layer.graphTransitionSourceStateIndex)];
+            const auto &destination = layer.graphStates[static_cast<size_t>(layer.graphTransitionDestinationStateIndex)];
+            layer.graphTransitionSourceTime = AdvanceClipTime(
+                source.clipIndex, layer.graphTransitionSourceTime, deltaTime, source.speed * layer.speed, source.loop);
+            layer.graphTransitionDestinationTime = AdvanceClipTime(
+                destination.clipIndex, layer.graphTransitionDestinationTime, deltaTime, destination.speed * layer.speed, destination.loop);
+            layer.graphTransitionElapsed += std::max(0.0f, deltaTime);
+            if (layer.graphTransitionElapsed >= layer.graphTransitionDuration)
+            {
+                layer.graphCurrentStateIndex = layer.graphTransitionDestinationStateIndex;
+                layer.graphStateTime = layer.graphTransitionDestinationTime;
+                layer.graphTransitionActive = false;
+            }
+            return;
+        }
+
+        auto &state = layer.graphStates[static_cast<size_t>(layer.graphCurrentStateIndex)];
+        layer.graphStateTime = AdvanceClipTime(
+            state.clipIndex, layer.graphStateTime, deltaTime, state.speed * layer.speed, state.loop);
+        for (const auto &transition : state.transitions)
+        {
+            if (transition.destinationStateIndex >= 0 &&
+                transition.destinationStateIndex < static_cast<int>(layer.graphStates.size()) &&
+                IsTransitionReadyAtTime(transition, state, layer.graphStateTime))
+            {
+                StartLayerTransition(layer, layer.graphCurrentStateIndex, transition);
+                break;
+            }
+        }
     }
 
     void AnimationComponent::SetCurrentStateIndex(int stateIndex)
@@ -2047,6 +2380,45 @@ namespace PlutoGE::scene
         return true;
     }
 
+    int AnimationComponent::FindLayerIndex(std::string_view layerName) const
+    {
+        for (size_t index = 0; index < m_layers.size(); ++index)
+            if (m_layers[index].name == layerName)
+                return static_cast<int>(index);
+        return -1;
+    }
+
+    bool AnimationComponent::PlayLayer(std::string_view layerName, bool restart)
+    {
+        const int index = FindLayerIndex(layerName);
+        if (index < 0)
+            return false;
+        auto &layer = m_layers[static_cast<size_t>(index)];
+        if (restart)
+            layer.time = 0.0f;
+        layer.playing = layer.enabled && layer.clipValid;
+        m_jointMatricesDirty = true;
+        m_nodeMatricesDirty = true;
+        return layer.playing;
+    }
+
+    bool AnimationComponent::StopLayer(std::string_view layerName)
+    {
+        const int index = FindLayerIndex(layerName);
+        if (index < 0)
+            return false;
+        m_layers[static_cast<size_t>(index)].playing = false;
+        m_jointMatricesDirty = true;
+        m_nodeMatricesDirty = true;
+        return true;
+    }
+
+    float AnimationComponent::GetLayerWeight(std::string_view layerName) const
+    {
+        const int index = FindLayerIndex(layerName);
+        return index >= 0 ? m_layers[static_cast<size_t>(index)].currentWeight : 0.0f;
+    }
+
     const std::vector<glm::mat4> &AnimationComponent::GetJointMatrices(const render::Skeleton &skeleton)
     {
         if (m_jointMatricesDirty || m_jointMatrices.size() != skeleton.joints.size())
@@ -2172,6 +2544,50 @@ namespace PlutoGE::scene
             localTransforms = BlendLocalTransforms(sourceTransforms, destinationTransforms, blend);
         }
 
+        std::vector<glm::mat4> bindTransforms;
+        bindTransforms.reserve(nodes.size());
+        for (const auto &node : nodes)
+            bindTransforms.push_back(node.localBindTransform);
+        for (const auto &layer : m_layers)
+        {
+            if (!layer.enabled || layer.currentWeight <= 0.00001f)
+                continue;
+            auto sampleLayerClip = [&](int clipIndex, float time)
+            {
+                return SampleLocalTransforms(
+                    m_clips, clipIndex, time, nodes.size(),
+                    [&nodes](const render::AnimationChannel &channel) { return ResolveChannelNodeIndex(channel, nodes); },
+                    [&nodes](size_t nodeIndex) { return nodes[nodeIndex].localBindTransform; });
+            };
+            std::vector<glm::mat4> layerTransforms;
+            if (!layer.graphReference.empty() && !layer.graphStates.empty())
+            {
+                if (layer.graphTransitionActive)
+                {
+                    const auto &source = layer.graphStates[static_cast<size_t>(layer.graphTransitionSourceStateIndex)];
+                    const auto &destination = layer.graphStates[static_cast<size_t>(layer.graphTransitionDestinationStateIndex)];
+                    const float blend = layer.graphTransitionDuration > 0.0f
+                                            ? std::clamp(layer.graphTransitionElapsed / layer.graphTransitionDuration, 0.0f, 1.0f)
+                                            : 1.0f;
+                    layerTransforms = BlendLocalTransforms(
+                        sampleLayerClip(source.clipIndex, layer.graphTransitionSourceTime),
+                        sampleLayerClip(destination.clipIndex, layer.graphTransitionDestinationTime), blend);
+                }
+                else
+                {
+                    const auto &state = layer.graphStates[static_cast<size_t>(layer.graphCurrentStateIndex)];
+                    layerTransforms = sampleLayerClip(state.clipIndex, layer.graphStateTime);
+                }
+            }
+            else
+            {
+                layerTransforms = sampleLayerClip(layer.clipIndex, layer.time);
+            }
+            localTransforms = BlendMaskedLocalTransforms(
+                localTransforms, layerTransforms, bindTransforms,
+                ResolveNodeMask(layer.maskId, nodes), layer.currentWeight, layer.blendMode);
+        }
+
         std::vector<uint8_t> evaluated(nodes.size(), 0);
         std::function<glm::mat4(size_t)> evaluateNode = [&](size_t nodeIndex) -> glm::mat4 {
             if (evaluated[nodeIndex])
@@ -2193,6 +2609,88 @@ namespace PlutoGE::scene
         }
 
         m_nodeMatricesDirty = false;
+    }
+
+    std::vector<float> AnimationComponent::ResolveNodeMask(int maskId, const std::vector<render::AnimationNode> &nodes) const
+    {
+        const auto maskIt = std::find_if(m_boneMasks.begin(), m_boneMasks.end(),
+                                         [maskId](const assets::AnimationGraphBoneMask &mask) { return mask.id == maskId; });
+        if (maskId == 0)
+            return std::vector<float>(nodes.size(), 1.0f);
+        if (maskIt == m_boneMasks.end())
+            return std::vector<float>(nodes.size(), 0.0f);
+
+        std::vector<float> weights(nodes.size(), std::clamp(maskIt->defaultWeight, 0.0f, 1.0f));
+        for (const auto &entry : maskIt->entries)
+        {
+            int rootIndex = -1;
+            for (size_t nodeIndex = 0; nodeIndex < nodes.size(); ++nodeIndex)
+            {
+                if (render::GuessHumanoidBone(nodes[nodeIndex].name) == entry.bone)
+                {
+                    rootIndex = static_cast<int>(nodeIndex);
+                    break;
+                }
+            }
+            if (rootIndex < 0)
+                continue;
+            for (int nodeIndex = 0; nodeIndex < static_cast<int>(nodes.size()); ++nodeIndex)
+            {
+                if (nodeIndex == rootIndex || (entry.includeChildren && IsDescendantOf(
+                                                   nodeIndex, rootIndex,
+                                                   [&nodes](int index) { return nodes[static_cast<size_t>(index)].parentNodeIndex; },
+                                                   static_cast<int>(nodes.size()))))
+                    weights[static_cast<size_t>(nodeIndex)] = std::clamp(entry.weight, 0.0f, 1.0f);
+            }
+        }
+        return weights;
+    }
+
+    std::vector<float> AnimationComponent::ResolveJointMask(int maskId, const render::Skeleton &skeleton) const
+    {
+        const auto maskIt = std::find_if(m_boneMasks.begin(), m_boneMasks.end(),
+                                         [maskId](const assets::AnimationGraphBoneMask &mask) { return mask.id == maskId; });
+        if (maskId == 0)
+            return std::vector<float>(skeleton.joints.size(), 1.0f);
+        if (maskIt == m_boneMasks.end())
+            return std::vector<float>(skeleton.joints.size(), 0.0f);
+
+        std::vector<float> weights(skeleton.joints.size(), std::clamp(maskIt->defaultWeight, 0.0f, 1.0f));
+        for (const auto &entry : maskIt->entries)
+        {
+            int rootIndex = -1;
+            for (const auto &mapping : skeleton.humanoidBoneMappings)
+            {
+                if (mapping.bone == entry.bone && mapping.targetJointIndex >= 0 &&
+                    mapping.targetJointIndex < static_cast<int>(skeleton.joints.size()))
+                {
+                    rootIndex = mapping.targetJointIndex;
+                    break;
+                }
+            }
+            if (rootIndex < 0)
+            {
+                for (size_t jointIndex = 0; jointIndex < skeleton.joints.size(); ++jointIndex)
+                {
+                    if (render::GuessHumanoidBone(skeleton.joints[jointIndex].name) == entry.bone)
+                    {
+                        rootIndex = static_cast<int>(jointIndex);
+                        break;
+                    }
+                }
+            }
+            if (rootIndex < 0)
+                continue;
+            for (int jointIndex = 0; jointIndex < static_cast<int>(skeleton.joints.size()); ++jointIndex)
+            {
+                if (jointIndex == rootIndex || (entry.includeChildren && IsDescendantOf(
+                                                     jointIndex, rootIndex,
+                                                     [&skeleton](int index) { return skeleton.joints[static_cast<size_t>(index)].parentJointIndex; },
+                                                     static_cast<int>(skeleton.joints.size()))))
+                    weights[static_cast<size_t>(jointIndex)] = std::clamp(entry.weight, 0.0f, 1.0f);
+            }
+        }
+        return weights;
     }
 
     void AnimationComponent::EnsureRetargetBindingCache(const render::Skeleton &skeleton)
@@ -2349,6 +2847,43 @@ namespace PlutoGE::scene
         else
         {
             localTransforms = sampleClip(m_currentClipIndex, m_time);
+        }
+
+        std::vector<glm::mat4> bindTransforms;
+        bindTransforms.reserve(skeleton.joints.size());
+        for (const auto &joint : skeleton.joints)
+            bindTransforms.push_back(joint.localBindTransform);
+        for (const auto &layer : m_layers)
+        {
+            if (!layer.enabled || layer.currentWeight <= 0.00001f)
+                continue;
+            std::vector<glm::mat4> layerTransforms;
+            if (!layer.graphReference.empty() && !layer.graphStates.empty())
+            {
+                if (layer.graphTransitionActive)
+                {
+                    const auto &source = layer.graphStates[static_cast<size_t>(layer.graphTransitionSourceStateIndex)];
+                    const auto &destination = layer.graphStates[static_cast<size_t>(layer.graphTransitionDestinationStateIndex)];
+                    const float blend = layer.graphTransitionDuration > 0.0f
+                                            ? std::clamp(layer.graphTransitionElapsed / layer.graphTransitionDuration, 0.0f, 1.0f)
+                                            : 1.0f;
+                    layerTransforms = BlendLocalTransforms(
+                        sampleClip(source.clipIndex, layer.graphTransitionSourceTime),
+                        sampleClip(destination.clipIndex, layer.graphTransitionDestinationTime), blend);
+                }
+                else
+                {
+                    const auto &state = layer.graphStates[static_cast<size_t>(layer.graphCurrentStateIndex)];
+                    layerTransforms = sampleClip(state.clipIndex, layer.graphStateTime);
+                }
+            }
+            else
+            {
+                layerTransforms = sampleClip(layer.clipIndex, layer.time);
+            }
+            localTransforms = BlendMaskedLocalTransforms(
+                localTransforms, layerTransforms, bindTransforms,
+                ResolveJointMask(layer.maskId, skeleton), layer.currentWeight, layer.blendMode);
         }
 
         // Skin joint arrays are not required to be topologically sorted. In

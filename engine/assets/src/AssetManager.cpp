@@ -1356,6 +1356,7 @@ namespace PlutoGE::assets
 
         AnimationGraphAsset graph;
         std::unordered_map<int, std::size_t> transitionIndexById;
+        std::unordered_map<int, std::size_t> boneMaskIndexById;
         std::string line;
         while (std::getline(input, line))
         {
@@ -1447,6 +1448,59 @@ namespace PlutoGE::assets
                     .threshold = ParseFloatOr(fields[3], 0.0f),
                 });
             }
+            else if (key == "BoneMask")
+            {
+                const auto fields = SplitFields(value);
+                if (fields.size() < 3)
+                    continue;
+                graph.boneMasks.push_back(AnimationGraphBoneMask{
+                    .id = ParseIntOr(fields[0], 0),
+                    .name = fields[1],
+                    .defaultWeight = std::clamp(ParseFloatOr(fields[2], 0.0f), 0.0f, 1.0f),
+                });
+                boneMaskIndexById[graph.boneMasks.back().id] = graph.boneMasks.size() - 1;
+            }
+            else if (key == "BoneMaskEntry")
+            {
+                const auto fields = SplitFields(value);
+                if (fields.size() < 4)
+                    continue;
+                const auto maskIt = boneMaskIndexById.find(ParseIntOr(fields[0], 0));
+                if (maskIt == boneMaskIndexById.end())
+                    continue;
+                const int bone = std::clamp(ParseIntOr(fields[1], 0), 0,
+                                            static_cast<int>(render::HumanoidBone::Count) - 1);
+                graph.boneMasks[maskIt->second].entries.push_back(AnimationGraphBoneMaskEntry{
+                    .bone = static_cast<render::HumanoidBone>(bone),
+                    .weight = std::clamp(ParseFloatOr(fields[2], 1.0f), 0.0f, 1.0f),
+                    .includeChildren = ParseBoolOr(fields[3], true),
+                });
+            }
+            else if (key == "Layer")
+            {
+                const auto fields = SplitFields(value);
+                if (fields.size() < 17)
+                    continue;
+                graph.layers.push_back(AnimationGraphLayer{
+                    .id = ParseIntOr(fields[0], 0),
+                    .name = fields[1],
+                    .graphReference = fields[16] == "0" ? std::string{} : fields[16],
+                    .clipReference = fields[2],
+                    .clipName = fields[3],
+                    .clipIndex = ParseIntOr(fields[4], 0),
+                    .maskId = ParseIntOr(fields[5], 0),
+                    .blendMode = ParseIntOr(fields[6], 0) == 1 ? AnimationGraphLayerBlendMode::Additive : AnimationGraphLayerBlendMode::Override,
+                    .weight = std::clamp(ParseFloatOr(fields[7], 1.0f), 0.0f, 1.0f),
+                    .weightParameter = fields[8],
+                    .activationParameter = fields[9],
+                    .speed = std::max(0.0f, ParseFloatOr(fields[10], 1.0f)),
+                    .fadeIn = std::max(0.0f, ParseFloatOr(fields[11], 0.08f)),
+                    .fadeOut = std::max(0.0f, ParseFloatOr(fields[12], 0.12f)),
+                    .loop = ParseBoolOr(fields[13], false),
+                    .restartOnActivation = ParseBoolOr(fields[14], true),
+                    .enabled = ParseBoolOr(fields[15], true),
+                });
+            }
         }
 
         if (graph.states.empty())
@@ -1509,7 +1563,7 @@ namespace PlutoGE::assets
             return false;
         }
 
-        output << "AnimationGraphVersion=1\n";
+        output << "AnimationGraphVersion=3\n";
         output << "DefaultStateId=" << graph.defaultStateId << "\n";
         for (const auto &parameter : graph.parameters)
         {
@@ -1547,6 +1601,39 @@ namespace PlutoGE::assets
                        << ToString(condition.mode) << '|'
                        << condition.threshold << "\n";
             }
+        }
+        for (const auto &mask : graph.boneMasks)
+        {
+            output << "BoneMask=" << mask.id << '|'
+                   << mask.name << '|'
+                   << std::clamp(mask.defaultWeight, 0.0f, 1.0f) << "\n";
+            for (const auto &entry : mask.entries)
+            {
+                output << "BoneMaskEntry=" << mask.id << '|'
+                       << static_cast<int>(entry.bone) << '|'
+                       << std::clamp(entry.weight, 0.0f, 1.0f) << '|'
+                       << (entry.includeChildren ? "1" : "0") << "\n";
+            }
+        }
+        for (const auto &layer : graph.layers)
+        {
+            output << "Layer=" << layer.id << '|'
+                   << layer.name << '|'
+                   << layer.clipReference << '|'
+                   << layer.clipName << '|'
+                   << layer.clipIndex << '|'
+                   << layer.maskId << '|'
+                   << (layer.blendMode == AnimationGraphLayerBlendMode::Additive ? 1 : 0) << '|'
+                   << std::clamp(layer.weight, 0.0f, 1.0f) << '|'
+                   << layer.weightParameter << '|'
+                   << layer.activationParameter << '|'
+                   << std::max(0.0f, layer.speed) << '|'
+                   << std::max(0.0f, layer.fadeIn) << '|'
+                   << std::max(0.0f, layer.fadeOut) << '|'
+                   << (layer.loop ? "1" : "0") << '|'
+                   << (layer.restartOnActivation ? "1" : "0") << '|'
+                   << (layer.enabled ? "1" : "0") << '|'
+                   << layer.graphReference << "\n";
         }
 
         if (!output.good())

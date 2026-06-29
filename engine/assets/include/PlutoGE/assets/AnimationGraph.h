@@ -1,5 +1,7 @@
 #pragma once
 
+#include "PlutoGE/render/HumanoidRig.h"
+
 #include <string>
 #include <vector>
 
@@ -64,12 +66,60 @@ namespace PlutoGE::assets
         bool loop = true;
     };
 
+    enum class AnimationGraphLayerBlendMode
+    {
+        Override,
+        Additive,
+    };
+
+    struct AnimationGraphBoneMaskEntry
+    {
+        render::HumanoidBone bone = render::HumanoidBone::Spine;
+        float weight = 1.0f;
+        bool includeChildren = true;
+    };
+
+    // Entries are applied in order. Later entries can refine a parent entry,
+    // which makes soft seams such as Spine=.25, Chest=.75, UpperChest=1 easy.
+    struct AnimationGraphBoneMask
+    {
+        int id = 0;
+        std::string name;
+        float defaultWeight = 0.0f;
+        std::vector<AnimationGraphBoneMaskEntry> entries;
+    };
+
+    struct AnimationGraphLayer
+    {
+        int id = 0;
+        std::string name;
+        // When set, this layer evaluates the referenced graph's state machine.
+        // Otherwise it evaluates the clip fields below as a simple layer.
+        std::string graphReference;
+        std::string clipReference;
+        std::string clipName;
+        int clipIndex = 0;
+        int maskId = 0;
+        AnimationGraphLayerBlendMode blendMode = AnimationGraphLayerBlendMode::Override;
+        float weight = 1.0f;
+        std::string weightParameter;
+        std::string activationParameter;
+        float speed = 1.0f;
+        float fadeIn = 0.08f;
+        float fadeOut = 0.12f;
+        bool loop = false;
+        bool restartOnActivation = true;
+        bool enabled = true;
+    };
+
     struct AnimationGraphAsset
     {
         int defaultStateId = 0;
         std::vector<AnimationGraphState> states;
         std::vector<AnimationGraphTransition> transitions;
         std::vector<AnimationGraphParameter> parameters;
+        std::vector<AnimationGraphBoneMask> boneMasks;
+        std::vector<AnimationGraphLayer> layers;
     };
 
     AnimationGraphAsset CreateDefaultAnimationGraphAsset();

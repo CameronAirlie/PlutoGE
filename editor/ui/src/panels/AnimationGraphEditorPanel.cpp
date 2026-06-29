@@ -62,6 +62,27 @@ namespace PlutoGE::ui
             return options;
         }
 
+        std::vector<ClipAssetOption> CollectAnimationGraphAssetOptions(const assets::Project *project,
+                                                                        std::string_view excludedReference)
+        {
+            std::vector<ClipAssetOption> options;
+            if (!project)
+                return options;
+            for (const auto &asset : project->GetManifest().assetEntries)
+            {
+                if (asset.type != assets::ProjectAssetType::AnimationGraph || asset.reference == excludedReference)
+                    continue;
+                std::string displayName = asset.reference;
+                if (StartsWith(displayName, assets::Project::kProjectAssetScheme))
+                    displayName.erase(0, assets::Project::kProjectAssetScheme.size());
+                options.push_back({.reference = asset.reference, .displayName = std::move(displayName)});
+            }
+            std::sort(options.begin(), options.end(),
+                      [](const ClipAssetOption &left, const ClipAssetOption &right)
+                      { return left.displayName < right.displayName; });
+            return options;
+        }
+
         std::string ClipNameFromReference(const std::string &reference)
         {
             if (reference.empty())
@@ -147,6 +168,29 @@ namespace PlutoGE::ui
                 id = std::max(id, parameter.id + 1);
             }
             return id;
+        }
+
+        int NextBoneMaskId(const assets::AnimationGraphAsset &graph)
+        {
+            int id = 1;
+            for (const auto &mask : graph.boneMasks)
+                id = std::max(id, mask.id + 1);
+            return id;
+        }
+
+        int NextLayerId(const assets::AnimationGraphAsset &graph)
+        {
+            int id = 1;
+            for (const auto &layer : graph.layers)
+                id = std::max(id, layer.id + 1);
+            return id;
+        }
+
+        assets::AnimationGraphBoneMask *FindBoneMask(assets::AnimationGraphAsset &graph, int id)
+        {
+            const auto it = std::find_if(graph.boneMasks.begin(), graph.boneMasks.end(),
+                                         [id](const assets::AnimationGraphBoneMask &mask) { return mask.id == id; });
+            return it == graph.boneMasks.end() ? nullptr : &*it;
         }
 
         std::size_t StateIndexForId(const assets::AnimationGraphAsset &graph, int id)
@@ -823,7 +867,19 @@ namespace PlutoGE::ui
             strncpy_s(nameBuffer, parameter.name.c_str(), _TRUNCATE);
             if (ImGui::InputText("Name", nameBuffer, sizeof(nameBuffer)))
             {
+                const std::string oldName = parameter.name;
                 parameter.name = nameBuffer;
+                for (auto &transition : m_graph.transitions)
+                    for (auto &condition : transition.conditions)
+                        if (condition.parameterName == oldName)
+                            condition.parameterName = parameter.name;
+                for (auto &layer : m_graph.layers)
+                {
+                    if (layer.activationParameter == oldName)
+                        layer.activationParameter = parameter.name;
+                    if (layer.weightParameter == oldName)
+                        layer.weightParameter = parameter.name;
+                }
                 m_dirty = true;
             }
             int type = static_cast<int>(parameter.type);
@@ -865,6 +921,307 @@ namespace PlutoGE::ui
                                                            }),
                                             transition.conditions.end());
             }
+            for (auto &layer : m_graph.layers)
+            {
+                if (layer.activationParameter == removedName)
+                    layer.activationParameter.clear();
+                if (layer.weightParameter == removedName)
+                    layer.weightParameter.clear();
+            }
+            m_dirty = true;
+        }
+
+
+        ImGui::SeparatorText("Layered Animation");
+        ImGui::TextWrapped("Stack reusable animation graphs or clips, then restrict each result with a bone mask. Later layers can partially or completely override earlier layers.");
+        const auto layerClipOptions = CollectClipAssetOptions(editorShell.GetProject());
+        const auto layerGraphOptions = CollectAnimationGraphAssetOptions(editorShell.GetProject(), reference);
+        if (ImGui::Button("Add Graph Layer"))
+        {
+            m_graph.layers.push_back(assets::AnimationGraphLayer{
+                .id = NextLayerId(m_graph),
+                .name = "Graph Layer " + std::to_string(m_graph.layers.size() + 1),
+                .graphReference = layerGraphOptions.empty() ? std::string{} : layerGraphOptions.front().reference,
+            });
+            m_dirty = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Add Upper Body Action Preset"))
+        {
+            const int maskId = NextBoneMaskId(m_graph);
+            assets::AnimationGraphBoneMask mask{
+                .id = maskId,
+                .name = "Upper Body",
+                .defaultWeight = 0.0f,
+            };
+            mask.entries = {
+                {.bone = render::HumanoidBone::Spine, .weight = 0.25f, .includeChildren = true},
+                {.bone = render::HumanoidBone::Chest, .weight = 0.75f, .includeChildren = true},
+                {.bone = render::HumanoidBone::UpperChest, .weight = 1.0f, .includeChildren = true},
+                {.bone = render::HumanoidBone::LeftShoulder, .weight = 1.0f, .includeChildren = true},
+                {.bone = render::HumanoidBone::RightShoulder, .weight = 1.0f, .includeChildren = true},
+            };
+            m_graph.boneMasks.push_back(std::move(mask));
+
+            const bool hasShootParameter = std::any_of(m_graph.parameters.begin(), m_graph.parameters.end(),
+                                                        [](const assets::AnimationGraphParameter &parameter) { return parameter.name == "Shoot"; });
+            if (!hasShootParameter)
+            {
+                m_graph.parameters.push_back(assets::AnimationGraphParameter{
+                    .id = NextParameterId(m_graph),
+                    .name = "Shoot",
+                    .type = assets::AnimationGraphParameterType::Trigger,
+                });
+            }
+            m_graph.layers.push_back(assets::AnimationGraphLayer{
+                .id = NextLayerId(m_graph),
+                .name = "Upper Body Action",
+                .maskId = maskId,
+                .activationParameter = "Shoot",
+            });
+            m_dirty = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Add Empty Layer"))
+        {
+            m_graph.layers.push_back(assets::AnimationGraphLayer{
+                .id = NextLayerId(m_graph),
+                .name = "Layer " + std::to_string(m_graph.layers.size() + 1),
+            });
+            m_dirty = true;
+        }
+
+        int layerToRemove = -1;
+        for (int layerIndex = 0; layerIndex < static_cast<int>(m_graph.layers.size()); ++layerIndex)
+        {
+            auto &layer = m_graph.layers[static_cast<size_t>(layerIndex)];
+            ImGui::PushID(10000 + layerIndex);
+            const std::string title = layer.name.empty() ? "Unnamed Layer" : layer.name;
+            if (ImGui::TreeNode(title.c_str()))
+            {
+                char nameBuffer[128]{};
+                strncpy_s(nameBuffer, layer.name.c_str(), _TRUNCATE);
+                if (ImGui::InputText("Name", nameBuffer, sizeof(nameBuffer)))
+                {
+                    layer.name = nameBuffer;
+                    m_dirty = true;
+                }
+
+                std::string graphPreview = layer.graphReference.empty() ? "None (use clip)" : layer.graphReference;
+                for (const auto &option : layerGraphOptions)
+                    if (option.reference == layer.graphReference)
+                        graphPreview = option.displayName;
+                if (ImGui::BeginCombo("Animation Graph", graphPreview.c_str()))
+                {
+                    if (ImGui::Selectable("None (use clip)", layer.graphReference.empty()))
+                    {
+                        layer.graphReference.clear();
+                        m_dirty = true;
+                    }
+                    for (const auto &option : layerGraphOptions)
+                    {
+                        const bool selected = option.reference == layer.graphReference;
+                        if (ImGui::Selectable(option.displayName.c_str(), selected))
+                        {
+                            layer.graphReference = option.reference;
+                            m_dirty = true;
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+
+                if (layer.graphReference.empty())
+                {
+                    std::string clipPreview = layer.clipReference.empty() ? "None" : layer.clipReference;
+                    for (const auto &option : layerClipOptions)
+                        if (option.reference == layer.clipReference)
+                            clipPreview = option.displayName;
+                    if (ImGui::BeginCombo("Clip Asset", clipPreview.c_str()))
+                    {
+                        if (ImGui::Selectable("None", layer.clipReference.empty()))
+                        {
+                            layer.clipReference.clear();
+                            m_dirty = true;
+                        }
+                        for (const auto &option : layerClipOptions)
+                        {
+                            const bool selected = option.reference == layer.clipReference;
+                            if (ImGui::Selectable(option.displayName.c_str(), selected))
+                            {
+                                layer.clipReference = option.reference;
+                                layer.clipName = ClipNameFromReference(option.reference);
+                                m_dirty = true;
+                            }
+                        }
+                        ImGui::EndCombo();
+                    }
+                    char clipNameBuffer[128]{};
+                    strncpy_s(clipNameBuffer, layer.clipName.c_str(), _TRUNCATE);
+                    if (ImGui::InputText("Clip Name", clipNameBuffer, sizeof(clipNameBuffer)))
+                    {
+                        layer.clipName = clipNameBuffer;
+                        m_dirty = true;
+                    }
+                    if (ImGui::DragInt("Clip Index", &layer.clipIndex, 0.1f, 0, 999))
+                        m_dirty = true;
+                }
+
+                const auto *selectedMask = FindBoneMask(m_graph, layer.maskId);
+                const char *maskPreview = selectedMask ? selectedMask->name.c_str() : "Full Body";
+                if (ImGui::BeginCombo("Bone Mask", maskPreview))
+                {
+                    if (ImGui::Selectable("Full Body", layer.maskId == 0))
+                    {
+                        layer.maskId = 0;
+                        m_dirty = true;
+                    }
+                    for (const auto &mask : m_graph.boneMasks)
+                    {
+                        if (ImGui::Selectable(mask.name.c_str(), layer.maskId == mask.id))
+                        {
+                            layer.maskId = mask.id;
+                            m_dirty = true;
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+
+                int blendMode = static_cast<int>(layer.blendMode);
+                constexpr const char *blendModes[] = {"Override", "Additive"};
+                if (ImGui::Combo("Blend Mode", &blendMode, blendModes, IM_ARRAYSIZE(blendModes)))
+                {
+                    layer.blendMode = static_cast<assets::AnimationGraphLayerBlendMode>(blendMode);
+                    m_dirty = true;
+                }
+                m_dirty |= ImGui::SliderFloat("Weight", &layer.weight, 0.0f, 1.0f);
+                m_dirty |= ImGui::DragFloat("Speed", &layer.speed, 0.01f, 0.0f, 10.0f);
+                m_dirty |= ImGui::DragFloat("Fade In", &layer.fadeIn, 0.01f, 0.0f, 5.0f);
+                m_dirty |= ImGui::DragFloat("Fade Out", &layer.fadeOut, 0.01f, 0.0f, 5.0f);
+                if (layer.graphReference.empty())
+                    m_dirty |= ImGui::Checkbox("Loop", &layer.loop);
+                m_dirty |= ImGui::Checkbox("Restart on Activation", &layer.restartOnActivation);
+                m_dirty |= ImGui::Checkbox("Enabled", &layer.enabled);
+
+                const char *activationPreview = layer.activationParameter.empty() ? "Always" : layer.activationParameter.c_str();
+                if (ImGui::BeginCombo("Activation", activationPreview))
+                {
+                    if (ImGui::Selectable("Always", layer.activationParameter.empty()))
+                    {
+                        layer.activationParameter.clear();
+                        m_dirty = true;
+                    }
+                    for (const auto &parameter : m_graph.parameters)
+                    {
+                        if (parameter.type != assets::AnimationGraphParameterType::Bool &&
+                            parameter.type != assets::AnimationGraphParameterType::Trigger)
+                            continue;
+                        if (ImGui::Selectable(parameter.name.c_str(), layer.activationParameter == parameter.name))
+                        {
+                            layer.activationParameter = parameter.name;
+                            m_dirty = true;
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+
+                const char *weightPreview = layer.weightParameter.empty() ? "None" : layer.weightParameter.c_str();
+                if (ImGui::BeginCombo("Weight Parameter", weightPreview))
+                {
+                    if (ImGui::Selectable("None", layer.weightParameter.empty()))
+                    {
+                        layer.weightParameter.clear();
+                        m_dirty = true;
+                    }
+                    for (const auto &parameter : m_graph.parameters)
+                    {
+                        if (parameter.type != assets::AnimationGraphParameterType::Float)
+                            continue;
+                        if (ImGui::Selectable(parameter.name.c_str(), layer.weightParameter == parameter.name))
+                        {
+                            layer.weightParameter = parameter.name;
+                            m_dirty = true;
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+                if (ImGui::Button("Delete Layer"))
+                    layerToRemove = layerIndex;
+                ImGui::TreePop();
+            }
+            ImGui::PopID();
+        }
+        if (layerToRemove >= 0)
+        {
+            m_graph.layers.erase(m_graph.layers.begin() + layerToRemove);
+            m_dirty = true;
+        }
+
+        ImGui::SeparatorText("Bone Masks");
+        if (ImGui::Button("Add Bone Mask"))
+        {
+            m_graph.boneMasks.push_back(assets::AnimationGraphBoneMask{
+                .id = NextBoneMaskId(m_graph),
+                .name = "Bone Mask " + std::to_string(m_graph.boneMasks.size() + 1),
+            });
+            m_dirty = true;
+        }
+        int maskToRemove = -1;
+        for (int maskIndex = 0; maskIndex < static_cast<int>(m_graph.boneMasks.size()); ++maskIndex)
+        {
+            auto &mask = m_graph.boneMasks[static_cast<size_t>(maskIndex)];
+            ImGui::PushID(20000 + maskIndex);
+            if (ImGui::TreeNode(mask.name.c_str()))
+            {
+                char nameBuffer[128]{};
+                strncpy_s(nameBuffer, mask.name.c_str(), _TRUNCATE);
+                if (ImGui::InputText("Name", nameBuffer, sizeof(nameBuffer)))
+                {
+                    mask.name = nameBuffer;
+                    m_dirty = true;
+                }
+                m_dirty |= ImGui::SliderFloat("Default Weight", &mask.defaultWeight, 0.0f, 1.0f);
+                if (ImGui::Button("Add Bone"))
+                {
+                    mask.entries.push_back({});
+                    m_dirty = true;
+                }
+                int entryToRemove = -1;
+                for (int entryIndex = 0; entryIndex < static_cast<int>(mask.entries.size()); ++entryIndex)
+                {
+                    auto &entry = mask.entries[static_cast<size_t>(entryIndex)];
+                    ImGui::PushID(entryIndex);
+                    int bone = static_cast<int>(entry.bone);
+                    if (ImGui::Combo("Bone", &bone, render::kHumanoidBoneNames.data(), static_cast<int>(render::kHumanoidBoneCount)))
+                    {
+                        entry.bone = static_cast<render::HumanoidBone>(bone);
+                        m_dirty = true;
+                    }
+                    m_dirty |= ImGui::SliderFloat("Bone Weight", &entry.weight, 0.0f, 1.0f);
+                    m_dirty |= ImGui::Checkbox("Include Children", &entry.includeChildren);
+                    ImGui::SameLine();
+                    if (ImGui::Button("Remove Bone"))
+                        entryToRemove = entryIndex;
+                    ImGui::Separator();
+                    ImGui::PopID();
+                }
+                if (entryToRemove >= 0)
+                {
+                    mask.entries.erase(mask.entries.begin() + entryToRemove);
+                    m_dirty = true;
+                }
+                if (ImGui::Button("Delete Mask"))
+                    maskToRemove = maskIndex;
+                ImGui::TreePop();
+            }
+            ImGui::PopID();
+        }
+        if (maskToRemove >= 0)
+        {
+            const int removedId = m_graph.boneMasks[static_cast<size_t>(maskToRemove)].id;
+            m_graph.boneMasks.erase(m_graph.boneMasks.begin() + maskToRemove);
+            for (auto &layer : m_graph.layers)
+                if (layer.maskId == removedId)
+                    layer.maskId = 0;
             m_dirty = true;
         }
 

@@ -82,6 +82,42 @@ namespace PlutoGE::scene
             std::vector<AnimationTransition> transitions;
         };
 
+        struct AnimationLayer
+        {
+            std::string name;
+            std::string graphReference;
+            int clipIndex = 0;
+            int maskId = 0;
+            assets::AnimationGraphLayerBlendMode blendMode = assets::AnimationGraphLayerBlendMode::Override;
+            float weight = 1.0f;
+            std::string weightParameter;
+            std::string activationParameter;
+            float speed = 1.0f;
+            float fadeIn = 0.08f;
+            float fadeOut = 0.12f;
+            bool loop = false;
+            bool restartOnActivation = true;
+            bool enabled = true;
+            bool clipValid = false;
+
+            std::vector<AnimationState> graphStates;
+            int graphDefaultStateIndex = 0;
+            int graphCurrentStateIndex = 0;
+            float graphStateTime = 0.0f;
+            bool graphTransitionActive = false;
+            int graphTransitionSourceStateIndex = -1;
+            int graphTransitionDestinationStateIndex = -1;
+            float graphTransitionSourceTime = 0.0f;
+            float graphTransitionDestinationTime = 0.0f;
+            float graphTransitionElapsed = 0.0f;
+            float graphTransitionDuration = 0.0f;
+
+            float time = 0.0f;
+            float currentWeight = 0.0f;
+            bool playing = false;
+            bool wasActive = false;
+        };
+
         AnimationComponent() = default;
         ~AnimationComponent() override = default;
 
@@ -148,6 +184,11 @@ namespace PlutoGE::scene
         void SetInt(std::string_view parameterName, int value);
         int GetInt(std::string_view parameterName) const;
         bool PlayState(std::string_view stateName);
+        int FindLayerIndex(std::string_view layerName) const;
+        bool PlayLayer(std::string_view layerName, bool restart = true);
+        bool StopLayer(std::string_view layerName);
+        float GetLayerWeight(std::string_view layerName) const;
+        const std::vector<AnimationLayer> &GetLayers() const { return m_layers; }
 
     private:
         struct TransitionPlayback
@@ -168,7 +209,11 @@ namespace PlutoGE::scene
         void ApplyAnimationGraphAsset(const assets::AnimationGraphAsset &graph);
         void ResetGraphPlayback();
         void UpdateGraph(float deltaTime);
+        void UpdateLayers(float deltaTime);
+        void UpdateLayerGraph(AnimationLayer &layer, float deltaTime);
+        void StartLayerTransition(AnimationLayer &layer, int sourceStateIndex, const AnimationTransition &transition);
         bool IsTransitionReady(const AnimationTransition &transition, const AnimationState &state) const;
+        bool IsTransitionReadyAtTime(const AnimationTransition &transition, const AnimationState &state, float stateTime) const;
         void ConsumeTransitionTriggers(const AnimationTransition &transition);
         void StartTransition(int sourceStateIndex, const AnimationTransition &transition);
         float AdvanceClipTime(int clipIndex, float time, float deltaTime, float speed, bool looping, bool *finished = nullptr) const;
@@ -177,6 +222,8 @@ namespace PlutoGE::scene
         void EvaluateJointMatrices(const render::Skeleton &skeleton);
         void EvaluateNodeMatrices(const std::vector<render::AnimationNode> &nodes);
         void EnsureRetargetBindingCache(const render::Skeleton &skeleton);
+        std::vector<float> ResolveJointMask(int maskId, const render::Skeleton &skeleton) const;
+        std::vector<float> ResolveNodeMask(int maskId, const std::vector<render::AnimationNode> &nodes) const;
 
         std::vector<render::AnimationClip> m_clips;
         std::vector<glm::mat4> m_jointMatrices;
@@ -184,6 +231,9 @@ namespace PlutoGE::scene
         std::string m_sourceAnimationPath;
         std::vector<AnimationState> m_states;
         std::vector<AnimationParameter> m_parameters;
+        std::vector<assets::AnimationGraphBoneMask> m_boneMasks;
+        std::vector<AnimationLayer> m_layers;
+        std::vector<size_t> m_layerTriggersToReset;
         std::unordered_map<std::string, size_t> m_parameterLookup;
         const render::Skeleton *m_retargetBindingSkeleton = nullptr;
         std::size_t m_retargetBindingSignature = 0;

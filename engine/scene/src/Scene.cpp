@@ -899,6 +899,20 @@ namespace PlutoGE::scene
         FlushPendingDestroyEntities();
     }
 
+    bool Scene::ContainsEntity(const Entity *entity) const
+    {
+        if (!entity)
+        {
+            return false;
+        }
+
+        return std::any_of(m_entityStorage.begin(), m_entityStorage.end(),
+                           [entity](const std::unique_ptr<Entity> &ownedEntity)
+                           {
+                               return ownedEntity.get() == entity;
+                           });
+    }
+
     void Scene::SubmitRenderCommands()
     {
         for (auto *meshComponent : m_meshComponents)

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <string>
 #include <vector>
 
 namespace PlutoGE::platform
@@ -11,14 +12,25 @@ namespace PlutoGE::ui
 {
     class Panel;
 
+    struct PanelUpdateTiming
+    {
+        std::string name;
+        float updateMs = 0.0f;
+        bool open = false;
+        bool visible = false;
+    };
+
     struct PanelManagerTimingStats
     {
+        float beginPanelUpdateMs = 0.0f;
+        float panelUpdatesTotalMs = 0.0f;
         float endPanelUpdateTotalMs = 0.0f;
         float imguiRenderMs = 0.0f;
         float platformWindowsUpdateMs = 0.0f;
         float platformWindowsRenderMs = 0.0f;
         float contextRestoreMs = 0.0f;
         int platformViewportCount = 1;
+        std::vector<PanelUpdateTiming> panelUpdates;
     };
 
     class PanelManager

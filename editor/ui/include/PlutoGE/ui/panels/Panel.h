@@ -22,6 +22,7 @@ namespace PlutoGE::ui
         void EndPanel();
         void Update();
         bool IsOpen() const { return m_isOpen; }
+        const std::string &GetName() const { return m_config.name; }
         void SetOpen(bool open) { m_isOpen = open; }
         bool WasVisibleLastFrame() const { return m_wasVisibleLastFrame; }
         void SetInteractionEnabled(bool enabled) { m_isInteractionEnabled = enabled; }

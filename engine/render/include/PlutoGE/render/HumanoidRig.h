@@ -83,6 +83,27 @@ namespace PlutoGE::render
                 normalized.push_back(static_cast<char>(std::tolower(character)));
             }
         }
+
+        // DCCs and character generators commonly wrap the useful bone name
+        // in a stable rig prefix. Punctuation has already been removed above,
+        // so strip only well-known wrappers rather than doing fuzzy substring
+        // matches that could confuse left/right or parent/child bones.
+        constexpr std::array<std::string_view, 6> rigPrefixes = {
+            "mixamorig", "ccbase", "def", "org", "mch", "armature"};
+        bool strippedPrefix = true;
+        while (strippedPrefix)
+        {
+            strippedPrefix = false;
+            for (const auto prefix : rigPrefixes)
+            {
+                if (normalized.size() > prefix.size() && normalized.rfind(prefix, 0) == 0)
+                {
+                    normalized.erase(0, prefix.size());
+                    strippedPrefix = true;
+                    break;
+                }
+            }
+        }
         return normalized;
     }
 
@@ -103,23 +124,23 @@ namespace PlutoGE::render
         if (IsOneOf(name, {"spine", "spine01", "bip01spine"})) return HumanoidBone::Spine;
         if (IsOneOf(name, {"chest", "spine1", "spine02", "bip01spine1"})) return HumanoidBone::Chest;
         if (IsOneOf(name, {"upperchest", "spine2", "spine03", "bip01spine2"})) return HumanoidBone::UpperChest;
-        if (IsOneOf(name, {"neck", "neck1", "bip01neck"})) return HumanoidBone::Neck;
+        if (IsOneOf(name, {"neck", "neck1", "neck01", "bip01neck"})) return HumanoidBone::Neck;
         if (IsOneOf(name, {"head", "bip01head"})) return HumanoidBone::Head;
 
-        if (IsOneOf(name, {"leftshoulder", "claviclel", "lclavicle", "bip01lclavicle"})) return HumanoidBone::LeftShoulder;
+        if (IsOneOf(name, {"leftshoulder", "claviclel", "lclavicle", "lshoulder", "bip01lclavicle"})) return HumanoidBone::LeftShoulder;
         if (IsOneOf(name, {"leftarm", "leftupperarm", "upperarml", "lupperarm", "bip01lupperarm"})) return HumanoidBone::LeftUpperArm;
         if (IsOneOf(name, {"leftforearm", "leftlowerarm", "lowerarml", "lforearm", "bip01lforearm"})) return HumanoidBone::LeftLowerArm;
         if (IsOneOf(name, {"lefthand", "handl", "lhand", "bip01lhand"})) return HumanoidBone::LeftHand;
-        if (IsOneOf(name, {"rightshoulder", "clavicler", "rclavicle", "bip01rclavicle"})) return HumanoidBone::RightShoulder;
+        if (IsOneOf(name, {"rightshoulder", "clavicler", "rclavicle", "rshoulder", "bip01rclavicle"})) return HumanoidBone::RightShoulder;
         if (IsOneOf(name, {"rightarm", "rightupperarm", "upperarmr", "rupperarm", "bip01rupperarm"})) return HumanoidBone::RightUpperArm;
         if (IsOneOf(name, {"rightforearm", "rightlowerarm", "lowerarmr", "rforearm", "bip01rforearm"})) return HumanoidBone::RightLowerArm;
         if (IsOneOf(name, {"righthand", "handr", "rhand", "bip01rhand"})) return HumanoidBone::RightHand;
 
-        if (IsOneOf(name, {"leftupleg", "leftupperleg", "thighl", "lthigh", "bip01lthigh"})) return HumanoidBone::LeftUpperLeg;
+        if (IsOneOf(name, {"leftupleg", "leftupperleg", "thighl", "lthigh", "lupperleg", "bip01lthigh"})) return HumanoidBone::LeftUpperLeg;
         if (IsOneOf(name, {"leftleg", "leftlowerleg", "calfl", "lcalf", "leftshin", "bip01lcalf"})) return HumanoidBone::LeftLowerLeg;
         if (IsOneOf(name, {"leftfoot", "footl", "lfoot", "bip01lfoot"})) return HumanoidBone::LeftFoot;
         if (IsOneOf(name, {"lefttoebase", "lefttoes", "balll", "ltoe", "bip01ltoe0"})) return HumanoidBone::LeftToes;
-        if (IsOneOf(name, {"rightupleg", "rightupperleg", "thighr", "rthigh", "bip01rthigh"})) return HumanoidBone::RightUpperLeg;
+        if (IsOneOf(name, {"rightupleg", "rightupperleg", "thighr", "rthigh", "rupperleg", "bip01rthigh"})) return HumanoidBone::RightUpperLeg;
         if (IsOneOf(name, {"rightleg", "rightlowerleg", "calfr", "rcalf", "rightshin", "bip01rcalf"})) return HumanoidBone::RightLowerLeg;
         if (IsOneOf(name, {"rightfoot", "footr", "rfoot", "bip01rfoot"})) return HumanoidBone::RightFoot;
         if (IsOneOf(name, {"righttoebase", "righttoes", "ballr", "rtoe", "bip01rtoe0"})) return HumanoidBone::RightToes;

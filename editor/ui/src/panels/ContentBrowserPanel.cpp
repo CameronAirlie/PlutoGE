@@ -1127,15 +1127,52 @@ namespace PlutoGE::ui
         ImGui::Separator();
 
         const auto &assets = project->GetManifest().assetEntries;
-        ImGui::BeginChild("Assets", ImVec2(0.0f, -ImGui::GetFrameHeightWithSpacing() * 3.0f), true);
-        for (int index = 0; index < static_cast<int>(assets.size()); ++index)
+        const std::string_view filter(m_filterBuffer.data());
+        bool registryChanged = m_cachedProject != project || m_cachedAssetReferences.size() != assets.size();
+        if (!registryChanged)
         {
-            const auto &asset = assets[static_cast<std::size_t>(index)];
-            const std::string displayName = std::string("[") + std::string(assets::Project::GetAssetTypeName(asset.type)) + "] " + DisplayAssetReference(asset.reference);
-            if (!ContainsInsensitive(displayName, m_filterBuffer.data()))
+            for (std::size_t index = 0; index < assets.size(); ++index)
             {
-                continue;
+                if (m_cachedAssetReferences[index] != assets[index].reference)
+                {
+                    registryChanged = true;
+                    break;
+                }
             }
+        }
+
+        if (registryChanged || m_cachedFilter != filter)
+        {
+            m_cachedProject = project;
+            m_cachedFilter = filter;
+            m_cachedAssetReferences.clear();
+            m_filteredAssetIndices.clear();
+            m_filteredAssetDisplayNames.clear();
+            m_cachedAssetReferences.reserve(assets.size());
+            m_filteredAssetIndices.reserve(assets.size());
+            m_filteredAssetDisplayNames.reserve(assets.size());
+
+            for (int index = 0; index < static_cast<int>(assets.size()); ++index)
+            {
+                const auto &asset = assets[static_cast<std::size_t>(index)];
+                m_cachedAssetReferences.push_back(asset.reference);
+                std::string displayName = std::string("[") + std::string(assets::Project::GetAssetTypeName(asset.type)) + "] " + DisplayAssetReference(asset.reference);
+                if (ContainsInsensitive(displayName, filter))
+                {
+                    m_filteredAssetIndices.push_back(index);
+                    m_filteredAssetDisplayNames.push_back(std::move(displayName));
+                }
+            }
+            m_hasExpandedMesh = false;
+        }
+
+        ImGui::BeginChild("Assets", ImVec2(0.0f, -ImGui::GetFrameHeightWithSpacing() * 3.0f), true);
+        bool hasExpandedMesh = false;
+        auto renderAssetRow = [&](int filteredIndex)
+        {
+            const int index = m_filteredAssetIndices[static_cast<std::size_t>(filteredIndex)];
+            const auto &asset = assets[static_cast<std::size_t>(index)];
+            const auto &displayName = m_filteredAssetDisplayNames[static_cast<std::size_t>(filteredIndex)];
 
             const bool selected = m_selectedAssetIndex == index;
             const bool canExpandMesh = asset.type == assets::ProjectAssetType::Mesh &&
@@ -1150,6 +1187,7 @@ namespace PlutoGE::ui
                                                  ImGuiTreeNodeFlags_SpanAvailWidth |
                                                  (selected ? ImGuiTreeNodeFlags_Selected : 0);
                 treeOpen = ImGui::TreeNodeEx("AssetTreeNode", flags, "%s", displayName.c_str());
+                hasExpandedMesh = hasExpandedMesh || treeOpen;
                 rowActivated = ImGui::IsItemClicked();
             }
             else
@@ -1278,7 +1316,28 @@ namespace PlutoGE::ui
                 ImGui::TreePop();
             }
             ImGui::PopID();
+        };
+
+        if (m_hasExpandedMesh)
+        {
+            for (int filteredIndex = 0; filteredIndex < static_cast<int>(m_filteredAssetIndices.size()); ++filteredIndex)
+            {
+                renderAssetRow(filteredIndex);
+            }
         }
+        else
+        {
+            ImGuiListClipper clipper;
+            clipper.Begin(static_cast<int>(m_filteredAssetIndices.size()));
+            while (clipper.Step())
+            {
+                for (int filteredIndex = clipper.DisplayStart; filteredIndex < clipper.DisplayEnd; ++filteredIndex)
+                {
+                    renderAssetRow(filteredIndex);
+                }
+            }
+        }
+        m_hasExpandedMesh = hasExpandedMesh;
         ImGui::EndChild();
 
         if (m_selectedAssetIndex >= 0 && m_selectedAssetIndex < static_cast<int>(assets.size()))

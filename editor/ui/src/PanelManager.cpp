@@ -229,10 +229,23 @@ namespace PlutoGE::ui
 
     void PanelManager::UpdatePanels()
     {
+        std::vector<PanelUpdateTiming> completedTimings;
+        completedTimings.reserve(m_panels.size());
+        float totalMs = 0.0f;
         for (auto panel : m_panels)
         {
+            const auto panelStart = std::chrono::high_resolution_clock::now();
             panel->Update();
+            const auto panelEnd = std::chrono::high_resolution_clock::now();
+            const float updateMs = DurationMs(panelStart, panelEnd);
+            totalMs += updateMs;
+            completedTimings.push_back({panel->GetName(), updateMs, panel->IsOpen(), panel->WasVisibleLastFrame()});
         }
+
+        // Publish only after every panel has finished. The profiler panel reads the
+        // previous completed frame while this frame's measurements are collected.
+        m_timingStats.panelUpdatesTotalMs = totalMs;
+        m_timingStats.panelUpdates = std::move(completedTimings);
     }
 
     void PanelManager::ShutdownPanels()
@@ -247,6 +260,7 @@ namespace PlutoGE::ui
 
     void PanelManager::BeginPanelUpdate()
     {
+        const auto beginPanelUpdateStart = std::chrono::high_resolution_clock::now();
         auto &io = ImGui::GetIO();
         const bool suppressImguiMouse = m_window && m_window->IsCursorLocked();
         if (suppressImguiMouse)
@@ -276,6 +290,7 @@ namespace PlutoGE::ui
         ImGui::NewFrame();
         ImGuizmo::BeginFrame();
         ImGui::DockSpaceOverViewport(ImGui::GetMainViewport()->ID);
+        m_timingStats.beginPanelUpdateMs = DurationMs(beginPanelUpdateStart, std::chrono::high_resolution_clock::now());
     }
 
     void PanelManager::EndPanelUpdate()

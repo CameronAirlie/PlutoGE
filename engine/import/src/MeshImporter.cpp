@@ -175,7 +175,7 @@ namespace PlutoGE::assetimport
         };
 
         constexpr uint32_t kCookedMeshCacheMagic = 0x434d4750; // PGMC
-        constexpr uint32_t kCookedMeshCacheVersion = 23;
+        constexpr uint32_t kCookedMeshCacheVersion = 26;
 
         bool ReadBooleanEnvironmentFlag(const char *name, bool defaultValue)
         {
@@ -581,11 +581,17 @@ namespace PlutoGE::assetimport
             {
                 WritePod(output, channel.jointIndex);
                 WritePod(output, channel.nodeIndex);
+                WritePod(output, channel.sourceParentNodeIndex);
                 WriteString(output, channel.targetName);
                 WriteBool(output, channel.hasSourceLocalBindTransform);
                 if (channel.hasSourceLocalBindTransform)
                 {
                     WriteMat4(output, channel.sourceLocalBindTransform);
+                }
+                WriteBool(output, channel.hasSourceGlobalBindTransform);
+                if (channel.hasSourceGlobalBindTransform)
+                {
+                    WriteMat4(output, channel.sourceGlobalBindTransform);
                 }
                 WritePod(output, static_cast<uint32_t>(channel.path));
                 WritePod(output, static_cast<uint32_t>(channel.interpolation));
@@ -607,11 +613,17 @@ namespace PlutoGE::assetimport
                 render::AnimationChannel channel;
                 channel.jointIndex = ReadPod<int>(input);
                 channel.nodeIndex = ReadPod<int>(input);
+                channel.sourceParentNodeIndex = ReadPod<int>(input);
                 channel.targetName = ReadString(input);
                 channel.hasSourceLocalBindTransform = ReadBool(input);
                 if (channel.hasSourceLocalBindTransform)
                 {
                     channel.sourceLocalBindTransform = ReadMat4(input);
+                }
+                channel.hasSourceGlobalBindTransform = ReadBool(input);
+                if (channel.hasSourceGlobalBindTransform)
+                {
+                    channel.sourceGlobalBindTransform = ReadMat4(input);
                 }
                 channel.path = static_cast<render::AnimationTargetPath>(ReadPod<uint32_t>(input));
                 channel.interpolation = static_cast<render::AnimationInterpolation>(ReadPod<uint32_t>(input));
@@ -2390,7 +2402,10 @@ namespace PlutoGE::assetimport
             return interpolation == "STEP" ? render::AnimationInterpolation::Step : render::AnimationInterpolation::Linear;
         }
 
-        std::vector<render::AnimationClip> ParseAnimations(const tinygltf::Model &model, const render::Skeleton &skeleton)
+        std::vector<render::AnimationClip> ParseAnimations(const tinygltf::Model &model,
+                                                            const render::Skeleton &skeleton,
+                                                            const std::vector<glm::mat4> &nodeGlobals,
+                                                            const std::vector<int> &nodeParents)
         {
             std::unordered_map<int, int> nodeToJoint;
             for (size_t jointIndex = 0; jointIndex < skeleton.joints.size(); ++jointIndex)
@@ -2459,9 +2474,17 @@ namespace PlutoGE::assetimport
                     const auto jointIt = nodeToJoint.find(channelSource.target_node);
                     channel.jointIndex = jointIt == nodeToJoint.end() ? -1 : jointIt->second;
                     channel.nodeIndex = channelSource.target_node;
+                    channel.sourceParentNodeIndex = channelSource.target_node < static_cast<int>(nodeParents.size())
+                                                        ? nodeParents[static_cast<size_t>(channelSource.target_node)]
+                                                        : -1;
                     channel.targetName = model.nodes[static_cast<size_t>(channelSource.target_node)].name;
                     channel.sourceLocalBindTransform = ComposeNodeTransform(model.nodes[static_cast<size_t>(channelSource.target_node)]);
                     channel.hasSourceLocalBindTransform = true;
+                    if (channelSource.target_node < static_cast<int>(nodeGlobals.size()))
+                    {
+                        channel.sourceGlobalBindTransform = nodeGlobals[static_cast<size_t>(channelSource.target_node)];
+                        channel.hasSourceGlobalBindTransform = true;
+                    }
                     if (channel.targetName.empty() && channel.jointIndex >= 0)
                     {
                         channel.targetName = skeleton.joints[static_cast<size_t>(channel.jointIndex)].name;
@@ -3278,6 +3301,28 @@ namespace PlutoGE::assetimport
 
                     parentNodeIndex = nodes[static_cast<size_t>(parentNodeIndex)].parentNodeIndex;
                 }
+
+                // A skeleton contains weighted bones, not necessarily every
+                // transform node between them. Collapse any intermediary
+                // nodes into the joint-local bind transform so the compact
+                // joint hierarchy reproduces the source node hierarchy.
+                if (joint.nodeIndex >= 0 && joint.nodeIndex < static_cast<int>(nodes.size()))
+                {
+                    const glm::mat4 jointGlobal = nodes[static_cast<size_t>(joint.nodeIndex)].globalTransform;
+                    if (joint.parentJointIndex >= 0 &&
+                        joint.parentJointIndex < static_cast<int>(skeleton.joints.size()))
+                    {
+                        const int parentJointNodeIndex = skeleton.joints[static_cast<size_t>(joint.parentJointIndex)].nodeIndex;
+                        joint.localBindTransform = parentJointNodeIndex >= 0 &&
+                                                           parentJointNodeIndex < static_cast<int>(nodes.size())
+                                                       ? glm::inverse(nodes[static_cast<size_t>(parentJointNodeIndex)].globalTransform) * jointGlobal
+                                                       : jointGlobal;
+                    }
+                    else
+                    {
+                        joint.localBindTransform = jointGlobal;
+                    }
+                }
             }
 
             return skeleton;
@@ -3866,9 +3911,11 @@ namespace PlutoGE::assetimport
         void AddAssimpVectorChannel(
             render::AnimationClip &clip,
             int nodeIndex,
+            int sourceParentNodeIndex,
             int jointIndex,
             const std::string &targetName,
             const glm::mat4 &sourceLocalBindTransform,
+            const glm::mat4 &sourceGlobalBindTransform,
             render::AnimationTargetPath path,
             const aiVectorKey *keys,
             unsigned int keyCount,
@@ -3881,10 +3928,13 @@ namespace PlutoGE::assetimport
 
             render::AnimationChannel channel;
             channel.nodeIndex = nodeIndex;
+            channel.sourceParentNodeIndex = sourceParentNodeIndex;
             channel.jointIndex = jointIndex;
             channel.targetName = targetName;
             channel.sourceLocalBindTransform = sourceLocalBindTransform;
+            channel.sourceGlobalBindTransform = sourceGlobalBindTransform;
             channel.hasSourceLocalBindTransform = true;
+            channel.hasSourceGlobalBindTransform = true;
             channel.path = path;
             channel.interpolation = render::AnimationInterpolation::Linear;
             channel.times.reserve(keyCount);
@@ -3902,9 +3952,11 @@ namespace PlutoGE::assetimport
         void AddAssimpRotationChannel(
             render::AnimationClip &clip,
             int nodeIndex,
+            int sourceParentNodeIndex,
             int jointIndex,
             const std::string &targetName,
             const glm::mat4 &sourceLocalBindTransform,
+            const glm::mat4 &sourceGlobalBindTransform,
             const aiQuatKey *keys,
             unsigned int keyCount,
             double ticksPerSecond)
@@ -3916,10 +3968,13 @@ namespace PlutoGE::assetimport
 
             render::AnimationChannel channel;
             channel.nodeIndex = nodeIndex;
+            channel.sourceParentNodeIndex = sourceParentNodeIndex;
             channel.jointIndex = jointIndex;
             channel.targetName = targetName;
             channel.sourceLocalBindTransform = sourceLocalBindTransform;
+            channel.sourceGlobalBindTransform = sourceGlobalBindTransform;
             channel.hasSourceLocalBindTransform = true;
+            channel.hasSourceGlobalBindTransform = true;
             channel.path = render::AnimationTargetPath::Rotation;
             channel.interpolation = render::AnimationInterpolation::Linear;
             channel.times.reserve(keyCount);
@@ -3975,9 +4030,13 @@ namespace PlutoGE::assetimport
                     const glm::mat4 sourceLocalBindTransform = nodeIt->second >= 0 && nodeIt->second < static_cast<int>(nodes.size())
                                                                       ? nodes[static_cast<size_t>(nodeIt->second)].localTransform
                                                                       : glm::mat4(1.0f);
-                    AddAssimpVectorChannel(clip, nodeIt->second, jointIndex, nodeName, sourceLocalBindTransform, render::AnimationTargetPath::Translation, sourceChannel->mPositionKeys, sourceChannel->mNumPositionKeys, ticksPerSecond);
-                    AddAssimpRotationChannel(clip, nodeIt->second, jointIndex, nodeName, sourceLocalBindTransform, sourceChannel->mRotationKeys, sourceChannel->mNumRotationKeys, ticksPerSecond);
-                    AddAssimpVectorChannel(clip, nodeIt->second, jointIndex, nodeName, sourceLocalBindTransform, render::AnimationTargetPath::Scale, sourceChannel->mScalingKeys, sourceChannel->mNumScalingKeys, ticksPerSecond);
+                    const glm::mat4 sourceGlobalBindTransform = nodeIt->second >= 0 && nodeIt->second < static_cast<int>(nodes.size())
+                                                                       ? nodes[static_cast<size_t>(nodeIt->second)].globalTransform
+                                                                       : sourceLocalBindTransform;
+                    const int sourceParentNodeIndex = nodes[static_cast<size_t>(nodeIt->second)].parentNodeIndex;
+                    AddAssimpVectorChannel(clip, nodeIt->second, sourceParentNodeIndex, jointIndex, nodeName, sourceLocalBindTransform, sourceGlobalBindTransform, render::AnimationTargetPath::Translation, sourceChannel->mPositionKeys, sourceChannel->mNumPositionKeys, ticksPerSecond);
+                    AddAssimpRotationChannel(clip, nodeIt->second, sourceParentNodeIndex, jointIndex, nodeName, sourceLocalBindTransform, sourceGlobalBindTransform, sourceChannel->mRotationKeys, sourceChannel->mNumRotationKeys, ticksPerSecond);
+                    AddAssimpVectorChannel(clip, nodeIt->second, sourceParentNodeIndex, jointIndex, nodeName, sourceLocalBindTransform, sourceGlobalBindTransform, render::AnimationTargetPath::Scale, sourceChannel->mScalingKeys, sourceChannel->mNumScalingKeys, ticksPerSecond);
                 }
 
                 clip.channelCount = static_cast<int>(clip.channels.size());
@@ -4195,7 +4254,7 @@ namespace PlutoGE::assetimport
             ImportedMeshSourceAsset parsedMeshAsset;
             parsedMeshAsset.skeleton = ParseSkeleton(model, FindPrimarySkinIndex(model), nodeGlobals, nodeParents);
             parsedMeshAsset.animationNodes = ParseAnimationNodes(model, nodeParents);
-            parsedMeshAsset.animations = ParseAnimations(model, parsedMeshAsset.skeleton);
+            parsedMeshAsset.animations = ParseAnimations(model, parsedMeshAsset.skeleton, nodeGlobals, nodeParents);
 
             const auto textureStageStart = ImportClock::now();
             parsedMeshAsset.textures.resize(model.images.size());

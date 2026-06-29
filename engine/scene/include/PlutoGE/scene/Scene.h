@@ -79,6 +79,7 @@ namespace PlutoGE::scene
 
         Entity *FindEntityByName(const std::string &name) const;               // Utility function to find an entity by name (can be useful for scripting and editor)
         Entity *FindEntityByID(EntityID id) const;                             // Utility function to find an entity by its unique ID (useful for serialization and referencing)
+        bool ContainsEntity(const Entity *entity) const;
         std::vector<Entity *> FindEntitiesByTag(const std::string &tag) const; // Utility function to find entities by tag (can be useful for scripting and editor)
         bool Raycast(const glm::vec3 &origin,
                      const glm::vec3 &direction,

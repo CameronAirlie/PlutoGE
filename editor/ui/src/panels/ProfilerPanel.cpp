@@ -64,16 +64,34 @@ namespace PlutoGE::ui
         }
 
         ImGui::Separator();
+        ImGui::Text("Profiling begin: %.2f ms", frameTimingStats.profilingBeginMs);
+        ImGui::Text("Editor setup: %.2f ms", frameTimingStats.editorSetupMs);
         ImGui::Text("Scene update: %.2f ms", frameTimingStats.sceneUpdateMs);
         ImGui::Text("Viewport render: %.2f ms", frameTimingStats.viewportRenderMs);
         ImGui::Text("Viewport renders: %d", frameTimingStats.renderedViewportCount);
         ImGui::Text("Renderer begin frame: %.2f ms", frameTimingStats.rendererBeginFrameMs);
+        ImGui::Text("Editor UI total: %.2f ms", frameTimingStats.editorUiMs);
+        ImGui::Text("ImGui frame begin: %.2f ms", timingStats.beginPanelUpdateMs);
+        ImGui::Text("Editor chrome: %.2f ms", frameTimingStats.editorChromeMs);
+        ImGui::Text("Panel updates total: %.2f ms", timingStats.panelUpdatesTotalMs);
+        if (ImGui::TreeNode("Panel timings"))
+        {
+            for (const auto &panelTiming : timingStats.panelUpdates)
+            {
+                if (panelTiming.open || panelTiming.updateMs >= 0.01f)
+                {
+                    ImGui::Text("%s: %.2f ms%s", panelTiming.name.c_str(), panelTiming.updateMs,
+                                panelTiming.visible ? "" : " (not visible)");
+                }
+            }
+            ImGui::TreePop();
+        }
         ImGui::Text("Present / swap: %.2f ms", frameTimingStats.presentMs);
         ImGui::Text("Event polling: %.2f ms", frameTimingStats.eventPollingMs);
-        ImGui::Text("Frame remainder: %.2f ms", std::max(0.0f, m_profiler->GetCurrentFrameTimeMs() - frameTimingStats.sceneUpdateMs - frameTimingStats.viewportRenderMs - frameTimingStats.rendererBeginFrameMs - timingStats.endPanelUpdateTotalMs - frameTimingStats.presentMs - frameTimingStats.eventPollingMs));
+        ImGui::Text("Frame remainder: %.2f ms", std::max(0.0f, m_profiler->GetCurrentFrameTimeMs() - frameTimingStats.profilingBeginMs - frameTimingStats.editorSetupMs - frameTimingStats.sceneUpdateMs - frameTimingStats.viewportRenderMs - frameTimingStats.rendererBeginFrameMs - frameTimingStats.editorUiMs - frameTimingStats.presentMs - frameTimingStats.eventPollingMs));
         ImGui::Separator();
         ImGui::Text("ImGui render: %.2f ms", timingStats.imguiRenderMs);
-        ImGui::Text("Panel update total: %.2f ms", timingStats.endPanelUpdateTotalMs);
+        ImGui::Text("ImGui submission total: %.2f ms", timingStats.endPanelUpdateTotalMs);
         ImGui::Text("Platform window update: %.2f ms", timingStats.platformWindowsUpdateMs);
         ImGui::Text("Platform window render: %.2f ms", timingStats.platformWindowsRenderMs);
         ImGui::Text("Context restore: %.2f ms", timingStats.contextRestoreMs);

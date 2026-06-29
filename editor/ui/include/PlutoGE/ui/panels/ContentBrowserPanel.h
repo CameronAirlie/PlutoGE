@@ -4,6 +4,12 @@
 
 #include <array>
 #include <string>
+#include <vector>
+
+namespace PlutoGE::assets
+{
+    class Project;
+}
 
 namespace PlutoGE::scene
 {
@@ -39,5 +45,11 @@ namespace PlutoGE::ui
         std::array<char, 96> m_newShaderGraphNameBuffer{};
         std::array<char, 96> m_newAnimationGraphNameBuffer{};
         int m_selectedAssetIndex = -1;
+        const assets::Project *m_cachedProject = nullptr;
+        std::string m_cachedFilter;
+        std::vector<std::string> m_cachedAssetReferences;
+        std::vector<int> m_filteredAssetIndices;
+        std::vector<std::string> m_filteredAssetDisplayNames;
+        bool m_hasExpandedMesh = false;
     };
 }

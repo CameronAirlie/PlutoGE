@@ -385,7 +385,9 @@ namespace PlutoGE::ui
     void MaterialEditorPanel::LoadActiveMaterial()
     {
         auto &editorShell = EditorShell::GetInstance();
-        const auto &reference = editorShell.GetActiveMaterialAssetReference();
+        // Keep a value copy while loading. Asset creation refreshes the project
+        // registry immediately before opening this panel.
+        const std::string reference = editorShell.GetActiveMaterialAssetReference();
         m_loadedReference = reference;
         m_dirty = false;
 

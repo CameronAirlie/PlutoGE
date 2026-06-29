@@ -79,15 +79,35 @@ namespace PlutoGE::scene
             glm::vec3 basisY(transform[1]);
             glm::vec3 basisZ(transform[2]);
             scale = glm::vec3(glm::length(basisX), glm::length(basisY), glm::length(basisZ));
-            if (scale.x > 0.0f) basisX /= scale.x;
-            if (scale.y > 0.0f) basisY /= scale.y;
-            if (scale.z > 0.0f) basisZ /= scale.z;
+            constexpr float epsilon = 0.000001f;
+            if (scale.x <= epsilon || scale.y <= epsilon || scale.z <= epsilon)
+            {
+                rotation = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+                scale = glm::vec3(1.0f);
+                return;
+            }
+
+            basisX /= scale.x;
+            basisY /= scale.y;
+            basisZ /= scale.z;
+
+            // Preserve reflections. Treating all scale components as positive
+            // turns a mirrored FBX basis into an invalid rotation and commonly
+            // leaves arms or legs pointing sideways after retargeting.
+            if (glm::dot(basisX, glm::cross(basisY, basisZ)) < 0.0f)
+            {
+                basisX = -basisX;
+                basisY = -basisY;
+                basisZ = -basisZ;
+                scale = -scale;
+            }
+
             glm::mat3 rotationMatrix(1.0f);
             rotationMatrix[0] = basisX;
             rotationMatrix[1] = basisY;
             rotationMatrix[2] = basisZ;
-            const glm::quat q = glm::normalize(glm::quat_cast(rotationMatrix));
-            rotation = glm::vec4(q.x, q.y, q.z, q.w);
+            const glm::quat orientation = glm::normalize(glm::quat_cast(rotationMatrix));
+            rotation = glm::vec4(orientation.x, orientation.y, orientation.z, orientation.w);
         }
 
         std::string_view CanonicalTargetName(std::string_view name)
@@ -146,11 +166,41 @@ namespace PlutoGE::scene
             {
                 for (const auto &mapping : skeleton.humanoidBoneMappings)
                 {
-                    if (mapping.bone == *humanoidBone)
+                    // A source override opts this slot out of automatic name
+                    // matching; otherwise a similarly named channel can steal
+                    // a mapping the user explicitly assigned.
+                    if (mapping.sourceBoneName.empty() && mapping.bone == *humanoidBone)
                         return &mapping;
                 }
             }
             return nullptr;
+        }
+
+        bool IsReservedRetargetJoint(int jointIndex, const render::Skeleton &skeleton)
+        {
+            if (jointIndex < 0 || jointIndex >= static_cast<int>(skeleton.joints.size()))
+                return false;
+
+            // A source rig may animate an extra conversion/root bone which is
+            // deliberately absent from the humanoid map. Never copy that
+            // bone's absolute local rotation onto a same-named target root: it
+            // would rotate the entire retargeted character. Unmapped children
+            // such as fingers remain eligible for exact-name passthrough.
+            for (const auto &mapping : skeleton.humanoidBoneMappings)
+            {
+                int mappedJointIndex = mapping.targetJointIndex;
+                while (mappedJointIndex >= 0 && mappedJointIndex < static_cast<int>(skeleton.joints.size()))
+                {
+                    if (mappedJointIndex == jointIndex)
+                        return true;
+
+                    const int parentIndex = skeleton.joints[static_cast<size_t>(mappedJointIndex)].parentJointIndex;
+                    if (parentIndex == mappedJointIndex)
+                        break;
+                    mappedJointIndex = parentIndex;
+                }
+            }
+            return false;
         }
 
         int ResolveChannelJointIndex(const render::AnimationChannel &channel, const render::Skeleton &skeleton)
@@ -171,7 +221,10 @@ namespace PlutoGE::scene
                 {
                     if (skeleton.joints[jointIndex].name == channel.targetName)
                     {
-                        return static_cast<int>(jointIndex);
+                        const int resolvedIndex = static_cast<int>(jointIndex);
+                        return !skeleton.humanoidBoneMappings.empty() && IsReservedRetargetJoint(resolvedIndex, skeleton)
+                                   ? -1
+                                   : resolvedIndex;
                     }
                 }
 
@@ -179,7 +232,10 @@ namespace PlutoGE::scene
                 {
                     if (TargetNamesMatch(skeleton.joints[jointIndex].name, channel.targetName))
                     {
-                        return static_cast<int>(jointIndex);
+                        const int resolvedIndex = static_cast<int>(jointIndex);
+                        return !skeleton.humanoidBoneMappings.empty() && IsReservedRetargetJoint(resolvedIndex, skeleton)
+                                   ? -1
+                                   : resolvedIndex;
                     }
                 }
             }
@@ -399,6 +455,101 @@ namespace PlutoGE::scene
             std::vector<glm::vec4> rotations(skeleton.joints.size(), glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
             std::vector<glm::vec3> scales(skeleton.joints.size(), glm::vec3(1.0f));
             std::vector<uint8_t> animatedLocals(skeleton.joints.size(), 0);
+            for (size_t jointIndex = 0; jointIndex < skeleton.joints.size(); ++jointIndex)
+            {
+                DecomposeTransform(skeleton.joints[jointIndex].localBindTransform,
+                                   translations[jointIndex], rotations[jointIndex], scales[jointIndex]);
+            }
+
+            std::vector<glm::mat4> targetGlobalBindTransforms(skeleton.joints.size(), glm::mat4(1.0f));
+            std::vector<uint8_t> targetBindEvaluationState(skeleton.joints.size(), 0);
+            std::function<glm::mat4(size_t)> evaluateTargetGlobalBind = [&](size_t jointIndex) -> glm::mat4 {
+                if (targetBindEvaluationState[jointIndex] == 2)
+                    return targetGlobalBindTransforms[jointIndex];
+                if (targetBindEvaluationState[jointIndex] == 1)
+                    return skeleton.joints[jointIndex].localBindTransform;
+
+                targetBindEvaluationState[jointIndex] = 1;
+                const int parentIndex = skeleton.joints[jointIndex].parentJointIndex;
+                targetGlobalBindTransforms[jointIndex] = parentIndex >= 0 &&
+                                                                 parentIndex < static_cast<int>(skeleton.joints.size()) &&
+                                                                 parentIndex != static_cast<int>(jointIndex)
+                                                             ? evaluateTargetGlobalBind(static_cast<size_t>(parentIndex)) * skeleton.joints[jointIndex].localBindTransform
+                                                             : skeleton.joints[jointIndex].localBindTransform;
+                targetBindEvaluationState[jointIndex] = 2;
+                return targetGlobalBindTransforms[jointIndex];
+            };
+            for (size_t jointIndex = 0; jointIndex < skeleton.joints.size(); ++jointIndex)
+                evaluateTargetGlobalBind(jointIndex);
+
+            const auto &clip = clips[static_cast<size_t>(clipIndex)];
+            int sourceNodeCount = 0;
+            for (const auto &channel : clip.channels)
+            {
+                if (channel.nodeIndex >= 0)
+                    sourceNodeCount = std::max(sourceNodeCount, channel.nodeIndex + 1);
+            }
+
+            std::vector<glm::mat4> sourceLocalBindTransforms(static_cast<size_t>(sourceNodeCount), glm::mat4(1.0f));
+            std::vector<glm::mat4> sourceGlobalBindTransforms(static_cast<size_t>(sourceNodeCount), glm::mat4(1.0f));
+            std::vector<int> sourceParentIndices(static_cast<size_t>(sourceNodeCount), -1);
+            std::vector<uint8_t> sourceNodesPresent(static_cast<size_t>(sourceNodeCount), 0);
+            for (const auto &channel : clip.channels)
+            {
+                if (channel.nodeIndex < 0 || channel.nodeIndex >= sourceNodeCount)
+                    continue;
+
+                const size_t nodeIndex = static_cast<size_t>(channel.nodeIndex);
+                sourceParentIndices[nodeIndex] = channel.sourceParentNodeIndex;
+                if (channel.hasSourceLocalBindTransform)
+                    sourceLocalBindTransforms[nodeIndex] = channel.sourceLocalBindTransform;
+                if (channel.hasSourceGlobalBindTransform)
+                {
+                    sourceGlobalBindTransforms[nodeIndex] = channel.sourceGlobalBindTransform;
+                    sourceNodesPresent[nodeIndex] = 1;
+                }
+            }
+
+            const auto sourceLocalTransforms = SampleLocalTransforms(
+                clips, clipIndex, time, static_cast<size_t>(sourceNodeCount),
+                [](const render::AnimationChannel &channel) { return channel.nodeIndex; },
+                [&sourceLocalBindTransforms](size_t nodeIndex) { return sourceLocalBindTransforms[nodeIndex]; });
+
+            std::vector<glm::mat4> sourceGlobalTransforms(static_cast<size_t>(sourceNodeCount), glm::mat4(1.0f));
+            std::vector<uint8_t> sourceEvaluationState(static_cast<size_t>(sourceNodeCount), 0);
+            std::function<glm::mat4(size_t)> evaluateSourceGlobal = [&](size_t nodeIndex) -> glm::mat4 {
+                if (sourceEvaluationState[nodeIndex] == 2)
+                    return sourceGlobalTransforms[nodeIndex];
+                if (sourceEvaluationState[nodeIndex] == 1)
+                    return sourceGlobalBindTransforms[nodeIndex] * glm::inverse(sourceLocalBindTransforms[nodeIndex]) * sourceLocalTransforms[nodeIndex];
+
+                sourceEvaluationState[nodeIndex] = 1;
+                const int parentIndex = sourceParentIndices[nodeIndex];
+                if (parentIndex >= 0 && parentIndex < sourceNodeCount &&
+                    sourceNodesPresent[static_cast<size_t>(parentIndex)] &&
+                    parentIndex != static_cast<int>(nodeIndex))
+                {
+                    sourceGlobalTransforms[nodeIndex] = evaluateSourceGlobal(static_cast<size_t>(parentIndex)) * sourceLocalTransforms[nodeIndex];
+                }
+                else
+                {
+                    // Preserve static ancestors that do not own animation
+                    // channels (commonly the FBX/glTF armature conversion root).
+                    sourceGlobalTransforms[nodeIndex] = sourceGlobalBindTransforms[nodeIndex] *
+                                                        glm::inverse(sourceLocalBindTransforms[nodeIndex]) *
+                                                        sourceLocalTransforms[nodeIndex];
+                }
+                sourceEvaluationState[nodeIndex] = 2;
+                return sourceGlobalTransforms[nodeIndex];
+            };
+            for (size_t nodeIndex = 0; nodeIndex < static_cast<size_t>(sourceNodeCount); ++nodeIndex)
+            {
+                if (sourceNodesPresent[nodeIndex])
+                    evaluateSourceGlobal(nodeIndex);
+            }
+
+            std::vector<glm::quat> desiredTargetGlobalRotations(skeleton.joints.size(), glm::quat(1.0f, 0.0f, 0.0f, 0.0f));
+            std::vector<uint8_t> hasDesiredTargetGlobalRotation(skeleton.joints.size(), 0);
 
             for (const auto &channel : clips[static_cast<size_t>(clipIndex)].channels)
             {
@@ -440,7 +591,40 @@ namespace PlutoGE::scene
                     }
                     break;
                 case render::AnimationTargetPath::Rotation:
-                    if (applyBindRelativeRetarget)
+                    if (applyBindRelativeRetarget && channel.hasSourceGlobalBindTransform &&
+                        channel.nodeIndex >= 0 && channel.nodeIndex < sourceNodeCount)
+                    {
+                        glm::vec3 ignoredTranslation;
+                        glm::vec3 ignoredScale;
+                        glm::vec4 sourceGlobalBindRotation;
+                        glm::vec4 sourceGlobalAnimatedRotation;
+                        glm::vec4 targetGlobalBindRotation;
+                        DecomposeTransform(channel.sourceGlobalBindTransform,
+                                           ignoredTranslation, sourceGlobalBindRotation, ignoredScale);
+                        DecomposeTransform(sourceGlobalTransforms[static_cast<size_t>(channel.nodeIndex)],
+                                           ignoredTranslation, sourceGlobalAnimatedRotation, ignoredScale);
+                        DecomposeTransform(targetGlobalBindTransforms[jointIndex],
+                                           ignoredTranslation, targetGlobalBindRotation, ignoredScale);
+
+                        const glm::quat sourceGlobalBind(sourceGlobalBindRotation.w,
+                                                         sourceGlobalBindRotation.x,
+                                                         sourceGlobalBindRotation.y,
+                                                         sourceGlobalBindRotation.z);
+                        const glm::quat sourceGlobalAnimated(sourceGlobalAnimatedRotation.w,
+                                                             sourceGlobalAnimatedRotation.x,
+                                                             sourceGlobalAnimatedRotation.y,
+                                                             sourceGlobalAnimatedRotation.z);
+                        const glm::quat targetGlobalBind(targetGlobalBindRotation.w,
+                                                         targetGlobalBindRotation.x,
+                                                         targetGlobalBindRotation.y,
+                                                         targetGlobalBindRotation.z);
+                        const glm::quat correction = glm::quat(glm::radians(mapping->rotationOffsetDegrees));
+                        const glm::quat sourceGlobalDelta = glm::normalize(sourceGlobalAnimated * glm::inverse(sourceGlobalBind));
+                        desiredTargetGlobalRotations[jointIndex] = glm::normalize(sourceGlobalDelta * targetGlobalBind * correction);
+                        hasDesiredTargetGlobalRotation[jointIndex] = 1;
+                        break;
+                    }
+                    else if (applyBindRelativeRetarget)
                     {
                         const glm::quat sourceBind(sourceBindRotation.w, sourceBindRotation.x, sourceBindRotation.y, sourceBindRotation.z);
                         const glm::quat sourceAnimated(sample.w, sample.x, sample.y, sample.z);
@@ -475,6 +659,35 @@ namespace PlutoGE::scene
                     break;
                 }
             }
+
+            std::vector<glm::quat> targetGlobalRotations(skeleton.joints.size(), glm::quat(1.0f, 0.0f, 0.0f, 0.0f));
+            std::vector<uint8_t> targetRotationEvaluationState(skeleton.joints.size(), 0);
+            std::function<glm::quat(size_t)> evaluateTargetRotation = [&](size_t jointIndex) -> glm::quat {
+                if (targetRotationEvaluationState[jointIndex] == 2)
+                    return targetGlobalRotations[jointIndex];
+
+                targetRotationEvaluationState[jointIndex] = 1;
+                const int parentIndex = skeleton.joints[jointIndex].parentJointIndex;
+                const glm::quat parentGlobal = parentIndex >= 0 && parentIndex < static_cast<int>(skeleton.joints.size()) &&
+                                                       parentIndex != static_cast<int>(jointIndex) &&
+                                                       targetRotationEvaluationState[static_cast<size_t>(parentIndex)] != 1
+                                                   ? evaluateTargetRotation(static_cast<size_t>(parentIndex))
+                                                   : glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+
+                glm::quat localRotation(rotations[jointIndex].w, rotations[jointIndex].x,
+                                        rotations[jointIndex].y, rotations[jointIndex].z);
+                if (hasDesiredTargetGlobalRotation[jointIndex])
+                {
+                    localRotation = glm::normalize(glm::inverse(parentGlobal) * desiredTargetGlobalRotations[jointIndex]);
+                    rotations[jointIndex] = glm::vec4(localRotation.x, localRotation.y, localRotation.z, localRotation.w);
+                    animatedLocals[jointIndex] = 1;
+                }
+                targetGlobalRotations[jointIndex] = glm::normalize(parentGlobal * localRotation);
+                targetRotationEvaluationState[jointIndex] = 2;
+                return targetGlobalRotations[jointIndex];
+            };
+            for (size_t jointIndex = 0; jointIndex < skeleton.joints.size(); ++jointIndex)
+                evaluateTargetRotation(jointIndex);
 
             for (size_t index = 0; index < skeleton.joints.size(); ++index)
             {
@@ -1998,14 +2211,41 @@ namespace PlutoGE::scene
             localTransforms = BlendLocalTransforms(sourceTransforms, destinationTransforms, blend);
         }
 
+        // Skin joint arrays are not required to be topologically sorted. In
+        // particular, glTF permits a child to appear before its parent and
+        // Assimp preserves the source mesh's bone order. Evaluate parents on
+        // demand instead of accidentally using an identity parent transform.
         std::vector<glm::mat4> globalTransforms(skeleton.joints.size(), glm::mat4(1.0f));
+        std::vector<uint8_t> evaluationState(skeleton.joints.size(), 0);
+        std::function<glm::mat4(size_t)> evaluateJoint = [&](size_t jointIndex) -> glm::mat4 {
+            if (evaluationState[jointIndex] == 2)
+            {
+                return globalTransforms[jointIndex];
+            }
+
+            // Malformed cyclic hierarchies should not recurse forever. Treat
+            // the joint at which the cycle closes as a root.
+            if (evaluationState[jointIndex] == 1)
+            {
+                return localTransforms[jointIndex];
+            }
+
+            evaluationState[jointIndex] = 1;
+            const int parentIndex = skeleton.joints[jointIndex].parentJointIndex;
+            globalTransforms[jointIndex] = parentIndex >= 0 &&
+                                                   parentIndex < static_cast<int>(globalTransforms.size()) &&
+                                                   parentIndex != static_cast<int>(jointIndex)
+                                               ? evaluateJoint(static_cast<size_t>(parentIndex)) * localTransforms[jointIndex]
+                                               : localTransforms[jointIndex];
+            evaluationState[jointIndex] = 2;
+            return globalTransforms[jointIndex];
+        };
+
         for (size_t jointIndex = 0; jointIndex < skeleton.joints.size(); ++jointIndex)
         {
-            const int parentIndex = skeleton.joints[jointIndex].parentJointIndex;
-            globalTransforms[jointIndex] = parentIndex >= 0 && parentIndex < static_cast<int>(globalTransforms.size())
-                                               ? globalTransforms[static_cast<size_t>(parentIndex)] * localTransforms[jointIndex]
-                                               : localTransforms[jointIndex];
-            m_jointMatrices[jointIndex] = skeleton.joints[jointIndex].inverseRootMatrix * globalTransforms[jointIndex] * skeleton.joints[jointIndex].inverseBindMatrix;
+            m_jointMatrices[jointIndex] = skeleton.joints[jointIndex].inverseRootMatrix *
+                                          evaluateJoint(jointIndex) *
+                                          skeleton.joints[jointIndex].inverseBindMatrix;
         }
 
         m_jointMatricesDirty = false;

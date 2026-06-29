@@ -369,6 +369,7 @@ namespace PlutoGE::render
         ResolveAllGpuTimings();
         ResolveAllLightingGpuTimings();
         ResolveAllPostProcessGpuTimings();
+        m_gpuTimingsResolvedThisFrame = true;
 
         m_cpuFrameStats = {};
         m_profiledRenderCount = 0;
@@ -741,6 +742,7 @@ namespace PlutoGE::render
 
     void Renderer::EndFrame(RenderTarget *renderTarget)
     {
+        m_gpuTimingsResolvedThisFrame = false;
         if (renderTarget)
         {
             Graphics::UnbindRenderTarget();
@@ -803,7 +805,10 @@ namespace PlutoGE::render
         }
 
         auto &queryState = m_lightingGpuTimerQueries[stageIndex];
-        ResolveAllLightingGpuTimings(stageIndex);
+        if (!m_gpuTimingsResolvedThisFrame)
+        {
+            ResolveAllLightingGpuTimings(stageIndex);
+        }
 
         auto queryIndex = queryState.writeIndex;
         if (queryState.pending[queryIndex])
@@ -867,7 +872,10 @@ namespace PlutoGE::render
         }
 
         const std::size_t timingIndex = EnsurePostProcessGpuTiming(effectName);
-        ResolveAllPostProcessGpuTimings(timingIndex);
+        if (!m_gpuTimingsResolvedThisFrame)
+        {
+            ResolveAllPostProcessGpuTimings(timingIndex);
+        }
 
         auto &queryState = m_postProcessGpuTimerQueries[timingIndex];
         auto queryIndex = queryState.writeIndex;
@@ -1208,7 +1216,10 @@ namespace PlutoGE::render
         }
 
         auto &queryState = m_gpuTimerQueries[timingIndex];
-        ResolveAllGpuTimings(timingIndex);
+        if (!m_gpuTimingsResolvedThisFrame)
+        {
+            ResolveAllGpuTimings(timingIndex);
+        }
 
         auto queryIndex = queryState.writeIndex;
         if (queryState.pending[queryIndex])

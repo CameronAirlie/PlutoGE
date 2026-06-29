@@ -66,9 +66,12 @@ namespace PlutoGE::render
     {
         int jointIndex = -1;
         int nodeIndex = -1;
+        int sourceParentNodeIndex = -1;
         std::string targetName;
         glm::mat4 sourceLocalBindTransform{1.0f};
+        glm::mat4 sourceGlobalBindTransform{1.0f};
         bool hasSourceLocalBindTransform = false;
+        bool hasSourceGlobalBindTransform = false;
         AnimationTargetPath path = AnimationTargetPath::Translation;
         AnimationInterpolation interpolation = AnimationInterpolation::Linear;
         std::vector<float> times;

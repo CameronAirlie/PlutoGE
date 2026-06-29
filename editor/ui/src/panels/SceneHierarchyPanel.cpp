@@ -1,4 +1,6 @@
 #include "PlutoGE/ui/panels/SceneHierarchyPanel.h"
+
+// Editor selection access is validated by EditorShell before panel use.
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/render/Mesh.h"

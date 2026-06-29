@@ -265,7 +265,7 @@ namespace PlutoGE::assets
         }
 
         const auto version = ReadPod<std::uint32_t>(input);
-        if (magic != kMagic || version < 1 || version > 3)
+        if (magic != kMagic || version < 1 || version > 5)
         {
             return false;
         }
@@ -295,7 +295,7 @@ namespace PlutoGE::assets
         }
 
         constexpr std::uint32_t kMagic = 0x4347504c; // LPGC
-        constexpr std::uint32_t kVersion = 2;
+        constexpr std::uint32_t kVersion = 4;
         const auto magic = ReadPod<std::uint32_t>(input);
         const auto version = ReadPod<std::uint32_t>(input);
         if (magic != kMagic || version < 1 || version > kVersion)
@@ -303,7 +303,7 @@ namespace PlutoGE::assets
             return false;
         }
 
-        clip = ReadAnimationClip(input, version >= 2 ? 3 : 2);
+        clip = ReadAnimationClip(input, version >= 4 ? 5 : version >= 3 ? 4 : version >= 2 ? 3 : 2);
         return input.good();
     }
 
@@ -392,7 +392,7 @@ namespace PlutoGE::assets
         }
 
         constexpr std::uint32_t kMagic = 0x4147504c; // LPGA
-        constexpr std::uint32_t kVersion = 3;
+        constexpr std::uint32_t kVersion = 5;
         WritePod(output, kMagic);
         WritePod(output, kVersion);
         WritePod<std::uint64_t>(output, static_cast<std::uint64_t>(clips.size()));
@@ -518,7 +518,7 @@ namespace PlutoGE::assets
         }
 
         constexpr std::uint32_t kMagic = 0x4347504c; // LPGC
-        constexpr std::uint32_t kVersion = 2;
+        constexpr std::uint32_t kVersion = 4;
         WritePod(output, kMagic);
         WritePod(output, kVersion);
         WriteAnimationClip(output, clip);
@@ -817,11 +817,17 @@ namespace PlutoGE::assets
             {
                 WritePod(output, channel.jointIndex);
                 WritePod(output, channel.nodeIndex);
+                WritePod(output, channel.sourceParentNodeIndex);
                 WriteString(output, channel.targetName);
                 WritePod<std::uint8_t>(output, channel.hasSourceLocalBindTransform ? 1 : 0);
                 if (channel.hasSourceLocalBindTransform)
                 {
                     WriteMat4(output, channel.sourceLocalBindTransform);
+                }
+                WritePod<std::uint8_t>(output, channel.hasSourceGlobalBindTransform ? 1 : 0);
+                if (channel.hasSourceGlobalBindTransform)
+                {
+                    WriteMat4(output, channel.sourceGlobalBindTransform);
                 }
                 WritePod<std::uint32_t>(output, static_cast<std::uint32_t>(channel.path));
                 WritePod<std::uint32_t>(output, static_cast<std::uint32_t>(channel.interpolation));
@@ -851,6 +857,10 @@ namespace PlutoGE::assets
                 render::AnimationChannel channel;
                 channel.jointIndex = ReadPod<int>(input);
                 channel.nodeIndex = ReadPod<int>(input);
+                if (version >= 5)
+                {
+                    channel.sourceParentNodeIndex = ReadPod<int>(input);
+                }
                 if (version >= 2)
                 {
                     channel.targetName = ReadString(input);
@@ -861,6 +871,14 @@ namespace PlutoGE::assets
                     if (channel.hasSourceLocalBindTransform)
                     {
                         channel.sourceLocalBindTransform = ReadMat4(input);
+                    }
+                }
+                if (version >= 4)
+                {
+                    channel.hasSourceGlobalBindTransform = ReadPod<std::uint8_t>(input) != 0;
+                    if (channel.hasSourceGlobalBindTransform)
+                    {
+                        channel.sourceGlobalBindTransform = ReadMat4(input);
                     }
                 }
                 channel.path = static_cast<render::AnimationTargetPath>(ReadPod<std::uint32_t>(input));

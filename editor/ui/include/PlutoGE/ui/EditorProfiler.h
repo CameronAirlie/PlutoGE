@@ -11,9 +11,13 @@ namespace PlutoGE::ui
 {
     struct EditorFrameTimingStats
     {
+        float profilingBeginMs = 0.0f;
+        float editorSetupMs = 0.0f;
         float sceneUpdateMs = 0.0f;
         float viewportRenderMs = 0.0f;
         float rendererBeginFrameMs = 0.0f;
+        float editorUiMs = 0.0f;
+        float editorChromeMs = 0.0f;
         float presentMs = 0.0f;
         float eventPollingMs = 0.0f;
         int renderedViewportCount = 0;

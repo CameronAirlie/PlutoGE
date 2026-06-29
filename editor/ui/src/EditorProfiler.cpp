@@ -122,15 +122,33 @@ namespace PlutoGE::ui
         report << "Max frame time: " << GetMaxFrameTimeMs() << " ms\n";
         report << "Average FPS: " << GetAverageFPS() << "\n";
         report << "Samples: " << m_sampleCount << "\n";
+        report << "Profiling begin: " << frameTimingStats.profilingBeginMs << " ms\n";
+        report << "Editor setup: " << frameTimingStats.editorSetupMs << " ms\n";
         report << "Scene update: " << frameTimingStats.sceneUpdateMs << " ms\n";
         report << "Viewport render: " << frameTimingStats.viewportRenderMs << " ms\n";
         report << "Viewport renders: " << frameTimingStats.renderedViewportCount << "\n";
         report << "Renderer begin frame: " << frameTimingStats.rendererBeginFrameMs << " ms\n";
+        report << "Editor UI total: " << frameTimingStats.editorUiMs << " ms\n";
+        report << "ImGui frame begin: " << timingStats.beginPanelUpdateMs << " ms\n";
+        report << "Editor chrome: " << frameTimingStats.editorChromeMs << " ms\n";
+        report << "Panel updates total: " << timingStats.panelUpdatesTotalMs << " ms\n";
+        for (const auto &panelTiming : timingStats.panelUpdates)
+        {
+            if (panelTiming.open || panelTiming.updateMs >= 0.01f)
+            {
+                report << "Panel / " << panelTiming.name << ": " << panelTiming.updateMs << " ms";
+                if (!panelTiming.visible)
+                {
+                    report << " (not visible)";
+                }
+                report << "\n";
+            }
+        }
         report << "Present / swap: " << frameTimingStats.presentMs << " ms\n";
         report << "Event polling: " << frameTimingStats.eventPollingMs << " ms\n";
-        report << "Frame remainder: " << std::max(0.0f, GetCurrentFrameTimeMs() - frameTimingStats.sceneUpdateMs - frameTimingStats.viewportRenderMs - frameTimingStats.rendererBeginFrameMs - timingStats.endPanelUpdateTotalMs - frameTimingStats.presentMs - frameTimingStats.eventPollingMs) << " ms\n";
+        report << "Frame remainder: " << std::max(0.0f, GetCurrentFrameTimeMs() - frameTimingStats.profilingBeginMs - frameTimingStats.editorSetupMs - frameTimingStats.sceneUpdateMs - frameTimingStats.viewportRenderMs - frameTimingStats.rendererBeginFrameMs - frameTimingStats.editorUiMs - frameTimingStats.presentMs - frameTimingStats.eventPollingMs) << " ms\n";
         report << "ImGui render: " << timingStats.imguiRenderMs << " ms\n";
-        report << "Panel update total: " << timingStats.endPanelUpdateTotalMs << " ms\n";
+        report << "ImGui submission total: " << timingStats.endPanelUpdateTotalMs << " ms\n";
         report << "Platform windows update: " << timingStats.platformWindowsUpdateMs << " ms\n";
         report << "Platform windows render: " << timingStats.platformWindowsRenderMs << " ms\n";
         report << "Context restore: " << timingStats.contextRestoreMs << " ms\n";

@@ -1114,6 +1114,7 @@ namespace PlutoGE::ui
             return;
         }
 
+        std::lock_guard lock(m_consoleMessagesMutex);
         m_consoleMessages.push_back(ConsoleMessage{.severity = severity, .text = std::move(message)});
         constexpr std::size_t kMaxConsoleMessages = 1000;
         if (m_consoleMessages.size() > kMaxConsoleMessages)
@@ -1521,6 +1522,18 @@ namespace PlutoGE::ui
         }
     }
 
+    std::vector<EditorShell::ConsoleMessage> EditorShell::GetConsoleMessages() const
+    {
+        std::lock_guard lock(m_consoleMessagesMutex);
+        return m_consoleMessages;
+    }
+
+    void EditorShell::ClearConsoleMessages()
+    {
+        std::lock_guard lock(m_consoleMessagesMutex);
+        m_consoleMessages.clear();
+    }
+
     bool EditorShell::ConfirmContinueWithUnsavedChanges()
     {
         if (!m_sceneDirty && !m_projectDirty)
@@ -1559,6 +1572,16 @@ namespace PlutoGE::ui
     {
         m_selectedEntity = nullptr;
         m_isEditorCameraSelected = false;
+    }
+
+    scene::Entity *EditorShell::GetSelectedEntity()
+    {
+        if (m_selectedEntity && (!m_scene || !m_scene->ContainsEntity(m_selectedEntity)))
+        {
+            m_selectedEntity = nullptr;
+            m_isEditorCameraSelected = false;
+        }
+        return m_selectedEntity;
     }
 
     void EditorShell::SetScene(std::unique_ptr<scene::Scene> scene)
@@ -2152,7 +2175,10 @@ namespace PlutoGE::ui
             deltaTime = currentTime - lastTime;
             const float deltaSeconds = deltaTime.count();
             EditorFrameTimingStats frameTimingStats{};
+            const auto profilingBeginStart = std::chrono::high_resolution_clock::now();
             renderer.BeginProfilingFrame();
+            const auto profilingBeginEnd = std::chrono::high_resolution_clock::now();
+            frameTimingStats.profilingBeginMs = std::chrono::duration<float, std::milli>(profilingBeginEnd - profilingBeginStart).count();
 
             const bool isRuntimeRunning = m_engine.IsRuntimeRunning();
             auto shouldEnableRuntimeInput = [&]()
@@ -2240,6 +2266,7 @@ namespace PlutoGE::ui
             // Scene update
 
             const auto sceneUpdateStart = std::chrono::high_resolution_clock::now();
+            frameTimingStats.editorSetupMs = std::chrono::duration<float, std::milli>(sceneUpdateStart - profilingBeginEnd).count();
             if (!isBakeRunning)
             {
                 m_engine.UpdateAsyncMeshImports();
@@ -2357,8 +2384,10 @@ namespace PlutoGE::ui
             renderer.BeginFrame();
             const auto beginFrameEnd = std::chrono::high_resolution_clock::now();
             frameTimingStats.rendererBeginFrameMs = std::chrono::duration<float, std::milli>(beginFrameEnd - beginFrameStart).count();
+            const auto editorUiStart = beginFrameEnd;
 
             m_panelManager.BeginPanelUpdate();
+            const auto editorChromeStart = std::chrono::high_resolution_clock::now();
 
             HandleEditorShortcuts(isRuntimeRunning);
 
@@ -2835,6 +2864,8 @@ namespace PlutoGE::ui
             viewportPanel2->SetInteractionEnabled(true);
             viewportPanel2->SetVisualAlpha(1.0f);
 
+            const auto editorChromeEnd = std::chrono::high_resolution_clock::now();
+            frameTimingStats.editorChromeMs = std::chrono::duration<float, std::milli>(editorChromeEnd - editorChromeStart).count();
             m_panelManager.UpdatePanels();
 
             window.SetScriptInputEnabled(shouldEnableRuntimeInput());
@@ -2844,6 +2875,8 @@ namespace PlutoGE::ui
             }
 
             m_panelManager.EndPanelUpdate();
+            const auto editorUiEnd = std::chrono::high_resolution_clock::now();
+            frameTimingStats.editorUiMs = std::chrono::duration<float, std::milli>(editorUiEnd - editorUiStart).count();
 
             const bool interactiveEdit =
                 (isEditorCameraLookActive ||

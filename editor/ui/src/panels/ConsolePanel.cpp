@@ -83,7 +83,8 @@ namespace PlutoGE::ui
         ImGui::Separator();
 
         ImGui::BeginChild("ConsoleMessages", ImVec2(0.0f, 0.0f), false, ImGuiWindowFlags_HorizontalScrollbar);
-        for (const auto &message : editorShell.GetConsoleMessages())
+        const auto messages = editorShell.GetConsoleMessages();
+        for (const auto &message : messages)
         {
             if ((message.severity == EditorShell::ConsoleSeverity::Info && !m_showInfo) ||
                 (message.severity == EditorShell::ConsoleSeverity::Warning && !m_showWarnings) ||

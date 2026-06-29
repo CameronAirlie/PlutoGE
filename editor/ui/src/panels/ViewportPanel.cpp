@@ -1,4 +1,6 @@
 #include "PlutoGE/ui/panels/ViewportPanel.h"
+
+// Editor selection access is validated by EditorShell before panel use.
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/render/RenderTarget.h"
 #include "PlutoGE/ui/EditorShell.h"

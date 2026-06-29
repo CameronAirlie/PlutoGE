@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -132,7 +133,7 @@ namespace PlutoGE::ui
             return instance;
         }
 
-        [[nodiscard]] scene::Entity *GetSelectedEntity() { return m_selectedEntity; }
+        [[nodiscard]] scene::Entity *GetSelectedEntity();
         void SetSelectedEntity(scene::Entity *entity)
         {
             m_selectedEntity = entity;
@@ -189,8 +190,8 @@ namespace PlutoGE::ui
             return requested;
         }
         void Log(ConsoleSeverity severity, std::string message);
-        const std::vector<ConsoleMessage> &GetConsoleMessages() const { return m_consoleMessages; }
-        void ClearConsoleMessages() { m_consoleMessages.clear(); }
+        std::vector<ConsoleMessage> GetConsoleMessages() const;
+        void ClearConsoleMessages();
         void MarkSceneDirty();
         void MarkProjectDirty();
         [[nodiscard]] bool IsSceneDirty() const { return m_sceneDirty; }
@@ -273,6 +274,7 @@ namespace PlutoGE::ui
         std::string m_sceneEditLabel;
         std::string m_sceneEditBeforeState;
         std::vector<ConsoleMessage> m_consoleMessages;
+        mutable std::mutex m_consoleMessagesMutex;
         std::string m_activeMaterialAssetReference;
         std::string m_activeMeshAssetReference;
         std::string m_activeShaderGraphAssetReference;

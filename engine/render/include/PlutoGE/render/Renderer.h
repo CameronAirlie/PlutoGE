@@ -274,6 +274,7 @@ namespace PlutoGE::render
         RendererConfig m_config;
         bool m_isInitialized = false;
         bool m_gpuProfilingSupported = false;
+        bool m_gpuTimingsResolvedThisFrame = false;
 
         GBuffer m_gBuffer;
         PostProcessDebugView m_postProcessDebugView = PostProcessDebugView::None;

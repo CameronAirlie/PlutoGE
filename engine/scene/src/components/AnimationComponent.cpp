@@ -441,7 +441,9 @@ namespace PlutoGE::scene
             const std::vector<render::AnimationClip> &clips,
             int clipIndex,
             float time,
-            const render::Skeleton &skeleton)
+            const render::Skeleton &skeleton,
+            const std::vector<int> &jointBindings,
+            const std::vector<int> &mappingBindings)
         {
             std::vector<glm::mat4> localTransforms;
             localTransforms.reserve(skeleton.joints.size());
@@ -551,13 +553,18 @@ namespace PlutoGE::scene
             std::vector<glm::quat> desiredTargetGlobalRotations(skeleton.joints.size(), glm::quat(1.0f, 0.0f, 0.0f, 0.0f));
             std::vector<uint8_t> hasDesiredTargetGlobalRotation(skeleton.joints.size(), 0);
 
-            for (const auto &channel : clips[static_cast<size_t>(clipIndex)].channels)
+            const auto &channels = clips[static_cast<size_t>(clipIndex)].channels;
+            for (size_t channelIndex = 0; channelIndex < channels.size(); ++channelIndex)
             {
-                const int resolvedIndex = ResolveChannelJointIndex(channel, skeleton);
+                const auto &channel = channels[channelIndex];
+                const int resolvedIndex = channelIndex < jointBindings.size() ? jointBindings[channelIndex] : -1;
                 if (resolvedIndex < 0 || resolvedIndex >= static_cast<int>(skeleton.joints.size()))
                     continue;
 
-                const auto *mapping = FindHumanoidMappingForChannel(channel, skeleton);
+                const int mappingIndex = channelIndex < mappingBindings.size() ? mappingBindings[channelIndex] : -1;
+                const auto *mapping = mappingIndex >= 0 && mappingIndex < static_cast<int>(skeleton.humanoidBoneMappings.size())
+                                          ? &skeleton.humanoidBoneMappings[static_cast<size_t>(mappingIndex)]
+                                          : nullptr;
                 if (mapping && channel.path == render::AnimationTargetPath::Translation && !mapping->copyTranslation)
                     continue;
 
@@ -1151,6 +1158,9 @@ namespace PlutoGE::scene
             m_states.clear();
             m_parameters.clear();
             m_parameterLookup.clear();
+            m_retargetBindingSkeleton = nullptr;
+            m_retargetJointBindings.clear();
+            m_retargetMappingBindings.clear();
             m_transition = {};
             m_currentClipIndex = 0;
             m_defaultStateIndex = 0;
@@ -1232,6 +1242,9 @@ namespace PlutoGE::scene
     void AnimationComponent::SetClipsFromImportedAnimations(const std::vector<render::AnimationClip> &animations)
     {
         m_clips = animations;
+        m_retargetBindingSkeleton = nullptr;
+        m_retargetJointBindings.clear();
+        m_retargetMappingBindings.clear();
         for (size_t index = 0; index < m_clips.size(); ++index)
         {
             auto &clip = m_clips[index];
@@ -1642,14 +1655,20 @@ namespace PlutoGE::scene
             }
 
             const auto &parameter = m_parameters[parameterIt->second];
+            const bool parameterAsBool = parameter.type == AnimationParameterType::Bool ||
+                                                 parameter.type == AnimationParameterType::Trigger
+                                             ? parameter.boolValue
+                                             : parameter.type == AnimationParameterType::Int
+                                                   ? parameter.intValue != 0
+                                                   : std::abs(parameter.floatValue) > 0.0001f;
             bool matched = false;
             switch (condition.mode)
             {
             case AnimationConditionMode::If:
-                matched = parameter.type == AnimationParameterType::Trigger ? parameter.boolValue : GetBool(condition.parameterName);
+                matched = parameterAsBool;
                 break;
             case AnimationConditionMode::IfNot:
-                matched = !GetBool(condition.parameterName);
+                matched = !parameterAsBool;
                 break;
             case AnimationConditionMode::Greater:
                 matched = parameter.type == AnimationParameterType::Int ? parameter.intValue > static_cast<int>(condition.threshold) : parameter.floatValue > condition.threshold;
@@ -2190,6 +2209,67 @@ namespace PlutoGE::scene
         m_nodeMatricesDirty = false;
     }
 
+    void AnimationComponent::EnsureRetargetBindingCache(const render::Skeleton &skeleton)
+    {
+        auto hashCombine = [](std::size_t &seed, std::size_t value)
+        {
+            seed ^= value + 0x9e3779b9u + (seed << 6u) + (seed >> 2u);
+        };
+
+        std::size_t signature = skeleton.joints.size();
+        for (const auto &joint : skeleton.joints)
+        {
+            hashCombine(signature, std::hash<std::string>{}(joint.name));
+            hashCombine(signature, static_cast<std::size_t>(joint.parentJointIndex + 1));
+        }
+        for (const auto &mapping : skeleton.humanoidBoneMappings)
+        {
+            hashCombine(signature, std::hash<std::string>{}(mapping.sourceBoneName));
+            hashCombine(signature, static_cast<std::size_t>(mapping.targetJointIndex + 1));
+            hashCombine(signature, static_cast<std::size_t>(mapping.bone));
+        }
+        bool bindingSizesMatch = m_retargetJointBindings.size() == m_clips.size();
+        if (bindingSizesMatch)
+        {
+            for (size_t clipIndex = 0; clipIndex < m_clips.size(); ++clipIndex)
+            {
+                if (m_retargetJointBindings[clipIndex].size() != m_clips[clipIndex].channels.size())
+                {
+                    bindingSizesMatch = false;
+                    break;
+                }
+            }
+        }
+        if (m_retargetBindingSkeleton == &skeleton &&
+            m_retargetBindingSignature == signature &&
+            bindingSizesMatch)
+        {
+            return;
+        }
+
+        m_retargetBindingSkeleton = &skeleton;
+        m_retargetBindingSignature = signature;
+        m_retargetJointBindings.clear();
+        m_retargetMappingBindings.clear();
+        m_retargetJointBindings.resize(m_clips.size());
+        m_retargetMappingBindings.resize(m_clips.size());
+
+        for (size_t clipIndex = 0; clipIndex < m_clips.size(); ++clipIndex)
+        {
+            const auto &channels = m_clips[clipIndex].channels;
+            auto &jointBindings = m_retargetJointBindings[clipIndex];
+            auto &mappingBindings = m_retargetMappingBindings[clipIndex];
+            jointBindings.reserve(channels.size());
+            mappingBindings.reserve(channels.size());
+            for (const auto &channel : channels)
+            {
+                jointBindings.push_back(ResolveChannelJointIndex(channel, skeleton));
+                const auto *mapping = FindHumanoidMappingForChannel(channel, skeleton);
+                mappingBindings.push_back(mapping ? static_cast<int>(mapping - skeleton.humanoidBoneMappings.data()) : -1);
+            }
+        }
+    }
+
     void AnimationComponent::EvaluateJointMatrices(const render::Skeleton &skeleton)
     {
         m_jointMatrices.assign(skeleton.joints.size(), glm::mat4(1.0f));
@@ -2199,16 +2279,30 @@ namespace PlutoGE::scene
             return;
         }
 
-        auto localTransforms = SampleRetargetedJointTransforms(m_clips, m_currentClipIndex, m_time, skeleton);
+        EnsureRetargetBindingCache(skeleton);
+        auto sampleClip = [&](int clipIndex, float time)
+        {
+            static const std::vector<int> emptyBindings;
+            const bool validBindings = clipIndex >= 0 && clipIndex < static_cast<int>(m_retargetJointBindings.size());
+            return SampleRetargetedJointTransforms(
+                m_clips, clipIndex, time, skeleton,
+                validBindings ? m_retargetJointBindings[static_cast<size_t>(clipIndex)] : emptyBindings,
+                validBindings ? m_retargetMappingBindings[static_cast<size_t>(clipIndex)] : emptyBindings);
+        };
 
+        std::vector<glm::mat4> localTransforms;
         if (m_transition.active)
         {
             const auto &source = m_states[static_cast<size_t>(m_transition.sourceStateIndex)];
             const auto &destination = m_states[static_cast<size_t>(m_transition.destinationStateIndex)];
-            const auto sourceTransforms = SampleRetargetedJointTransforms(m_clips, source.clipIndex, m_transition.sourceTime, skeleton);
-            const auto destinationTransforms = SampleRetargetedJointTransforms(m_clips, destination.clipIndex, m_transition.destinationTime, skeleton);
+            const auto sourceTransforms = sampleClip(source.clipIndex, m_transition.sourceTime);
+            const auto destinationTransforms = sampleClip(destination.clipIndex, m_transition.destinationTime);
             const float blend = m_transition.duration > 0.0f ? std::clamp(m_transition.elapsed / m_transition.duration, 0.0f, 1.0f) : 1.0f;
             localTransforms = BlendLocalTransforms(sourceTransforms, destinationTransforms, blend);
+        }
+        else
+        {
+            localTransforms = sampleClip(m_currentClipIndex, m_time);
         }
 
         // Skin joint arrays are not required to be topologically sorted. In

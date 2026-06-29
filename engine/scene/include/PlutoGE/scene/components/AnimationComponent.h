@@ -161,6 +161,7 @@ namespace PlutoGE::scene
 
         void EvaluateJointMatrices(const render::Skeleton &skeleton);
         void EvaluateNodeMatrices(const std::vector<render::AnimationNode> &nodes);
+        void EnsureRetargetBindingCache(const render::Skeleton &skeleton);
 
         std::vector<render::AnimationClip> m_clips;
         std::vector<glm::mat4> m_jointMatrices;
@@ -169,6 +170,10 @@ namespace PlutoGE::scene
         std::vector<AnimationState> m_states;
         std::vector<AnimationParameter> m_parameters;
         std::unordered_map<std::string, size_t> m_parameterLookup;
+        const render::Skeleton *m_retargetBindingSkeleton = nullptr;
+        std::size_t m_retargetBindingSignature = 0;
+        std::vector<std::vector<int>> m_retargetJointBindings;
+        std::vector<std::vector<int>> m_retargetMappingBindings;
         std::string m_animationGraphAssetReference;
         TransitionPlayback m_transition;
         int m_currentClipIndex = 0;

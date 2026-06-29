@@ -11,6 +11,7 @@
 #include "PlutoGE/scene/components/ColliderComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
+#include "PlutoGE/scene/components/ParticleSystemComponent.h"
 #include "PlutoGE/scene/components/RigidbodyComponent.h"
 #include "PlutoGE/scene/components/ScriptComponent.h"
 #include "PlutoGE/scene/components/UIComponent.h"
@@ -81,6 +82,7 @@ namespace PlutoGE::scripting
         using register_animation_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_rigidbody_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_collider_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
+        using register_particle_system_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_runtime_ui_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_input_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_physics_api_fn = int(__cdecl *)(void *, void *, void *);
@@ -172,6 +174,7 @@ namespace PlutoGE::scripting
             UIImage = 9,
             UIText = 10,
             UIButton = 11,
+            ParticleSystem = 12,
         };
 
         std::wstring Utf8ToWide(std::string_view text)
@@ -754,6 +757,8 @@ namespace PlutoGE::scripting
                 return entity->GetComponent<scene::UITextComponent>();
             case ManagedComponentKind::UIButton:
                 return entity->GetComponent<scene::UIButtonComponent>();
+            case ManagedComponentKind::ParticleSystem:
+                return entity->GetComponent<scene::ParticleSystemComponent>();
             default:
                 return nullptr;
             }
@@ -1329,6 +1334,79 @@ namespace PlutoGE::scripting
         int32_t GetColliderTrigger(uint32_t entityId) { auto *component = FindCollider(entityId); return component && component->IsTrigger() ? 1 : 0; }
         void SetColliderTrigger(uint32_t entityId, int32_t value) { if (auto *component = FindCollider(entityId)) component->SetTrigger(value != 0); }
 
+        scene::ParticleSystemComponent *FindParticleSystem(uint32_t entityId)
+        {
+            auto *entity = FindEntity(entityId);
+            return entity ? entity->GetComponent<scene::ParticleSystemComponent>() : nullptr;
+        }
+
+        int32_t GetParticleSystemPlaying(uint32_t entityId) { auto *component = FindParticleSystem(entityId); return component && component->IsPlaying() ? 1 : 0; }
+        int32_t GetParticleSystemParticleCount(uint32_t entityId) { auto *component = FindParticleSystem(entityId); return component ? component->GetParticleCount() : 0; }
+        void ParticleSystemPlay(uint32_t entityId) { if (auto *component = FindParticleSystem(entityId)) component->Play(); }
+        void ParticleSystemPause(uint32_t entityId) { if (auto *component = FindParticleSystem(entityId)) component->Pause(); }
+        void ParticleSystemStop(uint32_t entityId, int32_t clear) { if (auto *component = FindParticleSystem(entityId)) component->Stop(clear != 0); }
+        void ParticleSystemClear(uint32_t entityId) { if (auto *component = FindParticleSystem(entityId)) component->Clear(); }
+        void ParticleSystemEmit(uint32_t entityId, int32_t count) { if (auto *component = FindParticleSystem(entityId)) component->Emit(count); }
+        int32_t GetParticleSystemLooping(uint32_t entityId) { auto *component = FindParticleSystem(entityId); return component && component->GetLooping() ? 1 : 0; }
+        void SetParticleSystemLooping(uint32_t entityId, int32_t value) { if (auto *component = FindParticleSystem(entityId)) component->SetLooping(value != 0); }
+        int32_t GetParticleSystemPlayOnAwake(uint32_t entityId) { auto *component = FindParticleSystem(entityId); return component && component->GetPlayOnAwake() ? 1 : 0; }
+        void SetParticleSystemPlayOnAwake(uint32_t entityId, int32_t value) { if (auto *component = FindParticleSystem(entityId)) component->SetPlayOnAwake(value != 0); }
+        float GetParticleSystemDuration(uint32_t entityId) { auto *component = FindParticleSystem(entityId); return component ? component->GetDuration() : 0.0f; }
+        void SetParticleSystemDuration(uint32_t entityId, float value) { if (auto *component = FindParticleSystem(entityId)) component->SetDuration(value); }
+        float GetParticleSystemStartLifetime(uint32_t entityId) { auto *component = FindParticleSystem(entityId); return component ? component->GetStartLifetime() : 0.0f; }
+        void SetParticleSystemStartLifetime(uint32_t entityId, float value) { if (auto *component = FindParticleSystem(entityId)) component->SetStartLifetime(value); }
+        float GetParticleSystemStartSpeed(uint32_t entityId) { auto *component = FindParticleSystem(entityId); return component ? component->GetStartSpeed() : 0.0f; }
+        void SetParticleSystemStartSpeed(uint32_t entityId, float value) { if (auto *component = FindParticleSystem(entityId)) component->SetStartSpeed(value); }
+        float GetParticleSystemStartSize(uint32_t entityId) { auto *component = FindParticleSystem(entityId); return component ? component->GetStartSize() : 0.0f; }
+        void SetParticleSystemStartSize(uint32_t entityId, float value) { if (auto *component = FindParticleSystem(entityId)) component->SetStartSize(value); }
+        float GetParticleSystemGravityModifier(uint32_t entityId) { auto *component = FindParticleSystem(entityId); return component ? component->GetGravityModifier() : 0.0f; }
+        void SetParticleSystemGravityModifier(uint32_t entityId, float value) { if (auto *component = FindParticleSystem(entityId)) component->SetGravityModifier(value); }
+        float GetParticleSystemEmissionRate(uint32_t entityId) { auto *component = FindParticleSystem(entityId); return component ? component->GetEmissionRateOverTime() : 0.0f; }
+        void SetParticleSystemEmissionRate(uint32_t entityId, float value) { if (auto *component = FindParticleSystem(entityId)) component->SetEmissionRateOverTime(value); }
+        NativeVector3 GetParticleSystemStartColor(uint32_t entityId)
+        {
+            auto *component = FindParticleSystem(entityId);
+            const auto value = component ? component->GetStartColor() : glm::vec4{1.0f};
+            return NativeVector3{value.r, value.g, value.b};
+        }
+        void SetParticleSystemStartColor(uint32_t entityId, NativeVector3 value)
+        {
+            if (auto *component = FindParticleSystem(entityId); component && IsFiniteVector3(value))
+            {
+                const float alpha = component->GetStartColor().a;
+                component->SetStartColor(glm::vec4(value.x, value.y, value.z, alpha));
+            }
+        }
+        NativeVector3 GetParticleSystemShapeSize(uint32_t entityId)
+        {
+            auto *component = FindParticleSystem(entityId);
+            const auto value = component ? component->GetShapeSize() : glm::vec3{1.0f};
+            return NativeVector3{value.x, value.y, value.z};
+        }
+        void SetParticleSystemShapeSize(uint32_t entityId, NativeVector3 value)
+        {
+            if (auto *component = FindParticleSystem(entityId); component && IsFiniteVector3(value))
+            {
+                component->SetShapeSize(glm::vec3(value.x, value.y, value.z));
+            }
+        }
+        int32_t GetParticleSystemSimulationSpace(uint32_t entityId) { auto *component = FindParticleSystem(entityId); return component ? static_cast<int32_t>(component->GetSimulationSpace()) : 0; }
+        void SetParticleSystemSimulationSpace(uint32_t entityId, int32_t value)
+        {
+            if (auto *component = FindParticleSystem(entityId))
+            {
+                component->SetSimulationSpace(value == 1 ? scene::ParticleSimulationSpace::World : scene::ParticleSimulationSpace::Local);
+            }
+        }
+        int32_t GetParticleSystemShape(uint32_t entityId) { auto *component = FindParticleSystem(entityId); return component ? static_cast<int32_t>(component->GetShape()) : 0; }
+        void SetParticleSystemShape(uint32_t entityId, int32_t value)
+        {
+            if (auto *component = FindParticleSystem(entityId))
+            {
+                component->SetShape(static_cast<scene::ParticleShape>(std::clamp(value, 0, 3)));
+            }
+        }
+
         scene::CanvasComponent *FindCanvas(uint32_t entityId) { auto *entity = FindEntity(entityId); return entity ? entity->GetComponent<scene::CanvasComponent>() : nullptr; }
         scene::RectTransformComponent *FindRectTransform(uint32_t entityId) { auto *entity = FindEntity(entityId); return entity ? entity->GetComponent<scene::RectTransformComponent>() : nullptr; }
         scene::UIImageComponent *FindUIImage(uint32_t entityId) { auto *entity = FindEntity(entityId); return entity ? entity->GetComponent<scene::UIImageComponent>() : nullptr; }
@@ -1701,6 +1779,7 @@ namespace PlutoGE::scripting
         register_animation_component_api_fn registerAnimationComponentApi = nullptr;
         register_rigidbody_component_api_fn registerRigidbodyComponentApi = nullptr;
         register_collider_component_api_fn registerColliderComponentApi = nullptr;
+        register_particle_system_component_api_fn registerParticleSystemComponentApi = nullptr;
         register_runtime_ui_api_fn registerRuntimeUIApi = nullptr;
         register_input_api_fn registerInputApi = nullptr;
         register_physics_api_fn registerPhysicsApi = nullptr;
@@ -1792,6 +1871,7 @@ namespace PlutoGE::scripting
             impl.registerAnimationComponentApi = nullptr;
             impl.registerRigidbodyComponentApi = nullptr;
             impl.registerColliderComponentApi = nullptr;
+            impl.registerParticleSystemComponentApi = nullptr;
             impl.registerRuntimeUIApi = nullptr;
             impl.registerInputApi = nullptr;
             impl.registerPhysicsApi = nullptr;
@@ -2102,6 +2182,7 @@ namespace PlutoGE::scripting
                 LoadManagedExport(impl, L"RegisterAnimationComponentApi", impl.registerAnimationComponentApi) &&
                 LoadManagedExport(impl, L"RegisterRigidbodyComponentApi", impl.registerRigidbodyComponentApi) &&
                 LoadManagedExport(impl, L"RegisterColliderComponentApi", impl.registerColliderComponentApi) &&
+                LoadManagedExport(impl, L"RegisterParticleSystemComponentApi", impl.registerParticleSystemComponentApi) &&
                 LoadManagedExport(impl, L"RegisterRuntimeUIApi", impl.registerRuntimeUIApi) &&
                 LoadManagedExport(impl, L"RegisterInputApi", impl.registerInputApi) &&
                 LoadManagedExport(impl, L"RegisterPhysicsApi", impl.registerPhysicsApi) &&
@@ -2418,6 +2499,44 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(static_cast<set_component_bool_fn>(&SetColliderTrigger))) == 0)
         {
             setManagedBridgeFailure("RegisterColliderComponentApi");
+            return false;
+        }
+
+        if (!m_impl->registerParticleSystemComponentApi ||
+            m_impl->registerParticleSystemComponentApi(
+                reinterpret_cast<void *>(static_cast<get_component_bool_fn>(&GetParticleSystemPlaying)),
+                reinterpret_cast<void *>(static_cast<get_component_int_fn>(&GetParticleSystemParticleCount)),
+                reinterpret_cast<void *>(static_cast<component_action_fn>(&ParticleSystemPlay)),
+                reinterpret_cast<void *>(static_cast<component_action_fn>(&ParticleSystemPause)),
+                reinterpret_cast<void *>(static_cast<set_component_bool_fn>(&ParticleSystemStop)),
+                reinterpret_cast<void *>(static_cast<component_action_fn>(&ParticleSystemClear)),
+                reinterpret_cast<void *>(static_cast<set_component_int_fn>(&ParticleSystemEmit)),
+                reinterpret_cast<void *>(static_cast<get_component_bool_fn>(&GetParticleSystemLooping)),
+                reinterpret_cast<void *>(static_cast<set_component_bool_fn>(&SetParticleSystemLooping)),
+                reinterpret_cast<void *>(static_cast<get_component_bool_fn>(&GetParticleSystemPlayOnAwake)),
+                reinterpret_cast<void *>(static_cast<set_component_bool_fn>(&SetParticleSystemPlayOnAwake)),
+                reinterpret_cast<void *>(static_cast<get_component_float_fn>(&GetParticleSystemDuration)),
+                reinterpret_cast<void *>(static_cast<set_component_float_fn>(&SetParticleSystemDuration)),
+                reinterpret_cast<void *>(static_cast<get_component_float_fn>(&GetParticleSystemStartLifetime)),
+                reinterpret_cast<void *>(static_cast<set_component_float_fn>(&SetParticleSystemStartLifetime)),
+                reinterpret_cast<void *>(static_cast<get_component_float_fn>(&GetParticleSystemStartSpeed)),
+                reinterpret_cast<void *>(static_cast<set_component_float_fn>(&SetParticleSystemStartSpeed)),
+                reinterpret_cast<void *>(static_cast<get_component_float_fn>(&GetParticleSystemStartSize)),
+                reinterpret_cast<void *>(static_cast<set_component_float_fn>(&SetParticleSystemStartSize)),
+                reinterpret_cast<void *>(static_cast<get_component_float_fn>(&GetParticleSystemGravityModifier)),
+                reinterpret_cast<void *>(static_cast<set_component_float_fn>(&SetParticleSystemGravityModifier)),
+                reinterpret_cast<void *>(static_cast<get_component_float_fn>(&GetParticleSystemEmissionRate)),
+                reinterpret_cast<void *>(static_cast<set_component_float_fn>(&SetParticleSystemEmissionRate)),
+                reinterpret_cast<void *>(static_cast<get_component_vector3_fn>(&GetParticleSystemStartColor)),
+                reinterpret_cast<void *>(static_cast<set_component_vector3_fn>(&SetParticleSystemStartColor)),
+                reinterpret_cast<void *>(static_cast<get_component_vector3_fn>(&GetParticleSystemShapeSize)),
+                reinterpret_cast<void *>(static_cast<set_component_vector3_fn>(&SetParticleSystemShapeSize)),
+                reinterpret_cast<void *>(static_cast<get_component_int_fn>(&GetParticleSystemSimulationSpace)),
+                reinterpret_cast<void *>(static_cast<set_component_int_fn>(&SetParticleSystemSimulationSpace)),
+                reinterpret_cast<void *>(static_cast<get_component_int_fn>(&GetParticleSystemShape)),
+                reinterpret_cast<void *>(static_cast<set_component_int_fn>(&SetParticleSystemShape))) == 0)
+        {
+            setManagedBridgeFailure("RegisterParticleSystemComponentApi");
             return false;
         }
 

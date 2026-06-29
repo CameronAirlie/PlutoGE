@@ -10,6 +10,7 @@
 #include "PlutoGE/scene/components/IblCaptureComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
+#include "PlutoGE/scene/components/ParticleSystemComponent.h"
 #include "PlutoGE/scene/components/RigidbodyComponent.h"
 #include "PlutoGE/scene/components/ScriptComponent.h"
 #include "PlutoGE/scene/components/SkeletonAttachmentComponent.h"
@@ -50,6 +51,8 @@ namespace PlutoGE::scene
                 return "TerrainComponent";
             if (dynamic_cast<const FoliageComponent *>(&component))
                 return "FoliageComponent";
+            if (dynamic_cast<const ParticleSystemComponent *>(&component))
+                return "ParticleSystemComponent";
             if (dynamic_cast<const AnimationComponent *>(&component))
                 return "AnimationComponent";
             if (dynamic_cast<const SkeletonAttachmentComponent *>(&component))
@@ -87,6 +90,8 @@ namespace PlutoGE::scene
                 return std::make_unique<TerrainComponent>(TerrainComponentConfig{});
             if (componentType == "FoliageComponent")
                 return std::make_unique<FoliageComponent>();
+            if (componentType == "ParticleSystemComponent")
+                return std::make_unique<ParticleSystemComponent>();
             if (componentType == "AnimationComponent")
                 return std::make_unique<AnimationComponent>();
             if (componentType == "SkeletonAttachmentComponent")

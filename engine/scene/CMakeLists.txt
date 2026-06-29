@@ -13,6 +13,7 @@ add_library(PlutoGEScene
     src/components/IblCaptureComponent.cpp
     src/components/LightComponent.cpp
     src/components/PhysicalSkyComponent.cpp
+    src/components/ParticleSystemComponent.cpp
     src/components/RigidbodyComponent.cpp
     src/components/ScriptComponent.cpp
     src/components/TerrainComponent.cpp

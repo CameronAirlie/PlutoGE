@@ -28,6 +28,7 @@ add_library(PlutoGERender
     src/passes/GridPass.cpp
     src/passes/LightPropagationVolumePass.cpp
     src/passes/LightingPass.cpp
+    src/passes/ParticlePass.cpp
     src/passes/ShadowPass.cpp
     src/passes/TransparentPass.cpp
     src/passes/VolumetricCloudPass.cpp

@@ -21,6 +21,7 @@
 #include "PlutoGE/scene/components/IblCaptureComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/PhysicalSkyComponent.h"
+#include "PlutoGE/scene/components/ParticleSystemComponent.h"
 #include "PlutoGE/scene/components/RigidbodyComponent.h"
 #include "PlutoGE/scene/components/UIComponent.h"
 #include "PlutoGE/scene/components/VolumetricCloudComponent.h"
@@ -67,12 +68,13 @@ namespace PlutoGE::ui
             IblCapture = 8,
             PhysicalSky = 9,
             VolumetricCloud = 10,
-            Script = 11,
-            Canvas = 12,
-            RectTransform = 13,
-            UIImage = 14,
-            UIText = 15,
-            UIButton = 16,
+            ParticleSystem = 11,
+            Script = 12,
+            Canvas = 13,
+            RectTransform = 14,
+            UIImage = 15,
+            UIText = 16,
+            UIButton = 17,
         };
 
         struct ScriptAssetOption
@@ -900,6 +902,10 @@ namespace PlutoGE::ui
             {
                 return "Foliage Component";
             }
+            if (dynamic_cast<const scene::ParticleSystemComponent *>(&component))
+            {
+                return "Particle System Component";
+            }
             if (dynamic_cast<const scene::AnimationComponent *>(&component))
             {
                 return "Animation Component";
@@ -972,6 +978,8 @@ namespace PlutoGE::ui
                 return "TerrainComponent";
             if (dynamic_cast<const scene::FoliageComponent *>(&component))
                 return "FoliageComponent";
+            if (dynamic_cast<const scene::ParticleSystemComponent *>(&component))
+                return "ParticleSystemComponent";
             if (dynamic_cast<const scene::AnimationComponent *>(&component))
                 return "AnimationComponent";
             if (dynamic_cast<const scene::SkeletonAttachmentComponent *>(&component))
@@ -1086,6 +1094,8 @@ namespace PlutoGE::ui
                 return !entity.HasComponent<scene::TerrainComponent>();
             case AddableComponentType::Foliage:
                 return !entity.HasComponent<scene::FoliageComponent>();
+            case AddableComponentType::ParticleSystem:
+                return !entity.HasComponent<scene::ParticleSystemComponent>();
             case AddableComponentType::Animation:
                 return !entity.HasComponent<scene::AnimationComponent>();
             case AddableComponentType::Camera:
@@ -1135,6 +1145,7 @@ namespace PlutoGE::ui
                 renderItem("Mesh", AddableComponentType::Mesh);
                 renderItem("Terrain", AddableComponentType::Terrain);
                 renderItem("Foliage", AddableComponentType::Foliage);
+                renderItem("Particle System", AddableComponentType::ParticleSystem);
                 renderItem("Camera", AddableComponentType::Camera);
                 renderItem("Light", AddableComponentType::Light);
                 ImGui::EndMenu();
@@ -1212,6 +1223,9 @@ namespace PlutoGE::ui
                 }
                 break;
             }
+            case AddableComponentType::ParticleSystem:
+                entity.CreateComponent<scene::ParticleSystemComponent>();
+                break;
             case AddableComponentType::Camera:
             {
                 const bool sceneAlreadyHasCamera = SceneHasAnyCamera(entity.GetScene());

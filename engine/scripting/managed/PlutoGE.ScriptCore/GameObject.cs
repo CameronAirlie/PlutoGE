@@ -81,6 +81,7 @@ public sealed class GameObject
             var type when type == typeof(UIImageComponent) => ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.UIImage),
             var type when type == typeof(UITextComponent) => ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.UIText),
             var type when type == typeof(UIButtonComponent) => ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.UIButton),
+            var type when type == typeof(ParticleSystemComponent) => ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.ParticleSystem),
             _ => false,
         };
     }
@@ -140,6 +141,11 @@ public sealed class GameObject
         if (typeof(T) == typeof(UIButtonComponent) && ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.UIButton))
         {
             return new UIButtonComponent(EntityId) as T;
+        }
+
+        if (typeof(T) == typeof(ParticleSystemComponent) && ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.ParticleSystem))
+        {
+            return new ParticleSystemComponent(EntityId) as T;
         }
 
         return null;

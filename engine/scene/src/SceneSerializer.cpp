@@ -10,6 +10,7 @@
 #include "PlutoGE/scene/components/IblCaptureComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
+#include "PlutoGE/scene/components/ParticleSystemComponent.h"
 #include "PlutoGE/scene/components/PhysicalSkyComponent.h"
 #include "PlutoGE/scene/components/RigidbodyComponent.h"
 #include "PlutoGE/scene/components/ScriptComponent.h"
@@ -191,6 +192,10 @@ namespace PlutoGE::scene
             {
                 return "FoliageComponent";
             }
+            if (dynamic_cast<const ParticleSystemComponent *>(&component))
+            {
+                return "ParticleSystemComponent";
+            }
             if (dynamic_cast<const AnimationComponent *>(&component))
             {
                 return "AnimationComponent";
@@ -268,6 +273,10 @@ namespace PlutoGE::scene
             if (componentType == "FoliageComponent")
             {
                 return std::make_unique<FoliageComponent>();
+            }
+            if (componentType == "ParticleSystemComponent")
+            {
+                return std::make_unique<ParticleSystemComponent>();
             }
             if (componentType == "AnimationComponent")
             {
@@ -349,6 +358,10 @@ namespace PlutoGE::scene
                        propertyName == "MaterialAsset" ||
                        propertyName.ends_with(".SourceMesh") ||
                        propertyName.ends_with(".MaterialAsset");
+            }
+            if (componentType == "ParticleSystemComponent")
+            {
+                return propertyName == "MaterialAsset";
             }
             if (componentType == "AnimationComponent")
             {

@@ -18,6 +18,7 @@ namespace PlutoGE::scene
     class Entity;
     class FoliageComponent;
     class MeshComponent;
+    class ParticleSystemComponent;
     class TerrainComponent;
     struct Light;
 
@@ -112,6 +113,7 @@ namespace PlutoGE::scene
         void SetBakedProbeVolume(BakedProbeVolume bakedProbeVolume);
         void ClearBakedProbeVolume();
         const std::vector<IblCaptureVolume> &GetIblCaptureVolumes() const { return m_iblCaptureVolumes; }
+        const std::vector<ParticleSystemComponent *> &GetParticleSystemComponents() const { return m_particleSystemComponents; }
         int AddIblCaptureVolume(IblCaptureVolume captureVolume);
         void SetIblCaptureVolume(std::size_t index, IblCaptureVolume captureVolume);
         void RemoveIblCaptureVolume(std::size_t index);
@@ -134,6 +136,8 @@ namespace PlutoGE::scene
         void UnregisterTerrainComponent(TerrainComponent *terrainComponent);
         void RegisterFoliageComponent(FoliageComponent *foliageComponent);
         void UnregisterFoliageComponent(FoliageComponent *foliageComponent);
+        void RegisterParticleSystemComponent(ParticleSystemComponent *particleSystemComponent);
+        void UnregisterParticleSystemComponent(ParticleSystemComponent *particleSystemComponent);
 
     private:
         std::string m_name;
@@ -142,6 +146,7 @@ namespace PlutoGE::scene
         std::vector<MeshComponent *> m_meshComponents;
         std::vector<TerrainComponent *> m_terrainComponents;
         std::vector<FoliageComponent *> m_foliageComponents;
+        std::vector<ParticleSystemComponent *> m_particleSystemComponents;
         std::vector<Light *> m_lights;
         std::string m_filePath;
         std::string m_environmentMapPath;

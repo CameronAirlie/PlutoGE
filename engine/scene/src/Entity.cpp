@@ -3,6 +3,7 @@
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
+#include "PlutoGE/scene/components/ParticleSystemComponent.h"
 #include "PlutoGE/scene/components/TerrainComponent.h"
 #include "PlutoGE/scene/components/FoliageComponent.h"
 
@@ -282,6 +283,11 @@ namespace PlutoGE::scene
                 m_scene->RegisterFoliageComponent(static_cast<FoliageComponent *>(component));
                 m_scene->MarkShadowLightsDirty();
             }
+
+            if (dynamic_cast<ParticleSystemComponent *>(component))
+            {
+                m_scene->RegisterParticleSystemComponent(static_cast<ParticleSystemComponent *>(component));
+            }
         }
 
         return component;
@@ -317,6 +323,11 @@ namespace PlutoGE::scene
             {
                 m_scene->UnregisterFoliageComponent(static_cast<FoliageComponent *>(component));
                 m_scene->MarkShadowLightsDirty();
+            }
+
+            if (dynamic_cast<ParticleSystemComponent *>(component))
+            {
+                m_scene->UnregisterParticleSystemComponent(static_cast<ParticleSystemComponent *>(component));
             }
         }
 
@@ -377,6 +388,14 @@ namespace PlutoGE::scene
                     m_scene->UnregisterFoliageComponent(foliageComponent);
                 }
             }
+
+            for (auto *particleSystemComponent : GetComponents<ParticleSystemComponent>())
+            {
+                if (particleSystemComponent)
+                {
+                    m_scene->UnregisterParticleSystemComponent(particleSystemComponent);
+                }
+            }
         }
 
         m_scene = scene;
@@ -412,6 +431,14 @@ namespace PlutoGE::scene
                 if (foliageComponent)
                 {
                     m_scene->RegisterFoliageComponent(foliageComponent);
+                }
+            }
+
+            for (auto *particleSystemComponent : GetComponents<ParticleSystemComponent>())
+            {
+                if (particleSystemComponent)
+                {
+                    m_scene->RegisterParticleSystemComponent(particleSystemComponent);
                 }
             }
         }

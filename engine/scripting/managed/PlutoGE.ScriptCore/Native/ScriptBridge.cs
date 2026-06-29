@@ -59,6 +59,7 @@ internal static unsafe class ScriptBridge
         UIImage = 9,
         UIText = 10,
         UIButton = 11,
+        ParticleSystem = 12,
     }
 
     private sealed class ScriptLoadContext : AssemblyLoadContext
@@ -181,6 +182,37 @@ internal static unsafe class ScriptBridge
     private static delegate* unmanaged[Cdecl]<uint, float, void> _setColliderHeight;
     private static delegate* unmanaged[Cdecl]<uint, int> _getColliderTrigger;
     private static delegate* unmanaged[Cdecl]<uint, int, void> _setColliderTrigger;
+    private static delegate* unmanaged[Cdecl]<uint, int> _getParticleSystemPlaying;
+    private static delegate* unmanaged[Cdecl]<uint, int> _getParticleSystemParticleCount;
+    private static delegate* unmanaged[Cdecl]<uint, void> _particleSystemPlay;
+    private static delegate* unmanaged[Cdecl]<uint, void> _particleSystemPause;
+    private static delegate* unmanaged[Cdecl]<uint, int, void> _particleSystemStop;
+    private static delegate* unmanaged[Cdecl]<uint, void> _particleSystemClear;
+    private static delegate* unmanaged[Cdecl]<uint, int, void> _particleSystemEmit;
+    private static delegate* unmanaged[Cdecl]<uint, int> _getParticleSystemLooping;
+    private static delegate* unmanaged[Cdecl]<uint, int, void> _setParticleSystemLooping;
+    private static delegate* unmanaged[Cdecl]<uint, int> _getParticleSystemPlayOnAwake;
+    private static delegate* unmanaged[Cdecl]<uint, int, void> _setParticleSystemPlayOnAwake;
+    private static delegate* unmanaged[Cdecl]<uint, float> _getParticleSystemDuration;
+    private static delegate* unmanaged[Cdecl]<uint, float, void> _setParticleSystemDuration;
+    private static delegate* unmanaged[Cdecl]<uint, float> _getParticleSystemStartLifetime;
+    private static delegate* unmanaged[Cdecl]<uint, float, void> _setParticleSystemStartLifetime;
+    private static delegate* unmanaged[Cdecl]<uint, float> _getParticleSystemStartSpeed;
+    private static delegate* unmanaged[Cdecl]<uint, float, void> _setParticleSystemStartSpeed;
+    private static delegate* unmanaged[Cdecl]<uint, float> _getParticleSystemStartSize;
+    private static delegate* unmanaged[Cdecl]<uint, float, void> _setParticleSystemStartSize;
+    private static delegate* unmanaged[Cdecl]<uint, float> _getParticleSystemGravityModifier;
+    private static delegate* unmanaged[Cdecl]<uint, float, void> _setParticleSystemGravityModifier;
+    private static delegate* unmanaged[Cdecl]<uint, float> _getParticleSystemEmissionRate;
+    private static delegate* unmanaged[Cdecl]<uint, float, void> _setParticleSystemEmissionRate;
+    private static delegate* unmanaged[Cdecl]<uint, NativeVector3> _getParticleSystemStartColor;
+    private static delegate* unmanaged[Cdecl]<uint, NativeVector3, void> _setParticleSystemStartColor;
+    private static delegate* unmanaged[Cdecl]<uint, NativeVector3> _getParticleSystemShapeSize;
+    private static delegate* unmanaged[Cdecl]<uint, NativeVector3, void> _setParticleSystemShapeSize;
+    private static delegate* unmanaged[Cdecl]<uint, int> _getParticleSystemSimulationSpace;
+    private static delegate* unmanaged[Cdecl]<uint, int, void> _setParticleSystemSimulationSpace;
+    private static delegate* unmanaged[Cdecl]<uint, int> _getParticleSystemShape;
+    private static delegate* unmanaged[Cdecl]<uint, int, void> _setParticleSystemShape;
     private static delegate* unmanaged[Cdecl]<uint, float> _getCanvasScaleFactor;
     private static delegate* unmanaged[Cdecl]<uint, float, void> _setCanvasScaleFactor;
     private static delegate* unmanaged[Cdecl]<uint, int> _getCanvasSortingOrder;
@@ -576,6 +608,88 @@ internal static unsafe class ScriptBridge
         _setColliderHeight = setHeight;
         _getColliderTrigger = getTrigger;
         _setColliderTrigger = setTrigger;
+        _lastError = string.Empty;
+        return 1;
+    }
+
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterParticleSystemComponentApi")]
+    public static int RegisterParticleSystemComponentApi(
+        delegate* unmanaged[Cdecl]<uint, int> getPlaying,
+        delegate* unmanaged[Cdecl]<uint, int> getParticleCount,
+        delegate* unmanaged[Cdecl]<uint, void> play,
+        delegate* unmanaged[Cdecl]<uint, void> pause,
+        delegate* unmanaged[Cdecl]<uint, int, void> stop,
+        delegate* unmanaged[Cdecl]<uint, void> clear,
+        delegate* unmanaged[Cdecl]<uint, int, void> emit,
+        delegate* unmanaged[Cdecl]<uint, int> getLooping,
+        delegate* unmanaged[Cdecl]<uint, int, void> setLooping,
+        delegate* unmanaged[Cdecl]<uint, int> getPlayOnAwake,
+        delegate* unmanaged[Cdecl]<uint, int, void> setPlayOnAwake,
+        delegate* unmanaged[Cdecl]<uint, float> getDuration,
+        delegate* unmanaged[Cdecl]<uint, float, void> setDuration,
+        delegate* unmanaged[Cdecl]<uint, float> getStartLifetime,
+        delegate* unmanaged[Cdecl]<uint, float, void> setStartLifetime,
+        delegate* unmanaged[Cdecl]<uint, float> getStartSpeed,
+        delegate* unmanaged[Cdecl]<uint, float, void> setStartSpeed,
+        delegate* unmanaged[Cdecl]<uint, float> getStartSize,
+        delegate* unmanaged[Cdecl]<uint, float, void> setStartSize,
+        delegate* unmanaged[Cdecl]<uint, float> getGravityModifier,
+        delegate* unmanaged[Cdecl]<uint, float, void> setGravityModifier,
+        delegate* unmanaged[Cdecl]<uint, float> getEmissionRate,
+        delegate* unmanaged[Cdecl]<uint, float, void> setEmissionRate,
+        delegate* unmanaged[Cdecl]<uint, NativeVector3> getStartColor,
+        delegate* unmanaged[Cdecl]<uint, NativeVector3, void> setStartColor,
+        delegate* unmanaged[Cdecl]<uint, NativeVector3> getShapeSize,
+        delegate* unmanaged[Cdecl]<uint, NativeVector3, void> setShapeSize,
+        delegate* unmanaged[Cdecl]<uint, int> getSimulationSpace,
+        delegate* unmanaged[Cdecl]<uint, int, void> setSimulationSpace,
+        delegate* unmanaged[Cdecl]<uint, int> getShape,
+        delegate* unmanaged[Cdecl]<uint, int, void> setShape)
+    {
+        if (getPlaying == null || getParticleCount == null || play == null || pause == null || stop == null ||
+            clear == null || emit == null || getLooping == null || setLooping == null ||
+            getPlayOnAwake == null || setPlayOnAwake == null || getDuration == null || setDuration == null ||
+            getStartLifetime == null || setStartLifetime == null || getStartSpeed == null || setStartSpeed == null ||
+            getStartSize == null || setStartSize == null || getGravityModifier == null || setGravityModifier == null ||
+            getEmissionRate == null || setEmissionRate == null || getStartColor == null || setStartColor == null ||
+            getShapeSize == null || setShapeSize == null || getSimulationSpace == null || setSimulationSpace == null ||
+            getShape == null || setShape == null)
+        {
+            SetError("Managed particle system component API registration received a null function pointer.");
+            return 0;
+        }
+
+        _getParticleSystemPlaying = getPlaying;
+        _getParticleSystemParticleCount = getParticleCount;
+        _particleSystemPlay = play;
+        _particleSystemPause = pause;
+        _particleSystemStop = stop;
+        _particleSystemClear = clear;
+        _particleSystemEmit = emit;
+        _getParticleSystemLooping = getLooping;
+        _setParticleSystemLooping = setLooping;
+        _getParticleSystemPlayOnAwake = getPlayOnAwake;
+        _setParticleSystemPlayOnAwake = setPlayOnAwake;
+        _getParticleSystemDuration = getDuration;
+        _setParticleSystemDuration = setDuration;
+        _getParticleSystemStartLifetime = getStartLifetime;
+        _setParticleSystemStartLifetime = setStartLifetime;
+        _getParticleSystemStartSpeed = getStartSpeed;
+        _setParticleSystemStartSpeed = setStartSpeed;
+        _getParticleSystemStartSize = getStartSize;
+        _setParticleSystemStartSize = setStartSize;
+        _getParticleSystemGravityModifier = getGravityModifier;
+        _setParticleSystemGravityModifier = setGravityModifier;
+        _getParticleSystemEmissionRate = getEmissionRate;
+        _setParticleSystemEmissionRate = setEmissionRate;
+        _getParticleSystemStartColor = getStartColor;
+        _setParticleSystemStartColor = setStartColor;
+        _getParticleSystemShapeSize = getShapeSize;
+        _setParticleSystemShapeSize = setShapeSize;
+        _getParticleSystemSimulationSpace = getSimulationSpace;
+        _setParticleSystemSimulationSpace = setSimulationSpace;
+        _getParticleSystemShape = getShape;
+        _setParticleSystemShape = setShape;
         _lastError = string.Empty;
         return 1;
     }
@@ -1420,6 +1534,38 @@ internal static unsafe class ScriptBridge
     internal static bool GetColliderTrigger(uint entityId) => _getColliderTrigger != null && _getColliderTrigger(entityId) != 0;
     internal static void SetColliderTrigger(uint entityId, bool value) { if (_setColliderTrigger != null) _setColliderTrigger(entityId, value ? 1 : 0); }
 
+    internal static bool GetParticleSystemPlaying(uint entityId) => _getParticleSystemPlaying != null && _getParticleSystemPlaying(entityId) != 0;
+    internal static int GetParticleSystemParticleCount(uint entityId) => _getParticleSystemParticleCount == null ? 0 : _getParticleSystemParticleCount(entityId);
+    internal static void ParticleSystemPlay(uint entityId) { if (_particleSystemPlay != null) _particleSystemPlay(entityId); }
+    internal static void ParticleSystemPause(uint entityId) { if (_particleSystemPause != null) _particleSystemPause(entityId); }
+    internal static void ParticleSystemStop(uint entityId, bool clear) { if (_particleSystemStop != null) _particleSystemStop(entityId, clear ? 1 : 0); }
+    internal static void ParticleSystemClear(uint entityId) { if (_particleSystemClear != null) _particleSystemClear(entityId); }
+    internal static void ParticleSystemEmit(uint entityId, int count) { if (_particleSystemEmit != null) _particleSystemEmit(entityId, count); }
+    internal static bool GetParticleSystemLooping(uint entityId) => _getParticleSystemLooping != null && _getParticleSystemLooping(entityId) != 0;
+    internal static void SetParticleSystemLooping(uint entityId, bool value) { if (_setParticleSystemLooping != null) _setParticleSystemLooping(entityId, value ? 1 : 0); }
+    internal static bool GetParticleSystemPlayOnAwake(uint entityId) => _getParticleSystemPlayOnAwake != null && _getParticleSystemPlayOnAwake(entityId) != 0;
+    internal static void SetParticleSystemPlayOnAwake(uint entityId, bool value) { if (_setParticleSystemPlayOnAwake != null) _setParticleSystemPlayOnAwake(entityId, value ? 1 : 0); }
+    internal static float GetParticleSystemDuration(uint entityId) => _getParticleSystemDuration == null ? 0.0f : _getParticleSystemDuration(entityId);
+    internal static void SetParticleSystemDuration(uint entityId, float value) { if (_setParticleSystemDuration != null) _setParticleSystemDuration(entityId, value); }
+    internal static float GetParticleSystemStartLifetime(uint entityId) => _getParticleSystemStartLifetime == null ? 0.0f : _getParticleSystemStartLifetime(entityId);
+    internal static void SetParticleSystemStartLifetime(uint entityId, float value) { if (_setParticleSystemStartLifetime != null) _setParticleSystemStartLifetime(entityId, value); }
+    internal static float GetParticleSystemStartSpeed(uint entityId) => _getParticleSystemStartSpeed == null ? 0.0f : _getParticleSystemStartSpeed(entityId);
+    internal static void SetParticleSystemStartSpeed(uint entityId, float value) { if (_setParticleSystemStartSpeed != null) _setParticleSystemStartSpeed(entityId, value); }
+    internal static float GetParticleSystemStartSize(uint entityId) => _getParticleSystemStartSize == null ? 0.0f : _getParticleSystemStartSize(entityId);
+    internal static void SetParticleSystemStartSize(uint entityId, float value) { if (_setParticleSystemStartSize != null) _setParticleSystemStartSize(entityId, value); }
+    internal static float GetParticleSystemGravityModifier(uint entityId) => _getParticleSystemGravityModifier == null ? 0.0f : _getParticleSystemGravityModifier(entityId);
+    internal static void SetParticleSystemGravityModifier(uint entityId, float value) { if (_setParticleSystemGravityModifier != null) _setParticleSystemGravityModifier(entityId, value); }
+    internal static float GetParticleSystemEmissionRate(uint entityId) => _getParticleSystemEmissionRate == null ? 0.0f : _getParticleSystemEmissionRate(entityId);
+    internal static void SetParticleSystemEmissionRate(uint entityId, float value) { if (_setParticleSystemEmissionRate != null) _setParticleSystemEmissionRate(entityId, value); }
+    internal static Vector3 GetParticleSystemStartColor(uint entityId) => _getParticleSystemStartColor == null ? Vector3.One : _getParticleSystemStartColor(entityId).ToManaged();
+    internal static void SetParticleSystemStartColor(uint entityId, Vector3 value) { if (_setParticleSystemStartColor != null) _setParticleSystemStartColor(entityId, NativeVector3.FromManaged(value)); }
+    internal static Vector3 GetParticleSystemShapeSize(uint entityId) => _getParticleSystemShapeSize == null ? Vector3.One : _getParticleSystemShapeSize(entityId).ToManaged();
+    internal static void SetParticleSystemShapeSize(uint entityId, Vector3 value) { if (_setParticleSystemShapeSize != null) _setParticleSystemShapeSize(entityId, NativeVector3.FromManaged(value)); }
+    internal static int GetParticleSystemSimulationSpace(uint entityId) => _getParticleSystemSimulationSpace == null ? 0 : _getParticleSystemSimulationSpace(entityId);
+    internal static void SetParticleSystemSimulationSpace(uint entityId, int value) { if (_setParticleSystemSimulationSpace != null) _setParticleSystemSimulationSpace(entityId, value); }
+    internal static int GetParticleSystemShape(uint entityId) => _getParticleSystemShape == null ? 0 : _getParticleSystemShape(entityId);
+    internal static void SetParticleSystemShape(uint entityId, int value) { if (_setParticleSystemShape != null) _setParticleSystemShape(entityId, value); }
+
     internal static float GetCanvasScaleFactor(uint entityId) => _getCanvasScaleFactor == null ? 1.0f : _getCanvasScaleFactor(entityId);
     internal static void SetCanvasScaleFactor(uint entityId, float value) { if (_setCanvasScaleFactor != null) _setCanvasScaleFactor(entityId, value); }
     internal static int GetCanvasSortingOrder(uint entityId) => _getCanvasSortingOrder == null ? 0 : _getCanvasSortingOrder(entityId);
@@ -1816,6 +1962,11 @@ internal static unsafe class ScriptBridge
             return 20;
         }
 
+        if (type == typeof(ParticleSystemComponent))
+        {
+            return 21;
+        }
+
         return null;
     }
 
@@ -1928,6 +2079,7 @@ internal static unsafe class ScriptBridge
             18 => CreateReferenceValue(memberType, value),
             19 => CreateReferenceValue(memberType, value),
             20 => CreateReferenceValue(memberType, value),
+            21 => CreateReferenceValue(memberType, value),
             _ => null,
         };
     }
@@ -1956,6 +2108,7 @@ internal static unsafe class ScriptBridge
             18 => ExtractEntityId(value).ToString(CultureInfo.InvariantCulture),
             19 => ExtractEntityId(value).ToString(CultureInfo.InvariantCulture),
             20 => ExtractEntityId(value).ToString(CultureInfo.InvariantCulture),
+            21 => ExtractEntityId(value).ToString(CultureInfo.InvariantCulture),
             _ => string.Empty,
         };
     }
@@ -2028,6 +2181,11 @@ internal static unsafe class ScriptBridge
             return new UIButtonComponent(entityId);
         }
 
+        if (memberType == typeof(ParticleSystemComponent))
+        {
+            return new ParticleSystemComponent(entityId);
+        }
+
         return entityId;
     }
 
@@ -2049,6 +2207,7 @@ internal static unsafe class ScriptBridge
             UIImageComponent imageComponent => imageComponent.EntityId,
             UITextComponent textComponent => textComponent.EntityId,
             UIButtonComponent buttonComponent => buttonComponent.EntityId,
+            ParticleSystemComponent particleSystemComponent => particleSystemComponent.EntityId,
             _ => 0u,
         };
     }

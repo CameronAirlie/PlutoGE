@@ -4,6 +4,7 @@
 #include <string>
 #include <iostream>
 #include <unordered_map>
+#include <vector>
 #include <glm/glm.hpp>
 
 namespace PlutoGE::render
@@ -11,7 +12,10 @@ namespace PlutoGE::render
     struct ShaderSource
     {
         std::string vertexSource;
+        std::string geometrySource;
         std::string fragmentSource;
+        std::vector<std::string> transformFeedbackVaryings;
+        GLenum transformFeedbackBufferMode = GL_INTERLEAVED_ATTRIBS;
     };
 
     struct ShaderConfig

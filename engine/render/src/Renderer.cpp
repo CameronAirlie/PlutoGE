@@ -12,6 +12,7 @@
 #include "PlutoGE/render/passes/LightingPass.h"
 #include "PlutoGE/render/passes/LightPropagationVolumePass.h"
 #include "PlutoGE/render/passes/PostProcessPass.h"
+#include "PlutoGE/render/passes/ParticlePass.h"
 #include "PlutoGE/render/passes/PhysicalSkyPass.h"
 #include "PlutoGE/render/passes/RuntimeUIPass.h"
 #include "PlutoGE/render/passes/ShadowPass.h"
@@ -317,6 +318,10 @@ namespace PlutoGE::render
         auto postProcessPass = new PostProcessPass();
         postProcessPass->Initialize();
         m_renderPasses.push_back(postProcessPass);
+
+        auto particlePass = new ParticlePass();
+        particlePass->Initialize();
+        m_renderPasses.push_back(particlePass);
 
         auto transparentPass = new TransparentPass();
         transparentPass->Initialize();

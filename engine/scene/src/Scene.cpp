@@ -5,6 +5,7 @@
 #include "PlutoGE/scene/components/FoliageComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
+#include "PlutoGE/scene/components/ParticleSystemComponent.h"
 #include "PlutoGE/scene/components/RigidbodyComponent.h"
 #include "PlutoGE/scene/components/ScriptComponent.h"
 #include "PlutoGE/scene/components/TerrainComponent.h"
@@ -963,6 +964,29 @@ namespace PlutoGE::scene
 
             foliageComponent->SubmitRenderCommands();
         }
+    }
+
+    void Scene::RegisterParticleSystemComponent(ParticleSystemComponent *particleSystemComponent)
+    {
+        if (!particleSystemComponent)
+        {
+            return;
+        }
+
+        if (std::find(m_particleSystemComponents.begin(), m_particleSystemComponents.end(), particleSystemComponent) == m_particleSystemComponents.end())
+        {
+            m_particleSystemComponents.push_back(particleSystemComponent);
+        }
+    }
+
+    void Scene::UnregisterParticleSystemComponent(ParticleSystemComponent *particleSystemComponent)
+    {
+        if (!particleSystemComponent)
+        {
+            return;
+        }
+
+        m_particleSystemComponents.erase(std::remove(m_particleSystemComponents.begin(), m_particleSystemComponents.end(), particleSystemComponent), m_particleSystemComponents.end());
     }
 
     void Scene::RegisterMeshComponent(MeshComponent *meshComponent)

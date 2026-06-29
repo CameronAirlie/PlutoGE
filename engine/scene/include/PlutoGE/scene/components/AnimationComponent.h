@@ -12,6 +12,21 @@
 
 namespace PlutoGE::scene
 {
+    struct AnimationRetargetClipCache
+    {
+        std::vector<int> jointBindings;
+        std::vector<int> mappingBindings;
+        std::vector<glm::mat4> sourceLocalBindTransforms;
+        std::vector<glm::mat4> sourceGlobalBindTransforms;
+        std::vector<glm::mat4> sourceInverseLocalBindTransforms;
+        std::vector<glm::vec4> sourceGlobalBindRotations;
+        std::vector<glm::vec3> sourceBindTranslations;
+        std::vector<glm::vec4> sourceBindRotations;
+        std::vector<glm::vec3> sourceBindScales;
+        std::vector<int> sourceParentIndices;
+        std::vector<uint8_t> sourceNodesPresent;
+    };
+
     class AnimationComponent : public TypedComponent<AnimationComponent>
     {
     public:
@@ -172,8 +187,12 @@ namespace PlutoGE::scene
         std::unordered_map<std::string, size_t> m_parameterLookup;
         const render::Skeleton *m_retargetBindingSkeleton = nullptr;
         std::size_t m_retargetBindingSignature = 0;
-        std::vector<std::vector<int>> m_retargetJointBindings;
-        std::vector<std::vector<int>> m_retargetMappingBindings;
+        std::vector<AnimationRetargetClipCache> m_retargetClipCaches;
+        std::vector<glm::vec3> m_targetBindTranslations;
+        std::vector<glm::vec4> m_targetBindRotations;
+        std::vector<glm::vec3> m_targetBindScales;
+        std::vector<glm::mat4> m_targetGlobalBindTransforms;
+        std::vector<glm::vec4> m_targetGlobalBindRotations;
         std::string m_animationGraphAssetReference;
         TransitionPlayback m_transition;
         int m_currentClipIndex = 0;

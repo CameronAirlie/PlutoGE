@@ -437,13 +437,56 @@ namespace PlutoGE::scene
             return localTransforms;
         }
 
+        std::vector<glm::mat4> SampleCachedSourceLocalTransforms(
+            const render::AnimationClip &clip,
+            float time,
+            const AnimationRetargetClipCache &cache)
+        {
+            std::vector<glm::mat4> localTransforms = cache.sourceLocalBindTransforms;
+            std::vector<glm::vec3> translations = cache.sourceBindTranslations;
+            std::vector<glm::vec4> rotations = cache.sourceBindRotations;
+            std::vector<glm::vec3> scales = cache.sourceBindScales;
+            std::vector<uint8_t> animatedLocals(localTransforms.size(), 0);
+
+            for (const auto &channel : clip.channels)
+            {
+                if (channel.nodeIndex < 0 || channel.nodeIndex >= static_cast<int>(localTransforms.size()))
+                    continue;
+                const size_t nodeIndex = static_cast<size_t>(channel.nodeIndex);
+                const glm::vec4 sample = SampleChannelValue(channel, time);
+                switch (channel.path)
+                {
+                case render::AnimationTargetPath::Translation:
+                    translations[nodeIndex] = glm::vec3(sample);
+                    break;
+                case render::AnimationTargetPath::Rotation:
+                    rotations[nodeIndex] = sample;
+                    break;
+                case render::AnimationTargetPath::Scale:
+                    scales[nodeIndex] = glm::vec3(sample);
+                    break;
+                }
+                animatedLocals[nodeIndex] = 1;
+            }
+
+            for (size_t nodeIndex = 0; nodeIndex < localTransforms.size(); ++nodeIndex)
+            {
+                if (animatedLocals[nodeIndex])
+                    localTransforms[nodeIndex] = ComposeTransform(translations[nodeIndex], rotations[nodeIndex], scales[nodeIndex]);
+            }
+            return localTransforms;
+        }
+
         std::vector<glm::mat4> SampleRetargetedJointTransforms(
             const std::vector<render::AnimationClip> &clips,
             int clipIndex,
             float time,
             const render::Skeleton &skeleton,
-            const std::vector<int> &jointBindings,
-            const std::vector<int> &mappingBindings)
+            const AnimationRetargetClipCache &cache,
+            const std::vector<glm::vec3> &targetBindTranslations,
+            const std::vector<glm::vec4> &targetBindRotations,
+            const std::vector<glm::vec3> &targetBindScales,
+            const std::vector<glm::vec4> &targetGlobalBindRotations)
         {
             std::vector<glm::mat4> localTransforms;
             localTransforms.reserve(skeleton.joints.size());
@@ -453,69 +496,15 @@ namespace PlutoGE::scene
             if (clipIndex < 0 || clipIndex >= static_cast<int>(clips.size()))
                 return localTransforms;
 
-            std::vector<glm::vec3> translations(skeleton.joints.size(), glm::vec3(0.0f));
-            std::vector<glm::vec4> rotations(skeleton.joints.size(), glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
-            std::vector<glm::vec3> scales(skeleton.joints.size(), glm::vec3(1.0f));
+            std::vector<glm::vec3> translations = targetBindTranslations;
+            std::vector<glm::vec4> rotations = targetBindRotations;
+            std::vector<glm::vec3> scales = targetBindScales;
             std::vector<uint8_t> animatedLocals(skeleton.joints.size(), 0);
-            for (size_t jointIndex = 0; jointIndex < skeleton.joints.size(); ++jointIndex)
-            {
-                DecomposeTransform(skeleton.joints[jointIndex].localBindTransform,
-                                   translations[jointIndex], rotations[jointIndex], scales[jointIndex]);
-            }
-
-            std::vector<glm::mat4> targetGlobalBindTransforms(skeleton.joints.size(), glm::mat4(1.0f));
-            std::vector<uint8_t> targetBindEvaluationState(skeleton.joints.size(), 0);
-            std::function<glm::mat4(size_t)> evaluateTargetGlobalBind = [&](size_t jointIndex) -> glm::mat4 {
-                if (targetBindEvaluationState[jointIndex] == 2)
-                    return targetGlobalBindTransforms[jointIndex];
-                if (targetBindEvaluationState[jointIndex] == 1)
-                    return skeleton.joints[jointIndex].localBindTransform;
-
-                targetBindEvaluationState[jointIndex] = 1;
-                const int parentIndex = skeleton.joints[jointIndex].parentJointIndex;
-                targetGlobalBindTransforms[jointIndex] = parentIndex >= 0 &&
-                                                                 parentIndex < static_cast<int>(skeleton.joints.size()) &&
-                                                                 parentIndex != static_cast<int>(jointIndex)
-                                                             ? evaluateTargetGlobalBind(static_cast<size_t>(parentIndex)) * skeleton.joints[jointIndex].localBindTransform
-                                                             : skeleton.joints[jointIndex].localBindTransform;
-                targetBindEvaluationState[jointIndex] = 2;
-                return targetGlobalBindTransforms[jointIndex];
-            };
-            for (size_t jointIndex = 0; jointIndex < skeleton.joints.size(); ++jointIndex)
-                evaluateTargetGlobalBind(jointIndex);
 
             const auto &clip = clips[static_cast<size_t>(clipIndex)];
-            int sourceNodeCount = 0;
-            for (const auto &channel : clip.channels)
-            {
-                if (channel.nodeIndex >= 0)
-                    sourceNodeCount = std::max(sourceNodeCount, channel.nodeIndex + 1);
-            }
+            const int sourceNodeCount = static_cast<int>(cache.sourceLocalBindTransforms.size());
 
-            std::vector<glm::mat4> sourceLocalBindTransforms(static_cast<size_t>(sourceNodeCount), glm::mat4(1.0f));
-            std::vector<glm::mat4> sourceGlobalBindTransforms(static_cast<size_t>(sourceNodeCount), glm::mat4(1.0f));
-            std::vector<int> sourceParentIndices(static_cast<size_t>(sourceNodeCount), -1);
-            std::vector<uint8_t> sourceNodesPresent(static_cast<size_t>(sourceNodeCount), 0);
-            for (const auto &channel : clip.channels)
-            {
-                if (channel.nodeIndex < 0 || channel.nodeIndex >= sourceNodeCount)
-                    continue;
-
-                const size_t nodeIndex = static_cast<size_t>(channel.nodeIndex);
-                sourceParentIndices[nodeIndex] = channel.sourceParentNodeIndex;
-                if (channel.hasSourceLocalBindTransform)
-                    sourceLocalBindTransforms[nodeIndex] = channel.sourceLocalBindTransform;
-                if (channel.hasSourceGlobalBindTransform)
-                {
-                    sourceGlobalBindTransforms[nodeIndex] = channel.sourceGlobalBindTransform;
-                    sourceNodesPresent[nodeIndex] = 1;
-                }
-            }
-
-            const auto sourceLocalTransforms = SampleLocalTransforms(
-                clips, clipIndex, time, static_cast<size_t>(sourceNodeCount),
-                [](const render::AnimationChannel &channel) { return channel.nodeIndex; },
-                [&sourceLocalBindTransforms](size_t nodeIndex) { return sourceLocalBindTransforms[nodeIndex]; });
+            const auto sourceLocalTransforms = SampleCachedSourceLocalTransforms(clip, time, cache);
 
             std::vector<glm::mat4> sourceGlobalTransforms(static_cast<size_t>(sourceNodeCount), glm::mat4(1.0f));
             std::vector<uint8_t> sourceEvaluationState(static_cast<size_t>(sourceNodeCount), 0);
@@ -523,12 +512,12 @@ namespace PlutoGE::scene
                 if (sourceEvaluationState[nodeIndex] == 2)
                     return sourceGlobalTransforms[nodeIndex];
                 if (sourceEvaluationState[nodeIndex] == 1)
-                    return sourceGlobalBindTransforms[nodeIndex] * glm::inverse(sourceLocalBindTransforms[nodeIndex]) * sourceLocalTransforms[nodeIndex];
+                    return cache.sourceGlobalBindTransforms[nodeIndex] * cache.sourceInverseLocalBindTransforms[nodeIndex] * sourceLocalTransforms[nodeIndex];
 
                 sourceEvaluationState[nodeIndex] = 1;
-                const int parentIndex = sourceParentIndices[nodeIndex];
+                const int parentIndex = cache.sourceParentIndices[nodeIndex];
                 if (parentIndex >= 0 && parentIndex < sourceNodeCount &&
-                    sourceNodesPresent[static_cast<size_t>(parentIndex)] &&
+                    cache.sourceNodesPresent[static_cast<size_t>(parentIndex)] &&
                     parentIndex != static_cast<int>(nodeIndex))
                 {
                     sourceGlobalTransforms[nodeIndex] = evaluateSourceGlobal(static_cast<size_t>(parentIndex)) * sourceLocalTransforms[nodeIndex];
@@ -537,8 +526,8 @@ namespace PlutoGE::scene
                 {
                     // Preserve static ancestors that do not own animation
                     // channels (commonly the FBX/glTF armature conversion root).
-                    sourceGlobalTransforms[nodeIndex] = sourceGlobalBindTransforms[nodeIndex] *
-                                                        glm::inverse(sourceLocalBindTransforms[nodeIndex]) *
+                    sourceGlobalTransforms[nodeIndex] = cache.sourceGlobalBindTransforms[nodeIndex] *
+                                                        cache.sourceInverseLocalBindTransforms[nodeIndex] *
                                                         sourceLocalTransforms[nodeIndex];
                 }
                 sourceEvaluationState[nodeIndex] = 2;
@@ -546,7 +535,7 @@ namespace PlutoGE::scene
             };
             for (size_t nodeIndex = 0; nodeIndex < static_cast<size_t>(sourceNodeCount); ++nodeIndex)
             {
-                if (sourceNodesPresent[nodeIndex])
+                if (cache.sourceNodesPresent[nodeIndex])
                     evaluateSourceGlobal(nodeIndex);
             }
 
@@ -557,11 +546,11 @@ namespace PlutoGE::scene
             for (size_t channelIndex = 0; channelIndex < channels.size(); ++channelIndex)
             {
                 const auto &channel = channels[channelIndex];
-                const int resolvedIndex = channelIndex < jointBindings.size() ? jointBindings[channelIndex] : -1;
+                const int resolvedIndex = channelIndex < cache.jointBindings.size() ? cache.jointBindings[channelIndex] : -1;
                 if (resolvedIndex < 0 || resolvedIndex >= static_cast<int>(skeleton.joints.size()))
                     continue;
 
-                const int mappingIndex = channelIndex < mappingBindings.size() ? mappingBindings[channelIndex] : -1;
+                const int mappingIndex = channelIndex < cache.mappingBindings.size() ? cache.mappingBindings[channelIndex] : -1;
                 const auto *mapping = mappingIndex >= 0 && mappingIndex < static_cast<int>(skeleton.humanoidBoneMappings.size())
                                           ? &skeleton.humanoidBoneMappings[static_cast<size_t>(mappingIndex)]
                                           : nullptr;
@@ -581,9 +570,12 @@ namespace PlutoGE::scene
                 glm::vec4 sourceBindRotation{0.0f, 0.0f, 0.0f, 1.0f};
                 glm::vec3 sourceBindScale{1.0f};
                 const bool applyBindRelativeRetarget = mapping && channel.hasSourceLocalBindTransform;
-                if (applyBindRelativeRetarget)
+                if (applyBindRelativeRetarget && channel.nodeIndex >= 0 && channel.nodeIndex < sourceNodeCount)
                 {
-                    DecomposeTransform(channel.sourceLocalBindTransform, sourceBindTranslation, sourceBindRotation, sourceBindScale);
+                    const size_t sourceNodeIndex = static_cast<size_t>(channel.nodeIndex);
+                    sourceBindTranslation = cache.sourceBindTranslations[sourceNodeIndex];
+                    sourceBindRotation = cache.sourceBindRotations[sourceNodeIndex];
+                    sourceBindScale = cache.sourceBindScales[sourceNodeIndex];
                 }
                 switch (channel.path)
                 {
@@ -603,15 +595,11 @@ namespace PlutoGE::scene
                     {
                         glm::vec3 ignoredTranslation;
                         glm::vec3 ignoredScale;
-                        glm::vec4 sourceGlobalBindRotation;
+                        const glm::vec4 &sourceGlobalBindRotation = cache.sourceGlobalBindRotations[static_cast<size_t>(channel.nodeIndex)];
                         glm::vec4 sourceGlobalAnimatedRotation;
-                        glm::vec4 targetGlobalBindRotation;
-                        DecomposeTransform(channel.sourceGlobalBindTransform,
-                                           ignoredTranslation, sourceGlobalBindRotation, ignoredScale);
+                        const glm::vec4 &targetGlobalBindRotation = targetGlobalBindRotations[jointIndex];
                         DecomposeTransform(sourceGlobalTransforms[static_cast<size_t>(channel.nodeIndex)],
                                            ignoredTranslation, sourceGlobalAnimatedRotation, ignoredScale);
-                        DecomposeTransform(targetGlobalBindTransforms[jointIndex],
-                                           ignoredTranslation, targetGlobalBindRotation, ignoredScale);
 
                         const glm::quat sourceGlobalBind(sourceGlobalBindRotation.w,
                                                          sourceGlobalBindRotation.x,
@@ -1159,8 +1147,7 @@ namespace PlutoGE::scene
             m_parameters.clear();
             m_parameterLookup.clear();
             m_retargetBindingSkeleton = nullptr;
-            m_retargetJointBindings.clear();
-            m_retargetMappingBindings.clear();
+            m_retargetClipCaches.clear();
             m_transition = {};
             m_currentClipIndex = 0;
             m_defaultStateIndex = 0;
@@ -1243,8 +1230,7 @@ namespace PlutoGE::scene
     {
         m_clips = animations;
         m_retargetBindingSkeleton = nullptr;
-        m_retargetJointBindings.clear();
-        m_retargetMappingBindings.clear();
+        m_retargetClipCaches.clear();
         for (size_t index = 0; index < m_clips.size(); ++index)
         {
             auto &clip = m_clips[index];
@@ -2228,12 +2214,12 @@ namespace PlutoGE::scene
             hashCombine(signature, static_cast<std::size_t>(mapping.targetJointIndex + 1));
             hashCombine(signature, static_cast<std::size_t>(mapping.bone));
         }
-        bool bindingSizesMatch = m_retargetJointBindings.size() == m_clips.size();
+        bool bindingSizesMatch = m_retargetClipCaches.size() == m_clips.size();
         if (bindingSizesMatch)
         {
             for (size_t clipIndex = 0; clipIndex < m_clips.size(); ++clipIndex)
             {
-                if (m_retargetJointBindings[clipIndex].size() != m_clips[clipIndex].channels.size())
+                if (m_retargetClipCaches[clipIndex].jointBindings.size() != m_clips[clipIndex].channels.size())
                 {
                     bindingSizesMatch = false;
                     break;
@@ -2249,23 +2235,83 @@ namespace PlutoGE::scene
 
         m_retargetBindingSkeleton = &skeleton;
         m_retargetBindingSignature = signature;
-        m_retargetJointBindings.clear();
-        m_retargetMappingBindings.clear();
-        m_retargetJointBindings.resize(m_clips.size());
-        m_retargetMappingBindings.resize(m_clips.size());
+        m_retargetClipCaches.clear();
+        m_retargetClipCaches.resize(m_clips.size());
+
+        m_targetBindTranslations.resize(skeleton.joints.size());
+        m_targetBindRotations.resize(skeleton.joints.size());
+        m_targetBindScales.resize(skeleton.joints.size());
+        m_targetGlobalBindTransforms.assign(skeleton.joints.size(), glm::mat4(1.0f));
+        m_targetGlobalBindRotations.assign(skeleton.joints.size(), glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+        std::vector<uint8_t> targetEvaluationState(skeleton.joints.size(), 0);
+        std::function<glm::mat4(size_t)> evaluateTargetBind = [&](size_t jointIndex) -> glm::mat4 {
+            if (targetEvaluationState[jointIndex] == 2)
+                return m_targetGlobalBindTransforms[jointIndex];
+            if (targetEvaluationState[jointIndex] == 1)
+                return skeleton.joints[jointIndex].localBindTransform;
+            targetEvaluationState[jointIndex] = 1;
+            const int parentIndex = skeleton.joints[jointIndex].parentJointIndex;
+            m_targetGlobalBindTransforms[jointIndex] = parentIndex >= 0 && parentIndex < static_cast<int>(skeleton.joints.size()) &&
+                                                              parentIndex != static_cast<int>(jointIndex)
+                                                          ? evaluateTargetBind(static_cast<size_t>(parentIndex)) * skeleton.joints[jointIndex].localBindTransform
+                                                          : skeleton.joints[jointIndex].localBindTransform;
+            targetEvaluationState[jointIndex] = 2;
+            return m_targetGlobalBindTransforms[jointIndex];
+        };
+        for (size_t jointIndex = 0; jointIndex < skeleton.joints.size(); ++jointIndex)
+        {
+            DecomposeTransform(skeleton.joints[jointIndex].localBindTransform,
+                               m_targetBindTranslations[jointIndex], m_targetBindRotations[jointIndex], m_targetBindScales[jointIndex]);
+            evaluateTargetBind(jointIndex);
+            glm::vec3 ignoredTranslation;
+            glm::vec3 ignoredScale;
+            DecomposeTransform(m_targetGlobalBindTransforms[jointIndex], ignoredTranslation, m_targetGlobalBindRotations[jointIndex], ignoredScale);
+        }
 
         for (size_t clipIndex = 0; clipIndex < m_clips.size(); ++clipIndex)
         {
             const auto &channels = m_clips[clipIndex].channels;
-            auto &jointBindings = m_retargetJointBindings[clipIndex];
-            auto &mappingBindings = m_retargetMappingBindings[clipIndex];
-            jointBindings.reserve(channels.size());
-            mappingBindings.reserve(channels.size());
+            auto &cache = m_retargetClipCaches[clipIndex];
+            cache.jointBindings.reserve(channels.size());
+            cache.mappingBindings.reserve(channels.size());
+            int sourceNodeCount = 0;
+            for (const auto &channel : channels)
+                sourceNodeCount = channel.nodeIndex >= 0 ? std::max(sourceNodeCount, channel.nodeIndex + 1) : sourceNodeCount;
+            cache.sourceLocalBindTransforms.assign(static_cast<size_t>(sourceNodeCount), glm::mat4(1.0f));
+            cache.sourceGlobalBindTransforms.assign(static_cast<size_t>(sourceNodeCount), glm::mat4(1.0f));
+            cache.sourceInverseLocalBindTransforms.assign(static_cast<size_t>(sourceNodeCount), glm::mat4(1.0f));
+            cache.sourceGlobalBindRotations.assign(static_cast<size_t>(sourceNodeCount), glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+            cache.sourceBindTranslations.assign(static_cast<size_t>(sourceNodeCount), glm::vec3(0.0f));
+            cache.sourceBindRotations.assign(static_cast<size_t>(sourceNodeCount), glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+            cache.sourceBindScales.assign(static_cast<size_t>(sourceNodeCount), glm::vec3(1.0f));
+            cache.sourceParentIndices.assign(static_cast<size_t>(sourceNodeCount), -1);
+            cache.sourceNodesPresent.assign(static_cast<size_t>(sourceNodeCount), 0);
             for (const auto &channel : channels)
             {
-                jointBindings.push_back(ResolveChannelJointIndex(channel, skeleton));
+                cache.jointBindings.push_back(ResolveChannelJointIndex(channel, skeleton));
                 const auto *mapping = FindHumanoidMappingForChannel(channel, skeleton);
-                mappingBindings.push_back(mapping ? static_cast<int>(mapping - skeleton.humanoidBoneMappings.data()) : -1);
+                cache.mappingBindings.push_back(mapping ? static_cast<int>(mapping - skeleton.humanoidBoneMappings.data()) : -1);
+                if (channel.nodeIndex < 0 || channel.nodeIndex >= sourceNodeCount)
+                    continue;
+                const size_t nodeIndex = static_cast<size_t>(channel.nodeIndex);
+                cache.sourceParentIndices[nodeIndex] = channel.sourceParentNodeIndex;
+                if (channel.hasSourceLocalBindTransform)
+                    cache.sourceLocalBindTransforms[nodeIndex] = channel.sourceLocalBindTransform;
+                if (channel.hasSourceGlobalBindTransform)
+                {
+                    cache.sourceGlobalBindTransforms[nodeIndex] = channel.sourceGlobalBindTransform;
+                    cache.sourceNodesPresent[nodeIndex] = 1;
+                }
+            }
+            for (size_t nodeIndex = 0; nodeIndex < static_cast<size_t>(sourceNodeCount); ++nodeIndex)
+            {
+                cache.sourceInverseLocalBindTransforms[nodeIndex] = glm::inverse(cache.sourceLocalBindTransforms[nodeIndex]);
+                DecomposeTransform(cache.sourceLocalBindTransforms[nodeIndex], cache.sourceBindTranslations[nodeIndex],
+                                   cache.sourceBindRotations[nodeIndex], cache.sourceBindScales[nodeIndex]);
+                glm::vec3 ignoredTranslation;
+                glm::vec3 ignoredScale;
+                DecomposeTransform(cache.sourceGlobalBindTransforms[nodeIndex], ignoredTranslation,
+                                   cache.sourceGlobalBindRotations[nodeIndex], ignoredScale);
             }
         }
     }
@@ -2282,12 +2328,12 @@ namespace PlutoGE::scene
         EnsureRetargetBindingCache(skeleton);
         auto sampleClip = [&](int clipIndex, float time)
         {
-            static const std::vector<int> emptyBindings;
-            const bool validBindings = clipIndex >= 0 && clipIndex < static_cast<int>(m_retargetJointBindings.size());
+            static const AnimationRetargetClipCache emptyCache;
+            const bool validBindings = clipIndex >= 0 && clipIndex < static_cast<int>(m_retargetClipCaches.size());
             return SampleRetargetedJointTransforms(
                 m_clips, clipIndex, time, skeleton,
-                validBindings ? m_retargetJointBindings[static_cast<size_t>(clipIndex)] : emptyBindings,
-                validBindings ? m_retargetMappingBindings[static_cast<size_t>(clipIndex)] : emptyBindings);
+                validBindings ? m_retargetClipCaches[static_cast<size_t>(clipIndex)] : emptyCache,
+                m_targetBindTranslations, m_targetBindRotations, m_targetBindScales, m_targetGlobalBindRotations);
         };
 
         std::vector<glm::mat4> localTransforms;

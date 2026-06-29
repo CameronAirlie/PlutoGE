@@ -13,6 +13,7 @@ namespace PlutoGE::scene
     enum class CanvasRenderMode
     {
         ScreenSpaceOverlay = 0,
+        WorldSpaceOverlay,
     };
 
     enum class UIAnchorPreset
@@ -114,12 +115,15 @@ namespace PlutoGE::scene
         void SetFontSize(float fontSize) { m_fontSize = fontSize; }
         const std::string &GetFontPath() const { return m_fontPath; }
         void SetFontPath(std::string fontPath) { m_fontPath = std::move(fontPath); }
+        bool IsRichText() const { return m_richText; }
+        void SetRichText(bool richText) { m_richText = richText; }
 
     private:
         std::string m_text;
         glm::vec4 m_color{1.0f};
         float m_fontSize = 18.0f;
         std::string m_fontPath;
+        bool m_richText = true;
     };
 
     class UIButtonComponent : public TypedComponent<UIButtonComponent>

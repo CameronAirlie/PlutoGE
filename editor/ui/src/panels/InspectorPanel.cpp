@@ -54,26 +54,6 @@ namespace PlutoGE::ui
         constexpr std::size_t kNewScriptNameBufferSize = 128;
         constexpr const char *kPostProcessEffectDragDropPayload = "PGE_PP_FX";
         constexpr const char *kEditorPostProcessEffectDragDropPayload = "PGE_ED_PP_FX";
-        constexpr const char *kAddableComponentLabels[] = {
-            "Mesh Component",
-            "Terrain Component",
-            "Foliage Component",
-            "Animation Component",
-            "Camera Component",
-            "Light Component",
-            "Rigidbody Component",
-            "Collider Component",
-            "IBL Capture Component",
-            "Physical Sky Component",
-            "Volumetric Cloud Component",
-            "Script Component",
-            "Canvas Component",
-            "Rect Transform Component",
-            "UI Image Component",
-            "UI Text Component",
-            "UI Button Component",
-        };
-
         enum class AddableComponentType
         {
             Mesh = 0,
@@ -1137,6 +1117,62 @@ namespace PlutoGE::ui
             default:
                 return false;
             }
+        }
+
+        std::optional<AddableComponentType> RenderAddComponentMenu(const scene::Entity &entity)
+        {
+            std::optional<AddableComponentType> selectedType;
+            const auto renderItem = [&](const char *label, AddableComponentType type)
+            {
+                if (ImGui::MenuItem(label, nullptr, false, CanAddComponentType(entity, type)))
+                {
+                    selectedType = type;
+                }
+            };
+
+            if (ImGui::BeginMenu("Rendering"))
+            {
+                renderItem("Mesh", AddableComponentType::Mesh);
+                renderItem("Terrain", AddableComponentType::Terrain);
+                renderItem("Foliage", AddableComponentType::Foliage);
+                renderItem("Camera", AddableComponentType::Camera);
+                renderItem("Light", AddableComponentType::Light);
+                ImGui::EndMenu();
+            }
+            if (ImGui::BeginMenu("Animation"))
+            {
+                renderItem("Animation", AddableComponentType::Animation);
+                ImGui::EndMenu();
+            }
+            if (ImGui::BeginMenu("Physics"))
+            {
+                renderItem("Rigidbody", AddableComponentType::Rigidbody);
+                renderItem("Collider", AddableComponentType::Collider);
+                ImGui::EndMenu();
+            }
+            if (ImGui::BeginMenu("Environment"))
+            {
+                renderItem("IBL Capture", AddableComponentType::IblCapture);
+                renderItem("Physical Sky", AddableComponentType::PhysicalSky);
+                renderItem("Volumetric Cloud", AddableComponentType::VolumetricCloud);
+                ImGui::EndMenu();
+            }
+            if (ImGui::BeginMenu("Scripting"))
+            {
+                renderItem("Script", AddableComponentType::Script);
+                ImGui::EndMenu();
+            }
+            if (ImGui::BeginMenu("UI"))
+            {
+                renderItem("Canvas", AddableComponentType::Canvas);
+                renderItem("Rect Transform", AddableComponentType::RectTransform);
+                renderItem("Image", AddableComponentType::UIImage);
+                renderItem("Text", AddableComponentType::UIText);
+                renderItem("Button", AddableComponentType::UIButton);
+                ImGui::EndMenu();
+            }
+
+            return selectedType;
         }
 
         void AddComponentToEntity(scene::Entity &entity, AddableComponentType componentType)
@@ -3144,34 +3180,29 @@ namespace PlutoGE::ui
             // Components
             if (ImGui::CollapsingHeader("Components"))
             {
-                static int selectedComponentTypeIndex = 0;
-                selectedComponentTypeIndex = std::clamp(selectedComponentTypeIndex, 0, static_cast<int>(IM_ARRAYSIZE(kAddableComponentLabels)) - 1);
-
-                ImGui::SetNextItemWidth(180.0f);
-                ImGui::Combo("Add Component", &selectedComponentTypeIndex, kAddableComponentLabels, IM_ARRAYSIZE(kAddableComponentLabels));
-                ImGui::SameLine();
-
-                const auto selectedComponentType = static_cast<AddableComponentType>(selectedComponentTypeIndex);
-                const bool canAddSelectedComponent = CanAddComponentType(*entity, selectedComponentType);
-                ImGui::BeginDisabled(!canAddSelectedComponent);
-                if (ImGui::Button("Add##Component"))
+                if (ImGui::Button("Add Component...", ImVec2(-1.0f, 0.0f)))
                 {
-                    const scene::EntityID entityId = entity->GetID();
-                    editorShell.ExecuteSceneEdit("Add Component",
-                                                 [entityId, selectedComponentType]()
-                                                 {
-                                                     auto *currentScene = core::Engine::GetInstance().GetScene();
-                                                     if (auto *target = currentScene ? currentScene->FindEntityByID(entityId) : nullptr)
-                                                     {
-                                                         AddComponentToEntity(*target, selectedComponentType);
-                                                     }
-                                                 });
+                    ImGui::OpenPopup("AddComponentMenu");
                 }
-                ImGui::EndDisabled();
 
-                if (!canAddSelectedComponent)
+                if (ImGui::BeginPopup("AddComponentMenu"))
                 {
-                    ImGui::TextDisabled("Selected component already exists on this entity.");
+                    const auto selectedComponentType = RenderAddComponentMenu(*entity);
+                    if (selectedComponentType)
+                    {
+                        const scene::EntityID entityId = entity->GetID();
+                        editorShell.ExecuteSceneEdit("Add Component",
+                                                     [entityId, componentType = *selectedComponentType]()
+                                                     {
+                                                         auto *currentScene = core::Engine::GetInstance().GetScene();
+                                                         if (auto *target = currentScene ? currentScene->FindEntityByID(entityId) : nullptr)
+                                                         {
+                                                             AddComponentToEntity(*target, componentType);
+                                                         }
+                                                     });
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::EndPopup();
                 }
 
                 int componentIndex = 0;

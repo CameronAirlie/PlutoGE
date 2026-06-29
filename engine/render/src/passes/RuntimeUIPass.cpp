@@ -26,6 +26,7 @@ namespace PlutoGE::render
     {
         constexpr int kFirstBakedCodepoint = 32;
         constexpr int kBakedCodepointCount = 224;
+        constexpr float kUIUnitsPerWorldUnit = 100.0f;
 
         struct UIRect
         {
@@ -37,6 +38,8 @@ namespace PlutoGE::render
         {
             UIRect rect;
             glm::vec4 color{1.0f};
+            float depth = 0.0f;
+            bool depthTest = false;
             int sortingOrder = 0;
             std::uint32_t entityId = 0;
         };
@@ -48,6 +51,10 @@ namespace PlutoGE::render
             std::string fontPath;
             glm::vec4 color{1.0f};
             float fontSize = 18.0f;
+            float pixelScale = 1.0f;
+            float depth = 0.0f;
+            bool depthTest = false;
+            bool richText = true;
             int sortingOrder = 0;
             std::uint32_t entityId = 0;
         };
@@ -66,6 +73,22 @@ namespace PlutoGE::render
             UIRect rect;
             glm::vec2 uvMin{0.0f};
             glm::vec2 uvMax{0.0f};
+            FontAtlas *fontAtlas = nullptr;
+            glm::vec4 color{1.0f};
+            float italicOffset = 0.0f;
+            float boldOffset = 0.0f;
+        };
+
+        struct ActiveCanvas
+        {
+            const scene::CanvasComponent *component = nullptr;
+        };
+
+        struct ProjectedWorldPoint
+        {
+            glm::vec2 screenPosition{0.0f};
+            float depth = 0.0f;
+            float pixelsPerWorldUnit = 1.0f;
         };
 
         Shader *CreateRuntimeUIShader()
@@ -97,9 +120,22 @@ namespace PlutoGE::render
                 #version 330 core
                 out vec4 FragColor;
                 uniform vec4 uColor;
+                uniform sampler2D uSceneDepthTexture;
+                uniform vec2 uViewportSize;
+                uniform float uElementDepth;
+                uniform int uDepthTest;
 
                 void main()
                 {
+                    if (uDepthTest != 0)
+                    {
+                        float sceneDepth = texture(uSceneDepthTexture, gl_FragCoord.xy / max(uViewportSize, vec2(1.0))).r;
+                        if (uElementDepth > sceneDepth + 0.00005)
+                        {
+                            discard;
+                        }
+                    }
+
                     FragColor = uColor;
                 }
             )";
@@ -117,6 +153,7 @@ namespace PlutoGE::render
                 uniform vec2 uRectMax;
                 uniform vec2 uUvMin;
                 uniform vec2 uUvMax;
+                uniform float uItalicOffset;
 
                 out vec2 vUv;
 
@@ -130,6 +167,9 @@ namespace PlutoGE::render
                         vec2(uRectMax.x, uRectMax.y),
                         vec2(uRectMin.x, uRectMax.y)
                     );
+
+                    float topVertices[6] = float[6](0.0, 0.0, 1.0, 0.0, 1.0, 1.0);
+                    positions[gl_VertexID].x += topVertices[gl_VertexID] * uItalicOffset;
 
                     vec2 uvs[6] = vec2[6](
                         vec2(uUvMin.x, uUvMax.y),
@@ -152,10 +192,23 @@ namespace PlutoGE::render
                 out vec4 FragColor;
 
                 uniform sampler2D uFontAtlas;
+                uniform sampler2D uSceneDepthTexture;
                 uniform vec4 uColor;
+                uniform vec2 uViewportSize;
+                uniform float uElementDepth;
+                uniform int uDepthTest;
 
                 void main()
                 {
+                    if (uDepthTest != 0)
+                    {
+                        float sceneDepth = texture(uSceneDepthTexture, gl_FragCoord.xy / max(uViewportSize, vec2(1.0))).r;
+                        if (uElementDepth > sceneDepth + 0.00005)
+                        {
+                            discard;
+                        }
+                    }
+
                     float alpha = texture(uFontAtlas, vUv).r;
                     if (alpha <= 0.001)
                     {
@@ -176,6 +229,45 @@ namespace PlutoGE::render
             const glm::vec2 pivotOffset = size * rectTransform.GetPivot();
             const glm::vec2 min = anchorPosition + rectTransform.GetAnchoredPosition() - pivotOffset;
             return UIRect{.min = min, .max = min + size};
+        }
+
+        UIRect ResolveWorldOverlayRect(const scene::RectTransformComponent &rectTransform,
+                                       const glm::vec2 &screenOrigin,
+                                       float pixelScale)
+        {
+            const glm::vec2 size = glm::max(rectTransform.GetSizeDelta(), glm::vec2(0.0f));
+            const glm::vec2 localMin = rectTransform.GetAnchoredPosition() - size * rectTransform.GetPivot();
+            const glm::vec2 min = screenOrigin + localMin * pixelScale;
+            return UIRect{.min = min, .max = min + size * pixelScale};
+        }
+
+        bool ProjectWorldPosition(const glm::vec3 &worldPosition,
+                                  const glm::mat4 &view,
+                                  const glm::mat4 &projection,
+                                  const glm::vec2 &viewportSize,
+                                  ProjectedWorldPoint &projectedPoint)
+        {
+            const glm::vec4 viewPosition = view * glm::vec4(worldPosition, 1.0f);
+            const glm::vec4 clipPosition = projection * viewPosition;
+            if (clipPosition.w <= 0.0001f)
+            {
+                return false;
+            }
+
+            const glm::vec3 ndc = glm::vec3(clipPosition) / clipPosition.w;
+            if (ndc.z < -1.0f || ndc.z > 1.0f)
+            {
+                return false;
+            }
+
+            projectedPoint.screenPosition = (glm::vec2(ndc) * 0.5f + 0.5f) * viewportSize;
+            projectedPoint.depth = ndc.z * 0.5f + 0.5f;
+            projectedPoint.pixelsPerWorldUnit = std::abs(projection[1][1]) * viewportSize.y * 0.5f;
+            if (std::abs(projection[3][3]) < 0.5f)
+            {
+                projectedPoint.pixelsPerWorldUnit /= std::max(-viewPosition.z, 0.0001f);
+            }
+            return true;
         }
 
         glm::vec4 ResolveButtonColor(const scene::UIButtonComponent *button, glm::vec4 color)
@@ -383,56 +475,220 @@ namespace PlutoGE::render
             return '?';
         }
 
-        std::vector<TextGlyphQuad> BuildTextGlyphQuads(const UITextRun &textRun, const FontAtlas &atlas)
+        struct RichTextStyle
+        {
+            glm::vec4 color{1.0f};
+            float fontSize = 18.0f;
+            bool bold = false;
+            bool italic = false;
+        };
+
+        struct RichTextToken
+        {
+            std::uint32_t codepoint = 0;
+            RichTextStyle style;
+            bool lineBreak = false;
+        };
+
+        int HexDigit(char value)
+        {
+            if (value >= '0' && value <= '9')
+                return value - '0';
+            if (value >= 'a' && value <= 'f')
+                return value - 'a' + 10;
+            if (value >= 'A' && value <= 'F')
+                return value - 'A' + 10;
+            return -1;
+        }
+
+        bool ParseRichTextColor(const std::string &value, glm::vec4 &color)
+        {
+            if ((value.size() != 7 && value.size() != 9) || value[0] != '#')
+            {
+                return false;
+            }
+
+            int channels[4] = {0, 0, 0, 255};
+            const int channelCount = value.size() == 9 ? 4 : 3;
+            for (int channel = 0; channel < channelCount; ++channel)
+            {
+                const int high = HexDigit(value[1 + channel * 2]);
+                const int low = HexDigit(value[2 + channel * 2]);
+                if (high < 0 || low < 0)
+                {
+                    return false;
+                }
+                channels[channel] = high * 16 + low;
+            }
+
+            color = glm::vec4(channels[0], channels[1], channels[2], channels[3]) / 255.0f;
+            return true;
+        }
+
+        std::vector<RichTextToken> TokenizeRichText(const UITextRun &textRun)
+        {
+            struct StyleFrame
+            {
+                std::string tag;
+                RichTextStyle style;
+            };
+
+            std::vector<RichTextToken> tokens;
+            std::vector<StyleFrame> styles{{"", RichTextStyle{.color = textRun.color, .fontSize = textRun.fontSize}}};
+
+            for (std::size_t byteIndex = 0; byteIndex < textRun.text.size();)
+            {
+                if (textRun.richText && textRun.text[byteIndex] == '<')
+                {
+                    const auto tagEnd = textRun.text.find('>', byteIndex + 1);
+                    if (tagEnd != std::string::npos)
+                    {
+                        const std::string tag = textRun.text.substr(byteIndex + 1, tagEnd - byteIndex - 1);
+                        bool recognized = false;
+                        if (tag == "br" || tag == "br/")
+                        {
+                            tokens.push_back(RichTextToken{.style = styles.back().style, .lineBreak = true});
+                            recognized = true;
+                        }
+                        else if (tag == "b" || tag == "i" || tag.rfind("color=", 0) == 0 || tag.rfind("size=", 0) == 0)
+                        {
+                            RichTextStyle style = styles.back().style;
+                            if (tag == "b")
+                            {
+                                style.bold = true;
+                                recognized = true;
+                            }
+                            else if (tag == "i")
+                            {
+                                style.italic = true;
+                                recognized = true;
+                            }
+                            else if (tag.rfind("color=", 0) == 0)
+                            {
+                                glm::vec4 parsedColor;
+                                recognized = ParseRichTextColor(tag.substr(6), parsedColor);
+                                if (recognized)
+                                {
+                                    style.color = parsedColor;
+                                }
+                            }
+                            else
+                            {
+                                try
+                                {
+                                    style.fontSize = std::clamp(std::stof(tag.substr(5)), 8.0f, 128.0f);
+                                    recognized = true;
+                                }
+                                catch (...)
+                                {
+                                }
+                            }
+
+                            if (recognized)
+                            {
+                                styles.push_back(StyleFrame{.tag = tag.substr(0, tag.find('=')), .style = style});
+                            }
+                        }
+                        else if (tag.size() > 1 && tag[0] == '/')
+                        {
+                            const std::string closingTag = tag.substr(1);
+                            if (styles.size() > 1 && styles.back().tag == closingTag)
+                            {
+                                styles.pop_back();
+                                recognized = true;
+                            }
+                        }
+
+                        if (recognized)
+                        {
+                            byteIndex = tagEnd + 1;
+                            continue;
+                        }
+                    }
+                }
+
+                const auto codepoint = DecodeUtf8Codepoint(textRun.text, byteIndex);
+                if (codepoint == '\r')
+                {
+                    continue;
+                }
+                if (codepoint == '\n')
+                {
+                    tokens.push_back(RichTextToken{.style = styles.back().style, .lineBreak = true});
+                }
+                else
+                {
+                    tokens.push_back(RichTextToken{.codepoint = NormalizeRenderableCodepoint(codepoint), .style = styles.back().style});
+                }
+            }
+
+            return tokens;
+        }
+
+        std::vector<TextGlyphQuad> BuildTextGlyphQuads(const UITextRun &textRun)
         {
             std::vector<TextGlyphQuad> glyphQuads;
-            if (textRun.text.empty())
+            if (textRun.text.empty() || textRun.pixelScale <= 0.0001f)
             {
                 return glyphQuads;
             }
 
-            float penX = 0.0f;
-            float penY = atlas.fontSize;
-            const float lineAdvance = atlas.fontSize * 1.25f;
-            const float rectWidth = std::max(textRun.rect.max.x - textRun.rect.min.x, 0.0f);
-            const float rectHeight = std::max(textRun.rect.max.y - textRun.rect.min.y, 0.0f);
-
-            for (std::size_t byteIndex = 0; byteIndex < textRun.text.size();)
+            const auto tokens = TokenizeRichText(textRun);
+            std::vector<float> lineHeights(1, std::clamp(textRun.fontSize, 8.0f, 128.0f));
+            for (const auto &token : tokens)
             {
-                const auto rawCodepoint = DecodeUtf8Codepoint(textRun.text, byteIndex);
-                if (rawCodepoint == '\r')
+                if (token.lineBreak)
                 {
-                    continue;
+                    lineHeights.push_back(std::clamp(textRun.fontSize, 8.0f, 128.0f));
                 }
+                else
+                {
+                    lineHeights.back() = std::max(lineHeights.back(), token.style.fontSize);
+                }
+            }
 
-                if (rawCodepoint == '\n')
+            float penX = 0.0f;
+            float lineTop = 0.0f;
+            std::size_t lineIndex = 0;
+            const float rectHeight = std::max(textRun.rect.max.y - textRun.rect.min.y, 0.0f) / textRun.pixelScale;
+
+            for (const auto &token : tokens)
+            {
+                if (token.lineBreak)
                 {
                     penX = 0.0f;
-                    penY += lineAdvance;
+                    lineTop += lineHeights[lineIndex] * 1.25f;
+                    ++lineIndex;
                     continue;
                 }
 
-                const auto codepoint = NormalizeRenderableCodepoint(rawCodepoint);
+                if (lineIndex >= lineHeights.size() || lineTop > rectHeight)
+                {
+                    break;
+                }
+
+                auto *atlas = GetOrCreateFontAtlas(textRun.fontPath, token.style.fontSize);
+                if (!atlas || atlas->textureId == 0)
+                {
+                    continue;
+                }
 
                 float nextPenX = penX;
-                float nextPenY = penY;
+                float nextPenY = lineTop + lineHeights[lineIndex];
                 stbtt_aligned_quad bakedQuad{};
-                stbtt_GetBakedQuad(atlas.glyphs,
-                                   atlas.width,
-                                   atlas.height,
-                                   static_cast<int>(codepoint) - kFirstBakedCodepoint,
+                stbtt_GetBakedQuad(atlas->glyphs,
+                                   atlas->width,
+                                   atlas->height,
+                                   static_cast<int>(token.codepoint) - kFirstBakedCodepoint,
                                    &nextPenX,
                                    &nextPenY,
                                    &bakedQuad,
                                    1);
 
-                if (penY > rectHeight + lineAdvance)
-                {
-                    break;
-                }
-
-                const glm::vec2 min(textRun.rect.min.x + bakedQuad.x0, textRun.rect.max.y - bakedQuad.y1);
-                const glm::vec2 max(textRun.rect.min.x + bakedQuad.x1, textRun.rect.max.y - bakedQuad.y0);
+                const glm::vec2 min(textRun.rect.min.x + bakedQuad.x0 * textRun.pixelScale,
+                                    textRun.rect.max.y - bakedQuad.y1 * textRun.pixelScale);
+                const glm::vec2 max(textRun.rect.min.x + bakedQuad.x1 * textRun.pixelScale,
+                                    textRun.rect.max.y - bakedQuad.y0 * textRun.pixelScale);
                 if (max.x > textRun.rect.min.x && min.x < textRun.rect.max.x &&
                     max.y > textRun.rect.min.y && min.y < textRun.rect.max.y)
                 {
@@ -440,19 +696,24 @@ namespace PlutoGE::render
                         .rect = UIRect{.min = min, .max = max},
                         .uvMin = glm::vec2(bakedQuad.s0, bakedQuad.t0),
                         .uvMax = glm::vec2(bakedQuad.s1, bakedQuad.t1),
+                        .fontAtlas = atlas,
+                        .color = token.style.color,
+                        .italicOffset = token.style.italic ? token.style.fontSize * textRun.pixelScale * 0.18f : 0.0f,
+                        .boldOffset = token.style.bold ? std::max(textRun.pixelScale * 0.75f, 0.35f) : 0.0f,
                     });
                 }
 
                 penX = nextPenX;
-                penY = nextPenY;
             }
 
             return glyphQuads;
         }
 
         void CollectUIQuads(scene::Entity *entity,
-                            const scene::CanvasComponent *activeCanvas,
+                            ActiveCanvas activeCanvas,
                             const glm::vec2 &viewportSize,
+                            const glm::mat4 &view,
+                            const glm::mat4 &projection,
                             std::vector<UIQuad> &quads,
                             std::vector<UITextRun> &textRuns)
         {
@@ -463,40 +724,65 @@ namespace PlutoGE::render
 
             if (auto *canvas = entity->GetComponent<scene::CanvasComponent>(); canvas && canvas->IsEnabled())
             {
-                activeCanvas = canvas;
+                activeCanvas.component = canvas;
             }
 
             auto *rectTransform = entity->GetComponent<scene::RectTransformComponent>();
             auto *image = entity->GetComponent<scene::UIImageComponent>();
             auto *button = entity->GetComponent<scene::UIButtonComponent>();
             auto *text = entity->GetComponent<scene::UITextComponent>();
-            if (activeCanvas && rectTransform && rectTransform->IsEnabled())
+            if (activeCanvas.component && rectTransform && rectTransform->IsEnabled())
             {
-                const float scaleFactor = std::max(activeCanvas->GetScaleFactor(), 0.0001f);
-                auto rect = ResolveScreenRect(*rectTransform, viewportSize / scaleFactor);
-                rect.min *= scaleFactor;
-                rect.max *= scaleFactor;
+                const float scaleFactor = std::max(activeCanvas.component->GetScaleFactor(), 0.0001f);
+                const bool worldSpaceOverlay = activeCanvas.component->GetRenderMode() == scene::CanvasRenderMode::WorldSpaceOverlay;
+                ProjectedWorldPoint projectedPoint;
+                const bool visible = !worldSpaceOverlay || ProjectWorldPosition(entity->GetWorldPosition(),
+                                                                                 view,
+                                                                                 projection,
+                                                                                 viewportSize,
+                                                                                 projectedPoint);
+                float pixelScale = 1.0f;
+                if (worldSpaceOverlay)
+                {
+                    const glm::vec3 worldScale = glm::abs(entity->GetWorldScale());
+                    const float uniformWorldScale = std::max(worldScale.x, worldScale.y);
+                    pixelScale = projectedPoint.pixelsPerWorldUnit * uniformWorldScale * scaleFactor / kUIUnitsPerWorldUnit;
+                }
+                auto rect = worldSpaceOverlay
+                                ? ResolveWorldOverlayRect(*rectTransform, projectedPoint.screenPosition, pixelScale)
+                                : ResolveScreenRect(*rectTransform, viewportSize / scaleFactor);
+                if (!worldSpaceOverlay)
+                {
+                    rect.min *= scaleFactor;
+                    rect.max *= scaleFactor;
+                }
 
-                if ((image && image->IsEnabled()) || (button && button->IsEnabled()))
+                if (visible && ((image && image->IsEnabled()) || (button && button->IsEnabled())))
                 {
                     glm::vec4 color = image && image->IsEnabled() ? image->GetColor() : glm::vec4(0.16f, 0.18f, 0.22f, 0.92f);
                     quads.push_back(UIQuad{
                         .rect = rect,
                         .color = ResolveButtonColor(button, color),
-                        .sortingOrder = activeCanvas->GetSortingOrder(),
+                        .depth = projectedPoint.depth,
+                        .depthTest = worldSpaceOverlay,
+                        .sortingOrder = activeCanvas.component->GetSortingOrder(),
                         .entityId = entity->GetID(),
                     });
                 }
 
-                if (text && text->IsEnabled() && !text->GetText().empty())
+                if (visible && text && text->IsEnabled() && !text->GetText().empty())
                 {
                     textRuns.push_back(UITextRun{
                         .rect = rect,
                         .text = text->GetText(),
                         .fontPath = text->GetFontPath(),
                         .color = text->GetColor(),
-                        .fontSize = text->GetFontSize() * scaleFactor,
-                        .sortingOrder = activeCanvas->GetSortingOrder(),
+                        .fontSize = worldSpaceOverlay ? text->GetFontSize() : text->GetFontSize() * scaleFactor,
+                        .pixelScale = worldSpaceOverlay ? pixelScale : 1.0f,
+                        .depth = projectedPoint.depth,
+                        .depthTest = worldSpaceOverlay,
+                        .richText = text->IsRichText(),
+                        .sortingOrder = activeCanvas.component->GetSortingOrder(),
                         .entityId = entity->GetID(),
                     });
                 }
@@ -504,7 +790,7 @@ namespace PlutoGE::render
 
             for (auto *child : entity->GetChildren())
             {
-                CollectUIQuads(child, activeCanvas, viewportSize, quads, textRuns);
+                CollectUIQuads(child, activeCanvas, viewportSize, view, projection, quads, textRuns);
             }
         }
     }
@@ -548,7 +834,13 @@ namespace PlutoGE::render
         const glm::vec2 viewportSize(static_cast<float>(renderWidth), static_cast<float>(renderHeight));
         for (auto *rootEntity : ctx.scene->GetRootEntities())
         {
-            CollectUIQuads(rootEntity, nullptr, viewportSize, quads, textRuns);
+            CollectUIQuads(rootEntity,
+                           ActiveCanvas{},
+                           viewportSize,
+                           ctx.cameraData.view,
+                           ctx.cameraData.projection,
+                           quads,
+                           textRuns);
         }
 
         if (quads.empty() && textRuns.empty())
@@ -575,8 +867,14 @@ namespace PlutoGE::render
         glBlendEquation(GL_FUNC_ADD);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
+        const GLuint sceneDepthTexture = ctx.temporaryRenderTarget ? ctx.temporaryRenderTarget->GetDepthTextureID() : 0;
+
         m_shader->Bind();
         m_shader->SetUniform("uViewportSize", viewportSize);
+        m_shader->SetUniform("uSceneDepthTexture", 0);
+
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, sceneDepthTexture);
 
         glBindVertexArray(m_vao);
         for (const auto &quad : quads)
@@ -584,6 +882,8 @@ namespace PlutoGE::render
             m_shader->SetUniform("uRectMin", quad.rect.min);
             m_shader->SetUniform("uRectMax", quad.rect.max);
             m_shader->SetUniform("uColor", quad.color);
+            m_shader->SetUniform("uElementDepth", quad.depth);
+            m_shader->SetUniform("uDepthTest", quad.depthTest && sceneDepthTexture != 0 ? 1 : 0);
             glDrawArrays(GL_TRIANGLES, 0, 6);
         }
 
@@ -601,30 +901,46 @@ namespace PlutoGE::render
         m_textShader->Bind();
         m_textShader->SetUniform("uViewportSize", viewportSize);
         m_textShader->SetUniform("uFontAtlas", 0);
+        m_textShader->SetUniform("uSceneDepthTexture", 1);
 
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, sceneDepthTexture);
         glActiveTexture(GL_TEXTURE0);
         for (const auto &textRun : textRuns)
         {
-            auto *fontAtlas = GetOrCreateFontAtlas(textRun.fontPath, textRun.fontSize);
-            if (!fontAtlas || fontAtlas->textureId == 0)
-            {
-                continue;
-            }
+            m_textShader->SetUniform("uElementDepth", textRun.depth);
+            m_textShader->SetUniform("uDepthTest", textRun.depthTest && sceneDepthTexture != 0 ? 1 : 0);
 
-            glBindTexture(GL_TEXTURE_2D, fontAtlas->textureId);
-            m_textShader->SetUniform("uColor", textRun.color);
-
-            const auto glyphQuads = BuildTextGlyphQuads(textRun, *fontAtlas);
+            const auto glyphQuads = BuildTextGlyphQuads(textRun);
             for (const auto &glyphQuad : glyphQuads)
             {
+                if (!glyphQuad.fontAtlas || glyphQuad.fontAtlas->textureId == 0)
+                {
+                    continue;
+                }
+
+                glBindTexture(GL_TEXTURE_2D, glyphQuad.fontAtlas->textureId);
+                m_textShader->SetUniform("uColor", glyphQuad.color);
                 m_textShader->SetUniform("uRectMin", glyphQuad.rect.min);
                 m_textShader->SetUniform("uRectMax", glyphQuad.rect.max);
                 m_textShader->SetUniform("uUvMin", glyphQuad.uvMin);
                 m_textShader->SetUniform("uUvMax", glyphQuad.uvMax);
+                m_textShader->SetUniform("uItalicOffset", glyphQuad.italicOffset);
                 glDrawArrays(GL_TRIANGLES, 0, 6);
+
+                if (glyphQuad.boldOffset > 0.0f)
+                {
+                    const glm::vec2 boldOffset(glyphQuad.boldOffset, 0.0f);
+                    m_textShader->SetUniform("uRectMin", glyphQuad.rect.min + boldOffset);
+                    m_textShader->SetUniform("uRectMax", glyphQuad.rect.max + boldOffset);
+                    glDrawArrays(GL_TRIANGLES, 0, 6);
+                }
             }
         }
         glBindTexture(GL_TEXTURE_2D, 0);
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        glActiveTexture(GL_TEXTURE0);
         glBindVertexArray(0);
 
         glDepthMask(GL_TRUE);

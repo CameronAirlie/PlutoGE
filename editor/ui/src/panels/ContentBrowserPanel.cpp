@@ -949,6 +949,41 @@ namespace PlutoGE::ui
             return;
         }
 
+        const auto renderAddMenu = [&]()
+        {
+            if (ImGui::BeginMenu("Rendering"))
+            {
+                if (ImGui::MenuItem("Material"))
+                {
+                    m_newMaterialNameBuffer.fill('\0');
+                    m_pendingMenuAction = PendingMenuAction::CreateMaterial;
+                }
+                if (ImGui::MenuItem("Shader Graph"))
+                {
+                    m_newShaderGraphNameBuffer.fill('\0');
+                    m_pendingMenuAction = PendingMenuAction::CreateShaderGraph;
+                }
+                ImGui::EndMenu();
+            }
+            if (ImGui::BeginMenu("Animation"))
+            {
+                if (ImGui::MenuItem("Animation Graph"))
+                {
+                    m_newAnimationGraphNameBuffer.fill('\0');
+                    m_pendingMenuAction = PendingMenuAction::CreateAnimationGraph;
+                }
+                ImGui::EndMenu();
+            }
+            if (ImGui::BeginMenu("Import"))
+            {
+                if (ImGui::MenuItem("3D Model..."))
+                {
+                    m_pendingMenuAction = PendingMenuAction::ImportModel;
+                }
+                ImGui::EndMenu();
+            }
+        };
+
         ImGui::SetNextItemWidth(240.0f);
         ImGui::InputText("Filter", m_filterBuffer.data(), m_filterBuffer.size());
         ImGui::SameLine();
@@ -958,7 +993,21 @@ namespace PlutoGE::ui
             editorShell.Log(EditorShell::ConsoleSeverity::Info, "Refreshed project assets.");
         }
         ImGui::SameLine();
-        if (ImGui::Button("Import Model"))
+        if (ImGui::Button("Add..."))
+        {
+            ImGui::OpenPopup("ContentBrowserAddMenu");
+        }
+        if (ImGui::BeginPopup("ContentBrowserAddMenu"))
+        {
+            renderAddMenu();
+            ImGui::EndPopup();
+        }
+
+        const auto pendingMenuAction = m_pendingMenuAction;
+        m_pendingMenuAction = PendingMenuAction::None;
+        switch (pendingMenuAction)
+        {
+        case PendingMenuAction::ImportModel:
         {
             std::string importedReference;
             std::string errorMessage;
@@ -972,24 +1021,20 @@ namespace PlutoGE::ui
             {
                 editorShell.Log(EditorShell::ConsoleSeverity::Error, errorMessage);
             }
+            break;
         }
-        ImGui::SameLine();
-        if (ImGui::Button("Create Material"))
-        {
-            m_newMaterialNameBuffer.fill('\0');
+        case PendingMenuAction::CreateMaterial:
             ImGui::OpenPopup("Create Material Asset");
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Create Shader Graph"))
-        {
-            m_newShaderGraphNameBuffer.fill('\0');
+            break;
+        case PendingMenuAction::CreateShaderGraph:
             ImGui::OpenPopup("Create Shader Graph Asset");
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Create Anim Graph"))
-        {
-            m_newAnimationGraphNameBuffer.fill('\0');
+            break;
+        case PendingMenuAction::CreateAnimationGraph:
             ImGui::OpenPopup("Create Animation Graph Asset");
+            break;
+        case PendingMenuAction::None:
+        default:
+            break;
         }
 
         if (ImGui::BeginPopupModal("Create Material Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
@@ -1337,6 +1382,13 @@ namespace PlutoGE::ui
                 }
             }
         }
+
+        if (ImGui::BeginPopupContextWindow("ContentBrowserContextMenu", ImGuiPopupFlags_NoOpenOverItems))
+        {
+            renderAddMenu();
+            ImGui::EndPopup();
+        }
+
         m_hasExpandedMesh = hasExpandedMesh;
         ImGui::EndChild();
 

@@ -124,7 +124,8 @@ namespace PlutoGE::scene
             if (button)
             {
                 bool hovered = false;
-                if (activeCanvas && rectTransform && rectTransform->IsEnabled() && button->IsEnabled() && button->IsInteractable())
+                if (activeCanvas && activeCanvas->GetRenderMode() == CanvasRenderMode::ScreenSpaceOverlay &&
+                    rectTransform && rectTransform->IsEnabled() && button->IsEnabled() && button->IsInteractable())
                 {
                     const float scaleFactor = std::max(activeCanvas->GetScaleFactor(), 0.0001f);
                     auto rect = ResolveScreenRect(*rectTransform, viewportSize / scaleFactor);

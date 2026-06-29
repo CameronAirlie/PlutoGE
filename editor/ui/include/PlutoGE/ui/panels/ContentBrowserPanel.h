@@ -40,6 +40,15 @@ namespace PlutoGE::ui
         void Render() override;
 
     private:
+        enum class PendingMenuAction
+        {
+            None,
+            ImportModel,
+            CreateMaterial,
+            CreateShaderGraph,
+            CreateAnimationGraph,
+        };
+
         std::array<char, 160> m_filterBuffer{};
         std::array<char, 96> m_newMaterialNameBuffer{};
         std::array<char, 96> m_newShaderGraphNameBuffer{};
@@ -51,5 +60,6 @@ namespace PlutoGE::ui
         std::vector<int> m_filteredAssetIndices;
         std::vector<std::string> m_filteredAssetDisplayNames;
         bool m_hasExpandedMesh = false;
+        PendingMenuAction m_pendingMenuAction = PendingMenuAction::None;
     };
 }

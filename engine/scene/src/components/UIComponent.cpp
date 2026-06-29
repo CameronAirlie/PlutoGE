@@ -58,7 +58,7 @@ namespace PlutoGE::scene
     {
         return {
             {"Enabled", PropertyType::Bool, IsEnabled() ? "true" : "false"},
-            {"RenderMode", PropertyType::Enum, std::to_string(static_cast<int>(m_renderMode)), {"ScreenSpaceOverlay"}},
+            {"RenderMode", PropertyType::Enum, std::to_string(static_cast<int>(m_renderMode)), {"ScreenSpaceOverlay", "WorldSpaceOverlay"}},
             {"ScaleFactor", PropertyType::Float, std::to_string(m_scaleFactor)},
             {"SortingOrder", PropertyType::Int, std::to_string(m_sortingOrder)},
         };
@@ -71,7 +71,12 @@ namespace PlutoGE::scene
             if (property.name == "Enabled")
                 SetEnabled(property.value == "true" || property.value == "1");
             else if (property.name == "RenderMode")
-                m_renderMode = CanvasRenderMode::ScreenSpaceOverlay;
+            {
+                const int renderMode = std::clamp(std::stoi(property.value),
+                                                  static_cast<int>(CanvasRenderMode::ScreenSpaceOverlay),
+                                                  static_cast<int>(CanvasRenderMode::WorldSpaceOverlay));
+                m_renderMode = static_cast<CanvasRenderMode>(renderMode);
+            }
             else if (property.name == "ScaleFactor")
                 m_scaleFactor = std::stof(property.value);
             else if (property.name == "SortingOrder")
@@ -193,6 +198,7 @@ namespace PlutoGE::scene
             {"Color", PropertyType::Color, SerializeColor(m_color)},
             {"FontSize", PropertyType::Float, std::to_string(m_fontSize)},
             {"FontPath", PropertyType::String, m_fontPath},
+            {"RichText", PropertyType::Bool, m_richText ? "true" : "false"},
         };
     }
 
@@ -210,6 +216,8 @@ namespace PlutoGE::scene
                 m_fontSize = std::stof(property.value);
             else if (property.name == "FontPath")
                 m_fontPath = property.value;
+            else if (property.name == "RichText")
+                m_richText = property.value == "true" || property.value == "1";
         }
     }
 

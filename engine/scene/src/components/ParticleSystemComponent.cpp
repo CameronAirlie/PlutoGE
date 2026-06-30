@@ -1,5 +1,7 @@
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
 
+#include "PlutoGE/core/Engine.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
@@ -37,6 +39,27 @@ namespace PlutoGE::scene
         bool ParseBool(const std::string &value)
         {
             return value == "true" || value == "1";
+        }
+
+        ParticleSimulationSpace ToSceneSimulationSpace(assets::ParticleSimulationSpace simulationSpace)
+        {
+            return simulationSpace == assets::ParticleSimulationSpace::World ? ParticleSimulationSpace::World : ParticleSimulationSpace::Local;
+        }
+
+        ParticleShape ToSceneShape(assets::ParticleShape shape)
+        {
+            switch (shape)
+            {
+            case assets::ParticleShape::Sphere:
+                return ParticleShape::Sphere;
+            case assets::ParticleShape::Box:
+                return ParticleShape::Box;
+            case assets::ParticleShape::Cone:
+                return ParticleShape::Cone;
+            case assets::ParticleShape::Point:
+            default:
+                return ParticleShape::Point;
+            }
         }
     }
 
@@ -356,29 +379,28 @@ namespace PlutoGE::scene
     std::vector<Property> ParticleSystemComponent::Serialize() const
     {
         return {
-            {"PlayOnAwake", PropertyType::Bool, m_playOnAwake ? "true" : "false"},
-            {"Looping", PropertyType::Bool, m_looping ? "true" : "false"},
-            {"Duration", PropertyType::Float, std::to_string(m_duration)},
-            {"MaxParticles", PropertyType::Int, std::to_string(m_maxParticles)},
-            {"StartLifetime", PropertyType::Float, std::to_string(m_startLifetime)},
-            {"StartSpeed", PropertyType::Float, std::to_string(m_startSpeed)},
-            {"StartSize", PropertyType::Float, std::to_string(m_startSize)},
-            {"StartColor", PropertyType::String, SerializeVec4(m_startColor)},
-            {"GravityModifier", PropertyType::Float, std::to_string(m_gravityModifier)},
-            {"EmissionRateOverTime", PropertyType::Float, std::to_string(m_emissionRateOverTime)},
-            {"BurstTime", PropertyType::Float, std::to_string(m_burstTime)},
-            {"BurstCount", PropertyType::Int, std::to_string(m_burstCount)},
-            {"SimulationSpace", PropertyType::Enum, m_simulationSpace == ParticleSimulationSpace::World ? "World" : "Local", {"Local", "World"}},
-            {"Shape", PropertyType::Enum, m_shape == ParticleShape::Sphere ? "Sphere" : m_shape == ParticleShape::Box ? "Box" : m_shape == ParticleShape::Cone ? "Cone" : "Point", {"Point", "Sphere", "Box", "Cone"}},
-            {"ShapeSize", PropertyType::Vec3, SerializeVec3(m_shapeSize)},
-            {"ShapeRadius", PropertyType::Float, std::to_string(m_shapeRadius)},
-            {"ConeAngle", PropertyType::Float, std::to_string(m_coneAngle)},
-            {"MaterialAsset", PropertyType::String, m_materialAssetReference},
+            {"ParticleSystemAsset", PropertyType::String, m_particleSystemAssetReference},
         };
     }
 
     void ParticleSystemComponent::Deserialize(const std::vector<Property> &properties)
     {
+        bool hasAssetProperty = false;
+        for (const auto &property : properties)
+        {
+            if (property.name == "ParticleSystemAsset")
+            {
+                hasAssetProperty = true;
+                SetParticleSystemAssetReference(property.value);
+            }
+        }
+
+        if (hasAssetProperty)
+        {
+            Clear();
+            return;
+        }
+
         for (const auto &property : properties)
         {
             if (property.name == "PlayOnAwake") SetPlayOnAwake(ParseBool(property.value));
@@ -406,6 +428,58 @@ namespace PlutoGE::scene
             else if (property.name == "ConeAngle") SetConeAngle(std::stof(property.value));
             else if (property.name == "MaterialAsset") SetMaterialAssetReference(property.value);
         }
+        Clear();
+    }
+
+    bool ParticleSystemComponent::SetParticleSystemAssetReference(std::string particleSystemAssetReference)
+    {
+        if (particleSystemAssetReference == m_particleSystemAssetReference)
+        {
+            return true;
+        }
+
+        if (particleSystemAssetReference.empty())
+        {
+            m_particleSystemAssetReference.clear();
+            ApplyParticleSystemAsset(assets::CreateDefaultParticleSystemAsset());
+            return true;
+        }
+
+        bool loaded = false;
+        const auto asset = core::Engine::GetInstance().GetAssetManager().LoadParticleSystemAsset(particleSystemAssetReference, &loaded);
+        if (!loaded)
+        {
+            return false;
+        }
+
+        m_particleSystemAssetReference = std::move(particleSystemAssetReference);
+        ApplyParticleSystemAsset(asset);
+        return true;
+    }
+
+    void ParticleSystemComponent::ApplyParticleSystemAsset(const assets::ParticleSystemAsset &asset)
+    {
+        m_playOnAwake = asset.playOnAwake;
+        m_looping = asset.looping;
+        m_duration = std::max(asset.duration, 0.0001f);
+        m_maxParticles = std::clamp(asset.maxParticles, 1, 200000);
+        m_startLifetime = std::max(asset.startLifetime, 0.0001f);
+        m_startSpeed = std::max(asset.startSpeed, 0.0f);
+        m_startSize = std::max(asset.startSize, 0.0f);
+        m_startColor = glm::clamp(asset.startColor, glm::vec4(0.0f), glm::vec4(1.0f));
+        m_gravityModifier = asset.gravityModifier;
+        m_emissionRateOverTime = std::max(asset.emissionRateOverTime, 0.0f);
+        m_burstTime = std::max(asset.burstTime, 0.0f);
+        m_burstCount = std::max(asset.burstCount, 0);
+        m_simulationSpace = ToSceneSimulationSpace(asset.simulationSpace);
+        m_shape = ToSceneShape(asset.shape);
+        m_shapeSize = glm::max(asset.shapeSize, glm::vec3(0.0f));
+        m_shapeRadius = std::max(asset.shapeRadius, 0.0f);
+        m_coneAngle = std::clamp(asset.coneAngle, 0.0f, 89.0f);
+        m_renderShape = asset.renderShape;
+        m_materialAssetReference = asset.materialAssetReference;
+        m_particleCountEstimate = std::min(m_particleCountEstimate, m_maxParticles);
+        MarkGpuStateDirty();
         Clear();
     }
 }

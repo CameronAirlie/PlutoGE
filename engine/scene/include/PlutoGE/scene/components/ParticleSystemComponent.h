@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PlutoGE/scene/components/Component.h"
+#include "PlutoGE/assets/ParticleSystemAsset.h"
 
 #include <array>
 #include <cstdint>
@@ -103,8 +104,13 @@ namespace PlutoGE::scene
         void SetShapeRadius(float radius);
         float GetConeAngle() const { return m_coneAngle; }
         void SetConeAngle(float angle);
+        assets::ParticleRenderShape GetRenderShape() const { return m_renderShape; }
+        void SetRenderShape(assets::ParticleRenderShape renderShape) { m_renderShape = renderShape; }
         const std::string &GetMaterialAssetReference() const { return m_materialAssetReference; }
         void SetMaterialAssetReference(const std::string &materialAssetReference) { m_materialAssetReference = materialAssetReference; }
+        const std::string &GetParticleSystemAssetReference() const { return m_particleSystemAssetReference; }
+        bool SetParticleSystemAssetReference(std::string particleSystemAssetReference);
+        void ApplyParticleSystemAsset(const assets::ParticleSystemAsset &asset);
 
     private:
         void ResetPlaybackState(bool clearParticles);
@@ -139,7 +145,9 @@ namespace PlutoGE::scene
         glm::vec3 m_shapeSize{1.0f};
         float m_shapeRadius = 1.0f;
         float m_coneAngle = 25.0f;
+        assets::ParticleRenderShape m_renderShape = assets::ParticleRenderShape::Circle;
         std::string m_materialAssetReference;
+        std::string m_particleSystemAssetReference;
 
         bool m_gpuInitialized = false;
         bool m_gpuStateDirty = true;

@@ -82,7 +82,7 @@ namespace PlutoGE::scripting
         using register_animation_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_rigidbody_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_collider_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
-        using register_particle_system_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
+        using register_particle_system_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_runtime_ui_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_input_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_physics_api_fn = int(__cdecl *)(void *, void *, void *);
@@ -1347,6 +1347,23 @@ namespace PlutoGE::scripting
         void ParticleSystemStop(uint32_t entityId, int32_t clear) { if (auto *component = FindParticleSystem(entityId)) component->Stop(clear != 0); }
         void ParticleSystemClear(uint32_t entityId) { if (auto *component = FindParticleSystem(entityId)) component->Clear(); }
         void ParticleSystemEmit(uint32_t entityId, int32_t count) { if (auto *component = FindParticleSystem(entityId)) component->Emit(count); }
+        const char *GetParticleSystemAssetReference(uint32_t entityId)
+        {
+            thread_local std::string assetReferenceStorage;
+            assetReferenceStorage.clear();
+            if (auto *component = FindParticleSystem(entityId))
+            {
+                assetReferenceStorage = component->GetParticleSystemAssetReference();
+            }
+            return assetReferenceStorage.c_str();
+        }
+        void SetParticleSystemAssetReference(uint32_t entityId, const char *assetReference)
+        {
+            if (auto *component = FindParticleSystem(entityId))
+            {
+                component->SetParticleSystemAssetReference(assetReference ? assetReference : "");
+            }
+        }
         int32_t GetParticleSystemLooping(uint32_t entityId) { auto *component = FindParticleSystem(entityId); return component && component->GetLooping() ? 1 : 0; }
         void SetParticleSystemLooping(uint32_t entityId, int32_t value) { if (auto *component = FindParticleSystem(entityId)) component->SetLooping(value != 0); }
         int32_t GetParticleSystemPlayOnAwake(uint32_t entityId) { auto *component = FindParticleSystem(entityId); return component && component->GetPlayOnAwake() ? 1 : 0; }
@@ -2511,6 +2528,8 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(static_cast<set_component_bool_fn>(&ParticleSystemStop)),
                 reinterpret_cast<void *>(static_cast<component_action_fn>(&ParticleSystemClear)),
                 reinterpret_cast<void *>(static_cast<set_component_int_fn>(&ParticleSystemEmit)),
+                reinterpret_cast<void *>(static_cast<get_component_string_fn>(&GetParticleSystemAssetReference)),
+                reinterpret_cast<void *>(static_cast<set_component_string_fn>(&SetParticleSystemAssetReference)),
                 reinterpret_cast<void *>(static_cast<get_component_bool_fn>(&GetParticleSystemLooping)),
                 reinterpret_cast<void *>(static_cast<set_component_bool_fn>(&SetParticleSystemLooping)),
                 reinterpret_cast<void *>(static_cast<get_component_bool_fn>(&GetParticleSystemPlayOnAwake)),

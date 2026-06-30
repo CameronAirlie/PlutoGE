@@ -958,6 +958,11 @@ namespace PlutoGE::ui
                     m_newMaterialNameBuffer.fill('\0');
                     m_pendingMenuAction = PendingMenuAction::CreateMaterial;
                 }
+                if (ImGui::MenuItem("Particle System"))
+                {
+                    m_newParticleSystemNameBuffer.fill('\0');
+                    m_pendingMenuAction = PendingMenuAction::CreateParticleSystem;
+                }
                 if (ImGui::MenuItem("Shader Graph"))
                 {
                     m_newShaderGraphNameBuffer.fill('\0');
@@ -1026,6 +1031,9 @@ namespace PlutoGE::ui
         case PendingMenuAction::CreateMaterial:
             ImGui::OpenPopup("Create Material Asset");
             break;
+        case PendingMenuAction::CreateParticleSystem:
+            ImGui::OpenPopup("Create Particle System Asset");
+            break;
         case PendingMenuAction::CreateShaderGraph:
             ImGui::OpenPopup("Create Shader Graph Asset");
             break;
@@ -1072,6 +1080,48 @@ namespace PlutoGE::ui
                 else
                 {
                     editorShell.Log(EditorShell::ConsoleSeverity::Error, errorMessage.empty() ? "Failed to create material." : errorMessage);
+                }
+            }
+            ImGui::EndDisabled();
+
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel"))
+            {
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+
+        if (ImGui::BeginPopupModal("Create Particle System Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        {
+            ImGui::InputText("Name", m_newParticleSystemNameBuffer.data(), m_newParticleSystemNameBuffer.size());
+            const std::string sanitizedName = SanitizeAssetFileName(m_newParticleSystemNameBuffer.data());
+            if (!sanitizedName.empty())
+            {
+                ImGui::TextDisabled("Creates Particles/%s.plutoparticles", sanitizedName.c_str());
+            }
+            else
+            {
+                ImGui::TextDisabled("Enter a particle system name.");
+            }
+
+            ImGui::BeginDisabled(sanitizedName.empty());
+            if (ImGui::Button("Create"))
+            {
+                const auto particlePath = project->GetAssetDirectoryPath() / "Particles" / (sanitizedName + ".plutoparticles");
+                const std::string reference = project->MakeAssetReference(particlePath);
+                std::string errorMessage;
+                if (core::Engine::GetInstance().GetAssetManager().SaveParticleSystemAsset(reference, assets::CreateDefaultParticleSystemAsset(), &errorMessage))
+                {
+                    project->RefreshAssetRegistry();
+                    editorShell.OpenParticleSystemAsset(reference);
+                    editorShell.MarkProjectDirty();
+                    editorShell.Log(EditorShell::ConsoleSeverity::Info, "Created particle system: " + reference);
+                    ImGui::CloseCurrentPopup();
+                }
+                else
+                {
+                    editorShell.Log(EditorShell::ConsoleSeverity::Error, errorMessage.empty() ? "Failed to create particle system." : errorMessage);
                 }
             }
             ImGui::EndDisabled();
@@ -1272,6 +1322,10 @@ namespace PlutoGE::ui
                 {
                     editorShell.OpenAnimationGraphAsset(asset.reference);
                 }
+                else if (asset.type == assets::ProjectAssetType::ParticleSystem)
+                {
+                    editorShell.OpenParticleSystemAsset(asset.reference);
+                }
             }
 
             if (ImGui::BeginDragDropSource())
@@ -1456,6 +1510,13 @@ namespace PlutoGE::ui
                 if (ImGui::Button("Open Animation Graph"))
                 {
                     editorShell.OpenAnimationGraphAsset(asset.reference);
+                }
+            }
+            else if (asset.type == assets::ProjectAssetType::ParticleSystem)
+            {
+                if (ImGui::Button("Open Particle System"))
+                {
+                    editorShell.OpenParticleSystemAsset(asset.reference);
                 }
             }
             else if (asset.type == assets::ProjectAssetType::SourceModel)

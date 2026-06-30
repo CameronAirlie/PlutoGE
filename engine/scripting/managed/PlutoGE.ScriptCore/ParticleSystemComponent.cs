@@ -29,6 +29,12 @@ public sealed class ParticleSystemComponent : ComponentReference
     public bool Playing => ScriptBridge.GetParticleSystemPlaying(EntityId);
     public int ParticleCount => ScriptBridge.GetParticleSystemParticleCount(EntityId);
 
+    public string ParticleSystemAsset
+    {
+        get => ScriptBridge.GetParticleSystemAssetReference(EntityId);
+        set => ScriptBridge.SetParticleSystemAssetReference(EntityId, value);
+    }
+
     public bool Looping
     {
         get => ScriptBridge.GetParticleSystemLooping(EntityId);

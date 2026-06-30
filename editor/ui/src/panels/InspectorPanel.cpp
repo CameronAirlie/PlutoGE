@@ -614,6 +614,29 @@ namespace PlutoGE::ui
             return droppedReference;
         }
 
+        std::optional<std::string> AcceptDroppedParticleSystemAssetReference()
+        {
+            std::optional<std::string> droppedReference;
+            if (ImGui::BeginDragDropTarget())
+            {
+                if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kContentBrowserAssetDragDropPayload))
+                {
+                    if (payload->Data && payload->DataSize > 0)
+                    {
+                        const auto *data = static_cast<const char *>(payload->Data);
+                        const std::string reference(data, data + payload->DataSize - 1);
+                        if (assets::Project::GetAssetTypeForReference(reference) == assets::ProjectAssetType::ParticleSystem)
+                        {
+                            droppedReference = reference;
+                        }
+                    }
+                }
+                ImGui::EndDragDropTarget();
+            }
+
+            return droppedReference;
+        }
+
         std::optional<std::string> AcceptDroppedTextureAssetReference()
         {
             std::optional<std::string> droppedReference;
@@ -3757,6 +3780,66 @@ namespace PlutoGE::ui
 
                                 ImGui::TreePop();
                             }
+                        }
+
+                        if (auto *particleSystemComponent = dynamic_cast<scene::ParticleSystemComponent *>(componentPtr))
+                        {
+                            const auto particleAssetOptions = CollectAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::ParticleSystem);
+                            const std::string currentReference = particleSystemComponent->GetParticleSystemAssetReference();
+                            const std::string preview = GetAssetReferencePreview(particleAssetOptions, currentReference, "None");
+                            if (ImGui::BeginCombo("Particle System Asset", preview.c_str()))
+                            {
+                                const bool noneSelected = currentReference.empty();
+                                if (ImGui::Selectable("None", noneSelected))
+                                {
+                                    if (particleSystemComponent->SetParticleSystemAssetReference({}))
+                                    {
+                                        entity->AddPrefabOverride("Component:ParticleSystemComponent:ParticleSystemAsset");
+                                        editorShell.MarkSceneDirty();
+                                    }
+                                }
+                                if (noneSelected)
+                                {
+                                    ImGui::SetItemDefaultFocus();
+                                }
+
+                                for (const auto &option : particleAssetOptions)
+                                {
+                                    const bool selected = option.reference == currentReference;
+                                    if (ImGui::Selectable(option.displayName.c_str(), selected))
+                                    {
+                                        if (particleSystemComponent->SetParticleSystemAssetReference(option.reference))
+                                        {
+                                            entity->AddPrefabOverride("Component:ParticleSystemComponent:ParticleSystemAsset");
+                                            editorShell.MarkSceneDirty();
+                                        }
+                                    }
+                                    if (selected)
+                                    {
+                                        ImGui::SetItemDefaultFocus();
+                                    }
+                                }
+                                ImGui::EndCombo();
+                            }
+                            if (auto droppedParticleReference = AcceptDroppedParticleSystemAssetReference())
+                            {
+                                if (particleSystemComponent->SetParticleSystemAssetReference(*droppedParticleReference))
+                                {
+                                    entity->AddPrefabOverride("Component:ParticleSystemComponent:ParticleSystemAsset");
+                                    editorShell.MarkSceneDirty();
+                                }
+                            }
+                            if (!currentReference.empty())
+                            {
+                                ImGui::SameLine();
+                                if (ImGui::Button("Open"))
+                                {
+                                    editorShell.OpenParticleSystemAsset(currentReference);
+                                }
+                            }
+
+                            propertiesProvided = true;
+                            properties.clear();
                         }
 
                         if (!propertiesProvided)

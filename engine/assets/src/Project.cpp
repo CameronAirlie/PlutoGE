@@ -659,6 +659,10 @@ namespace PlutoGE::assets
         {
             return ProjectAssetType::AnimationGraph;
         }
+        if (EndsWithInsensitive(reference, ".plutoparticles"))
+        {
+            return ProjectAssetType::ParticleSystem;
+        }
         if (EndsWithInsensitive(reference, ".plutomesh") || EndsWithInsensitive(reference, ".obj"))
         {
             return ProjectAssetType::Mesh;
@@ -709,6 +713,8 @@ namespace PlutoGE::assets
             return "Shader Graph";
         case ProjectAssetType::AnimationGraph:
             return "Animation Graph";
+        case ProjectAssetType::ParticleSystem:
+            return "Particle System";
         case ProjectAssetType::Texture:
             return "Texture";
         case ProjectAssetType::Assembly:
@@ -741,6 +747,8 @@ namespace PlutoGE::assets
             return ProjectAssetType::ShaderGraph;
         if (typeName == "Animation Graph" || typeName == "AnimationGraph")
             return ProjectAssetType::AnimationGraph;
+        if (typeName == "Particle System" || typeName == "ParticleSystem")
+            return ProjectAssetType::ParticleSystem;
         if (typeName == "Texture")
             return ProjectAssetType::Texture;
         if (typeName == "Assembly")

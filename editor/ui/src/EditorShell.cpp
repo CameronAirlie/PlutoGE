@@ -4,6 +4,7 @@
 #include "PlutoGE/ui/panels/ContentBrowserPanel.h"
 #include "PlutoGE/ui/panels/AnimationGraphEditorPanel.h"
 #include "PlutoGE/ui/panels/MaterialEditorPanel.h"
+#include "PlutoGE/ui/panels/ParticleSystemEditorPanel.h"
 #include "PlutoGE/ui/panels/MeshEditorPanel.h"
 #include "PlutoGE/ui/panels/ShaderGraphEditorPanel.h"
 #include "PlutoGE/ui/panels/ViewportPanel.h"
@@ -1774,6 +1775,18 @@ namespace PlutoGE::ui
         Log(ConsoleSeverity::Info, "Opened animation graph: " + m_activeAnimationGraphAssetReference);
     }
 
+    void EditorShell::OpenParticleSystemAsset(std::string particleSystemAssetReference)
+    {
+        if (particleSystemAssetReference.empty())
+        {
+            return;
+        }
+
+        m_activeParticleSystemAssetReference = std::move(particleSystemAssetReference);
+        m_openParticleSystemEditorRequested = true;
+        Log(ConsoleSeverity::Info, "Opened particle system: " + m_activeParticleSystemAssetReference);
+    }
+
     bool EditorShell::LoadProjectFromPath(const std::filesystem::path &manifestPath)
     {
         constexpr std::string_view kMissingScriptAssemblyPrefix = "Project script assembly was not found: ";
@@ -2120,6 +2133,10 @@ namespace PlutoGE::ui
         animationGraphEditorPanel->Initialize();
         m_panelManager.AddPanel(animationGraphEditorPanel);
 
+        auto particleSystemEditorPanel = new ParticleSystemEditorPanel(PanelConfig{"Particle System Editor", false});
+        particleSystemEditorPanel->Initialize();
+        m_panelManager.AddPanel(particleSystemEditorPanel);
+
         auto profilerPanel = new ProfilerPanel(PanelConfig{"Profiler"}, &m_profiler, &m_panelManager, &renderer);
         profilerPanel->Initialize();
         m_panelManager.AddPanel(profilerPanel);
@@ -2444,6 +2461,10 @@ namespace PlutoGE::ui
                 if (ConsumeAnimationGraphEditorOpenRequest())
                 {
                     animationGraphEditorPanel->SetOpen(true);
+                }
+                if (ConsumeParticleSystemEditorOpenRequest())
+                {
+                    particleSystemEditorPanel->SetOpen(true);
                 }
 
                 if (ImGui::BeginMenu("File"))

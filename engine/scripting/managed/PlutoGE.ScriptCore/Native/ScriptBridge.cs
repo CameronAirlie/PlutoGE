@@ -189,6 +189,8 @@ internal static unsafe class ScriptBridge
     private static delegate* unmanaged[Cdecl]<uint, int, void> _particleSystemStop;
     private static delegate* unmanaged[Cdecl]<uint, void> _particleSystemClear;
     private static delegate* unmanaged[Cdecl]<uint, int, void> _particleSystemEmit;
+    private static delegate* unmanaged[Cdecl]<uint, nint> _getParticleSystemAssetReference;
+    private static delegate* unmanaged[Cdecl]<uint, nint, void> _setParticleSystemAssetReference;
     private static delegate* unmanaged[Cdecl]<uint, int> _getParticleSystemLooping;
     private static delegate* unmanaged[Cdecl]<uint, int, void> _setParticleSystemLooping;
     private static delegate* unmanaged[Cdecl]<uint, int> _getParticleSystemPlayOnAwake;
@@ -621,6 +623,8 @@ internal static unsafe class ScriptBridge
         delegate* unmanaged[Cdecl]<uint, int, void> stop,
         delegate* unmanaged[Cdecl]<uint, void> clear,
         delegate* unmanaged[Cdecl]<uint, int, void> emit,
+        delegate* unmanaged[Cdecl]<uint, nint> getAssetReference,
+        delegate* unmanaged[Cdecl]<uint, nint, void> setAssetReference,
         delegate* unmanaged[Cdecl]<uint, int> getLooping,
         delegate* unmanaged[Cdecl]<uint, int, void> setLooping,
         delegate* unmanaged[Cdecl]<uint, int> getPlayOnAwake,
@@ -647,7 +651,8 @@ internal static unsafe class ScriptBridge
         delegate* unmanaged[Cdecl]<uint, int, void> setShape)
     {
         if (getPlaying == null || getParticleCount == null || play == null || pause == null || stop == null ||
-            clear == null || emit == null || getLooping == null || setLooping == null ||
+            clear == null || emit == null || getAssetReference == null || setAssetReference == null ||
+            getLooping == null || setLooping == null ||
             getPlayOnAwake == null || setPlayOnAwake == null || getDuration == null || setDuration == null ||
             getStartLifetime == null || setStartLifetime == null || getStartSpeed == null || setStartSpeed == null ||
             getStartSize == null || setStartSize == null || getGravityModifier == null || setGravityModifier == null ||
@@ -666,6 +671,8 @@ internal static unsafe class ScriptBridge
         _particleSystemStop = stop;
         _particleSystemClear = clear;
         _particleSystemEmit = emit;
+        _getParticleSystemAssetReference = getAssetReference;
+        _setParticleSystemAssetReference = setAssetReference;
         _getParticleSystemLooping = getLooping;
         _setParticleSystemLooping = setLooping;
         _getParticleSystemPlayOnAwake = getPlayOnAwake;
@@ -1541,6 +1548,28 @@ internal static unsafe class ScriptBridge
     internal static void ParticleSystemStop(uint entityId, bool clear) { if (_particleSystemStop != null) _particleSystemStop(entityId, clear ? 1 : 0); }
     internal static void ParticleSystemClear(uint entityId) { if (_particleSystemClear != null) _particleSystemClear(entityId); }
     internal static void ParticleSystemEmit(uint entityId, int count) { if (_particleSystemEmit != null) _particleSystemEmit(entityId, count); }
+    internal static string GetParticleSystemAssetReference(uint entityId)
+    {
+        if (_getParticleSystemAssetReference == null)
+        {
+            return string.Empty;
+        }
+
+        return Marshal.PtrToStringUTF8(_getParticleSystemAssetReference(entityId)) ?? string.Empty;
+    }
+    internal static void SetParticleSystemAssetReference(uint entityId, string value)
+    {
+        if (_setParticleSystemAssetReference == null)
+        {
+            return;
+        }
+
+        var valueBytes = Encoding.UTF8.GetBytes((value ?? string.Empty) + '\0');
+        fixed (byte* valuePtr = valueBytes)
+        {
+            _setParticleSystemAssetReference(entityId, (nint)valuePtr);
+        }
+    }
     internal static bool GetParticleSystemLooping(uint entityId) => _getParticleSystemLooping != null && _getParticleSystemLooping(entityId) != 0;
     internal static void SetParticleSystemLooping(uint entityId, bool value) { if (_setParticleSystemLooping != null) _setParticleSystemLooping(entityId, value ? 1 : 0); }
     internal static bool GetParticleSystemPlayOnAwake(uint entityId) => _getParticleSystemPlayOnAwake != null && _getParticleSystemPlayOnAwake(entityId) != 0;

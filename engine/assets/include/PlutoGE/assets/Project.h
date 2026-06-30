@@ -22,6 +22,7 @@ namespace PlutoGE::assets
         Material,
         ShaderGraph,
         AnimationGraph,
+        ParticleSystem,
         Texture,
         Assembly,
     };

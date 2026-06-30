@@ -2,9 +2,11 @@
 
 #include "PlutoGE/render/Camera.h"
 #include "PlutoGE/render/Graphics.h"
+#include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/RenderTarget.h"
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/Shader.h"
+#include "PlutoGE/core/Engine.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
@@ -156,11 +158,28 @@ namespace PlutoGE::render
                 in vec4 gColor;
                 out vec4 FragColor;
 
+                uniform vec4 uColor;
+                uniform sampler2D uAlbedoTexture;
+                uniform float uHasAlbedoTexture;
+                uniform int uParticleRenderShape;
+
                 void main()
                 {
-                    vec2 centered = gUv * 2.0 - 1.0;
-                    float mask = smoothstep(1.0, 0.82, dot(centered, centered));
-                    vec4 color = vec4(gColor.rgb, gColor.a * mask);
+                    float mask = 1.0;
+                    if (uParticleRenderShape == 0)
+                    {
+                        vec2 centered = gUv * 2.0 - 1.0;
+                        mask = smoothstep(1.0, 0.82, dot(centered, centered));
+                    }
+
+                    vec4 materialColor = uColor;
+                    if (uHasAlbedoTexture > 0.5)
+                    {
+                        materialColor *= texture(uAlbedoTexture, gUv);
+                    }
+
+                    vec4 color = gColor * materialColor;
+                    color.a *= mask;
                     if (color.a <= 0.01)
                     {
                         discard;
@@ -179,6 +198,11 @@ namespace PlutoGE::render
         int ToInt(scene::ParticleShape value)
         {
             return static_cast<int>(value);
+        }
+
+        int ToInt(assets::ParticleRenderShape value)
+        {
+            return value == assets::ParticleRenderShape::Quad ? 1 : 0;
         }
 
         float Hash(float value)
@@ -409,6 +433,25 @@ namespace PlutoGE::render
             m_renderShader->SetUniform("uCameraUp", cameraUp);
             m_renderShader->SetUniform("uEmitterTransform", owner->GetWorldTransform());
             m_renderShader->SetUniform("uSimulationSpace", ToInt(particleSystem->GetSimulationSpace()));
+            m_renderShader->SetUniform("uParticleRenderShape", ToInt(particleSystem->GetRenderShape()));
+
+            if (!particleSystem->GetMaterialAssetReference().empty())
+            {
+                if (auto *material = core::Engine::GetInstance().GetAssetManager().LoadMaterialAsset(particleSystem->GetMaterialAssetReference()))
+                {
+                    material->Bind(m_renderShader);
+                }
+                else
+                {
+                    m_renderShader->SetUniform("uColor", glm::vec4(1.0f));
+                    m_renderShader->SetUniform("uHasAlbedoTexture", 0.0f);
+                }
+            }
+            else
+            {
+                m_renderShader->SetUniform("uColor", glm::vec4(1.0f));
+                m_renderShader->SetUniform("uHasAlbedoTexture", 0.0f);
+            }
 
             glBindVertexArray(particleSystem->GetReadVao());
             glDrawArrays(GL_POINTS, 0, particleSystem->GetGpuCapacity());

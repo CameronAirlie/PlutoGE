@@ -6,6 +6,7 @@
 #include <PlutoGE/render/ShaderGraph.h>
 
 #include <algorithm>
+#include <charconv>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -67,6 +68,90 @@ namespace PlutoGE::assets
         render::AnimationClip ReadAnimationClip(std::istream &input, std::uint32_t version = 2);
         bool WriteGeneratedMeshAsset(std::ostream &output, const render::MeshConfig &config, const std::vector<std::string> &materialReferences);
         bool ReadGeneratedMeshAsset(std::istream &input, render::MeshConfig &config, std::vector<std::string> &materialReferences);
+
+        bool ParseBoolValue(const std::string &value)
+        {
+            return value == "true" || value == "1" || value == "True";
+        }
+
+        float ParseFloatValue(const std::string &value, float fallback)
+        {
+            float result = fallback;
+            const auto *begin = value.data();
+            const auto *end = value.data() + value.size();
+            const auto parsed = std::from_chars(begin, end, result);
+            return parsed.ec == std::errc{} ? result : fallback;
+        }
+
+        int ParseIntValue(const std::string &value, int fallback)
+        {
+            int result = fallback;
+            const auto *begin = value.data();
+            const auto *end = value.data() + value.size();
+            const auto parsed = std::from_chars(begin, end, result);
+            return parsed.ec == std::errc{} ? result : fallback;
+        }
+
+        glm::vec3 ParseVec3Value(const std::string &value, const glm::vec3 &fallback)
+        {
+            glm::vec3 result = fallback;
+            std::sscanf(value.c_str(), "%f,%f,%f", &result.x, &result.y, &result.z);
+            return result;
+        }
+
+        glm::vec4 ParseVec4Value(const std::string &value, const glm::vec4 &fallback)
+        {
+            glm::vec4 result = fallback;
+            std::sscanf(value.c_str(), "%f,%f,%f,%f", &result.x, &result.y, &result.z, &result.w);
+            return result;
+        }
+
+        const char *ToString(ParticleSimulationSpace simulationSpace)
+        {
+            return simulationSpace == ParticleSimulationSpace::World ? "World" : "Local";
+        }
+
+        const char *ToString(ParticleShape shape)
+        {
+            switch (shape)
+            {
+            case ParticleShape::Sphere:
+                return "Sphere";
+            case ParticleShape::Box:
+                return "Box";
+            case ParticleShape::Cone:
+                return "Cone";
+            case ParticleShape::Point:
+            default:
+                return "Point";
+            }
+        }
+
+        const char *ToString(ParticleRenderShape shape)
+        {
+            return shape == ParticleRenderShape::Quad ? "Quad" : "Circle";
+        }
+
+        ParticleSimulationSpace ParseParticleSimulationSpace(const std::string &value)
+        {
+            return value == "World" || value == "1" ? ParticleSimulationSpace::World : ParticleSimulationSpace::Local;
+        }
+
+        ParticleShape ParseParticleShape(const std::string &value)
+        {
+            if (value == "Sphere" || value == "1")
+                return ParticleShape::Sphere;
+            if (value == "Box" || value == "2")
+                return ParticleShape::Box;
+            if (value == "Cone" || value == "3")
+                return ParticleShape::Cone;
+            return ParticleShape::Point;
+        }
+
+        ParticleRenderShape ParseParticleRenderShape(const std::string &value)
+        {
+            return value == "Quad" || value == "1" ? ParticleRenderShape::Quad : ParticleRenderShape::Circle;
+        }
     }
 
     render::Texture *AssetManager::LoadTexture(const char *filePath)
@@ -1986,6 +2071,183 @@ namespace PlutoGE::assets
             cachedMaterial->second->GetConfig() = cachedConfig;
         }
 
+        return true;
+    }
+
+    ParticleSystemAsset AssetManager::LoadParticleSystemAsset(const std::string &assetReference, bool *loaded)
+    {
+        if (loaded)
+        {
+            *loaded = false;
+        }
+
+        if (assetReference.empty())
+        {
+            return CreateDefaultParticleSystemAsset();
+        }
+
+        if (auto cached = m_particleSystemCache.find(assetReference); cached != m_particleSystemCache.end())
+        {
+            if (loaded)
+            {
+                *loaded = true;
+            }
+            return cached->second;
+        }
+
+        const std::string particlePath = ResolveAssetPath(assetReference);
+        if (particlePath.empty() || std::filesystem::path(particlePath).extension() != ".plutoparticles")
+        {
+            return CreateDefaultParticleSystemAsset();
+        }
+
+        std::ifstream input(particlePath);
+        if (!input.is_open())
+        {
+            return CreateDefaultParticleSystemAsset();
+        }
+
+        ParticleSystemAsset asset = CreateDefaultParticleSystemAsset();
+        bool sawHeader = false;
+        std::string line;
+        while (std::getline(input, line))
+        {
+            const auto delimiter = line.find('=');
+            if (delimiter == std::string::npos)
+            {
+                continue;
+            }
+
+            const std::string key = line.substr(0, delimiter);
+            const std::string value = line.substr(delimiter + 1);
+            if (key == "ParticleSystemVersion")
+                sawHeader = true;
+            else if (key == "PlayOnAwake")
+                asset.playOnAwake = ParseBoolValue(value);
+            else if (key == "Looping")
+                asset.looping = ParseBoolValue(value);
+            else if (key == "Duration")
+                asset.duration = std::max(ParseFloatValue(value, asset.duration), 0.0001f);
+            else if (key == "MaxParticles")
+                asset.maxParticles = std::clamp(ParseIntValue(value, asset.maxParticles), 1, 200000);
+            else if (key == "StartLifetime")
+                asset.startLifetime = std::max(ParseFloatValue(value, asset.startLifetime), 0.0001f);
+            else if (key == "StartSpeed")
+                asset.startSpeed = std::max(ParseFloatValue(value, asset.startSpeed), 0.0f);
+            else if (key == "StartSize")
+                asset.startSize = std::max(ParseFloatValue(value, asset.startSize), 0.0f);
+            else if (key == "StartColor")
+                asset.startColor = glm::clamp(ParseVec4Value(value, asset.startColor), glm::vec4(0.0f), glm::vec4(1.0f));
+            else if (key == "GravityModifier")
+                asset.gravityModifier = ParseFloatValue(value, asset.gravityModifier);
+            else if (key == "EmissionRateOverTime")
+                asset.emissionRateOverTime = std::max(ParseFloatValue(value, asset.emissionRateOverTime), 0.0f);
+            else if (key == "BurstTime")
+                asset.burstTime = std::max(ParseFloatValue(value, asset.burstTime), 0.0f);
+            else if (key == "BurstCount")
+                asset.burstCount = std::max(ParseIntValue(value, asset.burstCount), 0);
+            else if (key == "SimulationSpace")
+                asset.simulationSpace = ParseParticleSimulationSpace(value);
+            else if (key == "Shape")
+                asset.shape = ParseParticleShape(value);
+            else if (key == "ShapeSize")
+                asset.shapeSize = glm::max(ParseVec3Value(value, asset.shapeSize), glm::vec3(0.0f));
+            else if (key == "ShapeRadius")
+                asset.shapeRadius = std::max(ParseFloatValue(value, asset.shapeRadius), 0.0f);
+            else if (key == "ConeAngle")
+                asset.coneAngle = std::clamp(ParseFloatValue(value, asset.coneAngle), 0.0f, 89.0f);
+            else if (key == "RenderShape")
+                asset.renderShape = ParseParticleRenderShape(value);
+            else if (key == "MaterialAsset")
+                asset.materialAssetReference = value;
+        }
+
+        if (!sawHeader)
+        {
+            return CreateDefaultParticleSystemAsset();
+        }
+
+        m_particleSystemCache[assetReference] = asset;
+        if (loaded)
+        {
+            *loaded = true;
+        }
+        return asset;
+    }
+
+    bool AssetManager::SaveParticleSystemAsset(const std::string &assetReference, const ParticleSystemAsset &asset, std::string *errorMessage)
+    {
+        if (assetReference.empty() || Project::IsEngineAssetReference(assetReference))
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Cannot save an empty or engine particle system asset reference.";
+            }
+            return false;
+        }
+
+        const std::string particlePath = ResolveAssetPath(assetReference);
+        if (particlePath.empty())
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Could not resolve particle system asset path.";
+            }
+            return false;
+        }
+
+        std::error_code errorCode;
+        std::filesystem::create_directories(std::filesystem::path(particlePath).parent_path(), errorCode);
+        if (errorCode)
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Failed to create particle system asset directory: " + errorCode.message();
+            }
+            return false;
+        }
+
+        std::ofstream output(particlePath, std::ios::out | std::ios::trunc);
+        if (!output.is_open())
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Failed to open particle system asset for writing.";
+            }
+            return false;
+        }
+
+        output << "ParticleSystemVersion=1\n";
+        output << "PlayOnAwake=" << (asset.playOnAwake ? "true" : "false") << "\n";
+        output << "Looping=" << (asset.looping ? "true" : "false") << "\n";
+        output << "Duration=" << asset.duration << "\n";
+        output << "MaxParticles=" << asset.maxParticles << "\n";
+        output << "StartLifetime=" << asset.startLifetime << "\n";
+        output << "StartSpeed=" << asset.startSpeed << "\n";
+        output << "StartSize=" << asset.startSize << "\n";
+        output << "StartColor=" << asset.startColor.r << "," << asset.startColor.g << "," << asset.startColor.b << "," << asset.startColor.a << "\n";
+        output << "GravityModifier=" << asset.gravityModifier << "\n";
+        output << "EmissionRateOverTime=" << asset.emissionRateOverTime << "\n";
+        output << "BurstTime=" << asset.burstTime << "\n";
+        output << "BurstCount=" << asset.burstCount << "\n";
+        output << "SimulationSpace=" << ToString(asset.simulationSpace) << "\n";
+        output << "Shape=" << ToString(asset.shape) << "\n";
+        output << "ShapeSize=" << asset.shapeSize.x << "," << asset.shapeSize.y << "," << asset.shapeSize.z << "\n";
+        output << "ShapeRadius=" << asset.shapeRadius << "\n";
+        output << "ConeAngle=" << asset.coneAngle << "\n";
+        output << "RenderShape=" << ToString(asset.renderShape) << "\n";
+        output << "MaterialAsset=" << asset.materialAssetReference << "\n";
+
+        if (!output.good())
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Failed to write particle system asset.";
+            }
+            return false;
+        }
+
+        m_particleSystemCache[assetReference] = asset;
         return true;
     }
 

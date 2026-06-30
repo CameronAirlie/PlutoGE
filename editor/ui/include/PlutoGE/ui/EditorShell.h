@@ -161,10 +161,12 @@ namespace PlutoGE::ui
         void OpenMeshAsset(std::string meshAssetReference);
         void OpenShaderGraphAsset(std::string shaderGraphAssetReference);
         void OpenAnimationGraphAsset(std::string animationGraphAssetReference);
+        void OpenParticleSystemAsset(std::string particleSystemAssetReference);
         const std::string &GetActiveMaterialAssetReference() const { return m_activeMaterialAssetReference; }
         const std::string &GetActiveMeshAssetReference() const { return m_activeMeshAssetReference; }
         const std::string &GetActiveShaderGraphAssetReference() const { return m_activeShaderGraphAssetReference; }
         const std::string &GetActiveAnimationGraphAssetReference() const { return m_activeAnimationGraphAssetReference; }
+        const std::string &GetActiveParticleSystemAssetReference() const { return m_activeParticleSystemAssetReference; }
         bool ConsumeMaterialEditorOpenRequest()
         {
             const bool requested = m_openMaterialEditorRequested;
@@ -187,6 +189,12 @@ namespace PlutoGE::ui
         {
             const bool requested = m_openAnimationGraphEditorRequested;
             m_openAnimationGraphEditorRequested = false;
+            return requested;
+        }
+        bool ConsumeParticleSystemEditorOpenRequest()
+        {
+            const bool requested = m_openParticleSystemEditorRequested;
+            m_openParticleSystemEditorRequested = false;
             return requested;
         }
         void Log(ConsoleSeverity severity, std::string message);
@@ -279,11 +287,13 @@ namespace PlutoGE::ui
         std::string m_activeMeshAssetReference;
         std::string m_activeShaderGraphAssetReference;
         std::string m_activeAnimationGraphAssetReference;
+        std::string m_activeParticleSystemAssetReference;
         std::string m_runtimeSceneSnapshot;
         bool m_runtimeSceneWasDirty = false;
         bool m_openMaterialEditorRequested = false;
         bool m_openMeshEditorRequested = false;
         bool m_openShaderGraphEditorRequested = false;
         bool m_openAnimationGraphEditorRequested = false;
+        bool m_openParticleSystemEditorRequested = false;
     };
 }

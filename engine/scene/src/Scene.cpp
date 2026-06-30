@@ -16,6 +16,7 @@
 #include <BulletCollision/CollisionShapes/btHeightfieldTerrainShape.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <iostream>
 #include <limits>
@@ -29,8 +30,6 @@
 
 namespace PlutoGE::scene
 {
-    Scene::~Scene() = default;
-
     namespace
     {
         void CollectRuntimeScriptComponents(Entity *entity, std::vector<ScriptComponent *> &scriptComponents)
@@ -444,7 +443,7 @@ namespace PlutoGE::scene
             }
         };
 
-        std::unique_ptr<BulletQueryWorld> BuildBulletQueryWorld(const std::vector<Entity *> &entities, EntityID ignoredEntityId = 0)
+        std::unique_ptr<BulletQueryWorld> BuildBulletQueryWorld(const std::vector<Entity *> &entities)
         {
             auto queryWorld = std::make_unique<BulletQueryWorld>();
             queryWorld->bodies.reserve(entities.size());
@@ -452,7 +451,7 @@ namespace PlutoGE::scene
             for (auto *entity : entities)
             {
                 auto *collider = entity ? entity->GetComponent<ColliderComponent>() : nullptr;
-                if (!entity || entity->GetID() == ignoredEntityId || !collider || !collider->IsEnabled() || collider->IsTrigger())
+                if (!entity || !collider || !collider->IsEnabled() || collider->IsTrigger())
                 {
                     continue;
                 }
@@ -485,6 +484,54 @@ namespace PlutoGE::scene
 
             return queryWorld;
         }
+
+        class IgnoringRayResultCallback : public btCollisionWorld::ClosestRayResultCallback
+        {
+        public:
+            IgnoringRayResultCallback(const btVector3 &from, const btVector3 &to, EntityID ignoredEntityId)
+                : btCollisionWorld::ClosestRayResultCallback(from, to), m_ignoredEntityId(ignoredEntityId)
+            {
+            }
+
+            bool needsCollision(btBroadphaseProxy *proxy) const override
+            {
+                if (!btCollisionWorld::ClosestRayResultCallback::needsCollision(proxy))
+                {
+                    return false;
+                }
+
+                const auto *object = proxy ? static_cast<const btCollisionObject *>(proxy->m_clientObject) : nullptr;
+                const auto *entity = object ? static_cast<const Entity *>(object->getUserPointer()) : nullptr;
+                return !entity || entity->GetID() != m_ignoredEntityId;
+            }
+
+        private:
+            EntityID m_ignoredEntityId = 0;
+        };
+
+        class IgnoringConvexResultCallback final : public btCollisionWorld::ClosestConvexResultCallback
+        {
+        public:
+            IgnoringConvexResultCallback(const btVector3 &from, const btVector3 &to, EntityID ignoredEntityId)
+                : btCollisionWorld::ClosestConvexResultCallback(from, to), m_ignoredEntityId(ignoredEntityId)
+            {
+            }
+
+            bool needsCollision(btBroadphaseProxy *proxy) const override
+            {
+                if (!btCollisionWorld::ClosestConvexResultCallback::needsCollision(proxy))
+                {
+                    return false;
+                }
+
+                const auto *object = proxy ? static_cast<const btCollisionObject *>(proxy->m_clientObject) : nullptr;
+                const auto *entity = object ? static_cast<const Entity *>(object->getUserPointer()) : nullptr;
+                return !entity || entity->GetID() != m_ignoredEntityId;
+            }
+
+        private:
+            EntityID m_ignoredEntityId = 0;
+        };
 
         uint64_t MakeCollisionPairKey(EntityID first, EntityID second)
         {
@@ -541,6 +588,60 @@ namespace PlutoGE::scene
             ApplyWorldPhysicsTransform(*stepBody.entity, transform);
             stepBody.rigidbody->SetVelocity(FromBullet(stepBody.body->getLinearVelocity()));
             stepBody.rigidbody->SetAngularVelocity(FromBullet(stepBody.body->getAngularVelocity()));
+        }
+    }
+
+    struct Scene::PhysicsQueryCache
+    {
+        std::unique_ptr<BulletQueryWorld> world;
+    };
+
+    Scene::Scene() = default;
+    Scene::~Scene() = default;
+
+    Scene::PhysicsQueryCache &Scene::GetPhysicsQueryCache() const
+    {
+        if (!m_physicsQueryCache)
+        {
+            std::vector<Entity *> entities;
+            for (auto *rootEntity : m_rootEntities)
+            {
+                CollectActiveEntities(rootEntity, entities);
+            }
+
+            m_physicsQueryCache = std::make_unique<PhysicsQueryCache>();
+            m_physicsQueryCache->world = BuildBulletQueryWorld(entities);
+        }
+
+        return *m_physicsQueryCache;
+    }
+
+    void Scene::InvalidatePhysicsQueryCache() const
+    {
+        m_physicsQueryCache.reset();
+    }
+
+    void Scene::SyncPhysicsQueryTransform(const Entity &entity) const
+    {
+        if (!m_physicsQueryCache || !m_physicsQueryCache->world)
+        {
+            return;
+        }
+
+        for (auto &body : m_physicsQueryCache->world->bodies)
+        {
+            if (body.entity != &entity || !body.object)
+            {
+                continue;
+            }
+
+            btTransform transform;
+            transform.setIdentity();
+            transform.setOrigin(ToBullet(entity.GetWorldPosition()));
+            transform.setRotation(ToBulletRotation(entity.GetWorldTransform()));
+            body.object->setWorldTransform(transform);
+            m_physicsQueryCache->world->collisionWorld.updateSingleAabb(body.object.get());
+            return;
         }
     }
 
@@ -869,23 +970,31 @@ namespace PlutoGE::scene
 
     void Scene::Update(float deltaTime)
     {
+        using Clock = std::chrono::high_resolution_clock;
+        const auto updateStart = Clock::now();
+        InvalidatePhysicsQueryCache();
         ClearIblCaptureVolumes();
+        const auto preparationEnd = Clock::now();
 
-        auto &window = core::Engine::GetInstance().GetWindow();
-        const auto extents = window.GetExtents();
-        if (extents.width > 0 && extents.height > 0)
+        if (m_runtimeStarted)
         {
-            const auto &input = window.GetInputState();
-            const glm::vec2 canvasSize(static_cast<float>(extents.width), static_cast<float>(extents.height));
-            const glm::vec2 mousePosition(static_cast<float>(input.mouseState.x),
-                                          static_cast<float>(extents.height) - static_cast<float>(input.mouseState.y));
-            const bool mousePressed = input.IsMouseButtonPressed(0);
-            const bool mouseReleased = input.IsMouseButtonReleased(0);
-            for (auto *rootEntity : m_rootEntities)
+            auto &window = core::Engine::GetInstance().GetWindow();
+            const auto extents = window.GetExtents();
+            if (extents.width > 0 && extents.height > 0)
             {
-                UpdateRuntimeUIButtonStates(rootEntity, nullptr, canvasSize, mousePosition, mousePressed, mouseReleased);
+                const auto &input = window.GetInputState();
+                const glm::vec2 canvasSize(static_cast<float>(extents.width), static_cast<float>(extents.height));
+                const glm::vec2 mousePosition(static_cast<float>(input.mouseState.x),
+                                              static_cast<float>(extents.height) - static_cast<float>(input.mouseState.y));
+                const bool mousePressed = input.IsMouseButtonPressed(0);
+                const bool mouseReleased = input.IsMouseButtonReleased(0);
+                for (auto *rootEntity : m_rootEntities)
+                {
+                    UpdateRuntimeUIButtonStates(rootEntity, nullptr, canvasSize, mousePosition, mousePressed, mouseReleased);
+                }
             }
         }
+        const auto runtimeUiEnd = Clock::now();
 
         for (auto rootEntity : m_rootEntities)
         {
@@ -894,12 +1003,22 @@ namespace PlutoGE::scene
                 rootEntity->Update(deltaTime);
             }
         }
+        const auto componentsEnd = Clock::now();
 
         SubmitRenderCommands();
+        const auto submissionEnd = Clock::now();
 
         FlushPendingDestroyEntities();
         StepPhysics(deltaTime);
         FlushPendingDestroyEntities();
+        InvalidatePhysicsQueryCache();
+        const auto physicsEnd = Clock::now();
+
+        m_updateTimingStats.preparationMs = std::chrono::duration<float, std::milli>(preparationEnd - updateStart).count();
+        m_updateTimingStats.runtimeUiMs = std::chrono::duration<float, std::milli>(runtimeUiEnd - preparationEnd).count();
+        m_updateTimingStats.componentsMs = std::chrono::duration<float, std::milli>(componentsEnd - runtimeUiEnd).count();
+        m_updateTimingStats.renderSubmissionMs = std::chrono::duration<float, std::milli>(submissionEnd - componentsEnd).count();
+        m_updateTimingStats.physicsMs = std::chrono::duration<float, std::milli>(physicsEnd - submissionEnd).count();
     }
 
     bool Scene::ContainsEntity(const Entity *entity) const
@@ -918,6 +1037,8 @@ namespace PlutoGE::scene
 
     void Scene::SubmitRenderCommands()
     {
+        using Clock = std::chrono::high_resolution_clock;
+        const auto meshStart = Clock::now();
         for (auto *meshComponent : m_meshComponents)
         {
             if (!meshComponent || !meshComponent->IsEnabled())
@@ -933,6 +1054,7 @@ namespace PlutoGE::scene
 
             meshComponent->SubmitRenderCommands();
         }
+        const auto terrainStart = Clock::now();
 
         for (auto *terrainComponent : m_terrainComponents)
         {
@@ -949,6 +1071,7 @@ namespace PlutoGE::scene
 
             terrainComponent->SubmitRenderCommands();
         }
+        const auto foliageStart = Clock::now();
 
         for (auto *foliageComponent : m_foliageComponents)
         {
@@ -965,6 +1088,11 @@ namespace PlutoGE::scene
 
             foliageComponent->SubmitRenderCommands();
         }
+        const auto submissionEnd = Clock::now();
+
+        m_updateTimingStats.meshSubmissionMs = std::chrono::duration<float, std::milli>(terrainStart - meshStart).count();
+        m_updateTimingStats.terrainSubmissionMs = std::chrono::duration<float, std::milli>(foliageStart - terrainStart).count();
+        m_updateTimingStats.foliageSubmissionMs = std::chrono::duration<float, std::milli>(submissionEnd - foliageStart).count();
     }
 
     void Scene::RegisterParticleSystemComponent(ParticleSystemComponent *particleSystemComponent)
@@ -1072,19 +1200,13 @@ namespace PlutoGE::scene
             return false;
         }
 
-        std::vector<Entity *> entities;
-        for (auto *rootEntity : m_rootEntities)
-        {
-            CollectActiveEntities(rootEntity, entities);
-        }
-
-        auto queryWorld = BuildBulletQueryWorld(entities, ignoredEntityId);
+        auto &queryCache = GetPhysicsQueryCache();
         const glm::vec3 normalizedDirection = direction / directionLength;
         const btVector3 from = ToBullet(origin);
         const btVector3 to = ToBullet(origin + normalizedDirection * maxDistance);
 
-        btCollisionWorld::ClosestRayResultCallback callback(from, to);
-        queryWorld->collisionWorld.rayTest(from, to, callback);
+        IgnoringRayResultCallback callback(from, to, ignoredEntityId);
+        queryCache.world->collisionWorld.rayTest(from, to, callback);
         if (!callback.hasHit())
         {
             return false;
@@ -1117,13 +1239,7 @@ namespace PlutoGE::scene
             return;
         }
 
-        std::vector<Entity *> entities;
-        for (auto *rootEntity : m_rootEntities)
-        {
-            CollectActiveEntities(rootEntity, entities);
-        }
-
-        auto queryWorld = BuildBulletQueryWorld(entities, ignoredEntityId);
+        auto &queryCache = GetPhysicsQueryCache();
         for (std::size_t index = 0; index < requests.size(); ++index)
         {
             const auto &request = requests[index];
@@ -1137,8 +1253,8 @@ namespace PlutoGE::scene
             const btVector3 from = ToBullet(request.origin);
             const btVector3 to = ToBullet(request.origin + normalizedDirection * request.maxDistance);
 
-            btCollisionWorld::ClosestRayResultCallback callback(from, to);
-            queryWorld->collisionWorld.rayTest(from, to, callback);
+            IgnoringRayResultCallback callback(from, to, ignoredEntityId);
+            queryCache.world->collisionWorld.rayTest(from, to, callback);
             if (!callback.hasHit())
             {
                 continue;
@@ -1180,28 +1296,22 @@ namespace PlutoGE::scene
             return false;
         }
 
-        std::vector<Entity *> entities;
-        for (auto *rootEntity : m_rootEntities)
-        {
-            CollectActiveEntities(rootEntity, entities);
-        }
-
-        auto queryWorld = BuildBulletQueryWorld(entities, ignoredEntityId);
+        auto &queryCache = GetPhysicsQueryCache();
         const glm::vec3 normalizedDirection = direction / directionLength;
         const btVector3 from = ToBullet(origin);
         const btVector3 to = ToBullet(origin + normalizedDirection * maxDistance);
 
-        class TaggedRayResultCallback final : public btCollisionWorld::ClosestRayResultCallback
+        class TaggedRayResultCallback final : public IgnoringRayResultCallback
         {
         public:
-            TaggedRayResultCallback(const btVector3 &from, const btVector3 &to, const std::string &tag)
-                : btCollisionWorld::ClosestRayResultCallback(from, to), m_tag(tag)
+            TaggedRayResultCallback(const btVector3 &from, const btVector3 &to, EntityID ignoredEntityId, const std::string &tag)
+                : IgnoringRayResultCallback(from, to, ignoredEntityId), m_tag(tag)
             {
             }
 
             bool needsCollision(btBroadphaseProxy *proxy) const override
             {
-                if (!btCollisionWorld::ClosestRayResultCallback::needsCollision(proxy))
+                if (!IgnoringRayResultCallback::needsCollision(proxy))
                 {
                     return false;
                 }
@@ -1215,8 +1325,8 @@ namespace PlutoGE::scene
             const std::string &m_tag;
         };
 
-        TaggedRayResultCallback callback(from, to, tag);
-        queryWorld->collisionWorld.rayTest(from, to, callback);
+        TaggedRayResultCallback callback(from, to, ignoredEntityId, tag);
+        queryCache.world->collisionWorld.rayTest(from, to, callback);
         if (!callback.hasHit())
         {
             return false;
@@ -1240,6 +1350,11 @@ namespace PlutoGE::scene
 
     glm::vec3 Scene::MoveKinematic(Entity &entity, const glm::vec3 &displacement, float skinWidth) const
     {
+        if (glm::dot(displacement, displacement) <= 0.0000000001f)
+        {
+            return glm::vec3(0.0f);
+        }
+
         auto *collider = entity.GetComponent<ColliderComponent>();
         if (!collider || !collider->IsEnabled() || collider->IsTrigger())
         {
@@ -1247,13 +1362,7 @@ namespace PlutoGE::scene
             return displacement;
         }
 
-        std::vector<Entity *> entities;
-        for (auto *rootEntity : m_rootEntities)
-        {
-            CollectActiveEntities(rootEntity, entities);
-        }
-
-        auto queryWorld = BuildBulletQueryWorld(entities, entity.GetID());
+        auto &queryCache = GetPhysicsQueryCache();
         auto shapeData = CreateBulletShapeForEntity(entity, *collider);
         auto *convexShape = dynamic_cast<btConvexShape *>(shapeData.shape.get());
         if (!convexShape)
@@ -1286,8 +1395,8 @@ namespace PlutoGE::scene
             to.setOrigin(ToBullet(currentPosition + remaining));
             to.setRotation(rotation);
 
-            btCollisionWorld::ClosestConvexResultCallback callback(from.getOrigin(), to.getOrigin());
-            queryWorld->collisionWorld.convexSweepTest(convexShape, from, to, callback);
+            IgnoringConvexResultCallback callback(from.getOrigin(), to.getOrigin(), entity.GetID());
+            queryCache.world->collisionWorld.convexSweepTest(convexShape, from, to, callback);
             if (!callback.hasHit())
             {
                 currentPosition += remaining;
@@ -1327,6 +1436,7 @@ namespace PlutoGE::scene
         }
 
         SetEntityWorldPosition(entity, currentPosition);
+        SyncPhysicsQueryTransform(entity);
         return currentPosition - startPosition;
     }
 

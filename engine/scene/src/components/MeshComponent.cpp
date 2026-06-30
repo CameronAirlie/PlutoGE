@@ -395,6 +395,7 @@ namespace PlutoGE::scene
         }
 
         m_mesh = mesh;
+        RefreshMeshDerivedState();
         MarkRenderCommandsDirty();
 
         if (auto *owner = GetOwner())
@@ -411,6 +412,24 @@ namespace PlutoGE::scene
         m_renderCommandCacheDirty = true;
         m_hasCachedRenderCommandModel = false;
         m_cachedRenderCommands.clear();
+    }
+
+    void MeshComponent::RefreshMeshDerivedState()
+    {
+        m_hasAnimatedNodeSubmeshes = false;
+        if (!m_mesh)
+        {
+            return;
+        }
+
+        for (size_t submeshIndex = 0; submeshIndex < m_mesh->GetSubmeshCount(); ++submeshIndex)
+        {
+            if (m_mesh->GetSubmesh(submeshIndex).animatedNodeIndex >= 0)
+            {
+                m_hasAnimatedNodeSubmeshes = true;
+                break;
+            }
+        }
     }
 
     void MeshComponent::UpdateCachedPreviousModels(const glm::mat4 &modelMatrix)
@@ -808,13 +827,10 @@ namespace PlutoGE::scene
         {
             auto entity = GetOwner();
             glm::mat4 modelMatrix = entity->GetWorldTransform();
-            bool hasAnimatedNodeSubmeshes = false;
-            for (size_t submeshIndex = 0; submeshIndex < m_mesh->GetSubmeshCount(); ++submeshIndex)
-            {
-                hasAnimatedNodeSubmeshes = hasAnimatedNodeSubmeshes || m_mesh->GetSubmesh(submeshIndex).animatedNodeIndex >= 0;
-            }
 
-            AnimationComponent *animationComponent = FindAnimationComponent(entity);
+            AnimationComponent *animationComponent = (m_mesh->HasSkeleton() || m_hasAnimatedNodeSubmeshes)
+                                                         ? FindAnimationComponent(entity)
+                                                         : nullptr;
             const std::vector<glm::mat4> *jointMatrices = nullptr;
             bool skinningPoseChanged = false;
             if (m_mesh->HasSkeleton())
@@ -827,17 +843,19 @@ namespace PlutoGE::scene
                     jointMatrices = &animationComponent->GetJointMatrices(m_mesh->GetSkeleton(), m_mesh->GetAnimationNodes());
                 }
             }
-            const bool canCacheStaticRenderCommands = m_isStatic &&
-                                                      !jointMatrices &&
-                                                      (!hasAnimatedNodeSubmeshes || !animationComponent || animationComponent->GetClipCount() == 0);
+            // Command construction is independent of the Static rendering flag.
+            // Any unskinned mesh with no active node animation can reuse its
+            // commands while its world transform remains unchanged.
+            const bool canCacheRenderCommands = !jointMatrices &&
+                                                (!m_hasAnimatedNodeSubmeshes || !animationComponent || animationComponent->GetClipCount() == 0);
 
             auto &renderer = PlutoGE::core::Engine::GetInstance().GetRenderer();
-            if (canCacheStaticRenderCommands &&
+            if (canCacheRenderCommands &&
                 !m_renderCommandCacheDirty &&
                 m_hasCachedRenderCommandModel &&
                 AreMatricesApproximatelyEqual(m_cachedRenderCommandModel, modelMatrix))
             {
-                renderer.SubmitSortedRenderCommands(m_cachedRenderCommands, false);
+                renderer.SubmitSortedRenderCommands(m_cachedRenderCommands, true);
 
                 m_previousModelMatrix = modelMatrix;
                 m_hasPreviousModelMatrix = true;
@@ -848,7 +866,7 @@ namespace PlutoGE::scene
             const size_t submeshBegin = m_submeshIndex >= 0 ? static_cast<size_t>(m_submeshIndex) : 0;
             const size_t submeshEnd = m_submeshIndex >= 0 ? std::min(submeshBegin + static_cast<size_t>(std::max(1, m_submeshCount)), meshSubmeshCount) : meshSubmeshCount;
             std::vector<render::RenderCommand> rebuiltCommands;
-            if (canCacheStaticRenderCommands)
+            if (canCacheRenderCommands)
             {
                 rebuiltCommands.reserve(submeshEnd - submeshBegin);
             }
@@ -885,13 +903,13 @@ namespace PlutoGE::scene
                 command.usePrimaryUvForLightmap = !m_mesh->HasUsableLightmapUvsForSubmesh(submeshIndex);
 
                 renderer.SubmitRenderCommand(command);
-                if (canCacheStaticRenderCommands)
+                if (canCacheRenderCommands)
                 {
                     rebuiltCommands.push_back(command);
                 }
             }
 
-            if (canCacheStaticRenderCommands)
+            if (canCacheRenderCommands)
             {
                 std::sort(rebuiltCommands.begin(), rebuiltCommands.end(), CompareRenderCommandKeys);
                 m_cachedRenderCommands = std::move(rebuiltCommands);

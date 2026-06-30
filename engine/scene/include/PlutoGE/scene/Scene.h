@@ -69,10 +69,22 @@ namespace PlutoGE::scene
         float maxDistance = 0.0f;
     };
 
+    struct SceneUpdateTimingStats
+    {
+        float preparationMs = 0.0f;
+        float runtimeUiMs = 0.0f;
+        float componentsMs = 0.0f;
+        float renderSubmissionMs = 0.0f;
+        float meshSubmissionMs = 0.0f;
+        float terrainSubmissionMs = 0.0f;
+        float foliageSubmissionMs = 0.0f;
+        float physicsMs = 0.0f;
+    };
+
     class Scene
     {
     public:
-        Scene() = default;
+        Scene();
         ~Scene();
 
         Entity *AddEntity(std::unique_ptr<Entity> entity, Entity *parent = nullptr);
@@ -84,6 +96,7 @@ namespace PlutoGE::scene
         void StopRuntime();
         void Update(float deltaTime);
         [[nodiscard]] bool IsRuntimeStarted() const { return m_runtimeStarted; }
+        [[nodiscard]] const SceneUpdateTimingStats &GetUpdateTimingStats() const { return m_updateTimingStats; }
 
         Entity *FindEntityByName(const std::string &name) const;               // Utility function to find an entity by name (can be useful for scripting and editor)
         Entity *FindEntityByID(EntityID id) const;                             // Utility function to find an entity by its unique ID (useful for serialization and referencing)
@@ -151,6 +164,8 @@ namespace PlutoGE::scene
         void UnregisterParticleSystemComponent(ParticleSystemComponent *particleSystemComponent);
 
     private:
+        struct PhysicsQueryCache;
+
         std::string m_name;
         std::vector<std::unique_ptr<Entity>> m_entityStorage;
         std::vector<Entity *> m_rootEntities;
@@ -164,16 +179,21 @@ namespace PlutoGE::scene
         render::Texture *m_environmentMapTexture = nullptr;
         float m_environmentIntensity = 1.0f;
         bool m_runtimeStarted = false;
+        SceneUpdateTimingStats m_updateTimingStats;
         BakedProbeVolume m_bakedProbeVolume;
         std::unique_ptr<render::Texture> m_bakedProbeTexture;
         std::vector<IblCaptureVolume> m_iblCaptureVolumes;
         std::unordered_set<uint64_t> m_activeCollisionPairs;
         std::vector<EntityID> m_pendingDestroyEntities;
         std::unordered_set<EntityID> m_pendingDestroyEntityIds;
+        mutable std::unique_ptr<PhysicsQueryCache> m_physicsQueryCache;
         void CollectEntitySubtree(Entity *entity, std::vector<Entity *> &entities) const;
         bool RemoveEntityRecursive(Entity *current, Entity *target);
         void FlushPendingDestroyEntities();
         void RebuildBakedProbeTexture();
+        PhysicsQueryCache &GetPhysicsQueryCache() const;
+        void InvalidatePhysicsQueryCache() const;
+        void SyncPhysicsQueryTransform(const Entity &entity) const;
         void StepPhysics(float deltaTime);
         void DispatchCollisionEvents(std::unordered_set<uint64_t> currentCollisionPairs);
     };

@@ -287,6 +287,7 @@ namespace PlutoGE::render
             uniform int uStepCount;
             uniform int uCascadeCount;
             uniform int uHasDirectionalLight;
+            uniform int uUseTemporalShadowSampling;
             uniform vec3 uCascadeWorldOrigins[4];
             uniform mat4 uCascadeLightSpaceMatrices[4];
             uniform float uCascadeSplits[4];
@@ -354,15 +355,20 @@ namespace PlutoGE::render
                     vec2( 0.5,  0.5)
                 );
                 float shadow = 0.0;
+                int sampleCount = uUseTemporalShadowSampling != 0 ? 2 : 4;
+                int temporalOffset = int(mod(floor(uFrameIndex) + floor(gl_FragCoord.x) + floor(gl_FragCoord.y), 2.0));
 
-                for (int sampleIndex = 0; sampleIndex < 4; ++sampleIndex)
+                for (int sampleIndex = 0; sampleIndex < sampleCount; ++sampleIndex)
                 {
-                    vec2 sampleCoords = projectedCoords.xy + offsets[sampleIndex] * texelSize * filterRadius;
+                    int offsetIndex = uUseTemporalShadowSampling != 0
+                        ? (sampleIndex == 0 ? temporalOffset : 3 - temporalOffset)
+                        : sampleIndex;
+                    vec2 sampleCoords = projectedCoords.xy + offsets[offsetIndex] * texelSize * filterRadius;
                     float closestDepth = texture(shadowMap, sampleCoords).r;
                     shadow += receiverDepth > closestDepth ? 1.0 : 0.0;
                 }
 
-                return shadow * 0.25;
+                return shadow / float(sampleCount);
             }
 
             float SampleDirectionalCascadeShadow(int cascadeIndex, vec3 projectedCoords)
@@ -609,6 +615,7 @@ namespace PlutoGE::render
         m_shader->SetUniform("uDirectionalContribution", m_directionalContribution);
         m_shader->SetUniform("uMaxOpacity", m_maxOpacity);
         m_shader->SetUniform("uFrameIndex", hasTemporalAAAfterFog ? static_cast<float>(context.renderContext.frameSequence % 4096) : 0.0f);
+        m_shader->SetUniform("uUseTemporalShadowSampling", hasTemporalAAAfterFog ? 1 : 0);
         m_shader->SetUniform("uStepCount", std::clamp(m_stepCount, kMinStepCount, kMaxStepCount));
         m_shader->SetUniform("uHasDirectionalLight", hasDirectionalLight);
         DrawFullscreenTriangle();

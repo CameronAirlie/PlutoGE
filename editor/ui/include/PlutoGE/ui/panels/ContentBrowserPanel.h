@@ -3,7 +3,9 @@
 #include "PlutoGE/ui/panels/Panel.h"
 
 #include <array>
+#include <cstdint>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace PlutoGE::assets
@@ -40,6 +42,16 @@ namespace PlutoGE::ui
         void Render() override;
 
     private:
+        struct MeshSubassetRow
+        {
+            std::string displayName;
+            std::string slotSummary;
+            std::uint32_t indexCount = 0;
+            int submeshIndex = -1;
+            int submeshCount = 1;
+            int materialSlot = -1;
+        };
+
         enum class PendingMenuAction
         {
             None,
@@ -76,6 +88,7 @@ namespace PlutoGE::ui
         std::vector<int> m_cachedRootFolderIndices;
         std::vector<int> m_filteredAssetIndices;
         std::vector<std::string> m_filteredAssetDisplayNames;
+        std::unordered_map<std::string, std::vector<MeshSubassetRow>> m_meshSubassetRows;
         PendingMenuAction m_pendingMenuAction = PendingMenuAction::None;
     };
 }

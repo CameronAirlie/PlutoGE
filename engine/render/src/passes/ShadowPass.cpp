@@ -136,11 +136,14 @@ namespace
         }
     }
 
-    void BindTransformInstanceAttributes(const PlutoGE::render::Mesh &mesh, unsigned int instanceBuffer)
+    void BindTransformInstanceAttributes(const PlutoGE::render::Mesh &mesh,
+                                         unsigned int instanceBuffer,
+                                         std::size_t firstInstance)
     {
+        const std::size_t baseOffset = firstInstance * sizeof(TransformInstanceData);
         glBindVertexArray(mesh.GetVAO());
         glBindBuffer(GL_ARRAY_BUFFER, instanceBuffer);
-        ConfigureMatrixAttributes(5, offsetof(TransformInstanceData, model), sizeof(TransformInstanceData));
+        ConfigureMatrixAttributes(5, baseOffset + offsetof(TransformInstanceData, model), sizeof(TransformInstanceData));
         glBindBuffer(GL_ARRAY_BUFFER, 0);
     }
 
@@ -770,14 +773,21 @@ namespace
                                             std::size_t &instanceCapacity,
                                             std::vector<TransformInstanceData> &batchInstances)
     {
+        struct PreparedShadowDraw
+        {
+            const PlutoGE::render::RenderCommand *command = nullptr;
+            std::size_t lodIndex = 0;
+            std::size_t firstInstance = 0;
+            std::size_t instanceCount = 0;
+        };
+
         ShadowDrawStats stats;
         PlutoGE::render::Material *boundMaterial = nullptr;
         PlutoGE::render::Mesh *boundMesh = nullptr;
         batchInstances.clear();
-        if (batchInstances.capacity() < 64)
-        {
-            batchInstances.reserve(64);
-        }
+        batchInstances.reserve(sortedShadowCasters.size());
+        std::vector<PreparedShadowDraw> draws;
+        draws.reserve(sortedShadowCasters.size());
 
         const auto appendInstances = [](const PlutoGE::render::RenderCommand &command, std::vector<TransformInstanceData> &instances)
         {
@@ -794,44 +804,6 @@ namespace
             }
         };
 
-        const auto flushBatch = [&](const PlutoGE::render::RenderCommand &batchHead, std::size_t batchLodIndex)
-        {
-            if (batchInstances.empty())
-            {
-                return;
-            }
-
-            if (batchHead.material != boundMaterial)
-            {
-                if (IsAlphaTestedShadowCaster(batchHead))
-                {
-                    BindShadowMaterialState(shader, batchHead.material);
-                }
-                else
-                {
-                    shader->SetUniform("uHasAlbedoTexture", 0.0f);
-                }
-                boundMaterial = batchHead.material;
-            }
-
-            shader->SetUniform("uUseSkinning", 0);
-            UploadTransformInstances(instanceBuffer, instanceCapacity, batchInstances);
-            if (batchHead.mesh != boundMesh)
-            {
-                BindTransformInstanceAttributes(*batchHead.mesh, instanceBuffer);
-                boundMesh = batchHead.mesh;
-            }
-
-            batchHead.mesh->DrawSubmeshInstancedBound(batchHead.submeshIndex, batchInstances.size(), batchLodIndex);
-            const auto indexCount = batchHead.mesh->GetSubmeshLodIndexCount(batchHead.submeshIndex, batchLodIndex);
-            stats.submittedInstances += static_cast<int>(batchInstances.size());
-            stats.submittedTriangles += static_cast<int>((indexCount / 3) * batchInstances.size());
-            ++stats.submittedBatches;
-            batchInstances.clear();
-        };
-
-        const PlutoGE::render::RenderCommand *batchHead = nullptr;
-        std::size_t batchLodIndex = 0;
         for (const auto *shadowCaster : sortedShadowCasters)
         {
             if (!predicate(*shadowCaster))
@@ -841,59 +813,88 @@ namespace
 
             const auto *command = shadowCaster->command;
             const std::size_t selectedLodIndex = lodSelector(*shadowCaster);
-            if (command->jointMatrices)
+            const bool appendToPrevious = !command->jointMatrices &&
+                                          !draws.empty() &&
+                                          !draws.back().command->jointMatrices &&
+                                          CanBatchShadowCommands(*draws.back().command,
+                                                                 *command,
+                                                                 draws.back().lodIndex,
+                                                                 selectedLodIndex);
+            if (!appendToPrevious)
             {
-                if (batchHead)
-                {
-                    flushBatch(*batchHead, batchLodIndex);
-                    batchHead = nullptr;
-                }
-
-                if (command->material != boundMaterial)
-                {
-                    if (IsAlphaTestedShadowCaster(*command))
-                    {
-                        BindShadowMaterialState(shader, command->material);
-                    }
-                    else
-                    {
-                        shader->SetUniform("uHasAlbedoTexture", 0.0f);
-                    }
-                    boundMaterial = command->material;
-                }
-
-                UploadShadowJointMatrices(shader, command->jointMatrices);
-                std::vector<TransformInstanceData> singleInstance;
-                appendInstances(*command, singleInstance);
-                UploadTransformInstances(instanceBuffer, instanceCapacity, singleInstance);
-                BindTransformInstanceAttributes(*command->mesh, instanceBuffer);
-                boundMesh = command->mesh;
-                command->mesh->DrawSubmeshInstancedBound(command->submeshIndex, singleInstance.size(), selectedLodIndex);
-                stats.submittedTriangles += static_cast<int>((command->mesh->GetSubmeshLodIndexCount(command->submeshIndex, selectedLodIndex) / 3) * singleInstance.size());
-                stats.submittedInstances += static_cast<int>(singleInstance.size());
-                ++stats.submittedBatches;
-                shader->SetUniform("uUseSkinning", 0);
-                continue;
+                draws.push_back(PreparedShadowDraw{
+                    .command = command,
+                    .lodIndex = selectedLodIndex,
+                    .firstInstance = batchInstances.size(),
+                });
             }
 
-            if (batchHead && !CanBatchShadowCommands(*batchHead, *command, batchLodIndex, selectedLodIndex))
-            {
-                flushBatch(*batchHead, batchLodIndex);
-                batchHead = nullptr;
-            }
-
-            if (!batchHead)
-            {
-                batchHead = command;
-                batchLodIndex = selectedLodIndex;
-            }
-
+            const std::size_t previousInstanceCount = batchInstances.size();
             appendInstances(*command, batchInstances);
+            draws.back().instanceCount += batchInstances.size() - previousInstanceCount;
         }
 
-        if (batchHead)
+        // Upload the pass's complete transform stream once. The old path orphaned
+        // and repopulated this buffer for every draw, which turns an animated
+        // caster invalidating a directional shadow into thousands of driver calls.
+        UploadTransformInstances(instanceBuffer, instanceCapacity, batchInstances);
+
+        const bool supportsBaseInstance = GLAD_GL_VERSION_4_2 && glDrawElementsInstancedBaseInstance != nullptr;
+        bool skinningEnabled = false;
+        for (const auto &draw : draws)
         {
-            flushBatch(*batchHead, batchLodIndex);
+            const auto &command = *draw.command;
+            if (command.material != boundMaterial)
+            {
+                if (IsAlphaTestedShadowCaster(command))
+                {
+                    BindShadowMaterialState(shader, command.material);
+                }
+                else
+                {
+                    shader->SetUniform("uHasAlbedoTexture", 0.0f);
+                }
+                boundMaterial = command.material;
+            }
+
+            if (command.jointMatrices)
+            {
+                UploadShadowJointMatrices(shader, command.jointMatrices);
+                skinningEnabled = true;
+            }
+            else if (skinningEnabled)
+            {
+                shader->SetUniform("uUseSkinning", 0);
+                skinningEnabled = false;
+            }
+
+            if (supportsBaseInstance)
+            {
+                if (command.mesh != boundMesh)
+                {
+                    BindTransformInstanceAttributes(*command.mesh, instanceBuffer, 0);
+                    boundMesh = command.mesh;
+                }
+                command.mesh->DrawSubmeshInstancedBaseInstanceBound(command.submeshIndex,
+                                                                     draw.instanceCount,
+                                                                     draw.firstInstance,
+                                                                     draw.lodIndex);
+            }
+            else
+            {
+                BindTransformInstanceAttributes(*command.mesh, instanceBuffer, draw.firstInstance);
+                command.mesh->DrawSubmeshInstancedBound(command.submeshIndex, draw.instanceCount, draw.lodIndex);
+            }
+
+            const auto indexCount = command.mesh->GetSubmeshLodIndexCount(command.submeshIndex, draw.lodIndex);
+            stats.submittedInstances += static_cast<int>(draw.instanceCount);
+            stats.submittedTriangles += static_cast<int>((indexCount / 3) * draw.instanceCount);
+            ++stats.submittedBatches;
+        }
+
+        if (skinningEnabled)
+        {
+            shader->SetUniform("uUseSkinning", 0);
         }
 
         return stats;

@@ -14,6 +14,14 @@ namespace PlutoGE::ui
         float profilingBeginMs = 0.0f;
         float editorSetupMs = 0.0f;
         float sceneUpdateMs = 0.0f;
+        float scenePreparationMs = 0.0f;
+        float sceneRuntimeUiMs = 0.0f;
+        float sceneComponentsMs = 0.0f;
+        float sceneRenderSubmissionMs = 0.0f;
+        float sceneMeshSubmissionMs = 0.0f;
+        float sceneTerrainSubmissionMs = 0.0f;
+        float sceneFoliageSubmissionMs = 0.0f;
+        float scenePhysicsMs = 0.0f;
         float viewportRenderMs = 0.0f;
         float rendererBeginFrameMs = 0.0f;
         float editorUiMs = 0.0f;

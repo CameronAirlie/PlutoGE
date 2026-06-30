@@ -2307,6 +2307,15 @@ namespace PlutoGE::ui
                         renderer.ClearSubmissionCullingCameras();
                     }
                     m_scene->Update(deltaTime.count());
+                    const auto &sceneTimingStats = m_scene->GetUpdateTimingStats();
+                    frameTimingStats.scenePreparationMs = sceneTimingStats.preparationMs;
+                    frameTimingStats.sceneRuntimeUiMs = sceneTimingStats.runtimeUiMs;
+                    frameTimingStats.sceneComponentsMs = sceneTimingStats.componentsMs;
+                    frameTimingStats.sceneRenderSubmissionMs = sceneTimingStats.renderSubmissionMs;
+                    frameTimingStats.sceneMeshSubmissionMs = sceneTimingStats.meshSubmissionMs;
+                    frameTimingStats.sceneTerrainSubmissionMs = sceneTimingStats.terrainSubmissionMs;
+                    frameTimingStats.sceneFoliageSubmissionMs = sceneTimingStats.foliageSubmissionMs;
+                    frameTimingStats.scenePhysicsMs = sceneTimingStats.physicsMs;
                 }
             }
             const auto sceneUpdateEnd = std::chrono::high_resolution_clock::now();

@@ -38,6 +38,8 @@ namespace PlutoGE::scene
             {
                 m_material = m_materials.front();
             }
+
+            RefreshMeshDerivedState();
         }
         ~MeshComponent() override = default;
 
@@ -212,6 +214,7 @@ namespace PlutoGE::scene
 
     private:
         void MarkRenderCommandsDirty();
+        void RefreshMeshDerivedState();
         void UpdateCachedPreviousModels(const glm::mat4 &modelMatrix);
 
         render::Mesh *m_mesh = nullptr;
@@ -232,5 +235,6 @@ namespace PlutoGE::scene
         int m_submeshCount = 1;
         bool m_visible = true;
         bool m_useGeneratedLods = false;
+        bool m_hasAnimatedNodeSubmeshes = false;
     };
 }

@@ -552,6 +552,33 @@ namespace PlutoGE::render
                 static_cast<GLsizei>(instanceCount));
         }
 
+        void DrawSubmeshInstancedBaseInstanceBound(size_t submeshIndex,
+                                                   std::size_t instanceCount,
+                                                   std::size_t baseInstance,
+                                                   size_t lodIndex = 0) const
+        {
+            if (instanceCount == 0)
+            {
+                return;
+            }
+
+            const auto range = submeshIndex < m_config.submeshes.size()
+                                   ? ResolveSubmeshLodRange(m_config.submeshes[submeshIndex], lodIndex, m_config.data.indices.size())
+                                   : Submesh::LodRange{0, static_cast<uint32_t>(m_config.data.indices.size())};
+            if (range.indexCount == 0)
+            {
+                return;
+            }
+
+            glDrawElementsInstancedBaseInstance(
+                GL_TRIANGLES,
+                static_cast<GLsizei>(range.indexCount),
+                GL_UNSIGNED_INT,
+                reinterpret_cast<const void *>(static_cast<uintptr_t>(range.indexOffset) * sizeof(unsigned int)),
+                static_cast<GLsizei>(instanceCount),
+                static_cast<GLuint>(baseInstance));
+        }
+
         ~Mesh() = default;
 
         size_t GetVertexCount() const { return m_config.data.vertices.size(); }

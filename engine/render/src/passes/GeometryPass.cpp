@@ -106,17 +106,25 @@ namespace PlutoGE::render
             }
         }
 
-        void BindGeometryInstanceAttributes(const Mesh &mesh, unsigned int instanceBuffer)
+        void BindGeometryInstanceAttributes(const Mesh &mesh, unsigned int instanceBuffer, std::size_t firstInstance)
         {
+            const std::size_t baseOffset = firstInstance * sizeof(GeometryInstanceData);
             glBindVertexArray(mesh.GetVAO());
             glBindBuffer(GL_ARRAY_BUFFER, instanceBuffer);
-            ConfigureMatrixAttributes(5, offsetof(GeometryInstanceData, model), sizeof(GeometryInstanceData));
-            ConfigureMatrixAttributes(9, offsetof(GeometryInstanceData, previousModel), sizeof(GeometryInstanceData));
+            ConfigureMatrixAttributes(5, baseOffset + offsetof(GeometryInstanceData, model), sizeof(GeometryInstanceData));
+            ConfigureMatrixAttributes(9, baseOffset + offsetof(GeometryInstanceData, previousModel), sizeof(GeometryInstanceData));
             glEnableVertexAttribArray(13);
-            glVertexAttribPointer(13, 4, GL_FLOAT, GL_FALSE, static_cast<GLsizei>(sizeof(GeometryInstanceData)), reinterpret_cast<const void *>(offsetof(GeometryInstanceData, flags)));
+            glVertexAttribPointer(13, 4, GL_FLOAT, GL_FALSE, static_cast<GLsizei>(sizeof(GeometryInstanceData)), reinterpret_cast<const void *>(baseOffset + offsetof(GeometryInstanceData, flags)));
             glVertexAttribDivisor(13, 1);
             glBindBuffer(GL_ARRAY_BUFFER, 0);
         }
+
+        struct PreparedGeometryDraw
+        {
+            const RenderCommand *command = nullptr;
+            std::size_t firstInstance = 0;
+            std::size_t instanceCount = 0;
+        };
 
         void UploadGeometryInstances(unsigned int &instanceBuffer,
                                      std::size_t &instanceCapacity,
@@ -217,99 +225,94 @@ namespace PlutoGE::render
 
         bindGeometryShader(m_geometryPassShader);
 
-        Material *boundMaterial = nullptr;
-        Mesh *boundMesh = nullptr;
-        std::vector<GeometryInstanceData> batchInstances;
-        batchInstances.reserve(64);
-        const RenderCommand *batchHead = nullptr;
+        std::vector<GeometryInstanceData> instances;
+        instances.reserve(ctx.renderCommands->size());
+        std::vector<PreparedGeometryDraw> draws;
+        draws.reserve(ctx.renderCommands->size());
 
-        const auto flushBatch = [&]()
-        {
-            if (!batchHead || batchInstances.empty())
-            {
-                batchHead = nullptr;
-                batchInstances.clear();
-                return;
-            }
-
-            if (batchHead->material != boundMaterial)
-            {
-                Shader *shader = bindGeometryShader(batchHead->material->GetShader());
-                batchHead->material->Bind(shader);
-                boundMaterial = batchHead->material;
-            }
-
-            activeShader->SetUniform("uUseSkinning", 0);
-            UploadGeometryInstances(m_instanceBuffer, m_instanceCapacity, batchInstances);
-            if (batchHead->mesh != boundMesh)
-            {
-                BindGeometryInstanceAttributes(*batchHead->mesh, m_instanceBuffer);
-                boundMesh = batchHead->mesh;
-            }
-
-            batchHead->mesh->DrawSubmeshInstancedBound(batchHead->submeshIndex, batchInstances.size(), batchHead->lodIndex);
-            if (ctx.renderer)
-            {
-                const auto indexCount = batchHead->mesh->GetSubmeshLodIndexCount(batchHead->submeshIndex, batchHead->lodIndex);
-                ctx.renderer->RecordGeometryBatch(static_cast<int>(batchInstances.size()), static_cast<int>((indexCount / 3) * batchInstances.size()), batchHead->lodIndex);
-            }
-            batchHead = nullptr;
-            batchInstances.clear();
-        };
-
+        // Build one contiguous instance stream for the entire pass. Uploading and
+        // orphaning the buffer once per draw is especially expensive in scenes
+        // with many one-instance batches.
         for (const auto &command : *ctx.renderCommands)
         {
-            if (!command.material || !command.mesh)
+            if (!command.material || !command.mesh || IsBlendMaterial(command.material))
             {
                 continue;
             }
 
-            if (IsBlendMaterial(command.material))
+            const bool appendToPrevious = !command.jointMatrices &&
+                                          !draws.empty() &&
+                                          !draws.back().command->jointMatrices &&
+                                          CanBatchGeometryCommands(*draws.back().command, command);
+            if (!appendToPrevious)
             {
-                continue;
+                draws.push_back(PreparedGeometryDraw{
+                    .command = &command,
+                    .firstInstance = instances.size(),
+                });
+            }
+
+            const std::size_t previousInstanceCount = instances.size();
+            AppendGeometryInstances(command, instances);
+            draws.back().instanceCount += instances.size() - previousInstanceCount;
+        }
+
+        UploadGeometryInstances(m_instanceBuffer, m_instanceCapacity, instances);
+
+        const bool supportsBaseInstance = GLAD_GL_VERSION_4_2 && glDrawElementsInstancedBaseInstance != nullptr;
+        Material *boundMaterial = nullptr;
+        Mesh *boundMesh = nullptr;
+        bool skinningEnabled = false;
+        for (const auto &draw : draws)
+        {
+            const auto &command = *draw.command;
+            if (command.material != boundMaterial)
+            {
+                Shader *previousShader = activeShader;
+                Shader *shader = bindGeometryShader(command.material->GetShader());
+                command.material->Bind(shader);
+                boundMaterial = command.material;
+                if (activeShader != previousShader)
+                {
+                    skinningEnabled = false;
+                }
             }
 
             if (command.jointMatrices)
             {
-                flushBatch();
-
-                if (command.material != boundMaterial)
-                {
-                    Shader *shader = bindGeometryShader(command.material->GetShader());
-                    command.material->Bind(shader);
-                    boundMaterial = command.material;
-                }
-
                 UploadJointMatrices(activeShader, command.jointMatrices);
-                std::vector<GeometryInstanceData> singleInstance;
-                AppendGeometryInstances(command, singleInstance);
-                UploadGeometryInstances(m_instanceBuffer, m_instanceCapacity, singleInstance);
-                BindGeometryInstanceAttributes(*command.mesh, m_instanceBuffer);
-                boundMesh = command.mesh;
-                command.mesh->DrawSubmeshInstancedBound(command.submeshIndex, singleInstance.size(), command.lodIndex);
-                if (ctx.renderer)
-                {
-                    const auto indexCount = command.mesh->GetSubmeshLodIndexCount(command.submeshIndex, command.lodIndex);
-                    ctx.renderer->RecordGeometryBatch(static_cast<int>(singleInstance.size()), static_cast<int>((indexCount / 3) * singleInstance.size()), command.lodIndex);
-                }
+                skinningEnabled = true;
+            }
+            else if (skinningEnabled)
+            {
                 activeShader->SetUniform("uUseSkinning", 0);
-                continue;
+                skinningEnabled = false;
             }
 
-            if (batchHead && !CanBatchGeometryCommands(*batchHead, command))
+            if (supportsBaseInstance)
             {
-                flushBatch();
+                if (command.mesh != boundMesh)
+                {
+                    BindGeometryInstanceAttributes(*command.mesh, m_instanceBuffer, 0);
+                    boundMesh = command.mesh;
+                }
+                command.mesh->DrawSubmeshInstancedBaseInstanceBound(command.submeshIndex,
+                                                                     draw.instanceCount,
+                                                                     draw.firstInstance,
+                                                                     command.lodIndex);
             }
-
-            if (!batchHead)
+            else
             {
-                batchHead = &command;
+                BindGeometryInstanceAttributes(*command.mesh, m_instanceBuffer, draw.firstInstance);
+                command.mesh->DrawSubmeshInstancedBound(command.submeshIndex, draw.instanceCount, command.lodIndex);
             }
 
-            AppendGeometryInstances(command, batchInstances);
+            if (ctx.renderer)
+            {
+                const auto indexCount = command.mesh->GetSubmeshLodIndexCount(command.submeshIndex, command.lodIndex);
+                ctx.renderer->RecordGeometryBatch(static_cast<int>(draw.instanceCount), static_cast<int>((indexCount / 3) * draw.instanceCount), command.lodIndex);
+            }
         }
-
-        flushBatch();
 
         if (activeShader)
         {

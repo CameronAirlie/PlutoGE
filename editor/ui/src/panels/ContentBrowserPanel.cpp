@@ -1433,6 +1433,7 @@ namespace PlutoGE::ui
             m_cachedAssetFileNames.clear();
             m_cachedAssetRelativePaths.clear();
             m_cachedFolders.clear();
+            m_meshSubassetRows.clear();
             m_cachedAssetReferences.reserve(assets.size());
             m_cachedAssetFolders.reserve(assets.size());
             m_cachedAssetFileNames.reserve(assets.size());
@@ -1747,71 +1748,105 @@ namespace PlutoGE::ui
             {
                 try
                 {
-                    auto *mesh = editorShell.GetEngine().GetAssetManager().LoadMeshAsset(asset.reference);
-                    if (!mesh || mesh->GetSubmeshCount() == 0)
+                    auto cachedRows = m_meshSubassetRows.find(asset.reference);
+                    if (cachedRows == m_meshSubassetRows.end())
+                    {
+                        std::vector<MeshSubassetRow> rows;
+                        auto *mesh = editorShell.GetEngine().GetAssetManager().LoadMeshAsset(asset.reference);
+                        if (mesh)
+                        {
+                            rows.reserve(mesh->GetSubmeshCount());
+                            for (size_t submeshIndex = 0; submeshIndex < mesh->GetSubmeshCount();)
+                            {
+                                const auto &submesh = mesh->GetSubmesh(submeshIndex);
+                                const std::string submeshName = submesh.name.empty()
+                                                                    ? std::string("Mesh ") + std::to_string(submeshIndex)
+                                                                    : submesh.name;
+                                size_t groupEnd = submeshIndex + 1;
+                                while (groupEnd < mesh->GetSubmeshCount())
+                                {
+                                    const auto &nextSubmesh = mesh->GetSubmesh(groupEnd);
+                                    const std::string nextName = nextSubmesh.name.empty()
+                                                                     ? std::string("Mesh ") + std::to_string(groupEnd)
+                                                                     : nextSubmesh.name;
+                                    if (nextName != submeshName)
+                                    {
+                                        break;
+                                    }
+                                    ++groupEnd;
+                                }
+
+                                std::string slotSummary;
+                                uint32_t indexCount = 0;
+                                for (size_t groupedIndex = submeshIndex; groupedIndex < groupEnd; ++groupedIndex)
+                                {
+                                    const auto &groupedSubmesh = mesh->GetSubmesh(groupedIndex);
+                                    if (!slotSummary.empty())
+                                    {
+                                        slotSummary += ", ";
+                                    }
+                                    slotSummary += std::to_string(groupedSubmesh.materialIndex);
+                                    indexCount += groupedSubmesh.indexCount;
+                                }
+
+                                const int groupCount = static_cast<int>(groupEnd - submeshIndex);
+                                rows.push_back(MeshSubassetRow{
+                                    .displayName = submeshName +
+                                                   (groupCount > 1 ? " [" + std::to_string(groupCount) + " parts, slots " + slotSummary + "]"
+                                                                   : " [Slot " + slotSummary + "]"),
+                                    .slotSummary = std::move(slotSummary),
+                                    .indexCount = indexCount,
+                                    .submeshIndex = static_cast<int>(submeshIndex),
+                                    .submeshCount = groupCount,
+                                    .materialSlot = static_cast<int>(submesh.materialIndex),
+                                });
+                                submeshIndex = groupEnd;
+                            }
+                        }
+                        cachedRows = m_meshSubassetRows.emplace(asset.reference, std::move(rows)).first;
+                    }
+
+                    const auto &rows = cachedRows->second;
+                    if (rows.empty())
                     {
                         ImGui::TextDisabled("No mesh children.");
                     }
                     else
                     {
-                        for (size_t submeshIndex = 0; submeshIndex < mesh->GetSubmeshCount();)
+                        // Imported meshes can contain hundreds of named parts. Keep
+                        // expansion useful without submitting every child to ImGui.
+                        const float rowHeight = ImGui::GetTextLineHeightWithSpacing();
+                        const float childHeight = std::min(rowHeight * static_cast<float>(rows.size()), rowHeight * 12.0f);
+                        ImGui::BeginChild("MeshSubassets", ImVec2(0.0f, childHeight), false);
+                        ImGuiListClipper submeshClipper;
+                        submeshClipper.Begin(static_cast<int>(rows.size()), rowHeight);
+                        while (submeshClipper.Step())
                         {
-                            const auto &submesh = mesh->GetSubmesh(submeshIndex);
-                            const std::string submeshName = submesh.name.empty()
-                                                                ? std::string("Mesh ") + std::to_string(submeshIndex)
-                                                                : submesh.name;
-                            size_t groupEnd = submeshIndex + 1;
-                            while (groupEnd < mesh->GetSubmeshCount())
+                            for (int rowIndex = submeshClipper.DisplayStart; rowIndex < submeshClipper.DisplayEnd; ++rowIndex)
                             {
-                                const auto &nextSubmesh = mesh->GetSubmesh(groupEnd);
-                                const std::string nextName = nextSubmesh.name.empty()
-                                                                 ? std::string("Mesh ") + std::to_string(groupEnd)
-                                                                 : nextSubmesh.name;
-                                if (nextName != submeshName)
+                                const auto &row = rows[static_cast<std::size_t>(rowIndex)];
+                                ImGui::PushID(row.submeshIndex);
+                                ImGui::Selectable(row.displayName.c_str(), false);
+                                if (ImGui::BeginDragDropSource())
                                 {
-                                    break;
+                                    ContentBrowserMeshSubassetPayload payload{};
+                                    strncpy_s(payload.sourceReference, asset.reference.c_str(), _TRUNCATE);
+                                        payload.submeshIndex = row.submeshIndex;
+                                        payload.submeshCount = row.submeshCount;
+                                        payload.materialSlot = row.materialSlot;
+                                    ImGui::SetDragDropPayload(kContentBrowserMeshSubassetDragDropPayload,
+                                                              &payload,
+                                                              sizeof(payload));
+                                    ImGui::Text("%s", row.displayName.c_str());
+                                    ImGui::TextDisabled("Material slots %s, %u indices", row.slotSummary.c_str(), row.indexCount);
+                                    ImGui::EndDragDropSource();
                                 }
-                                ++groupEnd;
+                                ImGui::SameLine();
+                                ImGui::TextDisabled("slots %s, %u indices", row.slotSummary.c_str(), row.indexCount);
+                                ImGui::PopID();
                             }
-
-                            std::string slotSummary;
-                            uint32_t indexCount = 0;
-                            for (size_t groupedIndex = submeshIndex; groupedIndex < groupEnd; ++groupedIndex)
-                            {
-                                const auto &groupedSubmesh = mesh->GetSubmesh(groupedIndex);
-                                if (!slotSummary.empty())
-                                {
-                                    slotSummary += ", ";
-                                }
-                                slotSummary += std::to_string(groupedSubmesh.materialIndex);
-                                indexCount += groupedSubmesh.indexCount;
-                            }
-
-                            const int groupCount = static_cast<int>(groupEnd - submeshIndex);
-                            const std::string submeshDisplayName = submeshName +
-                                                                   (groupCount > 1 ? " [" + std::to_string(groupCount) + " parts, slots " + slotSummary + "]"
-                                                                                   : " [Slot " + slotSummary + "]");
-                            ImGui::PushID(static_cast<int>(submeshIndex));
-                            ImGui::Selectable(submeshDisplayName.c_str(), false);
-                            if (ImGui::BeginDragDropSource())
-                            {
-                                ContentBrowserMeshSubassetPayload payload{};
-                                strncpy_s(payload.sourceReference, asset.reference.c_str(), _TRUNCATE);
-                                payload.submeshIndex = static_cast<int>(submeshIndex);
-                                payload.submeshCount = groupCount;
-                                payload.materialSlot = static_cast<int>(submesh.materialIndex);
-                                ImGui::SetDragDropPayload(kContentBrowserMeshSubassetDragDropPayload,
-                                                          &payload,
-                                                          sizeof(payload));
-                                ImGui::Text("%s", submeshDisplayName.c_str());
-                                ImGui::TextDisabled("Material slots %s, %u indices", slotSummary.c_str(), indexCount);
-                                ImGui::EndDragDropSource();
-                            }
-                            ImGui::SameLine();
-                            ImGui::TextDisabled("slots %s, %u indices", slotSummary.c_str(), indexCount);
-                            ImGui::PopID();
-                            submeshIndex = groupEnd;
                         }
+                        ImGui::EndChild();
                     }
                 }
                 catch (const std::exception &exception)

@@ -125,6 +125,14 @@ namespace PlutoGE::ui
         report << "Profiling begin: " << frameTimingStats.profilingBeginMs << " ms\n";
         report << "Editor setup: " << frameTimingStats.editorSetupMs << " ms\n";
         report << "Scene update: " << frameTimingStats.sceneUpdateMs << " ms\n";
+        report << "Scene / Preparation: " << frameTimingStats.scenePreparationMs << " ms\n";
+        report << "Scene / Runtime UI: " << frameTimingStats.sceneRuntimeUiMs << " ms\n";
+        report << "Scene / Components: " << frameTimingStats.sceneComponentsMs << " ms\n";
+        report << "Scene / Render submission: " << frameTimingStats.sceneRenderSubmissionMs << " ms\n";
+        report << "Scene / Mesh submission: " << frameTimingStats.sceneMeshSubmissionMs << " ms\n";
+        report << "Scene / Terrain submission: " << frameTimingStats.sceneTerrainSubmissionMs << " ms\n";
+        report << "Scene / Foliage submission: " << frameTimingStats.sceneFoliageSubmissionMs << " ms\n";
+        report << "Scene / Physics: " << frameTimingStats.scenePhysicsMs << " ms\n";
         report << "Viewport render: " << frameTimingStats.viewportRenderMs << " ms\n";
         report << "Viewport renders: " << frameTimingStats.renderedViewportCount << "\n";
         report << "Renderer begin frame: " << frameTimingStats.rendererBeginFrameMs << " ms\n";

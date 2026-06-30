@@ -67,6 +67,18 @@ namespace PlutoGE::ui
         ImGui::Text("Profiling begin: %.2f ms", frameTimingStats.profilingBeginMs);
         ImGui::Text("Editor setup: %.2f ms", frameTimingStats.editorSetupMs);
         ImGui::Text("Scene update: %.2f ms", frameTimingStats.sceneUpdateMs);
+        if (ImGui::TreeNode("Scene update timings"))
+        {
+            ImGui::Text("Preparation: %.2f ms", frameTimingStats.scenePreparationMs);
+            ImGui::Text("Runtime UI: %.2f ms", frameTimingStats.sceneRuntimeUiMs);
+            ImGui::Text("Components: %.2f ms", frameTimingStats.sceneComponentsMs);
+            ImGui::Text("Render submission: %.2f ms", frameTimingStats.sceneRenderSubmissionMs);
+            ImGui::Text("Mesh submission: %.2f ms", frameTimingStats.sceneMeshSubmissionMs);
+            ImGui::Text("Terrain submission: %.2f ms", frameTimingStats.sceneTerrainSubmissionMs);
+            ImGui::Text("Foliage submission: %.2f ms", frameTimingStats.sceneFoliageSubmissionMs);
+            ImGui::Text("Physics: %.2f ms", frameTimingStats.scenePhysicsMs);
+            ImGui::TreePop();
+        }
         ImGui::Text("Viewport render: %.2f ms", frameTimingStats.viewportRenderMs);
         ImGui::Text("Viewport renders: %d", frameTimingStats.renderedViewportCount);
         ImGui::Text("Renderer begin frame: %.2f ms", frameTimingStats.rendererBeginFrameMs);

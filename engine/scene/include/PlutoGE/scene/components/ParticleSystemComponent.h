@@ -54,6 +54,9 @@ namespace PlutoGE::scene
         float ConsumePendingDeltaTime();
         int ConsumePendingEmitCount();
         bool ConsumeClearRequested();
+        int GetNextEmitIndex() const { return m_nextEmitIndex; }
+        int GetNextEmitSequence() const { return m_nextEmitSequence; }
+        void AdvanceEmitCursor(int count);
 
         void EnsureGpuResources();
         void ReleaseGpuResources();
@@ -93,9 +96,9 @@ namespace PlutoGE::scene
         ParticleSimulationSpace GetSimulationSpace() const { return m_simulationSpace; }
         void SetSimulationSpace(ParticleSimulationSpace simulationSpace) { m_simulationSpace = simulationSpace; }
         ParticleShape GetShape() const { return m_shape; }
-        void SetShape(ParticleShape shape) { m_shape = shape; }
+        void SetShape(ParticleShape shape);
         const glm::vec3 &GetShapeSize() const { return m_shapeSize; }
-        void SetShapeSize(const glm::vec3 &size) { m_shapeSize = glm::max(size, glm::vec3(0.0f)); }
+        void SetShapeSize(const glm::vec3 &size);
         float GetShapeRadius() const { return m_shapeRadius; }
         void SetShapeRadius(float radius);
         float GetConeAngle() const { return m_coneAngle; }
@@ -117,6 +120,8 @@ namespace PlutoGE::scene
         float m_pendingDeltaTime = 0.0f;
         float m_emissionAccumulator = 0.0f;
         int m_pendingEmitCount = 0;
+        int m_nextEmitIndex = 0;
+        int m_nextEmitSequence = 0;
         int m_particleCountEstimate = 0;
         bool m_clearRequested = true;
 

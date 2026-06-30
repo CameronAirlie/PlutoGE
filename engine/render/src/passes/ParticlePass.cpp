@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <vector>
 
 #include <glm/gtc/constants.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -37,67 +38,8 @@ namespace PlutoGE::render
 
                 uniform float uDeltaTime;
                 uniform int uClear;
-                uniform int uEmitCount;
-                uniform int uMaxParticles;
-                uniform int uFrameSeed;
-                uniform vec3 uEmitterPosition;
-                uniform mat4 uEmitterTransform;
-                uniform int uSimulationSpace;
-                uniform int uShape;
-                uniform vec3 uShapeSize;
-                uniform float uShapeRadius;
-                uniform float uConeAngleRadians;
                 uniform float uStartLifetime;
-                uniform float uStartSpeed;
-                uniform float uStartSize;
-                uniform vec4 uStartColor;
                 uniform float uGravityModifier;
-
-                float Hash(float n)
-                {
-                    return fract(sin(n) * 43758.5453123);
-                }
-
-                vec3 RandomDirection(float seed)
-                {
-                    float z = Hash(seed + 1.0) * 2.0 - 1.0;
-                    float a = Hash(seed + 2.0) * 6.28318530718;
-                    float r = sqrt(max(0.0, 1.0 - z * z));
-                    return normalize(vec3(r * cos(a), z, r * sin(a)));
-                }
-
-                vec3 RandomBox(float seed)
-                {
-                    return (vec3(Hash(seed + 3.0), Hash(seed + 4.0), Hash(seed + 5.0)) - vec3(0.5)) * uShapeSize;
-                }
-
-                vec3 EmitOffset(float seed)
-                {
-                    if (uShape == 1)
-                    {
-                        return RandomDirection(seed) * uShapeRadius * pow(Hash(seed + 6.0), 0.3333333);
-                    }
-                    if (uShape == 2)
-                    {
-                        return RandomBox(seed);
-                    }
-                    return vec3(0.0);
-                }
-
-                vec3 EmitDirection(float seed, vec3 offset)
-                {
-                    if (uShape == 3)
-                    {
-                        float angle = Hash(seed + 7.0) * 6.28318530718;
-                        float radial = tan(uConeAngleRadians) * sqrt(Hash(seed + 8.0));
-                        return normalize(vec3(cos(angle) * radial, 1.0, sin(angle) * radial));
-                    }
-                    if (length(offset) > 0.0001)
-                    {
-                        return normalize(offset);
-                    }
-                    return RandomDirection(seed);
-                }
 
                 void main()
                 {
@@ -117,27 +59,6 @@ namespace PlutoGE::render
                         velocityLifetime.xyz += vec3(0.0, -9.81 * uGravityModifier, 0.0) * uDeltaTime;
                         positionAge.xyz += velocityLifetime.xyz * uDeltaTime;
                         positionAge.w += uDeltaTime;
-                    }
-
-                    if (index < uEmitCount)
-                    {
-                        float seed = float(index + uFrameSeed * 7919) + seedValue.x;
-                        vec3 localOffset = EmitOffset(seed);
-                        vec3 localDirection = EmitDirection(seed, localOffset);
-                        vec3 spawnPosition = uSimulationSpace == 0
-                            ? localOffset
-                            : (uEmitterTransform * vec4(localOffset, 1.0)).xyz;
-                        vec3 spawnDirection = uSimulationSpace == 0
-                            ? localDirection
-                            : normalize(mat3(uEmitterTransform) * localDirection);
-                        if (uSimulationSpace == 1)
-                        {
-                            spawnPosition += uEmitterPosition;
-                        }
-
-                        positionAge = vec4(spawnPosition, 0.0);
-                        velocityLifetime = vec4(spawnDirection * uStartSpeed, uStartLifetime);
-                        colorSize = vec4(uStartColor.rgb, uStartSize);
                     }
 
                     vPositionAge = positionAge;
@@ -259,6 +180,128 @@ namespace PlutoGE::render
         {
             return static_cast<int>(value);
         }
+
+        float Hash(float value)
+        {
+            const float hashed = std::sin(value) * 43758.5453123f;
+            return hashed - std::floor(hashed);
+        }
+
+        glm::vec3 RandomDirection(float seed)
+        {
+            const float z = Hash(seed + 1.0f) * 2.0f - 1.0f;
+            const float angle = Hash(seed + 2.0f) * glm::two_pi<float>();
+            const float radius = std::sqrt(std::max(0.0f, 1.0f - z * z));
+            return glm::normalize(glm::vec3(radius * std::cos(angle), z, radius * std::sin(angle)));
+        }
+
+        glm::vec3 RandomBox(float seed, const glm::vec3 &size)
+        {
+            return (glm::vec3(Hash(seed + 3.0f), Hash(seed + 4.0f), Hash(seed + 5.0f)) - glm::vec3(0.5f)) * size;
+        }
+
+        glm::vec2 RandomDisc(float seed, float radius)
+        {
+            const float angle = Hash(seed + 9.0f) * glm::two_pi<float>();
+            const float distance = std::sqrt(Hash(seed + 10.0f)) * radius;
+            return glm::vec2(std::cos(angle), std::sin(angle)) * distance;
+        }
+
+        glm::vec3 EmitOffset(const scene::ParticleSystemComponent &particleSystem, float seed)
+        {
+            switch (particleSystem.GetShape())
+            {
+            case scene::ParticleShape::Sphere:
+                return RandomDirection(seed) * particleSystem.GetShapeRadius() * std::cbrt(Hash(seed + 6.0f));
+            case scene::ParticleShape::Box:
+                return RandomBox(seed, particleSystem.GetShapeSize());
+            case scene::ParticleShape::Cone:
+            {
+                const glm::vec2 disc = RandomDisc(seed, particleSystem.GetShapeRadius());
+                return glm::vec3(disc.x, 0.0f, disc.y);
+            }
+            case scene::ParticleShape::Point:
+            default:
+                return glm::vec3(0.0f);
+            }
+        }
+
+        glm::vec3 EmitDirection(const scene::ParticleSystemComponent &particleSystem, float seed, const glm::vec3 &offset)
+        {
+            if (particleSystem.GetShape() == scene::ParticleShape::Cone)
+            {
+                const float angle = Hash(seed + 7.0f) * glm::two_pi<float>();
+                const float radial = std::tan(glm::radians(particleSystem.GetConeAngle())) * std::sqrt(Hash(seed + 8.0f));
+                return glm::normalize(glm::vec3(std::cos(angle) * radial, 1.0f, std::sin(angle) * radial));
+            }
+
+            if (glm::length(offset) > 0.0001f)
+            {
+                return glm::normalize(offset);
+            }
+
+            return RandomDirection(seed);
+        }
+
+        std::vector<scene::ParticleGpuData> BuildSpawnParticles(const scene::ParticleSystemComponent &particleSystem,
+                                                                const scene::Entity &owner,
+                                                                int emitCount,
+                                                                int emitSequenceStart)
+        {
+            std::vector<scene::ParticleGpuData> particles;
+            particles.reserve(static_cast<std::size_t>(std::max(emitCount, 0)));
+
+            const glm::mat4 emitterTransform = owner.GetWorldTransform();
+            const glm::mat3 emitterBasis(emitterTransform);
+            const glm::vec3 emitterPosition = owner.GetWorldPosition();
+            const bool worldSpace = particleSystem.GetSimulationSpace() == scene::ParticleSimulationSpace::World;
+
+            for (int emitIndex = 0; emitIndex < emitCount; ++emitIndex)
+            {
+                const float seed = static_cast<float>(emitSequenceStart + emitIndex) * 17.0f + static_cast<float>(emitIndex) * 12.9898f;
+                const glm::vec3 localOffset = EmitOffset(particleSystem, seed);
+                const glm::vec3 localDirection = EmitDirection(particleSystem, seed, localOffset);
+                const glm::vec3 spawnPosition = worldSpace ? emitterPosition + emitterBasis * localOffset : localOffset;
+                const glm::vec3 spawnDirection = worldSpace ? glm::normalize(emitterBasis * localDirection) : localDirection;
+
+                scene::ParticleGpuData particle;
+                particle.positionAge = glm::vec4(spawnPosition, 0.0f);
+                particle.velocityLifetime = glm::vec4(spawnDirection * particleSystem.GetStartSpeed(), particleSystem.GetStartLifetime());
+                particle.colorSize = glm::vec4(glm::vec3(particleSystem.GetStartColor()), particleSystem.GetStartSize());
+                particle.seed = glm::vec4(seed, seed * 1.37f, seed * 2.11f, 1.0f);
+                particles.push_back(particle);
+            }
+
+            return particles;
+        }
+
+        void WriteSpawnParticles(GLuint buffer, int capacity, int startIndex, const std::vector<scene::ParticleGpuData> &particles)
+        {
+            if (buffer == 0 || capacity <= 0 || particles.empty())
+            {
+                return;
+            }
+
+            const int emitCount = std::min(static_cast<int>(particles.size()), capacity);
+            const int clampedStart = std::clamp(startIndex, 0, capacity - 1);
+            const int firstBlockCount = std::min(emitCount, capacity - clampedStart);
+
+            glBindBuffer(GL_ARRAY_BUFFER, buffer);
+            glBufferSubData(GL_ARRAY_BUFFER,
+                            static_cast<GLintptr>(clampedStart * static_cast<int>(sizeof(scene::ParticleGpuData))),
+                            static_cast<GLsizeiptr>(firstBlockCount * sizeof(scene::ParticleGpuData)),
+                            particles.data());
+
+            const int secondBlockCount = emitCount - firstBlockCount;
+            if (secondBlockCount > 0)
+            {
+                glBufferSubData(GL_ARRAY_BUFFER,
+                                0,
+                                static_cast<GLsizeiptr>(secondBlockCount * sizeof(scene::ParticleGpuData)),
+                                particles.data() + firstBlockCount);
+            }
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+        }
     }
 
     void ParticlePass::Initialize()
@@ -330,26 +373,15 @@ namespace PlutoGE::render
             const bool clearRequested = particleSystem->ConsumeClearRequested() || particleSystem->ConsumeGpuStateDirty();
             const float deltaTime = particleSystem->ConsumePendingDeltaTime();
             const int emitCount = std::clamp(particleSystem->ConsumePendingEmitCount(), 0, particleSystem->GetGpuCapacity());
+            const int emitStartIndex = particleSystem->GetNextEmitIndex();
+            const int emitSequenceStart = particleSystem->GetNextEmitSequence();
 
-            if (clearRequested || deltaTime > 0.0f || emitCount > 0)
+            if (clearRequested || deltaTime > 0.0f)
             {
                 m_updateShader->Bind();
                 m_updateShader->SetUniform("uDeltaTime", deltaTime);
                 m_updateShader->SetUniform("uClear", clearRequested ? 1 : 0);
-                m_updateShader->SetUniform("uEmitCount", emitCount);
-                m_updateShader->SetUniform("uMaxParticles", particleSystem->GetGpuCapacity());
-                m_updateShader->SetUniform("uFrameSeed", static_cast<int>(ctx.frameSequence & 0x7fffffff));
-                m_updateShader->SetUniform("uEmitterPosition", owner->GetWorldPosition());
-                m_updateShader->SetUniform("uEmitterTransform", owner->GetWorldTransform());
-                m_updateShader->SetUniform("uSimulationSpace", ToInt(particleSystem->GetSimulationSpace()));
-                m_updateShader->SetUniform("uShape", ToInt(particleSystem->GetShape()));
-                m_updateShader->SetUniform("uShapeSize", particleSystem->GetShapeSize());
-                m_updateShader->SetUniform("uShapeRadius", particleSystem->GetShapeRadius());
-                m_updateShader->SetUniform("uConeAngleRadians", glm::radians(particleSystem->GetConeAngle()));
                 m_updateShader->SetUniform("uStartLifetime", particleSystem->GetStartLifetime());
-                m_updateShader->SetUniform("uStartSpeed", particleSystem->GetStartSpeed());
-                m_updateShader->SetUniform("uStartSize", particleSystem->GetStartSize());
-                m_updateShader->SetUniform("uStartColor", particleSystem->GetStartColor());
                 m_updateShader->SetUniform("uGravityModifier", particleSystem->GetGravityModifier());
 
                 glEnable(GL_RASTERIZER_DISCARD);
@@ -361,6 +393,13 @@ namespace PlutoGE::render
                 glBindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER, 0, 0);
                 glDisable(GL_RASTERIZER_DISCARD);
                 particleSystem->SwapGpuBuffers();
+            }
+
+            if (emitCount > 0)
+            {
+                const auto spawnParticles = BuildSpawnParticles(*particleSystem, *owner, emitCount, emitSequenceStart);
+                WriteSpawnParticles(particleSystem->GetReadBuffer(), particleSystem->GetGpuCapacity(), emitStartIndex, spawnParticles);
+                particleSystem->AdvanceEmitCursor(emitCount);
             }
 
             m_renderShader->Bind();

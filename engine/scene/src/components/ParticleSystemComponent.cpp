@@ -122,6 +122,8 @@ namespace PlutoGE::scene
         m_particleCountEstimate = 0;
         m_clearRequested = true;
         m_pendingEmitCount = 0;
+        m_nextEmitIndex = 0;
+        m_nextEmitSequence = 0;
     }
 
     void ParticleSystemComponent::Emit(int count)
@@ -131,9 +133,8 @@ namespace PlutoGE::scene
             return;
         }
 
-        const int available = std::max(0, m_maxParticles - m_particleCountEstimate);
-        const int accepted = std::min(count, available);
-        m_pendingEmitCount += accepted;
+        const int accepted = std::min(count, m_maxParticles);
+        m_pendingEmitCount = std::min(m_maxParticles, m_pendingEmitCount + accepted);
         m_particleCountEstimate = std::min(m_maxParticles, m_particleCountEstimate + accepted);
     }
 
@@ -156,6 +157,17 @@ namespace PlutoGE::scene
         const bool requested = m_clearRequested;
         m_clearRequested = false;
         return requested;
+    }
+
+    void ParticleSystemComponent::AdvanceEmitCursor(int count)
+    {
+        if (count <= 0 || m_maxParticles <= 0)
+        {
+            return;
+        }
+
+        m_nextEmitIndex = (m_nextEmitIndex + count) % m_maxParticles;
+        m_nextEmitSequence = (m_nextEmitSequence + count) & 0x3fffffff;
     }
 
     bool ParticleSystemComponent::ConsumeGpuStateDirty()
@@ -222,6 +234,8 @@ namespace PlutoGE::scene
         m_gpuInitialized = false;
         m_gpuCapacity = 0;
         m_readBufferIndex = 0;
+        m_nextEmitIndex = 0;
+        m_nextEmitSequence = 0;
     }
 
     void ParticleSystemComponent::ConfigureParticleAttributes(GLuint vao, GLuint buffer) const
@@ -292,14 +306,51 @@ namespace PlutoGE::scene
         m_burstCount = std::max(count, 0);
     }
 
+    void ParticleSystemComponent::SetShape(ParticleShape shape)
+    {
+        if (m_shape == shape)
+        {
+            return;
+        }
+
+        m_shape = shape;
+        Clear();
+    }
+
+    void ParticleSystemComponent::SetShapeSize(const glm::vec3 &size)
+    {
+        const glm::vec3 clampedSize = glm::max(size, glm::vec3(0.0f));
+        if (m_shapeSize == clampedSize)
+        {
+            return;
+        }
+
+        m_shapeSize = clampedSize;
+        Clear();
+    }
+
     void ParticleSystemComponent::SetShapeRadius(float radius)
     {
-        m_shapeRadius = std::max(radius, 0.0f);
+        const float clampedRadius = std::max(radius, 0.0f);
+        if (m_shapeRadius == clampedRadius)
+        {
+            return;
+        }
+
+        m_shapeRadius = clampedRadius;
+        Clear();
     }
 
     void ParticleSystemComponent::SetConeAngle(float angle)
     {
-        m_coneAngle = std::clamp(angle, 0.0f, 89.0f);
+        const float clampedAngle = std::clamp(angle, 0.0f, 89.0f);
+        if (m_coneAngle == clampedAngle)
+        {
+            return;
+        }
+
+        m_coneAngle = clampedAngle;
+        Clear();
     }
 
     std::vector<Property> ParticleSystemComponent::Serialize() const
@@ -319,7 +370,7 @@ namespace PlutoGE::scene
             {"BurstCount", PropertyType::Int, std::to_string(m_burstCount)},
             {"SimulationSpace", PropertyType::Enum, m_simulationSpace == ParticleSimulationSpace::World ? "World" : "Local", {"Local", "World"}},
             {"Shape", PropertyType::Enum, m_shape == ParticleShape::Sphere ? "Sphere" : m_shape == ParticleShape::Box ? "Box" : m_shape == ParticleShape::Cone ? "Cone" : "Point", {"Point", "Sphere", "Box", "Cone"}},
-            {"ShapeSize", PropertyType::String, SerializeVec3(m_shapeSize)},
+            {"ShapeSize", PropertyType::Vec3, SerializeVec3(m_shapeSize)},
             {"ShapeRadius", PropertyType::Float, std::to_string(m_shapeRadius)},
             {"ConeAngle", PropertyType::Float, std::to_string(m_coneAngle)},
             {"MaterialAsset", PropertyType::String, m_materialAssetReference},

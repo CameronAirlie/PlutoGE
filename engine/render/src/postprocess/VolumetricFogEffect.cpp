@@ -11,7 +11,7 @@ namespace PlutoGE::render
     namespace
     {
         constexpr int kDirectionalShadowCascadeTextureStartSlot = 5;
-        constexpr int kMinStepCount = 8;
+        constexpr int kMinStepCount = 16;
         constexpr int kMaxStepCount = 64;
 
         const scene::Light *FindPrimaryDirectionalLight(const RenderContext &renderContext)
@@ -283,6 +283,7 @@ namespace PlutoGE::render
             uniform float uMaxOpacity;
             uniform float uShadowSoftness;
             uniform float uCascadeBlendDistance;
+            uniform float uFrameIndex;
             uniform int uStepCount;
             uniform int uCascadeCount;
             uniform int uHasDirectionalLight;
@@ -328,6 +329,11 @@ namespace PlutoGE::render
                 return uFogColor;
             }
 
+            float InterleavedGradientNoise(vec2 pixelPosition)
+            {
+                return fract(52.9829189 * fract(dot(pixelPosition, vec2(0.06711056, 0.00583715))));
+            }
+
             float SampleShadowMapPCF(sampler2D shadowMap, vec3 projectedCoords)
             {
                 float receiverDepth = projectedCoords.z - 0.00045;
@@ -338,37 +344,25 @@ namespace PlutoGE::render
                 }
 
                 vec2 texelSize = 1.0 / vec2(textureSize(shadowMap, 0));
-                float blockerDepth = texture(shadowMap, projectedCoords.xy).r;
-                float blockerSeparation = max(receiverDepth - blockerDepth, 0.0);
-                float volumetricSoftness = max(uShadowSoftness * 4.0, 3.0);
-                float baseRadius = max(volumetricSoftness * 0.9, 2.0);
-                float maxRadius = max(volumetricSoftness * 5.0, baseRadius);
-                float filterRadius = mix(baseRadius, maxRadius, clamp(blockerSeparation * 160.0, 0.0, 1.0));
-                vec2 offsets[9] = vec2[](
-                    vec2(0.0, 0.0),
-                    vec2(0.72, 0.28),
-                    vec2(-0.64, 0.42),
-                    vec2(0.34, -0.78),
-                    vec2(-0.26, -0.68),
-                    vec2(1.18, -0.18),
-                    vec2(-1.08, -0.22),
-                    vec2(0.18, 1.12),
-                    vec2(-0.38, -1.18)
+                // A wide, sparse kernel projects every tap into the fog as a
+                // separate god-ray edge. Keep the footprint compact and dense.
+                float filterRadius = clamp(uShadowSoftness, 0.0, 2.0);
+                vec2 offsets[4] = vec2[](
+                    vec2(-0.5, -0.5),
+                    vec2( 0.5, -0.5),
+                    vec2(-0.5,  0.5),
+                    vec2( 0.5,  0.5)
                 );
-                float weights[9] = float[](1.7, 1.0, 1.0, 1.0, 1.0, 0.75, 0.75, 0.75, 0.75);
                 float shadow = 0.0;
-                float totalWeight = 0.0;
 
-                for (int sampleIndex = 0; sampleIndex < 9; ++sampleIndex)
+                for (int sampleIndex = 0; sampleIndex < 4; ++sampleIndex)
                 {
                     vec2 sampleCoords = projectedCoords.xy + offsets[sampleIndex] * texelSize * filterRadius;
                     float closestDepth = texture(shadowMap, sampleCoords).r;
-                    float weight = weights[sampleIndex];
-                    shadow += receiverDepth > closestDepth ? weight : 0.0;
-                    totalWeight += weight;
+                    shadow += receiverDepth > closestDepth ? 1.0 : 0.0;
                 }
 
-                return smoothstep(0.12, 0.88, shadow / max(totalWeight, 0.0001));
+                return shadow * 0.25;
             }
 
             float SampleDirectionalCascadeShadow(int cascadeIndex, vec3 projectedCoords)
@@ -404,13 +398,21 @@ namespace PlutoGE::render
                 return max(uCascadeCount - 1, 0);
             }
 
-            float ComputeDirectionalCascadeShadow(vec3 worldPosition, int cascadeIndex)
+            float ComputeViewDepth(vec3 worldPosition)
+            {
+                return abs((uViewMatrix * vec4(worldPosition, 1.0)).z);
+            }
+
+            float ComputeDirectionalCascadeShadow(vec3 worldPosition, int cascadeIndex, out bool hasCoverage)
             {
                 vec4 lightSpacePosition = uCascadeLightSpaceMatrices[cascadeIndex] * vec4(worldPosition - uCascadeWorldOrigins[cascadeIndex], 1.0);
                 vec3 projectedCoords = lightSpacePosition.xyz / max(lightSpacePosition.w, 0.0001);
                 projectedCoords = projectedCoords * 0.5 + 0.5;
 
-                if (projectedCoords.z < 0.0 || projectedCoords.z > 1.0 || projectedCoords.x < 0.0 || projectedCoords.x > 1.0 || projectedCoords.y < 0.0 || projectedCoords.y > 1.0)
+                hasCoverage = !(projectedCoords.z < 0.0 || projectedCoords.z > 1.0 ||
+                                projectedCoords.x < 0.0 || projectedCoords.x > 1.0 ||
+                                projectedCoords.y < 0.0 || projectedCoords.y > 1.0);
+                if (!hasCoverage)
                 {
                     return 0.0;
                 }
@@ -425,39 +427,37 @@ namespace PlutoGE::render
                     return 0.0;
                 }
 
-                float cameraDistance = distance(worldPosition, uCameraPosition);
-                if (cameraDistance > uCascadeSplits[uCascadeCount - 1])
+                float viewDepth = ComputeViewDepth(worldPosition);
+                if (viewDepth > uCascadeSplits[uCascadeCount - 1])
                 {
                     return 0.0;
                 }
 
-                int cascadeIndex = SelectDirectionalCascadeIndex(cameraDistance);
-                float shadow = ComputeDirectionalCascadeShadow(worldPosition, cascadeIndex);
+                int cascadeIndex = SelectDirectionalCascadeIndex(viewDepth);
+                bool hasCascadeCoverage = false;
+                float shadow = ComputeDirectionalCascadeShadow(worldPosition, cascadeIndex, hasCascadeCoverage);
+                if (!hasCascadeCoverage)
+                {
+                    return 0.0;
+                }
 
                 if (cascadeIndex < uCascadeCount - 1)
                 {
                     float splitDistance = uCascadeSplits[cascadeIndex];
                     float blendStart = max(splitDistance - uCascadeBlendDistance, 0.0);
-                    if (cameraDistance > blendStart)
+                    if (viewDepth > blendStart)
                     {
-                        float nextShadow = ComputeDirectionalCascadeShadow(worldPosition, cascadeIndex + 1);
-                        float blendFactor = clamp((cameraDistance - blendStart) / max(splitDistance - blendStart, 0.0001), 0.0, 1.0);
-                        shadow = mix(shadow, nextShadow, blendFactor);
+                        bool hasNextCascadeCoverage = false;
+                        float nextShadow = ComputeDirectionalCascadeShadow(worldPosition, cascadeIndex + 1, hasNextCascadeCoverage);
+                        if (hasNextCascadeCoverage)
+                        {
+                            float blendFactor = clamp((viewDepth - blendStart) / max(splitDistance - blendStart, 0.0001), 0.0, 1.0);
+                            shadow = mix(shadow, nextShadow, blendFactor);
+                        }
                     }
                 }
 
                 return shadow;
-            }
-
-            float ComputeSegmentLightVisibility(vec3 rayDirection, float segmentStart, float segmentLength)
-            {
-                if (uHasDirectionalLight == 0)
-                {
-                    return 1.0;
-                }
-
-                vec3 position = uCameraPosition + rayDirection * (segmentStart + segmentLength * 0.5);
-                return 1.0 - ComputeDirectionalLightShadow(position);
             }
 
             void main()
@@ -488,8 +488,7 @@ namespace PlutoGE::render
                 float directionalInscattering = uHasDirectionalLight != 0
                     ? ComputeDirectionalInscattering(dot(rayDirection, normalize(uLightDirection)))
                     : 0.0;
-                int shadowSampleStride = max(2, uStepCount / 3);
-                float cachedLightVisibility = 1.0;
+                float rayJitter = fract(InterleavedGradientNoise(gl_FragCoord.xy) + uFrameIndex * 0.61803398875);
 
                 for (int stepIndex = 0; stepIndex < uStepCount; ++stepIndex)
                 {
@@ -499,19 +498,19 @@ namespace PlutoGE::render
                     }
 
                     float segmentLength = min(stepLength, hitDistance - currentDistance);
-                    vec3 samplePosition = uCameraPosition + rayDirection * (currentDistance + 0.5 * segmentLength);
+                    float sampleJitter = fract(rayJitter + float(stepIndex) * 0.61803398875);
+                    vec3 samplePosition = uCameraPosition + rayDirection * (currentDistance + sampleJitter * segmentLength);
                     float density = ComputeDensity(samplePosition);
                     float extinction = max(density * segmentLength, 0.0);
                     float segmentTransmittance = exp(-extinction);
                     float segmentFog = 1.0 - segmentTransmittance;
-                    if (uHasDirectionalLight != 0 && (stepIndex == 0 || (stepIndex % shadowSampleStride) == 0))
-                    {
-                        cachedLightVisibility = ComputeSegmentLightVisibility(rayDirection, currentDistance, segmentLength);
-                    }
+                    float lightVisibility = uHasDirectionalLight != 0
+                        ? 1.0 - ComputeDirectionalLightShadow(samplePosition)
+                        : 1.0;
                     float multipleScattering = 1.0 - exp(-density * segmentLength * 6.0);
                     vec3 ambientScatter = ambientFogColor * uAmbientContribution * (0.55 + 0.45 * multipleScattering);
                     vec3 directionalScatter = uHasDirectionalLight != 0
-                        ? (uLightColor * uLightIntensity * directionalInscattering * uScattering * uDirectionalContribution * cachedLightVisibility)
+                        ? (uLightColor * uLightIntensity * directionalInscattering * uScattering * uDirectionalContribution * lightVisibility)
                         : vec3(0.0);
                     vec3 fogLighting = ambientScatter + (fogTint * directionalScatter);
 
@@ -557,6 +556,24 @@ namespace PlutoGE::render
         const glm::mat4 inverseProjection = glm::inverse(context.renderContext.cameraData.projection);
         const glm::vec3 cameraPosition = glm::vec3(inverseView[3]);
         const scene::Light *primaryDirectionalLight = FindPrimaryDirectionalLight(context.renderContext);
+        bool hasTemporalAAAfterFog = false;
+        if (context.renderContext.postProcessEffects)
+        {
+            bool foundFog = false;
+            for (const auto *effect : *context.renderContext.postProcessEffects)
+            {
+                if (effect == this)
+                {
+                    foundFog = true;
+                    continue;
+                }
+                if (foundFog && effect && effect->IsEnabled() && effect->GetTypeName() == "TAA")
+                {
+                    hasTemporalAAAfterFog = true;
+                    break;
+                }
+            }
+        }
 
         glm::vec3 lightDirection = glm::vec3(0.0f, 1.0f, 0.0f);
         glm::vec3 lightColor = glm::vec3(1.0f);
@@ -591,6 +608,7 @@ namespace PlutoGE::render
         m_shader->SetUniform("uAmbientContribution", m_ambientContribution);
         m_shader->SetUniform("uDirectionalContribution", m_directionalContribution);
         m_shader->SetUniform("uMaxOpacity", m_maxOpacity);
+        m_shader->SetUniform("uFrameIndex", hasTemporalAAAfterFog ? static_cast<float>(context.renderContext.frameSequence % 4096) : 0.0f);
         m_shader->SetUniform("uStepCount", std::clamp(m_stepCount, kMinStepCount, kMaxStepCount));
         m_shader->SetUniform("uHasDirectionalLight", hasDirectionalLight);
         DrawFullscreenTriangle();

@@ -27,13 +27,13 @@ namespace
     constexpr int kProjectedShadowPassMode = 0;
     constexpr int kPointShadowPassMode = 1;
     constexpr int kMaxIncrementalShadowSurfaceUpdatesPerFrame = 4;
-    constexpr int kMaxMotionDrivenDirectionalCascadeUpdatesPerLight = 2;
     constexpr float kDirectionalShadowPadding = 2.0f;
     constexpr float kShadowUpdateMatrixEpsilon = 0.0001f;
     constexpr float kNearCascadeMinCasterTexelRadius = 0.35f;
     constexpr float kFarCascadeMinCasterTexelRadius = 1.0f;
     constexpr float kDirectionalShadowSlopeBias = 1.5f;
     constexpr float kDirectionalShadowConstantBias = 2.0f;
+    constexpr std::array<int, 8> kDirectionalCascadeRefreshSchedule{0, 1, 0, 2, 0, 1, 0, 3};
 
     struct FrustumPlane
     {
@@ -123,27 +123,6 @@ namespace
         const float cascadeThickness = glm::max(cascadeFar - cascadeNear, 0.1f);
         const float recenterThreshold = glm::max(0.5f, cascadeThickness * 0.25f);
         return glm::distance(currentOrigin, storedOrigin) > recenterThreshold;
-    }
-
-    bool ShouldUpdateDirectionalCascade(std::uint64_t frameSequence, int cascadeIndex, bool forceFullUpdate, bool motionDrivenInvalidation)
-    {
-        if (forceFullUpdate)
-        {
-            return true;
-        }
-
-        const int cadenceOffset = motionDrivenInvalidation ? 3 : 1;
-        const int cadenceIndex = std::clamp(cascadeIndex + cadenceOffset, cadenceOffset, 6);
-        const std::uint64_t cadence = 1ull << static_cast<std::uint64_t>(cadenceIndex);
-        if (!motionDrivenInvalidation)
-        {
-            return (frameSequence % cadence) == 0;
-        }
-
-        // Phase-shift motion-driven cascade refreshes so farther cascades do not pile onto
-        // the same frame as the near cascade and cause periodic present-time spikes.
-        const std::uint64_t phaseOffset = (cadence >> 1) - 1ull;
-        return ((frameSequence + phaseOffset) % cadence) == 0;
     }
 
     void ConfigureMatrixAttributes(unsigned int baseLocation, std::size_t offset, std::size_t stride)
@@ -1003,7 +982,8 @@ namespace PlutoGE::render
                 continue;
             }
 
-            const bool hasPendingIncrementalRefresh = light->shadowRefreshPending && !light->isDirty;
+            const bool hasPendingDirectionalRefresh = light->type == scene::LightType::Directional && light->pendingShadowCascadeMask != 0;
+            const bool hasPendingIncrementalRefresh = (light->shadowRefreshPending || hasPendingDirectionalRefresh) && !light->isDirty;
             bool deferredShadowRefresh = false;
             const bool motionDrivenDirectionalInvalidation = light->type == scene::LightType::Directional && ctx.hasCameraData && (cameraDataChanged || shadowCastersChanged || hasPendingIncrementalRefresh);
 
@@ -1114,13 +1094,36 @@ namespace PlutoGE::render
                 const int cascadeCount = GetDirectionalCascadeCount(*light);
                 const auto cascadeSplits = BuildDirectionalCascadeSplits(ctx.cameraData, light->directionalShadowSettings, cascadeCount);
                 const bool forceFullCascadeUpdate = light->isDirty || !ctx.hasPreviousCameraData;
-                const bool motionDrivenCascadeInvalidation = !light->isDirty && (cameraDataChanged || shadowCastersChanged || hasPendingIncrementalRefresh);
                 const bool casterOnlyCascadeInvalidation = shadowCastersChanged && !light->isDirty && !cameraDataChanged && !hasPendingIncrementalRefresh;
                 const bool cameraOnlyInvalidation = cameraDataChanged && !light->isDirty && !shadowCastersChanged;
-                const int maxDirectionalCascadeUpdatesThisLight = forceFullCascadeUpdate
-                                                                      ? cascadeCount
-                                                                      : (motionDrivenCascadeInvalidation ? std::min(cascadeCount, kMaxMotionDrivenDirectionalCascadeUpdatesPerLight) : 1);
-                int directionalCascadeUpdatesThisLight = 0;
+                const std::uint8_t allCascadeMask = static_cast<std::uint8_t>((1u << cascadeCount) - 1u);
+                if (forceFullCascadeUpdate || cameraDataChanged || shadowCastersChanged)
+                {
+                    light->pendingShadowCascadeMask |= allCascadeMask;
+                }
+                else if (light->shadowRefreshPending && light->pendingShadowCascadeMask == 0)
+                {
+                    // Convert refreshes queued by older/general shadow paths into
+                    // explicit cascade work rather than repeatedly starting at zero.
+                    light->pendingShadowCascadeMask = allCascadeMask;
+                }
+
+                int scheduledCascadeIndex = -1;
+                if (!forceFullCascadeUpdate)
+                {
+                    for (std::size_t attempt = 0; attempt < kDirectionalCascadeRefreshSchedule.size(); ++attempt)
+                    {
+                        const int scheduleIndex = light->nextShadowCascadeToRefresh % static_cast<int>(kDirectionalCascadeRefreshSchedule.size());
+                        light->nextShadowCascadeToRefresh = (scheduleIndex + 1) % static_cast<int>(kDirectionalCascadeRefreshSchedule.size());
+                        const int candidateCascadeIndex = kDirectionalCascadeRefreshSchedule[static_cast<std::size_t>(scheduleIndex)];
+                        if (candidateCascadeIndex < cascadeCount &&
+                            (light->pendingShadowCascadeMask & static_cast<std::uint8_t>(1u << candidateCascadeIndex)) != 0)
+                        {
+                            scheduledCascadeIndex = candidateCascadeIndex;
+                            break;
+                        }
+                    }
+                }
 
                 light->shadowMatrix = glm::mat4(1.0f);
                 light->shadowFarPlane = cascadeSplits[cascadeCount - 1];
@@ -1157,17 +1160,11 @@ namespace PlutoGE::render
                     const glm::vec3 cascadeShadowWorldOrigin = (forceFullCascadeUpdate || !hasStoredCascadeOrigin || cascadeOriginChanged)
                                                                    ? currentShadowWorldOrigin
                                                                    : light->shadowCascadeWorldOrigins[cascadeIndex];
-                    const bool realtimeCascadeInvalidation = shadowCastersChanged || light->isDirty;
-
                     // Split radii drive cascade selection in lighting, so keep them current even when
                     // this cascade's shadow map redraw is deferred by the update cadence.
                     light->shadowCascadeSplits[cascadeIndex] = cascadeFar;
 
-                    const bool forceCascadeUpdate = forceFullCascadeUpdate;
-                    const bool cascadeMotionInvalidation = motionDrivenCascadeInvalidation;
-                    const bool immediateMotionCascadeUpdate = motionDrivenCascadeInvalidation && cascadeIndex < maxDirectionalCascadeUpdatesThisLight;
-                    const bool cadenceWantsUpdate = immediateMotionCascadeUpdate || ShouldUpdateDirectionalCascade(ctx.frameSequence, cascadeIndex, forceCascadeUpdate, cascadeMotionInvalidation);
-                    if (!forceFullCascadeUpdate && !realtimeCascadeInvalidation && !cascadeOriginChanged && !hasPendingIncrementalRefresh && !cadenceWantsUpdate)
+                    if (!forceFullCascadeUpdate && cascadeIndex != scheduledCascadeIndex)
                     {
                         continue;
                     }
@@ -1177,6 +1174,7 @@ namespace PlutoGE::render
                     const bool cascadeMatrixChanged = !AreMatricesApproximatelyEqual(cascadeMatrix, light->shadowCascadeMatrices[cascadeIndex]);
                     if (cameraOnlyInvalidation && !cascadeMatrixChanged && !cascadeSplitChanged && !cascadeOriginChanged)
                     {
+                        light->pendingShadowCascadeMask &= static_cast<std::uint8_t>(~(1u << cascadeIndex));
                         continue;
                     }
 
@@ -1196,16 +1194,11 @@ namespace PlutoGE::render
                                     effectiveMinCasterTexelRadius);
                             }))
                     {
+                        light->pendingShadowCascadeMask &= static_cast<std::uint8_t>(~(1u << cascadeIndex));
                         continue;
                     }
 
-                    if (directionalCascadeUpdatesThisLight >= maxDirectionalCascadeUpdatesThisLight)
-                    {
-                        deferredShadowRefresh = true;
-                        continue;
-                    }
-
-                    if (!forceFullCascadeUpdate && !realtimeCascadeInvalidation && !reserveIncrementalShadowSurfaceUpdate())
+                    if (!forceFullCascadeUpdate && !reserveIncrementalShadowSurfaceUpdate())
                     {
                         deferredShadowRefresh = true;
                         continue;
@@ -1254,7 +1247,7 @@ namespace PlutoGE::render
                             drawStats.submittedTriangles,
                             true);
                     }
-                    ++directionalCascadeUpdatesThisLight;
+                    light->pendingShadowCascadeMask &= static_cast<std::uint8_t>(~(1u << cascadeIndex));
                 }
 
                 for (int cascadeIndex = cascadeCount; cascadeIndex < scene::kMaxDirectionalShadowCascades; ++cascadeIndex)
@@ -1265,7 +1258,7 @@ namespace PlutoGE::render
                 }
 
                 light->isDirty = false;
-                light->shadowRefreshPending = deferredShadowRefresh;
+                light->shadowRefreshPending = deferredShadowRefresh || light->pendingShadowCascadeMask != 0;
                 glDisable(GL_POLYGON_OFFSET_FILL);
                 glEnable(GL_CULL_FACE);
                 glCullFace(GL_BACK);

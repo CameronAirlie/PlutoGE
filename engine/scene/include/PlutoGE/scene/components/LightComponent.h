@@ -3,6 +3,7 @@
 #include "PlutoGE/scene/components/Component.h"
 #include "PlutoGE/render/Texture.h"
 #include <array>
+#include <cstdint>
 #include <glm/glm.hpp>
 
 #include <memory>
@@ -63,6 +64,7 @@ namespace PlutoGE::scene
         bool isStatic = false;       // Static lights only refresh shadow data when dirty
         bool isDirty = true;         // Dirty lights need their shadow data refreshed
         bool shadowRefreshPending = false;
+        std::uint8_t pendingShadowCascadeMask = 0;
         int nextShadowCascadeToRefresh = 0;
     };
 

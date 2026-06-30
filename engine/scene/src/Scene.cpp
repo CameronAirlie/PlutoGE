@@ -688,6 +688,7 @@ namespace PlutoGE::scene
             {
                 light->isDirty = true;
                 light->shadowRefreshPending = false;
+                light->pendingShadowCascadeMask = 0;
                 light->nextShadowCascadeToRefresh = 0;
             }
         }

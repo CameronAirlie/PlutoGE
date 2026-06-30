@@ -52,6 +52,7 @@ namespace PlutoGE::scene
             light.shadowCascadeSplits.fill(0.0f);
             light.activeShadowCascadeCount = 0;
             light.shadowFarPlane = 0.0f;
+            light.pendingShadowCascadeMask = 0;
             light.nextShadowCascadeToRefresh = 0;
         }
 
@@ -204,6 +205,7 @@ namespace PlutoGE::scene
     {
         m_config.isDirty = true;
         m_config.shadowRefreshPending = false;
+        m_config.pendingShadowCascadeMask = 0;
         m_config.nextShadowCascadeToRefresh = 0;
     }
 
@@ -211,6 +213,7 @@ namespace PlutoGE::scene
     {
         m_config.isDirty = false;
         m_config.shadowRefreshPending = false;
+        m_config.pendingShadowCascadeMask = 0;
     }
 
     bool LightComponent::IsDirty() const

@@ -1,12 +1,16 @@
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
 
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/scene/Entity.h"
+#include "PlutoGE/scene/Scene.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
 #include <sstream>
+
+#include <glm/gtc/constants.hpp>
 
 namespace PlutoGE::scene
 {
@@ -61,6 +65,68 @@ namespace PlutoGE::scene
                 return ParticleShape::Point;
             }
         }
+
+        float Hash(float value)
+        {
+            const float hashed = std::sin(value) * 43758.5453123f;
+            return hashed - std::floor(hashed);
+        }
+
+        glm::vec3 RandomDirection(float seed)
+        {
+            const float z = Hash(seed + 1.0f) * 2.0f - 1.0f;
+            const float angle = Hash(seed + 2.0f) * glm::two_pi<float>();
+            const float radius = std::sqrt(std::max(0.0f, 1.0f - z * z));
+            return glm::normalize(glm::vec3(radius * std::cos(angle), z, radius * std::sin(angle)));
+        }
+
+        glm::vec3 RandomBox(float seed, const glm::vec3 &size)
+        {
+            return (glm::vec3(Hash(seed + 3.0f), Hash(seed + 4.0f), Hash(seed + 5.0f)) - glm::vec3(0.5f)) * size;
+        }
+
+        glm::vec2 RandomDisc(float seed, float radius)
+        {
+            const float angle = Hash(seed + 9.0f) * glm::two_pi<float>();
+            const float distance = std::sqrt(Hash(seed + 10.0f)) * radius;
+            return glm::vec2(std::cos(angle), std::sin(angle)) * distance;
+        }
+
+        glm::vec3 EmitOffset(ParticleShape shape, const glm::vec3 &shapeSize, float shapeRadius, float seed)
+        {
+            switch (shape)
+            {
+            case ParticleShape::Sphere:
+                return RandomDirection(seed) * shapeRadius * std::cbrt(Hash(seed + 6.0f));
+            case ParticleShape::Box:
+                return RandomBox(seed, shapeSize);
+            case ParticleShape::Cone:
+            {
+                const glm::vec2 disc = RandomDisc(seed, shapeRadius);
+                return glm::vec3(disc.x, 0.0f, disc.y);
+            }
+            case ParticleShape::Point:
+            default:
+                return glm::vec3(0.0f);
+            }
+        }
+
+        glm::vec3 EmitDirection(ParticleShape shape, float coneAngle, float seed, const glm::vec3 &offset)
+        {
+            if (shape == ParticleShape::Cone)
+            {
+                const float angle = Hash(seed + 7.0f) * glm::two_pi<float>();
+                const float radial = std::tan(glm::radians(coneAngle)) * std::sqrt(Hash(seed + 8.0f));
+                return glm::normalize(glm::vec3(std::cos(angle) * radial, 1.0f, std::sin(angle) * radial));
+            }
+
+            if (glm::length(offset) > 0.0001f)
+            {
+                return glm::normalize(offset);
+            }
+
+            return RandomDirection(seed);
+        }
     }
 
     ParticleSystemComponent::~ParticleSystemComponent()
@@ -88,7 +154,10 @@ namespace PlutoGE::scene
 
         const float previousTime = m_time;
         m_time += step;
-        m_pendingDeltaTime += step;
+        if (!UsesCpuSimulation())
+        {
+            m_pendingDeltaTime += step;
+        }
 
         if (m_emissionRateOverTime > 0.0f)
         {
@@ -119,6 +188,11 @@ namespace PlutoGE::scene
                 m_playing = false;
             }
         }
+
+        if (UsesCpuSimulation())
+        {
+            UpdateCpuSimulation(step);
+        }
     }
 
     void ParticleSystemComponent::Play()
@@ -147,6 +221,15 @@ namespace PlutoGE::scene
         m_pendingEmitCount = 0;
         m_nextEmitIndex = 0;
         m_nextEmitSequence = 0;
+        m_nextCpuEmitIndex = 0;
+        for (auto &particle : m_cpuParticles)
+        {
+            particle = {};
+        }
+        for (auto &trail : m_trails)
+        {
+            trail.clear();
+        }
     }
 
     void ParticleSystemComponent::Emit(int count)
@@ -156,9 +239,32 @@ namespace PlutoGE::scene
             return;
         }
 
+        if (UsesCpuSimulation())
+        {
+            SpawnCpuParticles(count);
+            return;
+        }
+
         const int accepted = std::min(count, m_maxParticles);
         m_pendingEmitCount = std::min(m_maxParticles, m_pendingEmitCount + accepted);
         m_particleCountEstimate = std::min(m_maxParticles, m_particleCountEstimate + accepted);
+    }
+
+    void ParticleSystemComponent::EmitAt(const glm::vec3 &worldPosition, int count)
+    {
+        if (count <= 0)
+        {
+            return;
+        }
+
+        m_emitAtRequested = true;
+        if (UsesCpuSimulation())
+        {
+            SpawnCpuParticlesAt(worldPosition, count);
+            return;
+        }
+
+        m_pendingEmitAtRequests.push_back({worldPosition, count});
     }
 
     float ParticleSystemComponent::ConsumePendingDeltaTime()
@@ -296,6 +402,7 @@ namespace PlutoGE::scene
     {
         m_maxParticles = std::clamp(maxParticles, 1, 200000);
         m_particleCountEstimate = std::min(m_particleCountEstimate, m_maxParticles);
+        ResizeCpuStorage();
         MarkGpuStateDirty();
     }
 
@@ -374,6 +481,342 @@ namespace PlutoGE::scene
 
         m_coneAngle = clampedAngle;
         Clear();
+    }
+
+    bool ParticleSystemComponent::UsesCpuSimulation() const
+    {
+        return m_collisionEnabled || m_trailsEnabled ||
+               !m_collisionSubEmitterAssetReference.empty() || !m_deathSubEmitterAssetReference.empty() ||
+               m_emitAtRequested;
+    }
+
+    void ParticleSystemComponent::ResizeCpuStorage()
+    {
+        m_cpuParticles.resize(static_cast<std::size_t>(m_maxParticles));
+        m_trails.resize(static_cast<std::size_t>(m_maxParticles));
+        if (m_nextCpuEmitIndex >= m_maxParticles)
+        {
+            m_nextCpuEmitIndex = 0;
+        }
+    }
+
+    void ParticleSystemComponent::SpawnCpuParticles(int count)
+    {
+        auto *owner = GetOwner();
+        if (!owner)
+        {
+            return;
+        }
+
+        const glm::vec3 origin = owner->GetWorldPosition();
+        if (m_simulationSpace == ParticleSimulationSpace::World)
+        {
+            SpawnCpuParticlesAt(origin, count);
+            return;
+        }
+
+        SpawnCpuParticlesAt(origin, count);
+    }
+
+    void ParticleSystemComponent::SpawnCpuParticlesAt(const glm::vec3 &worldPosition, int count)
+    {
+        if (count <= 0 || m_maxParticles <= 0)
+        {
+            return;
+        }
+
+        ResizeCpuStorage();
+        auto *owner = GetOwner();
+        const glm::mat4 emitterTransform = owner ? owner->GetWorldTransform() : glm::mat4(1.0f);
+        const glm::mat3 emitterBasis(emitterTransform);
+
+        const int emitCount = std::min(count, m_maxParticles);
+        for (int emitIndex = 0; emitIndex < emitCount; ++emitIndex)
+        {
+            const int particleIndex = m_nextCpuEmitIndex;
+            const float seed = static_cast<float>(m_nextEmitSequence + emitIndex) * 17.0f + static_cast<float>(emitIndex) * 12.9898f;
+            const glm::vec3 localOffset = EmitOffset(m_shape, m_shapeSize, m_shapeRadius, seed);
+            const glm::vec3 localDirection = EmitDirection(m_shape, m_coneAngle, seed, localOffset);
+            const glm::vec3 spawnDirection = glm::normalize(emitterBasis * localDirection);
+
+            auto &particle = m_cpuParticles[static_cast<std::size_t>(particleIndex)];
+            particle.position = worldPosition + emitterBasis * localOffset;
+            particle.velocity = spawnDirection * m_startSpeed;
+            particle.color = m_startColor;
+            particle.size = m_startSize;
+            particle.age = 0.0f;
+            particle.lifetime = m_startLifetime;
+            particle.seed = seed;
+            particle.active = true;
+            particle.deathSubEmitterFired = false;
+
+            if (particleIndex < static_cast<int>(m_trails.size()))
+            {
+                auto &trail = m_trails[static_cast<std::size_t>(particleIndex)];
+                trail.clear();
+                trail.push_back({particle.position, particle.color, 0.0f});
+            }
+
+            m_nextCpuEmitIndex = (m_nextCpuEmitIndex + 1) % m_maxParticles;
+            m_nextEmitSequence = (m_nextEmitSequence + 1) & 0x3fffffff;
+        }
+
+        m_particleCountEstimate = std::min(m_maxParticles, m_particleCountEstimate + emitCount);
+    }
+
+    void ParticleSystemComponent::SpawnCpuParticlesFromAsset(const assets::ParticleSystemAsset &asset, const glm::vec3 &worldPosition, int count)
+    {
+        if (count <= 0 || m_maxParticles <= 0)
+        {
+            return;
+        }
+
+        ResizeCpuStorage();
+        const int emitCount = std::min(count, m_maxParticles);
+        for (int emitIndex = 0; emitIndex < emitCount; ++emitIndex)
+        {
+            const int particleIndex = m_nextCpuEmitIndex;
+            const float seed = static_cast<float>(m_nextEmitSequence + emitIndex) * 19.0f + static_cast<float>(emitIndex) * 7.77f;
+            const auto shape = ToSceneShape(asset.shape);
+            const glm::vec3 offset = EmitOffset(shape, asset.shapeSize, asset.shapeRadius, seed);
+            const glm::vec3 direction = EmitDirection(shape, asset.coneAngle, seed, offset);
+
+            auto &particle = m_cpuParticles[static_cast<std::size_t>(particleIndex)];
+            particle.position = worldPosition + offset;
+            particle.velocity = direction * std::max(asset.startSpeed, 0.0f);
+            particle.color = glm::clamp(asset.startColor, glm::vec4(0.0f), glm::vec4(1.0f));
+            particle.size = std::max(asset.startSize, 0.0f);
+            particle.age = 0.0f;
+            particle.lifetime = std::max(asset.startLifetime, 0.0001f);
+            particle.seed = seed;
+            particle.active = true;
+            particle.deathSubEmitterFired = true;
+
+            if (particleIndex < static_cast<int>(m_trails.size()))
+            {
+                auto &trail = m_trails[static_cast<std::size_t>(particleIndex)];
+                trail.clear();
+                trail.push_back({particle.position, particle.color, 0.0f});
+            }
+
+            m_nextCpuEmitIndex = (m_nextCpuEmitIndex + 1) % m_maxParticles;
+            m_nextEmitSequence = (m_nextEmitSequence + 1) & 0x3fffffff;
+        }
+
+        m_particleCountEstimate = std::min(m_maxParticles, m_particleCountEstimate + emitCount);
+    }
+
+    void ParticleSystemComponent::SpawnSubEmitter(const std::string &assetReference, int count, const glm::vec3 &worldPosition)
+    {
+        if (assetReference.empty() || count <= 0)
+        {
+            return;
+        }
+
+        bool loaded = false;
+        const auto asset = core::Engine::GetInstance().GetAssetManager().LoadParticleSystemAsset(assetReference, &loaded);
+        if (loaded)
+        {
+            SpawnCpuParticlesFromAsset(asset, worldPosition, count);
+        }
+    }
+
+    void ParticleSystemComponent::UpdateCpuSimulation(float deltaTime)
+    {
+        ResizeCpuStorage();
+
+        for (const auto &request : m_pendingEmitAtRequests)
+        {
+            SpawnCpuParticlesAt(request.worldPosition, request.count);
+        }
+        m_pendingEmitAtRequests.clear();
+
+        auto *owner = GetOwner();
+        auto *scene = owner ? owner->GetScene() : nullptr;
+        const auto ignoredEntityId = owner ? owner->GetID() : 0;
+        int collisionChecks = 0;
+
+        struct CollisionCandidate
+        {
+            std::size_t particleIndex = 0;
+        };
+
+        struct PendingSubEmitter
+        {
+            std::string assetReference;
+            int count = 0;
+            glm::vec3 position{0.0f};
+        };
+
+        std::vector<glm::vec3> nextPositions(m_cpuParticles.size(), glm::vec3(0.0f));
+        std::vector<CollisionCandidate> collisionCandidates;
+        std::vector<PhysicsRaycastRequest> collisionRequests;
+        std::vector<PendingSubEmitter> pendingSubEmitters;
+        if (m_collisionEnabled && scene && m_collisionMaxChecksPerFrame > 0)
+        {
+            collisionCandidates.reserve(static_cast<std::size_t>(std::min(m_collisionMaxChecksPerFrame, m_maxParticles)));
+            collisionRequests.reserve(collisionCandidates.capacity());
+        }
+
+        for (std::size_t index = 0; index < m_cpuParticles.size(); ++index)
+        {
+            auto &particle = m_cpuParticles[index];
+            if (!particle.active)
+            {
+                continue;
+            }
+
+            for (auto &point : m_trails[index])
+            {
+                point.age += deltaTime;
+            }
+            m_trails[index].erase(std::remove_if(m_trails[index].begin(),
+                                                 m_trails[index].end(),
+                                                 [this](const ParticleTrailPoint &point) { return point.age > m_trailLifetime; }),
+                                  m_trails[index].end());
+
+            const glm::vec3 previousPosition = particle.position;
+            particle.velocity += glm::vec3(0.0f, -9.81f * m_gravityModifier, 0.0f) * deltaTime;
+            glm::vec3 nextPosition = particle.position + particle.velocity * deltaTime;
+            particle.age += deltaTime;
+            nextPositions[index] = nextPosition;
+
+            if (m_collisionEnabled && scene && collisionChecks < m_collisionMaxChecksPerFrame)
+            {
+                const glm::vec3 displacement = nextPosition - previousPosition;
+                const float distance = glm::length(displacement);
+                if (distance > 0.00001f)
+                {
+                    ++collisionChecks;
+                    collisionCandidates.push_back({index});
+                    collisionRequests.push_back({previousPosition, displacement / distance, distance + m_collisionRadius});
+                }
+            }
+        }
+
+        std::vector<PhysicsRaycastHit> collisionHits;
+        std::vector<uint8_t> collisionHitResults;
+        if (!collisionRequests.empty() && scene)
+        {
+            scene->RaycastBatch(collisionRequests, ignoredEntityId, collisionHits, collisionHitResults);
+        }
+
+        for (std::size_t requestIndex = 0; requestIndex < collisionCandidates.size(); ++requestIndex)
+        {
+            if (requestIndex >= collisionHitResults.size() || collisionHitResults[requestIndex] == 0)
+            {
+                continue;
+            }
+
+            const std::size_t particleIndex = collisionCandidates[requestIndex].particleIndex;
+            if (particleIndex >= m_cpuParticles.size())
+            {
+                continue;
+            }
+
+            auto &particle = m_cpuParticles[particleIndex];
+            if (!particle.active)
+            {
+                continue;
+            }
+
+            const auto &hit = collisionHits[requestIndex];
+            nextPositions[particleIndex] = hit.point + hit.normal * m_collisionRadius;
+            if (!m_collisionSubEmitterAssetReference.empty() && m_collisionSubEmitterCount > 0)
+            {
+                pendingSubEmitters.push_back({m_collisionSubEmitterAssetReference, m_collisionSubEmitterCount, hit.point});
+            }
+
+            switch (m_collisionMode)
+            {
+            case assets::ParticleCollisionMode::Bounce:
+                particle.velocity = glm::reflect(particle.velocity, hit.normal) * m_collisionBounce * (1.0f - m_collisionDampening);
+                particle.age += particle.lifetime * m_collisionLifetimeLoss;
+                break;
+            case assets::ParticleCollisionMode::Stop:
+                particle.velocity = glm::vec3(0.0f);
+                particle.age += particle.lifetime * m_collisionLifetimeLoss;
+                break;
+            case assets::ParticleCollisionMode::Kill:
+            default:
+                particle.age = particle.lifetime;
+                break;
+            }
+        }
+
+        int liveCount = 0;
+        for (std::size_t index = 0; index < m_cpuParticles.size(); ++index)
+        {
+            auto &particle = m_cpuParticles[index];
+            if (!particle.active)
+            {
+                continue;
+            }
+
+            particle.position = nextPositions[index];
+
+            if (particle.age >= particle.lifetime)
+            {
+                if (!particle.deathSubEmitterFired)
+                {
+                    if (!m_deathSubEmitterAssetReference.empty() && m_deathSubEmitterCount > 0)
+                    {
+                        pendingSubEmitters.push_back({m_deathSubEmitterAssetReference, m_deathSubEmitterCount, particle.position});
+                    }
+                    particle.deathSubEmitterFired = true;
+                }
+                particle.active = false;
+                m_trails[index].clear();
+                continue;
+            }
+
+            if (m_trailsEnabled)
+            {
+                auto &trail = m_trails[index];
+                if (trail.empty() || glm::length(trail.back().position - particle.position) > std::max(m_trailWidth * 0.25f, 0.005f))
+                {
+                    trail.push_back({particle.position, m_trailInheritParticleColor ? particle.color : glm::vec4(1.0f), 0.0f});
+                    if (trail.size() > 32)
+                    {
+                        trail.erase(trail.begin());
+                    }
+                }
+            }
+
+            ++liveCount;
+        }
+
+        m_particleCountEstimate = liveCount;
+        for (const auto &request : pendingSubEmitters)
+        {
+            SpawnSubEmitter(request.assetReference, request.count, request.position);
+        }
+    }
+
+    void ParticleSystemComponent::BuildTrailRenderSegments(std::vector<ParticleTrailRenderSegment> &segments) const
+    {
+        if (!m_trailsEnabled || m_trailLifetime <= 0.0f || m_trailWidth <= 0.0f)
+        {
+            return;
+        }
+
+        for (const auto &trail : m_trails)
+        {
+            if (trail.size() < 2)
+            {
+                continue;
+            }
+
+            for (std::size_t index = 1; index < trail.size(); ++index)
+            {
+                const auto &a = trail[index - 1];
+                const auto &b = trail[index];
+                const float normalizedAge = std::clamp((a.age + b.age) * 0.5f / std::max(m_trailLifetime, 0.0001f), 0.0f, 1.0f);
+                glm::vec4 color = m_trailInheritParticleColor ? (a.color + b.color) * 0.5f : glm::vec4(1.0f);
+                color.a *= 1.0f - normalizedAge;
+                segments.push_back({a.position, b.position, color, m_trailWidth});
+            }
+        }
     }
 
     std::vector<Property> ParticleSystemComponent::Serialize() const
@@ -467,6 +910,10 @@ namespace PlutoGE::scene
         m_startSpeed = std::max(asset.startSpeed, 0.0f);
         m_startSize = std::max(asset.startSize, 0.0f);
         m_startColor = glm::clamp(asset.startColor, glm::vec4(0.0f), glm::vec4(1.0f));
+        m_colorOverLifetimeEnabled = asset.colorOverLifetimeEnabled;
+        m_endColor = glm::clamp(asset.endColor, glm::vec4(0.0f), glm::vec4(1.0f));
+        m_sizeOverLifetimeEnabled = asset.sizeOverLifetimeEnabled;
+        m_endSize = std::max(asset.endSize, 0.0f);
         m_gravityModifier = asset.gravityModifier;
         m_emissionRateOverTime = std::max(asset.emissionRateOverTime, 0.0f);
         m_burstTime = std::max(asset.burstTime, 0.0f);
@@ -478,6 +925,23 @@ namespace PlutoGE::scene
         m_coneAngle = std::clamp(asset.coneAngle, 0.0f, 89.0f);
         m_renderShape = asset.renderShape;
         m_materialAssetReference = asset.materialAssetReference;
+        m_collisionEnabled = asset.collisionEnabled;
+        m_collisionMode = asset.collisionMode;
+        m_collisionDampening = std::clamp(asset.collisionDampening, 0.0f, 1.0f);
+        m_collisionBounce = std::max(asset.collisionBounce, 0.0f);
+        m_collisionLifetimeLoss = std::clamp(asset.collisionLifetimeLoss, 0.0f, 1.0f);
+        m_collisionRadius = std::max(asset.collisionRadius, 0.0f);
+        m_collisionMaxChecksPerFrame = std::clamp(asset.collisionMaxChecksPerFrame, 0, 200000);
+        m_trailsEnabled = asset.trailsEnabled;
+        m_trailLifetime = std::max(asset.trailLifetime, 0.0f);
+        m_trailWidth = std::max(asset.trailWidth, 0.0f);
+        m_trailInheritParticleColor = asset.trailInheritParticleColor;
+        m_trailMaterialAssetReference = asset.trailMaterialAssetReference;
+        m_collisionSubEmitterAssetReference = asset.collisionSubEmitterAssetReference;
+        m_collisionSubEmitterCount = std::max(asset.collisionSubEmitterCount, 0);
+        m_deathSubEmitterAssetReference = asset.deathSubEmitterAssetReference;
+        m_deathSubEmitterCount = std::max(asset.deathSubEmitterCount, 0);
+        ResizeCpuStorage();
         m_particleCountEstimate = std::min(m_particleCountEstimate, m_maxParticles);
         MarkGpuStateDirty();
         Clear();

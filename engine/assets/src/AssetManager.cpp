@@ -132,6 +132,20 @@ namespace PlutoGE::assets
             return shape == ParticleRenderShape::Quad ? "Quad" : "Circle";
         }
 
+        const char *ToString(ParticleCollisionMode mode)
+        {
+            switch (mode)
+            {
+            case ParticleCollisionMode::Bounce:
+                return "Bounce";
+            case ParticleCollisionMode::Stop:
+                return "Stop";
+            case ParticleCollisionMode::Kill:
+            default:
+                return "Kill";
+            }
+        }
+
         ParticleSimulationSpace ParseParticleSimulationSpace(const std::string &value)
         {
             return value == "World" || value == "1" ? ParticleSimulationSpace::World : ParticleSimulationSpace::Local;
@@ -151,6 +165,15 @@ namespace PlutoGE::assets
         ParticleRenderShape ParseParticleRenderShape(const std::string &value)
         {
             return value == "Quad" || value == "1" ? ParticleRenderShape::Quad : ParticleRenderShape::Circle;
+        }
+
+        ParticleCollisionMode ParseParticleCollisionMode(const std::string &value)
+        {
+            if (value == "Bounce" || value == "1")
+                return ParticleCollisionMode::Bounce;
+            if (value == "Stop" || value == "2")
+                return ParticleCollisionMode::Stop;
+            return ParticleCollisionMode::Kill;
         }
     }
 
@@ -2138,6 +2161,14 @@ namespace PlutoGE::assets
                 asset.startSize = std::max(ParseFloatValue(value, asset.startSize), 0.0f);
             else if (key == "StartColor")
                 asset.startColor = glm::clamp(ParseVec4Value(value, asset.startColor), glm::vec4(0.0f), glm::vec4(1.0f));
+            else if (key == "ColorOverLifetimeEnabled")
+                asset.colorOverLifetimeEnabled = ParseBoolValue(value);
+            else if (key == "EndColor")
+                asset.endColor = glm::clamp(ParseVec4Value(value, asset.endColor), glm::vec4(0.0f), glm::vec4(1.0f));
+            else if (key == "SizeOverLifetimeEnabled")
+                asset.sizeOverLifetimeEnabled = ParseBoolValue(value);
+            else if (key == "EndSize")
+                asset.endSize = std::max(ParseFloatValue(value, asset.endSize), 0.0f);
             else if (key == "GravityModifier")
                 asset.gravityModifier = ParseFloatValue(value, asset.gravityModifier);
             else if (key == "EmissionRateOverTime")
@@ -2160,6 +2191,38 @@ namespace PlutoGE::assets
                 asset.renderShape = ParseParticleRenderShape(value);
             else if (key == "MaterialAsset")
                 asset.materialAssetReference = value;
+            else if (key == "CollisionEnabled")
+                asset.collisionEnabled = ParseBoolValue(value);
+            else if (key == "CollisionMode")
+                asset.collisionMode = ParseParticleCollisionMode(value);
+            else if (key == "CollisionDampening")
+                asset.collisionDampening = std::clamp(ParseFloatValue(value, asset.collisionDampening), 0.0f, 1.0f);
+            else if (key == "CollisionBounce")
+                asset.collisionBounce = std::max(ParseFloatValue(value, asset.collisionBounce), 0.0f);
+            else if (key == "CollisionLifetimeLoss")
+                asset.collisionLifetimeLoss = std::clamp(ParseFloatValue(value, asset.collisionLifetimeLoss), 0.0f, 1.0f);
+            else if (key == "CollisionRadius")
+                asset.collisionRadius = std::max(ParseFloatValue(value, asset.collisionRadius), 0.0f);
+            else if (key == "CollisionMaxChecksPerFrame")
+                asset.collisionMaxChecksPerFrame = std::clamp(ParseIntValue(value, asset.collisionMaxChecksPerFrame), 0, 200000);
+            else if (key == "TrailsEnabled")
+                asset.trailsEnabled = ParseBoolValue(value);
+            else if (key == "TrailLifetime")
+                asset.trailLifetime = std::max(ParseFloatValue(value, asset.trailLifetime), 0.0f);
+            else if (key == "TrailWidth")
+                asset.trailWidth = std::max(ParseFloatValue(value, asset.trailWidth), 0.0f);
+            else if (key == "TrailInheritParticleColor")
+                asset.trailInheritParticleColor = ParseBoolValue(value);
+            else if (key == "TrailMaterialAsset")
+                asset.trailMaterialAssetReference = value;
+            else if (key == "CollisionSubEmitterAsset")
+                asset.collisionSubEmitterAssetReference = value;
+            else if (key == "CollisionSubEmitterCount")
+                asset.collisionSubEmitterCount = std::max(ParseIntValue(value, asset.collisionSubEmitterCount), 0);
+            else if (key == "DeathSubEmitterAsset")
+                asset.deathSubEmitterAssetReference = value;
+            else if (key == "DeathSubEmitterCount")
+                asset.deathSubEmitterCount = std::max(ParseIntValue(value, asset.deathSubEmitterCount), 0);
         }
 
         if (!sawHeader)
@@ -2217,7 +2280,7 @@ namespace PlutoGE::assets
             return false;
         }
 
-        output << "ParticleSystemVersion=1\n";
+        output << "ParticleSystemVersion=2\n";
         output << "PlayOnAwake=" << (asset.playOnAwake ? "true" : "false") << "\n";
         output << "Looping=" << (asset.looping ? "true" : "false") << "\n";
         output << "Duration=" << asset.duration << "\n";
@@ -2226,6 +2289,10 @@ namespace PlutoGE::assets
         output << "StartSpeed=" << asset.startSpeed << "\n";
         output << "StartSize=" << asset.startSize << "\n";
         output << "StartColor=" << asset.startColor.r << "," << asset.startColor.g << "," << asset.startColor.b << "," << asset.startColor.a << "\n";
+        output << "ColorOverLifetimeEnabled=" << (asset.colorOverLifetimeEnabled ? "true" : "false") << "\n";
+        output << "EndColor=" << asset.endColor.r << "," << asset.endColor.g << "," << asset.endColor.b << "," << asset.endColor.a << "\n";
+        output << "SizeOverLifetimeEnabled=" << (asset.sizeOverLifetimeEnabled ? "true" : "false") << "\n";
+        output << "EndSize=" << asset.endSize << "\n";
         output << "GravityModifier=" << asset.gravityModifier << "\n";
         output << "EmissionRateOverTime=" << asset.emissionRateOverTime << "\n";
         output << "BurstTime=" << asset.burstTime << "\n";
@@ -2237,6 +2304,22 @@ namespace PlutoGE::assets
         output << "ConeAngle=" << asset.coneAngle << "\n";
         output << "RenderShape=" << ToString(asset.renderShape) << "\n";
         output << "MaterialAsset=" << asset.materialAssetReference << "\n";
+        output << "CollisionEnabled=" << (asset.collisionEnabled ? "true" : "false") << "\n";
+        output << "CollisionMode=" << ToString(asset.collisionMode) << "\n";
+        output << "CollisionDampening=" << asset.collisionDampening << "\n";
+        output << "CollisionBounce=" << asset.collisionBounce << "\n";
+        output << "CollisionLifetimeLoss=" << asset.collisionLifetimeLoss << "\n";
+        output << "CollisionRadius=" << asset.collisionRadius << "\n";
+        output << "CollisionMaxChecksPerFrame=" << asset.collisionMaxChecksPerFrame << "\n";
+        output << "TrailsEnabled=" << (asset.trailsEnabled ? "true" : "false") << "\n";
+        output << "TrailLifetime=" << asset.trailLifetime << "\n";
+        output << "TrailWidth=" << asset.trailWidth << "\n";
+        output << "TrailInheritParticleColor=" << (asset.trailInheritParticleColor ? "true" : "false") << "\n";
+        output << "TrailMaterialAsset=" << asset.trailMaterialAssetReference << "\n";
+        output << "CollisionSubEmitterAsset=" << asset.collisionSubEmitterAssetReference << "\n";
+        output << "CollisionSubEmitterCount=" << asset.collisionSubEmitterCount << "\n";
+        output << "DeathSubEmitterAsset=" << asset.deathSubEmitterAssetReference << "\n";
+        output << "DeathSubEmitterCount=" << asset.deathSubEmitterCount << "\n";
 
         if (!output.good())
         {

@@ -34,6 +34,34 @@ namespace PlutoGE::scene
         glm::vec4 seed{0.0f};
     };
 
+    struct ParticleCpuData
+    {
+        glm::vec3 position{0.0f};
+        glm::vec3 velocity{0.0f};
+        glm::vec4 color{1.0f};
+        float size = 0.25f;
+        float age = 999999.0f;
+        float lifetime = 1.0f;
+        float seed = 0.0f;
+        bool active = false;
+        bool deathSubEmitterFired = false;
+    };
+
+    struct ParticleTrailPoint
+    {
+        glm::vec3 position{0.0f};
+        glm::vec4 color{1.0f};
+        float age = 0.0f;
+    };
+
+    struct ParticleTrailRenderSegment
+    {
+        glm::vec3 start{0.0f};
+        glm::vec3 end{0.0f};
+        glm::vec4 color{1.0f};
+        float width = 0.05f;
+    };
+
     class ParticleSystemComponent : public TypedComponent<ParticleSystemComponent>
     {
     public:
@@ -49,6 +77,7 @@ namespace PlutoGE::scene
         void Stop(bool clear = true);
         void Clear();
         void Emit(int count);
+        void EmitAt(const glm::vec3 &worldPosition, int count);
 
         bool IsPlaying() const { return m_playing; }
         int GetParticleCount() const { return m_particleCountEstimate; }
@@ -86,6 +115,10 @@ namespace PlutoGE::scene
         void SetStartSize(float size);
         const glm::vec4 &GetStartColor() const { return m_startColor; }
         void SetStartColor(const glm::vec4 &color) { m_startColor = glm::clamp(color, glm::vec4(0.0f), glm::vec4(1.0f)); }
+        bool GetColorOverLifetimeEnabled() const { return m_colorOverLifetimeEnabled; }
+        const glm::vec4 &GetEndColor() const { return m_endColor; }
+        bool GetSizeOverLifetimeEnabled() const { return m_sizeOverLifetimeEnabled; }
+        float GetEndSize() const { return m_endSize; }
         float GetGravityModifier() const { return m_gravityModifier; }
         void SetGravityModifier(float gravityModifier) { m_gravityModifier = gravityModifier; }
         float GetEmissionRateOverTime() const { return m_emissionRateOverTime; }
@@ -108,13 +141,30 @@ namespace PlutoGE::scene
         void SetRenderShape(assets::ParticleRenderShape renderShape) { m_renderShape = renderShape; }
         const std::string &GetMaterialAssetReference() const { return m_materialAssetReference; }
         void SetMaterialAssetReference(const std::string &materialAssetReference) { m_materialAssetReference = materialAssetReference; }
+        bool UsesCpuSimulation() const;
+        const std::vector<ParticleCpuData> &GetCpuParticles() const { return m_cpuParticles; }
+        void BuildTrailRenderSegments(std::vector<ParticleTrailRenderSegment> &segments) const;
+        bool GetTrailsEnabled() const { return m_trailsEnabled; }
+        const std::string &GetTrailMaterialAssetReference() const { return m_trailMaterialAssetReference; }
         const std::string &GetParticleSystemAssetReference() const { return m_particleSystemAssetReference; }
         bool SetParticleSystemAssetReference(std::string particleSystemAssetReference);
         void ApplyParticleSystemAsset(const assets::ParticleSystemAsset &asset);
 
     private:
+        struct EmitAtRequest
+        {
+            glm::vec3 worldPosition{0.0f};
+            int count = 0;
+        };
+
         void ResetPlaybackState(bool clearParticles);
         void ConfigureParticleAttributes(GLuint vao, GLuint buffer) const;
+        void UpdateCpuSimulation(float deltaTime);
+        void SpawnCpuParticles(int count);
+        void SpawnCpuParticlesAt(const glm::vec3 &worldPosition, int count);
+        void SpawnCpuParticlesFromAsset(const assets::ParticleSystemAsset &asset, const glm::vec3 &worldPosition, int count);
+        void SpawnSubEmitter(const std::string &assetReference, int count, const glm::vec3 &worldPosition);
+        void ResizeCpuStorage();
 
         bool m_playing = false;
         bool m_paused = false;
@@ -136,6 +186,10 @@ namespace PlutoGE::scene
         float m_startSpeed = 2.0f;
         float m_startSize = 0.25f;
         glm::vec4 m_startColor{1.0f};
+        bool m_colorOverLifetimeEnabled = false;
+        glm::vec4 m_endColor{1.0f, 1.0f, 1.0f, 0.0f};
+        bool m_sizeOverLifetimeEnabled = false;
+        float m_endSize = 0.0f;
         float m_gravityModifier = 0.0f;
         float m_emissionRateOverTime = 10.0f;
         float m_burstTime = 0.0f;
@@ -147,7 +201,28 @@ namespace PlutoGE::scene
         float m_coneAngle = 25.0f;
         assets::ParticleRenderShape m_renderShape = assets::ParticleRenderShape::Circle;
         std::string m_materialAssetReference;
+        bool m_collisionEnabled = false;
+        assets::ParticleCollisionMode m_collisionMode = assets::ParticleCollisionMode::Kill;
+        float m_collisionDampening = 0.0f;
+        float m_collisionBounce = 0.5f;
+        float m_collisionLifetimeLoss = 0.0f;
+        float m_collisionRadius = 0.05f;
+        int m_collisionMaxChecksPerFrame = 256;
+        bool m_trailsEnabled = false;
+        float m_trailLifetime = 0.5f;
+        float m_trailWidth = 0.08f;
+        bool m_trailInheritParticleColor = true;
+        std::string m_trailMaterialAssetReference;
+        std::string m_collisionSubEmitterAssetReference;
+        int m_collisionSubEmitterCount = 0;
+        std::string m_deathSubEmitterAssetReference;
+        int m_deathSubEmitterCount = 0;
         std::string m_particleSystemAssetReference;
+        bool m_emitAtRequested = false;
+        std::vector<EmitAtRequest> m_pendingEmitAtRequests;
+        std::vector<ParticleCpuData> m_cpuParticles;
+        std::vector<std::vector<ParticleTrailPoint>> m_trails;
+        int m_nextCpuEmitIndex = 0;
 
         bool m_gpuInitialized = false;
         bool m_gpuStateDirty = true;

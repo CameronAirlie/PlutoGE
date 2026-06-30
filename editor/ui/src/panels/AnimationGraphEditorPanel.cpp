@@ -5,6 +5,7 @@
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/components/AnimationComponent.h"
 #include "PlutoGE/ui/EditorShell.h"
+#include "PlutoGE/ui/GraphEditorPanelUtils.h"
 
 #include <algorithm>
 #include <array>
@@ -640,52 +641,61 @@ namespace PlutoGE::ui
         }
 
         ImGui::Separator();
-        ImGui::Columns(2, "AnimationGraphEditorColumns", true);
 
-        const ImVec2 graphSize(ImGui::GetContentRegionAvail().x, std::max(360.0f, ImGui::GetContentRegionAvail().y - 62.0f));
-        ImGui::BeginChild("AnimationGraphCanvasHost", graphSize, true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-        const ImVec2 canvasScreenPos = ImGui::GetCursorScreenPos();
-        AnimationGraphDelegate delegate(m_graph,
-                                        m_selectedStateId,
-                                        m_selectedStateIds,
-                                        m_selectedTransitionId,
-                                        m_graphViewState,
-                                        canvasScreenPos,
-                                        m_addStatePosition,
-                                        m_openAddStatePopup,
-                                        m_dirty);
-        GraphEditor::Show(delegate, m_graphOptions, m_graphViewState, true, &m_graphFit);
-        if (m_openAddStatePopup)
+        const float footerHeight = ImGui::GetFrameHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y;
+        ImGui::BeginChild("AnimationGraphEditorBody", ImVec2(0.0f, -footerHeight), false, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+        if (ImGui::BeginTable("AnimationGraphEditorLayout", 2, ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoSavedSettings))
         {
-            ImGui::OpenPopup("AnimationGraphAddStatePopup");
-            m_openAddStatePopup = false;
-        }
-        if (ImGui::BeginPopup("AnimationGraphAddStatePopup"))
-        {
-            if (ImGui::MenuItem("State"))
+            ImGui::TableSetupColumn("Graph", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+            ImGui::TableSetupColumn("Inspector", ImGuiTableColumnFlags_WidthFixed, 380.0f);
+            ImGui::TableNextRow();
+
+            ImGui::TableSetColumnIndex(0);
+            ImGui::BeginChild("AnimationGraphCanvasHost", ImVec2(0.0f, 0.0f), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+            const ImVec2 canvasScreenPos = ImGui::GetCursorScreenPos();
+            AnimationGraphDelegate delegate(m_graph,
+                                            m_selectedStateId,
+                                            m_selectedStateIds,
+                                            m_selectedTransitionId,
+                                            m_graphViewState,
+                                            canvasScreenPos,
+                                            m_addStatePosition,
+                                            m_openAddStatePopup,
+                                            m_dirty);
+            graph_editor_panel::ShowWithCanvasWheelGuard(delegate, m_graphOptions, m_graphViewState, true, &m_graphFit);
+            if (m_openAddStatePopup)
             {
-                const int id = NextStateId(m_graph);
-                m_graph.states.push_back(assets::AnimationGraphState{
-                    .id = id,
-                    .name = "State " + std::to_string(id),
-                    .clipIndex = 0,
-                    .positionX = m_addStatePosition.x,
-                    .positionY = m_addStatePosition.y,
-                });
-                if (m_graph.defaultStateId == 0)
-                {
-                    m_graph.defaultStateId = id;
-                }
-                m_selectedStateId = id;
-                m_selectedStateIds = {id};
-                m_dirty = true;
+                ImGui::OpenPopup("AnimationGraphAddStatePopup");
+                m_openAddStatePopup = false;
             }
-            ImGui::EndPopup();
-        }
-        ImGui::EndChild();
+            if (ImGui::BeginPopup("AnimationGraphAddStatePopup"))
+            {
+                if (ImGui::MenuItem("State"))
+                {
+                    const int id = NextStateId(m_graph);
+                    m_graph.states.push_back(assets::AnimationGraphState{
+                        .id = id,
+                        .name = "State " + std::to_string(id),
+                        .clipIndex = 0,
+                        .positionX = m_addStatePosition.x,
+                        .positionY = m_addStatePosition.y,
+                    });
+                    if (m_graph.defaultStateId == 0)
+                    {
+                        m_graph.defaultStateId = id;
+                    }
+                    m_selectedStateId = id;
+                    m_selectedStateIds = {id};
+                    m_dirty = true;
+                }
+                ImGui::EndPopup();
+            }
+            ImGui::EndChild();
 
-        ImGui::NextColumn();
-        ImGui::TextUnformatted("Inspector");
+            ImGui::TableSetColumnIndex(1);
+            ImGui::BeginChild("AnimationGraphInspector", ImVec2(0.0f, 0.0f), true);
+            ImGui::TextUnformatted("Inspector");
+            ImGui::Separator();
 
         if (auto *state = FindState(m_graph, m_selectedStateId))
         {
@@ -1234,7 +1244,11 @@ namespace PlutoGE::ui
             }
         }
 
-        ImGui::Columns(1);
+            ImGui::EndChild();
+
+            ImGui::EndTable();
+        }
+        ImGui::EndChild();
 
         ImGui::Separator();
         ImGui::BeginDisabled(!m_dirty);

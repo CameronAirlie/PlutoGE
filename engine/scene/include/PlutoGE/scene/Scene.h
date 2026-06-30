@@ -62,6 +62,13 @@ namespace PlutoGE::scene
         float distance = 0.0f;
     };
 
+    struct PhysicsRaycastRequest
+    {
+        glm::vec3 origin{0.0f};
+        glm::vec3 direction{0.0f, -1.0f, 0.0f};
+        float maxDistance = 0.0f;
+    };
+
     class Scene
     {
     public:
@@ -87,6 +94,10 @@ namespace PlutoGE::scene
                      float maxDistance,
                      PhysicsRaycastHit &hit,
                      EntityID ignoredEntityId = 0) const;
+        void RaycastBatch(const std::vector<PhysicsRaycastRequest> &requests,
+                          EntityID ignoredEntityId,
+                          std::vector<PhysicsRaycastHit> &hits,
+                          std::vector<uint8_t> &hitResults) const;
         bool RaycastByTag(const glm::vec3 &origin,
                           const glm::vec3 &direction,
                           float maxDistance,

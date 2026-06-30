@@ -26,6 +26,13 @@ namespace PlutoGE::assets
         Quad = 1,
     };
 
+    enum class ParticleCollisionMode
+    {
+        Kill = 0,
+        Bounce = 1,
+        Stop = 2,
+    };
+
     struct ParticleSystemAsset
     {
         bool looping = true;
@@ -36,6 +43,10 @@ namespace PlutoGE::assets
         float startSpeed = 2.0f;
         float startSize = 0.25f;
         glm::vec4 startColor{1.0f};
+        bool colorOverLifetimeEnabled = false;
+        glm::vec4 endColor{1.0f, 1.0f, 1.0f, 0.0f};
+        bool sizeOverLifetimeEnabled = false;
+        float endSize = 0.0f;
         float gravityModifier = 0.0f;
         float emissionRateOverTime = 10.0f;
         float burstTime = 0.0f;
@@ -47,6 +58,25 @@ namespace PlutoGE::assets
         float coneAngle = 25.0f;
         ParticleRenderShape renderShape = ParticleRenderShape::Circle;
         std::string materialAssetReference;
+
+        bool collisionEnabled = false;
+        ParticleCollisionMode collisionMode = ParticleCollisionMode::Kill;
+        float collisionDampening = 0.0f;
+        float collisionBounce = 0.5f;
+        float collisionLifetimeLoss = 0.0f;
+        float collisionRadius = 0.05f;
+        int collisionMaxChecksPerFrame = 256;
+
+        bool trailsEnabled = false;
+        float trailLifetime = 0.5f;
+        float trailWidth = 0.08f;
+        bool trailInheritParticleColor = true;
+        std::string trailMaterialAssetReference;
+
+        std::string collisionSubEmitterAssetReference;
+        int collisionSubEmitterCount = 0;
+        std::string deathSubEmitterAssetReference;
+        int deathSubEmitterCount = 0;
     };
 
     ParticleSystemAsset CreateDefaultParticleSystemAsset();

@@ -2,6 +2,8 @@
 
 #include "PlutoGE/render/passes/IRenderPass.h"
 
+#include <glad/glad.h>
+
 namespace PlutoGE::render
 {
     class Shader;
@@ -10,7 +12,7 @@ namespace PlutoGE::render
     {
     public:
         ParticlePass() = default;
-        ~ParticlePass() override = default;
+        ~ParticlePass() override;
 
         void Initialize() override;
         void Execute(const RenderContext &ctx) override;
@@ -19,6 +21,11 @@ namespace PlutoGE::render
     private:
         Shader *m_updateShader = nullptr;
         Shader *m_renderShader = nullptr;
+        Shader *m_trailShader = nullptr;
+        GLuint m_cpuParticleVao = 0;
+        GLuint m_cpuParticleBuffer = 0;
+        GLuint m_trailVao = 0;
+        GLuint m_trailBuffer = 0;
         bool m_loggedUnsupported = false;
     };
 }

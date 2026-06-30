@@ -189,6 +189,7 @@ internal static unsafe class ScriptBridge
     private static delegate* unmanaged[Cdecl]<uint, int, void> _particleSystemStop;
     private static delegate* unmanaged[Cdecl]<uint, void> _particleSystemClear;
     private static delegate* unmanaged[Cdecl]<uint, int, void> _particleSystemEmit;
+    private static delegate* unmanaged[Cdecl]<uint, NativeVector3, int, void> _particleSystemEmitAt;
     private static delegate* unmanaged[Cdecl]<uint, nint> _getParticleSystemAssetReference;
     private static delegate* unmanaged[Cdecl]<uint, nint, void> _setParticleSystemAssetReference;
     private static delegate* unmanaged[Cdecl]<uint, int> _getParticleSystemLooping;
@@ -623,6 +624,7 @@ internal static unsafe class ScriptBridge
         delegate* unmanaged[Cdecl]<uint, int, void> stop,
         delegate* unmanaged[Cdecl]<uint, void> clear,
         delegate* unmanaged[Cdecl]<uint, int, void> emit,
+        delegate* unmanaged[Cdecl]<uint, NativeVector3, int, void> emitAt,
         delegate* unmanaged[Cdecl]<uint, nint> getAssetReference,
         delegate* unmanaged[Cdecl]<uint, nint, void> setAssetReference,
         delegate* unmanaged[Cdecl]<uint, int> getLooping,
@@ -651,7 +653,7 @@ internal static unsafe class ScriptBridge
         delegate* unmanaged[Cdecl]<uint, int, void> setShape)
     {
         if (getPlaying == null || getParticleCount == null || play == null || pause == null || stop == null ||
-            clear == null || emit == null || getAssetReference == null || setAssetReference == null ||
+            clear == null || emit == null || emitAt == null || getAssetReference == null || setAssetReference == null ||
             getLooping == null || setLooping == null ||
             getPlayOnAwake == null || setPlayOnAwake == null || getDuration == null || setDuration == null ||
             getStartLifetime == null || setStartLifetime == null || getStartSpeed == null || setStartSpeed == null ||
@@ -671,6 +673,7 @@ internal static unsafe class ScriptBridge
         _particleSystemStop = stop;
         _particleSystemClear = clear;
         _particleSystemEmit = emit;
+        _particleSystemEmitAt = emitAt;
         _getParticleSystemAssetReference = getAssetReference;
         _setParticleSystemAssetReference = setAssetReference;
         _getParticleSystemLooping = getLooping;
@@ -1548,6 +1551,13 @@ internal static unsafe class ScriptBridge
     internal static void ParticleSystemStop(uint entityId, bool clear) { if (_particleSystemStop != null) _particleSystemStop(entityId, clear ? 1 : 0); }
     internal static void ParticleSystemClear(uint entityId) { if (_particleSystemClear != null) _particleSystemClear(entityId); }
     internal static void ParticleSystemEmit(uint entityId, int count) { if (_particleSystemEmit != null) _particleSystemEmit(entityId, count); }
+    internal static void ParticleSystemEmitAt(uint entityId, Vector3 worldPosition, int count)
+    {
+        if (_particleSystemEmitAt != null)
+        {
+            _particleSystemEmitAt(entityId, NativeVector3.FromManaged(worldPosition), count);
+        }
+    }
     internal static string GetParticleSystemAssetReference(uint entityId)
     {
         if (_getParticleSystemAssetReference == null)

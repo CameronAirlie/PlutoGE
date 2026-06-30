@@ -21,6 +21,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <set>
 #include <string>
 #include <unordered_map>
 
@@ -67,6 +68,182 @@ namespace PlutoGE::ui
                 reference.erase(0, assets::Project::kProjectAssetScheme.size());
             }
             return reference;
+        }
+
+        namespace
+        {
+            std::string PathToGenericUtf8String(const std::filesystem::path &path)
+            {
+#if defined(__cpp_char8_t)
+                // C++20: generic_u8string() returns std::u8string
+                std::u8string u8 = path.generic_u8string();
+                return std::string(reinterpret_cast<const char *>(u8.data()), u8.size());
+#else
+                // C++17: generic_u8string() returns std::string
+                return path.generic_u8string();
+#endif
+            }
+        }
+
+        std::string NormalizeAssetRelativePath(const std::filesystem::path &path)
+        {
+            std::filesystem::path normalizedPath;
+
+            try
+            {
+                normalizedPath = path.lexically_normal();
+            }
+            catch (const std::exception &)
+            {
+                normalizedPath = path;
+            }
+
+            std::string normalized = PathToGenericUtf8String(normalizedPath);
+
+            // generic_u8string already uses '/', but this is harmless.
+            std::replace(normalized.begin(), normalized.end(), '\\', '/');
+
+            if (normalized == ".")
+            {
+                return {};
+            }
+
+            while (!normalized.empty() && normalized.front() == '/')
+            {
+                normalized.erase(normalized.begin());
+            }
+
+            while (!normalized.empty() && normalized.back() == '/')
+            {
+                normalized.pop_back();
+            }
+
+            return normalized;
+        }
+
+        std::string GetAssetFolderParent(std::string_view folder)
+        {
+            std::string normalized(folder);
+            std::replace(normalized.begin(), normalized.end(), '\\', '/');
+            while (!normalized.empty() && normalized.front() == '/')
+            {
+                normalized.erase(normalized.begin());
+            }
+            while (!normalized.empty() && normalized.back() == '/')
+            {
+                normalized.pop_back();
+            }
+
+            const auto separator = normalized.find_last_of('/');
+            if (separator == std::string::npos)
+            {
+                return {};
+            }
+            return normalized.substr(0, separator);
+        }
+
+        std::string GetReferenceRelativePath(const assets::Project &project, const assets::ProjectAssetEntry &asset)
+        {
+            if (assets::Project::IsProjectAssetReference(asset.reference))
+            {
+                return NormalizeAssetRelativePath(DisplayAssetReference(asset.reference));
+            }
+
+            const auto resolvedPath = project.ResolveAssetReference(asset.reference);
+            if (!resolvedPath.empty() && project.IsInAssetDirectory(resolvedPath))
+            {
+                std::error_code errorCode;
+                return NormalizeAssetRelativePath(std::filesystem::relative(resolvedPath, project.GetAssetDirectoryPath(), errorCode));
+            }
+
+            return NormalizeAssetRelativePath(DisplayAssetReference(asset.reference));
+        }
+
+        std::string GetReferenceFolder(const assets::Project &project, const assets::ProjectAssetEntry &asset)
+        {
+            return GetAssetFolderParent(GetReferenceRelativePath(project, asset));
+        }
+
+        std::string GetReferenceFileName(const assets::Project &project, const assets::ProjectAssetEntry &asset)
+        {
+            const std::string relativePath = GetReferenceRelativePath(project, asset);
+            const auto separator = relativePath.find_last_of('/');
+            const auto fileName = separator == std::string::npos ? relativePath : relativePath.substr(separator + 1);
+            return fileName.empty() ? DisplayAssetReference(asset.reference) : fileName;
+        }
+
+        std::string GetAssetFolderName(std::string_view folder)
+        {
+            const auto separator = folder.find_last_of('/');
+            if (separator == std::string::npos)
+            {
+                return std::string(folder);
+            }
+            return std::string(folder.substr(separator + 1));
+        }
+
+        bool IsFolderAncestorOrSelf(std::string_view ancestor, std::string_view folder)
+        {
+            if (ancestor.empty())
+            {
+                return true;
+            }
+            if (folder == ancestor)
+            {
+                return true;
+            }
+            return folder.size() > ancestor.size() &&
+                   folder.compare(0, ancestor.size(), ancestor) == 0 &&
+                   folder[ancestor.size()] == '/';
+        }
+
+        std::filesystem::path GetCreateDirectory(const assets::Project &project, std::string_view selectedFolder, std::string_view fallbackFolder)
+        {
+            if (!selectedFolder.empty())
+            {
+                return project.GetAssetDirectoryPath() / std::filesystem::path(std::string(selectedFolder));
+            }
+            return project.GetAssetDirectoryPath() / std::filesystem::path(std::string(fallbackFolder));
+        }
+
+        std::string DisplayCreatePath(const assets::Project &project, const std::filesystem::path &path, std::string_view fileName)
+        {
+            std::error_code errorCode;
+            auto relativePath = std::filesystem::relative(path / std::filesystem::path(std::string(fileName)), project.GetAssetDirectoryPath(), errorCode);
+            return NormalizeAssetRelativePath(errorCode ? path.filename() / std::filesystem::path(std::string(fileName)) : relativePath);
+        }
+
+        void OpenAsset(EditorShell &editorShell, const assets::Project &project, const assets::ProjectAssetEntry &asset)
+        {
+            const auto resolvedPath = project.ResolveAssetReference(asset.reference);
+            if (resolvedPath.extension() == ".plutoscene")
+            {
+                editorShell.OpenSceneFromPath(resolvedPath);
+            }
+            else if (resolvedPath.extension() == ".plutoprefab")
+            {
+                editorShell.OpenSceneFromPath(resolvedPath);
+            }
+            else if (asset.type == assets::ProjectAssetType::Material)
+            {
+                editorShell.OpenMaterialAsset(asset.reference);
+            }
+            else if (asset.type == assets::ProjectAssetType::Mesh)
+            {
+                editorShell.OpenMeshAsset(asset.reference);
+            }
+            else if (asset.type == assets::ProjectAssetType::ShaderGraph)
+            {
+                editorShell.OpenShaderGraphAsset(asset.reference);
+            }
+            else if (asset.type == assets::ProjectAssetType::AnimationGraph)
+            {
+                editorShell.OpenAnimationGraphAsset(asset.reference);
+            }
+            else if (asset.type == assets::ProjectAssetType::ParticleSystem)
+            {
+                editorShell.OpenParticleSystemAsset(asset.reference);
+            }
         }
 
         std::string SanitizeAssetFileName(std::string_view text)
@@ -290,9 +467,18 @@ namespace PlutoGE::ui
             }
 
             const unsigned char header[18] = {
-                0, 0, 2,
-                0, 0, 0, 0, 0,
-                0, 0, 0, 0,
+                0,
+                0,
+                2,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
                 static_cast<unsigned char>(texture.width & 0xff),
                 static_cast<unsigned char>((texture.width >> 8) & 0xff),
                 static_cast<unsigned char>(texture.height & 0xff),
@@ -531,9 +717,9 @@ namespace PlutoGE::ui
         }
 
         bool EnsureAnimationAssetUsesClipReferences(const assets::Project &project,
-                                                   const std::string &animationReference,
-                                                   std::vector<std::string> &clipReferences,
-                                                   std::string *errorMessage)
+                                                    const std::string &animationReference,
+                                                    std::vector<std::string> &clipReferences,
+                                                    std::string *errorMessage)
         {
             auto &assetManager = core::Engine::GetInstance().GetAssetManager();
             if (assetManager.LoadAnimationClipReferences(animationReference, clipReferences))
@@ -562,9 +748,9 @@ namespace PlutoGE::ui
         }
 
         bool AddClipsFromSourceModelToAnimationAsset(const assets::Project &project,
-                                                    const std::string &animationReference,
-                                                    const std::filesystem::path &sourcePath,
-                                                    std::string *errorMessage)
+                                                     const std::string &animationReference,
+                                                     const std::filesystem::path &sourcePath,
+                                                     std::string *errorMessage)
         {
             auto &engine = core::Engine::GetInstance();
             assetimport::ImportedMeshSourceAsset importedSourceAsset;
@@ -995,6 +1181,7 @@ namespace PlutoGE::ui
         if (ImGui::Button("Refresh"))
         {
             project->RefreshAssetRegistry();
+            m_assetCacheDirty = true;
             editorShell.Log(EditorShell::ConsoleSeverity::Info, "Refreshed project assets.");
         }
         ImGui::SameLine();
@@ -1019,6 +1206,7 @@ namespace PlutoGE::ui
             if (ImportExternalSourceModelIntoAssets(*project, &importedReference, &errorMessage))
             {
                 project->RefreshAssetRegistry();
+                m_assetCacheDirty = true;
                 editorShell.MarkProjectDirty();
                 editorShell.Log(EditorShell::ConsoleSeverity::Info, "Imported model into assets: " + importedReference);
             }
@@ -1049,9 +1237,11 @@ namespace PlutoGE::ui
         {
             ImGui::InputText("Name", m_newMaterialNameBuffer.data(), m_newMaterialNameBuffer.size());
             const std::string sanitizedName = SanitizeAssetFileName(m_newMaterialNameBuffer.data());
+            const auto createDirectory = GetCreateDirectory(*project, m_selectedFolder, "Materials");
             if (!sanitizedName.empty())
             {
-                ImGui::TextDisabled("Creates Materials/%s.plutomaterial", sanitizedName.c_str());
+                const std::string fileName = sanitizedName + ".plutomaterial";
+                ImGui::TextDisabled("Creates %s", DisplayCreatePath(*project, createDirectory, fileName).c_str());
             }
             else
             {
@@ -1061,7 +1251,7 @@ namespace PlutoGE::ui
             ImGui::BeginDisabled(sanitizedName.empty());
             if (ImGui::Button("Create"))
             {
-                const auto materialPath = project->GetAssetDirectoryPath() / "Materials" / (sanitizedName + ".plutomaterial");
+                const auto materialPath = createDirectory / (sanitizedName + ".plutomaterial");
                 const std::string reference = project->MakeAssetReference(materialPath);
                 render::MaterialConfig config;
                 config.color = glm::vec4(0.82f, 0.84f, 0.88f, 1.0f);
@@ -1072,6 +1262,7 @@ namespace PlutoGE::ui
                 if (core::Engine::GetInstance().GetAssetManager().SaveMaterialAsset(reference, config, &errorMessage))
                 {
                     project->RefreshAssetRegistry();
+                    m_assetCacheDirty = true;
                     editorShell.OpenMaterialAsset(reference);
                     editorShell.MarkProjectDirty();
                     editorShell.Log(EditorShell::ConsoleSeverity::Info, "Created material: " + reference);
@@ -1096,9 +1287,11 @@ namespace PlutoGE::ui
         {
             ImGui::InputText("Name", m_newParticleSystemNameBuffer.data(), m_newParticleSystemNameBuffer.size());
             const std::string sanitizedName = SanitizeAssetFileName(m_newParticleSystemNameBuffer.data());
+            const auto createDirectory = GetCreateDirectory(*project, m_selectedFolder, "Particles");
             if (!sanitizedName.empty())
             {
-                ImGui::TextDisabled("Creates Particles/%s.plutoparticles", sanitizedName.c_str());
+                const std::string fileName = sanitizedName + ".plutoparticles";
+                ImGui::TextDisabled("Creates %s", DisplayCreatePath(*project, createDirectory, fileName).c_str());
             }
             else
             {
@@ -1108,12 +1301,13 @@ namespace PlutoGE::ui
             ImGui::BeginDisabled(sanitizedName.empty());
             if (ImGui::Button("Create"))
             {
-                const auto particlePath = project->GetAssetDirectoryPath() / "Particles" / (sanitizedName + ".plutoparticles");
+                const auto particlePath = createDirectory / (sanitizedName + ".plutoparticles");
                 const std::string reference = project->MakeAssetReference(particlePath);
                 std::string errorMessage;
                 if (core::Engine::GetInstance().GetAssetManager().SaveParticleSystemAsset(reference, assets::CreateDefaultParticleSystemAsset(), &errorMessage))
                 {
                     project->RefreshAssetRegistry();
+                    m_assetCacheDirty = true;
                     editorShell.OpenParticleSystemAsset(reference);
                     editorShell.MarkProjectDirty();
                     editorShell.Log(EditorShell::ConsoleSeverity::Info, "Created particle system: " + reference);
@@ -1138,9 +1332,11 @@ namespace PlutoGE::ui
         {
             ImGui::InputText("Name", m_newShaderGraphNameBuffer.data(), m_newShaderGraphNameBuffer.size());
             const std::string sanitizedName = SanitizeAssetFileName(m_newShaderGraphNameBuffer.data());
+            const auto createDirectory = GetCreateDirectory(*project, m_selectedFolder, "Shaders");
             if (!sanitizedName.empty())
             {
-                ImGui::TextDisabled("Creates Shaders/%s.plutoshadergraph", sanitizedName.c_str());
+                const std::string fileName = sanitizedName + ".plutoshadergraph";
+                ImGui::TextDisabled("Creates %s", DisplayCreatePath(*project, createDirectory, fileName).c_str());
             }
             else
             {
@@ -1150,12 +1346,13 @@ namespace PlutoGE::ui
             ImGui::BeginDisabled(sanitizedName.empty());
             if (ImGui::Button("Create"))
             {
-                const auto graphPath = project->GetAssetDirectoryPath() / "Shaders" / (sanitizedName + ".plutoshadergraph");
+                const auto graphPath = createDirectory / (sanitizedName + ".plutoshadergraph");
                 const std::string reference = project->MakeAssetReference(graphPath);
                 std::string errorMessage;
                 if (core::Engine::GetInstance().GetAssetManager().SaveShaderGraphAsset(reference, render::CreateDefaultShaderGraph(), &errorMessage))
                 {
                     project->RefreshAssetRegistry();
+                    m_assetCacheDirty = true;
                     editorShell.OpenShaderGraphAsset(reference);
                     editorShell.MarkProjectDirty();
                     editorShell.Log(EditorShell::ConsoleSeverity::Info, "Created shader graph: " + reference);
@@ -1180,9 +1377,11 @@ namespace PlutoGE::ui
         {
             ImGui::InputText("Name", m_newAnimationGraphNameBuffer.data(), m_newAnimationGraphNameBuffer.size());
             const std::string sanitizedName = SanitizeAssetFileName(m_newAnimationGraphNameBuffer.data());
+            const auto createDirectory = GetCreateDirectory(*project, m_selectedFolder, "AnimGraphs");
             if (!sanitizedName.empty())
             {
-                ImGui::TextDisabled("Creates AnimGraphs/%s.plutoanimgraph", sanitizedName.c_str());
+                const std::string fileName = sanitizedName + ".plutoanimgraph";
+                ImGui::TextDisabled("Creates %s", DisplayCreatePath(*project, createDirectory, fileName).c_str());
             }
             else
             {
@@ -1192,12 +1391,13 @@ namespace PlutoGE::ui
             ImGui::BeginDisabled(sanitizedName.empty());
             if (ImGui::Button("Create"))
             {
-                const auto graphPath = project->GetAssetDirectoryPath() / "AnimGraphs" / (sanitizedName + ".plutoanimgraph");
+                const auto graphPath = createDirectory / (sanitizedName + ".plutoanimgraph");
                 const std::string reference = project->MakeAssetReference(graphPath);
                 std::string errorMessage;
                 if (core::Engine::GetInstance().GetAssetManager().SaveAnimationGraphAsset(reference, assets::CreateDefaultAnimationGraphAsset(), &errorMessage))
                 {
                     project->RefreshAssetRegistry();
+                    m_assetCacheDirty = true;
                     editorShell.OpenAnimationGraphAsset(reference);
                     editorShell.MarkProjectDirty();
                     editorShell.Log(EditorShell::ConsoleSeverity::Info, "Created animation graph: " + reference);
@@ -1218,51 +1418,286 @@ namespace PlutoGE::ui
             ImGui::EndPopup();
         }
 
-        ImGui::TextDisabled("Assets: %zu", project->GetManifest().assetEntries.size());
-        ImGui::Separator();
-
         const auto &assets = project->GetManifest().assetEntries;
         const std::string_view filter(m_filterBuffer.data());
-        bool registryChanged = m_cachedProject != project || m_cachedAssetReferences.size() != assets.size();
-        if (!registryChanged)
+        const bool registryChanged = m_assetCacheDirty ||
+                                     m_cachedProject != project ||
+                                     m_cachedAssetReferences.size() != assets.size();
+
+        if (registryChanged)
         {
-            for (std::size_t index = 0; index < assets.size(); ++index)
+            m_assetCacheDirty = false;
+            m_cachedProject = project;
+            m_cachedAssetReferences.clear();
+            m_cachedAssetFolders.clear();
+            m_cachedAssetFileNames.clear();
+            m_cachedAssetRelativePaths.clear();
+            m_cachedFolders.clear();
+            m_cachedAssetReferences.reserve(assets.size());
+            m_cachedAssetFolders.reserve(assets.size());
+            m_cachedAssetFileNames.reserve(assets.size());
+            m_cachedAssetRelativePaths.reserve(assets.size());
+
+            std::set<std::string> folderSet;
+            folderSet.insert("");
+
+            for (int index = 0; index < static_cast<int>(assets.size()); ++index)
             {
-                if (m_cachedAssetReferences[index] != assets[index].reference)
+                const auto &asset = assets[static_cast<std::size_t>(index)];
+                m_cachedAssetReferences.push_back(asset.reference);
+
+                const std::string relativePath = GetReferenceRelativePath(*project, asset);
+                const std::string folder = GetAssetFolderParent(relativePath);
+                const auto separator = relativePath.find_last_of('/');
+                const std::string fileName = separator == std::string::npos ? relativePath : relativePath.substr(separator + 1);
+                m_cachedAssetRelativePaths.push_back(relativePath);
+                m_cachedAssetFolders.push_back(folder);
+                m_cachedAssetFileNames.push_back(fileName.empty() ? DisplayAssetReference(asset.reference) : fileName);
+
+                std::string folderPath = folder;
+                while (!folderPath.empty())
                 {
-                    registryChanged = true;
-                    break;
+                    folderSet.insert(folderPath);
+                    const std::string parentPath = GetAssetFolderParent(folderPath);
+                    if (parentPath.empty() || parentPath == folderPath)
+                    {
+                        break;
+                    }
+                    folderPath = parentPath;
                 }
             }
+
+            std::error_code directoryError;
+            const auto assetDirectory = project->GetAssetDirectoryPath();
+            if (std::filesystem::exists(assetDirectory, directoryError))
+            {
+                for (std::filesystem::recursive_directory_iterator iterator(assetDirectory, directoryError), end; iterator != end && !directoryError; iterator.increment(directoryError))
+                {
+                    if (!iterator->is_directory(directoryError) || directoryError)
+                    {
+                        directoryError.clear();
+                        continue;
+                    }
+
+                    std::error_code relativeError;
+                    const auto relativePath = std::filesystem::relative(iterator->path(), assetDirectory, relativeError);
+                    if (!relativeError)
+                    {
+                        folderSet.insert(NormalizeAssetRelativePath(relativePath));
+                    }
+                }
+            }
+
+            m_cachedFolders.assign(folderSet.begin(), folderSet.end());
+            m_cachedFolderParents.assign(m_cachedFolders.size(), {});
+            m_cachedFolderLabels.assign(m_cachedFolders.size(), {});
+            m_cachedFolderHasChildren.assign(m_cachedFolders.size(), false);
+            m_cachedFolderChildIndices.assign(m_cachedFolders.size(), {});
+            m_cachedRootFolderIndices.clear();
+
+            std::unordered_map<std::string, int> folderIndexByPath;
+            folderIndexByPath.reserve(m_cachedFolders.size());
+            for (std::size_t folderIndex = 0; folderIndex < m_cachedFolders.size(); ++folderIndex)
+            {
+                folderIndexByPath.emplace(m_cachedFolders[folderIndex], static_cast<int>(folderIndex));
+                m_cachedFolderParents[folderIndex] = GetAssetFolderParent(m_cachedFolders[folderIndex]);
+                m_cachedFolderLabels[folderIndex] = GetAssetFolderName(m_cachedFolders[folderIndex]);
+            }
+
+            for (std::size_t folderIndex = 0; folderIndex < m_cachedFolders.size(); ++folderIndex)
+            {
+                const auto &folder = m_cachedFolders[folderIndex];
+                if (folder.empty())
+                {
+                    continue;
+                }
+
+                const auto &parent = m_cachedFolderParents[folderIndex];
+                if (parent.empty())
+                {
+                    m_cachedRootFolderIndices.push_back(static_cast<int>(folderIndex));
+                    continue;
+                }
+
+                const auto parentEntry = folderIndexByPath.find(parent);
+                if (parentEntry != folderIndexByPath.end())
+                {
+                    m_cachedFolderChildIndices[static_cast<std::size_t>(parentEntry->second)].push_back(static_cast<int>(folderIndex));
+                    m_cachedFolderHasChildren[static_cast<std::size_t>(parentEntry->second)] = true;
+                }
+            }
+            m_cachedFilter.clear();
+            m_cachedFolder = "__registry_refresh__";
+            m_selectedAssetIndex = (m_selectedAssetIndex >= 0 && m_selectedAssetIndex < static_cast<int>(assets.size())) ? m_selectedAssetIndex : -1;
         }
 
-        if (registryChanged || m_cachedFilter != filter)
+        if (registryChanged || m_cachedFilter != filter || m_cachedFolder != m_selectedFolder)
         {
-            m_cachedProject = project;
             m_cachedFilter = filter;
-            m_cachedAssetReferences.clear();
+            m_cachedFolder = m_selectedFolder;
             m_filteredAssetIndices.clear();
             m_filteredAssetDisplayNames.clear();
-            m_cachedAssetReferences.reserve(assets.size());
+            m_cachedChildFolders.clear();
+            m_cachedChildFolderLabels.clear();
+            m_cachedChildFolderDisplayNames.clear();
             m_filteredAssetIndices.reserve(assets.size());
             m_filteredAssetDisplayNames.reserve(assets.size());
 
             for (int index = 0; index < static_cast<int>(assets.size()); ++index)
             {
                 const auto &asset = assets[static_cast<std::size_t>(index)];
-                m_cachedAssetReferences.push_back(asset.reference);
-                std::string displayName = std::string("[") + std::string(assets::Project::GetAssetTypeName(asset.type)) + "] " + DisplayAssetReference(asset.reference);
-                if (ContainsInsensitive(displayName, filter))
+                const std::size_t cacheIndex = static_cast<std::size_t>(index);
+                const bool inVisibleScope = filter.empty()
+                                                ? m_cachedAssetFolders[cacheIndex] == m_selectedFolder
+                                                : IsFolderAncestorOrSelf(m_selectedFolder, m_cachedAssetFolders[cacheIndex]);
+                std::string displayName = std::string("[") + std::string(assets::Project::GetAssetTypeName(asset.type)) + "] " +
+                                          (filter.empty() ? m_cachedAssetFileNames[cacheIndex] : m_cachedAssetRelativePaths[cacheIndex]);
+                if (inVisibleScope && ContainsInsensitive(displayName, filter))
                 {
                     m_filteredAssetIndices.push_back(index);
                     m_filteredAssetDisplayNames.push_back(std::move(displayName));
                 }
             }
-            m_hasExpandedMesh = false;
+
+            const std::vector<int> *childFolderIndices = &m_cachedRootFolderIndices;
+            if (!m_selectedFolder.empty())
+            {
+                for (std::size_t folderIndex = 0; folderIndex < m_cachedFolders.size(); ++folderIndex)
+                {
+                    if (m_cachedFolders[folderIndex] == m_selectedFolder)
+                    {
+                        childFolderIndices = &m_cachedFolderChildIndices[folderIndex];
+                        break;
+                    }
+                }
+            }
+
+            m_cachedChildFolders.reserve(childFolderIndices->size());
+            m_cachedChildFolderLabels.reserve(childFolderIndices->size());
+            m_cachedChildFolderDisplayNames.reserve(childFolderIndices->size());
+            for (const int folderIndex : *childFolderIndices)
+            {
+                if (folderIndex >= 0 && static_cast<std::size_t>(folderIndex) < m_cachedFolders.size())
+                {
+                    m_cachedChildFolders.push_back(m_cachedFolders[static_cast<std::size_t>(folderIndex)]);
+                    m_cachedChildFolderLabels.push_back(m_cachedFolderLabels[static_cast<std::size_t>(folderIndex)]);
+                    m_cachedChildFolderDisplayNames.push_back("[Folder] " + m_cachedFolderLabels[static_cast<std::size_t>(folderIndex)]);
+                }
+            }
         }
 
-        ImGui::BeginChild("Assets", ImVec2(0.0f, -ImGui::GetFrameHeightWithSpacing() * 3.0f), true);
-        bool hasExpandedMesh = false;
+        const auto renderFolderTree = [&](const auto &self, const std::vector<int> &folderIndices) -> void
+        {
+            for (const int rawFolderIndex : folderIndices)
+            {
+                if (rawFolderIndex < 0)
+                {
+                    continue;
+                }
+                const std::size_t folderIndex = static_cast<std::size_t>(rawFolderIndex);
+                if (folderIndex >= m_cachedFolders.size())
+                {
+                    continue;
+                }
+
+                const auto &folder = m_cachedFolders[folderIndex];
+                if (folder.empty())
+                {
+                    continue;
+                }
+
+                const bool selected = folder == m_selectedFolder;
+                const bool hasChildren = m_cachedFolderHasChildren[folderIndex];
+                const ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow |
+                                                 ImGuiTreeNodeFlags_SpanAvailWidth |
+                                                 (selected ? ImGuiTreeNodeFlags_Selected : 0) |
+                                                 (hasChildren ? 0 : ImGuiTreeNodeFlags_Leaf);
+                ImGui::PushID(folder.c_str());
+                const bool open = ImGui::TreeNodeEx("Folder", flags, "%s", m_cachedFolderLabels[folderIndex].c_str());
+                if (ImGui::IsItemClicked())
+                {
+                    m_selectedFolder = folder;
+                    m_selectedAssetIndex = -1;
+                }
+                if (open)
+                {
+                    if (hasChildren)
+                    {
+                        self(self, m_cachedFolderChildIndices[folderIndex]);
+                    }
+                    ImGui::TreePop();
+                }
+                ImGui::PopID();
+            }
+        };
+
+        const bool hasSearch = !m_cachedFilter.empty();
+        ImGui::TextDisabled("Assets: %zu", assets.size());
+        ImGui::SameLine();
+        ImGui::TextDisabled("| Folder: %s", m_selectedFolder.empty() ? "Assets" : m_selectedFolder.c_str());
+        ImGui::Separator();
+
+        const float footerHeight = ImGui::GetFrameHeightWithSpacing() * 3.0f;
+        ImGui::BeginChild("ContentBrowserBody", ImVec2(0.0f, -footerHeight), true);
+        const float leftWidth = std::min(260.0f, std::max(180.0f, ImGui::GetContentRegionAvail().x * 0.28f));
+        ImGui::BeginChild("FolderTree", ImVec2(leftWidth, 0.0f), false);
+        const ImGuiTreeNodeFlags rootFlags = ImGuiTreeNodeFlags_DefaultOpen |
+                                             ImGuiTreeNodeFlags_OpenOnArrow |
+                                             ImGuiTreeNodeFlags_SpanAvailWidth |
+                                             (m_selectedFolder.empty() ? ImGuiTreeNodeFlags_Selected : 0);
+        const bool rootOpen = ImGui::TreeNodeEx("AssetsRoot", rootFlags, "Assets");
+        if (ImGui::IsItemClicked())
+        {
+            m_selectedFolder.clear();
+            m_selectedAssetIndex = -1;
+        }
+        if (rootOpen)
+        {
+            renderFolderTree(renderFolderTree, m_cachedRootFolderIndices);
+            ImGui::TreePop();
+        }
+        ImGui::EndChild();
+
+        ImGui::SameLine();
+        ImGui::BeginChild("AssetPane", ImVec2(0.0f, 0.0f), false);
+        if (!m_selectedFolder.empty())
+        {
+            if (ImGui::SmallButton("Assets"))
+            {
+                m_selectedFolder.clear();
+                m_selectedAssetIndex = -1;
+            }
+            std::string breadcrumb;
+            std::size_t partStart = 0;
+            while (partStart < m_selectedFolder.size())
+            {
+                const auto partEnd = m_selectedFolder.find('/', partStart);
+                const std::string label = m_selectedFolder.substr(partStart, partEnd == std::string::npos ? std::string::npos : partEnd - partStart);
+                breadcrumb = breadcrumb.empty() ? label : breadcrumb + "/" + label;
+                ImGui::SameLine();
+                ImGui::TextUnformatted("/");
+                ImGui::SameLine();
+                ImGui::PushID(breadcrumb.c_str());
+                if (ImGui::SmallButton(label.c_str()))
+                {
+                    m_selectedFolder = breadcrumb;
+                    m_selectedAssetIndex = -1;
+                }
+                ImGui::PopID();
+
+                if (partEnd == std::string::npos)
+                {
+                    break;
+                }
+                partStart = partEnd + 1;
+            }
+        }
+        else
+        {
+            ImGui::TextDisabled("Assets");
+        }
+        ImGui::Separator();
+
         auto renderAssetRow = [&](int filteredIndex)
         {
             const int index = m_filteredAssetIndices[static_cast<std::size_t>(filteredIndex)];
@@ -1282,7 +1717,6 @@ namespace PlutoGE::ui
                                                  ImGuiTreeNodeFlags_SpanAvailWidth |
                                                  (selected ? ImGuiTreeNodeFlags_Selected : 0);
                 treeOpen = ImGui::TreeNodeEx("AssetTreeNode", flags, "%s", displayName.c_str());
-                hasExpandedMesh = hasExpandedMesh || treeOpen;
                 rowActivated = ImGui::IsItemClicked();
             }
             else
@@ -1297,35 +1731,7 @@ namespace PlutoGE::ui
 
             if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
             {
-                const auto resolvedPath = project->ResolveAssetReference(asset.reference);
-                if (resolvedPath.extension() == ".plutoscene")
-                {
-                    editorShell.OpenSceneFromPath(resolvedPath);
-                }
-                else if (resolvedPath.extension() == ".plutoprefab")
-                {
-                    editorShell.OpenSceneFromPath(resolvedPath);
-                }
-                else if (asset.type == assets::ProjectAssetType::Material)
-                {
-                    editorShell.OpenMaterialAsset(asset.reference);
-                }
-                else if (asset.type == assets::ProjectAssetType::Mesh)
-                {
-                    editorShell.OpenMeshAsset(asset.reference);
-                }
-                else if (asset.type == assets::ProjectAssetType::ShaderGraph)
-                {
-                    editorShell.OpenShaderGraphAsset(asset.reference);
-                }
-                else if (asset.type == assets::ProjectAssetType::AnimationGraph)
-                {
-                    editorShell.OpenAnimationGraphAsset(asset.reference);
-                }
-                else if (asset.type == assets::ProjectAssetType::ParticleSystem)
-                {
-                    editorShell.OpenParticleSystemAsset(asset.reference);
-                }
+                OpenAsset(editorShell, *project, asset);
             }
 
             if (ImGui::BeginDragDropSource())
@@ -1417,23 +1823,37 @@ namespace PlutoGE::ui
             ImGui::PopID();
         };
 
-        if (m_hasExpandedMesh)
+        if (!hasSearch)
         {
-            for (int filteredIndex = 0; filteredIndex < static_cast<int>(m_filteredAssetIndices.size()); ++filteredIndex)
+            for (std::size_t folderIndex = 0; folderIndex < m_cachedChildFolders.size(); ++folderIndex)
             {
-                renderAssetRow(filteredIndex);
+                const auto &folder = m_cachedChildFolders[folderIndex];
+                const auto &label = m_cachedChildFolderDisplayNames[folderIndex];
+                ImGui::PushID(folder.c_str());
+                const bool selected = m_selectedAssetIndex < 0 && folder == m_selectedFolder;
+                if (ImGui::Selectable(label.c_str(), selected, ImGuiSelectableFlags_AllowDoubleClick))
+                {
+                    if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+                    {
+                        m_selectedFolder = folder;
+                        m_selectedAssetIndex = -1;
+                    }
+                }
+                ImGui::PopID();
             }
         }
         else
         {
-            ImGuiListClipper clipper;
-            clipper.Begin(static_cast<int>(m_filteredAssetIndices.size()));
-            while (clipper.Step())
+            ImGui::TextDisabled("Search results in %s", m_selectedFolder.empty() ? "Assets" : m_selectedFolder.c_str());
+        }
+
+        ImGuiListClipper clipper;
+        clipper.Begin(static_cast<int>(m_filteredAssetIndices.size()));
+        while (clipper.Step())
+        {
+            for (int filteredIndex = clipper.DisplayStart; filteredIndex < clipper.DisplayEnd; ++filteredIndex)
             {
-                for (int filteredIndex = clipper.DisplayStart; filteredIndex < clipper.DisplayEnd; ++filteredIndex)
-                {
-                    renderAssetRow(filteredIndex);
-                }
+                renderAssetRow(filteredIndex);
             }
         }
 
@@ -1443,7 +1863,7 @@ namespace PlutoGE::ui
             ImGui::EndPopup();
         }
 
-        m_hasExpandedMesh = hasExpandedMesh;
+        ImGui::EndChild();
         ImGui::EndChild();
 
         if (m_selectedAssetIndex >= 0 && m_selectedAssetIndex < static_cast<int>(assets.size()))
@@ -1480,6 +1900,7 @@ namespace PlutoGE::ui
                         if (AddClipsFromSourceModelToAnimationAsset(*project, asset.reference, selectedPath, &errorMessage))
                         {
                             project->RefreshAssetRegistry();
+                            m_assetCacheDirty = true;
                             editorShell.MarkProjectDirty();
                             editorShell.Log(EditorShell::ConsoleSeverity::Info, "Added animation clips to: " + asset.reference);
                         }
@@ -1527,6 +1948,7 @@ namespace PlutoGE::ui
                     if (ImportSourceModelAsset(*project, asset, &errorMessage))
                     {
                         project->RefreshAssetRegistry();
+                        m_assetCacheDirty = true;
                         editorShell.MarkProjectDirty();
                         editorShell.Log(EditorShell::ConsoleSeverity::Info, "Imported model assets: " + asset.reference);
                     }

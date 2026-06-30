@@ -3,6 +3,7 @@
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/ui/EditorShell.h"
+#include "PlutoGE/ui/GraphEditorPanelUtils.h"
 
 #include <algorithm>
 #include <array>
@@ -1349,206 +1350,219 @@ namespace PlutoGE::ui
         ImGui::EndDisabled();
 
         ImGui::Separator();
-        ImGui::Columns(2, "ShaderGraphEditorColumns", true);
 
-        const ImVec2 graphSize(ImGui::GetContentRegionAvail().x, std::max(360.0f, ImGui::GetContentRegionAvail().y - 62.0f));
-        ImGui::BeginChild("ShaderGraphCanvasHost", graphSize, true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-        const ImVec2 canvasScreenPos = ImGui::GetCursorScreenPos();
-        ShaderGraphDelegate delegate(m_graph,
-                                     m_selectedNodeIds,
-                                     m_selectedNodeId,
-                                     m_nodeScreenRects,
-                                     m_graphViewState,
-                                     canvasScreenPos,
-                                     m_addNodePosition,
-                                     m_resizingNodeId,
-                                     m_openAddNodePopup,
-                                     m_showNodePreviews,
-                                     m_dirty);
-        GraphEditor::Show(delegate, m_graphOptions, m_graphViewState, !engineGraph, &m_graphFit);
-        if (m_openAddNodePopup)
+        const float footerHeight = ImGui::GetFrameHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y;
+        ImGui::BeginChild("ShaderGraphEditorBody", ImVec2(0.0f, -footerHeight), false, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+        if (ImGui::BeginTable("ShaderGraphEditorLayout", 2, ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoSavedSettings))
         {
-            ImGui::OpenPopup("ShaderGraphAddNodePopup");
-            m_openAddNodePopup = false;
-        }
-        ImGui::BeginDisabled(engineGraph);
-        if (ImGui::BeginPopup("ShaderGraphAddNodePopup"))
-        {
-            if (ImGui::BeginMenu("Inputs"))
-            {
-                AddNodeMenuItem("Material Input", m_graph, render::ShaderGraphNodeKind::MaterialInput, "Material Input", m_addNodePosition, m_dirty);
-                AddNodeMenuItem("Mesh UV", m_graph, render::ShaderGraphNodeKind::MeshUV, "Mesh UV", m_addNodePosition, m_dirty);
-                ImGui::EndMenu();
-            }
-            if (ImGui::BeginMenu("Values"))
-            {
-                AddNodeMenuItem("Float", m_graph, render::ShaderGraphNodeKind::Float, "Float", m_addNodePosition, m_dirty);
-                AddNodeMenuItem("Vec2", m_graph, render::ShaderGraphNodeKind::Vec2, "Vec2", m_addNodePosition, m_dirty);
-                AddNodeMenuItem("Vec3", m_graph, render::ShaderGraphNodeKind::Vec3, "Vec3", m_addNodePosition, m_dirty);
-                AddNodeMenuItem("Color", m_graph, render::ShaderGraphNodeKind::Color, "Color", m_addNodePosition, m_dirty);
-                ImGui::EndMenu();
-            }
-            if (ImGui::BeginMenu("Textures"))
-            {
-                AddNodeMenuItem("Noise Texture", m_graph, render::ShaderGraphNodeKind::NoiseTexture, "Noise Texture", m_addNodePosition, m_dirty);
-                ImGui::EndMenu();
-            }
-            if (ImGui::BeginMenu("Math"))
-            {
-                AddNodeMenuItem("Add", m_graph, render::ShaderGraphNodeKind::Add, "Add", m_addNodePosition, m_dirty);
-                AddNodeMenuItem("Subtract", m_graph, render::ShaderGraphNodeKind::Subtract, "Subtract", m_addNodePosition, m_dirty);
-                AddNodeMenuItem("Multiply", m_graph, render::ShaderGraphNodeKind::Multiply, "Multiply", m_addNodePosition, m_dirty);
-                AddNodeMenuItem("Divide", m_graph, render::ShaderGraphNodeKind::Divide, "Divide", m_addNodePosition, m_dirty);
-                AddNodeMenuItem("Lerp", m_graph, render::ShaderGraphNodeKind::Lerp, "Lerp", m_addNodePosition, m_dirty);
-                AddNodeMenuItem("Clamp", m_graph, render::ShaderGraphNodeKind::Clamp, "Clamp", m_addNodePosition, m_dirty);
-                AddNodeMenuItem("Normalize", m_graph, render::ShaderGraphNodeKind::Normalize, "Normalize", m_addNodePosition, m_dirty);
-                ImGui::EndMenu();
-            }
-            if (ImGui::BeginMenu("Output"))
-            {
-                AddNodeMenuItem("Geometry Output", m_graph, render::ShaderGraphNodeKind::Output, "Geometry Output", m_addNodePosition, m_dirty);
-                ImGui::EndMenu();
-            }
-            ImGui::EndPopup();
-        }
-        ImGui::EndDisabled();
-        ImGui::EndChild();
+            ImGui::TableSetupColumn("Graph", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+            ImGui::TableSetupColumn("Inspector", ImGuiTableColumnFlags_WidthFixed, 340.0f);
+            ImGui::TableNextRow();
 
-        ImGui::NextColumn();
-        ImGui::TextUnformatted("Inspector");
-        render::ShaderGraphNode *selectedNode = FindNode(m_graph, m_selectedNodeId);
-        if (selectedNode)
-        {
+            ImGui::TableSetColumnIndex(0);
+            ImGui::BeginChild("ShaderGraphCanvasHost", ImVec2(0.0f, 0.0f), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+            const ImVec2 canvasScreenPos = ImGui::GetCursorScreenPos();
+            ShaderGraphDelegate delegate(m_graph,
+                                         m_selectedNodeIds,
+                                         m_selectedNodeId,
+                                         m_nodeScreenRects,
+                                         m_graphViewState,
+                                         canvasScreenPos,
+                                         m_addNodePosition,
+                                         m_resizingNodeId,
+                                         m_openAddNodePopup,
+                                         m_showNodePreviews,
+                                         m_dirty);
+            graph_editor_panel::ShowWithCanvasWheelGuard(delegate, m_graphOptions, m_graphViewState, !engineGraph, &m_graphFit);
+
+            if (m_openAddNodePopup)
+            {
+                ImGui::OpenPopup("ShaderGraphAddNodePopup");
+                m_openAddNodePopup = false;
+            }
             ImGui::BeginDisabled(engineGraph);
-            char nameBuffer[128]{};
-            strncpy_s(nameBuffer, selectedNode->name.c_str(), _TRUNCATE);
-            if (ImGui::InputText("Name", nameBuffer, sizeof(nameBuffer)))
+            if (ImGui::BeginPopup("ShaderGraphAddNodePopup"))
             {
-                selectedNode->name = nameBuffer;
-                m_dirty = true;
-            }
-
-            float position[2] = {selectedNode->position.x, selectedNode->position.y};
-            if (ImGui::DragFloat2("Position", position, 1.0f))
-            {
-                selectedNode->position = {position[0], position[1]};
-                m_dirty = true;
-            }
-
-            bool collapsed = selectedNode->collapsed;
-            if (ImGui::Checkbox("Collapsed", &collapsed))
-            {
-                selectedNode->collapsed = collapsed;
-                if (selectedNode->size.x <= 0.0f)
+                if (ImGui::BeginMenu("Inputs"))
                 {
-                    selectedNode->size.x = kDefaultNodeWidth;
+                    AddNodeMenuItem("Material Input", m_graph, render::ShaderGraphNodeKind::MaterialInput, "Material Input", m_addNodePosition, m_dirty);
+                    AddNodeMenuItem("Mesh UV", m_graph, render::ShaderGraphNodeKind::MeshUV, "Mesh UV", m_addNodePosition, m_dirty);
+                    ImGui::EndMenu();
                 }
-                if (selectedNode->size.y <= 0.0f)
+                if (ImGui::BeginMenu("Values"))
                 {
-                    selectedNode->size.y = NodeHeight(selectedNode->kind, selectedNode->componentPins);
+                    AddNodeMenuItem("Float", m_graph, render::ShaderGraphNodeKind::Float, "Float", m_addNodePosition, m_dirty);
+                    AddNodeMenuItem("Vec2", m_graph, render::ShaderGraphNodeKind::Vec2, "Vec2", m_addNodePosition, m_dirty);
+                    AddNodeMenuItem("Vec3", m_graph, render::ShaderGraphNodeKind::Vec3, "Vec3", m_addNodePosition, m_dirty);
+                    AddNodeMenuItem("Color", m_graph, render::ShaderGraphNodeKind::Color, "Color", m_addNodePosition, m_dirty);
+                    ImGui::EndMenu();
                 }
-                m_dirty = true;
-            }
-
-            float size[2] = {NodeWidth(*selectedNode), selectedNode->collapsed ? std::max(NodeHeight(selectedNode->kind, selectedNode->componentPins), selectedNode->size.y) : NodeHeight(*selectedNode)};
-            if (ImGui::DragFloat2("Size", size, 1.0f, 0.0f, 0.0f, "%.0f"))
-            {
-                selectedNode->size.x = std::max(kNodeMinWidth, size[0]);
-                selectedNode->size.y = std::max(NodeHeight(selectedNode->kind, selectedNode->componentPins), size[1]);
-                m_dirty = true;
-            }
-
-            if (SupportsComponentPins(selectedNode->kind))
-            {
-                bool componentPins = selectedNode->componentPins;
-                if (ImGui::Checkbox("Component Pins", &componentPins))
+                if (ImGui::BeginMenu("Textures"))
                 {
-                    selectedNode->componentPins = componentPins;
-                    selectedNode->size.y = std::max(selectedNode->size.y, NodeHeight(selectedNode->kind, selectedNode->componentPins));
-                    RemoveLinksForNode(m_graph, selectedNode->id);
-                    m_dirty = true;
+                    AddNodeMenuItem("Noise Texture", m_graph, render::ShaderGraphNodeKind::NoiseTexture, "Noise Texture", m_addNodePosition, m_dirty);
+                    ImGui::EndMenu();
                 }
-            }
-
-            if (selectedNode->kind == render::ShaderGraphNodeKind::MaterialInput)
-            {
-                int materialInput = static_cast<int>(selectedNode->materialInput);
-                const char *items[] = {"Color", "Normal", "Metallic", "Roughness", "Opacity", "UV"};
-                if (ImGui::Combo("Input", &materialInput, items, IM_ARRAYSIZE(items)))
+                if (ImGui::BeginMenu("Math"))
                 {
-                    selectedNode->materialInput = static_cast<render::ShaderGraphMaterialInput>(materialInput);
-                    m_dirty = true;
+                    AddNodeMenuItem("Add", m_graph, render::ShaderGraphNodeKind::Add, "Add", m_addNodePosition, m_dirty);
+                    AddNodeMenuItem("Subtract", m_graph, render::ShaderGraphNodeKind::Subtract, "Subtract", m_addNodePosition, m_dirty);
+                    AddNodeMenuItem("Multiply", m_graph, render::ShaderGraphNodeKind::Multiply, "Multiply", m_addNodePosition, m_dirty);
+                    AddNodeMenuItem("Divide", m_graph, render::ShaderGraphNodeKind::Divide, "Divide", m_addNodePosition, m_dirty);
+                    AddNodeMenuItem("Lerp", m_graph, render::ShaderGraphNodeKind::Lerp, "Lerp", m_addNodePosition, m_dirty);
+                    AddNodeMenuItem("Clamp", m_graph, render::ShaderGraphNodeKind::Clamp, "Clamp", m_addNodePosition, m_dirty);
+                    AddNodeMenuItem("Normalize", m_graph, render::ShaderGraphNodeKind::Normalize, "Normalize", m_addNodePosition, m_dirty);
+                    ImGui::EndMenu();
                 }
-            }
-            else if (selectedNode->kind == render::ShaderGraphNodeKind::Float)
-            {
-                if (ImGui::DragFloat("Value", &selectedNode->value.x, 0.01f))
+                if (ImGui::BeginMenu("Output"))
                 {
-                    m_dirty = true;
+                    AddNodeMenuItem("Geometry Output", m_graph, render::ShaderGraphNodeKind::Output, "Geometry Output", m_addNodePosition, m_dirty);
+                    ImGui::EndMenu();
                 }
-            }
-            else if (selectedNode->kind == render::ShaderGraphNodeKind::Vec2)
-            {
-                if (ImGui::DragFloat2("Value", &selectedNode->value.x, 0.01f))
-                {
-                    m_dirty = true;
-                }
-            }
-            else if (selectedNode->kind == render::ShaderGraphNodeKind::Vec3)
-            {
-                if (ImGui::DragFloat3("Value", &selectedNode->value.x, 0.01f))
-                {
-                    m_dirty = true;
-                }
-            }
-            else if (selectedNode->kind == render::ShaderGraphNodeKind::Color)
-            {
-                if (ImGui::ColorEdit4("Value", &selectedNode->value.x))
-                {
-                    m_dirty = true;
-                }
-            }
-            else if (selectedNode->kind == render::ShaderGraphNodeKind::NoiseTexture)
-            {
-                if (ImGui::DragFloat("Scale", &selectedNode->value.x, 0.1f, 0.01f, 512.0f))
-                {
-                    m_dirty = true;
-                }
-                if (ImGui::DragFloat("Strength", &selectedNode->value.y, 0.01f, 0.0f, 8.0f))
-                {
-                    m_dirty = true;
-                }
-            }
-
-            ImGui::BeginDisabled(IsOutputNode(*selectedNode));
-            if (ImGui::Button("Delete Node"))
-            {
-                const int removedId = selectedNode->id;
-                m_graph.nodes.erase(std::remove_if(m_graph.nodes.begin(), m_graph.nodes.end(),
-                                                   [removedId](const render::ShaderGraphNode &node)
-                                                   {
-                                                       return node.id == removedId;
-                                                   }),
-                                    m_graph.nodes.end());
-                m_graph.links.erase(std::remove_if(m_graph.links.begin(), m_graph.links.end(),
-                                                   [removedId](const render::ShaderGraphLink &link)
-                                                   {
-                                                       return link.fromNodeId == removedId || link.toNodeId == removedId;
-                                                   }),
-                                    m_graph.links.end());
-                m_selectedNodeIds.erase(std::remove(m_selectedNodeIds.begin(), m_selectedNodeIds.end(), removedId), m_selectedNodeIds.end());
-                m_selectedNodeId = m_graph.nodes.empty() ? 0 : m_graph.nodes.front().id;
-                m_dirty = true;
+                ImGui::EndPopup();
             }
             ImGui::EndDisabled();
-            ImGui::EndDisabled();
-        }
-        else
-        {
-            ImGui::TextDisabled("Select a node in the graph.");
-        }
+            ImGui::EndChild();
 
-        ImGui::Columns(1);
+            ImGui::TableSetColumnIndex(1);
+            ImGui::BeginChild("ShaderGraphInspector", ImVec2(0.0f, 0.0f), true);
+            ImGui::TextUnformatted("Inspector");
+            ImGui::Separator();
+            render::ShaderGraphNode *selectedNode = FindNode(m_graph, m_selectedNodeId);
+            if (selectedNode)
+            {
+                ImGui::BeginDisabled(engineGraph);
+                char nameBuffer[128]{};
+                strncpy_s(nameBuffer, selectedNode->name.c_str(), _TRUNCATE);
+                if (ImGui::InputText("Name", nameBuffer, sizeof(nameBuffer)))
+                {
+                    selectedNode->name = nameBuffer;
+                    m_dirty = true;
+                }
+
+                float position[2] = {selectedNode->position.x, selectedNode->position.y};
+                if (ImGui::DragFloat2("Position", position, 1.0f))
+                {
+                    selectedNode->position = {position[0], position[1]};
+                    m_dirty = true;
+                }
+
+                bool collapsed = selectedNode->collapsed;
+                if (ImGui::Checkbox("Collapsed", &collapsed))
+                {
+                    selectedNode->collapsed = collapsed;
+                    if (selectedNode->size.x <= 0.0f)
+                    {
+                        selectedNode->size.x = kDefaultNodeWidth;
+                    }
+                    if (selectedNode->size.y <= 0.0f)
+                    {
+                        selectedNode->size.y = NodeHeight(selectedNode->kind, selectedNode->componentPins);
+                    }
+                    m_dirty = true;
+                }
+
+                float size[2] = {NodeWidth(*selectedNode), selectedNode->collapsed ? std::max(NodeHeight(selectedNode->kind, selectedNode->componentPins), selectedNode->size.y) : NodeHeight(*selectedNode)};
+                if (ImGui::DragFloat2("Size", size, 1.0f, 0.0f, 0.0f, "%.0f"))
+                {
+                    selectedNode->size.x = std::max(kNodeMinWidth, size[0]);
+                    selectedNode->size.y = std::max(NodeHeight(selectedNode->kind, selectedNode->componentPins), size[1]);
+                    m_dirty = true;
+                }
+
+                if (SupportsComponentPins(selectedNode->kind))
+                {
+                    bool componentPins = selectedNode->componentPins;
+                    if (ImGui::Checkbox("Component Pins", &componentPins))
+                    {
+                        selectedNode->componentPins = componentPins;
+                        selectedNode->size.y = std::max(selectedNode->size.y, NodeHeight(selectedNode->kind, selectedNode->componentPins));
+                        RemoveLinksForNode(m_graph, selectedNode->id);
+                        m_dirty = true;
+                    }
+                }
+
+                if (selectedNode->kind == render::ShaderGraphNodeKind::MaterialInput)
+                {
+                    int materialInput = static_cast<int>(selectedNode->materialInput);
+                    const char *items[] = {"Color", "Normal", "Metallic", "Roughness", "Opacity", "UV"};
+                    if (ImGui::Combo("Input", &materialInput, items, IM_ARRAYSIZE(items)))
+                    {
+                        selectedNode->materialInput = static_cast<render::ShaderGraphMaterialInput>(materialInput);
+                        m_dirty = true;
+                    }
+                }
+                else if (selectedNode->kind == render::ShaderGraphNodeKind::Float)
+                {
+                    if (ImGui::DragFloat("Value", &selectedNode->value.x, 0.01f))
+                    {
+                        m_dirty = true;
+                    }
+                }
+                else if (selectedNode->kind == render::ShaderGraphNodeKind::Vec2)
+                {
+                    if (ImGui::DragFloat2("Value", &selectedNode->value.x, 0.01f))
+                    {
+                        m_dirty = true;
+                    }
+                }
+                else if (selectedNode->kind == render::ShaderGraphNodeKind::Vec3)
+                {
+                    if (ImGui::DragFloat3("Value", &selectedNode->value.x, 0.01f))
+                    {
+                        m_dirty = true;
+                    }
+                }
+                else if (selectedNode->kind == render::ShaderGraphNodeKind::Color)
+                {
+                    if (ImGui::ColorEdit4("Value", &selectedNode->value.x))
+                    {
+                        m_dirty = true;
+                    }
+                }
+                else if (selectedNode->kind == render::ShaderGraphNodeKind::NoiseTexture)
+                {
+                    if (ImGui::DragFloat("Scale", &selectedNode->value.x, 0.1f, 0.01f, 512.0f))
+                    {
+                        m_dirty = true;
+                    }
+                    if (ImGui::DragFloat("Strength", &selectedNode->value.y, 0.01f, 0.0f, 8.0f))
+                    {
+                        m_dirty = true;
+                    }
+                }
+
+                ImGui::BeginDisabled(IsOutputNode(*selectedNode));
+                if (ImGui::Button("Delete Node"))
+                {
+                    const int removedId = selectedNode->id;
+                    m_graph.nodes.erase(std::remove_if(m_graph.nodes.begin(), m_graph.nodes.end(),
+                                                       [removedId](const render::ShaderGraphNode &node)
+                                                       {
+                                                           return node.id == removedId;
+                                                       }),
+                                        m_graph.nodes.end());
+                    m_graph.links.erase(std::remove_if(m_graph.links.begin(), m_graph.links.end(),
+                                                       [removedId](const render::ShaderGraphLink &link)
+                                                       {
+                                                           return link.fromNodeId == removedId || link.toNodeId == removedId;
+                                                       }),
+                                        m_graph.links.end());
+                    m_selectedNodeIds.erase(std::remove(m_selectedNodeIds.begin(), m_selectedNodeIds.end(), removedId), m_selectedNodeIds.end());
+                    m_selectedNodeId = m_graph.nodes.empty() ? 0 : m_graph.nodes.front().id;
+                    m_dirty = true;
+                }
+                ImGui::EndDisabled();
+                ImGui::EndDisabled();
+            }
+            else
+            {
+                ImGui::TextDisabled("Select a node in the graph.");
+            }
+            ImGui::EndChild();
+
+            ImGui::EndTable();
+        }
+        ImGui::EndChild();
 
         ImGui::Separator();
         ImGui::BeginDisabled(engineGraph || !m_dirty);

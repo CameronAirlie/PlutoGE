@@ -1104,6 +1104,62 @@ namespace PlutoGE::scene
         return true;
     }
 
+    void Scene::RaycastBatch(const std::vector<PhysicsRaycastRequest> &requests,
+                             EntityID ignoredEntityId,
+                             std::vector<PhysicsRaycastHit> &hits,
+                             std::vector<uint8_t> &hitResults) const
+    {
+        hits.assign(requests.size(), {});
+        hitResults.assign(requests.size(), 0);
+        if (requests.empty())
+        {
+            return;
+        }
+
+        std::vector<Entity *> entities;
+        for (auto *rootEntity : m_rootEntities)
+        {
+            CollectActiveEntities(rootEntity, entities);
+        }
+
+        auto queryWorld = BuildBulletQueryWorld(entities, ignoredEntityId);
+        for (std::size_t index = 0; index < requests.size(); ++index)
+        {
+            const auto &request = requests[index];
+            const float directionLength = glm::length(request.direction);
+            if (directionLength <= std::numeric_limits<float>::epsilon() || request.maxDistance <= 0.0f)
+            {
+                continue;
+            }
+
+            const glm::vec3 normalizedDirection = request.direction / directionLength;
+            const btVector3 from = ToBullet(request.origin);
+            const btVector3 to = ToBullet(request.origin + normalizedDirection * request.maxDistance);
+
+            btCollisionWorld::ClosestRayResultCallback callback(from, to);
+            queryWorld->collisionWorld.rayTest(from, to, callback);
+            if (!callback.hasHit())
+            {
+                continue;
+            }
+
+            auto *entity = callback.m_collisionObject
+                               ? static_cast<Entity *>(callback.m_collisionObject->getUserPointer())
+                               : nullptr;
+            if (!entity)
+            {
+                continue;
+            }
+
+            auto &hit = hits[index];
+            hit.entityId = entity->GetID();
+            hit.point = FromBullet(callback.m_hitPointWorld);
+            hit.normal = glm::normalize(FromBullet(callback.m_hitNormalWorld));
+            hit.distance = glm::length(hit.point - request.origin);
+            hitResults[index] = 1;
+        }
+    }
+
     bool Scene::RaycastByTag(const glm::vec3 &origin,
                              const glm::vec3 &direction,
                              float maxDistance,

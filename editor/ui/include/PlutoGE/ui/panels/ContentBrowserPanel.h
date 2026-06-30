@@ -56,12 +56,26 @@ namespace PlutoGE::ui
         std::array<char, 96> m_newShaderGraphNameBuffer{};
         std::array<char, 96> m_newAnimationGraphNameBuffer{};
         int m_selectedAssetIndex = -1;
+        std::string m_selectedFolder;
+        bool m_assetCacheDirty = true;
         const assets::Project *m_cachedProject = nullptr;
         std::string m_cachedFilter;
+        std::string m_cachedFolder;
         std::vector<std::string> m_cachedAssetReferences;
+        std::vector<std::string> m_cachedAssetFolders;
+        std::vector<std::string> m_cachedAssetFileNames;
+        std::vector<std::string> m_cachedAssetRelativePaths;
+        std::vector<std::string> m_cachedFolders;
+        std::vector<std::string> m_cachedFolderParents;
+        std::vector<std::string> m_cachedChildFolders;
+        std::vector<std::string> m_cachedChildFolderLabels;
+        std::vector<std::string> m_cachedChildFolderDisplayNames;
+        std::vector<std::string> m_cachedFolderLabels;
+        std::vector<bool> m_cachedFolderHasChildren;
+        std::vector<std::vector<int>> m_cachedFolderChildIndices;
+        std::vector<int> m_cachedRootFolderIndices;
         std::vector<int> m_filteredAssetIndices;
         std::vector<std::string> m_filteredAssetDisplayNames;
-        bool m_hasExpandedMesh = false;
         PendingMenuAction m_pendingMenuAction = PendingMenuAction::None;
     };
 }

@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <iostream>
 #include <vector>
 
@@ -124,6 +125,11 @@ namespace PlutoGE::render
                 uniform mat4 uProjection;
                 uniform vec3 uCameraRight;
                 uniform vec3 uCameraUp;
+                uniform float uStartColorAlpha;
+                uniform int uColorOverLifetimeEnabled;
+                uniform vec4 uEndColor;
+                uniform int uSizeOverLifetimeEnabled;
+                uniform float uEndSize;
 
                 void EmitCorner(vec3 center, vec2 corner, vec2 uv, float size)
                 {
@@ -141,9 +147,21 @@ namespace PlutoGE::render
                     }
 
                     float normalizedAge = clamp(vAge[0] / max(vLifetime[0], 0.0001), 0.0, 1.0);
-                    float alpha = 1.0 - normalizedAge;
                     float size = max(vColorSize[0].w, 0.0);
-                    gColor = vec4(vColorSize[0].rgb, alpha);
+                    if (uSizeOverLifetimeEnabled != 0)
+                    {
+                        size = mix(size, max(uEndSize, 0.0), normalizedAge);
+                    }
+
+                    gColor = vec4(vColorSize[0].rgb, uStartColorAlpha);
+                    if (uColorOverLifetimeEnabled != 0)
+                    {
+                        gColor = mix(gColor, uEndColor, normalizedAge);
+                    }
+                    else
+                    {
+                        gColor.a *= 1.0 - normalizedAge;
+                    }
 
                     EmitCorner(vPosition[0], vec2(-0.5, -0.5), vec2(0.0, 0.0), size);
                     EmitCorner(vPosition[0], vec2( 0.5, -0.5), vec2(1.0, 0.0), size);
@@ -189,6 +207,64 @@ namespace PlutoGE::render
             )";
             return Shader::Create(source);
         }
+
+        Shader *CreateParticleTrailShader()
+        {
+            ShaderSource source;
+            source.vertexSource = R"(
+                #version 330 core
+                layout(location = 0) in vec3 aPosition;
+                layout(location = 1) in vec4 aColor;
+                layout(location = 2) in vec2 aUv;
+
+                out vec4 vColor;
+                out vec2 vUv;
+
+                uniform mat4 uView;
+                uniform mat4 uProjection;
+
+                void main()
+                {
+                    gl_Position = uProjection * uView * vec4(aPosition, 1.0);
+                    vColor = aColor;
+                    vUv = aUv;
+                }
+            )";
+            source.fragmentSource = R"(
+                #version 330 core
+                in vec4 vColor;
+                in vec2 vUv;
+                out vec4 FragColor;
+
+                uniform vec4 uColor;
+                uniform sampler2D uAlbedoTexture;
+                uniform float uHasAlbedoTexture;
+
+                void main()
+                {
+                    vec4 materialColor = uColor;
+                    if (uHasAlbedoTexture > 0.5)
+                    {
+                        materialColor *= texture(uAlbedoTexture, vUv);
+                    }
+
+                    vec4 color = vColor * materialColor;
+                    if (color.a <= 0.01)
+                    {
+                        discard;
+                    }
+                    FragColor = color;
+                }
+            )";
+            return Shader::Create(source);
+        }
+
+        struct ParticleTrailVertex
+        {
+            glm::vec3 position{0.0f};
+            glm::vec4 color{1.0f};
+            glm::vec2 uv{0.0f};
+        };
 
         int ToInt(scene::ParticleSimulationSpace value)
         {
@@ -326,6 +402,130 @@ namespace PlutoGE::render
             }
             glBindBuffer(GL_ARRAY_BUFFER, 0);
         }
+
+        std::vector<scene::ParticleGpuData> BuildCpuParticleRenderData(const scene::ParticleSystemComponent &particleSystem)
+        {
+            std::vector<scene::ParticleGpuData> particles;
+            for (const auto &cpuParticle : particleSystem.GetCpuParticles())
+            {
+                if (!cpuParticle.active || cpuParticle.age > cpuParticle.lifetime)
+                {
+                    continue;
+                }
+
+                scene::ParticleGpuData particle;
+                particle.positionAge = glm::vec4(cpuParticle.position, cpuParticle.age);
+                particle.velocityLifetime = glm::vec4(cpuParticle.velocity, cpuParticle.lifetime);
+                particle.colorSize = glm::vec4(glm::vec3(cpuParticle.color), cpuParticle.size);
+                particle.seed = glm::vec4(cpuParticle.seed, cpuParticle.seed * 1.37f, cpuParticle.seed * 2.11f, 1.0f);
+                particles.push_back(particle);
+            }
+            return particles;
+        }
+
+        void EnsureCpuParticleBuffer(GLuint &vao, GLuint &buffer)
+        {
+            if (vao != 0 && buffer != 0)
+            {
+                return;
+            }
+
+            glGenVertexArrays(1, &vao);
+            glGenBuffers(1, &buffer);
+            glBindVertexArray(vao);
+            glBindBuffer(GL_ARRAY_BUFFER, buffer);
+            glEnableVertexAttribArray(0);
+            glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, sizeof(scene::ParticleGpuData), reinterpret_cast<const void *>(offsetof(scene::ParticleGpuData, positionAge)));
+            glEnableVertexAttribArray(1);
+            glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, sizeof(scene::ParticleGpuData), reinterpret_cast<const void *>(offsetof(scene::ParticleGpuData, velocityLifetime)));
+            glEnableVertexAttribArray(2);
+            glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, sizeof(scene::ParticleGpuData), reinterpret_cast<const void *>(offsetof(scene::ParticleGpuData, colorSize)));
+            glEnableVertexAttribArray(3);
+            glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, sizeof(scene::ParticleGpuData), reinterpret_cast<const void *>(offsetof(scene::ParticleGpuData, seed)));
+            glBindVertexArray(0);
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+        }
+
+        void EnsureTrailBuffer(GLuint &vao, GLuint &buffer)
+        {
+            if (vao != 0 && buffer != 0)
+            {
+                return;
+            }
+
+            glGenVertexArrays(1, &vao);
+            glGenBuffers(1, &buffer);
+            glBindVertexArray(vao);
+            glBindBuffer(GL_ARRAY_BUFFER, buffer);
+            glEnableVertexAttribArray(0);
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(ParticleTrailVertex), reinterpret_cast<const void *>(offsetof(ParticleTrailVertex, position)));
+            glEnableVertexAttribArray(1);
+            glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, sizeof(ParticleTrailVertex), reinterpret_cast<const void *>(offsetof(ParticleTrailVertex, color)));
+            glEnableVertexAttribArray(2);
+            glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(ParticleTrailVertex), reinterpret_cast<const void *>(offsetof(ParticleTrailVertex, uv)));
+            glBindVertexArray(0);
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+        }
+
+        std::vector<ParticleTrailVertex> BuildTrailVertices(const scene::ParticleSystemComponent &particleSystem,
+                                                            const glm::vec3 &cameraForward,
+                                                            const glm::vec3 &cameraRight)
+        {
+            std::vector<scene::ParticleTrailRenderSegment> segments;
+            particleSystem.BuildTrailRenderSegments(segments);
+
+            std::vector<ParticleTrailVertex> vertices;
+            vertices.reserve(segments.size() * 6);
+            for (const auto &segment : segments)
+            {
+                const glm::vec3 direction = segment.end - segment.start;
+                if (glm::length(direction) <= 0.0001f || segment.width <= 0.0f)
+                {
+                    continue;
+                }
+
+                glm::vec3 side = glm::cross(cameraForward, glm::normalize(direction));
+                if (glm::length(side) <= 0.0001f)
+                {
+                    side = cameraRight;
+                }
+                side = glm::normalize(side) * segment.width * 0.5f;
+
+                const glm::vec3 a = segment.start - side;
+                const glm::vec3 b = segment.start + side;
+                const glm::vec3 c = segment.end - side;
+                const glm::vec3 d = segment.end + side;
+                const glm::vec4 color = segment.color;
+
+                vertices.push_back({a, color, {0.0f, 0.0f}});
+                vertices.push_back({b, color, {0.0f, 1.0f}});
+                vertices.push_back({c, color, {1.0f, 0.0f}});
+                vertices.push_back({c, color, {1.0f, 0.0f}});
+                vertices.push_back({b, color, {0.0f, 1.0f}});
+                vertices.push_back({d, color, {1.0f, 1.0f}});
+            }
+            return vertices;
+        }
+    }
+
+    ParticlePass::~ParticlePass()
+    {
+        if (m_cpuParticleVao != 0)
+        {
+            glDeleteVertexArrays(1, &m_cpuParticleVao);
+        }
+        if (m_cpuParticleBuffer != 0)
+        {
+            glDeleteBuffers(1, &m_cpuParticleBuffer);
+        }
+        if (m_trailVao != 0)
+        {
+            glDeleteVertexArrays(1, &m_trailVao);
+        }
+        if (m_trailBuffer != 0)
+        {
+            glDeleteBuffers(1, &m_trailBuffer);
+        }
     }
 
     void ParticlePass::Initialize()
@@ -337,11 +537,12 @@ namespace PlutoGE::render
 
         m_updateShader = CreateParticleUpdateShader();
         m_renderShader = CreateParticleRenderShader();
+        m_trailShader = CreateParticleTrailShader();
     }
 
     void ParticlePass::Execute(const RenderContext &ctx)
     {
-        if (!ctx.scene || !ctx.hasCameraData || !m_updateShader || !m_renderShader || !GLAD_GL_VERSION_3_3)
+        if (!ctx.scene || !ctx.hasCameraData || !m_updateShader || !m_renderShader || !m_trailShader || !GLAD_GL_VERSION_3_3)
         {
             if (!m_loggedUnsupported)
             {
@@ -377,6 +578,7 @@ namespace PlutoGE::render
         const glm::mat4 inverseView = glm::inverse(ctx.cameraData.view);
         const glm::vec3 cameraRight = glm::normalize(glm::vec3(inverseView[0]));
         const glm::vec3 cameraUp = glm::normalize(glm::vec3(inverseView[1]));
+        const glm::vec3 cameraForward = -glm::normalize(glm::vec3(inverseView[2]));
 
         glEnable(GL_DEPTH_TEST);
         glDepthFunc(GL_LEQUAL);
@@ -393,37 +595,60 @@ namespace PlutoGE::render
                 continue;
             }
 
-            particleSystem->EnsureGpuResources();
-            const bool clearRequested = particleSystem->ConsumeClearRequested() || particleSystem->ConsumeGpuStateDirty();
-            const float deltaTime = particleSystem->ConsumePendingDeltaTime();
-            const int emitCount = std::clamp(particleSystem->ConsumePendingEmitCount(), 0, particleSystem->GetGpuCapacity());
-            const int emitStartIndex = particleSystem->GetNextEmitIndex();
-            const int emitSequenceStart = particleSystem->GetNextEmitSequence();
+            GLuint particleVao = 0;
+            int particleDrawCount = 0;
+            const bool cpuSimulation = particleSystem->UsesCpuSimulation();
 
-            if (clearRequested || deltaTime > 0.0f)
+            if (cpuSimulation)
             {
-                m_updateShader->Bind();
-                m_updateShader->SetUniform("uDeltaTime", deltaTime);
-                m_updateShader->SetUniform("uClear", clearRequested ? 1 : 0);
-                m_updateShader->SetUniform("uStartLifetime", particleSystem->GetStartLifetime());
-                m_updateShader->SetUniform("uGravityModifier", particleSystem->GetGravityModifier());
-
-                glEnable(GL_RASTERIZER_DISCARD);
-                glBindVertexArray(particleSystem->GetReadVao());
-                glBindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER, 0, particleSystem->GetWriteBuffer());
-                glBeginTransformFeedback(GL_POINTS);
-                glDrawArrays(GL_POINTS, 0, particleSystem->GetGpuCapacity());
-                glEndTransformFeedback();
-                glBindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER, 0, 0);
-                glDisable(GL_RASTERIZER_DISCARD);
-                particleSystem->SwapGpuBuffers();
+                const auto cpuParticles = BuildCpuParticleRenderData(*particleSystem);
+                EnsureCpuParticleBuffer(m_cpuParticleVao, m_cpuParticleBuffer);
+                glBindBuffer(GL_ARRAY_BUFFER, m_cpuParticleBuffer);
+                glBufferData(GL_ARRAY_BUFFER,
+                             static_cast<GLsizeiptr>(cpuParticles.size() * sizeof(scene::ParticleGpuData)),
+                             cpuParticles.empty() ? nullptr : cpuParticles.data(),
+                             GL_DYNAMIC_DRAW);
+                glBindBuffer(GL_ARRAY_BUFFER, 0);
+                particleVao = m_cpuParticleVao;
+                particleDrawCount = static_cast<int>(cpuParticles.size());
             }
-
-            if (emitCount > 0)
+            else
             {
-                const auto spawnParticles = BuildSpawnParticles(*particleSystem, *owner, emitCount, emitSequenceStart);
-                WriteSpawnParticles(particleSystem->GetReadBuffer(), particleSystem->GetGpuCapacity(), emitStartIndex, spawnParticles);
-                particleSystem->AdvanceEmitCursor(emitCount);
+                particleSystem->EnsureGpuResources();
+                const bool clearRequested = particleSystem->ConsumeClearRequested() || particleSystem->ConsumeGpuStateDirty();
+                const float deltaTime = particleSystem->ConsumePendingDeltaTime();
+                const int emitCount = std::clamp(particleSystem->ConsumePendingEmitCount(), 0, particleSystem->GetGpuCapacity());
+                const int emitStartIndex = particleSystem->GetNextEmitIndex();
+                const int emitSequenceStart = particleSystem->GetNextEmitSequence();
+
+                if (clearRequested || deltaTime > 0.0f)
+                {
+                    m_updateShader->Bind();
+                    m_updateShader->SetUniform("uDeltaTime", deltaTime);
+                    m_updateShader->SetUniform("uClear", clearRequested ? 1 : 0);
+                    m_updateShader->SetUniform("uStartLifetime", particleSystem->GetStartLifetime());
+                    m_updateShader->SetUniform("uGravityModifier", particleSystem->GetGravityModifier());
+
+                    glEnable(GL_RASTERIZER_DISCARD);
+                    glBindVertexArray(particleSystem->GetReadVao());
+                    glBindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER, 0, particleSystem->GetWriteBuffer());
+                    glBeginTransformFeedback(GL_POINTS);
+                    glDrawArrays(GL_POINTS, 0, particleSystem->GetGpuCapacity());
+                    glEndTransformFeedback();
+                    glBindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER, 0, 0);
+                    glDisable(GL_RASTERIZER_DISCARD);
+                    particleSystem->SwapGpuBuffers();
+                }
+
+                if (emitCount > 0)
+                {
+                    const auto spawnParticles = BuildSpawnParticles(*particleSystem, *owner, emitCount, emitSequenceStart);
+                    WriteSpawnParticles(particleSystem->GetReadBuffer(), particleSystem->GetGpuCapacity(), emitStartIndex, spawnParticles);
+                    particleSystem->AdvanceEmitCursor(emitCount);
+                }
+
+                particleVao = particleSystem->GetReadVao();
+                particleDrawCount = particleSystem->GetGpuCapacity();
             }
 
             m_renderShader->Bind();
@@ -432,8 +657,13 @@ namespace PlutoGE::render
             m_renderShader->SetUniform("uCameraRight", cameraRight);
             m_renderShader->SetUniform("uCameraUp", cameraUp);
             m_renderShader->SetUniform("uEmitterTransform", owner->GetWorldTransform());
-            m_renderShader->SetUniform("uSimulationSpace", ToInt(particleSystem->GetSimulationSpace()));
+            m_renderShader->SetUniform("uSimulationSpace", cpuSimulation ? 1 : ToInt(particleSystem->GetSimulationSpace()));
             m_renderShader->SetUniform("uParticleRenderShape", ToInt(particleSystem->GetRenderShape()));
+            m_renderShader->SetUniform("uStartColorAlpha", particleSystem->GetStartColor().a);
+            m_renderShader->SetUniform("uColorOverLifetimeEnabled", particleSystem->GetColorOverLifetimeEnabled() ? 1 : 0);
+            m_renderShader->SetUniform("uEndColor", particleSystem->GetEndColor());
+            m_renderShader->SetUniform("uSizeOverLifetimeEnabled", particleSystem->GetSizeOverLifetimeEnabled() ? 1 : 0);
+            m_renderShader->SetUniform("uEndSize", particleSystem->GetEndSize());
 
             if (!particleSystem->GetMaterialAssetReference().empty())
             {
@@ -453,8 +683,48 @@ namespace PlutoGE::render
                 m_renderShader->SetUniform("uHasAlbedoTexture", 0.0f);
             }
 
-            glBindVertexArray(particleSystem->GetReadVao());
-            glDrawArrays(GL_POINTS, 0, particleSystem->GetGpuCapacity());
+            glBindVertexArray(particleVao);
+            glDrawArrays(GL_POINTS, 0, particleDrawCount);
+
+            if (particleSystem->GetTrailsEnabled())
+            {
+                const auto trailVertices = BuildTrailVertices(*particleSystem, cameraForward, cameraRight);
+                if (!trailVertices.empty())
+                {
+                    EnsureTrailBuffer(m_trailVao, m_trailBuffer);
+                    glBindBuffer(GL_ARRAY_BUFFER, m_trailBuffer);
+                    glBufferData(GL_ARRAY_BUFFER,
+                                 static_cast<GLsizeiptr>(trailVertices.size() * sizeof(ParticleTrailVertex)),
+                                 trailVertices.data(),
+                                 GL_DYNAMIC_DRAW);
+                    glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+                    m_trailShader->Bind();
+                    m_trailShader->SetUniform("uView", ctx.cameraData.view);
+                    m_trailShader->SetUniform("uProjection", ctx.cameraData.projection);
+
+                    if (!particleSystem->GetTrailMaterialAssetReference().empty())
+                    {
+                        if (auto *material = core::Engine::GetInstance().GetAssetManager().LoadMaterialAsset(particleSystem->GetTrailMaterialAssetReference()))
+                        {
+                            material->Bind(m_trailShader);
+                        }
+                        else
+                        {
+                            m_trailShader->SetUniform("uColor", glm::vec4(1.0f));
+                            m_trailShader->SetUniform("uHasAlbedoTexture", 0.0f);
+                        }
+                    }
+                    else
+                    {
+                        m_trailShader->SetUniform("uColor", glm::vec4(1.0f));
+                        m_trailShader->SetUniform("uHasAlbedoTexture", 0.0f);
+                    }
+
+                    glBindVertexArray(m_trailVao);
+                    glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(trailVertices.size()));
+                }
+            }
         }
 
         glBindVertexArray(0);
@@ -465,6 +735,10 @@ namespace PlutoGE::render
         if (m_renderShader)
         {
             m_renderShader->Unbind();
+        }
+        if (m_trailShader)
+        {
+            m_trailShader->Unbind();
         }
         glDisable(GL_BLEND);
         glDepthMask(GL_TRUE);

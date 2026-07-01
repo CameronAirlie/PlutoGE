@@ -1859,6 +1859,7 @@ namespace PlutoGE::ui
             case scripting::ScriptFieldType::UIImageComponent:
             case scripting::ScriptFieldType::UITextComponent:
             case scripting::ScriptFieldType::UIButtonComponent:
+            case scripting::ScriptFieldType::ParticleSystemComponent:
             {
                 uint32_t selectedEntityId = std::get<uint32_t>(*fieldValue);
                 scene::Scene *scene = entity.GetScene();
@@ -1897,6 +1898,8 @@ namespace PlutoGE::ui
                         return candidate.HasComponent<scene::UITextComponent>();
                     case scripting::ScriptFieldType::UIButtonComponent:
                         return candidate.HasComponent<scene::UIButtonComponent>();
+                    case scripting::ScriptFieldType::ParticleSystemComponent:
+                        return candidate.HasComponent<scene::ParticleSystemComponent>();
                     case scripting::ScriptFieldType::EntityId:
                     case scripting::ScriptFieldType::GameObject:
                     default:

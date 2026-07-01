@@ -44,6 +44,7 @@ namespace PlutoGE::scene
             case scripting::ScriptFieldType::UIImageComponent:
             case scripting::ScriptFieldType::UITextComponent:
             case scripting::ScriptFieldType::UIButtonComponent:
+            case scripting::ScriptFieldType::ParticleSystemComponent:
                 return scene::PropertyType::Entity;
             case scripting::ScriptFieldType::None:
             default:

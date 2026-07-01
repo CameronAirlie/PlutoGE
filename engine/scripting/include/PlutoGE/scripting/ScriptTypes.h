@@ -33,6 +33,7 @@ namespace PlutoGE::scripting
         UIImageComponent,
         UITextComponent,
         UIButtonComponent,
+        ParticleSystemComponent,
     };
 
     using ScriptFieldValue = std::variant<std::monostate, bool, int32_t, float, double, std::string, glm::vec2, glm::vec3, uint32_t>;

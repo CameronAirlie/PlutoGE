@@ -167,6 +167,7 @@ namespace PlutoGE::scripting
         case ScriptFieldType::UIImageComponent:
         case ScriptFieldType::UITextComponent:
         case ScriptFieldType::UIButtonComponent:
+        case ScriptFieldType::ParticleSystemComponent:
             return std::holds_alternative<uint32_t>(value);
         case ScriptFieldType::None:
         default:
@@ -205,6 +206,7 @@ namespace PlutoGE::scripting
         case ScriptFieldType::UIImageComponent:
         case ScriptFieldType::UITextComponent:
         case ScriptFieldType::UIButtonComponent:
+        case ScriptFieldType::ParticleSystemComponent:
             return uint32_t{0};
         case ScriptFieldType::None:
         default:

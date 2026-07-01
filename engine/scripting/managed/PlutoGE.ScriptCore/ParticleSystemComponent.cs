@@ -111,6 +111,7 @@ public sealed class ParticleSystemComponent : ComponentReference
     public void Pause() => ScriptBridge.ParticleSystemPause(EntityId);
     public void Stop(bool clear = true) => ScriptBridge.ParticleSystemStop(EntityId, clear);
     public void Clear() => ScriptBridge.ParticleSystemClear(EntityId);
-    public void Emit(int count) => ScriptBridge.ParticleSystemEmit(EntityId, count);
-    public void EmitAt(Vector3 worldPosition, int count) => ScriptBridge.ParticleSystemEmitAt(EntityId, worldPosition, count);
+    public void Emit(int count = 1) => ScriptBridge.ParticleSystemEmit(EntityId, count);
+    public void Emit(Vector3 worldPosition, int count = 1) => ScriptBridge.ParticleSystemEmitAt(EntityId, worldPosition, count);
+    public void EmitAt(Vector3 worldPosition, int count = 1) => Emit(worldPosition, count);
 }

@@ -420,7 +420,7 @@ namespace PlutoGE::scripting
         {
             int fieldTypeValue = 0;
             std::from_chars(token.data(), token.data() + token.size(), fieldTypeValue);
-            if (fieldTypeValue < static_cast<int>(ScriptFieldType::None) || fieldTypeValue > static_cast<int>(ScriptFieldType::UIButtonComponent))
+            if (fieldTypeValue < static_cast<int>(ScriptFieldType::None) || fieldTypeValue > static_cast<int>(ScriptFieldType::ParticleSystemComponent))
             {
                 return ScriptFieldType::None;
             }
@@ -489,6 +489,7 @@ namespace PlutoGE::scripting
             case ScriptFieldType::UIImageComponent:
             case ScriptFieldType::UITextComponent:
             case ScriptFieldType::UIButtonComponent:
+            case ScriptFieldType::ParticleSystemComponent:
             {
                 uint32_t value = 0;
                 std::from_chars(token.data(), token.data() + token.size(), value);
@@ -1185,19 +1186,71 @@ namespace PlutoGE::scripting
             return component->GetClips()[static_cast<size_t>(clipIndex)].duration;
         }
 
-        int32_t GetAnimationPlaying(uint32_t entityId) { auto *component = FindAnimation(entityId); return component && component->IsPlaying() ? 1 : 0; }
-        void SetAnimationPlaying(uint32_t entityId, int32_t value) { if (auto *component = FindAnimation(entityId)) component->SetPlaying(value != 0); }
-        int32_t GetAnimationLooping(uint32_t entityId) { auto *component = FindAnimation(entityId); return component && component->IsLooping() ? 1 : 0; }
-        void SetAnimationLooping(uint32_t entityId, int32_t value) { if (auto *component = FindAnimation(entityId)) component->SetLooping(value != 0); }
-        int32_t GetAnimationAutoplay(uint32_t entityId) { auto *component = FindAnimation(entityId); return component && component->IsAutoplay() ? 1 : 0; }
-        void SetAnimationAutoplay(uint32_t entityId, int32_t value) { if (auto *component = FindAnimation(entityId)) component->SetAutoplay(value != 0); }
-        float GetAnimationSpeed(uint32_t entityId) { auto *component = FindAnimation(entityId); return component ? component->GetSpeed() : 0.0f; }
-        void SetAnimationSpeed(uint32_t entityId, float value) { if (auto *component = FindAnimation(entityId)) component->SetSpeed(value); }
-        float GetAnimationTime(uint32_t entityId) { auto *component = FindAnimation(entityId); return component ? component->GetTime() : 0.0f; }
-        void SetAnimationTime(uint32_t entityId, float value) { if (auto *component = FindAnimation(entityId)) component->SetTime(value); }
-        void AnimationPlay(uint32_t entityId) { if (auto *component = FindAnimation(entityId)) component->Play(); }
-        void AnimationPause(uint32_t entityId) { if (auto *component = FindAnimation(entityId)) component->Pause(); }
-        void AnimationStop(uint32_t entityId) { if (auto *component = FindAnimation(entityId)) component->Stop(); }
+        int32_t GetAnimationPlaying(uint32_t entityId)
+        {
+            auto *component = FindAnimation(entityId);
+            return component && component->IsPlaying() ? 1 : 0;
+        }
+        void SetAnimationPlaying(uint32_t entityId, int32_t value)
+        {
+            if (auto *component = FindAnimation(entityId))
+                component->SetPlaying(value != 0);
+        }
+        int32_t GetAnimationLooping(uint32_t entityId)
+        {
+            auto *component = FindAnimation(entityId);
+            return component && component->IsLooping() ? 1 : 0;
+        }
+        void SetAnimationLooping(uint32_t entityId, int32_t value)
+        {
+            if (auto *component = FindAnimation(entityId))
+                component->SetLooping(value != 0);
+        }
+        int32_t GetAnimationAutoplay(uint32_t entityId)
+        {
+            auto *component = FindAnimation(entityId);
+            return component && component->IsAutoplay() ? 1 : 0;
+        }
+        void SetAnimationAutoplay(uint32_t entityId, int32_t value)
+        {
+            if (auto *component = FindAnimation(entityId))
+                component->SetAutoplay(value != 0);
+        }
+        float GetAnimationSpeed(uint32_t entityId)
+        {
+            auto *component = FindAnimation(entityId);
+            return component ? component->GetSpeed() : 0.0f;
+        }
+        void SetAnimationSpeed(uint32_t entityId, float value)
+        {
+            if (auto *component = FindAnimation(entityId))
+                component->SetSpeed(value);
+        }
+        float GetAnimationTime(uint32_t entityId)
+        {
+            auto *component = FindAnimation(entityId);
+            return component ? component->GetTime() : 0.0f;
+        }
+        void SetAnimationTime(uint32_t entityId, float value)
+        {
+            if (auto *component = FindAnimation(entityId))
+                component->SetTime(value);
+        }
+        void AnimationPlay(uint32_t entityId)
+        {
+            if (auto *component = FindAnimation(entityId))
+                component->Play();
+        }
+        void AnimationPause(uint32_t entityId)
+        {
+            if (auto *component = FindAnimation(entityId))
+                component->Pause();
+        }
+        void AnimationStop(uint32_t entityId)
+        {
+            if (auto *component = FindAnimation(entityId))
+                component->Stop();
+        }
         void SetAnimationBoolParameter(uint32_t entityId, const char *name, int32_t value)
         {
             if (auto *component = FindAnimation(entityId); component && name)
@@ -1253,20 +1306,76 @@ namespace PlutoGE::scripting
             return entity ? entity->GetComponent<scene::ColliderComponent>() : nullptr;
         }
 
-        float GetRigidbodyMass(uint32_t entityId) { auto *component = FindRigidbody(entityId); return component ? component->GetMass() : 0.0f; }
-        void SetRigidbodyMass(uint32_t entityId, float value) { if (auto *component = FindRigidbody(entityId)) component->SetMass(value); }
-        float GetRigidbodyLinearDrag(uint32_t entityId) { auto *component = FindRigidbody(entityId); return component ? component->GetLinearDrag() : 0.0f; }
-        void SetRigidbodyLinearDrag(uint32_t entityId, float value) { if (auto *component = FindRigidbody(entityId)) component->SetLinearDrag(value); }
-        float GetRigidbodyAngularDrag(uint32_t entityId) { auto *component = FindRigidbody(entityId); return component ? component->GetAngularDrag() : 0.0f; }
-        void SetRigidbodyAngularDrag(uint32_t entityId, float value) { if (auto *component = FindRigidbody(entityId)) component->SetAngularDrag(value); }
-        float GetRigidbodyFriction(uint32_t entityId) { auto *component = FindRigidbody(entityId); return component ? component->GetFriction() : 0.0f; }
-        void SetRigidbodyFriction(uint32_t entityId, float value) { if (auto *component = FindRigidbody(entityId)) component->SetFriction(value); }
-        int32_t GetRigidbodyUseGravity(uint32_t entityId) { auto *component = FindRigidbody(entityId); return component && component->UsesGravity() ? 1 : 0; }
-        void SetRigidbodyUseGravity(uint32_t entityId, int32_t value) { if (auto *component = FindRigidbody(entityId)) component->SetUseGravity(value != 0); }
-        int32_t GetRigidbodyKinematic(uint32_t entityId) { auto *component = FindRigidbody(entityId); return component && component->IsKinematic() ? 1 : 0; }
-        void SetRigidbodyKinematic(uint32_t entityId, int32_t value) { if (auto *component = FindRigidbody(entityId)) component->SetKinematic(value != 0); }
-        int32_t GetRigidbodyFreezeRotation(uint32_t entityId) { auto *component = FindRigidbody(entityId); return component && component->HasFreezeRotation() ? 1 : 0; }
-        void SetRigidbodyFreezeRotation(uint32_t entityId, int32_t value) { if (auto *component = FindRigidbody(entityId)) component->SetFreezeRotation(value != 0); }
+        float GetRigidbodyMass(uint32_t entityId)
+        {
+            auto *component = FindRigidbody(entityId);
+            return component ? component->GetMass() : 0.0f;
+        }
+        void SetRigidbodyMass(uint32_t entityId, float value)
+        {
+            if (auto *component = FindRigidbody(entityId))
+                component->SetMass(value);
+        }
+        float GetRigidbodyLinearDrag(uint32_t entityId)
+        {
+            auto *component = FindRigidbody(entityId);
+            return component ? component->GetLinearDrag() : 0.0f;
+        }
+        void SetRigidbodyLinearDrag(uint32_t entityId, float value)
+        {
+            if (auto *component = FindRigidbody(entityId))
+                component->SetLinearDrag(value);
+        }
+        float GetRigidbodyAngularDrag(uint32_t entityId)
+        {
+            auto *component = FindRigidbody(entityId);
+            return component ? component->GetAngularDrag() : 0.0f;
+        }
+        void SetRigidbodyAngularDrag(uint32_t entityId, float value)
+        {
+            if (auto *component = FindRigidbody(entityId))
+                component->SetAngularDrag(value);
+        }
+        float GetRigidbodyFriction(uint32_t entityId)
+        {
+            auto *component = FindRigidbody(entityId);
+            return component ? component->GetFriction() : 0.0f;
+        }
+        void SetRigidbodyFriction(uint32_t entityId, float value)
+        {
+            if (auto *component = FindRigidbody(entityId))
+                component->SetFriction(value);
+        }
+        int32_t GetRigidbodyUseGravity(uint32_t entityId)
+        {
+            auto *component = FindRigidbody(entityId);
+            return component && component->UsesGravity() ? 1 : 0;
+        }
+        void SetRigidbodyUseGravity(uint32_t entityId, int32_t value)
+        {
+            if (auto *component = FindRigidbody(entityId))
+                component->SetUseGravity(value != 0);
+        }
+        int32_t GetRigidbodyKinematic(uint32_t entityId)
+        {
+            auto *component = FindRigidbody(entityId);
+            return component && component->IsKinematic() ? 1 : 0;
+        }
+        void SetRigidbodyKinematic(uint32_t entityId, int32_t value)
+        {
+            if (auto *component = FindRigidbody(entityId))
+                component->SetKinematic(value != 0);
+        }
+        int32_t GetRigidbodyFreezeRotation(uint32_t entityId)
+        {
+            auto *component = FindRigidbody(entityId);
+            return component && component->HasFreezeRotation() ? 1 : 0;
+        }
+        void SetRigidbodyFreezeRotation(uint32_t entityId, int32_t value)
+        {
+            if (auto *component = FindRigidbody(entityId))
+                component->SetFreezeRotation(value != 0);
+        }
         NativeVector3 GetRigidbodyVelocity(uint32_t entityId)
         {
             auto *component = FindRigidbody(entityId);
@@ -1294,7 +1403,11 @@ namespace PlutoGE::scripting
             }
         }
 
-        int32_t GetColliderShape(uint32_t entityId) { auto *component = FindCollider(entityId); return component ? static_cast<int32_t>(component->GetShape()) : 0; }
+        int32_t GetColliderShape(uint32_t entityId)
+        {
+            auto *component = FindCollider(entityId);
+            return component ? static_cast<int32_t>(component->GetShape()) : 0;
+        }
         void SetColliderShape(uint32_t entityId, int32_t value)
         {
             if (auto *component = FindCollider(entityId))
@@ -1328,12 +1441,36 @@ namespace PlutoGE::scripting
                 component->SetSize(glm::vec3(value.x, value.y, value.z));
             }
         }
-        float GetColliderRadius(uint32_t entityId) { auto *component = FindCollider(entityId); return component ? component->GetRadius() : 0.0f; }
-        void SetColliderRadius(uint32_t entityId, float value) { if (auto *component = FindCollider(entityId)) component->SetRadius(value); }
-        float GetColliderHeight(uint32_t entityId) { auto *component = FindCollider(entityId); return component ? component->GetHeight() : 0.0f; }
-        void SetColliderHeight(uint32_t entityId, float value) { if (auto *component = FindCollider(entityId)) component->SetHeight(value); }
-        int32_t GetColliderTrigger(uint32_t entityId) { auto *component = FindCollider(entityId); return component && component->IsTrigger() ? 1 : 0; }
-        void SetColliderTrigger(uint32_t entityId, int32_t value) { if (auto *component = FindCollider(entityId)) component->SetTrigger(value != 0); }
+        float GetColliderRadius(uint32_t entityId)
+        {
+            auto *component = FindCollider(entityId);
+            return component ? component->GetRadius() : 0.0f;
+        }
+        void SetColliderRadius(uint32_t entityId, float value)
+        {
+            if (auto *component = FindCollider(entityId))
+                component->SetRadius(value);
+        }
+        float GetColliderHeight(uint32_t entityId)
+        {
+            auto *component = FindCollider(entityId);
+            return component ? component->GetHeight() : 0.0f;
+        }
+        void SetColliderHeight(uint32_t entityId, float value)
+        {
+            if (auto *component = FindCollider(entityId))
+                component->SetHeight(value);
+        }
+        int32_t GetColliderTrigger(uint32_t entityId)
+        {
+            auto *component = FindCollider(entityId);
+            return component && component->IsTrigger() ? 1 : 0;
+        }
+        void SetColliderTrigger(uint32_t entityId, int32_t value)
+        {
+            if (auto *component = FindCollider(entityId))
+                component->SetTrigger(value != 0);
+        }
 
         scene::ParticleSystemComponent *FindParticleSystem(uint32_t entityId)
         {
@@ -1341,13 +1478,41 @@ namespace PlutoGE::scripting
             return entity ? entity->GetComponent<scene::ParticleSystemComponent>() : nullptr;
         }
 
-        int32_t GetParticleSystemPlaying(uint32_t entityId) { auto *component = FindParticleSystem(entityId); return component && component->IsPlaying() ? 1 : 0; }
-        int32_t GetParticleSystemParticleCount(uint32_t entityId) { auto *component = FindParticleSystem(entityId); return component ? component->GetParticleCount() : 0; }
-        void ParticleSystemPlay(uint32_t entityId) { if (auto *component = FindParticleSystem(entityId)) component->Play(); }
-        void ParticleSystemPause(uint32_t entityId) { if (auto *component = FindParticleSystem(entityId)) component->Pause(); }
-        void ParticleSystemStop(uint32_t entityId, int32_t clear) { if (auto *component = FindParticleSystem(entityId)) component->Stop(clear != 0); }
-        void ParticleSystemClear(uint32_t entityId) { if (auto *component = FindParticleSystem(entityId)) component->Clear(); }
-        void ParticleSystemEmit(uint32_t entityId, int32_t count) { if (auto *component = FindParticleSystem(entityId)) component->Emit(count); }
+        int32_t GetParticleSystemPlaying(uint32_t entityId)
+        {
+            auto *component = FindParticleSystem(entityId);
+            return component && component->IsPlaying() ? 1 : 0;
+        }
+        int32_t GetParticleSystemParticleCount(uint32_t entityId)
+        {
+            auto *component = FindParticleSystem(entityId);
+            return component ? component->GetParticleCount() : 0;
+        }
+        void ParticleSystemPlay(uint32_t entityId)
+        {
+            if (auto *component = FindParticleSystem(entityId))
+                component->Play();
+        }
+        void ParticleSystemPause(uint32_t entityId)
+        {
+            if (auto *component = FindParticleSystem(entityId))
+                component->Pause();
+        }
+        void ParticleSystemStop(uint32_t entityId, int32_t clear)
+        {
+            if (auto *component = FindParticleSystem(entityId))
+                component->Stop(clear != 0);
+        }
+        void ParticleSystemClear(uint32_t entityId)
+        {
+            if (auto *component = FindParticleSystem(entityId))
+                component->Clear();
+        }
+        void ParticleSystemEmit(uint32_t entityId, int32_t count)
+        {
+            if (auto *component = FindParticleSystem(entityId))
+                component->Emit(count);
+        }
         void ParticleSystemEmitAt(uint32_t entityId, NativeVector3 position, int32_t count)
         {
             if (auto *component = FindParticleSystem(entityId); component && IsFiniteVector3(position))
@@ -1372,22 +1537,86 @@ namespace PlutoGE::scripting
                 component->SetParticleSystemAssetReference(assetReference ? assetReference : "");
             }
         }
-        int32_t GetParticleSystemLooping(uint32_t entityId) { auto *component = FindParticleSystem(entityId); return component && component->GetLooping() ? 1 : 0; }
-        void SetParticleSystemLooping(uint32_t entityId, int32_t value) { if (auto *component = FindParticleSystem(entityId)) component->SetLooping(value != 0); }
-        int32_t GetParticleSystemPlayOnAwake(uint32_t entityId) { auto *component = FindParticleSystem(entityId); return component && component->GetPlayOnAwake() ? 1 : 0; }
-        void SetParticleSystemPlayOnAwake(uint32_t entityId, int32_t value) { if (auto *component = FindParticleSystem(entityId)) component->SetPlayOnAwake(value != 0); }
-        float GetParticleSystemDuration(uint32_t entityId) { auto *component = FindParticleSystem(entityId); return component ? component->GetDuration() : 0.0f; }
-        void SetParticleSystemDuration(uint32_t entityId, float value) { if (auto *component = FindParticleSystem(entityId)) component->SetDuration(value); }
-        float GetParticleSystemStartLifetime(uint32_t entityId) { auto *component = FindParticleSystem(entityId); return component ? component->GetStartLifetime() : 0.0f; }
-        void SetParticleSystemStartLifetime(uint32_t entityId, float value) { if (auto *component = FindParticleSystem(entityId)) component->SetStartLifetime(value); }
-        float GetParticleSystemStartSpeed(uint32_t entityId) { auto *component = FindParticleSystem(entityId); return component ? component->GetStartSpeed() : 0.0f; }
-        void SetParticleSystemStartSpeed(uint32_t entityId, float value) { if (auto *component = FindParticleSystem(entityId)) component->SetStartSpeed(value); }
-        float GetParticleSystemStartSize(uint32_t entityId) { auto *component = FindParticleSystem(entityId); return component ? component->GetStartSize() : 0.0f; }
-        void SetParticleSystemStartSize(uint32_t entityId, float value) { if (auto *component = FindParticleSystem(entityId)) component->SetStartSize(value); }
-        float GetParticleSystemGravityModifier(uint32_t entityId) { auto *component = FindParticleSystem(entityId); return component ? component->GetGravityModifier() : 0.0f; }
-        void SetParticleSystemGravityModifier(uint32_t entityId, float value) { if (auto *component = FindParticleSystem(entityId)) component->SetGravityModifier(value); }
-        float GetParticleSystemEmissionRate(uint32_t entityId) { auto *component = FindParticleSystem(entityId); return component ? component->GetEmissionRateOverTime() : 0.0f; }
-        void SetParticleSystemEmissionRate(uint32_t entityId, float value) { if (auto *component = FindParticleSystem(entityId)) component->SetEmissionRateOverTime(value); }
+        int32_t GetParticleSystemLooping(uint32_t entityId)
+        {
+            auto *component = FindParticleSystem(entityId);
+            return component && component->GetLooping() ? 1 : 0;
+        }
+        void SetParticleSystemLooping(uint32_t entityId, int32_t value)
+        {
+            if (auto *component = FindParticleSystem(entityId))
+                component->SetLooping(value != 0);
+        }
+        int32_t GetParticleSystemPlayOnAwake(uint32_t entityId)
+        {
+            auto *component = FindParticleSystem(entityId);
+            return component && component->GetPlayOnAwake() ? 1 : 0;
+        }
+        void SetParticleSystemPlayOnAwake(uint32_t entityId, int32_t value)
+        {
+            if (auto *component = FindParticleSystem(entityId))
+                component->SetPlayOnAwake(value != 0);
+        }
+        float GetParticleSystemDuration(uint32_t entityId)
+        {
+            auto *component = FindParticleSystem(entityId);
+            return component ? component->GetDuration() : 0.0f;
+        }
+        void SetParticleSystemDuration(uint32_t entityId, float value)
+        {
+            if (auto *component = FindParticleSystem(entityId))
+                component->SetDuration(value);
+        }
+        float GetParticleSystemStartLifetime(uint32_t entityId)
+        {
+            auto *component = FindParticleSystem(entityId);
+            return component ? component->GetStartLifetime() : 0.0f;
+        }
+        void SetParticleSystemStartLifetime(uint32_t entityId, float value)
+        {
+            if (auto *component = FindParticleSystem(entityId))
+                component->SetStartLifetime(value);
+        }
+        float GetParticleSystemStartSpeed(uint32_t entityId)
+        {
+            auto *component = FindParticleSystem(entityId);
+            return component ? component->GetStartSpeed() : 0.0f;
+        }
+        void SetParticleSystemStartSpeed(uint32_t entityId, float value)
+        {
+            if (auto *component = FindParticleSystem(entityId))
+                component->SetStartSpeed(value);
+        }
+        float GetParticleSystemStartSize(uint32_t entityId)
+        {
+            auto *component = FindParticleSystem(entityId);
+            return component ? component->GetStartSize() : 0.0f;
+        }
+        void SetParticleSystemStartSize(uint32_t entityId, float value)
+        {
+            if (auto *component = FindParticleSystem(entityId))
+                component->SetStartSize(value);
+        }
+        float GetParticleSystemGravityModifier(uint32_t entityId)
+        {
+            auto *component = FindParticleSystem(entityId);
+            return component ? component->GetGravityModifier() : 0.0f;
+        }
+        void SetParticleSystemGravityModifier(uint32_t entityId, float value)
+        {
+            if (auto *component = FindParticleSystem(entityId))
+                component->SetGravityModifier(value);
+        }
+        float GetParticleSystemEmissionRate(uint32_t entityId)
+        {
+            auto *component = FindParticleSystem(entityId);
+            return component ? component->GetEmissionRateOverTime() : 0.0f;
+        }
+        void SetParticleSystemEmissionRate(uint32_t entityId, float value)
+        {
+            if (auto *component = FindParticleSystem(entityId))
+                component->SetEmissionRateOverTime(value);
+        }
         NativeVector3 GetParticleSystemStartColor(uint32_t entityId)
         {
             auto *component = FindParticleSystem(entityId);
@@ -1415,7 +1644,11 @@ namespace PlutoGE::scripting
                 component->SetShapeSize(glm::vec3(value.x, value.y, value.z));
             }
         }
-        int32_t GetParticleSystemSimulationSpace(uint32_t entityId) { auto *component = FindParticleSystem(entityId); return component ? static_cast<int32_t>(component->GetSimulationSpace()) : 0; }
+        int32_t GetParticleSystemSimulationSpace(uint32_t entityId)
+        {
+            auto *component = FindParticleSystem(entityId);
+            return component ? static_cast<int32_t>(component->GetSimulationSpace()) : 0;
+        }
         void SetParticleSystemSimulationSpace(uint32_t entityId, int32_t value)
         {
             if (auto *component = FindParticleSystem(entityId))
@@ -1423,7 +1656,11 @@ namespace PlutoGE::scripting
                 component->SetSimulationSpace(value == 1 ? scene::ParticleSimulationSpace::World : scene::ParticleSimulationSpace::Local);
             }
         }
-        int32_t GetParticleSystemShape(uint32_t entityId) { auto *component = FindParticleSystem(entityId); return component ? static_cast<int32_t>(component->GetShape()) : 0; }
+        int32_t GetParticleSystemShape(uint32_t entityId)
+        {
+            auto *component = FindParticleSystem(entityId);
+            return component ? static_cast<int32_t>(component->GetShape()) : 0;
+        }
         void SetParticleSystemShape(uint32_t entityId, int32_t value)
         {
             if (auto *component = FindParticleSystem(entityId))
@@ -1432,16 +1669,52 @@ namespace PlutoGE::scripting
             }
         }
 
-        scene::CanvasComponent *FindCanvas(uint32_t entityId) { auto *entity = FindEntity(entityId); return entity ? entity->GetComponent<scene::CanvasComponent>() : nullptr; }
-        scene::RectTransformComponent *FindRectTransform(uint32_t entityId) { auto *entity = FindEntity(entityId); return entity ? entity->GetComponent<scene::RectTransformComponent>() : nullptr; }
-        scene::UIImageComponent *FindUIImage(uint32_t entityId) { auto *entity = FindEntity(entityId); return entity ? entity->GetComponent<scene::UIImageComponent>() : nullptr; }
-        scene::UITextComponent *FindUIText(uint32_t entityId) { auto *entity = FindEntity(entityId); return entity ? entity->GetComponent<scene::UITextComponent>() : nullptr; }
-        scene::UIButtonComponent *FindUIButton(uint32_t entityId) { auto *entity = FindEntity(entityId); return entity ? entity->GetComponent<scene::UIButtonComponent>() : nullptr; }
+        scene::CanvasComponent *FindCanvas(uint32_t entityId)
+        {
+            auto *entity = FindEntity(entityId);
+            return entity ? entity->GetComponent<scene::CanvasComponent>() : nullptr;
+        }
+        scene::RectTransformComponent *FindRectTransform(uint32_t entityId)
+        {
+            auto *entity = FindEntity(entityId);
+            return entity ? entity->GetComponent<scene::RectTransformComponent>() : nullptr;
+        }
+        scene::UIImageComponent *FindUIImage(uint32_t entityId)
+        {
+            auto *entity = FindEntity(entityId);
+            return entity ? entity->GetComponent<scene::UIImageComponent>() : nullptr;
+        }
+        scene::UITextComponent *FindUIText(uint32_t entityId)
+        {
+            auto *entity = FindEntity(entityId);
+            return entity ? entity->GetComponent<scene::UITextComponent>() : nullptr;
+        }
+        scene::UIButtonComponent *FindUIButton(uint32_t entityId)
+        {
+            auto *entity = FindEntity(entityId);
+            return entity ? entity->GetComponent<scene::UIButtonComponent>() : nullptr;
+        }
 
-        float GetCanvasScaleFactor(uint32_t entityId) { auto *component = FindCanvas(entityId); return component ? component->GetScaleFactor() : 1.0f; }
-        void SetCanvasScaleFactor(uint32_t entityId, float value) { if (auto *component = FindCanvas(entityId)) component->SetScaleFactor(value); }
-        int32_t GetCanvasSortingOrder(uint32_t entityId) { auto *component = FindCanvas(entityId); return component ? component->GetSortingOrder() : 0; }
-        void SetCanvasSortingOrder(uint32_t entityId, int32_t value) { if (auto *component = FindCanvas(entityId)) component->SetSortingOrder(value); }
+        float GetCanvasScaleFactor(uint32_t entityId)
+        {
+            auto *component = FindCanvas(entityId);
+            return component ? component->GetScaleFactor() : 1.0f;
+        }
+        void SetCanvasScaleFactor(uint32_t entityId, float value)
+        {
+            if (auto *component = FindCanvas(entityId))
+                component->SetScaleFactor(value);
+        }
+        int32_t GetCanvasSortingOrder(uint32_t entityId)
+        {
+            auto *component = FindCanvas(entityId);
+            return component ? component->GetSortingOrder() : 0;
+        }
+        void SetCanvasSortingOrder(uint32_t entityId, int32_t value)
+        {
+            if (auto *component = FindCanvas(entityId))
+                component->SetSortingOrder(value);
+        }
 
         NativeVector3 GetRectAnchoredPosition(uint32_t entityId)
         {
@@ -1469,7 +1742,11 @@ namespace PlutoGE::scripting
                 component->SetSizeDelta(glm::vec2(value.x, value.y));
             }
         }
-        int32_t GetRectAnchorPreset(uint32_t entityId) { auto *component = FindRectTransform(entityId); return component ? static_cast<int32_t>(component->GetAnchorPreset()) : 4; }
+        int32_t GetRectAnchorPreset(uint32_t entityId)
+        {
+            auto *component = FindRectTransform(entityId);
+            return component ? static_cast<int32_t>(component->GetAnchorPreset()) : 4;
+        }
         void SetRectAnchorPreset(uint32_t entityId, int32_t value)
         {
             if (auto *component = FindRectTransform(entityId))
@@ -1521,15 +1798,47 @@ namespace PlutoGE::scripting
                 component->SetColor(glm::vec4(value.x, value.y, value.z, alpha));
             }
         }
-        float GetUITextFontSize(uint32_t entityId) { auto *component = FindUIText(entityId); return component ? component->GetFontSize() : 0.0f; }
-        void SetUITextFontSize(uint32_t entityId, float value) { if (auto *component = FindUIText(entityId)) component->SetFontSize(value); }
+        float GetUITextFontSize(uint32_t entityId)
+        {
+            auto *component = FindUIText(entityId);
+            return component ? component->GetFontSize() : 0.0f;
+        }
+        void SetUITextFontSize(uint32_t entityId, float value)
+        {
+            if (auto *component = FindUIText(entityId))
+                component->SetFontSize(value);
+        }
 
-        int32_t GetUIButtonInteractable(uint32_t entityId) { auto *component = FindUIButton(entityId); return component && component->IsInteractable() ? 1 : 0; }
-        void SetUIButtonInteractable(uint32_t entityId, int32_t value) { if (auto *component = FindUIButton(entityId)) component->SetInteractable(value != 0); }
-        int32_t GetUIButtonHovered(uint32_t entityId) { auto *component = FindUIButton(entityId); return component && component->IsHovered() ? 1 : 0; }
-        int32_t GetUIButtonPressed(uint32_t entityId) { auto *component = FindUIButton(entityId); return component && component->WasPressed() ? 1 : 0; }
-        int32_t GetUIButtonReleased(uint32_t entityId) { auto *component = FindUIButton(entityId); return component && component->WasReleased() ? 1 : 0; }
-        int32_t GetUIButtonClicked(uint32_t entityId) { auto *component = FindUIButton(entityId); return component && component->WasClicked() ? 1 : 0; }
+        int32_t GetUIButtonInteractable(uint32_t entityId)
+        {
+            auto *component = FindUIButton(entityId);
+            return component && component->IsInteractable() ? 1 : 0;
+        }
+        void SetUIButtonInteractable(uint32_t entityId, int32_t value)
+        {
+            if (auto *component = FindUIButton(entityId))
+                component->SetInteractable(value != 0);
+        }
+        int32_t GetUIButtonHovered(uint32_t entityId)
+        {
+            auto *component = FindUIButton(entityId);
+            return component && component->IsHovered() ? 1 : 0;
+        }
+        int32_t GetUIButtonPressed(uint32_t entityId)
+        {
+            auto *component = FindUIButton(entityId);
+            return component && component->WasPressed() ? 1 : 0;
+        }
+        int32_t GetUIButtonReleased(uint32_t entityId)
+        {
+            auto *component = FindUIButton(entityId);
+            return component && component->WasReleased() ? 1 : 0;
+        }
+        int32_t GetUIButtonClicked(uint32_t entityId)
+        {
+            auto *component = FindUIButton(entityId);
+            return component && component->WasClicked() ? 1 : 0;
+        }
 
         int32_t GetKeyDown(int32_t keyCode)
         {

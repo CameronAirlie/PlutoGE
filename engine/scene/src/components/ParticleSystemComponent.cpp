@@ -197,6 +197,11 @@ namespace PlutoGE::scene
 
     void ParticleSystemComponent::Play()
     {
+        if (!m_paused && !m_playing && (m_time > 0.0f || m_burstFiredThisCycle))
+        {
+            ResetPlaybackState(false);
+        }
+
         m_playing = true;
         m_paused = false;
     }
@@ -239,6 +244,11 @@ namespace PlutoGE::scene
             return;
         }
 
+        if (!m_playing && !m_paused)
+        {
+            Play();
+        }
+
         if (UsesCpuSimulation())
         {
             SpawnCpuParticles(count);
@@ -255,6 +265,11 @@ namespace PlutoGE::scene
         if (count <= 0)
         {
             return;
+        }
+
+        if (!m_playing && !m_paused)
+        {
+            Play();
         }
 
         m_emitAtRequested = true;
@@ -672,7 +687,8 @@ namespace PlutoGE::scene
             }
             m_trails[index].erase(std::remove_if(m_trails[index].begin(),
                                                  m_trails[index].end(),
-                                                 [this](const ParticleTrailPoint &point) { return point.age > m_trailLifetime; }),
+                                                 [this](const ParticleTrailPoint &point)
+                                                 { return point.age > m_trailLifetime; }),
                                   m_trails[index].end());
 
             const glm::vec3 previousPosition = particle.position;
@@ -846,30 +862,51 @@ namespace PlutoGE::scene
 
         for (const auto &property : properties)
         {
-            if (property.name == "PlayOnAwake") SetPlayOnAwake(ParseBool(property.value));
-            else if (property.name == "Looping") SetLooping(ParseBool(property.value));
-            else if (property.name == "Duration") SetDuration(std::stof(property.value));
-            else if (property.name == "MaxParticles") SetMaxParticles(std::stoi(property.value));
-            else if (property.name == "StartLifetime") SetStartLifetime(std::stof(property.value));
-            else if (property.name == "StartSpeed") SetStartSpeed(std::stof(property.value));
-            else if (property.name == "StartSize") SetStartSize(std::stof(property.value));
-            else if (property.name == "StartColor") SetStartColor(ParseVec4(property.value, m_startColor));
-            else if (property.name == "GravityModifier") SetGravityModifier(std::stof(property.value));
-            else if (property.name == "EmissionRateOverTime") SetEmissionRateOverTime(std::stof(property.value));
-            else if (property.name == "BurstTime") SetBurstTime(std::stof(property.value));
-            else if (property.name == "BurstCount") SetBurstCount(std::stoi(property.value));
-            else if (property.name == "SimulationSpace") SetSimulationSpace(property.value == "World" || property.value == "1" ? ParticleSimulationSpace::World : ParticleSimulationSpace::Local);
+            if (property.name == "PlayOnAwake")
+                SetPlayOnAwake(ParseBool(property.value));
+            else if (property.name == "Looping")
+                SetLooping(ParseBool(property.value));
+            else if (property.name == "Duration")
+                SetDuration(std::stof(property.value));
+            else if (property.name == "MaxParticles")
+                SetMaxParticles(std::stoi(property.value));
+            else if (property.name == "StartLifetime")
+                SetStartLifetime(std::stof(property.value));
+            else if (property.name == "StartSpeed")
+                SetStartSpeed(std::stof(property.value));
+            else if (property.name == "StartSize")
+                SetStartSize(std::stof(property.value));
+            else if (property.name == "StartColor")
+                SetStartColor(ParseVec4(property.value, m_startColor));
+            else if (property.name == "GravityModifier")
+                SetGravityModifier(std::stof(property.value));
+            else if (property.name == "EmissionRateOverTime")
+                SetEmissionRateOverTime(std::stof(property.value));
+            else if (property.name == "BurstTime")
+                SetBurstTime(std::stof(property.value));
+            else if (property.name == "BurstCount")
+                SetBurstCount(std::stoi(property.value));
+            else if (property.name == "SimulationSpace")
+                SetSimulationSpace(property.value == "World" || property.value == "1" ? ParticleSimulationSpace::World : ParticleSimulationSpace::Local);
             else if (property.name == "Shape")
             {
-                if (property.value == "Sphere" || property.value == "1") SetShape(ParticleShape::Sphere);
-                else if (property.value == "Box" || property.value == "2") SetShape(ParticleShape::Box);
-                else if (property.value == "Cone" || property.value == "3") SetShape(ParticleShape::Cone);
-                else SetShape(ParticleShape::Point);
+                if (property.value == "Sphere" || property.value == "1")
+                    SetShape(ParticleShape::Sphere);
+                else if (property.value == "Box" || property.value == "2")
+                    SetShape(ParticleShape::Box);
+                else if (property.value == "Cone" || property.value == "3")
+                    SetShape(ParticleShape::Cone);
+                else
+                    SetShape(ParticleShape::Point);
             }
-            else if (property.name == "ShapeSize") SetShapeSize(ParseVec3(property.value, m_shapeSize));
-            else if (property.name == "ShapeRadius") SetShapeRadius(std::stof(property.value));
-            else if (property.name == "ConeAngle") SetConeAngle(std::stof(property.value));
-            else if (property.name == "MaterialAsset") SetMaterialAssetReference(property.value);
+            else if (property.name == "ShapeSize")
+                SetShapeSize(ParseVec3(property.value, m_shapeSize));
+            else if (property.name == "ShapeRadius")
+                SetShapeRadius(std::stof(property.value));
+            else if (property.name == "ConeAngle")
+                SetConeAngle(std::stof(property.value));
+            else if (property.name == "MaterialAsset")
+                SetMaterialAssetReference(property.value);
         }
         Clear();
     }

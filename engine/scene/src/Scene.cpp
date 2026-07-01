@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <iostream>
 #include <limits>
 #include <memory>
@@ -404,6 +405,7 @@ namespace PlutoGE::scene
         struct BulletStepBody
         {
             Entity *entity = nullptr;
+            EntityID entityId = 0;
             ColliderComponent *collider = nullptr;
             RigidbodyComponent *rigidbody = nullptr;
             std::unique_ptr<btCollisionShape> shape;
@@ -411,7 +413,34 @@ namespace PlutoGE::scene
             std::vector<float> heightfieldData;
             std::unique_ptr<btDefaultMotionState> motionState;
             std::unique_ptr<btRigidBody> body;
+            uint64_t configurationSignature = 0;
             bool dynamic = false;
+        };
+
+        struct BulletRuntimeWorld
+        {
+            btDefaultCollisionConfiguration collisionConfiguration;
+            btCollisionDispatcher dispatcher{&collisionConfiguration};
+            btDbvtBroadphase broadphase;
+            btSequentialImpulseConstraintSolver solver;
+            btDiscreteDynamicsWorld dynamicsWorld{&dispatcher, &broadphase, &solver, &collisionConfiguration};
+            std::vector<BulletStepBody> bodies;
+
+            BulletRuntimeWorld()
+            {
+                dynamicsWorld.setGravity(btVector3(0.0f, -9.81f, 0.0f));
+            }
+
+            ~BulletRuntimeWorld()
+            {
+                for (auto &body : bodies)
+                {
+                    if (body.body)
+                    {
+                        dynamicsWorld.removeRigidBody(body.body.get());
+                    }
+                }
+            }
         };
 
         struct BulletQueryBody
@@ -589,11 +618,66 @@ namespace PlutoGE::scene
             stepBody.rigidbody->SetVelocity(FromBullet(stepBody.body->getLinearVelocity()));
             stepBody.rigidbody->SetAngularVelocity(FromBullet(stepBody.body->getAngularVelocity()));
         }
+
+        template <typename ValueType>
+        void HashCombine(std::size_t &seed, const ValueType &value)
+        {
+            seed ^= std::hash<ValueType>{}(value) + 0x9e3779b9u + (seed << 6u) + (seed >> 2u);
+        }
+
+        void HashVec3(std::size_t &seed, const glm::vec3 &value)
+        {
+            HashCombine(seed, value.x);
+            HashCombine(seed, value.y);
+            HashCombine(seed, value.z);
+        }
+
+        uint64_t ComputeRuntimePhysicsBodySignature(const Entity &entity,
+                                                    const ColliderComponent &collider,
+                                                    const RigidbodyComponent *rigidbody)
+        {
+            std::size_t signature = 0;
+            HashCombine(signature, entity.GetID());
+            HashCombine(signature, static_cast<int>(collider.GetShape()));
+            HashCombine(signature, collider.IsEnabled());
+            HashCombine(signature, collider.IsTrigger());
+            HashVec3(signature, collider.GetCenter());
+            HashVec3(signature, collider.GetSize());
+            HashCombine(signature, collider.GetRadius());
+            HashCombine(signature, collider.GetHeight());
+            HashVec3(signature, entity.GetWorldScale());
+
+            if (const auto *terrain = entity.GetComponent<TerrainComponent>())
+            {
+                HashCombine(signature, terrain->GetWidth());
+                HashCombine(signature, terrain->GetDepth());
+                HashCombine(signature, terrain->GetCellSize());
+            }
+
+            HashCombine(signature, rigidbody && rigidbody->IsEnabled());
+            if (rigidbody && rigidbody->IsEnabled())
+            {
+                HashCombine(signature, rigidbody->GetMass());
+                HashCombine(signature, rigidbody->GetLinearDrag());
+                HashCombine(signature, rigidbody->GetAngularDrag());
+                HashCombine(signature, rigidbody->GetFriction());
+                HashCombine(signature, rigidbody->UsesGravity());
+                HashCombine(signature, rigidbody->IsKinematic());
+                HashCombine(signature, rigidbody->HasFreezeRotation());
+            }
+
+            return static_cast<uint64_t>(signature);
+        }
     }
 
     struct Scene::PhysicsQueryCache
     {
         std::unique_ptr<BulletQueryWorld> world;
+    };
+
+    struct Scene::RuntimePhysicsState
+    {
+        std::unique_ptr<BulletRuntimeWorld> world;
     };
 
     Scene::Scene() = default;
@@ -619,6 +703,101 @@ namespace PlutoGE::scene
     void Scene::InvalidatePhysicsQueryCache() const
     {
         m_physicsQueryCache.reset();
+    }
+
+    void Scene::ResetRuntimePhysicsState()
+    {
+        m_runtimePhysicsState.reset();
+        m_activeCollisionPairs.clear();
+    }
+
+    void Scene::RebuildRuntimePhysicsState(const std::vector<Entity *> &entities)
+    {
+        if (!m_runtimePhysicsState)
+        {
+            m_runtimePhysicsState = std::make_unique<RuntimePhysicsState>();
+        }
+
+        auto runtimeWorld = std::make_unique<BulletRuntimeWorld>();
+        runtimeWorld->bodies.reserve(entities.size());
+
+        for (auto *entity : entities)
+        {
+            auto *collider = entity ? entity->GetComponent<ColliderComponent>() : nullptr;
+            if (!entity || !collider || !collider->IsEnabled() || collider->IsTrigger())
+            {
+                continue;
+            }
+
+            auto *rigidbody = entity->GetComponent<RigidbodyComponent>();
+            const glm::vec3 worldScale = entity->GetWorldScale();
+            auto shapeData = CreateBulletShapeForEntity(*entity, *collider);
+            if (!shapeData.shape)
+            {
+                continue;
+            }
+
+            const bool rigidbodyEnabled = rigidbody && rigidbody->IsEnabled();
+            const bool dynamic = rigidbodyEnabled && !rigidbody->IsKinematic();
+            const float mass = dynamic ? rigidbody->GetMass() : 0.0f;
+            btVector3 localInertia(0.0f, 0.0f, 0.0f);
+            if (mass > 0.0f)
+            {
+                shapeData.shape->calculateLocalInertia(mass, localInertia);
+            }
+
+            btTransform startTransform;
+            startTransform.setIdentity();
+            startTransform.setOrigin(ToBullet(entity->GetWorldPosition()));
+            startTransform.setRotation(ToBulletRotation(entity->GetWorldTransform()));
+
+            auto motionState = std::make_unique<btDefaultMotionState>(startTransform);
+            btRigidBody::btRigidBodyConstructionInfo constructionInfo(mass, motionState.get(), shapeData.shape.get(), localInertia);
+            constructionInfo.m_linearDamping = rigidbodyEnabled ? rigidbody->GetLinearDrag() : 0.0f;
+            constructionInfo.m_angularDamping = rigidbodyEnabled ? rigidbody->GetAngularDrag() : 0.0f;
+            auto body = std::make_unique<btRigidBody>(constructionInfo);
+            body->setUserPointer(entity);
+            if (rigidbodyEnabled)
+            {
+                body->setFriction(rigidbody->GetFriction());
+                body->setLinearVelocity(ToBullet(rigidbody->GetVelocity()));
+                body->setAngularVelocity(rigidbody->HasFreezeRotation() ? btVector3(0.0f, 0.0f, 0.0f) : ToBullet(rigidbody->GetAngularVelocity()));
+                body->setGravity(rigidbody->UsesGravity() ? runtimeWorld->dynamicsWorld.getGravity() : btVector3(0.0f, 0.0f, 0.0f));
+                if (rigidbody->HasFreezeRotation())
+                {
+                    body->setAngularFactor(btVector3(0.0f, 0.0f, 0.0f));
+                }
+            }
+
+            if (!dynamic && rigidbodyEnabled && rigidbody->IsKinematic())
+            {
+                body->setCollisionFlags(body->getCollisionFlags() | btCollisionObject::CF_KINEMATIC_OBJECT);
+                body->setActivationState(DISABLE_DEACTIVATION);
+            }
+            if (dynamic)
+            {
+                body->setCcdMotionThreshold(0.0001f);
+                body->setCcdSweptSphereRadius(std::max(0.05f, collider->GetScaledRadius(worldScale)));
+                body->setActivationState(DISABLE_DEACTIVATION);
+            }
+
+            runtimeWorld->dynamicsWorld.addRigidBody(body.get());
+            runtimeWorld->bodies.push_back(BulletStepBody{
+                .entity = entity,
+                .entityId = entity->GetID(),
+                .collider = collider,
+                .rigidbody = rigidbodyEnabled ? rigidbody : nullptr,
+                .shape = std::move(shapeData.shape),
+                .childShapes = std::move(shapeData.ownedChildShapes),
+                .heightfieldData = std::move(shapeData.ownedHeightfieldData),
+                .motionState = std::move(motionState),
+                .body = std::move(body),
+                .configurationSignature = ComputeRuntimePhysicsBodySignature(*entity, *collider, rigidbodyEnabled ? rigidbody : nullptr),
+                .dynamic = dynamic,
+            });
+        }
+
+        m_runtimePhysicsState->world = std::move(runtimeWorld);
     }
 
     void Scene::SyncPhysicsQueryTransform(const Entity &entity) const
@@ -652,6 +831,8 @@ namespace PlutoGE::scene
             return;
         }
 
+        ResetRuntimePhysicsState();
+
         for (auto *scriptComponent : GatherRuntimeScriptComponents(m_rootEntities))
         {
             scriptComponent->Start();
@@ -673,6 +854,7 @@ namespace PlutoGE::scene
         }
 
         m_runtimeStarted = false;
+        ResetRuntimePhysicsState();
     }
 
     void Scene::SetEnvironmentMap(render::Texture *texture, const std::string &filePath)
@@ -904,6 +1086,8 @@ namespace PlutoGE::scene
                     return entitySet.contains(ownedEntity.get());
                 }),
             m_entityStorage.end());
+
+        ResetRuntimePhysicsState();
     }
 
     bool Scene::DestroyEntity(EntityID entityId)
@@ -1345,7 +1529,6 @@ namespace PlutoGE::scene
         hit.normal = glm::normalize(FromBullet(callback.m_hitNormalWorld));
         hit.distance = glm::length(hit.point - origin);
         return true;
-
     }
 
     glm::vec3 Scene::MoveKinematic(Entity &entity, const glm::vec3 &displacement, float skinWidth) const
@@ -1459,95 +1642,93 @@ namespace PlutoGE::scene
             CollectActiveEntities(rootEntity, entities);
         }
 
-        btDefaultCollisionConfiguration collisionConfiguration;
-        btCollisionDispatcher dispatcher(&collisionConfiguration);
-        btDbvtBroadphase broadphase;
-        btSequentialImpulseConstraintSolver solver;
-        btDiscreteDynamicsWorld dynamicsWorld(&dispatcher, &broadphase, &solver, &collisionConfiguration);
-        dynamicsWorld.setGravity(btVector3(0.0f, -9.81f, 0.0f));
-
-        std::vector<BulletStepBody> stepBodies;
-        stepBodies.reserve(entities.size());
+        bool rebuildRuntimePhysics = !m_runtimePhysicsState || !m_runtimePhysicsState->world;
+        std::vector<Entity *> physicsEntities;
+        physicsEntities.reserve(entities.size());
         for (auto *entity : entities)
         {
             auto *collider = entity ? entity->GetComponent<ColliderComponent>() : nullptr;
-            if (!entity || !collider || !collider->IsEnabled() || collider->IsTrigger())
+            if (entity && collider && collider->IsEnabled() && !collider->IsTrigger())
             {
-                continue;
+                physicsEntities.push_back(entity);
             }
-
-            auto *rigidbody = entity->GetComponent<RigidbodyComponent>();
-            const glm::vec3 worldScale = entity->GetWorldScale();
-            auto shapeData = CreateBulletShapeForEntity(*entity, *collider);
-            if (!shapeData.shape)
-            {
-                continue;
-            }
-
-            const bool dynamic = rigidbody && rigidbody->IsEnabled() && !rigidbody->IsKinematic();
-            const float mass = dynamic ? rigidbody->GetMass() : 0.0f;
-            btVector3 localInertia(0.0f, 0.0f, 0.0f);
-            if (mass > 0.0f)
-            {
-                shapeData.shape->calculateLocalInertia(mass, localInertia);
-            }
-
-            btTransform startTransform;
-            startTransform.setIdentity();
-            startTransform.setOrigin(ToBullet(entity->GetWorldPosition()));
-            startTransform.setRotation(ToBulletRotation(entity->GetWorldTransform()));
-
-            auto motionState = std::make_unique<btDefaultMotionState>(startTransform);
-            btRigidBody::btRigidBodyConstructionInfo constructionInfo(mass, motionState.get(), shapeData.shape.get(), localInertia);
-            constructionInfo.m_linearDamping = rigidbody ? rigidbody->GetLinearDrag() : 0.0f;
-            constructionInfo.m_angularDamping = rigidbody ? rigidbody->GetAngularDrag() : 0.0f;
-            auto body = std::make_unique<btRigidBody>(constructionInfo);
-            body->setUserPointer(entity);
-            if (rigidbody)
-            {
-                body->setFriction(rigidbody->GetFriction());
-                body->setLinearVelocity(ToBullet(rigidbody->GetVelocity()));
-                body->setAngularVelocity(rigidbody->HasFreezeRotation() ? btVector3(0.0f, 0.0f, 0.0f) : ToBullet(rigidbody->GetAngularVelocity()));
-                body->setGravity(rigidbody->UsesGravity() ? dynamicsWorld.getGravity() : btVector3(0.0f, 0.0f, 0.0f));
-                if (rigidbody->HasFreezeRotation())
-                {
-                    body->setAngularFactor(btVector3(0.0f, 0.0f, 0.0f));
-                }
-            }
-
-            if (!dynamic && rigidbody && rigidbody->IsKinematic())
-            {
-                body->setCollisionFlags(body->getCollisionFlags() | btCollisionObject::CF_KINEMATIC_OBJECT);
-                body->setActivationState(DISABLE_DEACTIVATION);
-            }
-            if (dynamic)
-            {
-                body->setCcdMotionThreshold(0.0001f);
-                body->setCcdSweptSphereRadius(std::max(0.05f, collider->GetScaledRadius(worldScale)));
-                body->setActivationState(DISABLE_DEACTIVATION);
-            }
-
-            dynamicsWorld.addRigidBody(body.get());
-            stepBodies.push_back(BulletStepBody{
-                .entity = entity,
-                .collider = collider,
-                .rigidbody = rigidbody && rigidbody->IsEnabled() ? rigidbody : nullptr,
-                .shape = std::move(shapeData.shape),
-                .childShapes = std::move(shapeData.ownedChildShapes),
-                .heightfieldData = std::move(shapeData.ownedHeightfieldData),
-                .motionState = std::move(motionState),
-                .body = std::move(body),
-                .dynamic = dynamic,
-            });
         }
 
-        dynamicsWorld.stepSimulation(step, 0);
+        if (!rebuildRuntimePhysics)
+        {
+            const auto &existingBodies = m_runtimePhysicsState->world->bodies;
+            if (existingBodies.size() != physicsEntities.size())
+            {
+                rebuildRuntimePhysics = true;
+            }
+            else
+            {
+                for (size_t index = 0; index < physicsEntities.size(); ++index)
+                {
+                    auto *entity = physicsEntities[index];
+                    auto *collider = entity->GetComponent<ColliderComponent>();
+                    auto *rigidbody = entity->GetComponent<RigidbodyComponent>();
+                    const bool rigidbodyEnabled = rigidbody && rigidbody->IsEnabled();
+                    if (existingBodies[index].entity != entity ||
+                        existingBodies[index].configurationSignature != ComputeRuntimePhysicsBodySignature(*entity, *collider, rigidbodyEnabled ? rigidbody : nullptr))
+                    {
+                        rebuildRuntimePhysics = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (rebuildRuntimePhysics)
+        {
+            RebuildRuntimePhysicsState(entities);
+        }
+
+        if (!m_runtimePhysicsState || !m_runtimePhysicsState->world)
+        {
+            return;
+        }
+
+        auto &runtimeWorld = *m_runtimePhysicsState->world;
+        for (auto &stepBody : runtimeWorld.bodies)
+        {
+            if (!stepBody.body || !stepBody.entity || stepBody.dynamic)
+            {
+                continue;
+            }
+
+            btTransform transform;
+            transform.setIdentity();
+            transform.setOrigin(ToBullet(stepBody.entity->GetWorldPosition()));
+            transform.setRotation(ToBulletRotation(stepBody.entity->GetWorldTransform()));
+            stepBody.body->setWorldTransform(transform);
+            if (stepBody.motionState)
+            {
+                stepBody.motionState->setWorldTransform(transform);
+            }
+            stepBody.body->setInterpolationWorldTransform(transform);
+
+            if (stepBody.rigidbody && stepBody.rigidbody->IsKinematic())
+            {
+                stepBody.body->setLinearVelocity(ToBullet(stepBody.rigidbody->GetVelocity()));
+                stepBody.body->setAngularVelocity(stepBody.rigidbody->HasFreezeRotation() ? btVector3(0.0f, 0.0f, 0.0f) : ToBullet(stepBody.rigidbody->GetAngularVelocity()));
+            }
+            else
+            {
+                stepBody.body->setLinearVelocity(btVector3(0.0f, 0.0f, 0.0f));
+                stepBody.body->setAngularVelocity(btVector3(0.0f, 0.0f, 0.0f));
+            }
+
+            runtimeWorld.dynamicsWorld.updateSingleAabb(stepBody.body.get());
+        }
+
+        runtimeWorld.dynamicsWorld.stepSimulation(step, 0);
 
         std::unordered_set<uint64_t> currentCollisionPairs;
-        const int manifoldCount = dynamicsWorld.getDispatcher()->getNumManifolds();
+        const int manifoldCount = runtimeWorld.dynamicsWorld.getDispatcher()->getNumManifolds();
         for (int manifoldIndex = 0; manifoldIndex < manifoldCount; ++manifoldIndex)
         {
-            auto *manifold = dynamicsWorld.getDispatcher()->getManifoldByIndexInternal(manifoldIndex);
+            auto *manifold = runtimeWorld.dynamicsWorld.getDispatcher()->getManifoldByIndexInternal(manifoldIndex);
             if (!manifold || manifold->getNumContacts() <= 0)
             {
                 continue;
@@ -1578,10 +1759,9 @@ namespace PlutoGE::scene
             }
         }
 
-        for (auto &stepBody : stepBodies)
+        for (auto &stepBody : runtimeWorld.bodies)
         {
             SyncBodyBackToEntity(stepBody);
-            dynamicsWorld.removeRigidBody(stepBody.body.get());
         }
 
         DispatchCollisionEvents(std::move(currentCollisionPairs));

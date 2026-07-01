@@ -98,8 +98,8 @@ namespace PlutoGE::scene
         [[nodiscard]] bool IsRuntimeStarted() const { return m_runtimeStarted; }
         [[nodiscard]] const SceneUpdateTimingStats &GetUpdateTimingStats() const { return m_updateTimingStats; }
 
-        Entity *FindEntityByName(const std::string &name) const;               // Utility function to find an entity by name (can be useful for scripting and editor)
-        Entity *FindEntityByID(EntityID id) const;                             // Utility function to find an entity by its unique ID (useful for serialization and referencing)
+        Entity *FindEntityByName(const std::string &name) const; // Utility function to find an entity by name (can be useful for scripting and editor)
+        Entity *FindEntityByID(EntityID id) const;               // Utility function to find an entity by its unique ID (useful for serialization and referencing)
         bool ContainsEntity(const Entity *entity) const;
         std::vector<Entity *> FindEntitiesByTag(const std::string &tag) const; // Utility function to find entities by tag (can be useful for scripting and editor)
         bool Raycast(const glm::vec3 &origin,
@@ -165,6 +165,7 @@ namespace PlutoGE::scene
 
     private:
         struct PhysicsQueryCache;
+        struct RuntimePhysicsState;
 
         std::string m_name;
         std::vector<std::unique_ptr<Entity>> m_entityStorage;
@@ -187,12 +188,15 @@ namespace PlutoGE::scene
         std::vector<EntityID> m_pendingDestroyEntities;
         std::unordered_set<EntityID> m_pendingDestroyEntityIds;
         mutable std::unique_ptr<PhysicsQueryCache> m_physicsQueryCache;
+        std::unique_ptr<RuntimePhysicsState> m_runtimePhysicsState;
         void CollectEntitySubtree(Entity *entity, std::vector<Entity *> &entities) const;
         bool RemoveEntityRecursive(Entity *current, Entity *target);
         void FlushPendingDestroyEntities();
         void RebuildBakedProbeTexture();
         PhysicsQueryCache &GetPhysicsQueryCache() const;
         void InvalidatePhysicsQueryCache() const;
+        void ResetRuntimePhysicsState();
+        void RebuildRuntimePhysicsState(const std::vector<Entity *> &entities);
         void SyncPhysicsQueryTransform(const Entity &entity) const;
         void StepPhysics(float deltaTime);
         void DispatchCollisionEvents(std::unordered_set<uint64_t> currentCollisionPairs);

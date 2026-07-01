@@ -175,7 +175,7 @@ namespace PlutoGE::assetimport
         };
 
         constexpr uint32_t kCookedMeshCacheMagic = 0x434d4750; // PGMC
-        constexpr uint32_t kCookedMeshCacheVersion = 26;
+        constexpr uint32_t kCookedMeshCacheVersion = 27;
 
         bool ReadBooleanEnvironmentFlag(const char *name, bool defaultValue)
         {
@@ -213,13 +213,13 @@ namespace PlutoGE::assetimport
             }
         };
 
-        MeshCookOptions ResolveMeshCookOptions()
+        MeshCookOptions ResolveMeshCookOptions(const MeshImportOptions &requested = {})
         {
             return MeshCookOptions{
-                .generateLods = ReadBooleanEnvironmentFlag("PLUTOGE_GENERATE_MESH_LODS", false),
+                .generateLods = requested.generateLods || ReadBooleanEnvironmentFlag("PLUTOGE_GENERATE_MESH_LODS", false),
                 .generateTangents = ReadBooleanEnvironmentFlag("PLUTOGE_GENERATE_MESH_TANGENTS", false),
-                .optimizeVertexCache = ReadBooleanEnvironmentFlag("PLUTOGE_OPTIMIZE_MESH_VERTEX_CACHE", false),
-                .optimizeOverdraw = ReadBooleanEnvironmentFlag("PLUTOGE_OPTIMIZE_MESH_OVERDRAW", false),
+                .optimizeVertexCache = requested.optimizeVertexCache || ReadBooleanEnvironmentFlag("PLUTOGE_OPTIMIZE_MESH_VERTEX_CACHE", false),
+                .optimizeOverdraw = requested.optimizeOverdraw || ReadBooleanEnvironmentFlag("PLUTOGE_OPTIMIZE_MESH_OVERDRAW", false),
                 .assimpQualityPostProcess = ReadBooleanEnvironmentFlag("PLUTOGE_ASSIMP_QUALITY_POSTPROCESS", false),
             };
         }
@@ -1776,6 +1776,53 @@ namespace PlutoGE::assetimport
                 {
                     submesh.lods = sourceSubmesh.lods;
                 }
+            }
+        }
+
+        void OptimizeGeneratedLodRanges(render::MeshData &meshData,
+                                        const std::vector<render::Submesh> &submeshes,
+                                        bool optimizeVertexCache,
+                                        bool optimizeOverdraw)
+        {
+            if ((!optimizeVertexCache && !optimizeOverdraw) || meshData.vertices.empty())
+            {
+                return;
+            }
+
+            const auto optimizeSubmesh = [&](const render::Submesh &submesh)
+            {
+                for (std::size_t lodIndex = 1; lodIndex < submesh.lods.size(); ++lodIndex)
+                {
+                    const auto &lod = submesh.lods[lodIndex];
+                    if (lod.indexCount < 3 || lod.indexOffset + lod.indexCount > meshData.indices.size())
+                    {
+                        continue;
+                    }
+
+                    auto *indices = meshData.indices.data() + lod.indexOffset;
+                    meshopt_optimizeVertexCache(indices, indices, lod.indexCount, meshData.vertices.size());
+                    if (optimizeOverdraw && lod.indexCount <= kLargeMeshOverdrawThreshold)
+                    {
+                        meshopt_optimizeOverdraw(
+                            indices,
+                            indices,
+                            lod.indexCount,
+                            reinterpret_cast<const float *>(meshData.vertices.data()),
+                            meshData.vertices.size(),
+                            sizeof(render::MeshVertexData),
+                            1.05f);
+                        meshopt_optimizeVertexCache(indices, indices, lod.indexCount, meshData.vertices.size());
+                    }
+                }
+            };
+
+            if (submeshes.size() > 1)
+            {
+                std::for_each(std::execution::par, submeshes.begin(), submeshes.end(), optimizeSubmesh);
+            }
+            else if (!submeshes.empty())
+            {
+                optimizeSubmesh(submeshes.front());
             }
         }
 
@@ -4194,6 +4241,7 @@ namespace PlutoGE::assetimport
                 profile->optimizeMs = ElapsedMilliseconds(optimizeStart);
             }
             GenerateSubmeshLods(asset.meshData, asset.submeshes, cookOptions.generateLods);
+            OptimizeGeneratedLodRanges(asset.meshData, asset.submeshes, cookOptions.optimizeVertexCache, cookOptions.optimizeOverdraw);
             return asset;
         }
 
@@ -4361,6 +4409,7 @@ namespace PlutoGE::assetimport
             }
             OptimizeMeshData(parsedMeshAsset.meshData, parsedMeshAsset.submeshes, cookOptions.optimizeVertexCache, cookOptions.optimizeOverdraw, &profile);
             GenerateSubmeshLods(parsedMeshAsset.meshData, parsedMeshAsset.submeshes, cookOptions.generateLods);
+            OptimizeGeneratedLodRanges(parsedMeshAsset.meshData, parsedMeshAsset.submeshes, cookOptions.optimizeVertexCache, cookOptions.optimizeOverdraw);
             profile.optimizeMs = ElapsedMilliseconds(optimizeStart);
             StoreCookedMeshAsset(filePath, cookOptions, parsedMeshAsset);
             return parsedMeshAsset;
@@ -4378,20 +4427,22 @@ namespace PlutoGE::assetimport
         return extension == ".glb" || extension == ".gltf" || extension == ".fbx";
     }
 
-    ImportedMeshSourceAsset MeshImporter::ImportMeshSourceAsset(const std::string &filePath) const
+    ImportedMeshSourceAsset MeshImporter::ImportMeshSourceAsset(const std::string &filePath, const MeshImportOptions &options) const
     {
-        return ParseMeshAsset(filePath);
+        return ParseMeshAsset(filePath, ResolveMeshCookOptions(options));
     }
 
-    ImportedMeshAsset MeshImporter::GenerateMeshLods(const std::string &filePath)
+    ImportedMeshAsset MeshImporter::GenerateMeshLods(const std::string &filePath, const MeshImportOptions &options)
     {
         const auto normalizedPath = NormalizePath(filePath);
-        MeshCookOptions cookOptions = ResolveMeshCookOptions();
+        MeshImportOptions requested = options;
+        requested.generateLods = true;
+        MeshCookOptions cookOptions = ResolveMeshCookOptions(requested);
         cookOptions.generateLods = true;
-        return FinalizeImportedMeshAsset(normalizedPath, ParseMeshAsset(normalizedPath, cookOptions));
+        return FinalizeImportedMeshAsset(normalizedPath, ParseMeshAsset(normalizedPath, cookOptions), requested);
     }
 
-    ImportedMeshAsset MeshImporter::FinalizeImportedMeshAsset(const std::string &filePath, ImportedMeshSourceAsset meshSourceAsset)
+    ImportedMeshAsset MeshImporter::FinalizeImportedMeshAsset(const std::string &filePath, ImportedMeshSourceAsset meshSourceAsset, const MeshImportOptions &options)
     {
         // LRU cache for meshes
         constexpr size_t kMaxMeshCacheSize = 32;
@@ -4436,6 +4487,7 @@ namespace PlutoGE::assetimport
             cachedImportedMeshAsset.sourceFileSize = sourceStamp->fileSize;
             cachedImportedMeshAsset.sourceWriteTime = sourceStamp->writeTime;
         }
+        cachedImportedMeshAsset.importFlags = options.ToFlags();
         auto [iterator, inserted] = m_meshCache.emplace(normalizedPath, std::move(cachedImportedMeshAsset));
         return iterator->second.ToImportedMeshAsset();
     }
@@ -4445,7 +4497,7 @@ namespace PlutoGE::assetimport
         return ParseMeshAsset(filePath).meshData;
     }
 
-    ImportedMeshAsset MeshImporter::ImportMeshAsset(const std::string &filePath)
+    ImportedMeshAsset MeshImporter::ImportMeshAsset(const std::string &filePath, const MeshImportOptions &options)
     {
         const auto normalizedPath = NormalizePath(filePath);
         const auto cachedMesh = m_meshCache.find(normalizedPath);
@@ -4454,7 +4506,8 @@ namespace PlutoGE::assetimport
             const auto sourceStamp = ReadMeshSourceStamp(normalizedPath);
             if (sourceStamp &&
                 cachedMesh->second.sourceFileSize == sourceStamp->fileSize &&
-                cachedMesh->second.sourceWriteTime == sourceStamp->writeTime)
+                cachedMesh->second.sourceWriteTime == sourceStamp->writeTime &&
+                cachedMesh->second.importFlags == options.ToFlags())
             {
                 return cachedMesh->second.ToImportedMeshAsset();
             }
@@ -4469,7 +4522,7 @@ namespace PlutoGE::assetimport
 
         try
         {
-            return FinalizeImportedMeshAsset(normalizedPath, ParseMeshAsset(normalizedPath));
+            return FinalizeImportedMeshAsset(normalizedPath, ParseMeshAsset(normalizedPath, ResolveMeshCookOptions(options)), options);
         }
         catch (const std::exception &exception)
         {

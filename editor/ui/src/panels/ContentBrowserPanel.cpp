@@ -981,7 +981,9 @@ namespace PlutoGE::ui
                 meshConfig.animationNodes = importedSourceAsset.animationNodes;
                 meshConfig.animations = importedSourceAsset.animations;
 
-                if (!engine.GetAssetManager().SaveMeshAsset(meshReference, meshConfig, materialReferences, errorMessage))
+                assets::MeshAssetMetadata meshMetadata;
+                meshMetadata.sourceAssetReference = asset.reference;
+                if (!engine.GetAssetManager().SaveMeshAsset(meshReference, meshConfig, materialReferences, errorMessage, meshMetadata))
                 {
                     return false;
                 }

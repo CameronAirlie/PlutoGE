@@ -24,6 +24,9 @@ namespace PlutoGE::render
         unsigned int m_shadowFramebuffer = 0;
         unsigned int m_instanceBuffer = 0;
         std::size_t m_instanceCapacity = 0;
+        unsigned int m_indirectBuffer = 0;
+        std::size_t m_indirectCapacity = 0;
+        bool m_indirectDrawEnabled = true;
         std::uint64_t m_shadowCasterFingerprint = 0;
         bool m_hasShadowCasterFingerprint = false;
     };

@@ -118,15 +118,21 @@ namespace PlutoGE::render
         int shadowUpdatedDirectionalCascadeCount = 0;
         int shadowSubmittedInstanceCount = 0;
         int shadowSubmittedBatchCount = 0;
+        int shadowMaterialGroupCount = 0;
+        int shadowApiDrawCallCount = 0;
         int shadowSubmittedTriangleCount = 0;
         int shadowUpdatedPixelCount = 0;
         int submittedRenderCommandCount = 0;
         int submissionCulledRenderCommandCount = 0;
         int visibleRenderCommandCount = 0;
         int frustumCulledRenderCommandCount = 0;
+        int visibleSingleLodCommandCount = 0;
+        int visibleMultiLodCommandCount = 0;
         int renderCommandSortCount = 0;
         int geometrySubmittedInstanceCount = 0;
         int geometrySubmittedBatchCount = 0;
+        int geometryMaterialGroupCount = 0;
+        int geometryApiDrawCallCount = 0;
         int geometrySubmittedTriangleCount = 0;
         std::array<int, 4> geometrySubmittedTrianglesByLod{};
     };
@@ -192,8 +198,9 @@ namespace PlutoGE::render
         void EndPostProcessEffectTiming();
         void SetLightingPassCounters(int lightCount, int shadowedLightCount);
         void RecordGBufferResize(float resizeMs);
-        void RecordShadowMapUpdate(int surfacePixels, int submittedInstances, int submittedBatches, int submittedTriangles, bool directionalCascade);
+        void RecordShadowMapUpdate(int surfacePixels, int submittedInstances, int submittedBatches, int submittedTriangles, int materialGroups, int apiDrawCalls, bool directionalCascade);
         void RecordGeometryBatch(int submittedInstances, int submittedTriangles, std::size_t lodIndex);
+        void RecordGeometryDriverSubmission(int materialGroups, int apiDrawCalls);
 
         bool PreparePhysicalSkyEnvironment(const RenderContext &ctx);
         GLuint GetPhysicalSkyEnvironmentTextureID() const;

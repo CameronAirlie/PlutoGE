@@ -1,6 +1,7 @@
 #include "PlutoGE/render/passes/GeometryPass.h"
 #include "PlutoGE/render/RenderTarget.h"
 #include "PlutoGE/render/GBuffer.h"
+#include "PlutoGE/render/IndirectDraw.h"
 #include "PlutoGE/render/Camera.h"
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/Mesh.h"
@@ -10,6 +11,7 @@
 #include <array>
 #include <cstddef>
 #include <chrono>
+#include <iostream>
 #include <vector>
 
 namespace PlutoGE::render
@@ -259,12 +261,83 @@ namespace PlutoGE::render
 
         UploadGeometryInstances(m_instanceBuffer, m_instanceCapacity, instances);
 
-        const bool supportsBaseInstance = GLAD_GL_VERSION_4_2 && glDrawElementsInstancedBaseInstance != nullptr;
+        struct PreparedGeometryGroup
+        {
+            std::size_t firstDraw = 0;
+            std::size_t drawCount = 0;
+            std::size_t firstIndirectCommand = 0;
+            bool usesIndirect = false;
+        };
+
+        std::vector<DrawElementsIndirectCommand> indirectCommands;
+        indirectCommands.reserve(draws.size());
+        std::vector<PreparedGeometryGroup> groups;
+        groups.reserve(draws.size());
+        for (std::size_t drawIndex = 0; drawIndex < draws.size();)
+        {
+            const auto &head = draws[drawIndex];
+            const bool usesIndirect = !head.command->jointMatrices;
+            const IndirectDrawGroupingKey headKey{
+                .shader = head.command->material ? head.command->material->GetShader() : head.command->shader,
+                .material = head.command->material,
+                .mesh = head.command->mesh,
+                .skinned = head.command->jointMatrices != nullptr,
+            };
+            std::size_t drawEnd = drawIndex + 1;
+            if (usesIndirect)
+            {
+                while (drawEnd < draws.size())
+                {
+                    const auto *candidate = draws[drawEnd].command;
+                    const IndirectDrawGroupingKey candidateKey{
+                        .shader = candidate->material ? candidate->material->GetShader() : candidate->shader,
+                        .material = candidate->material,
+                        .mesh = candidate->mesh,
+                        .skinned = candidate->jointMatrices != nullptr,
+                    };
+                    if (!CanGroupGeometryIndirectDraws(headKey, candidateKey))
+                    {
+                        break;
+                    }
+                    ++drawEnd;
+                }
+            }
+
+            const std::size_t firstIndirectCommand = indirectCommands.size();
+            if (usesIndirect)
+            {
+                for (std::size_t groupedDrawIndex = drawIndex; groupedDrawIndex < drawEnd; ++groupedDrawIndex)
+                {
+                    const auto &groupedDraw = draws[groupedDrawIndex];
+                    const auto range = groupedDraw.command->mesh->GetSubmeshLodRange(
+                        groupedDraw.command->submeshIndex,
+                        groupedDraw.command->lodIndex);
+                    indirectCommands.push_back(BuildDrawElementsIndirectCommand(
+                        range.indexCount,
+                        groupedDraw.instanceCount,
+                        range.indexOffset,
+                        groupedDraw.firstInstance));
+                }
+            }
+
+            groups.push_back(PreparedGeometryGroup{
+                .firstDraw = drawIndex,
+                .drawCount = drawEnd - drawIndex,
+                .firstIndirectCommand = firstIndirectCommand,
+                .usesIndirect = usesIndirect,
+            });
+            drawIndex = drawEnd;
+        }
+
+        UploadIndirectDrawCommands(m_indirectBuffer, m_indirectCapacity, indirectCommands);
+
         Material *boundMaterial = nullptr;
         Mesh *boundMesh = nullptr;
         bool skinningEnabled = false;
-        for (const auto &draw : draws)
+        int apiDrawCalls = 0;
+        for (const auto &group : groups)
         {
+            const auto &draw = draws[group.firstDraw];
             const auto &command = *draw.command;
             if (command.material != boundMaterial)
             {
@@ -278,40 +351,110 @@ namespace PlutoGE::render
                 }
             }
 
-            if (command.jointMatrices)
+            if (group.usesIndirect)
             {
-                UploadJointMatrices(activeShader, command.jointMatrices);
-                skinningEnabled = true;
-            }
-            else if (skinningEnabled)
-            {
-                activeShader->SetUniform("uUseSkinning", 0);
-                skinningEnabled = false;
-            }
-
-            if (supportsBaseInstance)
-            {
+                if (skinningEnabled)
+                {
+                    activeShader->SetUniform("uUseSkinning", 0);
+                    skinningEnabled = false;
+                }
                 if (command.mesh != boundMesh)
                 {
                     BindGeometryInstanceAttributes(*command.mesh, m_instanceBuffer, 0);
                     boundMesh = command.mesh;
                 }
-                command.mesh->DrawSubmeshInstancedBaseInstanceBound(command.submeshIndex,
-                                                                     draw.instanceCount,
-                                                                     draw.firstInstance,
-                                                                     command.lodIndex);
+                bool submittedIndirectly = false;
+                if (m_indirectDrawEnabled)
+                {
+                    const bool validateIndirectDraw = !m_indirectDrawValidated;
+                    if (validateIndirectDraw)
+                    {
+                        while (glGetError() != GL_NO_ERROR)
+                        {
+                        }
+                    }
+                    glBindBuffer(GL_DRAW_INDIRECT_BUFFER, m_indirectBuffer);
+                    glMultiDrawElementsIndirect(
+                        GL_TRIANGLES,
+                        GL_UNSIGNED_INT,
+                        reinterpret_cast<const void *>(group.firstIndirectCommand * sizeof(DrawElementsIndirectCommand)),
+                        static_cast<GLsizei>(group.drawCount),
+                        0);
+                    if (validateIndirectDraw)
+                    {
+                        const GLenum indirectError = glGetError();
+                        submittedIndirectly = indirectError == GL_NO_ERROR;
+                        if (!submittedIndirectly)
+                        {
+                            std::cerr << "Geometry multi-draw disabled after OpenGL error " << indirectError
+                                      << "; using direct draws." << std::endl;
+                            m_indirectDrawEnabled = false;
+                        }
+                        else
+                        {
+                            m_indirectDrawValidated = true;
+                        }
+                    }
+                    else
+                    {
+                        submittedIndirectly = true;
+                    }
+                }
+
+                if (!submittedIndirectly)
+                {
+                    for (std::size_t groupedDrawIndex = group.firstDraw;
+                         groupedDrawIndex < group.firstDraw + group.drawCount;
+                         ++groupedDrawIndex)
+                    {
+                        const auto &directDraw = draws[groupedDrawIndex];
+                        directDraw.command->mesh->DrawSubmeshInstancedBaseInstanceBound(
+                            directDraw.command->submeshIndex,
+                            directDraw.instanceCount,
+                            directDraw.firstInstance,
+                            directDraw.command->lodIndex);
+                    }
+                    apiDrawCalls += static_cast<int>(group.drawCount);
+                }
+                else
+                {
+                    ++apiDrawCalls;
+                }
             }
             else
             {
-                BindGeometryInstanceAttributes(*command.mesh, m_instanceBuffer, draw.firstInstance);
-                command.mesh->DrawSubmeshInstancedBound(command.submeshIndex, draw.instanceCount, command.lodIndex);
+                UploadJointMatrices(activeShader, command.jointMatrices);
+                skinningEnabled = true;
+                BindGeometryInstanceAttributes(*command.mesh, m_instanceBuffer, 0);
+                command.mesh->DrawSubmeshInstancedBaseInstanceBound(command.submeshIndex,
+                                                                    draw.instanceCount,
+                                                                    draw.firstInstance,
+                                                                    command.lodIndex);
+                boundMesh = command.mesh;
+                ++apiDrawCalls;
             }
 
             if (ctx.renderer)
             {
-                const auto indexCount = command.mesh->GetSubmeshLodIndexCount(command.submeshIndex, command.lodIndex);
-                ctx.renderer->RecordGeometryBatch(static_cast<int>(draw.instanceCount), static_cast<int>((indexCount / 3) * draw.instanceCount), command.lodIndex);
+                for (std::size_t groupedDrawIndex = group.firstDraw;
+                     groupedDrawIndex < group.firstDraw + group.drawCount;
+                     ++groupedDrawIndex)
+                {
+                    const auto &groupedDraw = draws[groupedDrawIndex];
+                    const auto &groupedCommand = *groupedDraw.command;
+                    const auto indexCount = groupedCommand.mesh->GetSubmeshLodIndexCount(groupedCommand.submeshIndex, groupedCommand.lodIndex);
+                    ctx.renderer->RecordGeometryBatch(
+                        static_cast<int>(groupedDraw.instanceCount),
+                        static_cast<int>((indexCount / 3) * groupedDraw.instanceCount),
+                        groupedCommand.lodIndex);
+                }
             }
+        }
+
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
+        if (ctx.renderer)
+        {
+            ctx.renderer->RecordGeometryDriverSubmission(static_cast<int>(groups.size()), apiDrawCalls);
         }
 
         if (activeShader)

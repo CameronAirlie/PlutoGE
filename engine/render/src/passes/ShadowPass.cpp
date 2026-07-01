@@ -1,6 +1,7 @@
 #include "PlutoGE/render/passes/ShadowPass.h"
 
 #include "PlutoGE/render/Material.h"
+#include "PlutoGE/render/IndirectDraw.h"
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/Shader.h"
@@ -79,6 +80,8 @@ namespace
         int submittedInstances = 0;
         int submittedBatches = 0;
         int submittedTriangles = 0;
+        int materialGroups = 0;
+        int apiDrawCalls = 0;
     };
 
     int GetDirectionalCascadeCount(const PlutoGE::scene::Light &light)
@@ -339,8 +342,7 @@ namespace
                       {
                           return aCommand->submeshIndex < bCommand->submeshIndex;
                       }
-                      return aCommand->lodIndex < bCommand->lodIndex;
-                  });
+                      return aCommand->lodIndex < bCommand->lodIndex; });
         return sortedShadowCasters;
     }
 
@@ -704,13 +706,13 @@ namespace
     }
 
     bool IsMovedCommandRelevantForDirectionalCascade(const ShadowCasterEntry &shadowCaster,
-                                                    const glm::mat4 &lightView,
-                                                    const glm::vec3 &shadowWorldOrigin,
-                                                    const glm::vec2 &receiverMin,
-                                                    const glm::vec2 &receiverMax,
-                                                    const glm::vec2 &receiverExtent,
-                                                    int shadowResolution,
-                                                    float minCasterTexelRadius)
+                                                     const glm::mat4 &lightView,
+                                                     const glm::vec3 &shadowWorldOrigin,
+                                                     const glm::vec2 &receiverMin,
+                                                     const glm::vec2 &receiverMax,
+                                                     const glm::vec2 &receiverExtent,
+                                                     int shadowResolution,
+                                                     float minCasterTexelRadius)
     {
         return shadowCaster.hasMoved &&
                (IsBoundsRelevantForDirectionalCascade(shadowCaster.bounds, lightView, shadowWorldOrigin, receiverMin, receiverMax, receiverExtent, shadowResolution, minCasterTexelRadius) ||
@@ -721,9 +723,7 @@ namespace
     bool AnyMovedShadowCasterRelevant(const std::vector<ShadowCasterEntry> &shadowCasters, Predicate &&predicate)
     {
         return std::any_of(shadowCasters.begin(), shadowCasters.end(), [&](const ShadowCasterEntry &shadowCaster)
-                           {
-                               return shadowCaster.hasMoved && predicate(shadowCaster);
-                           });
+                           { return shadowCaster.hasMoved && predicate(shadowCaster); });
     }
 
     void BindShadowMaterialState(PlutoGE::render::Shader *shader, PlutoGE::render::Material *material)
@@ -771,6 +771,9 @@ namespace
                                             PlutoGE::render::Shader *shader,
                                             unsigned int &instanceBuffer,
                                             std::size_t &instanceCapacity,
+                                            unsigned int &indirectBuffer,
+                                            std::size_t &indirectCapacity,
+                                            bool &indirectDrawEnabled,
                                             std::vector<TransformInstanceData> &batchInstances)
     {
         struct PreparedShadowDraw
@@ -839,10 +842,82 @@ namespace
         // caster invalidating a directional shadow into thousands of driver calls.
         UploadTransformInstances(instanceBuffer, instanceCapacity, batchInstances);
 
-        const bool supportsBaseInstance = GLAD_GL_VERSION_4_2 && glDrawElementsInstancedBaseInstance != nullptr;
-        bool skinningEnabled = false;
-        for (const auto &draw : draws)
+        struct PreparedShadowGroup
         {
+            std::size_t firstDraw = 0;
+            std::size_t drawCount = 0;
+            std::size_t firstIndirectCommand = 0;
+            bool usesIndirect = false;
+        };
+
+        std::vector<PlutoGE::render::DrawElementsIndirectCommand> indirectCommands;
+        indirectCommands.reserve(draws.size());
+        std::vector<PreparedShadowGroup> groups;
+        groups.reserve(draws.size());
+        for (std::size_t drawIndex = 0; drawIndex < draws.size();)
+        {
+            const auto &head = draws[drawIndex];
+            const bool usesIndirect = !head.command->jointMatrices;
+            const bool headAlphaTested = IsAlphaTestedShadowCaster(*head.command);
+            const PlutoGE::render::IndirectDrawGroupingKey headKey{
+                .material = head.command->material,
+                .mesh = head.command->mesh,
+                .skinned = head.command->jointMatrices != nullptr,
+                .alphaTested = headAlphaTested,
+            };
+            std::size_t drawEnd = drawIndex + 1;
+            if (usesIndirect)
+            {
+                while (drawEnd < draws.size())
+                {
+                    const auto &candidate = draws[drawEnd];
+                    const bool candidateAlphaTested = IsAlphaTestedShadowCaster(*candidate.command);
+                    const PlutoGE::render::IndirectDrawGroupingKey candidateKey{
+                        .material = candidate.command->material,
+                        .mesh = candidate.command->mesh,
+                        .skinned = candidate.command->jointMatrices != nullptr,
+                        .alphaTested = candidateAlphaTested,
+                    };
+                    if (!PlutoGE::render::CanGroupShadowIndirectDraws(headKey, candidateKey))
+                    {
+                        break;
+                    }
+                    ++drawEnd;
+                }
+            }
+
+            const std::size_t firstIndirectCommand = indirectCommands.size();
+            if (usesIndirect)
+            {
+                for (std::size_t groupedDrawIndex = drawIndex; groupedDrawIndex < drawEnd; ++groupedDrawIndex)
+                {
+                    const auto &groupedDraw = draws[groupedDrawIndex];
+                    const auto range = groupedDraw.command->mesh->GetSubmeshLodRange(
+                        groupedDraw.command->submeshIndex,
+                        groupedDraw.lodIndex);
+                    indirectCommands.push_back(PlutoGE::render::BuildDrawElementsIndirectCommand(
+                        range.indexCount,
+                        groupedDraw.instanceCount,
+                        range.indexOffset,
+                        groupedDraw.firstInstance));
+                }
+            }
+
+            groups.push_back(PreparedShadowGroup{
+                .firstDraw = drawIndex,
+                .drawCount = drawEnd - drawIndex,
+                .firstIndirectCommand = firstIndirectCommand,
+                .usesIndirect = usesIndirect,
+            });
+            drawIndex = drawEnd;
+        }
+
+        PlutoGE::render::UploadIndirectDrawCommands(indirectBuffer, indirectCapacity, indirectCommands);
+
+        bool skinningEnabled = false;
+        for (const auto &group : groups)
+        {
+            const auto &draw = draws[group.firstDraw];
             const auto &command = *draw.command;
             if (command.material != boundMaterial)
             {
@@ -857,40 +932,89 @@ namespace
                 boundMaterial = command.material;
             }
 
-            if (command.jointMatrices)
+            if (group.usesIndirect)
             {
-                UploadShadowJointMatrices(shader, command.jointMatrices);
-                skinningEnabled = true;
-            }
-            else if (skinningEnabled)
-            {
-                shader->SetUniform("uUseSkinning", 0);
-                skinningEnabled = false;
-            }
-
-            if (supportsBaseInstance)
-            {
+                if (skinningEnabled)
+                {
+                    shader->SetUniform("uUseSkinning", 0);
+                    skinningEnabled = false;
+                }
                 if (command.mesh != boundMesh)
                 {
                     BindTransformInstanceAttributes(*command.mesh, instanceBuffer, 0);
                     boundMesh = command.mesh;
                 }
-                command.mesh->DrawSubmeshInstancedBaseInstanceBound(command.submeshIndex,
-                                                                     draw.instanceCount,
-                                                                     draw.firstInstance,
-                                                                     draw.lodIndex);
+                bool submittedIndirectly = false;
+                if (indirectDrawEnabled)
+                {
+                    while (glGetError() != GL_NO_ERROR)
+                    {
+                    }
+                    glBindBuffer(GL_DRAW_INDIRECT_BUFFER, indirectBuffer);
+                    glMultiDrawElementsIndirect(
+                        GL_TRIANGLES,
+                        GL_UNSIGNED_INT,
+                        reinterpret_cast<const void *>(group.firstIndirectCommand * sizeof(PlutoGE::render::DrawElementsIndirectCommand)),
+                        static_cast<GLsizei>(group.drawCount),
+                        0);
+                    const GLenum indirectError = glGetError();
+                    submittedIndirectly = indirectError == GL_NO_ERROR;
+                    if (!submittedIndirectly)
+                    {
+                        std::cerr << "Shadow multi-draw disabled after OpenGL error " << indirectError
+                                  << "; using direct draws." << std::endl;
+                        indirectDrawEnabled = false;
+                    }
+                }
+
+                if (!submittedIndirectly)
+                {
+                    for (std::size_t groupedDrawIndex = group.firstDraw;
+                         groupedDrawIndex < group.firstDraw + group.drawCount;
+                         ++groupedDrawIndex)
+                    {
+                        const auto &directDraw = draws[groupedDrawIndex];
+                        directDraw.command->mesh->DrawSubmeshInstancedBaseInstanceBound(
+                            directDraw.command->submeshIndex,
+                            directDraw.instanceCount,
+                            directDraw.firstInstance,
+                            directDraw.lodIndex);
+                    }
+                    stats.apiDrawCalls += static_cast<int>(group.drawCount);
+                }
+                else
+                {
+                    ++stats.apiDrawCalls;
+                }
             }
             else
             {
-                BindTransformInstanceAttributes(*command.mesh, instanceBuffer, draw.firstInstance);
-                command.mesh->DrawSubmeshInstancedBound(command.submeshIndex, draw.instanceCount, draw.lodIndex);
+                UploadShadowJointMatrices(shader, command.jointMatrices);
+                skinningEnabled = true;
+                BindTransformInstanceAttributes(*command.mesh, instanceBuffer, 0);
+                command.mesh->DrawSubmeshInstancedBaseInstanceBound(command.submeshIndex,
+                                                                    draw.instanceCount,
+                                                                    draw.firstInstance,
+                                                                    draw.lodIndex);
+                boundMesh = command.mesh;
+                ++stats.apiDrawCalls;
             }
 
-            const auto indexCount = command.mesh->GetSubmeshLodIndexCount(command.submeshIndex, draw.lodIndex);
-            stats.submittedInstances += static_cast<int>(draw.instanceCount);
-            stats.submittedTriangles += static_cast<int>((indexCount / 3) * draw.instanceCount);
-            ++stats.submittedBatches;
+            for (std::size_t groupedDrawIndex = group.firstDraw;
+                 groupedDrawIndex < group.firstDraw + group.drawCount;
+                 ++groupedDrawIndex)
+            {
+                const auto &groupedDraw = draws[groupedDrawIndex];
+                const auto &groupedCommand = *groupedDraw.command;
+                const auto indexCount = groupedCommand.mesh->GetSubmeshLodIndexCount(groupedCommand.submeshIndex, groupedDraw.lodIndex);
+                stats.submittedInstances += static_cast<int>(groupedDraw.instanceCount);
+                stats.submittedTriangles += static_cast<int>((indexCount / 3) * groupedDraw.instanceCount);
+                ++stats.submittedBatches;
+            }
         }
+
+        stats.materialGroups = static_cast<int>(groups.size());
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
 
         if (skinningEnabled)
         {
@@ -1067,6 +1191,9 @@ namespace PlutoGE::render
                         m_shadowPassShader,
                         m_instanceBuffer,
                         m_instanceCapacity,
+                        m_indirectBuffer,
+                        m_indirectCapacity,
+                        m_indirectDrawEnabled,
                         shadowBatchInstances);
                     if (ctx.renderer)
                     {
@@ -1075,6 +1202,8 @@ namespace PlutoGE::render
                             drawStats.submittedInstances,
                             drawStats.submittedBatches,
                             drawStats.submittedTriangles,
+                            drawStats.materialGroups,
+                            drawStats.apiDrawCalls,
                             false);
                     }
                 }
@@ -1238,6 +1367,9 @@ namespace PlutoGE::render
                         m_shadowPassShader,
                         m_instanceBuffer,
                         m_instanceCapacity,
+                        m_indirectBuffer,
+                        m_indirectCapacity,
+                        m_indirectDrawEnabled,
                         shadowBatchInstances);
                     if (ctx.renderer)
                     {
@@ -1246,6 +1378,8 @@ namespace PlutoGE::render
                             drawStats.submittedInstances,
                             drawStats.submittedBatches,
                             drawStats.submittedTriangles,
+                            drawStats.materialGroups,
+                            drawStats.apiDrawCalls,
                             true);
                     }
                     light->pendingShadowCascadeMask &= static_cast<std::uint8_t>(~(1u << cascadeIndex));
@@ -1332,6 +1466,9 @@ namespace PlutoGE::render
                 m_shadowPassShader,
                 m_instanceBuffer,
                 m_instanceCapacity,
+                m_indirectBuffer,
+                m_indirectCapacity,
+                m_indirectDrawEnabled,
                 shadowBatchInstances);
             if (ctx.renderer)
             {
@@ -1340,6 +1477,8 @@ namespace PlutoGE::render
                     drawStats.submittedInstances,
                     drawStats.submittedBatches,
                     drawStats.submittedTriangles,
+                    drawStats.materialGroups,
+                    drawStats.apiDrawCalls,
                     false);
             }
 

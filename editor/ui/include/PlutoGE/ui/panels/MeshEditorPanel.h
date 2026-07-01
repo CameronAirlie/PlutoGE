@@ -1,5 +1,6 @@
 #pragma once
 
+#include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/ui/panels/Panel.h"
 
@@ -22,6 +23,7 @@ namespace PlutoGE::ui
         std::string m_loadedReference;
         render::MeshConfig m_config;
         std::vector<std::string> m_materialReferences;
+        assets::MeshAssetMetadata m_metadata;
         bool m_dirty = false;
     };
 }

@@ -1,5 +1,7 @@
 #include "PlutoGE/render/postprocess/VolumetricFogEffect.h"
 
+#include "PlutoGE/render/Graphics.h"
+#include "PlutoGE/render/RenderTarget.h"
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/Shader.h"
 #include "PlutoGE/scene/components/LightComponent.h"
@@ -13,6 +15,11 @@ namespace PlutoGE::render
         constexpr int kDirectionalShadowCascadeTextureStartSlot = 5;
         constexpr int kMinStepCount = 16;
         constexpr int kMaxStepCount = 64;
+
+        bool ParseBool(const std::string &value)
+        {
+            return value == "true" || value == "1";
+        }
 
         const scene::Light *FindPrimaryDirectionalLight(const RenderContext &renderContext)
         {
@@ -154,6 +161,11 @@ namespace PlutoGE::render
                 .value = std::to_string(m_stepCount),
             },
             PostProcessParameter{
+                .name = "Half Resolution",
+                .type = PostProcessParameterType::Bool,
+                .value = m_halfResolution ? "true" : "false",
+            },
+            PostProcessParameter{
                 .name = "Color R",
                 .type = PostProcessParameterType::Float,
                 .value = std::to_string(m_fogColor.r),
@@ -215,6 +227,16 @@ namespace PlutoGE::render
             {
                 m_stepCount = std::clamp(std::stoi(parameter.value), kMinStepCount, kMaxStepCount);
             }
+            else if (parameter.name == "Half Resolution")
+            {
+                const bool nextHalfResolution = ParseBool(parameter.value);
+                if (m_halfResolution != nextHalfResolution)
+                {
+                    m_halfResolution = nextHalfResolution;
+                    m_internalWidth = 0;
+                    m_internalHeight = 0;
+                }
+            }
             else if (parameter.name == "Color R")
             {
                 m_fogColor.r = glm::clamp(std::stof(parameter.value), 0.0f, 1.0f);
@@ -257,7 +279,6 @@ namespace PlutoGE::render
             in vec2 UV;
             out vec4 FragColor;
 
-            uniform sampler2D uSceneTexture;
             uniform sampler2D uSceneDepthTexture;
             uniform sampler2D uScenePositionTexture;
             uniform sampler2D uShadowCascadeMap0;
@@ -468,7 +489,6 @@ namespace PlutoGE::render
 
             void main()
             {
-                vec3 sceneColor = texture(uSceneTexture, UV).rgb;
                 float sceneDepth = texture(uSceneDepthTexture, UV).r;
                 vec3 rayDirection = GetWorldRayDirection(UV);
                 vec3 surfacePosition = texture(uScenePositionTexture, UV).rgb;
@@ -483,7 +503,7 @@ namespace PlutoGE::render
 
                 if (hitDistance <= 0.0001 || uFogDensity <= 0.0 || uStepCount <= 0)
                 {
-                    FragColor = vec4(sceneColor, 1.0);
+                    FragColor = vec4(0.0);
                     return;
                 }
 
@@ -535,28 +555,78 @@ namespace PlutoGE::render
                 float totalFog = Saturate(1.0 - transmittance);
                 if (totalFog <= 0.0001)
                 {
-                    FragColor = vec4(sceneColor, 1.0);
+                    FragColor = vec4(0.0);
                     return;
                 }
 
                 vec3 fogRadiance = accumulatedLight / max(totalFog, 0.0001);
                 float fogFactor = min(totalFog, uMaxOpacity);
-                vec3 finalColor = mix(sceneColor, fogRadiance, fogFactor);
-                FragColor = vec4(finalColor, 1.0);
+                FragColor = vec4(fogRadiance, fogFactor);
             }
         )";
 
         m_shader = Shader::Create(source);
+
+        ShaderSource compositeSource;
+        compositeSource.vertexSource = source.vertexSource;
+        compositeSource.fragmentSource = R"(
+            #version 330 core
+
+            in vec2 UV;
+            out vec4 FragColor;
+
+            uniform sampler2D uSceneTexture;
+            uniform sampler2D uFogTexture;
+
+            void main()
+            {
+                vec3 sceneColor = texture(uSceneTexture, UV).rgb;
+                vec4 fog = texture(uFogTexture, UV);
+                float fogFactor = clamp(fog.a, 0.0, 1.0);
+                vec3 finalColor = mix(sceneColor, fog.rgb, fogFactor);
+                FragColor = vec4(finalColor, 1.0);
+            }
+        )";
+
+        m_compositeShader = Shader::Create(compositeSource);
+    }
+
+    void VolumetricFogEffect::EnsureInternalTarget(int width, int height)
+    {
+        const int targetWidth = std::max(1, m_halfResolution ? width / 2 : width);
+        const int targetHeight = std::max(1, m_halfResolution ? height / 2 : height);
+        if (targetWidth != m_internalWidth || targetHeight != m_internalHeight)
+        {
+            m_internalWidth = targetWidth;
+            m_internalHeight = targetHeight;
+        }
+
+        if (!m_fogRenderTarget)
+        {
+            m_fogRenderTarget = std::make_unique<RenderTarget>(RenderTargetConfig{
+                .width = m_internalWidth,
+                .height = m_internalHeight,
+                .clearColor = glm::vec4(0.0f),
+            });
+        }
+        else if (m_fogRenderTarget->GetWidth() != m_internalWidth || m_fogRenderTarget->GetHeight() != m_internalHeight)
+        {
+            m_fogRenderTarget->Resize(m_internalWidth, m_internalHeight);
+        }
     }
 
     void VolumetricFogEffect::Apply(const PostProcessContext &context)
     {
-        if (!m_shader || !context.sourceRenderTarget || !context.renderContext.hasCameraData)
+        if (!m_shader || !m_compositeShader || !context.sourceRenderTarget || !context.destinationRenderTarget || !context.renderContext.hasCameraData)
         {
             return;
         }
 
-        BeginApply(context);
+        EnsureInternalTarget(context.sourceRenderTarget->GetWidth(), context.sourceRenderTarget->GetHeight());
+        if (!m_fogRenderTarget || !m_fogRenderTarget->IsInitialized())
+        {
+            return;
+        }
 
         const glm::mat4 inverseView = glm::inverse(context.renderContext.cameraData.view);
         const glm::mat4 inverseProjection = glm::inverse(context.renderContext.cameraData.projection);
@@ -594,8 +664,19 @@ namespace PlutoGE::render
             hasDirectionalLight = 1;
         }
 
+        const PostProcessContext internalContext{
+            .renderContext = context.renderContext,
+            .sourceRenderTarget = context.sourceRenderTarget,
+            .destinationRenderTarget = nullptr,
+        };
+
+        Graphics::BindRenderTarget(m_fogRenderTarget.get());
+        glViewport(0, 0, m_internalWidth, m_internalHeight);
+        glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+
         m_shader->Bind();
-        BindCommonInputs(m_shader, context);
+        BindCommonInputs(m_shader, internalContext);
         BindDirectionalShadowInputs(m_shader, primaryDirectionalLight);
         m_shader->SetUniform("uViewMatrix", context.renderContext.cameraData.view);
         m_shader->SetUniform("uInverseViewMatrix", inverseView);
@@ -618,6 +699,16 @@ namespace PlutoGE::render
         m_shader->SetUniform("uUseTemporalShadowSampling", hasTemporalAAAfterFog ? 1 : 0);
         m_shader->SetUniform("uStepCount", std::clamp(m_stepCount, kMinStepCount, kMaxStepCount));
         m_shader->SetUniform("uHasDirectionalLight", hasDirectionalLight);
+        DrawFullscreenTriangle();
+
+        BeginApply(context);
+        glViewport(0, 0, context.destinationRenderTarget->GetWidth(), context.destinationRenderTarget->GetHeight());
+
+        m_compositeShader->Bind();
+        BindCommonInputs(m_compositeShader, context);
+        glActiveTexture(GL_TEXTURE5);
+        glBindTexture(GL_TEXTURE_2D, m_fogRenderTarget->GetColorTextureID());
+        m_compositeShader->SetUniform("uFogTexture", 5);
         DrawFullscreenTriangle();
 
         EndApply();

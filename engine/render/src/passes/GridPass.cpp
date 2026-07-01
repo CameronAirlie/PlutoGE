@@ -189,9 +189,7 @@ namespace PlutoGE::render
         glBindTexture(GL_TEXTURE_2D, ctx.temporaryRenderTarget->GetDepthTextureID());
         m_gridShader->SetUniform("uSceneDepthTexture", 0);
 
-        glBindVertexArray(m_vao);
-        glDrawArrays(GL_TRIANGLES, 0, 3);
-        glBindVertexArray(0);
+        Graphics::DrawFullscreenTriangle();
 
         m_gridShader->Unbind();
         glDisable(GL_BLEND);

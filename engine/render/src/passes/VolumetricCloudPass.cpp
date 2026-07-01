@@ -437,7 +437,7 @@ namespace PlutoGE::render
             m_shader->SetUniform("uDetailErosion", cloud.GetDetailErosion());
             m_shader->SetUniform("uPrimarySteps", cloud.GetPrimaryStepCount());
             m_shader->SetUniform("uLightSteps", cloud.GetLightStepCount());
-            glDrawArrays(GL_TRIANGLES, 0, 3);
+            Graphics::DrawFullscreenTriangle();
         }
 
         glBindVertexArray(0);
@@ -451,9 +451,7 @@ namespace PlutoGE::render
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, m_cloudTarget->GetColorTextureID());
         m_compositeShader->SetUniform("uCloudTexture", 0);
-        glBindVertexArray(m_vao);
-        glDrawArrays(GL_TRIANGLES, 0, 3);
-        glBindVertexArray(0);
+        Graphics::DrawFullscreenTriangle();
         m_compositeShader->Unbind();
         glDisable(GL_BLEND);
         glDepthMask(GL_TRUE);

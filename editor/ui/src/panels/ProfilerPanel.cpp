@@ -114,8 +114,10 @@ namespace PlutoGE::ui
         ImGui::Text("CPU passes total: %.2f ms", m_renderer->GetTotalCpuPassTimeMs());
         ImGui::Text("Render commands: %d submitted, %d submission culled", cpuFrameStats.submittedRenderCommandCount, cpuFrameStats.submissionCulledRenderCommandCount);
         ImGui::Text("Visible commands: %d visible, %d frustum culled", cpuFrameStats.visibleRenderCommandCount, cpuFrameStats.frustumCulledRenderCommandCount);
+        ImGui::Text("Visible LOD availability: %d single-level, %d multi-level", cpuFrameStats.visibleSingleLodCommandCount, cpuFrameStats.visibleMultiLodCommandCount);
         ImGui::Text("Render command sorts: %d", cpuFrameStats.renderCommandSortCount);
-        ImGui::Text("Geometry workload: %d batches, %d instances, %d triangles", cpuFrameStats.geometrySubmittedBatchCount, cpuFrameStats.geometrySubmittedInstanceCount, cpuFrameStats.geometrySubmittedTriangleCount);
+        ImGui::Text("Geometry workload: %d logical batches, %d instances, %d triangles", cpuFrameStats.geometrySubmittedBatchCount, cpuFrameStats.geometrySubmittedInstanceCount, cpuFrameStats.geometrySubmittedTriangleCount);
+        ImGui::Text("Geometry driver submission: %d material groups, %d API draw calls", cpuFrameStats.geometryMaterialGroupCount, cpuFrameStats.geometryApiDrawCallCount);
         ImGui::Text("Geometry LOD triangles: L0 %d, L1 %d, L2 %d, L3+ %d",
                     cpuFrameStats.geometrySubmittedTrianglesByLod[0],
                     cpuFrameStats.geometrySubmittedTrianglesByLod[1],
@@ -128,7 +130,8 @@ namespace PlutoGE::ui
         ImGui::Text("Intermediate target resize: %.2f ms (%d)", cpuFrameStats.intermediateTargetResizeMs, cpuFrameStats.intermediateTargetResizeCount);
         ImGui::Text("GBuffer resize: %.2f ms (%d)", cpuFrameStats.gBufferResizeMs, cpuFrameStats.gBufferResizeCount);
         ImGui::Text("Shadow updates: %d surfaces (%d directional cascades)", cpuFrameStats.shadowUpdatedSurfaceCount, cpuFrameStats.shadowUpdatedDirectionalCascadeCount);
-        ImGui::Text("Shadow workload: %d px, %d batches, %d instances, %d triangles", cpuFrameStats.shadowUpdatedPixelCount, cpuFrameStats.shadowSubmittedBatchCount, cpuFrameStats.shadowSubmittedInstanceCount, cpuFrameStats.shadowSubmittedTriangleCount);
+        ImGui::Text("Shadow workload: %d px, %d logical batches, %d instances, %d triangles", cpuFrameStats.shadowUpdatedPixelCount, cpuFrameStats.shadowSubmittedBatchCount, cpuFrameStats.shadowSubmittedInstanceCount, cpuFrameStats.shadowSubmittedTriangleCount);
+        ImGui::Text("Shadow driver submission: %d material groups, %d API draw calls", cpuFrameStats.shadowMaterialGroupCount, cpuFrameStats.shadowApiDrawCallCount);
 
         ImGui::Separator();
         ImGui::Text("GPU passes total: %.2f ms", totalGpuPassTimeMs);

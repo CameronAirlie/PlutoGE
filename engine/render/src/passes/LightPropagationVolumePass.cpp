@@ -2,6 +2,7 @@
 
 #include "PlutoGE/render/Camera.h"
 #include "PlutoGE/render/GBuffer.h"
+#include "PlutoGE/render/Graphics.h"
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/Shader.h"
 #include "PlutoGE/render/Texture.h"
@@ -846,7 +847,7 @@ namespace PlutoGE::render
             glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, m_propagationTexture->GetTextureID(), 0, layer);
             glDrawBuffer(GL_COLOR_ATTACHMENT0);
             m_injectionResolveShader->SetUniform("uLayer", layer);
-            glDrawArrays(GL_TRIANGLES, 0, 3);
+            Graphics::DrawFullscreenTriangle();
         }
 
         m_volumeTexture.swap(m_propagationTexture);
@@ -904,7 +905,7 @@ namespace PlutoGE::render
                 }
 
                 m_propagationShader->SetUniform("uLayer", layer);
-                glDrawArrays(GL_TRIANGLES, 0, 3);
+                Graphics::DrawFullscreenTriangle();
             }
 
             m_volumeTexture.swap(m_propagationTexture);
@@ -961,7 +962,7 @@ namespace PlutoGE::render
             }
 
             m_blendShader->SetUniform("uLayer", layer);
-            glDrawArrays(GL_TRIANGLES, 0, 3);
+            Graphics::DrawFullscreenTriangle();
         }
 
         glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previousFramebuffer));

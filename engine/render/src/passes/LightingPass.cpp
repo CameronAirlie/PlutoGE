@@ -1101,7 +1101,7 @@ namespace PlutoGE::render
         m_directLightingPassShader->SetUniform("uDebugViewMode", 0);
         m_directLightingPassShader->SetUniform("uOutputShadowMask", 1);
         m_directLightingPassShader->SetUniform("uUseFilteredShadowMask", 0);
-        glDrawArrays(GL_TRIANGLES, 0, 3);
+        Graphics::DrawFullscreenTriangle();
 
         const int filterRadius = std::clamp(light.directionalShadowSettings.screenSpaceFilterRadius, 0, 4);
         if (!filtered || !light.directionalShadowSettings.screenSpaceFilterEnabled || filterRadius <= 0)
@@ -1131,7 +1131,7 @@ namespace PlutoGE::render
         glViewport(0, 0, m_blurredShadowMaskTarget->GetWidth(), m_blurredShadowMaskTarget->GetHeight());
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
-        glDrawArrays(GL_TRIANGLES, 0, 3);
+        Graphics::DrawFullscreenTriangle();
 
         m_shadowMaskBlurShader->Bind();
         glActiveTexture(GL_TEXTURE0 + kShadowMaskTextureSlot);
@@ -1149,7 +1149,7 @@ namespace PlutoGE::render
         glViewport(0, 0, m_rawShadowMaskTarget->GetWidth(), m_rawShadowMaskTarget->GetHeight());
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
-        glDrawArrays(GL_TRIANGLES, 0, 3);
+        Graphics::DrawFullscreenTriangle();
 
         return m_rawShadowMaskTarget.get();
     }
@@ -1244,7 +1244,7 @@ namespace PlutoGE::render
             glActiveTexture(GL_TEXTURE0 + kIndirectTextureSlot);
             glBindTexture(GL_TEXTURE_2D, resolvedIndirectTarget->GetColorTextureID());
             m_indirectCompositeShader->SetUniform("uIndirectTexture", kIndirectTextureSlot);
-            glDrawArrays(GL_TRIANGLES, 0, 3);
+            Graphics::DrawFullscreenTriangle();
         };
 
         switch (indirectSettings.debugView)
@@ -1338,8 +1338,7 @@ namespace PlutoGE::render
 
         glDisable(GL_BLEND);
         m_lightingPassShader->SetUniform("uPassMode", kAmbientPassMode);
-        glBindVertexArray(0);
-        glDrawArrays(GL_TRIANGLES, 0, 3);
+        Graphics::DrawFullscreenTriangle();
 
         if (ctx.renderer)
         {
@@ -1370,7 +1369,7 @@ namespace PlutoGE::render
                     glActiveTexture(GL_TEXTURE0 + kIndirectTextureSlot);
                     glBindTexture(GL_TEXTURE_2D, shadowMask->GetColorTextureID());
                     m_indirectCompositeShader->SetUniform("uIndirectTexture", kIndirectTextureSlot);
-                    glDrawArrays(GL_TRIANGLES, 0, 3);
+                    Graphics::DrawFullscreenTriangle();
                     break;
                 }
             }
@@ -1437,14 +1436,14 @@ namespace PlutoGE::render
                         glActiveTexture(GL_TEXTURE0 + kShadowMaskTextureSlot);
                         glBindTexture(GL_TEXTURE_2D, filteredShadowMask->GetColorTextureID());
                         m_directLightingPassShader->SetUniform("uFilteredShadowMask", kShadowMaskTextureSlot);
-                        glDrawArrays(GL_TRIANGLES, 0, 3);
+                        Graphics::DrawFullscreenTriangle();
                         continue;
                     }
                 }
 
                 m_directLightingPassShader->SetUniform("uOutputShadowMask", 0);
                 m_directLightingPassShader->SetUniform("uUseFilteredShadowMask", 0);
-                glDrawArrays(GL_TRIANGLES, 0, 3);
+                Graphics::DrawFullscreenTriangle();
             }
         }
 

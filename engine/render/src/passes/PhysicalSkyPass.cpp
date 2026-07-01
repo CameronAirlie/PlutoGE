@@ -318,9 +318,7 @@ namespace PlutoGE::render
         m_shader->Bind();
         m_shader->SetUniform("uEnvironmentCapture", 1);
         SetSkyUniforms(*m_shader, *sky, sunDirection);
-        glBindVertexArray(m_vao);
-        glDrawArrays(GL_TRIANGLES, 0, 3);
-        glBindVertexArray(0);
+        Graphics::DrawFullscreenTriangle();
         m_shader->Unbind();
 
         glBindTexture(GL_TEXTURE_2D, m_environmentTexture);
@@ -367,9 +365,7 @@ namespace PlutoGE::render
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, ctx.temporaryRenderTarget->GetDepthTextureID());
         m_shader->SetUniform("uSceneDepth", 0);
-        glBindVertexArray(m_vao);
-        glDrawArrays(GL_TRIANGLES, 0, 3);
-        glBindVertexArray(0);
+        Graphics::DrawFullscreenTriangle();
         m_shader->Unbind();
         glDepthMask(GL_TRUE);
         Graphics::UnbindRenderTarget();

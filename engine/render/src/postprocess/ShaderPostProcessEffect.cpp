@@ -102,7 +102,6 @@ namespace PlutoGE::render
 
     void ShaderPostProcessEffect::DrawFullscreenTriangle() const
     {
-        glBindVertexArray(0);
-        glDrawArrays(GL_TRIANGLES, 0, 3);
+        Graphics::DrawFullscreenTriangle();
     }
 }

@@ -49,4 +49,16 @@ namespace PlutoGE::render
     {
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
     }
+
+    void Graphics::DrawFullscreenTriangle()
+    {
+        static GLuint fullscreenVertexArray = 0;
+        if (fullscreenVertexArray == 0)
+        {
+            glGenVertexArrays(1, &fullscreenVertexArray);
+        }
+        glBindVertexArray(fullscreenVertexArray);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        glBindVertexArray(0);
+    }
 }

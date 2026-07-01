@@ -1,6 +1,9 @@
 #pragma once
 
+#include "PlutoGE/render/RenderTarget.h"
 #include "PlutoGE/render/postprocess/ShaderPostProcessEffect.h"
+
+#include <memory>
 
 #include <glm/glm.hpp>
 
@@ -22,7 +25,11 @@ namespace PlutoGE::render
         void SetParameters(const std::vector<PostProcessParameter> &parameters) override;
 
     private:
+        void EnsureInternalTarget(int width, int height);
+
         Shader *m_shader = nullptr;
+        Shader *m_compositeShader = nullptr;
+        std::unique_ptr<RenderTarget> m_fogRenderTarget;
         glm::vec3 m_fogColor{1.0f, 1.0f, 1.0f};
         float m_density = 0.035f;
         float m_heightFalloff = 0.12f;
@@ -34,5 +41,8 @@ namespace PlutoGE::render
         float m_directionalContribution = 6.0f;
         float m_maxOpacity = 0.92f;
         int m_stepCount = 16;
+        int m_internalWidth = 0;
+        int m_internalHeight = 0;
+        bool m_halfResolution = true;
     };
 }

@@ -66,8 +66,8 @@ namespace PlutoGE::assets
 
         void WriteAnimationClip(std::ostream &output, const render::AnimationClip &clip);
         render::AnimationClip ReadAnimationClip(std::istream &input, std::uint32_t version = 2);
-        bool WriteGeneratedMeshAsset(std::ostream &output, const render::MeshConfig &config, const std::vector<std::string> &materialReferences);
-        bool ReadGeneratedMeshAsset(std::istream &input, render::MeshConfig &config, std::vector<std::string> &materialReferences);
+        bool WriteGeneratedMeshAsset(std::ostream &output, const render::MeshConfig &config, const std::vector<std::string> &materialReferences, const MeshAssetMetadata &metadata);
+        bool ReadGeneratedMeshAsset(std::istream &input, render::MeshConfig &config, std::vector<std::string> &materialReferences, MeshAssetMetadata &metadata);
 
         bool ParseBoolValue(const std::string &value)
         {
@@ -239,10 +239,12 @@ namespace PlutoGE::assets
                 {
                     render::MeshConfig config;
                     std::vector<std::string> materialReferences;
-                    if (ReadGeneratedMeshAsset(input, config, materialReferences))
+                    MeshAssetMetadata metadata;
+                    if (ReadGeneratedMeshAsset(input, config, materialReferences, metadata))
                     {
                         mesh = render::Mesh::FromConfig(std::move(config));
                         m_meshMaterialReferenceCache[assetReference] = std::move(materialReferences);
+                        m_meshMetadataCache[assetReference] = std::move(metadata);
                     }
                 }
             }
@@ -272,10 +274,38 @@ namespace PlutoGE::assets
         return found == m_meshMaterialReferenceCache.end() ? empty : found->second;
     }
 
+    const MeshAssetMetadata &AssetManager::GetMeshAssetMetadata(const std::string &assetReference)
+    {
+        static const MeshAssetMetadata empty;
+        if (assetReference.empty())
+        {
+            return empty;
+        }
+
+        if (m_meshMetadataCache.find(assetReference) == m_meshMetadataCache.end())
+        {
+            const std::string meshPath = ResolveAssetPath(assetReference);
+            std::ifstream input(meshPath, std::ios::binary);
+            if (input.is_open())
+            {
+                render::MeshConfig ignoredConfig;
+                std::vector<std::string> ignoredMaterialReferences;
+                MeshAssetMetadata metadata;
+                if (ReadGeneratedMeshAsset(input, ignoredConfig, ignoredMaterialReferences, metadata))
+                {
+                    m_meshMetadataCache[assetReference] = std::move(metadata);
+                }
+            }
+        }
+        const auto found = m_meshMetadataCache.find(assetReference);
+        return found == m_meshMetadataCache.end() ? empty : found->second;
+    }
+
     bool AssetManager::SaveMeshAsset(const std::string &assetReference,
                                      const render::MeshConfig &config,
                                      const std::vector<std::string> &materialReferences,
-                                     std::string *errorMessage)
+                                     std::string *errorMessage,
+                                     const MeshAssetMetadata &metadata)
     {
         if (assetReference.empty() || Project::IsEngineAssetReference(assetReference))
         {
@@ -308,7 +338,7 @@ namespace PlutoGE::assets
         }
 
         std::ofstream output(meshPath, std::ios::binary | std::ios::trunc);
-        if (!output.is_open() || !WriteGeneratedMeshAsset(output, config, materialReferences))
+        if (!output.is_open() || !WriteGeneratedMeshAsset(output, config, materialReferences, metadata))
         {
             if (errorMessage)
             {
@@ -319,6 +349,7 @@ namespace PlutoGE::assets
 
         m_meshCache.erase(assetReference);
         m_meshMaterialReferenceCache[assetReference] = materialReferences;
+        m_meshMetadataCache[assetReference] = metadata;
         return true;
     }
 
@@ -1006,10 +1037,10 @@ namespace PlutoGE::assets
             return clip;
         }
 
-        bool WriteGeneratedMeshAsset(std::ostream &output, const render::MeshConfig &config, const std::vector<std::string> &materialReferences)
+        bool WriteGeneratedMeshAsset(std::ostream &output, const render::MeshConfig &config, const std::vector<std::string> &materialReferences, const MeshAssetMetadata &metadata)
         {
             constexpr std::uint32_t kMagic = 0x4d47504c; // LPGM
-            constexpr std::uint32_t kVersion = 3;
+            constexpr std::uint32_t kVersion = 4;
             WritePod(output, kMagic);
             WritePod(output, kVersion);
 
@@ -1080,15 +1111,19 @@ namespace PlutoGE::assets
             {
                 WriteString(output, materialReference);
             }
+            WriteString(output, metadata.sourceAssetReference);
+            WritePod<std::uint8_t>(output, metadata.importOptions.generateLods ? 1 : 0);
+            WritePod<std::uint8_t>(output, metadata.importOptions.optimizeVertexCache ? 1 : 0);
+            WritePod<std::uint8_t>(output, metadata.importOptions.optimizeOverdraw ? 1 : 0);
             return output.good();
         }
 
-        bool ReadGeneratedMeshAsset(std::istream &input, render::MeshConfig &config, std::vector<std::string> &materialReferences)
+        bool ReadGeneratedMeshAsset(std::istream &input, render::MeshConfig &config, std::vector<std::string> &materialReferences, MeshAssetMetadata &metadata)
         {
             constexpr std::uint32_t kMagic = 0x4d47504c; // LPGM
             const auto magic = ReadPod<std::uint32_t>(input);
             const auto version = ReadPod<std::uint32_t>(input);
-            if (magic != kMagic || version < 1 || version > 3)
+            if (magic != kMagic || version < 1 || version > 4)
             {
                 return false;
             }
@@ -1171,6 +1206,13 @@ namespace PlutoGE::assets
             for (auto &materialReference : materialReferences)
             {
                 materialReference = ReadString(input);
+            }
+            if (version >= 4)
+            {
+                metadata.sourceAssetReference = ReadString(input);
+                metadata.importOptions.generateLods = ReadPod<std::uint8_t>(input) != 0;
+                metadata.importOptions.optimizeVertexCache = ReadPod<std::uint8_t>(input) != 0;
+                metadata.importOptions.optimizeOverdraw = ReadPod<std::uint8_t>(input) != 0;
             }
             return input.good();
         }
@@ -2397,7 +2439,7 @@ namespace PlutoGE::assets
         return NormalizePath(assetPath);
     }
 
-    std::string AssetManager::ResolveMeshAssetSourcePath(const std::string &assetReference) const
+    std::string AssetManager::ResolveMeshAssetSourcePath(const std::string &assetReference)
     {
         const std::string meshAssetPath = ResolveAssetPath(assetReference);
         if (meshAssetPath.empty() || std::filesystem::path(meshAssetPath).extension() != ".plutomesh")
@@ -2405,6 +2447,23 @@ namespace PlutoGE::assets
             return meshAssetPath;
         }
 
+        const auto &metadata = GetMeshAssetMetadata(assetReference);
+        if (!metadata.sourceAssetReference.empty())
+        {
+            if (Project::IsProjectAssetReference(metadata.sourceAssetReference) ||
+                Project::IsEngineAssetReference(metadata.sourceAssetReference))
+            {
+                return ResolveAssetPath(metadata.sourceAssetReference);
+            }
+
+            const auto sourcePath = std::filesystem::path(metadata.sourceAssetReference);
+            return sourcePath.is_absolute()
+                       ? sourcePath.lexically_normal().string()
+                       : (std::filesystem::path(meshAssetPath).parent_path() / sourcePath).lexically_normal().string();
+        }
+
+        // Legacy text assets stored Source= directly. Binary versions 1-3 did
+        // not persist source metadata and fall through to the editor's stem lookup.
         std::ifstream input(meshAssetPath);
         if (!input.is_open())
         {

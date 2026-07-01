@@ -166,8 +166,12 @@ namespace PlutoGE::ui
         report << "Render commands submission culled: " << cpuFrameStats.submissionCulledRenderCommandCount << "\n";
         report << "Render commands visible: " << cpuFrameStats.visibleRenderCommandCount << "\n";
         report << "Render commands frustum culled: " << cpuFrameStats.frustumCulledRenderCommandCount << "\n";
+        report << "Visible commands with one LOD: " << cpuFrameStats.visibleSingleLodCommandCount << "\n";
+        report << "Visible commands with multiple LODs: " << cpuFrameStats.visibleMultiLodCommandCount << "\n";
         report << "Render command sorts: " << cpuFrameStats.renderCommandSortCount << "\n";
-        report << "Geometry submitted batches: " << cpuFrameStats.geometrySubmittedBatchCount << "\n";
+        report << "Geometry logical batches: " << cpuFrameStats.geometrySubmittedBatchCount << "\n";
+        report << "Geometry material groups: " << cpuFrameStats.geometryMaterialGroupCount << "\n";
+        report << "Geometry API draw calls: " << cpuFrameStats.geometryApiDrawCallCount << "\n";
         report << "Geometry submitted instances: " << cpuFrameStats.geometrySubmittedInstanceCount << "\n";
         report << "Geometry submitted triangles: " << cpuFrameStats.geometrySubmittedTriangleCount << "\n";
         report << "Geometry LOD0 triangles: " << cpuFrameStats.geometrySubmittedTrianglesByLod[0] << "\n";
@@ -186,7 +190,9 @@ namespace PlutoGE::ui
         report << "Shadow updated directional cascades: " << cpuFrameStats.shadowUpdatedDirectionalCascadeCount << "\n";
         report << "Shadow updated pixels: " << cpuFrameStats.shadowUpdatedPixelCount << "\n";
         report << "Shadow submitted instances: " << cpuFrameStats.shadowSubmittedInstanceCount << "\n";
-        report << "Shadow submitted batches: " << cpuFrameStats.shadowSubmittedBatchCount << "\n";
+        report << "Shadow logical batches: " << cpuFrameStats.shadowSubmittedBatchCount << "\n";
+        report << "Shadow material groups: " << cpuFrameStats.shadowMaterialGroupCount << "\n";
+        report << "Shadow API draw calls: " << cpuFrameStats.shadowApiDrawCallCount << "\n";
         report << "Shadow submitted triangles: " << cpuFrameStats.shadowSubmittedTriangleCount << "\n";
         report << "GPU passes total: " << totalGpuPassTimeMs << " ms\n";
         for (const auto &gpuPassTiming : gpuPassTimings)

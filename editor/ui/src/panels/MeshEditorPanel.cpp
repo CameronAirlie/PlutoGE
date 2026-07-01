@@ -390,6 +390,7 @@ namespace PlutoGE::ui
         m_loadedReference = reference;
         m_config = {};
         m_materialReferences.clear();
+        m_metadata = {};
         m_dirty = false;
 
         auto *mesh = core::Engine::GetInstance().GetAssetManager().LoadMeshAsset(reference);
@@ -401,6 +402,7 @@ namespace PlutoGE::ui
         m_config = BuildMeshConfigFromMesh(*mesh);
         EnsureBaseLodRanges(m_config);
         m_materialReferences = core::Engine::GetInstance().GetAssetManager().GetMeshAssetMaterialReferences(reference);
+        m_metadata = core::Engine::GetInstance().GetAssetManager().GetMeshAssetMetadata(reference);
     }
 
     void MeshEditorPanel::Render()
@@ -471,29 +473,54 @@ namespace PlutoGE::ui
 
         ImGui::SeparatorText("LOD Settings");
         auto *project = editorShell.GetProject();
-        const bool canGenerateLods = project && !engineMesh && !FindSourceModelForMesh(*project, reference).empty();
-        ImGui::BeginDisabled(!canGenerateLods);
-        if (ImGui::Button("Generate LODs From Source Model"))
+        std::filesystem::path sourcePath;
+        if (project && !engineMesh)
         {
-            const auto sourcePath = FindSourceModelForMesh(*project, reference);
-            auto importedMeshAsset = editorShell.GetEngine().GenerateMeshAssetLods(sourcePath.string());
+            const auto resolvedSourcePath = editorShell.GetEngine().GetAssetManager().ResolveMeshAssetSourcePath(reference);
+            sourcePath = resolvedSourcePath.empty() ? FindSourceModelForMesh(*project, reference) : std::filesystem::path(resolvedSourcePath);
+        }
+        const bool canReimport = project && !engineMesh && !sourcePath.empty();
+        m_dirty |= ImGui::Checkbox("Generate LODs", &m_metadata.importOptions.generateLods);
+        m_dirty |= ImGui::Checkbox("Optimize Vertex Cache", &m_metadata.importOptions.optimizeVertexCache);
+        m_dirty |= ImGui::Checkbox("Optimize Overdraw", &m_metadata.importOptions.optimizeOverdraw);
+        ImGui::BeginDisabled(!canReimport);
+        if (ImGui::Button("Reimport With Settings"))
+        {
+            auto importedMeshAsset = editorShell.GetEngine().ImportMeshAsset(sourcePath.string(), m_metadata.importOptions);
             if (importedMeshAsset.mesh)
             {
                 auto humanoidBoneMappings = std::move(m_config.skeleton.humanoidBoneMappings);
                 m_config = BuildMeshConfigFromMesh(*importedMeshAsset.mesh);
                 m_config.skeleton.humanoidBoneMappings = std::move(humanoidBoneMappings);
                 EnsureBaseLodRanges(m_config);
+                if (m_metadata.sourceAssetReference.empty())
+                {
+                    m_metadata.sourceAssetReference = project->MakeAssetReference(sourcePath);
+                }
                 m_dirty = true;
-                editorShell.Log(EditorShell::ConsoleSeverity::Info, "Generated LODs for mesh asset: " + reference);
+                editorShell.Log(EditorShell::ConsoleSeverity::Info, "Reimported mesh asset with saved settings: " + reference);
             }
         }
         ImGui::EndDisabled();
-        if (!canGenerateLods)
+        if (!canReimport)
         {
-            ImGui::TextDisabled("LOD generation needs a matching Source Model asset.");
+            ImGui::TextDisabled("Reimport needs a matching Source Model asset.");
         }
 
         const size_t maxLodCount = GetMaxLodCount(m_config);
+        const std::uint64_t lod0Triangles = CountTrianglesForLod(m_config, 0);
+        if (m_config.submeshes.size() > 500)
+        {
+            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "Large draw count: %zu submeshes (recommended maximum: 500).", m_config.submeshes.size());
+        }
+        if (lod0Triangles > 1'000'000)
+        {
+            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "Large LOD0: %llu triangles.", static_cast<unsigned long long>(lod0Triangles));
+        }
+        if (maxLodCount <= 1 && lod0Triangles > 100'000)
+        {
+            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "This large mesh has no simplified LODs.");
+        }
         for (size_t lodIndex = 0; lodIndex < maxLodCount; ++lodIndex)
         {
             ImGui::PushID(static_cast<int>(lodIndex));
@@ -529,7 +556,7 @@ namespace PlutoGE::ui
         if (ImGui::Button("Save Mesh Asset"))
         {
             std::string errorMessage;
-            if (editorShell.GetEngine().GetAssetManager().SaveMeshAsset(reference, m_config, m_materialReferences, &errorMessage))
+            if (editorShell.GetEngine().GetAssetManager().SaveMeshAsset(reference, m_config, m_materialReferences, &errorMessage, m_metadata))
             {
                 m_dirty = false;
                 LoadActiveMesh();

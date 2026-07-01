@@ -77,8 +77,8 @@ namespace PlutoGE::core
         void StartRuntime();
         void StopRuntime();
         [[nodiscard]] bool IsRuntimeRunning() const { return m_isRuntimeRunning; }
-        ImportedRenderMeshAsset ImportMeshAsset(const std::string &filePath);
-        ImportedRenderMeshAsset GenerateMeshAssetLods(const std::string &filePath);
+        ImportedRenderMeshAsset ImportMeshAsset(const std::string &filePath, const assetimport::MeshImportOptions &options = {});
+        ImportedRenderMeshAsset GenerateMeshAssetLods(const std::string &filePath, const assetimport::MeshImportOptions &options = {});
         render::Mesh *ImportMesh(const std::string &filePath);
         void QueueMeshImport(scene::EntityID entityId, const std::string &filePath);
         void UpdateAsyncMeshImports();
@@ -94,7 +94,7 @@ namespace PlutoGE::core
         };
 
         ImportedRenderMeshAsset BuildImportedRenderMeshAsset(const std::string &normalizedPath, const assetimport::ImportedMeshAsset &importedMeshAsset);
-        ImportedRenderMeshAsset FinalizeImportedMeshAsset(const std::string &filePath, assetimport::ImportedMeshSourceAsset importedMeshSourceAsset);
+        ImportedRenderMeshAsset FinalizeImportedMeshAsset(const std::string &filePath, assetimport::ImportedMeshSourceAsset importedMeshSourceAsset, const assetimport::MeshImportOptions &options = {});
 
         Engine() = default;
         EngineConfig m_config;

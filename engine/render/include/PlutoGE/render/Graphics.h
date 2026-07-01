@@ -24,5 +24,6 @@ namespace PlutoGE::render
 
         static void BindFramebuffer(GLuint framebufferID);
         static void UnbindFramebuffer();
+        static void DrawFullscreenTriangle();
     };
 }

@@ -344,24 +344,24 @@ namespace PlutoGE::core
         return importedRenderMeshAsset;
     }
 
-    ImportedRenderMeshAsset Engine::FinalizeImportedMeshAsset(const std::string &filePath, assetimport::ImportedMeshSourceAsset importedMeshSourceAsset)
+    ImportedRenderMeshAsset Engine::FinalizeImportedMeshAsset(const std::string &filePath, assetimport::ImportedMeshSourceAsset importedMeshSourceAsset, const assetimport::MeshImportOptions &options)
     {
         const auto normalizedPath = NormalizePath(filePath);
-        const auto importedMeshAsset = m_meshImporter.FinalizeImportedMeshAsset(normalizedPath, std::move(importedMeshSourceAsset));
+        const auto importedMeshAsset = m_meshImporter.FinalizeImportedMeshAsset(normalizedPath, std::move(importedMeshSourceAsset), options);
         return BuildImportedRenderMeshAsset(normalizedPath, importedMeshAsset);
     }
 
-    ImportedRenderMeshAsset Engine::ImportMeshAsset(const std::string &filePath)
+    ImportedRenderMeshAsset Engine::ImportMeshAsset(const std::string &filePath, const assetimport::MeshImportOptions &options)
     {
         const auto normalizedPath = NormalizePath(filePath);
-        const auto importedMeshAsset = m_meshImporter.ImportMeshAsset(normalizedPath);
+        const auto importedMeshAsset = m_meshImporter.ImportMeshAsset(normalizedPath, options);
         return BuildImportedRenderMeshAsset(normalizedPath, importedMeshAsset);
     }
 
-    ImportedRenderMeshAsset Engine::GenerateMeshAssetLods(const std::string &filePath)
+    ImportedRenderMeshAsset Engine::GenerateMeshAssetLods(const std::string &filePath, const assetimport::MeshImportOptions &options)
     {
         const auto normalizedPath = NormalizePath(filePath);
-        const auto importedMeshAsset = m_meshImporter.GenerateMeshLods(normalizedPath);
+        const auto importedMeshAsset = m_meshImporter.GenerateMeshLods(normalizedPath, options);
         return BuildImportedRenderMeshAsset(normalizedPath, importedMeshAsset);
     }
 

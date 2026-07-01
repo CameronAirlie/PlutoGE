@@ -276,6 +276,15 @@ namespace PlutoGE::render
 
         if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
         {
+            std::cerr << "Failed to load OpenGL functions." << std::endl;
+            return false;
+        }
+
+        if (!GLAD_GL_VERSION_4_3)
+        {
+            const auto *version = reinterpret_cast<const char *>(glGetString(GL_VERSION));
+            std::cerr << "PlutoGE requires OpenGL 4.3 core; driver reported "
+                      << (version ? version : "an unknown version") << "." << std::endl;
             return false;
         }
 
@@ -567,6 +576,8 @@ namespace PlutoGE::render
         const glm::vec3 cameraPosition = glm::vec3(glm::inverse(activeCameraData.view)[3]);
         const float projectionScaleY = std::abs(activeCameraData.projection[1][1]);
         const float halfViewportHeight = static_cast<float>(std::max(renderHeight, 1)) * 0.5f;
+        m_cpuFrameStats.visibleSingleLodCommandCount = 0;
+        m_cpuFrameStats.visibleMultiLodCommandCount = 0;
         for (const auto &command : m_renderCommands)
         {
             if (IsRenderCommandVisible(command, frustumPlanes) &&
@@ -574,6 +585,14 @@ namespace PlutoGE::render
                 PassesStaticProjectedSizeCull(command, cameraPosition, projectionScaleY, halfViewportHeight))
             {
                 m_visibleRenderCommands.push_back(command);
+                if (command.mesh && command.mesh->GetSubmeshLodCount(command.submeshIndex) > 1)
+                {
+                    ++m_cpuFrameStats.visibleMultiLodCommandCount;
+                }
+                else
+                {
+                    ++m_cpuFrameStats.visibleSingleLodCommandCount;
+                }
             }
         }
         m_cpuFrameStats.visibleRenderCommandCount = static_cast<int>(m_visibleRenderCommands.size());
@@ -930,7 +949,7 @@ namespace PlutoGE::render
         ++m_cpuFrameStats.gBufferResizeCount;
     }
 
-    void Renderer::RecordShadowMapUpdate(int surfacePixels, int submittedInstances, int submittedBatches, int submittedTriangles, bool directionalCascade)
+    void Renderer::RecordShadowMapUpdate(int surfacePixels, int submittedInstances, int submittedBatches, int submittedTriangles, int materialGroups, int apiDrawCalls, bool directionalCascade)
     {
         ++m_cpuFrameStats.shadowUpdatedSurfaceCount;
         if (directionalCascade)
@@ -940,6 +959,8 @@ namespace PlutoGE::render
         m_cpuFrameStats.shadowUpdatedPixelCount += std::max(surfacePixels, 0);
         m_cpuFrameStats.shadowSubmittedInstanceCount += std::max(submittedInstances, 0);
         m_cpuFrameStats.shadowSubmittedBatchCount += std::max(submittedBatches, 0);
+        m_cpuFrameStats.shadowMaterialGroupCount += std::max(materialGroups, 0);
+        m_cpuFrameStats.shadowApiDrawCallCount += std::max(apiDrawCalls, 0);
         m_cpuFrameStats.shadowSubmittedTriangleCount += std::max(submittedTriangles, 0);
     }
 
@@ -950,6 +971,12 @@ namespace PlutoGE::render
         const std::size_t clampedLodIndex = std::min(lodIndex, m_cpuFrameStats.geometrySubmittedTrianglesByLod.size() - 1);
         m_cpuFrameStats.geometrySubmittedTrianglesByLod[clampedLodIndex] += std::max(submittedTriangles, 0);
         ++m_cpuFrameStats.geometrySubmittedBatchCount;
+    }
+
+    void Renderer::RecordGeometryDriverSubmission(int materialGroups, int apiDrawCalls)
+    {
+        m_cpuFrameStats.geometryMaterialGroupCount += std::max(materialGroups, 0);
+        m_cpuFrameStats.geometryApiDrawCallCount += std::max(apiDrawCalls, 0);
     }
 
     float Renderer::GetTotalGpuPassTimeMs() const

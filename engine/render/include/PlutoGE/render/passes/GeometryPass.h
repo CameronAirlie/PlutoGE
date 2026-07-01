@@ -22,5 +22,9 @@ namespace PlutoGE::render
         Shader *m_geometryPassShader = nullptr;
         unsigned int m_instanceBuffer = 0;
         std::size_t m_instanceCapacity = 0;
+        unsigned int m_indirectBuffer = 0;
+        std::size_t m_indirectCapacity = 0;
+        bool m_indirectDrawEnabled = true;
+        bool m_indirectDrawValidated = false;
     };
 }

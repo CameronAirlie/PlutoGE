@@ -3,6 +3,7 @@
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/assets/AnimationGraph.h"
 #include "PlutoGE/assets/ParticleSystemAsset.h"
+#include "PlutoGE/import/MeshImporter.h"
 #include "PlutoGE/render/ShaderGraph.h"
 
 #include <cstdint>
@@ -26,6 +27,12 @@ namespace PlutoGE::render
 
 namespace PlutoGE::assets
 {
+    struct MeshAssetMetadata
+    {
+        std::string sourceAssetReference;
+        assetimport::MeshImportOptions importOptions;
+    };
+
     class AssetManager
     {
     public:
@@ -34,16 +41,18 @@ namespace PlutoGE::assets
 
         std::string GetAssetPath(const std::string &relativePath) const;
         std::string ResolveAssetPath(const std::string &assetPath) const;
-        std::string ResolveMeshAssetSourcePath(const std::string &assetReference) const;
+        std::string ResolveMeshAssetSourcePath(const std::string &assetReference);
         std::string PersistAssetPath(const std::string &filePath) const;
 
         render::Texture *LoadTexture(const char *filePath);
         render::Mesh *LoadMeshAsset(const std::string &assetReference);
         const std::vector<std::string> &GetMeshAssetMaterialReferences(const std::string &assetReference);
+        const MeshAssetMetadata &GetMeshAssetMetadata(const std::string &assetReference);
         bool SaveMeshAsset(const std::string &assetReference,
                            const render::MeshConfig &config,
                            const std::vector<std::string> &materialReferences,
-                           std::string *errorMessage = nullptr);
+                           std::string *errorMessage = nullptr,
+                           const MeshAssetMetadata &metadata = {});
         bool LoadAnimationAsset(const std::string &assetReference, std::vector<render::AnimationClip> &clips) const;
         bool LoadAnimationClipAsset(const std::string &assetReference, render::AnimationClip &clip) const;
         bool LoadAnimationClipReferences(const std::string &assetReference, std::vector<std::string> &clipReferences) const;
@@ -84,6 +93,7 @@ namespace PlutoGE::assets
         std::unordered_map<std::string, render::Texture *> m_textureCache;   // Cache for loaded textures
         std::unordered_map<std::string, render::Mesh *> m_meshCache;
         std::unordered_map<std::string, std::vector<std::string>> m_meshMaterialReferenceCache;
+        std::unordered_map<std::string, MeshAssetMetadata> m_meshMetadataCache;
         std::unordered_map<std::string, render::Material *> m_materialCache; // Cache for loaded materials
         std::unordered_map<std::string, render::ShaderGraph> m_shaderGraphCache;
         std::unordered_map<std::string, AnimationGraphAsset> m_animationGraphCache;

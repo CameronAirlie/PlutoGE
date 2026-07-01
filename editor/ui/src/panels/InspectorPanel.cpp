@@ -53,6 +53,20 @@ namespace PlutoGE::ui
     {
         constexpr std::size_t kInspectorPathBufferSize = 512;
         constexpr std::size_t kNewScriptNameBufferSize = 128;
+
+        bool ContainsInsensitive(std::string_view text, std::string_view query)
+        {
+            if (query.empty())
+            {
+                return true;
+            }
+            return std::search(text.begin(), text.end(), query.begin(), query.end(),
+                               [](char left, char right)
+                               {
+                                   return std::tolower(static_cast<unsigned char>(left)) ==
+                                          std::tolower(static_cast<unsigned char>(right));
+                               }) != text.end();
+        }
         constexpr const char *kPostProcessEffectDragDropPayload = "PGE_PP_FX";
         constexpr const char *kEditorPostProcessEffectDragDropPayload = "PGE_ED_PP_FX";
         enum class AddableComponentType
@@ -91,6 +105,17 @@ namespace PlutoGE::ui
             std::string displayName;
         };
 
+        struct AssetReferenceOptionsCacheEntry
+        {
+            const assets::Project *project = nullptr;
+            const assets::ProjectAssetEntry *assetEntriesData = nullptr;
+            std::size_t assetEntryCount = 0;
+            std::string firstReference;
+            std::string middleReference;
+            std::string lastReference;
+            std::vector<AssetReferenceOption> options;
+        };
+
         struct FoliageSubmeshChoice
         {
             std::string label;
@@ -100,7 +125,8 @@ namespace PlutoGE::ui
 
         std::string GetFoliageSubmeshGroupName(std::string name)
         {
-            const auto trimToken = [](std::string token) {
+            const auto trimToken = [](std::string token)
+            {
                 while (!token.empty() && std::isspace(static_cast<unsigned char>(token.front())) != 0)
                 {
                     token.erase(token.begin());
@@ -500,6 +526,58 @@ namespace PlutoGE::ui
             return options;
         }
 
+        const std::vector<AssetReferenceOption> &GetCachedAssetReferenceOptions(const assets::Project *project,
+                                                                                assets::ProjectAssetType type)
+        {
+            static std::array<AssetReferenceOptionsCacheEntry,
+                              static_cast<std::size_t>(assets::ProjectAssetType::Assembly) + 1>
+                cacheEntries;
+
+            auto &cacheEntry = cacheEntries[static_cast<std::size_t>(type)];
+            if (!project)
+            {
+                if (cacheEntry.project == nullptr && !cacheEntry.options.empty())
+                {
+                    return cacheEntry.options;
+                }
+
+                cacheEntry.options = CollectAssetReferenceOptions(nullptr, type);
+                cacheEntry.project = nullptr;
+                cacheEntry.assetEntriesData = nullptr;
+                cacheEntry.assetEntryCount = 0;
+                cacheEntry.firstReference.clear();
+                cacheEntry.middleReference.clear();
+                cacheEntry.lastReference.clear();
+                return cacheEntry.options;
+            }
+
+            const auto &assetEntries = project->GetManifest().assetEntries;
+            const auto *assetEntriesData = assetEntries.data();
+            const std::size_t assetEntryCount = assetEntries.size();
+            const std::string_view firstReference = assetEntryCount > 0 ? assetEntries.front().reference : std::string_view{};
+            const std::string_view middleReference = assetEntryCount > 0 ? assetEntries[assetEntryCount / 2].reference : std::string_view{};
+            const std::string_view lastReference = assetEntryCount > 0 ? assetEntries.back().reference : std::string_view{};
+
+            if (cacheEntry.project == project &&
+                cacheEntry.assetEntriesData == assetEntriesData &&
+                cacheEntry.assetEntryCount == assetEntryCount &&
+                cacheEntry.firstReference == firstReference &&
+                cacheEntry.middleReference == middleReference &&
+                cacheEntry.lastReference == lastReference)
+            {
+                return cacheEntry.options;
+            }
+
+            cacheEntry.options = CollectAssetReferenceOptions(project, type);
+            cacheEntry.project = project;
+            cacheEntry.assetEntriesData = assetEntriesData;
+            cacheEntry.assetEntryCount = assetEntryCount;
+            cacheEntry.firstReference = firstReference;
+            cacheEntry.middleReference = middleReference;
+            cacheEntry.lastReference = lastReference;
+            return cacheEntry.options;
+        }
+
         std::string GetAssetReferencePreview(const std::vector<AssetReferenceOption> &options,
                                              const std::string &reference,
                                              std::string fallback)
@@ -784,58 +862,57 @@ namespace PlutoGE::ui
             return true;
         }
 
-        size_t GetMaterialSlotCount(const scene::MeshComponent &meshComponent)
+        std::vector<std::string> BuildMaterialSlotUsageSummaries(const scene::MeshComponent &meshComponent)
         {
-            size_t materialSlotCount = meshComponent.GetMaterials().size();
-            if (const auto *mesh = meshComponent.GetMesh())
+            struct Usage
             {
-                for (size_t submeshIndex = 0; submeshIndex < mesh->GetSubmeshCount(); ++submeshIndex)
+                std::size_t count = 0;
+                std::string examples;
+            };
+
+            std::vector<Usage> usage((std::max)(meshComponent.GetMaterials().size(), static_cast<std::size_t>(1)));
+            const auto *mesh = meshComponent.GetMesh();
+            if (mesh)
+            {
+                for (std::size_t submeshIndex = 0; submeshIndex < mesh->GetSubmeshCount(); ++submeshIndex)
                 {
-                    materialSlotCount = (std::max)(materialSlotCount, static_cast<size_t>(mesh->GetSubmesh(submeshIndex).materialIndex) + 1);
+                    const auto &submesh = mesh->GetSubmesh(submeshIndex);
+                    const auto slotIndex = static_cast<std::size_t>(submesh.materialIndex);
+                    if (slotIndex >= usage.size())
+                    {
+                        usage.resize(slotIndex + 1);
+                    }
+                    auto &slotUsage = usage[slotIndex];
+                    if (slotUsage.count < 3)
+                    {
+                        if (!slotUsage.examples.empty())
+                        {
+                            slotUsage.examples += ", ";
+                        }
+                        slotUsage.examples += submesh.name.empty() ? "Submesh " + std::to_string(submeshIndex) : submesh.name;
+                    }
+                    ++slotUsage.count;
                 }
             }
 
-            return (std::max)(materialSlotCount, static_cast<size_t>(1));
-        }
-
-        std::string BuildMaterialSlotUsageSummary(const scene::MeshComponent &meshComponent, size_t materialSlotIndex)
-        {
-            const auto *mesh = meshComponent.GetMesh();
-            if (!mesh)
+            std::vector<std::string> summaries;
+            summaries.reserve(usage.size());
+            for (const auto &slotUsage : usage)
             {
-                return {};
-            }
-
-            std::string summary;
-            size_t usageCount = 0;
-            for (size_t submeshIndex = 0; submeshIndex < mesh->GetSubmeshCount(); ++submeshIndex)
-            {
-                const auto &submesh = mesh->GetSubmesh(submeshIndex);
-                if (static_cast<size_t>(submesh.materialIndex) != materialSlotIndex)
+                if (slotUsage.count == 0)
                 {
+                    summaries.emplace_back("Unused by this mesh");
                     continue;
                 }
-
-                if (usageCount < 3)
+                std::string examples = slotUsage.examples;
+                if (slotUsage.count > 3)
                 {
-                    if (!summary.empty())
-                    {
-                        summary += ", ";
-                    }
-                    summary += submesh.name.empty() ? "Submesh " + std::to_string(submeshIndex) : submesh.name;
+                    examples += ", +" + std::to_string(slotUsage.count - 3) + " more";
                 }
-                ++usageCount;
+                summaries.push_back("Used by " + std::to_string(slotUsage.count) + " submesh" +
+                                    (slotUsage.count == 1 ? ": " : "es: ") + examples);
             }
-
-            if (usageCount == 0)
-            {
-                return "Unused by this mesh";
-            }
-            if (usageCount > 3)
-            {
-                summary += ", +" + std::to_string(usageCount - 3) + " more";
-            }
-            return "Used by " + std::to_string(usageCount) + " submesh" + (usageCount == 1 ? ": " : "es: ") + summary;
+            return summaries;
         }
 
         const ScriptAssetOption *FindScriptAssetOptionForClassName(const std::vector<ScriptAssetOption> &options,
@@ -2406,10 +2483,12 @@ namespace PlutoGE::ui
             if (auto *meshComponent = entity->GetComponent<PlutoGE::scene::MeshComponent>())
             {
                 auto &engine = PlutoGE::core::Engine::GetInstance();
+                RefreshMaterialSlotUsageSummaries(*meshComponent);
+                const auto &materialSlotUsageSummaries = m_materialSlotUsageSummaries;
 
                 ImGui::Separator();
                 ImGui::Text("Static Mesh");
-                const auto meshAssetOptions = CollectAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::Mesh);
+                const auto &meshAssetOptions = GetCachedAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::Mesh);
                 std::string meshPreview = meshComponent->GetMeshAssetReference().empty() ? "None" : meshComponent->GetMeshAssetReference();
                 for (const auto &option : meshAssetOptions)
                 {
@@ -2456,7 +2535,7 @@ namespace PlutoGE::ui
                     const auto *mesh = meshComponent->GetMesh();
                     ImGui::TextDisabled("Submeshes: %zu | Material Slots: %zu",
                                         mesh->GetSubmeshCount(),
-                                        GetMaterialSlotCount(*meshComponent));
+                                        materialSlotUsageSummaries.size());
                     ImGui::TextDisabled("Reference: %s", meshComponent->GetMeshAssetReference().empty() ? "Runtime Mesh" : meshComponent->GetMeshAssetReference().c_str());
                 }
                 else
@@ -2474,10 +2553,10 @@ namespace PlutoGE::ui
                 }
                 ImGui::EndDisabled();
 
-                const auto materialAssetOptions = CollectAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::Material);
+                const auto &materialAssetOptions = GetCachedAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::Material);
                 const int isolatedSubmeshIndex = meshComponent->GetSubmeshIndex();
                 const bool editingIsolatedSubmesh = isolatedSubmeshIndex >= 0 && meshComponent->GetMesh() &&
-                                                   static_cast<size_t>(isolatedSubmeshIndex) < meshComponent->GetMesh()->GetSubmeshCount();
+                                                    static_cast<size_t>(isolatedSubmeshIndex) < meshComponent->GetMesh()->GetSubmeshCount();
                 if (meshComponent->GetMesh() && meshComponent->GetMesh()->GetSubmeshCount() > 1)
                 {
                     if (editingIsolatedSubmesh)
@@ -2509,7 +2588,7 @@ namespace PlutoGE::ui
                     }
                     else
                     {
-                        const size_t materialSlotCount = GetMaterialSlotCount(*meshComponent);
+                        const size_t materialSlotCount = materialSlotUsageSummaries.size();
                         materialSlotIndices.reserve(materialSlotCount);
                         for (size_t materialSlotIndex = 0; materialSlotIndex < materialSlotCount; ++materialSlotIndex)
                         {
@@ -2517,6 +2596,7 @@ namespace PlutoGE::ui
                         }
                     }
 
+                    const auto &meshDefaultMaterialReferences = engine.GetAssetManager().GetMeshAssetMaterialReferences(meshComponent->GetMeshAssetReference());
                     for (size_t materialSlotListIndex = 0; materialSlotListIndex < materialSlotIndices.size(); ++materialSlotListIndex)
                     {
                         const size_t materialSlotIndex = materialSlotIndices[materialSlotListIndex];
@@ -2524,7 +2604,7 @@ namespace PlutoGE::ui
                         ImGui::Text("Slot %zu", materialSlotIndex);
                         ImGui::SameLine();
                         ImGui::TextDisabled("(drop a material asset here)");
-                        const std::string slotUsageSummary = BuildMaterialSlotUsageSummary(*meshComponent, materialSlotIndex);
+                        const std::string &slotUsageSummary = materialSlotUsageSummaries[materialSlotIndex];
                         if (!slotUsageSummary.empty())
                         {
                             ImGui::TextDisabled("%s", slotUsageSummary.c_str());
@@ -2560,8 +2640,6 @@ namespace PlutoGE::ui
                                 editorShell.MarkSceneDirty();
                             }
                         }
-
-                        const auto &meshDefaultMaterialReferences = engine.GetAssetManager().GetMeshAssetMaterialReferences(meshComponent->GetMeshAssetReference());
                         const bool hasMeshDefaultMaterial = materialSlotIndex < meshDefaultMaterialReferences.size() &&
                                                             !meshDefaultMaterialReferences[materialSlotIndex].empty();
                         ImGui::BeginDisabled(!hasMeshDefaultMaterial || materialAssetReference == meshDefaultMaterialReferences[materialSlotIndex]);
@@ -2588,10 +2666,56 @@ namespace PlutoGE::ui
                     if (ImGui::CollapsingHeader(editingIsolatedSubmesh ? "Selected Submesh Material" : "Submesh Materials",
                                                 editingIsolatedSubmesh ? ImGuiTreeNodeFlags_DefaultOpen : 0))
                     {
-                        const size_t submeshBegin = editingIsolatedSubmesh ? static_cast<size_t>(isolatedSubmeshIndex) : 0;
-                        const size_t submeshEnd = editingIsolatedSubmesh ? submeshBegin + 1 : meshComponent->GetMesh()->GetSubmeshCount();
-                        for (size_t submeshIndex = submeshBegin; submeshIndex < submeshEnd; ++submeshIndex)
+                        const auto *inspectedMesh = meshComponent->GetMesh();
+                        if (m_inspectedSubmeshList != inspectedMesh)
                         {
+                            m_inspectedSubmeshList = inspectedMesh;
+                            m_selectedSubmeshIndex = inspectedMesh->GetSubmeshCount() > 0 ? 0 : -1;
+                            m_submeshFilter.fill('\0');
+                            m_appliedSubmeshFilter.clear();
+                            RefreshFilteredSubmeshIndices(*inspectedMesh);
+                        }
+
+                        if (editingIsolatedSubmesh)
+                        {
+                            m_selectedSubmeshIndex = isolatedSubmeshIndex;
+                        }
+                        else
+                        {
+                            const std::string_view filter(m_submeshFilter.data());
+                            const bool filterChanged = ImGui::InputTextWithHint("##SubmeshFilter", "Filter submeshes...", m_submeshFilter.data(), m_submeshFilter.size());
+                            if (filterChanged || m_appliedSubmeshFilter != filter)
+                            {
+                                RefreshFilteredSubmeshIndices(*inspectedMesh);
+                            }
+
+                            ImGui::BeginChild("SubmeshList", ImVec2(0.0f, 180.0f), ImGuiChildFlags_Borders);
+                            ImGuiListClipper clipper;
+                            clipper.Begin(static_cast<int>(m_filteredSubmeshIndices.size()));
+                            while (clipper.Step())
+                            {
+                                for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; ++row)
+                                {
+                                    const auto candidateIndex = m_filteredSubmeshIndices[static_cast<std::size_t>(row)];
+                                    const auto &candidate = inspectedMesh->GetSubmesh(candidateIndex);
+                                    const std::string candidateLabel = candidate.name.empty()
+                                                                           ? "Submesh " + std::to_string(candidateIndex)
+                                                                           : candidate.name;
+                                    ImGui::PushID(static_cast<int>(candidateIndex));
+                                    if (ImGui::Selectable(candidateLabel.c_str(), m_selectedSubmeshIndex == static_cast<int>(candidateIndex)))
+                                    {
+                                        m_selectedSubmeshIndex = static_cast<int>(candidateIndex);
+                                    }
+                                    ImGui::PopID();
+                                }
+                            }
+                            ImGui::EndChild();
+                        }
+
+                        if (m_selectedSubmeshIndex >= 0 &&
+                            static_cast<std::size_t>(m_selectedSubmeshIndex) < inspectedMesh->GetSubmeshCount())
+                        {
+                            const size_t submeshIndex = static_cast<std::size_t>(m_selectedSubmeshIndex);
                             const auto &submesh = meshComponent->GetMesh()->GetSubmesh(submeshIndex);
                             auto *material = meshComponent->GetMaterialForSubmesh(submeshIndex);
 
@@ -2599,7 +2723,7 @@ namespace PlutoGE::ui
                             const std::string submeshLabel = submesh.name.empty()
                                                                  ? std::string("Submesh ") + std::to_string(submeshIndex)
                                                                  : submesh.name;
-                            if (ImGui::TreeNode(submeshLabel.c_str()))
+                            ImGui::SeparatorText(submeshLabel.c_str());
                             {
                                 ImGui::Text("Material Slot: %u", submesh.materialIndex);
                                 ImGui::Text("Indices: %u", submesh.indexCount);
@@ -2752,8 +2876,6 @@ namespace PlutoGE::ui
                                 {
                                     ImGui::Text("No material assigned.");
                                 }
-
-                                ImGui::TreePop();
                             }
                             ImGui::PopID();
                         }
@@ -3637,8 +3759,8 @@ namespace PlutoGE::ui
 
                             selectedType = foliageComponent->GetSelectedType();
                             const bool canGenerateLodsForFoliage = selectedType &&
-                                                                    !selectedType->sourceMeshPath.empty() &&
-                                                                    !assets::Project::IsEngineAssetReference(selectedType->sourceMeshPath);
+                                                                   !selectedType->sourceMeshPath.empty() &&
+                                                                   !assets::Project::IsEngineAssetReference(selectedType->sourceMeshPath);
                             ImGui::BeginDisabled(!canGenerateLodsForFoliage);
                             if (ImGui::Button("Generate Foliage LODs"))
                             {
@@ -3972,5 +4094,40 @@ namespace PlutoGE::ui
     void InspectorPanel::Shutdown()
     {
         // Cleanup code for the InspectorPanel
+    }
+
+    void InspectorPanel::RefreshFilteredSubmeshIndices(const render::Mesh &mesh)
+    {
+        m_filteredSubmeshIndices.clear();
+        m_filteredSubmeshIndices.reserve(mesh.GetSubmeshCount());
+
+        const std::string_view filter(m_submeshFilter.data());
+        for (std::size_t index = 0; index < mesh.GetSubmeshCount(); ++index)
+        {
+            const auto &candidate = mesh.GetSubmesh(index);
+            const std::string candidateLabel = candidate.name.empty()
+                                                   ? "Submesh " + std::to_string(index)
+                                                   : candidate.name;
+            if (ContainsInsensitive(candidateLabel, filter))
+            {
+                m_filteredSubmeshIndices.push_back(index);
+            }
+        }
+
+        m_appliedSubmeshFilter.assign(filter.data(), filter.size());
+    }
+
+    void InspectorPanel::RefreshMaterialSlotUsageSummaries(const scene::MeshComponent &meshComponent)
+    {
+        const auto *mesh = meshComponent.GetMesh();
+        const std::size_t materialCount = meshComponent.GetMaterials().size();
+        if (m_materialUsageMesh == mesh && m_materialUsageMaterialCount == materialCount && !m_materialSlotUsageSummaries.empty())
+        {
+            return;
+        }
+
+        m_materialSlotUsageSummaries = BuildMaterialSlotUsageSummaries(meshComponent);
+        m_materialUsageMesh = mesh;
+        m_materialUsageMaterialCount = materialCount;
     }
 }

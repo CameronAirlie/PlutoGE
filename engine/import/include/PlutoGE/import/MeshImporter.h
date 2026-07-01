@@ -11,6 +11,20 @@
 
 namespace PlutoGE::assetimport
 {
+    struct MeshImportOptions
+    {
+        bool generateLods = false;
+        bool optimizeVertexCache = false;
+        bool optimizeOverdraw = false;
+
+        [[nodiscard]] std::uint32_t ToFlags() const
+        {
+            return (generateLods ? 1u : 0u) |
+                   (optimizeVertexCache ? 2u : 0u) |
+                   (optimizeOverdraw ? 4u : 0u);
+        }
+    };
+
     struct ImportedTextureData
     {
         std::string cacheKey;
@@ -69,10 +83,10 @@ namespace PlutoGE::assetimport
         MeshImporter() = default;
         ~MeshImporter() = default;
 
-        ImportedMeshSourceAsset ImportMeshSourceAsset(const std::string &filePath) const;
-        ImportedMeshAsset GenerateMeshLods(const std::string &filePath);
-        ImportedMeshAsset FinalizeImportedMeshAsset(const std::string &filePath, ImportedMeshSourceAsset meshSourceAsset);
-        ImportedMeshAsset ImportMeshAsset(const std::string &filePath);
+        ImportedMeshSourceAsset ImportMeshSourceAsset(const std::string &filePath, const MeshImportOptions &options = {}) const;
+        ImportedMeshAsset GenerateMeshLods(const std::string &filePath, const MeshImportOptions &options = {});
+        ImportedMeshAsset FinalizeImportedMeshAsset(const std::string &filePath, ImportedMeshSourceAsset meshSourceAsset, const MeshImportOptions &options = {});
+        ImportedMeshAsset ImportMeshAsset(const std::string &filePath, const MeshImportOptions &options = {});
         render::Mesh *ImportMesh(const std::string &filePath);
         render::MeshData ImportMeshData(const std::string &filePath) const;
         bool SupportsFileType(std::string_view filePath) const;
@@ -86,6 +100,7 @@ namespace PlutoGE::assetimport
             std::vector<render::AnimationClip> animations;
             uint64_t sourceFileSize = 0;
             int64_t sourceWriteTime = 0;
+            std::uint32_t importFlags = 0;
 
             ImportedMeshAsset ToImportedMeshAsset() const
             {

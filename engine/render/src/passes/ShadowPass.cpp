@@ -28,6 +28,7 @@ namespace
     constexpr int kProjectedShadowPassMode = 0;
     constexpr int kPointShadowPassMode = 1;
     constexpr int kMaxIncrementalShadowSurfaceUpdatesPerFrame = 4;
+    constexpr int kMaxMotionDrivenDirectionalCascadeUpdatesPerLight = 2;
     constexpr float kDirectionalShadowPadding = 2.0f;
     constexpr float kShadowUpdateMatrixEpsilon = 0.0001f;
     constexpr float kNearCascadeMinCasterTexelRadius = 0.35f;
@@ -1238,19 +1239,27 @@ namespace PlutoGE::render
                     light->pendingShadowCascadeMask = allCascadeMask;
                 }
 
-                int scheduledCascadeIndex = -1;
+                std::uint8_t scheduledCascadeMask = 0;
                 if (!forceFullCascadeUpdate)
                 {
-                    for (std::size_t attempt = 0; attempt < kDirectionalCascadeRefreshSchedule.size(); ++attempt)
+                    const int scheduledCascadeCount = motionDrivenDirectionalInvalidation
+                                                          ? std::min(cascadeCount, kMaxMotionDrivenDirectionalCascadeUpdatesPerLight)
+                                                          : 1;
+                    int selectedCascadeCount = 0;
+                    for (std::size_t attempt = 0;
+                         attempt < kDirectionalCascadeRefreshSchedule.size() && selectedCascadeCount < scheduledCascadeCount;
+                         ++attempt)
                     {
                         const int scheduleIndex = light->nextShadowCascadeToRefresh % static_cast<int>(kDirectionalCascadeRefreshSchedule.size());
                         light->nextShadowCascadeToRefresh = (scheduleIndex + 1) % static_cast<int>(kDirectionalCascadeRefreshSchedule.size());
                         const int candidateCascadeIndex = kDirectionalCascadeRefreshSchedule[static_cast<std::size_t>(scheduleIndex)];
+                        const std::uint8_t candidateCascadeBit = static_cast<std::uint8_t>(1u << candidateCascadeIndex);
                         if (candidateCascadeIndex < cascadeCount &&
-                            (light->pendingShadowCascadeMask & static_cast<std::uint8_t>(1u << candidateCascadeIndex)) != 0)
+                            (light->pendingShadowCascadeMask & candidateCascadeBit) != 0 &&
+                            (scheduledCascadeMask & candidateCascadeBit) == 0)
                         {
-                            scheduledCascadeIndex = candidateCascadeIndex;
-                            break;
+                            scheduledCascadeMask |= candidateCascadeBit;
+                            ++selectedCascadeCount;
                         }
                     }
                 }
@@ -1294,7 +1303,8 @@ namespace PlutoGE::render
                     // this cascade's shadow map redraw is deferred by the update cadence.
                     light->shadowCascadeSplits[cascadeIndex] = cascadeFar;
 
-                    if (!forceFullCascadeUpdate && cascadeIndex != scheduledCascadeIndex)
+                    if (!forceFullCascadeUpdate &&
+                        (scheduledCascadeMask & static_cast<std::uint8_t>(1u << cascadeIndex)) == 0)
                     {
                         continue;
                     }

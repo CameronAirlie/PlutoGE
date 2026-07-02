@@ -26,6 +26,7 @@ namespace PlutoGE::scene
             case scripting::ScriptFieldType::Double:
                 return scene::PropertyType::Double;
             case scripting::ScriptFieldType::String:
+            case scripting::ScriptFieldType::PrefabAsset:
                 return scene::PropertyType::String;
             case scripting::ScriptFieldType::Vector2:
                 return scene::PropertyType::Vec2;

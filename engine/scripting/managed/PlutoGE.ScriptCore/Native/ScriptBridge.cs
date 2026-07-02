@@ -113,6 +113,7 @@ internal static unsafe class ScriptBridge
     private static delegate* unmanaged[Cdecl]<uint, int> _getEntityTagCount;
     private static delegate* unmanaged[Cdecl]<uint, int, nint> _getEntityTag;
     private static delegate* unmanaged[Cdecl]<uint, int> _destroyEntity;
+    private static delegate* unmanaged[Cdecl]<byte*, uint> _instantiatePrefab;
     private static delegate* unmanaged[Cdecl]<uint, int, int> _hasComponent;
     private static delegate* unmanaged[Cdecl]<uint, int, int> _getComponentEnabled;
     private static delegate* unmanaged[Cdecl]<uint, int, int, void> _setComponentEnabled;
@@ -372,6 +373,20 @@ internal static unsafe class ScriptBridge
         _getEntityTagCount = getEntityTagCount;
         _getEntityTag = getEntityTag;
         _destroyEntity = destroyEntity;
+        _lastError = string.Empty;
+        return 1;
+    }
+
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterPrefabApi")]
+    public static int RegisterPrefabApi(delegate* unmanaged[Cdecl]<byte*, uint> instantiatePrefab)
+    {
+        if (instantiatePrefab == null)
+        {
+            SetError("Managed prefab API registration received a null function pointer.");
+            return 0;
+        }
+
+        _instantiatePrefab = instantiatePrefab;
         _lastError = string.Empty;
         return 1;
     }
@@ -1187,6 +1202,20 @@ internal static unsafe class ScriptBridge
     internal static bool DestroyEntity(uint entityId)
     {
         return entityId != 0 && _destroyEntity != null && _destroyEntity(entityId) != 0;
+    }
+
+    internal static uint InstantiatePrefab(string prefabReference)
+    {
+        if (_instantiatePrefab == null || string.IsNullOrWhiteSpace(prefabReference))
+        {
+            return 0;
+        }
+
+        var referenceBytes = Encoding.UTF8.GetBytes(prefabReference + '\0');
+        fixed (byte* referencePtr = referenceBytes)
+        {
+            return _instantiatePrefab(referencePtr);
+        }
     }
 
     internal static bool InvokeEntityMethod(uint entityId, string methodName, object?[]? args)
@@ -2006,6 +2035,11 @@ internal static unsafe class ScriptBridge
             return 21;
         }
 
+        if (type == typeof(Prefab))
+        {
+            return 22;
+        }
+
         return null;
     }
 
@@ -2119,6 +2153,7 @@ internal static unsafe class ScriptBridge
             19 => CreateReferenceValue(memberType, value),
             20 => CreateReferenceValue(memberType, value),
             21 => CreateReferenceValue(memberType, value),
+            22 => string.IsNullOrWhiteSpace(value) ? null : new Prefab(value),
             _ => null,
         };
     }
@@ -2148,6 +2183,7 @@ internal static unsafe class ScriptBridge
             19 => ExtractEntityId(value).ToString(CultureInfo.InvariantCulture),
             20 => ExtractEntityId(value).ToString(CultureInfo.InvariantCulture),
             21 => ExtractEntityId(value).ToString(CultureInfo.InvariantCulture),
+            22 => (value as Prefab)?.AssetReference ?? string.Empty,
             _ => string.Empty,
         };
     }

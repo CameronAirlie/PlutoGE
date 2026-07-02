@@ -621,6 +621,29 @@ namespace PlutoGE::ui
             return droppedReference;
         }
 
+        std::optional<std::string> AcceptDroppedPrefabAssetReference()
+        {
+            std::optional<std::string> droppedReference;
+            if (ImGui::BeginDragDropTarget())
+            {
+                if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kContentBrowserAssetDragDropPayload))
+                {
+                    if (payload->Data && payload->DataSize > 0)
+                    {
+                        const auto *data = static_cast<const char *>(payload->Data);
+                        const std::string reference(data, data + payload->DataSize - 1);
+                        if (assets::Project::GetAssetTypeForReference(reference) == assets::ProjectAssetType::Prefab)
+                        {
+                            droppedReference = reference;
+                        }
+                    }
+                }
+                ImGui::EndDragDropTarget();
+            }
+
+            return droppedReference;
+        }
+
         std::optional<std::string> AcceptDroppedMeshAssetReference()
         {
             std::optional<std::string> droppedReference;
@@ -1825,6 +1848,44 @@ namespace PlutoGE::ui
                 if (ImGui::InputText(field.name.c_str(), buffer, sizeof(buffer)))
                 {
                     changed |= scriptComponent.SetFieldValue(field.name, std::string(buffer));
+                }
+                break;
+            }
+            case scripting::ScriptFieldType::PrefabAsset:
+            {
+                const auto &options = GetCachedAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::Prefab);
+                const auto &value = std::get<std::string>(*fieldValue);
+                const std::string preview = GetAssetReferencePreview(options, value, "<None>");
+                if (ImGui::BeginCombo(field.name.c_str(), preview.c_str()))
+                {
+                    const bool noneSelected = value.empty();
+                    if (ImGui::Selectable("<None>", noneSelected))
+                    {
+                        changed |= scriptComponent.SetFieldValue(field.name, std::string{});
+                    }
+                    if (noneSelected)
+                    {
+                        ImGui::SetItemDefaultFocus();
+                    }
+
+                    for (const auto &option : options)
+                    {
+                        const bool selected = option.reference == value;
+                        if (ImGui::Selectable(option.displayName.c_str(), selected))
+                        {
+                            changed |= scriptComponent.SetFieldValue(field.name, option.reference);
+                        }
+                        if (selected)
+                        {
+                            ImGui::SetItemDefaultFocus();
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+
+                if (auto droppedReference = AcceptDroppedPrefabAssetReference())
+                {
+                    changed |= scriptComponent.SetFieldValue(field.name, *droppedReference);
                 }
                 break;
             }

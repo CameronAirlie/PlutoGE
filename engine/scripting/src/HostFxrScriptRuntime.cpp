@@ -5,6 +5,7 @@
 #include "PlutoGE/scripting/ScriptLogging.h"
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/scene/Entity.h"
+#include "PlutoGE/scene/Prefab.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/AnimationComponent.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
@@ -75,6 +76,7 @@ namespace PlutoGE::scripting
         using apply_field_data_fn = int(__cdecl *)(int64_t, const char *);
         using set_entity_id_fn = int(__cdecl *)(int64_t, uint32_t);
         using register_game_object_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
+        using register_prefab_api_fn = int(__cdecl *)(void *);
         using register_component_api_fn = int(__cdecl *)(void *, void *, void *);
         using register_camera_component_api_fn = int(__cdecl *)(void *, void *, void *, void *);
         using register_light_component_api_fn = int(__cdecl *)(void *, void *, void *, void *);
@@ -110,6 +112,7 @@ namespace PlutoGE::scripting
         using get_entity_tag_count_fn = int(__cdecl *)(uint32_t);
         using get_entity_tag_fn = const char *(__cdecl *)(uint32_t, int32_t);
         using destroy_entity_fn = int(__cdecl *)(uint32_t);
+        using instantiate_prefab_fn = uint32_t(__cdecl *)(const char *);
         using has_entity_component_fn = int(__cdecl *)(uint32_t, int32_t);
         using get_component_enabled_fn = int(__cdecl *)(uint32_t, int32_t);
         using set_component_enabled_fn = void(__cdecl *)(uint32_t, int32_t, int32_t);
@@ -420,7 +423,7 @@ namespace PlutoGE::scripting
         {
             int fieldTypeValue = 0;
             std::from_chars(token.data(), token.data() + token.size(), fieldTypeValue);
-            if (fieldTypeValue < static_cast<int>(ScriptFieldType::None) || fieldTypeValue > static_cast<int>(ScriptFieldType::ParticleSystemComponent))
+            if (fieldTypeValue < static_cast<int>(ScriptFieldType::None) || fieldTypeValue > static_cast<int>(ScriptFieldType::PrefabAsset))
             {
                 return ScriptFieldType::None;
             }
@@ -455,6 +458,7 @@ namespace PlutoGE::scripting
             case ScriptFieldType::Double:
                 return ParseDouble(token);
             case ScriptFieldType::String:
+            case ScriptFieldType::PrefabAsset:
                 return token;
             case ScriptFieldType::Vector2:
             {
@@ -932,6 +936,29 @@ namespace PlutoGE::scripting
         {
             auto *scene = core::Engine::GetInstance().GetScene();
             return scene && scene->DestroyEntity(entityId) ? 1 : 0;
+        }
+
+        uint32_t InstantiatePrefab(const char *prefabReference)
+        {
+            auto *activeScene = core::Engine::GetInstance().GetScene();
+            if (!activeScene || !prefabReference || prefabReference[0] == '\0')
+            {
+                return 0;
+            }
+
+            std::string errorMessage;
+            auto *instance = scene::Prefab::Instantiate(*activeScene, prefabReference, nullptr, &errorMessage);
+            if (!instance)
+            {
+                if (!errorMessage.empty())
+                {
+                    DispatchScriptLog(ScriptLogSeverity::Warning,
+                                      "Failed to instantiate prefab '" + std::string(prefabReference) + "': " + errorMessage);
+                }
+                return 0;
+            }
+
+            return instance->GetID();
         }
 
         int32_t HasEntityComponent(uint32_t entityId, int32_t componentKind)
@@ -2106,6 +2133,7 @@ namespace PlutoGE::scripting
         apply_field_data_fn applyFieldData = nullptr;
         set_entity_id_fn setEntityId = nullptr;
         register_game_object_api_fn registerGameObjectApi = nullptr;
+        register_prefab_api_fn registerPrefabApi = nullptr;
         register_component_api_fn registerComponentApi = nullptr;
         register_camera_component_api_fn registerCameraComponentApi = nullptr;
         register_light_component_api_fn registerLightComponentApi = nullptr;
@@ -2198,6 +2226,7 @@ namespace PlutoGE::scripting
             impl.applyFieldData = nullptr;
             impl.setEntityId = nullptr;
             impl.registerGameObjectApi = nullptr;
+            impl.registerPrefabApi = nullptr;
             impl.registerComponentApi = nullptr;
             impl.registerCameraComponentApi = nullptr;
             impl.registerLightComponentApi = nullptr;
@@ -2509,6 +2538,7 @@ namespace PlutoGE::scripting
                 LoadManagedExport(impl, L"ApplyFieldData", impl.applyFieldData) &&
                 LoadManagedExport(impl, L"SetEntityId", impl.setEntityId) &&
                 LoadManagedExport(impl, L"RegisterGameObjectApi", impl.registerGameObjectApi) &&
+                LoadManagedExport(impl, L"RegisterPrefabApi", impl.registerPrefabApi) &&
                 LoadManagedExport(impl, L"RegisterComponentApi", impl.registerComponentApi) &&
                 LoadManagedExport(impl, L"RegisterCameraComponentApi", impl.registerCameraComponentApi) &&
                 LoadManagedExport(impl, L"RegisterLightComponentApi", impl.registerLightComponentApi) &&
@@ -2715,6 +2745,14 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(static_cast<destroy_entity_fn>(&DestroyEntity))) == 0)
         {
             setManagedBridgeFailure("RegisterGameObjectApi");
+            return false;
+        }
+
+        if (!m_impl->registerPrefabApi ||
+            m_impl->registerPrefabApi(
+                reinterpret_cast<void *>(static_cast<instantiate_prefab_fn>(&InstantiatePrefab))) == 0)
+        {
+            setManagedBridgeFailure("RegisterPrefabApi");
             return false;
         }
 

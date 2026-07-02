@@ -1234,7 +1234,10 @@ namespace PlutoGE::scene
         }
         const auto runtimeUiEnd = Clock::now();
 
-        for (auto rootEntity : m_rootEntities)
+        // Scripts may instantiate a prefab while an entity is updating. Iterate a
+        // snapshot so appending a new root cannot invalidate this traversal.
+        const auto rootsAtFrameStart = m_rootEntities;
+        for (auto *rootEntity : rootsAtFrameStart)
         {
             if (rootEntity->IsActive())
             {

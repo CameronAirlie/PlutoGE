@@ -149,6 +149,7 @@ namespace PlutoGE::scripting
         case ScriptFieldType::Double:
             return std::holds_alternative<double>(value);
         case ScriptFieldType::String:
+        case ScriptFieldType::PrefabAsset:
             return std::holds_alternative<std::string>(value);
         case ScriptFieldType::Vector2:
             return std::holds_alternative<glm::vec2>(value);
@@ -188,6 +189,7 @@ namespace PlutoGE::scripting
         case ScriptFieldType::Double:
             return 0.0;
         case ScriptFieldType::String:
+        case ScriptFieldType::PrefabAsset:
             return std::string{};
         case ScriptFieldType::Vector2:
             return glm::vec2{0.0f, 0.0f};

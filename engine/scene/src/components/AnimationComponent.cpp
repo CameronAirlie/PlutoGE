@@ -487,6 +487,7 @@ namespace PlutoGE::scene
             const std::vector<glm::vec3> &targetBindTranslations,
             const std::vector<glm::vec4> &targetBindRotations,
             const std::vector<glm::vec3> &targetBindScales,
+            const std::vector<glm::mat4> &targetGlobalBindTransforms,
             const std::vector<glm::vec4> &targetGlobalBindRotations)
         {
             std::vector<glm::mat4> localTransforms;
@@ -654,6 +655,72 @@ namespace PlutoGE::scene
                     }
                     break;
                 }
+            }
+
+            // Root/armature translation is commonly authored on an ancestor
+            // of Hips. That ancestor is deliberately not mapped during
+            // humanoid retargeting, but discarding its vertical motion makes
+            // crouches and landings bend the legs upward around a fixed pelvis.
+            // Fold the source hips' global vertical delta into the target hips
+            // when Copy Translation is enabled. Horizontal root motion remains
+            // stripped so controller-driven characters cannot drift.
+            int hipsMappingIndex = -1;
+            int targetHipsJointIndex = -1;
+            float hipsTranslationScale = 1.0f;
+            for (size_t mappingIndex = 0; mappingIndex < skeleton.humanoidBoneMappings.size(); ++mappingIndex)
+            {
+                const auto &mapping = skeleton.humanoidBoneMappings[mappingIndex];
+                if (mapping.bone == render::HumanoidBone::Hips && mapping.copyTranslation &&
+                    mapping.targetJointIndex >= 0 && mapping.targetJointIndex < static_cast<int>(skeleton.joints.size()))
+                {
+                    hipsMappingIndex = static_cast<int>(mappingIndex);
+                    targetHipsJointIndex = mapping.targetJointIndex;
+                    hipsTranslationScale = mapping.translationScale;
+                    break;
+                }
+            }
+
+            int sourceHipsNodeIndex = -1;
+            if (hipsMappingIndex >= 0)
+            {
+                for (size_t channelIndex = 0; channelIndex < channels.size(); ++channelIndex)
+                {
+                    if (channelIndex < cache.mappingBindings.size() &&
+                        cache.mappingBindings[channelIndex] == hipsMappingIndex && channels[channelIndex].nodeIndex >= 0)
+                    {
+                        sourceHipsNodeIndex = channels[channelIndex].nodeIndex;
+                        break;
+                    }
+                }
+            }
+
+            if (sourceHipsNodeIndex >= 0 && sourceHipsNodeIndex < sourceNodeCount &&
+                cache.sourceNodesPresent[static_cast<size_t>(sourceHipsNodeIndex)] &&
+                targetHipsJointIndex >= 0 &&
+                targetHipsJointIndex < static_cast<int>(targetBindTranslations.size()) &&
+                targetHipsJointIndex < static_cast<int>(targetGlobalBindTransforms.size()))
+            {
+                glm::vec3 sourceAnimatedGlobalTranslation;
+                glm::vec4 ignoredRotation;
+                glm::vec3 ignoredScale;
+                DecomposeTransform(sourceGlobalTransforms[static_cast<size_t>(sourceHipsNodeIndex)],
+                                   sourceAnimatedGlobalTranslation, ignoredRotation, ignoredScale);
+
+                glm::vec3 sourceBindGlobalTranslation;
+                DecomposeTransform(cache.sourceGlobalBindTransforms[static_cast<size_t>(sourceHipsNodeIndex)],
+                                   sourceBindGlobalTranslation, ignoredRotation, ignoredScale);
+
+                const size_t targetIndex = static_cast<size_t>(targetHipsJointIndex);
+                const int parentIndex = skeleton.joints[targetIndex].parentJointIndex;
+                const glm::mat4 parentGlobalBind = parentIndex >= 0 && parentIndex < static_cast<int>(targetGlobalBindTransforms.size())
+                                                       ? targetGlobalBindTransforms[static_cast<size_t>(parentIndex)]
+                                                       : glm::mat4(1.0f);
+                const glm::mat3 parentBasis(parentGlobalBind);
+                const glm::vec3 currentLocalDelta = translations[targetIndex] - targetBindTranslations[targetIndex];
+                glm::vec3 currentGlobalDelta = parentBasis * currentLocalDelta;
+                currentGlobalDelta.y = (sourceAnimatedGlobalTranslation.y - sourceBindGlobalTranslation.y) * hipsTranslationScale;
+                translations[targetIndex] = targetBindTranslations[targetIndex] + glm::inverse(parentBasis) * currentGlobalDelta;
+                animatedLocals[targetIndex] = 1;
             }
 
             std::vector<glm::quat> targetGlobalRotations(skeleton.joints.size(), glm::quat(1.0f, 0.0f, 0.0f, 0.0f));
@@ -3011,7 +3078,8 @@ namespace PlutoGE::scene
             return SampleRetargetedJointTransforms(
                 m_clips, clipIndex, time, skeleton,
                 validBindings ? m_retargetClipCaches[static_cast<size_t>(clipIndex)] : emptyCache,
-                m_targetBindTranslations, m_targetBindRotations, m_targetBindScales, m_targetGlobalBindRotations);
+                m_targetBindTranslations, m_targetBindRotations, m_targetBindScales,
+                m_targetGlobalBindTransforms, m_targetGlobalBindRotations);
         };
         auto sampleState = [&](const AnimationState &state, float time)
         {

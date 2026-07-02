@@ -6,7 +6,8 @@
 
 #include <algorithm>
 #include <glm/gtc/matrix_inverse.hpp>
-#include <glm/gtc/quaternion.hpp>
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtx/euler_angles.hpp>
 
 namespace PlutoGE::scene
 {
@@ -50,8 +51,15 @@ namespace PlutoGE::scene
             rotationMatrix[1] = glm::vec4(glm::normalize(basisY), 0.0f);
             rotationMatrix[2] = glm::vec4(glm::normalize(basisZ), 0.0f);
 
-            const glm::quat rotation = glm::normalize(glm::quat_cast(glm::mat3(rotationMatrix)));
-            result.rotation = glm::degrees(glm::eulerAngles(rotation));
+            // Entity builds its local transform as Rx * Ry * Rz, so extract
+            // the angles using that same convention. glm::eulerAngles uses a
+            // different convention and does not reconstruct the source
+            // matrix, which made attached entities wobble as bones rotated.
+            float rotationX = 0.0f;
+            float rotationY = 0.0f;
+            float rotationZ = 0.0f;
+            glm::extractEulerAngleXYZ(rotationMatrix, rotationX, rotationY, rotationZ);
+            result.rotation = glm::degrees(glm::vec3(rotationX, rotationY, rotationZ));
             return result;
         }
 
@@ -89,6 +97,68 @@ namespace PlutoGE::scene
                 transform *= nodes[static_cast<size_t>(*iterator)].localBindTransform;
             }
             return transform;
+        }
+
+        int FindJointIndex(const render::Skeleton &skeleton, int nodeIndex, const std::string &jointName)
+        {
+            for (size_t jointIndex = 0; jointIndex < skeleton.joints.size(); ++jointIndex)
+            {
+                if (skeleton.joints[jointIndex].nodeIndex == nodeIndex)
+                {
+                    return static_cast<int>(jointIndex);
+                }
+            }
+
+            if (!jointName.empty())
+            {
+                for (size_t jointIndex = 0; jointIndex < skeleton.joints.size(); ++jointIndex)
+                {
+                    if (skeleton.joints[jointIndex].name == jointName)
+                    {
+                        return static_cast<int>(jointIndex);
+                    }
+                }
+            }
+
+            return -1;
+        }
+
+        glm::mat4 ComputeJointMeshMatrix(render::Mesh &mesh,
+                                         AnimationComponent *animationComponent,
+                                         int nodeIndex,
+                                         const std::string &jointName)
+        {
+            const auto &nodes = mesh.GetAnimationNodes();
+            const auto &skeleton = mesh.GetSkeleton();
+            const int jointIndex = FindJointIndex(skeleton, nodeIndex, jointName);
+
+            if (jointIndex >= 0)
+            {
+                const auto &joint = skeleton.joints[static_cast<size_t>(jointIndex)];
+                if (animationComponent)
+                {
+                    // Use the exact skinning pose consumed by rendering. A
+                    // skin matrix is boneMesh * inverseBind, so removing the
+                    // inverse bind recovers the animated bone transform in
+                    // mesh space, including retargeting and root correction.
+                    const auto &jointMatrices = animationComponent->GetJointMatrices(skeleton, nodes);
+                    if (jointIndex < static_cast<int>(jointMatrices.size()))
+                    {
+                        return jointMatrices[static_cast<size_t>(jointIndex)] * glm::inverse(joint.inverseBindMatrix);
+                    }
+                }
+
+                if (nodeIndex >= 0 && nodeIndex < static_cast<int>(nodes.size()))
+                {
+                    return joint.inverseRootMatrix * ComputeAnimationNodeBindMatrix(nodes, nodeIndex);
+                }
+
+                return glm::inverse(joint.inverseBindMatrix);
+            }
+
+            return animationComponent
+                       ? animationComponent->GetNodeMatrix(nodes, nodeIndex)
+                       : ComputeAnimationNodeBindMatrix(nodes, nodeIndex);
         }
     }
 
@@ -132,12 +202,33 @@ namespace PlutoGE::scene
         }
 
         auto *animationComponent = FindAnimationComponent(sourceMeshEntity);
-        const glm::mat4 nodeMatrix = animationComponent
-                                         ? animationComponent->GetNodeMatrix(nodes, m_targetNodeIndex)
-                                         : ComputeAnimationNodeBindMatrix(nodes, m_targetNodeIndex);
-        const glm::mat4 targetWorld = sourceMeshEntity->GetWorldTransform() * nodeMatrix;
-        const glm::mat4 parentWorld = owner->GetParent() ? owner->GetParent()->GetWorldTransform() : glm::mat4(1.0f);
-        const glm::mat4 localTransform = glm::inverse(parentWorld) * targetWorld;
+        const glm::mat4 jointMeshMatrix = ComputeJointMeshMatrix(*mesh, animationComponent, m_targetNodeIndex, m_jointName);
+
+        glm::mat4 localTransform(1.0f);
+        auto *parent = owner->GetParent();
+        auto *parentAttachment = parent ? parent->GetComponent<SkeletonAttachmentComponent>() : nullptr;
+        if (parentAttachment && parentAttachment->FindSourceMeshComponent() == sourceMeshComponent)
+        {
+            // Derive the local pose directly from both bone transforms. This
+            // is independent of entity update order and avoids a one-frame
+            // rotation/translation feedback through the parent's old world
+            // transform.
+            const glm::mat4 parentJointMeshMatrix = ComputeJointMeshMatrix(
+                *mesh,
+                animationComponent,
+                parentAttachment->GetTargetNodeIndex(),
+                parentAttachment->GetJointName());
+            localTransform = glm::inverse(parentJointMeshMatrix) * jointMeshMatrix;
+        }
+        else
+        {
+            const glm::mat4 targetWorld = sourceMeshEntity->GetWorldTransform() *
+                                          sourceMeshComponent->GetMeshOffsetTransform() *
+                                          jointMeshMatrix;
+            const glm::mat4 parentWorld = parent ? parent->GetWorldTransform() : glm::mat4(1.0f);
+            localTransform = glm::inverse(parentWorld) * targetWorld;
+        }
+
         const auto decomposed = DecomposeTransform(localTransform);
         owner->SetPosition(decomposed.position);
         owner->SetRotation(decomposed.rotation);

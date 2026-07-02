@@ -103,6 +103,11 @@ namespace PlutoGE::scene
         const std::string &GetSourceMeshPath() const { return GetMeshAssetReference(); }
         void SetUseGeneratedLods(bool useGeneratedLods) { m_useGeneratedLods = useGeneratedLods; }
         bool GetUseGeneratedLods() const { return m_useGeneratedLods; }
+        void SetMeshPositionOffset(const glm::vec3 &offset);
+        const glm::vec3 &GetMeshPositionOffset() const;
+        void SetMeshRotationOffset(const glm::vec3 &offset);
+        const glm::vec3 &GetMeshRotationOffset() const;
+        glm::mat4 GetMeshOffsetTransform() const;
 
         void SetMaterial(render::Material *material)
         {
@@ -216,6 +221,7 @@ namespace PlutoGE::scene
         void MarkRenderCommandsDirty();
         void RefreshMeshDerivedState();
         void UpdateCachedPreviousModels(const glm::mat4 &modelMatrix);
+        MeshComponent *FindMeshOffsetSource() const;
 
         render::Mesh *m_mesh = nullptr;
         render::Material *m_material = nullptr;
@@ -231,6 +237,8 @@ namespace PlutoGE::scene
         glm::mat4 m_cachedRenderCommandModel = glm::mat4(1.0f);
         std::vector<render::RenderCommand> m_cachedRenderCommands;
         std::string m_sourceMeshPath;
+        glm::vec3 m_meshPositionOffset{0.0f};
+        glm::vec3 m_meshRotationOffset{0.0f};
         int m_submeshIndex = -1;
         int m_submeshCount = 1;
         bool m_visible = true;

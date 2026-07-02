@@ -2546,6 +2546,17 @@ namespace PlutoGE::ui
                     ImGui::TextDisabled("Assign a generated .plutomesh asset from the content browser.");
                 }
 
+                glm::vec3 meshPositionOffset = meshComponent->GetMeshPositionOffset();
+                glm::vec3 meshRotationOffset = meshComponent->GetMeshRotationOffset();
+                bool meshOffsetChanged = ImGui::DragFloat3("Mesh Position Offset", &meshPositionOffset.x, 0.01f);
+                meshOffsetChanged |= ImGui::DragFloat3("Mesh Rotation Offset", &meshRotationOffset.x, 0.1f);
+                if (meshOffsetChanged)
+                {
+                    meshComponent->SetMeshPositionOffset(meshPositionOffset);
+                    meshComponent->SetMeshRotationOffset(meshRotationOffset);
+                    editorShell.MarkSceneDirty();
+                }
+
                 ImGui::BeginDisabled(meshComponent->GetMeshAssetReference().empty());
                 if (ImGui::Button("Reset Materials To Mesh Defaults"))
                 {

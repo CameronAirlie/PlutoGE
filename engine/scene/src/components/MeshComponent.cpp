@@ -490,6 +490,8 @@ namespace PlutoGE::scene
                     childMeshComponent->SetSourceMeshPath(m_sourceMeshPath);
                     childMeshComponent->SetUseGeneratedLods(m_useGeneratedLods);
                     childMeshComponent->SetStatic(m_isStatic);
+                    childMeshComponent->SetMeshPositionOffset(m_meshPositionOffset);
+                    childMeshComponent->SetMeshRotationOffset(m_meshRotationOffset);
                     childMeshComponent->SetVisible(true);
                     if (submeshMaterialOverride)
                     {
@@ -531,6 +533,8 @@ namespace PlutoGE::scene
             childMeshComponent->SetSourceMeshPath(m_sourceMeshPath);
             childMeshComponent->SetUseGeneratedLods(m_useGeneratedLods);
             childMeshComponent->SetStatic(m_isStatic);
+            childMeshComponent->SetMeshPositionOffset(m_meshPositionOffset);
+            childMeshComponent->SetMeshRotationOffset(m_meshRotationOffset);
             childMeshComponent->SetSubmeshIndex(static_cast<int>(submeshIndex));
             if (submeshIndex < m_submeshMaterials.size() && m_submeshMaterials[submeshIndex])
             {
@@ -616,6 +620,8 @@ namespace PlutoGE::scene
             {"SubmeshCount", PropertyType::Int, std::to_string(m_submeshCount)},
             {"MeshAsset", PropertyType::String, m_sourceMeshPath},
             {"UseGeneratedLods", PropertyType::Bool, m_useGeneratedLods ? "true" : "false"},
+            {"MeshPositionOffset", PropertyType::Vec3, SerializeVec3(m_meshPositionOffset)},
+            {"MeshRotationOffset", PropertyType::Vec3, SerializeVec3(m_meshRotationOffset)},
             {"MaterialSlotCount", PropertyType::Int, std::to_string(m_materials.size())},
         };
 
@@ -692,6 +698,14 @@ namespace PlutoGE::scene
             else if (property.name == "UseGeneratedLods")
             {
                 useGeneratedLods = property.value == "true" || property.value == "1";
+            }
+            else if (property.name == "MeshPositionOffset")
+            {
+                m_meshPositionOffset = ParseVec3(property.value, glm::vec3(0.0f));
+            }
+            else if (property.name == "MeshRotationOffset")
+            {
+                m_meshRotationOffset = ParseVec3(property.value, glm::vec3(0.0f));
             }
             else if (property.name.rfind(kMaterialSlotPrefix, 0) == 0)
             {
@@ -821,12 +835,92 @@ namespace PlutoGE::scene
         (void)deltaTime;
     }
 
+    MeshComponent *MeshComponent::FindMeshOffsetSource() const
+    {
+        if (m_submeshIndex < 0)
+        {
+            return const_cast<MeshComponent *>(this);
+        }
+
+        auto *owner = GetOwner();
+        for (auto *current = owner ? owner->GetParent() : nullptr; current != nullptr; current = current->GetParent())
+        {
+            auto *candidate = current->GetComponent<MeshComponent>();
+            if (!candidate || candidate->GetSubmeshIndex() >= 0)
+            {
+                continue;
+            }
+
+            const bool sameMesh = candidate->GetMesh() && candidate->GetMesh() == m_mesh;
+            const bool sameAsset = !m_sourceMeshPath.empty() && candidate->GetSourceMeshPath() == m_sourceMeshPath;
+            if (sameMesh || sameAsset)
+            {
+                return candidate;
+            }
+        }
+
+        return const_cast<MeshComponent *>(this);
+    }
+
+    void MeshComponent::SetMeshPositionOffset(const glm::vec3 &offset)
+    {
+        auto *source = FindMeshOffsetSource();
+        if (source != this)
+        {
+            source->SetMeshPositionOffset(offset);
+            return;
+        }
+        if (m_meshPositionOffset == offset)
+        {
+            return;
+        }
+        m_meshPositionOffset = offset;
+        MarkRenderCommandsDirty();
+    }
+
+    const glm::vec3 &MeshComponent::GetMeshPositionOffset() const
+    {
+        return FindMeshOffsetSource()->m_meshPositionOffset;
+    }
+
+    void MeshComponent::SetMeshRotationOffset(const glm::vec3 &offset)
+    {
+        auto *source = FindMeshOffsetSource();
+        if (source != this)
+        {
+            source->SetMeshRotationOffset(offset);
+            return;
+        }
+        if (m_meshRotationOffset == offset)
+        {
+            return;
+        }
+        m_meshRotationOffset = offset;
+        MarkRenderCommandsDirty();
+    }
+
+    const glm::vec3 &MeshComponent::GetMeshRotationOffset() const
+    {
+        return FindMeshOffsetSource()->m_meshRotationOffset;
+    }
+
+    glm::mat4 MeshComponent::GetMeshOffsetTransform() const
+    {
+        const auto *source = FindMeshOffsetSource();
+        glm::mat4 transform(1.0f);
+        transform = glm::translate(transform, source->m_meshPositionOffset);
+        transform = glm::rotate(transform, glm::radians(source->m_meshRotationOffset.x), glm::vec3(1.0f, 0.0f, 0.0f));
+        transform = glm::rotate(transform, glm::radians(source->m_meshRotationOffset.y), glm::vec3(0.0f, 1.0f, 0.0f));
+        transform = glm::rotate(transform, glm::radians(source->m_meshRotationOffset.z), glm::vec3(0.0f, 0.0f, 1.0f));
+        return transform;
+    }
+
     void MeshComponent::SubmitRenderCommands()
     {
         if (m_mesh && m_visible)
         {
             auto entity = GetOwner();
-            glm::mat4 modelMatrix = entity->GetWorldTransform();
+            const glm::mat4 modelMatrix = entity->GetWorldTransform() * GetMeshOffsetTransform();
 
             AnimationComponent *animationComponent = (m_mesh->HasSkeleton() || m_hasAnimatedNodeSubmeshes)
                                                          ? FindAnimationComponent(entity)

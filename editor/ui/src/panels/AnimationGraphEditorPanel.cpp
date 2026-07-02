@@ -447,7 +447,9 @@ namespace PlutoGE::ui
                                   IM_COL32(190, 198, 210, 255),
                                   "Out");
 
-                std::string clip = state.clipName.empty() ? "Clip #" + std::to_string(state.clipIndex) : state.clipName;
+                std::string clip = state.blendSpacePoints.empty()
+                                       ? (state.clipName.empty() ? "Clip #" + std::to_string(state.clipIndex) : state.clipName)
+                                       : "2D Blend Space (" + std::to_string(state.blendSpacePoints.size()) + ")";
                 if (clip.size() > 22)
                 {
                     clip.resize(19);
@@ -708,58 +710,151 @@ namespace PlutoGE::ui
             }
 
             const auto clipOptions = CollectClipAssetOptions(editorShell.GetProject());
-            std::string clipPreview = state->clipReference.empty() ? "None" : state->clipReference;
-            for (const auto &option : clipOptions)
+            int motionType = state->blendSpacePoints.empty() ? 0 : 1;
+            constexpr const char *motionTypes[] = {"Animation Clip", "2D Blend Space"};
+            if (ImGui::Combo("Motion", &motionType, motionTypes, IM_ARRAYSIZE(motionTypes)))
             {
-                if (option.reference == state->clipReference)
+                if (motionType == 1)
                 {
-                    clipPreview = option.displayName;
-                    break;
+                    state->blendSpacePoints.push_back(assets::AnimationGraphBlendSpacePoint{
+                        .clipReference = state->clipReference,
+                        .clipName = state->clipName,
+                        .clipIndex = state->clipIndex,
+                    });
                 }
+                else
+                    state->blendSpacePoints.clear();
+                m_dirty = true;
             }
 
-            if (ImGui::BeginCombo("Clip Asset", clipPreview.c_str()))
+            if (state->blendSpacePoints.empty())
             {
-                if (ImGui::Selectable("None", state->clipReference.empty()))
+                std::string clipPreview = state->clipReference.empty() ? "None" : state->clipReference;
+                for (const auto &option : clipOptions)
+                {
+                    if (option.reference == state->clipReference)
+                    {
+                        clipPreview = option.displayName;
+                        break;
+                    }
+                }
+
+                if (ImGui::BeginCombo("Clip Asset", clipPreview.c_str()))
+                {
+                    if (ImGui::Selectable("None", state->clipReference.empty()))
+                    {
+                        state->clipReference.clear();
+                        m_dirty = true;
+                    }
+                    for (const auto &option : clipOptions)
+                    {
+                        const bool selected = option.reference == state->clipReference;
+                        if (ImGui::Selectable(option.displayName.c_str(), selected))
+                        {
+                            state->clipReference = option.reference;
+                            state->clipName = ClipNameFromReference(option.reference);
+                            m_dirty = true;
+                        }
+                        if (selected)
+                            ImGui::SetItemDefaultFocus();
+                    }
+                    ImGui::EndCombo();
+                }
+                ImGui::SameLine();
+                ImGui::BeginDisabled(state->clipReference.empty());
+                if (ImGui::Button("Clear##ClipAsset"))
                 {
                     state->clipReference.clear();
                     m_dirty = true;
                 }
-                for (const auto &option : clipOptions)
-                {
-                    const bool selected = option.reference == state->clipReference;
-                    if (ImGui::Selectable(option.displayName.c_str(), selected))
-                    {
-                        state->clipReference = option.reference;
-                        state->clipName = ClipNameFromReference(option.reference);
-                        m_dirty = true;
-                    }
-                    if (selected)
-                    {
-                        ImGui::SetItemDefaultFocus();
-                    }
-                }
-                ImGui::EndCombo();
-            }
-            ImGui::SameLine();
-            ImGui::BeginDisabled(state->clipReference.empty());
-            if (ImGui::Button("Clear##ClipAsset"))
-            {
-                state->clipReference.clear();
-                m_dirty = true;
-            }
-            ImGui::EndDisabled();
+                ImGui::EndDisabled();
 
-            char clipBuffer[128]{};
-            strncpy_s(clipBuffer, state->clipName.c_str(), _TRUNCATE);
-            if (ImGui::InputText("Clip Name", clipBuffer, sizeof(clipBuffer)))
-            {
-                state->clipName = clipBuffer;
-                m_dirty = true;
+                char clipBuffer[128]{};
+                strncpy_s(clipBuffer, state->clipName.c_str(), _TRUNCATE);
+                if (ImGui::InputText("Clip Name", clipBuffer, sizeof(clipBuffer)))
+                {
+                    state->clipName = clipBuffer;
+                    m_dirty = true;
+                }
+                if (ImGui::DragInt("Clip Index", &state->clipIndex, 0.1f, 0, 999))
+                    m_dirty = true;
             }
-            if (ImGui::DragInt("Clip Index", &state->clipIndex, 0.1f, 0, 999))
+            else
             {
-                m_dirty = true;
+                auto drawFloatParameter = [&](const char *label, std::string &value)
+                {
+                    const char *preview = value.empty() ? "None" : value.c_str();
+                    if (!ImGui::BeginCombo(label, preview))
+                        return;
+                    for (const auto &parameter : m_graph.parameters)
+                    {
+                        if (parameter.type != assets::AnimationGraphParameterType::Float)
+                            continue;
+                        if (ImGui::Selectable(parameter.name.c_str(), parameter.name == value))
+                        {
+                            value = parameter.name;
+                            m_dirty = true;
+                        }
+                    }
+                    ImGui::EndCombo();
+                };
+                drawFloatParameter("Horizontal Parameter", state->blendSpaceParameterX);
+                drawFloatParameter("Vertical Parameter", state->blendSpaceParameterY);
+                if (state->blendSpaceParameterX.empty() || state->blendSpaceParameterY.empty())
+                    ImGui::TextWrapped("Add two Float parameters below, then assign them here.");
+
+                if (ImGui::Button("Add Blend Point"))
+                {
+                    assets::AnimationGraphBlendSpacePoint point;
+                    if (!clipOptions.empty())
+                    {
+                        point.clipReference = clipOptions.front().reference;
+                        point.clipName = ClipNameFromReference(point.clipReference);
+                    }
+                    state->blendSpacePoints.push_back(std::move(point));
+                    m_dirty = true;
+                }
+
+                int pointToRemove = -1;
+                for (int pointIndex = 0; pointIndex < static_cast<int>(state->blendSpacePoints.size()); ++pointIndex)
+                {
+                    auto &point = state->blendSpacePoints[static_cast<size_t>(pointIndex)];
+                    ImGui::PushID(20000 + pointIndex);
+                    const std::string heading = "Point " + std::to_string(pointIndex + 1) +
+                                                " (" + std::to_string(point.positionX) + ", " + std::to_string(point.positionY) + ")";
+                    if (ImGui::TreeNode(heading.c_str()))
+                    {
+                        std::string pointPreview = point.clipReference.empty() ? "None" : point.clipReference;
+                        for (const auto &option : clipOptions)
+                            if (option.reference == point.clipReference)
+                                pointPreview = option.displayName;
+                        if (ImGui::BeginCombo("Clip Asset", pointPreview.c_str()))
+                        {
+                            for (const auto &option : clipOptions)
+                            {
+                                const bool selected = option.reference == point.clipReference;
+                                if (ImGui::Selectable(option.displayName.c_str(), selected))
+                                {
+                                    point.clipReference = option.reference;
+                                    point.clipName = ClipNameFromReference(option.reference);
+                                    m_dirty = true;
+                                }
+                            }
+                            ImGui::EndCombo();
+                        }
+                        m_dirty |= ImGui::DragFloat("X", &point.positionX, 0.05f);
+                        m_dirty |= ImGui::DragFloat("Y", &point.positionY, 0.05f);
+                        if (ImGui::Button("Remove Point"))
+                            pointToRemove = pointIndex;
+                        ImGui::TreePop();
+                    }
+                    ImGui::PopID();
+                }
+                if (pointToRemove >= 0)
+                {
+                    state->blendSpacePoints.erase(state->blendSpacePoints.begin() + pointToRemove);
+                    m_dirty = true;
+                }
             }
             if (ImGui::DragFloat("Speed", &state->speed, 0.01f, 0.0f, 10.0f))
             {
@@ -883,6 +978,13 @@ namespace PlutoGE::ui
                     for (auto &condition : transition.conditions)
                         if (condition.parameterName == oldName)
                             condition.parameterName = parameter.name;
+                for (auto &state : m_graph.states)
+                {
+                    if (state.blendSpaceParameterX == oldName)
+                        state.blendSpaceParameterX = parameter.name;
+                    if (state.blendSpaceParameterY == oldName)
+                        state.blendSpaceParameterY = parameter.name;
+                }
                 for (auto &layer : m_graph.layers)
                 {
                     if (layer.activationParameter == oldName)
@@ -937,6 +1039,13 @@ namespace PlutoGE::ui
                     layer.activationParameter.clear();
                 if (layer.weightParameter == removedName)
                     layer.weightParameter.clear();
+            }
+            for (auto &state : m_graph.states)
+            {
+                if (state.blendSpaceParameterX == removedName)
+                    state.blendSpaceParameterX.clear();
+                if (state.blendSpaceParameterY == removedName)
+                    state.blendSpaceParameterY.clear();
             }
             m_dirty = true;
         }

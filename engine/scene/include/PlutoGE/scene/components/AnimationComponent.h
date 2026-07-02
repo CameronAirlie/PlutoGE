@@ -75,10 +75,20 @@ namespace PlutoGE::scene
 
         struct AnimationState
         {
+            struct BlendSpacePoint
+            {
+                int clipIndex = 0;
+                float positionX = 0.0f;
+                float positionY = 0.0f;
+            };
+
             std::string name;
             int clipIndex = 0;
             float speed = 1.0f;
             bool loop = true;
+            std::string blendSpaceParameterX;
+            std::string blendSpaceParameterY;
+            std::vector<BlendSpacePoint> blendSpacePoints;
             std::vector<AnimationTransition> transitions;
         };
 
@@ -202,6 +212,12 @@ namespace PlutoGE::scene
             float duration = 0.0f;
         };
 
+        struct BlendSpaceSample
+        {
+            int clipIndex = 0;
+            float weight = 0.0f;
+        };
+
         bool HasCurrentClip() const;
         void ClampCurrentClipIndex();
         void EnsureDefaultGraph();
@@ -217,7 +233,11 @@ namespace PlutoGE::scene
         void ConsumeTransitionTriggers(const AnimationTransition &transition);
         void StartTransition(int sourceStateIndex, const AnimationTransition &transition);
         float AdvanceClipTime(int clipIndex, float time, float deltaTime, float speed, bool looping, bool *finished = nullptr) const;
+        float AdvanceStateTime(const AnimationState &state, float time, float deltaTime, float speedMultiplier = 1.0f, bool *finished = nullptr) const;
         float GetClipDuration(int clipIndex) const;
+        float GetBlendSpaceDuration(const AnimationState &state) const;
+        std::vector<BlendSpaceSample> ResolveBlendSpaceSamples(const AnimationState &state) const;
+        float GetBlendSpaceClipTime(const AnimationState &state, int clipIndex, float stateTime) const;
 
         void EvaluateJointMatrices(const render::Skeleton &skeleton);
         void EvaluateNodeMatrices(const std::vector<render::AnimationNode> &nodes);

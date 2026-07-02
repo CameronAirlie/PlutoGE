@@ -1559,6 +1559,37 @@ namespace PlutoGE::assets
                     .loop = ParseBoolOr(fields[7], true),
                 });
             }
+            else if (key == "BlendSpace")
+            {
+                const auto fields = SplitFields(value);
+                if (fields.size() < 3)
+                    continue;
+                const int stateId = ParseIntOr(fields[0], 0);
+                const auto stateIt = std::find_if(graph.states.begin(), graph.states.end(),
+                                                  [stateId](const AnimationGraphState &state) { return state.id == stateId; });
+                if (stateIt == graph.states.end())
+                    continue;
+                stateIt->blendSpaceParameterX = fields[1];
+                stateIt->blendSpaceParameterY = fields[2];
+            }
+            else if (key == "BlendSpacePoint")
+            {
+                const auto fields = SplitFields(value);
+                if (fields.size() < 6)
+                    continue;
+                const int stateId = ParseIntOr(fields[0], 0);
+                const auto stateIt = std::find_if(graph.states.begin(), graph.states.end(),
+                                                  [stateId](const AnimationGraphState &state) { return state.id == stateId; });
+                if (stateIt == graph.states.end())
+                    continue;
+                stateIt->blendSpacePoints.push_back(AnimationGraphBlendSpacePoint{
+                    .clipReference = fields[5] == "0" ? std::string{} : fields[5],
+                    .clipName = fields[3],
+                    .clipIndex = ParseIntOr(fields[4], 0),
+                    .positionX = ParseFloatOr(fields[1], 0.0f),
+                    .positionY = ParseFloatOr(fields[2], 0.0f),
+                });
+            }
             else if (key == "Transition")
             {
                 const auto fields = SplitFields(value);
@@ -1713,7 +1744,7 @@ namespace PlutoGE::assets
             return false;
         }
 
-        output << "AnimationGraphVersion=3\n";
+        output << "AnimationGraphVersion=4\n";
         output << "DefaultStateId=" << graph.defaultStateId << "\n";
         for (const auto &parameter : graph.parameters)
         {
@@ -1735,6 +1766,21 @@ namespace PlutoGE::assets
                    << state.speed << '|'
                    << (state.loop ? "1" : "0") << '|'
                    << state.clipReference << "\n";
+            if (!state.blendSpacePoints.empty())
+            {
+                output << "BlendSpace=" << state.id << '|'
+                       << state.blendSpaceParameterX << '|'
+                       << state.blendSpaceParameterY << "\n";
+                for (const auto &point : state.blendSpacePoints)
+                {
+                    output << "BlendSpacePoint=" << state.id << '|'
+                           << point.positionX << '|'
+                           << point.positionY << '|'
+                           << point.clipName << '|'
+                           << point.clipIndex << '|'
+                           << (point.clipReference.empty() ? "0" : point.clipReference) << "\n";
+                }
+            }
         }
         for (const auto &transition : graph.transitions)
         {

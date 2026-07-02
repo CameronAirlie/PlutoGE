@@ -7,6 +7,7 @@
 #include <functional>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
+#include <limits>
 #include <string_view>
 
 namespace PlutoGE::scene
@@ -719,6 +720,28 @@ namespace PlutoGE::scene
             }
 
             return blended;
+        }
+
+        std::vector<glm::mat4> BlendWeightedLocalTransforms(
+            const std::vector<std::pair<std::vector<glm::mat4>, float>> &samples)
+        {
+            std::vector<glm::mat4> result;
+            float accumulatedWeight = 0.0f;
+            for (const auto &[transforms, weight] : samples)
+            {
+                if (weight <= 0.00001f)
+                    continue;
+                if (result.empty())
+                {
+                    result = transforms;
+                    accumulatedWeight = weight;
+                    continue;
+                }
+                const float nextWeight = accumulatedWeight + weight;
+                result = BlendLocalTransforms(result, transforms, weight / nextWeight);
+                accumulatedWeight = nextWeight;
+            }
+            return result;
         }
 
         std::vector<glm::mat4> BlendMaskedLocalTransforms(
@@ -1503,6 +1526,10 @@ namespace PlutoGE::scene
             {
                 state.clipIndex = std::clamp(state.clipIndex, 0, static_cast<int>(m_clips.size()) - 1);
             }
+            for (auto &point : state.blendSpacePoints)
+                point.clipIndex = m_clips.empty() ? 0 : std::clamp(point.clipIndex, 0, static_cast<int>(m_clips.size()) - 1);
+            if (!state.blendSpacePoints.empty())
+                state.clipIndex = state.blendSpacePoints.front().clipIndex;
 
             state.speed = std::max(0.0f, state.speed);
             for (auto &transition : state.transitions)
@@ -1527,6 +1554,10 @@ namespace PlutoGE::scene
                 for (auto &state : layer.graphStates)
                 {
                     state.clipIndex = m_clips.empty() ? 0 : std::clamp(state.clipIndex, 0, static_cast<int>(m_clips.size()) - 1);
+                    for (auto &point : state.blendSpacePoints)
+                        point.clipIndex = m_clips.empty() ? 0 : std::clamp(point.clipIndex, 0, static_cast<int>(m_clips.size()) - 1);
+                    if (!state.blendSpacePoints.empty())
+                        state.clipIndex = state.blendSpacePoints.front().clipIndex;
                     state.speed = std::max(0.0f, state.speed);
                     for (auto &transition : state.transitions)
                     {
@@ -1626,6 +1657,18 @@ namespace PlutoGE::scene
             state.clipIndex = resolveClipIndex(assetState.clipReference, assetState.clipName, assetState.clipIndex);
             state.speed = assetState.speed;
             state.loop = assetState.loop;
+            state.blendSpaceParameterX = assetState.blendSpaceParameterX;
+            state.blendSpaceParameterY = assetState.blendSpaceParameterY;
+            for (const auto &assetPoint : assetState.blendSpacePoints)
+            {
+                state.blendSpacePoints.push_back(AnimationState::BlendSpacePoint{
+                    .clipIndex = resolveClipIndex(assetPoint.clipReference, assetPoint.clipName, assetPoint.clipIndex),
+                    .positionX = assetPoint.positionX,
+                    .positionY = assetPoint.positionY,
+                });
+            }
+            if (!state.blendSpacePoints.empty())
+                state.clipIndex = state.blendSpacePoints.front().clipIndex;
             stateIndexById[assetState.id] = static_cast<int>(m_states.size());
             m_states.push_back(std::move(state));
         }
@@ -1657,6 +1700,18 @@ namespace PlutoGE::scene
                         state.clipIndex = resolveClipIndex(assetState.clipReference, assetState.clipName, assetState.clipIndex);
                         state.speed = assetState.speed;
                         state.loop = assetState.loop;
+                        state.blendSpaceParameterX = assetState.blendSpaceParameterX;
+                        state.blendSpaceParameterY = assetState.blendSpaceParameterY;
+                        for (const auto &assetPoint : assetState.blendSpacePoints)
+                        {
+                            state.blendSpacePoints.push_back(AnimationState::BlendSpacePoint{
+                                .clipIndex = resolveClipIndex(assetPoint.clipReference, assetPoint.clipName, assetPoint.clipIndex),
+                                .positionX = assetPoint.positionX,
+                                .positionY = assetPoint.positionY,
+                            });
+                        }
+                        if (!state.blendSpacePoints.empty())
+                            state.clipIndex = state.blendSpacePoints.front().clipIndex;
                         layerStateIndexById[assetState.id] = static_cast<int>(layer.graphStates.size());
                         layer.graphStates.push_back(std::move(state));
                     }
@@ -1765,6 +1820,151 @@ namespace PlutoGE::scene
     float AnimationComponent::GetClipDuration(int clipIndex) const
     {
         return clipIndex >= 0 && clipIndex < static_cast<int>(m_clips.size()) ? m_clips[static_cast<size_t>(clipIndex)].duration : 0.0f;
+    }
+
+    std::vector<AnimationComponent::BlendSpaceSample> AnimationComponent::ResolveBlendSpaceSamples(const AnimationState &state) const
+    {
+        const auto &points = state.blendSpacePoints;
+        if (points.empty())
+            return {{state.clipIndex, 1.0f}};
+
+        const float x = GetFloat(state.blendSpaceParameterX);
+        const float y = GetFloat(state.blendSpaceParameterY);
+        constexpr float epsilon = 0.00001f;
+
+        for (const auto &point : points)
+        {
+            const float dx = x - point.positionX;
+            const float dy = y - point.positionY;
+            if (dx * dx + dy * dy <= epsilon * epsilon)
+                return {{point.clipIndex, 1.0f}};
+        }
+
+        float bestTriangleArea = std::numeric_limits<float>::max();
+        std::vector<BlendSpaceSample> bestTriangle;
+        for (size_t first = 0; first < points.size(); ++first)
+        {
+            for (size_t second = first + 1; second < points.size(); ++second)
+            {
+                for (size_t third = second + 1; third < points.size(); ++third)
+                {
+                    const auto &a = points[first];
+                    const auto &b = points[second];
+                    const auto &c = points[third];
+                    const float denominator = (b.positionY - c.positionY) * (a.positionX - c.positionX) +
+                                              (c.positionX - b.positionX) * (a.positionY - c.positionY);
+                    const float area = std::abs(denominator);
+                    if (area <= epsilon || area >= bestTriangleArea)
+                        continue;
+
+                    const float weightA = ((b.positionY - c.positionY) * (x - c.positionX) +
+                                           (c.positionX - b.positionX) * (y - c.positionY)) /
+                                          denominator;
+                    const float weightB = ((c.positionY - a.positionY) * (x - c.positionX) +
+                                           (a.positionX - c.positionX) * (y - c.positionY)) /
+                                          denominator;
+                    const float weightC = 1.0f - weightA - weightB;
+                    if (weightA < -epsilon || weightB < -epsilon || weightC < -epsilon)
+                        continue;
+
+                    const float clampedA = std::max(0.0f, weightA);
+                    const float clampedB = std::max(0.0f, weightB);
+                    const float clampedC = std::max(0.0f, weightC);
+                    const float total = clampedA + clampedB + clampedC;
+                    bestTriangleArea = area;
+                    bestTriangle = {
+                        {a.clipIndex, clampedA / total},
+                        {b.clipIndex, clampedB / total},
+                        {c.clipIndex, clampedC / total},
+                    };
+                }
+            }
+        }
+        if (!bestTriangle.empty())
+            return bestTriangle;
+
+        if (points.size() == 1)
+            return {{points.front().clipIndex, 1.0f}};
+
+        float bestDistanceSquared = std::numeric_limits<float>::max();
+        size_t bestFirst = 0;
+        size_t bestSecond = 1;
+        float bestT = 0.0f;
+        for (size_t first = 0; first < points.size(); ++first)
+        {
+            for (size_t second = first + 1; second < points.size(); ++second)
+            {
+                const float edgeX = points[second].positionX - points[first].positionX;
+                const float edgeY = points[second].positionY - points[first].positionY;
+                const float lengthSquared = edgeX * edgeX + edgeY * edgeY;
+                if (lengthSquared <= epsilon)
+                    continue;
+                const float t = std::clamp(((x - points[first].positionX) * edgeX +
+                                            (y - points[first].positionY) * edgeY) /
+                                               lengthSquared,
+                                           0.0f, 1.0f);
+                const float closestX = points[first].positionX + edgeX * t;
+                const float closestY = points[first].positionY + edgeY * t;
+                const float dx = x - closestX;
+                const float dy = y - closestY;
+                const float distanceSquared = dx * dx + dy * dy;
+                if (distanceSquared < bestDistanceSquared)
+                {
+                    bestDistanceSquared = distanceSquared;
+                    bestFirst = first;
+                    bestSecond = second;
+                    bestT = t;
+                }
+            }
+        }
+        return {
+            {points[bestFirst].clipIndex, 1.0f - bestT},
+            {points[bestSecond].clipIndex, bestT},
+        };
+    }
+
+    float AnimationComponent::GetBlendSpaceClipTime(const AnimationState &state, int clipIndex, float stateTime) const
+    {
+        if (state.blendSpacePoints.empty())
+            return stateTime;
+        const float stateDuration = GetClipDuration(state.clipIndex);
+        const float clipDuration = GetClipDuration(clipIndex);
+        if (stateDuration <= 0.00001f || clipDuration <= 0.00001f)
+            return stateTime;
+        const float phase = state.loop ? std::fmod(std::max(0.0f, stateTime) / stateDuration, 1.0f)
+                                       : std::clamp(stateTime / stateDuration, 0.0f, 1.0f);
+        return phase * clipDuration;
+    }
+
+    float AnimationComponent::GetBlendSpaceDuration(const AnimationState &state) const
+    {
+        if (state.blendSpacePoints.empty())
+            return GetClipDuration(state.clipIndex);
+        float duration = 0.0f;
+        float totalWeight = 0.0f;
+        for (const auto &sample : ResolveBlendSpaceSamples(state))
+        {
+            const float clipDuration = GetClipDuration(sample.clipIndex);
+            if (clipDuration <= 0.00001f || sample.weight <= 0.00001f)
+                continue;
+            duration += clipDuration * sample.weight;
+            totalWeight += sample.weight;
+        }
+        return totalWeight > 0.00001f ? duration / totalWeight : GetClipDuration(state.clipIndex);
+    }
+
+    float AnimationComponent::AdvanceStateTime(
+        const AnimationState &state, float time, float deltaTime, float speedMultiplier, bool *finished) const
+    {
+        float speed = state.speed * speedMultiplier;
+        if (!state.blendSpacePoints.empty())
+        {
+            const float referenceDuration = GetClipDuration(state.clipIndex);
+            const float blendedDuration = GetBlendSpaceDuration(state);
+            if (referenceDuration > 0.00001f && blendedDuration > 0.00001f)
+                speed *= referenceDuration / blendedDuration;
+        }
+        return AdvanceClipTime(state.clipIndex, time, deltaTime, speed, state.loop, finished);
     }
 
     float AnimationComponent::AdvanceClipTime(int clipIndex, float time, float deltaTime, float speed, bool looping, bool *finished) const
@@ -1939,8 +2139,8 @@ namespace PlutoGE::scene
         {
             const auto &source = m_states[static_cast<size_t>(m_transition.sourceStateIndex)];
             const auto &destination = m_states[static_cast<size_t>(m_transition.destinationStateIndex)];
-            m_transition.sourceTime = AdvanceClipTime(source.clipIndex, m_transition.sourceTime, deltaTime, source.speed, source.loop);
-            m_transition.destinationTime = AdvanceClipTime(destination.clipIndex, m_transition.destinationTime, deltaTime, destination.speed, destination.loop);
+            m_transition.sourceTime = AdvanceStateTime(source, m_transition.sourceTime, deltaTime);
+            m_transition.destinationTime = AdvanceStateTime(destination, m_transition.destinationTime, deltaTime);
             m_transition.elapsed += std::max(0.0f, deltaTime);
 
             if (m_transition.elapsed >= m_transition.duration)
@@ -1954,7 +2154,7 @@ namespace PlutoGE::scene
         {
             auto &state = m_states[static_cast<size_t>(m_graphCurrentStateIndex)];
             bool finished = false;
-            m_graphStateTime = AdvanceClipTime(state.clipIndex, m_graphStateTime, deltaTime, state.speed, state.loop, &finished);
+            m_graphStateTime = AdvanceStateTime(state, m_graphStateTime, deltaTime, 1.0f, &finished);
 
             bool startedTransition = false;
             for (const auto &transition : state.transitions)
@@ -2084,10 +2284,8 @@ namespace PlutoGE::scene
         {
             const auto &source = layer.graphStates[static_cast<size_t>(layer.graphTransitionSourceStateIndex)];
             const auto &destination = layer.graphStates[static_cast<size_t>(layer.graphTransitionDestinationStateIndex)];
-            layer.graphTransitionSourceTime = AdvanceClipTime(
-                source.clipIndex, layer.graphTransitionSourceTime, deltaTime, source.speed * layer.speed, source.loop);
-            layer.graphTransitionDestinationTime = AdvanceClipTime(
-                destination.clipIndex, layer.graphTransitionDestinationTime, deltaTime, destination.speed * layer.speed, destination.loop);
+            layer.graphTransitionSourceTime = AdvanceStateTime(source, layer.graphTransitionSourceTime, deltaTime, layer.speed);
+            layer.graphTransitionDestinationTime = AdvanceStateTime(destination, layer.graphTransitionDestinationTime, deltaTime, layer.speed);
             layer.graphTransitionElapsed += std::max(0.0f, deltaTime);
             if (layer.graphTransitionElapsed >= layer.graphTransitionDuration)
             {
@@ -2099,8 +2297,9 @@ namespace PlutoGE::scene
         }
 
         auto &state = layer.graphStates[static_cast<size_t>(layer.graphCurrentStateIndex)];
-        layer.graphStateTime = AdvanceClipTime(
-            state.clipIndex, layer.graphStateTime, deltaTime, state.speed * layer.speed, state.loop);
+        bool finished = false;
+        layer.graphStateTime = AdvanceStateTime(state, layer.graphStateTime, deltaTime, layer.speed, &finished);
+        bool startedTransition = false;
         for (const auto &transition : state.transitions)
         {
             if (transition.destinationStateIndex >= 0 &&
@@ -2108,9 +2307,16 @@ namespace PlutoGE::scene
                 IsTransitionReadyAtTime(transition, state, layer.graphStateTime))
             {
                 StartLayerTransition(layer, layer.graphCurrentStateIndex, transition);
+                startedTransition = true;
                 break;
             }
         }
+
+        // Referenced graph layers are one-shots when they reach a terminal
+        // non-looping state, just like simple clip layers. Stopping playback
+        // lets UpdateLayers fade the layer out and reveal the base graph.
+        if (finished && !state.loop && !startedTransition)
+            layer.playing = false;
     }
 
     void AnimationComponent::SetCurrentStateIndex(int stateIndex)
@@ -2496,50 +2702,31 @@ namespace PlutoGE::scene
             return;
         }
 
-        auto localTransforms = SampleLocalTransforms(
-            m_clips,
-            m_currentClipIndex,
-            m_time,
-            nodes.size(),
-            [&nodes](const render::AnimationChannel &channel)
-            {
-                return ResolveChannelNodeIndex(channel, nodes);
-            },
-            [&nodes](size_t nodeIndex)
-            {
-                return nodes[nodeIndex].localBindTransform;
-            });
+        auto sampleClip = [&](int clipIndex, float time)
+        {
+            return SampleLocalTransforms(
+                m_clips, clipIndex, time, nodes.size(),
+                [&nodes](const render::AnimationChannel &channel) { return ResolveChannelNodeIndex(channel, nodes); },
+                [&nodes](size_t nodeIndex) { return nodes[nodeIndex].localBindTransform; });
+        };
+        auto sampleState = [&](const AnimationState &state, float time)
+        {
+            std::vector<std::pair<std::vector<glm::mat4>, float>> poses;
+            for (const auto &sample : ResolveBlendSpaceSamples(state))
+                poses.emplace_back(sampleClip(sample.clipIndex, GetBlendSpaceClipTime(state, sample.clipIndex, time)), sample.weight);
+            return BlendWeightedLocalTransforms(poses);
+        };
+
+        auto localTransforms = !m_states.empty()
+                                   ? sampleState(m_states[static_cast<size_t>(m_graphCurrentStateIndex)], m_graphStateTime)
+                                   : sampleClip(m_currentClipIndex, m_time);
 
         if (m_transition.active)
         {
             const auto &source = m_states[static_cast<size_t>(m_transition.sourceStateIndex)];
             const auto &destination = m_states[static_cast<size_t>(m_transition.destinationStateIndex)];
-            const auto sourceTransforms = SampleLocalTransforms(
-                m_clips,
-                source.clipIndex,
-                m_transition.sourceTime,
-                nodes.size(),
-                [&nodes](const render::AnimationChannel &channel)
-                {
-                    return ResolveChannelNodeIndex(channel, nodes);
-                },
-                [&nodes](size_t nodeIndex)
-                {
-                    return nodes[nodeIndex].localBindTransform;
-                });
-            const auto destinationTransforms = SampleLocalTransforms(
-                m_clips,
-                destination.clipIndex,
-                m_transition.destinationTime,
-                nodes.size(),
-                [&nodes](const render::AnimationChannel &channel)
-                {
-                    return ResolveChannelNodeIndex(channel, nodes);
-                },
-                [&nodes](size_t nodeIndex)
-                {
-                    return nodes[nodeIndex].localBindTransform;
-                });
+            const auto sourceTransforms = sampleState(source, m_transition.sourceTime);
+            const auto destinationTransforms = sampleState(destination, m_transition.destinationTime);
             const float blend = m_transition.duration > 0.0f ? std::clamp(m_transition.elapsed / m_transition.duration, 0.0f, 1.0f) : 1.0f;
             localTransforms = BlendLocalTransforms(sourceTransforms, destinationTransforms, blend);
         }
@@ -2552,13 +2739,6 @@ namespace PlutoGE::scene
         {
             if (!layer.enabled || layer.currentWeight <= 0.00001f)
                 continue;
-            auto sampleLayerClip = [&](int clipIndex, float time)
-            {
-                return SampleLocalTransforms(
-                    m_clips, clipIndex, time, nodes.size(),
-                    [&nodes](const render::AnimationChannel &channel) { return ResolveChannelNodeIndex(channel, nodes); },
-                    [&nodes](size_t nodeIndex) { return nodes[nodeIndex].localBindTransform; });
-            };
             std::vector<glm::mat4> layerTransforms;
             if (!layer.graphReference.empty() && !layer.graphStates.empty())
             {
@@ -2570,18 +2750,18 @@ namespace PlutoGE::scene
                                             ? std::clamp(layer.graphTransitionElapsed / layer.graphTransitionDuration, 0.0f, 1.0f)
                                             : 1.0f;
                     layerTransforms = BlendLocalTransforms(
-                        sampleLayerClip(source.clipIndex, layer.graphTransitionSourceTime),
-                        sampleLayerClip(destination.clipIndex, layer.graphTransitionDestinationTime), blend);
+                        sampleState(source, layer.graphTransitionSourceTime),
+                        sampleState(destination, layer.graphTransitionDestinationTime), blend);
                 }
                 else
                 {
                     const auto &state = layer.graphStates[static_cast<size_t>(layer.graphCurrentStateIndex)];
-                    layerTransforms = sampleLayerClip(state.clipIndex, layer.graphStateTime);
+                    layerTransforms = sampleState(state, layer.graphStateTime);
                 }
             }
             else
             {
-                layerTransforms = sampleLayerClip(layer.clipIndex, layer.time);
+                layerTransforms = sampleClip(layer.clipIndex, layer.time);
             }
             localTransforms = BlendMaskedLocalTransforms(
                 localTransforms, layerTransforms, bindTransforms,
@@ -2833,20 +3013,29 @@ namespace PlutoGE::scene
                 validBindings ? m_retargetClipCaches[static_cast<size_t>(clipIndex)] : emptyCache,
                 m_targetBindTranslations, m_targetBindRotations, m_targetBindScales, m_targetGlobalBindRotations);
         };
+        auto sampleState = [&](const AnimationState &state, float time)
+        {
+            std::vector<std::pair<std::vector<glm::mat4>, float>> poses;
+            for (const auto &sample : ResolveBlendSpaceSamples(state))
+                poses.emplace_back(sampleClip(sample.clipIndex, GetBlendSpaceClipTime(state, sample.clipIndex, time)), sample.weight);
+            return BlendWeightedLocalTransforms(poses);
+        };
 
         std::vector<glm::mat4> localTransforms;
         if (m_transition.active)
         {
             const auto &source = m_states[static_cast<size_t>(m_transition.sourceStateIndex)];
             const auto &destination = m_states[static_cast<size_t>(m_transition.destinationStateIndex)];
-            const auto sourceTransforms = sampleClip(source.clipIndex, m_transition.sourceTime);
-            const auto destinationTransforms = sampleClip(destination.clipIndex, m_transition.destinationTime);
+            const auto sourceTransforms = sampleState(source, m_transition.sourceTime);
+            const auto destinationTransforms = sampleState(destination, m_transition.destinationTime);
             const float blend = m_transition.duration > 0.0f ? std::clamp(m_transition.elapsed / m_transition.duration, 0.0f, 1.0f) : 1.0f;
             localTransforms = BlendLocalTransforms(sourceTransforms, destinationTransforms, blend);
         }
         else
         {
-            localTransforms = sampleClip(m_currentClipIndex, m_time);
+            localTransforms = !m_states.empty()
+                                  ? sampleState(m_states[static_cast<size_t>(m_graphCurrentStateIndex)], m_graphStateTime)
+                                  : sampleClip(m_currentClipIndex, m_time);
         }
 
         std::vector<glm::mat4> bindTransforms;
@@ -2868,13 +3057,13 @@ namespace PlutoGE::scene
                                             ? std::clamp(layer.graphTransitionElapsed / layer.graphTransitionDuration, 0.0f, 1.0f)
                                             : 1.0f;
                     layerTransforms = BlendLocalTransforms(
-                        sampleClip(source.clipIndex, layer.graphTransitionSourceTime),
-                        sampleClip(destination.clipIndex, layer.graphTransitionDestinationTime), blend);
+                        sampleState(source, layer.graphTransitionSourceTime),
+                        sampleState(destination, layer.graphTransitionDestinationTime), blend);
                 }
                 else
                 {
                     const auto &state = layer.graphStates[static_cast<size_t>(layer.graphCurrentStateIndex)];
-                    layerTransforms = sampleClip(state.clipIndex, layer.graphStateTime);
+                    layerTransforms = sampleState(state, layer.graphStateTime);
                 }
             }
             else

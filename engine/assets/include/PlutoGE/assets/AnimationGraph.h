@@ -53,6 +53,15 @@ namespace PlutoGE::assets
         std::vector<AnimationGraphCondition> conditions;
     };
 
+    struct AnimationGraphBlendSpacePoint
+    {
+        std::string clipReference;
+        std::string clipName;
+        int clipIndex = 0;
+        float positionX = 0.0f;
+        float positionY = 0.0f;
+    };
+
     struct AnimationGraphState
     {
         int id = 0;
@@ -64,6 +73,12 @@ namespace PlutoGE::assets
         float positionY = 60.0f;
         float speed = 1.0f;
         bool loop = true;
+        // A state with blend-space points evaluates its clips using these two
+        // float parameters. Clip fields above remain the fallback and preserve
+        // compatibility with older graph assets.
+        std::string blendSpaceParameterX;
+        std::string blendSpaceParameterY;
+        std::vector<AnimationGraphBlendSpacePoint> blendSpacePoints;
     };
 
     enum class AnimationGraphLayerBlendMode

@@ -49,6 +49,8 @@ namespace PlutoGE::scene
         [[nodiscard]] std::vector<scripting::ScriptFieldDefinition> GetSerializedFields() const;
         [[nodiscard]] bool IsStarted() const { return m_started; }
 
+        void RemapEntityReferences(const std::unordered_map<uint32_t, uint32_t> &entityIdRemap);
+
         void Reload();
 
     private:

@@ -405,6 +405,34 @@ namespace PlutoGE::scene
         return core::Engine::GetInstance().GetScriptEngine().GetSerializedFields(m_scriptClass);
     }
 
+    void ScriptComponent::RemapEntityReferences(const std::unordered_map<uint32_t, uint32_t> &entityIdRemap)
+    {
+        bool changed = false;
+        for (auto &[fieldName, fieldValue] : m_fieldValues)
+        {
+            (void)fieldName;
+            auto *entityId = std::get_if<uint32_t>(&fieldValue);
+            if (!entityId)
+            {
+                continue;
+            }
+
+            const auto remappedEntity = entityIdRemap.find(*entityId);
+            if (remappedEntity == entityIdRemap.end())
+            {
+                continue;
+            }
+
+            *entityId = remappedEntity->second;
+            changed = true;
+        }
+
+        if (changed)
+        {
+            ApplySerializedFields();
+        }
+    }
+
     void ScriptComponent::Reload()
     {
         Stop();

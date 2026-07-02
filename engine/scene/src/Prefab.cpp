@@ -294,6 +294,51 @@ namespace PlutoGE::scene
             return clonePtr;
         }
 
+        void BuildEntityIdRemap(const Entity &source,
+                                const Entity &clone,
+                                std::unordered_map<EntityID, EntityID> &entityIdRemap)
+        {
+            entityIdRemap[source.GetID()] = clone.GetID();
+
+            const auto &sourceChildren = source.GetChildren();
+            const auto &cloneChildren = clone.GetChildren();
+            const std::size_t childCount = std::min(sourceChildren.size(), cloneChildren.size());
+            for (std::size_t childIndex = 0; childIndex < childCount; ++childIndex)
+            {
+                if (sourceChildren[childIndex] && cloneChildren[childIndex])
+                {
+                    BuildEntityIdRemap(*sourceChildren[childIndex], *cloneChildren[childIndex], entityIdRemap);
+                }
+            }
+        }
+
+        void RemapScriptEntityReferences(Entity &entity,
+                                         const std::unordered_map<EntityID, EntityID> &entityIdRemap)
+        {
+            for (auto *scriptComponent : entity.GetComponents<ScriptComponent>())
+            {
+                if (scriptComponent)
+                {
+                    scriptComponent->RemapEntityReferences(entityIdRemap);
+                }
+            }
+
+            for (auto *child : entity.GetChildren())
+            {
+                if (child)
+                {
+                    RemapScriptEntityReferences(*child, entityIdRemap);
+                }
+            }
+        }
+
+        void RemapClonedScriptEntityReferences(const Entity &source, Entity &clone)
+        {
+            std::unordered_map<EntityID, EntityID> entityIdRemap;
+            BuildEntityIdRemap(source, clone, entityIdRemap);
+            RemapScriptEntityReferences(clone, entityIdRemap);
+        }
+
         std::unique_ptr<Scene> LoadPrefabScene(std::string_view prefabReference, std::string *errorMessage)
         {
             return SceneSerializer::Load(ResolvePrefabPath(prefabReference), errorMessage);
@@ -577,7 +622,11 @@ namespace PlutoGE::scene
             }
 
             Scene prefabScene;
-            CloneEntityTreeIntoScenePreservingIds(prefabScene, entity, nullptr);
+            auto *clonedRoot = CloneEntityTreeIntoScenePreservingIds(prefabScene, entity, nullptr);
+            if (clonedRoot)
+            {
+                RemapClonedScriptEntityReferences(entity, *clonedRoot);
+            }
             if (auto roots = prefabScene.GetRootEntities(); !roots.empty() && clearPrefabLink)
             {
                 roots.front()->ClearPrefabLinkRecursive();
@@ -615,7 +664,12 @@ namespace PlutoGE::scene
             return nullptr;
         }
 
-        return CloneEntityTreeIntoScene(scene, *roots.front(), prefabReference, parent, true);
+        auto *instanceRoot = CloneEntityTreeIntoScene(scene, *roots.front(), prefabReference, parent, true);
+        if (instanceRoot)
+        {
+            RemapClonedScriptEntityReferences(*roots.front(), *instanceRoot);
+        }
+        return instanceRoot;
     }
 
     Entity *Prefab::DuplicateEntity(Scene &scene,
@@ -623,7 +677,12 @@ namespace PlutoGE::scene
                                     Entity *parent,
                                     bool preservePrefabLink)
     {
-        return DuplicateEntityTreeIntoScene(scene, source, parent, preservePrefabLink);
+        auto *duplicateRoot = DuplicateEntityTreeIntoScene(scene, source, parent, preservePrefabLink);
+        if (duplicateRoot)
+        {
+            RemapClonedScriptEntityReferences(source, *duplicateRoot);
+        }
+        return duplicateRoot;
     }
 
     bool Prefab::UpdateInstance(Entity &instanceRoot, std::string *errorMessage)
@@ -665,6 +724,7 @@ namespace PlutoGE::scene
         }
 
         std::unordered_map<EntityID, std::vector<std::pair<std::string, std::string>>> overrideValues;
+        std::unordered_map<EntityID, EntityID> previousInstanceToPrefabId;
         std::vector<Entity *> existingEntities;
         CollectEntitiesRecursive(&instanceRoot, existingEntities);
         for (auto *entity : existingEntities)
@@ -673,6 +733,8 @@ namespace PlutoGE::scene
             {
                 continue;
             }
+
+            previousInstanceToPrefabId[entity->GetID()] = entity->GetPrefabEntityID();
 
             for (const auto &path : entity->GetPrefabOverrides())
             {
@@ -683,7 +745,8 @@ namespace PlutoGE::scene
             }
         }
 
-        for (auto *child : instanceRoot.GetChildren())
+        const auto previousChildren = instanceRoot.GetChildren();
+        for (auto *child : previousChildren)
         {
             scene->RemoveEntity(child);
         }
@@ -700,6 +763,8 @@ namespace PlutoGE::scene
             }
         }
 
+        RemapClonedScriptEntityReferences(*prefabRoot, instanceRoot);
+
         for (const auto &[prefabEntityId, values] : overrideValues)
         {
             auto *target = FindEntityByPrefabId(&instanceRoot, prefabEntityId);
@@ -714,6 +779,18 @@ namespace PlutoGE::scene
                 target->AddPrefabOverride(path);
             }
         }
+
+        // Overrides are captured before the old children are replaced, so their
+        // entity-reference values still contain the previous instance IDs.
+        std::unordered_map<EntityID, EntityID> previousToUpdatedEntityId;
+        for (const auto &[previousEntityId, prefabEntityId] : previousInstanceToPrefabId)
+        {
+            if (auto *updatedEntity = FindEntityByPrefabId(&instanceRoot, prefabEntityId))
+            {
+                previousToUpdatedEntityId[previousEntityId] = updatedEntity->GetID();
+            }
+        }
+        RemapScriptEntityReferences(instanceRoot, previousToUpdatedEntityId);
 
         return true;
     }

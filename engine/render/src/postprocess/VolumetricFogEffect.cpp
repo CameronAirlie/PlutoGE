@@ -515,6 +515,9 @@ namespace PlutoGE::render
                     ? ComputeDirectionalInscattering(dot(rayDirection, normalize(uLightDirection)))
                     : 0.0;
                 float rayJitter = fract(InterleavedGradientNoise(gl_FragCoord.xy) + uFrameIndex * 0.61803398875);
+                int shadowSampleStride = uHasDirectionalLight != 0 && uStepCount >= 12 ? 2 : 1;
+                float cachedLightVisibility = 1.0;
+                bool hasCachedLightVisibility = false;
 
                 for (int stepIndex = 0; stepIndex < uStepCount; ++stepIndex)
                 {
@@ -530,9 +533,16 @@ namespace PlutoGE::render
                     float extinction = max(density * segmentLength, 0.0);
                     float segmentTransmittance = exp(-extinction);
                     float segmentFog = 1.0 - segmentTransmittance;
-                    float lightVisibility = uHasDirectionalLight != 0
-                        ? 1.0 - ComputeDirectionalLightShadow(samplePosition)
-                        : 1.0;
+                    float lightVisibility = 1.0;
+                    if (uHasDirectionalLight != 0)
+                    {
+                        if (!hasCachedLightVisibility || (stepIndex % shadowSampleStride) == 0)
+                        {
+                            cachedLightVisibility = 1.0 - ComputeDirectionalLightShadow(samplePosition);
+                            hasCachedLightVisibility = true;
+                        }
+                        lightVisibility = cachedLightVisibility;
+                    }
                     float multipleScattering = 1.0 - exp(-density * segmentLength * 6.0);
                     vec3 ambientScatter = ambientFogColor * uAmbientContribution * (0.55 + 0.45 * multipleScattering);
                     vec3 directionalScatter = uHasDirectionalLight != 0

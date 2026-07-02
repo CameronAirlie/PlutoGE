@@ -1030,7 +1030,10 @@ namespace PlutoGE::render
         const auto *lpvEffect = FindEnabledLpvEffect(ctx);
         if (!lpvEffect || !ctx.hasCameraData || !ctx.gBuffer || !ctx.lights)
         {
-            ClearVolume();
+            if (m_hasValidVolume || m_transitionActive || m_pendingFullInjection)
+            {
+                ClearVolume();
+            }
             return;
         }
 

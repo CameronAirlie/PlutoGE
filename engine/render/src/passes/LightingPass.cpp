@@ -1067,7 +1067,7 @@ namespace PlutoGE::render
         }
 
         const float configuredRenderScale = glm::clamp(light.directionalShadowSettings.screenSpaceFilterRenderScale, 0.25f, 1.0f);
-        const float renderScale = filtered ? 1.0f : configuredRenderScale;
+        const float renderScale = configuredRenderScale;
         const int maskWidth = std::max(1, static_cast<int>(std::lround(static_cast<float>(ctx.temporaryRenderTarget->GetWidth()) * renderScale)));
         const int maskHeight = std::max(1, static_cast<int>(std::lround(static_cast<float>(ctx.temporaryRenderTarget->GetHeight()) * renderScale)));
         EnsureShadowMaskTargets(maskWidth, maskHeight);
@@ -1150,6 +1150,11 @@ namespace PlutoGE::render
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
         Graphics::DrawFullscreenTriangle();
+
+        glBindTexture(GL_TEXTURE_2D, m_rawShadowMaskTarget->GetColorTextureID());
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, renderScale < 1.0f ? GL_LINEAR : GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, renderScale < 1.0f ? GL_LINEAR : GL_NEAREST);
+        glBindTexture(GL_TEXTURE_2D, 0);
 
         return m_rawShadowMaskTarget.get();
     }
@@ -1316,8 +1321,8 @@ namespace PlutoGE::render
 
         const auto *environmentTexture = ctx.scene ? ctx.scene->GetEnvironmentMapTexture() : nullptr;
         const float environmentMaxMipLevel = hasPhysicalSkyEnvironment
-            ? static_cast<float>(std::max(0, static_cast<int>(std::floor(std::log2(static_cast<float>(std::max(ctx.renderer->GetPhysicalSkyEnvironmentWidth(), ctx.renderer->GetPhysicalSkyEnvironmentHeight())))))))
-            : resolveMaxMipLevel(environmentTexture);
+                                                 ? static_cast<float>(std::max(0, static_cast<int>(std::floor(std::log2(static_cast<float>(std::max(ctx.renderer->GetPhysicalSkyEnvironmentWidth(), ctx.renderer->GetPhysicalSkyEnvironmentHeight())))))))
+                                                 : resolveMaxMipLevel(environmentTexture);
         m_lightingPassShader->SetUniform("uEnvironmentMaxMipLevel", environmentMaxMipLevel);
         const auto &iblCaptureVolumes = ctx.scene ? ctx.scene->GetIblCaptureVolumes() : std::vector<scene::IblCaptureVolume>{};
         const int iblCaptureCount = std::min(scene::kMaxIblCaptureVolumes, static_cast<int>(iblCaptureVolumes.size()));

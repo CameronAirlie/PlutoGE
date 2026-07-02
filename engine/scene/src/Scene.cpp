@@ -450,6 +450,7 @@ namespace PlutoGE::scene
             std::vector<std::unique_ptr<btCollisionShape>> childShapes;
             std::vector<float> heightfieldData;
             std::unique_ptr<btCollisionObject> object;
+            uint64_t configurationSignature = 0;
         };
 
         struct BulletQueryWorld
@@ -471,6 +472,10 @@ namespace PlutoGE::scene
                 }
             }
         };
+
+        uint64_t ComputeRuntimePhysicsBodySignature(const Entity &entity,
+                                                    const ColliderComponent &collider,
+                                                    const RigidbodyComponent *rigidbody);
 
         std::unique_ptr<BulletQueryWorld> BuildBulletQueryWorld(const std::vector<Entity *> &entities)
         {
@@ -508,6 +513,8 @@ namespace PlutoGE::scene
                     .childShapes = std::move(shapeData.ownedChildShapes),
                     .heightfieldData = std::move(shapeData.ownedHeightfieldData),
                     .object = std::move(object),
+                    .configurationSignature = ComputeRuntimePhysicsBodySignature(
+                        *entity, *collider, entity->GetComponent<RigidbodyComponent>()),
                 });
             }
 
@@ -673,6 +680,7 @@ namespace PlutoGE::scene
     struct Scene::PhysicsQueryCache
     {
         std::unique_ptr<BulletQueryWorld> world;
+        uint64_t refreshSequence = 0;
     };
 
     struct Scene::RuntimePhysicsState
@@ -685,19 +693,63 @@ namespace PlutoGE::scene
 
     Scene::PhysicsQueryCache &Scene::GetPhysicsQueryCache() const
     {
-        if (!m_physicsQueryCache)
-        {
-            std::vector<Entity *> entities;
-            for (auto *rootEntity : m_rootEntities)
-            {
-                CollectActiveEntities(rootEntity, entities);
-            }
+        if (!m_physicsQueryCache || m_physicsQueryCache->refreshSequence != m_updateSequence)
+            RefreshPhysicsQueryCache();
+        return *m_physicsQueryCache;
+    }
 
+    void Scene::RefreshPhysicsQueryCache() const
+    {
+        std::vector<Entity *> entities;
+        for (auto *rootEntity : m_rootEntities)
+            CollectActiveEntities(rootEntity, entities);
+
+        std::vector<Entity *> queryEntities;
+        queryEntities.reserve(entities.size());
+        for (auto *entity : entities)
+        {
+            auto *collider = entity ? entity->GetComponent<ColliderComponent>() : nullptr;
+            if (entity && collider && collider->IsEnabled() && !collider->IsTrigger())
+                queryEntities.push_back(entity);
+        }
+
+        bool rebuild = !m_physicsQueryCache || !m_physicsQueryCache->world;
+        if (!rebuild)
+        {
+            const auto &bodies = m_physicsQueryCache->world->bodies;
+            rebuild = bodies.size() != queryEntities.size();
+            for (size_t index = 0; !rebuild && index < queryEntities.size(); ++index)
+            {
+                auto *entity = queryEntities[index];
+                auto *collider = entity->GetComponent<ColliderComponent>();
+                auto *rigidbody = entity->GetComponent<RigidbodyComponent>();
+                if (bodies[index].entity != entity ||
+                    bodies[index].configurationSignature != ComputeRuntimePhysicsBodySignature(*entity, *collider, rigidbody))
+                    rebuild = true;
+            }
+        }
+
+        if (rebuild)
+        {
             m_physicsQueryCache = std::make_unique<PhysicsQueryCache>();
             m_physicsQueryCache->world = BuildBulletQueryWorld(entities);
         }
 
-        return *m_physicsQueryCache;
+        if (m_physicsQueryCache->world)
+        {
+            for (auto &body : m_physicsQueryCache->world->bodies)
+            {
+                if (!body.entity || !body.object)
+                    continue;
+                btTransform transform;
+                transform.setIdentity();
+                transform.setOrigin(ToBullet(body.entity->GetWorldPosition()));
+                transform.setRotation(ToBulletRotation(body.entity->GetWorldTransform()));
+                body.object->setWorldTransform(transform);
+                m_physicsQueryCache->world->collisionWorld.updateSingleAabb(body.object.get());
+            }
+        }
+        m_physicsQueryCache->refreshSequence = m_updateSequence;
     }
 
     void Scene::InvalidatePhysicsQueryCache() const
@@ -1156,7 +1208,9 @@ namespace PlutoGE::scene
     {
         using Clock = std::chrono::high_resolution_clock;
         const auto updateStart = Clock::now();
-        InvalidatePhysicsQueryCache();
+        ++m_updateSequence;
+        if (m_physicsQueryCache)
+            RefreshPhysicsQueryCache();
         ClearIblCaptureVolumes();
         const auto preparationEnd = Clock::now();
 
@@ -1195,7 +1249,6 @@ namespace PlutoGE::scene
         FlushPendingDestroyEntities();
         StepPhysics(deltaTime);
         FlushPendingDestroyEntities();
-        InvalidatePhysicsQueryCache();
         const auto physicsEnd = Clock::now();
 
         m_updateTimingStats.preparationMs = std::chrono::duration<float, std::milli>(preparationEnd - updateStart).count();
@@ -1762,6 +1815,8 @@ namespace PlutoGE::scene
         for (auto &stepBody : runtimeWorld.bodies)
         {
             SyncBodyBackToEntity(stepBody);
+            if (stepBody.dynamic && stepBody.entity)
+                SyncPhysicsQueryTransform(*stepBody.entity);
         }
 
         DispatchCollisionEvents(std::move(currentCollisionPairs));

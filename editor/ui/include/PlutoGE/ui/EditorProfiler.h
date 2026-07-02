@@ -28,6 +28,7 @@ namespace PlutoGE::ui
         float editorChromeMs = 0.0f;
         float presentMs = 0.0f;
         float eventPollingMs = 0.0f;
+        bool vSyncEnabled = false;
         int renderedViewportCount = 0;
     };
 

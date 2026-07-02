@@ -44,6 +44,7 @@ namespace PlutoGE::ui
         ImGui::Text("Frame: %.2f ms", m_profiler->GetCurrentFrameTimeMs());
         ImGui::Text("Average: %.2f ms (%.1f FPS)", m_profiler->GetAverageFrameTimeMs(), m_profiler->GetAverageFPS());
         ImGui::Text("Min / Max: %.2f ms / %.2f ms", m_profiler->GetMinFrameTimeMs(), m_profiler->GetMaxFrameTimeMs());
+        ImGui::Text("VSync: %s", frameTimingStats.vSyncEnabled ? "On" : "Off");
         ImGui::Separator();
 
         if (m_profiler->GetSampleCount() > 0)

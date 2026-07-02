@@ -188,12 +188,14 @@ namespace PlutoGE::scene
         std::vector<EntityID> m_pendingDestroyEntities;
         std::unordered_set<EntityID> m_pendingDestroyEntityIds;
         mutable std::unique_ptr<PhysicsQueryCache> m_physicsQueryCache;
+        uint64_t m_updateSequence = 0;
         std::unique_ptr<RuntimePhysicsState> m_runtimePhysicsState;
         void CollectEntitySubtree(Entity *entity, std::vector<Entity *> &entities) const;
         bool RemoveEntityRecursive(Entity *current, Entity *target);
         void FlushPendingDestroyEntities();
         void RebuildBakedProbeTexture();
         PhysicsQueryCache &GetPhysicsQueryCache() const;
+        void RefreshPhysicsQueryCache() const;
         void InvalidatePhysicsQueryCache() const;
         void ResetRuntimePhysicsState();
         void RebuildRuntimePhysicsState(const std::vector<Entity *> &entities);

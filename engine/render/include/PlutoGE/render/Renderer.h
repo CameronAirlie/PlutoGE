@@ -180,6 +180,7 @@ namespace PlutoGE::render
         void ClearSubmissionCullingCameras();
 
         void SetVSyncEnabled(bool enabled);
+        [[nodiscard]] bool IsVSyncEnabled() const { return m_vsyncEnabled; }
         void SetPostProcessDebugView(PostProcessDebugView debugView) { m_postProcessDebugView = debugView; }
         PostProcessDebugView GetPostProcessDebugView() const { return m_postProcessDebugView; }
         [[nodiscard]] const std::vector<CpuPassTiming> &GetCpuPassTimings() const { return m_cpuPassTimings; }
@@ -280,6 +281,7 @@ namespace PlutoGE::render
 
         RendererConfig m_config;
         bool m_isInitialized = false;
+        bool m_vsyncEnabled = false;
         bool m_gpuProfilingSupported = false;
         bool m_gpuTimingsResolvedThisFrame = false;
 

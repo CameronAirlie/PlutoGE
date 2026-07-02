@@ -122,6 +122,7 @@ namespace PlutoGE::ui
         report << "Max frame time: " << GetMaxFrameTimeMs() << " ms\n";
         report << "Average FPS: " << GetAverageFPS() << "\n";
         report << "Samples: " << m_sampleCount << "\n";
+        report << "VSync: " << (frameTimingStats.vSyncEnabled ? "On" : "Off") << "\n";
         report << "Profiling begin: " << frameTimingStats.profilingBeginMs << " ms\n";
         report << "Editor setup: " << frameTimingStats.editorSetupMs << " ms\n";
         report << "Scene update: " << frameTimingStats.sceneUpdateMs << " ms\n";

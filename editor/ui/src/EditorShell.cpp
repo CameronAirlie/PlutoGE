@@ -2183,8 +2183,7 @@ namespace PlutoGE::ui
         };
 
         bool editorVSyncEnabled = m_project ? m_project->GetManifest().vSyncEnabled : false;
-        bool appliedEditorVSyncEnabled = editorVSyncEnabled;
-        renderer.SetVSyncEnabled(appliedEditorVSyncEnabled);
+        renderer.SetVSyncEnabled(editorVSyncEnabled);
 
         while (!window.ShouldClose())
         {
@@ -2813,8 +2812,7 @@ namespace PlutoGE::ui
                                 m_statusMessage = scriptErrorMessage;
                             }
                             editorVSyncEnabled = manifest.vSyncEnabled;
-                            appliedEditorVSyncEnabled = editorVSyncEnabled;
-                            renderer.SetVSyncEnabled(appliedEditorVSyncEnabled);
+                            renderer.SetVSyncEnabled(editorVSyncEnabled);
                             m_panelManager.SetEditorFontSize(manifest.editorFontSize);
                             ImGui::CloseCurrentPopup();
                         }
@@ -2908,18 +2906,8 @@ namespace PlutoGE::ui
             const auto editorUiEnd = std::chrono::high_resolution_clock::now();
             frameTimingStats.editorUiMs = std::chrono::duration<float, std::milli>(editorUiEnd - editorUiStart).count();
 
-            const bool interactiveEdit =
-                (isEditorCameraLookActive ||
-                 viewportPanel->IsTransformGizmoUsing() ||
-                 viewportPanel2->IsTransformGizmoUsing());
-            const bool desiredEditorVSyncEnabled = editorVSyncEnabled && !interactiveEdit;
-            if (desiredEditorVSyncEnabled != appliedEditorVSyncEnabled)
-            {
-                appliedEditorVSyncEnabled = desiredEditorVSyncEnabled;
-                renderer.SetVSyncEnabled(appliedEditorVSyncEnabled);
-            }
-
             const auto presentStart = std::chrono::high_resolution_clock::now();
+            frameTimingStats.vSyncEnabled = renderer.IsVSyncEnabled();
             renderer.EndFrame();
             const auto presentEnd = std::chrono::high_resolution_clock::now();
             frameTimingStats.presentMs = std::chrono::duration<float, std::milli>(presentEnd - presentStart).count();

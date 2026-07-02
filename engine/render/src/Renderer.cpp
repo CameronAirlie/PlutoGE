@@ -1005,17 +1005,8 @@ namespace PlutoGE::render
 
     void Renderer::SetVSyncEnabled(bool enabled)
     {
-        // Enable or disable VSync based on the 'enabled' parameter
-        // This typically involves calling platform-specific APIs to set the swap interval
-
-        if (enabled)
-        {
-            glfwSwapInterval(1); // Enable VSync
-        }
-        else
-        {
-            glfwSwapInterval(0); // Disable VSync
-        }
+        m_vsyncEnabled = enabled;
+        glfwSwapInterval(enabled ? 1 : 0);
     }
 
     void Renderer::CleanupResources(RenderTarget *renderTarget)

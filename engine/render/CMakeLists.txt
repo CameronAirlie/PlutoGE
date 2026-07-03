@@ -10,6 +10,7 @@ add_library(PlutoGERender
     src/Material.cpp
     src/postprocess/ShaderPostProcessEffect.cpp
     src/postprocess/AutoExposureEffect.cpp
+    src/postprocess/BloomEffect.cpp
     src/postprocess/ColorGradingEffect.cpp
     src/postprocess/SceneCompositeEffect.cpp
     src/postprocess/ToneMappingEffect.cpp

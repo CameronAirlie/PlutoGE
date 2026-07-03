@@ -1,6 +1,7 @@
 #include "PlutoGE/render/postprocess/PostProcessEffectFactory.h"
 
 #include "PlutoGE/render/postprocess/AutoExposureEffect.h"
+#include "PlutoGE/render/postprocess/BloomEffect.h"
 #include "PlutoGE/render/postprocess/ColorGradingEffect.h"
 #include "PlutoGE/render/postprocess/DepthOfFieldEffect.h"
 #include "PlutoGE/render/postprocess/FXAAEffect.h"
@@ -24,6 +25,7 @@ namespace PlutoGE::render
     namespace
     {
         const std::vector<std::string> kRegisteredTypes = {
+            "Bloom",
             "LSAO",
             "SSGI",
             "LPV",
@@ -47,6 +49,11 @@ namespace PlutoGE::render
         if (typeName == "SceneComposite")
         {
             return std::make_unique<SceneCompositeEffect>();
+        }
+
+        if (typeName == "Bloom")
+        {
+            return std::make_unique<BloomEffect>();
         }
 
         if (typeName == "LSAO")

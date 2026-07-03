@@ -1200,8 +1200,7 @@ void main()
 
         if (unlitMaterial)
         {
-            float emissionCoverage = clamp(max(max(emission.r, emission.g), emission.b), 0.0, 1.0);
-            FragColor = vec4(albedo * (1.0 - emissionCoverage) + emission, 1.0);
+            FragColor = vec4(albedo + emission, 1.0);
             return;
         }
 
@@ -1227,8 +1226,7 @@ void main()
         realtimeAmbient += environmentDiffuse;
         vec3 ambient = mix(realtimeAmbient, bakedIrradiance * albedo * (1.0 - metallic), bakedStaticMaterial ? 1.0 : 0.0);
         ambient += environmentSpecular;
-        float emissionCoverage = clamp(max(max(emission.r, emission.g), emission.b), 0.0, 1.0);
-        FragColor = vec4(ambient * (1.0 - emissionCoverage) + emission, 1.0);
+        FragColor = vec4(ambient + emission, 1.0);
         return;
     }
 
@@ -2103,9 +2101,8 @@ void main()
                 }
 
                 vec3 emission = max(uEmission, vec3(0.0));
-                float emissionCoverage = clamp(max(max(emission.r, emission.g), emission.b), 0.0, 1.0);
                 vec3 litSurface = baseColor + environmentSpecular + directSpecular;
-                FragColor = vec4(litSurface * (1.0 - emissionCoverage) + emission, outputAlpha);
+                FragColor = vec4(litSurface + emission, outputAlpha);
             }
         )";
 
@@ -2127,6 +2124,7 @@ void main()
         void SetUniform(const std::string &name, int value) const;
         void SetUniform(const std::string &name, const Texture *texture, int slot) const;
         bool TrySetUniform(const std::string &name, const glm::vec4 &value) const;
+        bool TrySetUniform(const std::string &name, const glm::vec3 &value) const;
         bool TrySetUniform(const std::string &name, float value) const;
         bool TrySetUniform(const std::string &name, int value) const;
         bool TrySetUniform(const std::string &name, const Texture *texture, int slot) const;

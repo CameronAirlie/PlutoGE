@@ -668,12 +668,6 @@ namespace PlutoGE::render
                                                ? texture(uFilteredShadowMask, UV).r
                                                : -1.0;
                     vec3 lighting = ComputeLightContribution(fragPos, normal, viewDir, albedo, metallic, roughness, uLight, filteredShadow);
-                    if (uDebugViewMode == 0)
-                    {
-                        vec3 emission = max(texture(gEmission, UV).rgb, vec3(0.0));
-                        float emissionCoverage = clamp(max(max(emission.r, emission.g), emission.b), 0.0, 1.0);
-                        lighting *= 1.0 - emissionCoverage;
-                    }
                     FragColor = vec4(lighting, 1.0);
                 }
             )";

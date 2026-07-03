@@ -373,6 +373,18 @@ namespace PlutoGE::render
         return true;
     }
 
+    bool Shader::TrySetUniform(const std::string &name, const glm::vec3 &value) const
+    {
+        const GLint location = ResolveUniformLocation(name, false);
+        if (location == -1)
+        {
+            return false;
+        }
+
+        glUniform3f(location, value.x, value.y, value.z);
+        return true;
+    }
+
     bool Shader::TrySetUniform(const std::string &name, float value) const
     {
         const GLint location = ResolveUniformLocation(name, false);
@@ -414,7 +426,7 @@ namespace PlutoGE::render
         glUniform1i(location, slot);
         return true;
     }
-    
+
     bool Shader::TrySetUniform(const std::string &name, const glm::vec2 &value) const
     {
         const GLint location = ResolveUniformLocation(name, false);

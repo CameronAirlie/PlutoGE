@@ -25,9 +25,10 @@ namespace PlutoGE::render
         constexpr int kNormalTextureSlot = 1;
         constexpr int kAlbedoTextureSlot = 2;
         constexpr int kBakedLightingTextureSlot = 3;
-        constexpr int kDepthTextureSlot = 4;
-        constexpr int kDebugTextureSlot = 5;
-        constexpr int kDirectionalShadowCascadeTextureStartSlot = 6;
+        constexpr int kEmissionTextureSlot = 4;
+        constexpr int kDepthTextureSlot = 5;
+        constexpr int kDebugTextureSlot = 6;
+        constexpr int kDirectionalShadowCascadeTextureStartSlot = 7;
         constexpr int kShadowMap2DTextureSlot = kDirectionalShadowCascadeTextureStartSlot + scene::kMaxDirectionalShadowCascades;
         constexpr int kShadowMapCubeTextureSlot = kShadowMap2DTextureSlot + 1;
         constexpr int kLightPropagationVolumeTextureSlot = kShadowMapCubeTextureSlot + 1;
@@ -167,6 +168,7 @@ namespace PlutoGE::render
                 uniform sampler2D gNormal;
                 uniform sampler2D gAlbedoSpec;
                 uniform sampler2D gBakedLighting;
+                uniform sampler2D gEmission;
                 uniform sampler2D gDebug;
 
                 const float PI = 3.14159265359;
@@ -649,6 +651,12 @@ namespace PlutoGE::render
                                                ? texture(uFilteredShadowMask, UV).r
                                                : -1.0;
                     vec3 lighting = ComputeLightContribution(fragPos, normal, viewDir, albedo, metallic, roughness, uLight, filteredShadow);
+                    if (uDebugViewMode == 0)
+                    {
+                        vec3 emission = max(texture(gEmission, UV).rgb, vec3(0.0));
+                        float emissionCoverage = clamp(max(max(emission.r, emission.g), emission.b), 0.0, 1.0);
+                        lighting *= 1.0 - emissionCoverage;
+                    }
                     FragColor = vec4(lighting, 1.0);
                 }
             )";
@@ -787,6 +795,13 @@ namespace PlutoGE::render
             if (shader->HasUniform("gBakedLighting"))
             {
                 shader->SetUniform("gBakedLighting", kBakedLightingTextureSlot);
+            }
+
+            glActiveTexture(GL_TEXTURE0 + kEmissionTextureSlot);
+            glBindTexture(GL_TEXTURE_2D, gBuffer->GetEmissionTextureID());
+            if (shader->HasUniform("gEmission"))
+            {
+                shader->SetUniform("gEmission", kEmissionTextureSlot);
             }
 
             glActiveTexture(GL_TEXTURE0 + kDebugTextureSlot);
@@ -1017,10 +1032,19 @@ namespace PlutoGE::render
             out vec4 FragColor;
 
             uniform sampler2D uIndirectTexture;
+            uniform sampler2D uEmissionTexture;
+            uniform int uMaskEmission;
 
             void main()
             {
-                FragColor = vec4(texture(uIndirectTexture, UV).rgb, 1.0);
+                vec3 indirect = texture(uIndirectTexture, UV).rgb;
+                if (uMaskEmission != 0)
+                {
+                    vec3 emission = max(texture(uEmissionTexture, UV).rgb, vec3(0.0));
+                    float emissionCoverage = clamp(max(max(emission.r, emission.g), emission.b), 0.0, 1.0);
+                    indirect *= 1.0 - emissionCoverage;
+                }
+                FragColor = vec4(indirect, 1.0);
             }
         )";
 
@@ -1249,6 +1273,10 @@ namespace PlutoGE::render
             glActiveTexture(GL_TEXTURE0 + kIndirectTextureSlot);
             glBindTexture(GL_TEXTURE_2D, resolvedIndirectTarget->GetColorTextureID());
             m_indirectCompositeShader->SetUniform("uIndirectTexture", kIndirectTextureSlot);
+            glActiveTexture(GL_TEXTURE1);
+            glBindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetEmissionTextureID());
+            m_indirectCompositeShader->SetUniform("uEmissionTexture", 1);
+            m_indirectCompositeShader->SetUniform("uMaskEmission", indirectOnly ? 0 : 1);
             Graphics::DrawFullscreenTriangle();
         };
 

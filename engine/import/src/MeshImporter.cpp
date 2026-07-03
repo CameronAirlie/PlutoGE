@@ -175,7 +175,7 @@ namespace PlutoGE::assetimport
         };
 
         constexpr uint32_t kCookedMeshCacheMagic = 0x434d4750; // PGMC
-        constexpr uint32_t kCookedMeshCacheVersion = 27;
+        constexpr uint32_t kCookedMeshCacheVersion = 28;
 
         bool ReadBooleanEnvironmentFlag(const char *name, bool defaultValue)
         {
@@ -461,6 +461,9 @@ namespace PlutoGE::assetimport
             WriteBool(output, material.castsShadow);
             WritePod(output, material.metallic);
             WritePod(output, material.roughness);
+            WritePod(output, material.emission.r);
+            WritePod(output, material.emission.g);
+            WritePod(output, material.emission.b);
             WritePod(output, material.transmission);
             WritePod(output, material.ior);
             WritePod(output, material.thickness);
@@ -485,6 +488,9 @@ namespace PlutoGE::assetimport
             material.castsShadow = ReadBool(input);
             material.metallic = ReadPod<float>(input);
             material.roughness = ReadPod<float>(input);
+            material.emission.r = ReadPod<float>(input);
+            material.emission.g = ReadPod<float>(input);
+            material.emission.b = ReadPod<float>(input);
             material.transmission = ReadPod<float>(input);
             material.ior = ReadPod<float>(input);
             material.thickness = ReadPod<float>(input);
@@ -1091,6 +1097,14 @@ namespace PlutoGE::assetimport
             }
 
             parsedMaterial.roughness = static_cast<float>(material.pbrMetallicRoughness.roughnessFactor);
+            if (material.emissiveFactor.size() >= 3)
+            {
+                const float emissiveStrength = std::max(readExtensionNumber("KHR_materials_emissive_strength", "emissiveStrength", 1.0f), 0.0f);
+                parsedMaterial.emission = glm::max(glm::vec3(
+                    static_cast<float>(material.emissiveFactor[0]),
+                    static_cast<float>(material.emissiveFactor[1]),
+                    static_cast<float>(material.emissiveFactor[2])) * emissiveStrength, glm::vec3(0.0f));
+            }
 
             parsedMaterial.transmission = std::clamp(readExtensionNumber("KHR_materials_transmission", "transmissionFactor", 0.0f), 0.0f, 1.0f);
             parsedMaterial.ior = std::clamp(readExtensionNumber("KHR_materials_ior", "ior", 1.45f), 1.0f, 2.5f);
@@ -3118,6 +3132,12 @@ namespace PlutoGE::assetimport
                 {
                     importedMaterial.color.a = 1.0f;
                 }
+            }
+
+            aiColor4D emissiveColor;
+            if (AI_SUCCESS == aiGetMaterialColor(&material, AI_MATKEY_COLOR_EMISSIVE, &emissiveColor))
+            {
+                importedMaterial.emission = glm::max(glm::vec3(emissiveColor.r, emissiveColor.g, emissiveColor.b), glm::vec3(0.0f));
             }
 
             float shininess = 0.0f;

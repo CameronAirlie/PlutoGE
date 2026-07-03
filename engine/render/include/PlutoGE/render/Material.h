@@ -54,6 +54,8 @@ namespace PlutoGE::render
         Texture *roughnessTexture = nullptr; // Pointer to a roughness texture (if any)
         TextureChannel roughnessTextureChannel = TextureChannel::Red;
 
+        glm::vec3 emission{0.0f}; // HDR self-illumination color
+
         float transmission = 0.0f;                        // Transmitted light amount for glass-like materials
         float ior = 1.45f;                                // Index of refraction; common window glass is around 1.45-1.52
         float thickness = 0.01f;                          // Approximate material thickness in scene units
@@ -94,6 +96,7 @@ namespace PlutoGE::render
         void SetRoughness(float roughness) { m_config.roughness = roughness; }
         void SetRoughnessTexture(Texture *texture) { m_config.roughnessTexture = texture; }
         void SetRoughnessTextureChannel(TextureChannel channel) { m_config.roughnessTextureChannel = channel; }
+        void SetEmission(const glm::vec3 &emission) { m_config.emission = emission; }
         void SetTransmission(float transmission) { m_config.transmission = transmission; }
         void SetIor(float ior) { m_config.ior = ior; }
         void SetThickness(float thickness) { m_config.thickness = thickness; }

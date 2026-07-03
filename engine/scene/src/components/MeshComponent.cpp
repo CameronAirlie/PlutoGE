@@ -214,6 +214,7 @@ namespace PlutoGE::scene
             std::optional<glm::vec2> uvScale;
             std::optional<float> metallic;
             std::optional<float> roughness;
+            std::optional<glm::vec3> emission;
             std::optional<float> transmission;
             std::optional<float> ior;
             std::optional<float> thickness;
@@ -233,6 +234,7 @@ namespace PlutoGE::scene
             properties.push_back({prefix + "UvScale", PropertyType::String, SerializeVec2(config.uvScale)});
             properties.push_back({prefix + "Metallic", PropertyType::Float, std::to_string(config.metallic)});
             properties.push_back({prefix + "Roughness", PropertyType::Float, std::to_string(config.roughness)});
+            properties.push_back({prefix + "Emission", PropertyType::String, SerializeVec3(config.emission)});
             properties.push_back({prefix + "Transmission", PropertyType::Float, std::to_string(config.transmission)});
             properties.push_back({prefix + "Ior", PropertyType::Float, std::to_string(config.ior)});
             properties.push_back({prefix + "Thickness", PropertyType::Float, std::to_string(config.thickness)});
@@ -283,6 +285,10 @@ namespace PlutoGE::scene
             else if (fieldName == "Roughness")
             {
                 serializedMaterial.roughness = std::stof(value);
+            }
+            else if (fieldName == "Emission")
+            {
+                serializedMaterial.emission = ParseVec3(value);
             }
             else if (fieldName == "Transmission")
             {
@@ -347,6 +353,10 @@ namespace PlutoGE::scene
             if (serializedMaterial.roughness.has_value())
             {
                 material.SetRoughness(*serializedMaterial.roughness);
+            }
+            if (serializedMaterial.emission.has_value())
+            {
+                material.SetEmission(*serializedMaterial.emission);
             }
             if (serializedMaterial.transmission.has_value())
             {

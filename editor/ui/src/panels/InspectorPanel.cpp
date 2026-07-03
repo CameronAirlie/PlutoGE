@@ -116,6 +116,29 @@ namespace PlutoGE::ui
             std::vector<AssetReferenceOption> options;
         };
 
+        struct ScriptAssetOptionsCacheEntry
+        {
+            const assets::Project *project = nullptr;
+            const assets::ProjectAssetEntry *assetEntriesData = nullptr;
+            std::size_t assetEntryCount = 0;
+            std::string firstReference;
+            std::string middleReference;
+            std::string lastReference;
+            std::vector<std::string> loadedClassNames;
+            std::vector<ScriptAssetOption> options;
+        };
+
+        ScriptAssetOptionsCacheEntry &GetScriptAssetOptionsCache()
+        {
+            static ScriptAssetOptionsCacheEntry cache;
+            return cache;
+        }
+
+        void InvalidateScriptAssetOptionsCache()
+        {
+            GetScriptAssetOptionsCache().project = nullptr;
+        }
+
         struct FoliageSubmeshChoice
         {
             std::string label;
@@ -479,6 +502,40 @@ namespace PlutoGE::ui
                           return left.displayName < right.displayName;
                       });
             return options;
+        }
+
+        const std::vector<ScriptAssetOption> &GetCachedProjectScriptAssetOptions(
+            const assets::Project &project,
+            const std::vector<std::string> &loadedClassNames)
+        {
+            auto &cache = GetScriptAssetOptionsCache();
+            const auto &assetEntries = project.GetManifest().assetEntries;
+            const auto *assetEntriesData = assetEntries.data();
+            const std::size_t assetEntryCount = assetEntries.size();
+            const std::string_view firstReference = assetEntryCount > 0 ? assetEntries.front().reference : std::string_view{};
+            const std::string_view middleReference = assetEntryCount > 0 ? assetEntries[assetEntryCount / 2].reference : std::string_view{};
+            const std::string_view lastReference = assetEntryCount > 0 ? assetEntries.back().reference : std::string_view{};
+
+            if (cache.project == &project &&
+                cache.assetEntriesData == assetEntriesData &&
+                cache.assetEntryCount == assetEntryCount &&
+                cache.firstReference == firstReference &&
+                cache.middleReference == middleReference &&
+                cache.lastReference == lastReference &&
+                cache.loadedClassNames == loadedClassNames)
+            {
+                return cache.options;
+            }
+
+            cache.options = CollectProjectScriptAssetOptions(project, loadedClassNames);
+            cache.project = &project;
+            cache.assetEntriesData = assetEntriesData;
+            cache.assetEntryCount = assetEntryCount;
+            cache.firstReference = firstReference;
+            cache.middleReference = middleReference;
+            cache.lastReference = lastReference;
+            cache.loadedClassNames = loadedClassNames;
+            return cache.options;
         }
 
         std::vector<AssetReferenceOption> CollectAssetReferenceOptions(const assets::Project *project, assets::ProjectAssetType type)
@@ -1670,9 +1727,10 @@ namespace PlutoGE::ui
         auto *project = editorShell.GetProject();
         auto &scriptEngine = core::Engine::GetInstance().GetScriptEngine();
         const auto classNames = scriptEngine.GetClassNames();
-        const auto scriptAssetOptions = project != nullptr
-                                            ? CollectProjectScriptAssetOptions(*project, classNames)
-                                            : std::vector<ScriptAssetOption>{};
+        static const std::vector<ScriptAssetOption> noScriptAssetOptions;
+        const auto &scriptAssetOptions = project != nullptr
+                                             ? GetCachedProjectScriptAssetOptions(*project, classNames)
+                                             : noScriptAssetOptions;
         const std::string currentSource = scriptComponent.GetSource();
         std::string previewValue = currentSource.empty() ? "<None>" : currentSource;
         if (const auto *selectedAsset = FindScriptAssetOptionForClassName(scriptAssetOptions, currentSource))
@@ -1771,6 +1829,7 @@ namespace PlutoGE::ui
             if (ImGui::Button("Refresh##ScriptSources"))
             {
                 project->RefreshAssetRegistry();
+                InvalidateScriptAssetOptionsCache();
             }
 
             ImGui::SameLine();
@@ -1837,10 +1896,16 @@ namespace PlutoGE::ui
             ImGui::TextDisabled("No script classes are loaded.");
         }
 
+        const auto fieldValues = scriptComponent.GetFieldValuesSnapshot();
+        std::optional<std::vector<scene::Entity *>> sceneEntities;
         int fieldIndex = 0;
         for (const auto &field : scriptComponent.GetSerializedFields())
         {
-            auto fieldValue = scriptComponent.GetFieldValue(field.name);
+            std::optional<scripting::ScriptFieldValue> fieldValue;
+            if (const auto fieldIterator = fieldValues.find(field.name); fieldIterator != fieldValues.end())
+            {
+                fieldValue = fieldIterator->second;
+            }
             if (!fieldValue.has_value())
             {
                 fieldValue = scripting::IsFieldValueCompatible(field.type, field.defaultValue)
@@ -2018,14 +2083,18 @@ namespace PlutoGE::ui
             {
                 uint32_t selectedEntityId = std::get<uint32_t>(*fieldValue);
                 scene::Scene *scene = entity.GetScene();
-                std::vector<scene::Entity *> entities;
-                if (scene)
+                if (!sceneEntities.has_value())
                 {
-                    for (auto *rootEntity : scene->GetRootEntities())
+                    sceneEntities.emplace();
+                    if (scene)
                     {
-                        CollectEntitiesRecursive(rootEntity, entities);
+                        for (auto *rootEntity : scene->GetRootEntities())
+                        {
+                            CollectEntitiesRecursive(rootEntity, *sceneEntities);
+                        }
                     }
                 }
+                const auto &entities = *sceneEntities;
 
                 auto isCompatibleEntity = [field](const scene::Entity &candidate) -> bool
                 {
@@ -2971,6 +3040,20 @@ namespace PlutoGE::ui
                                     if (ImGui::DragFloat("Roughness", &roughness, 0.01f, 0.04f, 1.0f))
                                     {
                                         material->SetRoughness(roughness);
+                                        editorShell.MarkSceneDirty();
+                                    }
+
+                                    float emission[3] = {
+                                        materialConfig.emission.r,
+                                        materialConfig.emission.g,
+                                        materialConfig.emission.b,
+                                    };
+                                    if (ImGui::ColorEdit3("Emission", emission, ImGuiColorEditFlags_HDR | ImGuiColorEditFlags_Float))
+                                    {
+                                        material->SetEmission(glm::vec3(
+                                            emission[0] > 0.0f ? emission[0] : 0.0f,
+                                            emission[1] > 0.0f ? emission[1] : 0.0f,
+                                            emission[2] > 0.0f ? emission[2] : 0.0f));
                                         editorShell.MarkSceneDirty();
                                     }
 
@@ -4161,6 +4244,7 @@ namespace PlutoGE::ui
                                         entity->AddPrefabOverride("Component:UIImageComponent:TexturePath");
                                         editorShell.MarkSceneDirty();
                                     }
+
                                     if (selected)
                                     {
                                         ImGui::SetItemDefaultFocus();

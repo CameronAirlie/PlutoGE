@@ -258,6 +258,7 @@ namespace PlutoGE::render
             layout (location = 3) out vec2 gMotionVector;
             layout (location = 4) out vec4 gBakedLighting;
             layout (location = 5) out float gDebug;
+            layout (location = 6) out vec3 gEmission;
             
             in vec3 FragPos;
             in vec3 Normal;
@@ -287,6 +288,7 @@ namespace PlutoGE::render
             uniform float uHasRoughnessTexture = 0.0;
             uniform float uRoughnessFactor = 1.0;
             uniform int uRoughnessTextureChannel = 0;
+            uniform vec3 uEmission = vec3(0.0);
 
             uniform sampler2D uLightmapTexture;
             uniform float uHasLightmapTexture = 0.0;
@@ -355,6 +357,7 @@ namespace PlutoGE::render
 
                 gNormalRoughness = vec4(normalize(normal), clamp(roughness, 0.04, 1.0));
                 gAlbedoMetallic = vec4(albedo, clamp(metallic, 0.0, 1.0));
+                gEmission = max(uEmission, vec3(0.0));
                 gBakedLighting = vec4(0.0);
                 gDebug = InstanceFlags.w <= 0.5 ? -1.0 : clamp(InstanceFlags.z / InstanceFlags.w, 0.0, 1.0);
 
@@ -414,6 +417,7 @@ uniform sampler2D gDepth;
 uniform sampler2D gNormal;
 uniform sampler2D gAlbedoSpec;
 uniform sampler2D gBakedLighting;
+uniform sampler2D gEmission;
 uniform sampler2D gDebug;
 uniform sampler2D uEnvironmentMap;
 
@@ -1160,6 +1164,7 @@ void main()
     float roughness = clamp(normalRoughness.a, 0.04, 1.0);
     float metallic = clamp(albedoMetallic.a, 0.0, 1.0);
     vec4 bakedLightingMask = texture(gBakedLighting, UV);
+    vec3 emission = max(texture(gEmission, UV).rgb, vec3(0.0));
     vec3 bakedIrradiance = bakedLightingMask.rgb;
     float bakedStaticMask = bakedLightingMask.a;
     if (uDebugViewMode == DEBUG_VIEW_LOD)
@@ -1201,7 +1206,8 @@ void main()
         realtimeAmbient += environmentDiffuse;
         vec3 ambient = mix(realtimeAmbient, bakedIrradiance * albedo * (1.0 - metallic), bakedStaticMask);
         ambient += environmentSpecular;
-        FragColor = vec4(ambient, 1.0);
+        float emissionCoverage = clamp(max(max(emission.r, emission.g), emission.b), 0.0, 1.0);
+        FragColor = vec4(ambient * (1.0 - emissionCoverage) + emission, 1.0);
         return;
     }
 
@@ -1504,6 +1510,7 @@ void main()
             uniform sampler2D uAlbedoTexture;
             uniform float uHasAlbedoTexture = 0.0;
             uniform vec4 uColor = vec4(1.0);
+            uniform vec3 uEmission = vec3(0.0);
             uniform int uSurfaceType = 0;
             uniform float uAlphaCutoff = 0.01;
             uniform sampler2D uNormalTexture;
@@ -2068,7 +2075,10 @@ void main()
                     outputAlpha = uSceneColorEnabled != 0 ? 1.0 : clamp(max(color.a * (1.0 - transmission * 0.65), fresnelAlpha * 0.55), 0.04, color.a);
                 }
 
-                FragColor = vec4(baseColor + environmentSpecular + directSpecular, outputAlpha);
+                vec3 emission = max(uEmission, vec3(0.0));
+                float emissionCoverage = clamp(max(max(emission.r, emission.g), emission.b), 0.0, 1.0);
+                vec3 litSurface = baseColor + environmentSpecular + directSpecular;
+                FragColor = vec4(litSurface * (1.0 - emissionCoverage) + emission, outputAlpha);
             }
         )";
 

@@ -1073,6 +1073,7 @@ namespace PlutoGE::scene
 
         auto *entityPtr = entity.get();
         m_entityStorage.push_back(std::move(entity));
+        m_entitiesById[entityPtr->GetID()] = entityPtr;
 
         if (parent)
         {
@@ -1130,6 +1131,10 @@ namespace PlutoGE::scene
         std::vector<Entity *> subtree;
         CollectEntitySubtree(entity, subtree);
         const std::unordered_set<Entity *> entitySet(subtree.begin(), subtree.end());
+        for (const auto *subtreeEntity : subtree)
+        {
+            m_entitiesById.erase(subtreeEntity->GetID());
+        }
 
         m_entityStorage.erase(
             std::remove_if(
@@ -1211,8 +1216,6 @@ namespace PlutoGE::scene
         using Clock = std::chrono::high_resolution_clock;
         const auto updateStart = Clock::now();
         ++m_updateSequence;
-        if (m_physicsQueryCache)
-            RefreshPhysicsQueryCache();
         ClearIblCaptureVolumes();
         const auto preparationEnd = Clock::now();
 
@@ -1238,9 +1241,10 @@ namespace PlutoGE::scene
 
         // Scripts may instantiate a prefab while an entity is updating. Iterate a
         // snapshot so appending a new root cannot invalidate this traversal.
-        const auto rootsAtFrameStart = m_rootEntities;
-        for (auto *rootEntity : rootsAtFrameStart)
+        const std::size_t rootCountAtFrameStart = m_rootEntities.size();
+        for (std::size_t rootIndex = 0; rootIndex < rootCountAtFrameStart; ++rootIndex)
         {
+            auto *rootEntity = m_rootEntities[rootIndex];
             if (rootEntity->IsActive())
             {
                 rootEntity->Update(deltaTime);
@@ -1270,11 +1274,8 @@ namespace PlutoGE::scene
             return false;
         }
 
-        return std::any_of(m_entityStorage.begin(), m_entityStorage.end(),
-                           [entity](const std::unique_ptr<Entity> &ownedEntity)
-                           {
-                               return ownedEntity.get() == entity;
-                           });
+        const auto iterator = m_entitiesById.find(entity->GetID());
+        return iterator != m_entitiesById.end() && iterator->second == entity;
     }
 
     void Scene::SubmitRenderCommands()
@@ -1939,38 +1940,10 @@ namespace PlutoGE::scene
         return nullptr; // Not found
     }
 
-    void SearchEntityByIDRecursive(Entity *current, EntityID id, Entity **result)
-    {
-        if (current->GetID() == id)
-        {
-            *result = current;
-            return;
-        }
-
-        for (auto child : current->GetChildren())
-        {
-            SearchEntityByIDRecursive(child, id, result);
-            if (*result)
-                return; // Early exit if found
-        }
-    }
-
     Entity *Scene::FindEntityByID(EntityID id) const
     {
-        for (auto rootEntity : m_rootEntities)
-        {
-            if (rootEntity->GetID() == id)
-            {
-                return rootEntity;
-            }
-            Entity *result = nullptr;
-            SearchEntityByIDRecursive(rootEntity, id, &result);
-            if (result)
-            {
-                return result;
-            }
-        }
-        return nullptr; // Not found
+        const auto iterator = m_entitiesById.find(id);
+        return iterator == m_entitiesById.end() ? nullptr : iterator->second;
     }
 
     void SearchEntitiesByTagRecursive(Entity *current, const std::string &tag, std::vector<Entity *> &results)

@@ -82,7 +82,7 @@ namespace PlutoGE::scripting
         using register_component_api_fn = int(__cdecl *)(void *, void *, void *);
         using register_camera_component_api_fn = int(__cdecl *)(void *, void *, void *, void *);
         using register_light_component_api_fn = int(__cdecl *)(void *, void *, void *, void *);
-        using register_mesh_component_api_fn = int(__cdecl *)(void *, void *, void *, void *);
+        using register_mesh_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *);
         using register_animation_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_rigidbody_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_collider_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
@@ -1059,7 +1059,8 @@ namespace PlutoGE::scripting
 
         int32_t GetCameraMain(uint32_t entityId)
         {
-            auto *cameraComponent = FindEntity(entityId) ? FindEntity(entityId)->GetComponent<scene::CameraComponent>() : nullptr;
+            auto *entity = FindEntity(entityId);
+            auto *cameraComponent = entity ? entity->GetComponent<scene::CameraComponent>() : nullptr;
             return cameraComponent && cameraComponent->IsMainCamera() ? 1 : 0;
         }
 
@@ -1501,6 +1502,49 @@ namespace PlutoGE::scripting
             if (auto *component = FindRigidbody(entityId); component && IsFiniteVector3(value))
             {
                 component->SetAngularVelocity(glm::vec3(value.x, value.y, value.z));
+            }
+        }
+
+        NativeVector3 GetMeshEmission(uint32_t entityId)
+        {
+            auto *entity = FindEntity(entityId);
+            auto *meshComponent = entity ? entity->GetComponent<scene::MeshComponent>() : nullptr;
+            auto *material = meshComponent ? meshComponent->GetMaterialForMaterialSlot(0) : nullptr;
+            if (!material)
+            {
+                return {};
+            }
+
+            const auto emission = material->GetConfig().emission;
+            return NativeVector3{emission.r, emission.g, emission.b};
+        }
+
+        void SetMeshEmission(uint32_t entityId, NativeVector3 emission)
+        {
+            auto *entity = FindEntity(entityId);
+            auto *meshComponent = entity ? entity->GetComponent<scene::MeshComponent>() : nullptr;
+            if (!meshComponent || !IsFiniteVector3(emission))
+            {
+                return;
+            }
+
+            auto *material = meshComponent->GetMaterialForMaterialSlot(0);
+            if (!material)
+            {
+                material = meshComponent->CreateUniqueMaterialForMaterialSlot(0);
+            }
+            else if (!meshComponent->GetMaterialAssetForMaterialSlot(0).empty())
+            {
+                material = meshComponent->CreateUniqueMaterialForMaterialSlot(0);
+                meshComponent->SetMaterialAssetForMaterialSlot(0, {});
+            }
+
+            if (material)
+            {
+                material->SetEmission(glm::vec3(
+                    emission.x > 0.0f ? emission.x : 0.0f,
+                    emission.y > 0.0f ? emission.y : 0.0f,
+                    emission.z > 0.0f ? emission.z : 0.0f));
             }
         }
         void AddRigidbodyForce(uint32_t entityId, NativeVector3 value)
@@ -2754,6 +2798,24 @@ namespace PlutoGE::scripting
                 return iterator->second;
             }
 
+            [[nodiscard]] std::unordered_map<std::string, ScriptFieldValue> GetFieldValuesSnapshot() const override
+            {
+                if (!m_impl || !m_impl->getFieldData || !m_impl->freeMarshaledString)
+                {
+                    return ScriptInstance::GetFieldValuesSnapshot();
+                }
+
+                const char *managedText = m_impl->getFieldData(m_instanceHandle);
+                if (!managedText)
+                {
+                    return ScriptInstance::GetFieldValuesSnapshot();
+                }
+
+                const std::string wireData(managedText);
+                m_impl->freeMarshaledString(managedText);
+                return ParseFieldData(wireData);
+            }
+
             ~ManagedScriptInstance() override
             {
                 if (m_impl && m_instanceHandle != 0 && m_impl->destroyScriptInstance)
@@ -2954,7 +3016,9 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(static_cast<get_mesh_static_fn>(&GetMeshStatic)),
                 reinterpret_cast<void *>(static_cast<set_mesh_static_fn>(&SetMeshStatic)),
                 reinterpret_cast<void *>(static_cast<get_mesh_color_fn>(&GetMeshColor)),
-                reinterpret_cast<void *>(static_cast<set_mesh_color_fn>(&SetMeshColor))) == 0)
+                reinterpret_cast<void *>(static_cast<set_mesh_color_fn>(&SetMeshColor)),
+                reinterpret_cast<void *>(static_cast<get_mesh_color_fn>(&GetMeshEmission)),
+                reinterpret_cast<void *>(static_cast<set_mesh_color_fn>(&SetMeshEmission))) == 0)
         {
             setManagedBridgeFailure("RegisterMeshComponentApi");
             return false;

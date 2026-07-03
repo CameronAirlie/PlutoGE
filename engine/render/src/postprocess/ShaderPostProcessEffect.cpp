@@ -92,6 +92,13 @@ namespace PlutoGE::render
             {
                 shader->SetUniform("uSceneAlbedoTexture", 4);
             }
+
+            glActiveTexture(GL_TEXTURE15);
+            glBindTexture(GL_TEXTURE_2D, context.renderContext.gBuffer->GetEmissionTextureID());
+            if (shader->HasUniform("uSceneEmissionTexture"))
+            {
+                shader->SetUniform("uSceneEmissionTexture", 15);
+            }
         }
 
         if (shader->HasUniform("uDebugViewMode"))

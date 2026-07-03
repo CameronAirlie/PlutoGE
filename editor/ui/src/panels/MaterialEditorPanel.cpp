@@ -406,6 +406,7 @@ namespace PlutoGE::ui
             m_metallicTexturePath.clear();
             m_metallicTextureChannel = render::TextureChannel::Red;
             m_roughness = 0.55f;
+            m_emission = glm::vec3(0.0f);
             m_roughnessTexturePath.clear();
             m_roughnessTextureChannel = render::TextureChannel::Red;
             m_transmission = 0.0f;
@@ -433,6 +434,7 @@ namespace PlutoGE::ui
         m_metallicTexturePath = config.metallicTexture ? config.metallicTexture->GetFilePath() : std::string{};
         m_metallicTextureChannel = config.metallicTextureChannel;
         m_roughness = config.roughness;
+        m_emission = config.emission;
         m_roughnessTexturePath = config.roughnessTexture ? config.roughnessTexture->GetFilePath() : std::string{};
         m_roughnessTextureChannel = config.roughnessTextureChannel;
         m_transmission = config.transmission;
@@ -569,6 +571,12 @@ namespace PlutoGE::ui
         {
             m_dirty = true;
         }
+        float emission[3] = {m_emission.r, m_emission.g, m_emission.b};
+        if (ImGui::ColorEdit3("Emission", emission, ImGuiColorEditFlags_HDR | ImGuiColorEditFlags_Float))
+        {
+            m_emission = glm::max(glm::vec3(emission[0], emission[1], emission[2]), glm::vec3(0.0f));
+            m_dirty = true;
+        }
         if (RenderTexturePathControl(reference, "Roughness", "Roughness Texture", m_roughnessTexturePath))
         {
             m_dirty = true;
@@ -639,6 +647,7 @@ namespace PlutoGE::ui
             config.metallicTexture = LoadMaterialEditorTexture(m_metallicTexturePath);
             config.metallicTextureChannel = m_metallicTextureChannel;
             config.roughness = (std::clamp)(m_roughness, 0.04f, 1.0f);
+            config.emission = glm::max(m_emission, glm::vec3(0.0f));
             config.roughnessTexture = LoadMaterialEditorTexture(m_roughnessTexturePath);
             config.roughnessTextureChannel = m_roughnessTextureChannel;
             config.transmission = (std::clamp)(m_transmission, 0.0f, 1.0f);

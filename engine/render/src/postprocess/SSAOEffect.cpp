@@ -448,6 +448,7 @@ namespace PlutoGE::render
 
             uniform sampler2D uSceneTexture;
             uniform sampler2D uResolvedAoTexture;
+            uniform sampler2D uSceneEmissionTexture;
             uniform int uOutputMode;
 
             void main()
@@ -461,7 +462,9 @@ namespace PlutoGE::render
                     return;
                 }
 
-                FragColor = vec4(sceneColor * ao, 1.0);
+                vec3 emission = max(texture(uSceneEmissionTexture, UV).rgb, vec3(0.0));
+                float emissionCoverage = clamp(max(max(emission.r, emission.g), emission.b), 0.0, 1.0);
+                FragColor = vec4(sceneColor * mix(ao, 1.0, emissionCoverage), 1.0);
             }
         )";
 

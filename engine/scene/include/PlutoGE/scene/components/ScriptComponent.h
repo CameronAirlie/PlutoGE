@@ -46,6 +46,7 @@ namespace PlutoGE::scene
         [[nodiscard]] bool SetFieldValue(const std::string &fieldName, const scripting::ScriptFieldValue &value);
         [[nodiscard]] std::optional<scripting::ScriptFieldValue> GetFieldValue(const std::string &fieldName) const;
         [[nodiscard]] const std::unordered_map<std::string, scripting::ScriptFieldValue> &GetFieldValues() const { return m_fieldValues; }
+        [[nodiscard]] std::unordered_map<std::string, scripting::ScriptFieldValue> GetFieldValuesSnapshot() const;
         [[nodiscard]] std::vector<scripting::ScriptFieldDefinition> GetSerializedFields() const;
         [[nodiscard]] bool IsStarted() const { return m_started; }
 

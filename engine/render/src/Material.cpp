@@ -31,6 +31,11 @@ namespace PlutoGE::render
             activeShader->TrySetUniform(name, value);
         };
 
+        const auto setVec3 = [activeShader](const char *name, const glm::vec3 &value)
+        {
+            activeShader->TrySetUniform(name, value);
+        };
+
         const auto setInt = [activeShader](const char *name, int value)
         {
             activeShader->TrySetUniform(name, value);
@@ -47,6 +52,7 @@ namespace PlutoGE::render
         setFloat("uAlphaCutoff", m_config.alphaCutoff);
         setFloat("uMetallicFactor", m_config.metallic);
         setFloat("uRoughnessFactor", m_config.roughness);
+        setVec3("uEmission", glm::max(m_config.emission, glm::vec3(0.0f)));
         setFloat("uFlipNormalY", m_config.flipNormalY ? 1.0f : 0.0f);
         setFloat("uTransmissionFactor", m_config.transmission);
         setFloat("uIor", m_config.ior);

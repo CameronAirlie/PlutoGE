@@ -44,6 +44,7 @@ namespace PlutoGE::assetimport
         bool castsShadow = true;
         float metallic = 0.0f;
         float roughness = 1.0f;
+        glm::vec3 emission{0.0f};
         float transmission = 0.0f;
         float ior = 1.45f;
         float thickness = 0.01f;

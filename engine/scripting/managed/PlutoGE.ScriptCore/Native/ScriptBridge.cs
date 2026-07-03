@@ -134,6 +134,8 @@ internal static unsafe class ScriptBridge
     private static delegate* unmanaged[Cdecl]<uint, int, void> _setMeshStatic;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3> _getMeshColor;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3, void> _setMeshColor;
+    private static delegate* unmanaged[Cdecl]<uint, NativeVector3> _getMeshEmission;
+    private static delegate* unmanaged[Cdecl]<uint, NativeVector3, void> _setMeshEmission;
     private static delegate* unmanaged[Cdecl]<uint, int> _getAnimationClipCount;
     private static delegate* unmanaged[Cdecl]<uint, int> _getAnimationClipIndex;
     private static delegate* unmanaged[Cdecl]<uint, int, void> _setAnimationClipIndex;
@@ -498,9 +500,12 @@ internal static unsafe class ScriptBridge
         delegate* unmanaged[Cdecl]<uint, int> getMeshStatic,
         delegate* unmanaged[Cdecl]<uint, int, void> setMeshStatic,
         delegate* unmanaged[Cdecl]<uint, NativeVector3> getMeshColor,
-        delegate* unmanaged[Cdecl]<uint, NativeVector3, void> setMeshColor)
+        delegate* unmanaged[Cdecl]<uint, NativeVector3, void> setMeshColor,
+        delegate* unmanaged[Cdecl]<uint, NativeVector3> getMeshEmission,
+        delegate* unmanaged[Cdecl]<uint, NativeVector3, void> setMeshEmission)
     {
-        if (getMeshStatic == null || setMeshStatic == null || getMeshColor == null || setMeshColor == null)
+        if (getMeshStatic == null || setMeshStatic == null || getMeshColor == null || setMeshColor == null ||
+            getMeshEmission == null || setMeshEmission == null)
         {
             SetError("Managed mesh component API registration received a null function pointer.");
             return 0;
@@ -510,6 +515,8 @@ internal static unsafe class ScriptBridge
         _setMeshStatic = setMeshStatic;
         _getMeshColor = getMeshColor;
         _setMeshColor = setMeshColor;
+        _getMeshEmission = getMeshEmission;
+        _setMeshEmission = setMeshEmission;
         _lastError = string.Empty;
         return 1;
     }
@@ -1537,6 +1544,21 @@ internal static unsafe class ScriptBridge
         }
 
         _setMeshColor(entityId, NativeVector3.FromManaged(color));
+    }
+
+    internal static Vector3 GetMeshEmission(uint entityId)
+    {
+        return _getMeshEmission == null ? Vector3.Zero : _getMeshEmission(entityId).ToManaged();
+    }
+
+    internal static void SetMeshEmission(uint entityId, Vector3 emission)
+    {
+        if (_setMeshEmission == null)
+        {
+            return;
+        }
+
+        _setMeshEmission(entityId, NativeVector3.FromManaged(emission));
     }
 
     internal static int GetAnimationClipCount(uint entityId) => _getAnimationClipCount == null ? 0 : _getAnimationClipCount(entityId);

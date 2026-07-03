@@ -71,6 +71,8 @@ namespace PlutoGE::render
                 return "graphOpacity";
             case ShaderGraphMaterialInput::UV:
                 return "UV";
+            case ShaderGraphMaterialInput::Emission:
+                return "graphEmission";
             case ShaderGraphMaterialInput::Color:
             default:
                 return "vec4(graphAlbedo, graphOpacity)";
@@ -257,6 +259,7 @@ namespace PlutoGE::render
             const std::string metallic = outputNode ? BuildOutputExpression(graph, *outputNode, "Metallic", "graphMetallic", errorMessage) : "graphMetallic";
             const std::string roughness = outputNode ? BuildOutputExpression(graph, *outputNode, "Roughness", "graphRoughness", errorMessage) : "graphRoughness";
             const std::string opacity = outputNode ? BuildOutputExpression(graph, *outputNode, "Opacity", "graphOpacity", errorMessage) : "graphOpacity";
+            const std::string emission = outputNode ? BuildOutputExpression(graph, *outputNode, "Emission", "graphEmission", errorMessage) : "graphEmission";
 
             return std::string(R"(
             #version 330 core
@@ -267,6 +270,7 @@ namespace PlutoGE::render
             layout (location = 3) out vec2 gMotionVector;
             layout (location = 4) out vec4 gBakedLighting;
             layout (location = 5) out float gDebug;
+            layout (location = 6) out vec3 gEmission;
 
             in vec3 FragPos;
             in vec3 Normal;
@@ -296,6 +300,7 @@ namespace PlutoGE::render
             uniform float uHasRoughnessTexture = 0.0;
             uniform float uRoughnessFactor = 1.0;
             uniform int uRoughnessTextureChannel = 0;
+            uniform vec3 uEmission = vec3(0.0);
 
             uniform sampler2D uLightmapTexture;
             uniform float uHasLightmapTexture = 0.0;
@@ -345,6 +350,7 @@ namespace PlutoGE::render
                 float graphOpacity = uColor.a;
                 float graphMetallic = clamp(uMetallicFactor, 0.0, 1.0);
                 float graphRoughness = clamp(uRoughnessFactor, 0.04, 1.0);
+                vec3 graphEmission = max(uEmission, vec3(0.0));
                 vec3 graphNormal = normalize(Normal);
 
                 if (uHasAlbedoTexture > 0.5)
@@ -379,7 +385,8 @@ namespace PlutoGE::render
                 "                vec3 finalNormal = normalize(ToVec3(" + normal + "));\n"
                 "                float finalMetallic = ToFloat(" + metallic + ");\n"
                 "                float finalRoughness = ToFloat(" + roughness + ");\n"
-                "                float finalOpacity = ToFloat(" + opacity + ");\n" + R"(
+                "                float finalOpacity = ToFloat(" + opacity + ");\n"
+                "                vec3 finalEmission = ToVec3(" + emission + ");\n" + R"(
 
                 if (uAlphaMode == 1 && finalOpacity < uAlphaCutoff)
                 {
@@ -388,6 +395,7 @@ namespace PlutoGE::render
 
                 gNormalRoughness = vec4(normalize(finalNormal), clamp(finalRoughness, 0.04, 1.0));
                 gAlbedoMetallic = vec4(finalAlbedo, clamp(finalMetallic, 0.0, 1.0));
+                gEmission = max(finalEmission, vec3(0.0));
                 gBakedLighting = vec4(0.0);
                 gDebug = InstanceFlags.w <= 0.5 ? -1.0 : clamp(InstanceFlags.z / InstanceFlags.w, 0.0, 1.0);
 
@@ -421,6 +429,7 @@ namespace PlutoGE::render
             ShaderGraphNode{.id = 3, .kind = ShaderGraphNodeKind::MaterialInput, .name = "Material Metallic", .materialInput = ShaderGraphMaterialInput::Metallic, .position = {40.0f, 220.0f}},
             ShaderGraphNode{.id = 4, .kind = ShaderGraphNodeKind::MaterialInput, .name = "Material Roughness", .materialInput = ShaderGraphMaterialInput::Roughness, .position = {40.0f, 310.0f}},
             ShaderGraphNode{.id = 5, .kind = ShaderGraphNodeKind::MaterialInput, .name = "Material Opacity", .materialInput = ShaderGraphMaterialInput::Opacity, .position = {40.0f, 400.0f}},
+            ShaderGraphNode{.id = 6, .kind = ShaderGraphNodeKind::MaterialInput, .name = "Material Emission", .materialInput = ShaderGraphMaterialInput::Emission, .position = {40.0f, 490.0f}},
             ShaderGraphNode{.id = 100, .kind = ShaderGraphNodeKind::Output, .name = "Geometry Output", .position = {430.0f, 180.0f}},
         };
         graph.links = {
@@ -429,6 +438,7 @@ namespace PlutoGE::render
             ShaderGraphLink{.id = 3, .fromNodeId = 3, .fromPin = "Out", .toNodeId = 100, .toPin = "Metallic"},
             ShaderGraphLink{.id = 4, .fromNodeId = 4, .fromPin = "Out", .toNodeId = 100, .toPin = "Roughness"},
             ShaderGraphLink{.id = 5, .fromNodeId = 5, .fromPin = "Out", .toNodeId = 100, .toPin = "Opacity"},
+            ShaderGraphLink{.id = 6, .fromNodeId = 6, .fromPin = "Out", .toNodeId = 100, .toPin = "Emission"},
         };
         return graph;
     }
@@ -597,6 +607,8 @@ namespace PlutoGE::render
             return "Opacity";
         case ShaderGraphMaterialInput::UV:
             return "UV";
+        case ShaderGraphMaterialInput::Emission:
+            return "Emission";
         case ShaderGraphMaterialInput::Color:
         default:
             return "Color";
@@ -629,6 +641,7 @@ namespace PlutoGE::render
         if (value == "Roughness") return ShaderGraphMaterialInput::Roughness;
         if (value == "Opacity") return ShaderGraphMaterialInput::Opacity;
         if (value == "UV") return ShaderGraphMaterialInput::UV;
+        if (value == "Emission") return ShaderGraphMaterialInput::Emission;
         return ShaderGraphMaterialInput::Color;
     }
 }

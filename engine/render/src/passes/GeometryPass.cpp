@@ -190,10 +190,13 @@ namespace PlutoGE::render
         glEnable(GL_CULL_FACE);
         glCullFace(GL_BACK);
         glViewport(0, 0, ctx.gBuffer->GetWidth(), ctx.gBuffer->GetHeight());
-        const GLenum defaultAttachments[5] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3, GL_COLOR_ATTACHMENT4};
-        const GLenum debugAttachments[6] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3, GL_COLOR_ATTACHMENT4, GL_COLOR_ATTACHMENT5};
+        // The array index maps directly to the fragment output location. Keep a
+        // GL_NONE placeholder for location 5 when LOD debug output is disabled
+        // so location 6 still reaches the emission attachment.
+        const GLenum defaultAttachments[7] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3, GL_COLOR_ATTACHMENT4, GL_NONE, GL_COLOR_ATTACHMENT6};
+        const GLenum debugAttachments[7] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3, GL_COLOR_ATTACHMENT4, GL_COLOR_ATTACHMENT5, GL_COLOR_ATTACHMENT6};
         const bool writeLodDebug = ctx.postProcessDebugView == PostProcessDebugView::Lod;
-        glDrawBuffers(writeLodDebug ? 6 : 5, writeLodDebug ? debugAttachments : defaultAttachments);
+        glDrawBuffers(7, writeLodDebug ? debugAttachments : defaultAttachments);
         glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         if (writeLodDebug)

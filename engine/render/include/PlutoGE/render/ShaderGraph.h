@@ -45,6 +45,7 @@ namespace PlutoGE::render
         Roughness = 3,
         Opacity = 4,
         UV = 5,
+        Emission = 6,
     };
 
     struct ShaderGraphNode

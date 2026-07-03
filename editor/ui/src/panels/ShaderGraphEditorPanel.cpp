@@ -39,7 +39,7 @@ namespace PlutoGE::ui
         constexpr const char *kPinsValue[] = {"Value"};
         constexpr const char *kPinsNoise[] = {"UV", "Scale", "Strength"};
         constexpr const char *kPinsNoiseOutput[] = {"Value", "Color"};
-        constexpr const char *kPinsOutput[] = {"Albedo", "Normal", "Metallic", "Roughness", "Opacity"};
+        constexpr const char *kPinsOutput[] = {"Albedo", "Normal", "Metallic", "Roughness", "Opacity", "Emission"};
 
         constexpr ImU32 kPinAnyColor = IM_COL32(170, 176, 188, 255);
         constexpr ImU32 kPinFloatColor = IM_COL32(230, 190, 92, 255);
@@ -63,7 +63,7 @@ namespace PlutoGE::ui
         ImU32 kPinColorComponentColors[] = {kPinFloatColor, kPinFloatColor, kPinFloatColor, kPinFloatColor};
         ImU32 kPinNoiseInputColors[] = {kPinVec2Color, kPinFloatColor, kPinFloatColor};
         ImU32 kPinNoiseOutputColors[] = {kPinFloatColor, kPinColorColor};
-        ImU32 kPinOutputColors[] = {kPinColorColor, kPinVec3Color, kPinFloatColor, kPinFloatColor, kPinFloatColor};
+        ImU32 kPinOutputColors[] = {kPinColorColor, kPinVec3Color, kPinFloatColor, kPinFloatColor, kPinFloatColor, kPinVec3Color};
 
         bool SupportsComponentPins(render::ShaderGraphNodeKind kind)
         {
@@ -104,7 +104,7 @@ namespace PlutoGE::ui
                 count = 3;
                 return const_cast<const char **>(kPinsNoise);
             case render::ShaderGraphNodeKind::Output:
-                count = 5;
+                count = 6;
                 return const_cast<const char **>(kPinsOutput);
             default:
                 count = 0;
@@ -429,6 +429,8 @@ namespace PlutoGE::ui
                 return PreviewSample{glm::vec4(1.0f), 1};
             case render::ShaderGraphMaterialInput::UV:
                 return PreviewSample{glm::vec4(uv.x, uv.y, 0.0f, 1.0f), 2};
+            case render::ShaderGraphMaterialInput::Emission:
+                return PreviewSample{glm::vec4(0.0f), 3};
             case render::ShaderGraphMaterialInput::Color:
             default:
                 return PreviewSample{glm::vec4(uv.x, uv.y, 1.0f - uv.x * 0.5f, 1.0f), 4};
@@ -566,13 +568,14 @@ namespace PlutoGE::ui
                 const PreviewSample metallic = EvaluatePreviewInput(graph, nodeId, "Metallic", uv, EvaluatePreviewMaterialInput(render::ShaderGraphMaterialInput::Metallic, uv), visiting);
                 const PreviewSample roughness = EvaluatePreviewInput(graph, nodeId, "Roughness", uv, EvaluatePreviewMaterialInput(render::ShaderGraphMaterialInput::Roughness, uv), visiting);
                 const PreviewSample opacity = EvaluatePreviewInput(graph, nodeId, "Opacity", uv, EvaluatePreviewMaterialInput(render::ShaderGraphMaterialInput::Opacity, uv), visiting);
+                const PreviewSample emission = EvaluatePreviewInput(graph, nodeId, "Emission", uv, EvaluatePreviewMaterialInput(render::ShaderGraphMaterialInput::Emission, uv), visiting);
                 const glm::vec3 lightDir = glm::normalize(glm::vec3(-0.35f, 0.55f, 1.0f));
                 const glm::vec3 previewNormal = glm::normalize(glm::vec3(normal.value) * 2.0f - glm::vec3(1.0f));
                 const float diffuse = std::clamp(glm::dot(previewNormal, lightDir) * 0.5f + 0.5f, 0.0f, 1.0f);
                 const float metal = std::clamp(metallic.value.x, 0.0f, 1.0f);
                 const float rough = std::clamp(roughness.value.x, 0.04f, 1.0f);
                 const glm::vec3 baseColor = glm::vec3(albedo.value);
-                const glm::vec3 shaded = baseColor * (0.22f + 0.78f * diffuse) + glm::vec3(1.0f - rough) * metal * 0.18f;
+                const glm::vec3 shaded = baseColor * (0.22f + 0.78f * diffuse) + glm::vec3(1.0f - rough) * metal * 0.18f + glm::max(glm::vec3(emission.value), glm::vec3(0.0f));
                 result = PreviewSample{glm::vec4(glm::clamp(shaded, glm::vec3(0.0f), glm::vec3(1.0f)), std::clamp(opacity.value.x, 0.0f, 1.0f)), 4};
                 break;
             }
@@ -1484,7 +1487,7 @@ namespace PlutoGE::ui
                 if (selectedNode->kind == render::ShaderGraphNodeKind::MaterialInput)
                 {
                     int materialInput = static_cast<int>(selectedNode->materialInput);
-                    const char *items[] = {"Color", "Normal", "Metallic", "Roughness", "Opacity", "UV"};
+                    const char *items[] = {"Color", "Normal", "Metallic", "Roughness", "Opacity", "UV", "Emission"};
                     if (ImGui::Combo("Input", &materialInput, items, IM_ARRAYSIZE(items)))
                     {
                         selectedNode->materialInput = static_cast<render::ShaderGraphMaterialInput>(materialInput);

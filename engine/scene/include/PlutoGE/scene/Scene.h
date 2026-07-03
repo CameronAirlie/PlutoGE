@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <glm/glm.hpp>
 #include <memory>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 #include <string>
@@ -176,6 +177,7 @@ namespace PlutoGE::scene
 
         std::string m_name;
         std::vector<std::unique_ptr<Entity>> m_entityStorage;
+        std::unordered_map<EntityID, Entity *> m_entitiesById;
         std::vector<Entity *> m_rootEntities;
         std::vector<MeshComponent *> m_meshComponents;
         std::vector<TerrainComponent *> m_terrainComponents;

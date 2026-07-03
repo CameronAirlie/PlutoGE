@@ -136,6 +136,9 @@ namespace PlutoGE::core
                     HashValue(fingerprint, material.castsShadow);
                     HashValue(fingerprint, material.metallic);
                     HashValue(fingerprint, material.roughness);
+                    HashValue(fingerprint, material.emission.r);
+                    HashValue(fingerprint, material.emission.g);
+                    HashValue(fingerprint, material.emission.b);
                     HashValue(fingerprint, material.transmission);
                     HashValue(fingerprint, material.ior);
                     HashValue(fingerprint, material.thickness);
@@ -303,6 +306,7 @@ namespace PlutoGE::core
                     config.castsShadow = material.castsShadow;
                     config.metallic = material.metallic;
                     config.roughness = material.roughness;
+                    config.emission = material.emission;
                     config.transmission = material.transmission;
                     config.ior = material.ior;
                     config.thickness = material.thickness;

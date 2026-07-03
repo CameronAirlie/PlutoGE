@@ -401,6 +401,20 @@ namespace PlutoGE::scene
         return iterator->second;
     }
 
+    std::unordered_map<std::string, scripting::ScriptFieldValue> ScriptComponent::GetFieldValuesSnapshot() const
+    {
+        auto fieldValues = m_fieldValues;
+        if (m_instance && core::Engine::GetInstance().IsRuntimeRunning())
+        {
+            for (auto &[fieldName, fieldValue] : m_instance->GetFieldValuesSnapshot())
+            {
+                fieldValues.insert_or_assign(std::move(fieldName), std::move(fieldValue));
+            }
+        }
+
+        return fieldValues;
+    }
+
     std::vector<scripting::ScriptFieldDefinition> ScriptComponent::GetSerializedFields() const
     {
         return core::Engine::GetInstance().GetScriptEngine().GetSerializedFields(m_scriptClass);

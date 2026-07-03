@@ -32,6 +32,10 @@ namespace PlutoGE::scripting
         }
 
         [[nodiscard]] virtual std::optional<ScriptFieldValue> GetFieldValue(std::string_view fieldName) const;
+        [[nodiscard]] virtual std::unordered_map<std::string, ScriptFieldValue> GetFieldValuesSnapshot() const
+        {
+            return m_fieldValues;
+        }
 
         void SetOwner(scene::Entity *owner)
         {

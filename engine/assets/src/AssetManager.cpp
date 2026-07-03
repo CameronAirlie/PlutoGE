@@ -1974,6 +1974,10 @@ namespace PlutoGE::assets
                     {
                         ParseFloat(value, config.roughness);
                     }
+                    else if (key == "Emission")
+                    {
+                        ParseVec3(value, config.emission);
+                    }
                     else if (key == "Transmission")
                     {
                         ParseFloat(value, config.transmission);
@@ -2123,6 +2127,7 @@ namespace PlutoGE::assets
         output << "UvScale=" << config.uvScale.x << "," << config.uvScale.y << "\n";
         output << "Metallic=" << config.metallic << "\n";
         output << "Roughness=" << config.roughness << "\n";
+        output << "Emission=" << config.emission.r << "," << config.emission.g << "," << config.emission.b << "\n";
         output << "Transmission=" << config.transmission << "\n";
         output << "Ior=" << config.ior << "\n";
         output << "Thickness=" << config.thickness << "\n";

@@ -23,4 +23,10 @@ public sealed class MeshComponent : ComponentReference
         get => ScriptBridge.GetMeshColor(EntityId);
         set => ScriptBridge.SetMeshColor(EntityId, value);
     }
+
+    public Vector3 Emission
+    {
+        get => ScriptBridge.GetMeshEmission(EntityId);
+        set => ScriptBridge.SetMeshEmission(EntityId, value);
+    }
 }

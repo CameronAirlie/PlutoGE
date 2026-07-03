@@ -703,6 +703,7 @@ namespace PlutoGE::ui
             config.castsShadow = material.castsShadow;
             config.metallic = material.metallic;
             config.roughness = material.roughness;
+            config.emission = material.emission;
             config.transmission = material.transmission;
             config.ior = material.ior;
             config.thickness = material.thickness;

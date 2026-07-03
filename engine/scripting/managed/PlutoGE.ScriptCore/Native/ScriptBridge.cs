@@ -2337,6 +2337,13 @@ internal static unsafe class ScriptBridge
             assetData = Marshal.PtrToStringUTF8(dataPtr) ?? string.Empty;
         }
 
+        // Native asset loading may preserve Windows CRLF line endings (for
+        // example when reading packaged data in binary mode). A trailing '\r'
+        // otherwise becomes part of the managed type name and makes a valid
+        // asset fail type lookup, which then reads back as a blank reference.
+        assetData = assetData.Replace("\r\n", "\n", StringComparison.Ordinal)
+                             .Replace('\r', '\n');
+
         var lines = assetData.Split('\n', StringSplitOptions.RemoveEmptyEntries);
         if (lines.Length == 0)
         {

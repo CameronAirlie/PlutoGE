@@ -84,9 +84,9 @@ internal static unsafe class ScriptBridge
         }
     }
 
-    private sealed record ScriptFieldMetadata(string Name, int Type, object? DefaultValue, MemberInfo Member);
+    private sealed record ScriptFieldMetadata(string Name, int Type, string ReferenceTypeName, object? DefaultValue, MemberInfo Member);
 
-    private sealed record ScriptClassMetadata(string AssemblyName, string NamespaceName, string ClassName, Type Type, IReadOnlyList<ScriptFieldMetadata> Fields)
+    private sealed record ScriptClassMetadata(string AssemblyName, string NamespaceName, string ClassName, Type Type, bool IsScriptableObject, IReadOnlyList<string> AssignableTypeNames, IReadOnlyList<ScriptFieldMetadata> Fields)
     {
         public string FullName => string.IsNullOrEmpty(NamespaceName) ? ClassName : $"{NamespaceName}.{ClassName}";
     }
@@ -113,7 +113,12 @@ internal static unsafe class ScriptBridge
     private static delegate* unmanaged[Cdecl]<uint, int> _getEntityTagCount;
     private static delegate* unmanaged[Cdecl]<uint, int, nint> _getEntityTag;
     private static delegate* unmanaged[Cdecl]<uint, int> _destroyEntity;
+    private static delegate* unmanaged[Cdecl]<uint, nint> _getEntityName;
+    private static delegate* unmanaged[Cdecl]<byte*, uint> _findEntityByName;
+    private static delegate* unmanaged[Cdecl]<byte*, int> _getEntityCountByTag;
+    private static delegate* unmanaged[Cdecl]<byte*, int, uint> _getEntityByTag;
     private static delegate* unmanaged[Cdecl]<byte*, uint> _instantiatePrefab;
+    private static delegate* unmanaged[Cdecl]<byte*, nint> _loadScriptableObjectAsset;
     private static delegate* unmanaged[Cdecl]<uint, int, int> _hasComponent;
     private static delegate* unmanaged[Cdecl]<uint, int, int> _getComponentEnabled;
     private static delegate* unmanaged[Cdecl]<uint, int, int, void> _setComponentEnabled;
@@ -171,6 +176,8 @@ internal static unsafe class ScriptBridge
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3, void> _setRigidbodyVelocity;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3> _getRigidbodyAngularVelocity;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3, void> _setRigidbodyAngularVelocity;
+    private static delegate* unmanaged[Cdecl]<uint, NativeVector3, void> _addRigidbodyForce;
+    private static delegate* unmanaged[Cdecl]<uint, NativeVector3, void> _addRigidbodyImpulse;
     private static delegate* unmanaged[Cdecl]<uint, int> _getColliderShape;
     private static delegate* unmanaged[Cdecl]<uint, int, void> _setColliderShape;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3> _getColliderCenter;
@@ -229,6 +236,14 @@ internal static unsafe class ScriptBridge
     private static delegate* unmanaged[Cdecl]<uint, int, void> _setRectAnchorPreset;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3> _getUIImageColor;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3, void> _setUIImageColor;
+    private static delegate* unmanaged[Cdecl]<uint, float> _getUIImageAlpha;
+    private static delegate* unmanaged[Cdecl]<uint, float, void> _setUIImageAlpha;
+    private static delegate* unmanaged[Cdecl]<uint, nint> _getUIImageTexture;
+    private static delegate* unmanaged[Cdecl]<uint, nint, void> _setUIImageTexture;
+    private static delegate* unmanaged[Cdecl]<uint, int> _getUIImagePreserveAspect;
+    private static delegate* unmanaged[Cdecl]<uint, int, void> _setUIImagePreserveAspect;
+    private static delegate* unmanaged[Cdecl]<uint, float> _getUIImageFillAmount;
+    private static delegate* unmanaged[Cdecl]<uint, float, void> _setUIImageFillAmount;
     private static delegate* unmanaged[Cdecl]<uint, nint> _getUIText;
     private static delegate* unmanaged[Cdecl]<uint, nint, void> _setUIText;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3> _getUITextColor;
@@ -338,7 +353,11 @@ internal static unsafe class ScriptBridge
         delegate* unmanaged[Cdecl]<uint, int, void> setEntityActive,
         delegate* unmanaged[Cdecl]<uint, int> getEntityTagCount,
         delegate* unmanaged[Cdecl]<uint, int, nint> getEntityTag,
-        delegate* unmanaged[Cdecl]<uint, int> destroyEntity)
+        delegate* unmanaged[Cdecl]<uint, int> destroyEntity,
+        delegate* unmanaged[Cdecl]<uint, nint> getEntityName,
+        delegate* unmanaged[Cdecl]<byte*, uint> findEntityByName,
+        delegate* unmanaged[Cdecl]<byte*, int> getEntityCountByTag,
+        delegate* unmanaged[Cdecl]<byte*, int, uint> getEntityByTag)
     {
         if (getEntityPosition == null ||
             getEntityWorldPosition == null ||
@@ -353,7 +372,11 @@ internal static unsafe class ScriptBridge
             setEntityActive == null ||
             getEntityTagCount == null ||
             getEntityTag == null ||
-            destroyEntity == null)
+            destroyEntity == null ||
+            getEntityName == null ||
+            findEntityByName == null ||
+            getEntityCountByTag == null ||
+            getEntityByTag == null)
         {
             SetError("Managed game object API registration received a null function pointer.");
             return 0;
@@ -373,6 +396,10 @@ internal static unsafe class ScriptBridge
         _getEntityTagCount = getEntityTagCount;
         _getEntityTag = getEntityTag;
         _destroyEntity = destroyEntity;
+        _getEntityName = getEntityName;
+        _findEntityByName = findEntityByName;
+        _getEntityCountByTag = getEntityCountByTag;
+        _getEntityByTag = getEntityByTag;
         _lastError = string.Empty;
         return 1;
     }
@@ -387,6 +414,20 @@ internal static unsafe class ScriptBridge
         }
 
         _instantiatePrefab = instantiatePrefab;
+        _lastError = string.Empty;
+        return 1;
+    }
+
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterScriptableObjectApi")]
+    public static int RegisterScriptableObjectApi(delegate* unmanaged[Cdecl]<byte*, nint> loadAsset)
+    {
+        if (loadAsset == null)
+        {
+            SetError("Managed scriptable object API registration received a null function pointer.");
+            return 0;
+        }
+
+        _loadScriptableObjectAsset = loadAsset;
         _lastError = string.Empty;
         return 1;
     }
@@ -557,13 +598,16 @@ internal static unsafe class ScriptBridge
         delegate* unmanaged[Cdecl]<uint, NativeVector3> getVelocity,
         delegate* unmanaged[Cdecl]<uint, NativeVector3, void> setVelocity,
         delegate* unmanaged[Cdecl]<uint, NativeVector3> getAngularVelocity,
-        delegate* unmanaged[Cdecl]<uint, NativeVector3, void> setAngularVelocity)
+        delegate* unmanaged[Cdecl]<uint, NativeVector3, void> setAngularVelocity,
+        delegate* unmanaged[Cdecl]<uint, NativeVector3, void> addForce,
+        delegate* unmanaged[Cdecl]<uint, NativeVector3, void> addImpulse)
     {
         if (getMass == null || setMass == null || getLinearDrag == null || setLinearDrag == null ||
             getAngularDrag == null || setAngularDrag == null || getFriction == null || setFriction == null ||
             getUseGravity == null || setUseGravity == null ||
             getKinematic == null || setKinematic == null || getFreezeRotation == null || setFreezeRotation == null ||
-            getVelocity == null || setVelocity == null || getAngularVelocity == null || setAngularVelocity == null)
+            getVelocity == null || setVelocity == null || getAngularVelocity == null || setAngularVelocity == null ||
+            addForce == null || addImpulse == null)
         {
             SetError("Managed rigidbody component API registration received a null function pointer.");
             return 0;
@@ -587,6 +631,8 @@ internal static unsafe class ScriptBridge
         _setRigidbodyVelocity = setVelocity;
         _getRigidbodyAngularVelocity = getAngularVelocity;
         _setRigidbodyAngularVelocity = setAngularVelocity;
+        _addRigidbodyForce = addForce;
+        _addRigidbodyImpulse = addImpulse;
         _lastError = string.Empty;
         return 1;
     }
@@ -733,6 +779,14 @@ internal static unsafe class ScriptBridge
         delegate* unmanaged[Cdecl]<uint, int, void> setRectAnchorPreset,
         delegate* unmanaged[Cdecl]<uint, NativeVector3> getUIImageColor,
         delegate* unmanaged[Cdecl]<uint, NativeVector3, void> setUIImageColor,
+        delegate* unmanaged[Cdecl]<uint, float> getUIImageAlpha,
+        delegate* unmanaged[Cdecl]<uint, float, void> setUIImageAlpha,
+        delegate* unmanaged[Cdecl]<uint, nint> getUIImageTexture,
+        delegate* unmanaged[Cdecl]<uint, nint, void> setUIImageTexture,
+        delegate* unmanaged[Cdecl]<uint, int> getUIImagePreserveAspect,
+        delegate* unmanaged[Cdecl]<uint, int, void> setUIImagePreserveAspect,
+        delegate* unmanaged[Cdecl]<uint, float> getUIImageFillAmount,
+        delegate* unmanaged[Cdecl]<uint, float, void> setUIImageFillAmount,
         delegate* unmanaged[Cdecl]<uint, nint> getUIText,
         delegate* unmanaged[Cdecl]<uint, nint, void> setUIText,
         delegate* unmanaged[Cdecl]<uint, NativeVector3> getUITextColor,
@@ -751,7 +805,10 @@ internal static unsafe class ScriptBridge
             getRectAnchoredPosition == null || setRectAnchoredPosition == null ||
             getRectSizeDelta == null || setRectSizeDelta == null ||
             getRectAnchorPreset == null || setRectAnchorPreset == null ||
-            getUIImageColor == null || setUIImageColor == null ||
+            getUIImageColor == null || setUIImageColor == null || getUIImageAlpha == null || setUIImageAlpha == null ||
+            getUIImageTexture == null || setUIImageTexture == null ||
+            getUIImagePreserveAspect == null || setUIImagePreserveAspect == null ||
+            getUIImageFillAmount == null || setUIImageFillAmount == null ||
             getUIText == null || setUIText == null ||
             getUITextColor == null || setUITextColor == null ||
             getUITextFontSize == null || setUITextFontSize == null ||
@@ -775,6 +832,14 @@ internal static unsafe class ScriptBridge
         _setRectAnchorPreset = setRectAnchorPreset;
         _getUIImageColor = getUIImageColor;
         _setUIImageColor = setUIImageColor;
+        _getUIImageAlpha = getUIImageAlpha;
+        _setUIImageAlpha = setUIImageAlpha;
+        _getUIImageTexture = getUIImageTexture;
+        _setUIImageTexture = setUIImageTexture;
+        _getUIImagePreserveAspect = getUIImagePreserveAspect;
+        _setUIImagePreserveAspect = setUIImagePreserveAspect;
+        _getUIImageFillAmount = getUIImageFillAmount;
+        _setUIImageFillAmount = setUIImageFillAmount;
         _getUIText = getUIText;
         _setUIText = setUIText;
         _getUITextColor = getUITextColor;
@@ -1204,6 +1269,32 @@ internal static unsafe class ScriptBridge
         return entityId != 0 && _destroyEntity != null && _destroyEntity(entityId) != 0;
     }
 
+    internal static string GetEntityName(uint entityId)
+    {
+        return _getEntityName == null ? string.Empty : Marshal.PtrToStringUTF8(_getEntityName(entityId)) ?? string.Empty;
+    }
+
+    internal static uint FindEntityByName(string name)
+    {
+        if (_findEntityByName == null || string.IsNullOrWhiteSpace(name)) return 0;
+        var bytes = Encoding.UTF8.GetBytes(name + '\0');
+        fixed (byte* namePtr = bytes) return _findEntityByName(namePtr);
+    }
+
+    internal static uint[] FindEntitiesByTag(string tag)
+    {
+        if (_getEntityCountByTag == null || _getEntityByTag == null || string.IsNullOrWhiteSpace(tag)) return [];
+        tag = tag.Trim();
+        var bytes = Encoding.UTF8.GetBytes(tag + '\0');
+        fixed (byte* tagPtr = bytes)
+        {
+            var count = Math.Max(0, _getEntityCountByTag(tagPtr));
+            var entityIds = new uint[count];
+            for (var index = 0; index < count; ++index) entityIds[index] = _getEntityByTag(tagPtr, index);
+            return entityIds;
+        }
+    }
+
     internal static uint InstantiatePrefab(string prefabReference)
     {
         if (_instantiatePrefab == null || string.IsNullOrWhiteSpace(prefabReference))
@@ -1559,6 +1650,8 @@ internal static unsafe class ScriptBridge
     internal static void SetRigidbodyVelocity(uint entityId, Vector3 value) { if (_setRigidbodyVelocity != null) _setRigidbodyVelocity(entityId, NativeVector3.FromManaged(value)); }
     internal static Vector3 GetRigidbodyAngularVelocity(uint entityId) => _getRigidbodyAngularVelocity == null ? Vector3.Zero : _getRigidbodyAngularVelocity(entityId).ToManaged();
     internal static void SetRigidbodyAngularVelocity(uint entityId, Vector3 value) { if (_setRigidbodyAngularVelocity != null) _setRigidbodyAngularVelocity(entityId, NativeVector3.FromManaged(value)); }
+    internal static void AddRigidbodyForce(uint entityId, Vector3 value) { if (_addRigidbodyForce != null) _addRigidbodyForce(entityId, NativeVector3.FromManaged(value)); }
+    internal static void AddRigidbodyImpulse(uint entityId, Vector3 value) { if (_addRigidbodyImpulse != null) _addRigidbodyImpulse(entityId, NativeVector3.FromManaged(value)); }
 
     internal static int GetColliderShape(uint entityId) => _getColliderShape == null ? 0 : _getColliderShape(entityId);
     internal static void SetColliderShape(uint entityId, int value) { if (_setColliderShape != null) _setColliderShape(entityId, value); }
@@ -1666,6 +1759,19 @@ internal static unsafe class ScriptBridge
 
     internal static Vector3 GetUIImageColor(uint entityId) => _getUIImageColor == null ? Vector3.One : _getUIImageColor(entityId).ToManaged();
     internal static void SetUIImageColor(uint entityId, Vector3 value) { if (_setUIImageColor != null) _setUIImageColor(entityId, NativeVector3.FromManaged(value)); }
+    internal static float GetUIImageAlpha(uint entityId) => _getUIImageAlpha == null ? 1.0f : _getUIImageAlpha(entityId);
+    internal static void SetUIImageAlpha(uint entityId, float value) { if (_setUIImageAlpha != null) _setUIImageAlpha(entityId, value); }
+    internal static string GetUIImageTexture(uint entityId) => _getUIImageTexture == null ? string.Empty : Marshal.PtrToStringUTF8(_getUIImageTexture(entityId)) ?? string.Empty;
+    internal static void SetUIImageTexture(uint entityId, string value)
+    {
+        if (_setUIImageTexture == null) return;
+        var bytes = Encoding.UTF8.GetBytes((value ?? string.Empty) + '\0');
+        fixed (byte* valuePtr = bytes) _setUIImageTexture(entityId, (nint)valuePtr);
+    }
+    internal static bool GetUIImagePreserveAspect(uint entityId) => _getUIImagePreserveAspect != null && _getUIImagePreserveAspect(entityId) != 0;
+    internal static void SetUIImagePreserveAspect(uint entityId, bool value) { if (_setUIImagePreserveAspect != null) _setUIImagePreserveAspect(entityId, value ? 1 : 0); }
+    internal static float GetUIImageFillAmount(uint entityId) => _getUIImageFillAmount == null ? 1.0f : _getUIImageFillAmount(entityId);
+    internal static void SetUIImageFillAmount(uint entityId, float value) { if (_setUIImageFillAmount != null) _setUIImageFillAmount(entityId, value); }
 
     internal static string GetUIText(uint entityId)
     {
@@ -1879,7 +1985,9 @@ internal static unsafe class ScriptBridge
     {
         foreach (var type in assembly.GetTypes())
         {
-            if (type.IsAbstract || !typeof(ScriptBehaviour).IsAssignableFrom(type))
+            var isBehaviour = typeof(ScriptBehaviour).IsAssignableFrom(type);
+            var isScriptableObject = typeof(ScriptableObject).IsAssignableFrom(type);
+            if (type.IsAbstract || (!isBehaviour && !isScriptableObject))
             {
                 continue;
             }
@@ -1900,7 +2008,7 @@ internal static unsafe class ScriptBridge
                     continue;
                 }
 
-                fields.Add(new ScriptFieldMetadata(field.Name, fieldType.Value, field.GetValue(defaultInstance), field));
+                fields.Add(new ScriptFieldMetadata(field.Name, fieldType.Value, GetReferenceTypeName(field.FieldType, fieldType.Value), field.GetValue(defaultInstance), field));
             }
 
             foreach (var property in type.GetProperties(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
@@ -1916,7 +2024,7 @@ internal static unsafe class ScriptBridge
                     continue;
                 }
 
-                fields.Add(new ScriptFieldMetadata(property.Name, fieldType.Value, property.GetValue(defaultInstance), property));
+                fields.Add(new ScriptFieldMetadata(property.Name, fieldType.Value, GetReferenceTypeName(property.PropertyType, fieldType.Value), property.GetValue(defaultInstance), property));
             }
 
             yield return new ScriptClassMetadata(
@@ -1924,6 +2032,8 @@ internal static unsafe class ScriptBridge
                 type.Namespace ?? string.Empty,
                 type.Name,
                 type,
+                isScriptableObject,
+                GetAssignableTypeNames(type),
                 fields);
         }
     }
@@ -2040,7 +2150,27 @@ internal static unsafe class ScriptBridge
             return 22;
         }
 
+        if (typeof(ScriptableObject).IsAssignableFrom(type))
+        {
+            return 23;
+        }
+
         return null;
+    }
+
+    private static string GetReferenceTypeName(Type memberType, int fieldType)
+    {
+        return fieldType == 23 ? memberType.FullName ?? memberType.Name : string.Empty;
+    }
+
+    private static IReadOnlyList<string> GetAssignableTypeNames(Type type)
+    {
+        var names = new List<string>();
+        for (var current = type; current is not null; current = current.BaseType)
+        {
+            if (!string.IsNullOrEmpty(current.FullName)) names.Add(current.FullName);
+        }
+        return names;
     }
 
     private static string BuildMetadataPayload()
@@ -2049,10 +2179,11 @@ internal static unsafe class ScriptBridge
 
         foreach (var scriptClass in ScriptClasses.Values)
         {
-            builder.Append("CLASS\t")
+            builder.Append(scriptClass.IsScriptableObject ? "OBJECT\t" : "CLASS\t")
                 .Append(Escape(scriptClass.AssemblyName)).Append('\t')
                 .Append(Escape(scriptClass.NamespaceName)).Append('\t')
-                .Append(Escape(scriptClass.ClassName)).Append('\n');
+                .Append(Escape(scriptClass.ClassName)).Append('\t')
+                .Append(Escape(string.Join(';', scriptClass.AssignableTypeNames))).Append('\n');
 
             foreach (var field in scriptClass.Fields)
             {
@@ -2060,7 +2191,8 @@ internal static unsafe class ScriptBridge
                     .Append(Escape(field.Name)).Append('\t')
                     .Append(field.Type.ToString(CultureInfo.InvariantCulture)).Append('\t')
                     .Append('1').Append('\t')
-                    .Append(Escape(SerializeValue(field.Type, field.DefaultValue))).Append('\n');
+                    .Append(Escape(SerializeValue(field.Type, field.DefaultValue))).Append('\t')
+                    .Append(Escape(field.ReferenceTypeName)).Append('\n');
             }
 
             builder.Append("END\n");
@@ -2069,7 +2201,7 @@ internal static unsafe class ScriptBridge
         return builder.ToString();
     }
 
-    private static void ApplyFieldValues(ScriptBehaviour instance, ScriptClassMetadata scriptClass, string fieldData)
+    private static void ApplyFieldValues(object instance, ScriptClassMetadata scriptClass, string fieldData)
     {
         foreach (var line in fieldData.Split('\n', StringSplitOptions.RemoveEmptyEntries))
         {
@@ -2154,6 +2286,7 @@ internal static unsafe class ScriptBridge
             20 => CreateReferenceValue(memberType, value),
             21 => CreateReferenceValue(memberType, value),
             22 => string.IsNullOrWhiteSpace(value) ? null : new Prefab(value),
+            23 => LoadScriptableObject(value, memberType),
             _ => null,
         };
     }
@@ -2184,8 +2317,50 @@ internal static unsafe class ScriptBridge
             20 => ExtractEntityId(value).ToString(CultureInfo.InvariantCulture),
             21 => ExtractEntityId(value).ToString(CultureInfo.InvariantCulture),
             22 => (value as Prefab)?.AssetReference ?? string.Empty,
+            23 => (value as ScriptableObject)?.AssetReference ?? string.Empty,
             _ => string.Empty,
         };
+    }
+
+    private static ScriptableObject? LoadScriptableObject(string assetReference, Type expectedType)
+    {
+        if (string.IsNullOrWhiteSpace(assetReference) || _loadScriptableObjectAsset == null)
+        {
+            return null;
+        }
+
+        var referenceBytes = Encoding.UTF8.GetBytes(assetReference + '\0');
+        string assetData;
+        fixed (byte* referencePtr = referenceBytes)
+        {
+            var dataPtr = _loadScriptableObjectAsset(referencePtr);
+            assetData = Marshal.PtrToStringUTF8(dataPtr) ?? string.Empty;
+        }
+
+        var lines = assetData.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        if (lines.Length == 0)
+        {
+            return null;
+        }
+
+        var header = SplitEscaped(lines[0], '\t');
+        if (header.Count < 2 || header[0] != "SCRIPTABLE" || !ScriptClasses.TryGetValue(header[1], out var scriptClass) || !scriptClass.IsScriptableObject)
+        {
+            return null;
+        }
+        if (!expectedType.IsAssignableFrom(scriptClass.Type))
+        {
+            return null;
+        }
+
+        if (Activator.CreateInstance(scriptClass.Type, nonPublic: true) is not ScriptableObject instance)
+        {
+            return null;
+        }
+
+        instance.AssetReference = assetReference;
+        ApplyFieldValues(instance, scriptClass, string.Join('\n', lines.Skip(1)));
+        return instance;
     }
 
     private static object? CreateReferenceValue(Type memberType, string value)

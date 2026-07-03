@@ -25,6 +25,7 @@ namespace PlutoGE::assets
         ParticleSystem,
         Texture,
         Assembly,
+        ScriptableObject,
     };
 
     struct ProjectAssetEntry

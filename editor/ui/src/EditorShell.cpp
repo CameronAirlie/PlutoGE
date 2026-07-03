@@ -1598,6 +1598,9 @@ namespace PlutoGE::ui
             scene = CreateEmptyScene();
         }
 
+        // Keep the previous scene alive until Engine::SetScene has stopped its
+        // runtime and switched the non-owning scene pointer.
+        auto previousScene = std::move(m_scene);
         m_scene = std::move(scene);
         std::string prefabErrorMessage;
         const int updatedPrefabCount = scene::Prefab::UpdateInstances(*m_scene, {}, &prefabErrorMessage);
@@ -2938,10 +2941,10 @@ namespace PlutoGE::ui
             m_activeBakeTask.reset();
         }
         m_selectedEntity = nullptr;
-        m_project.reset();
-        m_scene.reset();
-        m_engine.GetAssetManager().ClearProjectContext();
         m_engine.SetScene(nullptr);
+        m_scene.reset();
+        m_project.reset();
+        m_engine.GetAssetManager().ClearProjectContext();
         scripting::ClearScriptLogSink();
         m_panelManager.ShutdownPanels();
         m_engine.Shutdown();

@@ -90,13 +90,19 @@ namespace PlutoGE::scene
         void Deserialize(const std::vector<Property> &properties) override;
 
         glm::vec4 GetColor() const { return m_color; }
-        void SetColor(const glm::vec4 &color) { m_color = color; }
+        void SetColor(const glm::vec4 &color) { m_color = glm::clamp(color, glm::vec4(0.0f), glm::vec4(1.0f)); }
         const std::string &GetTexturePath() const { return m_texturePath; }
         void SetTexturePath(std::string texturePath) { m_texturePath = std::move(texturePath); }
+        bool GetPreserveAspect() const { return m_preserveAspect; }
+        void SetPreserveAspect(bool preserveAspect) { m_preserveAspect = preserveAspect; }
+        float GetFillAmount() const { return m_fillAmount; }
+        void SetFillAmount(float fillAmount) { m_fillAmount = glm::clamp(fillAmount, 0.0f, 1.0f); }
 
     private:
         glm::vec4 m_color{1.0f};
         std::string m_texturePath;
+        bool m_preserveAspect = false;
+        float m_fillAmount = 1.0f;
     };
 
     class UITextComponent : public TypedComponent<UITextComponent>

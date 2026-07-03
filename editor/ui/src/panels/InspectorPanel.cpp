@@ -530,7 +530,7 @@ namespace PlutoGE::ui
                                                                                 assets::ProjectAssetType type)
         {
             static std::array<AssetReferenceOptionsCacheEntry,
-                              static_cast<std::size_t>(assets::ProjectAssetType::Assembly) + 1>
+                              static_cast<std::size_t>(assets::ProjectAssetType::ScriptableObject) + 1>
                 cacheEntries;
 
             auto &cacheEntry = cacheEntries[static_cast<std::size_t>(type)];
@@ -642,6 +642,41 @@ namespace PlutoGE::ui
             }
 
             return droppedReference;
+        }
+
+        std::optional<std::string> AcceptDroppedScriptableObjectReference()
+        {
+            std::optional<std::string> droppedReference;
+            if (ImGui::BeginDragDropTarget())
+            {
+                if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kContentBrowserAssetDragDropPayload))
+                {
+                    if (payload->Data && payload->DataSize > 0)
+                    {
+                        const auto *data = static_cast<const char *>(payload->Data);
+                        const std::string reference(data, data + payload->DataSize - 1);
+                        if (assets::Project::GetAssetTypeForReference(reference) == assets::ProjectAssetType::ScriptableObject)
+                        {
+                            droppedReference = reference;
+                        }
+                    }
+                }
+                ImGui::EndDragDropTarget();
+            }
+            return droppedReference;
+        }
+
+        std::string ReadScriptableObjectType(const assets::Project *project, const std::string &reference)
+        {
+            if (!project)
+            {
+                return {};
+            }
+            std::ifstream input(project->ResolveAssetReference(reference));
+            std::string header;
+            std::getline(input, header);
+            constexpr std::string_view prefix = "SCRIPTABLE\t";
+            return header.rfind(prefix, 0) == 0 ? header.substr(prefix.size()) : std::string{};
         }
 
         std::optional<std::string> AcceptDroppedMeshAssetReference()
@@ -1561,6 +1596,18 @@ namespace PlutoGE::ui
             }
             break;
         }
+        case scene::PropertyType::Color:
+        {
+            glm::vec4 value{1.0f};
+            sscanf_s(property.value.c_str(), "%f,%f,%f,%f", &value.r, &value.g, &value.b, &value.a);
+            if (ImGui::ColorEdit4(property.name.c_str(), &value.r))
+            {
+                property.value = std::to_string(value.r) + "," + std::to_string(value.g) + "," +
+                                 std::to_string(value.b) + "," + std::to_string(value.a);
+                return true;
+            }
+            break;
+        }
         case scene::PropertyType::Enum:
         {
             if (property.enumOptions.empty())
@@ -1884,6 +1931,53 @@ namespace PlutoGE::ui
                 }
 
                 if (auto droppedReference = AcceptDroppedPrefabAssetReference())
+                {
+                    changed |= scriptComponent.SetFieldValue(field.name, *droppedReference);
+                }
+                break;
+            }
+            case scripting::ScriptFieldType::ScriptableObjectAsset:
+            {
+                const auto &allOptions = GetCachedAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::ScriptableObject);
+                const auto &value = std::get<std::string>(*fieldValue);
+                const auto matchesType = [&](const AssetReferenceOption &option)
+                {
+                    if (field.referenceTypeName.empty()) return true;
+                    const auto actualType = ReadScriptableObjectType(editorShell.GetProject(), option.reference);
+                    const auto *actualDefinition = core::Engine::GetInstance().GetScriptEngine().FindClass(actualType);
+                    return actualType == field.referenceTypeName ||
+                           (actualDefinition && std::find(actualDefinition->assignableTypeNames.begin(), actualDefinition->assignableTypeNames.end(), field.referenceTypeName) != actualDefinition->assignableTypeNames.end());
+                };
+                std::string preview = value.empty() ? "<None>" : value;
+                for (const auto &option : allOptions)
+                {
+                    if (option.reference == value)
+                    {
+                        preview = option.displayName;
+                        break;
+                    }
+                }
+                if (ImGui::BeginCombo(field.name.c_str(), preview.c_str()))
+                {
+                    if (ImGui::Selectable("<None>", value.empty()))
+                    {
+                        changed |= scriptComponent.SetFieldValue(field.name, std::string{});
+                    }
+                    for (const auto &option : allOptions)
+                    {
+                        if (!matchesType(option))
+                        {
+                            continue;
+                        }
+                        const bool selected = option.reference == value;
+                        if (ImGui::Selectable(option.displayName.c_str(), selected))
+                        {
+                            changed |= scriptComponent.SetFieldValue(field.name, option.reference);
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+                if (auto droppedReference = AcceptDroppedScriptableObjectReference(); droppedReference && matchesType({*droppedReference, *droppedReference}))
                 {
                     changed |= scriptComponent.SetFieldValue(field.name, *droppedReference);
                 }
@@ -4037,6 +4131,54 @@ namespace PlutoGE::ui
 
                             propertiesProvided = true;
                             properties.clear();
+                        }
+
+                        if (auto *imageComponent = dynamic_cast<scene::UIImageComponent *>(componentPtr))
+                        {
+                            const auto &textureOptions = GetCachedAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::Texture);
+                            const std::string currentReference = imageComponent->GetTexturePath();
+                            const std::string preview = GetAssetReferencePreview(textureOptions, currentReference, "None");
+                            if (ImGui::BeginCombo("Texture", preview.c_str()))
+                            {
+                                const bool noneSelected = currentReference.empty();
+                                if (ImGui::Selectable("None", noneSelected))
+                                {
+                                    imageComponent->SetTexturePath({});
+                                    entity->AddPrefabOverride("Component:UIImageComponent:TexturePath");
+                                    editorShell.MarkSceneDirty();
+                                }
+                                if (noneSelected)
+                                {
+                                    ImGui::SetItemDefaultFocus();
+                                }
+
+                                for (const auto &option : textureOptions)
+                                {
+                                    const bool selected = option.reference == currentReference;
+                                    if (ImGui::Selectable(option.displayName.c_str(), selected))
+                                    {
+                                        imageComponent->SetTexturePath(option.reference);
+                                        entity->AddPrefabOverride("Component:UIImageComponent:TexturePath");
+                                        editorShell.MarkSceneDirty();
+                                    }
+                                    if (selected)
+                                    {
+                                        ImGui::SetItemDefaultFocus();
+                                    }
+                                }
+                                ImGui::EndCombo();
+                            }
+                            if (auto droppedTextureReference = AcceptDroppedTextureAssetReference())
+                            {
+                                imageComponent->SetTexturePath(*droppedTextureReference);
+                                entity->AddPrefabOverride("Component:UIImageComponent:TexturePath");
+                                editorShell.MarkSceneDirty();
+                            }
+
+                            properties = imageComponent->Serialize();
+                            std::erase_if(properties, [](const scene::Property &property)
+                                          { return property.name == "Enabled" || property.name == "TexturePath"; });
+                            propertiesProvided = true;
                         }
 
                         if (!propertiesProvided)

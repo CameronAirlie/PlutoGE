@@ -1,9 +1,11 @@
 #include "PlutoGE/render/passes/RuntimeUIPass.h"
 
+#include "PlutoGE/core/Engine.h"
 #include "PlutoGE/render/Graphics.h"
 #include "PlutoGE/render/RenderTarget.h"
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/Shader.h"
+#include "PlutoGE/render/Texture.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/UIComponent.h"
@@ -37,7 +39,10 @@ namespace PlutoGE::render
         struct UIQuad
         {
             UIRect rect;
+            glm::vec2 uvMin{0.0f};
+            glm::vec2 uvMax{1.0f};
             glm::vec4 color{1.0f};
+            GLuint textureId = 0;
             float depth = 0.0f;
             bool depthTest = false;
             int sortingOrder = 0;
@@ -99,6 +104,9 @@ namespace PlutoGE::render
                 uniform vec2 uViewportSize;
                 uniform vec2 uRectMin;
                 uniform vec2 uRectMax;
+                uniform vec2 uUvMin;
+                uniform vec2 uUvMax;
+                out vec2 vUv;
 
                 void main()
                 {
@@ -110,9 +118,18 @@ namespace PlutoGE::render
                         vec2(uRectMax.x, uRectMax.y),
                         vec2(uRectMin.x, uRectMax.y)
                     );
+                    vec2 uvs[6] = vec2[6](
+                        vec2(uUvMin.x, uUvMin.y),
+                        vec2(uUvMax.x, uUvMin.y),
+                        vec2(uUvMax.x, uUvMax.y),
+                        vec2(uUvMin.x, uUvMin.y),
+                        vec2(uUvMax.x, uUvMax.y),
+                        vec2(uUvMin.x, uUvMax.y)
+                    );
 
                     vec2 ndc = (positions[gl_VertexID] / max(uViewportSize, vec2(1.0))) * 2.0 - 1.0;
                     gl_Position = vec4(ndc, 0.0, 1.0);
+                    vUv = uvs[gl_VertexID];
                 }
             )";
 
@@ -120,10 +137,13 @@ namespace PlutoGE::render
                 #version 330 core
                 out vec4 FragColor;
                 uniform vec4 uColor;
+                uniform sampler2D uImageTexture;
+                uniform int uHasTexture;
                 uniform sampler2D uSceneDepthTexture;
                 uniform vec2 uViewportSize;
                 uniform float uElementDepth;
                 uniform int uDepthTest;
+                in vec2 vUv;
 
                 void main()
                 {
@@ -136,7 +156,8 @@ namespace PlutoGE::render
                         }
                     }
 
-                    FragColor = uColor;
+                    vec4 imageColor = uHasTexture != 0 ? texture(uImageTexture, vUv) : vec4(1.0);
+                    FragColor = imageColor * uColor;
                 }
             )";
 
@@ -760,9 +781,54 @@ namespace PlutoGE::render
                 if (visible && ((image && image->IsEnabled()) || (button && button->IsEnabled())))
                 {
                     glm::vec4 color = image && image->IsEnabled() ? image->GetColor() : glm::vec4(0.16f, 0.18f, 0.22f, 0.92f);
+                    render::Texture *texture = nullptr;
+                    float fillAmount = 1.0f;
+                    if (image && image->IsEnabled())
+                    {
+                        fillAmount = image->GetFillAmount();
+                        if (!image->GetTexturePath().empty())
+                        {
+                            auto &engine = core::Engine::GetInstance();
+                            std::string resolvedPath = engine.GetAssetManager().ResolveAssetPath(image->GetTexturePath());
+                            if (resolvedPath.empty())
+                            {
+                                resolvedPath = image->GetTexturePath();
+                            }
+                            texture = engine.GetTextureManager().LoadTextureFromFile(resolvedPath.c_str());
+                        }
+                    }
+
+                    if (texture && image->GetPreserveAspect() && texture->GetWidth() > 0 && texture->GetHeight() > 0)
+                    {
+                        const glm::vec2 rectSize = rect.max - rect.min;
+                        const float textureAspect = static_cast<float>(texture->GetWidth()) / static_cast<float>(texture->GetHeight());
+                        const float rectAspect = rectSize.x / std::max(rectSize.y, 0.0001f);
+                        if (rectAspect > textureAspect)
+                        {
+                            const float width = rectSize.y * textureAspect;
+                            const float inset = (rectSize.x - width) * 0.5f;
+                            rect.min.x += inset;
+                            rect.max.x -= inset;
+                        }
+                        else
+                        {
+                            const float height = rectSize.x / std::max(textureAspect, 0.0001f);
+                            const float inset = (rectSize.y - height) * 0.5f;
+                            rect.min.y += inset;
+                            rect.max.y -= inset;
+                        }
+                    }
+
+                    if (fillAmount <= 0.0f)
+                    {
+                        color.a = 0.0f;
+                    }
+                    rect.max.x = glm::mix(rect.min.x, rect.max.x, fillAmount);
                     quads.push_back(UIQuad{
                         .rect = rect,
+                        .uvMax = glm::vec2(fillAmount, 1.0f),
                         .color = ResolveButtonColor(button, color),
+                        .textureId = texture ? texture->GetTextureID() : 0,
                         .depth = projectedPoint.depth,
                         .depthTest = worldSpaceOverlay,
                         .sortingOrder = activeCanvas.component->GetSortingOrder(),
@@ -871,9 +937,10 @@ namespace PlutoGE::render
 
         m_shader->Bind();
         m_shader->SetUniform("uViewportSize", viewportSize);
-        m_shader->SetUniform("uSceneDepthTexture", 0);
+        m_shader->SetUniform("uImageTexture", 0);
+        m_shader->SetUniform("uSceneDepthTexture", 1);
 
-        glActiveTexture(GL_TEXTURE0);
+        glActiveTexture(GL_TEXTURE1);
         glBindTexture(GL_TEXTURE_2D, sceneDepthTexture);
 
         glBindVertexArray(m_vao);
@@ -881,9 +948,14 @@ namespace PlutoGE::render
         {
             m_shader->SetUniform("uRectMin", quad.rect.min);
             m_shader->SetUniform("uRectMax", quad.rect.max);
+            m_shader->SetUniform("uUvMin", quad.uvMin);
+            m_shader->SetUniform("uUvMax", quad.uvMax);
             m_shader->SetUniform("uColor", quad.color);
+            m_shader->SetUniform("uHasTexture", quad.textureId != 0 ? 1 : 0);
             m_shader->SetUniform("uElementDepth", quad.depth);
             m_shader->SetUniform("uDepthTest", quad.depthTest && sceneDepthTexture != 0 ? 1 : 0);
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, quad.textureId);
             glDrawArrays(GL_TRIANGLES, 0, 6);
         }
 

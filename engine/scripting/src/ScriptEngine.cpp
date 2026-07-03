@@ -150,6 +150,7 @@ namespace PlutoGE::scripting
             return std::holds_alternative<double>(value);
         case ScriptFieldType::String:
         case ScriptFieldType::PrefabAsset:
+        case ScriptFieldType::ScriptableObjectAsset:
             return std::holds_alternative<std::string>(value);
         case ScriptFieldType::Vector2:
             return std::holds_alternative<glm::vec2>(value);
@@ -190,6 +191,7 @@ namespace PlutoGE::scripting
             return 0.0;
         case ScriptFieldType::String:
         case ScriptFieldType::PrefabAsset:
+        case ScriptFieldType::ScriptableObjectAsset:
             return std::string{};
         case ScriptFieldType::Vector2:
             return glm::vec2{0.0f, 0.0f};
@@ -347,10 +349,26 @@ namespace PlutoGE::scripting
 
         for (const auto &[fullName, registeredClass] : m_classes)
         {
-            (void)registeredClass;
-            classNames.push_back(fullName);
+            if (registeredClass.definition.kind == ScriptClassKind::Behaviour)
+            {
+                classNames.push_back(fullName);
+            }
         }
 
+        std::sort(classNames.begin(), classNames.end());
+        return classNames;
+    }
+
+    std::vector<std::string> ScriptEngine::GetScriptableObjectClassNames() const
+    {
+        std::vector<std::string> classNames;
+        for (const auto &[fullName, registeredClass] : m_classes)
+        {
+            if (registeredClass.definition.kind == ScriptClassKind::ScriptableObject)
+            {
+                classNames.push_back(fullName);
+            }
+        }
         std::sort(classNames.begin(), classNames.end());
         return classNames;
     }

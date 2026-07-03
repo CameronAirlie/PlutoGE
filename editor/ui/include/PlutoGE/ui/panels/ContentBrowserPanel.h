@@ -60,6 +60,7 @@ namespace PlutoGE::ui
             CreateParticleSystem,
             CreateShaderGraph,
             CreateAnimationGraph,
+            CreateScriptableObject,
         };
 
         std::array<char, 160> m_filterBuffer{};
@@ -67,6 +68,8 @@ namespace PlutoGE::ui
         std::array<char, 96> m_newParticleSystemNameBuffer{};
         std::array<char, 96> m_newShaderGraphNameBuffer{};
         std::array<char, 96> m_newAnimationGraphNameBuffer{};
+        std::array<char, 96> m_newScriptableObjectNameBuffer{};
+        int m_newScriptableObjectClassIndex = 0;
         int m_selectedAssetIndex = -1;
         std::string m_selectedFolder;
         bool m_assetCacheDirty = true;

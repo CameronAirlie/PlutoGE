@@ -23,6 +23,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -75,17 +76,18 @@ namespace PlutoGE::scripting
         using invoke_on_collision_fn = int(__cdecl *)(int64_t, uint32_t);
         using apply_field_data_fn = int(__cdecl *)(int64_t, const char *);
         using set_entity_id_fn = int(__cdecl *)(int64_t, uint32_t);
-        using register_game_object_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
+        using register_game_object_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_prefab_api_fn = int(__cdecl *)(void *);
+        using register_scriptable_object_api_fn = int(__cdecl *)(void *);
         using register_component_api_fn = int(__cdecl *)(void *, void *, void *);
         using register_camera_component_api_fn = int(__cdecl *)(void *, void *, void *, void *);
         using register_light_component_api_fn = int(__cdecl *)(void *, void *, void *, void *);
         using register_mesh_component_api_fn = int(__cdecl *)(void *, void *, void *, void *);
         using register_animation_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
-        using register_rigidbody_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
+        using register_rigidbody_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_collider_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_particle_system_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
-        using register_runtime_ui_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
+        using register_runtime_ui_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_input_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_physics_api_fn = int(__cdecl *)(void *, void *, void *);
         using register_debug_api_fn = int(__cdecl *)(void *);
@@ -112,7 +114,12 @@ namespace PlutoGE::scripting
         using get_entity_tag_count_fn = int(__cdecl *)(uint32_t);
         using get_entity_tag_fn = const char *(__cdecl *)(uint32_t, int32_t);
         using destroy_entity_fn = int(__cdecl *)(uint32_t);
+        using get_entity_name_fn = const char *(__cdecl *)(uint32_t);
+        using find_entity_by_name_fn = uint32_t(__cdecl *)(const char *);
+        using get_entity_count_by_tag_fn = int32_t(__cdecl *)(const char *);
+        using get_entity_by_tag_fn = uint32_t(__cdecl *)(const char *, int32_t);
         using instantiate_prefab_fn = uint32_t(__cdecl *)(const char *);
+        using load_scriptable_object_asset_fn = const char *(__cdecl *)(const char *);
         using has_entity_component_fn = int(__cdecl *)(uint32_t, int32_t);
         using get_component_enabled_fn = int(__cdecl *)(uint32_t, int32_t);
         using set_component_enabled_fn = void(__cdecl *)(uint32_t, int32_t, int32_t);
@@ -423,7 +430,7 @@ namespace PlutoGE::scripting
         {
             int fieldTypeValue = 0;
             std::from_chars(token.data(), token.data() + token.size(), fieldTypeValue);
-            if (fieldTypeValue < static_cast<int>(ScriptFieldType::None) || fieldTypeValue > static_cast<int>(ScriptFieldType::PrefabAsset))
+            if (fieldTypeValue < static_cast<int>(ScriptFieldType::None) || fieldTypeValue > static_cast<int>(ScriptFieldType::ScriptableObjectAsset))
             {
                 return ScriptFieldType::None;
             }
@@ -459,6 +466,7 @@ namespace PlutoGE::scripting
                 return ParseDouble(token);
             case ScriptFieldType::String:
             case ScriptFieldType::PrefabAsset:
+            case ScriptFieldType::ScriptableObjectAsset:
                 return token;
             case ScriptFieldType::Vector2:
             {
@@ -640,7 +648,7 @@ namespace PlutoGE::scripting
                     const auto tokens = SplitEscaped(line, '\t');
                     if (!tokens.empty())
                     {
-                        if (tokens[0] == "CLASS" && tokens.size() >= 4)
+                        if ((tokens[0] == "CLASS" || tokens[0] == "OBJECT") && tokens.size() >= 4)
                         {
                             if (currentClass)
                             {
@@ -651,6 +659,11 @@ namespace PlutoGE::scripting
                             currentClass->assemblyName = tokens[1];
                             currentClass->namespaceName = tokens[2];
                             currentClass->className = tokens[3];
+                            currentClass->kind = tokens[0] == "OBJECT" ? ScriptClassKind::ScriptableObject : ScriptClassKind::Behaviour;
+                            if (tokens.size() >= 5)
+                            {
+                                currentClass->assignableTypeNames = SplitEscaped(tokens[4], ';');
+                            }
                         }
                         else if (tokens[0] == "FIELD" && tokens.size() >= 5 && currentClass)
                         {
@@ -659,6 +672,10 @@ namespace PlutoGE::scripting
                             fieldDefinition.type = ParseFieldType(tokens[2]);
                             fieldDefinition.serialized = tokens[3] == "1";
                             fieldDefinition.defaultValue = ParseFieldValue(fieldDefinition.type, tokens[4]);
+                            if (tokens.size() >= 6)
+                            {
+                                fieldDefinition.referenceTypeName = tokens[5];
+                            }
                             currentClass->fields.push_back(std::move(fieldDefinition));
                         }
                         else if (tokens[0] == "END" && currentClass)
@@ -938,6 +955,41 @@ namespace PlutoGE::scripting
             return scene && scene->DestroyEntity(entityId) ? 1 : 0;
         }
 
+        const char *GetEntityName(uint32_t entityId)
+        {
+            thread_local std::string nameStorage;
+            auto *entity = FindEntity(entityId);
+            nameStorage = entity ? entity->GetName() : std::string{};
+            return nameStorage.c_str();
+        }
+
+        uint32_t FindEntityByName(const char *name)
+        {
+            auto *activeScene = core::Engine::GetInstance().GetScene();
+            auto *entity = activeScene && name ? activeScene->FindEntityByName(name) : nullptr;
+            return entity ? entity->GetID() : 0;
+        }
+
+        int32_t GetEntityCountByTag(const char *tag)
+        {
+            auto *activeScene = core::Engine::GetInstance().GetScene();
+            return activeScene && tag ? static_cast<int32_t>(activeScene->FindEntitiesByTag(tag).size()) : 0;
+        }
+
+        uint32_t GetEntityByTag(const char *tag, int32_t index)
+        {
+            auto *activeScene = core::Engine::GetInstance().GetScene();
+            if (!activeScene || !tag || index < 0)
+            {
+                return 0;
+            }
+
+            const auto entities = activeScene->FindEntitiesByTag(tag);
+            return index < static_cast<int32_t>(entities.size()) && entities[static_cast<std::size_t>(index)]
+                       ? entities[static_cast<std::size_t>(index)]->GetID()
+                       : 0;
+        }
+
         uint32_t InstantiatePrefab(const char *prefabReference)
         {
             auto *activeScene = core::Engine::GetInstance().GetScene();
@@ -959,6 +1011,28 @@ namespace PlutoGE::scripting
             }
 
             return instance->GetID();
+        }
+
+        const char *LoadScriptableObjectAsset(const char *assetReference)
+        {
+            static thread_local std::string assetData;
+            assetData.clear();
+            if (!assetReference || *assetReference == '\0')
+            {
+                return assetData.c_str();
+            }
+
+            const auto path = core::Engine::GetInstance().GetAssetManager().ResolveAssetPath(assetReference);
+            std::ifstream input(path, std::ios::in | std::ios::binary);
+            if (!input.is_open())
+            {
+                return assetData.c_str();
+            }
+
+            std::ostringstream stream;
+            stream << input.rdbuf();
+            assetData = stream.str();
+            return assetData.c_str();
         }
 
         int32_t HasEntityComponent(uint32_t entityId, int32_t componentKind)
@@ -1429,6 +1503,26 @@ namespace PlutoGE::scripting
                 component->SetAngularVelocity(glm::vec3(value.x, value.y, value.z));
             }
         }
+        void AddRigidbodyForce(uint32_t entityId, NativeVector3 value)
+        {
+            if (IsFiniteVector3(value))
+            {
+                if (auto *activeScene = core::Engine::GetInstance().GetScene())
+                {
+                    activeScene->AddRigidbodyForce(entityId, glm::vec3(value.x, value.y, value.z), false);
+                }
+            }
+        }
+        void AddRigidbodyImpulse(uint32_t entityId, NativeVector3 value)
+        {
+            if (IsFiniteVector3(value))
+            {
+                if (auto *activeScene = core::Engine::GetInstance().GetScene())
+                {
+                    activeScene->AddRigidbodyForce(entityId, glm::vec3(value.x, value.y, value.z), true);
+                }
+            }
+        }
 
         int32_t GetColliderShape(uint32_t entityId)
         {
@@ -1796,6 +1890,58 @@ namespace PlutoGE::scripting
                 component->SetColor(glm::vec4(value.x, value.y, value.z, alpha));
             }
         }
+        float GetUIImageAlpha(uint32_t entityId)
+        {
+            auto *component = FindUIImage(entityId);
+            return component ? component->GetColor().a : 1.0f;
+        }
+        void SetUIImageAlpha(uint32_t entityId, float value)
+        {
+            if (auto *component = FindUIImage(entityId); component && std::isfinite(value))
+            {
+                auto color = component->GetColor();
+                color.a = value;
+                component->SetColor(color);
+            }
+        }
+        const char *GetUIImageTexture(uint32_t entityId)
+        {
+            thread_local std::string textureStorage;
+            auto *component = FindUIImage(entityId);
+            textureStorage = component ? component->GetTexturePath() : std::string{};
+            return textureStorage.c_str();
+        }
+        void SetUIImageTexture(uint32_t entityId, const char *value)
+        {
+            if (auto *component = FindUIImage(entityId))
+            {
+                component->SetTexturePath(value ? value : "");
+            }
+        }
+        int32_t GetUIImagePreserveAspect(uint32_t entityId)
+        {
+            auto *component = FindUIImage(entityId);
+            return component && component->GetPreserveAspect() ? 1 : 0;
+        }
+        void SetUIImagePreserveAspect(uint32_t entityId, int32_t value)
+        {
+            if (auto *component = FindUIImage(entityId))
+            {
+                component->SetPreserveAspect(value != 0);
+            }
+        }
+        float GetUIImageFillAmount(uint32_t entityId)
+        {
+            auto *component = FindUIImage(entityId);
+            return component ? component->GetFillAmount() : 1.0f;
+        }
+        void SetUIImageFillAmount(uint32_t entityId, float value)
+        {
+            if (auto *component = FindUIImage(entityId); component && std::isfinite(value))
+            {
+                component->SetFillAmount(value);
+            }
+        }
 
         const char *GetUIText(uint32_t entityId)
         {
@@ -2134,6 +2280,7 @@ namespace PlutoGE::scripting
         set_entity_id_fn setEntityId = nullptr;
         register_game_object_api_fn registerGameObjectApi = nullptr;
         register_prefab_api_fn registerPrefabApi = nullptr;
+        register_scriptable_object_api_fn registerScriptableObjectApi = nullptr;
         register_component_api_fn registerComponentApi = nullptr;
         register_camera_component_api_fn registerCameraComponentApi = nullptr;
         register_light_component_api_fn registerLightComponentApi = nullptr;
@@ -2227,6 +2374,7 @@ namespace PlutoGE::scripting
             impl.setEntityId = nullptr;
             impl.registerGameObjectApi = nullptr;
             impl.registerPrefabApi = nullptr;
+            impl.registerScriptableObjectApi = nullptr;
             impl.registerComponentApi = nullptr;
             impl.registerCameraComponentApi = nullptr;
             impl.registerLightComponentApi = nullptr;
@@ -2539,6 +2687,7 @@ namespace PlutoGE::scripting
                 LoadManagedExport(impl, L"SetEntityId", impl.setEntityId) &&
                 LoadManagedExport(impl, L"RegisterGameObjectApi", impl.registerGameObjectApi) &&
                 LoadManagedExport(impl, L"RegisterPrefabApi", impl.registerPrefabApi) &&
+                LoadManagedExport(impl, L"RegisterScriptableObjectApi", impl.registerScriptableObjectApi) &&
                 LoadManagedExport(impl, L"RegisterComponentApi", impl.registerComponentApi) &&
                 LoadManagedExport(impl, L"RegisterCameraComponentApi", impl.registerCameraComponentApi) &&
                 LoadManagedExport(impl, L"RegisterLightComponentApi", impl.registerLightComponentApi) &&
@@ -2742,7 +2891,11 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(static_cast<set_entity_active_fn>(&SetEntityActive)),
                 reinterpret_cast<void *>(static_cast<get_entity_tag_count_fn>(&GetEntityTagCount)),
                 reinterpret_cast<void *>(static_cast<get_entity_tag_fn>(&GetEntityTag)),
-                reinterpret_cast<void *>(static_cast<destroy_entity_fn>(&DestroyEntity))) == 0)
+                reinterpret_cast<void *>(static_cast<destroy_entity_fn>(&DestroyEntity)),
+                reinterpret_cast<void *>(static_cast<get_entity_name_fn>(&GetEntityName)),
+                reinterpret_cast<void *>(static_cast<find_entity_by_name_fn>(&FindEntityByName)),
+                reinterpret_cast<void *>(static_cast<get_entity_count_by_tag_fn>(&GetEntityCountByTag)),
+                reinterpret_cast<void *>(static_cast<get_entity_by_tag_fn>(&GetEntityByTag))) == 0)
         {
             setManagedBridgeFailure("RegisterGameObjectApi");
             return false;
@@ -2753,6 +2906,14 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(static_cast<instantiate_prefab_fn>(&InstantiatePrefab))) == 0)
         {
             setManagedBridgeFailure("RegisterPrefabApi");
+            return false;
+        }
+
+        if (!m_impl->registerScriptableObjectApi ||
+            m_impl->registerScriptableObjectApi(
+                reinterpret_cast<void *>(static_cast<load_scriptable_object_asset_fn>(&LoadScriptableObjectAsset))) == 0)
+        {
+            setManagedBridgeFailure("RegisterScriptableObjectApi");
             return false;
         }
 
@@ -2849,7 +3010,9 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(static_cast<get_component_vector3_fn>(&GetRigidbodyVelocity)),
                 reinterpret_cast<void *>(static_cast<set_component_vector3_fn>(&SetRigidbodyVelocity)),
                 reinterpret_cast<void *>(static_cast<get_component_vector3_fn>(&GetRigidbodyAngularVelocity)),
-                reinterpret_cast<void *>(static_cast<set_component_vector3_fn>(&SetRigidbodyAngularVelocity))) == 0)
+                reinterpret_cast<void *>(static_cast<set_component_vector3_fn>(&SetRigidbodyAngularVelocity)),
+                reinterpret_cast<void *>(static_cast<set_component_vector3_fn>(&AddRigidbodyForce)),
+                reinterpret_cast<void *>(static_cast<set_component_vector3_fn>(&AddRigidbodyImpulse))) == 0)
         {
             setManagedBridgeFailure("RegisterRigidbodyComponentApi");
             return false;
@@ -2929,6 +3092,14 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(static_cast<set_component_int_fn>(&SetRectAnchorPreset)),
                 reinterpret_cast<void *>(static_cast<get_component_vector3_fn>(&GetUIImageColor)),
                 reinterpret_cast<void *>(static_cast<set_component_vector3_fn>(&SetUIImageColor)),
+                reinterpret_cast<void *>(static_cast<get_component_float_fn>(&GetUIImageAlpha)),
+                reinterpret_cast<void *>(static_cast<set_component_float_fn>(&SetUIImageAlpha)),
+                reinterpret_cast<void *>(static_cast<get_component_string_fn>(&GetUIImageTexture)),
+                reinterpret_cast<void *>(static_cast<set_component_string_fn>(&SetUIImageTexture)),
+                reinterpret_cast<void *>(static_cast<get_component_bool_fn>(&GetUIImagePreserveAspect)),
+                reinterpret_cast<void *>(static_cast<set_component_bool_fn>(&SetUIImagePreserveAspect)),
+                reinterpret_cast<void *>(static_cast<get_component_float_fn>(&GetUIImageFillAmount)),
+                reinterpret_cast<void *>(static_cast<set_component_float_fn>(&SetUIImageFillAmount)),
                 reinterpret_cast<void *>(static_cast<get_component_string_fn>(&GetUIText)),
                 reinterpret_cast<void *>(static_cast<set_component_string_fn>(&SetUIText)),
                 reinterpret_cast<void *>(static_cast<get_component_vector3_fn>(&GetUITextColor)),

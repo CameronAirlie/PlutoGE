@@ -639,6 +639,10 @@ namespace PlutoGE::assets
         {
             return ProjectAssetType::Prefab;
         }
+        if (EndsWithInsensitive(reference, ".plutoscriptable"))
+        {
+            return ProjectAssetType::ScriptableObject;
+        }
         if (EndsWithInsensitive(reference, ".cs"))
         {
             return ProjectAssetType::Script;
@@ -719,6 +723,8 @@ namespace PlutoGE::assets
             return "Texture";
         case ProjectAssetType::Assembly:
             return "Assembly";
+        case ProjectAssetType::ScriptableObject:
+            return "Scriptable Object";
         case ProjectAssetType::Unknown:
         default:
             return "Unknown";
@@ -753,6 +759,8 @@ namespace PlutoGE::assets
             return ProjectAssetType::Texture;
         if (typeName == "Assembly")
             return ProjectAssetType::Assembly;
+        if (typeName == "Scriptable Object" || typeName == "ScriptableObject")
+            return ProjectAssetType::ScriptableObject;
         return ProjectAssetType::Unknown;
     }
 

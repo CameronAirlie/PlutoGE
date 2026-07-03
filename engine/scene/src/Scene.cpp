@@ -884,6 +884,7 @@ namespace PlutoGE::scene
         }
 
         ResetRuntimePhysicsState();
+        m_pendingRigidbodyForces.clear();
 
         for (auto *scriptComponent : GatherRuntimeScriptComponents(m_rootEntities))
         {
@@ -907,6 +908,7 @@ namespace PlutoGE::scene
 
         m_runtimeStarted = false;
         ResetRuntimePhysicsState();
+        m_pendingRigidbodyForces.clear();
     }
 
     void Scene::SetEnvironmentMap(render::Texture *texture, const std::string &filePath)
@@ -1679,6 +1681,30 @@ namespace PlutoGE::scene
         return currentPosition - startPosition;
     }
 
+    bool Scene::AddRigidbodyForce(EntityID entityId, const glm::vec3 &value, bool impulse)
+    {
+        if (!std::isfinite(value.x) || !std::isfinite(value.y) || !std::isfinite(value.z))
+        {
+            return false;
+        }
+
+        auto *entity = FindEntityByID(entityId);
+        auto *rigidbody = entity ? entity->GetComponent<RigidbodyComponent>() : nullptr;
+        auto *collider = entity ? entity->GetComponent<ColliderComponent>() : nullptr;
+        if (!entity || !entity->IsActive() || !rigidbody || !rigidbody->IsEnabled() || rigidbody->IsKinematic() ||
+            !collider || !collider->IsEnabled() || collider->IsTrigger())
+        {
+            return false;
+        }
+
+        m_pendingRigidbodyForces.push_back(PendingRigidbodyForce{
+            .entityId = entityId,
+            .value = value,
+            .impulse = impulse,
+        });
+        return true;
+    }
+
     void Scene::StepPhysics(float deltaTime)
     {
         if (!m_runtimeStarted)
@@ -1777,6 +1803,31 @@ namespace PlutoGE::scene
 
             runtimeWorld.dynamicsWorld.updateSingleAabb(stepBody.body.get());
         }
+
+        for (const auto &pendingForce : m_pendingRigidbodyForces)
+        {
+            const auto bodyIterator = std::find_if(runtimeWorld.bodies.begin(), runtimeWorld.bodies.end(),
+                                                   [&](const BulletStepBody &stepBody)
+                                                   {
+                                                       return stepBody.entityId == pendingForce.entityId &&
+                                                              stepBody.dynamic && stepBody.body;
+                                                   });
+            if (bodyIterator == runtimeWorld.bodies.end())
+            {
+                continue;
+            }
+
+            bodyIterator->body->activate(true);
+            if (pendingForce.impulse)
+            {
+                bodyIterator->body->applyCentralImpulse(ToBullet(pendingForce.value));
+            }
+            else
+            {
+                bodyIterator->body->applyCentralForce(ToBullet(pendingForce.value));
+            }
+        }
+        m_pendingRigidbodyForces.clear();
 
         runtimeWorld.dynamicsWorld.stepSimulation(step, 0);
 

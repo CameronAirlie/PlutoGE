@@ -10,6 +10,7 @@
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/AnimationComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
+#include "PlutoGE/scripting/ScriptEngine.h"
 #include "PlutoGE/ui/EditorShell.h"
 
 #include <algorithm>
@@ -24,6 +25,7 @@
 #include <set>
 #include <string>
 #include <unordered_map>
+#include <sstream>
 
 #include <imgui.h>
 #ifdef _WIN32
@@ -268,6 +270,142 @@ namespace PlutoGE::ui
                 name.pop_back();
             }
             return name;
+        }
+
+        std::string EscapeScriptableText(std::string_view text)
+        {
+            std::string result;
+            for (const char character : text)
+            {
+                switch (character)
+                {
+                case '\\': result += "\\\\"; break;
+                case '\t': result += "\\t"; break;
+                case '\n': result += "\\n"; break;
+                default: result += character; break;
+                }
+            }
+            return result;
+        }
+
+        std::vector<std::string> SplitScriptableLine(std::string_view line)
+        {
+            std::vector<std::string> tokens(1);
+            bool escaping = false;
+            for (const char character : line)
+            {
+                if (escaping)
+                {
+                    tokens.back() += character == 't' ? '\t' : character == 'n' ? '\n' : character;
+                    escaping = false;
+                }
+                else if (character == '\\')
+                {
+                    escaping = true;
+                }
+                else if (character == '\t')
+                {
+                    tokens.emplace_back();
+                }
+                else
+                {
+                    tokens.back() += character;
+                }
+            }
+            return tokens;
+        }
+
+        std::string SerializeScriptableValue(const scripting::ScriptFieldValue &value)
+        {
+            return std::visit([](const auto &typedValue) -> std::string
+            {
+                using T = std::decay_t<decltype(typedValue)>;
+                if constexpr (std::is_same_v<T, std::monostate>) return {};
+                else if constexpr (std::is_same_v<T, bool>) return typedValue ? "true" : "false";
+                else if constexpr (std::is_same_v<T, std::string>) return typedValue;
+                else if constexpr (std::is_same_v<T, glm::vec2>) return std::to_string(typedValue.x) + "," + std::to_string(typedValue.y);
+                else if constexpr (std::is_same_v<T, glm::vec3>) return std::to_string(typedValue.x) + "," + std::to_string(typedValue.y) + "," + std::to_string(typedValue.z);
+                else return std::to_string(typedValue);
+            }, value);
+        }
+
+        scripting::ScriptFieldValue ParseScriptableValue(scripting::ScriptFieldType type, const std::string &text)
+        {
+            try
+            {
+                switch (type)
+                {
+                case scripting::ScriptFieldType::Boolean: return text == "true" || text == "1";
+                case scripting::ScriptFieldType::Int32: return static_cast<int32_t>(std::stoi(text));
+                case scripting::ScriptFieldType::Float: return std::stof(text);
+                case scripting::ScriptFieldType::Double: return std::stod(text);
+                case scripting::ScriptFieldType::String:
+                case scripting::ScriptFieldType::PrefabAsset:
+                case scripting::ScriptFieldType::ScriptableObjectAsset: return text;
+                case scripting::ScriptFieldType::Vector2:
+                {
+                    glm::vec2 value{};
+                    char comma{};
+                    std::istringstream(text) >> value.x >> comma >> value.y;
+                    return value;
+                }
+                case scripting::ScriptFieldType::Vector3:
+                {
+                    glm::vec3 value{};
+                    char comma1{}, comma2{};
+                    std::istringstream(text) >> value.x >> comma1 >> value.y >> comma2 >> value.z;
+                    return value;
+                }
+                default: return scripting::MakeDefaultFieldValue(type);
+                }
+            }
+            catch (...)
+            {
+                return scripting::MakeDefaultFieldValue(type);
+            }
+        }
+
+        bool SaveScriptableObjectAsset(const std::filesystem::path &path,
+                                       std::string_view className,
+                                       const std::vector<scripting::ScriptFieldDefinition> &fields,
+                                       const std::unordered_map<std::string, scripting::ScriptFieldValue> &values)
+        {
+            std::error_code errorCode;
+            std::filesystem::create_directories(path.parent_path(), errorCode);
+            std::ofstream output(path, std::ios::out | std::ios::trunc);
+            if (!output.is_open()) return false;
+            output << "SCRIPTABLE\t" << EscapeScriptableText(className) << '\n';
+            for (const auto &field : fields)
+            {
+                const auto iterator = values.find(field.name);
+                const auto &value = iterator != values.end() ? iterator->second : field.defaultValue;
+                output << "FIELD\t" << EscapeScriptableText(field.name) << '\t'
+                       << static_cast<int>(field.type) << '\t'
+                       << EscapeScriptableText(SerializeScriptableValue(value)) << '\n';
+            }
+            return output.good();
+        }
+
+        bool LoadScriptableObjectAsset(const std::filesystem::path &path,
+                                       std::string &className,
+                                       std::unordered_map<std::string, scripting::ScriptFieldValue> &values)
+        {
+            std::ifstream input(path);
+            std::string line;
+            if (!std::getline(input, line)) return false;
+            auto header = SplitScriptableLine(line);
+            if (header.size() < 2 || header[0] != "SCRIPTABLE") return false;
+            className = header[1];
+            values.clear();
+            while (std::getline(input, line))
+            {
+                auto tokens = SplitScriptableLine(line);
+                if (tokens.size() >= 4 && tokens[0] == "FIELD")
+                {
+                    values[tokens[1]] = ParseScriptableValue(static_cast<scripting::ScriptFieldType>(std::stoi(tokens[2])), tokens[3]);
+                }
+            }
+            return true;
         }
 
         std::string BuildEntityNameForMeshReference(const std::string &reference)
@@ -1167,6 +1305,12 @@ namespace PlutoGE::ui
                 }
                 ImGui::EndMenu();
             }
+            if (ImGui::MenuItem("Scriptable Object"))
+            {
+                m_newScriptableObjectNameBuffer.fill('\0');
+                m_newScriptableObjectClassIndex = 0;
+                m_pendingMenuAction = PendingMenuAction::CreateScriptableObject;
+            }
             if (ImGui::BeginMenu("Import"))
             {
                 if (ImGui::MenuItem("3D Model..."))
@@ -1230,6 +1374,9 @@ namespace PlutoGE::ui
         case PendingMenuAction::CreateAnimationGraph:
             ImGui::OpenPopup("Create Animation Graph Asset");
             break;
+        case PendingMenuAction::CreateScriptableObject:
+            ImGui::OpenPopup("Create Scriptable Object Asset");
+            break;
         case PendingMenuAction::None:
         default:
             break;
@@ -1282,6 +1429,63 @@ namespace PlutoGE::ui
             {
                 ImGui::CloseCurrentPopup();
             }
+            ImGui::EndPopup();
+        }
+
+        if (ImGui::BeginPopupModal("Create Scriptable Object Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        {
+            auto &scriptEngine = editorShell.GetEngine().GetScriptEngine();
+            const auto classNames = scriptEngine.GetScriptableObjectClassNames();
+            ImGui::InputText("Name", m_newScriptableObjectNameBuffer.data(), m_newScriptableObjectNameBuffer.size());
+            if (classNames.empty())
+            {
+                ImGui::TextDisabled("Build a concrete ScriptableObject subclass first.");
+            }
+            else
+            {
+                m_newScriptableObjectClassIndex = std::clamp(m_newScriptableObjectClassIndex, 0, static_cast<int>(classNames.size()) - 1);
+                if (ImGui::BeginCombo("Type", classNames[static_cast<std::size_t>(m_newScriptableObjectClassIndex)].c_str()))
+                {
+                    for (int index = 0; index < static_cast<int>(classNames.size()); ++index)
+                    {
+                        if (ImGui::Selectable(classNames[static_cast<std::size_t>(index)].c_str(), index == m_newScriptableObjectClassIndex))
+                        {
+                            m_newScriptableObjectClassIndex = index;
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+            }
+
+            const std::string sanitizedName = SanitizeAssetFileName(m_newScriptableObjectNameBuffer.data());
+            const auto createDirectory = GetCreateDirectory(*project, m_selectedFolder, "Data");
+            ImGui::BeginDisabled(sanitizedName.empty() || classNames.empty());
+            if (ImGui::Button("Create"))
+            {
+                const auto &className = classNames[static_cast<std::size_t>(m_newScriptableObjectClassIndex)];
+                const auto *definition = scriptEngine.FindClass(className);
+                std::unordered_map<std::string, scripting::ScriptFieldValue> values;
+                if (definition)
+                {
+                    for (const auto &field : definition->fields) values[field.name] = field.defaultValue;
+                }
+                const auto assetPath = createDirectory / (sanitizedName + ".plutoscriptable");
+                if (definition && SaveScriptableObjectAsset(assetPath, className, definition->fields, values))
+                {
+                    project->RefreshAssetRegistry();
+                    m_assetCacheDirty = true;
+                    editorShell.MarkProjectDirty();
+                    editorShell.Log(EditorShell::ConsoleSeverity::Info, "Created scriptable object: " + project->MakeAssetReference(assetPath));
+                    ImGui::CloseCurrentPopup();
+                }
+                else
+                {
+                    editorShell.Log(EditorShell::ConsoleSeverity::Error, "Failed to create scriptable object asset.");
+                }
+            }
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
             ImGui::EndPopup();
         }
 
@@ -1919,7 +2123,100 @@ namespace PlutoGE::ui
                 ImGui::TextWrapped("Path: %s", resolvedPath.string().c_str());
             }
 
-            if (asset.type == assets::ProjectAssetType::Material)
+            if (asset.type == assets::ProjectAssetType::ScriptableObject)
+            {
+                std::string className;
+                std::unordered_map<std::string, scripting::ScriptFieldValue> values;
+                auto &scriptEngine = editorShell.GetEngine().GetScriptEngine();
+                if (!LoadScriptableObjectAsset(resolvedPath, className, values))
+                {
+                    ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f), "Invalid scriptable object asset.");
+                }
+                else if (const auto *definition = scriptEngine.FindClass(className))
+                {
+                    ImGui::SeparatorText(className.c_str());
+                    bool changed = false;
+                    int fieldIndex = 0;
+                    for (const auto &field : definition->fields)
+                    {
+                        auto iterator = values.find(field.name);
+                        if (iterator == values.end() || !scripting::IsFieldValueCompatible(field.type, iterator->second))
+                        {
+                            iterator = values.insert_or_assign(field.name, field.defaultValue).first;
+                        }
+                        ImGui::PushID(fieldIndex++);
+                        switch (field.type)
+                        {
+                        case scripting::ScriptFieldType::Boolean:
+                        {
+                            bool value = std::get<bool>(iterator->second);
+                            if (ImGui::Checkbox(field.name.c_str(), &value)) { iterator->second = value; changed = true; }
+                            break;
+                        }
+                        case scripting::ScriptFieldType::Int32:
+                        {
+                            int value = std::get<int32_t>(iterator->second);
+                            if (ImGui::DragInt(field.name.c_str(), &value)) { iterator->second = static_cast<int32_t>(value); changed = true; }
+                            break;
+                        }
+                        case scripting::ScriptFieldType::Float:
+                        {
+                            float value = std::get<float>(iterator->second);
+                            if (ImGui::DragFloat(field.name.c_str(), &value, 0.01f)) { iterator->second = value; changed = true; }
+                            break;
+                        }
+                        case scripting::ScriptFieldType::Double:
+                        {
+                            double value = std::get<double>(iterator->second);
+                            if (ImGui::InputDouble(field.name.c_str(), &value)) { iterator->second = value; changed = true; }
+                            break;
+                        }
+                        case scripting::ScriptFieldType::Vector2:
+                        {
+                            auto value = std::get<glm::vec2>(iterator->second);
+                            if (ImGui::DragFloat2(field.name.c_str(), &value.x, 0.01f)) { iterator->second = value; changed = true; }
+                            break;
+                        }
+                        case scripting::ScriptFieldType::Vector3:
+                        {
+                            auto value = std::get<glm::vec3>(iterator->second);
+                            if (ImGui::DragFloat3(field.name.c_str(), &value.x, 0.01f)) { iterator->second = value; changed = true; }
+                            break;
+                        }
+                        case scripting::ScriptFieldType::String:
+                        case scripting::ScriptFieldType::PrefabAsset:
+                        case scripting::ScriptFieldType::ScriptableObjectAsset:
+                        {
+                            std::array<char, 512> buffer{};
+                            const auto &value = std::get<std::string>(iterator->second);
+                            strncpy_s(buffer.data(), buffer.size(), value.c_str(), _TRUNCATE);
+                            if (ImGui::InputText(field.name.c_str(), buffer.data(), buffer.size())) { iterator->second = std::string(buffer.data()); changed = true; }
+                            break;
+                        }
+                        default:
+                            ImGui::TextDisabled("%s (unsupported asset field)", field.name.c_str());
+                            break;
+                        }
+                        ImGui::PopID();
+                    }
+                    if (changed)
+                    {
+                        if (SaveScriptableObjectAsset(resolvedPath, className, definition->fields, values))
+                        {
+                            editorShell.MarkProjectDirty();
+                        }
+                        else
+                        {
+                            editorShell.Log(EditorShell::ConsoleSeverity::Error, "Failed to save scriptable object: " + asset.reference);
+                        }
+                    }
+                }
+                else
+                {
+                    ImGui::TextDisabled("Type '%s' is not loaded. Build scripts to edit this asset.", className.c_str());
+                }
+            }
+            else if (asset.type == assets::ProjectAssetType::Material)
             {
                 if (ImGui::Button("Open Material"))
                 {

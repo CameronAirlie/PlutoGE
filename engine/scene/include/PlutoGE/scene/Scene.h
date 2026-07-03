@@ -118,6 +118,7 @@ namespace PlutoGE::scene
                           PhysicsRaycastHit &hit,
                           EntityID ignoredEntityId = 0) const;
         glm::vec3 MoveKinematic(Entity &entity, const glm::vec3 &displacement, float skinWidth = 0.02f) const;
+        bool AddRigidbodyForce(EntityID entityId, const glm::vec3 &value, bool impulse = false);
 
         std::vector<Light *> GetLights() const; // Get active lights in the scene (for rendering)
         void MarkShadowLightsDirty();
@@ -166,6 +167,12 @@ namespace PlutoGE::scene
     private:
         struct PhysicsQueryCache;
         struct RuntimePhysicsState;
+        struct PendingRigidbodyForce
+        {
+            EntityID entityId = 0;
+            glm::vec3 value{0.0f};
+            bool impulse = false;
+        };
 
         std::string m_name;
         std::vector<std::unique_ptr<Entity>> m_entityStorage;
@@ -190,6 +197,7 @@ namespace PlutoGE::scene
         mutable std::unique_ptr<PhysicsQueryCache> m_physicsQueryCache;
         uint64_t m_updateSequence = 0;
         std::unique_ptr<RuntimePhysicsState> m_runtimePhysicsState;
+        std::vector<PendingRigidbodyForce> m_pendingRigidbodyForces;
         void CollectEntitySubtree(Entity *entity, std::vector<Entity *> &entities) const;
         bool RemoveEntityRecursive(Entity *current, Entity *target);
         void FlushPendingDestroyEntities();

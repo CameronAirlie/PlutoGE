@@ -14,4 +14,28 @@ public sealed class UIImageComponent : ComponentReference
         get => ScriptBridge.GetUIImageColor(EntityId);
         set => ScriptBridge.SetUIImageColor(EntityId, value);
     }
+
+    public float Alpha
+    {
+        get => ScriptBridge.GetUIImageAlpha(EntityId);
+        set => ScriptBridge.SetUIImageAlpha(EntityId, value);
+    }
+
+    public string Texture
+    {
+        get => ScriptBridge.GetUIImageTexture(EntityId);
+        set => ScriptBridge.SetUIImageTexture(EntityId, value);
+    }
+
+    public bool PreserveAspect
+    {
+        get => ScriptBridge.GetUIImagePreserveAspect(EntityId);
+        set => ScriptBridge.SetUIImagePreserveAspect(EntityId, value);
+    }
+
+    public float FillAmount
+    {
+        get => ScriptBridge.GetUIImageFillAmount(EntityId);
+        set => ScriptBridge.SetUIImageFillAmount(EntityId, value);
+    }
 }

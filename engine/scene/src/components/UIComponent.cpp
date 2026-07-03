@@ -174,6 +174,8 @@ namespace PlutoGE::scene
             {"Enabled", PropertyType::Bool, IsEnabled() ? "true" : "false"},
             {"Color", PropertyType::Color, SerializeColor(m_color)},
             {"TexturePath", PropertyType::String, m_texturePath},
+            {"PreserveAspect", PropertyType::Bool, m_preserveAspect ? "true" : "false"},
+            {"FillAmount", PropertyType::Float, std::to_string(m_fillAmount)},
         };
     }
 
@@ -187,6 +189,10 @@ namespace PlutoGE::scene
                 m_color = ParseColor(property.value, m_color);
             else if (property.name == "TexturePath")
                 m_texturePath = property.value;
+            else if (property.name == "PreserveAspect")
+                m_preserveAspect = property.value == "true" || property.value == "1";
+            else if (property.name == "FillAmount")
+                SetFillAmount(std::stof(property.value));
         }
     }
 

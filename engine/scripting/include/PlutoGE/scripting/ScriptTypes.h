@@ -35,6 +35,13 @@ namespace PlutoGE::scripting
         UIButtonComponent,
         ParticleSystemComponent,
         PrefabAsset,
+        ScriptableObjectAsset,
+    };
+
+    enum class ScriptClassKind
+    {
+        Behaviour,
+        ScriptableObject,
     };
 
     using ScriptFieldValue = std::variant<std::monostate, bool, int32_t, float, double, std::string, glm::vec2, glm::vec3, uint32_t>;
@@ -44,6 +51,8 @@ namespace PlutoGE::scripting
         std::string name;
         ScriptFieldType type = ScriptFieldType::None;
         bool serialized = true;
+        // The managed full type name used to filter typed asset references.
+        std::string referenceTypeName;
         ScriptFieldValue defaultValue{};
     };
 
@@ -52,6 +61,8 @@ namespace PlutoGE::scripting
         std::string assemblyName;
         std::string namespaceName;
         std::string className;
+        ScriptClassKind kind = ScriptClassKind::Behaviour;
+        std::vector<std::string> assignableTypeNames;
         std::vector<ScriptFieldDefinition> fields;
 
         [[nodiscard]] std::string GetFullName() const

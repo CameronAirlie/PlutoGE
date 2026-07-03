@@ -65,4 +65,14 @@ public sealed class RigidbodyComponent : ComponentReference
         get => ScriptBridge.GetRigidbodyAngularVelocity(EntityId);
         set => ScriptBridge.SetRigidbodyAngularVelocity(EntityId, value);
     }
+
+    public void AddForce(Vector3 force)
+    {
+        ScriptBridge.AddRigidbodyForce(EntityId, force);
+    }
+
+    public void AddImpulse(Vector3 impulse)
+    {
+        ScriptBridge.AddRigidbodyImpulse(EntityId, impulse);
+    }
 }

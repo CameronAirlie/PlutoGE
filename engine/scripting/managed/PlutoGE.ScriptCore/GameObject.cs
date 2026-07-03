@@ -13,6 +13,7 @@ public sealed class GameObject
 
     public uint EntityId { get; }
     public bool IsValid => EntityId != 0;
+    public string Name => ScriptBridge.GetEntityName(EntityId);
 
     public Vector3 Position
     {
@@ -64,6 +65,34 @@ public sealed class GameObject
     public static bool Destroy(GameObject? gameObject)
     {
         return gameObject is not null && ScriptBridge.DestroyEntity(gameObject.EntityId);
+    }
+
+    public static GameObject? Find(string name)
+    {
+        var entityId = ScriptBridge.FindEntityByName(name);
+        return entityId == 0 ? null : new GameObject(entityId);
+    }
+
+    public static GameObject[] FindByTag(string tag)
+    {
+        var entityIds = ScriptBridge.FindEntitiesByTag(tag);
+        var gameObjects = new GameObject[entityIds.Length];
+        for (var index = 0; index < entityIds.Length; ++index)
+        {
+            gameObjects[index] = new GameObject(entityIds[index]);
+        }
+        return gameObjects;
+    }
+
+    public static GameObject? FindWithTag(string tag)
+    {
+        var entityIds = ScriptBridge.FindEntitiesByTag(tag);
+        return entityIds.Length == 0 ? null : new GameObject(entityIds[0]);
+    }
+
+    public static GameObject[] FindGameObjectsWithTag(string tag)
+    {
+        return FindByTag(tag);
     }
 
     public bool HasComponent<T>() where T : class

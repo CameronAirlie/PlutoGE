@@ -135,6 +135,7 @@ namespace PlutoGE::ui
 
             std::vector<std::pair<std::string, std::string>> shaderGraphs;
             shaderGraphs.emplace_back("Default Lit", std::string(assets::Project::kBuiltinDefaultShaderGraphReference));
+            shaderGraphs.emplace_back("Default Unlit", std::string(assets::Project::kBuiltinDefaultUnlitShaderGraphReference));
             if (auto *project = EditorShell::GetInstance().GetProject())
             {
                 for (const auto &asset : project->GetManifest().assetEntries)
@@ -149,7 +150,8 @@ namespace PlutoGE::ui
                     {
                         displayName.erase(0, assets::Project::kProjectAssetScheme.size());
                     }
-                    else if (displayName == assets::Project::kBuiltinDefaultShaderGraphReference)
+                    else if (displayName == assets::Project::kBuiltinDefaultShaderGraphReference ||
+                             displayName == assets::Project::kBuiltinDefaultUnlitShaderGraphReference)
                     {
                         continue;
                     }
@@ -480,7 +482,7 @@ namespace PlutoGE::ui
         ImGui::TextDisabled("%s | %s | Metallic %.2f | Roughness %.2f",
                             m_surfaceType == render::MaterialSurfaceType::Glass ? "Glass" : "Standard",
                             m_alphaMode == render::AlphaMode::Blend ? "Blend" : m_alphaMode == render::AlphaMode::Mask ? "Mask"
-                                                                                                                        : "Opaque",
+                                                                                                                       : "Opaque",
                             m_metallic,
                             m_roughness);
         ImGui::TextDisabled("Textures: Albedo %s | Normal %s | Metallic %s | Roughness %s",

@@ -90,6 +90,7 @@ namespace PlutoGE::assets
         static constexpr std::string_view kBuiltinDefaultMaterialReference = "engine://builtin/material/default";
         static constexpr std::string_view kBuiltinDefaultShadedMaterialReference = "engine://builtin/material/default-shaded";
         static constexpr std::string_view kBuiltinDefaultShaderGraphReference = "engine://builtin/shadergraph/default-lit";
+        static constexpr std::string_view kBuiltinDefaultUnlitShaderGraphReference = "engine://builtin/shadergraph/default-unlit";
 
         Project(std::filesystem::path manifestPath, ProjectManifest manifest);
 

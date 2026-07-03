@@ -86,8 +86,9 @@ namespace PlutoGE::render
     };
 
     ShaderGraph CreateDefaultShaderGraph();
+    ShaderGraph CreateDefaultUnlitShaderGraph();
     std::uint64_t HashShaderGraph(const ShaderGraph &graph);
-    Shader *CompileShaderGraphToGeometryShader(const ShaderGraph &graph, std::string *errorMessage = nullptr);
+    Shader *CompileShaderGraphToGeometryShader(const ShaderGraph &graph, bool unlit = false, std::string *errorMessage = nullptr);
 
     const char *ToString(ShaderGraphNodeKind kind);
     const char *ToString(ShaderGraphMaterialInput input);

@@ -422,6 +422,8 @@ uniform sampler2D gDebug;
 uniform sampler2D uEnvironmentMap;
 
 const float PI = 3.14159265359;
+const float MATERIAL_FLAG_BAKED_STATIC = 1.0;
+const float MATERIAL_FLAG_UNLIT = 2.0;
 const int PASS_MODE_AMBIENT = 0;
 const int LIGHT_TYPE_POINT = 0;
 const int LIGHT_TYPE_DIRECTIONAL = 1;
@@ -1135,6 +1137,16 @@ vec3 SampleBakedProbeIrradiance(vec3 fragPos)
 
     return max(texture(uBakedProbeVolume, probeUv).rgb, vec3(0.0));
 }
+
+bool IsBakedStaticMaterial(float materialFlag)
+{
+    return materialFlag >= MATERIAL_FLAG_BAKED_STATIC - 0.25 && materialFlag < MATERIAL_FLAG_UNLIT - 0.25;
+}
+
+bool IsUnlitMaterial(float materialFlag)
+{
+    return materialFlag >= MATERIAL_FLAG_UNLIT - 0.25;
+}
 		)";
 
             source.fragmentSource += R"(
@@ -1166,7 +1178,9 @@ void main()
     vec4 bakedLightingMask = texture(gBakedLighting, UV);
     vec3 emission = max(texture(gEmission, UV).rgb, vec3(0.0));
     vec3 bakedIrradiance = bakedLightingMask.rgb;
-    float bakedStaticMask = bakedLightingMask.a;
+    float materialFlag = bakedLightingMask.a;
+    bool unlitMaterial = IsUnlitMaterial(materialFlag);
+    bool bakedStaticMaterial = IsBakedStaticMaterial(materialFlag);
     if (uDebugViewMode == DEBUG_VIEW_LOD)
     {
         FragColor = vec4(GetLodDebugColor(texture(gDebug, UV).r), 1.0);
@@ -1181,6 +1195,13 @@ void main()
         if (uDebugViewMode == DEBUG_VIEW_SHADOW_CASCADES)
         {
             FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+            return;
+        }
+
+        if (unlitMaterial)
+        {
+            float emissionCoverage = clamp(max(max(emission.r, emission.g), emission.b), 0.0, 1.0);
+            FragColor = vec4(albedo * (1.0 - emissionCoverage) + emission, 1.0);
             return;
         }
 
@@ -1204,14 +1225,20 @@ void main()
         realtimeAmbient += lpvIndirect;
         realtimeAmbient += bakedProbeIndirect;
         realtimeAmbient += environmentDiffuse;
-        vec3 ambient = mix(realtimeAmbient, bakedIrradiance * albedo * (1.0 - metallic), bakedStaticMask);
+        vec3 ambient = mix(realtimeAmbient, bakedIrradiance * albedo * (1.0 - metallic), bakedStaticMaterial ? 1.0 : 0.0);
         ambient += environmentSpecular;
         float emissionCoverage = clamp(max(max(emission.r, emission.g), emission.b), 0.0, 1.0);
         FragColor = vec4(ambient * (1.0 - emissionCoverage) + emission, 1.0);
         return;
     }
 
-    if (uLight.IsStatic != 0 && bakedStaticMask > 0.5)
+    if (unlitMaterial)
+    {
+        FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+        return;
+    }
+
+    if (uLight.IsStatic != 0 && bakedStaticMaterial)
     {
         FragColor = vec4(0.0, 0.0, 0.0, 1.0);
         return;

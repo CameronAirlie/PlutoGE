@@ -246,7 +246,7 @@ namespace PlutoGE::render
             return found == graph.nodes.end() ? nullptr : &*found;
         }
 
-        std::string BuildFragmentSource(const ShaderGraph &graph, std::string &errorMessage)
+        std::string BuildFragmentSource(const ShaderGraph &graph, bool unlit, std::string &errorMessage)
         {
             const ShaderGraphNode *outputNode = FindOutputNode(graph);
             if (!outputNode)
@@ -260,6 +260,9 @@ namespace PlutoGE::render
             const std::string roughness = outputNode ? BuildOutputExpression(graph, *outputNode, "Roughness", "graphRoughness", errorMessage) : "graphRoughness";
             const std::string opacity = outputNode ? BuildOutputExpression(graph, *outputNode, "Opacity", "graphOpacity", errorMessage) : "graphOpacity";
             const std::string emission = outputNode ? BuildOutputExpression(graph, *outputNode, "Emission", "graphEmission", errorMessage) : "graphEmission";
+
+            const char *initialBakedLightingAlpha = unlit ? "2.0" : "0.0";
+            const char *allowLightmap = unlit ? "false" : "true";
 
             return std::string(R"(
             #version 330 core
@@ -381,12 +384,18 @@ namespace PlutoGE::render
                     graphRoughness *= ReadTextureChannel(texture(uRoughnessTexture, UV), uRoughnessTextureChannel);
                 }
 
-                vec3 finalAlbedo = ToVec3()" + albedo + ");\n"
-                "                vec3 finalNormal = normalize(ToVec3(" + normal + "));\n"
-                "                float finalMetallic = ToFloat(" + metallic + ");\n"
-                "                float finalRoughness = ToFloat(" + roughness + ");\n"
-                "                float finalOpacity = ToFloat(" + opacity + ");\n"
-                "                vec3 finalEmission = ToVec3(" + emission + ");\n" + R"(
+                vec3 finalAlbedo = ToVec3()" +
+                               albedo + ");\n"
+                                        "                vec3 finalNormal = normalize(ToVec3(" +
+                               normal + "));\n"
+                                        "                float finalMetallic = ToFloat(" +
+                               metallic + ");\n"
+                                          "                float finalRoughness = ToFloat(" +
+                               roughness + ");\n"
+                                           "                float finalOpacity = ToFloat(" +
+                               opacity + ");\n"
+                                         "                vec3 finalEmission = ToVec3(" +
+                               emission + ");\n" + R"(
 
                 if (uAlphaMode == 1 && finalOpacity < uAlphaCutoff)
                 {
@@ -396,10 +405,12 @@ namespace PlutoGE::render
                 gNormalRoughness = vec4(normalize(finalNormal), clamp(finalRoughness, 0.04, 1.0));
                 gAlbedoMetallic = vec4(finalAlbedo, clamp(finalMetallic, 0.0, 1.0));
                 gEmission = max(finalEmission, vec3(0.0));
-                gBakedLighting = vec4(0.0);
+                gBakedLighting = vec4(0.0, 0.0, 0.0, )" +
+                               std::string(initialBakedLightingAlpha) + R"();
                 gDebug = InstanceFlags.w <= 0.5 ? -1.0 : clamp(InstanceFlags.z / InstanceFlags.w, 0.0, 1.0);
 
-                if (InstanceFlags.x > 0.5 && uHasLightmapTexture > 0.5)
+                if ()" + std::string(allowLightmap) +
+                               R"( && InstanceFlags.x > 0.5 && uHasLightmapTexture > 0.5)
                 {
                     vec2 lightmapUv = clamp(mix(UV2, UV, clamp(InstanceFlags.y, 0.0, 1.0)), vec2(0.0), vec2(1.0));
                     gBakedLighting = vec4(max(texture(uLightmapTexture, lightmapUv).rgb, vec3(0.0)), 1.0);
@@ -443,6 +454,11 @@ namespace PlutoGE::render
         return graph;
     }
 
+    ShaderGraph CreateDefaultUnlitShaderGraph()
+    {
+        return CreateDefaultShaderGraph();
+    }
+
     std::uint64_t HashShaderGraph(const ShaderGraph &graph)
     {
         std::uint64_t hash = 1469598103934665603ull;
@@ -473,7 +489,7 @@ namespace PlutoGE::render
         return hash;
     }
 
-    Shader *CompileShaderGraphToGeometryShader(const ShaderGraph &graph, std::string *errorMessage)
+    Shader *CompileShaderGraphToGeometryShader(const ShaderGraph &graph, bool unlit, std::string *errorMessage)
     {
         std::string compileError;
         ShaderSource source;
@@ -546,7 +562,7 @@ namespace PlutoGE::render
                 TBN = mat3(worldTangent, normalize(worldBitangent), worldNormal);
             }
         )";
-        source.fragmentSource = BuildFragmentSource(graph, compileError);
+        source.fragmentSource = BuildFragmentSource(graph, unlit, compileError);
         if (errorMessage && !compileError.empty())
         {
             *errorMessage = compileError;
@@ -617,31 +633,51 @@ namespace PlutoGE::render
 
     ShaderGraphNodeKind ParseShaderGraphNodeKind(std::string_view value)
     {
-        if (value == "MaterialInput") return ShaderGraphNodeKind::MaterialInput;
-        if (value == "Vec2") return ShaderGraphNodeKind::Vec2;
-        if (value == "Vec3") return ShaderGraphNodeKind::Vec3;
-        if (value == "Color") return ShaderGraphNodeKind::Color;
-        if (value == "Add") return ShaderGraphNodeKind::Add;
-        if (value == "Subtract") return ShaderGraphNodeKind::Subtract;
-        if (value == "Multiply") return ShaderGraphNodeKind::Multiply;
-        if (value == "Divide") return ShaderGraphNodeKind::Divide;
-        if (value == "Lerp") return ShaderGraphNodeKind::Lerp;
-        if (value == "Clamp") return ShaderGraphNodeKind::Clamp;
-        if (value == "Normalize") return ShaderGraphNodeKind::Normalize;
-        if (value == "NoiseTexture") return ShaderGraphNodeKind::NoiseTexture;
-        if (value == "MeshUV") return ShaderGraphNodeKind::MeshUV;
-        if (value == "Output") return ShaderGraphNodeKind::Output;
+        if (value == "MaterialInput")
+            return ShaderGraphNodeKind::MaterialInput;
+        if (value == "Vec2")
+            return ShaderGraphNodeKind::Vec2;
+        if (value == "Vec3")
+            return ShaderGraphNodeKind::Vec3;
+        if (value == "Color")
+            return ShaderGraphNodeKind::Color;
+        if (value == "Add")
+            return ShaderGraphNodeKind::Add;
+        if (value == "Subtract")
+            return ShaderGraphNodeKind::Subtract;
+        if (value == "Multiply")
+            return ShaderGraphNodeKind::Multiply;
+        if (value == "Divide")
+            return ShaderGraphNodeKind::Divide;
+        if (value == "Lerp")
+            return ShaderGraphNodeKind::Lerp;
+        if (value == "Clamp")
+            return ShaderGraphNodeKind::Clamp;
+        if (value == "Normalize")
+            return ShaderGraphNodeKind::Normalize;
+        if (value == "NoiseTexture")
+            return ShaderGraphNodeKind::NoiseTexture;
+        if (value == "MeshUV")
+            return ShaderGraphNodeKind::MeshUV;
+        if (value == "Output")
+            return ShaderGraphNodeKind::Output;
         return ShaderGraphNodeKind::Float;
     }
 
     ShaderGraphMaterialInput ParseShaderGraphMaterialInput(std::string_view value)
     {
-        if (value == "Normal") return ShaderGraphMaterialInput::Normal;
-        if (value == "Metallic") return ShaderGraphMaterialInput::Metallic;
-        if (value == "Roughness") return ShaderGraphMaterialInput::Roughness;
-        if (value == "Opacity") return ShaderGraphMaterialInput::Opacity;
-        if (value == "UV") return ShaderGraphMaterialInput::UV;
-        if (value == "Emission") return ShaderGraphMaterialInput::Emission;
+        if (value == "Normal")
+            return ShaderGraphMaterialInput::Normal;
+        if (value == "Metallic")
+            return ShaderGraphMaterialInput::Metallic;
+        if (value == "Roughness")
+            return ShaderGraphMaterialInput::Roughness;
+        if (value == "Opacity")
+            return ShaderGraphMaterialInput::Opacity;
+        if (value == "UV")
+            return ShaderGraphMaterialInput::UV;
+        if (value == "Emission")
+            return ShaderGraphMaterialInput::Emission;
         return ShaderGraphMaterialInput::Color;
     }
 }

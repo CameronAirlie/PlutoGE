@@ -172,6 +172,8 @@ namespace PlutoGE::render
                 uniform sampler2D gDebug;
 
                 const float PI = 3.14159265359;
+                const float MATERIAL_FLAG_BAKED_STATIC = 1.0;
+                const float MATERIAL_FLAG_UNLIT = 2.0;
                 const int LIGHT_TYPE_POINT = 0;
                 const int LIGHT_TYPE_DIRECTIONAL = 1;
                 const int LIGHT_TYPE_SPOT = 2;
@@ -302,6 +304,16 @@ namespace PlutoGE::render
                     vec3 diffuse = kD * albedo / PI;
 
                     return (diffuse + specular) * radiance * ndotl;
+                }
+
+                bool IsBakedStaticMaterial(float materialFlag)
+                {
+                    return materialFlag >= MATERIAL_FLAG_BAKED_STATIC - 0.25 && materialFlag < MATERIAL_FLAG_UNLIT - 0.25;
+                }
+
+                bool IsUnlitMaterial(float materialFlag)
+                {
+                    return materialFlag >= MATERIAL_FLAG_UNLIT - 0.25;
                 }
             )";
 
@@ -620,9 +632,15 @@ namespace PlutoGE::render
                     vec3 albedo = albedoMetallic.rgb;
                     float roughness = clamp(normalRoughness.a, 0.04, 1.0);
                     float metallic = clamp(albedoMetallic.a, 0.0, 1.0);
+                    float materialFlag = texture(gBakedLighting, UV).a;
                     if (uDebugViewMode == DEBUG_VIEW_LOD)
                     {
                         FragColor = vec4(GetLodDebugColor(texture(gDebug, UV).r), 1.0);
+                        return;
+                    }
+                    if (IsUnlitMaterial(materialFlag))
+                    {
+                        FragColor = vec4(0.0, 0.0, 0.0, 1.0);
                         return;
                     }
                     if (uOutputShadowMask != 0)
@@ -638,8 +656,7 @@ namespace PlutoGE::render
 
                     if (uLight.IsStatic != 0)
                     {
-                        float bakedStaticMask = texture(gBakedLighting, UV).a;
-                        if (bakedStaticMask > 0.5)
+                        if (IsBakedStaticMaterial(materialFlag))
                         {
                             FragColor = vec4(0.0, 0.0, 0.0, 1.0);
                             return;

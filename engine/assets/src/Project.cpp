@@ -554,7 +554,7 @@ namespace PlutoGE::assets
                 entry.reference = tokens[1];
                 ParseUnsignedInteger(tokens[2], entry.size);
                 entry.type = tokens.size() >= 4 ? Project::ParseAssetTypeName(tokens[3])
-                                                 : Project::GetAssetTypeForReference(entry.reference);
+                                                : Project::GetAssetTypeForReference(entry.reference);
                 manifest.assetEntries.push_back(std::move(entry));
                 continue;
             }
@@ -590,6 +590,7 @@ namespace PlutoGE::assets
             std::string(kBuiltinDefaultMaterialReference),
             std::string(kBuiltinDefaultShadedMaterialReference),
             std::string(kBuiltinDefaultShaderGraphReference),
+            std::string(kBuiltinDefaultUnlitShaderGraphReference),
         };
     }
 

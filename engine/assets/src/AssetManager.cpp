@@ -442,7 +442,9 @@ namespace PlutoGE::assets
             return false;
         }
 
-        clip = ReadAnimationClip(input, version >= 4 ? 5 : version >= 3 ? 4 : version >= 2 ? 3 : 2);
+        clip = ReadAnimationClip(input, version >= 4 ? 5 : version >= 3 ? 4
+                                                       : version >= 2   ? 3
+                                                                        : 2);
         return input.good();
     }
 
@@ -1234,6 +1236,15 @@ namespace PlutoGE::assets
             return render::CreateDefaultShaderGraph();
         }
 
+        if (assetReference == Project::kBuiltinDefaultUnlitShaderGraphReference)
+        {
+            if (loaded)
+            {
+                *loaded = true;
+            }
+            return render::CreateDefaultUnlitShaderGraph();
+        }
+
         if (auto cached = m_shaderGraphCache.find(assetReference); cached != m_shaderGraphCache.end())
         {
             if (loaded)
@@ -1566,7 +1577,8 @@ namespace PlutoGE::assets
                     continue;
                 const int stateId = ParseIntOr(fields[0], 0);
                 const auto stateIt = std::find_if(graph.states.begin(), graph.states.end(),
-                                                  [stateId](const AnimationGraphState &state) { return state.id == stateId; });
+                                                  [stateId](const AnimationGraphState &state)
+                                                  { return state.id == stateId; });
                 if (stateIt == graph.states.end())
                     continue;
                 stateIt->blendSpaceParameterX = fields[1];
@@ -1579,7 +1591,8 @@ namespace PlutoGE::assets
                     continue;
                 const int stateId = ParseIntOr(fields[0], 0);
                 const auto stateIt = std::find_if(graph.states.begin(), graph.states.end(),
-                                                  [stateId](const AnimationGraphState &state) { return state.id == stateId; });
+                                                  [stateId](const AnimationGraphState &state)
+                                                  { return state.id == stateId; });
                 if (stateIt == graph.states.end())
                     continue;
                 stateIt->blendSpacePoints.push_back(AnimationGraphBlendSpacePoint{
@@ -1884,11 +1897,12 @@ namespace PlutoGE::assets
             return cached->second.second;
         }
 
-        render::Shader *shader = render::CompileShaderGraphToGeometryShader(graph, errorMessage);
+        const bool isUnlitBuiltin = cacheKey == Project::kBuiltinDefaultUnlitShaderGraphReference;
+        render::Shader *shader = render::CompileShaderGraphToGeometryShader(graph, isUnlitBuiltin, errorMessage);
         if (!shader && cacheKey != Project::kBuiltinDefaultShaderGraphReference)
         {
             graph = render::CreateDefaultShaderGraph();
-            shader = render::CompileShaderGraphToGeometryShader(graph, errorMessage);
+            shader = render::CompileShaderGraphToGeometryShader(graph, false, errorMessage);
         }
 
         if (shader)
@@ -1950,9 +1964,9 @@ namespace PlutoGE::assets
                     {
                         config.alphaMode = value == "Blend" || value == "blend" || value == "2"
                                                ? render::AlphaMode::Blend
-                                               : value == "Mask" || value == "mask" || value == "1"
-                                                     ? render::AlphaMode::Mask
-                                                     : render::AlphaMode::Opaque;
+                                           : value == "Mask" || value == "mask" || value == "1"
+                                               ? render::AlphaMode::Mask
+                                               : render::AlphaMode::Opaque;
                     }
                     else if (key == "AlphaCutoff")
                     {
@@ -2121,7 +2135,9 @@ namespace PlutoGE::assets
 
         output << "Color=" << config.color.r << "," << config.color.g << "," << config.color.b << "," << config.color.a << "\n";
         output << "SurfaceType=" << ToString(config.surfaceType) << "\n";
-        output << "AlphaMode=" << (config.alphaMode == render::AlphaMode::Blend ? "Blend" : config.alphaMode == render::AlphaMode::Mask ? "Mask" : "Opaque") << "\n";
+        output << "AlphaMode=" << (config.alphaMode == render::AlphaMode::Blend ? "Blend" : config.alphaMode == render::AlphaMode::Mask ? "Mask"
+                                                                                                                                        : "Opaque")
+               << "\n";
         output << "AlphaCutoff=" << config.alphaCutoff << "\n";
         output << "CastsShadow=" << (config.castsShadow ? "true" : "false") << "\n";
         output << "UvScale=" << config.uvScale.x << "," << config.uvScale.y << "\n";

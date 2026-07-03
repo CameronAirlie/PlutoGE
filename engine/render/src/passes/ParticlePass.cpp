@@ -177,6 +177,7 @@ namespace PlutoGE::render
                 out vec4 FragColor;
 
                 uniform vec4 uColor;
+                uniform vec3 uEmission = vec3(0.0);
                 uniform sampler2D uAlbedoTexture;
                 uniform float uHasAlbedoTexture;
                 uniform int uParticleRenderShape;
@@ -202,7 +203,9 @@ namespace PlutoGE::render
                     {
                         discard;
                     }
-                    FragColor = color;
+
+                    vec3 emissive = max(uEmission, vec3(0.0));
+                    FragColor = vec4(color.rgb + emissive, color.a);
                 }
             )";
             return Shader::Create(source);
@@ -237,6 +240,7 @@ namespace PlutoGE::render
                 out vec4 FragColor;
 
                 uniform vec4 uColor;
+                uniform vec3 uEmission = vec3(0.0);
                 uniform sampler2D uAlbedoTexture;
                 uniform float uHasAlbedoTexture;
 
@@ -253,7 +257,9 @@ namespace PlutoGE::render
                     {
                         discard;
                     }
-                    FragColor = color;
+
+                    vec3 emissive = max(uEmission, vec3(0.0));
+                    FragColor = vec4(color.rgb + emissive, color.a);
                 }
             )";
             return Shader::Create(source);
@@ -558,16 +564,17 @@ namespace PlutoGE::render
             return;
         }
 
-        const int targetWidth = ctx.renderTarget ? ctx.renderTarget->GetWidth() : (ctx.temporaryRenderTarget ? ctx.temporaryRenderTarget->GetWidth() : 0);
-        const int targetHeight = ctx.renderTarget ? ctx.renderTarget->GetHeight() : (ctx.temporaryRenderTarget ? ctx.temporaryRenderTarget->GetHeight() : 0);
+        RenderTarget *particleRenderTarget = ctx.temporaryRenderTarget ? ctx.temporaryRenderTarget : ctx.renderTarget;
+        const int targetWidth = particleRenderTarget ? particleRenderTarget->GetWidth() : 0;
+        const int targetHeight = particleRenderTarget ? particleRenderTarget->GetHeight() : 0;
         if (targetWidth <= 0 || targetHeight <= 0)
         {
             return;
         }
 
-        if (ctx.renderTarget)
+        if (particleRenderTarget)
         {
-            Graphics::BindRenderTarget(ctx.renderTarget);
+            Graphics::BindRenderTarget(particleRenderTarget);
         }
         else
         {

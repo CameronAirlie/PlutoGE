@@ -324,13 +324,13 @@ namespace PlutoGE::render
         volumetricCloudPass->Initialize();
         m_renderPasses.push_back(volumetricCloudPass);
 
-        auto postProcessPass = new PostProcessPass();
-        postProcessPass->Initialize();
-        m_renderPasses.push_back(postProcessPass);
-
         auto particlePass = new ParticlePass();
         particlePass->Initialize();
         m_renderPasses.push_back(particlePass);
+
+        auto postProcessPass = new PostProcessPass();
+        postProcessPass->Initialize();
+        m_renderPasses.push_back(postProcessPass);
 
         auto transparentPass = new TransparentPass();
         transparentPass->Initialize();

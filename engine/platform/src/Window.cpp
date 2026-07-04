@@ -220,6 +220,17 @@ namespace PlutoGE::platform
         ApplyCursorMode();
     }
 
+    void Window::SetEditorCursorLocked(bool locked)
+    {
+        if (m_requestedEditorCursorLocked == locked)
+        {
+            return;
+        }
+
+        m_requestedEditorCursorLocked = locked;
+        ApplyCursorMode();
+    }
+
     void Window::SetCursorLockOverride(bool forceVisible)
     {
         if (m_forceCursorVisible == forceVisible)
@@ -248,7 +259,8 @@ namespace PlutoGE::platform
 
     void Window::ApplyCursorMode()
     {
-        m_isCursorLocked = m_isScriptInputEnabled && m_requestedScriptCursorLocked && !m_forceCursorVisible;
+        const bool scriptLockActive = m_isScriptInputEnabled && m_requestedScriptCursorLocked;
+        m_isCursorLocked = (scriptLockActive || m_requestedEditorCursorLocked) && !m_forceCursorVisible;
         if (m_window)
         {
             glfwSetInputMode(static_cast<GLFWwindow *>(m_window), GLFW_CURSOR, m_isCursorLocked ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);

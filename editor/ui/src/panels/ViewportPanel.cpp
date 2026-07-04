@@ -10,6 +10,7 @@
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/scene/components/IblCaptureComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
+#include "PlutoGE/scene/components/AnimationComponent.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
 #include "PlutoGE/scene/components/ColliderComponent.h"
 #include "PlutoGE/scene/components/FoliageComponent.h"
@@ -746,6 +747,62 @@ namespace PlutoGE::ui
             return true;
         }
 
+        scene::AnimationComponent *FindAnimationComponent(scene::Entity *entity)
+        {
+            for (auto *current = entity; current != nullptr; current = current->GetParent())
+            {
+                if (auto *animationComponent = current->GetComponent<scene::AnimationComponent>())
+                {
+                    return animationComponent;
+                }
+            }
+
+            return nullptr;
+        }
+
+        glm::mat4 ComputeAnimationNodeBindMatrix(const std::vector<render::AnimationNode> &nodes, int nodeIndex)
+        {
+            if (nodeIndex < 0 || nodeIndex >= static_cast<int>(nodes.size()))
+            {
+                return glm::mat4(1.0f);
+            }
+
+            std::vector<int> chain;
+            for (int currentNodeIndex = nodeIndex;
+                 currentNodeIndex >= 0 && currentNodeIndex < static_cast<int>(nodes.size());
+                 currentNodeIndex = nodes[static_cast<size_t>(currentNodeIndex)].parentNodeIndex)
+            {
+                chain.push_back(currentNodeIndex);
+            }
+
+            glm::mat4 transform(1.0f);
+            for (auto iterator = chain.rbegin(); iterator != chain.rend(); ++iterator)
+            {
+                transform *= nodes[static_cast<size_t>(*iterator)].localBindTransform;
+            }
+            return transform;
+        }
+
+        glm::mat4 ComputePickSubmeshTransform(scene::Entity &entity,
+                                              scene::MeshComponent &meshComponent,
+                                              const render::Submesh &submesh,
+                                              scene::AnimationComponent *animationComponent)
+        {
+            glm::mat4 transform = entity.GetWorldTransform() * meshComponent.GetMeshOffsetTransform();
+            if (submesh.animatedNodeIndex >= 0)
+            {
+                render::Mesh *mesh = meshComponent.GetMesh();
+                if (mesh)
+                {
+                    transform *= animationComponent && animationComponent->GetClipCount() > 0
+                                     ? animationComponent->GetNodeMatrix(mesh->GetAnimationNodes(), submesh.animatedNodeIndex)
+                                     : ComputeAnimationNodeBindMatrix(mesh->GetAnimationNodes(), submesh.animatedNodeIndex);
+                }
+            }
+
+            return transform;
+        }
+
         std::optional<PickRay> BuildPickRay(const render::CameraData &cameraData,
                                             const ImVec2 &viewportMin,
                                             const ImVec2 &viewportSize)
@@ -777,8 +834,17 @@ namespace PlutoGE::ui
             nearPoint /= nearPoint.w;
             farPoint /= farPoint.w;
 
-            const glm::vec3 origin = glm::vec3(nearPoint);
-            const glm::vec3 direction = glm::normalize(glm::vec3(farPoint - nearPoint));
+            const glm::mat4 inverseView = glm::inverse(cameraData.view);
+            glm::vec4 cameraWorldPosition = inverseView * glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+            if (std::abs(cameraWorldPosition.w) <= kRayEpsilon)
+            {
+                return std::nullopt;
+            }
+
+            cameraWorldPosition /= cameraWorldPosition.w;
+
+            const glm::vec3 origin = glm::vec3(cameraWorldPosition);
+            const glm::vec3 direction = glm::normalize(glm::vec3(farPoint) - origin);
             if (!std::isfinite(direction.x) || !std::isfinite(direction.y) || !std::isfinite(direction.z))
             {
                 return std::nullopt;
@@ -815,11 +881,6 @@ namespace PlutoGE::ui
             float selectedDistance = std::numeric_limits<float>::max();
             for (auto *entity : entities)
             {
-                if (!entity || !entity->IsActive())
-                {
-                    continue;
-                }
-
                 auto *meshComponent = entity->GetComponent<scene::MeshComponent>();
                 auto *terrainComponent = entity->GetComponent<scene::TerrainComponent>();
                 if ((!meshComponent || !meshComponent->IsVisible() || !meshComponent->GetMesh()) && !terrainComponent)
@@ -846,28 +907,15 @@ namespace PlutoGE::ui
                     continue;
                 }
 
-                const glm::mat4 worldTransform = entity->GetWorldTransform();
-                const glm::mat4 inverseWorldTransform = glm::inverse(worldTransform);
-                glm::vec3 localOrigin = glm::vec3(inverseWorldTransform * glm::vec4(ray->origin, 1.0f));
-                glm::vec3 localDirection = glm::vec3(inverseWorldTransform * glm::vec4(ray->direction, 0.0f));
-                const float directionLengthSquared = glm::dot(localDirection, localDirection);
-                if (directionLengthSquared <= kRayEpsilon)
-                {
-                    continue;
-                }
-                localDirection = glm::normalize(localDirection);
-
                 render::Mesh *mesh = meshComponent->GetMesh();
-                if (!IntersectBounds(mesh->GetBounds(), localOrigin, localDirection))
-                {
-                    continue;
-                }
-
                 const auto &meshData = mesh->GetMeshData();
                 if (meshData.vertices.empty() || meshData.indices.size() < 3)
                 {
                     continue;
                 }
+
+                scene::AnimationComponent *animationComponent = FindAnimationComponent(entity);
+                const bool useApproximateSubmeshPick = mesh->HasSkeleton() && animationComponent && animationComponent->GetClipCount() > 0;
 
                 const size_t meshSubmeshCount = std::max<size_t>(mesh->GetSubmeshCount(), 1);
                 const size_t submeshBegin = meshComponent->GetSubmeshIndex() >= 0 ? static_cast<size_t>(meshComponent->GetSubmeshIndex()) : 0;
@@ -877,16 +925,31 @@ namespace PlutoGE::ui
                 {
                     const auto &submesh = submeshIndex < mesh->GetSubmeshCount() ? mesh->GetSubmesh(submeshIndex) : render::Submesh{};
                     if (submesh.indexCount < 3 ||
-                        submesh.indexOffset + submesh.indexCount > meshData.indices.size() ||
-                        !IntersectBounds(submesh.bounds, localOrigin, localDirection))
+                        submesh.indexOffset + submesh.indexCount > meshData.indices.size())
+                    {
+                        continue;
+                    }
+
+                    const glm::mat4 submeshWorldTransform = ComputePickSubmeshTransform(*entity, *meshComponent, submesh, animationComponent);
+                    const glm::mat4 inverseSubmeshWorldTransform = glm::inverse(submeshWorldTransform);
+                    glm::vec3 localOrigin = glm::vec3(inverseSubmeshWorldTransform * glm::vec4(ray->origin, 1.0f));
+                    glm::vec3 localDirection = glm::vec3(inverseSubmeshWorldTransform * glm::vec4(ray->direction, 0.0f));
+                    const float directionLengthSquared = glm::dot(localDirection, localDirection);
+                    if (directionLengthSquared <= kRayEpsilon)
+                    {
+                        continue;
+                    }
+                    localDirection = glm::normalize(localDirection);
+
+                    if (!IntersectBounds(submesh.bounds, localOrigin, localDirection))
                     {
                         continue;
                     }
 
                     const std::size_t triangleCount = submesh.indexCount / 3;
-                    if (triangleCount > kMaxExactPickTrianglesPerSubmesh)
+                    if (useApproximateSubmeshPick || triangleCount > kMaxExactPickTrianglesPerSubmesh)
                     {
-                        const glm::vec3 worldCenter = glm::vec3(worldTransform * glm::vec4(submesh.bounds.center, 1.0f));
+                        const glm::vec3 worldCenter = glm::vec3(submeshWorldTransform * glm::vec4(submesh.bounds.center, 1.0f));
                         const float approximateDistance = glm::length(worldCenter - ray->origin);
                         if (approximateDistance < selectedDistance)
                         {
@@ -924,7 +987,7 @@ namespace PlutoGE::ui
                         }
 
                         const glm::vec3 localHitPoint = localOrigin + localDirection * localDistance;
-                        const glm::vec3 worldHitPoint = glm::vec3(worldTransform * glm::vec4(localHitPoint, 1.0f));
+                        const glm::vec3 worldHitPoint = glm::vec3(submeshWorldTransform * glm::vec4(localHitPoint, 1.0f));
                         const float worldDistance = glm::length(worldHitPoint - ray->origin);
                         if (worldDistance < selectedDistance)
                         {
@@ -1186,6 +1249,7 @@ namespace PlutoGE::ui
 
         const std::string overlayName = "##ViewportSettingsOverlay" + m_config.name;
         ImGui::Begin(overlayName.c_str(), nullptr, flags);
+        bool overlayPopupOpen = false;
         if (m_config.editorViewport)
         {
             if (m_gizmoOperation == ImGuizmo::TRANSLATE)
@@ -1212,6 +1276,7 @@ namespace PlutoGE::ui
             }
             if (ImGui::BeginPopup("TransformPopup"))
             {
+                overlayPopupOpen = true;
                 if (ImGui::MenuItem("Move", "W", m_gizmoOperation == ImGuizmo::TRANSLATE))
                 {
                     m_gizmoOperation = ImGuizmo::TRANSLATE;
@@ -1250,6 +1315,7 @@ namespace PlutoGE::ui
         }
         if (ImGui::BeginPopup("ViewPopup"))
         {
+            overlayPopupOpen = true;
             if (m_config.editorViewport)
             {
                 ImGui::MenuItem("Grid", nullptr, &m_showGrid);
@@ -1278,6 +1344,7 @@ namespace PlutoGE::ui
         }
         if (ImGui::BeginPopup("QualityPopup"))
         {
+            overlayPopupOpen = true;
             ImGui::SetNextItemWidth(180.0f);
             if (ImGui::SliderFloat("Render Scale", &m_renderScale, kMinRenderScale, kMaxRenderScale, "%.2fx"))
             {
@@ -1296,6 +1363,7 @@ namespace PlutoGE::ui
             }
             if (ImGui::BeginPopup("SnapPopup"))
             {
+                overlayPopupOpen = true;
                 ImGui::MenuItem("Enabled", nullptr, &m_enableSnap);
                 ImGui::BeginDisabled(!m_enableSnap);
                 ImGui::SetNextItemWidth(210.0f);
@@ -1328,8 +1396,7 @@ namespace PlutoGE::ui
         }
 
         const bool hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup | ImGuiHoveredFlags_ChildWindows) ||
-                             ImGui::IsAnyItemHovered() ||
-                             ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId);
+                             overlayPopupOpen;
         ImGui::End();
         ImGui::PopStyleVar(3);
 
@@ -1482,7 +1549,11 @@ namespace PlutoGE::ui
                                  snapValues);
             // IsOver is global state inside ImGuizmo. Only trust it in a frame
             // where this viewport actually submitted a gizmo.
-            gizmoBlocksSelection = ImGuizmo::IsOver() || ImGuizmo::IsUsing();
+            // IsOver() covers the gizmo's projected hit regions and can be true
+            // well away from a visible handle (especially at shallow camera
+            // angles).  Only an interaction that the gizmo actually captured
+            // should consume a viewport selection click.
+            gizmoBlocksSelection = ImGuizmo::IsUsing();
             if (ImGuizmo::IsUsing())
             {
                 m_isTransformGizmoUsing = true;

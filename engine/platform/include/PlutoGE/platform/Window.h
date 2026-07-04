@@ -47,6 +47,7 @@ namespace PlutoGE::platform
 
         void SetResizeCallback(const std::function<void(int, int)> &callback);
         void SetCursorLocked(bool locked);
+        void SetEditorCursorLocked(bool locked);
         void SetCursorLockOverride(bool forceVisible);
         void SetScriptInputEnabled(bool enabled);
 
@@ -68,6 +69,7 @@ namespace PlutoGE::platform
         bool m_isCursorLocked = false;
         bool m_isScriptInputEnabled = true;
         bool m_requestedScriptCursorLocked = false;
+        bool m_requestedEditorCursorLocked = false;
         bool m_forceCursorVisible = false;
 
         void ApplyCursorMode();

@@ -460,29 +460,22 @@ namespace PlutoGE::ui
             }
         }
 
-        void SetCursorCapture(GLFWwindow *windowHandle, bool captured)
-        {
-            if (!windowHandle)
-            {
-                return;
-            }
-
-            glfwSetInputMode(windowHandle, GLFW_CURSOR, captured ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
-        }
-
         void UpdateEditorCamera(EditorShell::EditorViewportCamera &camera,
+                                platform::Window &window,
                                 GLFWwindow *windowHandle,
                                 bool canActivate,
                                 float deltaTime,
                                 bool &isLookActive,
                                 double &lastCursorX,
-                                double &lastCursorY)
+                                double &lastCursorY,
+                                double &restoreCursorX,
+                                double &restoreCursorY)
         {
             if (!windowHandle)
             {
                 if (isLookActive)
                 {
-                    SetCursorCapture(windowHandle, false);
+                    window.SetEditorCursorLocked(false);
                     isLookActive = false;
                 }
                 return;
@@ -493,7 +486,10 @@ namespace PlutoGE::ui
             {
                 if (isLookActive)
                 {
-                    SetCursorCapture(windowHandle, false);
+                    window.SetEditorCursorLocked(false);
+                    glfwSetCursorPos(windowHandle, restoreCursorX, restoreCursorY);
+                    lastCursorX = restoreCursorX;
+                    lastCursorY = restoreCursorY;
                     isLookActive = false;
                 }
                 return;
@@ -507,8 +503,10 @@ namespace PlutoGE::ui
                 }
 
                 isLookActive = true;
-                SetCursorCapture(windowHandle, true);
-                glfwGetCursorPos(windowHandle, &lastCursorX, &lastCursorY);
+                glfwGetCursorPos(windowHandle, &restoreCursorX, &restoreCursorY);
+                window.SetEditorCursorLocked(true);
+                lastCursorX = restoreCursorX;
+                lastCursorY = restoreCursorY;
             }
 
             double cursorX = 0.0;
@@ -2227,6 +2225,8 @@ namespace PlutoGE::ui
         bool cursorOverrideShortcutWasDown = false;
         double lastEditorCameraCursorX = 0.0;
         double lastEditorCameraCursorY = 0.0;
+        double restoreEditorCameraCursorX = 0.0;
+        double restoreEditorCameraCursorY = 0.0;
         std::array<char, 256> projectNameBuffer{};
         std::array<char, 256> projectWindowTitleBuffer{};
         std::array<char, 512> projectScriptAssemblyBuffer{};
@@ -2316,12 +2316,15 @@ namespace PlutoGE::ui
             const auto renderTarget2Width = renderTarget2->GetWidth();
             const auto renderTarget2Height = renderTarget2->GetHeight();
             UpdateEditorCamera(m_editorCamera,
+                               window,
                                windowHandle,
-                               !isRuntimeRunning && (viewportPanel->IsViewportHovered() || viewportPanel->IsViewportFocused()),
+                               !isRuntimeRunning && viewportPanel->IsViewportHovered(),
                                deltaSeconds,
                                isEditorCameraLookActive,
                                lastEditorCameraCursorX,
-                               lastEditorCameraCursorY);
+                               lastEditorCameraCursorY,
+                               restoreEditorCameraCursorX,
+                               restoreEditorCameraCursorY);
 
             auto *cameraComponent2 = FindFirstSceneCamera(m_scene.get());
             const bool shouldRenderViewport1 = viewportPanel->ShouldRenderFrame();
@@ -3064,7 +3067,8 @@ namespace PlutoGE::ui
 
         if (isEditorCameraLookActive)
         {
-            SetCursorCapture(windowHandle, false);
+            window.SetEditorCursorLocked(false);
+            glfwSetCursorPos(windowHandle, restoreEditorCameraCursorX, restoreEditorCameraCursorY);
         }
         window.SetCursorLockOverride(false);
     }

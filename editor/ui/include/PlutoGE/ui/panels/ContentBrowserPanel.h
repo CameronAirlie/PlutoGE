@@ -58,6 +58,7 @@ namespace PlutoGE::ui
             ImportModel,
             CreateMaterial,
             CreateParticleSystem,
+            CreatePostProcessPreset,
             CreateShaderGraph,
             CreateAnimationGraph,
             CreateScriptableObject,
@@ -66,6 +67,7 @@ namespace PlutoGE::ui
         std::array<char, 160> m_filterBuffer{};
         std::array<char, 96> m_newMaterialNameBuffer{};
         std::array<char, 96> m_newParticleSystemNameBuffer{};
+        std::array<char, 96> m_newPostProcessPresetNameBuffer{};
         std::array<char, 96> m_newShaderGraphNameBuffer{};
         std::array<char, 96> m_newAnimationGraphNameBuffer{};
         std::array<char, 96> m_newScriptableObjectNameBuffer{};

@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <future>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -84,6 +85,8 @@ namespace PlutoGE::core
         void UpdateAsyncMeshImports();
         [[nodiscard]] MeshImportStatus GetMeshImportStatus(scene::EntityID entityId) const;
         void SetScene(scene::Scene *scene);
+        bool RequestSceneLoad(std::string sceneAssetReference);
+        std::optional<std::string> ConsumeSceneLoadRequest();
 
     private:
         struct PendingMeshImportJob
@@ -117,5 +120,6 @@ namespace PlutoGE::core
 
         bool m_isInitialized = false;
         bool m_isRuntimeRunning = false;
+        std::optional<std::string> m_pendingSceneLoadRequest;
     };
 }

@@ -174,6 +174,7 @@ namespace PlutoGE::scene
         float m_duration = 5.0f;
         float m_time = 0.0f;
         float m_pendingDeltaTime = 0.0f;
+        float m_gpuSimulationTimeRemaining = 0.0f;
         float m_emissionAccumulator = 0.0f;
         int m_pendingEmitCount = 0;
         int m_nextEmitIndex = 0;

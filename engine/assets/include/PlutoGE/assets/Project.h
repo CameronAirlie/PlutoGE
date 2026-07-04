@@ -23,6 +23,7 @@ namespace PlutoGE::assets
         ShaderGraph,
         AnimationGraph,
         ParticleSystem,
+        PostProcessPreset,
         Texture,
         Assembly,
         ScriptableObject,
@@ -73,6 +74,7 @@ namespace PlutoGE::assets
         bool vSyncEnabled = true;
         float editorFontSize = 15.0f;
         ProjectEditorCameraSettings editorCamera;
+        std::string editorCameraPostProcessPreset;
         std::vector<ProjectPostProcessEffect> editorCameraPostProcessEffects;
         std::vector<ProjectAssetEntry> assetEntries;
     };
@@ -112,6 +114,7 @@ namespace PlutoGE::assets
 
         std::string MakeAssetReference(const std::filesystem::path &filePath) const;
         std::filesystem::path ResolveAssetReference(std::string_view reference) const;
+        std::string FindSceneAssetReference(std::string_view nameOrReference) const;
         bool IsInAssetDirectory(const std::filesystem::path &filePath) const;
 
         const ProjectManifest &GetManifest() const { return m_manifest; }

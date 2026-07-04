@@ -1,5 +1,7 @@
 #include "PlutoGE/scene/components/CameraComponent.h"
 #include "PlutoGE/scene/Entity.h"
+#include "PlutoGE/assets/PostProcessPresetAsset.h"
+#include "PlutoGE/core/Engine.h"
 #include "PlutoGE/render/Camera.h"
 #include "PlutoGE/render/postprocess/AutoExposureEffect.h"
 #include "PlutoGE/render/postprocess/LPVEffect.h"
@@ -207,6 +209,23 @@ namespace PlutoGE::scene
         return m_postProcessEffects[index].get();
     }
 
+    bool CameraComponent::SetPostProcessPresetAssetReference(std::string assetReference)
+    {
+        if (assetReference.empty())
+        {
+            m_postProcessPresetAssetReference.clear();
+            ClearPostProcessEffects();
+            return true;
+        }
+        bool loaded = false;
+        const auto preset = core::Engine::GetInstance().GetAssetManager().LoadPostProcessPresetAsset(assetReference, &loaded);
+        if (!loaded)
+            return false;
+        m_postProcessEffects = assets::InstantiatePostProcessPreset(preset);
+        m_postProcessPresetAssetReference = std::move(assetReference);
+        return true;
+    }
+
     std::vector<Property> CameraComponent::Serialize() const
     {
         std::vector<Property> properties;
@@ -218,6 +237,12 @@ namespace PlutoGE::scene
         }
 
         properties.push_back({"MainCamera", scene::PropertyType::Bool, m_isMainCamera ? "true" : "false"});
+
+        properties.push_back({"PostProcessPresetAsset", scene::PropertyType::String, m_postProcessPresetAssetReference});
+
+        // Inline effects are retained only for legacy cameras that have not selected a preset yet.
+        if (!m_postProcessPresetAssetReference.empty())
+            return properties;
 
         properties.push_back({"PostProcessEffectCount", scene::PropertyType::Int, std::to_string(m_postProcessEffects.size())});
 
@@ -255,6 +280,7 @@ namespace PlutoGE::scene
         }
 
         bool hasSerializedEffects = false;
+        std::string presetReference;
         std::map<size_t, SerializedEffectData> serializedEffects;
 
         for (const auto &property : properties)
@@ -278,6 +304,10 @@ namespace PlutoGE::scene
             else if (property.name == "PostProcessEffectCount")
             {
                 hasSerializedEffects = true;
+            }
+            else if (property.name == "PostProcessPresetAsset")
+            {
+                presetReference = property.value;
             }
             else if (property.name.rfind(kEffectPrefix, 0) == 0)
             {
@@ -327,6 +357,11 @@ namespace PlutoGE::scene
                     parameter->enumOptions = property.enumOptions;
                 }
             }
+        }
+
+        if (!presetReference.empty() && SetPostProcessPresetAssetReference(presetReference))
+        {
+            return;
         }
 
         if (!hasSerializedEffects)

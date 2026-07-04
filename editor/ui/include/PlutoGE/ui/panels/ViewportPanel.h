@@ -46,6 +46,8 @@ namespace PlutoGE::ui
         bool IsViewportFocused() const { return m_isViewportFocused; }
         bool IsTransformGizmoUsing() const { return m_isTransformGizmoUsing; }
         bool IsGridVisible() const { return m_showGrid; }
+        glm::vec2 GetViewportMin() const { return m_viewportMin; }
+        glm::vec2 GetViewportSize() const { return m_viewportSize; }
         void SetPanelControlsEnabled(bool enabled) { m_panelControlsEnabled = enabled; }
         static const char *GetDebugViewLabel(render::PostProcessDebugView debugView);
 
@@ -73,5 +75,7 @@ namespace PlutoGE::ui
         bool m_isViewportFocused = false;
         bool m_isTransformGizmoUsing = false;
         bool m_panelControlsEnabled = true;
+        glm::vec2 m_viewportMin{0.0f};
+        glm::vec2 m_viewportSize{0.0f};
     };
 }

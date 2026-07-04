@@ -45,6 +45,8 @@ namespace PlutoGE::scene
         const std::vector<std::unique_ptr<render::IPostProcessEffect>> &GetPostProcessEffects() const { return m_postProcessEffects; }
         render::IPostProcessEffect *GetPostProcessEffect(size_t index);
         const render::IPostProcessEffect *GetPostProcessEffect(size_t index) const;
+        bool SetPostProcessPresetAssetReference(std::string assetReference);
+        const std::string &GetPostProcessPresetAssetReference() const { return m_postProcessPresetAssetReference; }
 
         template <typename TEffect, typename... TArgs>
         TEffect &EmplacePostProcessEffect(TArgs &&...args)
@@ -61,5 +63,6 @@ namespace PlutoGE::scene
         std::unique_ptr<render::Camera> m_camera;
         bool m_isMainCamera = false;
         std::vector<std::unique_ptr<render::IPostProcessEffect>> m_postProcessEffects;
+        std::string m_postProcessPresetAssetReference;
     };
 }

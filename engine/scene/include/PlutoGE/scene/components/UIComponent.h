@@ -30,6 +30,12 @@ namespace PlutoGE::scene
         Stretch,
     };
 
+    struct RectTransformLayout
+    {
+        glm::vec2 min{0.0f};
+        glm::vec2 max{0.0f};
+    };
+
     class CanvasComponent : public TypedComponent<CanvasComponent>
     {
     public:
@@ -155,4 +161,7 @@ namespace PlutoGE::scene
         bool m_released = false;
         bool m_clicked = false;
     };
+
+    RectTransformLayout ResolveRectTransformLayout(const RectTransformComponent &rectTransform,
+                                                   const RectTransformLayout &parentRect);
 }

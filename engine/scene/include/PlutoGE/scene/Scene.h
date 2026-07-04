@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <glm/glm.hpp>
 #include <memory>
+#include <optional>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -96,6 +97,8 @@ namespace PlutoGE::scene
         void StartRuntime();
         void StopRuntime();
         void Update(float deltaTime);
+        void SetRuntimeUIInputOverride(const glm::vec2 &canvasSize, const glm::vec2 &mousePosition, bool pointerInside);
+        void ClearRuntimeUIInputOverride();
         [[nodiscard]] bool IsRuntimeStarted() const { return m_runtimeStarted; }
         [[nodiscard]] const SceneUpdateTimingStats &GetUpdateTimingStats() const { return m_updateTimingStats; }
 
@@ -200,6 +203,13 @@ namespace PlutoGE::scene
         uint64_t m_updateSequence = 0;
         std::unique_ptr<RuntimePhysicsState> m_runtimePhysicsState;
         std::vector<PendingRigidbodyForce> m_pendingRigidbodyForces;
+        struct RuntimeUIInputOverride
+        {
+            glm::vec2 canvasSize{0.0f};
+            glm::vec2 mousePosition{0.0f};
+            bool pointerInside = false;
+        };
+        std::optional<RuntimeUIInputOverride> m_runtimeUIInputOverride;
         void CollectEntitySubtree(Entity *entity, std::vector<Entity *> &entities) const;
         bool RemoveEntityRecursive(Entity *current, Entity *target);
         void FlushPendingDestroyEntities();

@@ -42,10 +42,12 @@ namespace PlutoGE::platform
         [[nodiscard]] InputState &GetInputState() { return m_inputState; }
         [[nodiscard]] bool IsCursorLocked() const;
         [[nodiscard]] bool IsCursorLockRequested() const { return m_requestedScriptCursorLocked; }
+        [[nodiscard]] bool IsCursorLockOverridden() const { return m_forceCursorVisible; }
         [[nodiscard]] bool IsScriptInputEnabled() const { return m_isScriptInputEnabled; }
 
         void SetResizeCallback(const std::function<void(int, int)> &callback);
         void SetCursorLocked(bool locked);
+        void SetCursorLockOverride(bool forceVisible);
         void SetScriptInputEnabled(bool enabled);
 
         void SetContextCurrent();
@@ -66,6 +68,7 @@ namespace PlutoGE::platform
         bool m_isCursorLocked = false;
         bool m_isScriptInputEnabled = true;
         bool m_requestedScriptCursorLocked = false;
+        bool m_forceCursorVisible = false;
 
         void ApplyCursorMode();
     };

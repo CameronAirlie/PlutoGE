@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <sstream>
 #include <unordered_map>
 
@@ -2440,6 +2441,109 @@ namespace PlutoGE::assets
         }
 
         m_particleSystemCache[assetReference] = asset;
+        return true;
+    }
+
+    PostProcessPresetAsset AssetManager::LoadPostProcessPresetAsset(const std::string &assetReference, bool *loaded)
+    {
+        if (loaded)
+            *loaded = false;
+        if (assetReference.empty())
+            return {};
+        if (auto cached = m_postProcessPresetCache.find(assetReference); cached != m_postProcessPresetCache.end())
+        {
+            if (loaded)
+                *loaded = true;
+            return cached->second;
+        }
+
+        const std::string path = ResolveAssetPath(assetReference);
+        if (path.empty() || std::filesystem::path(path).extension() != ".plutopostprocess")
+            return {};
+        std::ifstream input(path);
+        std::string header;
+        int version = 0;
+        std::size_t effectCount = 0;
+        if (!(input >> header >> version >> effectCount) || header != "PostProcessPresetVersion" || version != 1)
+            return {};
+
+        PostProcessPresetAsset asset;
+        for (std::size_t effectIndex = 0; effectIndex < effectCount; ++effectIndex)
+        {
+            std::string record;
+            PostProcessEffectAsset effect;
+            std::size_t parameterCount = 0;
+            if (!(input >> record >> std::quoted(effect.typeName) >> effect.enabled >> parameterCount) || record != "Effect")
+                return {};
+            for (std::size_t parameterIndex = 0; parameterIndex < parameterCount; ++parameterIndex)
+            {
+                render::PostProcessParameter parameter;
+                int type = 0;
+                std::size_t enumOptionCount = 0;
+                if (!(input >> record >> type >> std::quoted(parameter.name) >> std::quoted(parameter.value) >> enumOptionCount) || record != "Parameter")
+                    return {};
+                parameter.type = static_cast<render::PostProcessParameterType>(type);
+                for (std::size_t optionIndex = 0; optionIndex < enumOptionCount; ++optionIndex)
+                {
+                    std::string option;
+                    if (!(input >> std::quoted(option)))
+                        return {};
+                    parameter.enumOptions.push_back(std::move(option));
+                }
+                effect.parameters.push_back(std::move(parameter));
+            }
+            asset.effects.push_back(std::move(effect));
+        }
+        m_postProcessPresetCache[assetReference] = asset;
+        if (loaded)
+            *loaded = true;
+        return asset;
+    }
+
+    bool AssetManager::SavePostProcessPresetAsset(const std::string &assetReference, const PostProcessPresetAsset &asset, std::string *errorMessage)
+    {
+        if (assetReference.empty() || Project::IsEngineAssetReference(assetReference))
+        {
+            if (errorMessage)
+                *errorMessage = "Cannot save an empty or engine post process preset reference.";
+            return false;
+        }
+        const std::string path = ResolveAssetPath(assetReference);
+        if (path.empty() || std::filesystem::path(path).extension() != ".plutopostprocess")
+        {
+            if (errorMessage)
+                *errorMessage = "Could not resolve post process preset path.";
+            return false;
+        }
+        std::error_code errorCode;
+        std::filesystem::create_directories(std::filesystem::path(path).parent_path(), errorCode);
+        std::ofstream output(path, std::ios::trunc);
+        if (errorCode || !output.is_open())
+        {
+            if (errorMessage)
+                *errorMessage = "Failed to open post process preset for writing.";
+            return false;
+        }
+        output << "PostProcessPresetVersion 1 " << asset.effects.size() << '\n';
+        for (const auto &effect : asset.effects)
+        {
+            output << "Effect " << std::quoted(effect.typeName) << ' ' << effect.enabled << ' ' << effect.parameters.size() << '\n';
+            for (const auto &parameter : effect.parameters)
+            {
+                output << "Parameter " << static_cast<int>(parameter.type) << ' ' << std::quoted(parameter.name) << ' '
+                       << std::quoted(parameter.value) << ' ' << parameter.enumOptions.size();
+                for (const auto &option : parameter.enumOptions)
+                    output << ' ' << std::quoted(option);
+                output << '\n';
+            }
+        }
+        if (!output.good())
+        {
+            if (errorMessage)
+                *errorMessage = "Failed to write post process preset.";
+            return false;
+        }
+        m_postProcessPresetCache[assetReference] = asset;
         return true;
     }
 

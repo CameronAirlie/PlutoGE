@@ -58,6 +58,9 @@ namespace PlutoGE::ui
             float yawDegrees = 0.0f;
             float pitchDegrees = 0.0f;
             std::vector<std::unique_ptr<render::IPostProcessEffect>> postProcessEffects;
+            std::string postProcessPresetAssetReference;
+
+            bool SetPostProcessPresetAssetReference(std::string assetReference);
 
             void AddPostProcessEffect(std::unique_ptr<render::IPostProcessEffect> effect)
             {
@@ -117,6 +120,7 @@ namespace PlutoGE::ui
             }
 
             const std::vector<std::unique_ptr<render::IPostProcessEffect>> &GetPostProcessEffects() const { return postProcessEffects; }
+            const std::string &GetPostProcessPresetAssetReference() const { return postProcessPresetAssetReference; }
         };
 
         void Initialize();
@@ -254,6 +258,7 @@ namespace PlutoGE::ui
         bool RestoreSceneState(const std::string &state, std::string *errorMessage = nullptr, bool markDirty = true);
         bool StartEditorRuntime();
         bool StopEditorRuntime();
+        void HandleRuntimeSceneLoadRequest();
         bool ConfirmContinueWithUnsavedChanges();
         void MarkSceneClean();
         void MarkProjectClean();
@@ -289,6 +294,7 @@ namespace PlutoGE::ui
         std::string m_activeAnimationGraphAssetReference;
         std::string m_activeParticleSystemAssetReference;
         std::string m_runtimeSceneSnapshot;
+        std::string m_runtimeSceneSnapshotPath;
         bool m_runtimeSceneWasDirty = false;
         bool m_openMaterialEditorRequested = false;
         bool m_openMeshEditorRequested = false;

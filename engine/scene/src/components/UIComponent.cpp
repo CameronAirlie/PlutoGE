@@ -5,6 +5,18 @@
 
 namespace PlutoGE::scene
 {
+    RectTransformLayout ResolveRectTransformLayout(const RectTransformComponent &rectTransform,
+                                                   const RectTransformLayout &parentRect)
+    {
+        const glm::vec2 parentSize = glm::max(parentRect.max - parentRect.min, glm::vec2(0.0f));
+        const glm::vec2 anchorMinPosition = parentRect.min + parentSize * rectTransform.GetAnchorMin();
+        const glm::vec2 anchorMaxPosition = parentRect.min + parentSize * rectTransform.GetAnchorMax();
+        const glm::vec2 anchorReference = glm::mix(anchorMinPosition, anchorMaxPosition, rectTransform.GetPivot());
+        const glm::vec2 size = glm::max((anchorMaxPosition - anchorMinPosition) + rectTransform.GetSizeDelta(), glm::vec2(0.0f));
+        const glm::vec2 min = anchorReference + rectTransform.GetAnchoredPosition() - size * rectTransform.GetPivot();
+        return {.min = min, .max = min + size};
+    }
+
     namespace
     {
         std::string SerializeVec2(const glm::vec2 &value)

@@ -508,12 +508,33 @@ namespace PlutoGE::core
             m_scene->StopRuntime();
         }
 
+        // Scene updates may already have submitted commands containing pointers
+        // into the outgoing scene. Never carry those across a scene transition.
+        m_renderer.ClearRenderCommands();
         m_scene = scene;
 
         if (m_isRuntimeRunning && m_scene)
         {
             m_scene->StartRuntime();
         }
+    }
+
+    bool Engine::RequestSceneLoad(std::string sceneAssetReference)
+    {
+        if (!m_isRuntimeRunning || sceneAssetReference.empty())
+        {
+            return false;
+        }
+
+        m_pendingSceneLoadRequest = std::move(sceneAssetReference);
+        return true;
+    }
+
+    std::optional<std::string> Engine::ConsumeSceneLoadRequest()
+    {
+        auto request = std::move(m_pendingSceneLoadRequest);
+        m_pendingSceneLoadRequest.reset();
+        return request;
     }
 
     void Engine::StartRuntime()
@@ -543,6 +564,7 @@ namespace PlutoGE::core
         }
 
         m_isRuntimeRunning = false;
+        m_pendingSceneLoadRequest.reset();
     }
 
     void Engine::Shutdown()

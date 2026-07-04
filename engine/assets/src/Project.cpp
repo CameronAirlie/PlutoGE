@@ -518,6 +518,12 @@ namespace PlutoGE::assets
                 continue;
             }
 
+            if (tokens[0] == "EDITOR_CAMERA_POST_PROCESS_PRESET" && tokens.size() >= 2)
+            {
+                manifest.editorCameraPostProcessPreset = tokens[1];
+                continue;
+            }
+
             if (tokens[0] == "EDITOR_CAMERA_EFFECT" && tokens.size() >= 3)
             {
                 ProjectPostProcessEffect effect;
@@ -668,6 +674,10 @@ namespace PlutoGE::assets
         {
             return ProjectAssetType::ParticleSystem;
         }
+        if (EndsWithInsensitive(reference, ".plutopostprocess"))
+        {
+            return ProjectAssetType::PostProcessPreset;
+        }
         if (EndsWithInsensitive(reference, ".plutomesh") || EndsWithInsensitive(reference, ".obj"))
         {
             return ProjectAssetType::Mesh;
@@ -720,6 +730,8 @@ namespace PlutoGE::assets
             return "Animation Graph";
         case ProjectAssetType::ParticleSystem:
             return "Particle System";
+        case ProjectAssetType::PostProcessPreset:
+            return "Post Process Preset";
         case ProjectAssetType::Texture:
             return "Texture";
         case ProjectAssetType::Assembly:
@@ -756,6 +768,8 @@ namespace PlutoGE::assets
             return ProjectAssetType::AnimationGraph;
         if (typeName == "Particle System" || typeName == "ParticleSystem")
             return ProjectAssetType::ParticleSystem;
+        if (typeName == "Post Process Preset" || typeName == "PostProcessPreset")
+            return ProjectAssetType::PostProcessPreset;
         if (typeName == "Texture")
             return ProjectAssetType::Texture;
         if (typeName == "Assembly")
@@ -794,6 +808,7 @@ namespace PlutoGE::assets
                << m_manifest.editorCamera.fovY << '\t'
                << m_manifest.editorCamera.nearPlane << '\t'
                << m_manifest.editorCamera.farPlane << '\n';
+        output << "EDITOR_CAMERA_POST_PROCESS_PRESET\t" << EscapeText(m_manifest.editorCameraPostProcessPreset) << '\n';
         for (std::size_t effectIndex = 0; effectIndex < m_manifest.editorCameraPostProcessEffects.size(); ++effectIndex)
         {
             const auto &effect = m_manifest.editorCameraPostProcessEffects[effectIndex];
@@ -895,6 +910,42 @@ namespace PlutoGE::assets
 
         const auto relativePath = std::filesystem::path(reference.substr(kProjectAssetScheme.size()));
         return (GetAssetDirectoryPath() / relativePath).lexically_normal();
+    }
+
+    std::string Project::FindSceneAssetReference(std::string_view nameOrReference) const
+    {
+        if (nameOrReference.empty())
+            return {};
+
+        const std::string requested(nameOrReference);
+        if (GetAssetTypeForReference(requested) == ProjectAssetType::Scene)
+        {
+            if (IsProjectAssetReference(requested))
+                return std::filesystem::exists(ResolveAssetReference(requested)) ? requested : std::string{};
+            const std::filesystem::path requestedPath(requested);
+            if (requestedPath.is_absolute())
+                return std::filesystem::exists(requestedPath) ? requestedPath.lexically_normal().string() : std::string{};
+        }
+
+        std::filesystem::path requestedPath(requested);
+        std::string requestedFileName = requestedPath.filename().string();
+        std::string requestedStem = requestedPath.stem().string();
+        if (requestedPath.extension().empty())
+            requestedFileName += ".plutoscene";
+
+        for (const auto &entry : m_manifest.assetEntries)
+        {
+            if (entry.type != ProjectAssetType::Scene)
+                continue;
+            std::string relative = entry.reference;
+            if (IsProjectAssetReference(relative))
+                relative.erase(0, kProjectAssetScheme.size());
+            const std::filesystem::path entryPath(relative);
+            if (relative == requested || entryPath.generic_string() == requested ||
+                entryPath.filename().string() == requestedFileName || entryPath.stem().string() == requestedStem)
+                return entry.reference;
+        }
+        return {};
     }
 
     bool Project::IsInAssetDirectory(const std::filesystem::path &filePath) const

@@ -15,6 +15,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -87,6 +88,7 @@ namespace PlutoGE::render
         struct ActiveCanvas
         {
             const scene::CanvasComponent *component = nullptr;
+            std::optional<scene::RectTransformLayout> parentRect;
         };
 
         struct ProjectedWorldPoint
@@ -241,15 +243,6 @@ namespace PlutoGE::render
             )";
 
             return Shader::Create(source);
-        }
-
-        UIRect ResolveScreenRect(const scene::RectTransformComponent &rectTransform, const glm::vec2 &canvasSize)
-        {
-            const glm::vec2 anchorPosition = canvasSize * rectTransform.GetAnchorMin();
-            const glm::vec2 size = glm::max(rectTransform.GetSizeDelta(), glm::vec2(0.0f));
-            const glm::vec2 pivotOffset = size * rectTransform.GetPivot();
-            const glm::vec2 min = anchorPosition + rectTransform.GetAnchoredPosition() - pivotOffset;
-            return UIRect{.min = min, .max = min + size};
         }
 
         UIRect ResolveWorldOverlayRect(const scene::RectTransformComponent &rectTransform,
@@ -746,6 +739,11 @@ namespace PlutoGE::render
             if (auto *canvas = entity->GetComponent<scene::CanvasComponent>(); canvas && canvas->IsEnabled())
             {
                 activeCanvas.component = canvas;
+                const float scaleFactor = std::max(canvas->GetScaleFactor(), 0.0001f);
+                activeCanvas.parentRect = scene::RectTransformLayout{
+                    .min = glm::vec2(0.0f),
+                    .max = viewportSize / scaleFactor,
+                };
             }
 
             auto *rectTransform = entity->GetComponent<scene::RectTransformComponent>();
@@ -769,9 +767,12 @@ namespace PlutoGE::render
                     const float uniformWorldScale = std::max(worldScale.x, worldScale.y);
                     pixelScale = projectedPoint.pixelsPerWorldUnit * uniformWorldScale * scaleFactor / kUIUnitsPerWorldUnit;
                 }
+                const auto logicalLayout = activeCanvas.parentRect
+                                               ? scene::ResolveRectTransformLayout(*rectTransform, *activeCanvas.parentRect)
+                                               : scene::RectTransformLayout{};
                 auto rect = worldSpaceOverlay
                                 ? ResolveWorldOverlayRect(*rectTransform, projectedPoint.screenPosition, pixelScale)
-                                : ResolveScreenRect(*rectTransform, viewportSize / scaleFactor);
+                                : UIRect{.min = logicalLayout.min, .max = logicalLayout.max};
                 if (!worldSpaceOverlay)
                 {
                     rect.min *= scaleFactor;
@@ -851,6 +852,11 @@ namespace PlutoGE::render
                         .sortingOrder = activeCanvas.component->GetSortingOrder(),
                         .entityId = entity->GetID(),
                     });
+                }
+
+                if (!worldSpaceOverlay)
+                {
+                    activeCanvas.parentRect = logicalLayout;
                 }
             }
 

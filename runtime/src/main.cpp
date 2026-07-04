@@ -399,6 +399,30 @@ int main(int argc, char **argv)
             scene->Update(deltaTime);
         }
 
+        if (const auto requestedScene = engine.ConsumeSceneLoadRequest())
+        {
+            const std::string reference = project->FindSceneAssetReference(*requestedScene);
+            const std::string requestedPath = reference.empty() ? std::string{} : engine.GetAssetManager().ResolveAssetPath(reference);
+            std::string sceneLoadError;
+            auto nextScene = requestedPath.empty() ? nullptr : PlutoGE::scene::SceneSerializer::Load(requestedPath, &sceneLoadError);
+            if (nextScene)
+            {
+                engine.SetScene(nextScene.get());
+                scene = std::move(nextScene);
+#ifdef _WIN32
+                PlutoGE::g_runtimeDiagnostics.Log("Loaded scene from script: " + requestedPath);
+#endif
+            }
+            else
+            {
+                const std::string detail = sceneLoadError.empty() ? "scene asset was not found" : sceneLoadError;
+                std::cerr << "Failed to load scene '" << *requestedScene << "': " << detail << std::endl;
+#ifdef _WIN32
+                PlutoGE::g_runtimeDiagnostics.Log("Failed scripted scene load '" + *requestedScene + "': " + detail);
+#endif
+            }
+        }
+
 #ifdef _WIN32
         if (!hasLoggedFirstFrameDiagnostics)
         {

@@ -1290,6 +1290,11 @@ namespace PlutoGE::ui
                     m_newParticleSystemNameBuffer.fill('\0');
                     m_pendingMenuAction = PendingMenuAction::CreateParticleSystem;
                 }
+                if (ImGui::MenuItem("Post Process Preset"))
+                {
+                    m_newPostProcessPresetNameBuffer.fill('\0');
+                    m_pendingMenuAction = PendingMenuAction::CreatePostProcessPreset;
+                }
                 if (ImGui::MenuItem("Shader Graph"))
                 {
                     m_newShaderGraphNameBuffer.fill('\0');
@@ -1368,6 +1373,9 @@ namespace PlutoGE::ui
             break;
         case PendingMenuAction::CreateParticleSystem:
             ImGui::OpenPopup("Create Particle System Asset");
+            break;
+        case PendingMenuAction::CreatePostProcessPreset:
+            ImGui::OpenPopup("Create Post Process Preset Asset");
             break;
         case PendingMenuAction::CreateShaderGraph:
             ImGui::OpenPopup("Create Shader Graph Asset");
@@ -1532,6 +1540,34 @@ namespace PlutoGE::ui
             {
                 ImGui::CloseCurrentPopup();
             }
+            ImGui::EndPopup();
+        }
+
+        if (ImGui::BeginPopupModal("Create Post Process Preset Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        {
+            ImGui::InputText("Name", m_newPostProcessPresetNameBuffer.data(), m_newPostProcessPresetNameBuffer.size());
+            const std::string sanitizedName = SanitizeAssetFileName(m_newPostProcessPresetNameBuffer.data());
+            const auto createDirectory = GetCreateDirectory(*project, m_selectedFolder, "PostProcessing");
+            ImGui::BeginDisabled(sanitizedName.empty());
+            if (ImGui::Button("Create"))
+            {
+                const auto path = createDirectory / (sanitizedName + ".plutopostprocess");
+                const std::string reference = project->MakeAssetReference(path);
+                std::string errorMessage;
+                if (core::Engine::GetInstance().GetAssetManager().SavePostProcessPresetAsset(reference, assets::CreateDefaultPostProcessPresetAsset(), &errorMessage))
+                {
+                    project->RefreshAssetRegistry();
+                    m_assetCacheDirty = true;
+                    editorShell.MarkProjectDirty();
+                    editorShell.Log(EditorShell::ConsoleSeverity::Info, "Created post process preset: " + reference);
+                    ImGui::CloseCurrentPopup();
+                }
+                else
+                    editorShell.Log(EditorShell::ConsoleSeverity::Error, errorMessage);
+            }
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
             ImGui::EndPopup();
         }
 

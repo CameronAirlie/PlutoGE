@@ -118,6 +118,7 @@ internal static unsafe class ScriptBridge
     private static delegate* unmanaged[Cdecl]<byte*, int> _getEntityCountByTag;
     private static delegate* unmanaged[Cdecl]<byte*, int, uint> _getEntityByTag;
     private static delegate* unmanaged[Cdecl]<byte*, uint> _instantiatePrefab;
+    private static delegate* unmanaged[Cdecl]<byte*, int> _loadScene;
     private static delegate* unmanaged[Cdecl]<byte*, nint> _loadScriptableObjectAsset;
     private static delegate* unmanaged[Cdecl]<uint, int, int> _hasComponent;
     private static delegate* unmanaged[Cdecl]<uint, int, int> _getComponentEnabled;
@@ -416,6 +417,20 @@ internal static unsafe class ScriptBridge
         }
 
         _instantiatePrefab = instantiatePrefab;
+        _lastError = string.Empty;
+        return 1;
+    }
+
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterSceneApi")]
+    public static int RegisterSceneApi(delegate* unmanaged[Cdecl]<byte*, int> loadScene)
+    {
+        if (loadScene == null)
+        {
+            SetError("Managed scene API registration received a null function pointer.");
+            return 0;
+        }
+
+        _loadScene = loadScene;
         _lastError = string.Empty;
         return 1;
     }
@@ -1313,6 +1328,20 @@ internal static unsafe class ScriptBridge
         fixed (byte* referencePtr = referenceBytes)
         {
             return _instantiatePrefab(referencePtr);
+        }
+    }
+
+    internal static bool LoadScene(string sceneAssetReference)
+    {
+        if (_loadScene == null || string.IsNullOrWhiteSpace(sceneAssetReference))
+        {
+            return false;
+        }
+
+        var referenceBytes = Encoding.UTF8.GetBytes(sceneAssetReference.Trim() + '\0');
+        fixed (byte* referencePtr = referenceBytes)
+        {
+            return _loadScene(referencePtr) != 0;
         }
     }
 

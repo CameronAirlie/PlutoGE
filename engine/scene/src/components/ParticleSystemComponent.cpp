@@ -141,7 +141,7 @@ namespace PlutoGE::scene
             Play();
         }
 
-        if (!m_playing || m_paused)
+        if (m_paused)
         {
             return;
         }
@@ -152,44 +152,58 @@ namespace PlutoGE::scene
             return;
         }
 
-        const float previousTime = m_time;
-        m_time += step;
-        if (!UsesCpuSimulation())
+        const bool cpuSimulation = UsesCpuSimulation();
+
+        // GPU particles live independently of the emitter timeline. Advance the
+        // tail before this frame can emit new particles, so new particles receive
+        // their full configured lifetime.
+        if (!cpuSimulation && m_gpuSimulationTimeRemaining > 0.0f)
         {
             m_pendingDeltaTime += step;
-        }
-
-        if (m_emissionRateOverTime > 0.0f)
-        {
-            m_emissionAccumulator += m_emissionRateOverTime * step;
-            const int emitCount = static_cast<int>(std::floor(m_emissionAccumulator));
-            if (emitCount > 0)
+            m_gpuSimulationTimeRemaining = std::max(m_gpuSimulationTimeRemaining - step, 0.0f);
+            if (m_gpuSimulationTimeRemaining <= 0.0f)
             {
-                Emit(emitCount);
-                m_emissionAccumulator -= static_cast<float>(emitCount);
+                m_particleCountEstimate = 0;
             }
         }
 
-        if (m_burstCount > 0 && !m_burstFiredThisCycle && previousTime <= m_burstTime && m_time >= m_burstTime)
+        if (m_playing)
         {
-            Emit(m_burstCount);
-            m_burstFiredThisCycle = true;
+            const float previousTime = m_time;
+            m_time += step;
+
+            if (m_emissionRateOverTime > 0.0f)
+            {
+                m_emissionAccumulator += m_emissionRateOverTime * step;
+                const int emitCount = static_cast<int>(std::floor(m_emissionAccumulator));
+                if (emitCount > 0)
+                {
+                    Emit(emitCount);
+                    m_emissionAccumulator -= static_cast<float>(emitCount);
+                }
+            }
+
+            if (m_burstCount > 0 && !m_burstFiredThisCycle && previousTime <= m_burstTime && m_time >= m_burstTime)
+            {
+                Emit(m_burstCount);
+                m_burstFiredThisCycle = true;
+            }
+
+            if (m_duration > 0.0f && m_time >= m_duration)
+            {
+                if (m_looping)
+                {
+                    m_time = std::fmod(m_time, m_duration);
+                    m_burstFiredThisCycle = false;
+                }
+                else
+                {
+                    m_playing = false;
+                }
+            }
         }
 
-        if (m_duration > 0.0f && m_time >= m_duration)
-        {
-            if (m_looping)
-            {
-                m_time = std::fmod(m_time, m_duration);
-                m_burstFiredThisCycle = false;
-            }
-            else
-            {
-                m_playing = false;
-            }
-        }
-
-        if (UsesCpuSimulation())
+        if (cpuSimulation && (m_particleCountEstimate > 0 || !m_pendingEmitAtRequests.empty()))
         {
             UpdateCpuSimulation(step);
         }
@@ -222,6 +236,7 @@ namespace PlutoGE::scene
     void ParticleSystemComponent::Clear()
     {
         m_particleCountEstimate = 0;
+        m_gpuSimulationTimeRemaining = 0.0f;
         m_clearRequested = true;
         m_pendingEmitCount = 0;
         m_nextEmitIndex = 0;
@@ -258,6 +273,7 @@ namespace PlutoGE::scene
         const int accepted = std::min(count, m_maxParticles);
         m_pendingEmitCount = std::min(m_maxParticles, m_pendingEmitCount + accepted);
         m_particleCountEstimate = std::min(m_maxParticles, m_particleCountEstimate + accepted);
+        m_gpuSimulationTimeRemaining = std::max(m_gpuSimulationTimeRemaining, m_startLifetime);
     }
 
     void ParticleSystemComponent::EmitAt(const glm::vec3 &worldPosition, int count)

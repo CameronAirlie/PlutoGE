@@ -2202,6 +2202,34 @@ namespace PlutoGE::ui
             return;
         }
 
+        const auto presetOptions = CollectAssetReferenceOptions(EditorShell::GetInstance().GetProject(), assets::ProjectAssetType::PostProcessPreset);
+        const std::string &presetReference = cameraComponent.GetPostProcessPresetAssetReference();
+        const std::string presetLabel = presetReference.empty() ? "None" : presetReference;
+        if (ImGui::BeginCombo("Preset", presetLabel.c_str()))
+        {
+            if (ImGui::Selectable("None", presetReference.empty()))
+            {
+                if (cameraComponent.SetPostProcessPresetAssetReference({}))
+                    EditorShell::GetInstance().MarkSceneDirty();
+            }
+            for (const auto &option : presetOptions)
+            {
+                const bool selected = option.reference == presetReference;
+                if (ImGui::Selectable(option.displayName.c_str(), selected))
+                {
+                    if (cameraComponent.SetPostProcessPresetAssetReference(option.reference))
+                        EditorShell::GetInstance().MarkSceneDirty();
+                }
+            }
+            ImGui::EndCombo();
+        }
+        if (!presetReference.empty())
+        {
+            ImGui::TextDisabled("Changes below can be saved back to the shared preset.");
+        }
+        else
+            ImGui::TextDisabled("Legacy inline stack (select a preset to share settings)." );
+
         const auto &registeredTypes = render::GetRegisteredPostProcessEffectTypes();
         static int selectedEffectTypeIndex = 0;
         if (!registeredTypes.empty())
@@ -2350,6 +2378,13 @@ namespace PlutoGE::ui
             ImGui::PopID();
         }
 
+        if (!presetReference.empty() && ImGui::Button("Save Preset"))
+        {
+            std::string errorMessage;
+            auto preset = assets::CapturePostProcessPreset(cameraComponent.GetPostProcessEffects());
+            if (!core::Engine::GetInstance().GetAssetManager().SavePostProcessPresetAsset(presetReference, preset, &errorMessage))
+                EditorShell::GetInstance().Log(EditorShell::ConsoleSeverity::Error, errorMessage);
+        }
         ImGui::TreePop();
     }
 
@@ -2395,6 +2430,34 @@ namespace PlutoGE::ui
         {
             return;
         }
+
+        const auto presetOptions = CollectAssetReferenceOptions(EditorShell::GetInstance().GetProject(), assets::ProjectAssetType::PostProcessPreset);
+        const std::string &presetReference = camera.GetPostProcessPresetAssetReference();
+        const std::string presetLabel = presetReference.empty() ? "None" : presetReference;
+        if (ImGui::BeginCombo("Preset", presetLabel.c_str()))
+        {
+            if (ImGui::Selectable("None", presetReference.empty()))
+            {
+                if (camera.SetPostProcessPresetAssetReference({}))
+                    EditorShell::GetInstance().MarkProjectDirty();
+            }
+            for (const auto &option : presetOptions)
+            {
+                const bool selected = option.reference == presetReference;
+                if (ImGui::Selectable(option.displayName.c_str(), selected))
+                {
+                    if (camera.SetPostProcessPresetAssetReference(option.reference))
+                        EditorShell::GetInstance().MarkProjectDirty();
+                }
+            }
+            ImGui::EndCombo();
+        }
+        if (!presetReference.empty())
+        {
+            ImGui::TextDisabled("Changes below can be saved back to the shared preset.");
+        }
+        else
+            ImGui::TextDisabled("Legacy inline stack (select a preset to share settings)." );
 
         const auto &registeredTypes = render::GetRegisteredPostProcessEffectTypes();
         static int selectedEffectTypeIndex = 0;
@@ -2544,6 +2607,13 @@ namespace PlutoGE::ui
             ImGui::PopID();
         }
 
+        if (!presetReference.empty() && ImGui::Button("Save Preset"))
+        {
+            std::string errorMessage;
+            auto preset = assets::CapturePostProcessPreset(camera.GetPostProcessEffects());
+            if (!core::Engine::GetInstance().GetAssetManager().SavePostProcessPresetAsset(presetReference, preset, &errorMessage))
+                EditorShell::GetInstance().Log(EditorShell::ConsoleSeverity::Error, errorMessage);
+        }
         ImGui::TreePop();
     }
 

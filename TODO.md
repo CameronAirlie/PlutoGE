@@ -12,5 +12,9 @@
 6. [x] - Improve post processing stack ui to be able to drag to arrange effects
 7. [x] - Fix brightness levels. when gamma is set to 2.2 the scene is way too bright.
 8. [x] - Fix humanoid mesh animation. Legs are stretched and sticking out sideways unanimated. may be fixed by #1
-9. [ ] - Extract post processing effects into separate asset type. have editor camera and camera components select post processing effedt asset preset.
+9. [x] - Extract post processing effects into separate asset type. have editor camera and camera components select post processing effedt asset preset.
 10. [ ] - Integrate engine with visual studio so visual studio is able to attach to the engine process. Similar to unity, expose an sdk or package to be able to work on scripts using a packaged engine executable for production.
+11. [ ] - Implement sound system
+    a. Add support for 3D spatial audio
+    b. Add sound emitter and sound listener components.
+    c. Come up with how to deal with walls that muffle/block sound

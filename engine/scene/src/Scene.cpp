@@ -88,15 +88,6 @@ namespace PlutoGE::scene
             glm::vec2 max{0.0f};
         };
 
-        UIRect ResolveScreenRect(const RectTransformComponent &rectTransform, const glm::vec2 &canvasSize)
-        {
-            const glm::vec2 anchorPosition = canvasSize * rectTransform.GetAnchorMin();
-            const glm::vec2 size = glm::max(rectTransform.GetSizeDelta(), glm::vec2(0.0f));
-            const glm::vec2 pivotOffset = size * rectTransform.GetPivot();
-            const glm::vec2 min = anchorPosition + rectTransform.GetAnchoredPosition() - pivotOffset;
-            return UIRect{.min = min, .max = min + size};
-        }
-
         bool ContainsPoint(const UIRect &rect, const glm::vec2 &point)
         {
             return point.x >= rect.min.x && point.x <= rect.max.x &&
@@ -108,7 +99,8 @@ namespace PlutoGE::scene
                                          const glm::vec2 &viewportSize,
                                          const glm::vec2 &mousePosition,
                                          bool mousePressed,
-                                         bool mouseReleased)
+                                         bool mouseReleased,
+                                         std::optional<UIRect> parentRect = std::nullopt)
         {
             if (!entity || !entity->IsActive())
             {
@@ -118,18 +110,26 @@ namespace PlutoGE::scene
             if (auto *canvas = entity->GetComponent<CanvasComponent>(); canvas && canvas->IsEnabled())
             {
                 activeCanvas = canvas;
+                const float scaleFactor = std::max(activeCanvas->GetScaleFactor(), 0.0001f);
+                parentRect = UIRect{.min = glm::vec2(0.0f), .max = viewportSize / scaleFactor};
             }
 
             auto *button = entity->GetComponent<UIButtonComponent>();
             auto *rectTransform = entity->GetComponent<RectTransformComponent>();
+            std::optional<UIRect> resolvedRect;
+            if (activeCanvas && parentRect && rectTransform && rectTransform->IsEnabled())
+            {
+                const auto layout = ResolveRectTransformLayout(*rectTransform, {.min = parentRect->min, .max = parentRect->max});
+                resolvedRect = UIRect{.min = layout.min, .max = layout.max};
+            }
             if (button)
             {
                 bool hovered = false;
                 if (activeCanvas && activeCanvas->GetRenderMode() == CanvasRenderMode::ScreenSpaceOverlay &&
-                    rectTransform && rectTransform->IsEnabled() && button->IsEnabled() && button->IsInteractable())
+                    resolvedRect && button->IsEnabled() && button->IsInteractable())
                 {
                     const float scaleFactor = std::max(activeCanvas->GetScaleFactor(), 0.0001f);
-                    auto rect = ResolveScreenRect(*rectTransform, viewportSize / scaleFactor);
+                    auto rect = *resolvedRect;
                     rect.min *= scaleFactor;
                     rect.max *= scaleFactor;
                     hovered = ContainsPoint(rect, mousePosition);
@@ -140,7 +140,8 @@ namespace PlutoGE::scene
 
             for (auto *child : entity->GetChildren())
             {
-                UpdateRuntimeUIButtonStates(child, activeCanvas, viewportSize, mousePosition, mousePressed, mouseReleased);
+                UpdateRuntimeUIButtonStates(child, activeCanvas, viewportSize, mousePosition, mousePressed, mouseReleased,
+                                            resolvedRect ? resolvedRect : parentRect);
             }
         }
 
@@ -1223,17 +1224,23 @@ namespace PlutoGE::scene
         {
             auto &window = core::Engine::GetInstance().GetWindow();
             const auto extents = window.GetExtents();
-            if (extents.width > 0 && extents.height > 0)
+            const glm::vec2 defaultCanvasSize(static_cast<float>(extents.width), static_cast<float>(extents.height));
+            const glm::vec2 canvasSize = m_runtimeUIInputOverride ? m_runtimeUIInputOverride->canvasSize : defaultCanvasSize;
+            if (canvasSize.x > 0.0f && canvasSize.y > 0.0f)
             {
                 const auto &input = window.GetInputState();
-                const glm::vec2 canvasSize(static_cast<float>(extents.width), static_cast<float>(extents.height));
-                const glm::vec2 mousePosition(static_cast<float>(input.mouseState.x),
-                                              static_cast<float>(extents.height) - static_cast<float>(input.mouseState.y));
-                const bool mousePressed = input.IsMouseButtonPressed(0);
-                const bool mouseReleased = input.IsMouseButtonReleased(0);
+                const bool pointerInside = !m_runtimeUIInputOverride || m_runtimeUIInputOverride->pointerInside;
+                const glm::vec2 mousePosition = m_runtimeUIInputOverride
+                                                    ? m_runtimeUIInputOverride->mousePosition
+                                                    : glm::vec2(static_cast<float>(input.mouseState.x),
+                                                                canvasSize.y - static_cast<float>(input.mouseState.y));
+                const bool mousePressed = pointerInside && input.IsMouseButtonPressed(0);
+                const bool mouseReleased = pointerInside && input.IsMouseButtonReleased(0);
                 for (auto *rootEntity : m_rootEntities)
                 {
-                    UpdateRuntimeUIButtonStates(rootEntity, nullptr, canvasSize, mousePosition, mousePressed, mouseReleased);
+                    UpdateRuntimeUIButtonStates(rootEntity, nullptr, canvasSize,
+                                                pointerInside ? mousePosition : glm::vec2(-1.0f),
+                                                mousePressed, mouseReleased);
                 }
             }
         }
@@ -1265,6 +1272,20 @@ namespace PlutoGE::scene
         m_updateTimingStats.componentsMs = std::chrono::duration<float, std::milli>(componentsEnd - runtimeUiEnd).count();
         m_updateTimingStats.renderSubmissionMs = std::chrono::duration<float, std::milli>(submissionEnd - componentsEnd).count();
         m_updateTimingStats.physicsMs = std::chrono::duration<float, std::milli>(physicsEnd - submissionEnd).count();
+    }
+
+    void Scene::SetRuntimeUIInputOverride(const glm::vec2 &canvasSize, const glm::vec2 &mousePosition, bool pointerInside)
+    {
+        m_runtimeUIInputOverride = RuntimeUIInputOverride{
+            .canvasSize = glm::max(canvasSize, glm::vec2(0.0f)),
+            .mousePosition = mousePosition,
+            .pointerInside = pointerInside,
+        };
+    }
+
+    void Scene::ClearRuntimeUIInputOverride()
+    {
+        m_runtimeUIInputOverride.reset();
     }
 
     bool Scene::ContainsEntity(const Entity *entity) const

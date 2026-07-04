@@ -220,6 +220,16 @@ namespace PlutoGE::platform
         ApplyCursorMode();
     }
 
+    void Window::SetCursorLockOverride(bool forceVisible)
+    {
+        if (m_forceCursorVisible == forceVisible)
+        {
+            return;
+        }
+        m_forceCursorVisible = forceVisible;
+        ApplyCursorMode();
+    }
+
     void Window::SetScriptInputEnabled(bool enabled)
     {
         if (m_isScriptInputEnabled == enabled)
@@ -238,7 +248,7 @@ namespace PlutoGE::platform
 
     void Window::ApplyCursorMode()
     {
-        m_isCursorLocked = m_isScriptInputEnabled && m_requestedScriptCursorLocked;
+        m_isCursorLocked = m_isScriptInputEnabled && m_requestedScriptCursorLocked && !m_forceCursorVisible;
         if (m_window)
         {
             glfwSetInputMode(static_cast<GLFWwindow *>(m_window), GLFW_CURSOR, m_isCursorLocked ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);

@@ -1041,6 +1041,7 @@ namespace PlutoGE::ui
     {
         m_isViewportHovered = false;
         m_isViewportFocused = false;
+        m_viewportSize = glm::vec2(0.0f);
 
         if (!m_renderTarget || !m_renderTarget->IsInitialized())
             return;
@@ -1075,6 +1076,8 @@ namespace PlutoGE::ui
         ImVec2 imageSize = ImVec2(panelSize.x, panelSize.y);
         ImGui::Image(texId, imageSize, ImVec2(0, 1), ImVec2(1, 0));
         const ImVec2 viewportMin = ImGui::GetItemRectMin();
+        m_viewportMin = glm::vec2(viewportMin.x, viewportMin.y);
+        m_viewportSize = glm::vec2(imageSize.x, imageSize.y);
         const bool viewportClicked = ImGui::IsItemClicked(ImGuiMouseButton_Left);
         m_isViewportHovered = ImGui::IsItemHovered();
         m_isViewportFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
@@ -1354,6 +1357,7 @@ namespace PlutoGE::ui
         ImGuizmo::Enable(true);
         ImGuizmo::SetDrawlist();
         ImGuizmo::SetRect(viewportMin.x, viewportMin.y, viewportSize.x, viewportSize.y);
+        bool gizmoBlocksSelection = false;
 
         if (m_showDebugShapes)
         {
@@ -1476,6 +1480,9 @@ namespace PlutoGE::ui
                                  glm::value_ptr(entityTransform),
                                  nullptr,
                                  snapValues);
+            // IsOver is global state inside ImGuizmo. Only trust it in a frame
+            // where this viewport actually submitted a gizmo.
+            gizmoBlocksSelection = ImGuizmo::IsOver() || ImGuizmo::IsUsing();
             if (ImGuizmo::IsUsing())
             {
                 m_isTransformGizmoUsing = true;
@@ -1484,7 +1491,7 @@ namespace PlutoGE::ui
             }
         }
 
-        if (viewportClicked && m_isViewportHovered && !ImGuizmo::IsOver() && !ImGuizmo::IsUsing())
+        if (viewportClicked && m_isViewportHovered && !gizmoBlocksSelection)
         {
             editorShell.SetSelectedEntity(PickEntity(editorShell.GetEngine().GetScene(), cameraData, viewportMin, viewportSize));
         }

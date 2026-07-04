@@ -3,6 +3,7 @@
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/assets/AnimationGraph.h"
 #include "PlutoGE/assets/ParticleSystemAsset.h"
+#include "PlutoGE/assets/PostProcessPresetAsset.h"
 #include "PlutoGE/import/MeshImporter.h"
 #include "PlutoGE/render/ShaderGraph.h"
 
@@ -73,6 +74,8 @@ namespace PlutoGE::assets
         bool SaveAnimationGraphAsset(const std::string &assetReference, const AnimationGraphAsset &graph, std::string *errorMessage = nullptr);
         ParticleSystemAsset LoadParticleSystemAsset(const std::string &assetReference, bool *loaded = nullptr);
         bool SaveParticleSystemAsset(const std::string &assetReference, const ParticleSystemAsset &asset, std::string *errorMessage = nullptr);
+        PostProcessPresetAsset LoadPostProcessPresetAsset(const std::string &assetReference, bool *loaded = nullptr);
+        bool SavePostProcessPresetAsset(const std::string &assetReference, const PostProcessPresetAsset &asset, std::string *errorMessage = nullptr);
         render::Shader *CompileShaderGraphAsset(const std::string &assetReference, std::string *errorMessage = nullptr);
         render::Material *CreateMaterial();
         render::Material *CreateDefaultMaterial();
@@ -98,6 +101,7 @@ namespace PlutoGE::assets
         std::unordered_map<std::string, render::ShaderGraph> m_shaderGraphCache;
         std::unordered_map<std::string, AnimationGraphAsset> m_animationGraphCache;
         std::unordered_map<std::string, ParticleSystemAsset> m_particleSystemCache;
+        std::unordered_map<std::string, PostProcessPresetAsset> m_postProcessPresetCache;
         std::unordered_map<std::string, std::pair<std::uint64_t, render::Shader *>> m_shaderGraphShaderCache;
 
         void RefreshCachedMaterialsForShaderGraph(const std::string &shaderGraphReference);

@@ -1,6 +1,8 @@
 #include "PlutoGE/import/MeshImporter.h"
 #include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/render/IndirectDraw.h"
+#include "PlutoGE/scene/components/UIComponent.h"
+#include "PlutoGE/scene/components/ParticleSystemComponent.h"
 
 #include <cassert>
 #include <cstring>
@@ -26,6 +28,36 @@
 int main()
 {
     using namespace PlutoGE;
+
+    scene::RectTransformComponent childRect;
+    childRect.SetAnchorPreset(scene::UIAnchorPreset::MiddleCenter);
+    childRect.SetSizeDelta(glm::vec2(100.0f, 40.0f));
+    const auto childLayout = scene::ResolveRectTransformLayout(
+        childRect, {.min = glm::vec2(100.0f, 100.0f), .max = glm::vec2(300.0f, 200.0f)});
+    assert(childLayout.min == glm::vec2(150.0f, 130.0f));
+    assert(childLayout.max == glm::vec2(250.0f, 170.0f));
+
+    childRect.SetAnchorPreset(scene::UIAnchorPreset::Stretch);
+    childRect.SetSizeDelta(glm::vec2(0.0f));
+    const auto stretchedLayout = scene::ResolveRectTransformLayout(
+        childRect, {.min = glm::vec2(100.0f, 100.0f), .max = glm::vec2(300.0f, 200.0f)});
+    assert(stretchedLayout.min == glm::vec2(100.0f, 100.0f));
+    assert(stretchedLayout.max == glm::vec2(300.0f, 200.0f));
+
+    scene::ParticleSystemComponent oneShotParticles;
+    oneShotParticles.SetLooping(false);
+    oneShotParticles.SetDuration(0.1f);
+    oneShotParticles.SetStartLifetime(1.0f);
+    oneShotParticles.SetEmissionRateOverTime(0.0f);
+    oneShotParticles.Emit(1);
+    oneShotParticles.Update(0.2f);
+    assert(!oneShotParticles.IsPlaying());
+    assert(oneShotParticles.GetParticleCount() == 1);
+    for (int step = 0; step < 5; ++step)
+    {
+        oneShotParticles.Update(0.2f);
+    }
+    assert(oneShotParticles.GetParticleCount() == 0);
 
     const auto command = render::BuildDrawElementsIndirectCommand(300, 4, 27, 12);
     assert(command.count == 300);

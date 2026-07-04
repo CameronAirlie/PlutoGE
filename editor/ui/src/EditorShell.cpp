@@ -51,6 +51,23 @@
 
 namespace PlutoGE::ui
 {
+    bool EditorShell::EditorViewportCamera::SetPostProcessPresetAssetReference(std::string assetReference)
+    {
+        if (assetReference.empty())
+        {
+            postProcessPresetAssetReference.clear();
+            postProcessEffects.clear();
+            return true;
+        }
+        bool loaded = false;
+        const auto preset = core::Engine::GetInstance().GetAssetManager().LoadPostProcessPresetAsset(assetReference, &loaded);
+        if (!loaded)
+            return false;
+        postProcessEffects = assets::InstantiatePostProcessPreset(preset);
+        postProcessPresetAssetReference = std::move(assetReference);
+        return true;
+    }
+
     void EditorShell::RequestIblCapture(scene::IblCaptureComponent *captureComponent)
     {
         auto *owner = captureComponent ? captureComponent->GetOwner() : nullptr;
@@ -1208,6 +1225,8 @@ namespace PlutoGE::ui
         }
 
         m_runtimeSceneWasDirty = m_sceneDirty;
+        m_runtimeSceneSnapshotPath = m_scene ? m_scene->GetFilePath() : std::string{};
+        m_engine.GetWindow().SetCursorLockOverride(false);
         m_engine.StartRuntime();
         m_statusMessage = "Runtime started.";
         return true;
@@ -1221,6 +1240,10 @@ namespace PlutoGE::ui
         }
 
         m_engine.StopRuntime();
+        auto &window = m_engine.GetWindow();
+        window.SetCursorLockOverride(false);
+        window.SetScriptInputEnabled(false);
+        window.SetCursorLocked(false);
 
         if (!m_runtimeSceneSnapshot.empty())
         {
@@ -1233,12 +1256,44 @@ namespace PlutoGE::ui
             }
 
             m_runtimeSceneSnapshot.clear();
+            if (m_scene)
+            {
+                m_scene->SetFilePath(m_runtimeSceneSnapshotPath);
+            }
         }
+
+        m_runtimeSceneSnapshotPath.clear();
 
         m_sceneDirty = m_runtimeSceneWasDirty;
         UpdateWindowTitle();
         m_statusMessage = "Runtime stopped. Restored pre-Play scene state.";
         return true;
+    }
+
+    void EditorShell::HandleRuntimeSceneLoadRequest()
+    {
+        const auto request = m_engine.ConsumeSceneLoadRequest();
+        if (!request)
+            return;
+        if (!m_project)
+        {
+            Log(ConsoleSeverity::Error, "Cannot load a scene from script without an open project.");
+            return;
+        }
+
+        const std::string reference = m_project->FindSceneAssetReference(*request);
+        const std::string path = reference.empty() ? std::string{} : m_engine.GetAssetManager().ResolveAssetPath(reference);
+        std::string errorMessage;
+        auto loadedScene = path.empty() ? nullptr : scene::SceneSerializer::Load(path, &errorMessage);
+        if (!loadedScene)
+        {
+            const std::string detail = errorMessage.empty() ? "scene asset was not found" : errorMessage;
+            Log(ConsoleSeverity::Error, "Failed to load scene '" + *request + "': " + detail);
+            return;
+        }
+
+        SetScene(std::move(loadedScene));
+        m_statusMessage = "Runtime loaded scene: " + std::filesystem::path(path).filename().string();
     }
 
     void EditorShell::ExecuteSceneEdit(std::string label, const std::function<void()> &edit)
@@ -1486,12 +1541,24 @@ namespace PlutoGE::ui
     void EditorShell::HandleEditorShortcuts(bool isRuntimeRunning)
     {
         const ImGuiIO &io = ImGui::GetIO();
-        if (isRuntimeRunning || io.WantTextInput)
+        if (io.WantTextInput)
         {
             return;
         }
 
+        if (ImGui::IsKeyPressed(ImGuiKey_F5, false))
+        {
+            if (isRuntimeRunning && io.KeyShift)
+                StopEditorRuntime();
+            else if (!isRuntimeRunning && !io.KeyShift)
+                StartEditorRuntime();
+            return;
+        }
         const bool command = io.KeyCtrl || io.KeySuper;
+        if (isRuntimeRunning)
+        {
+            return;
+        }
         if (ImGui::IsKeyPressed(ImGuiKey_Escape))
         {
             SetSelectedEntity(nullptr);
@@ -1597,6 +1664,8 @@ namespace PlutoGE::ui
         {
             scene = CreateEmptyScene();
         }
+
+        m_pendingIblCaptureEntities.clear();
 
         // Keep the previous scene alive until Engine::SetScene has stopped its
         // runtime and switched the non-owning scene pointer.
@@ -1809,7 +1878,11 @@ namespace PlutoGE::ui
         const auto &manifest = m_project->GetManifest();
         m_panelManager.SetEditorFontSize(manifest.editorFontSize);
         ApplyProjectEditorCameraSettings(manifest.editorCamera, m_editorCamera);
-        ApplyProjectEditorPostProcessEffects(manifest.editorCameraPostProcessEffects, m_editorCamera);
+        if (manifest.editorCameraPostProcessPreset.empty() ||
+            !m_editorCamera.SetPostProcessPresetAssetReference(manifest.editorCameraPostProcessPreset))
+        {
+            ApplyProjectEditorPostProcessEffects(manifest.editorCameraPostProcessEffects, m_editorCamera);
+        }
         m_engine.GetRenderer().SetVSyncEnabled(manifest.vSyncEnabled);
 
         std::string scriptErrorMessage;
@@ -1936,7 +2009,10 @@ namespace PlutoGE::ui
 
         auto &manifest = m_project->GetManifest();
         manifest.editorCamera = BuildProjectEditorCameraSettings(m_editorCamera);
-        manifest.editorCameraPostProcessEffects = BuildProjectEditorPostProcessEffects(m_editorCamera);
+        manifest.editorCameraPostProcessPreset = m_editorCamera.GetPostProcessPresetAssetReference();
+        manifest.editorCameraPostProcessEffects = manifest.editorCameraPostProcessPreset.empty()
+                                                      ? BuildProjectEditorPostProcessEffects(m_editorCamera)
+                                                      : std::vector<assets::ProjectPostProcessEffect>{};
         if (manifest.windowTitle.empty())
         {
             manifest.windowTitle = manifest.name;
@@ -2147,6 +2223,8 @@ namespace PlutoGE::ui
         auto *renderTarget2 = viewportPanel2->GetRenderTarget();
         auto *windowHandle = static_cast<GLFWwindow *>(window.GetWindow());
         bool isEditorCameraLookActive = false;
+        bool forceEditorCursorVisible = false;
+        bool cursorOverrideShortcutWasDown = false;
         double lastEditorCameraCursorX = 0.0;
         double lastEditorCameraCursorY = 0.0;
         std::array<char, 256> projectNameBuffer{};
@@ -2200,6 +2278,21 @@ namespace PlutoGE::ui
             frameTimingStats.profilingBeginMs = std::chrono::duration<float, std::milli>(profilingBeginEnd - profilingBeginStart).count();
 
             const bool isRuntimeRunning = m_engine.IsRuntimeRunning();
+            const bool cursorOverrideShortcutDown = isRuntimeRunning &&
+                                                    (glfwGetKey(windowHandle, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
+                                                     glfwGetKey(windowHandle, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS) &&
+                                                    glfwGetKey(windowHandle, GLFW_KEY_F1) == GLFW_PRESS;
+            if (cursorOverrideShortcutDown && !cursorOverrideShortcutWasDown)
+            {
+                forceEditorCursorVisible = true;
+                m_statusMessage = "Cursor lock overridden. Disable it from Runtime > Force Show Cursor.";
+            }
+            cursorOverrideShortcutWasDown = cursorOverrideShortcutDown;
+            if (!isRuntimeRunning)
+            {
+                forceEditorCursorVisible = false;
+            }
+            window.SetCursorLockOverride(forceEditorCursorVisible);
             auto shouldEnableRuntimeInput = [&]()
             {
                 return m_engine.IsRuntimeRunning() &&
@@ -2232,7 +2325,7 @@ namespace PlutoGE::ui
 
             auto *cameraComponent2 = FindFirstSceneCamera(m_scene.get());
             const bool shouldRenderViewport1 = viewportPanel->ShouldRenderFrame();
-            const bool shouldRenderViewport2 = viewportPanel2->ShouldRenderFrame() && IsCameraActiveInScene(m_scene.get(), cameraComponent2);
+            bool shouldRenderViewport2 = viewportPanel2->ShouldRenderFrame() && IsCameraActiveInScene(m_scene.get(), cameraComponent2);
             render::CameraData editorCameraData{};
             bool hasEditorCameraData = false;
             render::CameraData gameCameraData{};
@@ -2307,6 +2400,26 @@ namespace PlutoGE::ui
                     else
                     {
                         renderer.ClearSubmissionCullingCameras();
+
+                        const glm::vec2 viewportMin = viewportPanel2->GetViewportMin();
+                        const glm::vec2 viewportSize = viewportPanel2->GetViewportSize();
+                        auto *gameRenderTarget = viewportPanel2->GetRenderTarget();
+                        const bool hasViewport = gameRenderTarget && viewportSize.x > 0.0f && viewportSize.y > 0.0f;
+                        const ImVec2 mouse = ImGui::GetIO().MousePos;
+                        const glm::vec2 normalizedMouse = hasViewport
+                                                              ? glm::vec2((mouse.x - viewportMin.x) / viewportSize.x,
+                                                                          (mouse.y - viewportMin.y) / viewportSize.y)
+                                                              : glm::vec2(-1.0f);
+                        const bool pointerInside = hasViewport && viewportPanel2->IsViewportHovered() &&
+                                                   normalizedMouse.x >= 0.0f && normalizedMouse.x <= 1.0f &&
+                                                   normalizedMouse.y >= 0.0f && normalizedMouse.y <= 1.0f;
+                        const glm::vec2 canvasSize = hasViewport
+                                                         ? glm::vec2(static_cast<float>(gameRenderTarget->GetWidth()),
+                                                                     static_cast<float>(gameRenderTarget->GetHeight()))
+                                                         : glm::vec2(0.0f);
+                        const glm::vec2 canvasMouse(normalizedMouse.x * canvasSize.x,
+                                                    (1.0f - normalizedMouse.y) * canvasSize.y);
+                        m_scene->SetRuntimeUIInputOverride(canvasSize, canvasMouse, pointerInside);
                     }
                     m_scene->Update(deltaTime.count());
                     const auto &sceneTimingStats = m_scene->GetUpdateTimingStats();
@@ -2319,9 +2432,19 @@ namespace PlutoGE::ui
                     frameTimingStats.sceneFoliageSubmissionMs = sceneTimingStats.foliageSubmissionMs;
                     frameTimingStats.scenePhysicsMs = sceneTimingStats.physicsMs;
                 }
+                if (isRuntimeRunning)
+                {
+                    HandleRuntimeSceneLoadRequest();
+                }
             }
             const auto sceneUpdateEnd = std::chrono::high_resolution_clock::now();
             frameTimingStats.sceneUpdateMs = std::chrono::duration<float, std::milli>(sceneUpdateEnd - sceneUpdateStart).count();
+
+            // Scripts may destroy the active camera or replace the entire scene
+            // during Update. Any component pointer captured before Update is stale.
+            cameraComponent2 = FindFirstSceneCamera(m_scene.get());
+            shouldRenderViewport2 = viewportPanel2->ShouldRenderFrame() &&
+                                    IsCameraActiveInScene(m_scene.get(), cameraComponent2);
 
             if (!isBakeRunning && m_scene && !m_pendingIblCaptureEntities.empty())
             {
@@ -2392,7 +2515,7 @@ namespace PlutoGE::ui
                 viewportPanel->ClearFrame();
             }
 
-            if (shouldRenderViewport2)
+            if (shouldRenderViewport2 && cameraComponent2)
             {
                 ++frameTimingStats.renderedViewportCount;
                 viewportPanel2->RenderFrame(*cameraComponent2);
@@ -2683,21 +2806,33 @@ namespace PlutoGE::ui
                 {
                     const bool canRunRuntime = m_scene != nullptr;
                     ImGui::BeginDisabled(!canRunRuntime || m_engine.IsRuntimeRunning());
-                    if (ImGui::MenuItem("Play"))
+                    if (ImGui::MenuItem("Play", "F5"))
                     {
                         if (StartEditorRuntime())
                         {
+                            forceEditorCursorVisible = false;
+                            window.SetCursorLockOverride(false);
                             window.SetScriptInputEnabled(shouldEnableRuntimeInput());
                         }
                     }
                     ImGui::EndDisabled();
 
                     ImGui::BeginDisabled(!m_engine.IsRuntimeRunning());
-                    if (ImGui::MenuItem("Stop"))
+                    if (ImGui::MenuItem("Stop", "Shift+F5"))
                     {
                         StopEditorRuntime();
+                        forceEditorCursorVisible = false;
+                        window.SetCursorLockOverride(false);
                         window.SetScriptInputEnabled(false);
                         window.SetCursorLocked(false);
+                    }
+                    ImGui::EndDisabled();
+
+                    ImGui::BeginDisabled(!m_engine.IsRuntimeRunning());
+                    if (ImGui::MenuItem("Force Show Cursor", "Shift+F1", forceEditorCursorVisible))
+                    {
+                        forceEditorCursorVisible = !forceEditorCursorVisible;
+                        window.SetCursorLockOverride(forceEditorCursorVisible);
                     }
                     ImGui::EndDisabled();
                     ImGui::EndMenu();
@@ -2931,6 +3066,7 @@ namespace PlutoGE::ui
         {
             SetCursorCapture(windowHandle, false);
         }
+        window.SetCursorLockOverride(false);
     }
 
     void EditorShell::Shutdown()

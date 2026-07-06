@@ -16,6 +16,7 @@ namespace PlutoGE::render
 namespace PlutoGE::scene
 {
     class CameraComponent;
+    class Entity;
 }
 
 namespace PlutoGE::ui
@@ -77,6 +78,9 @@ namespace PlutoGE::ui
         bool m_isViewportHovered = false;
         bool m_isViewportFocused = false;
         bool m_isTransformGizmoUsing = false;
+        scene::Entity *m_splinePointEntity = nullptr;
+        int m_selectedSplinePoint = -1;
+        bool m_isSplinePointGizmoUsing = false;
         bool m_panelControlsEnabled = true;
         bool m_hasEditorCameraData = false;
         render::CameraData m_editorCameraData{};

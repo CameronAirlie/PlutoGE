@@ -144,6 +144,13 @@ namespace PlutoGE::scene
         MarkDirty();
     }
 
+    void SplineComponent::InsertPoint(std::size_t index, const glm::vec3 &position)
+    {
+        index = std::min(index, m_points.size());
+        m_points.insert(m_points.begin() + static_cast<std::ptrdiff_t>(index), {position});
+        MarkDirty();
+    }
+
     void SplineComponent::RemovePoint(std::size_t index)
     {
         if (index >= m_points.size() || m_points.size() <= 2)

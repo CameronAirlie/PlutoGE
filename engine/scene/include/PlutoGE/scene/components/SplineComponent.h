@@ -47,6 +47,7 @@ namespace PlutoGE::scene
         const std::vector<SplineControlPoint> &GetPoints() const { return m_points; }
         void SetPoints(std::vector<SplineControlPoint> points);
         void AddPoint(const glm::vec3 &position);
+        void InsertPoint(std::size_t index, const glm::vec3 &position);
         void RemovePoint(std::size_t index);
         void SetPointPosition(std::size_t index, const glm::vec3 &position);
 

@@ -15,6 +15,7 @@
 #include "PlutoGE/scene/components/ColliderComponent.h"
 #include "PlutoGE/scene/components/FoliageComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
+#include "PlutoGE/scene/components/SplineComponent.h"
 #include "PlutoGE/scene/components/TerrainComponent.h"
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/ui/panels/ContentBrowserPanel.h"
@@ -1644,6 +1645,8 @@ namespace PlutoGE::ui
         ImGuizmo::SetDrawlist();
         ImGuizmo::SetRect(viewportMin.x, viewportMin.y, viewportSize.x, viewportSize.y);
         bool gizmoBlocksSelection = false;
+        bool splineHandleClicked = false;
+        bool entityGizmoSubmitted = false;
 
         if (m_showDebugShapes)
         {
@@ -1652,6 +1655,17 @@ namespace PlutoGE::ui
 
         if (auto *selectedEntity = editorShell.GetSelectedEntity())
         {
+            if (m_splinePointEntity != selectedEntity)
+            {
+                if (m_isSplinePointGizmoUsing)
+                {
+                    editorShell.EndSceneEdit();
+                    m_isSplinePointGizmoUsing = false;
+                }
+                m_splinePointEntity = selectedEntity;
+                m_selectedSplinePoint = -1;
+            }
+
             bool terrainPaintActive = false;
             bool foliagePaintActive = false;
             static bool s_terrainStrokeActive = false;
@@ -1763,26 +1777,250 @@ namespace PlutoGE::ui
                     break;
                 }
             }
-            ImGuizmo::Manipulate(glm::value_ptr(cameraData.view),
-                                 glm::value_ptr(cameraData.projection),
-                                 m_gizmoOperation,
-                                 m_gizmoMode,
-                                 glm::value_ptr(entityTransform),
-                                 nullptr,
-                                 snapValues);
+            auto *splineComponent = selectedEntity->GetComponent<scene::SplineComponent>();
+            if (splineComponent && splineComponent->IsEnabled())
+            {
+                const auto &points = splineComponent->GetPoints();
+                if (m_selectedSplinePoint >= static_cast<int>(points.size()))
+                {
+                    m_selectedSplinePoint = -1;
+                }
+
+                auto *drawList = ImGui::GetWindowDrawList();
+                drawList->PushClipRect(viewportMin, ImVec2(viewportMin.x + viewportSize.x, viewportMin.y + viewportSize.y), true);
+
+                std::vector<glm::vec3> worldPoints;
+                worldPoints.reserve(points.size());
+                for (const auto &point : points)
+                {
+                    worldPoints.push_back(glm::vec3(entityTransform * glm::vec4(point.position, 1.0f)));
+                }
+
+                for (std::size_t pointIndex = 1; pointIndex < worldPoints.size(); ++pointIndex)
+                {
+                    DrawWorldLine(drawList, worldPoints[pointIndex - 1], worldPoints[pointIndex], cameraData, viewportMin, viewportSize,
+                                  IM_COL32(255, 190, 70, 210), 2.0f);
+                }
+                if (splineComponent->IsClosed() && worldPoints.size() > 2)
+                {
+                    DrawWorldLine(drawList, worldPoints.back(), worldPoints.front(), cameraData, viewportMin, viewportSize,
+                                  IM_COL32(255, 190, 70, 210), 2.0f);
+                }
+
+                constexpr float kSplinePointRadius = 7.0f;
+                constexpr float kSplinePointHitRadius = 11.0f;
+                constexpr float kSplineInsertRadius = 6.0f;
+                constexpr float kSplineInsertHitRadius = 10.0f;
+                int hoveredPoint = -1;
+                float nearestPointDistanceSquared = kSplinePointHitRadius * kSplinePointHitRadius;
+                const ImVec2 mousePosition = ImGui::GetIO().MousePos;
+                std::vector<ProjectedPoint> projectedPoints;
+                projectedPoints.reserve(worldPoints.size());
+                for (std::size_t pointIndex = 0; pointIndex < worldPoints.size(); ++pointIndex)
+                {
+                    const ProjectedPoint projected = ProjectWorldPoint(worldPoints[pointIndex], cameraData, viewportMin, viewportSize);
+                    projectedPoints.push_back(projected);
+                    if (!projected.visible)
+                    {
+                        continue;
+                    }
+
+                    const float dx = projected.screen.x - mousePosition.x;
+                    const float dy = projected.screen.y - mousePosition.y;
+                    const float distanceSquared = dx * dx + dy * dy;
+                    if (distanceSquared <= nearestPointDistanceSquared)
+                    {
+                        nearestPointDistanceSquared = distanceSquared;
+                        hoveredPoint = static_cast<int>(pointIndex);
+                    }
+                }
+
+                int hoveredInsertSegment = -1;
+                std::vector<ProjectedPoint> projectedInsertPoints;
+                const std::size_t segmentCount = splineComponent->IsClosed() && worldPoints.size() > 2
+                                                     ? worldPoints.size()
+                                                     : worldPoints.size() > 1 ? worldPoints.size() - 1 : 0;
+                projectedInsertPoints.reserve(segmentCount);
+                float nearestInsertDistanceSquared = kSplineInsertHitRadius * kSplineInsertHitRadius;
+                for (std::size_t segmentIndex = 0; segmentIndex < segmentCount; ++segmentIndex)
+                {
+                    const std::size_t nextPointIndex = (segmentIndex + 1) % worldPoints.size();
+                    const glm::vec3 midpoint = (worldPoints[segmentIndex] + worldPoints[nextPointIndex]) * 0.5f;
+                    const ProjectedPoint projected = ProjectWorldPoint(midpoint, cameraData, viewportMin, viewportSize);
+                    projectedInsertPoints.push_back(projected);
+                    if (!projected.visible || hoveredPoint >= 0)
+                    {
+                        continue;
+                    }
+
+                    const float dx = projected.screen.x - mousePosition.x;
+                    const float dy = projected.screen.y - mousePosition.y;
+                    const float distanceSquared = dx * dx + dy * dy;
+                    if (distanceSquared <= nearestInsertDistanceSquared)
+                    {
+                        nearestInsertDistanceSquared = distanceSquared;
+                        hoveredInsertSegment = static_cast<int>(segmentIndex);
+                    }
+                }
+
+                const bool insertPointClicked = viewportClicked && m_isViewportHovered && !controlsHovered && hoveredInsertSegment >= 0;
+                if (!insertPointClicked && viewportClicked && m_isViewportHovered && !controlsHovered && hoveredPoint >= 0)
+                {
+                    m_selectedSplinePoint = hoveredPoint;
+                    splineHandleClicked = true;
+                }
+
+                for (std::size_t segmentIndex = 0; segmentIndex < projectedInsertPoints.size(); ++segmentIndex)
+                {
+                    if (!projectedInsertPoints[segmentIndex].visible)
+                    {
+                        continue;
+                    }
+                    const bool hoveredInsert = static_cast<int>(segmentIndex) == hoveredInsertSegment;
+                    const ImVec2 center = projectedInsertPoints[segmentIndex].screen;
+                    const float radius = hoveredInsert ? 7.5f : kSplineInsertRadius;
+                    drawList->AddCircleFilled(center, radius,
+                                              hoveredInsert ? IM_COL32(100, 220, 135, 255) : IM_COL32(40, 75, 55, 225), 16);
+                    drawList->AddCircle(center, radius, IM_COL32(180, 255, 195, 245), 16, 1.5f);
+                    drawList->AddLine(ImVec2(center.x - 3.0f, center.y), ImVec2(center.x + 3.0f, center.y),
+                                      IM_COL32(235, 255, 240, 255), 1.5f);
+                    drawList->AddLine(ImVec2(center.x, center.y - 3.0f), ImVec2(center.x, center.y + 3.0f),
+                                      IM_COL32(235, 255, 240, 255), 1.5f);
+                }
+
+                for (std::size_t pointIndex = 0; pointIndex < projectedPoints.size(); ++pointIndex)
+                {
+                    if (!projectedPoints[pointIndex].visible)
+                    {
+                        continue;
+                    }
+                    const bool selected = static_cast<int>(pointIndex) == m_selectedSplinePoint;
+                    const bool hoveredPointHandle = static_cast<int>(pointIndex) == hoveredPoint;
+                    const ImU32 fillColor = selected ? IM_COL32(255, 215, 70, 255)
+                                                    : hoveredPointHandle ? IM_COL32(255, 235, 150, 255)
+                                                                         : IM_COL32(245, 145, 45, 245);
+                    drawList->AddCircleFilled(projectedPoints[pointIndex].screen, selected ? 8.5f : kSplinePointRadius, fillColor, 16);
+                    drawList->AddCircle(projectedPoints[pointIndex].screen, selected ? 8.5f : kSplinePointRadius,
+                                        IM_COL32(35, 25, 15, 255), 16, 2.0f);
+
+                    const std::string pointLabel = std::to_string(pointIndex);
+                    const ImVec2 labelPosition(projectedPoints[pointIndex].screen.x + 10.0f,
+                                               projectedPoints[pointIndex].screen.y - 9.0f);
+                    drawList->AddText(ImVec2(labelPosition.x + 1.0f, labelPosition.y + 1.0f),
+                                      IM_COL32(15, 10, 5, 240), pointLabel.c_str());
+                    drawList->AddText(labelPosition, IM_COL32(255, 245, 220, 255), pointLabel.c_str());
+                }
+                drawList->PopClipRect();
+
+                if (insertPointClicked)
+                {
+                    const std::size_t startPointIndex = static_cast<std::size_t>(hoveredInsertSegment);
+                    const std::size_t nextPointIndex = (startPointIndex + 1) % points.size();
+                    const std::size_t insertionIndex = startPointIndex + 1;
+                    const glm::vec3 newPointPosition = (points[startPointIndex].position + points[nextPointIndex].position) * 0.5f;
+                    editorShell.ExecuteSceneEdit("Insert Spline Point", [splineComponent, selectedEntity, insertionIndex, newPointPosition]()
+                                                 {
+                                                     splineComponent->InsertPoint(insertionIndex, newPointPosition);
+                                                     selectedEntity->AddPrefabOverride("Component:SplineComponent:PointCount");
+                                                 });
+                    m_selectedSplinePoint = static_cast<int>(insertionIndex);
+                    splineHandleClicked = true;
+                    return;
+                }
+
+                if (m_selectedSplinePoint >= 0)
+                {
+                    glm::mat4 pointTransform = entityTransform;
+                    pointTransform[3] = glm::vec4(worldPoints[static_cast<std::size_t>(m_selectedSplinePoint)], 1.0f);
+                    ImGuizmo::Manipulate(glm::value_ptr(cameraData.view),
+                                         glm::value_ptr(cameraData.projection),
+                                         ImGuizmo::TRANSLATE,
+                                         m_gizmoMode,
+                                         glm::value_ptr(pointTransform),
+                                         nullptr,
+                                         m_enableSnap ? &m_translateSnap.x : nullptr);
+
+                    const bool pointGizmoUsing = ImGuizmo::IsUsing();
+                    gizmoBlocksSelection = pointGizmoUsing || splineHandleClicked;
+                    if (pointGizmoUsing && !m_isSplinePointGizmoUsing)
+                    {
+                        editorShell.BeginSceneEdit("Move Spline Point");
+                    }
+                    if (pointGizmoUsing)
+                    {
+                        m_isTransformGizmoUsing = true;
+                        const glm::vec3 worldPosition(pointTransform[3]);
+                        const glm::vec3 localPosition(glm::inverse(entityTransform) * glm::vec4(worldPosition, 1.0f));
+                        splineComponent->SetPointPosition(static_cast<std::size_t>(m_selectedSplinePoint), localPosition);
+                        selectedEntity->AddPrefabOverride("Component:SplineComponent:Points." + std::to_string(m_selectedSplinePoint));
+                        editorShell.MarkSceneDirty();
+                    }
+                    if (!pointGizmoUsing && m_isSplinePointGizmoUsing)
+                    {
+                        editorShell.EndSceneEdit();
+                    }
+                    m_isSplinePointGizmoUsing = pointGizmoUsing;
+
+                    if (viewportClicked && !splineHandleClicked && !pointGizmoUsing && !controlsHovered)
+                    {
+                        m_selectedSplinePoint = -1;
+                    }
+                }
+                else
+                {
+                    ImGuizmo::Manipulate(glm::value_ptr(cameraData.view),
+                                         glm::value_ptr(cameraData.projection),
+                                         m_gizmoOperation,
+                                         m_gizmoMode,
+                                         glm::value_ptr(entityTransform),
+                                         nullptr,
+                                         snapValues);
+                    entityGizmoSubmitted = true;
+                }
+            }
+            else
+            {
+                if (m_isSplinePointGizmoUsing)
+                {
+                    editorShell.EndSceneEdit();
+                    m_isSplinePointGizmoUsing = false;
+                }
+                m_selectedSplinePoint = -1;
+                ImGuizmo::Manipulate(glm::value_ptr(cameraData.view),
+                                     glm::value_ptr(cameraData.projection),
+                                     m_gizmoOperation,
+                                     m_gizmoMode,
+                                     glm::value_ptr(entityTransform),
+                                     nullptr,
+                                     snapValues);
+                entityGizmoSubmitted = true;
+            }
             // IsOver is global state inside ImGuizmo. Only trust it in a frame
             // where this viewport actually submitted a gizmo.
             // IsOver() covers the gizmo's projected hit regions and can be true
             // well away from a visible handle (especially at shallow camera
             // angles).  Only an interaction that the gizmo actually captured
             // should consume a viewport selection click.
-            gizmoBlocksSelection = ImGuizmo::IsUsing();
-            if (ImGuizmo::IsUsing())
+            if (entityGizmoSubmitted)
             {
-                m_isTransformGizmoUsing = true;
-                ApplyWorldTransformToEntity(*selectedEntity, entityTransform);
-                editorShell.MarkSceneDirty();
+                gizmoBlocksSelection = ImGuizmo::IsUsing();
+                if (ImGuizmo::IsUsing())
+                {
+                    m_isTransformGizmoUsing = true;
+                    ApplyWorldTransformToEntity(*selectedEntity, entityTransform);
+                    editorShell.MarkSceneDirty();
+                }
             }
+        }
+        else
+        {
+            if (m_isSplinePointGizmoUsing)
+            {
+                editorShell.EndSceneEdit();
+                m_isSplinePointGizmoUsing = false;
+            }
+            m_splinePointEntity = nullptr;
+            m_selectedSplinePoint = -1;
         }
 
         if (viewportClicked)
@@ -1799,7 +2037,8 @@ namespace PlutoGE::ui
             }
             if (gizmoBlocksSelection)
             {
-                editorShell.Log(EditorShell::ConsoleSeverity::Info, "[Pick] blocked=gizmo-using");
+                editorShell.Log(EditorShell::ConsoleSeverity::Info,
+                                splineHandleClicked ? "[Pick] blocked=spline-point" : "[Pick] blocked=gizmo-using");
                 return;
             }
 

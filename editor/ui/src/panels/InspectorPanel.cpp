@@ -4007,6 +4007,8 @@ namespace PlutoGE::ui
                                 {"Thickness", scene::PropertyType::Float, std::to_string(splineComponent->GetThickness())},
                                 {"SamplesPerSegment", scene::PropertyType::Int, std::to_string(splineComponent->GetSamplesPerSegment())},
                                 {"CollisionSamplesPerSegment", scene::PropertyType::Int, std::to_string(splineComponent->GetCollisionSamplesPerSegment())},
+                                {"MaxChordError", scene::PropertyType::Float, std::to_string(splineComponent->GetMaxChordError())},
+                                {"MaxTangentAngleDegrees", scene::PropertyType::Float, std::to_string(splineComponent->GetMaxTangentAngleDegrees())},
                                 {"UvMetersPerTile", scene::PropertyType::Float, std::to_string(splineComponent->GetUvMetersPerTile())},
                                 {"Closed", scene::PropertyType::Bool, splineComponent->IsClosed() ? "true" : "false"},
                                 {"GenerateMesh", scene::PropertyType::Bool, splineComponent->ShouldGenerateMesh() ? "true" : "false"},
@@ -4055,10 +4057,19 @@ namespace PlutoGE::ui
                             {
                                 ImGui::PushID(static_cast<int>(pointIndex));
                                 glm::vec3 position = points[pointIndex].position;
-                                if (ImGui::DragFloat3("Point", &position.x, 0.1f))
+                                const std::string pointLabel = "Point " + std::to_string(pointIndex);
+                                if (ImGui::DragFloat3(pointLabel.c_str(), &position.x, 0.1f))
                                 {
                                     splineComponent->SetPointPosition(pointIndex, position);
                                     entity->AddPrefabOverride("Component:SplineComponent:Points." + std::to_string(pointIndex));
+                                    editorShell.MarkSceneDirty();
+                                }
+                                glm::vec3 rotation = points[pointIndex].rotation;
+                                const std::string rotationLabel = "Rotation " + std::to_string(pointIndex);
+                                if (ImGui::DragFloat3(rotationLabel.c_str(), &rotation.x, 0.1f))
+                                {
+                                    splineComponent->SetPointRotation(pointIndex, rotation);
+                                    entity->AddPrefabOverride("Component:SplineComponent:PointRotations." + std::to_string(pointIndex));
                                     editorShell.MarkSceneDirty();
                                 }
                                 ImGui::SameLine();

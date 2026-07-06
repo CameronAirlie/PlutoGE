@@ -86,5 +86,8 @@ namespace PlutoGE::ui
         render::CameraData m_editorCameraData{};
         glm::vec2 m_viewportMin{0.0f};
         glm::vec2 m_viewportSize{0.0f};
+        uint32_t m_selectedSplineEntityId = 0;
+        int m_selectedSplinePointIndex = -1;
+        bool m_splinePointEditActive = false;
     };
 }

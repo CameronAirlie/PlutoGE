@@ -259,9 +259,7 @@ namespace PlutoGE::scene
                 const glm::vec3 p3 = GetWrappedPoint(points, segment + 2, closed);
                 const glm::quat startRotation = RotationQuaternion(GetWrappedControlPoint(points, segment, closed).rotation);
                 const glm::quat endRotation = RotationQuaternion(GetWrappedControlPoint(points, segment + 1, closed).rotation);
-                std::vector<AdaptiveInterval> intervals = {{0.0f, 1.0f, CalculateIntervalError(
-                                                                         p0, p1, p2, p3, startRotation, endRotation, 0.0f, 1.0f,
-                                                                         std::max(maxChordError, 0.001f), maxTangentAngleRadians)}};
+                std::vector<AdaptiveInterval> intervals = {{0.0f, 1.0f, CalculateIntervalError(p0, p1, p2, p3, startRotation, endRotation, 0.0f, 1.0f, std::max(maxChordError, 0.001f), maxTangentAngleRadians)}};
                 while (static_cast<int>(intervals.size()) < maxSamplesPerSegment)
                 {
                     const auto worst = std::max_element(intervals.begin(), intervals.end(), [](const AdaptiveInterval &left, const AdaptiveInterval &right)
@@ -275,13 +273,9 @@ namespace PlutoGE::scene
                     const float start = worst->start;
                     const float end = worst->end;
                     const float middle = glm::mix(start, end, 0.5f);
-                    intervals[intervalIndex] = {start, middle, CalculateIntervalError(
-                                                                  p0, p1, p2, p3, startRotation, endRotation, start, middle,
-                                                                  std::max(maxChordError, 0.001f), maxTangentAngleRadians)};
+                    intervals[intervalIndex] = {start, middle, CalculateIntervalError(p0, p1, p2, p3, startRotation, endRotation, start, middle, std::max(maxChordError, 0.001f), maxTangentAngleRadians)};
                     intervals.insert(intervals.begin() + static_cast<std::ptrdiff_t>(intervalIndex + 1),
-                                     {middle, end, CalculateIntervalError(
-                                                       p0, p1, p2, p3, startRotation, endRotation, middle, end,
-                                                       std::max(maxChordError, 0.001f), maxTangentAngleRadians)});
+                                     {middle, end, CalculateIntervalError(p0, p1, p2, p3, startRotation, endRotation, middle, end, std::max(maxChordError, 0.001f), maxTangentAngleRadians)});
                 }
 
                 for (const AdaptiveInterval &interval : intervals)

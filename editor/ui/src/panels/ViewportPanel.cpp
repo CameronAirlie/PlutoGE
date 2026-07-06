@@ -1753,8 +1753,8 @@ namespace PlutoGE::ui
                                           glm::rotate(glm::mat4(1.0f), glm::radians(editorCamera.yawDegrees), glm::vec3(0.0f, 1.0f, 0.0f)) *
                                           glm::rotate(glm::mat4(1.0f), glm::radians(editorCamera.pitchDegrees), glm::vec3(1.0f, 0.0f, 0.0f));
         const render::CameraData freshCameraData = editorCamera.camera.GetCameraDataForTransform(cameraTransform,
-                                                                                                  m_renderTarget->GetWidth(),
-                                                                                                  m_renderTarget->GetHeight());
+                                                                                                 m_renderTarget->GetWidth(),
+                                                                                                 m_renderTarget->GetHeight());
         const render::CameraData cameraData = m_hasEditorCameraData
                                                   ? m_editorCameraData
                                                   : freshCameraData;
@@ -2008,7 +2008,8 @@ namespace PlutoGE::ui
                 std::vector<ProjectedPoint> projectedInsertPoints;
                 const std::size_t segmentCount = splineComponent->IsClosed() && worldPoints.size() > 2
                                                      ? worldPoints.size()
-                                                     : worldPoints.size() > 1 ? worldPoints.size() - 1 : 0;
+                                                 : worldPoints.size() > 1 ? worldPoints.size() - 1
+                                                                          : 0;
                 projectedInsertPoints.reserve(segmentCount);
                 float nearestInsertDistanceSquared = kSplineInsertHitRadius * kSplineInsertHitRadius;
                 for (std::size_t segmentIndex = 0; segmentIndex < segmentCount; ++segmentIndex)
@@ -2065,9 +2066,9 @@ namespace PlutoGE::ui
                     }
                     const bool selected = static_cast<int>(pointIndex) == m_selectedSplinePoint;
                     const bool hoveredPointHandle = static_cast<int>(pointIndex) == hoveredPoint;
-                    const ImU32 fillColor = selected ? IM_COL32(255, 215, 70, 255)
-                                                    : hoveredPointHandle ? IM_COL32(255, 235, 150, 255)
-                                                                         : IM_COL32(245, 145, 45, 245);
+                    const ImU32 fillColor = selected             ? IM_COL32(255, 215, 70, 255)
+                                            : hoveredPointHandle ? IM_COL32(255, 235, 150, 255)
+                                                                 : IM_COL32(245, 145, 45, 245);
                     drawList->AddCircleFilled(projectedPoints[pointIndex].screen, selected ? 8.5f : kSplinePointRadius, fillColor, 16);
                     drawList->AddCircle(projectedPoints[pointIndex].screen, selected ? 8.5f : kSplinePointRadius,
                                         IM_COL32(35, 25, 15, 255), 16, 2.0f);
@@ -2090,8 +2091,7 @@ namespace PlutoGE::ui
                     editorShell.ExecuteSceneEdit("Insert Spline Point", [splineComponent, selectedEntity, insertionIndex, newPointPosition]()
                                                  {
                                                      splineComponent->InsertPoint(insertionIndex, newPointPosition);
-                                                     selectedEntity->AddPrefabOverride("Component:SplineComponent:PointCount");
-                                                 });
+                                                     selectedEntity->AddPrefabOverride("Component:SplineComponent:PointCount"); });
                     m_selectedSplinePoint = static_cast<int>(insertionIndex);
                     splineHandleClicked = true;
                     return;

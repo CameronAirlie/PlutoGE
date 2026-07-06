@@ -18,6 +18,7 @@ namespace PlutoGE::scene
     struct SplineControlPoint
     {
         glm::vec3 position{0.0f};
+        glm::vec3 rotation{0.0f};
     };
 
     struct SplineComponentConfig
@@ -26,6 +27,8 @@ namespace PlutoGE::scene
         float width = 8.0f;
         float thickness = 0.25f;
         float samplesPerSegment = 12.0f;
+        float maxChordError = 0.1f;
+        float maxTangentAngleDegrees = 5.0f;
         float uvMetersPerTile = 6.0f;
         bool closed = true;
         bool generateMesh = true;
@@ -49,6 +52,7 @@ namespace PlutoGE::scene
         void AddPoint(const glm::vec3 &position);
         void RemovePoint(std::size_t index);
         void SetPointPosition(std::size_t index, const glm::vec3 &position);
+        void SetPointRotation(std::size_t index, const glm::vec3 &rotation);
 
         float GetWidth() const { return m_width; }
         void SetWidth(float width);
@@ -56,6 +60,10 @@ namespace PlutoGE::scene
         void SetThickness(float thickness);
         int GetSamplesPerSegment() const { return m_samplesPerSegment; }
         void SetSamplesPerSegment(int samplesPerSegment);
+        float GetMaxChordError() const { return m_maxChordError; }
+        void SetMaxChordError(float maxChordError);
+        float GetMaxTangentAngleDegrees() const { return m_maxTangentAngleDegrees; }
+        void SetMaxTangentAngleDegrees(float maxTangentAngleDegrees);
         float GetUvMetersPerTile() const { return m_uvMetersPerTile; }
         void SetUvMetersPerTile(float uvMetersPerTile);
         bool IsClosed() const { return m_closed; }
@@ -82,6 +90,8 @@ namespace PlutoGE::scene
         float m_width = 8.0f;
         float m_thickness = 0.25f;
         int m_samplesPerSegment = 12;
+        float m_maxChordError = 0.1f;
+        float m_maxTangentAngleDegrees = 5.0f;
         float m_uvMetersPerTile = 6.0f;
         bool m_closed = true;
         bool m_generateMesh = true;

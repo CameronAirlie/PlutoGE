@@ -13,6 +13,10 @@
 #include <cstdio>
 #include <sstream>
 
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtx/euler_angles.hpp>
+#include <glm/gtc/quaternion.hpp>
+
 namespace PlutoGE::scene
 {
     namespace
@@ -44,6 +48,77 @@ namespace PlutoGE::scene
                            (-p0 + 3.0f * p1 - 3.0f * p2 + p3) * t3);
         }
 
+        glm::vec3 CatmullRomDerivative(const glm::vec3 &p0, const glm::vec3 &p1, const glm::vec3 &p2, const glm::vec3 &p3, float t)
+        {
+            const float t2 = t * t;
+            return 0.5f * ((-p0 + p2) +
+                           2.0f * (2.0f * p0 - 5.0f * p1 + 4.0f * p2 - p3) * t +
+                           3.0f * (-p0 + 3.0f * p1 - 3.0f * p2 + p3) * t2);
+        }
+
+        glm::vec3 SafeNormalize(const glm::vec3 &value, const glm::vec3 &fallback)
+        {
+            return glm::dot(value, value) > 0.000001f ? glm::normalize(value) : fallback;
+        }
+
+        float DistanceToLine(const glm::vec3 &point, const glm::vec3 &lineStart, const glm::vec3 &lineEnd)
+        {
+            const glm::vec3 line = lineEnd - lineStart;
+            const float lengthSquared = glm::dot(line, line);
+            if (lengthSquared <= 0.000001f)
+            {
+                return glm::length(point - lineStart);
+            }
+            const float t = glm::clamp(glm::dot(point - lineStart, line) / lengthSquared, 0.0f, 1.0f);
+            return glm::length(point - (lineStart + line * t));
+        }
+
+        struct AdaptiveInterval
+        {
+            float start = 0.0f;
+            float end = 1.0f;
+            float error = 0.0f;
+        };
+
+        float CalculateIntervalError(const glm::vec3 &p0,
+                                     const glm::vec3 &p1,
+                                     const glm::vec3 &p2,
+                                     const glm::vec3 &p3,
+                                     const glm::quat &startRotation,
+                                     const glm::quat &endRotation,
+                                     float start,
+                                     float end,
+                                     float maxChordError,
+                                     float maxTangentAngleRadians)
+        {
+            const float quarter = glm::mix(start, end, 0.25f);
+            const float middle = glm::mix(start, end, 0.5f);
+            const float threeQuarter = glm::mix(start, end, 0.75f);
+            const glm::vec3 startPoint = CatmullRom(p0, p1, p2, p3, start);
+            const glm::vec3 endPoint = CatmullRom(p0, p1, p2, p3, end);
+
+            float chordError = 0.0f;
+            chordError = std::max(chordError, DistanceToLine(CatmullRom(p0, p1, p2, p3, quarter), startPoint, endPoint));
+            chordError = std::max(chordError, DistanceToLine(CatmullRom(p0, p1, p2, p3, middle), startPoint, endPoint));
+            chordError = std::max(chordError, DistanceToLine(CatmullRom(p0, p1, p2, p3, threeQuarter), startPoint, endPoint));
+
+            const float sampleParameters[] = {start, quarter, middle, threeQuarter, end};
+            float tangentAngle = 0.0f;
+            glm::vec3 previousTangent = SafeNormalize(CatmullRomDerivative(p0, p1, p2, p3, sampleParameters[0]), glm::vec3(0.0f, 0.0f, 1.0f));
+            for (std::size_t sampleIndex = 1; sampleIndex < std::size(sampleParameters); ++sampleIndex)
+            {
+                const glm::vec3 tangent = SafeNormalize(CatmullRomDerivative(p0, p1, p2, p3, sampleParameters[sampleIndex]), previousTangent);
+                tangentAngle = std::max(tangentAngle, std::acos(glm::clamp(glm::dot(previousTangent, tangent), -1.0f, 1.0f)));
+                previousTangent = tangent;
+            }
+
+            const float rotationAngle = 2.0f * std::acos(glm::clamp(std::abs(glm::dot(startRotation, endRotation)), 0.0f, 1.0f));
+            const float intervalRotationAngle = rotationAngle * (end - start);
+            return std::max({chordError / maxChordError,
+                             tangentAngle / maxTangentAngleRadians,
+                             intervalRotationAngle / maxTangentAngleRadians});
+        }
+
         glm::vec3 GetWrappedPoint(const std::vector<SplineControlPoint> &points, int index, bool closed)
         {
             const int count = static_cast<int>(points.size());
@@ -63,6 +138,30 @@ namespace PlutoGE::scene
             }
 
             return points[static_cast<std::size_t>(std::clamp(index, 0, count - 1))].position;
+        }
+
+        const SplineControlPoint &GetWrappedControlPoint(const std::vector<SplineControlPoint> &points, int index, bool closed)
+        {
+            const int count = static_cast<int>(points.size());
+            if (closed)
+            {
+                index %= count;
+                if (index < 0)
+                {
+                    index += count;
+                }
+            }
+            else
+            {
+                index = std::clamp(index, 0, count - 1);
+            }
+            return points[static_cast<std::size_t>(index)];
+        }
+
+        glm::quat RotationQuaternion(const glm::vec3 &rotationDegrees)
+        {
+            const glm::vec3 radians = glm::radians(rotationDegrees);
+            return glm::quat_cast(glm::eulerAngleXYZ(radians.x, radians.y, radians.z));
         }
 
         void AddVertex(render::MeshData &meshData,
@@ -96,6 +195,8 @@ namespace PlutoGE::scene
           m_width(std::max(config.width, 0.05f)),
           m_thickness(std::max(config.thickness, 0.0f)),
           m_samplesPerSegment(std::max(1, static_cast<int>(std::round(config.samplesPerSegment)))),
+          m_maxChordError(std::max(config.maxChordError, 0.001f)),
+          m_maxTangentAngleDegrees(std::clamp(config.maxTangentAngleDegrees, 0.1f, 90.0f)),
           m_uvMetersPerTile(std::max(config.uvMetersPerTile, 0.01f)),
           m_closed(config.closed),
           m_generateMesh(config.generateMesh),
@@ -166,6 +267,17 @@ namespace PlutoGE::scene
         MarkDirty();
     }
 
+    void SplineComponent::SetPointRotation(std::size_t index, const glm::vec3 &rotation)
+    {
+        if (index >= m_points.size())
+        {
+            return;
+        }
+
+        m_points[index].rotation = rotation;
+        MarkDirty();
+    }
+
     void SplineComponent::SetWidth(float width)
     {
         m_width = std::max(width, 0.05f);
@@ -181,6 +293,18 @@ namespace PlutoGE::scene
     void SplineComponent::SetSamplesPerSegment(int samplesPerSegment)
     {
         m_samplesPerSegment = std::clamp(samplesPerSegment, 1, 128);
+        MarkDirty();
+    }
+
+    void SplineComponent::SetMaxChordError(float maxChordError)
+    {
+        m_maxChordError = std::max(maxChordError, 0.001f);
+        MarkDirty();
+    }
+
+    void SplineComponent::SetMaxTangentAngleDegrees(float maxTangentAngleDegrees)
+    {
+        m_maxTangentAngleDegrees = std::clamp(maxTangentAngleDegrees, 0.1f, 90.0f);
         MarkDirty();
     }
 
@@ -244,24 +368,58 @@ namespace PlutoGE::scene
         }
 
         std::vector<glm::vec3> centers;
+        std::vector<glm::quat> rotations;
         const int segmentCount = m_closed ? static_cast<int>(m_points.size()) : static_cast<int>(m_points.size()) - 1;
         centers.reserve(static_cast<std::size_t>(segmentCount * m_samplesPerSegment + 1));
+        rotations.reserve(static_cast<std::size_t>(segmentCount * m_samplesPerSegment + 1));
+        const float maxTangentAngleRadians = glm::radians(m_maxTangentAngleDegrees);
         for (int segment = 0; segment < segmentCount; ++segment)
         {
-            for (int sample = 0; sample < m_samplesPerSegment; ++sample)
+            const glm::vec3 p0 = GetWrappedPoint(m_points, segment - 1, m_closed);
+            const glm::vec3 p1 = GetWrappedPoint(m_points, segment, m_closed);
+            const glm::vec3 p2 = GetWrappedPoint(m_points, segment + 1, m_closed);
+            const glm::vec3 p3 = GetWrappedPoint(m_points, segment + 2, m_closed);
+            const glm::quat startRotation = RotationQuaternion(GetWrappedControlPoint(m_points, segment, m_closed).rotation);
+            const glm::quat endRotation = RotationQuaternion(GetWrappedControlPoint(m_points, segment + 1, m_closed).rotation);
+            std::vector<AdaptiveInterval> intervals = {{0.0f, 1.0f, CalculateIntervalError(
+                                                                            p0, p1, p2, p3, startRotation, endRotation, 0.0f, 1.0f,
+                                                                            m_maxChordError, maxTangentAngleRadians)}};
+            while (static_cast<int>(intervals.size()) < m_samplesPerSegment)
             {
-                const float t = static_cast<float>(sample) / static_cast<float>(m_samplesPerSegment);
-                centers.push_back(CatmullRom(
-                    GetWrappedPoint(m_points, segment - 1, m_closed),
-                    GetWrappedPoint(m_points, segment, m_closed),
-                    GetWrappedPoint(m_points, segment + 1, m_closed),
-                    GetWrappedPoint(m_points, segment + 2, m_closed),
-                    t));
+                const auto worst = std::max_element(intervals.begin(), intervals.end(), [](const AdaptiveInterval &left, const AdaptiveInterval &right)
+                                                    { return left.error < right.error; });
+                if (worst == intervals.end() || worst->error <= 1.0f)
+                {
+                    break;
+                }
+
+                const std::size_t intervalIndex = static_cast<std::size_t>(std::distance(intervals.begin(), worst));
+                const float start = worst->start;
+                const float end = worst->end;
+                const float middle = glm::mix(start, end, 0.5f);
+                intervals[intervalIndex] = {start, middle, CalculateIntervalError(
+                                                                      p0, p1, p2, p3, startRotation, endRotation, start, middle,
+                                                                      m_maxChordError, maxTangentAngleRadians)};
+                intervals.insert(intervals.begin() + static_cast<std::ptrdiff_t>(intervalIndex + 1),
+                                 {middle, end, CalculateIntervalError(
+                                                   p0, p1, p2, p3, startRotation, endRotation, middle, end,
+                                                   m_maxChordError, maxTangentAngleRadians)});
+            }
+
+            for (const AdaptiveInterval &interval : intervals)
+            {
+                const float t = interval.start;
+                centers.push_back(CatmullRom(p0, p1, p2, p3, t));
+                rotations.push_back(glm::normalize(glm::slerp(
+                    startRotation,
+                    endRotation,
+                    t)));
             }
         }
         if (!m_closed)
         {
             centers.push_back(m_points.back().position);
+            rotations.push_back(RotationQuaternion(m_points.back().rotation));
         }
 
         if (centers.size() < 2)
@@ -294,19 +452,29 @@ namespace PlutoGE::scene
             }
             tangent = glm::normalize(tangent);
 
-            glm::vec3 right = glm::cross(tangent, up);
+            glm::vec3 defaultRight = glm::cross(tangent, up);
+            if (glm::dot(defaultRight, defaultRight) <= 0.000001f)
+            {
+                defaultRight = glm::cross(tangent, glm::vec3(0.0f, 0.0f, 1.0f));
+            }
+            defaultRight = glm::normalize(defaultRight);
+            const glm::vec3 baseX = -defaultRight;
+            const glm::vec3 baseY = glm::normalize(glm::cross(tangent, baseX));
+            const glm::mat3 splineFrame(baseX, baseY, tangent);
+            const glm::vec3 preferredRight = splineFrame * (rotations[index] * glm::vec3(-1.0f, 0.0f, 0.0f));
+            glm::vec3 right = preferredRight - tangent * glm::dot(preferredRight, tangent);
             if (glm::dot(right, right) <= 0.000001f)
             {
-                right = glm::vec3(1.0f, 0.0f, 0.0f);
+                right = defaultRight;
             }
             right = glm::normalize(right);
             const glm::vec3 surfaceNormal = glm::normalize(glm::cross(right, tangent));
 
             const float v = distances[index] / m_uvMetersPerTile;
-            AddVertex(meshData, centers[index] - right * halfWidth, surfaceNormal, glm::vec2(0.0f, v), tangent);
-            AddVertex(meshData, centers[index] + right * halfWidth, surfaceNormal, glm::vec2(1.0f, v), tangent);
-            AddVertex(meshData, centers[index] - right * halfWidth - up * bottomOffset, -right, glm::vec2(0.0f, v), tangent);
-            AddVertex(meshData, centers[index] + right * halfWidth - up * bottomOffset, right, glm::vec2(1.0f, v), tangent);
+            AddVertex(meshData, centers[index] - right * halfWidth, surfaceNormal, glm::vec2(0.0f, v), right);
+            AddVertex(meshData, centers[index] + right * halfWidth, surfaceNormal, glm::vec2(1.0f, v), right);
+            AddVertex(meshData, centers[index] - right * halfWidth - surfaceNormal * bottomOffset, -right, glm::vec2(0.0f, v), right);
+            AddVertex(meshData, centers[index] + right * halfWidth - surfaceNormal * bottomOffset, right, glm::vec2(1.0f, v), right);
         }
 
         const std::size_t edgeCount = m_closed ? centers.size() : centers.size() - 1;
@@ -380,6 +548,8 @@ namespace PlutoGE::scene
             {"Width", PropertyType::Float, std::to_string(m_width)},
             {"Thickness", PropertyType::Float, std::to_string(m_thickness)},
             {"SamplesPerSegment", PropertyType::Int, std::to_string(m_samplesPerSegment)},
+            {"MaxChordError", PropertyType::Float, std::to_string(m_maxChordError)},
+            {"MaxTangentAngleDegrees", PropertyType::Float, std::to_string(m_maxTangentAngleDegrees)},
             {"UvMetersPerTile", PropertyType::Float, std::to_string(m_uvMetersPerTile)},
             {"Closed", PropertyType::Bool, m_closed ? "true" : "false"},
             {"GenerateMesh", PropertyType::Bool, m_generateMesh ? "true" : "false"},
@@ -391,6 +561,7 @@ namespace PlutoGE::scene
         for (std::size_t index = 0; index < m_points.size(); ++index)
         {
             properties.push_back({"Points." + std::to_string(index), PropertyType::Vec3, SerializeVec3(m_points[index].position)});
+            properties.push_back({"PointRotations." + std::to_string(index), PropertyType::Vec3, SerializeVec3(m_points[index].rotation)});
         }
 
         return properties;
@@ -409,6 +580,10 @@ namespace PlutoGE::scene
                 m_thickness = std::max(std::stof(property.value), 0.0f);
             else if (property.name == "SamplesPerSegment")
                 m_samplesPerSegment = std::clamp(std::stoi(property.value), 1, 128);
+            else if (property.name == "MaxChordError")
+                m_maxChordError = std::max(std::stof(property.value), 0.001f);
+            else if (property.name == "MaxTangentAngleDegrees")
+                m_maxTangentAngleDegrees = std::clamp(std::stof(property.value), 0.1f, 90.0f);
             else if (property.name == "UvMetersPerTile")
                 m_uvMetersPerTile = std::max(std::stof(property.value), 0.01f);
             else if (property.name == "Closed")
@@ -429,6 +604,15 @@ namespace PlutoGE::scene
                     deserializedPoints.resize(index + 1);
                 }
                 deserializedPoints[index].position = ParseVec3(property.value);
+            }
+            else if (property.name.rfind("PointRotations.", 0) == 0)
+            {
+                const auto index = static_cast<std::size_t>(std::stoul(property.name.substr(15)));
+                if (index >= deserializedPoints.size())
+                {
+                    deserializedPoints.resize(index + 1);
+                }
+                deserializedPoints[index].rotation = ParseVec3(property.value);
             }
         }
 

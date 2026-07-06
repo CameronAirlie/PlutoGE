@@ -15,6 +15,7 @@
 #include "PlutoGE/scene/components/ColliderComponent.h"
 #include "PlutoGE/scene/components/FoliageComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
+#include "PlutoGE/scene/components/SplineComponent.h"
 #include "PlutoGE/scene/components/TerrainComponent.h"
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/ui/panels/ContentBrowserPanel.h"
@@ -1247,6 +1248,125 @@ namespace PlutoGE::ui
             entity.SetScale(scale);
         }
 
+        glm::vec3 ExtractRotationDegrees(const glm::mat4 &transform)
+        {
+            glm::vec3 basisX = glm::normalize(glm::vec3(transform[0]));
+            glm::vec3 basisY = glm::normalize(glm::vec3(transform[1]));
+            glm::vec3 basisZ = glm::normalize(glm::vec3(transform[2]));
+            if (glm::dot(glm::cross(basisX, basisY), basisZ) < 0.0f)
+            {
+                basisX = -basisX;
+            }
+
+            glm::mat4 rotationMatrix(1.0f);
+            rotationMatrix[0] = glm::vec4(basisX, 0.0f);
+            rotationMatrix[1] = glm::vec4(basisY, 0.0f);
+            rotationMatrix[2] = glm::vec4(basisZ, 0.0f);
+            float rotationX = 0.0f;
+            float rotationY = 0.0f;
+            float rotationZ = 0.0f;
+            glm::extractEulerAngleXYZ(rotationMatrix, rotationX, rotationY, rotationZ);
+            return glm::degrees(glm::vec3(rotationX, rotationY, rotationZ));
+        }
+
+        glm::mat4 BuildSplinePointFrame(const scene::SplineComponent &spline, std::size_t pointIndex)
+        {
+            const auto &points = spline.GetPoints();
+            const std::size_t lastIndex = points.size() - 1;
+            const std::size_t previousIndex = pointIndex > 0 ? pointIndex - 1 : (spline.IsClosed() ? lastIndex : pointIndex);
+            const std::size_t nextIndex = pointIndex < lastIndex ? pointIndex + 1 : (spline.IsClosed() ? 0 : pointIndex);
+
+            glm::vec3 tangent = points[nextIndex].position - points[previousIndex].position;
+            if (glm::dot(tangent, tangent) <= 0.000001f)
+            {
+                tangent = glm::vec3(0.0f, 0.0f, 1.0f);
+            }
+            tangent = glm::normalize(tangent);
+
+            glm::vec3 defaultRight = glm::cross(tangent, glm::vec3(0.0f, 1.0f, 0.0f));
+            if (glm::dot(defaultRight, defaultRight) <= 0.000001f)
+            {
+                defaultRight = glm::cross(tangent, glm::vec3(0.0f, 0.0f, 1.0f));
+            }
+            defaultRight = glm::normalize(defaultRight);
+
+            glm::mat4 frame(1.0f);
+            frame[0] = glm::vec4(-defaultRight, 0.0f);
+            frame[1] = glm::vec4(glm::normalize(glm::cross(tangent, -defaultRight)), 0.0f);
+            frame[2] = glm::vec4(tangent, 0.0f);
+            return frame;
+        }
+
+        int DrawAndPickSplineControlPoints(scene::Entity &entity,
+                                           scene::SplineComponent &spline,
+                                           int selectedPointIndex,
+                                           const render::CameraData &cameraData,
+                                           const ImVec2 &viewportMin,
+                                           const ImVec2 &viewportSize,
+                                           bool pickPoint)
+        {
+            const auto &points = spline.GetPoints();
+            if (points.empty())
+            {
+                return -1;
+            }
+
+            auto *drawList = ImGui::GetWindowDrawList();
+            const glm::mat4 worldTransform = entity.GetWorldTransform();
+            std::vector<glm::vec3> worldPoints;
+            worldPoints.reserve(points.size());
+            for (const auto &point : points)
+            {
+                worldPoints.push_back(glm::vec3(worldTransform * glm::vec4(point.position, 1.0f)));
+            }
+
+            drawList->PushClipRect(viewportMin, ImVec2(viewportMin.x + viewportSize.x, viewportMin.y + viewportSize.y), true);
+            for (std::size_t index = 1; index < worldPoints.size(); ++index)
+            {
+                DrawWorldLine(drawList, worldPoints[index - 1], worldPoints[index], cameraData, viewportMin, viewportSize,
+                              IM_COL32(255, 196, 64, 190), 1.5f);
+            }
+            if (spline.IsClosed() && worldPoints.size() > 2)
+            {
+                DrawWorldLine(drawList, worldPoints.back(), worldPoints.front(), cameraData, viewportMin, viewportSize,
+                              IM_COL32(255, 196, 64, 190), 1.5f);
+            }
+
+            int pickedIndex = -1;
+            float closestDistanceSquared = 12.0f * 12.0f;
+            const ImVec2 mousePosition = ImGui::GetIO().MousePos;
+            for (std::size_t index = 0; index < worldPoints.size(); ++index)
+            {
+                const ProjectedPoint projected = ProjectWorldPoint(worldPoints[index], cameraData, viewportMin, viewportSize);
+                if (!projected.visible)
+                {
+                    continue;
+                }
+
+                const bool selected = static_cast<int>(index) == selectedPointIndex;
+                drawList->AddCircleFilled(projected.screen, selected ? 7.0f : 5.0f,
+                                          selected ? IM_COL32(255, 232, 128, 255) : IM_COL32(255, 172, 32, 235));
+                drawList->AddCircle(projected.screen, selected ? 8.0f : 6.0f, IM_COL32(32, 24, 12, 255), 0, 1.5f);
+                const std::string pointLabel = std::to_string(index);
+                drawList->AddText(ImVec2(projected.screen.x + 9.0f, projected.screen.y - 8.0f),
+                                  IM_COL32(255, 232, 180, 255), pointLabel.c_str());
+
+                if (pickPoint)
+                {
+                    const float dx = mousePosition.x - projected.screen.x;
+                    const float dy = mousePosition.y - projected.screen.y;
+                    const float distanceSquared = dx * dx + dy * dy;
+                    if (distanceSquared <= closestDistanceSquared)
+                    {
+                        closestDistanceSquared = distanceSquared;
+                        pickedIndex = static_cast<int>(index);
+                    }
+                }
+            }
+            drawList->PopClipRect();
+            return pickedIndex;
+        }
+
         void FrameSelectedEntity(EditorShell &editorShell)
         {
             auto *selectedEntity = editorShell.GetSelectedEntity();
@@ -1652,6 +1772,41 @@ namespace PlutoGE::ui
 
         if (auto *selectedEntity = editorShell.GetSelectedEntity())
         {
+            auto *splineComponent = selectedEntity->GetComponent<scene::SplineComponent>();
+            if (!splineComponent || m_selectedSplineEntityId != selectedEntity->GetID())
+            {
+                if (m_splinePointEditActive)
+                {
+                    editorShell.EndSceneEdit();
+                    m_splinePointEditActive = false;
+                }
+                m_selectedSplineEntityId = splineComponent ? selectedEntity->GetID() : 0;
+                m_selectedSplinePointIndex = -1;
+            }
+
+            bool splinePointClickConsumed = false;
+            if (splineComponent)
+            {
+                const auto &points = splineComponent->GetPoints();
+                if (m_selectedSplinePointIndex >= static_cast<int>(points.size()))
+                {
+                    m_selectedSplinePointIndex = -1;
+                }
+                const bool canPickPoint = viewportClicked && m_isViewportHovered && !controlsHovered && !ImGuizmo::IsUsing();
+                const int pickedPoint = DrawAndPickSplineControlPoints(*selectedEntity,
+                                                                       *splineComponent,
+                                                                       m_selectedSplinePointIndex,
+                                                                       cameraData,
+                                                                       viewportMin,
+                                                                       viewportSize,
+                                                                       canPickPoint);
+                if (pickedPoint >= 0)
+                {
+                    m_selectedSplinePointIndex = pickedPoint;
+                    splinePointClickConsumed = true;
+                }
+            }
+
             bool terrainPaintActive = false;
             bool foliagePaintActive = false;
             static bool s_terrainStrokeActive = false;
@@ -1744,6 +1899,22 @@ namespace PlutoGE::ui
             }
 
             glm::mat4 entityTransform = selectedEntity->GetWorldTransform();
+            const bool editingSplinePoint = splineComponent &&
+                                            m_selectedSplinePointIndex >= 0 &&
+                                            m_selectedSplinePointIndex < static_cast<int>(splineComponent->GetPoints().size());
+            if (editingSplinePoint)
+            {
+                if (m_gizmoOperation == ImGuizmo::SCALE || m_gizmoOperation == ImGuizmo::BOUNDS)
+                {
+                    m_gizmoOperation = ImGuizmo::TRANSLATE;
+                }
+                const auto &point = splineComponent->GetPoints()[static_cast<std::size_t>(m_selectedSplinePointIndex)];
+                const glm::vec3 rotationRadians = glm::radians(point.rotation);
+                const glm::mat4 pointTransform = glm::translate(glm::mat4(1.0f), point.position) *
+                                                 BuildSplinePointFrame(*splineComponent, static_cast<std::size_t>(m_selectedSplinePointIndex)) *
+                                                 glm::eulerAngleXYZ(rotationRadians.x, rotationRadians.y, rotationRadians.z);
+                entityTransform *= pointTransform;
+            }
             float *snapValues = nullptr;
             if (m_enableSnap)
             {
@@ -1780,8 +1951,42 @@ namespace PlutoGE::ui
             if (ImGuizmo::IsUsing())
             {
                 m_isTransformGizmoUsing = true;
-                ApplyWorldTransformToEntity(*selectedEntity, entityTransform);
+                if (editingSplinePoint)
+                {
+                    if (!m_splinePointEditActive)
+                    {
+                        editorShell.BeginSceneEdit(m_gizmoOperation == ImGuizmo::ROTATE ? "Rotate Spline Point" : "Move Spline Point");
+                        m_splinePointEditActive = true;
+                    }
+                    const glm::mat4 localPointTransform = glm::inverse(selectedEntity->GetWorldTransform()) * entityTransform;
+                    const std::size_t pointIndex = static_cast<std::size_t>(m_selectedSplinePointIndex);
+                    if (m_gizmoOperation == ImGuizmo::ROTATE)
+                    {
+                        const glm::mat4 relativePointTransform = glm::inverse(BuildSplinePointFrame(*splineComponent, pointIndex)) * localPointTransform;
+                        splineComponent->SetPointRotation(pointIndex, ExtractRotationDegrees(relativePointTransform));
+                        selectedEntity->AddPrefabOverride("Component:SplineComponent:PointRotations." + std::to_string(m_selectedSplinePointIndex));
+                    }
+                    else
+                    {
+                        splineComponent->SetPointPosition(pointIndex, glm::vec3(localPointTransform[3]));
+                        selectedEntity->AddPrefabOverride("Component:SplineComponent:Points." + std::to_string(m_selectedSplinePointIndex));
+                    }
+                }
+                else
+                {
+                    ApplyWorldTransformToEntity(*selectedEntity, entityTransform);
+                }
                 editorShell.MarkSceneDirty();
+            }
+            else if (m_splinePointEditActive)
+            {
+                editorShell.EndSceneEdit();
+                m_splinePointEditActive = false;
+            }
+
+            if (splinePointClickConsumed)
+            {
+                return;
             }
         }
 
@@ -1803,6 +2008,7 @@ namespace PlutoGE::ui
                 return;
             }
 
+            m_selectedSplinePointIndex = -1;
             PickDebugInfo pickDebugInfo;
             auto *pickedEntity = PickEntity(editorShell.GetEngine().GetScene(), cameraData, viewportMin, viewportSize, &pickDebugInfo);
             if (!pickDebugInfo.rayBuilt && m_hasEditorCameraData)

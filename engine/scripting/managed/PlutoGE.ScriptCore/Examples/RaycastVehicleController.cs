@@ -49,7 +49,9 @@ public sealed class RaycastVehicleController : ScriptBehaviour
 
     [SerializedField] private float downforce = 36.0f;
     [SerializedField] private float maxDownforceMultiplier = 2.0f;
-    [SerializedField] private float rollingResistance = 110.0f;
+    [SerializedField] private float rollingResistance = 18.0f;
+    [SerializedField] private float coastLongitudinalDampingScale = 0.0015f;
+    [SerializedField] private float brakingLongitudinalDampingScale = 0.008f;
     [SerializedField] private float uprightAssist = 7.5f;
     [SerializedField] private float yawAssist = 0.65f;
     [SerializedField] private float recoveryImpulse = 6500.0f;
@@ -315,7 +317,10 @@ public sealed class RaycastVehicleController : ScriptBehaviour
             var handbrakeForceVector = !wheel.Steering && handbrake
                 ? -forward * MathF.Sign(NonZero(forwardSpeed)) * handbrakeForce * 0.5f
                 : Vector3.Zero;
-            var longitudinalDamping = -forward * forwardSpeed * longitudinalStiffness * 0.02f;
+            var longitudinalDampingScale = brakeInput > 0.0f || handbrake
+                ? brakingLongitudinalDampingScale
+                : coastLongitudinalDampingScale;
+            var longitudinalDamping = -forward * forwardSpeed * longitudinalStiffness * MathF.Max(longitudinalDampingScale, 0.0f);
             var rolling = -forward * forwardSpeed * rollingResistance;
 
             var longitudinalForce = forward * driveForce + brake + handbrakeForceVector + longitudinalDamping + rolling;

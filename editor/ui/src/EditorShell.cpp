@@ -87,8 +87,12 @@ namespace PlutoGE::ui
 
     namespace
     {
-        constexpr float kEditorCameraMoveSpeed = 6.0f;
         constexpr float kEditorCameraBoostMultiplier = 2.5f;
+        constexpr float kEditorCameraScrollStepFactor = 1.2f;
+        constexpr float kEditorCameraMinMoveSpeed = 0.1f;
+        constexpr float kEditorCameraMaxMoveSpeed = 1000.0f;
+        constexpr float kEditorCameraMinSpeedAdjustment = 0.1f;
+        constexpr float kEditorCameraMaxSpeedAdjustment = 10.0f;
         constexpr float kEditorCameraMouseSensitivity = 0.12f;
         constexpr float kEditorCameraPitchLimitDegrees = 89.0f;
         constexpr const char *kSceneFileFilter = "PlutoGE Scene\0*.plutoscene\0All Files\0*.*\0";
@@ -364,6 +368,7 @@ namespace PlutoGE::ui
                 .positionX = camera.position.x,
                 .positionY = camera.position.y,
                 .positionZ = camera.position.z,
+                .moveSpeed = camera.moveSpeed,
                 .yawDegrees = camera.yawDegrees,
                 .pitchDegrees = camera.pitchDegrees,
                 .fovY = camera.camera.GetFOV(),
@@ -409,6 +414,8 @@ namespace PlutoGE::ui
                                               EditorShell::EditorViewportCamera &camera)
         {
             camera.position = glm::vec3(settings.positionX, settings.positionY, settings.positionZ);
+            camera.moveSpeed = glm::clamp(settings.moveSpeed, kEditorCameraMinMoveSpeed, kEditorCameraMaxMoveSpeed);
+            camera.speedAdjustment = 1.0f;
             camera.yawDegrees = settings.yawDegrees;
             camera.pitchDegrees = settings.pitchDegrees;
             camera.camera.SetFOV(settings.fovY);
@@ -560,7 +567,15 @@ namespace PlutoGE::ui
                 return;
             }
 
-            float moveSpeed = kEditorCameraMoveSpeed;
+            const double scrollDeltaY = window.GetInputState().mouseState.scrollDeltaY;
+            if (scrollDeltaY != 0.0)
+            {
+                camera.speedAdjustment = glm::clamp(camera.speedAdjustment * std::pow(kEditorCameraScrollStepFactor, static_cast<float>(scrollDeltaY)),
+                                                    kEditorCameraMinSpeedAdjustment,
+                                                    kEditorCameraMaxSpeedAdjustment);
+            }
+
+            float moveSpeed = glm::clamp(camera.moveSpeed, kEditorCameraMinMoveSpeed, kEditorCameraMaxMoveSpeed) * camera.speedAdjustment;
             if (glfwGetKey(windowHandle, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS)
             {
                 moveSpeed *= kEditorCameraBoostMultiplier;

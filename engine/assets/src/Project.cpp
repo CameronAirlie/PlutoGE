@@ -503,6 +503,13 @@ namespace PlutoGE::assets
                 continue;
             }
 
+            if (tokens[0] == "EDITOR_CAMERA_SPEED" && tokens.size() >= 2)
+            {
+                ParseFloat(tokens[1], manifest.editorCamera.moveSpeed);
+                manifest.editorCamera.moveSpeed = std::clamp(manifest.editorCamera.moveSpeed, 0.1f, 1000.0f);
+                continue;
+            }
+
             if (tokens[0] == "EDITOR_CAMERA_ROTATION" && tokens.size() >= 3)
             {
                 ParseFloat(tokens[1], manifest.editorCamera.yawDegrees);
@@ -801,6 +808,7 @@ namespace PlutoGE::assets
                << m_manifest.editorCamera.positionX << '\t'
                << m_manifest.editorCamera.positionY << '\t'
                << m_manifest.editorCamera.positionZ << '\n';
+        output << "EDITOR_CAMERA_SPEED\t" << std::clamp(m_manifest.editorCamera.moveSpeed, 0.1f, 1000.0f) << '\n';
         output << "EDITOR_CAMERA_ROTATION\t"
                << m_manifest.editorCamera.yawDegrees << '\t'
                << m_manifest.editorCamera.pitchDegrees << '\n';

@@ -1511,8 +1511,8 @@ namespace PlutoGE::ui
                 entity.CreateComponent<scene::ColliderComponent>(scene::ColliderComponentConfig{
                     .shape = entity.HasComponent<scene::TerrainComponent>()
                                  ? scene::ColliderShape::Terrain
-                                 : entity.HasComponent<scene::SplineComponent>() ? scene::ColliderShape::Mesh
-                                                                                : scene::ColliderShape::Box,
+                             : entity.HasComponent<scene::SplineComponent>() ? scene::ColliderShape::Mesh
+                                                                             : scene::ColliderShape::Box,
                 });
                 break;
             case AddableComponentType::IblCapture:
@@ -2053,7 +2053,8 @@ namespace PlutoGE::ui
                 const auto &value = std::get<std::string>(*fieldValue);
                 const auto matchesType = [&](const AssetReferenceOption &option)
                 {
-                    if (field.referenceTypeName.empty()) return true;
+                    if (field.referenceTypeName.empty())
+                        return true;
                     const auto actualType = ReadScriptableObjectType(editorShell.GetProject(), option.reference);
                     const auto *actualDefinition = core::Engine::GetInstance().GetScriptEngine().FindClass(actualType);
                     return actualType == field.referenceTypeName ||
@@ -2274,7 +2275,7 @@ namespace PlutoGE::ui
             ImGui::TextDisabled("Changes below can be saved back to the shared preset.");
         }
         else
-            ImGui::TextDisabled("Legacy inline stack (select a preset to share settings)." );
+            ImGui::TextDisabled("Legacy inline stack (select a preset to share settings).");
 
         const auto &registeredTypes = render::GetRegisteredPostProcessEffectTypes();
         static int selectedEffectTypeIndex = 0;
@@ -2437,6 +2438,7 @@ namespace PlutoGE::ui
     void InspectorPanel::RenderEditorCameraInspector(EditorShell::EditorViewportCamera &camera) const
     {
         ImGui::TextUnformatted("Editor Camera");
+        auto &editorShell = EditorShell::GetInstance();
 
         if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen))
         {
@@ -2447,16 +2449,26 @@ namespace PlutoGE::ui
 
         if (ImGui::CollapsingHeader("Camera", ImGuiTreeNodeFlags_DefaultOpen))
         {
+            if (ImGui::DragFloat("Move Speed", &camera.moveSpeed, 0.05f, 0.1f, 1000.0f, "%.2f"))
+            {
+                camera.moveSpeed = std::clamp(camera.moveSpeed, 0.1f, 1000.0f);
+                editorShell.MarkProjectDirty();
+            }
+
+            ImGui::Text("Current Fly Speed: %.2f", camera.moveSpeed * camera.speedAdjustment);
+
             float fov = camera.camera.GetFOV();
             if (ImGui::DragFloat("FOV", &fov, 0.1f, 1.0f, 179.0f))
             {
                 camera.camera.SetFOV(fov);
+                editorShell.MarkProjectDirty();
             }
 
             float nearPlane = camera.camera.GetNearPlane();
             if (ImGui::DragFloat("Near Plane", &nearPlane, 0.01f, 0.001f, camera.camera.GetFarPlane() - 0.001f))
             {
                 camera.camera.SetNearPlane(nearPlane);
+                editorShell.MarkProjectDirty();
             }
 
             float farPlane = camera.camera.GetFarPlane();
@@ -2464,6 +2476,7 @@ namespace PlutoGE::ui
             if (ImGui::DragFloat("Far Plane", &farPlane, 0.1f, minFarPlane, 10000.0f))
             {
                 camera.camera.SetFarPlane(farPlane);
+                editorShell.MarkProjectDirty();
             }
         }
 
@@ -2503,7 +2516,7 @@ namespace PlutoGE::ui
             ImGui::TextDisabled("Changes below can be saved back to the shared preset.");
         }
         else
-            ImGui::TextDisabled("Legacy inline stack (select a preset to share settings)." );
+            ImGui::TextDisabled("Legacy inline stack (select a preset to share settings).");
 
         const auto &registeredTypes = render::GetRegisteredPostProcessEffectTypes();
         static int selectedEffectTypeIndex = 0;

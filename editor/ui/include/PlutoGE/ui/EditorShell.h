@@ -55,6 +55,8 @@ namespace PlutoGE::ui
                 .farPlane = 100.0f,
             }};
             glm::vec3 position{0.0f, 2.0f, 6.0f};
+            float moveSpeed = 6.0f;
+            float speedAdjustment = 1.0f;
             float yawDegrees = 0.0f;
             float pitchDegrees = 0.0f;
             std::vector<std::unique_ptr<render::IPostProcessEffect>> postProcessEffects;

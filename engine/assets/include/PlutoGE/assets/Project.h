@@ -41,6 +41,7 @@ namespace PlutoGE::assets
         float positionX = 0.0f;
         float positionY = 2.0f;
         float positionZ = 6.0f;
+        float moveSpeed = 6.0f;
         float yawDegrees = 0.0f;
         float pitchDegrees = 0.0f;
         float fovY = 45.0f;

@@ -295,6 +295,25 @@ namespace PlutoGE::audio
                                                                .sampleRate = decodedClip.sampleRate,
                                                                .samples = std::move(decodedClip.samples),
                                                            });
+        if (it->second.channels <= 1)
+        {
+            it->second.monoSamples = it->second.samples;
+        }
+        else
+        {
+            const std::size_t frameCount = it->second.samples.size() / static_cast<std::size_t>(it->second.channels);
+            it->second.monoSamples.resize(frameCount);
+            for (std::size_t frameIndex = 0; frameIndex < frameCount; ++frameIndex)
+            {
+                float mixedSample = 0.0f;
+                for (int channelIndex = 0; channelIndex < it->second.channels; ++channelIndex)
+                {
+                    mixedSample += it->second.samples[frameIndex * static_cast<std::size_t>(it->second.channels) + static_cast<std::size_t>(channelIndex)];
+                }
+
+                it->second.monoSamples[frameIndex] = mixedSample / static_cast<float>(it->second.channels);
+            }
+        }
         clip = &it->second;
         return true;
 #else
@@ -401,18 +420,21 @@ namespace PlutoGE::audio
             gain *= 1.0f - 0.65f * std::clamp(emitter.occlusion, 0.0f, 1.0f);
             gain *= std::max(listener.masterVolume, 0.0f);
 
-            std::vector<float> matrix(static_cast<std::size_t>(m_outputChannels), gain);
+            std::vector<float> matrix(static_cast<std::size_t>(m_outputChannels), 0.0f);
             if (m_outputChannels >= 2)
             {
                 const float pan = ComputePan(listener, emitter);
-                matrix[0] = gain * (pan <= 0.0f ? 1.0f : 1.0f - pan);
-                matrix[1] = gain * (pan >= 0.0f ? 1.0f : 1.0f + pan);
-                for (unsigned int channelIndex = 2; channelIndex < m_outputChannels; ++channelIndex)
-                {
-                    matrix[channelIndex] = gain * 0.65f;
-                }
+                const float leftGain = gain * (pan <= 0.0f ? 1.0f : 1.0f - pan);
+                const float rightGain = gain * (pan >= 0.0f ? 1.0f : 1.0f + pan);
+                matrix[0] = leftGain;
+                matrix[1] = rightGain;
+            }
+            else
+            {
+                matrix[0] = gain;
             }
 
+            sourceVoice->SetVolume(1.0f);
             sourceVoice->SetOutputMatrix(static_cast<IXAudio2Voice *>(m_masterVoice), 1, m_outputChannels, matrix.data());
 
             XAUDIO2_FILTER_PARAMETERS filterParameters{};
@@ -425,6 +447,14 @@ namespace PlutoGE::audio
 
         gain *= listener.active ? std::max(listener.masterVolume, 0.0f) : 1.0f;
         sourceVoice->SetVolume(gain);
+
+        std::vector<float> identityMatrix(static_cast<std::size_t>(voice.channels) * static_cast<std::size_t>(m_outputChannels), 0.0f);
+        for (int sourceChannel = 0; sourceChannel < voice.channels; ++sourceChannel)
+        {
+            const unsigned int targetChannel = std::min(static_cast<unsigned int>(sourceChannel), m_outputChannels - 1);
+            identityMatrix[static_cast<std::size_t>(sourceChannel) * static_cast<std::size_t>(m_outputChannels) + targetChannel] = 1.0f;
+        }
+        sourceVoice->SetOutputMatrix(static_cast<IXAudio2Voice *>(m_masterVoice), voice.channels, m_outputChannels, identityMatrix.data());
 
         XAUDIO2_FILTER_PARAMETERS filterParameters{};
         filterParameters.Type = LowPassFilter;
@@ -498,18 +528,23 @@ namespace PlutoGE::audio
             const bool needsNewVoice = currentVoice == m_activeVoices.end() ||
                                        currentVoice->second.clipPath != emitter.clipPath ||
                                        currentVoice->second.looping != emitter.looping ||
+                                       currentVoice->second.spatialized != emitter.spatialized ||
                                        emitter.restartRequested;
 
             if (needsNewVoice)
             {
                 DestroyVoice(emitter.key);
 
+                const bool useSpatialVoice = emitter.spatialized;
+                const int sourceChannels = useSpatialVoice ? 1 : clip->channels;
+                const std::vector<float> &sourceSamples = useSpatialVoice ? clip->monoSamples : clip->samples;
+
                 WAVEFORMATEX waveFormat{};
                 waveFormat.wFormatTag = WAVE_FORMAT_IEEE_FLOAT;
-                waveFormat.nChannels = static_cast<WORD>(clip->channels);
+                waveFormat.nChannels = static_cast<WORD>(sourceChannels);
                 waveFormat.nSamplesPerSec = static_cast<DWORD>(clip->sampleRate);
                 waveFormat.wBitsPerSample = 32;
-                waveFormat.nBlockAlign = static_cast<WORD>(clip->channels * sizeof(float));
+                waveFormat.nBlockAlign = static_cast<WORD>(sourceChannels * sizeof(float));
                 waveFormat.nAvgBytesPerSec = waveFormat.nSamplesPerSec * waveFormat.nBlockAlign;
 
                 IXAudio2SourceVoice *sourceVoice = nullptr;
@@ -519,8 +554,8 @@ namespace PlutoGE::audio
                 }
 
                 XAUDIO2_BUFFER buffer{};
-                buffer.AudioBytes = static_cast<UINT32>(clip->samples.size() * sizeof(float));
-                buffer.pAudioData = reinterpret_cast<const BYTE *>(clip->samples.data());
+                buffer.AudioBytes = static_cast<UINT32>(sourceSamples.size() * sizeof(float));
+                buffer.pAudioData = reinterpret_cast<const BYTE *>(sourceSamples.data());
                 buffer.Flags = XAUDIO2_END_OF_STREAM;
                 buffer.LoopCount = emitter.looping ? XAUDIO2_LOOP_INFINITE : 0;
                 if (FAILED(sourceVoice->SubmitSourceBuffer(&buffer)))
@@ -537,9 +572,10 @@ namespace PlutoGE::audio
                 currentVoice = m_activeVoices.emplace(emitter.key, ActiveVoice{
                                                                        .sourceVoice = sourceVoice,
                                                                        .clipPath = emitter.clipPath,
-                                                                       .channels = clip->channels,
+                                                                       .channels = sourceChannels,
                                                                        .paused = emitter.paused,
                                                                        .looping = emitter.looping,
+                                                                       .spatialized = emitter.spatialized,
                                                                    })
                                    .first;
             }

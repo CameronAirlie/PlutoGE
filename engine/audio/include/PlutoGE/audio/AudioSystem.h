@@ -44,6 +44,7 @@ namespace PlutoGE::audio
             int channels = 0;
             int sampleRate = 0;
             std::vector<float> samples;
+            std::vector<float> monoSamples;
         };
 
         struct ActiveVoice
@@ -53,6 +54,7 @@ namespace PlutoGE::audio
             int channels = 0;
             bool paused = false;
             bool looping = false;
+            bool spatialized = false;
         };
 
         AudioSystem() = default;

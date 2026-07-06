@@ -24,6 +24,7 @@ namespace PlutoGE::assets
         AnimationGraph,
         ParticleSystem,
         PostProcessPreset,
+        Audio,
         Texture,
         Assembly,
         ScriptableObject,

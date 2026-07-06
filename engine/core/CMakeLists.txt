@@ -10,6 +10,7 @@ target_include_directories(PlutoGECore PUBLIC
 
 target_link_libraries(PlutoGECore PUBLIC
     # Add dependencies here
+    PlutoGE::Audio
     PlutoGE::Platform
     PlutoGE::Render
     PlutoGE::Assets

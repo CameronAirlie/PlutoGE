@@ -707,6 +707,10 @@ namespace PlutoGE::assets
         {
             return ProjectAssetType::Texture;
         }
+        if (EndsWithInsensitive(reference, ".wav"))
+        {
+            return ProjectAssetType::Audio;
+        }
 
         return ProjectAssetType::Unknown;
     }
@@ -739,6 +743,8 @@ namespace PlutoGE::assets
             return "Particle System";
         case ProjectAssetType::PostProcessPreset:
             return "Post Process Preset";
+        case ProjectAssetType::Audio:
+            return "Audio";
         case ProjectAssetType::Texture:
             return "Texture";
         case ProjectAssetType::Assembly:
@@ -777,6 +783,8 @@ namespace PlutoGE::assets
             return ProjectAssetType::ParticleSystem;
         if (typeName == "Post Process Preset" || typeName == "PostProcessPreset")
             return ProjectAssetType::PostProcessPreset;
+        if (typeName == "Audio")
+            return ProjectAssetType::Audio;
         if (typeName == "Texture")
             return ProjectAssetType::Texture;
         if (typeName == "Assembly")

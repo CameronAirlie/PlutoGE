@@ -1,5 +1,6 @@
 add_subdirectory(core)
 add_subdirectory(platform)
+add_subdirectory(audio)
 add_subdirectory(render)
 add_subdirectory(assets)
 add_subdirectory(import)
@@ -13,6 +14,7 @@ target_link_libraries(PlutoGE
     INTERFACE 
         PlutoGE::Core
         PlutoGE::Platform
+        PlutoGE::Audio
         PlutoGE::Render
         PlutoGE::Assets
         PlutoGE::Import

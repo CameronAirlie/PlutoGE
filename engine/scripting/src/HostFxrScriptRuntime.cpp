@@ -15,6 +15,7 @@
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
 #include "PlutoGE/scene/components/RigidbodyComponent.h"
 #include "PlutoGE/scene/components/ScriptComponent.h"
+#include "PlutoGE/scene/components/SoundEmitterComponent.h"
 #include "PlutoGE/scene/components/UIComponent.h"
 
 #include <algorithm>
@@ -89,6 +90,7 @@ namespace PlutoGE::scripting
         using register_rigidbody_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_collider_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_particle_system_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
+        using register_sound_emitter_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_runtime_ui_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_input_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_physics_api_fn = int(__cdecl *)(void *, void *, void *);
@@ -190,6 +192,7 @@ namespace PlutoGE::scripting
             UIText = 10,
             UIButton = 11,
             ParticleSystem = 12,
+            SoundEmitter = 13,
         };
 
         std::wstring Utf8ToWide(std::string_view text)
@@ -506,6 +509,7 @@ namespace PlutoGE::scripting
             case ScriptFieldType::UITextComponent:
             case ScriptFieldType::UIButtonComponent:
             case ScriptFieldType::ParticleSystemComponent:
+            case ScriptFieldType::SoundEmitterComponent:
             {
                 uint32_t value = 0;
                 std::from_chars(token.data(), token.data() + token.size(), value);
@@ -786,6 +790,8 @@ namespace PlutoGE::scripting
                 return entity->GetComponent<scene::UIButtonComponent>();
             case ManagedComponentKind::ParticleSystem:
                 return entity->GetComponent<scene::ParticleSystemComponent>();
+            case ManagedComponentKind::SoundEmitter:
+                return entity->GetComponent<scene::SoundEmitterComponent>();
             default:
                 return nullptr;
             }
@@ -1877,6 +1883,130 @@ namespace PlutoGE::scripting
             }
         }
 
+        scene::SoundEmitterComponent *FindSoundEmitter(uint32_t entityId)
+        {
+            auto *entity = FindEntity(entityId);
+            return entity ? entity->GetComponent<scene::SoundEmitterComponent>() : nullptr;
+        }
+
+        int32_t GetSoundEmitterPlaying(uint32_t entityId)
+        {
+            auto *component = FindSoundEmitter(entityId);
+            return component && component->IsPlaying() ? 1 : 0;
+        }
+        void SoundEmitterPlay(uint32_t entityId)
+        {
+            if (auto *component = FindSoundEmitter(entityId))
+                component->Play();
+        }
+        void SoundEmitterPause(uint32_t entityId)
+        {
+            if (auto *component = FindSoundEmitter(entityId))
+                component->Pause();
+        }
+        void SoundEmitterStop(uint32_t entityId)
+        {
+            if (auto *component = FindSoundEmitter(entityId))
+                component->Stop();
+        }
+        const char *GetSoundEmitterClipReference(uint32_t entityId)
+        {
+            thread_local std::string assetReferenceStorage;
+            assetReferenceStorage.clear();
+            if (auto *component = FindSoundEmitter(entityId))
+            {
+                assetReferenceStorage = component->GetClipReference();
+            }
+            return assetReferenceStorage.c_str();
+        }
+        void SetSoundEmitterClipReference(uint32_t entityId, const char *assetReference)
+        {
+            if (auto *component = FindSoundEmitter(entityId))
+            {
+                component->SetClipReference(assetReference ? assetReference : "");
+            }
+        }
+        int32_t GetSoundEmitterLooping(uint32_t entityId)
+        {
+            auto *component = FindSoundEmitter(entityId);
+            return component && component->GetLooping() ? 1 : 0;
+        }
+        void SetSoundEmitterLooping(uint32_t entityId, int32_t value)
+        {
+            if (auto *component = FindSoundEmitter(entityId))
+                component->SetLooping(value != 0);
+        }
+        int32_t GetSoundEmitterSpatialized(uint32_t entityId)
+        {
+            auto *component = FindSoundEmitter(entityId);
+            return component && component->IsSpatialized() ? 1 : 0;
+        }
+        void SetSoundEmitterSpatialized(uint32_t entityId, int32_t value)
+        {
+            if (auto *component = FindSoundEmitter(entityId))
+                component->SetSpatialized(value != 0);
+        }
+        int32_t GetSoundEmitterPlayOnAwake(uint32_t entityId)
+        {
+            auto *component = FindSoundEmitter(entityId);
+            return component && component->GetPlayOnAwake() ? 1 : 0;
+        }
+        void SetSoundEmitterPlayOnAwake(uint32_t entityId, int32_t value)
+        {
+            if (auto *component = FindSoundEmitter(entityId))
+                component->SetPlayOnAwake(value != 0);
+        }
+        float GetSoundEmitterVolume(uint32_t entityId)
+        {
+            auto *component = FindSoundEmitter(entityId);
+            return component ? component->GetVolume() : 0.0f;
+        }
+        void SetSoundEmitterVolume(uint32_t entityId, float value)
+        {
+            if (auto *component = FindSoundEmitter(entityId))
+                component->SetVolume(value);
+        }
+        float GetSoundEmitterPitch(uint32_t entityId)
+        {
+            auto *component = FindSoundEmitter(entityId);
+            return component ? component->GetPitch() : 1.0f;
+        }
+        void SetSoundEmitterPitch(uint32_t entityId, float value)
+        {
+            if (auto *component = FindSoundEmitter(entityId))
+                component->SetPitch(value);
+        }
+        float GetSoundEmitterMinDistance(uint32_t entityId)
+        {
+            auto *component = FindSoundEmitter(entityId);
+            return component ? component->GetMinDistance() : 1.0f;
+        }
+        void SetSoundEmitterMinDistance(uint32_t entityId, float value)
+        {
+            if (auto *component = FindSoundEmitter(entityId))
+                component->SetMinDistance(value);
+        }
+        float GetSoundEmitterMaxDistance(uint32_t entityId)
+        {
+            auto *component = FindSoundEmitter(entityId);
+            return component ? component->GetMaxDistance() : 30.0f;
+        }
+        void SetSoundEmitterMaxDistance(uint32_t entityId, float value)
+        {
+            if (auto *component = FindSoundEmitter(entityId))
+                component->SetMaxDistance(value);
+        }
+        float GetSoundEmitterRolloff(uint32_t entityId)
+        {
+            auto *component = FindSoundEmitter(entityId);
+            return component ? component->GetRolloff() : 1.0f;
+        }
+        void SetSoundEmitterRolloff(uint32_t entityId, float value)
+        {
+            if (auto *component = FindSoundEmitter(entityId))
+                component->SetRolloff(value);
+        }
+
         scene::CanvasComponent *FindCanvas(uint32_t entityId)
         {
             auto *entity = FindEntity(entityId);
@@ -2378,6 +2508,7 @@ namespace PlutoGE::scripting
         register_rigidbody_component_api_fn registerRigidbodyComponentApi = nullptr;
         register_collider_component_api_fn registerColliderComponentApi = nullptr;
         register_particle_system_component_api_fn registerParticleSystemComponentApi = nullptr;
+        register_sound_emitter_component_api_fn registerSoundEmitterComponentApi = nullptr;
         register_runtime_ui_api_fn registerRuntimeUIApi = nullptr;
         register_input_api_fn registerInputApi = nullptr;
         register_physics_api_fn registerPhysicsApi = nullptr;
@@ -2474,6 +2605,7 @@ namespace PlutoGE::scripting
             impl.registerRigidbodyComponentApi = nullptr;
             impl.registerColliderComponentApi = nullptr;
             impl.registerParticleSystemComponentApi = nullptr;
+            impl.registerSoundEmitterComponentApi = nullptr;
             impl.registerRuntimeUIApi = nullptr;
             impl.registerInputApi = nullptr;
             impl.registerPhysicsApi = nullptr;
@@ -2789,6 +2921,7 @@ namespace PlutoGE::scripting
                 LoadManagedExport(impl, L"RegisterRigidbodyComponentApi", impl.registerRigidbodyComponentApi) &&
                 LoadManagedExport(impl, L"RegisterColliderComponentApi", impl.registerColliderComponentApi) &&
                 LoadManagedExport(impl, L"RegisterParticleSystemComponentApi", impl.registerParticleSystemComponentApi) &&
+                LoadManagedExport(impl, L"RegisterSoundEmitterComponentApi", impl.registerSoundEmitterComponentApi) &&
                 LoadManagedExport(impl, L"RegisterRuntimeUIApi", impl.registerRuntimeUIApi) &&
                 LoadManagedExport(impl, L"RegisterInputApi", impl.registerInputApi) &&
                 LoadManagedExport(impl, L"RegisterPhysicsApi", impl.registerPhysicsApi) &&
@@ -3206,6 +3339,29 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(static_cast<set_component_int_fn>(&SetParticleSystemShape))) == 0)
         {
             setManagedBridgeFailure("RegisterParticleSystemComponentApi");
+            return false;
+        }
+
+        if (!m_impl->registerSoundEmitterComponentApi ||
+            m_impl->registerSoundEmitterComponentApi(
+                reinterpret_cast<void *>(static_cast<get_component_bool_fn>(&GetSoundEmitterPlaying)),
+                reinterpret_cast<void *>(static_cast<component_action_fn>(&SoundEmitterPlay)),
+                reinterpret_cast<void *>(static_cast<component_action_fn>(&SoundEmitterPause)),
+                reinterpret_cast<void *>(static_cast<component_action_fn>(&SoundEmitterStop)),
+                reinterpret_cast<void *>(static_cast<get_component_string_fn>(&GetSoundEmitterClipReference)),
+                reinterpret_cast<void *>(static_cast<set_component_string_fn>(&SetSoundEmitterClipReference)),
+                reinterpret_cast<void *>(static_cast<get_component_bool_fn>(&GetSoundEmitterLooping)),
+                reinterpret_cast<void *>(static_cast<set_component_bool_fn>(&SetSoundEmitterLooping)),
+                reinterpret_cast<void *>(static_cast<get_component_bool_fn>(&GetSoundEmitterSpatialized)),
+                reinterpret_cast<void *>(static_cast<set_component_bool_fn>(&SetSoundEmitterSpatialized)),
+                reinterpret_cast<void *>(static_cast<get_component_bool_fn>(&GetSoundEmitterPlayOnAwake)),
+                reinterpret_cast<void *>(static_cast<set_component_bool_fn>(&SetSoundEmitterPlayOnAwake)),
+                reinterpret_cast<void *>(static_cast<get_component_float_fn>(&GetSoundEmitterVolume)),
+                reinterpret_cast<void *>(static_cast<set_component_float_fn>(&SetSoundEmitterVolume)),
+                reinterpret_cast<void *>(static_cast<get_component_float_fn>(&GetSoundEmitterPitch)),
+                reinterpret_cast<void *>(static_cast<set_component_float_fn>(&SetSoundEmitterPitch))) == 0)
+        {
+            setManagedBridgeFailure("RegisterSoundEmitterComponentApi");
             return false;
         }
 

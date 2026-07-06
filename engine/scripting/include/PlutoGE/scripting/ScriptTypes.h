@@ -34,6 +34,7 @@ namespace PlutoGE::scripting
         UITextComponent,
         UIButtonComponent,
         ParticleSystemComponent,
+        SoundEmitterComponent,
         PrefabAsset,
         ScriptableObjectAsset,
     };

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "PlutoGE/audio/AudioSystem.h"
 #include "PlutoGE/platform/Window.h"
 #include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/import/MeshImporter.h"
@@ -74,6 +75,7 @@ namespace PlutoGE::core
         [[nodiscard]] assetimport::MeshImporter &GetMeshImporter() { return m_meshImporter; }
         [[nodiscard]] render::TextureManager &GetTextureManager() { return m_textureManager; }
         [[nodiscard]] scripting::ScriptEngine &GetScriptEngine() { return m_scriptEngine; }
+        [[nodiscard]] audio::AudioSystem &GetAudioSystem() { return m_audioSystem; }
         [[nodiscard]] scene::Scene *GetScene() { return m_scene; }
         void StartRuntime();
         void StopRuntime();
@@ -107,6 +109,7 @@ namespace PlutoGE::core
         assetimport::MeshImporter m_meshImporter;
         render::TextureManager m_textureManager;
         scripting::ScriptEngine m_scriptEngine;
+        audio::AudioSystem m_audioSystem;
         scene::Scene *m_scene = nullptr;
         struct ImportedMaterialCacheEntry
         {

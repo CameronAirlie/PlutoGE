@@ -191,6 +191,11 @@ namespace PlutoGE::core
             return false;
         }
 
+        if (!m_audioSystem.Initialize())
+        {
+            std::cerr << "Failed to initialize audio system." << std::endl;
+        }
+
         m_scriptEngine.Initialize();
 
         m_isInitialized = true;
@@ -571,6 +576,7 @@ namespace PlutoGE::core
     {
         StopRuntime();
         m_scriptEngine.Shutdown();
+        m_audioSystem.Shutdown();
         m_renderer.Shutdown();
         m_window.Close();
         m_isInitialized = false;

@@ -60,6 +60,7 @@ internal static unsafe class ScriptBridge
         UIText = 10,
         UIButton = 11,
         ParticleSystem = 12,
+        SoundEmitter = 13,
     }
 
     private sealed class ScriptLoadContext : AssemblyLoadContext
@@ -229,6 +230,22 @@ internal static unsafe class ScriptBridge
     private static delegate* unmanaged[Cdecl]<uint, int, void> _setParticleSystemSimulationSpace;
     private static delegate* unmanaged[Cdecl]<uint, int> _getParticleSystemShape;
     private static delegate* unmanaged[Cdecl]<uint, int, void> _setParticleSystemShape;
+    private static delegate* unmanaged[Cdecl]<uint, int> _getSoundEmitterPlaying;
+    private static delegate* unmanaged[Cdecl]<uint, void> _soundEmitterPlay;
+    private static delegate* unmanaged[Cdecl]<uint, void> _soundEmitterPause;
+    private static delegate* unmanaged[Cdecl]<uint, void> _soundEmitterStop;
+    private static delegate* unmanaged[Cdecl]<uint, nint> _getSoundEmitterClipReference;
+    private static delegate* unmanaged[Cdecl]<uint, nint, void> _setSoundEmitterClipReference;
+    private static delegate* unmanaged[Cdecl]<uint, int> _getSoundEmitterLooping;
+    private static delegate* unmanaged[Cdecl]<uint, int, void> _setSoundEmitterLooping;
+    private static delegate* unmanaged[Cdecl]<uint, int> _getSoundEmitterSpatialized;
+    private static delegate* unmanaged[Cdecl]<uint, int, void> _setSoundEmitterSpatialized;
+    private static delegate* unmanaged[Cdecl]<uint, int> _getSoundEmitterPlayOnAwake;
+    private static delegate* unmanaged[Cdecl]<uint, int, void> _setSoundEmitterPlayOnAwake;
+    private static delegate* unmanaged[Cdecl]<uint, float> _getSoundEmitterVolume;
+    private static delegate* unmanaged[Cdecl]<uint, float, void> _setSoundEmitterVolume;
+    private static delegate* unmanaged[Cdecl]<uint, float> _getSoundEmitterPitch;
+    private static delegate* unmanaged[Cdecl]<uint, float, void> _setSoundEmitterPitch;
     private static delegate* unmanaged[Cdecl]<uint, float> _getCanvasScaleFactor;
     private static delegate* unmanaged[Cdecl]<uint, float, void> _setCanvasScaleFactor;
     private static delegate* unmanaged[Cdecl]<uint, int> _getCanvasSortingOrder;
@@ -789,6 +806,54 @@ internal static unsafe class ScriptBridge
         _setParticleSystemSimulationSpace = setSimulationSpace;
         _getParticleSystemShape = getShape;
         _setParticleSystemShape = setShape;
+        _lastError = string.Empty;
+        return 1;
+    }
+
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterSoundEmitterComponentApi")]
+    public static int RegisterSoundEmitterComponentApi(
+        delegate* unmanaged[Cdecl]<uint, int> getPlaying,
+        delegate* unmanaged[Cdecl]<uint, void> play,
+        delegate* unmanaged[Cdecl]<uint, void> pause,
+        delegate* unmanaged[Cdecl]<uint, void> stop,
+        delegate* unmanaged[Cdecl]<uint, nint> getClipReference,
+        delegate* unmanaged[Cdecl]<uint, nint, void> setClipReference,
+        delegate* unmanaged[Cdecl]<uint, int> getLooping,
+        delegate* unmanaged[Cdecl]<uint, int, void> setLooping,
+        delegate* unmanaged[Cdecl]<uint, int> getSpatialized,
+        delegate* unmanaged[Cdecl]<uint, int, void> setSpatialized,
+        delegate* unmanaged[Cdecl]<uint, int> getPlayOnAwake,
+        delegate* unmanaged[Cdecl]<uint, int, void> setPlayOnAwake,
+        delegate* unmanaged[Cdecl]<uint, float> getVolume,
+        delegate* unmanaged[Cdecl]<uint, float, void> setVolume,
+        delegate* unmanaged[Cdecl]<uint, float> getPitch,
+        delegate* unmanaged[Cdecl]<uint, float, void> setPitch)
+    {
+        if (getPlaying == null || play == null || pause == null || stop == null ||
+            getClipReference == null || setClipReference == null || getLooping == null || setLooping == null ||
+            getSpatialized == null || setSpatialized == null || getPlayOnAwake == null || setPlayOnAwake == null ||
+            getVolume == null || setVolume == null || getPitch == null || setPitch == null)
+        {
+            SetError("Managed sound emitter component API registration received a null function pointer.");
+            return 0;
+        }
+
+        _getSoundEmitterPlaying = getPlaying;
+        _soundEmitterPlay = play;
+        _soundEmitterPause = pause;
+        _soundEmitterStop = stop;
+        _getSoundEmitterClipReference = getClipReference;
+        _setSoundEmitterClipReference = setClipReference;
+        _getSoundEmitterLooping = getLooping;
+        _setSoundEmitterLooping = setLooping;
+        _getSoundEmitterSpatialized = getSpatialized;
+        _setSoundEmitterSpatialized = setSpatialized;
+        _getSoundEmitterPlayOnAwake = getPlayOnAwake;
+        _setSoundEmitterPlayOnAwake = setPlayOnAwake;
+        _getSoundEmitterVolume = getVolume;
+        _setSoundEmitterVolume = setVolume;
+        _getSoundEmitterPitch = getPitch;
+        _setSoundEmitterPitch = setPitch;
         _lastError = string.Empty;
         return 1;
     }
@@ -1807,6 +1872,43 @@ internal static unsafe class ScriptBridge
     internal static int GetParticleSystemShape(uint entityId) => _getParticleSystemShape == null ? 0 : _getParticleSystemShape(entityId);
     internal static void SetParticleSystemShape(uint entityId, int value) { if (_setParticleSystemShape != null) _setParticleSystemShape(entityId, value); }
 
+    internal static bool GetSoundEmitterPlaying(uint entityId) => _getSoundEmitterPlaying != null && _getSoundEmitterPlaying(entityId) != 0;
+    internal static void SoundEmitterPlay(uint entityId) { if (_soundEmitterPlay != null) _soundEmitterPlay(entityId); }
+    internal static void SoundEmitterPause(uint entityId) { if (_soundEmitterPause != null) _soundEmitterPause(entityId); }
+    internal static void SoundEmitterStop(uint entityId) { if (_soundEmitterStop != null) _soundEmitterStop(entityId); }
+    internal static string GetSoundEmitterClipReference(uint entityId)
+    {
+        if (_getSoundEmitterClipReference == null)
+        {
+            return string.Empty;
+        }
+
+        return Marshal.PtrToStringUTF8(_getSoundEmitterClipReference(entityId)) ?? string.Empty;
+    }
+    internal static void SetSoundEmitterClipReference(uint entityId, string value)
+    {
+        if (_setSoundEmitterClipReference == null)
+        {
+            return;
+        }
+
+        var valueBytes = Encoding.UTF8.GetBytes((value ?? string.Empty) + '\0');
+        fixed (byte* valuePtr = valueBytes)
+        {
+            _setSoundEmitterClipReference(entityId, (nint)valuePtr);
+        }
+    }
+    internal static bool GetSoundEmitterLooping(uint entityId) => _getSoundEmitterLooping != null && _getSoundEmitterLooping(entityId) != 0;
+    internal static void SetSoundEmitterLooping(uint entityId, bool value) { if (_setSoundEmitterLooping != null) _setSoundEmitterLooping(entityId, value ? 1 : 0); }
+    internal static bool GetSoundEmitterSpatialized(uint entityId) => _getSoundEmitterSpatialized != null && _getSoundEmitterSpatialized(entityId) != 0;
+    internal static void SetSoundEmitterSpatialized(uint entityId, bool value) { if (_setSoundEmitterSpatialized != null) _setSoundEmitterSpatialized(entityId, value ? 1 : 0); }
+    internal static bool GetSoundEmitterPlayOnAwake(uint entityId) => _getSoundEmitterPlayOnAwake != null && _getSoundEmitterPlayOnAwake(entityId) != 0;
+    internal static void SetSoundEmitterPlayOnAwake(uint entityId, bool value) { if (_setSoundEmitterPlayOnAwake != null) _setSoundEmitterPlayOnAwake(entityId, value ? 1 : 0); }
+    internal static float GetSoundEmitterVolume(uint entityId) => _getSoundEmitterVolume == null ? 1.0f : _getSoundEmitterVolume(entityId);
+    internal static void SetSoundEmitterVolume(uint entityId, float value) { if (_setSoundEmitterVolume != null) _setSoundEmitterVolume(entityId, value); }
+    internal static float GetSoundEmitterPitch(uint entityId) => _getSoundEmitterPitch == null ? 1.0f : _getSoundEmitterPitch(entityId);
+    internal static void SetSoundEmitterPitch(uint entityId, float value) { if (_setSoundEmitterPitch != null) _setSoundEmitterPitch(entityId, value); }
+
     internal static float GetCanvasScaleFactor(uint entityId) => _getCanvasScaleFactor == null ? 1.0f : _getCanvasScaleFactor(entityId);
     internal static void SetCanvasScaleFactor(uint entityId, float value) { if (_setCanvasScaleFactor != null) _setCanvasScaleFactor(entityId, value); }
     internal static int GetCanvasSortingOrder(uint entityId) => _getCanvasSortingOrder == null ? 0 : _getCanvasSortingOrder(entityId);
@@ -2225,14 +2327,19 @@ internal static unsafe class ScriptBridge
             return 21;
         }
 
-        if (type == typeof(Prefab))
+        if (type == typeof(SoundEmitterComponent))
         {
             return 22;
         }
 
-        if (typeof(ScriptableObject).IsAssignableFrom(type))
+        if (type == typeof(Prefab))
         {
             return 23;
+        }
+
+        if (typeof(ScriptableObject).IsAssignableFrom(type))
+        {
+            return 24;
         }
 
         return null;
@@ -2240,7 +2347,7 @@ internal static unsafe class ScriptBridge
 
     private static string GetReferenceTypeName(Type memberType, int fieldType)
     {
-        return fieldType == 23 ? memberType.FullName ?? memberType.Name : string.Empty;
+        return fieldType == 24 ? memberType.FullName ?? memberType.Name : string.Empty;
     }
 
     private static IReadOnlyList<string> GetAssignableTypeNames(Type type)
@@ -2365,8 +2472,9 @@ internal static unsafe class ScriptBridge
             19 => CreateReferenceValue(memberType, value),
             20 => CreateReferenceValue(memberType, value),
             21 => CreateReferenceValue(memberType, value),
-            22 => string.IsNullOrWhiteSpace(value) ? null : new Prefab(value),
-            23 => LoadScriptableObject(value, memberType),
+            22 => CreateReferenceValue(memberType, value),
+            23 => string.IsNullOrWhiteSpace(value) ? null : new Prefab(value),
+            24 => LoadScriptableObject(value, memberType),
             _ => null,
         };
     }
@@ -2396,8 +2504,9 @@ internal static unsafe class ScriptBridge
             19 => ExtractEntityId(value).ToString(CultureInfo.InvariantCulture),
             20 => ExtractEntityId(value).ToString(CultureInfo.InvariantCulture),
             21 => ExtractEntityId(value).ToString(CultureInfo.InvariantCulture),
-            22 => (value as Prefab)?.AssetReference ?? string.Empty,
-            23 => (value as ScriptableObject)?.AssetReference ?? string.Empty,
+            22 => ExtractEntityId(value).ToString(CultureInfo.InvariantCulture),
+            23 => (value as Prefab)?.AssetReference ?? string.Empty,
+            24 => (value as ScriptableObject)?.AssetReference ?? string.Empty,
             _ => string.Empty,
         };
     }
@@ -2523,6 +2632,11 @@ internal static unsafe class ScriptBridge
             return new ParticleSystemComponent(entityId);
         }
 
+        if (memberType == typeof(SoundEmitterComponent))
+        {
+            return new SoundEmitterComponent(entityId);
+        }
+
         return entityId;
     }
 
@@ -2545,6 +2659,7 @@ internal static unsafe class ScriptBridge
             UITextComponent textComponent => textComponent.EntityId,
             UIButtonComponent buttonComponent => buttonComponent.EntityId,
             ParticleSystemComponent particleSystemComponent => particleSystemComponent.EntityId,
+            SoundEmitterComponent soundEmitterComponent => soundEmitterComponent.EntityId,
             _ => 0u,
         };
     }

@@ -15,6 +15,8 @@
 #include "PlutoGE/scene/components/RigidbodyComponent.h"
 #include "PlutoGE/scene/components/ScriptComponent.h"
 #include "PlutoGE/scene/components/SkeletonAttachmentComponent.h"
+#include "PlutoGE/scene/components/SoundEmitterComponent.h"
+#include "PlutoGE/scene/components/SoundListenerComponent.h"
 #include "PlutoGE/scene/components/SplineComponent.h"
 #include "PlutoGE/scene/components/TerrainComponent.h"
 #include "PlutoGE/scene/components/UIComponent.h"
@@ -233,6 +235,14 @@ namespace PlutoGE::scene
             {
                 return "ScriptComponent";
             }
+            if (dynamic_cast<const SoundEmitterComponent *>(&component))
+            {
+                return "SoundEmitterComponent";
+            }
+            if (dynamic_cast<const SoundListenerComponent *>(&component))
+            {
+                return "SoundListenerComponent";
+            }
             if (dynamic_cast<const CanvasComponent *>(&component))
             {
                 return "CanvasComponent";
@@ -318,6 +328,14 @@ namespace PlutoGE::scene
             if (componentType == "ScriptComponent")
             {
                 return std::make_unique<ScriptComponent>(ScriptComponentConfig{});
+            }
+            if (componentType == "SoundEmitterComponent")
+            {
+                return std::make_unique<SoundEmitterComponent>();
+            }
+            if (componentType == "SoundListenerComponent")
+            {
+                return std::make_unique<SoundListenerComponent>();
             }
             if (componentType == "CanvasComponent")
             {
@@ -408,121 +426,121 @@ namespace PlutoGE::scene
 
             output << "SCENE\t1\n";
 
-        auto &assetManager = core::Engine::GetInstance().GetAssetManager();
+            auto &assetManager = core::Engine::GetInstance().GetAssetManager();
 
-        if (!scene.GetEnvironmentMapPath().empty())
-        {
-            output << "ENVIRONMENT\t"
-                   << EscapeText(assetManager.PersistAssetPath(scene.GetEnvironmentMapPath())) << '\t'
-                   << scene.GetEnvironmentIntensity() << '\n';
-        }
-
-        for (const auto &captureVolume : scene.GetIblCaptureVolumes())
-        {
-            if (captureVolume.environmentMapPath.empty())
+            if (!scene.GetEnvironmentMapPath().empty())
             {
-                continue;
+                output << "ENVIRONMENT\t"
+                       << EscapeText(assetManager.PersistAssetPath(scene.GetEnvironmentMapPath())) << '\t'
+                       << scene.GetEnvironmentIntensity() << '\n';
             }
 
-            output << "IBL_CAPTURE\t"
-                   << SerializeVec3(captureVolume.origin) << '\t'
-                   << SerializeVec3(captureVolume.size) << '\t'
-                   << EscapeText(assetManager.PersistAssetPath(captureVolume.environmentMapPath)) << '\t'
-                   << captureVolume.intensity << '\t'
-                   << captureVolume.blendDistance << '\n';
-        }
-
-        const auto &probeVolume = scene.GetBakedProbeVolume();
-        if (probeVolume.IsValid())
-        {
-            output << "PROBE\t"
-                   << SerializeVec3(probeVolume.origin) << '\t'
-                   << SerializeVec3(probeVolume.size) << '\t'
-                   << SerializeIVec3(probeVolume.resolution) << '\n';
-            for (const auto &sample : probeVolume.irradiance)
+            for (const auto &captureVolume : scene.GetIblCaptureVolumes())
             {
-                output << "PROBE_SAMPLE\t" << SerializeVec3(sample) << '\n';
+                if (captureVolume.environmentMapPath.empty())
+                {
+                    continue;
+                }
+
+                output << "IBL_CAPTURE\t"
+                       << SerializeVec3(captureVolume.origin) << '\t'
+                       << SerializeVec3(captureVolume.size) << '\t'
+                       << EscapeText(assetManager.PersistAssetPath(captureVolume.environmentMapPath)) << '\t'
+                       << captureVolume.intensity << '\t'
+                       << captureVolume.blendDistance << '\n';
             }
-        }
 
-        std::vector<const Entity *> entities;
-        for (auto *rootEntity : scene.GetRootEntities())
-        {
-            CollectEntitiesRecursive(rootEntity, entities);
-        }
-
-        for (const auto *entity : entities)
-        {
-            output << "ENTITY\t"
-                   << entity->GetID() << '\t'
-                   << (entity->GetParent() ? entity->GetParent()->GetID() : 0) << '\t'
-                   << (entity->IsSelfActive() ? 1 : 0) << '\t'
-                   << EscapeText(entity->GetName()) << '\t'
-                   << SerializeVec3(entity->GetPosition()) << '\t'
-                   << SerializeVec3(entity->GetRotation()) << '\t'
-                   << SerializeVec3(entity->GetScale()) << '\n';
-
-            if (!entity->GetPrefabSource().empty())
+            const auto &probeVolume = scene.GetBakedProbeVolume();
+            if (probeVolume.IsValid())
             {
-                output << "PREFAB\t"
+                output << "PROBE\t"
+                       << SerializeVec3(probeVolume.origin) << '\t'
+                       << SerializeVec3(probeVolume.size) << '\t'
+                       << SerializeIVec3(probeVolume.resolution) << '\n';
+                for (const auto &sample : probeVolume.irradiance)
+                {
+                    output << "PROBE_SAMPLE\t" << SerializeVec3(sample) << '\n';
+                }
+            }
+
+            std::vector<const Entity *> entities;
+            for (auto *rootEntity : scene.GetRootEntities())
+            {
+                CollectEntitiesRecursive(rootEntity, entities);
+            }
+
+            for (const auto *entity : entities)
+            {
+                output << "ENTITY\t"
                        << entity->GetID() << '\t'
-                       << EscapeText(entity->GetPrefabSource()) << '\t'
-                       << entity->GetPrefabEntityID() << '\t'
-                       << (entity->IsPrefabInstanceRoot() ? 1 : 0) << '\t'
-                       << entity->GetPrefabOverrides().size();
-                for (const auto &overridePath : entity->GetPrefabOverrides())
-                {
-                    output << '\t' << EscapeText(overridePath);
-                }
-                output << '\n';
-            }
+                       << (entity->GetParent() ? entity->GetParent()->GetID() : 0) << '\t'
+                       << (entity->IsSelfActive() ? 1 : 0) << '\t'
+                       << EscapeText(entity->GetName()) << '\t'
+                       << SerializeVec3(entity->GetPosition()) << '\t'
+                       << SerializeVec3(entity->GetRotation()) << '\t'
+                       << SerializeVec3(entity->GetScale()) << '\n';
 
-            if (!entity->GetTags().empty())
-            {
-                output << "TAGS\t" << entity->GetID() << '\t' << entity->GetTags().size();
-                for (const auto &tag : entity->GetTags())
+                if (!entity->GetPrefabSource().empty())
                 {
-                    output << '\t' << EscapeText(tag);
-                }
-                output << '\n';
-            }
-
-            for (const auto &bucket : entity->GetComponentBuckets())
-            {
-                for (const auto *component : bucket)
-                {
-                    if (!component)
+                    output << "PREFAB\t"
+                           << entity->GetID() << '\t'
+                           << EscapeText(entity->GetPrefabSource()) << '\t'
+                           << entity->GetPrefabEntityID() << '\t'
+                           << (entity->IsPrefabInstanceRoot() ? 1 : 0) << '\t'
+                           << entity->GetPrefabOverrides().size();
+                    for (const auto &overridePath : entity->GetPrefabOverrides())
                     {
-                        continue;
+                        output << '\t' << EscapeText(overridePath);
                     }
+                    output << '\n';
+                }
 
-                    const auto componentType = ResolveComponentTypeName(*component);
-                    if (componentType.empty())
+                if (!entity->GetTags().empty())
+                {
+                    output << "TAGS\t" << entity->GetID() << '\t' << entity->GetTags().size();
+                    for (const auto &tag : entity->GetTags())
                     {
-                        continue;
+                        output << '\t' << EscapeText(tag);
                     }
+                    output << '\n';
+                }
 
-                    output << "COMPONENT\t" << entity->GetID() << '\t' << componentType << '\n';
-                    for (const auto &property : component->Serialize())
+                for (const auto &bucket : entity->GetComponentBuckets())
+                {
+                    for (const auto *component : bucket)
                     {
-                        const std::string serializedValue = IsAssetPathProperty(componentType, property.name)
-                                                                ? assetManager.PersistAssetPath(property.value)
-                                                                : property.value;
-                        output << "PROPERTY\t"
-                               << EscapeText(property.name) << '\t'
-                               << static_cast<int>(property.type) << '\t'
-                               << EscapeText(serializedValue) << '\t'
-                               << property.enumOptions.size();
-                        for (const auto &option : property.enumOptions)
+                        if (!component)
                         {
-                            output << '\t' << EscapeText(option);
+                            continue;
                         }
-                        output << '\n';
+
+                        const auto componentType = ResolveComponentTypeName(*component);
+                        if (componentType.empty())
+                        {
+                            continue;
+                        }
+
+                        output << "COMPONENT\t" << entity->GetID() << '\t' << componentType << '\n';
+                        for (const auto &property : component->Serialize())
+                        {
+                            const std::string serializedValue = IsAssetPathProperty(componentType, property.name)
+                                                                    ? assetManager.PersistAssetPath(property.value)
+                                                                    : property.value;
+                            output << "PROPERTY\t"
+                                   << EscapeText(property.name) << '\t'
+                                   << static_cast<int>(property.type) << '\t'
+                                   << EscapeText(serializedValue) << '\t'
+                                   << property.enumOptions.size();
+                            for (const auto &option : property.enumOptions)
+                            {
+                                output << '\t' << EscapeText(option);
+                            }
+                            output << '\n';
+                        }
+                        output << "END_COMPONENT\n";
                     }
-                    output << "END_COMPONENT\n";
                 }
             }
-        }
 
             return true;
         }
@@ -574,217 +592,217 @@ namespace PlutoGE::scene
                 scene->SetFilePath(std::filesystem::absolute(std::filesystem::path(filePath)).lexically_normal().string());
             }
 
-        struct PendingEntityParent
-        {
-            EntityID id = 0;
-            EntityID parentId = 0;
-        };
-
-        struct PendingComponent
-        {
-            EntityID entityId = 0;
-            std::string typeName;
-            std::vector<Property> properties;
-        };
-
-        std::unordered_map<EntityID, Entity *> entityMap;
-        std::vector<PendingEntityParent> pendingParents;
-        std::optional<PendingComponent> activeComponent;
-        auto &assetManager = core::Engine::GetInstance().GetAssetManager();
-        BakedProbeVolume bakedProbeVolume;
-        std::string environmentMapPath;
-        float environmentIntensity = 1.0f;
-        std::vector<IblCaptureVolume> iblCaptureVolumes;
-
-        std::string line;
-        while (std::getline(input, line))
-        {
-            const auto tokens = SplitEscaped(line, '\t');
-            if (tokens.empty())
+            struct PendingEntityParent
             {
-                continue;
-            }
+                EntityID id = 0;
+                EntityID parentId = 0;
+            };
 
-            if (tokens[0] == "SCENE")
+            struct PendingComponent
             {
-                continue;
-            }
+                EntityID entityId = 0;
+                std::string typeName;
+                std::vector<Property> properties;
+            };
 
-            if (tokens[0] == "ENVIRONMENT" && tokens.size() >= 3)
+            std::unordered_map<EntityID, Entity *> entityMap;
+            std::vector<PendingEntityParent> pendingParents;
+            std::optional<PendingComponent> activeComponent;
+            auto &assetManager = core::Engine::GetInstance().GetAssetManager();
+            BakedProbeVolume bakedProbeVolume;
+            std::string environmentMapPath;
+            float environmentIntensity = 1.0f;
+            std::vector<IblCaptureVolume> iblCaptureVolumes;
+
+            std::string line;
+            while (std::getline(input, line))
             {
-                environmentMapPath = assetManager.ResolveAssetPath(tokens[1]);
-                environmentIntensity = std::stof(tokens[2]);
-                continue;
-            }
-
-            if (tokens[0] == "IBL_CAPTURE" && tokens.size() >= 6)
-            {
-                IblCaptureVolume captureVolume;
-                captureVolume.origin = ParseVec3(tokens[1]);
-                captureVolume.size = ParseVec3(tokens[2]);
-                captureVolume.environmentMapPath = assetManager.ResolveAssetPath(tokens[3]);
-                captureVolume.intensity = std::stof(tokens[4]);
-                captureVolume.blendDistance = std::stof(tokens[5]);
-                iblCaptureVolumes.push_back(std::move(captureVolume));
-                continue;
-            }
-
-            if (tokens[0] == "PROBE" && tokens.size() >= 4)
-            {
-                bakedProbeVolume.origin = ParseVec3(tokens[1]);
-                bakedProbeVolume.size = ParseVec3(tokens[2]);
-                bakedProbeVolume.resolution = ParseIVec3(tokens[3]);
-                bakedProbeVolume.irradiance.clear();
-                continue;
-            }
-
-            if (tokens[0] == "PROBE_SAMPLE" && tokens.size() >= 2)
-            {
-                bakedProbeVolume.irradiance.push_back(ParseVec3(tokens[1]));
-                continue;
-            }
-
-            if (tokens[0] == "ENTITY" && tokens.size() >= 8)
-            {
-                const EntityID serializedId = static_cast<EntityID>(std::stoul(tokens[1]));
-                const EntityID parentId = static_cast<EntityID>(std::stoul(tokens[2]));
-                const bool isActive = tokens[3] == "1";
-
-                auto entity = std::make_unique<Entity>(serializedId, EntityConfig{.name = tokens[4]});
-                entity->SetPosition(ParseVec3(tokens[5]));
-                entity->SetRotation(ParseVec3(tokens[6]));
-                entity->SetScale(ParseVec3(tokens[7]));
-                entity->SetActive(isActive);
-
-                auto *entityPtr = scene->AddEntity(std::move(entity));
-                entityMap.emplace(serializedId, entityPtr);
-                pendingParents.push_back(PendingEntityParent{.id = serializedId, .parentId = parentId});
-                continue;
-            }
-
-            if (tokens[0] == "COMPONENT" && tokens.size() >= 3)
-            {
-                activeComponent = PendingComponent{
-                    .entityId = static_cast<EntityID>(std::stoul(tokens[1])),
-                    .typeName = tokens[2],
-                };
-                continue;
-            }
-
-            if (tokens[0] == "PREFAB" && tokens.size() >= 5)
-            {
-                const EntityID entityId = static_cast<EntityID>(std::stoul(tokens[1]));
-                const auto entityIt = entityMap.find(entityId);
-                if (entityIt != entityMap.end())
+                const auto tokens = SplitEscaped(line, '\t');
+                if (tokens.empty())
                 {
-                    entityIt->second->SetPrefabLink(tokens[2],
-                                                    static_cast<EntityID>(std::stoul(tokens[3])),
-                                                    tokens[4] == "1");
-                    if (tokens.size() >= 6)
+                    continue;
+                }
+
+                if (tokens[0] == "SCENE")
+                {
+                    continue;
+                }
+
+                if (tokens[0] == "ENVIRONMENT" && tokens.size() >= 3)
+                {
+                    environmentMapPath = assetManager.ResolveAssetPath(tokens[1]);
+                    environmentIntensity = std::stof(tokens[2]);
+                    continue;
+                }
+
+                if (tokens[0] == "IBL_CAPTURE" && tokens.size() >= 6)
+                {
+                    IblCaptureVolume captureVolume;
+                    captureVolume.origin = ParseVec3(tokens[1]);
+                    captureVolume.size = ParseVec3(tokens[2]);
+                    captureVolume.environmentMapPath = assetManager.ResolveAssetPath(tokens[3]);
+                    captureVolume.intensity = std::stof(tokens[4]);
+                    captureVolume.blendDistance = std::stof(tokens[5]);
+                    iblCaptureVolumes.push_back(std::move(captureVolume));
+                    continue;
+                }
+
+                if (tokens[0] == "PROBE" && tokens.size() >= 4)
+                {
+                    bakedProbeVolume.origin = ParseVec3(tokens[1]);
+                    bakedProbeVolume.size = ParseVec3(tokens[2]);
+                    bakedProbeVolume.resolution = ParseIVec3(tokens[3]);
+                    bakedProbeVolume.irradiance.clear();
+                    continue;
+                }
+
+                if (tokens[0] == "PROBE_SAMPLE" && tokens.size() >= 2)
+                {
+                    bakedProbeVolume.irradiance.push_back(ParseVec3(tokens[1]));
+                    continue;
+                }
+
+                if (tokens[0] == "ENTITY" && tokens.size() >= 8)
+                {
+                    const EntityID serializedId = static_cast<EntityID>(std::stoul(tokens[1]));
+                    const EntityID parentId = static_cast<EntityID>(std::stoul(tokens[2]));
+                    const bool isActive = tokens[3] == "1";
+
+                    auto entity = std::make_unique<Entity>(serializedId, EntityConfig{.name = tokens[4]});
+                    entity->SetPosition(ParseVec3(tokens[5]));
+                    entity->SetRotation(ParseVec3(tokens[6]));
+                    entity->SetScale(ParseVec3(tokens[7]));
+                    entity->SetActive(isActive);
+
+                    auto *entityPtr = scene->AddEntity(std::move(entity));
+                    entityMap.emplace(serializedId, entityPtr);
+                    pendingParents.push_back(PendingEntityParent{.id = serializedId, .parentId = parentId});
+                    continue;
+                }
+
+                if (tokens[0] == "COMPONENT" && tokens.size() >= 3)
+                {
+                    activeComponent = PendingComponent{
+                        .entityId = static_cast<EntityID>(std::stoul(tokens[1])),
+                        .typeName = tokens[2],
+                    };
+                    continue;
+                }
+
+                if (tokens[0] == "PREFAB" && tokens.size() >= 5)
+                {
+                    const EntityID entityId = static_cast<EntityID>(std::stoul(tokens[1]));
+                    const auto entityIt = entityMap.find(entityId);
+                    if (entityIt != entityMap.end())
                     {
-                        const int overrideCount = std::stoi(tokens[5]);
-                        for (int overrideIndex = 0; overrideIndex < overrideCount && 6 + overrideIndex < static_cast<int>(tokens.size()); ++overrideIndex)
+                        entityIt->second->SetPrefabLink(tokens[2],
+                                                        static_cast<EntityID>(std::stoul(tokens[3])),
+                                                        tokens[4] == "1");
+                        if (tokens.size() >= 6)
                         {
-                            entityIt->second->AddPrefabOverride(tokens[6 + overrideIndex]);
+                            const int overrideCount = std::stoi(tokens[5]);
+                            for (int overrideIndex = 0; overrideIndex < overrideCount && 6 + overrideIndex < static_cast<int>(tokens.size()); ++overrideIndex)
+                            {
+                                entityIt->second->AddPrefabOverride(tokens[6 + overrideIndex]);
+                            }
                         }
                     }
+                    continue;
                 }
-                continue;
-            }
 
-            if (tokens[0] == "TAGS" && tokens.size() >= 3)
-            {
-                const EntityID entityId = static_cast<EntityID>(std::stoul(tokens[1]));
-                const auto entityIt = entityMap.find(entityId);
-                if (entityIt != entityMap.end())
+                if (tokens[0] == "TAGS" && tokens.size() >= 3)
                 {
-                    std::vector<std::string> tags;
-                    const int tagCount = std::stoi(tokens[2]);
-                    tags.reserve(static_cast<std::size_t>(std::max(tagCount, 0)));
-                    for (int tagIndex = 0; tagIndex < tagCount && 3 + tagIndex < static_cast<int>(tokens.size()); ++tagIndex)
+                    const EntityID entityId = static_cast<EntityID>(std::stoul(tokens[1]));
+                    const auto entityIt = entityMap.find(entityId);
+                    if (entityIt != entityMap.end())
                     {
-                        if (!tokens[3 + tagIndex].empty())
+                        std::vector<std::string> tags;
+                        const int tagCount = std::stoi(tokens[2]);
+                        tags.reserve(static_cast<std::size_t>(std::max(tagCount, 0)));
+                        for (int tagIndex = 0; tagIndex < tagCount && 3 + tagIndex < static_cast<int>(tokens.size()); ++tagIndex)
                         {
-                            tags.push_back(tokens[3 + tagIndex]);
+                            if (!tokens[3 + tagIndex].empty())
+                            {
+                                tags.push_back(tokens[3 + tagIndex]);
+                            }
+                        }
+                        entityIt->second->SetTags(std::move(tags));
+                    }
+                    continue;
+                }
+
+                if (tokens[0] == "PROPERTY" && tokens.size() >= 5 && activeComponent.has_value())
+                {
+                    Property property;
+                    property.name = tokens[1];
+                    property.type = static_cast<PropertyType>(std::stoi(tokens[2]));
+                    property.value = IsAssetPathProperty(activeComponent->typeName, property.name)
+                                         ? assetManager.ResolveAssetPath(tokens[3])
+                                         : tokens[3];
+                    const int enumCount = std::stoi(tokens[4]);
+                    for (int enumIndex = 0; enumIndex < enumCount && 5 + enumIndex < static_cast<int>(tokens.size()); ++enumIndex)
+                    {
+                        property.enumOptions.push_back(tokens[5 + enumIndex]);
+                    }
+                    activeComponent->properties.push_back(std::move(property));
+                    continue;
+                }
+
+                if (tokens[0] == "END_COMPONENT" && activeComponent.has_value())
+                {
+                    const auto entityIt = entityMap.find(activeComponent->entityId);
+                    if (entityIt != entityMap.end())
+                    {
+                        auto component = CreateComponentForType(activeComponent->typeName);
+                        if (component)
+                        {
+                            auto *componentPtr = entityIt->second->AddComponent(component.release());
+                            componentPtr->Deserialize(activeComponent->properties);
                         }
                     }
-                    entityIt->second->SetTags(std::move(tags));
+                    activeComponent.reset();
                 }
-                continue;
             }
 
-            if (tokens[0] == "PROPERTY" && tokens.size() >= 5 && activeComponent.has_value())
+            for (const auto &pendingParent : pendingParents)
             {
-                Property property;
-                property.name = tokens[1];
-                property.type = static_cast<PropertyType>(std::stoi(tokens[2]));
-                property.value = IsAssetPathProperty(activeComponent->typeName, property.name)
-                                     ? assetManager.ResolveAssetPath(tokens[3])
-                                     : tokens[3];
-                const int enumCount = std::stoi(tokens[4]);
-                for (int enumIndex = 0; enumIndex < enumCount && 5 + enumIndex < static_cast<int>(tokens.size()); ++enumIndex)
+                if (pendingParent.parentId == 0)
                 {
-                    property.enumOptions.push_back(tokens[5 + enumIndex]);
+                    continue;
                 }
-                activeComponent->properties.push_back(std::move(property));
-                continue;
-            }
 
-            if (tokens[0] == "END_COMPONENT" && activeComponent.has_value())
-            {
-                const auto entityIt = entityMap.find(activeComponent->entityId);
-                if (entityIt != entityMap.end())
+                const auto entityIt = entityMap.find(pendingParent.id);
+                const auto parentIt = entityMap.find(pendingParent.parentId);
+                if (entityIt == entityMap.end() || parentIt == entityMap.end())
                 {
-                    auto component = CreateComponentForType(activeComponent->typeName);
-                    if (component)
-                    {
-                        auto *componentPtr = entityIt->second->AddComponent(component.release());
-                        componentPtr->Deserialize(activeComponent->properties);
-                    }
+                    continue;
                 }
-                activeComponent.reset();
-            }
-        }
 
-        for (const auto &pendingParent : pendingParents)
-        {
-            if (pendingParent.parentId == 0)
+                parentIt->second->AddChild(entityIt->second);
+            }
+
+            if (bakedProbeVolume.IsValid())
             {
-                continue;
+                scene->SetBakedProbeVolume(std::move(bakedProbeVolume));
             }
 
-            const auto entityIt = entityMap.find(pendingParent.id);
-            const auto parentIt = entityMap.find(pendingParent.parentId);
-            if (entityIt == entityMap.end() || parentIt == entityMap.end())
+            if (!environmentMapPath.empty())
             {
-                continue;
+                auto *environmentTexture = core::Engine::GetInstance().GetTextureManager().LoadEnvironmentTextureFromFile(environmentMapPath.c_str());
+                scene->SetEnvironmentMap(environmentTexture, environmentMapPath);
+                scene->SetEnvironmentIntensity(environmentIntensity);
             }
 
-            parentIt->second->AddChild(entityIt->second);
-        }
-
-        if (bakedProbeVolume.IsValid())
-        {
-            scene->SetBakedProbeVolume(std::move(bakedProbeVolume));
-        }
-
-        if (!environmentMapPath.empty())
-        {
-            auto *environmentTexture = core::Engine::GetInstance().GetTextureManager().LoadEnvironmentTextureFromFile(environmentMapPath.c_str());
-            scene->SetEnvironmentMap(environmentTexture, environmentMapPath);
-            scene->SetEnvironmentIntensity(environmentIntensity);
-        }
-
-        for (auto &captureVolume : iblCaptureVolumes)
-        {
-            if (scene->GetIblCaptureVolumes().size() >= static_cast<std::size_t>(kMaxIblCaptureVolumes))
+            for (auto &captureVolume : iblCaptureVolumes)
             {
-                break;
-            }
+                if (scene->GetIblCaptureVolumes().size() >= static_cast<std::size_t>(kMaxIblCaptureVolumes))
+                {
+                    break;
+                }
 
-            captureVolume.environmentMapTexture = core::Engine::GetInstance().GetTextureManager().LoadEnvironmentTextureFromFile(captureVolume.environmentMapPath.c_str());
-            scene->AddIblCaptureVolume(std::move(captureVolume));
-        }
+                captureVolume.environmentMapTexture = core::Engine::GetInstance().GetTextureManager().LoadEnvironmentTextureFromFile(captureVolume.environmentMapPath.c_str());
+                scene->AddIblCaptureVolume(std::move(captureVolume));
+            }
 
             scene->MarkShadowLightsDirty();
             return scene;

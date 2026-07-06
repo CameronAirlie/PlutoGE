@@ -24,6 +24,8 @@
 #include "PlutoGE/scene/components/PhysicalSkyComponent.h"
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
 #include "PlutoGE/scene/components/RigidbodyComponent.h"
+#include "PlutoGE/scene/components/SoundEmitterComponent.h"
+#include "PlutoGE/scene/components/SoundListenerComponent.h"
 #include "PlutoGE/scene/components/UIComponent.h"
 #include "PlutoGE/scene/components/VolumetricCloudComponent.h"
 #include "PlutoGE/scene/Entity.h"
@@ -86,11 +88,13 @@ namespace PlutoGE::ui
             ParticleSystem = 11,
             Spline = 12,
             Script = 13,
-            Canvas = 14,
-            RectTransform = 15,
-            UIImage = 16,
-            UIText = 17,
-            UIButton = 18,
+            SoundEmitter = 14,
+            SoundListener = 15,
+            Canvas = 16,
+            RectTransform = 17,
+            UIImage = 18,
+            UIText = 19,
+            UIButton = 20,
         };
 
         struct ScriptAssetOption
@@ -855,6 +859,29 @@ namespace PlutoGE::ui
             return droppedReference;
         }
 
+        std::optional<std::string> AcceptDroppedAudioAssetReference()
+        {
+            std::optional<std::string> droppedReference;
+            if (ImGui::BeginDragDropTarget())
+            {
+                if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kContentBrowserAssetDragDropPayload))
+                {
+                    if (payload->Data && payload->DataSize > 0)
+                    {
+                        const auto *data = static_cast<const char *>(payload->Data);
+                        const std::string reference(data, data + payload->DataSize - 1);
+                        if (assets::Project::GetAssetTypeForReference(reference) == assets::ProjectAssetType::Audio)
+                        {
+                            droppedReference = reference;
+                        }
+                    }
+                }
+                ImGui::EndDragDropTarget();
+            }
+
+            return droppedReference;
+        }
+
         bool AssignMaterialAssetToSlot(scene::MeshComponent &meshComponent,
                                        size_t materialSlotIndex,
                                        const std::string &materialAssetReference,
@@ -1187,6 +1214,14 @@ namespace PlutoGE::ui
             {
                 return "Script Component";
             }
+            if (dynamic_cast<const scene::SoundEmitterComponent *>(&component))
+            {
+                return "Sound Emitter Component";
+            }
+            if (dynamic_cast<const scene::SoundListenerComponent *>(&component))
+            {
+                return "Sound Listener Component";
+            }
             if (dynamic_cast<const scene::CanvasComponent *>(&component))
             {
                 return "Canvas Component";
@@ -1241,6 +1276,10 @@ namespace PlutoGE::ui
                 return "PhysicalSkyComponent";
             if (dynamic_cast<const scene::ScriptComponent *>(&component))
                 return "ScriptComponent";
+            if (dynamic_cast<const scene::SoundEmitterComponent *>(&component))
+                return "SoundEmitterComponent";
+            if (dynamic_cast<const scene::SoundListenerComponent *>(&component))
+                return "SoundListenerComponent";
             if (dynamic_cast<const scene::CanvasComponent *>(&component))
                 return "CanvasComponent";
             if (dynamic_cast<const scene::RectTransformComponent *>(&component))
@@ -1359,6 +1398,10 @@ namespace PlutoGE::ui
                 return !entity.HasComponent<scene::VolumetricCloudComponent>();
             case AddableComponentType::Script:
                 return !entity.HasComponent<scene::ScriptComponent>();
+            case AddableComponentType::SoundEmitter:
+                return !entity.HasComponent<scene::SoundEmitterComponent>();
+            case AddableComponentType::SoundListener:
+                return !entity.HasComponent<scene::SoundListenerComponent>();
             case AddableComponentType::Canvas:
                 return !entity.HasComponent<scene::CanvasComponent>();
             case AddableComponentType::RectTransform:
@@ -1417,6 +1460,12 @@ namespace PlutoGE::ui
             if (ImGui::BeginMenu("Scripting"))
             {
                 renderItem("Script", AddableComponentType::Script);
+                ImGui::EndMenu();
+            }
+            if (ImGui::BeginMenu("Audio"))
+            {
+                renderItem("Sound Emitter", AddableComponentType::SoundEmitter);
+                renderItem("Sound Listener", AddableComponentType::SoundListener);
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("UI"))
@@ -1526,6 +1575,12 @@ namespace PlutoGE::ui
                 break;
             case AddableComponentType::Script:
                 entity.CreateComponent<scene::ScriptComponent>(scene::ScriptComponentConfig{});
+                break;
+            case AddableComponentType::SoundEmitter:
+                entity.CreateComponent<scene::SoundEmitterComponent>();
+                break;
+            case AddableComponentType::SoundListener:
+                entity.CreateComponent<scene::SoundListenerComponent>();
                 break;
             case AddableComponentType::Canvas:
                 entity.CreateComponent<scene::CanvasComponent>();
@@ -2127,6 +2182,7 @@ namespace PlutoGE::ui
             case scripting::ScriptFieldType::UITextComponent:
             case scripting::ScriptFieldType::UIButtonComponent:
             case scripting::ScriptFieldType::ParticleSystemComponent:
+            case scripting::ScriptFieldType::SoundEmitterComponent:
             {
                 uint32_t selectedEntityId = std::get<uint32_t>(*fieldValue);
                 scene::Scene *scene = entity.GetScene();
@@ -2171,6 +2227,8 @@ namespace PlutoGE::ui
                         return candidate.HasComponent<scene::UIButtonComponent>();
                     case scripting::ScriptFieldType::ParticleSystemComponent:
                         return candidate.HasComponent<scene::ParticleSystemComponent>();
+                    case scripting::ScriptFieldType::SoundEmitterComponent:
+                        return candidate.HasComponent<scene::SoundEmitterComponent>();
                     case scripting::ScriptFieldType::EntityId:
                     case scripting::ScriptFieldType::GameObject:
                     default:
@@ -4432,6 +4490,52 @@ namespace PlutoGE::ui
                             properties.clear();
                         }
 
+                        if (auto *soundEmitterComponent = dynamic_cast<scene::SoundEmitterComponent *>(componentPtr))
+                        {
+                            const auto &audioOptions = GetCachedAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::Audio);
+                            const std::string currentReference = soundEmitterComponent->GetClipReference();
+                            const std::string preview = GetAssetReferencePreview(audioOptions, currentReference, "None");
+                            if (ImGui::BeginCombo("Audio Clip", preview.c_str()))
+                            {
+                                const bool noneSelected = currentReference.empty();
+                                if (ImGui::Selectable("None", noneSelected))
+                                {
+                                    soundEmitterComponent->SetClipReference({});
+                                    entity->AddPrefabOverride("Component:SoundEmitterComponent:Clip");
+                                    editorShell.MarkSceneDirty();
+                                }
+                                if (noneSelected)
+                                {
+                                    ImGui::SetItemDefaultFocus();
+                                }
+
+                                for (const auto &option : audioOptions)
+                                {
+                                    const bool selected = option.reference == currentReference;
+                                    if (ImGui::Selectable(option.displayName.c_str(), selected))
+                                    {
+                                        soundEmitterComponent->SetClipReference(option.reference);
+                                        entity->AddPrefabOverride("Component:SoundEmitterComponent:Clip");
+                                        editorShell.MarkSceneDirty();
+                                    }
+                                    if (selected)
+                                    {
+                                        ImGui::SetItemDefaultFocus();
+                                    }
+                                }
+                                ImGui::EndCombo();
+                            }
+
+                            if (auto droppedAudioReference = AcceptDroppedAudioAssetReference())
+                            {
+                                soundEmitterComponent->SetClipReference(*droppedAudioReference);
+                                entity->AddPrefabOverride("Component:SoundEmitterComponent:Clip");
+                                editorShell.MarkSceneDirty();
+                            }
+
+                            ImGui::TextDisabled("WAV clips only in the current runtime.");
+                        }
+
                         if (auto *imageComponent = dynamic_cast<scene::UIImageComponent *>(componentPtr))
                         {
                             const auto &textureOptions = GetCachedAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::Texture);
@@ -4532,6 +4636,10 @@ namespace PlutoGE::ui
                                 {
                                     continue;
                                 }
+                            }
+                            if (dynamic_cast<scene::SoundEmitterComponent *>(componentPtr) && property.name == "Clip")
+                            {
+                                continue;
                             }
 
                             ImGui::PushID(propertyIndex++);

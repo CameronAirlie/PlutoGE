@@ -8,6 +8,8 @@
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
 #include "PlutoGE/scene/components/RigidbodyComponent.h"
 #include "PlutoGE/scene/components/ScriptComponent.h"
+#include "PlutoGE/scene/components/SoundEmitterComponent.h"
+#include "PlutoGE/scene/components/SoundListenerComponent.h"
 #include "PlutoGE/scene/components/SplineComponent.h"
 #include "PlutoGE/scene/components/TerrainComponent.h"
 #include "PlutoGE/scene/components/UIComponent.h"
@@ -84,6 +86,61 @@ namespace PlutoGE::scene
             {
                 CollectActiveEntities(child, entities);
             }
+        }
+
+        void CollectActiveAudioComponents(Entity *entity,
+                                          std::vector<SoundEmitterComponent *> &emitters,
+                                          std::vector<SoundListenerComponent *> &listeners)
+        {
+            if (!entity || !entity->IsActive())
+            {
+                return;
+            }
+
+            for (auto *emitter : entity->GetComponents<SoundEmitterComponent>())
+            {
+                if (emitter && emitter->IsEnabled())
+                {
+                    emitters.push_back(emitter);
+                }
+            }
+
+            for (auto *listener : entity->GetComponents<SoundListenerComponent>())
+            {
+                if (listener && listener->IsEnabled())
+                {
+                    listeners.push_back(listener);
+                }
+            }
+
+            for (auto *child : entity->GetChildren())
+            {
+                CollectActiveAudioComponents(child, emitters, listeners);
+            }
+        }
+
+        SoundListenerComponent *ChoosePrimaryListener(const std::vector<SoundListenerComponent *> &listeners)
+        {
+            for (auto *listener : listeners)
+            {
+                if (listener && listener->IsPrimary())
+                {
+                    return listener;
+                }
+            }
+
+            return listeners.empty() ? nullptr : listeners.front();
+        }
+
+        glm::vec3 SafeNormalize(const glm::vec3 &value, const glm::vec3 &fallback)
+        {
+            const float lengthSquared = glm::dot(value, value);
+            if (!std::isfinite(lengthSquared) || lengthSquared <= 0.000001f)
+            {
+                return fallback;
+            }
+
+            return value / std::sqrt(lengthSquared);
         }
 
         struct UIRect
@@ -1109,6 +1166,8 @@ namespace PlutoGE::scene
             scriptComponent->Start();
         }
 
+        core::Engine::GetInstance().GetAudioSystem().ClearEmitters();
+
         m_runtimeStarted = true;
     }
 
@@ -1123,6 +1182,8 @@ namespace PlutoGE::scene
         {
             scriptComponent->Stop();
         }
+
+        core::Engine::GetInstance().GetAudioSystem().ClearEmitters();
 
         m_runtimeStarted = false;
         ResetRuntimePhysicsState();
@@ -1489,6 +1550,76 @@ namespace PlutoGE::scene
             }
         }
         const auto lateScriptsEnd = Clock::now();
+
+        if (m_runtimeStarted)
+        {
+            std::vector<SoundEmitterComponent *> emitters;
+            std::vector<SoundListenerComponent *> listeners;
+            for (auto *rootEntity : m_rootEntities)
+            {
+                CollectActiveAudioComponents(rootEntity, emitters, listeners);
+            }
+
+            audio::ListenerState listenerState;
+            const auto *listenerComponent = ChoosePrimaryListener(listeners);
+            if (listenerComponent && listenerComponent->GetOwner())
+            {
+                const auto *listenerOwner = listenerComponent->GetOwner();
+                const glm::mat4 listenerTransform = listenerOwner->GetWorldTransform();
+                listenerState.active = true;
+                listenerState.position = listenerOwner->GetWorldPosition();
+                listenerState.forward = SafeNormalize(-glm::vec3(listenerTransform[2]), glm::vec3(0.0f, 0.0f, -1.0f));
+                listenerState.up = SafeNormalize(glm::vec3(listenerTransform[1]), glm::vec3(0.0f, 1.0f, 0.0f));
+                listenerState.masterVolume = listenerComponent->GetMasterVolume();
+            }
+
+            std::vector<audio::EmitterState> emitterStates;
+            emitterStates.reserve(emitters.size());
+            auto &engine = core::Engine::GetInstance();
+            for (auto *emitter : emitters)
+            {
+                const auto *owner = emitter ? emitter->GetOwner() : nullptr;
+                if (!emitter || !owner || owner->GetID() == 0)
+                {
+                    continue;
+                }
+
+                audio::EmitterState emitterState;
+                emitterState.key = emitter->GetRuntimeKey();
+                emitterState.clipPath = engine.GetAssetManager().ResolveAssetPath(emitter->GetClipReference());
+                emitterState.position = owner->GetWorldPosition();
+                emitterState.playing = emitter->IsPlaying();
+                emitterState.paused = emitter->IsPaused();
+                emitterState.looping = emitter->GetLooping();
+                emitterState.spatialized = emitter->IsSpatialized();
+                emitterState.restartRequested = emitter->ConsumeRestartRequested();
+                emitterState.volume = emitter->GetVolume();
+                emitterState.pitch = emitter->GetPitch();
+                emitterState.minDistance = emitter->GetMinDistance();
+                emitterState.maxDistance = emitter->GetMaxDistance();
+                emitterState.rolloff = emitter->GetRolloff();
+
+                if (listenerState.active && emitterState.spatialized)
+                {
+                    const glm::vec3 direction = emitterState.position - listenerState.position;
+                    const float distance = glm::length(direction);
+                    if (distance > 0.05f)
+                    {
+                        PhysicsRaycastHit hit;
+                        if (Raycast(listenerState.position, direction / distance, distance, hit, owner->GetID()) &&
+                            hit.entityId != 0 &&
+                            (!listenerComponent || !listenerComponent->GetOwner() || hit.entityId != listenerComponent->GetOwner()->GetID()))
+                        {
+                            emitterState.occlusion = 1.0f;
+                        }
+                    }
+                }
+
+                emitterStates.push_back(std::move(emitterState));
+            }
+
+            engine.GetAudioSystem().Update(listenerState, emitterStates);
+        }
 
         SubmitRenderCommands();
         const auto submissionEnd = Clock::now();

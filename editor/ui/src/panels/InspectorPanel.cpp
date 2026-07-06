@@ -3948,6 +3948,7 @@ namespace PlutoGE::ui
                                 {"Width", scene::PropertyType::Float, std::to_string(splineComponent->GetWidth())},
                                 {"Thickness", scene::PropertyType::Float, std::to_string(splineComponent->GetThickness())},
                                 {"SamplesPerSegment", scene::PropertyType::Int, std::to_string(splineComponent->GetSamplesPerSegment())},
+                                {"CollisionSamplesPerSegment", scene::PropertyType::Int, std::to_string(splineComponent->GetCollisionSamplesPerSegment())},
                                 {"UvMetersPerTile", scene::PropertyType::Float, std::to_string(splineComponent->GetUvMetersPerTile())},
                                 {"Closed", scene::PropertyType::Bool, splineComponent->IsClosed() ? "true" : "false"},
                                 {"GenerateMesh", scene::PropertyType::Bool, splineComponent->ShouldGenerateMesh() ? "true" : "false"},

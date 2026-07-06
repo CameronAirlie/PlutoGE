@@ -8,6 +8,7 @@
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
 #include "PlutoGE/scene/components/RigidbodyComponent.h"
 #include "PlutoGE/scene/components/ScriptComponent.h"
+#include "PlutoGE/scene/components/SplineComponent.h"
 #include "PlutoGE/scene/components/TerrainComponent.h"
 #include "PlutoGE/scene/components/UIComponent.h"
 #include "PlutoGE/render/Texture.h"
@@ -28,6 +29,7 @@
 
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/euler_angles.hpp>
+#include <glm/gtx/quaternion.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -344,6 +346,8 @@ namespace PlutoGE::scene
             std::vector<float> ownedHeightfieldData;
         };
 
+        BulletShapeData CreateSplineSegmentBulletShape(const SplineComponent &spline, const glm::vec3 &worldScale);
+
         std::unique_ptr<btCollisionShape> CreateBaseBulletShape(const ColliderComponent &collider, const glm::vec3 &worldScale)
         {
             switch (collider.GetShape())
@@ -368,16 +372,10 @@ namespace PlutoGE::scene
             }
         }
 
-        BulletShapeData CreateMeshBulletShape(const MeshComponent &meshComponent, const glm::vec3 &worldScale)
+        BulletShapeData CreateMeshBulletShape(const render::Mesh &mesh, const glm::vec3 &worldScale)
         {
             BulletShapeData shapeData;
-            const auto *mesh = meshComponent.GetMesh();
-            if (!mesh)
-            {
-                return shapeData;
-            }
-
-            const auto &meshData = mesh->GetMeshData();
+            const auto &meshData = mesh.GetMeshData();
             if (meshData.vertices.empty() || meshData.indices.size() < 3)
             {
                 return shapeData;
@@ -519,9 +517,20 @@ namespace PlutoGE::scene
             }
             if (collider.GetShape() == ColliderShape::Mesh)
             {
+                if (const auto *spline = entity.GetComponent<SplineComponent>())
+                {
+                    if (const auto *collisionMesh = spline->GetGeneratedCollisionMesh())
+                    {
+                        return CreateMeshBulletShape(*collisionMesh, worldScale);
+                    }
+                    return {};
+                }
                 if (const auto *meshComponent = entity.GetComponent<MeshComponent>())
                 {
-                    return CreateMeshBulletShape(*meshComponent, worldScale);
+                    if (const auto *mesh = meshComponent->GetMesh())
+                    {
+                        return CreateMeshBulletShape(*mesh, worldScale);
+                    }
                 }
                 return {};
             }
@@ -768,6 +777,62 @@ namespace PlutoGE::scene
             HashCombine(seed, value.z);
         }
 
+        BulletShapeData CreateSplineSegmentBulletShape(const SplineComponent &spline, const glm::vec3 &worldScale)
+        {
+            BulletShapeData shapeData;
+            const auto &pathPoints = spline.GetCollisionPathPoints();
+            if (pathPoints.size() < 2)
+            {
+                return shapeData;
+            }
+
+            auto compoundShape = std::make_unique<btCompoundShape>();
+            const bool closed = spline.IsClosed() && pathPoints.size() > 2;
+            const std::size_t segmentCount = closed ? pathPoints.size() : pathPoints.size() - 1;
+            const glm::vec3 absScale = glm::abs(worldScale);
+            const float horizontalScale = std::max(absScale.x, absScale.z);
+            const float halfWidth = std::max(spline.GetWidth() * horizontalScale * 0.5f, 0.0001f);
+            const float halfThickness = std::max(spline.GetThickness() * absScale.y * 0.5f, 0.05f);
+            const float segmentPadding = halfWidth;
+
+            for (std::size_t segmentIndex = 0; segmentIndex < segmentCount; ++segmentIndex)
+            {
+                const std::size_t nextIndex = (segmentIndex + 1) % pathPoints.size();
+                const glm::vec3 start = pathPoints[segmentIndex] * absScale;
+                const glm::vec3 end = pathPoints[nextIndex] * absScale;
+                glm::vec3 direction = end - start;
+                const float length = glm::length(direction);
+                if (length <= 0.0001f)
+                {
+                    continue;
+                }
+
+                direction /= length;
+                auto childShape = std::make_unique<btBoxShape>(btVector3(
+                    halfWidth,
+                    halfThickness,
+                    std::max(length * 0.5f + segmentPadding, 0.0001f)));
+
+                const glm::vec3 center = (start + end) * 0.5f - glm::vec3(0.0f, halfThickness, 0.0f);
+                const glm::quat rotation = glm::rotation(glm::vec3(0.0f, 0.0f, 1.0f), direction);
+
+                btTransform childTransform;
+                childTransform.setIdentity();
+                childTransform.setOrigin(ToBullet(center));
+                childTransform.setRotation(btQuaternion(rotation.x, rotation.y, rotation.z, rotation.w));
+                compoundShape->addChildShape(childTransform, childShape.get());
+                shapeData.ownedChildShapes.push_back(std::move(childShape));
+            }
+
+            if (shapeData.ownedChildShapes.empty())
+            {
+                return {};
+            }
+
+            shapeData.shape = std::move(compoundShape);
+            return shapeData;
+        }
+
         uint64_t ComputeRuntimePhysicsBodySignature(const Entity &entity,
                                                     const ColliderComponent &collider,
                                                     const RigidbodyComponent *rigidbody)
@@ -798,6 +863,19 @@ namespace PlutoGE::scene
                     HashCombine(signature, mesh->GetVertexCount());
                     HashCombine(signature, mesh->GetIndexCount());
                 }
+            }
+            if (const auto *spline = entity.GetComponent<SplineComponent>())
+            {
+                HashCombine(signature, spline->ShouldGenerateCollision());
+                HashCombine(signature, spline->GetCollisionSamplesPerSegment());
+                const auto *collisionMesh = spline->GetGeneratedCollisionMesh();
+                HashCombine(signature, reinterpret_cast<std::uintptr_t>(collisionMesh));
+                if (collisionMesh)
+                {
+                    HashCombine(signature, collisionMesh->GetVertexCount());
+                    HashCombine(signature, collisionMesh->GetIndexCount());
+                }
+                HashCombine(signature, spline->GetCollisionPathPoints().size());
             }
 
             HashCombine(signature, rigidbody && rigidbody->IsEnabled());
@@ -1931,7 +2009,7 @@ namespace PlutoGE::scene
 
         if (rebuildRuntimePhysics)
         {
-            RebuildRuntimePhysicsState(entities);
+            RebuildRuntimePhysicsState(physicsEntities);
         }
 
         if (!m_runtimePhysicsState || !m_runtimePhysicsState->world)

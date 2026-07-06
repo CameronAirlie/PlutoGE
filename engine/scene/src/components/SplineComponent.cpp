@@ -89,6 +89,122 @@ namespace PlutoGE::scene
             meshData.indices.push_back(d);
         }
 
+        std::vector<glm::vec3> BuildSplineCenters(const std::vector<SplineControlPoint> &points,
+                                                  bool closed,
+                                                  int samplesPerSegment)
+        {
+            std::vector<glm::vec3> centers;
+            if (points.size() < 2)
+            {
+                return centers;
+            }
+
+            const int segmentCount = closed ? static_cast<int>(points.size()) : static_cast<int>(points.size()) - 1;
+            if (segmentCount <= 0)
+            {
+                return centers;
+            }
+
+            centers.reserve(static_cast<std::size_t>(segmentCount * samplesPerSegment + 1));
+            for (int segment = 0; segment < segmentCount; ++segment)
+            {
+                for (int sample = 0; sample < samplesPerSegment; ++sample)
+                {
+                    const float t = static_cast<float>(sample) / static_cast<float>(samplesPerSegment);
+                    centers.push_back(CatmullRom(
+                        GetWrappedPoint(points, segment - 1, closed),
+                        GetWrappedPoint(points, segment, closed),
+                        GetWrappedPoint(points, segment + 1, closed),
+                        GetWrappedPoint(points, segment + 2, closed),
+                        t));
+                }
+            }
+
+            if (!closed)
+            {
+                centers.push_back(points.back().position);
+            }
+
+            return centers;
+        }
+
+        std::unique_ptr<render::Mesh> BuildSplineMesh(const std::vector<glm::vec3> &centers,
+                                                      float width,
+                                                      float thickness,
+                                                      float uvMetersPerTile,
+                                                      bool closed,
+                                                      bool includeSideFaces = true)
+        {
+            if (centers.size() < 2)
+            {
+                return nullptr;
+            }
+
+            render::MeshData meshData;
+            const float halfWidth = width * 0.5f;
+            const float bottomOffset = std::max(thickness, 0.0f);
+            float distance = 0.0f;
+            std::vector<float> distances(centers.size(), 0.0f);
+            for (std::size_t index = 1; index < centers.size(); ++index)
+            {
+                distance += glm::length(centers[index] - centers[index - 1]);
+                distances[index] = distance;
+            }
+
+            const glm::vec3 up(0.0f, 1.0f, 0.0f);
+            for (std::size_t index = 0; index < centers.size(); ++index)
+            {
+                const glm::vec3 previous = index == 0 ? (closed ? centers[centers.size() - 1] : centers[index]) : centers[index - 1];
+                const glm::vec3 next = index + 1 < centers.size() ? centers[index + 1] : (closed ? centers[0] : centers[index]);
+                glm::vec3 tangent = next - previous;
+                if (glm::dot(tangent, tangent) <= 0.000001f)
+                {
+                    tangent = glm::vec3(0.0f, 0.0f, 1.0f);
+                }
+                tangent = glm::normalize(tangent);
+
+                glm::vec3 right = glm::cross(tangent, up);
+                if (glm::dot(right, right) <= 0.000001f)
+                {
+                    right = glm::vec3(1.0f, 0.0f, 0.0f);
+                }
+                right = glm::normalize(right);
+                const glm::vec3 surfaceNormal = glm::normalize(glm::cross(right, tangent));
+
+                const float v = distances[index] / uvMetersPerTile;
+                AddVertex(meshData, centers[index] - right * halfWidth, surfaceNormal, glm::vec2(0.0f, v), tangent);
+                AddVertex(meshData, centers[index] + right * halfWidth, surfaceNormal, glm::vec2(1.0f, v), tangent);
+                AddVertex(meshData, centers[index] - right * halfWidth - up * bottomOffset, -right, glm::vec2(0.0f, v), tangent);
+                AddVertex(meshData, centers[index] + right * halfWidth - up * bottomOffset, right, glm::vec2(1.0f, v), tangent);
+            }
+
+            const std::size_t edgeCount = closed ? centers.size() : centers.size() - 1;
+            for (std::size_t index = 0; index < edgeCount; ++index)
+            {
+                const std::size_t nextIndex = (index + 1) % centers.size();
+                const auto base = static_cast<unsigned int>(index * 4);
+                const auto nextBase = static_cast<unsigned int>(nextIndex * 4);
+                AddQuad(meshData, base + 0, base + 1, nextBase + 0, nextBase + 1);
+                if (includeSideFaces && bottomOffset > 0.0f)
+                {
+                    AddQuad(meshData, base + 2, base + 0, nextBase + 2, nextBase + 0);
+                    AddQuad(meshData, base + 1, base + 3, nextBase + 1, nextBase + 3);
+                    AddQuad(meshData, base + 3, base + 2, nextBase + 3, nextBase + 2);
+                }
+            }
+
+            render::MeshConfig config;
+            config.data = std::move(meshData);
+            config.submeshes.push_back(render::Submesh{
+                .indexOffset = 0,
+                .indexCount = static_cast<uint32_t>(config.data.indices.size()),
+                .materialIndex = 0,
+                .name = "Spline Track",
+            });
+
+            return std::unique_ptr<render::Mesh>(render::Mesh::CreateInitialized(config));
+        }
+
     }
 
     SplineComponent::SplineComponent(const SplineComponentConfig &config)
@@ -96,6 +212,7 @@ namespace PlutoGE::scene
           m_width(std::max(config.width, 0.05f)),
           m_thickness(std::max(config.thickness, 0.0f)),
           m_samplesPerSegment(std::max(1, static_cast<int>(std::round(config.samplesPerSegment)))),
+          m_collisionSamplesPerSegment(std::max(1, static_cast<int>(std::round(config.collisionSamplesPerSegment)))),
           m_uvMetersPerTile(std::max(config.uvMetersPerTile, 0.01f)),
           m_closed(config.closed),
           m_generateMesh(config.generateMesh),
@@ -191,6 +308,12 @@ namespace PlutoGE::scene
         MarkDirty();
     }
 
+    void SplineComponent::SetCollisionSamplesPerSegment(int collisionSamplesPerSegment)
+    {
+        m_collisionSamplesPerSegment = std::clamp(collisionSamplesPerSegment, 1, 128);
+        MarkDirty();
+    }
+
     void SplineComponent::SetUvMetersPerTile(float uvMetersPerTile)
     {
         m_uvMetersPerTile = std::max(uvMetersPerTile, 0.01f);
@@ -212,7 +335,7 @@ namespace PlutoGE::scene
     void SplineComponent::SetGenerateCollision(bool generateCollision)
     {
         m_generateCollision = generateCollision;
-        ApplyGeneratedComponents();
+        MarkDirty();
     }
 
     void SplineComponent::SetMaterial(render::Material *material)
@@ -243,104 +366,40 @@ namespace PlutoGE::scene
         m_dirty = false;
         EnsureDefaultPoints();
 
-        if (!m_generateMesh || m_points.size() < 2)
+        if (m_points.size() < 2)
         {
             m_generatedMesh.reset();
+            m_generatedCollisionMesh.reset();
+            m_collisionPathPoints.clear();
             ApplyGeneratedComponents();
             return;
         }
 
-        std::vector<glm::vec3> centers;
-        const int segmentCount = m_closed ? static_cast<int>(m_points.size()) : static_cast<int>(m_points.size()) - 1;
-        centers.reserve(static_cast<std::size_t>(segmentCount * m_samplesPerSegment + 1));
-        for (int segment = 0; segment < segmentCount; ++segment)
+        if (m_generateMesh)
         {
-            for (int sample = 0; sample < m_samplesPerSegment; ++sample)
-            {
-                const float t = static_cast<float>(sample) / static_cast<float>(m_samplesPerSegment);
-                centers.push_back(CatmullRom(
-                    GetWrappedPoint(m_points, segment - 1, m_closed),
-                    GetWrappedPoint(m_points, segment, m_closed),
-                    GetWrappedPoint(m_points, segment + 1, m_closed),
-                    GetWrappedPoint(m_points, segment + 2, m_closed),
-                    t));
-            }
+            const auto renderCenters = BuildSplineCenters(m_points, m_closed, m_samplesPerSegment);
+            m_generatedMesh = BuildSplineMesh(renderCenters, m_width, m_thickness, m_uvMetersPerTile, m_closed, true);
         }
-        if (!m_closed)
-        {
-            centers.push_back(m_points.back().position);
-        }
-
-        if (centers.size() < 2)
+        else
         {
             m_generatedMesh.reset();
-            ApplyGeneratedComponents();
-            return;
         }
 
-        render::MeshData meshData;
-        const float halfWidth = m_width * 0.5f;
-        const float bottomOffset = std::max(m_thickness, 0.0f);
-        float distance = 0.0f;
-        std::vector<float> distances(centers.size(), 0.0f);
-        for (std::size_t index = 1; index < centers.size(); ++index)
+        if (m_generateCollision)
         {
-            distance += glm::length(centers[index] - centers[index - 1]);
-            distances[index] = distance;
+            m_collisionPathPoints = BuildSplineCenters(m_points, m_closed, std::min(m_samplesPerSegment, m_collisionSamplesPerSegment));
+            m_generatedCollisionMesh = BuildSplineMesh(m_collisionPathPoints,
+                                                       m_width,
+                                                       m_thickness,
+                                                       m_uvMetersPerTile,
+                                                       m_closed,
+                                                       false);
         }
-
-        const glm::vec3 up(0.0f, 1.0f, 0.0f);
-        for (std::size_t index = 0; index < centers.size(); ++index)
+        else
         {
-            const glm::vec3 previous = index == 0 ? (m_closed ? centers[centers.size() - 1] : centers[index]) : centers[index - 1];
-            const glm::vec3 next = index + 1 < centers.size() ? centers[index + 1] : (m_closed ? centers[0] : centers[index]);
-            glm::vec3 tangent = next - previous;
-            if (glm::dot(tangent, tangent) <= 0.000001f)
-            {
-                tangent = glm::vec3(0.0f, 0.0f, 1.0f);
-            }
-            tangent = glm::normalize(tangent);
-
-            glm::vec3 right = glm::cross(tangent, up);
-            if (glm::dot(right, right) <= 0.000001f)
-            {
-                right = glm::vec3(1.0f, 0.0f, 0.0f);
-            }
-            right = glm::normalize(right);
-            const glm::vec3 surfaceNormal = glm::normalize(glm::cross(right, tangent));
-
-            const float v = distances[index] / m_uvMetersPerTile;
-            AddVertex(meshData, centers[index] - right * halfWidth, surfaceNormal, glm::vec2(0.0f, v), tangent);
-            AddVertex(meshData, centers[index] + right * halfWidth, surfaceNormal, glm::vec2(1.0f, v), tangent);
-            AddVertex(meshData, centers[index] - right * halfWidth - up * bottomOffset, -right, glm::vec2(0.0f, v), tangent);
-            AddVertex(meshData, centers[index] + right * halfWidth - up * bottomOffset, right, glm::vec2(1.0f, v), tangent);
+            m_generatedCollisionMesh.reset();
+            m_collisionPathPoints.clear();
         }
-
-        const std::size_t edgeCount = m_closed ? centers.size() : centers.size() - 1;
-        for (std::size_t index = 0; index < edgeCount; ++index)
-        {
-            const std::size_t nextIndex = (index + 1) % centers.size();
-            const auto base = static_cast<unsigned int>(index * 4);
-            const auto nextBase = static_cast<unsigned int>(nextIndex * 4);
-            AddQuad(meshData, base + 0, base + 1, nextBase + 0, nextBase + 1);
-            if (bottomOffset > 0.0f)
-            {
-                AddQuad(meshData, base + 2, base + 0, nextBase + 2, nextBase + 0);
-                AddQuad(meshData, base + 1, base + 3, nextBase + 1, nextBase + 3);
-                AddQuad(meshData, base + 3, base + 2, nextBase + 3, nextBase + 2);
-            }
-        }
-
-        render::MeshConfig config;
-        config.data = std::move(meshData);
-        config.submeshes.push_back(render::Submesh{
-            .indexOffset = 0,
-            .indexCount = static_cast<uint32_t>(config.data.indices.size()),
-            .materialIndex = 0,
-            .name = "Spline Track",
-        });
-
-        m_generatedMesh = std::unique_ptr<render::Mesh>(render::Mesh::CreateInitialized(config));
         ApplyGeneratedComponents();
     }
 
@@ -387,6 +446,7 @@ namespace PlutoGE::scene
             {"Width", PropertyType::Float, std::to_string(m_width)},
             {"Thickness", PropertyType::Float, std::to_string(m_thickness)},
             {"SamplesPerSegment", PropertyType::Int, std::to_string(m_samplesPerSegment)},
+            {"CollisionSamplesPerSegment", PropertyType::Int, std::to_string(m_collisionSamplesPerSegment)},
             {"UvMetersPerTile", PropertyType::Float, std::to_string(m_uvMetersPerTile)},
             {"Closed", PropertyType::Bool, m_closed ? "true" : "false"},
             {"GenerateMesh", PropertyType::Bool, m_generateMesh ? "true" : "false"},
@@ -416,6 +476,8 @@ namespace PlutoGE::scene
                 m_thickness = std::max(std::stof(property.value), 0.0f);
             else if (property.name == "SamplesPerSegment")
                 m_samplesPerSegment = std::clamp(std::stoi(property.value), 1, 128);
+            else if (property.name == "CollisionSamplesPerSegment")
+                m_collisionSamplesPerSegment = std::clamp(std::stoi(property.value), 1, 128);
             else if (property.name == "UvMetersPerTile")
                 m_uvMetersPerTile = std::max(std::stof(property.value), 0.01f);
             else if (property.name == "Closed")

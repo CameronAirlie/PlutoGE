@@ -26,6 +26,7 @@ namespace PlutoGE::scene
         float width = 8.0f;
         float thickness = 0.25f;
         float samplesPerSegment = 12.0f;
+        float collisionSamplesPerSegment = 4.0f;
         float uvMetersPerTile = 6.0f;
         bool closed = true;
         bool generateMesh = true;
@@ -57,6 +58,8 @@ namespace PlutoGE::scene
         void SetThickness(float thickness);
         int GetSamplesPerSegment() const { return m_samplesPerSegment; }
         void SetSamplesPerSegment(int samplesPerSegment);
+        int GetCollisionSamplesPerSegment() const { return m_collisionSamplesPerSegment; }
+        void SetCollisionSamplesPerSegment(int collisionSamplesPerSegment);
         float GetUvMetersPerTile() const { return m_uvMetersPerTile; }
         void SetUvMetersPerTile(float uvMetersPerTile);
         bool IsClosed() const { return m_closed; }
@@ -70,6 +73,8 @@ namespace PlutoGE::scene
         void SetMaterialAssetReference(const std::string &materialAssetReference);
         const std::string &GetMaterialAssetReference() const { return m_materialAssetReference; }
         render::Mesh *GetGeneratedMesh() const { return m_generatedMesh.get(); }
+        render::Mesh *GetGeneratedCollisionMesh() const { return m_generatedCollisionMesh.get(); }
+        const std::vector<glm::vec3> &GetCollisionPathPoints() const { return m_collisionPathPoints; }
 
         void Rebuild();
 
@@ -83,6 +88,7 @@ namespace PlutoGE::scene
         float m_width = 8.0f;
         float m_thickness = 0.25f;
         int m_samplesPerSegment = 12;
+        int m_collisionSamplesPerSegment = 4;
         float m_uvMetersPerTile = 6.0f;
         bool m_closed = true;
         bool m_generateMesh = true;
@@ -90,6 +96,8 @@ namespace PlutoGE::scene
         render::Material *m_material = nullptr;
         std::string m_materialAssetReference;
         std::unique_ptr<render::Mesh> m_generatedMesh;
+        std::unique_ptr<render::Mesh> m_generatedCollisionMesh;
+        std::vector<glm::vec3> m_collisionPathPoints;
         bool m_dirty = true;
     };
 }

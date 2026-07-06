@@ -23,6 +23,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <sstream>
 #include <limits>
 #include <optional>
 
@@ -43,6 +44,9 @@ namespace PlutoGE::ui
         constexpr float kMinRenderScale = 0.5f;
         constexpr float kMaxRenderScale = 1.0f;
         constexpr float kRayEpsilon = 0.0001f;
+        constexpr float kHomogeneousWEpsilon = 0.00000001f;
+        constexpr float kTriangleDeterminantEpsilon = 0.00000001f;
+        constexpr float kTriangleDistanceEpsilon = 0.000001f;
         constexpr const char *kDebugViewLabels[] = {
             "Post Process",
             "Quadrants",
@@ -66,6 +70,28 @@ namespace PlutoGE::ui
         {
             ImVec2 screen;
             bool visible = false;
+        };
+
+        struct PickDebugInfo
+        {
+            bool sceneMissing = false;
+            bool rayBuilt = false;
+            std::size_t totalEntities = 0;
+            std::size_t inactiveEntities = 0;
+            std::size_t pickableMeshEntities = 0;
+            std::size_t pickableTerrainEntities = 0;
+            std::size_t emptyMeshEntities = 0;
+            std::size_t submeshesTested = 0;
+            std::size_t submeshesRejectedByBounds = 0;
+            std::size_t boundsHits = 0;
+            std::size_t terrainHits = 0;
+            std::size_t triangleTests = 0;
+            std::size_t triangleHits = 0;
+            std::size_t approximateHits = 0;
+            scene::Entity *selectedEntity = nullptr;
+            float selectedDistance = std::numeric_limits<float>::max();
+            std::string selectedSource;
+            std::string rayFailureReason;
         };
 
         const char *GetTerrainPaintModeLabel(scene::TerrainPaintMode mode)
@@ -203,23 +229,28 @@ namespace PlutoGE::ui
             }
         }
 
-        bool IntersectBounds(const render::MeshBounds &bounds, const glm::vec3 &origin, const glm::vec3 &direction)
+        std::optional<float> IntersectBoundsDistance(const render::MeshBounds &bounds, const glm::vec3 &origin, const glm::vec3 &direction)
         {
             const glm::vec3 offset = origin - bounds.center;
             const float b = glm::dot(offset, direction);
             const float c = glm::dot(offset, offset) - bounds.radius * bounds.radius;
             if (c <= 0.0f)
             {
-                return true;
+                return 0.0f;
             }
 
             if (b > 0.0f)
             {
-                return false;
+                return std::nullopt;
             }
 
             const float discriminant = b * b - c;
-            return discriminant >= 0.0f;
+            if (discriminant < 0.0f)
+            {
+                return std::nullopt;
+            }
+
+            return std::max(0.0f, -b - std::sqrt(discriminant));
         }
 
         ProjectedPoint ProjectWorldPoint(const glm::vec3 &point,
@@ -717,7 +748,7 @@ namespace PlutoGE::ui
             const glm::vec3 edge2 = v2 - v0;
             const glm::vec3 p = glm::cross(direction, edge2);
             const float determinant = glm::dot(edge1, p);
-            if (std::abs(determinant) <= kRayEpsilon)
+            if (std::abs(determinant) <= kTriangleDeterminantEpsilon)
             {
                 return false;
             }
@@ -738,7 +769,7 @@ namespace PlutoGE::ui
             }
 
             const float hitDistance = glm::dot(edge2, q) * inverseDeterminant;
-            if (hitDistance <= kRayEpsilon)
+            if (hitDistance <= kTriangleDistanceEpsilon)
             {
                 return false;
             }
@@ -805,10 +836,15 @@ namespace PlutoGE::ui
 
         std::optional<PickRay> BuildPickRay(const render::CameraData &cameraData,
                                             const ImVec2 &viewportMin,
-                                            const ImVec2 &viewportSize)
+                                            const ImVec2 &viewportSize,
+                                            std::string *failureReason = nullptr)
         {
             if (viewportSize.x <= 0.0f || viewportSize.y <= 0.0f)
             {
+                if (failureReason)
+                {
+                    *failureReason = "viewport-size";
+                }
                 return std::nullopt;
             }
 
@@ -817,36 +853,44 @@ namespace PlutoGE::ui
             const float normalizedY = (mousePosition.y - viewportMin.y) / viewportSize.y;
             if (normalizedX < 0.0f || normalizedX > 1.0f || normalizedY < 0.0f || normalizedY > 1.0f)
             {
+                if (failureReason)
+                {
+                    std::ostringstream message;
+                    message << "mouse-outside normalized=(" << normalizedX << "," << normalizedY << ")";
+                    *failureReason = message.str();
+                }
                 return std::nullopt;
             }
 
             const float clipX = normalizedX * 2.0f - 1.0f;
             const float clipY = 1.0f - normalizedY * 2.0f;
-            const glm::mat4 inverseViewProjection = glm::inverse(cameraData.projection * cameraData.view);
-
-            glm::vec4 nearPoint = inverseViewProjection * glm::vec4(clipX, clipY, -1.0f, 1.0f);
-            glm::vec4 farPoint = inverseViewProjection * glm::vec4(clipX, clipY, 1.0f, 1.0f);
-            if (std::abs(nearPoint.w) <= kRayEpsilon || std::abs(farPoint.w) <= kRayEpsilon)
-            {
-                return std::nullopt;
-            }
-
-            nearPoint /= nearPoint.w;
-            farPoint /= farPoint.w;
-
+            glm::vec4 eyeDirection = glm::inverse(cameraData.projection) * glm::vec4(clipX, clipY, -1.0f, 1.0f);
+            eyeDirection = glm::vec4(eyeDirection.x, eyeDirection.y, -1.0f, 0.0f);
             const glm::mat4 inverseView = glm::inverse(cameraData.view);
             glm::vec4 cameraWorldPosition = inverseView * glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
-            if (std::abs(cameraWorldPosition.w) <= kRayEpsilon)
+            if (std::abs(cameraWorldPosition.w) <= kHomogeneousWEpsilon)
             {
+                if (failureReason)
+                {
+                    std::ostringstream message;
+                    message << "camera-w w=" << cameraWorldPosition.w;
+                    *failureReason = message.str();
+                }
                 return std::nullopt;
             }
 
             cameraWorldPosition /= cameraWorldPosition.w;
 
             const glm::vec3 origin = glm::vec3(cameraWorldPosition);
-            const glm::vec3 direction = glm::normalize(glm::vec3(farPoint) - origin);
+            const glm::vec3 direction = glm::normalize(glm::vec3(inverseView * eyeDirection));
             if (!std::isfinite(direction.x) || !std::isfinite(direction.y) || !std::isfinite(direction.z))
             {
+                if (failureReason)
+                {
+                    std::ostringstream message;
+                    message << "nonfinite-direction dir=(" << direction.x << "," << direction.y << "," << direction.z << ")";
+                    *failureReason = message.str();
+                }
                 return std::nullopt;
             }
 
@@ -856,19 +900,33 @@ namespace PlutoGE::ui
         scene::Entity *PickEntity(scene::Scene *scene,
                                   const render::CameraData &cameraData,
                                   const ImVec2 &viewportMin,
-                                  const ImVec2 &viewportSize)
+                                  const ImVec2 &viewportSize,
+                                  PickDebugInfo *debugInfo = nullptr)
         {
             constexpr std::size_t kMaxExactPickTrianglesPerSubmesh = 250000;
 
             if (!scene)
             {
+                if (debugInfo)
+                {
+                    debugInfo->sceneMissing = true;
+                }
                 return nullptr;
             }
 
-            const auto ray = BuildPickRay(cameraData, viewportMin, viewportSize);
+            std::string rayFailureReason;
+            const auto ray = BuildPickRay(cameraData, viewportMin, viewportSize, &rayFailureReason);
             if (!ray.has_value())
             {
+                if (debugInfo)
+                {
+                    debugInfo->rayFailureReason = std::move(rayFailureReason);
+                }
                 return nullptr;
+            }
+            if (debugInfo)
+            {
+                debugInfo->rayBuilt = true;
             }
 
             std::vector<scene::Entity *> entities;
@@ -881,28 +939,62 @@ namespace PlutoGE::ui
             float selectedDistance = std::numeric_limits<float>::max();
             for (auto *entity : entities)
             {
+                if (debugInfo)
+                {
+                    ++debugInfo->totalEntities;
+                }
+                if (!entity || !entity->IsActive())
+                {
+                    if (debugInfo)
+                    {
+                        ++debugInfo->inactiveEntities;
+                    }
+                    continue;
+                }
+
                 auto *meshComponent = entity->GetComponent<scene::MeshComponent>();
                 auto *terrainComponent = entity->GetComponent<scene::TerrainComponent>();
-                if ((!meshComponent || !meshComponent->IsVisible() || !meshComponent->GetMesh()) && !terrainComponent)
+                const bool hasPickableMesh = meshComponent && meshComponent->IsEnabled() && meshComponent->IsVisible() && meshComponent->GetMesh();
+                const bool hasPickableTerrain = terrainComponent && terrainComponent->IsEnabled();
+                if (debugInfo)
+                {
+                    if (hasPickableMesh)
+                    {
+                        ++debugInfo->pickableMeshEntities;
+                    }
+                    if (hasPickableTerrain)
+                    {
+                        ++debugInfo->pickableTerrainEntities;
+                    }
+                }
+                if (!hasPickableMesh && !hasPickableTerrain)
                 {
                     continue;
                 }
 
-                if (terrainComponent && terrainComponent->IsEnabled())
+                if (hasPickableTerrain)
                 {
                     glm::vec3 hitPoint{0.0f};
                     if (terrainComponent->Raycast(ray->origin, ray->direction, hitPoint))
                     {
+                        if (debugInfo)
+                        {
+                            ++debugInfo->terrainHits;
+                        }
                         const float worldDistance = glm::length(hitPoint - ray->origin);
                         if (worldDistance < selectedDistance)
                         {
                             selectedDistance = worldDistance;
                             selectedEntity = entity;
+                            if (debugInfo)
+                            {
+                                debugInfo->selectedSource = "terrain";
+                            }
                         }
                     }
                 }
 
-                if (!meshComponent || !meshComponent->IsVisible() || !meshComponent->GetMesh())
+                if (!hasPickableMesh)
                 {
                     continue;
                 }
@@ -911,6 +1003,10 @@ namespace PlutoGE::ui
                 const auto &meshData = mesh->GetMeshData();
                 if (meshData.vertices.empty() || meshData.indices.size() < 3)
                 {
+                    if (debugInfo)
+                    {
+                        ++debugInfo->emptyMeshEntities;
+                    }
                     continue;
                 }
 
@@ -923,6 +1019,10 @@ namespace PlutoGE::ui
 
                 for (size_t submeshIndex = submeshBegin; submeshIndex < submeshEnd; ++submeshIndex)
                 {
+                    if (debugInfo)
+                    {
+                        ++debugInfo->submeshesTested;
+                    }
                     const auto &submesh = submeshIndex < mesh->GetSubmeshCount() ? mesh->GetSubmesh(submeshIndex) : render::Submesh{};
                     if (submesh.indexCount < 3 ||
                         submesh.indexOffset + submesh.indexCount > meshData.indices.size())
@@ -941,9 +1041,30 @@ namespace PlutoGE::ui
                     }
                     localDirection = glm::normalize(localDirection);
 
-                    if (!IntersectBounds(submesh.bounds, localOrigin, localDirection))
+                    const auto boundsDistance = IntersectBoundsDistance(submesh.bounds, localOrigin, localDirection);
+                    if (!boundsDistance.has_value())
                     {
+                        if (debugInfo)
+                        {
+                            ++debugInfo->submeshesRejectedByBounds;
+                        }
                         continue;
+                    }
+                    if (debugInfo)
+                    {
+                        ++debugInfo->boundsHits;
+                    }
+                    const glm::vec3 localBoundsHitPoint = localOrigin + localDirection * *boundsDistance;
+                    const glm::vec3 worldBoundsHitPoint = glm::vec3(submeshWorldTransform * glm::vec4(localBoundsHitPoint, 1.0f));
+                    const float worldBoundsDistance = glm::length(worldBoundsHitPoint - ray->origin);
+                    if (worldBoundsDistance < selectedDistance)
+                    {
+                        selectedDistance = worldBoundsDistance;
+                        selectedEntity = entity;
+                        if (debugInfo)
+                        {
+                            debugInfo->selectedSource = "bounds";
+                        }
                     }
 
                     const std::size_t triangleCount = submesh.indexCount / 3;
@@ -955,6 +1076,11 @@ namespace PlutoGE::ui
                         {
                             selectedDistance = approximateDistance;
                             selectedEntity = entity;
+                            if (debugInfo)
+                            {
+                                ++debugInfo->approximateHits;
+                                debugInfo->selectedSource = "approx";
+                            }
                         }
                         continue;
                     }
@@ -981,9 +1107,17 @@ namespace PlutoGE::ui
                         const glm::vec3 v2(thirdVertex.position[0], thirdVertex.position[1], thirdVertex.position[2]);
 
                         float localDistance = 0.0f;
+                        if (debugInfo)
+                        {
+                            ++debugInfo->triangleTests;
+                        }
                         if (!IntersectTriangle(localOrigin, localDirection, v0, v1, v2, localDistance))
                         {
                             continue;
+                        }
+                        if (debugInfo)
+                        {
+                            ++debugInfo->triangleHits;
                         }
 
                         const glm::vec3 localHitPoint = localOrigin + localDirection * localDistance;
@@ -993,12 +1127,76 @@ namespace PlutoGE::ui
                         {
                             selectedDistance = worldDistance;
                             selectedEntity = entity;
+                            if (debugInfo)
+                            {
+                                debugInfo->selectedSource = "triangle";
+                            }
                         }
                     }
                 }
             }
 
+            if (debugInfo)
+            {
+                debugInfo->selectedEntity = selectedEntity;
+                debugInfo->selectedDistance = selectedDistance;
+            }
             return selectedEntity;
+        }
+
+        std::string FormatPickDebugMessage(const PickDebugInfo &debugInfo, const ImVec2 &mousePosition, const ImVec2 &viewportMin, const ImVec2 &viewportSize)
+        {
+            std::ostringstream message;
+            message << "[Pick] mouse=(" << mousePosition.x << "," << mousePosition.y << ")"
+                    << " viewportMin=(" << viewportMin.x << "," << viewportMin.y << ")"
+                    << " viewportSize=(" << viewportSize.x << "," << viewportSize.y << ")";
+
+            if (debugInfo.sceneMissing)
+            {
+                message << " blocked=no-scene";
+                return message.str();
+            }
+
+            if (!debugInfo.rayBuilt)
+            {
+                message << " blocked=ray-not-built";
+                if (!debugInfo.rayFailureReason.empty())
+                {
+                    message << " reason=" << debugInfo.rayFailureReason;
+                }
+                return message.str();
+            }
+
+            message << " entities=" << debugInfo.totalEntities
+                    << " inactive=" << debugInfo.inactiveEntities
+                    << " pickableMesh=" << debugInfo.pickableMeshEntities
+                    << " pickableTerrain=" << debugInfo.pickableTerrainEntities
+                    << " emptyMesh=" << debugInfo.emptyMeshEntities
+                    << " submeshes=" << debugInfo.submeshesTested
+                    << " boundsHits=" << debugInfo.boundsHits
+                    << " boundsRejects=" << debugInfo.submeshesRejectedByBounds
+                    << " terrainHits=" << debugInfo.terrainHits
+                    << " approxHits=" << debugInfo.approximateHits
+                    << " triangleTests=" << debugInfo.triangleTests
+                    << " triangleHits=" << debugInfo.triangleHits;
+            if (!debugInfo.rayFailureReason.empty())
+            {
+                message << " note=\"" << debugInfo.rayFailureReason << "\"";
+            }
+
+            if (debugInfo.selectedEntity)
+            {
+                message << " selected=\"" << debugInfo.selectedEntity->GetName() << "\""
+                        << " id=" << debugInfo.selectedEntity->GetID()
+                        << " source=" << (debugInfo.selectedSource.empty() ? "unknown" : debugInfo.selectedSource)
+                        << " distance=" << debugInfo.selectedDistance;
+            }
+            else
+            {
+                message << " selected=<none>";
+            }
+
+            return message.str();
         }
 
         void ApplyWorldTransformToEntity(scene::Entity &entity, const glm::mat4 &worldTransform)
@@ -1084,6 +1282,17 @@ namespace PlutoGE::ui
         return kDebugViewLabels[static_cast<int>(debugView)];
     }
 
+    void ViewportPanel::SetEditorCameraData(const render::CameraData &cameraData)
+    {
+        m_editorCameraData = cameraData;
+        m_hasEditorCameraData = true;
+    }
+
+    void ViewportPanel::ClearEditorCameraData()
+    {
+        m_hasEditorCameraData = false;
+    }
+
     void ViewportPanel::Initialize()
     {
         m_renderScale = glm::clamp(m_config.initialRenderScale, kMinRenderScale, kMaxRenderScale);
@@ -1139,10 +1348,17 @@ namespace PlutoGE::ui
         ImVec2 imageSize = ImVec2(panelSize.x, panelSize.y);
         ImGui::Image(texId, imageSize, ImVec2(0, 1), ImVec2(1, 0));
         const ImVec2 viewportMin = ImGui::GetItemRectMin();
+        const ImVec2 viewportMax = ImGui::GetItemRectMax();
         m_viewportMin = glm::vec2(viewportMin.x, viewportMin.y);
         m_viewportSize = glm::vec2(imageSize.x, imageSize.y);
-        const bool viewportClicked = ImGui::IsItemClicked(ImGuiMouseButton_Left);
-        m_isViewportHovered = ImGui::IsItemHovered();
+        const ImVec2 mousePosition = ImGui::GetIO().MousePos;
+        const bool mouseInsideViewport =
+            mousePosition.x >= viewportMin.x && mousePosition.x <= viewportMax.x &&
+            mousePosition.y >= viewportMin.y && mousePosition.y <= viewportMax.y;
+        m_isViewportHovered = mouseInsideViewport &&
+                              ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem |
+                                                     ImGuiHoveredFlags_RootAndChildWindows);
+        const bool viewportClicked = mouseInsideViewport && ImGui::IsMouseClicked(ImGuiMouseButton_Left);
         m_isViewportFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
 
         if (m_config.editorViewport && ImGui::BeginDragDropTarget())
@@ -1198,7 +1414,7 @@ namespace PlutoGE::ui
 
         if (m_config.editorViewport)
         {
-            RenderEditorOverlays(viewportMin, imageSize, viewportClicked && !controlsHovered);
+            RenderEditorOverlays(viewportMin, imageSize, viewportClicked, controlsHovered);
         }
     }
 
@@ -1403,7 +1619,7 @@ namespace PlutoGE::ui
         return hovered;
     }
 
-    void ViewportPanel::RenderEditorOverlays(const ImVec2 &viewportMin, const ImVec2 &viewportSize, bool viewportClicked)
+    void ViewportPanel::RenderEditorOverlays(const ImVec2 &viewportMin, const ImVec2 &viewportSize, bool viewportClicked, bool controlsHovered)
     {
         m_isTransformGizmoUsing = false;
         if (!m_renderTarget || !m_renderTarget->IsInitialized() || viewportSize.x <= 0.0f || viewportSize.y <= 0.0f)
@@ -1416,9 +1632,12 @@ namespace PlutoGE::ui
         const glm::mat4 cameraTransform = glm::translate(glm::mat4(1.0f), editorCamera.position) *
                                           glm::rotate(glm::mat4(1.0f), glm::radians(editorCamera.yawDegrees), glm::vec3(0.0f, 1.0f, 0.0f)) *
                                           glm::rotate(glm::mat4(1.0f), glm::radians(editorCamera.pitchDegrees), glm::vec3(1.0f, 0.0f, 0.0f));
-        const render::CameraData cameraData = editorCamera.camera.GetCameraDataForTransform(cameraTransform,
-                                                                                            m_renderTarget->GetWidth(),
-                                                                                            m_renderTarget->GetHeight());
+        const render::CameraData freshCameraData = editorCamera.camera.GetCameraDataForTransform(cameraTransform,
+                                                                                                  m_renderTarget->GetWidth(),
+                                                                                                  m_renderTarget->GetHeight());
+        const render::CameraData cameraData = m_hasEditorCameraData
+                                                  ? m_editorCameraData
+                                                  : freshCameraData;
 
         ImGuizmo::SetOrthographic(false);
         ImGuizmo::Enable(true);
@@ -1517,6 +1736,10 @@ namespace PlutoGE::ui
 
             if (terrainPaintActive || foliagePaintActive)
             {
+                if (viewportClicked)
+                {
+                    editorShell.Log(EditorShell::ConsoleSeverity::Info, "[Pick] blocked=paint-active");
+                }
                 return;
             }
 
@@ -1562,9 +1785,39 @@ namespace PlutoGE::ui
             }
         }
 
-        if (viewportClicked && m_isViewportHovered && !gizmoBlocksSelection)
+        if (viewportClicked)
         {
-            editorShell.SetSelectedEntity(PickEntity(editorShell.GetEngine().GetScene(), cameraData, viewportMin, viewportSize));
+            if (controlsHovered)
+            {
+                editorShell.Log(EditorShell::ConsoleSeverity::Info, "[Pick] blocked=viewport-controls-hovered");
+                return;
+            }
+            if (!m_isViewportHovered)
+            {
+                editorShell.Log(EditorShell::ConsoleSeverity::Info, "[Pick] blocked=viewport-not-hovered");
+                return;
+            }
+            if (gizmoBlocksSelection)
+            {
+                editorShell.Log(EditorShell::ConsoleSeverity::Info, "[Pick] blocked=gizmo-using");
+                return;
+            }
+
+            PickDebugInfo pickDebugInfo;
+            auto *pickedEntity = PickEntity(editorShell.GetEngine().GetScene(), cameraData, viewportMin, viewportSize, &pickDebugInfo);
+            if (!pickDebugInfo.rayBuilt && m_hasEditorCameraData)
+            {
+                PickDebugInfo fallbackPickDebugInfo;
+                pickedEntity = PickEntity(editorShell.GetEngine().GetScene(), freshCameraData, viewportMin, viewportSize, &fallbackPickDebugInfo);
+                if (fallbackPickDebugInfo.rayBuilt)
+                {
+                    fallbackPickDebugInfo.rayFailureReason = "cached-camera-failed: " + pickDebugInfo.rayFailureReason + "; fresh-camera-used";
+                    pickDebugInfo = std::move(fallbackPickDebugInfo);
+                }
+            }
+            editorShell.SetSelectedEntity(pickedEntity);
+            editorShell.Log(EditorShell::ConsoleSeverity::Info,
+                            FormatPickDebugMessage(pickDebugInfo, ImGui::GetIO().MousePos, viewportMin, viewportSize));
         }
     }
 

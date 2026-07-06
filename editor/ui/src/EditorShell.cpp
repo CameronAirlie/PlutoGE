@@ -2341,6 +2341,11 @@ namespace PlutoGE::ui
                                                                                    renderTargetWidth,
                                                                                    renderTargetHeight);
                 hasEditorCameraData = true;
+                viewportPanel->SetEditorCameraData(editorCameraData);
+            }
+            else
+            {
+                viewportPanel->ClearEditorCameraData();
             }
 
             if (shouldRenderViewport2 && cameraComponent2)
@@ -2512,10 +2517,16 @@ namespace PlutoGE::ui
                                      &editorPostProcessEffects,
                                      m_scene.get(),
                                      viewportPanel->IsGridVisible());
+                render::CameraData renderedEditorCameraData{};
+                if (renderer.GetLastRenderedCameraData(renderTarget, renderedEditorCameraData))
+                {
+                    viewportPanel->SetEditorCameraData(renderedEditorCameraData);
+                }
             }
             else
             {
                 viewportPanel->ClearFrame();
+                viewportPanel->ClearEditorCameraData();
             }
 
             if (shouldRenderViewport2 && cameraComponent2)

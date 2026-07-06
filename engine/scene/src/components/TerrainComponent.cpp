@@ -21,6 +21,8 @@ namespace PlutoGE::scene
     namespace
     {
         constexpr float kRayEpsilon = 0.0001f;
+        constexpr float kTriangleDeterminantEpsilon = 0.00000001f;
+        constexpr float kTriangleDistanceEpsilon = 0.000001f;
 
         TerrainPaintMode ParsePaintMode(const std::string &value)
         {
@@ -127,7 +129,7 @@ namespace PlutoGE::scene
             const glm::vec3 edge2 = v2 - v0;
             const glm::vec3 p = glm::cross(direction, edge2);
             const float determinant = glm::dot(edge1, p);
-            if (std::abs(determinant) <= kRayEpsilon)
+            if (std::abs(determinant) <= kTriangleDeterminantEpsilon)
             {
                 return false;
             }
@@ -148,7 +150,7 @@ namespace PlutoGE::scene
             }
 
             const float hitDistance = glm::dot(edge2, q) * inverseDeterminant;
-            if (hitDistance <= kRayEpsilon)
+            if (hitDistance <= kTriangleDistanceEpsilon)
             {
                 return false;
             }

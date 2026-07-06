@@ -1,5 +1,6 @@
 #pragma once
 
+#include "PlutoGE/render/Camera.h"
 #include "PlutoGE/ui/panels/ViewportPanel.h"
 #include "PlutoGE/ui/panels/Panel.h"
 
@@ -49,11 +50,13 @@ namespace PlutoGE::ui
         glm::vec2 GetViewportMin() const { return m_viewportMin; }
         glm::vec2 GetViewportSize() const { return m_viewportSize; }
         void SetPanelControlsEnabled(bool enabled) { m_panelControlsEnabled = enabled; }
+        void SetEditorCameraData(const render::CameraData &cameraData);
+        void ClearEditorCameraData();
         static const char *GetDebugViewLabel(render::PostProcessDebugView debugView);
 
     private:
         bool RenderViewportSettingsOverlay(const ImVec2 &viewportMin, const ImVec2 &viewportSize);
-        void RenderEditorOverlays(const ImVec2 &viewportMin, const ImVec2 &viewportSize, bool viewportClicked);
+        void RenderEditorOverlays(const ImVec2 &viewportMin, const ImVec2 &viewportSize, bool viewportClicked, bool controlsHovered);
 
         ViewportPanelConfig m_config;
         float m_renderScale = 1.0f;
@@ -75,6 +78,8 @@ namespace PlutoGE::ui
         bool m_isViewportFocused = false;
         bool m_isTransformGizmoUsing = false;
         bool m_panelControlsEnabled = true;
+        bool m_hasEditorCameraData = false;
+        render::CameraData m_editorCameraData{};
         glm::vec2 m_viewportMin{0.0f};
         glm::vec2 m_viewportSize{0.0f};
     };

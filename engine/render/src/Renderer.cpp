@@ -566,6 +566,8 @@ namespace PlutoGE::render
         {
             activeCameraData = taaEffect->PrepareCameraData(cameraData, renderWidth, renderHeight, m_frameSequence);
         }
+        frameResources->lastRenderedCameraData = activeCameraData;
+        frameResources->hasLastRenderedCameraData = true;
 
         UpdateRenderCommandLods(activeCameraData, renderHeight);
         EnsureRenderCommandsSorted();
@@ -648,6 +650,18 @@ namespace PlutoGE::render
         frameResources->hasPreviousCameraData = true;
         frameResources->previousShadowCameraData = cameraData;
         frameResources->hasPreviousShadowCameraData = true;
+    }
+
+    bool Renderer::GetLastRenderedCameraData(RenderTarget *renderTarget, CameraData &cameraData) const
+    {
+        const auto iterator = m_frameResources.find(renderTarget);
+        if (iterator == m_frameResources.end() || !iterator->second || !iterator->second->hasLastRenderedCameraData)
+        {
+            return false;
+        }
+
+        cameraData = iterator->second->lastRenderedCameraData;
+        return true;
     }
 
     void Renderer::ClearRenderCommands()

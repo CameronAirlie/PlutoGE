@@ -14,6 +14,8 @@
 
 #include <btBulletDynamicsCommon.h>
 #include <BulletCollision/CollisionShapes/btHeightfieldTerrainShape.h>
+#include <BulletCollision/CollisionShapes/btBvhTriangleMeshShape.h>
+#include <BulletCollision/CollisionShapes/btTriangleMesh.h>
 
 #include <algorithm>
 #include <chrono>
@@ -155,6 +157,70 @@ namespace PlutoGE::scene
             return glm::vec3(value.x(), value.y(), value.z());
         }
 
+        bool IsFiniteVec3(const glm::vec3 &value)
+        {
+            return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z);
+        }
+
+        bool BuildRaycastEndpoints(const glm::vec3 &origin,
+                                   const glm::vec3 &direction,
+                                   float maxDistance,
+                                   btVector3 &from,
+                                   btVector3 &to)
+        {
+            constexpr float kMinimumRayLength = 0.0001f;
+            if (!IsFiniteVec3(origin) || !IsFiniteVec3(direction) || !std::isfinite(maxDistance) ||
+                maxDistance <= kMinimumRayLength)
+            {
+                return false;
+            }
+
+            const float directionLengthSquared = glm::dot(direction, direction);
+            if (!std::isfinite(directionLengthSquared) ||
+                directionLengthSquared <= kMinimumRayLength * kMinimumRayLength)
+            {
+                return false;
+            }
+
+            const glm::vec3 normalizedDirection = direction / std::sqrt(directionLengthSquared);
+            const glm::vec3 end = origin + normalizedDirection * maxDistance;
+            if (!IsFiniteVec3(end) || glm::dot(end - origin, end - origin) <= kMinimumRayLength * kMinimumRayLength)
+            {
+                return false;
+            }
+
+            from = ToBullet(origin);
+            to = ToBullet(end);
+            return (to - from).length2() > kMinimumRayLength * kMinimumRayLength;
+        }
+
+        glm::vec3 NormalizeRaycastNormal(const btVector3 &normal)
+        {
+            const glm::vec3 value = FromBullet(normal);
+            const float lengthSquared = glm::dot(value, value);
+            return std::isfinite(lengthSquared) && lengthSquared > 0.000001f
+                       ? value / std::sqrt(lengthSquared)
+                       : glm::vec3(0.0f, 1.0f, 0.0f);
+        }
+
+        bool IsEntityOrDescendantOf(const Entity *entity, EntityID ancestorId)
+        {
+            if (!entity || ancestorId == 0)
+            {
+                return false;
+            }
+
+            for (const auto *current = entity; current; current = current->GetParent())
+            {
+                if (current->GetID() == ancestorId)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         struct DecomposedTransform
         {
             glm::vec3 position{0.0f};
@@ -272,6 +338,7 @@ namespace PlutoGE::scene
 
         struct BulletShapeData
         {
+            std::vector<std::unique_ptr<btTriangleMesh>> ownedTriangleMeshes;
             std::unique_ptr<btCollisionShape> shape;
             std::vector<std::unique_ptr<btCollisionShape>> ownedChildShapes;
             std::vector<float> ownedHeightfieldData;
@@ -299,6 +366,57 @@ namespace PlutoGE::scene
                 return std::make_unique<btBoxShape>(ToBullet(halfExtents));
             }
             }
+        }
+
+        BulletShapeData CreateMeshBulletShape(const MeshComponent &meshComponent, const glm::vec3 &worldScale)
+        {
+            BulletShapeData shapeData;
+            const auto *mesh = meshComponent.GetMesh();
+            if (!mesh)
+            {
+                return shapeData;
+            }
+
+            const auto &meshData = mesh->GetMeshData();
+            if (meshData.vertices.empty() || meshData.indices.size() < 3)
+            {
+                return shapeData;
+            }
+
+            auto triangleMesh = std::make_unique<btTriangleMesh>(true, false);
+            for (std::size_t index = 0; index + 2 < meshData.indices.size(); index += 3)
+            {
+                const auto i0 = meshData.indices[index + 0];
+                const auto i1 = meshData.indices[index + 1];
+                const auto i2 = meshData.indices[index + 2];
+                if (i0 >= meshData.vertices.size() || i1 >= meshData.vertices.size() || i2 >= meshData.vertices.size())
+                {
+                    continue;
+                }
+
+                const auto toScaledBullet = [&](const render::MeshVertexData &vertex)
+                {
+                    return btVector3(
+                        vertex.position[0] * worldScale.x,
+                        vertex.position[1] * worldScale.y,
+                        vertex.position[2] * worldScale.z);
+                };
+
+                triangleMesh->addTriangle(
+                    toScaledBullet(meshData.vertices[i0]),
+                    toScaledBullet(meshData.vertices[i1]),
+                    toScaledBullet(meshData.vertices[i2]),
+                    true);
+            }
+
+            if (triangleMesh->getNumTriangles() == 0)
+            {
+                return {};
+            }
+
+            shapeData.shape = std::make_unique<btBvhTriangleMeshShape>(triangleMesh.get(), true);
+            shapeData.ownedTriangleMeshes.push_back(std::move(triangleMesh));
+            return shapeData;
         }
 
         BulletShapeData CreateTerrainBulletShape(const TerrainComponent &terrain, const glm::vec3 &worldScale)
@@ -399,6 +517,14 @@ namespace PlutoGE::scene
                 }
                 return {};
             }
+            if (collider.GetShape() == ColliderShape::Mesh)
+            {
+                if (const auto *meshComponent = entity.GetComponent<MeshComponent>())
+                {
+                    return CreateMeshBulletShape(*meshComponent, worldScale);
+                }
+                return {};
+            }
 
             return CreateBulletShape(collider, worldScale);
         }
@@ -409,6 +535,7 @@ namespace PlutoGE::scene
             EntityID entityId = 0;
             ColliderComponent *collider = nullptr;
             RigidbodyComponent *rigidbody = nullptr;
+            std::vector<std::unique_ptr<btTriangleMesh>> triangleMeshes;
             std::unique_ptr<btCollisionShape> shape;
             std::vector<std::unique_ptr<btCollisionShape>> childShapes;
             std::vector<float> heightfieldData;
@@ -447,6 +574,7 @@ namespace PlutoGE::scene
         struct BulletQueryBody
         {
             Entity *entity = nullptr;
+            std::vector<std::unique_ptr<btTriangleMesh>> triangleMeshes;
             std::unique_ptr<btCollisionShape> shape;
             std::vector<std::unique_ptr<btCollisionShape>> childShapes;
             std::vector<float> heightfieldData;
@@ -510,6 +638,7 @@ namespace PlutoGE::scene
 
                 queryWorld->bodies.push_back(BulletQueryBody{
                     .entity = entity,
+                    .triangleMeshes = std::move(shapeData.ownedTriangleMeshes),
                     .shape = std::move(shapeData.shape),
                     .childShapes = std::move(shapeData.ownedChildShapes),
                     .heightfieldData = std::move(shapeData.ownedHeightfieldData),
@@ -539,7 +668,7 @@ namespace PlutoGE::scene
 
                 const auto *object = proxy ? static_cast<const btCollisionObject *>(proxy->m_clientObject) : nullptr;
                 const auto *entity = object ? static_cast<const Entity *>(object->getUserPointer()) : nullptr;
-                return !entity || entity->GetID() != m_ignoredEntityId;
+                return !IsEntityOrDescendantOf(entity, m_ignoredEntityId);
             }
 
         private:
@@ -563,7 +692,7 @@ namespace PlutoGE::scene
 
                 const auto *object = proxy ? static_cast<const btCollisionObject *>(proxy->m_clientObject) : nullptr;
                 const auto *entity = object ? static_cast<const Entity *>(object->getUserPointer()) : nullptr;
-                return !entity || entity->GetID() != m_ignoredEntityId;
+                return !IsEntityOrDescendantOf(entity, m_ignoredEntityId);
             }
 
         private:
@@ -620,8 +749,7 @@ namespace PlutoGE::scene
                 return;
             }
 
-            btTransform transform;
-            stepBody.body->getMotionState()->getWorldTransform(transform);
+            const btTransform &transform = stepBody.body->getWorldTransform();
             ApplyWorldPhysicsTransform(*stepBody.entity, transform);
             stepBody.rigidbody->SetVelocity(FromBullet(stepBody.body->getLinearVelocity()));
             stepBody.rigidbody->SetAngularVelocity(FromBullet(stepBody.body->getAngularVelocity()));
@@ -660,6 +788,16 @@ namespace PlutoGE::scene
                 HashCombine(signature, terrain->GetWidth());
                 HashCombine(signature, terrain->GetDepth());
                 HashCombine(signature, terrain->GetCellSize());
+            }
+            if (const auto *meshComponent = entity.GetComponent<MeshComponent>())
+            {
+                const auto *mesh = meshComponent->GetMesh();
+                HashCombine(signature, reinterpret_cast<std::uintptr_t>(mesh));
+                if (mesh)
+                {
+                    HashCombine(signature, mesh->GetVertexCount());
+                    HashCombine(signature, mesh->GetIndexCount());
+                }
             }
 
             HashCombine(signature, rigidbody && rigidbody->IsEnabled());
@@ -840,6 +978,7 @@ namespace PlutoGE::scene
                 .entityId = entity->GetID(),
                 .collider = collider,
                 .rigidbody = rigidbodyEnabled ? rigidbody : nullptr,
+                .triangleMeshes = std::move(shapeData.ownedTriangleMeshes),
                 .shape = std::move(shapeData.shape),
                 .childShapes = std::move(shapeData.ownedChildShapes),
                 .heightfieldData = std::move(shapeData.ownedHeightfieldData),
@@ -1259,19 +1398,28 @@ namespace PlutoGE::scene
         }
         const auto componentsEnd = Clock::now();
 
-        SubmitRenderCommands();
-        const auto submissionEnd = Clock::now();
-
         FlushPendingDestroyEntities();
         StepPhysics(deltaTime);
         FlushPendingDestroyEntities();
         const auto physicsEnd = Clock::now();
 
+        for (auto *scriptComponent : GatherRuntimeScriptComponents(m_rootEntities))
+        {
+            if (scriptComponent && scriptComponent->IsEnabled())
+            {
+                scriptComponent->LateUpdate(deltaTime);
+            }
+        }
+        const auto lateScriptsEnd = Clock::now();
+
+        SubmitRenderCommands();
+        const auto submissionEnd = Clock::now();
+
         m_updateTimingStats.preparationMs = std::chrono::duration<float, std::milli>(preparationEnd - updateStart).count();
         m_updateTimingStats.runtimeUiMs = std::chrono::duration<float, std::milli>(runtimeUiEnd - preparationEnd).count();
         m_updateTimingStats.componentsMs = std::chrono::duration<float, std::milli>(componentsEnd - runtimeUiEnd).count();
-        m_updateTimingStats.renderSubmissionMs = std::chrono::duration<float, std::milli>(submissionEnd - componentsEnd).count();
-        m_updateTimingStats.physicsMs = std::chrono::duration<float, std::milli>(physicsEnd - submissionEnd).count();
+        m_updateTimingStats.physicsMs = std::chrono::duration<float, std::milli>(physicsEnd - componentsEnd).count();
+        m_updateTimingStats.renderSubmissionMs = std::chrono::duration<float, std::milli>(submissionEnd - lateScriptsEnd).count();
     }
 
     void Scene::SetRuntimeUIInputOverride(const glm::vec2 &canvasSize, const glm::vec2 &mousePosition, bool pointerInside)
@@ -1458,17 +1606,14 @@ namespace PlutoGE::scene
                         EntityID ignoredEntityId) const
     {
         hit = {};
-        const float directionLength = glm::length(direction);
-        if (directionLength <= std::numeric_limits<float>::epsilon() || maxDistance <= 0.0f)
+        btVector3 from;
+        btVector3 to;
+        if (!BuildRaycastEndpoints(origin, direction, maxDistance, from, to))
         {
             return false;
         }
 
         auto &queryCache = GetPhysicsQueryCache();
-        const glm::vec3 normalizedDirection = direction / directionLength;
-        const btVector3 from = ToBullet(origin);
-        const btVector3 to = ToBullet(origin + normalizedDirection * maxDistance);
-
         IgnoringRayResultCallback callback(from, to, ignoredEntityId);
         queryCache.world->collisionWorld.rayTest(from, to, callback);
         if (!callback.hasHit())
@@ -1486,7 +1631,7 @@ namespace PlutoGE::scene
 
         hit.entityId = entity->GetID();
         hit.point = FromBullet(callback.m_hitPointWorld);
-        hit.normal = glm::normalize(FromBullet(callback.m_hitNormalWorld));
+        hit.normal = NormalizeRaycastNormal(callback.m_hitNormalWorld);
         hit.distance = glm::length(hit.point - origin);
         return true;
     }
@@ -1507,15 +1652,12 @@ namespace PlutoGE::scene
         for (std::size_t index = 0; index < requests.size(); ++index)
         {
             const auto &request = requests[index];
-            const float directionLength = glm::length(request.direction);
-            if (directionLength <= std::numeric_limits<float>::epsilon() || request.maxDistance <= 0.0f)
+            btVector3 from;
+            btVector3 to;
+            if (!BuildRaycastEndpoints(request.origin, request.direction, request.maxDistance, from, to))
             {
                 continue;
             }
-
-            const glm::vec3 normalizedDirection = request.direction / directionLength;
-            const btVector3 from = ToBullet(request.origin);
-            const btVector3 to = ToBullet(request.origin + normalizedDirection * request.maxDistance);
 
             IgnoringRayResultCallback callback(from, to, ignoredEntityId);
             queryCache.world->collisionWorld.rayTest(from, to, callback);
@@ -1535,7 +1677,7 @@ namespace PlutoGE::scene
             auto &hit = hits[index];
             hit.entityId = entity->GetID();
             hit.point = FromBullet(callback.m_hitPointWorld);
-            hit.normal = glm::normalize(FromBullet(callback.m_hitNormalWorld));
+            hit.normal = NormalizeRaycastNormal(callback.m_hitNormalWorld);
             hit.distance = glm::length(hit.point - request.origin);
             hitResults[index] = 1;
         }
@@ -1554,17 +1696,14 @@ namespace PlutoGE::scene
             return Raycast(origin, direction, maxDistance, hit, ignoredEntityId);
         }
 
-        const float directionLength = glm::length(direction);
-        if (directionLength <= std::numeric_limits<float>::epsilon() || maxDistance <= 0.0f)
+        btVector3 from;
+        btVector3 to;
+        if (!BuildRaycastEndpoints(origin, direction, maxDistance, from, to))
         {
             return false;
         }
 
         auto &queryCache = GetPhysicsQueryCache();
-        const glm::vec3 normalizedDirection = direction / directionLength;
-        const btVector3 from = ToBullet(origin);
-        const btVector3 to = ToBullet(origin + normalizedDirection * maxDistance);
-
         class TaggedRayResultCallback final : public IgnoringRayResultCallback
         {
         public:
@@ -1606,7 +1745,7 @@ namespace PlutoGE::scene
 
         hit.entityId = entity->GetID();
         hit.point = FromBullet(callback.m_hitPointWorld);
-        hit.normal = glm::normalize(FromBullet(callback.m_hitNormalWorld));
+        hit.normal = NormalizeRaycastNormal(callback.m_hitNormalWorld);
         hit.distance = glm::length(hit.point - origin);
         return true;
     }
@@ -1703,9 +1842,15 @@ namespace PlutoGE::scene
         return currentPosition - startPosition;
     }
 
-    bool Scene::AddRigidbodyForce(EntityID entityId, const glm::vec3 &value, bool impulse)
+    bool Scene::AddRigidbodyForce(EntityID entityId,
+                                  const glm::vec3 &value,
+                                  bool impulse,
+                                  std::optional<glm::vec3> worldPosition)
     {
-        if (!std::isfinite(value.x) || !std::isfinite(value.y) || !std::isfinite(value.z))
+        if (!std::isfinite(value.x) || !std::isfinite(value.y) || !std::isfinite(value.z) ||
+            (worldPosition && (!std::isfinite(worldPosition->x) ||
+                               !std::isfinite(worldPosition->y) ||
+                               !std::isfinite(worldPosition->z))))
         {
             return false;
         }
@@ -1722,6 +1867,7 @@ namespace PlutoGE::scene
         m_pendingRigidbodyForces.push_back(PendingRigidbodyForce{
             .entityId = entityId,
             .value = value,
+            .worldPosition = worldPosition,
             .impulse = impulse,
         });
         return true;
@@ -1840,18 +1986,38 @@ namespace PlutoGE::scene
             }
 
             bodyIterator->body->activate(true);
+            const btVector3 force = ToBullet(pendingForce.value);
+            const bool hasWorldPosition = pendingForce.worldPosition.has_value();
+            const btVector3 relativePosition = hasWorldPosition
+                                                   ? ToBullet(*pendingForce.worldPosition) -
+                                                         bodyIterator->body->getCenterOfMassPosition()
+                                                   : btVector3(0.0f, 0.0f, 0.0f);
             if (pendingForce.impulse)
             {
-                bodyIterator->body->applyCentralImpulse(ToBullet(pendingForce.value));
+                if (hasWorldPosition)
+                {
+                    bodyIterator->body->applyImpulse(force, relativePosition);
+                }
+                else
+                {
+                    bodyIterator->body->applyCentralImpulse(force);
+                }
             }
             else
             {
-                bodyIterator->body->applyCentralForce(ToBullet(pendingForce.value));
+                if (hasWorldPosition)
+                {
+                    bodyIterator->body->applyForce(force, relativePosition);
+                }
+                else
+                {
+                    bodyIterator->body->applyCentralForce(force);
+                }
             }
         }
         m_pendingRigidbodyForces.clear();
 
-        runtimeWorld.dynamicsWorld.stepSimulation(step, 0);
+        runtimeWorld.dynamicsWorld.stepSimulation(step, 8, 1.0f / 120.0f);
 
         std::unordered_set<uint64_t> currentCollisionPairs;
         const int manifoldCount = runtimeWorld.dynamicsWorld.getDispatcher()->getNumManifolds();

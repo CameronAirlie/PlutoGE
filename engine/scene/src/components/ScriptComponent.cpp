@@ -246,6 +246,27 @@ namespace PlutoGE::scene
         m_instance->OnUpdate(deltaTime);
     }
 
+    void ScriptComponent::LateUpdate(float deltaTime)
+    {
+        if (!core::Engine::GetInstance().IsRuntimeRunning())
+        {
+            return;
+        }
+
+        if (m_scriptClass.empty())
+        {
+            return;
+        }
+
+        Start();
+        if (!m_instance)
+        {
+            return;
+        }
+
+        m_instance->OnLateUpdate(deltaTime);
+    }
+
     void ScriptComponent::OnCollisionEnter(uint32_t otherEntityId)
     {
         if (!core::Engine::GetInstance().IsRuntimeRunning() || m_scriptClass.empty())

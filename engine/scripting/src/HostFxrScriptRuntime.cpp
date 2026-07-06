@@ -73,6 +73,7 @@ namespace PlutoGE::scripting
         using destroy_script_instance_fn = void(__cdecl *)(int64_t);
         using invoke_on_create_fn = int(__cdecl *)(int64_t);
         using invoke_on_update_fn = int(__cdecl *)(int64_t, float);
+        using invoke_on_late_update_fn = int(__cdecl *)(int64_t, float);
         using invoke_on_collision_fn = int(__cdecl *)(int64_t, uint32_t);
         using apply_field_data_fn = int(__cdecl *)(int64_t, const char *);
         using set_entity_id_fn = int(__cdecl *)(int64_t, uint32_t);
@@ -85,7 +86,7 @@ namespace PlutoGE::scripting
         using register_light_component_api_fn = int(__cdecl *)(void *, void *, void *, void *);
         using register_mesh_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *);
         using register_animation_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
-        using register_rigidbody_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
+        using register_rigidbody_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_collider_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_particle_system_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_runtime_ui_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
@@ -149,6 +150,7 @@ namespace PlutoGE::scripting
         using component_action_fn = void(__cdecl *)(uint32_t);
         using get_component_vector3_fn = NativeVector3(__cdecl *)(uint32_t);
         using set_component_vector3_fn = void(__cdecl *)(uint32_t, NativeVector3);
+        using rigidbody_force_at_position_fn = void(__cdecl *)(uint32_t, NativeVector3, NativeVector3);
         using set_component_string_fn = void(__cdecl *)(uint32_t, const char *);
         using particle_emit_at_fn = void(__cdecl *)(uint32_t, NativeVector3, int32_t);
         using set_animation_bool_parameter_fn = void(__cdecl *)(uint32_t, const char *, int32_t);
@@ -1579,6 +1581,36 @@ namespace PlutoGE::scripting
             }
         }
 
+        void AddRigidbodyForceAtPosition(uint32_t entityId, NativeVector3 value, NativeVector3 worldPosition)
+        {
+            if (IsFiniteVector3(value) && IsFiniteVector3(worldPosition))
+            {
+                if (auto *activeScene = core::Engine::GetInstance().GetScene())
+                {
+                    activeScene->AddRigidbodyForce(
+                        entityId,
+                        glm::vec3(value.x, value.y, value.z),
+                        false,
+                        glm::vec3(worldPosition.x, worldPosition.y, worldPosition.z));
+                }
+            }
+        }
+
+        void AddRigidbodyImpulseAtPosition(uint32_t entityId, NativeVector3 value, NativeVector3 worldPosition)
+        {
+            if (IsFiniteVector3(value) && IsFiniteVector3(worldPosition))
+            {
+                if (auto *activeScene = core::Engine::GetInstance().GetScene())
+                {
+                    activeScene->AddRigidbodyForce(
+                        entityId,
+                        glm::vec3(value.x, value.y, value.z),
+                        true,
+                        glm::vec3(worldPosition.x, worldPosition.y, worldPosition.z));
+                }
+            }
+        }
+
         int32_t GetColliderShape(uint32_t entityId)
         {
             auto *component = FindCollider(entityId);
@@ -2329,6 +2361,7 @@ namespace PlutoGE::scripting
         destroy_script_instance_fn destroyScriptInstance = nullptr;
         invoke_on_create_fn invokeOnCreate = nullptr;
         invoke_on_update_fn invokeOnUpdate = nullptr;
+        invoke_on_late_update_fn invokeOnLateUpdate = nullptr;
         invoke_on_collision_fn invokeOnCollisionEnter = nullptr;
         invoke_on_collision_fn invokeOnCollisionExit = nullptr;
         apply_field_data_fn applyFieldData = nullptr;
@@ -2424,6 +2457,7 @@ namespace PlutoGE::scripting
             impl.destroyScriptInstance = nullptr;
             impl.invokeOnCreate = nullptr;
             impl.invokeOnUpdate = nullptr;
+            impl.invokeOnLateUpdate = nullptr;
             impl.invokeOnCollisionEnter = nullptr;
             impl.invokeOnCollisionExit = nullptr;
             impl.applyFieldData = nullptr;
@@ -2738,6 +2772,7 @@ namespace PlutoGE::scripting
                 LoadManagedExport(impl, L"DestroyScriptInstance", impl.destroyScriptInstance) &&
                 LoadManagedExport(impl, L"InvokeOnCreate", impl.invokeOnCreate) &&
                 LoadManagedExport(impl, L"InvokeOnUpdate", impl.invokeOnUpdate) &&
+                LoadManagedExport(impl, L"InvokeOnLateUpdate", impl.invokeOnLateUpdate) &&
                 LoadManagedExport(impl, L"InvokeOnCollisionEnter", impl.invokeOnCollisionEnter) &&
                 LoadManagedExport(impl, L"InvokeOnCollisionExit", impl.invokeOnCollisionExit) &&
                 LoadManagedExport(impl, L"ApplyFieldData", impl.applyFieldData) &&
@@ -2851,6 +2886,14 @@ namespace PlutoGE::scripting
                 if (m_impl && m_impl->invokeOnUpdate)
                 {
                     m_impl->invokeOnUpdate(m_instanceHandle, deltaTime);
+                }
+            }
+
+            void OnLateUpdate(float deltaTime) override
+            {
+                if (m_impl && m_impl->invokeOnLateUpdate)
+                {
+                    m_impl->invokeOnLateUpdate(m_instanceHandle, deltaTime);
                 }
             }
 
@@ -3098,7 +3141,9 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(static_cast<get_component_vector3_fn>(&GetRigidbodyAngularVelocity)),
                 reinterpret_cast<void *>(static_cast<set_component_vector3_fn>(&SetRigidbodyAngularVelocity)),
                 reinterpret_cast<void *>(static_cast<set_component_vector3_fn>(&AddRigidbodyForce)),
-                reinterpret_cast<void *>(static_cast<set_component_vector3_fn>(&AddRigidbodyImpulse))) == 0)
+                reinterpret_cast<void *>(static_cast<set_component_vector3_fn>(&AddRigidbodyImpulse)),
+                reinterpret_cast<void *>(static_cast<rigidbody_force_at_position_fn>(&AddRigidbodyForceAtPosition)),
+                reinterpret_cast<void *>(static_cast<rigidbody_force_at_position_fn>(&AddRigidbodyImpulseAtPosition))) == 0)
         {
             setManagedBridgeFailure("RegisterRigidbodyComponentApi");
             return false;

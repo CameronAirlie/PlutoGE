@@ -9,6 +9,7 @@
 #include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/scene/components/ScriptComponent.h"
 #include "PlutoGE/scene/components/SkeletonAttachmentComponent.h"
+#include "PlutoGE/scene/components/SplineComponent.h"
 #include "PlutoGE/scene/components/TerrainComponent.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/scripting/ScriptEngine.h"
@@ -83,12 +84,13 @@ namespace PlutoGE::ui
             PhysicalSky = 9,
             VolumetricCloud = 10,
             ParticleSystem = 11,
-            Script = 12,
-            Canvas = 13,
-            RectTransform = 14,
-            UIImage = 15,
-            UIText = 16,
-            UIButton = 17,
+            Spline = 12,
+            Script = 13,
+            Canvas = 14,
+            RectTransform = 15,
+            UIImage = 16,
+            UIText = 17,
+            UIButton = 18,
         };
 
         struct ScriptAssetOption
@@ -977,6 +979,26 @@ namespace PlutoGE::ui
             return true;
         }
 
+        bool AssignMaterialAssetToSpline(scene::SplineComponent &splineComponent,
+                                         const std::string &materialAssetReference,
+                                         core::Engine &engine)
+        {
+            if (assets::Project::GetAssetTypeForReference(materialAssetReference) != assets::ProjectAssetType::Material)
+            {
+                return false;
+            }
+
+            auto *materialAsset = engine.GetAssetManager().LoadMaterialAsset(materialAssetReference);
+            if (!materialAsset)
+            {
+                return false;
+            }
+
+            splineComponent.SetMaterial(materialAsset);
+            splineComponent.SetMaterialAssetReference(materialAssetReference);
+            return true;
+        }
+
         std::vector<std::string> BuildMaterialSlotUsageSummaries(const scene::MeshComponent &meshComponent)
         {
             struct Usage
@@ -1121,6 +1143,10 @@ namespace PlutoGE::ui
             {
                 return "Particle System Component";
             }
+            if (dynamic_cast<const scene::SplineComponent *>(&component))
+            {
+                return "Spline Track Component";
+            }
             if (dynamic_cast<const scene::AnimationComponent *>(&component))
             {
                 return "Animation Component";
@@ -1225,6 +1251,8 @@ namespace PlutoGE::ui
                 return "UITextComponent";
             if (dynamic_cast<const scene::UIButtonComponent *>(&component))
                 return "UIButtonComponent";
+            if (dynamic_cast<const scene::SplineComponent *>(&component))
+                return "SplineComponent";
             return {};
         }
 
@@ -1311,6 +1339,8 @@ namespace PlutoGE::ui
                 return !entity.HasComponent<scene::FoliageComponent>();
             case AddableComponentType::ParticleSystem:
                 return !entity.HasComponent<scene::ParticleSystemComponent>();
+            case AddableComponentType::Spline:
+                return !entity.HasComponent<scene::SplineComponent>();
             case AddableComponentType::Animation:
                 return !entity.HasComponent<scene::AnimationComponent>();
             case AddableComponentType::Camera:
@@ -1359,6 +1389,7 @@ namespace PlutoGE::ui
             {
                 renderItem("Mesh", AddableComponentType::Mesh);
                 renderItem("Terrain", AddableComponentType::Terrain);
+                renderItem("Spline Track", AddableComponentType::Spline);
                 renderItem("Foliage", AddableComponentType::Foliage);
                 renderItem("Particle System", AddableComponentType::ParticleSystem);
                 renderItem("Camera", AddableComponentType::Camera);
@@ -1441,6 +1472,18 @@ namespace PlutoGE::ui
             case AddableComponentType::ParticleSystem:
                 entity.CreateComponent<scene::ParticleSystemComponent>();
                 break;
+            case AddableComponentType::Spline:
+            {
+                auto *splineComponent = entity.CreateComponent<scene::SplineComponent>(scene::SplineComponentConfig{
+                    .material = engine.GetAssetManager().LoadMaterialAsset(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference)),
+                    .materialAssetReference = std::string(assets::Project::kBuiltinDefaultShadedMaterialReference),
+                });
+                if (splineComponent)
+                {
+                    splineComponent->Rebuild();
+                }
+                break;
+            }
             case AddableComponentType::Camera:
             {
                 const bool sceneAlreadyHasCamera = SceneHasAnyCamera(entity.GetScene());
@@ -1466,7 +1509,10 @@ namespace PlutoGE::ui
                 break;
             case AddableComponentType::Collider:
                 entity.CreateComponent<scene::ColliderComponent>(scene::ColliderComponentConfig{
-                    .shape = entity.HasComponent<scene::TerrainComponent>() ? scene::ColliderShape::Terrain : scene::ColliderShape::Box,
+                    .shape = entity.HasComponent<scene::TerrainComponent>()
+                                 ? scene::ColliderShape::Terrain
+                                 : entity.HasComponent<scene::SplineComponent>() ? scene::ColliderShape::Mesh
+                                                                                : scene::ColliderShape::Box,
                 });
                 break;
             case AddableComponentType::IblCapture:
@@ -3882,6 +3928,92 @@ namespace PlutoGE::ui
                                 }
                             }
                         }
+                        else if (auto *splineComponent = dynamic_cast<scene::SplineComponent *>(componentPtr))
+                        {
+                            propertiesProvided = true;
+                            properties = {
+                                {"Width", scene::PropertyType::Float, std::to_string(splineComponent->GetWidth())},
+                                {"Thickness", scene::PropertyType::Float, std::to_string(splineComponent->GetThickness())},
+                                {"SamplesPerSegment", scene::PropertyType::Int, std::to_string(splineComponent->GetSamplesPerSegment())},
+                                {"UvMetersPerTile", scene::PropertyType::Float, std::to_string(splineComponent->GetUvMetersPerTile())},
+                                {"Closed", scene::PropertyType::Bool, splineComponent->IsClosed() ? "true" : "false"},
+                                {"GenerateMesh", scene::PropertyType::Bool, splineComponent->ShouldGenerateMesh() ? "true" : "false"},
+                                {"GenerateCollision", scene::PropertyType::Bool, splineComponent->ShouldGenerateCollision() ? "true" : "false"},
+                            };
+
+                            const auto materialAssetOptions = CollectAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::Material);
+                            const std::string materialPreview = GetAssetReferencePreview(
+                                materialAssetOptions,
+                                splineComponent->GetMaterialAssetReference(),
+                                "Default Shaded");
+                            if (ImGui::BeginCombo("Material Asset", materialPreview.c_str()))
+                            {
+                                for (const auto &option : materialAssetOptions)
+                                {
+                                    const bool selected = option.reference == splineComponent->GetMaterialAssetReference();
+                                    if (ImGui::Selectable(option.displayName.c_str(), selected))
+                                    {
+                                        if (AssignMaterialAssetToSpline(*splineComponent, option.reference, core::Engine::GetInstance()))
+                                        {
+                                            entity->AddPrefabOverride("Component:SplineComponent:MaterialAsset");
+                                            editorShell.MarkSceneDirty();
+                                        }
+                                    }
+
+                                    if (selected)
+                                    {
+                                        ImGui::SetItemDefaultFocus();
+                                    }
+                                }
+                                ImGui::EndCombo();
+                            }
+
+                            if (auto droppedReference = AcceptDroppedMaterialAssetReference())
+                            {
+                                if (AssignMaterialAssetToSpline(*splineComponent, *droppedReference, core::Engine::GetInstance()))
+                                {
+                                    entity->AddPrefabOverride("Component:SplineComponent:MaterialAsset");
+                                    editorShell.MarkSceneDirty();
+                                }
+                            }
+
+                            const auto &points = splineComponent->GetPoints();
+                            ImGui::Text("Control Points: %zu", points.size());
+                            for (std::size_t pointIndex = 0; pointIndex < points.size(); ++pointIndex)
+                            {
+                                ImGui::PushID(static_cast<int>(pointIndex));
+                                glm::vec3 position = points[pointIndex].position;
+                                if (ImGui::DragFloat3("Point", &position.x, 0.1f))
+                                {
+                                    splineComponent->SetPointPosition(pointIndex, position);
+                                    entity->AddPrefabOverride("Component:SplineComponent:Points." + std::to_string(pointIndex));
+                                    editorShell.MarkSceneDirty();
+                                }
+                                ImGui::SameLine();
+                                ImGui::BeginDisabled(points.size() <= 2);
+                                if (ImGui::Button("Remove"))
+                                {
+                                    splineComponent->RemovePoint(pointIndex);
+                                    entity->AddPrefabOverride("Component:SplineComponent:PointCount");
+                                    editorShell.MarkSceneDirty();
+                                    ImGui::EndDisabled();
+                                    ImGui::PopID();
+                                    break;
+                                }
+                                ImGui::EndDisabled();
+                                ImGui::PopID();
+                            }
+
+                            if (ImGui::Button("Add Point"))
+                            {
+                                const glm::vec3 newPoint = points.empty()
+                                                               ? glm::vec3(0.0f)
+                                                               : points.back().position + glm::vec3(8.0f, 0.0f, 0.0f);
+                                splineComponent->AddPoint(newPoint);
+                                entity->AddPrefabOverride("Component:SplineComponent:PointCount");
+                                editorShell.MarkSceneDirty();
+                            }
+                        }
                         else if (auto *foliageComponent = dynamic_cast<scene::FoliageComponent *>(componentPtr))
                         {
                             propertiesProvided = true;
@@ -4377,7 +4509,8 @@ namespace PlutoGE::ui
                             }
                             if (auto *colliderComponent = dynamic_cast<scene::ColliderComponent *>(componentPtr))
                             {
-                                if (colliderComponent->GetShape() == scene::ColliderShape::Terrain &&
+                                if ((colliderComponent->GetShape() == scene::ColliderShape::Terrain ||
+                                     colliderComponent->GetShape() == scene::ColliderShape::Mesh) &&
                                     (property.name == "Center" ||
                                      property.name == "Size" ||
                                      property.name == "Radius" ||

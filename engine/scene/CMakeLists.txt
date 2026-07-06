@@ -16,6 +16,7 @@ add_library(PlutoGEScene
     src/components/ParticleSystemComponent.cpp
     src/components/RigidbodyComponent.cpp
     src/components/ScriptComponent.cpp
+    src/components/SplineComponent.cpp
     src/components/TerrainComponent.cpp
     src/components/UIComponent.cpp
     src/components/VolumetricCloudComponent.cpp

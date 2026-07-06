@@ -181,6 +181,8 @@ internal static unsafe class ScriptBridge
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3, void> _setRigidbodyAngularVelocity;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3, void> _addRigidbodyForce;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3, void> _addRigidbodyImpulse;
+    private static delegate* unmanaged[Cdecl]<uint, NativeVector3, NativeVector3, void> _addRigidbodyForceAtPosition;
+    private static delegate* unmanaged[Cdecl]<uint, NativeVector3, NativeVector3, void> _addRigidbodyImpulseAtPosition;
     private static delegate* unmanaged[Cdecl]<uint, int> _getColliderShape;
     private static delegate* unmanaged[Cdecl]<uint, int, void> _setColliderShape;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3> _getColliderCenter;
@@ -622,14 +624,16 @@ internal static unsafe class ScriptBridge
         delegate* unmanaged[Cdecl]<uint, NativeVector3> getAngularVelocity,
         delegate* unmanaged[Cdecl]<uint, NativeVector3, void> setAngularVelocity,
         delegate* unmanaged[Cdecl]<uint, NativeVector3, void> addForce,
-        delegate* unmanaged[Cdecl]<uint, NativeVector3, void> addImpulse)
+        delegate* unmanaged[Cdecl]<uint, NativeVector3, void> addImpulse,
+        delegate* unmanaged[Cdecl]<uint, NativeVector3, NativeVector3, void> addForceAtPosition,
+        delegate* unmanaged[Cdecl]<uint, NativeVector3, NativeVector3, void> addImpulseAtPosition)
     {
         if (getMass == null || setMass == null || getLinearDrag == null || setLinearDrag == null ||
             getAngularDrag == null || setAngularDrag == null || getFriction == null || setFriction == null ||
             getUseGravity == null || setUseGravity == null ||
             getKinematic == null || setKinematic == null || getFreezeRotation == null || setFreezeRotation == null ||
             getVelocity == null || setVelocity == null || getAngularVelocity == null || setAngularVelocity == null ||
-            addForce == null || addImpulse == null)
+            addForce == null || addImpulse == null || addForceAtPosition == null || addImpulseAtPosition == null)
         {
             SetError("Managed rigidbody component API registration received a null function pointer.");
             return 0;
@@ -655,6 +659,8 @@ internal static unsafe class ScriptBridge
         _setRigidbodyAngularVelocity = setAngularVelocity;
         _addRigidbodyForce = addForce;
         _addRigidbodyImpulse = addImpulse;
+        _addRigidbodyForceAtPosition = addForceAtPosition;
+        _addRigidbodyImpulseAtPosition = addImpulseAtPosition;
         _lastError = string.Empty;
         return 1;
     }
@@ -1056,6 +1062,27 @@ internal static unsafe class ScriptBridge
             }
 
             instance.OnUpdate(deltaTime);
+            return 1;
+        }
+        catch (Exception exception)
+        {
+            SetError(exception.ToString());
+            return 0;
+        }
+    }
+
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "InvokeOnLateUpdate")]
+    public static int InvokeOnLateUpdate(long handle, float deltaTime)
+    {
+        try
+        {
+            if (!Instances.TryGetValue(handle, out var instance))
+            {
+                SetError($"Unknown managed script instance handle '{handle}'.");
+                return 0;
+            }
+
+            instance.OnLateUpdate(deltaTime);
             return 1;
         }
         catch (Exception exception)
@@ -1703,6 +1730,8 @@ internal static unsafe class ScriptBridge
     internal static void SetRigidbodyAngularVelocity(uint entityId, Vector3 value) { if (_setRigidbodyAngularVelocity != null) _setRigidbodyAngularVelocity(entityId, NativeVector3.FromManaged(value)); }
     internal static void AddRigidbodyForce(uint entityId, Vector3 value) { if (_addRigidbodyForce != null) _addRigidbodyForce(entityId, NativeVector3.FromManaged(value)); }
     internal static void AddRigidbodyImpulse(uint entityId, Vector3 value) { if (_addRigidbodyImpulse != null) _addRigidbodyImpulse(entityId, NativeVector3.FromManaged(value)); }
+    internal static void AddRigidbodyForceAtPosition(uint entityId, Vector3 value, Vector3 worldPosition) { if (_addRigidbodyForceAtPosition != null) _addRigidbodyForceAtPosition(entityId, NativeVector3.FromManaged(value), NativeVector3.FromManaged(worldPosition)); }
+    internal static void AddRigidbodyImpulseAtPosition(uint entityId, Vector3 value, Vector3 worldPosition) { if (_addRigidbodyImpulseAtPosition != null) _addRigidbodyImpulseAtPosition(entityId, NativeVector3.FromManaged(value), NativeVector3.FromManaged(worldPosition)); }
 
     internal static int GetColliderShape(uint entityId) => _getColliderShape == null ? 0 : _getColliderShape(entityId);
     internal static void SetColliderShape(uint entityId, int value) { if (_setColliderShape != null) _setColliderShape(entityId, value); }

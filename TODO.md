@@ -18,3 +18,6 @@
     a. Add support for 3D spatial audio
     b. Add sound emitter and sound listener components.
     c. Come up with how to deal with walls that muffle/block sound
+12. [ ] - Spline system
+    a. Collision (for roads/racetracks etc.)
+13. [ ] - Setup project distribution. No dependency execution on new machine

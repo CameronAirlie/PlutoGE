@@ -122,7 +122,10 @@ namespace PlutoGE::scene
                           PhysicsRaycastHit &hit,
                           EntityID ignoredEntityId = 0) const;
         glm::vec3 MoveKinematic(Entity &entity, const glm::vec3 &displacement, float skinWidth = 0.02f) const;
-        bool AddRigidbodyForce(EntityID entityId, const glm::vec3 &value, bool impulse = false);
+        bool AddRigidbodyForce(EntityID entityId,
+                               const glm::vec3 &value,
+                               bool impulse = false,
+                               std::optional<glm::vec3> worldPosition = std::nullopt);
 
         std::vector<Light *> GetLights() const; // Get active lights in the scene (for rendering)
         void MarkShadowLightsDirty();
@@ -175,6 +178,7 @@ namespace PlutoGE::scene
         {
             EntityID entityId = 0;
             glm::vec3 value{0.0f};
+            std::optional<glm::vec3> worldPosition;
             bool impulse = false;
         };
 

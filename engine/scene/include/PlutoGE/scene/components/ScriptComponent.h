@@ -33,6 +33,7 @@ namespace PlutoGE::scene
         void Start();
         void Stop();
         void Update(float deltaTime) override;
+        void LateUpdate(float deltaTime);
         void OnCollisionEnter(uint32_t otherEntityId);
         void OnCollisionExit(uint32_t otherEntityId);
         std::vector<Property> Serialize() const override;

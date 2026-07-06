@@ -75,4 +75,14 @@ public sealed class RigidbodyComponent : ComponentReference
     {
         ScriptBridge.AddRigidbodyImpulse(EntityId, impulse);
     }
+
+    public void AddForceAtPosition(Vector3 force, Vector3 worldPosition)
+    {
+        ScriptBridge.AddRigidbodyForceAtPosition(EntityId, force, worldPosition);
+    }
+
+    public void AddImpulseAtPosition(Vector3 impulse, Vector3 worldPosition)
+    {
+        ScriptBridge.AddRigidbodyImpulseAtPosition(EntityId, impulse, worldPosition);
+    }
 }

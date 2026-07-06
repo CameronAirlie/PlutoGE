@@ -165,6 +165,13 @@ namespace PlutoGE::render
             }
         }
 
+        static Mesh *CreateInitialized(const MeshConfig &config)
+        {
+            Mesh *mesh = new Mesh(config);
+            mesh->Initialize();
+            return mesh;
+        }
+
         static Mesh *Cube()
         {
             std::vector<MeshVertexData> vertices = {

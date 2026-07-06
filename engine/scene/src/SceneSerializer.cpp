@@ -15,6 +15,7 @@
 #include "PlutoGE/scene/components/RigidbodyComponent.h"
 #include "PlutoGE/scene/components/ScriptComponent.h"
 #include "PlutoGE/scene/components/SkeletonAttachmentComponent.h"
+#include "PlutoGE/scene/components/SplineComponent.h"
 #include "PlutoGE/scene/components/TerrainComponent.h"
 #include "PlutoGE/scene/components/UIComponent.h"
 #include "PlutoGE/scene/components/VolumetricCloudComponent.h"
@@ -188,6 +189,10 @@ namespace PlutoGE::scene
             {
                 return "TerrainComponent";
             }
+            if (dynamic_cast<const SplineComponent *>(&component))
+            {
+                return "SplineComponent";
+            }
             if (dynamic_cast<const FoliageComponent *>(&component))
             {
                 return "FoliageComponent";
@@ -270,6 +275,10 @@ namespace PlutoGE::scene
             {
                 return std::make_unique<TerrainComponent>(TerrainComponentConfig{});
             }
+            if (componentType == "SplineComponent")
+            {
+                return std::make_unique<SplineComponent>(SplineComponentConfig{});
+            }
             if (componentType == "FoliageComponent")
             {
                 return std::make_unique<FoliageComponent>();
@@ -351,6 +360,10 @@ namespace PlutoGE::scene
             if (componentType == "TerrainComponent")
             {
                 return propertyName == "HeightMap" || propertyName == "MaterialAsset";
+            }
+            if (componentType == "SplineComponent")
+            {
+                return propertyName == "MaterialAsset";
             }
             if (componentType == "FoliageComponent")
             {

@@ -12,6 +12,7 @@ namespace PlutoGE::scene
         Sphere,
         Capsule,
         Terrain,
+        Mesh,
     };
 
     struct ColliderComponentConfig

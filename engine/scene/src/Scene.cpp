@@ -1672,9 +1672,72 @@ namespace PlutoGE::scene
                 }
 
                 emitterStates.push_back(std::move(emitterState));
+
+                for (const auto &oneShotPlayback : emitter->GetOneShotPlaybacks())
+                {
+                    const bool oneShotActive = engine.GetAudioSystem().IsEmitterActive(oneShotPlayback.key);
+                    if (!oneShotPlayback.pending && !oneShotActive)
+                    {
+                        continue;
+                    }
+
+                    audio::EmitterState oneShotState;
+                    oneShotState.key = oneShotPlayback.key;
+                    oneShotState.clipPath = engine.GetAssetManager().ResolveAssetPath(emitter->GetClipReference());
+                    oneShotState.position = owner->GetWorldPosition();
+                    oneShotState.playing = true;
+                    oneShotState.paused = false;
+                    oneShotState.looping = false;
+                    oneShotState.spatialized = emitter->IsSpatialized();
+                    oneShotState.restartRequested = false;
+                    oneShotState.volume = emitter->GetVolume() * std::max(oneShotPlayback.volumeScale, 0.0f);
+                    oneShotState.pitch = emitter->GetPitch() * std::clamp(oneShotPlayback.pitchScale, 0.25f, 4.0f);
+                    oneShotState.minDistance = emitter->GetMinDistance();
+                    oneShotState.maxDistance = emitter->GetMaxDistance();
+                    oneShotState.rolloff = emitter->GetRolloff();
+                    oneShotState.airAbsorptionStrength = emitter->GetAirAbsorptionStrength();
+                    oneShotState.lowPassStrength = emitter->GetLowPassStrength();
+                    oneShotState.occlusion = listenerState.active && oneShotState.spatialized ? emitterStates.back().occlusion : 0.0f;
+                    emitterStates.push_back(std::move(oneShotState));
+
+                    if (oneShotPlayback.pending)
+                    {
+                        emitter->MarkOneShotPlaybackStarted(oneShotPlayback.key);
+                    }
+                }
             }
 
             engine.GetAudioSystem().Update(listenerState, emitterStates, deltaTime);
+
+            for (auto *emitter : emitters)
+            {
+                if (!emitter)
+                {
+                    continue;
+                }
+
+                if (emitter->IsPlaying() && !emitter->IsPaused() && !emitter->GetLooping())
+                {
+                    if (!engine.GetAudioSystem().IsEmitterActive(emitter->GetRuntimeKey()))
+                    {
+                        emitter->NotifyPlaybackFinished();
+                    }
+                }
+
+                std::vector<std::uint64_t> finishedOneShotKeys;
+                for (const auto &oneShotPlayback : emitter->GetOneShotPlaybacks())
+                {
+                    if (!oneShotPlayback.pending && !engine.GetAudioSystem().IsEmitterActive(oneShotPlayback.key))
+                    {
+                        finishedOneShotKeys.push_back(oneShotPlayback.key);
+                    }
+                }
+
+                for (const auto finishedKey : finishedOneShotKeys)
+                {
+                    emitter->NotifyOneShotPlaybackFinished(finishedKey);
+                }
+            }
         }
 
         SubmitRenderCommands();

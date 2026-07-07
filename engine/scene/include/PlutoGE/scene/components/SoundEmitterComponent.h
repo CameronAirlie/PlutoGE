@@ -4,12 +4,21 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace PlutoGE::scene
 {
     class SoundEmitterComponent final : public TypedComponent<SoundEmitterComponent>
     {
     public:
+        struct OneShotPlayback
+        {
+            std::uint64_t key = 0;
+            bool pending = true;
+            float volumeScale = 1.0f;
+            float pitchScale = 1.0f;
+        };
+
         SoundEmitterComponent() = default;
         ~SoundEmitterComponent() override = default;
 
@@ -18,10 +27,16 @@ namespace PlutoGE::scene
         void Deserialize(const std::vector<Property> &properties) override;
 
         void Play(bool restart = false);
+        void PlayOneShot();
+        void PlayOneShot(float volumeScale, float pitchScale);
         void Pause();
         void Stop();
+        void NotifyPlaybackFinished();
+        void MarkOneShotPlaybackStarted(std::uint64_t key);
+        void NotifyOneShotPlaybackFinished(std::uint64_t key);
 
         [[nodiscard]] std::uint64_t GetRuntimeKey() const;
+        [[nodiscard]] const std::vector<OneShotPlayback> &GetOneShotPlaybacks() const { return m_oneShotPlaybacks; }
         [[nodiscard]] const std::string &GetClipReference() const { return m_clipReference; }
         void SetClipReference(std::string clipReference) { m_clipReference = std::move(clipReference); }
         [[nodiscard]] bool GetPlayOnAwake() const { return m_playOnAwake; }
@@ -67,5 +82,7 @@ namespace PlutoGE::scene
         bool m_paused = false;
         bool m_restartRequested = false;
         bool m_runtimeArmed = false;
+        std::vector<OneShotPlayback> m_oneShotPlaybacks;
+        std::uint64_t m_nextOneShotSerial = 1ull;
     };
 }

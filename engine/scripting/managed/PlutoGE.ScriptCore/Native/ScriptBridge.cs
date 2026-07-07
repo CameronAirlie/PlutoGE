@@ -232,6 +232,8 @@ internal static unsafe class ScriptBridge
     private static delegate* unmanaged[Cdecl]<uint, int, void> _setParticleSystemShape;
     private static delegate* unmanaged[Cdecl]<uint, int> _getSoundEmitterPlaying;
     private static delegate* unmanaged[Cdecl]<uint, void> _soundEmitterPlay;
+    private static delegate* unmanaged[Cdecl]<uint, void> _soundEmitterPlayOneShot;
+    private static delegate* unmanaged[Cdecl]<uint, float, float, void> _soundEmitterPlayOneShotScaled;
     private static delegate* unmanaged[Cdecl]<uint, void> _soundEmitterPause;
     private static delegate* unmanaged[Cdecl]<uint, void> _soundEmitterStop;
     private static delegate* unmanaged[Cdecl]<uint, nint> _getSoundEmitterClipReference;
@@ -846,6 +848,8 @@ internal static unsafe class ScriptBridge
     public static int RegisterSoundEmitterComponentApi(
         delegate* unmanaged[Cdecl]<uint, int> getPlaying,
         delegate* unmanaged[Cdecl]<uint, void> play,
+        delegate* unmanaged[Cdecl]<uint, void> playOneShot,
+        delegate* unmanaged[Cdecl]<uint, float, float, void> playOneShotScaled,
         delegate* unmanaged[Cdecl]<uint, void> pause,
         delegate* unmanaged[Cdecl]<uint, void> stop,
         delegate* unmanaged[Cdecl]<uint, nint> getClipReference,
@@ -861,7 +865,7 @@ internal static unsafe class ScriptBridge
         delegate* unmanaged[Cdecl]<uint, float> getPitch,
         delegate* unmanaged[Cdecl]<uint, float, void> setPitch)
     {
-        if (getPlaying == null || play == null || pause == null || stop == null ||
+        if (getPlaying == null || play == null || playOneShot == null || playOneShotScaled == null || pause == null || stop == null ||
             getClipReference == null || setClipReference == null || getLooping == null || setLooping == null ||
             getSpatialized == null || setSpatialized == null || getPlayOnAwake == null || setPlayOnAwake == null ||
             getVolume == null || setVolume == null || getPitch == null || setPitch == null)
@@ -872,6 +876,8 @@ internal static unsafe class ScriptBridge
 
         _getSoundEmitterPlaying = getPlaying;
         _soundEmitterPlay = play;
+        _soundEmitterPlayOneShot = playOneShot;
+        _soundEmitterPlayOneShotScaled = playOneShotScaled;
         _soundEmitterPause = pause;
         _soundEmitterStop = stop;
         _getSoundEmitterClipReference = getClipReference;
@@ -1906,6 +1912,8 @@ internal static unsafe class ScriptBridge
 
     internal static bool GetSoundEmitterPlaying(uint entityId) => _getSoundEmitterPlaying != null && _getSoundEmitterPlaying(entityId) != 0;
     internal static void SoundEmitterPlay(uint entityId) { if (_soundEmitterPlay != null) _soundEmitterPlay(entityId); }
+    internal static void SoundEmitterPlayOneShot(uint entityId) { if (_soundEmitterPlayOneShot != null) _soundEmitterPlayOneShot(entityId); }
+    internal static void SoundEmitterPlayOneShot(uint entityId, float volumeScale, float pitchScale) { if (_soundEmitterPlayOneShotScaled != null) _soundEmitterPlayOneShotScaled(entityId, volumeScale, pitchScale); }
     internal static void SoundEmitterPause(uint entityId) { if (_soundEmitterPause != null) _soundEmitterPause(entityId); }
     internal static void SoundEmitterStop(uint entityId) { if (_soundEmitterStop != null) _soundEmitterStop(entityId); }
     internal static string GetSoundEmitterClipReference(uint entityId)

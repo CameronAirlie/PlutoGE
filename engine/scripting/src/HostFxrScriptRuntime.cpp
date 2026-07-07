@@ -91,7 +91,7 @@ namespace PlutoGE::scripting
         using register_rigidbody_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_collider_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_particle_system_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
-        using register_sound_emitter_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
+        using register_sound_emitter_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_runtime_ui_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_input_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_physics_api_fn = int(__cdecl *)(void *, void *, void *);
@@ -157,6 +157,7 @@ namespace PlutoGE::scripting
         using get_component_string_fn = const char *(__cdecl *)(uint32_t);
         using get_component_float_by_index_fn = float(__cdecl *)(uint32_t, int32_t);
         using component_action_fn = void(__cdecl *)(uint32_t);
+        using component_action_with_two_floats_fn = void(__cdecl *)(uint32_t, float, float);
         using get_component_vector3_fn = NativeVector3(__cdecl *)(uint32_t);
         using set_component_vector3_fn = void(__cdecl *)(uint32_t, NativeVector3);
         using rigidbody_force_at_position_fn = void(__cdecl *)(uint32_t, NativeVector3, NativeVector3);
@@ -1933,6 +1934,16 @@ namespace PlutoGE::scripting
             if (auto *component = FindSoundEmitter(entityId))
                 component->Play();
         }
+        void SoundEmitterPlayOneShot(uint32_t entityId)
+        {
+            if (auto *component = FindSoundEmitter(entityId))
+                component->PlayOneShot();
+        }
+        void SoundEmitterPlayOneShotScaled(uint32_t entityId, float volumeScale, float pitchScale)
+        {
+            if (auto *component = FindSoundEmitter(entityId))
+                component->PlayOneShot(volumeScale, pitchScale);
+        }
         void SoundEmitterPause(uint32_t entityId)
         {
             if (auto *component = FindSoundEmitter(entityId))
@@ -3386,6 +3397,8 @@ namespace PlutoGE::scripting
             m_impl->registerSoundEmitterComponentApi(
                 reinterpret_cast<void *>(static_cast<get_component_bool_fn>(&GetSoundEmitterPlaying)),
                 reinterpret_cast<void *>(static_cast<component_action_fn>(&SoundEmitterPlay)),
+                reinterpret_cast<void *>(static_cast<component_action_fn>(&SoundEmitterPlayOneShot)),
+                reinterpret_cast<void *>(static_cast<component_action_with_two_floats_fn>(&SoundEmitterPlayOneShotScaled)),
                 reinterpret_cast<void *>(static_cast<component_action_fn>(&SoundEmitterPause)),
                 reinterpret_cast<void *>(static_cast<component_action_fn>(&SoundEmitterStop)),
                 reinterpret_cast<void *>(static_cast<get_component_string_fn>(&GetSoundEmitterClipReference)),

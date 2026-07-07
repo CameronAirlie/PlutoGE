@@ -50,6 +50,8 @@ public sealed class SoundEmitterComponent : ComponentReference
     }
 
     public void Play() => ScriptBridge.SoundEmitterPlay(EntityId);
+    public void PlayOneShot() => ScriptBridge.SoundEmitterPlayOneShot(EntityId);
+    public void PlayOneShot(float volumeScale, float pitchScale) => ScriptBridge.SoundEmitterPlayOneShot(EntityId, volumeScale, pitchScale);
     public void Pause() => ScriptBridge.SoundEmitterPause(EntityId);
     public void Stop() => ScriptBridge.SoundEmitterStop(EntityId);
 }

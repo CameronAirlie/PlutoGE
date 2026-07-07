@@ -19,6 +19,7 @@ namespace PlutoGE::scene
             m_playing = false;
             m_paused = false;
             m_restartRequested = false;
+            m_oneShotPlaybacks.clear();
             return;
         }
 
@@ -107,9 +108,33 @@ namespace PlutoGE::scene
 
     void SoundEmitterComponent::Play(bool restart)
     {
+        const bool wasActivelyPlaying = m_playing && !m_paused;
         m_playing = !m_clipReference.empty();
         m_paused = false;
-        m_restartRequested = restart && m_playing;
+        m_restartRequested = m_playing && (restart || wasActivelyPlaying);
+    }
+
+    void SoundEmitterComponent::PlayOneShot()
+    {
+        PlayOneShot(1.0f, 1.0f);
+    }
+
+    void SoundEmitterComponent::PlayOneShot(float volumeScale, float pitchScale)
+    {
+        if (m_clipReference.empty())
+        {
+            return;
+        }
+
+        const std::uint64_t baseKey = GetRuntimeKey();
+        const std::uint64_t serial = m_nextOneShotSerial++;
+        const std::uint64_t oneShotKey = baseKey ^ (serial + 0x517cc1b727220a95ull + (baseKey << 6u) + (baseKey >> 2u));
+        m_oneShotPlaybacks.push_back(OneShotPlayback{
+            .key = oneShotKey != 0ull ? oneShotKey : serial,
+            .pending = true,
+            .volumeScale = std::max(volumeScale, 0.0f),
+            .pitchScale = std::clamp(pitchScale, 0.25f, 4.0f),
+        });
     }
 
     void SoundEmitterComponent::Pause()
@@ -127,6 +152,32 @@ namespace PlutoGE::scene
         m_playing = false;
         m_paused = false;
         m_restartRequested = false;
+        m_oneShotPlaybacks.clear();
+    }
+
+    void SoundEmitterComponent::NotifyPlaybackFinished()
+    {
+        m_playing = false;
+        m_paused = false;
+        m_restartRequested = false;
+    }
+
+    void SoundEmitterComponent::MarkOneShotPlaybackStarted(std::uint64_t key)
+    {
+        for (auto &playback : m_oneShotPlaybacks)
+        {
+            if (playback.key == key)
+            {
+                playback.pending = false;
+                return;
+            }
+        }
+    }
+
+    void SoundEmitterComponent::NotifyOneShotPlaybackFinished(std::uint64_t key)
+    {
+        std::erase_if(m_oneShotPlaybacks, [key](const OneShotPlayback &playback)
+                      { return playback.key == key; });
     }
 
     std::uint64_t SoundEmitterComponent::GetRuntimeKey() const

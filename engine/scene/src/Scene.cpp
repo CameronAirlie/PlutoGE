@@ -176,10 +176,34 @@ namespace PlutoGE::scene
                 const float sampleWeight = index == 0 ? 1.5f : 1.0f;
                 totalWeight += sampleWeight;
 
-                PhysicsRaycastHit hit;
-                if (scene.Raycast(listenerState.position + listenerOffsets[index], direction, distance, hit, emitterEntityId) &&
-                    hit.entityId != 0 &&
-                    hit.entityId != listenerEntityId)
+                glm::vec3 sampleOrigin = listenerState.position + listenerOffsets[index];
+                float remainingDistance = distance;
+                EntityID ignoredEntityId = emitterEntityId;
+                bool blocked = false;
+                for (int rayStep = 0; rayStep < 16 && remainingDistance > 0.001f; ++rayStep)
+                {
+                    PhysicsRaycastHit hit;
+                    if (!scene.Raycast(sampleOrigin, direction, remainingDistance, hit, ignoredEntityId) || hit.entityId == 0)
+                    {
+                        break;
+                    }
+
+                    const auto *hitEntity = scene.FindEntityByID(hit.entityId);
+                    const auto *hitCollider = hitEntity ? hitEntity->GetComponent<ColliderComponent>() : nullptr;
+                    const bool skipsAudio = hit.entityId == listenerEntityId || (hitCollider && !hitCollider->BlocksAudio());
+                    if (!skipsAudio)
+                    {
+                        blocked = true;
+                        break;
+                    }
+
+                    ignoredEntityId = hit.entityId;
+                    const float advance = std::max(hit.distance + 0.01f, 0.01f);
+                    sampleOrigin += direction * advance;
+                    remainingDistance -= advance;
+                }
+
+                if (blocked)
                 {
                     blockedWeight += sampleWeight;
                 }

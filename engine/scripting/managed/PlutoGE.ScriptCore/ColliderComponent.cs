@@ -54,4 +54,10 @@ public sealed class ColliderComponent : ComponentReference
         get => ScriptBridge.GetColliderTrigger(EntityId);
         set => ScriptBridge.SetColliderTrigger(EntityId, value);
     }
+
+    public bool BlocksAudio
+    {
+        get => ScriptBridge.GetColliderBlocksAudio(EntityId);
+        set => ScriptBridge.SetColliderBlocksAudio(EntityId, value);
+    }
 }

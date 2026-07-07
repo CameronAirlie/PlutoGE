@@ -196,6 +196,8 @@ internal static unsafe class ScriptBridge
     private static delegate* unmanaged[Cdecl]<uint, float, void> _setColliderHeight;
     private static delegate* unmanaged[Cdecl]<uint, int> _getColliderTrigger;
     private static delegate* unmanaged[Cdecl]<uint, int, void> _setColliderTrigger;
+    private static delegate* unmanaged[Cdecl]<uint, int> _getColliderBlocksAudio;
+    private static delegate* unmanaged[Cdecl]<uint, int, void> _setColliderBlocksAudio;
     private static delegate* unmanaged[Cdecl]<uint, int> _getParticleSystemPlaying;
     private static delegate* unmanaged[Cdecl]<uint, int> _getParticleSystemParticleCount;
     private static delegate* unmanaged[Cdecl]<uint, void> _particleSystemPlay;
@@ -729,11 +731,14 @@ internal static unsafe class ScriptBridge
         delegate* unmanaged[Cdecl]<uint, float> getHeight,
         delegate* unmanaged[Cdecl]<uint, float, void> setHeight,
         delegate* unmanaged[Cdecl]<uint, int> getTrigger,
-        delegate* unmanaged[Cdecl]<uint, int, void> setTrigger)
+        delegate* unmanaged[Cdecl]<uint, int, void> setTrigger,
+        delegate* unmanaged[Cdecl]<uint, int> getBlocksAudio,
+        delegate* unmanaged[Cdecl]<uint, int, void> setBlocksAudio)
     {
         if (getShape == null || setShape == null || getCenter == null || setCenter == null ||
             getSize == null || setSize == null || getRadius == null || setRadius == null ||
-            getHeight == null || setHeight == null || getTrigger == null || setTrigger == null)
+            getHeight == null || setHeight == null || getTrigger == null || setTrigger == null ||
+            getBlocksAudio == null || setBlocksAudio == null)
         {
             SetError("Managed collider component API registration received a null function pointer.");
             return 0;
@@ -751,6 +756,8 @@ internal static unsafe class ScriptBridge
         _setColliderHeight = setHeight;
         _getColliderTrigger = getTrigger;
         _setColliderTrigger = setTrigger;
+        _getColliderBlocksAudio = getBlocksAudio;
+        _setColliderBlocksAudio = setBlocksAudio;
         _lastError = string.Empty;
         return 1;
     }
@@ -1848,6 +1855,8 @@ internal static unsafe class ScriptBridge
     internal static void SetColliderHeight(uint entityId, float value) { if (_setColliderHeight != null) _setColliderHeight(entityId, value); }
     internal static bool GetColliderTrigger(uint entityId) => _getColliderTrigger != null && _getColliderTrigger(entityId) != 0;
     internal static void SetColliderTrigger(uint entityId, bool value) { if (_setColliderTrigger != null) _setColliderTrigger(entityId, value ? 1 : 0); }
+    internal static bool GetColliderBlocksAudio(uint entityId) => _getColliderBlocksAudio != null && _getColliderBlocksAudio(entityId) != 0;
+    internal static void SetColliderBlocksAudio(uint entityId, bool value) { if (_setColliderBlocksAudio != null) _setColliderBlocksAudio(entityId, value ? 1 : 0); }
 
     internal static bool GetParticleSystemPlaying(uint entityId) => _getParticleSystemPlaying != null && _getParticleSystemPlaying(entityId) != 0;
     internal static int GetParticleSystemParticleCount(uint entityId) => _getParticleSystemParticleCount == null ? 0 : _getParticleSystemParticleCount(entityId);

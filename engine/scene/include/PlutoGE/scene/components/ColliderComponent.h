@@ -23,6 +23,7 @@ namespace PlutoGE::scene
         float radius = 0.5f;
         float height = 2.0f;
         bool isTrigger = false;
+        bool blocksAudio = true;
     };
 
     class ColliderComponent : public TypedComponent<ColliderComponent>
@@ -53,6 +54,8 @@ namespace PlutoGE::scene
 
         bool IsTrigger() const { return m_config.isTrigger; }
         void SetTrigger(bool isTrigger) { m_config.isTrigger = isTrigger; }
+        bool BlocksAudio() const { return m_config.blocksAudio; }
+        void SetBlocksAudio(bool blocksAudio) { m_config.blocksAudio = blocksAudio; }
 
         glm::vec3 GetScaledCenter(const glm::vec3 &objectScale) const;
         glm::vec3 GetScaledSize(const glm::vec3 &objectScale) const;

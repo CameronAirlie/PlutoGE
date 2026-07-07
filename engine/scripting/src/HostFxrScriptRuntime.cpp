@@ -89,7 +89,7 @@ namespace PlutoGE::scripting
         using register_mesh_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *);
         using register_animation_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_rigidbody_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
-        using register_collider_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
+        using register_collider_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_particle_system_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_sound_emitter_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_runtime_ui_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
@@ -1720,6 +1720,16 @@ namespace PlutoGE::scripting
             if (auto *component = FindCollider(entityId))
                 component->SetTrigger(value != 0);
         }
+        int32_t GetColliderBlocksAudio(uint32_t entityId)
+        {
+            auto *component = FindCollider(entityId);
+            return component && component->BlocksAudio() ? 1 : 0;
+        }
+        void SetColliderBlocksAudio(uint32_t entityId, int32_t value)
+        {
+            if (auto *component = FindCollider(entityId))
+                component->SetBlocksAudio(value != 0);
+        }
 
         scene::ParticleSystemComponent *FindParticleSystem(uint32_t entityId)
         {
@@ -3346,7 +3356,9 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(static_cast<get_component_float_fn>(&GetColliderHeight)),
                 reinterpret_cast<void *>(static_cast<set_component_float_fn>(&SetColliderHeight)),
                 reinterpret_cast<void *>(static_cast<get_component_bool_fn>(&GetColliderTrigger)),
-                reinterpret_cast<void *>(static_cast<set_component_bool_fn>(&SetColliderTrigger))) == 0)
+                reinterpret_cast<void *>(static_cast<set_component_bool_fn>(&SetColliderTrigger)),
+                reinterpret_cast<void *>(static_cast<get_component_bool_fn>(&GetColliderBlocksAudio)),
+                reinterpret_cast<void *>(static_cast<set_component_bool_fn>(&SetColliderBlocksAudio))) == 0)
         {
             setManagedBridgeFailure("RegisterColliderComponentApi");
             return false;

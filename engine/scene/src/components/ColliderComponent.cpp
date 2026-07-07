@@ -90,6 +90,7 @@ namespace PlutoGE::scene
             {"Radius", PropertyType::Float, std::to_string(m_config.radius)},
             {"Height", PropertyType::Float, std::to_string(m_config.height)},
             {"Is Trigger", PropertyType::Bool, m_config.isTrigger ? "true" : "false"},
+            {"Blocks Audio", PropertyType::Bool, m_config.blocksAudio ? "true" : "false"},
         };
     }
 
@@ -121,6 +122,10 @@ namespace PlutoGE::scene
             else if (property.name == "Is Trigger")
             {
                 m_config.isTrigger = ParseBool(property.value);
+            }
+            else if (property.name == "Blocks Audio")
+            {
+                m_config.blocksAudio = ParseBool(property.value);
             }
         }
     }

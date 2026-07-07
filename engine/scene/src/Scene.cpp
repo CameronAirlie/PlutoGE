@@ -1623,6 +1623,9 @@ namespace PlutoGE::scene
                 listenerState.forward = SafeNormalize(-glm::vec3(listenerTransform[2]), glm::vec3(0.0f, 0.0f, -1.0f));
                 listenerState.up = SafeNormalize(glm::vec3(listenerTransform[1]), glm::vec3(0.0f, 1.0f, 0.0f));
                 listenerState.masterVolume = listenerComponent->GetMasterVolume();
+                listenerState.occlusionStrength = listenerComponent->GetOcclusionStrength();
+                listenerState.airAbsorptionStrength = listenerComponent->GetAirAbsorptionStrength();
+                listenerState.lowPassStrength = listenerComponent->GetLowPassStrength();
             }
 
             std::vector<audio::EmitterState> emitterStates;
@@ -1650,17 +1653,22 @@ namespace PlutoGE::scene
                 emitterState.minDistance = emitter->GetMinDistance();
                 emitterState.maxDistance = emitter->GetMaxDistance();
                 emitterState.rolloff = emitter->GetRolloff();
+                emitterState.airAbsorptionStrength = emitter->GetAirAbsorptionStrength();
+                emitterState.lowPassStrength = emitter->GetLowPassStrength();
 
                 if (listenerState.active && emitterState.spatialized)
                 {
                     const EntityID listenerEntityId = listenerComponent && listenerComponent->GetOwner()
                                                           ? listenerComponent->GetOwner()->GetID()
                                                           : 0;
-                    emitterState.occlusion = ComputeAudioOcclusion(*this,
-                                                                    listenerState,
-                                                                    emitterState.position,
-                                                                    owner->GetID(),
-                                                                    listenerEntityId);
+                    const float rawOcclusion = ComputeAudioOcclusion(*this,
+                                                                     listenerState,
+                                                                     emitterState.position,
+                                                                     owner->GetID(),
+                                                                     listenerEntityId);
+                    emitterState.occlusion = std::clamp(rawOcclusion * emitter->GetOcclusionStrength() * listenerState.occlusionStrength,
+                                                        0.0f,
+                                                        1.0f);
                 }
 
                 emitterStates.push_back(std::move(emitterState));

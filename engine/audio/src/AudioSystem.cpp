@@ -277,6 +277,11 @@ namespace PlutoGE::audio
         {
             return alIsExtensionPresent(name) == AL_TRUE;
         }
+
+        bool HasOpenALDeviceExtension(ALCdevice *device, const char *name)
+        {
+            return device != nullptr && alcIsExtensionPresent(device, name) == ALC_TRUE;
+        }
 #endif
 
 #ifdef _WIN32
@@ -337,7 +342,8 @@ namespace PlutoGE::audio
         const bool hrtfAvailable = alcIsExtensionPresent(device, "ALC_SOFT_HRTF") == ALC_TRUE;
         ALCint hrtfAttributes[] = {
 #ifdef ALC_HRTF_SOFT
-            ALC_HRTF_SOFT, ALC_TRUE,
+            ALC_HRTF_SOFT,
+            ALC_TRUE,
 #endif
             0,
         };
@@ -362,7 +368,7 @@ namespace PlutoGE::audio
         m_openAlDevice = device;
         m_openAlContext = context;
         m_usingOpenAl = true;
-        m_openAlEfxAvailable = HasOpenALExtension("AL_EXT_EFX");
+        m_openAlEfxAvailable = HasOpenALDeviceExtension(device, "ALC_EXT_EFX");
         m_initialized = true;
         return true;
 #else
@@ -676,6 +682,8 @@ namespace PlutoGE::audio
             alSourcei(source, AL_LOOPING, emitter.looping ? AL_TRUE : AL_FALSE);
 
             float gain = std::max(emitter.volume, 0.0f);
+            const float userLowPass = std::clamp(emitter.lowPassStrength + listener.lowPassStrength, 0.0f, 1.0f);
+            float filterDamping = userLowPass;
             if (emitter.spatialized && listener.active)
             {
                 const float safeDeltaTime = std::max(deltaTime, 0.0001f);
@@ -684,23 +692,20 @@ namespace PlutoGE::audio
                                                       : glm::vec3(0.0f);
                 const float targetOcclusion = std::clamp(emitter.occlusion, 0.0f, 1.0f);
                 const float distance = glm::distance(listener.position, emitter.position);
+                const float attenuation = ComputeAttenuation(emitter, distance);
                 const float distanceRange = (std::max)(0.001f, emitter.maxDistance - emitter.minDistance);
-                const float targetAirAbsorption = std::clamp((distance - emitter.minDistance) / distanceRange, 0.0f, 1.0f);
+                const float targetAirAbsorption = std::clamp(((distance - emitter.minDistance) / distanceRange) *
+                                                                 emitter.airAbsorptionStrength * listener.airAbsorptionStrength,
+                                                             0.0f,
+                                                             1.0f);
                 voice.smoothedOcclusion += (targetOcclusion - voice.smoothedOcclusion) * 0.18f;
                 voice.smoothedAirAbsorption += (targetAirAbsorption - voice.smoothedAirAbsorption) * 0.08f;
 
+                gain *= attenuation;
                 gain *= 1.0f - 0.65f * voice.smoothedOcclusion;
-
-                if (voice.backendFilter != 0)
-                {
-                    const ALuint filter = static_cast<ALuint>(voice.backendFilter);
-                    const float damping = std::clamp(0.95f * voice.smoothedOcclusion + 0.25f * voice.smoothedAirAbsorption, 0.0f, 1.0f);
-                    const float highFrequencyGain = std::clamp(std::exp(std::log(1.0f) + (std::log(0.035f) - std::log(1.0f)) * damping), 0.035f, 1.0f);
-                    alFilteri(filter, AL_FILTER_TYPE, AL_FILTER_LOWPASS);
-                    alFilterf(filter, AL_LOWPASS_GAIN, 1.0f);
-                    alFilterf(filter, AL_LOWPASS_GAINHF, highFrequencyGain);
-                    alSourcei(source, AL_DIRECT_FILTER, static_cast<ALint>(filter));
-                }
+                filterDamping = std::clamp(userLowPass + 0.95f * voice.smoothedOcclusion + 0.25f * voice.smoothedAirAbsorption,
+                                           0.0f,
+                                           1.0f);
 
                 alSourcei(source, AL_SOURCE_RELATIVE, AL_FALSE);
                 alSource3f(source, AL_POSITION, emitter.position.x, emitter.position.y, emitter.position.z);
@@ -714,14 +719,30 @@ namespace PlutoGE::audio
             }
             else
             {
-                if (voice.backendFilter != 0)
-                {
-                    alSourcei(source, AL_DIRECT_FILTER, 0);
-                }
+                voice.hasPreviousSpatialState = false;
 
                 alSourcei(source, AL_SOURCE_RELATIVE, AL_TRUE);
                 alSource3f(source, AL_POSITION, 0.0f, 0.0f, 0.0f);
                 alSource3f(source, AL_VELOCITY, 0.0f, 0.0f, 0.0f);
+            }
+
+            if (voice.backendFilter != 0)
+            {
+                const ALuint filter = static_cast<ALuint>(voice.backendFilter);
+                if (filterDamping > 0.0001f)
+                {
+                    const float highFrequencyGain = std::clamp(std::exp(std::log(1.0f) + (std::log(0.035f) - std::log(1.0f)) * filterDamping),
+                                                               0.035f,
+                                                               1.0f);
+                    alFilteri(filter, AL_FILTER_TYPE, AL_FILTER_LOWPASS);
+                    alFilterf(filter, AL_LOWPASS_GAIN, 1.0f);
+                    alFilterf(filter, AL_LOWPASS_GAINHF, highFrequencyGain);
+                    alSourcei(source, AL_DIRECT_FILTER, static_cast<ALint>(filter));
+                }
+                else
+                {
+                    alSourcei(source, AL_DIRECT_FILTER, 0);
+                }
             }
 
             alSourcef(source, AL_GAIN, gain);
@@ -739,12 +760,17 @@ namespace PlutoGE::audio
         sourceVoice->SetFrequencyRatio(std::clamp(emitter.pitch, 0.25f, 4.0f));
 
         float gain = std::max(emitter.volume, 0.0f);
+        const float userLowPass = std::clamp(emitter.lowPassStrength + listener.lowPassStrength, 0.0f, 1.0f);
+        float filterDamping = userLowPass;
         if (emitter.spatialized && listener.active)
         {
             const float distance = glm::distance(listener.position, emitter.position);
             const float attenuation = ComputeAttenuation(emitter, distance);
             const float distanceRange = (std::max)(0.001f, emitter.maxDistance - emitter.minDistance);
-            const float targetAirAbsorption = std::clamp((distance - emitter.minDistance) / distanceRange, 0.0f, 1.0f);
+            const float targetAirAbsorption = std::clamp(((distance - emitter.minDistance) / distanceRange) *
+                                                             emitter.airAbsorptionStrength * listener.airAbsorptionStrength,
+                                                         0.0f,
+                                                         1.0f);
             const float targetOcclusion = std::clamp(emitter.occlusion, 0.0f, 1.0f);
             voice.smoothedOcclusion += (targetOcclusion - voice.smoothedOcclusion) * 0.18f;
             voice.smoothedAirAbsorption += (targetAirAbsorption - voice.smoothedAirAbsorption) * 0.08f;
@@ -826,8 +852,10 @@ namespace PlutoGE::audio
             XAUDIO2_FILTER_PARAMETERS filterParameters{};
             filterParameters.Type = LowPassFilter;
             filterParameters.OneOverQ = 1.0f;
-            const float environmentalDamping = std::clamp(voice.smoothedOcclusion + x3dLowPassDamping + 0.25f * voice.smoothedAirAbsorption, 0.0f, 1.0f);
-            const float cutoffHz = InterpolateLogFrequency(18000.0f, 450.0f, environmentalDamping);
+            filterDamping = std::clamp(userLowPass + voice.smoothedOcclusion + x3dLowPassDamping + 0.25f * voice.smoothedAirAbsorption,
+                                       0.0f,
+                                       1.0f);
+            const float cutoffHz = InterpolateLogFrequency(18000.0f, 450.0f, filterDamping);
             filterParameters.Frequency = ToXAudioFilterFrequency(cutoffHz, voice.sampleRate);
             sourceVoice->SetFilterParameters(&filterParameters);
             return;
@@ -843,11 +871,13 @@ namespace PlutoGE::audio
             identityMatrix[static_cast<std::size_t>(sourceChannel) * static_cast<std::size_t>(m_outputChannels) + targetChannel] = 1.0f;
         }
         sourceVoice->SetOutputMatrix(static_cast<IXAudio2Voice *>(m_masterVoice), voice.channels, m_outputChannels, identityMatrix.data());
+        voice.hasPreviousSpatialState = false;
 
         XAUDIO2_FILTER_PARAMETERS filterParameters{};
         filterParameters.Type = LowPassFilter;
         filterParameters.OneOverQ = 1.0f;
-        filterParameters.Frequency = XAUDIO2_MAX_FREQ_RATIO;
+        const float cutoffHz = InterpolateLogFrequency(18000.0f, 450.0f, filterDamping);
+        filterParameters.Frequency = ToXAudioFilterFrequency(cutoffHz, voice.sampleRate);
         sourceVoice->SetFilterParameters(&filterParameters);
 #else
         (void)voice;
@@ -941,10 +971,12 @@ namespace PlutoGE::audio
                 }
 
                 auto currentVoice = m_activeVoices.find(emitter.key);
+                const bool useSpatialVoice = emitter.spatialized && listener.active;
                 const bool needsNewVoice = currentVoice == m_activeVoices.end() ||
                                            currentVoice->second.clipPath != emitter.clipPath ||
                                            currentVoice->second.looping != emitter.looping ||
                                            currentVoice->second.spatialized != emitter.spatialized ||
+                                           currentVoice->second.usingSpatialPlayback != useSpatialVoice ||
                                            emitter.restartRequested;
 
                 if (needsNewVoice)
@@ -958,7 +990,6 @@ namespace PlutoGE::audio
                         continue;
                     }
 
-                    const bool useSpatialVoice = emitter.spatialized && listener.active;
                     const ALuint buffer = useSpatialVoice ? static_cast<ALuint>(clip->monoBackendBuffer)
                                                           : static_cast<ALuint>(clip->backendBuffer);
                     alSourcei(source, AL_BUFFER, static_cast<ALint>(buffer));
@@ -972,7 +1003,11 @@ namespace PlutoGE::audio
                     newVoice.paused = emitter.paused;
                     newVoice.looping = emitter.looping;
                     newVoice.spatialized = emitter.spatialized;
+                    newVoice.usingSpatialPlayback = useSpatialVoice;
                     newVoice.smoothedOcclusion = std::clamp(emitter.occlusion, 0.0f, 1.0f);
+                    newVoice.smoothedAirAbsorption = std::clamp(emitter.lowPassStrength + listener.lowPassStrength,
+                                                                0.0f,
+                                                                1.0f);
 
                     if (m_openAlEfxAvailable)
                     {
@@ -1126,7 +1161,6 @@ namespace PlutoGE::audio
                 {
                     sourceVoice->Start(0);
                 }
-
             }
             else if (auto *sourceVoice = static_cast<IXAudio2SourceVoice *>(currentVoice->second.sourceVoice))
             {

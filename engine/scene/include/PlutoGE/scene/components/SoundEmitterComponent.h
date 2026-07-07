@@ -40,6 +40,12 @@ namespace PlutoGE::scene
         void SetMaxDistance(float maxDistance);
         [[nodiscard]] float GetRolloff() const { return m_rolloff; }
         void SetRolloff(float rolloff);
+        [[nodiscard]] float GetOcclusionStrength() const { return m_occlusionStrength; }
+        void SetOcclusionStrength(float occlusionStrength);
+        [[nodiscard]] float GetAirAbsorptionStrength() const { return m_airAbsorptionStrength; }
+        void SetAirAbsorptionStrength(float airAbsorptionStrength);
+        [[nodiscard]] float GetLowPassStrength() const { return m_lowPassStrength; }
+        void SetLowPassStrength(float lowPassStrength);
         [[nodiscard]] bool IsPlaying() const { return m_playing; }
         [[nodiscard]] bool IsPaused() const { return m_paused; }
         bool ConsumeRestartRequested();
@@ -54,6 +60,9 @@ namespace PlutoGE::scene
         float m_minDistance = 1.0f;
         float m_maxDistance = 30.0f;
         float m_rolloff = 1.0f;
+        float m_occlusionStrength = 1.0f;
+        float m_airAbsorptionStrength = 1.0f;
+        float m_lowPassStrength = 0.0f;
         bool m_playing = false;
         bool m_paused = false;
         bool m_restartRequested = false;

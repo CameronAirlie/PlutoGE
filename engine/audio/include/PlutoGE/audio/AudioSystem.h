@@ -17,6 +17,9 @@ namespace PlutoGE::audio
         glm::vec3 forward{0.0f, 0.0f, -1.0f};
         glm::vec3 up{0.0f, 1.0f, 0.0f};
         float masterVolume = 1.0f;
+        float occlusionStrength = 1.0f;
+        float airAbsorptionStrength = 1.0f;
+        float lowPassStrength = 0.0f;
     };
 
     struct EmitterState
@@ -35,6 +38,8 @@ namespace PlutoGE::audio
         float maxDistance = 25.0f;
         float rolloff = 1.0f;
         float occlusion = 0.0f;
+        float airAbsorptionStrength = 1.0f;
+        float lowPassStrength = 0.0f;
     };
 
     class AudioSystem
@@ -61,6 +66,7 @@ namespace PlutoGE::audio
             bool paused = false;
             bool looping = false;
             bool spatialized = false;
+            bool usingSpatialPlayback = false;
             bool hasPreviousSpatialState = false;
             glm::vec3 previousListenerPosition{0.0f};
             glm::vec3 previousEmitterPosition{0.0f};

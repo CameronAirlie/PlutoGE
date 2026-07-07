@@ -43,6 +43,9 @@ namespace PlutoGE::scene
             {"MinDistance", PropertyType::Float, std::to_string(m_minDistance)},
             {"MaxDistance", PropertyType::Float, std::to_string(m_maxDistance)},
             {"Rolloff", PropertyType::Float, std::to_string(m_rolloff)},
+            {"OcclusionStrength", PropertyType::Float, std::to_string(m_occlusionStrength)},
+            {"AirAbsorptionStrength", PropertyType::Float, std::to_string(m_airAbsorptionStrength)},
+            {"LowPassStrength", PropertyType::Float, std::to_string(m_lowPassStrength)},
         };
     }
 
@@ -85,6 +88,18 @@ namespace PlutoGE::scene
             else if (property.name == "Rolloff")
             {
                 SetRolloff(std::stof(property.value));
+            }
+            else if (property.name == "OcclusionStrength")
+            {
+                SetOcclusionStrength(std::stof(property.value));
+            }
+            else if (property.name == "AirAbsorptionStrength")
+            {
+                SetAirAbsorptionStrength(std::stof(property.value));
+            }
+            else if (property.name == "LowPassStrength")
+            {
+                SetLowPassStrength(std::stof(property.value));
             }
         }
     }
@@ -143,6 +158,21 @@ namespace PlutoGE::scene
     void SoundEmitterComponent::SetRolloff(float rolloff)
     {
         m_rolloff = std::max(rolloff, 0.01f);
+    }
+
+    void SoundEmitterComponent::SetOcclusionStrength(float occlusionStrength)
+    {
+        m_occlusionStrength = std::clamp(occlusionStrength, 0.0f, 4.0f);
+    }
+
+    void SoundEmitterComponent::SetAirAbsorptionStrength(float airAbsorptionStrength)
+    {
+        m_airAbsorptionStrength = std::clamp(airAbsorptionStrength, 0.0f, 4.0f);
+    }
+
+    void SoundEmitterComponent::SetLowPassStrength(float lowPassStrength)
+    {
+        m_lowPassStrength = std::clamp(lowPassStrength, 0.0f, 1.0f);
     }
 
     bool SoundEmitterComponent::ConsumeRestartRequested()

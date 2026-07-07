@@ -164,6 +164,7 @@ namespace PlutoGE::scene
             if (m_gpuSimulationTimeRemaining <= 0.0f)
             {
                 m_particleCountEstimate = 0;
+                m_clearRequested = true;
             }
         }
 

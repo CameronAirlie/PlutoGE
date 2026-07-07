@@ -141,7 +141,7 @@ namespace PlutoGE::render
 
                 void main()
                 {
-                    if (vAge[0] > vLifetime[0])
+                    if (vAge[0] >= vLifetime[0])
                     {
                         return;
                     }

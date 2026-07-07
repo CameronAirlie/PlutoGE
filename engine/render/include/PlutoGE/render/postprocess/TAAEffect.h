@@ -23,6 +23,7 @@ namespace PlutoGE::render
         float depthRejectionThreshold = 0.0035f;
         float normalRejectionThreshold = 0.82f;
         float velocityRejectionScale = 80.0f;
+        float jitterStrength = 1.0f;
         int quality = 0;
         bool jitterEnabled = true;
     };

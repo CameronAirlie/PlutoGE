@@ -54,6 +54,7 @@ namespace PlutoGE::render
             PostProcessParameter{.name = "Depth Rejection Threshold", .type = PostProcessParameterType::Float, .value = std::to_string(m_config.depthRejectionThreshold)},
             PostProcessParameter{.name = "Normal Rejection Threshold", .type = PostProcessParameterType::Float, .value = std::to_string(m_config.normalRejectionThreshold)},
             PostProcessParameter{.name = "Velocity Rejection Scale", .type = PostProcessParameterType::Float, .value = std::to_string(m_config.velocityRejectionScale)},
+            PostProcessParameter{.name = "Jitter Strength", .type = PostProcessParameterType::Float, .value = std::to_string(m_config.jitterStrength)},
             PostProcessParameter{.name = "Jitter Enabled", .type = PostProcessParameterType::Bool, .value = m_config.jitterEnabled ? "true" : "false"},
         };
     }
@@ -93,6 +94,11 @@ namespace PlutoGE::render
             else if (parameter.name == "Velocity Rejection Scale")
             {
                 m_config.velocityRejectionScale = std::clamp(std::stof(parameter.value), 0.0f, 400.0f);
+            }
+            else if (parameter.name == "Jitter Strength")
+            {
+                m_config.jitterStrength = std::clamp(std::stof(parameter.value), 0.0f, 2.0f);
+                ResetHistory();
             }
             else if (parameter.name == "Jitter Enabled")
             {
@@ -460,8 +466,9 @@ namespace PlutoGE::render
         }
 
         const std::uint64_t sampleIndex = frameSequence % kJitterSampleCount + 1;
-        const float jitterX = (Halton(sampleIndex, 2) - 0.5f) * 2.0f / static_cast<float>(width);
-        const float jitterY = (Halton(sampleIndex, 3) - 0.5f) * 2.0f / static_cast<float>(height);
+        const float jitterStrength = std::clamp(m_config.jitterStrength, 0.0f, 2.0f);
+        const float jitterX = (Halton(sampleIndex, 2) - 0.5f) * 2.0f * jitterStrength / static_cast<float>(width);
+        const float jitterY = (Halton(sampleIndex, 3) - 0.5f) * 2.0f * jitterStrength / static_cast<float>(height);
         return glm::vec2(jitterX, jitterY);
     }
 

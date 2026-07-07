@@ -1,12 +1,12 @@
 using System;
+using System.Collections.Generic;
 using System.Numerics;
 using PlutoGE.ScriptCore;
 
 namespace PlutoGE.ScriptCore.Examples;
 
 /// <summary>
-/// Four-wheel raycast vehicle controller with spring suspension, tire grip, drive,
-/// braking, handbrake, downforce, and optional visual wheel animation.
+/// Simple arcade raycast vehicle controller tuned for fast, forgiving handling.
 /// </summary>
 public sealed class RaycastVehicleController : ScriptBehaviour
 {
@@ -20,95 +20,99 @@ public sealed class RaycastVehicleController : ScriptBehaviour
     [SerializedField] private GameObject? rearLeftWheelVisual = null;
     [SerializedField] private GameObject? rearRightWheelVisual = null;
 
-    [SerializedField] private float vehicleMass = 1200.0f;
-    [SerializedField] private float wheelRadius = 0.36f;
-    [SerializedField] private float suspensionTravel = 0.42f;
-    [SerializedField] private float targetRideCompression = 0.35f;
-    [SerializedField] private bool autoTuneSuspension = true;
-    [SerializedField] private float dampingRatio = 0.65f;
-    [SerializedField] private float springStrength = 48000.0f;
-    [SerializedField] private float damperStrength = 6400.0f;
-    [SerializedField] private float maxSuspensionForceMultiplier = 3.0f;
-    [SerializedField] private float tireGrip = 1.35f;
-    [SerializedField] private float longitudinalGripMultiplier = 2.35f;
-    [SerializedField] private float minimumDriveNormalForce = 3200.0f;
-    [SerializedField] private float lateralStiffness = 9500.0f;
-    [SerializedField] private float longitudinalStiffness = 7200.0f;
+    [SerializedField] private float mass   = 1250.0f;
+    [SerializedField] private float wheelRadius   = 0.5f;
+    [SerializedField] private float suspensionTravel   = 0.100000001f;
+    [SerializedField] private float rideHeight   = 0.150000006f;
+    [SerializedField] private float springStrength   = 118000.0f;
+    [SerializedField] private float damperStrength   = 12000.0f;
 
-    [SerializedField] private float motorForce = 36000.0f;
-    [SerializedField] private float reverseForce = 6200.0f;
-    [SerializedField] private float brakeForce = 12500.0f;
-    [SerializedField] private float handbrakeForce = 9000.0f;
-    [SerializedField] private float frontDriveBias = 0.0f;
-    [SerializedField] private float chassisFriction = 0.05f;
+    [SerializedField] private float acceleration   = 26.0f;
+    [SerializedField] private float reverseAcceleration   = 14.0f;
+    [SerializedField] private float brakePower   = 34.0f;
+    [SerializedField] private float maxSpeed   = 92.0f;
+    [SerializedField] private int drivetrain   = 0;
+    [SerializedField] private float frontGrip   = 7.5f;
+    [SerializedField] private float rearGrip   = 9.0f;
+    [SerializedField] private float gripLimit   = 1.35f;
+    [SerializedField] private float driveGrip   = 1.15f;
+    [SerializedField] private float brakeGrip   = 1.45f;
+    [SerializedField] private float stabilityAssist   = 4.0f;
+    [SerializedField] private float handbrakeGrip   = 2.7f;
+    [SerializedField] private float driftAssist   = 5.0f;
+    [SerializedField] private float downforce   = 5.0f;
+    [SerializedField] private float idleRpm = 900.0f;
+    [SerializedField] private float redlineRpm = 7200.0f;
+    [SerializedField] private float finalDriveRatio = 3.7f;
+    [SerializedField] private float reverseGearRatio = 3.2f;
+    [SerializedField] private float firstGearRatio = 3.1f;
+    [SerializedField] private float secondGearRatio = 2.2f;
+    [SerializedField] private float thirdGearRatio = 1.6f;
+    [SerializedField] private float fourthGearRatio = 1.25f;
+    [SerializedField] private float fifthGearRatio = 1.0f;
+    [SerializedField] private float sixthGearRatio = 0.82f;
+    [SerializedField] private float upshiftRpm = 6200.0f;
+    [SerializedField] private float downshiftRpm = 1800.0f;
+    [SerializedField] private float engineResponse = 9.0f;
+    [SerializedField] private float launchRpm = 3400.0f;
+    [SerializedField] private float peakTorqueRpm = 4800.0f;
+    [SerializedField] private float shiftDuration = 0.18f;
 
-    [SerializedField] private float maxSteerAngle = 32.0f;
-    [SerializedField] private float steerResponse = 8.0f;
-    [SerializedField] private float steerFadeSpeed = 38.0f;
-    [SerializedField] private float handbrakeRearGripMultiplier = 0.42f;
-    [SerializedField] private float driftSteerAssist = 5.5f;
-    [SerializedField] private float driftFrontControlForce = 1.15f;
-    [SerializedField] private float driftAssistSlipStart = 0.32f;
-    [SerializedField] private float driftAssistSlipFull = 0.72f;
-    [SerializedField] private float maxDriftYawRate = 2.6f;
+    [SerializedField] private float maxSteerAngle   = 32.0f;
+    [SerializedField] private float steerSharpness   = 5.0f;
+    [SerializedField] private float highSpeedSteerFade   = 0.620000005f;
+    [SerializedField] private float yawAssist   = 0.0f;
+    [SerializedField] private float uprightAssist   = 0.0f;
 
-    [SerializedField] private float downforce = 36.0f;
-    [SerializedField] private float maxDownforceMultiplier = 2.0f;
-    [SerializedField] private float rollingResistance = 18.0f;
-    [SerializedField] private float coastLongitudinalDampingScale = 0.0015f;
-    [SerializedField] private float brakingLongitudinalDampingScale = 0.008f;
-    [SerializedField] private float uprightAssist = 7.5f;
-    [SerializedField] private float yawAssist = 0.65f;
-    [SerializedField] private float recoveryImpulse = 6500.0f;
-    [SerializedField] private float maximumSpeed = 95.0f;
-    [SerializedField] private float maximumPointSpeed = 80.0f;
-    [SerializedField] private float minimumGroundNormalY = 0.35f;
-    [SerializedField] private float suspensionRayStartOffset = 0.25f;
-    [SerializedField] private float tireForceApplicationHeight = 0.35f;
-    [SerializedField] private float forceSmoothingSharpness = 18.0f;
-    [SerializedField] private float highSpeedGripFadeStart = 35.0f;
-    [SerializedField] private float highSpeedGripFadeEnd = 85.0f;
-    [SerializedField] private float highSpeedLateralGripMultiplier = 0.72f;
-    [SerializedField] private float maxSuspensionJounceSpeed = 12.0f;
-    [SerializedField] private float highSpeedPitchRollDamping = 3.0f;
-    [SerializedField] private float groundedUpwardVelocityDamping = 2.0f;
-    [SerializedField] private float speedLimiterStart = 0.82f;
-    [SerializedField] private float overspeedDrag = 90.0f;
+    [SerializedField] private bool steerFrontWheelAnchors   = true;
+    [SerializedField] private float physicsSteerDirection   = -1.0f;
+    [SerializedField] private Vector3 wheelSpinAxis   = new Vector3(-1.0f, 0.0f, 0.0f);
+    [SerializedField] private Vector3 wheelSteerAxis   = new Vector3(0.0f, 1.0f, 0.0f);
+    [SerializedField] private float leftWheelSpinDirection   = 1.0f;
+    [SerializedField] private float rightWheelSpinDirection   = 1.0f;
 
-    [SerializedField] private bool steerFrontWheelAnchors = true;
-    [SerializedField] private float physicsSteerDirection = -1.0f;
-    [SerializedField] private Vector3 wheelSpinAxis = new Vector3(1.0f, 0.0f, 0.0f);
-    [SerializedField] private Vector3 wheelSteerAxis = new Vector3(0.0f, 1.0f, 0.0f);
-    [SerializedField] private float leftWheelSpinDirection = 1.0f;
-    [SerializedField] private float rightWheelSpinDirection = 1.0f;
-
-    [SerializedField] private bool keepBodyColliderAboveWheelContact = true;
-    [SerializedField] private float bodyColliderGroundClearance = 0.08f;
-    [SerializedField] private float antiScrapeForceMultiplier = 1.2f;
-
-    [SerializedField] private bool lockCursorOnCreate = true;
-    [SerializedField] private string groundTag = string.Empty;
+    [SerializedField] private bool lockCursorOnCreate   = true;
+    [SerializedField] private string groundTag   = "ground";
 
     private readonly WheelState[] _wheels = new WheelState[4];
+    private static readonly Dictionary<uint, VehicleTelemetry> s_telemetryByEntity = [];
     private RigidbodyComponent? _rigidbody;
-    private float _steer;
+    private float _steerAngle;
+    private float _engineRpm;
+    private float _drivenWheelSpinSpeed;
+    private float _shiftTimer;
+    private int _currentGear = 1;
     private int _groundedWheelCount;
+
+    public static bool TryGetTelemetry(GameObject? vehicle, out VehicleTelemetry telemetry)
+    {
+        telemetry = default;
+        return vehicle is not null && s_telemetryByEntity.TryGetValue(vehicle.EntityId, out telemetry);
+    }
+
+    public static VehicleTelemetry GetTelemetryOrDefault(GameObject? vehicle)
+    {
+        return TryGetTelemetry(vehicle, out var telemetry) ? telemetry : default;
+    }
 
     public override void OnCreate()
     {
         _rigidbody = GameObject.GetComponent<RigidbodyComponent>();
         if (_rigidbody is not null)
         {
-            _rigidbody.Mass = MathF.Max(vehicleMass, 50.0f);
+            _rigidbody.Mass = MathF.Max(mass, 50.0f);
             _rigidbody.IsKinematic = false;
             _rigidbody.UseGravity = true;
             _rigidbody.FreezeRotation = false;
-            _rigidbody.LinearDrag = 0.02f;
-            _rigidbody.AngularDrag = 0.8f;
-            _rigidbody.Friction = MathF.Max(chassisFriction, 0.0f);
+            _rigidbody.LinearDrag = 0.015f;
+            _rigidbody.AngularDrag = 0.75f;
+            _rigidbody.Friction = 0.02f;
         }
 
-        AutoTuneSuspensionIfNeeded();
+        _engineRpm = MathF.Max(idleRpm, 0.0f);
+        _drivenWheelSpinSpeed = 0.0f;
+        _shiftTimer = 0.0f;
+        _currentGear = 1;
 
         if (lockCursorOnCreate)
         {
@@ -119,7 +123,6 @@ public sealed class RaycastVehicleController : ScriptBehaviour
         ConfigureWheel(1, frontRightWheelAnchor, frontRightWheelVisual, true, true);
         ConfigureWheel(2, rearLeftWheelAnchor, rearLeftWheelVisual, false, false);
         ConfigureWheel(3, rearRightWheelAnchor, rearRightWheelVisual, false, true);
-        AdjustBodyColliderClearance();
     }
 
     public override void OnUpdate(float deltaTime)
@@ -134,31 +137,36 @@ public sealed class RaycastVehicleController : ScriptBehaviour
             Input.CursorLocked = !Input.CursorLocked;
         }
 
-        ClampBodyVelocity();
-
-        var speed = _rigidbody.Velocity.Length();
-        var throttle = Input.IsKeyDown(KeyCode.W) ? 1.0f : 0.0f;
-        var brakeInput = Input.IsKeyDown(KeyCode.S) ? 1.0f : 0.0f;
-        var handbrake = Input.IsKeyDown(KeyCode.Space);
-        var steerInput = 0.0f;
-        if (Input.IsKeyDown(KeyCode.A)) steerInput += 1.0f;
-        if (Input.IsKeyDown(KeyCode.D)) steerInput -= 1.0f;
-
-        var steerSpeed = ForwardSpeedAbs();
-        var steerFade = 1.0f / (1.0f + steerSpeed / MathF.Max(steerFadeSpeed, 0.01f));
-        var targetSteer = steerInput * maxSteerAngle * steerFade;
-        _steer = Lerp(_steer, targetSteer, 1.0f - MathF.Exp(-steerResponse * deltaTime));
-
         if (Input.IsKeyPressed(KeyCode.R))
         {
             RecoverCar();
         }
 
-        ApplyVehicleForces(deltaTime, throttle, brakeInput, handbrake, steerInput);
-        ApplyAeroAndAssists(speed, steerInput, deltaTime);
-        ApplyAntiScrapeLift();
+        var throttle = Input.IsKeyDown(KeyCode.W) ? 1.0f : 0.0f;
+        var brake = Input.IsKeyDown(KeyCode.S) ? 1.0f : 0.0f;
+        var handbrake = Input.IsKeyDown(KeyCode.Space);
+        var steerInput = 0.0f;
+        if (Input.IsKeyDown(KeyCode.A)) steerInput += 1.0f;
+        if (Input.IsKeyDown(KeyCode.D)) steerInput -= 1.0f;
+
+        var forwardSpeed = Vector3.Dot(_rigidbody.Velocity, Forward);
+        var speed01 = Math.Clamp(MathF.Abs(forwardSpeed) / MathF.Max(maxSpeed, 1.0f), 0.0f, 1.0f);
+        var steerLimit = maxSteerAngle * Lerp(1.0f, Math.Clamp(highSpeedSteerFade, 0.1f, 1.0f), speed01);
+        _steerAngle = Lerp(_steerAngle, steerInput * steerLimit, 1.0f - MathF.Exp(-steerSharpness * deltaTime));
+
+        ClampTopSpeed();
+        var driveSplit = GetDriveSplit();
+        UpdateDrivetrain(deltaTime, throttle, brake, forwardSpeed, driveSplit);
+        var drivePower = throttle * GetEngineTorqueMultiplier();
+        ApplyWheels(deltaTime, drivePower, brake, handbrake, driveSplit);
+        ApplyArcadeAssists(deltaTime, steerInput, handbrake);
+        UpdateTelemetry(deltaTime, throttle, brake, handbrake, steerInput, driveSplit);
         UpdateWheelVisuals(deltaTime);
     }
+
+    private Vector3 Forward => SafeNormalize(GameObject.Forward, -Vector3.UnitZ);
+    private Vector3 Right => SafeNormalize(GameObject.Right, Vector3.UnitX);
+    private Vector3 Up => SafeNormalize(Vector3.Cross(Right, Forward), Vector3.UnitY);
 
     private void ConfigureWheel(int index, GameObject? anchor, GameObject? visual, bool steering, bool rightSide)
     {
@@ -174,71 +182,14 @@ public sealed class RaycastVehicleController : ScriptBehaviour
         };
     }
 
-    private void AutoTuneSuspensionIfNeeded()
+    private void ApplyWheels(float deltaTime, float drivePower, float brake, bool handbrake, DriveSplit driveSplit)
     {
-        if (!autoTuneSuspension || _rigidbody is null)
-        {
-            return;
-        }
-
-        var targetCompressionDistance = MathF.Max(suspensionTravel * Math.Clamp(targetRideCompression, 0.05f, 0.95f), 0.001f);
-        var sprungMassPerWheel = _rigidbody.Mass * 0.25f;
-        springStrength = _rigidbody.Mass * 9.81f / (4.0f * targetCompressionDistance);
-        damperStrength = 2.0f * MathF.Sqrt(springStrength * sprungMassPerWheel) * Math.Clamp(dampingRatio, 0.1f, 1.5f);
-    }
-
-    private void AdjustBodyColliderClearance()
-    {
-        if (!keepBodyColliderAboveWheelContact)
-        {
-            return;
-        }
-
-        var collider = GameObject.GetComponent<ColliderComponent>();
-        if (collider is null || collider.Shape != ColliderShape.Box)
-        {
-            return;
-        }
-
-        var hasWheel = false;
-        var lowestWheelMount = float.MaxValue;
-        foreach (var wheel in _wheels)
-        {
-            if (wheel.Anchor is null)
-            {
-                continue;
-            }
-
-            hasWheel = true;
-            lowestWheelMount = MathF.Min(lowestWheelMount, wheel.Anchor.Position.Y);
-        }
-
-        if (!hasWheel)
-        {
-            return;
-        }
-
-        var size = collider.Size;
-        var center = collider.Center;
-        var targetCompressionDistance = suspensionTravel * Math.Clamp(targetRideCompression, 0.0f, 1.0f);
-        var fullCompressionGroundY = lowestWheelMount + suspensionTravel - targetCompressionDistance - wheelRadius;
-        var minimumBodyBottom = fullCompressionGroundY + MathF.Max(bodyColliderGroundClearance, 0.0f);
-        var currentBodyBottom = center.Y - size.Y * 0.5f;
-        if (currentBodyBottom < minimumBodyBottom)
-        {
-            center.Y += minimumBodyBottom - currentBodyBottom;
-            collider.Center = center;
-        }
-    }
-
-    private void ApplyVehicleForces(float deltaTime, float throttle, float brakeInput, bool handbrake, float steerInput)
-    {
-        var frontDrive = Math.Clamp(frontDriveBias, 0.0f, 1.0f);
-        var rearDrive = 1.0f - frontDrive;
-        var forwardSpeedAbs = ForwardSpeedAbs();
-        var limiterStart = MathF.Max(maximumSpeed * Math.Clamp(speedLimiterStart, 0.1f, 1.0f), 0.1f);
-        var speedLimiter = 1.0f - SmoothStep(InverseLerp(limiterStart, MathF.Max(maximumSpeed, limiterStart + 0.1f), forwardSpeedAbs));
         _groundedWheelCount = 0;
+        var bodyForward = Forward;
+        var bodyRight = Right;
+        var bodyUp = Up;
+        var rideCompression = Math.Clamp(rideHeight, 0.05f, 0.95f) * suspensionTravel;
+        var rayLength = wheelRadius + suspensionTravel - rideCompression + 0.2f;
 
         for (var index = 0; index < _wheels.Length; ++index)
         {
@@ -248,288 +199,385 @@ public sealed class RaycastVehicleController : ScriptBehaviour
                 continue;
             }
 
-            var anchorPosition = wheel.Anchor.WorldPosition;
-            var forward = SafeNormalize(GameObject.Forward, -Vector3.UnitZ);
-            var right = SafeNormalize(GameObject.Right, Vector3.UnitX);
+            var wheelForward = bodyForward;
+            var wheelRight = bodyRight;
             if (wheel.Steering)
             {
-                var physicsSteer = _steer * MathF.Sign(NonZero(physicsSteerDirection));
-                forward = RotateAroundUp(forward, physicsSteer);
-                right = RotateAroundUp(right, physicsSteer);
+                var signedSteer = _steerAngle * MathF.Sign(NonZero(physicsSteerDirection));
+                wheelForward = RotateAroundUp(bodyForward, signedSteer);
+                wheelRight = RotateAroundUp(bodyRight, signedSteer);
             }
 
-            var up = SafeNormalize(Vector3.Cross(right, forward), Vector3.UnitY);
-            var down = -up;
-            var rayStartOffset = MathF.Max(suspensionRayStartOffset, 0.0f);
-            var rayOrigin = anchorPosition + up * rayStartOffset;
-            var targetCompressionDistance = suspensionTravel * Math.Clamp(targetRideCompression, 0.0f, 1.0f);
-            var maxContactDistanceFromAnchor = wheelRadius + suspensionTravel - targetCompressionDistance;
-            var rayLength = maxContactDistanceFromAnchor + rayStartOffset;
-            RaycastHit hit;
+            var rayOrigin = wheel.Anchor.WorldPosition + bodyUp * 0.2f;
             var hitGround = string.IsNullOrWhiteSpace(groundTag)
-                ? Physics.Raycast(rayOrigin, down, rayLength, GameObject, out hit)
-                : Physics.RaycastTagged(rayOrigin, down, rayLength, groundTag, GameObject, out hit);
+                ? Physics.Raycast(rayOrigin, -bodyUp, rayLength, GameObject, out var hit)
+                : Physics.RaycastTagged(rayOrigin, -bodyUp, rayLength, groundTag, GameObject, out hit);
 
-            if (!hitGround || Vector3.Dot(hit.Normal, up) < minimumGroundNormalY)
+            if (!hitGround || Vector3.Dot(hit.Normal, bodyUp) < 0.35f)
             {
                 wheel.Grounded = false;
                 wheel.Compression = 0.0f;
-                wheel.SmoothedSuspensionForce = Vector3.Lerp(wheel.SmoothedSuspensionForce, Vector3.Zero, ForceSmoothingAmount(deltaTime));
-                wheel.SmoothedTireForce = Vector3.Lerp(wheel.SmoothedTireForce, Vector3.Zero, ForceSmoothingAmount(deltaTime));
                 _wheels[index] = wheel;
                 continue;
             }
 
-            var pointVelocity = EstimatePointVelocity(anchorPosition);
             _groundedWheelCount++;
-            var distanceFromAnchor = MathF.Max(hit.Distance - rayStartOffset, 0.0f);
-            var compression = Math.Clamp(targetCompressionDistance + wheelRadius - distanceFromAnchor, 0.0f, suspensionTravel);
-            var compression01 = compression / MathF.Max(suspensionTravel, 0.0001f);
-            var springVelocity = Math.Clamp(Vector3.Dot(pointVelocity, up), -maxSuspensionJounceSpeed, maxSuspensionJounceSpeed);
-            var maxSuspensionForce = _rigidbody!.Mass * 9.81f * MathF.Max(maxSuspensionForceMultiplier, 0.5f) * 0.25f;
-            var normalForceMagnitude = Math.Clamp(
-                compression * springStrength - springVelocity * damperStrength,
-                0.0f,
-                maxSuspensionForce);
-            var suspensionPoint = hit.Point + up * wheelRadius;
-            var tireForcePoint = hit.Point + up * MathF.Max(tireForceApplicationHeight, 0.0f);
-            var smoothingAmount = ForceSmoothingAmount(deltaTime);
 
-            var suspensionForce = up * normalForceMagnitude;
-            wheel.SmoothedSuspensionForce = Vector3.Lerp(wheel.SmoothedSuspensionForce, suspensionForce, smoothingAmount);
-            _rigidbody.AddForceAtPosition(wheel.SmoothedSuspensionForce, suspensionPoint);
+            var pointVelocity = PointVelocity(wheel.Anchor.WorldPosition);
+            var distanceFromAnchor = MathF.Max(hit.Distance - 0.2f, 0.0f);
+            var compression = Math.Clamp(rideCompression + wheelRadius - distanceFromAnchor, 0.0f, suspensionTravel);
+            var compression01 = compression / MathF.Max(suspensionTravel, 0.001f);
+            var springVelocity = Vector3.Dot(pointVelocity, bodyUp);
+            var suspensionForce = compression * springStrength - springVelocity * damperStrength;
+            suspensionForce = Math.Clamp(suspensionForce, 0.0f, _rigidbody!.Mass * 9.81f * 0.9f);
+            _rigidbody.AddForceAtPosition(bodyUp * suspensionForce, hit.Point + bodyUp * wheelRadius);
 
-            var lateralSpeed = Vector3.Dot(pointVelocity, right);
-            var forwardSpeed = Vector3.Dot(pointVelocity, forward);
-            var speed01 = InverseLerp(highSpeedGripFadeStart, highSpeedGripFadeEnd, _rigidbody.Velocity.Length());
-            var highSpeedGrip = Lerp(1.0f, highSpeedLateralGripMultiplier, speed01);
-            var gripMultiplier = (!wheel.Steering && handbrake) ? handbrakeRearGripMultiplier : 1.0f;
-            var lateralForce = -right * lateralSpeed * lateralStiffness * gripMultiplier;
-            var maxLateralForce = normalForceMagnitude * tireGrip * gripMultiplier * highSpeedGrip;
-            lateralForce = ClampMagnitude(lateralForce, maxLateralForce);
+            var lateralSpeed = Vector3.Dot(pointVelocity, wheelRight);
+            var forwardSpeed = Vector3.Dot(pointVelocity, wheelForward);
+            var baseGrip = wheel.Steering ? frontGrip : rearGrip;
+            var wheelGrip = (!wheel.Steering && handbrake) ? handbrakeGrip : baseGrip;
+            var lateralForce = -wheelRight * lateralSpeed * wheelGrip * _rigidbody.Mass * 0.25f;
+            var normalLoad = MathF.Max(suspensionForce, _rigidbody.Mass * 9.81f * 0.12f);
+            lateralForce = ClampMagnitude(lateralForce, normalLoad * MathF.Max(gripLimit, 0.1f));
 
-            var driveShare = wheel.Steering ? frontDrive * 0.5f : rearDrive * 0.5f;
-            var driveForce = throttle * motorForce * driveShare * speedLimiter;
-            if (brakeInput > 0.0f)
+            var tireForce = lateralForce;
+            var driveShare = wheel.Steering ? driveSplit.Front * 0.5f : driveSplit.Rear * 0.5f;
+            if (drivePower > 0.0f && driveShare > 0.0f)
             {
-                driveForce += forwardSpeed > 1.0f
-                    ? -MathF.Sign(forwardSpeed) * brakeForce * brakeInput * 0.25f
-                    : -reverseForce * brakeInput * driveShare;
+                var speedLimiter = 1.0f - SmoothStep(Math.Clamp(MathF.Abs(Vector3.Dot(_rigidbody.Velocity, bodyForward)) / MathF.Max(maxSpeed, 1.0f), 0.0f, 1.0f));
+                var rawDrive = wheelForward * drivePower * acceleration * _rigidbody.Mass * driveShare * speedLimiter;
+                var tractionLimit = normalLoad * MathF.Max(wheelGrip, 0.0f) * MathF.Max(driveGrip, 0.0f) * driveShare;
+                tireForce += ClampMagnitude(rawDrive, tractionLimit);
             }
 
-            var brake = brakeInput > 0.0f && forwardSpeed > 1.0f
-                ? -forward * MathF.Sign(forwardSpeed) * brakeForce * brakeInput * 0.25f
-                : Vector3.Zero;
-            var handbrakeForceVector = !wheel.Steering && handbrake
-                ? -forward * MathF.Sign(NonZero(forwardSpeed)) * handbrakeForce * 0.5f
-                : Vector3.Zero;
-            var longitudinalDampingScale = brakeInput > 0.0f || handbrake
-                ? brakingLongitudinalDampingScale
-                : coastLongitudinalDampingScale;
-            var longitudinalDamping = -forward * forwardSpeed * longitudinalStiffness * MathF.Max(longitudinalDampingScale, 0.0f);
-            var rolling = -forward * forwardSpeed * rollingResistance;
-
-            var longitudinalForce = forward * driveForce + brake + handbrakeForceVector + longitudinalDamping + rolling;
-            var driveNormalForce = MathF.Max(normalForceMagnitude, minimumDriveNormalForce);
-            var maxLongitudinalForce = driveNormalForce * tireGrip * longitudinalGripMultiplier * gripMultiplier;
-            longitudinalForce = ClampMagnitude(longitudinalForce, maxLongitudinalForce);
-
-            var driftControlForce = Vector3.Zero;
-            if (wheel.Steering && MathF.Abs(steerInput) > 0.01f)
+            if (brake > 0.0f)
             {
-                var bodyRight = SafeNormalize(GameObject.Right, Vector3.UnitX);
-                var bodyForward = SafeNormalize(GameObject.Forward, -Vector3.UnitZ);
-                var bodyForwardSpeed = MathF.Abs(Vector3.Dot(_rigidbody.Velocity, bodyForward));
-                var bodyLateralSpeed = MathF.Abs(Vector3.Dot(_rigidbody.Velocity, bodyRight));
-                var slipAmount = PlanarSlipAmount(bodyForwardSpeed, bodyLateralSpeed);
-                var assistAmount = SmoothStep(InverseLerp(driftAssistSlipStart, driftAssistSlipFull, slipAmount));
-                var steerDirection = steerInput * MathF.Sign(NonZero(physicsSteerDirection));
-                driftControlForce = bodyRight * steerDirection * normalForceMagnitude * MathF.Max(driftFrontControlForce, 0.0f) * assistAmount;
+                var reversing = MathF.Abs(forwardSpeed) < 1.2f || forwardSpeed < -0.5f;
+                if (reversing && driveShare > 0.0f)
+                {
+                    var rawReverse = -wheelForward * brake * reverseAcceleration * _rigidbody.Mass * driveShare;
+                    var tractionLimit = normalLoad * MathF.Max(wheelGrip, 0.0f) * MathF.Max(driveGrip, 0.0f) * driveShare;
+                    tireForce += ClampMagnitude(rawReverse, tractionLimit);
+                }
+                else
+                {
+                    var rawBrake = -wheelForward * MathF.Sign(NonZero(forwardSpeed)) * brake * brakePower * _rigidbody.Mass * 0.25f;
+                    var brakeLimit = normalLoad * MathF.Max(wheelGrip, 0.0f) * MathF.Max(brakeGrip, 0.0f);
+                    tireForce += ClampMagnitude(rawBrake, brakeLimit);
+                }
             }
 
-            var tireForce = lateralForce + longitudinalForce + driftControlForce;
-            wheel.SmoothedTireForce = Vector3.Lerp(wheel.SmoothedTireForce, tireForce, smoothingAmount);
-            _rigidbody.AddForceAtPosition(wheel.SmoothedTireForce, tireForcePoint);
+            if (handbrake && !wheel.Steering)
+            {
+                tireForce += -wheelForward * MathF.Sign(NonZero(forwardSpeed)) * brakePower * _rigidbody.Mass * 0.18f;
+            }
+
+            _rigidbody.AddForceAtPosition(tireForce, hit.Point + bodyUp * 0.25f);
 
             wheel.Grounded = true;
             wheel.Compression = compression01;
             wheel.ForwardSpeed = forwardSpeed;
-            wheel.VisualSteerAngle = wheel.Steering ? _steer : 0.0f;
+            wheel.VisualSteerAngle = wheel.Steering ? _steerAngle : 0.0f;
             _wheels[index] = wheel;
         }
     }
 
-    private Vector3 EstimatePointVelocity(Vector3 worldPoint)
+    private void ApplyArcadeAssists(float deltaTime, float steerInput, bool handbrake)
+    {
+        if (_rigidbody is null)
+        {
+            return;
+        }
+
+        var velocity = _rigidbody.Velocity;
+        var speed = velocity.Length();
+        if (speed > 0.1f)
+        {
+            _rigidbody.AddForce(-Vector3.UnitY * MathF.Min(downforce * speed * speed, _rigidbody.Mass * 9.81f * 2.5f));
+        }
+
+        var up = Up;
+        var angularVelocity = _rigidbody.AngularVelocity;
+        var uprightCorrection = Vector3.Cross(up, Vector3.UnitY) * uprightAssist;
+        angularVelocity += uprightCorrection * deltaTime;
+
+        if (_groundedWheelCount > 0)
+        {
+            var forwardSpeed = Vector3.Dot(velocity, Forward);
+            var steerSign = steerInput * MathF.Sign(NonZero(physicsSteerDirection));
+            var targetYaw = steerSign * Math.Clamp(MathF.Abs(forwardSpeed) * 0.055f, 0.0f, handbrake ? 3.0f : 1.9f);
+            var yawBlend = 1.0f - MathF.Exp(-(handbrake ? driftAssist : yawAssist) * deltaTime);
+            angularVelocity.Y = Lerp(angularVelocity.Y, targetYaw, yawBlend);
+
+            if (velocity.Y > 0.0f)
+            {
+                _rigidbody.Velocity = new Vector3(velocity.X, velocity.Y * MathF.Exp(-2.0f * deltaTime), velocity.Z);
+            }
+        }
+
+        _rigidbody.AngularVelocity = ClampMagnitude(angularVelocity, 14.0f);
+
+        var lateralSpeed = Vector3.Dot(_rigidbody.Velocity, Right);
+        var stabilityBlend = 1.0f - MathF.Exp(-MathF.Max(stabilityAssist, 0.0f) * (handbrake ? 0.25f : 1.0f) * deltaTime);
+        if (stabilityBlend > 0.0f)
+        {
+            _rigidbody.Velocity -= Right * lateralSpeed * stabilityBlend;
+        }
+    }
+
+    private DriveSplit GetDriveSplit()
+    {
+        return drivetrain switch
+        {
+            1 => new DriveSplit(1.0f, 0.0f),
+            2 => new DriveSplit(0.35f, 0.65f),
+            _ => new DriveSplit(0.0f, 1.0f),
+        };
+    }
+
+    private void UpdateTelemetry(float deltaTime, float throttle, float brake, bool handbrake, float steerInput, DriveSplit driveSplit)
+    {
+        if (_rigidbody is null)
+        {
+            return;
+        }
+
+        var velocity = _rigidbody.Velocity;
+        var forwardSpeed = Vector3.Dot(velocity, Forward);
+        var lateralSpeed = Vector3.Dot(velocity, Right);
+        var groundedDrivenWheelSpeed = GetAverageDrivenWheelSpeed(driveSplit, forwardSpeed);
+        var longitudinalSlip = EstimateLongitudinalSlip(throttle, brake, driveSplit);
+        var wheelRpm = WheelRpm(_drivenWheelSpinSpeed);
+
+        var speed = velocity.Length();
+        var slipRatio = MathF.Abs(lateralSpeed) / MathF.Max(MathF.Abs(forwardSpeed), 1.0f);
+        var wheelSpinSlip = MathF.Max(MathF.Abs(_drivenWheelSpinSpeed) - MathF.Abs(forwardSpeed), 0.0f);
+        longitudinalSlip = MathF.Max(longitudinalSlip, wheelSpinSlip / MathF.Max(MathF.Abs(groundedDrivenWheelSpeed), 8.0f));
+        var smokeAmount = Math.Clamp(MathF.Max(slipRatio - 0.25f, MathF.Max(longitudinalSlip, wheelSpinSlip / 12.0f)) / 0.75f, 0.0f, 1.0f);
+        if (speed < 2.0f)
+        {
+            smokeAmount *= Math.Clamp(speed / 2.0f + throttle * 0.5f, 0.0f, 1.0f);
+        }
+
+        s_telemetryByEntity[EntityId] = new VehicleTelemetry(
+            speed,
+            forwardSpeed,
+            lateralSpeed,
+            _drivenWheelSpinSpeed,
+            wheelRpm,
+            _engineRpm,
+            Math.Clamp(_engineRpm / MathF.Max(redlineRpm, idleRpm + 100.0f), 0.0f, 1.0f),
+            _currentGear,
+            throttle,
+            brake,
+            steerInput,
+            handbrake,
+            _groundedWheelCount,
+            slipRatio,
+            longitudinalSlip,
+            smokeAmount,
+            drivetrain,
+            driveSplit.Front,
+            driveSplit.Rear);
+    }
+
+    private float GetAverageDrivenWheelSpeed(DriveSplit driveSplit, float fallbackSpeed)
+    {
+        var speedSum = 0.0f;
+        var weightSum = 0.0f;
+        foreach (var wheel in _wheels)
+        {
+            var driveWeight = wheel.Steering ? driveSplit.Front : driveSplit.Rear;
+            if (!wheel.Grounded || driveWeight <= 0.0f)
+            {
+                continue;
+            }
+
+            speedSum += wheel.ForwardSpeed * driveWeight;
+            weightSum += driveWeight;
+        }
+
+        return weightSum > 0.0001f ? speedSum / weightSum : fallbackSpeed;
+    }
+
+    private float EstimateLongitudinalSlip(float throttle, float brake, DriveSplit driveSplit)
+    {
+        var slip = 0.0f;
+        foreach (var wheel in _wheels)
+        {
+            if (!wheel.Grounded)
+            {
+                continue;
+            }
+
+            var driveWeight = wheel.Steering ? driveSplit.Front : driveSplit.Rear;
+            var wheelGrip = wheel.Steering ? frontGrip : rearGrip;
+            var lowGripAmount = 1.0f - Math.Clamp(wheelGrip / 4.0f, 0.0f, 1.0f);
+            slip = MathF.Max(slip, throttle * driveWeight * lowGripAmount);
+            slip = MathF.Max(slip, brake * lowGripAmount * 0.35f);
+        }
+
+        return Math.Clamp(slip, 0.0f, 1.0f);
+    }
+
+    private void UpdateDrivetrain(float deltaTime, float throttle, float brake, float forwardSpeed, DriveSplit driveSplit)
+    {
+        if (_shiftTimer > 0.0f)
+        {
+            _shiftTimer = MathF.Max(_shiftTimer - deltaTime, 0.0f);
+        }
+
+        if (forwardSpeed < -0.5f)
+        {
+            _currentGear = -1;
+        }
+        else if (_currentGear <= 0)
+        {
+            _currentGear = 1;
+        }
+
+        var drivenSpeed = GetAverageDrivenWheelSpeed(driveSplit, forwardSpeed);
+        var mechanicalRpm = EstimateRpmForGear(MathF.Abs(drivenSpeed), _currentGear);
+        if (_shiftTimer <= 0.0f && _currentGear > 0)
+        {
+            if (_currentGear < 6 && mechanicalRpm >= MathF.Max(upshiftRpm, idleRpm + 500.0f))
+            {
+                _currentGear++;
+                _shiftTimer = MathF.Max(shiftDuration, 0.0f);
+                mechanicalRpm = EstimateRpmForGear(MathF.Abs(drivenSpeed), _currentGear);
+            }
+            else if (_currentGear > 1 && mechanicalRpm <= MathF.Max(downshiftRpm, idleRpm))
+            {
+                _currentGear--;
+                _shiftTimer = MathF.Max(shiftDuration * 0.45f, 0.0f);
+                mechanicalRpm = EstimateRpmForGear(MathF.Abs(drivenSpeed), _currentGear);
+            }
+        }
+
+        var targetRpm = MathF.Max(mechanicalRpm, MathF.Max(idleRpm, 0.0f));
+        if (throttle > 0.0f && MathF.Abs(forwardSpeed) < 2.0f)
+        {
+            targetRpm = MathF.Max(targetRpm, Lerp(MathF.Max(idleRpm, 0.0f), MathF.Max(launchRpm, idleRpm), throttle));
+        }
+        else if (throttle > 0.0f)
+        {
+            targetRpm += throttle * 350.0f;
+        }
+
+        if (brake > 0.0f && _currentGear == -1)
+        {
+            targetRpm = MathF.Max(targetRpm, Lerp(MathF.Max(idleRpm, 0.0f), MathF.Max(launchRpm, idleRpm), brake * 0.65f));
+        }
+
+        targetRpm = Math.Clamp(targetRpm, MathF.Max(idleRpm, 0.0f), MathF.Max(redlineRpm, idleRpm + 100.0f));
+        var response = _shiftTimer > 0.0f ? engineResponse * 1.8f : engineResponse;
+        _engineRpm = Lerp(_engineRpm, targetRpm, 1.0f - MathF.Exp(-MathF.Max(response, 0.0f) * deltaTime));
+        UpdateDrivenWheelSpinSpeed(deltaTime, throttle, brake, forwardSpeed, drivenSpeed);
+    }
+
+    private float GetEngineTorqueMultiplier()
+    {
+        if (_shiftTimer > 0.0f)
+        {
+            return 0.18f;
+        }
+
+        var idle = MathF.Max(idleRpm, 0.0f);
+        var redline = MathF.Max(redlineRpm, idle + 100.0f);
+        var peak = Math.Clamp(peakTorqueRpm, idle + 100.0f, redline);
+        var lowTorque = Lerp(0.28f, 1.0f, SmoothStep(InverseLerp(idle, peak, _engineRpm)));
+        var highRpmFade = Lerp(1.0f, 0.72f, SmoothStep(InverseLerp(peak, redline, _engineRpm)));
+        return Math.Clamp(lowTorque * highRpmFade, 0.0f, 1.0f);
+    }
+
+    private void UpdateDrivenWheelSpinSpeed(float deltaTime, float throttle, float brake, float forwardSpeed, float groundedDrivenSpeed)
+    {
+        var driveInput = throttle > 0.0f || (brake > 0.0f && _currentGear == -1);
+        var targetWheelSpeed = groundedDrivenSpeed;
+        if (driveInput)
+        {
+            targetWheelSpeed = EngineRpmToWheelSpeed(_engineRpm, _currentGear);
+            if (_currentGear > 0 && targetWheelSpeed < 0.0f)
+            {
+                targetWheelSpeed = MathF.Abs(targetWheelSpeed);
+            }
+            else if (_currentGear == -1 && targetWheelSpeed > 0.0f)
+            {
+                targetWheelSpeed = -targetWheelSpeed;
+            }
+
+            if (MathF.Abs(forwardSpeed) > 0.5f && MathF.Sign(targetWheelSpeed) != MathF.Sign(forwardSpeed) && _currentGear > 0)
+            {
+                targetWheelSpeed = MathF.Abs(targetWheelSpeed) * MathF.Sign(forwardSpeed);
+            }
+        }
+
+        var response = driveInput ? 18.0f : 10.0f;
+        _drivenWheelSpinSpeed = Lerp(_drivenWheelSpinSpeed, targetWheelSpeed, 1.0f - MathF.Exp(-response * deltaTime));
+    }
+
+    private float EstimateRpmForGear(float speed, int gear)
+    {
+        var rpm = MathF.Abs(WheelRpm(speed)) * MathF.Abs(GetGearRatio(gear)) * MathF.Max(finalDriveRatio, 0.01f);
+        return Math.Clamp(rpm, MathF.Max(idleRpm, 0.0f), MathF.Max(redlineRpm, idleRpm + 100.0f));
+    }
+
+    private float EngineRpmToWheelSpeed(float rpm, int gear)
+    {
+        var ratio = MathF.Abs(GetGearRatio(gear)) * MathF.Max(finalDriveRatio, 0.01f);
+        if (ratio <= 0.0001f)
+        {
+            return 0.0f;
+        }
+
+        var wheelRpm = MathF.Abs(rpm) / ratio;
+        var circumference = 2.0f * MathF.PI * MathF.Max(wheelRadius, 0.01f);
+        var speed = wheelRpm * circumference / 60.0f;
+        return gear < 0 ? -speed : speed;
+    }
+
+    private float WheelRpm(float speed)
+    {
+        var circumference = 2.0f * MathF.PI * MathF.Max(wheelRadius, 0.01f);
+        return speed / circumference * 60.0f;
+    }
+
+    private float GetGearRatio(int gear)
+    {
+        return gear switch
+        {
+            -1 => MathF.Max(reverseGearRatio, 0.01f),
+            1 => MathF.Max(firstGearRatio, 0.01f),
+            2 => MathF.Max(secondGearRatio, 0.01f),
+            3 => MathF.Max(thirdGearRatio, 0.01f),
+            4 => MathF.Max(fourthGearRatio, 0.01f),
+            5 => MathF.Max(fifthGearRatio, 0.01f),
+            _ => MathF.Max(sixthGearRatio, 0.01f),
+        };
+    }
+
+    private void ClampTopSpeed()
+    {
+        if (_rigidbody is null)
+        {
+            return;
+        }
+
+        var limit = MathF.Max(maxSpeed, 1.0f) * 1.25f;
+        if (_rigidbody.Velocity.LengthSquared() > limit * limit)
+        {
+            _rigidbody.Velocity = Vector3.Normalize(_rigidbody.Velocity) * limit;
+        }
+    }
+
+    private Vector3 PointVelocity(Vector3 worldPoint)
     {
         if (_rigidbody is null)
         {
             return Vector3.Zero;
         }
 
-        var radius = worldPoint - GameObject.WorldPosition;
-        var pointVelocity = _rigidbody.Velocity + Vector3.Cross(_rigidbody.AngularVelocity, radius);
-        return ClampMagnitude(pointVelocity, MathF.Max(maximumPointSpeed, 5.0f));
-    }
-
-    private float ForwardSpeedAbs()
-    {
-        if (_rigidbody is null)
-        {
-            return 0.0f;
-        }
-
-        var forwardAxis = SafeNormalize(GameObject.Forward, -Vector3.UnitZ);
-        return MathF.Abs(Vector3.Dot(_rigidbody.Velocity, forwardAxis));
-    }
-
-    private void ClampBodyVelocity()
-    {
-        if (_rigidbody is null)
-        {
-            return;
-        }
-
-        var failSafeSpeed = MathF.Max(maximumSpeed, 1.0f) * 1.45f;
-        if (_rigidbody.Velocity.LengthSquared() > failSafeSpeed * failSafeSpeed)
-        {
-            _rigidbody.Velocity = Vector3.Normalize(_rigidbody.Velocity) * failSafeSpeed;
-        }
-
-        const float maxAngularSpeed = 16.0f;
-        if (_rigidbody.AngularVelocity.LengthSquared() > maxAngularSpeed * maxAngularSpeed)
-        {
-            _rigidbody.AngularVelocity = Vector3.Normalize(_rigidbody.AngularVelocity) * maxAngularSpeed;
-        }
-    }
-
-    private void ApplyAeroAndAssists(float speed, float steerInput, float deltaTime)
-    {
-        if (_rigidbody is null)
-        {
-            return;
-        }
-
-        var velocity = _rigidbody.Velocity;
-        if (velocity.LengthSquared() > 0.01f)
-        {
-            var maxDownforce = _rigidbody.Mass * 9.81f * MathF.Max(maxDownforceMultiplier, 0.0f);
-            var downforceMagnitude = MathF.Min(downforce * speed * speed, maxDownforce);
-            _rigidbody.AddForce(Vector3.UnitY * -downforceMagnitude);
-
-            var maxSpeed = MathF.Max(maximumSpeed, 1.0f);
-            if (speed > maxSpeed)
-            {
-                var overspeed = speed - maxSpeed;
-                _rigidbody.AddForce(-Vector3.Normalize(velocity) * overspeed * overspeed * MathF.Max(overspeedDrag, 0.0f));
-            }
-        }
-
-        var right = SafeNormalize(GameObject.Right, Vector3.UnitX);
-        var forward = SafeNormalize(GameObject.Forward, -Vector3.UnitZ);
-        var up = SafeNormalize(Vector3.Cross(right, forward), Vector3.UnitY);
-        var uprightCorrection = Vector3.Cross(up, Vector3.UnitY) * uprightAssist;
-        var yawDamping = -Vector3.UnitY * _rigidbody.AngularVelocity.Y * yawAssist;
-        _rigidbody.AngularVelocity += (uprightCorrection + yawDamping) * deltaTime;
-        ApplyDriftSteerAssist(steerInput, deltaTime);
-
-        var highSpeedAmount = InverseLerp(highSpeedGripFadeStart, highSpeedGripFadeEnd, speed);
-        if (highSpeedAmount > 0.0f)
-        {
-            var pitchRollDamping = MathF.Exp(-highSpeedPitchRollDamping * highSpeedAmount * deltaTime);
-            var angularVelocity = _rigidbody.AngularVelocity;
-            _rigidbody.AngularVelocity = new Vector3(
-                angularVelocity.X * pitchRollDamping,
-                angularVelocity.Y,
-                angularVelocity.Z * pitchRollDamping);
-        }
-
-        if (_groundedWheelCount > 0 && _rigidbody.Velocity.Y > 0.0f)
-        {
-            var bodyVelocity = _rigidbody.Velocity;
-            var verticalDamping = MathF.Exp(-groundedUpwardVelocityDamping * deltaTime);
-            _rigidbody.Velocity = new Vector3(bodyVelocity.X, bodyVelocity.Y * verticalDamping, bodyVelocity.Z);
-        }
-    }
-
-    private void ApplyDriftSteerAssist(float steerInput, float deltaTime)
-    {
-        if (_rigidbody is null || _groundedWheelCount <= 0 || MathF.Abs(steerInput) <= 0.01f)
-        {
-            return;
-        }
-
-        var forward = SafeNormalize(GameObject.Forward, -Vector3.UnitZ);
-        var right = SafeNormalize(GameObject.Right, Vector3.UnitX);
-        var velocity = _rigidbody.Velocity;
-        var forwardSpeed = MathF.Abs(Vector3.Dot(velocity, forward));
-        var lateralSpeed = MathF.Abs(Vector3.Dot(velocity, right));
-        var planarSpeed = forwardSpeed + lateralSpeed;
-        if (planarSpeed <= 0.1f)
-        {
-            return;
-        }
-
-        var slipAmount = PlanarSlipAmount(forwardSpeed, lateralSpeed);
-        var assistAmount = SmoothStep(InverseLerp(driftAssistSlipStart, driftAssistSlipFull, slipAmount));
-        if (assistAmount <= 0.0f)
-        {
-            return;
-        }
-
-        var physicsSteer = steerInput * MathF.Sign(NonZero(physicsSteerDirection));
-        var targetYawRate = physicsSteer * MathF.Max(maxDriftYawRate, 0.0f);
-        var angularVelocity = _rigidbody.AngularVelocity;
-        var yawBlend = 1.0f - MathF.Exp(-MathF.Max(driftSteerAssist, 0.0f) * assistAmount * deltaTime);
-        angularVelocity.Y = Lerp(angularVelocity.Y, targetYawRate, yawBlend);
-        _rigidbody.AngularVelocity = angularVelocity;
-    }
-
-    private static float PlanarSlipAmount(float forwardSpeed, float lateralSpeed)
-    {
-        var planarSpeed = MathF.Abs(forwardSpeed) + MathF.Abs(lateralSpeed);
-        return planarSpeed <= 0.1f ? 0.0f : MathF.Abs(lateralSpeed) / planarSpeed;
-    }
-
-    private void ApplyAntiScrapeLift()
-    {
-        if (_rigidbody is null || _groundedWheelCount <= 0)
-        {
-            return;
-        }
-
-        var collider = GameObject.GetComponent<ColliderComponent>();
-        if (collider is null || collider.Shape != ColliderShape.Box)
-        {
-            return;
-        }
-
-        var bodyBottomWorldY = GameObject.WorldPosition.Y + collider.Center.Y - collider.Size.Y * 0.5f;
-        var groundY = float.MinValue;
-        var targetCompressionDistance = suspensionTravel * Math.Clamp(targetRideCompression, 0.0f, 1.0f);
-        foreach (var wheel in _wheels)
-        {
-            if (!wheel.Grounded || wheel.Anchor is null)
-            {
-                continue;
-            }
-
-            groundY = MathF.Max(groundY, wheel.Anchor.WorldPosition.Y + wheel.Compression * suspensionTravel - targetCompressionDistance - wheelRadius);
-        }
-
-        if (groundY == float.MinValue)
-        {
-            return;
-        }
-
-        var clearance = bodyBottomWorldY - groundY;
-        var targetClearance = MathF.Max(bodyColliderGroundClearance, 0.0f);
-        if (clearance >= targetClearance)
-        {
-            return;
-        }
-
-        var lift01 = Math.Clamp((targetClearance - clearance) / MathF.Max(targetClearance, 0.001f), 0.0f, 1.0f);
-        _rigidbody.AddForce(Vector3.UnitY * _rigidbody.Mass * 9.81f * MathF.Max(antiScrapeForceMultiplier, 0.0f) * lift01);
+        return _rigidbody.Velocity + Vector3.Cross(_rigidbody.AngularVelocity, worldPoint - GameObject.WorldPosition);
     }
 
     private void RecoverCar()
@@ -542,7 +590,8 @@ public sealed class RaycastVehicleController : ScriptBehaviour
         var rotation = GameObject.Rotation;
         GameObject.Rotation = new Vector3(0.0f, rotation.Y, 0.0f);
         _rigidbody.AngularVelocity = Vector3.Zero;
-        _rigidbody.AddImpulse(Vector3.UnitY * recoveryImpulse);
+        _rigidbody.Velocity = new Vector3(_rigidbody.Velocity.X, 0.0f, _rigidbody.Velocity.Z);
+        _rigidbody.AddImpulse(Vector3.UnitY * _rigidbody.Mass * 4.0f);
     }
 
     private void UpdateWheelVisuals(float deltaTime)
@@ -560,8 +609,7 @@ public sealed class RaycastVehicleController : ScriptBehaviour
                 wheel.Anchor.Rotation = wheel.BaseAnchorRotation + wheelSteerAxis * wheel.VisualSteerAngle;
             }
 
-            var targetCompressionDistance = suspensionTravel * Math.Clamp(targetRideCompression, 0.0f, 1.0f);
-            var localRise = wheel.Compression * suspensionTravel - targetCompressionDistance;
+            var localRise = wheel.Compression * suspensionTravel - rideHeight * suspensionTravel;
             wheel.Visual.Position = new Vector3(
                 wheel.BaseVisualPosition.X,
                 wheel.BaseVisualPosition.Y + localRise,
@@ -604,13 +652,9 @@ public sealed class RaycastVehicleController : ScriptBehaviour
             return Vector3.Zero;
         }
 
-        var lengthSquared = value.LengthSquared();
-        if (lengthSquared <= maxLength * maxLength)
-        {
-            return value;
-        }
-
-        return Vector3.Normalize(value) * maxLength;
+        return value.LengthSquared() > maxLength * maxLength
+            ? Vector3.Normalize(value) * maxLength
+            : value;
     }
 
     private static float Lerp(float from, float to, float amount)
@@ -622,11 +666,6 @@ public sealed class RaycastVehicleController : ScriptBehaviour
     {
         var t = Math.Clamp(value, 0.0f, 1.0f);
         return t * t * (3.0f - 2.0f * t);
-    }
-
-    private float ForceSmoothingAmount(float deltaTime)
-    {
-        return 1.0f - MathF.Exp(-MathF.Max(forceSmoothingSharpness, 0.0f) * deltaTime);
     }
 
     private static float InverseLerp(float from, float to, float value)
@@ -655,10 +694,86 @@ public sealed class RaycastVehicleController : ScriptBehaviour
         public float ForwardSpeed;
         public float VisualSteerAngle;
         public float SpinDegrees;
-        public Vector3 SmoothedSuspensionForce;
-        public Vector3 SmoothedTireForce;
         public Vector3 BaseAnchorRotation;
         public Vector3 BaseVisualPosition;
         public Vector3 BaseVisualRotation;
     }
+
+    private readonly struct DriveSplit
+    {
+        public DriveSplit(float front, float rear)
+        {
+            Front = front;
+            Rear = rear;
+        }
+
+        public float Front { get; }
+        public float Rear { get; }
+    }
+}
+
+public readonly struct VehicleTelemetry
+{
+    public VehicleTelemetry(
+        float speed,
+        float forwardSpeed,
+        float lateralSpeed,
+        float drivenWheelSpeed,
+        float drivenWheelRpm,
+        float engineRpm,
+        float engineRpm01,
+        int gear,
+        float throttle,
+        float brake,
+        float steering,
+        bool handbrake,
+        int groundedWheelCount,
+        float lateralSlip,
+        float longitudinalSlip,
+        float tyreSmoke,
+        int drivetrain,
+        float frontDriveShare,
+        float rearDriveShare)
+    {
+        Speed = speed;
+        ForwardSpeed = forwardSpeed;
+        LateralSpeed = lateralSpeed;
+        DrivenWheelSpeed = drivenWheelSpeed;
+        DrivenWheelRpm = drivenWheelRpm;
+        EngineRpm = engineRpm;
+        EngineRpm01 = engineRpm01;
+        Gear = gear;
+        Throttle = throttle;
+        Brake = brake;
+        Steering = steering;
+        Handbrake = handbrake;
+        GroundedWheelCount = groundedWheelCount;
+        LateralSlip = lateralSlip;
+        LongitudinalSlip = longitudinalSlip;
+        TyreSmoke = tyreSmoke;
+        Drivetrain = drivetrain;
+        FrontDriveShare = frontDriveShare;
+        RearDriveShare = rearDriveShare;
+    }
+
+    public float Speed { get; }
+    public float ForwardSpeed { get; }
+    public float LateralSpeed { get; }
+    public float DrivenWheelSpeed { get; }
+    public float DrivenWheelRpm { get; }
+    public float EngineRpm { get; }
+    public float EngineRpm01 { get; }
+    public int Gear { get; }
+    public float Throttle { get; }
+    public float Brake { get; }
+    public float Steering { get; }
+    public bool Handbrake { get; }
+    public int GroundedWheelCount { get; }
+    public float LateralSlip { get; }
+    public float LongitudinalSlip { get; }
+    public float TyreSmoke { get; }
+    public int Drivetrain { get; }
+    public float FrontDriveShare { get; }
+    public float RearDriveShare { get; }
+    public bool IsGrounded => GroundedWheelCount > 0;
 }

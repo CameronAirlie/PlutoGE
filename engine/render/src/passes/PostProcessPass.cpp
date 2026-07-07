@@ -1,6 +1,7 @@
 #include "PlutoGE/render/passes/PostProcessPass.h"
 
 #include "PlutoGE/render/postprocess/IPostProcessEffect.h"
+#include "PlutoGE/render/postprocess/SSAOEffect.h"
 #include "PlutoGE/render/RenderTarget.h"
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
@@ -14,6 +15,11 @@ namespace PlutoGE::render
         bool IsLightingManagedEffect(const IPostProcessEffect *effect)
         {
             return effect && (effect->GetTypeName() == "SSGI" || effect->GetTypeName() == "LPV" || effect->GetTypeName() == "RSM");
+        }
+
+        bool IsPreParticleEffect(const IPostProcessEffect *effect)
+        {
+            return dynamic_cast<const SSAOEffect *>(effect) != nullptr;
         }
 
         void BlitColorBuffer(RenderTarget *source, RenderTarget *destination)
@@ -61,7 +67,7 @@ namespace PlutoGE::render
         size_t enabledEffectCount = 0;
         for (const auto &effect : effects)
         {
-            if (effect && effect->IsEnabled() && !IsLightingManagedEffect(effect))
+            if (effect && effect->IsEnabled() && !IsLightingManagedEffect(effect) && !IsPreParticleEffect(effect))
             {
                 ++enabledEffectCount;
             }
@@ -82,7 +88,7 @@ namespace PlutoGE::render
         for (size_t index = 0; index < effects.size(); ++index)
         {
             auto *effect = effects[index];
-            if (!effect || !effect->IsEnabled() || IsLightingManagedEffect(effect))
+            if (!effect || !effect->IsEnabled() || IsLightingManagedEffect(effect) || IsPreParticleEffect(effect))
             {
                 continue;
             }

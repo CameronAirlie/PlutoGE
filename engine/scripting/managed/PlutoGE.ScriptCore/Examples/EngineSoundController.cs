@@ -6,7 +6,7 @@ namespace PlutoGE.ScriptCore.Examples;
 
 /// <summary>
 /// Simple automatic engine audio controller. Attach this to an entity with a SoundEmitterComponent,
-/// assign a target vehicle object, and it will derive gear, RPM, engine sound, and tyre screech from rigidbody motion.
+/// assign a target vehicle object, and it will use vehicle telemetry for RPM, load, gear, and tyre screech.
 /// </summary>
 public sealed class EngineSoundController : ScriptBehaviour
 {
@@ -14,6 +14,7 @@ public sealed class EngineSoundController : ScriptBehaviour
     [SerializedField] private GameObject? engineEmitterObject = null;
     [SerializedField] private GameObject? tyreScreechEmitterObject = null;
     [SerializedField] private bool playOnCreate = true;
+    [SerializedField] private bool preferVehicleTelemetry = true;
     [SerializedField] private bool usePlanarSpeed = true;
     [SerializedField] private float wheelRadius = 0.34f;
     [SerializedField] private float finalDriveRatio = 3.9f;
@@ -37,6 +38,8 @@ public sealed class EngineSoundController : ScriptBehaviour
     [SerializedField] private float tyreSlipThreshold = 0.18f;
     [SerializedField] private float tyreSlipFull = 0.95f;
     [SerializedField] private float minimumScreechSpeed = 7.5f;
+    [SerializedField] private float wheelSpinScreechThreshold = 2.0f;
+    [SerializedField] private float minimumTelemetryScreech = 0.08f;
     [SerializedField] private float screechVolume = 0.9f;
     [SerializedField] private float screechPitchLow = 0.9f;
     [SerializedField] private float screechPitchHigh = 1.3f;
@@ -89,6 +92,22 @@ public sealed class EngineSoundController : ScriptBehaviour
         }
 
         var targetObject = target ?? GameObject;
+        if (preferVehicleTelemetry && RaycastVehicleController.TryGetTelemetry(targetObject, out var telemetry))
+        {
+            _currentGear = telemetry.Gear;
+            var telemetryRpmAmount = 1.0f - MathF.Exp(-MathF.Max(rpmResponse, 0.0f) * deltaTime);
+            _smoothedRpm = Lerp(_smoothedRpm, MathF.Max(telemetry.EngineRpm, idleRpm), telemetryRpmAmount);
+
+            var telemetryRpm01 = telemetry.EngineRpm01 > 0.0f
+                ? telemetry.EngineRpm01
+                : SafeInverseLerp(MathF.Max(idleRpm, 0.0f), MathF.Max(redlineRpm, idleRpm + 100.0f), _smoothedRpm);
+            var telemetryLoad01 = Math.Clamp(MathF.Max(telemetry.Throttle, MathF.Abs(telemetry.ForwardSpeed) / MathF.Max(telemetry.Speed, 1.0f)), 0.0f, 1.0f);
+
+            UpdateEngineEmitter(telemetryRpm01, telemetryLoad01, telemetryRpmAmount);
+            UpdateTyreScreech(GetTelemetryTyreScreechAmount(telemetry), deltaTime);
+            return;
+        }
+
         var velocity = _rigidbody.Velocity;
         var speed = usePlanarSpeed
             ? new Vector2(velocity.X, velocity.Z).Length()
@@ -120,9 +139,22 @@ public sealed class EngineSoundController : ScriptBehaviour
 
         var rpm01 = SafeInverseLerp(MathF.Max(idleRpm, 0.0f), MathF.Max(redlineRpm, idleRpm + 100.0f), _smoothedRpm);
         var load01 = SafeInverseLerp(0.0f, 1.0f, MathF.Abs(signedDriveSpeed) / MathF.Max(ComputeTopSpeedForGear(_currentGear), 0.01f));
-        var targetPitch = Lerp(Math.Clamp(enginePitchAtIdle, 0.25f, 4.0f), Math.Clamp(enginePitchAtRedline, 0.25f, 4.0f), EaseOut(rpm01));
-        var targetVolume = Lerp(Math.Max(engineVolumeAtIdle, 0.0f), Math.Max(engineVolumeAtRedline, 0.0f), MathF.Sqrt(rpm01));
-        targetVolume += load01 * MathF.Max(loadVolumeBoost, 0.0f);
+        UpdateEngineEmitter(rpm01, load01, rpmAmount);
+
+        UpdateTyreScreech(speed, MathF.Abs(forwardSpeed), MathF.Abs(lateralSpeed), deltaTime);
+    }
+
+    private void UpdateEngineEmitter(float rpm01, float load01, float rpmAmount)
+    {
+        if (_engineEmitter is null)
+        {
+            return;
+        }
+
+        var clampedRpm01 = Math.Clamp(rpm01, 0.0f, 1.0f);
+        var targetPitch = Lerp(Math.Clamp(enginePitchAtIdle, 0.25f, 4.0f), Math.Clamp(enginePitchAtRedline, 0.25f, 4.0f), EaseOut(clampedRpm01));
+        var targetVolume = Lerp(Math.Max(engineVolumeAtIdle, 0.0f), Math.Max(engineVolumeAtRedline, 0.0f), MathF.Sqrt(clampedRpm01));
+        targetVolume += Math.Clamp(load01, 0.0f, 1.0f) * MathF.Max(loadVolumeBoost, 0.0f);
 
         _smoothedEnginePitch = Lerp(_smoothedEnginePitch, targetPitch, rpmAmount);
         _smoothedEngineVolume = Lerp(_smoothedEngineVolume, targetVolume, rpmAmount);
@@ -130,8 +162,6 @@ public sealed class EngineSoundController : ScriptBehaviour
         _engineEmitter.Pitch = _smoothedEnginePitch;
         _engineEmitter.Volume = _smoothedEngineVolume;
         EnsurePlaying(_engineEmitter);
-
-        UpdateTyreScreech(speed, MathF.Abs(forwardSpeed), MathF.Abs(lateralSpeed), deltaTime);
     }
 
     private void UpdateGear(float signedDriveSpeed)
@@ -174,8 +204,33 @@ public sealed class EngineSoundController : ScriptBehaviour
         var screechAmount = SafeInverseLerp(MathF.Max(tyreSlipThreshold, 0.0f), MathF.Max(tyreSlipFull, tyreSlipThreshold + 0.01f), slipRatio);
         screechAmount *= speedGate;
 
+        UpdateTyreScreech(screechAmount, deltaTime);
+    }
+
+    private float GetTelemetryTyreScreechAmount(VehicleTelemetry telemetry)
+    {
+        var wheelSpinSpeed = MathF.Abs(telemetry.DrivenWheelSpeed);
+        var vehicleSpeed = MathF.Abs(telemetry.ForwardSpeed);
+        var spinningFasterThanMoving = wheelSpinSpeed > vehicleSpeed + MathF.Max(wheelSpinScreechThreshold, 0.0f);
+        if (!telemetry.IsGrounded ||
+            !spinningFasterThanMoving ||
+            telemetry.TyreSmoke < MathF.Max(minimumTelemetryScreech, 0.0f))
+        {
+            return 0.0f;
+        }
+
+        return Math.Clamp(telemetry.TyreSmoke, 0.0f, 1.0f);
+    }
+
+    private void UpdateTyreScreech(float screechAmount, float deltaTime)
+    {
+        if (_tyreEmitter is null)
+        {
+            return;
+        }
+
         var screechLerp = 1.0f - MathF.Exp(-MathF.Max(screechResponse, 0.0f) * deltaTime);
-        _smoothedScreechAmount = Lerp(_smoothedScreechAmount, screechAmount, screechLerp);
+        _smoothedScreechAmount = Lerp(_smoothedScreechAmount, Math.Clamp(screechAmount, 0.0f, 1.0f), screechLerp);
         _tyreEmitter.Volume = _smoothedScreechAmount * MathF.Max(screechVolume, 0.0f);
         _tyreEmitter.Pitch = Lerp(Math.Clamp(screechPitchLow, 0.25f, 4.0f), Math.Clamp(screechPitchHigh, 0.25f, 4.0f), _smoothedScreechAmount);
 

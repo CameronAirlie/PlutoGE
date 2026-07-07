@@ -909,8 +909,8 @@ namespace PlutoGE::render
             CollectUIQuads(rootEntity,
                            ActiveCanvas{},
                            viewportSize,
-                           ctx.cameraData.view,
-                           ctx.cameraData.projection,
+                           ctx.unjitteredCameraData.view,
+                           ctx.unjitteredCameraData.projection,
                            quads,
                            textRuns);
         }

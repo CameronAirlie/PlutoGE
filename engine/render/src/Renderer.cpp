@@ -19,6 +19,7 @@
 #include "PlutoGE/render/passes/TransparentPass.h"
 #include "PlutoGE/render/passes/VolumetricCloudPass.h"
 #include "PlutoGE/render/postprocess/IPostProcessEffect.h"
+#include "PlutoGE/render/postprocess/SSAOEffect.h"
 #include "PlutoGE/render/postprocess/TAAEffect.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/VolumetricCloudComponent.h"
@@ -197,6 +198,23 @@ namespace PlutoGE::render
             return renderTarget->Resize(width, height);
         }
 
+        void BlitColorBuffer(RenderTarget *source, RenderTarget *destination)
+        {
+            if (!source || !destination)
+            {
+                return;
+            }
+
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, source->GetFramebufferID());
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, destination->GetFramebufferID());
+            glBlitFramebuffer(
+                0, 0, source->GetWidth(), source->GetHeight(),
+                0, 0, destination->GetWidth(), destination->GetHeight(),
+                GL_COLOR_BUFFER_BIT,
+                GL_NEAREST);
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        }
+
         TAAEffect *FindActiveTAAEffect(const std::vector<IPostProcessEffect *> *postProcessEffects)
         {
             if (!postProcessEffects)
@@ -218,6 +236,36 @@ namespace PlutoGE::render
             }
 
             return nullptr;
+        }
+
+        void ApplyAmbientOcclusionBeforeParticles(const RenderContext &ctx)
+        {
+            if (!ctx.postProcessEffects || !ctx.temporaryRenderTarget || !ctx.postProcessIntermediateRenderTarget)
+            {
+                return;
+            }
+
+            for (auto *effect : *ctx.postProcessEffects)
+            {
+                auto *ssaoEffect = dynamic_cast<SSAOEffect *>(effect);
+                if (!ssaoEffect || !ssaoEffect->IsEnabled())
+                {
+                    continue;
+                }
+
+                const bool gpuTimingActive = ctx.renderer && ctx.renderer->BeginPostProcessEffectTiming(ssaoEffect->GetTypeName());
+                ssaoEffect->Apply(PostProcessContext{
+                    .renderContext = ctx,
+                    .sourceRenderTarget = ctx.temporaryRenderTarget,
+                    .destinationRenderTarget = ctx.postProcessIntermediateRenderTarget,
+                });
+                if (gpuTimingActive)
+                {
+                    ctx.renderer->EndPostProcessEffectTiming();
+                }
+
+                BlitColorBuffer(ctx.postProcessIntermediateRenderTarget, ctx.temporaryRenderTarget);
+            }
         }
 
         void ExpandCaptureFarPlaneForClouds(const scene::Entity *entity,
@@ -603,6 +651,7 @@ namespace PlutoGE::render
         RenderContext ctx{
             .renderer = this,
             .cameraData = activeCameraData,
+            .unjitteredCameraData = cameraData,
             .previousCameraData = frameResources->previousCameraData,
             .hasCameraData = true,
             .hasPreviousCameraData = frameResources->hasPreviousCameraData,
@@ -643,6 +692,11 @@ namespace PlutoGE::render
 
         for (std::size_t index = 0; index < m_renderPasses.size(); ++index)
         {
+            if (std::string_view(m_renderPasses[index]->GetName()) == "Particles")
+            {
+                ApplyAmbientOcclusionBeforeParticles(ctx);
+            }
+
             ExecutePassWithGpuTiming(*m_renderPasses[index], ctx, index + 1);
         }
 

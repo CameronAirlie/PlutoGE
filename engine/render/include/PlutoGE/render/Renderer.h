@@ -141,6 +141,7 @@ namespace PlutoGE::render
     {
         Renderer *renderer = nullptr;
         CameraData cameraData; // Camera data for the current frame
+        CameraData unjitteredCameraData;
         CameraData previousCameraData;
         bool hasCameraData = false;
         bool hasPreviousCameraData = false;

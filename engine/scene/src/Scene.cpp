@@ -21,6 +21,7 @@
 #include <BulletCollision/CollisionShapes/btTriangleMesh.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -141,6 +142,57 @@ namespace PlutoGE::scene
             }
 
             return value / std::sqrt(lengthSquared);
+        }
+
+        float ComputeAudioOcclusion(const Scene &scene,
+                                    const audio::ListenerState &listenerState,
+                                    const glm::vec3 &emitterPosition,
+                                    EntityID emitterEntityId,
+                                    EntityID listenerEntityId)
+        {
+            const glm::vec3 emitterOffset = emitterPosition - listenerState.position;
+            const float distance = glm::length(emitterOffset);
+            if (!listenerState.active || distance <= 0.05f)
+            {
+                return 0.0f;
+            }
+
+            const glm::vec3 direction = emitterOffset / distance;
+            const glm::vec3 right = SafeNormalize(glm::cross(listenerState.forward, listenerState.up), glm::vec3(1.0f, 0.0f, 0.0f));
+            const glm::vec3 up = SafeNormalize(listenerState.up, glm::vec3(0.0f, 1.0f, 0.0f));
+            const float spread = std::clamp(distance * 0.035f, 0.08f, 0.45f);
+            const std::array<glm::vec3, 5> listenerOffsets{
+                glm::vec3(0.0f),
+                right * spread,
+                -right * spread,
+                up * spread,
+                -up * spread,
+            };
+
+            float blockedWeight = 0.0f;
+            float totalWeight = 0.0f;
+            for (std::size_t index = 0; index < listenerOffsets.size(); ++index)
+            {
+                const float sampleWeight = index == 0 ? 1.5f : 1.0f;
+                totalWeight += sampleWeight;
+
+                PhysicsRaycastHit hit;
+                if (scene.Raycast(listenerState.position + listenerOffsets[index], direction, distance, hit, emitterEntityId) &&
+                    hit.entityId != 0 &&
+                    hit.entityId != listenerEntityId)
+                {
+                    blockedWeight += sampleWeight;
+                }
+            }
+
+            const float blockedRatio = totalWeight > 0.0f ? blockedWeight / totalWeight : 0.0f;
+            if (blockedRatio <= 0.0f)
+            {
+                return 0.0f;
+            }
+
+            const float distanceReinforcement = std::clamp(distance / 18.0f, 0.0f, 1.0f) * 0.18f;
+            return std::clamp(0.25f + blockedRatio * 0.62f + distanceReinforcement, 0.0f, 1.0f);
         }
 
         struct UIRect
@@ -1601,18 +1653,14 @@ namespace PlutoGE::scene
 
                 if (listenerState.active && emitterState.spatialized)
                 {
-                    const glm::vec3 direction = emitterState.position - listenerState.position;
-                    const float distance = glm::length(direction);
-                    if (distance > 0.05f)
-                    {
-                        PhysicsRaycastHit hit;
-                        if (Raycast(listenerState.position, direction / distance, distance, hit, owner->GetID()) &&
-                            hit.entityId != 0 &&
-                            (!listenerComponent || !listenerComponent->GetOwner() || hit.entityId != listenerComponent->GetOwner()->GetID()))
-                        {
-                            emitterState.occlusion = 1.0f;
-                        }
-                    }
+                    const EntityID listenerEntityId = listenerComponent && listenerComponent->GetOwner()
+                                                          ? listenerComponent->GetOwner()->GetID()
+                                                          : 0;
+                    emitterState.occlusion = ComputeAudioOcclusion(*this,
+                                                                    listenerState,
+                                                                    emitterState.position,
+                                                                    owner->GetID(),
+                                                                    listenerEntityId);
                 }
 
                 emitterStates.push_back(std::move(emitterState));

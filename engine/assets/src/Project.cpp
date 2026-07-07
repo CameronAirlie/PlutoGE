@@ -343,6 +343,56 @@ namespace PlutoGE::assets
 
             return true;
         }
+
+        bool CopyRuntimeSidecarFiles(const std::filesystem::path &runtimeExecutablePath,
+                                     const std::filesystem::path &destinationDirectory,
+                                     std::string *errorMessage)
+        {
+            const auto sourceDirectory = runtimeExecutablePath.parent_path();
+            std::error_code errorCode;
+            for (std::filesystem::directory_iterator iterator(sourceDirectory, std::filesystem::directory_options::skip_permission_denied, errorCode), end;
+                 iterator != end;
+                 iterator.increment(errorCode))
+            {
+                if (errorCode)
+                {
+                    SetError(errorMessage, "Failed while enumerating runtime dependencies in: " + PathToUtf8String(sourceDirectory));
+                    return false;
+                }
+
+                std::error_code statusErrorCode;
+                if (!iterator->is_regular_file(statusErrorCode))
+                {
+                    continue;
+                }
+
+                const auto sourcePath = iterator->path();
+                if (NormalizeAbsolutePath(sourcePath) == NormalizeAbsolutePath(runtimeExecutablePath))
+                {
+                    continue;
+                }
+
+                const auto extension = sourcePath.extension().string();
+                if (extension != ".dll" && extension != ".DLL")
+                {
+                    continue;
+                }
+
+                const auto destinationPath = destinationDirectory / sourcePath.filename();
+                errorCode.clear();
+                std::filesystem::copy_file(sourcePath,
+                                           destinationPath,
+                                           std::filesystem::copy_options::overwrite_existing,
+                                           errorCode);
+                if (errorCode)
+                {
+                    SetError(errorMessage, "Failed to copy runtime dependency: " + PathToUtf8String(sourcePath) + " (" + errorCode.message() + ")");
+                    return false;
+                }
+            }
+
+            return true;
+        }
     }
 
     Project::Project(std::filesystem::path manifestPath, ProjectManifest manifest)
@@ -1033,6 +1083,11 @@ namespace PlutoGE::assets
         if (errorCode)
         {
             SetError(errorMessage, "Failed to copy runtime executable into export directory.");
+            return false;
+        }
+
+        if (!CopyRuntimeSidecarFiles(normalizedRuntimeExecutablePath, normalizedDestinationExecutablePath.parent_path(), errorMessage))
+        {
             return false;
         }
 

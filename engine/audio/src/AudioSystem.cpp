@@ -416,8 +416,16 @@ namespace PlutoGE::audio
         float gain = std::max(emitter.volume, 0.0f);
         if (emitter.spatialized && listener.active && voice.channels == 1)
         {
-            gain *= ComputeAttenuation(emitter, glm::distance(listener.position, emitter.position));
-            gain *= 1.0f - 0.65f * std::clamp(emitter.occlusion, 0.0f, 1.0f);
+            const float distance = glm::distance(listener.position, emitter.position);
+            const float attenuation = ComputeAttenuation(emitter, distance);
+            const float distanceRange = (std::max)(0.001f, emitter.maxDistance - emitter.minDistance);
+            const float targetAirAbsorption = std::clamp((distance - emitter.minDistance) / distanceRange, 0.0f, 1.0f);
+            const float targetOcclusion = std::clamp(emitter.occlusion, 0.0f, 1.0f);
+            voice.smoothedOcclusion += (targetOcclusion - voice.smoothedOcclusion) * 0.18f;
+            voice.smoothedAirAbsorption += (targetAirAbsorption - voice.smoothedAirAbsorption) * 0.08f;
+
+            gain *= attenuation;
+            gain *= 1.0f - 0.65f * voice.smoothedOcclusion;
             gain *= std::max(listener.masterVolume, 0.0f);
 
             std::vector<float> matrix(static_cast<std::size_t>(m_outputChannels), 0.0f);
@@ -440,7 +448,8 @@ namespace PlutoGE::audio
             XAUDIO2_FILTER_PARAMETERS filterParameters{};
             filterParameters.Type = LowPassFilter;
             filterParameters.OneOverQ = 1.0f;
-            filterParameters.Frequency = std::clamp(1.0f - 0.55f * emitter.occlusion, XAUDIO2_MIN_FREQ_RATIO, XAUDIO2_MAX_FREQ_RATIO);
+            const float environmentalDamping = std::clamp(0.55f * voice.smoothedOcclusion + 0.20f * voice.smoothedAirAbsorption, 0.0f, 0.85f);
+            filterParameters.Frequency = std::clamp(1.0f - environmentalDamping, XAUDIO2_MIN_FREQ_RATIO, XAUDIO2_MAX_FREQ_RATIO);
             sourceVoice->SetFilterParameters(&filterParameters);
             return;
         }
@@ -576,6 +585,7 @@ namespace PlutoGE::audio
                                                                        .paused = emitter.paused,
                                                                        .looping = emitter.looping,
                                                                        .spatialized = emitter.spatialized,
+                                                                       .smoothedOcclusion = std::clamp(emitter.occlusion, 0.0f, 1.0f),
                                                                    })
                                    .first;
             }

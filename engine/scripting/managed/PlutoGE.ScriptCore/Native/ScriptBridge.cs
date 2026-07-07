@@ -312,13 +312,34 @@ internal static unsafe class ScriptBridge
                 ResetLoadedAssembly();
 
                 var fullPath = Path.GetFullPath(assemblyPath);
-                _loadContext = new ScriptLoadContext(fullPath);
-                _loadedAssembly = _loadContext.LoadFromAssemblyPath(fullPath);
+                var builtinAssembly = typeof(ScriptBehaviour).Assembly;
+                var isBuiltinAssembly = string.Equals(
+                    Path.GetFullPath(builtinAssembly.Location),
+                    fullPath,
+                    StringComparison.OrdinalIgnoreCase);
+
+                if (isBuiltinAssembly)
+                {
+                    _loadedAssembly = builtinAssembly;
+                }
+                else
+                {
+                    _loadContext = new ScriptLoadContext(fullPath);
+                    _loadedAssembly = _loadContext.LoadFromAssemblyPath(fullPath);
+                }
 
                 ScriptClasses.Clear();
-                foreach (var scriptClass in DiscoverScriptClasses(_loadedAssembly))
+                foreach (var scriptClass in DiscoverBuiltinScriptClasses())
                 {
                     ScriptClasses[scriptClass.FullName] = scriptClass;
+                }
+
+                if (!isBuiltinAssembly)
+                {
+                    foreach (var scriptClass in DiscoverScriptClasses(_loadedAssembly))
+                    {
+                        ScriptClasses[scriptClass.FullName] = scriptClass;
+                    }
                 }
 
                 _lastError = string.Empty;
@@ -329,6 +350,17 @@ internal static unsafe class ScriptBridge
         {
             SetError(exception.ToString());
             return 0;
+        }
+    }
+
+    private static IEnumerable<ScriptClassMetadata> DiscoverBuiltinScriptClasses()
+    {
+        foreach (var scriptClass in DiscoverScriptClasses(typeof(ScriptBehaviour).Assembly))
+        {
+            if (scriptClass.FullName.StartsWith("PlutoGE.ScriptCore.Examples.", StringComparison.Ordinal))
+            {
+                yield return scriptClass;
+            }
         }
     }
 

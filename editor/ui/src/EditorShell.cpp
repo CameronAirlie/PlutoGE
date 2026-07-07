@@ -279,6 +279,31 @@ namespace PlutoGE::ui
             return {};
         }
 
+        std::filesystem::path FindScriptCoreAssemblyPath(const std::filesystem::path &searchRoot)
+        {
+            const auto scriptCoreProjectPath = FindScriptCoreProjectPath(searchRoot);
+            if (scriptCoreProjectPath.empty())
+            {
+                return {};
+            }
+
+            const auto scriptCoreDirectory = scriptCoreProjectPath.parent_path();
+            const std::array<std::filesystem::path, 2> candidates{
+                scriptCoreDirectory / "bin" / "Debug" / "net8.0" / "PlutoGE.ScriptCore.dll",
+                scriptCoreDirectory / "bin" / "Release" / "net8.0" / "PlutoGE.ScriptCore.dll",
+            };
+
+            for (const auto &candidate : candidates)
+            {
+                if (std::filesystem::exists(candidate))
+                {
+                    return candidate.lexically_normal();
+                }
+            }
+
+            return {};
+        }
+
         std::string MakeRelativeOrAbsoluteGenericPath(const std::filesystem::path &targetPath, const std::filesystem::path &basePath)
         {
             std::error_code errorCode;
@@ -321,6 +346,42 @@ namespace PlutoGE::ui
                 if (errorMessage)
                 {
                     *errorMessage = "Failed to write file: " + filePath.string();
+                }
+                return false;
+            }
+
+            return true;
+        }
+
+        bool CopyFileIfExists(const std::filesystem::path &sourcePath,
+                              const std::filesystem::path &destinationPath,
+                              std::string *errorMessage)
+        {
+            if (!std::filesystem::exists(sourcePath))
+            {
+                return true;
+            }
+
+            std::error_code errorCode;
+            std::filesystem::create_directories(destinationPath.parent_path(), errorCode);
+            if (errorCode)
+            {
+                if (errorMessage)
+                {
+                    *errorMessage = "Failed to create SDK directory: " + destinationPath.parent_path().string();
+                }
+                return false;
+            }
+
+            std::filesystem::copy_file(sourcePath,
+                                       destinationPath,
+                                       std::filesystem::copy_options::overwrite_existing,
+                                       errorCode);
+            if (errorCode)
+            {
+                if (errorMessage)
+                {
+                    *errorMessage = "Failed to copy SDK file: " + sourcePath.string();
                 }
                 return false;
             }
@@ -1101,6 +1162,12 @@ namespace PlutoGE::ui
         const auto assemblyPath = ResolveProjectScriptAssemblyPath();
         if (!m_project || assemblyPath.empty())
         {
+            const auto scriptCoreAssemblyPath = FindScriptCoreAssemblyPath(GetProcessDirectory());
+            if (!scriptCoreAssemblyPath.empty())
+            {
+                (void)scriptEngine.LoadAssembly(scriptCoreAssemblyPath);
+            }
+
             if (wasRuntimeRunning)
             {
                 m_engine.StartRuntime();
@@ -1111,6 +1178,22 @@ namespace PlutoGE::ui
 
         if (!std::filesystem::exists(assemblyPath))
         {
+            const auto scriptCoreAssemblyPath = FindScriptCoreAssemblyPath(GetProcessDirectory());
+            if (!scriptCoreAssemblyPath.empty() && scriptEngine.LoadAssembly(scriptCoreAssemblyPath))
+            {
+                if (errorMessage)
+                {
+                    errorMessage->clear();
+                }
+
+                if (wasRuntimeRunning)
+                {
+                    m_engine.StartRuntime();
+                }
+
+                return true;
+            }
+
             if (errorMessage)
             {
                 *errorMessage = "Project script assembly was not found: " + assemblyPath.string();
@@ -2088,8 +2171,131 @@ namespace PlutoGE::ui
             return false;
         }
 
+        if (!ExportScriptAuthoringSdk(destinationExecutablePath, &errorMessage))
+        {
+            m_statusMessage = errorMessage.empty() ? "Built project but failed to export the script SDK." : errorMessage;
+            return false;
+        }
+
         m_statusMessage = "Built project: " + std::filesystem::path(destinationExecutablePath).filename().string();
         return true;
+    }
+
+    bool EditorShell::ExportScriptAuthoringSdk(const std::filesystem::path &destinationExecutablePath, std::string *errorMessage) const
+    {
+        if (!m_project)
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "No project loaded.";
+            }
+            return false;
+        }
+
+        const auto scriptCoreAssemblyPath = FindScriptCoreAssemblyPath(GetProcessDirectory());
+        if (scriptCoreAssemblyPath.empty())
+        {
+            if (errorMessage)
+            {
+                *errorMessage = "Could not locate PlutoGE.ScriptCore.dll for the exported script SDK.";
+            }
+            return false;
+        }
+
+        const auto scriptCoreDirectory = scriptCoreAssemblyPath.parent_path();
+        const auto exportDirectory = std::filesystem::absolute(destinationExecutablePath).lexically_normal().parent_path();
+        const auto sdkDirectory = exportDirectory / "Sdk";
+        const auto sdkReferenceDirectory = sdkDirectory / "PlutoGE.ScriptCore";
+
+        const std::array<std::filesystem::path, 5> sdkFiles{
+            scriptCoreDirectory / "PlutoGE.ScriptCore.dll",
+            scriptCoreDirectory / "PlutoGE.ScriptCore.xml",
+            scriptCoreDirectory / "PlutoGE.ScriptCore.pdb",
+            scriptCoreDirectory / "PlutoGE.ScriptCore.deps.json",
+            scriptCoreDirectory / "PlutoGE.ScriptCore.runtimeconfig.json",
+        };
+
+        for (const auto &sdkFile : sdkFiles)
+        {
+            if (!CopyFileIfExists(sdkFile, sdkReferenceDirectory / sdkFile.filename(), errorMessage))
+            {
+                return false;
+            }
+        }
+
+        const auto executableName = destinationExecutablePath.filename().generic_string();
+        const auto manifestName = assets::GetRuntimeManifestPathForExecutable(destinationExecutablePath).filename().generic_string();
+        const auto projectRoot = std::filesystem::absolute(m_project->GetRootDirectory()).lexically_normal();
+        const auto scriptSourceDirectory = std::filesystem::absolute(GetProjectScriptSourceDirectory()).lexically_normal();
+        const auto scriptOutputDirectory = exportDirectory / m_project->GetManifest().assetDirectory / std::filesystem::path(kDefaultProjectManagedDirectory);
+        const std::string sourcePattern = MakeRelativeOrAbsoluteGenericPath(scriptSourceDirectory, sdkDirectory) + "/**/*.cs";
+        const std::string outputPath = MakeRelativeOrAbsoluteGenericPath(scriptOutputDirectory, sdkDirectory);
+
+        std::string rootNamespace = SanitizeIdentifier(m_project->GetManifest().name);
+        if (rootNamespace.empty())
+        {
+            rootNamespace = "PlutoGEProject";
+        }
+
+        std::string propsContent;
+        propsContent += "<Project>\n";
+        propsContent += "  <ItemGroup>\n";
+        propsContent += "    <Reference Include=\"PlutoGE.ScriptCore\">\n";
+        propsContent += "      <HintPath>PlutoGE.ScriptCore/PlutoGE.ScriptCore.dll</HintPath>\n";
+        propsContent += "      <Private>false</Private>\n";
+        propsContent += "    </Reference>\n";
+        propsContent += "  </ItemGroup>\n";
+        propsContent += "</Project>\n";
+
+        if (!WriteTextFile(sdkDirectory / "PlutoGE.ScriptCore.props", propsContent, errorMessage))
+        {
+            return false;
+        }
+
+        std::string scriptProjectContent;
+        scriptProjectContent += "<Project Sdk=\"Microsoft.NET.Sdk\">\n";
+        scriptProjectContent += "  <Import Project=\"PlutoGE.ScriptCore.props\" />\n";
+        scriptProjectContent += "  <PropertyGroup>\n";
+        scriptProjectContent += "    <TargetFramework>net8.0</TargetFramework>\n";
+        scriptProjectContent += "    <ImplicitUsings>enable</ImplicitUsings>\n";
+        scriptProjectContent += "    <Nullable>enable</Nullable>\n";
+        scriptProjectContent += "    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>\n";
+        scriptProjectContent += "    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>\n";
+        scriptProjectContent += "    <AssemblyName>" + rootNamespace + ".Scripts</AssemblyName>\n";
+        scriptProjectContent += "    <RootNamespace>" + rootNamespace + ".Scripts</RootNamespace>\n";
+        scriptProjectContent += "    <OutputPath>" + outputPath + "/</OutputPath>\n";
+        scriptProjectContent += "    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>\n";
+        scriptProjectContent += "    <StartAction>Program</StartAction>\n";
+        scriptProjectContent += "    <StartProgram>../" + executableName + "</StartProgram>\n";
+        scriptProjectContent += "    <StartArguments>../" + manifestName + "</StartArguments>\n";
+        scriptProjectContent += "    <StartWorkingDirectory>..</StartWorkingDirectory>\n";
+        scriptProjectContent += "  </PropertyGroup>\n";
+        scriptProjectContent += "  <ItemGroup>\n";
+        scriptProjectContent += "    <Compile Include=\"" + sourcePattern + "\" />\n";
+        scriptProjectContent += "  </ItemGroup>\n";
+        scriptProjectContent += "  <Target Name=\"CopyScriptCoreRuntimeFiles\" AfterTargets=\"Build\">\n";
+        scriptProjectContent += "    <ItemGroup>\n";
+        scriptProjectContent += "      <ScriptCoreRuntimeFiles Include=\"PlutoGE.ScriptCore/PlutoGE.ScriptCore.dll\" />\n";
+        scriptProjectContent += "      <ScriptCoreRuntimeFiles Include=\"PlutoGE.ScriptCore/PlutoGE.ScriptCore.runtimeconfig.json\" />\n";
+        scriptProjectContent += "      <ScriptCoreRuntimeFiles Include=\"PlutoGE.ScriptCore/PlutoGE.ScriptCore.deps.json\" Condition=\"Exists('PlutoGE.ScriptCore/PlutoGE.ScriptCore.deps.json')\" />\n";
+        scriptProjectContent += "    </ItemGroup>\n";
+        scriptProjectContent += "    <Copy SourceFiles=\"@(ScriptCoreRuntimeFiles)\" DestinationFolder=\"$(OutputPath)\" SkipUnchangedFiles=\"true\" />\n";
+        scriptProjectContent += "  </Target>\n";
+        scriptProjectContent += "</Project>\n";
+
+        if (!WriteTextFile(sdkDirectory / (rootNamespace + ".Scripts.csproj"), scriptProjectContent, errorMessage))
+        {
+            return false;
+        }
+
+        std::string readmeContent;
+        readmeContent += "# PlutoGE Script SDK\n\n";
+        readmeContent += "Open `" + rootNamespace + ".Scripts.csproj` in Visual Studio to edit project scripts against this exported engine build.\n";
+        readmeContent += "The project builds into `../" + m_project->GetManifest().assetDirectory + "/" + std::string(kDefaultProjectManagedDirectory) + "` and launches `../" + executableName + "` for debugging.\n";
+        readmeContent += "Use Visual Studio's Debug > Attach to Process command to attach to a running `" + executableName + "` process when you prefer manual attach.\n";
+        readmeContent += "\nSource project root at export time: `" + projectRoot.generic_string() + "`\n";
+
+        return WriteTextFile(sdkDirectory / "README.md", readmeContent, errorMessage);
     }
 
     bool EditorShell::BuildAndRunProjectToPath(const std::filesystem::path &destinationExecutablePath)

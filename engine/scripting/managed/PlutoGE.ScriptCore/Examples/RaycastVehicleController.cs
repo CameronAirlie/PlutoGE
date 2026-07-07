@@ -46,6 +46,11 @@ public sealed class RaycastVehicleController : ScriptBehaviour
     [SerializedField] private float steerResponse = 8.0f;
     [SerializedField] private float steerFadeSpeed = 38.0f;
     [SerializedField] private float handbrakeRearGripMultiplier = 0.42f;
+    [SerializedField] private float driftSteerAssist = 5.5f;
+    [SerializedField] private float driftFrontControlForce = 1.15f;
+    [SerializedField] private float driftAssistSlipStart = 0.32f;
+    [SerializedField] private float driftAssistSlipFull = 0.72f;
+    [SerializedField] private float maxDriftYawRate = 2.6f;
 
     [SerializedField] private float downforce = 36.0f;
     [SerializedField] private float maxDownforceMultiplier = 2.0f;
@@ -139,7 +144,8 @@ public sealed class RaycastVehicleController : ScriptBehaviour
         if (Input.IsKeyDown(KeyCode.A)) steerInput += 1.0f;
         if (Input.IsKeyDown(KeyCode.D)) steerInput -= 1.0f;
 
-        var steerFade = 1.0f / (1.0f + speed / MathF.Max(steerFadeSpeed, 0.01f));
+        var steerSpeed = ForwardSpeedAbs();
+        var steerFade = 1.0f / (1.0f + steerSpeed / MathF.Max(steerFadeSpeed, 0.01f));
         var targetSteer = steerInput * maxSteerAngle * steerFade;
         _steer = Lerp(_steer, targetSteer, 1.0f - MathF.Exp(-steerResponse * deltaTime));
 
@@ -148,8 +154,8 @@ public sealed class RaycastVehicleController : ScriptBehaviour
             RecoverCar();
         }
 
-        ApplyVehicleForces(deltaTime, throttle, brakeInput, handbrake);
-        ApplyAeroAndAssists(speed, deltaTime);
+        ApplyVehicleForces(deltaTime, throttle, brakeInput, handbrake, steerInput);
+        ApplyAeroAndAssists(speed, steerInput, deltaTime);
         ApplyAntiScrapeLift();
         UpdateWheelVisuals(deltaTime);
     }
@@ -225,13 +231,13 @@ public sealed class RaycastVehicleController : ScriptBehaviour
         }
     }
 
-    private void ApplyVehicleForces(float deltaTime, float throttle, float brakeInput, bool handbrake)
+    private void ApplyVehicleForces(float deltaTime, float throttle, float brakeInput, bool handbrake, float steerInput)
     {
         var frontDrive = Math.Clamp(frontDriveBias, 0.0f, 1.0f);
         var rearDrive = 1.0f - frontDrive;
-        var speed = _rigidbody?.Velocity.Length() ?? 0.0f;
+        var forwardSpeedAbs = ForwardSpeedAbs();
         var limiterStart = MathF.Max(maximumSpeed * Math.Clamp(speedLimiterStart, 0.1f, 1.0f), 0.1f);
-        var speedLimiter = 1.0f - SmoothStep(InverseLerp(limiterStart, MathF.Max(maximumSpeed, limiterStart + 0.1f), speed));
+        var speedLimiter = 1.0f - SmoothStep(InverseLerp(limiterStart, MathF.Max(maximumSpeed, limiterStart + 0.1f), forwardSpeedAbs));
         _groundedWheelCount = 0;
 
         for (var index = 0; index < _wheels.Length; ++index)
@@ -328,7 +334,20 @@ public sealed class RaycastVehicleController : ScriptBehaviour
             var maxLongitudinalForce = driveNormalForce * tireGrip * longitudinalGripMultiplier * gripMultiplier;
             longitudinalForce = ClampMagnitude(longitudinalForce, maxLongitudinalForce);
 
-            var tireForce = lateralForce + longitudinalForce;
+            var driftControlForce = Vector3.Zero;
+            if (wheel.Steering && MathF.Abs(steerInput) > 0.01f)
+            {
+                var bodyRight = SafeNormalize(GameObject.Right, Vector3.UnitX);
+                var bodyForward = SafeNormalize(GameObject.Forward, -Vector3.UnitZ);
+                var bodyForwardSpeed = MathF.Abs(Vector3.Dot(_rigidbody.Velocity, bodyForward));
+                var bodyLateralSpeed = MathF.Abs(Vector3.Dot(_rigidbody.Velocity, bodyRight));
+                var slipAmount = PlanarSlipAmount(bodyForwardSpeed, bodyLateralSpeed);
+                var assistAmount = SmoothStep(InverseLerp(driftAssistSlipStart, driftAssistSlipFull, slipAmount));
+                var steerDirection = steerInput * MathF.Sign(NonZero(physicsSteerDirection));
+                driftControlForce = bodyRight * steerDirection * normalForceMagnitude * MathF.Max(driftFrontControlForce, 0.0f) * assistAmount;
+            }
+
+            var tireForce = lateralForce + longitudinalForce + driftControlForce;
             wheel.SmoothedTireForce = Vector3.Lerp(wheel.SmoothedTireForce, tireForce, smoothingAmount);
             _rigidbody.AddForceAtPosition(wheel.SmoothedTireForce, tireForcePoint);
 
@@ -352,6 +371,17 @@ public sealed class RaycastVehicleController : ScriptBehaviour
         return ClampMagnitude(pointVelocity, MathF.Max(maximumPointSpeed, 5.0f));
     }
 
+    private float ForwardSpeedAbs()
+    {
+        if (_rigidbody is null)
+        {
+            return 0.0f;
+        }
+
+        var forwardAxis = SafeNormalize(GameObject.Forward, -Vector3.UnitZ);
+        return MathF.Abs(Vector3.Dot(_rigidbody.Velocity, forwardAxis));
+    }
+
     private void ClampBodyVelocity()
     {
         if (_rigidbody is null)
@@ -372,7 +402,7 @@ public sealed class RaycastVehicleController : ScriptBehaviour
         }
     }
 
-    private void ApplyAeroAndAssists(float speed, float deltaTime)
+    private void ApplyAeroAndAssists(float speed, float steerInput, float deltaTime)
     {
         if (_rigidbody is null)
         {
@@ -400,6 +430,7 @@ public sealed class RaycastVehicleController : ScriptBehaviour
         var uprightCorrection = Vector3.Cross(up, Vector3.UnitY) * uprightAssist;
         var yawDamping = -Vector3.UnitY * _rigidbody.AngularVelocity.Y * yawAssist;
         _rigidbody.AngularVelocity += (uprightCorrection + yawDamping) * deltaTime;
+        ApplyDriftSteerAssist(steerInput, deltaTime);
 
         var highSpeedAmount = InverseLerp(highSpeedGripFadeStart, highSpeedGripFadeEnd, speed);
         if (highSpeedAmount > 0.0f)
@@ -418,6 +449,45 @@ public sealed class RaycastVehicleController : ScriptBehaviour
             var verticalDamping = MathF.Exp(-groundedUpwardVelocityDamping * deltaTime);
             _rigidbody.Velocity = new Vector3(bodyVelocity.X, bodyVelocity.Y * verticalDamping, bodyVelocity.Z);
         }
+    }
+
+    private void ApplyDriftSteerAssist(float steerInput, float deltaTime)
+    {
+        if (_rigidbody is null || _groundedWheelCount <= 0 || MathF.Abs(steerInput) <= 0.01f)
+        {
+            return;
+        }
+
+        var forward = SafeNormalize(GameObject.Forward, -Vector3.UnitZ);
+        var right = SafeNormalize(GameObject.Right, Vector3.UnitX);
+        var velocity = _rigidbody.Velocity;
+        var forwardSpeed = MathF.Abs(Vector3.Dot(velocity, forward));
+        var lateralSpeed = MathF.Abs(Vector3.Dot(velocity, right));
+        var planarSpeed = forwardSpeed + lateralSpeed;
+        if (planarSpeed <= 0.1f)
+        {
+            return;
+        }
+
+        var slipAmount = PlanarSlipAmount(forwardSpeed, lateralSpeed);
+        var assistAmount = SmoothStep(InverseLerp(driftAssistSlipStart, driftAssistSlipFull, slipAmount));
+        if (assistAmount <= 0.0f)
+        {
+            return;
+        }
+
+        var physicsSteer = steerInput * MathF.Sign(NonZero(physicsSteerDirection));
+        var targetYawRate = physicsSteer * MathF.Max(maxDriftYawRate, 0.0f);
+        var angularVelocity = _rigidbody.AngularVelocity;
+        var yawBlend = 1.0f - MathF.Exp(-MathF.Max(driftSteerAssist, 0.0f) * assistAmount * deltaTime);
+        angularVelocity.Y = Lerp(angularVelocity.Y, targetYawRate, yawBlend);
+        _rigidbody.AngularVelocity = angularVelocity;
+    }
+
+    private static float PlanarSlipAmount(float forwardSpeed, float lateralSpeed)
+    {
+        var planarSpeed = MathF.Abs(forwardSpeed) + MathF.Abs(lateralSpeed);
+        return planarSpeed <= 0.1f ? 0.0f : MathF.Abs(lateralSpeed) / planarSpeed;
     }
 
     private void ApplyAntiScrapeLift()

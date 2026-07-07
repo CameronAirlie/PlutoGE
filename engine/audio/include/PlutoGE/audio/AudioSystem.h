@@ -55,6 +55,8 @@ namespace PlutoGE::audio
             bool paused = false;
             bool looping = false;
             bool spatialized = false;
+            float smoothedOcclusion = 0.0f;
+            float smoothedAirAbsorption = 0.0f;
         };
 
         AudioSystem() = default;

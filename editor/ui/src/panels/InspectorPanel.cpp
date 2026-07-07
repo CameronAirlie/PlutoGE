@@ -38,8 +38,11 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <locale>
 #include <map>
 #include <optional>
+#include <regex>
+#include <sstream>
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
@@ -56,6 +59,13 @@ namespace PlutoGE::ui
     {
         constexpr std::size_t kInspectorPathBufferSize = 512;
         constexpr std::size_t kNewScriptNameBufferSize = 128;
+        constexpr int kScriptCoreSearchAncestorLimit = 8;
+        constexpr std::string_view kBuiltinExampleNamespace = "PlutoGE.ScriptCore.Examples.";
+
+        bool IsBuiltinExampleScript(std::string_view className)
+        {
+            return className.rfind(kBuiltinExampleNamespace, 0) == 0;
+        }
 
         bool ContainsInsensitive(std::string_view text, std::string_view query)
         {
@@ -102,7 +112,9 @@ namespace PlutoGE::ui
             std::string reference;
             std::string displayName;
             std::string className;
+            std::filesystem::path sourcePath;
             bool classLoaded = false;
+            bool engineBuiltin = false;
         };
 
         struct AssetReferenceOption
@@ -419,6 +431,41 @@ namespace PlutoGE::ui
             return namespaceName + "." + resolvedClassName;
         }
 
+        std::filesystem::path FindScriptCoreProjectPath(const std::filesystem::path &searchRoot)
+        {
+            auto candidateRoot = searchRoot.lexically_normal();
+            for (int depth = 0; depth < kScriptCoreSearchAncestorLimit && !candidateRoot.empty(); ++depth)
+            {
+                const auto candidate = (candidateRoot / "engine" / "scripting" / "managed" / "PlutoGE.ScriptCore" / "PlutoGE.ScriptCore.csproj").lexically_normal();
+                if (std::filesystem::exists(candidate))
+                {
+                    return candidate;
+                }
+
+                const auto parentRoot = candidateRoot.parent_path();
+                if (parentRoot.empty() || parentRoot == candidateRoot)
+                {
+                    break;
+                }
+
+                candidateRoot = parentRoot;
+            }
+
+            return {};
+        }
+
+        std::filesystem::path FindScriptCoreExamplesDirectory()
+        {
+            const auto scriptCoreProjectPath = FindScriptCoreProjectPath(std::filesystem::current_path());
+            if (scriptCoreProjectPath.empty())
+            {
+                return {};
+            }
+
+            const auto examplesDirectory = scriptCoreProjectPath.parent_path() / "Examples";
+            return std::filesystem::exists(examplesDirectory) ? examplesDirectory.lexically_normal() : std::filesystem::path{};
+        }
+
         std::string FindLoadedClassForShortName(const std::vector<std::string> &loadedClassNames, std::string_view shortName)
         {
             if (shortName.empty())
@@ -496,10 +543,51 @@ namespace PlutoGE::ui
                 }
 
                 const auto assetPath = project.ResolveAssetReference(assetEntry.reference);
+                option.sourcePath = assetPath;
                 option.className = ResolveScriptClassName(assetPath, loadedClassNames);
                 option.classLoaded = !option.className.empty() &&
                                      std::find(loadedClassNames.begin(), loadedClassNames.end(), option.className) != loadedClassNames.end();
                 options.push_back(std::move(option));
+            }
+
+            std::sort(options.begin(), options.end(),
+                      [](const ScriptAssetOption &left, const ScriptAssetOption &right)
+                      {
+                          return left.displayName < right.displayName;
+                      });
+            return options;
+        }
+
+        std::vector<ScriptAssetOption> CollectBuiltinScriptAssetOptions(const std::vector<std::string> &loadedClassNames)
+        {
+            std::vector<ScriptAssetOption> options;
+            const auto examplesDirectory = FindScriptCoreExamplesDirectory();
+            if (examplesDirectory.empty())
+            {
+                return options;
+            }
+
+            std::error_code errorCode;
+            for (const auto &entry : std::filesystem::directory_iterator(examplesDirectory, errorCode))
+            {
+                if (errorCode || !entry.is_regular_file() || !EndsWithInsensitive(entry.path().filename().string(), ".cs"))
+                {
+                    continue;
+                }
+
+                ScriptAssetOption option;
+                option.sourcePath = entry.path().lexically_normal();
+                const auto filename = entry.path().filename().string();
+                option.reference = "engine://builtin/script/examples/" + filename;
+                option.displayName = "Examples/" + filename;
+                option.className = ResolveScriptClassName(option.sourcePath, loadedClassNames);
+                option.classLoaded = !option.className.empty() &&
+                                     std::find(loadedClassNames.begin(), loadedClassNames.end(), option.className) != loadedClassNames.end();
+                option.engineBuiltin = true;
+                if (IsBuiltinExampleScript(option.className))
+                {
+                    options.push_back(std::move(option));
+                }
             }
 
             std::sort(options.begin(), options.end(),
@@ -1091,6 +1179,218 @@ namespace PlutoGE::ui
             }
 
             return nullptr;
+        }
+
+        std::string EscapeRegexText(std::string_view text)
+        {
+            std::string escaped;
+            escaped.reserve(text.size() * 2);
+            for (char character : text)
+            {
+                if (std::string_view(R"(\.^$|()[]{}*+?)").find(character) != std::string_view::npos)
+                {
+                    escaped.push_back('\\');
+                }
+                escaped.push_back(character);
+            }
+            return escaped;
+        }
+
+        std::string EscapeCSharpStringLiteral(std::string_view text)
+        {
+            std::string escaped = "\"";
+            for (char character : text)
+            {
+                switch (character)
+                {
+                case '\\':
+                    escaped += "\\\\";
+                    break;
+                case '"':
+                    escaped += "\\\"";
+                    break;
+                case '\n':
+                    escaped += "\\n";
+                    break;
+                case '\r':
+                    escaped += "\\r";
+                    break;
+                case '\t':
+                    escaped += "\\t";
+                    break;
+                default:
+                    escaped.push_back(character);
+                    break;
+                }
+            }
+            escaped += '"';
+            return escaped;
+        }
+
+        std::string FormatFloatLiteral(float value)
+        {
+            std::ostringstream stream;
+            stream.imbue(std::locale::classic());
+            stream.precision(9);
+            stream << value;
+            std::string literal = stream.str();
+            if (literal.find_first_of(".eE") == std::string::npos)
+            {
+                literal += ".0";
+            }
+            literal += "f";
+            return literal;
+        }
+
+        std::string FormatDoubleLiteral(double value)
+        {
+            std::ostringstream stream;
+            stream.imbue(std::locale::classic());
+            stream.precision(17);
+            stream << value;
+            std::string literal = stream.str();
+            if (literal.find_first_of(".eE") == std::string::npos)
+            {
+                literal += ".0";
+            }
+            return literal;
+        }
+
+        std::optional<std::string> ToCSharpDefaultLiteral(scripting::ScriptFieldType fieldType,
+                                                          const scripting::ScriptFieldValue &value)
+        {
+            switch (fieldType)
+            {
+            case scripting::ScriptFieldType::Boolean:
+                return std::get<bool>(value) ? "true" : "false";
+            case scripting::ScriptFieldType::Int32:
+                return std::to_string(std::get<int32_t>(value));
+            case scripting::ScriptFieldType::Float:
+                return FormatFloatLiteral(std::get<float>(value));
+            case scripting::ScriptFieldType::Double:
+                return FormatDoubleLiteral(std::get<double>(value));
+            case scripting::ScriptFieldType::String:
+            case scripting::ScriptFieldType::PrefabAsset:
+            case scripting::ScriptFieldType::ScriptableObjectAsset:
+                return EscapeCSharpStringLiteral(std::get<std::string>(value));
+            case scripting::ScriptFieldType::Vector2:
+            {
+                const auto vector = std::get<glm::vec2>(value);
+                return "new Vector2(" + FormatFloatLiteral(vector.x) + ", " + FormatFloatLiteral(vector.y) + ")";
+            }
+            case scripting::ScriptFieldType::Vector3:
+            {
+                const auto vector = std::get<glm::vec3>(value);
+                return "new Vector3(" + FormatFloatLiteral(vector.x) + ", " + FormatFloatLiteral(vector.y) + ", " + FormatFloatLiteral(vector.z) + ")";
+            }
+            case scripting::ScriptFieldType::EntityId:
+                return std::to_string(std::get<uint32_t>(value)) + "u";
+            case scripting::ScriptFieldType::GameObject:
+            case scripting::ScriptFieldType::MeshComponent:
+            case scripting::ScriptFieldType::CameraComponent:
+            case scripting::ScriptFieldType::LightComponent:
+            case scripting::ScriptFieldType::RigidbodyComponent:
+            case scripting::ScriptFieldType::ColliderComponent:
+            case scripting::ScriptFieldType::AnimationComponent:
+            case scripting::ScriptFieldType::CanvasComponent:
+            case scripting::ScriptFieldType::RectTransformComponent:
+            case scripting::ScriptFieldType::UIImageComponent:
+            case scripting::ScriptFieldType::UITextComponent:
+            case scripting::ScriptFieldType::UIButtonComponent:
+            case scripting::ScriptFieldType::ParticleSystemComponent:
+            case scripting::ScriptFieldType::SoundEmitterComponent:
+                return std::get<uint32_t>(value) == 0 ? std::optional<std::string>{"null"} : std::nullopt;
+            case scripting::ScriptFieldType::None:
+            default:
+                return std::nullopt;
+            }
+        }
+
+        struct SaveScriptDefaultsResult
+        {
+            int updated = 0;
+            int skipped = 0;
+            std::string error;
+        };
+
+        SaveScriptDefaultsResult SaveScriptDefaultsToSource(
+            const std::filesystem::path &sourcePath,
+            const std::vector<scripting::ScriptFieldDefinition> &fields,
+            const std::unordered_map<std::string, scripting::ScriptFieldValue> &fieldValues)
+        {
+            SaveScriptDefaultsResult result;
+            if (sourcePath.empty() || !std::filesystem::exists(sourcePath))
+            {
+                result.error = "Could not find the script source file.";
+                return result;
+            }
+
+            std::ifstream input(sourcePath);
+            if (!input.is_open())
+            {
+                result.error = "Could not read the script source file.";
+                return result;
+            }
+
+            std::ostringstream sourceStream;
+            sourceStream << input.rdbuf();
+            std::string source = sourceStream.str();
+            std::string updatedSource = source;
+
+            for (const auto &field : fields)
+            {
+                scripting::ScriptFieldValue fieldValue = scripting::IsFieldValueCompatible(field.type, field.defaultValue)
+                                                            ? field.defaultValue
+                                                            : scripting::MakeDefaultFieldValue(field.type);
+                if (const auto iterator = fieldValues.find(field.name); iterator != fieldValues.end())
+                {
+                    fieldValue = iterator->second;
+                }
+                if (!scripting::IsFieldValueCompatible(field.type, fieldValue))
+                {
+                    ++result.skipped;
+                    continue;
+                }
+
+                const auto literal = ToCSharpDefaultLiteral(field.type, fieldValue);
+                if (!literal)
+                {
+                    ++result.skipped;
+                    continue;
+                }
+
+                const std::regex fieldPattern(
+                    "(\\[SerializedField\\][^;]*?\\b" + EscapeRegexText(field.name) + "\\b[^;=]*)(\\s*=\\s*[^;]*)?(;)");
+                const std::string replacement = "$1 = " + *literal + "$3";
+                const std::string nextSource = std::regex_replace(
+                    updatedSource,
+                    fieldPattern,
+                    replacement,
+                    std::regex_constants::format_first_only);
+                if (nextSource == updatedSource)
+                {
+                    ++result.skipped;
+                    continue;
+                }
+
+                updatedSource = nextSource;
+                ++result.updated;
+            }
+
+            if (updatedSource == source)
+            {
+                return result;
+            }
+
+            std::ofstream output(sourcePath, std::ios::trunc);
+            if (!output.is_open())
+            {
+                result.error = "Could not write the script source file.";
+                return result;
+            }
+
+            output << updatedSource;
+            return result;
         }
 
         std::string SanitizeScriptIdentifier(std::string_view text)
@@ -1832,11 +2132,16 @@ namespace PlutoGE::ui
         const auto &scriptAssetOptions = project != nullptr
                                              ? GetCachedProjectScriptAssetOptions(*project, classNames)
                                              : noScriptAssetOptions;
+        const auto builtinScriptOptions = CollectBuiltinScriptAssetOptions(classNames);
         const std::string currentSource = scriptComponent.GetSource();
         std::string previewValue = currentSource.empty() ? "<None>" : currentSource;
         if (const auto *selectedAsset = FindScriptAssetOptionForClassName(scriptAssetOptions, currentSource))
         {
             previewValue = selectedAsset->displayName;
+        }
+        else if (const auto *selectedBuiltin = FindScriptAssetOptionForClassName(builtinScriptOptions, currentSource))
+        {
+            previewValue = selectedBuiltin->displayName;
         }
 
         bool changed = false;
@@ -1879,9 +2184,39 @@ namespace PlutoGE::ui
                 }
             }
 
+            if (!builtinScriptOptions.empty())
+            {
+                ImGui::Separator();
+                ImGui::TextDisabled("Engine Builtin Scripts");
+                for (const auto &option : builtinScriptOptions)
+                {
+                    const bool isSelected = option.className == currentSource;
+                    std::string label = option.displayName;
+                    if (!option.classLoaded)
+                    {
+                        label += " (not loaded)";
+                    }
+                    label += "##" + option.reference;
+
+                    if (ImGui::Selectable(label.c_str(), isSelected))
+                    {
+                        scriptComponent.SetSource(option.className);
+                        changed = true;
+                    }
+                    if (isSelected)
+                    {
+                        ImGui::SetItemDefaultFocus();
+                    }
+                }
+            }
+
             std::unordered_set<std::string> assetClassNames;
-            assetClassNames.reserve(scriptAssetOptions.size());
+            assetClassNames.reserve(scriptAssetOptions.size() + builtinScriptOptions.size());
             for (const auto &option : scriptAssetOptions)
+            {
+                assetClassNames.insert(option.className);
+            }
+            for (const auto &option : builtinScriptOptions)
             {
                 assetClassNames.insert(option.className);
             }
@@ -1983,7 +2318,42 @@ namespace PlutoGE::ui
             }
         }
 
-        if (currentSource.empty() && scriptAssetOptions.empty() && classNames.empty())
+        const ScriptAssetOption *selectedSourceOption = FindScriptAssetOptionForClassName(scriptAssetOptions, currentSource);
+        if (!selectedSourceOption)
+        {
+            selectedSourceOption = FindScriptAssetOptionForClassName(builtinScriptOptions, currentSource);
+        }
+
+        const auto serializedFields = scriptComponent.GetSerializedFields();
+        const auto fieldValues = scriptComponent.GetFieldValuesSnapshot();
+        if (!currentSource.empty() && selectedSourceOption && !serializedFields.empty())
+        {
+            ImGui::BeginDisabled(selectedSourceOption->sourcePath.empty() || editorShell.IsRuntimeExportProject());
+            if (ImGui::Button("Set Values As Script Defaults"))
+            {
+                const auto saveResult = SaveScriptDefaultsToSource(selectedSourceOption->sourcePath, serializedFields, fieldValues);
+                if (!saveResult.error.empty())
+                {
+                    editorShell.SetStatusMessage(saveResult.error);
+                    editorShell.Log(EditorShell::ConsoleSeverity::Error, saveResult.error);
+                }
+                else
+                {
+                    std::string message = "Updated " + std::to_string(saveResult.updated) + " script default" +
+                                          (saveResult.updated == 1 ? "" : "s") + ".";
+                    if (saveResult.skipped > 0)
+                    {
+                        message += " Skipped " + std::to_string(saveResult.skipped) + ".";
+                    }
+                    editorShell.SetStatusMessage(message);
+                    editorShell.Log(EditorShell::ConsoleSeverity::Info, message);
+                    changed = saveResult.updated > 0 || changed;
+                }
+            }
+            ImGui::EndDisabled();
+        }
+
+        if (currentSource.empty() && scriptAssetOptions.empty() && builtinScriptOptions.empty() && classNames.empty())
         {
             ImGui::TextDisabled(project ? "No scripts were found in the asset directory or loaded assembly."
                                         : "Open a project to browse script assets.");
@@ -1997,10 +2367,9 @@ namespace PlutoGE::ui
             ImGui::TextDisabled("No script classes are loaded.");
         }
 
-        const auto fieldValues = scriptComponent.GetFieldValuesSnapshot();
         std::optional<std::vector<scene::Entity *>> sceneEntities;
         int fieldIndex = 0;
-        for (const auto &field : scriptComponent.GetSerializedFields())
+        for (const auto &field : serializedFields)
         {
             std::optional<scripting::ScriptFieldValue> fieldValue;
             if (const auto fieldIterator = fieldValues.find(field.name); fieldIterator != fieldValues.end())

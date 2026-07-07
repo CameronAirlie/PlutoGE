@@ -13,11 +13,13 @@
 7. [x] - Fix brightness levels. when gamma is set to 2.2 the scene is way too bright.
 8. [x] - Fix humanoid mesh animation. Legs are stretched and sticking out sideways unanimated. may be fixed by #1
 9. [x] - Extract post processing effects into separate asset type. have editor camera and camera components select post processing effedt asset preset.
-10. [ ] - Integrate engine with visual studio so visual studio is able to attach to the engine process. Similar to unity, expose an sdk or package to be able to work on scripts using a packaged engine executable for production.
-11. [ ] - Implement sound system
-    a. Add support for 3D spatial audio
-    b. Add sound emitter and sound listener components.
-    c. Come up with how to deal with walls that muffle/block sound
-12. [ ] - Spline system
-    a. Collision (for roads/racetracks etc.)
+10. [x] - Integrate engine with visual studio so visual studio is able to attach to the engine process. Similar to unity, expose an sdk or package to be able to work on scripts using a packaged engine executable for production.
+11. [x] - Implement sound system
+        [x] - Add support for 3D spatial audio
+        [x] - Add sound emitter and sound listener components.
+        [x] - Come up with how to deal with walls that muffle/block sound
+12. [x] - Spline system
+        [x] - Collision (for roads/racetracks etc.)
 13. [ ] - Setup project distribution. No dependency execution on new machine
+        [x] - Can build executable. then copy to another machine and run with minimal dependencies
+        [ ] - Decide whether exported builds should bundle .NET/hostfxr or require a target-machine runtime install

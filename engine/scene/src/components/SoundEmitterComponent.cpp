@@ -4,6 +4,7 @@
 #include "PlutoGE/scene/Entity.h"
 
 #include <algorithm>
+#include <cstdint>
 
 namespace PlutoGE::scene
 {
@@ -131,7 +132,14 @@ namespace PlutoGE::scene
     std::uint64_t SoundEmitterComponent::GetRuntimeKey() const
     {
         const auto *owner = GetOwner();
-        return owner ? static_cast<std::uint64_t>(owner->GetID()) : 0ull;
+        if (!owner)
+        {
+            return 0ull;
+        }
+
+        const auto ownerId = static_cast<std::uint64_t>(owner->GetID());
+        const auto componentId = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(this));
+        return ownerId ^ (componentId + 0x9e3779b97f4a7c15ull + (ownerId << 6u) + (ownerId >> 2u));
     }
 
     void SoundEmitterComponent::SetVolume(float volume)

@@ -10,6 +10,11 @@ target_include_directories(PlutoGEAudio PUBLIC
 
 target_link_libraries(PlutoGEAudio PUBLIC
     PlutoGE::glm
+    PlutoGE::openal_soft
+)
+
+target_compile_definitions(PlutoGEAudio PRIVATE
+    PLUTOGE_USE_OPENAL_SOFT=1
 )
 
 if (WIN32)

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <array>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -45,16 +46,24 @@ namespace PlutoGE::audio
             int sampleRate = 0;
             std::vector<float> samples;
             std::vector<float> monoSamples;
+            unsigned int backendBuffer = 0;
+            unsigned int monoBackendBuffer = 0;
         };
 
         struct ActiveVoice
         {
             void *sourceVoice = nullptr;
+            unsigned int backendSource = 0;
+            unsigned int backendFilter = 0;
             std::string clipPath;
             int channels = 0;
+            int sampleRate = 0;
             bool paused = false;
             bool looping = false;
             bool spatialized = false;
+            bool hasPreviousSpatialState = false;
+            glm::vec3 previousListenerPosition{0.0f};
+            glm::vec3 previousEmitterPosition{0.0f};
             float smoothedOcclusion = 0.0f;
             float smoothedAirAbsorption = 0.0f;
         };
@@ -64,7 +73,7 @@ namespace PlutoGE::audio
 
         bool Initialize();
         void Shutdown();
-        void Update(const ListenerState &listener, const std::vector<EmitterState> &emitters);
+        void Update(const ListenerState &listener, const std::vector<EmitterState> &emitters, float deltaTime);
         void ClearEmitters();
         bool IsEmitterActive(std::uint64_t key) const;
         bool IsAvailable() const { return m_initialized; }
@@ -73,14 +82,23 @@ namespace PlutoGE::audio
         bool EnsureClipLoaded(const std::string &clipPath, const AudioClip *&clip);
         void DestroyVoice(std::uint64_t key);
         void StopInactiveEmitters(const std::vector<std::uint64_t> &activeKeys);
-        void UpdateVoice(ActiveVoice &voice, const ListenerState &listener, const EmitterState &emitter);
+        void UpdateVoice(ActiveVoice &voice, const ListenerState &listener, const EmitterState &emitter, float deltaTime);
         float ComputeAttenuation(const EmitterState &emitter, float distance) const;
         float ComputePan(const ListenerState &listener, const EmitterState &emitter) const;
 
         bool m_initialized = false;
         void *m_xaudio = nullptr;
         void *m_masterVoice = nullptr;
+        void *m_openAlDevice = nullptr;
+        void *m_openAlContext = nullptr;
         unsigned int m_outputChannels = 2;
+        unsigned int m_outputChannelMask = 0;
+        bool m_spatialAudioInitialized = false;
+        bool m_usingOpenAl = false;
+        bool m_openAlEfxAvailable = false;
+        bool m_hasPreviousOpenAlListenerPosition = false;
+        glm::vec3 m_previousOpenAlListenerPosition{0.0f};
+        std::array<std::uint8_t, 20> m_spatialAudioHandle{};
         std::unordered_map<std::string, AudioClip> m_clipCache;
         std::unordered_map<std::uint64_t, ActiveVoice> m_activeVoices;
     };

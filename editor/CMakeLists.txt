@@ -23,6 +23,14 @@ target_link_libraries(PlutoGEEditor
 
 add_dependencies(PlutoGEEditor PlutoGE::Platform PlutoGE::Render PlutoGE::Assets PlutoGE::Core)
 
+if (TARGET OpenAL)
+    add_custom_command(TARGET PlutoGEEditor POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:OpenAL>
+            $<TARGET_FILE_DIR:PlutoGEEditor>/$<TARGET_FILE_NAME:OpenAL>
+    )
+endif()
+
 set(PLUTO_EDITOR_RESOURCES_DIR ${CMAKE_CURRENT_SOURCE_DIR}/resources)
 if (EXISTS ${PLUTO_EDITOR_RESOURCES_DIR})
     add_custom_command(TARGET PlutoGEEditor POST_BUILD

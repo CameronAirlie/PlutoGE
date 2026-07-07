@@ -19,6 +19,7 @@
 #include "PlutoGE/scene/components/UIComponent.h"
 
 #include <algorithm>
+#include <array>
 #include <charconv>
 #include <cmath>
 #include <cstdint>
@@ -95,6 +96,12 @@ namespace PlutoGE::scripting
         using register_input_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_physics_api_fn = int(__cdecl *)(void *, void *, void *);
         using register_debug_api_fn = int(__cdecl *)(void *);
+
+        struct HostFxrLocation
+        {
+            std::filesystem::path libraryPath;
+            std::filesystem::path dotnetRoot;
+        };
 
         struct NativeVector3
         {
@@ -249,9 +256,56 @@ namespace PlutoGE::scripting
             return value;
         }
 
-        std::optional<std::filesystem::path> FindHostFxrLibrary()
+        std::filesystem::path GetExecutableDirectory()
+        {
+            std::array<wchar_t, MAX_PATH> modulePath{};
+            const DWORD modulePathLength = GetModuleFileNameW(nullptr, modulePath.data(), static_cast<DWORD>(modulePath.size()));
+            if (modulePathLength == 0 || modulePathLength >= modulePath.size())
+            {
+                return {};
+            }
+
+            return std::filesystem::path(modulePath.data()).parent_path().lexically_normal();
+        }
+
+        std::optional<std::filesystem::path> FindHostFxrInDotnetRoot(const std::filesystem::path &dotnetRoot)
+        {
+            const auto fxrDirectory = dotnetRoot / "host" / "fxr";
+            if (!std::filesystem::exists(fxrDirectory))
+            {
+                return std::nullopt;
+            }
+
+            std::vector<std::filesystem::path> versions;
+            for (const auto &entry : std::filesystem::directory_iterator(fxrDirectory))
+            {
+                if (entry.is_directory())
+                {
+                    versions.push_back(entry.path());
+                }
+            }
+
+            std::sort(versions.begin(), versions.end());
+            for (auto iterator = versions.rbegin(); iterator != versions.rend(); ++iterator)
+            {
+                const auto candidate = *iterator / "hostfxr.dll";
+                if (std::filesystem::exists(candidate))
+                {
+                    return candidate;
+                }
+            }
+
+            return std::nullopt;
+        }
+
+        std::optional<HostFxrLocation> FindHostFxrLibrary()
         {
             std::vector<std::filesystem::path> dotnetRoots;
+            if (const auto executableDirectory = GetExecutableDirectory(); !executableDirectory.empty())
+            {
+                dotnetRoots.emplace_back(executableDirectory / "DotnetRuntime");
+            }
+
             if (const auto dotnetRoot = GetEnvironmentVariableText(L"DOTNET_ROOT"))
             {
                 dotnetRoots.emplace_back(*dotnetRoot);
@@ -264,29 +318,9 @@ namespace PlutoGE::scripting
 
             for (const auto &dotnetRoot : dotnetRoots)
             {
-                const auto fxrDirectory = dotnetRoot / "host" / "fxr";
-                if (!std::filesystem::exists(fxrDirectory))
+                if (const auto hostFxrPath = FindHostFxrInDotnetRoot(dotnetRoot))
                 {
-                    continue;
-                }
-
-                std::vector<std::filesystem::path> versions;
-                for (const auto &entry : std::filesystem::directory_iterator(fxrDirectory))
-                {
-                    if (entry.is_directory())
-                    {
-                        versions.push_back(entry.path());
-                    }
-                }
-
-                std::sort(versions.begin(), versions.end());
-                for (auto iterator = versions.rbegin(); iterator != versions.rend(); ++iterator)
-                {
-                    const auto candidate = *iterator / "hostfxr.dll";
-                    if (std::filesystem::exists(candidate))
-                    {
-                        return candidate;
-                    }
+                    return HostFxrLocation{*hostFxrPath, dotnetRoot};
                 }
             }
 
@@ -2476,6 +2510,7 @@ namespace PlutoGE::scripting
     {
 #ifdef _WIN32
         HMODULE hostfxrLibrary = nullptr;
+        std::filesystem::path dotnetRoot;
         hostfxr_initialize_for_runtime_config_fn initializeForRuntimeConfig = nullptr;
         hostfxr_get_runtime_delegate_fn getRuntimeDelegate = nullptr;
         hostfxr_close_fn closeHostContext = nullptr;
@@ -2811,14 +2846,15 @@ namespace PlutoGE::scripting
                 return true;
             }
 
-            const auto hostFxrPath = FindHostFxrLibrary();
-            if (!hostFxrPath)
+            const auto hostFxrLocation = FindHostFxrLibrary();
+            if (!hostFxrLocation)
             {
                 impl.lastError = "Failed to locate hostfxr.dll";
                 return false;
             }
 
-            impl.hostfxrLibrary = LoadLibraryW(hostFxrPath->c_str());
+            impl.dotnetRoot = hostFxrLocation->dotnetRoot;
+            impl.hostfxrLibrary = LoadLibraryW(hostFxrLocation->libraryPath.c_str());
             if (!impl.hostfxrLibrary)
             {
                 impl.lastError = "Failed to load hostfxr.dll";
@@ -2869,7 +2905,11 @@ namespace PlutoGE::scripting
             impl.bridgeSourceRuntimeConfigPath = runtimeConfigPath;
 
             hostfxr_handle hostContext = nullptr;
-            const int initializeResult = impl.initializeForRuntimeConfig(impl.runtimeConfigPath.c_str(), nullptr, &hostContext);
+            hostfxr_initialize_parameters initializeParameters{};
+            initializeParameters.size = sizeof(initializeParameters);
+            initializeParameters.host_path = nullptr;
+            initializeParameters.dotnet_root = impl.dotnetRoot.empty() ? nullptr : impl.dotnetRoot.c_str();
+            const int initializeResult = impl.initializeForRuntimeConfig(impl.runtimeConfigPath.c_str(), &initializeParameters, &hostContext);
             if (initializeResult < 0)
             {
                 impl.lastError = "hostfxr failed to initialize the managed runtime (status " + std::to_string(initializeResult) + ")";

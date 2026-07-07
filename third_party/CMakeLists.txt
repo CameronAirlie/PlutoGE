@@ -118,6 +118,27 @@ target_include_directories(PlutoGE_meshoptimizer INTERFACE
     ${meshoptimizer_SOURCE_DIR}/src
 )
 
+set(ALSOFT_UTILS OFF CACHE BOOL "" FORCE)
+set(ALSOFT_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(ALSOFT_TESTS OFF CACHE BOOL "" FORCE)
+set(ALSOFT_INSTALL OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    openal_soft
+    GIT_REPOSITORY https://github.com/kcat/openal-soft.git
+    GIT_TAG        1.25.2
+)
+FetchContent_MakeAvailable(openal_soft)
+add_library(PlutoGE_openal_soft INTERFACE)
+add_library(PlutoGE::openal_soft ALIAS PlutoGE_openal_soft)
+if (TARGET OpenAL)
+    target_link_libraries(PlutoGE_openal_soft INTERFACE OpenAL)
+elseif (TARGET OpenAL::OpenAL)
+    target_link_libraries(PlutoGE_openal_soft INTERFACE OpenAL::OpenAL)
+endif()
+target_include_directories(PlutoGE_openal_soft INTERFACE
+    ${openal_soft_SOURCE_DIR}/include
+)
+
 set(BUILD_BULLET2_DEMOS OFF CACHE BOOL "" FORCE)
 set(BUILD_BULLET3 OFF CACHE BOOL "" FORCE)
 set(BUILD_CPU_DEMOS OFF CACHE BOOL "" FORCE)

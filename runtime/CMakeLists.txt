@@ -18,3 +18,11 @@ target_link_libraries(PlutoGERuntime
 )
 
 add_dependencies(PlutoGERuntime PlutoGE::Platform PlutoGE::Render PlutoGE::Assets PlutoGE::Core PlutoGE::Scene)
+
+if (TARGET OpenAL)
+    add_custom_command(TARGET PlutoGERuntime POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:OpenAL>
+            $<TARGET_FILE_DIR:PlutoGERuntime>/$<TARGET_FILE_NAME:OpenAL>
+    )
+endif()

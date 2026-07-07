@@ -1666,7 +1666,7 @@ namespace PlutoGE::scene
                 emitterStates.push_back(std::move(emitterState));
             }
 
-            engine.GetAudioSystem().Update(listenerState, emitterStates);
+            engine.GetAudioSystem().Update(listenerState, emitterStates, deltaTime);
         }
 
         SubmitRenderCommands();

@@ -22,4 +22,4 @@
         [x] - Collision (for roads/racetracks etc.)
 13. [ ] - Setup project distribution. No dependency execution on new machine
         [x] - Can build executable. then copy to another machine and run with minimal dependencies
-        [ ] - Decide whether exported builds should bundle .NET/hostfxr or require a target-machine runtime install
+        [x] - Decide whether exported builds should bundle .NET/hostfxr or require a target-machine runtime install

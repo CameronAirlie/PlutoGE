@@ -1,11 +1,13 @@
 #include "PlutoGE/assets/Project.h"
 
 #include <algorithm>
+#include <array>
 #include <charconv>
 #include <cctype>
 #include <cstdlib>
 #include <fstream>
 #include <system_error>
+#include <vector>
 
 namespace PlutoGE::assets
 {
@@ -14,6 +16,7 @@ namespace PlutoGE::assets
         constexpr std::string_view kProjectHeader = "PLUTOPROJECT";
         constexpr int kProjectVersion = 1;
         constexpr int kRuntimeSearchAncestorLimit = 8;
+        constexpr std::string_view kBundledDotnetRuntimeDirectory = "DotnetRuntime";
 
         std::filesystem::path NormalizeAbsolutePath(const std::filesystem::path &path)
         {
@@ -387,6 +390,126 @@ namespace PlutoGE::assets
                 if (errorCode)
                 {
                     SetError(errorMessage, "Failed to copy runtime dependency: " + PathToUtf8String(sourcePath) + " (" + errorCode.message() + ")");
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        std::filesystem::path GetEnvironmentPath(const char *name)
+        {
+#ifdef _WIN32
+            char *value = nullptr;
+            size_t valueSize = 0;
+            if (_dupenv_s(&value, &valueSize, name) != 0 || value == nullptr)
+            {
+                return {};
+            }
+
+            std::filesystem::path result(value);
+            std::free(value);
+            return result;
+#else
+            if (const char *value = std::getenv(name))
+            {
+                return value;
+            }
+
+            return {};
+#endif
+        }
+
+        std::vector<std::filesystem::path> GetDotnetRootCandidates()
+        {
+            std::vector<std::filesystem::path> candidates;
+
+            if (const auto dotnetRoot = GetEnvironmentPath("DOTNET_ROOT"); !dotnetRoot.empty())
+            {
+                candidates.emplace_back(dotnetRoot);
+            }
+
+#ifdef _WIN32
+            if (const auto programFiles = GetEnvironmentPath("ProgramFiles"); !programFiles.empty())
+            {
+                candidates.emplace_back(programFiles / "dotnet");
+            }
+#endif
+
+            return candidates;
+        }
+
+        bool IsDotnetRuntimeRoot(const std::filesystem::path &dotnetRoot)
+        {
+#ifdef _WIN32
+            const auto fxrDirectory = dotnetRoot / "host" / "fxr";
+            const auto sharedRuntimeDirectory = dotnetRoot / "shared" / "Microsoft.NETCore.App";
+            if (!std::filesystem::exists(fxrDirectory) || !std::filesystem::exists(sharedRuntimeDirectory))
+            {
+                return false;
+            }
+
+            std::error_code errorCode;
+            for (std::filesystem::directory_iterator iterator(fxrDirectory, std::filesystem::directory_options::skip_permission_denied, errorCode), end;
+                 iterator != end;
+                 iterator.increment(errorCode))
+            {
+                if (errorCode)
+                {
+                    errorCode.clear();
+                    continue;
+                }
+
+                if (iterator->is_directory() && std::filesystem::exists(iterator->path() / "hostfxr.dll"))
+                {
+                    return true;
+                }
+            }
+#endif
+
+            return false;
+        }
+
+        std::filesystem::path FindDotnetRuntimeRoot()
+        {
+            for (const auto &candidate : GetDotnetRootCandidates())
+            {
+                if (IsDotnetRuntimeRoot(candidate))
+                {
+                    return NormalizeAbsolutePath(candidate);
+                }
+            }
+
+            return {};
+        }
+
+        bool CopyBundledDotnetRuntime(const std::filesystem::path &destinationDirectory,
+                                      std::string *errorMessage)
+        {
+            const auto dotnetRoot = FindDotnetRuntimeRoot();
+            if (dotnetRoot.empty())
+            {
+                SetError(errorMessage, "Failed to locate a .NET runtime to bundle. Install the .NET runtime or set DOTNET_ROOT before exporting.");
+                return false;
+            }
+
+            const auto bundledRuntimeDirectory = destinationDirectory / std::filesystem::path(kBundledDotnetRuntimeDirectory);
+            const std::array<std::filesystem::path, 2> runtimeSubdirectories{
+                std::filesystem::path("host") / "fxr",
+                std::filesystem::path("shared") / "Microsoft.NETCore.App",
+            };
+
+            for (const auto &runtimeSubdirectory : runtimeSubdirectories)
+            {
+                const auto sourceDirectory = dotnetRoot / runtimeSubdirectory;
+                if (!std::filesystem::exists(sourceDirectory))
+                {
+                    SetError(errorMessage, "Failed to locate .NET runtime directory for export: " + PathToUtf8String(sourceDirectory));
+                    return false;
+                }
+
+                if (!CopyDirectoryRecursive(sourceDirectory, bundledRuntimeDirectory / runtimeSubdirectory, errorMessage))
+                {
                     return false;
                 }
             }
@@ -1087,6 +1210,11 @@ namespace PlutoGE::assets
         }
 
         if (!CopyRuntimeSidecarFiles(normalizedRuntimeExecutablePath, normalizedDestinationExecutablePath.parent_path(), errorMessage))
+        {
+            return false;
+        }
+
+        if (!CopyBundledDotnetRuntime(normalizedDestinationExecutablePath.parent_path(), errorMessage))
         {
             return false;
         }

@@ -2294,8 +2294,33 @@ namespace PlutoGE::scene
         auto &runtimeWorld = *m_runtimePhysicsState->world;
         for (auto &stepBody : runtimeWorld.bodies)
         {
-            if (!stepBody.body || !stepBody.entity || stepBody.dynamic)
+            if (!stepBody.body || !stepBody.entity)
             {
+                continue;
+            }
+
+            if (stepBody.dynamic)
+            {
+                btTransform transform;
+                transform.setIdentity();
+                transform.setOrigin(ToBullet(stepBody.entity->GetWorldPosition()));
+                transform.setRotation(ToBulletRotation(stepBody.entity->GetWorldTransform()));
+                stepBody.body->setWorldTransform(transform);
+                if (stepBody.motionState)
+                {
+                    stepBody.motionState->setWorldTransform(transform);
+                }
+                stepBody.body->setInterpolationWorldTransform(transform);
+
+                if (stepBody.rigidbody)
+                {
+                    stepBody.body->setLinearVelocity(ToBullet(stepBody.rigidbody->GetVelocity()));
+                    stepBody.body->setAngularVelocity(stepBody.rigidbody->HasFreezeRotation()
+                                                          ? btVector3(0.0f, 0.0f, 0.0f)
+                                                          : ToBullet(stepBody.rigidbody->GetAngularVelocity()));
+                }
+
+                runtimeWorld.dynamicsWorld.updateSingleAabb(stepBody.body.get());
                 continue;
             }
 

@@ -45,7 +45,9 @@ namespace PlutoGE::scene
         glm::vec3 GetWorldScale() const;
 
         void SetPosition(const glm::vec3 &position);
+        void SetWorldPosition(const glm::vec3 &position);
         void SetRotation(const glm::vec3 &rotation);
+        void SetWorldRotation(const glm::vec3 &rotation);
         void SetScale(const glm::vec3 &scale);
         void SetName(const std::string &name) { m_name = name; }
         void SetActive(bool active);

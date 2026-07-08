@@ -21,12 +21,22 @@ public sealed class GameObject
         set => ScriptBridge.SetEntityPosition(EntityId, value);
     }
 
-    public Vector3 WorldPosition => ScriptBridge.GetEntityWorldPosition(EntityId);
+    public Vector3 WorldPosition
+    {
+        get => ScriptBridge.GetEntityWorldPosition(EntityId);
+        set => ScriptBridge.SetEntityWorldPosition(EntityId, value);
+    }
 
     public Vector3 Rotation
     {
         get => ScriptBridge.GetEntityRotation(EntityId);
         set => ScriptBridge.SetEntityRotation(EntityId, value);
+    }
+
+    public Vector3 WorldRotation
+    {
+        get => ScriptBridge.GetEntityWorldRotation(EntityId);
+        set => ScriptBridge.SetEntityWorldRotation(EntityId, value);
     }
 
     public Vector3 Scale

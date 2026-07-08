@@ -115,6 +115,17 @@ namespace PlutoGE::scene
         MarkTransformDirtyRecursive();
     }
 
+    void Entity::SetWorldPosition(const glm::vec3 &position)
+    {
+        glm::vec3 localPosition = position;
+        if (m_parent)
+        {
+            localPosition = glm::vec3(glm::inverse(m_parent->GetWorldTransform()) * glm::vec4(position, 1.0f));
+        }
+
+        SetPosition(localPosition);
+    }
+
     void Entity::SetRotation(const glm::vec3 &rotation)
     {
         if (m_transform.rotation == rotation)
@@ -125,6 +136,24 @@ namespace PlutoGE::scene
         m_transform.rotation = rotation;
         m_localTransformDirty = true;
         MarkTransformDirtyRecursive();
+    }
+
+    void Entity::SetWorldRotation(const glm::vec3 &rotation)
+    {
+        if (!m_parent)
+        {
+            SetRotation(rotation);
+            return;
+        }
+
+        glm::mat4 worldTransform(1.0f);
+        worldTransform = glm::translate(worldTransform, GetWorldPosition());
+        worldTransform = glm::rotate(worldTransform, glm::radians(rotation.x), glm::vec3(1.0f, 0.0f, 0.0f));
+        worldTransform = glm::rotate(worldTransform, glm::radians(rotation.y), glm::vec3(0.0f, 1.0f, 0.0f));
+        worldTransform = glm::rotate(worldTransform, glm::radians(rotation.z), glm::vec3(0.0f, 0.0f, 1.0f));
+
+        const auto localTransform = DecomposeTransform(glm::inverse(m_parent->GetWorldTransform()) * worldTransform);
+        SetRotation(localTransform.rotation);
     }
 
     void Entity::SetScale(const glm::vec3 &scale)

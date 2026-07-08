@@ -103,8 +103,11 @@ internal static unsafe class ScriptBridge
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3> _getEntityPosition;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3> _getEntityWorldPosition;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3, void> _setEntityPosition;
+    private static delegate* unmanaged[Cdecl]<uint, NativeVector3, void> _setEntityWorldPosition;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3> _getEntityRotation;
+    private static delegate* unmanaged[Cdecl]<uint, NativeVector3> _getEntityWorldRotation;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3, void> _setEntityRotation;
+    private static delegate* unmanaged[Cdecl]<uint, NativeVector3, void> _setEntityWorldRotation;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3> _getEntityScale;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3, void> _setEntityScale;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3> _getEntityForward;
@@ -415,7 +418,10 @@ internal static unsafe class ScriptBridge
         delegate* unmanaged[Cdecl]<uint, nint> getEntityName,
         delegate* unmanaged[Cdecl]<byte*, uint> findEntityByName,
         delegate* unmanaged[Cdecl]<byte*, int> getEntityCountByTag,
-        delegate* unmanaged[Cdecl]<byte*, int, uint> getEntityByTag)
+        delegate* unmanaged[Cdecl]<byte*, int, uint> getEntityByTag,
+        delegate* unmanaged[Cdecl]<uint, NativeVector3, void> setEntityWorldPosition,
+        delegate* unmanaged[Cdecl]<uint, NativeVector3> getEntityWorldRotation,
+        delegate* unmanaged[Cdecl]<uint, NativeVector3, void> setEntityWorldRotation)
     {
         if (getEntityPosition == null ||
             getEntityWorldPosition == null ||
@@ -434,7 +440,10 @@ internal static unsafe class ScriptBridge
             getEntityName == null ||
             findEntityByName == null ||
             getEntityCountByTag == null ||
-            getEntityByTag == null)
+            getEntityByTag == null ||
+            setEntityWorldPosition == null ||
+            getEntityWorldRotation == null ||
+            setEntityWorldRotation == null)
         {
             SetError("Managed game object API registration received a null function pointer.");
             return 0;
@@ -443,8 +452,11 @@ internal static unsafe class ScriptBridge
         _getEntityPosition = getEntityPosition;
         _getEntityWorldPosition = getEntityWorldPosition;
         _setEntityPosition = setEntityPosition;
+        _setEntityWorldPosition = setEntityWorldPosition;
         _getEntityRotation = getEntityRotation;
+        _getEntityWorldRotation = getEntityWorldRotation;
         _setEntityRotation = setEntityRotation;
+        _setEntityWorldRotation = setEntityWorldRotation;
         _getEntityScale = getEntityScale;
         _setEntityScale = setEntityScale;
         _getEntityForward = getEntityForward;
@@ -1322,6 +1334,16 @@ internal static unsafe class ScriptBridge
         return _getEntityWorldPosition == null ? Vector3.Zero : _getEntityWorldPosition(entityId).ToManaged();
     }
 
+    internal static void SetEntityWorldPosition(uint entityId, Vector3 position)
+    {
+        if (_setEntityWorldPosition == null)
+        {
+            return;
+        }
+
+        _setEntityWorldPosition(entityId, NativeVector3.FromManaged(position));
+    }
+
     internal static void SetEntityPosition(uint entityId, Vector3 position)
     {
         if (_setEntityPosition == null)
@@ -1337,6 +1359,11 @@ internal static unsafe class ScriptBridge
         return _getEntityRotation == null ? Vector3.Zero : _getEntityRotation(entityId).ToManaged();
     }
 
+    internal static Vector3 GetEntityWorldRotation(uint entityId)
+    {
+        return _getEntityWorldRotation == null ? Vector3.Zero : _getEntityWorldRotation(entityId).ToManaged();
+    }
+
     internal static void SetEntityRotation(uint entityId, Vector3 rotation)
     {
         if (_setEntityRotation == null)
@@ -1345,6 +1372,16 @@ internal static unsafe class ScriptBridge
         }
 
         _setEntityRotation(entityId, NativeVector3.FromManaged(rotation));
+    }
+
+    internal static void SetEntityWorldRotation(uint entityId, Vector3 rotation)
+    {
+        if (_setEntityWorldRotation == null)
+        {
+            return;
+        }
+
+        _setEntityWorldRotation(entityId, NativeVector3.FromManaged(rotation));
     }
 
     internal static Vector3 GetEntityScale(uint entityId)

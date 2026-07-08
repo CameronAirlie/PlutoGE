@@ -79,7 +79,7 @@ namespace PlutoGE::scripting
         using invoke_on_collision_fn = int(__cdecl *)(int64_t, uint32_t);
         using apply_field_data_fn = int(__cdecl *)(int64_t, const char *);
         using set_entity_id_fn = int(__cdecl *)(int64_t, uint32_t);
-        using register_game_object_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
+        using register_game_object_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_prefab_api_fn = int(__cdecl *)(void *);
         using register_scene_api_fn = int(__cdecl *)(void *);
         using register_scriptable_object_api_fn = int(__cdecl *)(void *);
@@ -873,6 +873,17 @@ namespace PlutoGE::scripting
             return NativeVector3{position.x, position.y, position.z};
         }
 
+        void SetEntityWorldPosition(uint32_t entityId, NativeVector3 position)
+        {
+            auto *entity = FindEntity(entityId);
+            if (!entity || !IsFiniteVector3(position))
+            {
+                return;
+            }
+
+            entity->SetWorldPosition(glm::vec3(position.x, position.y, position.z));
+        }
+
         void SetEntityPosition(uint32_t entityId, NativeVector3 position)
         {
             auto *entity = FindEntity(entityId);
@@ -896,6 +907,18 @@ namespace PlutoGE::scripting
             return NativeVector3{rotation.x, rotation.y, rotation.z};
         }
 
+        NativeVector3 GetEntityWorldRotation(uint32_t entityId)
+        {
+            auto *entity = FindEntity(entityId);
+            if (!entity)
+            {
+                return {};
+            }
+
+            const auto rotation = entity->GetWorldRotation();
+            return NativeVector3{rotation.x, rotation.y, rotation.z};
+        }
+
         void SetEntityRotation(uint32_t entityId, NativeVector3 rotation)
         {
             auto *entity = FindEntity(entityId);
@@ -905,6 +928,17 @@ namespace PlutoGE::scripting
             }
 
             entity->SetRotation(glm::vec3(rotation.x, rotation.y, rotation.z));
+        }
+
+        void SetEntityWorldRotation(uint32_t entityId, NativeVector3 rotation)
+        {
+            auto *entity = FindEntity(entityId);
+            if (!entity || !IsFiniteVector3(rotation))
+            {
+                return;
+            }
+
+            entity->SetWorldRotation(glm::vec3(rotation.x, rotation.y, rotation.z));
         }
 
         NativeVector3 GetEntityScale(uint32_t entityId)
@@ -3208,7 +3242,10 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(static_cast<get_entity_name_fn>(&GetEntityName)),
                 reinterpret_cast<void *>(static_cast<find_entity_by_name_fn>(&FindEntityByName)),
                 reinterpret_cast<void *>(static_cast<get_entity_count_by_tag_fn>(&GetEntityCountByTag)),
-                reinterpret_cast<void *>(static_cast<get_entity_by_tag_fn>(&GetEntityByTag))) == 0)
+                reinterpret_cast<void *>(static_cast<get_entity_by_tag_fn>(&GetEntityByTag)),
+                reinterpret_cast<void *>(static_cast<set_entity_vector3_fn>(&SetEntityWorldPosition)),
+                reinterpret_cast<void *>(static_cast<get_entity_vector3_fn>(&GetEntityWorldRotation)),
+                reinterpret_cast<void *>(static_cast<set_entity_vector3_fn>(&SetEntityWorldRotation))) == 0)
         {
             setManagedBridgeFailure("RegisterGameObjectApi");
             return false;

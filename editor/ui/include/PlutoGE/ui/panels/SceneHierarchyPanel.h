@@ -27,8 +27,23 @@ namespace PlutoGE::ui
         void ContextMenu();
 
     private:
+        enum class EntityPreset
+        {
+            Empty,
+            Cube,
+            Camera,
+            DirectionalLight,
+            PointLight,
+            Sky,
+            Terrain,
+            ParticleSystem,
+            IblCapture,
+        };
+
         void RenderRootDropTarget();
         void RenderEntityNode(scene::Entity *entity);
+        void RenderCreateMenu(scene::Entity *parent);
+        void CreatePresetEntity(EntityPreset preset, scene::Entity *parent);
         void BeginRename(scene::Entity *entity);
         void EndRename(bool applyChanges);
 

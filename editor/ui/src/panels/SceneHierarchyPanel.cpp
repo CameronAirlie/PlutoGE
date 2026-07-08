@@ -3,8 +3,16 @@
 // Editor selection access is validated by EditorShell before panel use.
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/render/Camera.h"
 #include "PlutoGE/render/Mesh.h"
+#include "PlutoGE/scene/components/CameraComponent.h"
+#include "PlutoGE/scene/components/IblCaptureComponent.h"
+#include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
+#include "PlutoGE/scene/components/ParticleSystemComponent.h"
+#include "PlutoGE/scene/components/PhysicalSkyComponent.h"
+#include "PlutoGE/scene/components/TerrainComponent.h"
+#include "PlutoGE/scene/components/VolumetricCloudComponent.h"
 #include "PlutoGE/scene/Prefab.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/Entity.h"
@@ -22,6 +30,47 @@ namespace PlutoGE::ui
     namespace
     {
         constexpr const char *kHierarchyDragDropPayload = "PLUTOGE_SCENE_ENTITY";
+
+        bool SceneHasAnyCamera(scene::Entity *entity)
+        {
+            if (!entity)
+            {
+                return false;
+            }
+
+            if (entity->HasComponent<scene::CameraComponent>())
+            {
+                return true;
+            }
+
+            for (auto *child : entity->GetChildren())
+            {
+                if (SceneHasAnyCamera(child))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        bool SceneHasAnyCamera(scene::Scene *scene)
+        {
+            if (!scene)
+            {
+                return false;
+            }
+
+            for (auto *rootEntity : scene->GetRootEntities())
+            {
+                if (SceneHasAnyCamera(rootEntity))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
 
         std::string SanitizePrefabFileName(std::string text)
         {
@@ -196,6 +245,11 @@ namespace PlutoGE::ui
             {
                 EditorShell::GetInstance().DuplicateSelectedEntity();
             }
+            if (ImGui::BeginMenu("Create Child"))
+            {
+                RenderCreateMenu(entity);
+                ImGui::EndMenu();
+            }
             if (entity->GetParent() && ImGui::MenuItem("Unparent"))
             {
                 EditorShell::GetInstance().ExecuteSceneEdit("Unparent Entity",
@@ -281,6 +335,225 @@ namespace PlutoGE::ui
             ImGui::TreePop();
         }
         ImGui::PopID();
+    }
+
+    void SceneHierarchyPanel::RenderCreateMenu(scene::Entity *parent)
+    {
+        if (ImGui::MenuItem("Empty Entity"))
+        {
+            CreatePresetEntity(EntityPreset::Empty, parent);
+        }
+        if (ImGui::MenuItem("Cube"))
+        {
+            CreatePresetEntity(EntityPreset::Cube, parent);
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Camera"))
+        {
+            CreatePresetEntity(EntityPreset::Camera, parent);
+        }
+        if (ImGui::MenuItem("Directional Light"))
+        {
+            CreatePresetEntity(EntityPreset::DirectionalLight, parent);
+        }
+        if (ImGui::MenuItem("Point Light"))
+        {
+            CreatePresetEntity(EntityPreset::PointLight, parent);
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Sky"))
+        {
+            CreatePresetEntity(EntityPreset::Sky, parent);
+        }
+        if (ImGui::MenuItem("Terrain"))
+        {
+            CreatePresetEntity(EntityPreset::Terrain, parent);
+        }
+        if (ImGui::MenuItem("Particle System"))
+        {
+            CreatePresetEntity(EntityPreset::ParticleSystem, parent);
+        }
+        if (ImGui::MenuItem("IBL Capture"))
+        {
+            CreatePresetEntity(EntityPreset::IblCapture, parent);
+        }
+    }
+
+    void SceneHierarchyPanel::CreatePresetEntity(EntityPreset preset, scene::Entity *parent)
+    {
+        auto &engine = core::Engine::GetInstance();
+        auto *scene = EditorShell::GetInstance().GetEngine().GetScene();
+        if (!scene)
+        {
+            return;
+        }
+
+        scene::Entity *createdEntity = nullptr;
+        const bool sceneAlreadyHasCamera = SceneHasAnyCamera(scene);
+        const char *editLabel = "Create Entity";
+        switch (preset)
+        {
+        case EntityPreset::Empty:
+            editLabel = "Create Empty Entity";
+            break;
+        case EntityPreset::Cube:
+            editLabel = "Create Cube";
+            break;
+        case EntityPreset::Camera:
+            editLabel = "Create Camera";
+            break;
+        case EntityPreset::DirectionalLight:
+            editLabel = "Create Directional Light";
+            break;
+        case EntityPreset::PointLight:
+            editLabel = "Create Point Light";
+            break;
+        case EntityPreset::Sky:
+            editLabel = "Create Sky";
+            break;
+        case EntityPreset::Terrain:
+            editLabel = "Create Terrain";
+            break;
+        case EntityPreset::ParticleSystem:
+            editLabel = "Create Particle System";
+            break;
+        case EntityPreset::IblCapture:
+            editLabel = "Create IBL Capture";
+            break;
+        }
+
+        EditorShell::GetInstance().ExecuteSceneEdit(editLabel,
+                                                    [&engine, scene, parent, preset, sceneAlreadyHasCamera, &createdEntity]()
+                                                    {
+                                                        auto addEntity = [scene, parent, &createdEntity](std::string name)
+                                                        {
+                                                            auto newEntity = std::make_unique<scene::Entity>(scene::EntityConfig{.name = std::move(name)});
+                                                            createdEntity = scene->AddEntity(std::move(newEntity), parent);
+                                                            return createdEntity;
+                                                        };
+
+                                                        switch (preset)
+                                                        {
+                                                        case EntityPreset::Empty:
+                                                            addEntity("New Entity");
+                                                            break;
+                                                        case EntityPreset::Cube:
+                                                        {
+                                                            auto *entity = addEntity("Cube");
+                                                            if (!entity)
+                                                            {
+                                                                break;
+                                                            }
+                                                            auto *meshComponent = entity->CreateComponent<scene::MeshComponent>(scene::MeshComponentConfig{
+                                                                .mesh = engine.GetAssetManager().LoadMeshAsset(std::string(assets::Project::kBuiltinCubeMeshReference)),
+                                                                .material = engine.GetAssetManager().LoadMaterialAsset(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference)),
+                                                            });
+                                                            if (meshComponent)
+                                                            {
+                                                                meshComponent->SetSourceMeshPath(std::string(assets::Project::kBuiltinCubeMeshReference));
+                                                                meshComponent->SetMaterialAssetForMaterialSlot(0, std::string(assets::Project::kBuiltinDefaultShadedMaterialReference));
+                                                            }
+                                                            break;
+                                                        }
+                                                        case EntityPreset::Camera:
+                                                        {
+                                                            auto *entity = addEntity("Camera");
+                                                            if (!entity)
+                                                            {
+                                                                break;
+                                                            }
+                                                            entity->SetPosition(glm::vec3(0.0f, 2.0f, 5.0f));
+                                                            entity->SetRotation(glm::vec3(-15.0f, 0.0f, 0.0f));
+                                                            auto *cameraComponent = entity->CreateComponent<scene::CameraComponent>(new render::Camera(render::CameraConfig{
+                                                                .fovY = 60.0f,
+                                                                .nearPlane = 0.1f,
+                                                                .farPlane = 100.0f,
+                                                            }));
+                                                            if (cameraComponent)
+                                                            {
+                                                                cameraComponent->SetMainCamera(!sceneAlreadyHasCamera);
+                                                            }
+                                                            break;
+                                                        }
+                                                        case EntityPreset::DirectionalLight:
+                                                        {
+                                                            auto *entity = addEntity("Directional Light");
+                                                            if (auto *lightComponent = entity ? entity->CreateComponent<scene::LightComponent>() : nullptr)
+                                                            {
+                                                                lightComponent->SetLightType(scene::LightType::Directional);
+                                                                lightComponent->SetIntensity(4.0f);
+                                                                lightComponent->SetDirection(glm::normalize(glm::vec3(-0.45f, -0.85f, -0.25f)));
+                                                                lightComponent->SetCastsShadows(true);
+                                                            }
+                                                            break;
+                                                        }
+                                                        case EntityPreset::PointLight:
+                                                        {
+                                                            auto *entity = addEntity("Point Light");
+                                                            if (!entity)
+                                                            {
+                                                                break;
+                                                            }
+                                                            entity->SetPosition(glm::vec3(0.0f, 2.0f, 0.0f));
+                                                            if (auto *lightComponent = entity->CreateComponent<scene::LightComponent>())
+                                                            {
+                                                                lightComponent->SetLightType(scene::LightType::Point);
+                                                                lightComponent->SetIntensity(8.0f);
+                                                                lightComponent->SetRange(12.0f);
+                                                            }
+                                                            break;
+                                                        }
+                                                        case EntityPreset::Sky:
+                                                        {
+                                                            auto *entity = addEntity("Sky");
+                                                            if (entity)
+                                                            {
+                                                                entity->CreateComponent<scene::PhysicalSkyComponent>();
+                                                                entity->CreateComponent<scene::VolumetricCloudComponent>();
+                                                            }
+                                                            break;
+                                                        }
+                                                        case EntityPreset::Terrain:
+                                                        {
+                                                            auto *entity = addEntity("Terrain");
+                                                            if (entity)
+                                                            {
+                                                                auto *terrainComponent = entity->CreateComponent<scene::TerrainComponent>(scene::TerrainComponentConfig{
+                                                                    .material = engine.GetAssetManager().LoadMaterialAsset(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference)),
+                                                                });
+                                                                if (terrainComponent)
+                                                                {
+                                                                    terrainComponent->SetMaterialAssetReference(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference));
+                                                                }
+                                                            }
+                                                            break;
+                                                        }
+                                                        case EntityPreset::ParticleSystem:
+                                                        {
+                                                            auto *entity = addEntity("Particle System");
+                                                            if (entity)
+                                                            {
+                                                                entity->CreateComponent<scene::ParticleSystemComponent>();
+                                                            }
+                                                            break;
+                                                        }
+                                                        case EntityPreset::IblCapture:
+                                                        {
+                                                            auto *entity = addEntity("IBL Capture");
+                                                            if (entity)
+                                                            {
+                                                                entity->CreateComponent<scene::IblCaptureComponent>();
+                                                            }
+                                                            break;
+                                                        }
+                                                        }
+                                                    });
+
+        if (createdEntity)
+        {
+            EditorShell::GetInstance().SetSelectedEntity(createdEntity);
+            BeginRename(createdEntity);
+        }
     }
 
     void SceneHierarchyPanel::BeginRename(scene::Entity *entity)
@@ -418,41 +691,10 @@ namespace PlutoGE::ui
             }
             ImGui::EndDisabled();
             ImGui::Separator();
-            if (ImGui::MenuItem("Create Empty Entity"))
+            if (ImGui::BeginMenu("Create"))
             {
-                auto scene = ui::EditorShell::GetInstance().GetEngine().GetScene();
-                if (scene)
-                {
-                    EditorShell::GetInstance().ExecuteSceneEdit("Create Empty Entity",
-                                                                [scene]()
-                                                                {
-                                                                    auto newEntity = std::make_unique<scene::Entity>(scene::EntityConfig{.name = "New Entity"});
-                                                                    scene->AddEntity(std::move(newEntity));
-                                                                });
-                }
-            }
-            if (ImGui::MenuItem("Create Cube"))
-            {
-                auto &engine = core::Engine::GetInstance();
-                auto *scene = ui::EditorShell::GetInstance().GetEngine().GetScene();
-                if (scene)
-                {
-                    EditorShell::GetInstance().ExecuteSceneEdit("Create Cube",
-                                                                [&engine, scene]()
-                                                                {
-                                                                    auto newEntity = std::make_unique<scene::Entity>(scene::EntityConfig{.name = "Cube"});
-                                                                    auto *entity = scene->AddEntity(std::move(newEntity));
-                                                                    auto *meshComponent = entity->CreateComponent<scene::MeshComponent>(scene::MeshComponentConfig{
-                                                                        .mesh = engine.GetAssetManager().LoadMeshAsset(std::string(assets::Project::kBuiltinCubeMeshReference)),
-                                                                        .material = engine.GetAssetManager().LoadMaterialAsset(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference)),
-                                                                    });
-                                                                    if (meshComponent)
-                                                                    {
-                                                                        meshComponent->SetSourceMeshPath(std::string(assets::Project::kBuiltinCubeMeshReference));
-                                                                        meshComponent->SetMaterialAssetForMaterialSlot(0, std::string(assets::Project::kBuiltinDefaultShadedMaterialReference));
-                                                                    }
-                                                                });
-                }
+                RenderCreateMenu(nullptr);
+                ImGui::EndMenu();
             }
             ImGui::EndPopup();
         }

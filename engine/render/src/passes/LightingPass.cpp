@@ -375,7 +375,8 @@ namespace PlutoGE::render
 
                 float ComputeViewDepth(vec3 worldPosition)
                 {
-                    return abs((uViewMatrix * vec4(worldPosition, 1.0)).z);
+                    vec3 cameraForward = -normalize(vec3(uViewMatrix[0][2], uViewMatrix[1][2], uViewMatrix[2][2]));
+                    return max(dot(worldPosition - uViewPos, cameraForward), 0.0);
                 }
 
                 int SelectDirectionalCascadeIndex(Light light, float cameraDistance)
@@ -704,6 +705,7 @@ namespace PlutoGE::render
                 uniform sampler2D uShadowMaskTexture;
                 uniform sampler2D uScenePositionTexture;
                 uniform sampler2D uSceneNormalTexture;
+                uniform vec3 uViewPos;
                 uniform mat4 uViewMatrix;
                 uniform vec2 uDirection;
                 uniform int uFilterRadius;
@@ -714,7 +716,8 @@ namespace PlutoGE::render
 
                 float ComputeViewDepth(vec3 worldPosition)
                 {
-                    return abs((uViewMatrix * vec4(worldPosition, 1.0)).z);
+                    vec3 cameraForward = -normalize(vec3(uViewMatrix[0][2], uViewMatrix[1][2], uViewMatrix[2][2]));
+                    return max(dot(worldPosition - uViewPos, cameraForward), 0.0);
                 }
 
                 void main()
@@ -1110,6 +1113,7 @@ namespace PlutoGE::render
         {
             return nullptr;
         }
+        const glm::vec3 cameraPosition = glm::vec3(glm::inverse(ctx.cameraData.view)[3]);
 
         glBindTexture(GL_TEXTURE_2D, m_rawShadowMaskTarget->GetColorTextureID());
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
@@ -1129,7 +1133,7 @@ namespace PlutoGE::render
         BindLightingInputs(m_directLightingPassShader, ctx);
         const bool hasShadowMap = BindShadowMapForLight(light);
         BindLightUniforms(m_directLightingPassShader, light, hasShadowMap);
-        m_directLightingPassShader->SetUniform("uViewPos", glm::vec3(glm::inverse(ctx.cameraData.view)[3]));
+        m_directLightingPassShader->SetUniform("uViewPos", cameraPosition);
         m_directLightingPassShader->SetUniform("uViewMatrix", ctx.cameraData.view);
         m_directLightingPassShader->SetUniform("uInverseViewMatrix", glm::inverse(ctx.cameraData.view));
         m_directLightingPassShader->SetUniform("uInverseProjectionMatrix", glm::inverse(ctx.cameraData.projection));
@@ -1154,6 +1158,7 @@ namespace PlutoGE::render
         glActiveTexture(GL_TEXTURE0 + kShadowMaskNormalTextureSlot);
         glBindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetNormalTextureID());
         m_shadowMaskBlurShader->SetUniform("uSceneNormalTexture", kShadowMaskNormalTextureSlot);
+        m_shadowMaskBlurShader->SetUniform("uViewPos", cameraPosition);
         m_shadowMaskBlurShader->SetUniform("uViewMatrix", ctx.cameraData.view);
         m_shadowMaskBlurShader->SetUniform("uDirection", glm::vec2(1.0f, 0.0f));
         m_shadowMaskBlurShader->SetUniform("uFilterRadius", filterRadius);
@@ -1172,6 +1177,7 @@ namespace PlutoGE::render
         glActiveTexture(GL_TEXTURE0 + kShadowMaskTextureSlot);
         glBindTexture(GL_TEXTURE_2D, m_blurredShadowMaskTarget->GetColorTextureID());
         m_shadowMaskBlurShader->SetUniform("uShadowMaskTexture", kShadowMaskTextureSlot);
+        m_shadowMaskBlurShader->SetUniform("uViewPos", cameraPosition);
         m_shadowMaskBlurShader->SetUniform("uViewMatrix", ctx.cameraData.view);
         m_shadowMaskBlurShader->SetUniform("uDirection", glm::vec2(0.0f, 1.0f));
         m_shadowMaskBlurShader->SetUniform("uFilterRadius", filterRadius);

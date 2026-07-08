@@ -787,6 +787,12 @@ int SelectDirectionalCascadeIndex(Light light, float viewDepth)
     return light.CascadeCount - 1;
 }
 
+float ComputeViewDepth(vec3 worldPosition)
+{
+    vec3 cameraForward = -normalize(vec3(uViewMatrix[0][2], uViewMatrix[1][2], uViewMatrix[2][2]));
+    return max(dot(worldPosition - uViewPos, cameraForward), 0.0);
+}
+
 vec3 GetDirectionalCascadeDebugColor(int cascadeIndex)
 {
     if (cascadeIndex == 0)
@@ -857,7 +863,7 @@ float ComputeDirectionalShadow(vec3 fragPos,
     float ndotl = max(dot(surfaceNormal, lightVector), 0.0);
     float normalBias = max(0.004 * (1.0 - ndotl), 0.00075);
     vec3 receiverPosition = fragPos + surfaceNormal * normalBias;
-    float viewDepth = abs((uViewMatrix * vec4(fragPos, 1.0)).z);
+    float viewDepth = ComputeViewDepth(fragPos);
 
     if (viewDepth > light.CascadeSplits[light.CascadeCount - 1])
     {
@@ -1666,7 +1672,8 @@ void main()
 
             float ComputeViewDepth(vec3 fragPos)
             {
-                return max(-(uView * vec4(fragPos, 1.0)).z, 0.0);
+                vec3 cameraForward = -normalize(vec3(uView[0][2], uView[1][2], uView[2][2]));
+                return max(dot(fragPos - uViewPos, cameraForward), 0.0);
             }
 
             float ReadCascadeSplit(int lightIndex, int cascadeIndex)

@@ -215,10 +215,17 @@ namespace
         return ClampShadowLodIndex(command, std::max<std::size_t>(command.lodIndex, command.minShadowLodIndex));
     }
 
-    std::size_t SelectDirectionalShadowLod(const PlutoGE::render::RenderCommand &command, int cascadeIndex, int shadowResolution)
+    std::size_t SelectDirectionalShadowLod(const PlutoGE::render::RenderCommand &command,
+                                           int cascadeIndex,
+                                           int cascadeCount,
+                                           int shadowResolution)
     {
-        const std::size_t minimumShadowLod = (cascadeIndex > 0 || shadowResolution <= 1024) ? 1u : 0u;
-        return ClampShadowLodIndex(command, std::max<std::size_t>(std::max<std::size_t>(command.lodIndex, minimumShadowLod), command.minShadowLodIndex));
+        const bool isFarthestCascade = cascadeIndex >= cascadeCount - 1;
+        const std::size_t automaticShadowLod = (isFarthestCascade || shadowResolution <= 1024) ? 1u : 0u;
+        const std::size_t sceneLod = isFarthestCascade ? command.lodIndex : 0u;
+        return ClampShadowLodIndex(command, std::max<std::size_t>(
+                                                std::max<std::size_t>(sceneLod, automaticShadowLod),
+                                                command.minShadowLodIndex));
     }
 
     bool IsAlphaTestedShadowCaster(const PlutoGE::render::RenderCommand &command)
@@ -377,9 +384,10 @@ namespace
         }
     }
 
-    std::array<glm::vec3, 8> BuildCameraFrustumCorners(const PlutoGE::render::CameraData &cameraData)
+    std::array<glm::vec3, 8> BuildCameraRelativeFrustumCorners(const PlutoGE::render::CameraData &cameraData)
     {
-        const glm::mat4 inverseViewProjection = glm::inverse(cameraData.projection * cameraData.view);
+        const glm::mat4 inverseProjection = glm::inverse(cameraData.projection);
+        const glm::mat3 inverseViewRotation = glm::mat3(glm::inverse(cameraData.view));
         std::array<glm::vec3, 8> corners{};
         std::size_t index = 0;
 
@@ -392,8 +400,8 @@ namespace
                 for (int x = 0; x < 2; ++x)
                 {
                     const float clipX = x == 0 ? -1.0f : 1.0f;
-                    const glm::vec4 worldCorner = inverseViewProjection * glm::vec4(clipX, clipY, clipZ, 1.0f);
-                    corners[index++] = glm::vec3(worldCorner) / worldCorner.w;
+                    const glm::vec4 viewCorner = inverseProjection * glm::vec4(clipX, clipY, clipZ, 1.0f);
+                    corners[index++] = inverseViewRotation * (glm::vec3(viewCorner) / viewCorner.w);
                 }
             }
         }
@@ -401,9 +409,9 @@ namespace
         return corners;
     }
 
-    std::array<glm::vec3, 8> BuildCascadeFrustumCorners(const PlutoGE::render::CameraData &cameraData, float cascadeNear, float cascadeFar)
+    std::array<glm::vec3, 8> BuildCameraRelativeCascadeFrustumCorners(const PlutoGE::render::CameraData &cameraData, float cascadeNear, float cascadeFar)
     {
-        const auto frustumCorners = BuildCameraFrustumCorners(cameraData);
+        const auto frustumCorners = BuildCameraRelativeFrustumCorners(cameraData);
         std::array<glm::vec3, 8> cascadeCorners{};
         const float nearDepth = glm::max(cascadeNear, cameraData.nearPlane);
         const float farDepth = glm::max(cascadeFar, nearDepth + 0.1f);
@@ -413,10 +421,10 @@ namespace
 
         for (std::size_t index = 0; index < 4; ++index)
         {
-            const glm::vec3 &cameraNearCorner = frustumCorners[index];
-            const glm::vec3 &cameraFarCorner = frustumCorners[index + 4];
-            cascadeCorners[index] = cameraNearCorner + (cameraFarCorner - cameraNearCorner) * nearFactor;
-            cascadeCorners[index + 4] = cameraNearCorner + (cameraFarCorner - cameraNearCorner) * farFactor;
+            const glm::vec3 &nearCorner = frustumCorners[index];
+            const glm::vec3 &farCorner = frustumCorners[index + 4];
+            cascadeCorners[index] = nearCorner + (farCorner - nearCorner) * nearFactor;
+            cascadeCorners[index + 4] = nearCorner + (farCorner - nearCorner) * farFactor;
         }
 
         return cascadeCorners;
@@ -497,13 +505,13 @@ namespace
         int shadowResolution)
     {
         const glm::vec3 lightDirection = glm::normalize(light.direction);
-        const auto worldCascadeCorners = BuildCascadeFrustumCorners(cameraData, cascadeNear, cascadeFar);
+        const auto cameraRelativeCascadeCorners = BuildCameraRelativeCascadeFrustumCorners(cameraData, cascadeNear, cascadeFar);
         const glm::vec3 cameraPosition = glm::vec3(glm::inverse(cameraData.view)[3]);
         const glm::vec3 cascadeCenter = cameraPosition - shadowWorldOrigin;
         float cascadeRadius = 0.0f;
-        for (const glm::vec3 &corner : worldCascadeCorners)
+        for (const glm::vec3 &corner : cameraRelativeCascadeCorners)
         {
-            cascadeRadius = glm::max(cascadeRadius, glm::distance(corner, cameraPosition));
+            cascadeRadius = glm::max(cascadeRadius, glm::length(corner));
         }
         cascadeRadius = glm::max(cascadeRadius, cascadeFar);
 
@@ -1111,7 +1119,34 @@ namespace PlutoGE::render
             const bool hasPendingDirectionalRefresh = light->type == scene::LightType::Directional && light->pendingShadowCascadeMask != 0;
             const bool hasPendingIncrementalRefresh = (light->shadowRefreshPending || hasPendingDirectionalRefresh) && !light->isDirty;
             bool deferredShadowRefresh = false;
-            const bool motionDrivenDirectionalInvalidation = light->type == scene::LightType::Directional && ctx.hasCameraData && (cameraDataChanged || shadowCastersChanged || hasPendingIncrementalRefresh);
+            bool directionalCascadeOriginMismatch = false;
+            if (light->type == scene::LightType::Directional && ctx.hasCameraData)
+            {
+                const glm::vec3 currentShadowWorldOrigin = glm::vec3(glm::inverse(ctx.cameraData.view)[3]);
+                const int cascadeCount = GetDirectionalCascadeCount(*light);
+                const auto cascadeSplits = BuildDirectionalCascadeSplits(ctx.cameraData, light->directionalShadowSettings, cascadeCount);
+                for (int cascadeIndex = 0; cascadeIndex < cascadeCount; ++cascadeIndex)
+                {
+                    const bool hasStoredCascadeOrigin =
+                        !AreMatricesApproximatelyEqual(light->shadowCascadeMatrices[cascadeIndex], glm::mat4(1.0f)) ||
+                        glm::length(light->shadowCascadeWorldOrigins[cascadeIndex]) > kShadowUpdateMatrixEpsilon;
+                    const float cascadeNear = cascadeIndex == 0 ? ctx.cameraData.nearPlane : cascadeSplits[cascadeIndex - 1];
+                    const float cascadeFar = cascadeSplits[cascadeIndex];
+                    if (!hasStoredCascadeOrigin ||
+                        ShouldRefreshCameraRelativeCascade(currentShadowWorldOrigin,
+                                                           light->shadowCascadeWorldOrigins[cascadeIndex],
+                                                           cascadeNear,
+                                                           cascadeFar))
+                    {
+                        directionalCascadeOriginMismatch = true;
+                        break;
+                    }
+                }
+            }
+            const bool motionDrivenDirectionalInvalidation =
+                light->type == scene::LightType::Directional &&
+                ctx.hasCameraData &&
+                (cameraDataChanged || shadowCastersChanged || hasPendingIncrementalRefresh || directionalCascadeOriginMismatch);
 
             const bool needsUpdate = light->type == scene::LightType::Directional
                                          ? (ctx.hasCameraData &&
@@ -1224,11 +1259,11 @@ namespace PlutoGE::render
                 const glm::vec3 currentShadowWorldOrigin = glm::vec3(glm::inverse(ctx.cameraData.view)[3]);
                 const int cascadeCount = GetDirectionalCascadeCount(*light);
                 const auto cascadeSplits = BuildDirectionalCascadeSplits(ctx.cameraData, light->directionalShadowSettings, cascadeCount);
-                const bool forceFullCascadeUpdate = light->isDirty || !ctx.hasPreviousCameraData;
+                const bool forceFullCascadeUpdate = light->isDirty || !ctx.hasPreviousCameraData || directionalCascadeOriginMismatch;
                 const bool casterOnlyCascadeInvalidation = shadowCastersChanged && !light->isDirty && !cameraDataChanged && !hasPendingIncrementalRefresh;
                 const bool cameraOnlyInvalidation = cameraDataChanged && !light->isDirty && !shadowCastersChanged;
                 const std::uint8_t allCascadeMask = static_cast<std::uint8_t>((1u << cascadeCount) - 1u);
-                if (forceFullCascadeUpdate || cameraDataChanged || shadowCastersChanged)
+                if (forceFullCascadeUpdate || cameraDataChanged || shadowCastersChanged || directionalCascadeOriginMismatch)
                 {
                     light->pendingShadowCascadeMask |= allCascadeMask;
                 }
@@ -1372,7 +1407,7 @@ namespace PlutoGE::render
                         },
                         [&](const ShadowCasterEntry &shadowCaster)
                         {
-                            return SelectDirectionalShadowLod(*shadowCaster.command, cascadeIndex, shadowResolution);
+                            return SelectDirectionalShadowLod(*shadowCaster.command, cascadeIndex, cascadeCount, shadowResolution);
                         },
                         m_shadowPassShader,
                         m_instanceBuffer,

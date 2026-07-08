@@ -427,7 +427,8 @@ namespace PlutoGE::render
 
             float ComputeViewDepth(vec3 worldPosition)
             {
-                return abs((uViewMatrix * vec4(worldPosition, 1.0)).z);
+                vec3 cameraForward = -normalize(vec3(uViewMatrix[0][2], uViewMatrix[1][2], uViewMatrix[2][2]));
+                return max(dot(worldPosition - uCameraPosition, cameraForward), 0.0);
             }
 
             float ComputeDirectionalCascadeShadow(vec3 worldPosition, int cascadeIndex, out bool hasCoverage)

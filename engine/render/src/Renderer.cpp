@@ -522,7 +522,7 @@ namespace PlutoGE::render
             cameraData.nearPlane = 0.1f;
             cameraData.farPlane = captureFarPlane;
 
-            RenderFrame(cameraData, &captureTarget, lights, nullptr, scene, false);
+            RenderFrame(cameraData, &captureTarget, lights, nullptr, scene, false, false);
 
             glBindFramebuffer(GL_READ_FRAMEBUFFER, captureTarget.GetFramebufferID());
             glBindTexture(GL_TEXTURE_CUBE_MAP, targetCubemap->GetTextureID());
@@ -574,7 +574,7 @@ namespace PlutoGE::render
                     cameraComponent.GetOwner() ? cameraComponent.GetOwner()->GetScene() : nullptr);
     }
 
-    void Renderer::RenderFrame(const CameraData &cameraData, RenderTarget *renderTarget, std::vector<scene::Light *> lights, const std::vector<IPostProcessEffect *> *postProcessEffects, const scene::Scene *scene, bool renderEditorGrid)
+    void Renderer::RenderFrame(const CameraData &cameraData, RenderTarget *renderTarget, std::vector<scene::Light *> lights, const std::vector<IPostProcessEffect *> *postProcessEffects, const scene::Scene *scene, bool renderEditorGrid, bool interactivePreview)
     {
         if (!m_isInitialized)
             return;
@@ -668,6 +668,7 @@ namespace PlutoGE::render
             .postProcessDebugView = m_postProcessDebugView,
             .frameSequence = m_frameSequence,
             .renderEditorGrid = renderEditorGrid,
+            .interactivePreview = interactivePreview,
         };
 
         if (m_shadowPass)

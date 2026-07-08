@@ -2381,7 +2381,7 @@ namespace PlutoGE::ui
         ViewportPanelConfig viewportConfig;
         viewportConfig.name = "Editor Viewport";
         viewportConfig.clearColor = glm::vec4(0.1f, 0.1f, 0.15f, 1.0f);
-        viewportConfig.initialRenderScale = 1.0f;
+        viewportConfig.initialRenderScale = 0.85f;
         viewportConfig.editorViewport = true;
         auto *viewportPanel = new ViewportPanel(viewportConfig);
         viewportPanel->Initialize();
@@ -2514,16 +2514,6 @@ namespace PlutoGE::ui
                 forceEditorCursorVisible = false;
             }
             window.SetCursorLockOverride(forceEditorCursorVisible);
-            auto shouldEnableRuntimeInput = [&]()
-            {
-                return m_engine.IsRuntimeRunning() &&
-                       (window.IsCursorLocked() ||
-                        window.IsCursorLockRequested() ||
-                        viewportPanel2->IsViewportFocused() ||
-                        viewportPanel2->IsViewportHovered());
-            };
-
-            window.SetScriptInputEnabled(shouldEnableRuntimeInput());
             if (!isRuntimeRunning)
             {
                 window.SetCursorLocked(false);
@@ -2539,13 +2529,24 @@ namespace PlutoGE::ui
             UpdateEditorCamera(m_editorCamera,
                                window,
                                windowHandle,
-                               !isRuntimeRunning && viewportPanel->IsViewportHovered(),
+                               viewportPanel->IsViewportHovered(),
                                deltaSeconds,
                                isEditorCameraLookActive,
                                lastEditorCameraCursorX,
                                lastEditorCameraCursorY,
                                restoreEditorCameraCursorX,
                                restoreEditorCameraCursorY);
+            auto shouldEnableRuntimeInput = [&]()
+            {
+                return m_engine.IsRuntimeRunning() &&
+                       !isEditorCameraLookActive &&
+                       (window.IsCursorLocked() ||
+                        window.IsCursorLockRequested() ||
+                        viewportPanel2->IsViewportFocused() ||
+                        viewportPanel2->IsViewportHovered());
+            };
+
+            window.SetScriptInputEnabled(shouldEnableRuntimeInput());
 
             auto *cameraComponent2 = FindFirstSceneCamera(m_scene.get());
             const bool shouldRenderViewport1 = viewportPanel->ShouldRenderFrame();
@@ -2737,7 +2738,8 @@ namespace PlutoGE::ui
                                      m_scene ? m_scene->GetLights() : std::vector<scene::Light *>{},
                                      &editorPostProcessEffects,
                                      m_scene.get(),
-                                     viewportPanel->IsGridVisible());
+                                     viewportPanel->IsGridVisible(),
+                                     true);
                 render::CameraData renderedEditorCameraData{};
                 if (renderer.GetLastRenderedCameraData(renderTarget, renderedEditorCameraData))
                 {

@@ -359,6 +359,8 @@ namespace PlutoGE::render
         float renderScale = 0.25f;
         for (const CloudDraw &draw : clouds)
             renderScale = std::max(renderScale, draw.component->GetRenderScale());
+        if (ctx.interactivePreview)
+            renderScale = std::min(renderScale, 0.35f);
         const int cloudWidth = std::max(1, static_cast<int>(ctx.temporaryRenderTarget->GetWidth() * renderScale));
         const int cloudHeight = std::max(1, static_cast<int>(ctx.temporaryRenderTarget->GetHeight() * renderScale));
         if (!EnsureCloudTarget(cloudWidth, cloudHeight))
@@ -435,8 +437,10 @@ namespace PlutoGE::render
             m_shader->SetUniform("uBaseNoiseScale", cloud.GetBaseNoiseScale());
             m_shader->SetUniform("uDetailNoiseScale", cloud.GetDetailNoiseScale());
             m_shader->SetUniform("uDetailErosion", cloud.GetDetailErosion());
-            m_shader->SetUniform("uPrimarySteps", cloud.GetPrimaryStepCount());
-            m_shader->SetUniform("uLightSteps", cloud.GetLightStepCount());
+            const int primarySteps = ctx.interactivePreview ? std::min(cloud.GetPrimaryStepCount(), 16) : cloud.GetPrimaryStepCount();
+            const int lightSteps = ctx.interactivePreview ? std::min(cloud.GetLightStepCount(), 2) : cloud.GetLightStepCount();
+            m_shader->SetUniform("uPrimarySteps", primarySteps);
+            m_shader->SetUniform("uLightSteps", lightSteps);
             Graphics::DrawFullscreenTriangle();
         }
 

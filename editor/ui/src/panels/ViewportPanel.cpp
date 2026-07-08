@@ -1681,6 +1681,23 @@ namespace PlutoGE::ui
         if (ImGui::BeginPopup("QualityPopup"))
         {
             overlayPopupOpen = true;
+            if (ImGui::SmallButton("Performance"))
+            {
+                m_renderScale = 0.75f;
+                m_resizeStableFrames = kResizeDebounceFrames;
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Balanced"))
+            {
+                m_renderScale = 0.85f;
+                m_resizeStableFrames = kResizeDebounceFrames;
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Native"))
+            {
+                m_renderScale = 1.0f;
+                m_resizeStableFrames = kResizeDebounceFrames;
+            }
             ImGui::SetNextItemWidth(180.0f);
             if (ImGui::SliderFloat("Render Scale", &m_renderScale, kMinRenderScale, kMaxRenderScale, "%.2fx"))
             {

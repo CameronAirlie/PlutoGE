@@ -280,7 +280,6 @@ namespace PlutoGE::render
             out vec4 FragColor;
 
             uniform sampler2D uSceneDepthTexture;
-            uniform sampler2D uScenePositionTexture;
             uniform sampler2D uShadowCascadeMap0;
             uniform sampler2D uShadowCascadeMap1;
             uniform sampler2D uShadowCascadeMap2;
@@ -324,6 +323,14 @@ namespace PlutoGE::render
                 vec4 viewDirection = uInverseProjectionMatrix * vec4(clip, 1.0, 1.0);
                 vec3 rayDirectionView = normalize(viewDirection.xyz / max(viewDirection.w, 0.0001));
                 return normalize((uInverseViewMatrix * vec4(rayDirectionView, 0.0)).xyz);
+            }
+
+            vec3 ReconstructWorldPosition(vec2 uv, float depth)
+            {
+                vec4 clipPosition = vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+                vec4 viewPosition = uInverseProjectionMatrix * clipPosition;
+                viewPosition /= max(viewPosition.w, 0.0001);
+                return (uInverseViewMatrix * vec4(viewPosition.xyz, 1.0)).xyz;
             }
 
             float ComputeDensity(vec3 worldPosition)
@@ -492,13 +499,13 @@ namespace PlutoGE::render
             {
                 float sceneDepth = texture(uSceneDepthTexture, UV).r;
                 vec3 rayDirection = GetWorldRayDirection(UV);
-                vec3 surfacePosition = texture(uScenePositionTexture, UV).rgb;
                 vec3 fogTint = max(uFogColor, vec3(0.0));
                 vec3 ambientFogColor = ComputeFogAmbientColor();
 
                 float hitDistance = uMaxDistance;
                 if (sceneDepth < 0.9999)
                 {
+                    vec3 surfacePosition = ReconstructWorldPosition(UV, sceneDepth);
                     hitDistance = min(distance(surfacePosition, uCameraPosition), uMaxDistance);
                 }
 
@@ -683,6 +690,10 @@ namespace PlutoGE::render
 
         Graphics::BindRenderTarget(m_fogRenderTarget.get());
         glViewport(0, 0, m_internalWidth, m_internalHeight);
+        glDisable(GL_DEPTH_TEST);
+        glDepthMask(GL_FALSE);
+        glDisable(GL_CULL_FACE);
+        glDisable(GL_BLEND);
         glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
         glClear(GL_COLOR_BUFFER_BIT);
 
@@ -714,6 +725,7 @@ namespace PlutoGE::render
 
         BeginApply(context);
         glViewport(0, 0, context.destinationRenderTarget->GetWidth(), context.destinationRenderTarget->GetHeight());
+        glDisable(GL_BLEND);
 
         m_compositeShader->Bind();
         BindCommonInputs(m_compositeShader, context);
@@ -723,5 +735,6 @@ namespace PlutoGE::render
         DrawFullscreenTriangle();
 
         EndApply();
+        glDepthMask(GL_TRUE);
     }
 }

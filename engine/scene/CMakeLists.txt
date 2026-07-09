@@ -6,6 +6,7 @@ add_library(PlutoGEScene
     src/SceneSerializer.cpp
     src/components/AnimationComponent.cpp
     src/components/MeshComponent.cpp
+    src/components/OceanComponent.cpp
     src/components/SkeletonAttachmentComponent.cpp
     src/components/CameraComponent.cpp
     src/components/ColliderComponent.cpp

@@ -7,6 +7,7 @@
 #include "PlutoGE/scene/components/Component.h"
 #include "PlutoGE/scene/components/FoliageComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
+#include "PlutoGE/scene/components/OceanComponent.h"
 #include "PlutoGE/scene/components/ScriptComponent.h"
 #include "PlutoGE/scene/components/SkeletonAttachmentComponent.h"
 #include "PlutoGE/scene/components/SplineComponent.h"
@@ -97,14 +98,15 @@ namespace PlutoGE::ui
             VolumetricCloud = 10,
             ParticleSystem = 11,
             Spline = 12,
-            Script = 13,
-            SoundEmitter = 14,
-            SoundListener = 15,
-            Canvas = 16,
-            RectTransform = 17,
-            UIImage = 18,
-            UIText = 19,
-            UIButton = 20,
+            Ocean = 13,
+            Script = 14,
+            SoundEmitter = 15,
+            SoundListener = 16,
+            Canvas = 17,
+            RectTransform = 18,
+            UIImage = 19,
+            UIText = 20,
+            UIButton = 21,
         };
 
         struct ScriptAssetOption
@@ -1474,6 +1476,10 @@ namespace PlutoGE::ui
             {
                 return "Spline Track Component";
             }
+            if (dynamic_cast<const scene::OceanComponent *>(&component))
+            {
+                return "Ocean Component";
+            }
             if (dynamic_cast<const scene::AnimationComponent *>(&component))
             {
                 return "Animation Component";
@@ -1592,6 +1598,8 @@ namespace PlutoGE::ui
                 return "UIButtonComponent";
             if (dynamic_cast<const scene::SplineComponent *>(&component))
                 return "SplineComponent";
+            if (dynamic_cast<const scene::OceanComponent *>(&component))
+                return "OceanComponent";
             return {};
         }
 
@@ -1680,6 +1688,8 @@ namespace PlutoGE::ui
                 return !entity.HasComponent<scene::ParticleSystemComponent>();
             case AddableComponentType::Spline:
                 return !entity.HasComponent<scene::SplineComponent>();
+            case AddableComponentType::Ocean:
+                return !entity.HasComponent<scene::OceanComponent>();
             case AddableComponentType::Animation:
                 return !entity.HasComponent<scene::AnimationComponent>();
             case AddableComponentType::Camera:
@@ -1733,6 +1743,7 @@ namespace PlutoGE::ui
                 renderItem("Mesh", AddableComponentType::Mesh);
                 renderItem("Terrain", AddableComponentType::Terrain);
                 renderItem("Spline Track", AddableComponentType::Spline);
+                renderItem("Ocean", AddableComponentType::Ocean);
                 renderItem("Foliage", AddableComponentType::Foliage);
                 renderItem("Particle System", AddableComponentType::ParticleSystem);
                 renderItem("Camera", AddableComponentType::Camera);
@@ -1833,6 +1844,9 @@ namespace PlutoGE::ui
                 }
                 break;
             }
+            case AddableComponentType::Ocean:
+                entity.CreateComponent<scene::OceanComponent>();
+                break;
             case AddableComponentType::Camera:
             {
                 const bool sceneAlreadyHasCamera = SceneHasAnyCamera(entity.GetScene());
@@ -4463,6 +4477,97 @@ namespace PlutoGE::ui
                                                                : points.back().position + glm::vec3(8.0f, 0.0f, 0.0f);
                                 splineComponent->AddPoint(newPoint);
                                 entity->AddPrefabOverride("Component:SplineComponent:PointCount");
+                                editorShell.MarkSceneDirty();
+                            }
+                        }
+                        else if (auto *oceanComponent = dynamic_cast<scene::OceanComponent *>(componentPtr))
+                        {
+                            propertiesProvided = true;
+                            properties = {
+                                {"ShallowColor", scene::PropertyType::Color, std::to_string(oceanComponent->GetShallowColor().x) + "," + std::to_string(oceanComponent->GetShallowColor().y) + "," + std::to_string(oceanComponent->GetShallowColor().z) + ",1.0"},
+                                {"DeepColor", scene::PropertyType::Color, std::to_string(oceanComponent->GetDeepColor().x) + "," + std::to_string(oceanComponent->GetDeepColor().y) + "," + std::to_string(oceanComponent->GetDeepColor().z) + ",1.0"},
+                                {"FoamColor", scene::PropertyType::Color, std::to_string(oceanComponent->GetFoamColor().x) + "," + std::to_string(oceanComponent->GetFoamColor().y) + "," + std::to_string(oceanComponent->GetFoamColor().z) + ",1.0"},
+                                {"Opacity", scene::PropertyType::Float, std::to_string(oceanComponent->GetOpacity())},
+                                {"Smoothness", scene::PropertyType::Float, std::to_string(oceanComponent->GetSmoothness())},
+                                {"MaxVisibilityDepth", scene::PropertyType::Float, std::to_string(oceanComponent->GetMaxVisibilityDepth())},
+                                {"RefractionStrength", scene::PropertyType::Float, std::to_string(oceanComponent->GetRefractionStrength())},
+                                {"WaveAmplitude", scene::PropertyType::Float, std::to_string(oceanComponent->GetWaveAmplitude())},
+                                {"WaveLength", scene::PropertyType::Float, std::to_string(oceanComponent->GetWaveLength())},
+                                {"WaveSpeed", scene::PropertyType::Float, std::to_string(oceanComponent->GetWaveSpeed())},
+                                {"WaveChoppiness", scene::PropertyType::Float, std::to_string(oceanComponent->GetWaveChoppiness())},
+                                {"FoamDistance", scene::PropertyType::Float, std::to_string(oceanComponent->GetFoamDistance())},
+                                {"FoamIntensity", scene::PropertyType::Float, std::to_string(oceanComponent->GetFoamIntensity())},
+                                {"InvertAreaMask", scene::PropertyType::Bool, oceanComponent->GetInvertAreaMask() ? "true" : "false"},
+                            };
+
+                            const auto &areas = oceanComponent->GetAreas();
+                            ImGui::SeparatorText("Area Masks");
+                            ImGui::Text("Render full ocean by default. Areas carve holes unless Invert Area Mask is enabled.");
+                            for (std::size_t areaIndex = 0; areaIndex < areas.size(); ++areaIndex)
+                            {
+                                ImGui::PushID(static_cast<int>(areaIndex));
+                                const std::string header = "Area " + std::to_string(areaIndex);
+                                if (ImGui::TreeNode(header.c_str()))
+                                {
+                                    const auto &points = areas[areaIndex].points;
+                                    for (std::size_t pointIndex = 0; pointIndex < points.size(); ++pointIndex)
+                                    {
+                                        ImGui::PushID(static_cast<int>(pointIndex));
+                                        glm::vec2 point = points[pointIndex];
+                                        const std::string label = "Point " + std::to_string(pointIndex);
+                                        if (ImGui::DragFloat2(label.c_str(), &point.x, 0.1f))
+                                        {
+                                            oceanComponent->SetAreaPoint(areaIndex, pointIndex, point);
+                                            entity->AddPrefabOverride("Component:OceanComponent:Areas." + std::to_string(areaIndex) + ".Points." + std::to_string(pointIndex));
+                                            editorShell.MarkSceneDirty();
+                                        }
+                                        ImGui::SameLine();
+                                        ImGui::BeginDisabled(points.size() <= 3);
+                                        if (ImGui::Button("Remove"))
+                                        {
+                                            oceanComponent->RemovePoint(areaIndex, pointIndex);
+                                            entity->AddPrefabOverride("Component:OceanComponent:Areas." + std::to_string(areaIndex) + ".PointCount");
+                                            editorShell.MarkSceneDirty();
+                                            ImGui::EndDisabled();
+                                            ImGui::PopID();
+                                            break;
+                                        }
+                                        ImGui::EndDisabled();
+                                        ImGui::PopID();
+                                    }
+
+                                    if (ImGui::Button("Add Point"))
+                                    {
+                                        const glm::vec2 newPoint = points.empty() ? glm::vec2(0.0f) : points.back() + glm::vec2(6.0f, 0.0f);
+                                        oceanComponent->AddPoint(areaIndex, newPoint);
+                                        entity->AddPrefabOverride("Component:OceanComponent:Areas." + std::to_string(areaIndex) + ".PointCount");
+                                        editorShell.MarkSceneDirty();
+                                    }
+                                    ImGui::SameLine();
+                                    if (ImGui::Button("Remove Area"))
+                                    {
+                                        oceanComponent->RemoveArea(areaIndex);
+                                        entity->AddPrefabOverride("Component:OceanComponent:AreaCount");
+                                        editorShell.MarkSceneDirty();
+                                        ImGui::TreePop();
+                                        ImGui::PopID();
+                                        break;
+                                    }
+
+                                    ImGui::TreePop();
+                                }
+                                ImGui::PopID();
+                            }
+
+                            if (ImGui::Button("Add Area"))
+                            {
+                                oceanComponent->AddArea({
+                                    {-12.0f, -12.0f},
+                                    {12.0f, -12.0f},
+                                    {12.0f, 12.0f},
+                                    {-12.0f, 12.0f},
+                                });
+                                entity->AddPrefabOverride("Component:OceanComponent:AreaCount");
                                 editorShell.MarkSceneDirty();
                             }
                         }

@@ -10,6 +10,7 @@
 #include "PlutoGE/scene/components/IblCaptureComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
+#include "PlutoGE/scene/components/OceanComponent.h"
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
 #include "PlutoGE/scene/components/PhysicalSkyComponent.h"
 #include "PlutoGE/scene/components/RigidbodyComponent.h"
@@ -191,6 +192,10 @@ namespace PlutoGE::scene
             {
                 return "TerrainComponent";
             }
+            if (dynamic_cast<const OceanComponent *>(&component))
+            {
+                return "OceanComponent";
+            }
             if (dynamic_cast<const SplineComponent *>(&component))
             {
                 return "SplineComponent";
@@ -285,6 +290,10 @@ namespace PlutoGE::scene
             {
                 return std::make_unique<TerrainComponent>(TerrainComponentConfig{});
             }
+            if (componentType == "OceanComponent")
+            {
+                return std::make_unique<OceanComponent>();
+            }
             if (componentType == "SplineComponent")
             {
                 return std::make_unique<SplineComponent>(SplineComponentConfig{});
@@ -378,6 +387,10 @@ namespace PlutoGE::scene
             if (componentType == "TerrainComponent")
             {
                 return propertyName == "HeightMap" || propertyName == "MaterialAsset";
+            }
+            if (componentType == "OceanComponent")
+            {
+                return false;
             }
             if (componentType == "SplineComponent")
             {

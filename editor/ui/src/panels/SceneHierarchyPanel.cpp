@@ -9,6 +9,7 @@
 #include "PlutoGE/scene/components/IblCaptureComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
+#include "PlutoGE/scene/components/OceanComponent.h"
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
 #include "PlutoGE/scene/components/PhysicalSkyComponent.h"
 #include "PlutoGE/scene/components/TerrainComponent.h"
@@ -365,6 +366,10 @@ namespace PlutoGE::ui
         {
             CreatePresetEntity(EntityPreset::Sky, parent);
         }
+        if (ImGui::MenuItem("Ocean"))
+        {
+            CreatePresetEntity(EntityPreset::Ocean, parent);
+        }
         if (ImGui::MenuItem("Terrain"))
         {
             CreatePresetEntity(EntityPreset::Terrain, parent);
@@ -410,6 +415,9 @@ namespace PlutoGE::ui
             break;
         case EntityPreset::Sky:
             editLabel = "Create Sky";
+            break;
+        case EntityPreset::Ocean:
+            editLabel = "Create Ocean";
             break;
         case EntityPreset::Terrain:
             editLabel = "Create Terrain";
@@ -510,6 +518,15 @@ namespace PlutoGE::ui
                                                             {
                                                                 entity->CreateComponent<scene::PhysicalSkyComponent>();
                                                                 entity->CreateComponent<scene::VolumetricCloudComponent>();
+                                                            }
+                                                            break;
+                                                        }
+                                                        case EntityPreset::Ocean:
+                                                        {
+                                                            auto *entity = addEntity("Ocean");
+                                                            if (entity)
+                                                            {
+                                                                entity->CreateComponent<scene::OceanComponent>();
                                                             }
                                                             break;
                                                         }

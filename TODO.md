@@ -24,7 +24,7 @@
         [x] - Can build executable. then copy to another machine and run with minimal dependencies
         [x] - Decide whether exported builds should bundle .NET/hostfxr or require a target-machine runtime install
 14. [x] - Fix issue where when selecting a spline point, it shows a duplicate of the whole track offset at the point position
-15. [ ] - Implement ocean component for water 'simulation'.
-        - Handle areas that should not have ocean using spline-like area tool. this can be inverted for lakes.
+15. [x] - Implement ocean component for water 'simulation'.
+        - [x] - Handle areas that should not have ocean using spline-like area tool. this can be inverted for lakes.
 16. [ ] - Implement fast cloth simulation used in hanging cloths and capes etc.
 17. [ ] - Implement texture painting. For use in decal placement and landscape texture painting.

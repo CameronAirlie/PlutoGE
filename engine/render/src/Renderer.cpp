@@ -11,6 +11,7 @@
 #include "PlutoGE/render/passes/GridPass.h"
 #include "PlutoGE/render/passes/LightingPass.h"
 #include "PlutoGE/render/passes/LightPropagationVolumePass.h"
+#include "PlutoGE/render/passes/OceanPass.h"
 #include "PlutoGE/render/passes/PostProcessPass.h"
 #include "PlutoGE/render/passes/ParticlePass.h"
 #include "PlutoGE/render/passes/PhysicalSkyPass.h"
@@ -371,6 +372,10 @@ namespace PlutoGE::render
         auto volumetricCloudPass = new VolumetricCloudPass();
         volumetricCloudPass->Initialize();
         m_renderPasses.push_back(volumetricCloudPass);
+
+        auto oceanPass = new OceanPass();
+        oceanPass->Initialize();
+        m_renderPasses.push_back(oceanPass);
 
         auto particlePass = new ParticlePass();
         particlePass->Initialize();

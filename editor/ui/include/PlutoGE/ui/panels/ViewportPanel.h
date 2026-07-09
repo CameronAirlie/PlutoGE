@@ -79,15 +79,21 @@ namespace PlutoGE::ui
         bool m_isViewportFocused = false;
         bool m_isTransformGizmoUsing = false;
         scene::Entity *m_splinePointEntity = nullptr;
+        scene::Entity *m_oceanPointEntity = nullptr;
         int m_selectedSplinePoint = -1;
         bool m_isSplinePointGizmoUsing = false;
+        bool m_isOceanPointGizmoUsing = false;
         bool m_panelControlsEnabled = true;
         bool m_hasEditorCameraData = false;
         render::CameraData m_editorCameraData{};
         glm::vec2 m_viewportMin{0.0f};
         glm::vec2 m_viewportSize{0.0f};
         uint32_t m_selectedSplineEntityId = 0;
+        uint32_t m_selectedOceanEntityId = 0;
         int m_selectedSplinePointIndex = -1;
+        int m_selectedOceanAreaIndex = -1;
+        int m_selectedOceanPointIndex = -1;
         bool m_splinePointEditActive = false;
+        bool m_oceanPointEditActive = false;
     };
 }

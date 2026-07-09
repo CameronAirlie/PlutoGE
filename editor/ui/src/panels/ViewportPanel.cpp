@@ -15,6 +15,7 @@
 #include "PlutoGE/scene/components/ColliderComponent.h"
 #include "PlutoGE/scene/components/FoliageComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
+#include "PlutoGE/scene/components/OceanComponent.h"
 #include "PlutoGE/scene/components/SplineComponent.h"
 #include "PlutoGE/scene/components/TerrainComponent.h"
 #include "PlutoGE/render/Renderer.h"
@@ -1801,8 +1802,18 @@ namespace PlutoGE::ui
                 m_splinePointEntity = selectedEntity;
                 m_selectedSplinePoint = -1;
             }
+            if (m_oceanPointEntity != selectedEntity)
+            {
+                if (m_isOceanPointGizmoUsing)
+                {
+                    editorShell.EndSceneEdit();
+                    m_isOceanPointGizmoUsing = false;
+                }
+                m_oceanPointEntity = selectedEntity;
+            }
 
             auto *splineComponent = selectedEntity->GetComponent<scene::SplineComponent>();
+            auto *oceanComponent = selectedEntity->GetComponent<scene::OceanComponent>();
             if (!splineComponent || m_selectedSplineEntityId != selectedEntity->GetID())
             {
                 if (m_splinePointEditActive)
@@ -1813,8 +1824,20 @@ namespace PlutoGE::ui
                 m_selectedSplineEntityId = splineComponent ? selectedEntity->GetID() : 0;
                 m_selectedSplinePointIndex = -1;
             }
+            if (!oceanComponent || m_selectedOceanEntityId != selectedEntity->GetID())
+            {
+                if (m_oceanPointEditActive)
+                {
+                    editorShell.EndSceneEdit();
+                    m_oceanPointEditActive = false;
+                }
+                m_selectedOceanEntityId = oceanComponent ? selectedEntity->GetID() : 0;
+                m_selectedOceanAreaIndex = -1;
+                m_selectedOceanPointIndex = -1;
+            }
 
             bool splinePointClickConsumed = false;
+            bool oceanPointClickConsumed = false;
             if (splineComponent)
             {
                 const auto &points = splineComponent->GetPoints();
@@ -1933,6 +1956,11 @@ namespace PlutoGE::ui
             const bool editingSplinePoint = splineComponent &&
                                             m_selectedSplinePointIndex >= 0 &&
                                             m_selectedSplinePointIndex < static_cast<int>(splineComponent->GetPoints().size());
+            const bool editingOceanPoint = oceanComponent &&
+                                           m_selectedOceanAreaIndex >= 0 &&
+                                           m_selectedOceanAreaIndex < static_cast<int>(oceanComponent->GetAreas().size()) &&
+                                           m_selectedOceanPointIndex >= 0 &&
+                                           m_selectedOceanPointIndex < static_cast<int>(oceanComponent->GetAreas()[static_cast<std::size_t>(m_selectedOceanAreaIndex)].points.size());
             if (editingSplinePoint)
             {
                 if (m_gizmoOperation == ImGuizmo::SCALE || m_gizmoOperation == ImGuizmo::BOUNDS)
@@ -1945,6 +1973,13 @@ namespace PlutoGE::ui
                                                  BuildSplinePointFrame(*splineComponent, static_cast<std::size_t>(m_selectedSplinePointIndex)) *
                                                  glm::eulerAngleXYZ(rotationRadians.x, rotationRadians.y, rotationRadians.z);
                 entityTransform *= pointTransform;
+            }
+            else if (editingOceanPoint)
+            {
+                if (m_gizmoOperation == ImGuizmo::SCALE || m_gizmoOperation == ImGuizmo::BOUNDS || m_gizmoOperation == ImGuizmo::ROTATE)
+                {
+                    m_gizmoOperation = ImGuizmo::TRANSLATE;
+                }
             }
             float *snapValues = nullptr;
             if (m_enableSnap)
@@ -1963,6 +1998,169 @@ namespace PlutoGE::ui
                 case ImGuizmo::BOUNDS:
                 default:
                     break;
+                }
+            }
+            if (oceanComponent && oceanComponent->IsEnabled())
+            {
+                const auto &areas = oceanComponent->GetAreas();
+                if (m_selectedOceanAreaIndex >= static_cast<int>(areas.size()))
+                {
+                    m_selectedOceanAreaIndex = -1;
+                    m_selectedOceanPointIndex = -1;
+                }
+                else if (m_selectedOceanAreaIndex >= 0)
+                {
+                    const auto &selectedArea = areas[static_cast<std::size_t>(m_selectedOceanAreaIndex)].points;
+                    if (m_selectedOceanPointIndex >= static_cast<int>(selectedArea.size()))
+                    {
+                        m_selectedOceanPointIndex = -1;
+                    }
+                }
+
+                auto *drawList = ImGui::GetWindowDrawList();
+                drawList->PushClipRect(viewportMin, ImVec2(viewportMin.x + viewportSize.x, viewportMin.y + viewportSize.y), true);
+
+                constexpr float kOceanPointRadius = 7.0f;
+                constexpr float kOceanPointHitRadius = 11.0f;
+                constexpr float kOceanInsertRadius = 6.0f;
+                constexpr float kOceanInsertHitRadius = 10.0f;
+                const ImVec2 mousePosition = ImGui::GetIO().MousePos;
+                int hoveredAreaIndex = -1;
+                int hoveredPointIndex = -1;
+                float nearestPointDistanceSquared = kOceanPointHitRadius * kOceanPointHitRadius;
+                int hoveredInsertAreaIndex = -1;
+                int hoveredInsertSegmentIndex = -1;
+                float nearestInsertDistanceSquared = kOceanInsertHitRadius * kOceanInsertHitRadius;
+
+                for (std::size_t areaIndex = 0; areaIndex < areas.size(); ++areaIndex)
+                {
+                    const auto &points = areas[areaIndex].points;
+                    if (points.size() < 2)
+                    {
+                        continue;
+                    }
+
+                    std::vector<glm::vec3> worldPoints;
+                    worldPoints.reserve(points.size());
+                    for (const auto &point : points)
+                    {
+                        worldPoints.push_back(glm::vec3(entityWorldTransform * glm::vec4(point.x, 0.0f, point.y, 1.0f)));
+                    }
+
+                    for (std::size_t pointIndex = 0; pointIndex < worldPoints.size(); ++pointIndex)
+                    {
+                        const std::size_t nextPointIndex = (pointIndex + 1) % worldPoints.size();
+                        DrawWorldLine(drawList,
+                                      worldPoints[pointIndex],
+                                      worldPoints[nextPointIndex],
+                                      cameraData,
+                                      viewportMin,
+                                      viewportSize,
+                                      oceanComponent->GetInvertAreaMask() ? IM_COL32(70, 200, 255, 220) : IM_COL32(40, 140, 220, 220),
+                                      2.0f);
+                    }
+
+                    for (std::size_t pointIndex = 0; pointIndex < worldPoints.size(); ++pointIndex)
+                    {
+                        const ProjectedPoint projected = ProjectWorldPoint(worldPoints[pointIndex], cameraData, viewportMin, viewportSize);
+                        if (!projected.visible)
+                        {
+                            continue;
+                        }
+
+                        const float dx = projected.screen.x - mousePosition.x;
+                        const float dy = projected.screen.y - mousePosition.y;
+                        const float distanceSquared = dx * dx + dy * dy;
+                        if (distanceSquared <= nearestPointDistanceSquared)
+                        {
+                            nearestPointDistanceSquared = distanceSquared;
+                            hoveredAreaIndex = static_cast<int>(areaIndex);
+                            hoveredPointIndex = static_cast<int>(pointIndex);
+                        }
+
+                        const bool selected = static_cast<int>(areaIndex) == m_selectedOceanAreaIndex &&
+                                              static_cast<int>(pointIndex) == m_selectedOceanPointIndex;
+                        const bool hovered = static_cast<int>(areaIndex) == hoveredAreaIndex &&
+                                             static_cast<int>(pointIndex) == hoveredPointIndex;
+                        const ImU32 fillColor = selected             ? IM_COL32(95, 215, 255, 255)
+                                                : hovered          ? IM_COL32(170, 235, 255, 255)
+                                                                   : IM_COL32(45, 155, 230, 245);
+                        drawList->AddCircleFilled(projected.screen, selected ? 8.5f : kOceanPointRadius, fillColor, 16);
+                        drawList->AddCircle(projected.screen, selected ? 8.5f : kOceanPointRadius, IM_COL32(10, 25, 35, 255), 16, 2.0f);
+
+                        const std::string label = std::to_string(areaIndex) + ":" + std::to_string(pointIndex);
+                        drawList->AddText(ImVec2(projected.screen.x + 10.0f, projected.screen.y - 9.0f), IM_COL32(220, 245, 255, 255), label.c_str());
+                    }
+
+                    for (std::size_t segmentIndex = 0; segmentIndex < worldPoints.size(); ++segmentIndex)
+                    {
+                        const std::size_t nextPointIndex = (segmentIndex + 1) % worldPoints.size();
+                        const glm::vec3 midpoint = (worldPoints[segmentIndex] + worldPoints[nextPointIndex]) * 0.5f;
+                        const ProjectedPoint projected = ProjectWorldPoint(midpoint, cameraData, viewportMin, viewportSize);
+                        if (!projected.visible || hoveredPointIndex >= 0)
+                        {
+                            continue;
+                        }
+
+                        const float dx = projected.screen.x - mousePosition.x;
+                        const float dy = projected.screen.y - mousePosition.y;
+                        const float distanceSquared = dx * dx + dy * dy;
+                        if (distanceSquared <= nearestInsertDistanceSquared)
+                        {
+                            nearestInsertDistanceSquared = distanceSquared;
+                            hoveredInsertAreaIndex = static_cast<int>(areaIndex);
+                            hoveredInsertSegmentIndex = static_cast<int>(segmentIndex);
+                        }
+
+                        const bool hoveredInsert = static_cast<int>(areaIndex) == hoveredInsertAreaIndex &&
+                                                   static_cast<int>(segmentIndex) == hoveredInsertSegmentIndex;
+                        const float radius = hoveredInsert ? 7.5f : kOceanInsertRadius;
+                        drawList->AddCircleFilled(projected.screen, radius,
+                                                  hoveredInsert ? IM_COL32(100, 220, 255, 255) : IM_COL32(35, 70, 90, 225), 16);
+                        drawList->AddCircle(projected.screen, radius, IM_COL32(180, 240, 255, 245), 16, 1.5f);
+                        drawList->AddLine(ImVec2(projected.screen.x - 3.0f, projected.screen.y), ImVec2(projected.screen.x + 3.0f, projected.screen.y), IM_COL32(235, 255, 255, 255), 1.5f);
+                        drawList->AddLine(ImVec2(projected.screen.x, projected.screen.y - 3.0f), ImVec2(projected.screen.x, projected.screen.y + 3.0f), IM_COL32(235, 255, 255, 255), 1.5f);
+                    }
+                }
+
+                drawList->PopClipRect();
+
+                const bool insertPointClicked = viewportClicked && m_isViewportHovered && !controlsHovered && hoveredInsertAreaIndex >= 0 && hoveredInsertSegmentIndex >= 0;
+                if (!insertPointClicked && viewportClicked && m_isViewportHovered && !controlsHovered && hoveredAreaIndex >= 0 && hoveredPointIndex >= 0)
+                {
+                    m_selectedOceanAreaIndex = hoveredAreaIndex;
+                    m_selectedOceanPointIndex = hoveredPointIndex;
+                    splineHandleClicked = true;
+                    oceanPointClickConsumed = true;
+                }
+
+                if (insertPointClicked)
+                {
+                    const auto &points = areas[static_cast<std::size_t>(hoveredInsertAreaIndex)].points;
+                    const std::size_t startPointIndex = static_cast<std::size_t>(hoveredInsertSegmentIndex);
+                    const std::size_t nextPointIndex = (startPointIndex + 1) % points.size();
+                    const std::size_t insertionIndex = startPointIndex + 1;
+                    const glm::vec2 newPoint = (points[startPointIndex] + points[nextPointIndex]) * 0.5f;
+                    editorShell.ExecuteSceneEdit("Insert Ocean Area Point", [oceanComponent, selectedEntity, hoveredInsertAreaIndex, insertionIndex, newPoint]()
+                                                 {
+                                                     oceanComponent->InsertPoint(static_cast<std::size_t>(hoveredInsertAreaIndex), insertionIndex, newPoint);
+                                                     selectedEntity->AddPrefabOverride("Component:OceanComponent:Areas." + std::to_string(hoveredInsertAreaIndex) + ".PointCount");
+                                                 });
+                    m_selectedOceanAreaIndex = hoveredInsertAreaIndex;
+                    m_selectedOceanPointIndex = static_cast<int>(insertionIndex);
+                    splineHandleClicked = true;
+                    return;
+                }
+
+                if (oceanPointClickConsumed)
+                {
+                    return;
+                }
+
+                if (viewportClicked && !controlsHovered && hoveredAreaIndex < 0 && hoveredInsertAreaIndex < 0 && !ImGuizmo::IsUsing())
+                {
+                    m_selectedOceanAreaIndex = -1;
+                    m_selectedOceanPointIndex = -1;
                 }
             }
             if (splineComponent && splineComponent->IsEnabled())
@@ -2155,14 +2353,59 @@ namespace PlutoGE::ui
                 }
                 else
                 {
-                    ImGuizmo::Manipulate(glm::value_ptr(cameraData.view),
-                                         glm::value_ptr(cameraData.projection),
-                                         m_gizmoOperation,
-                                         m_gizmoMode,
-                                         glm::value_ptr(entityTransform),
-                                         nullptr,
-                                         snapValues);
-                    entityGizmoSubmitted = true;
+                    if (editingOceanPoint)
+                    {
+                        const glm::vec2 point = oceanComponent->GetAreas()[static_cast<std::size_t>(m_selectedOceanAreaIndex)].points[static_cast<std::size_t>(m_selectedOceanPointIndex)];
+                        glm::mat4 pointTransform = entityWorldTransform;
+                        pointTransform[3] = glm::vec4(glm::vec3(entityWorldTransform * glm::vec4(point.x, 0.0f, point.y, 1.0f)), 1.0f);
+                        ImGuizmo::Manipulate(glm::value_ptr(cameraData.view),
+                                             glm::value_ptr(cameraData.projection),
+                                             ImGuizmo::TRANSLATE,
+                                             m_gizmoMode,
+                                             glm::value_ptr(pointTransform),
+                                             nullptr,
+                                             m_enableSnap ? &m_translateSnap.x : nullptr);
+
+                        const bool pointGizmoUsing = ImGuizmo::IsUsing();
+                        gizmoBlocksSelection = pointGizmoUsing || splineHandleClicked;
+                        if (pointGizmoUsing && !m_isOceanPointGizmoUsing)
+                        {
+                            editorShell.BeginSceneEdit("Move Ocean Area Point");
+                        }
+                        if (pointGizmoUsing)
+                        {
+                            m_isTransformGizmoUsing = true;
+                            const glm::vec3 worldPosition(pointTransform[3]);
+                            const glm::vec3 localPosition(glm::inverse(entityWorldTransform) * glm::vec4(worldPosition, 1.0f));
+                            oceanComponent->SetAreaPoint(static_cast<std::size_t>(m_selectedOceanAreaIndex),
+                                                         static_cast<std::size_t>(m_selectedOceanPointIndex),
+                                                         glm::vec2(localPosition.x, localPosition.z));
+                            selectedEntity->AddPrefabOverride("Component:OceanComponent:Areas." + std::to_string(m_selectedOceanAreaIndex) + ".Points." + std::to_string(m_selectedOceanPointIndex));
+                            editorShell.MarkSceneDirty();
+                        }
+                        if (!pointGizmoUsing && m_isOceanPointGizmoUsing)
+                        {
+                            editorShell.EndSceneEdit();
+                        }
+                        m_isOceanPointGizmoUsing = pointGizmoUsing;
+
+                        if (viewportClicked && !splineHandleClicked && !pointGizmoUsing && !controlsHovered)
+                        {
+                            m_selectedOceanAreaIndex = -1;
+                            m_selectedOceanPointIndex = -1;
+                        }
+                    }
+                    else
+                    {
+                        ImGuizmo::Manipulate(glm::value_ptr(cameraData.view),
+                                             glm::value_ptr(cameraData.projection),
+                                             m_gizmoOperation,
+                                             m_gizmoMode,
+                                             glm::value_ptr(entityTransform),
+                                             nullptr,
+                                             snapValues);
+                        entityGizmoSubmitted = true;
+                    }
                 }
             }
             else
@@ -2173,14 +2416,59 @@ namespace PlutoGE::ui
                     m_isSplinePointGizmoUsing = false;
                 }
                 m_selectedSplinePoint = -1;
-                ImGuizmo::Manipulate(glm::value_ptr(cameraData.view),
-                                     glm::value_ptr(cameraData.projection),
-                                     m_gizmoOperation,
-                                     m_gizmoMode,
-                                     glm::value_ptr(entityTransform),
-                                     nullptr,
-                                     snapValues);
-                entityGizmoSubmitted = true;
+                if (editingOceanPoint)
+                {
+                    const glm::vec2 point = oceanComponent->GetAreas()[static_cast<std::size_t>(m_selectedOceanAreaIndex)].points[static_cast<std::size_t>(m_selectedOceanPointIndex)];
+                    glm::mat4 pointTransform = entityWorldTransform;
+                    pointTransform[3] = glm::vec4(glm::vec3(entityWorldTransform * glm::vec4(point.x, 0.0f, point.y, 1.0f)), 1.0f);
+                    ImGuizmo::Manipulate(glm::value_ptr(cameraData.view),
+                                         glm::value_ptr(cameraData.projection),
+                                         ImGuizmo::TRANSLATE,
+                                         m_gizmoMode,
+                                         glm::value_ptr(pointTransform),
+                                         nullptr,
+                                         m_enableSnap ? &m_translateSnap.x : nullptr);
+
+                    const bool pointGizmoUsing = ImGuizmo::IsUsing();
+                    gizmoBlocksSelection = pointGizmoUsing || splineHandleClicked;
+                    if (pointGizmoUsing && !m_isOceanPointGizmoUsing)
+                    {
+                        editorShell.BeginSceneEdit("Move Ocean Area Point");
+                    }
+                    if (pointGizmoUsing)
+                    {
+                        m_isTransformGizmoUsing = true;
+                        const glm::vec3 worldPosition(pointTransform[3]);
+                        const glm::vec3 localPosition(glm::inverse(entityWorldTransform) * glm::vec4(worldPosition, 1.0f));
+                        oceanComponent->SetAreaPoint(static_cast<std::size_t>(m_selectedOceanAreaIndex),
+                                                     static_cast<std::size_t>(m_selectedOceanPointIndex),
+                                                     glm::vec2(localPosition.x, localPosition.z));
+                        selectedEntity->AddPrefabOverride("Component:OceanComponent:Areas." + std::to_string(m_selectedOceanAreaIndex) + ".Points." + std::to_string(m_selectedOceanPointIndex));
+                        editorShell.MarkSceneDirty();
+                    }
+                    if (!pointGizmoUsing && m_isOceanPointGizmoUsing)
+                    {
+                        editorShell.EndSceneEdit();
+                    }
+                    m_isOceanPointGizmoUsing = pointGizmoUsing;
+
+                    if (viewportClicked && !splineHandleClicked && !pointGizmoUsing && !controlsHovered)
+                    {
+                        m_selectedOceanAreaIndex = -1;
+                        m_selectedOceanPointIndex = -1;
+                    }
+                }
+                else
+                {
+                    ImGuizmo::Manipulate(glm::value_ptr(cameraData.view),
+                                         glm::value_ptr(cameraData.projection),
+                                         m_gizmoOperation,
+                                         m_gizmoMode,
+                                         glm::value_ptr(entityTransform),
+                                         nullptr,
+                                         snapValues);
+                    entityGizmoSubmitted = true;
+                }
             }
             // IsOver is global state inside ImGuizmo. Only trust it in a frame
             // where this viewport actually submitted a gizmo.
@@ -2190,6 +2478,7 @@ namespace PlutoGE::ui
             // should consume a viewport selection click.
             if (entityGizmoSubmitted)
             {
+                const bool entityGizmoUsing = ImGuizmo::IsUsing();
                 if (ImGuizmo::IsUsing())
                 {
                     gizmoBlocksSelection = true;
@@ -2221,11 +2510,20 @@ namespace PlutoGE::ui
                     }
                     editorShell.MarkSceneDirty();
                 }
+                else if (!entityGizmoUsing)
+                {
+                    m_isOceanPointGizmoUsing = false;
+                }
             }
             else if (m_splinePointEditActive)
             {
                 editorShell.EndSceneEdit();
                 m_splinePointEditActive = false;
+            }
+            else if (m_oceanPointEditActive)
+            {
+                editorShell.EndSceneEdit();
+                m_oceanPointEditActive = false;
             }
 
             if (splinePointClickConsumed)
@@ -2240,8 +2538,16 @@ namespace PlutoGE::ui
                 editorShell.EndSceneEdit();
                 m_isSplinePointGizmoUsing = false;
             }
+            if (m_isOceanPointGizmoUsing)
+            {
+                editorShell.EndSceneEdit();
+                m_isOceanPointGizmoUsing = false;
+            }
             m_splinePointEntity = nullptr;
+            m_oceanPointEntity = nullptr;
             m_selectedSplinePoint = -1;
+            m_selectedOceanAreaIndex = -1;
+            m_selectedOceanPointIndex = -1;
         }
 
         if (viewportClicked)

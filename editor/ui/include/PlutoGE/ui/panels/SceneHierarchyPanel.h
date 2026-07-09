@@ -35,6 +35,7 @@ namespace PlutoGE::ui
             DirectionalLight,
             PointLight,
             Sky,
+            Ocean,
             Terrain,
             ParticleSystem,
             IblCapture,

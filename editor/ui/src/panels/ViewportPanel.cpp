@@ -1928,7 +1928,8 @@ namespace PlutoGE::ui
                 return;
             }
 
-            glm::mat4 entityTransform = selectedEntity->GetWorldTransform();
+            const glm::mat4 entityWorldTransform = selectedEntity->GetWorldTransform();
+            glm::mat4 entityTransform = entityWorldTransform;
             const bool editingSplinePoint = splineComponent &&
                                             m_selectedSplinePointIndex >= 0 &&
                                             m_selectedSplinePointIndex < static_cast<int>(splineComponent->GetPoints().size());
@@ -1979,7 +1980,7 @@ namespace PlutoGE::ui
                 worldPoints.reserve(points.size());
                 for (const auto &point : points)
                 {
-                    worldPoints.push_back(glm::vec3(entityTransform * glm::vec4(point.position, 1.0f)));
+                    worldPoints.push_back(glm::vec3(entityWorldTransform * glm::vec4(point.position, 1.0f)));
                 }
 
                 for (std::size_t pointIndex = 1; pointIndex < worldPoints.size(); ++pointIndex)
@@ -2116,7 +2117,7 @@ namespace PlutoGE::ui
 
                 if (m_selectedSplinePoint >= 0)
                 {
-                    glm::mat4 pointTransform = entityTransform;
+                    glm::mat4 pointTransform = entityWorldTransform;
                     pointTransform[3] = glm::vec4(worldPoints[static_cast<std::size_t>(m_selectedSplinePoint)], 1.0f);
                     ImGuizmo::Manipulate(glm::value_ptr(cameraData.view),
                                          glm::value_ptr(cameraData.projection),
@@ -2136,7 +2137,7 @@ namespace PlutoGE::ui
                     {
                         m_isTransformGizmoUsing = true;
                         const glm::vec3 worldPosition(pointTransform[3]);
-                        const glm::vec3 localPosition(glm::inverse(entityTransform) * glm::vec4(worldPosition, 1.0f));
+                        const glm::vec3 localPosition(glm::inverse(entityWorldTransform) * glm::vec4(worldPosition, 1.0f));
                         splineComponent->SetPointPosition(static_cast<std::size_t>(m_selectedSplinePoint), localPosition);
                         selectedEntity->AddPrefabOverride("Component:SplineComponent:Points." + std::to_string(m_selectedSplinePoint));
                         editorShell.MarkSceneDirty();

@@ -2741,7 +2741,7 @@ namespace PlutoGE::ui
                                      viewportPanel->IsGridVisible(),
                                      true);
                 render::CameraData renderedEditorCameraData{};
-                if (renderer.GetLastRenderedCameraData(renderTarget, renderedEditorCameraData))
+                if (renderer.GetLastUnjitteredCameraData(renderTarget, renderedEditorCameraData))
                 {
                     viewportPanel->SetEditorCameraData(renderedEditorCameraData);
                 }

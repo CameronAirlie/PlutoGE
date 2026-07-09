@@ -271,7 +271,7 @@ namespace PlutoGE::ui
                                                                     {
                                                                         meshComponent->CreateSubmeshChildEntities();
                                                                     }
-                    });
+                                                                });
                 }
             }
             if (auto *meshComponent = entity->GetComponent<scene::MeshComponent>();

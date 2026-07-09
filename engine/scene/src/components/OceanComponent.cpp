@@ -96,21 +96,36 @@ namespace PlutoGE::scene
 
         for (const auto &property : properties)
         {
-            if (property.name == "ShallowColor") m_shallowColor = glm::max(ParseVec3(property.value, m_shallowColor), glm::vec3(0.0f));
-            else if (property.name == "DeepColor") m_deepColor = glm::max(ParseVec3(property.value, m_deepColor), glm::vec3(0.0f));
-            else if (property.name == "FoamColor") m_foamColor = glm::max(ParseVec3(property.value, m_foamColor), glm::vec3(0.0f));
-            else if (property.name == "Opacity") m_opacity = std::clamp(std::stof(property.value), 0.0f, 1.0f);
-            else if (property.name == "Smoothness") m_smoothness = std::clamp(std::stof(property.value), 0.0f, 1.0f);
-            else if (property.name == "MaxVisibilityDepth") m_maxVisibilityDepth = std::max(std::stof(property.value), 0.01f);
-            else if (property.name == "RefractionStrength") m_refractionStrength = std::clamp(std::stof(property.value), 0.0f, 0.2f);
-            else if (property.name == "WaveAmplitude") m_waveAmplitude = std::max(std::stof(property.value), 0.0f);
-            else if (property.name == "WaveLength") m_waveLength = std::max(std::stof(property.value), 0.01f);
-            else if (property.name == "WaveSpeed") m_waveSpeed = std::stof(property.value);
-            else if (property.name == "WaveChoppiness") m_waveChoppiness = std::clamp(std::stof(property.value), 0.0f, 4.0f);
-            else if (property.name == "FoamDistance") m_foamDistance = std::max(std::stof(property.value), 0.0f);
-            else if (property.name == "FoamIntensity") m_foamIntensity = std::max(std::stof(property.value), 0.0f);
-            else if (property.name == "InvertAreaMask") m_invertAreaMask = property.value == "true";
-            else if (property.name == "AreaCount") areaCount = std::max(std::stoi(property.value), 0);
+            if (property.name == "ShallowColor")
+                m_shallowColor = glm::max(ParseVec3(property.value, m_shallowColor), glm::vec3(0.0f));
+            else if (property.name == "DeepColor")
+                m_deepColor = glm::max(ParseVec3(property.value, m_deepColor), glm::vec3(0.0f));
+            else if (property.name == "FoamColor")
+                m_foamColor = glm::max(ParseVec3(property.value, m_foamColor), glm::vec3(0.0f));
+            else if (property.name == "Opacity")
+                m_opacity = std::clamp(std::stof(property.value), 0.0f, 1.0f);
+            else if (property.name == "Smoothness")
+                m_smoothness = std::clamp(std::stof(property.value), 0.0f, 1.0f);
+            else if (property.name == "MaxVisibilityDepth")
+                m_maxVisibilityDepth = std::max(std::stof(property.value), 0.01f);
+            else if (property.name == "RefractionStrength")
+                m_refractionStrength = std::clamp(std::stof(property.value), 0.0f, 0.2f);
+            else if (property.name == "WaveAmplitude")
+                m_waveAmplitude = std::max(std::stof(property.value), 0.0f);
+            else if (property.name == "WaveLength")
+                m_waveLength = std::max(std::stof(property.value), 0.01f);
+            else if (property.name == "WaveSpeed")
+                m_waveSpeed = std::stof(property.value);
+            else if (property.name == "WaveChoppiness")
+                m_waveChoppiness = std::clamp(std::stof(property.value), 0.0f, 4.0f);
+            else if (property.name == "FoamDistance")
+                m_foamDistance = std::max(std::stof(property.value), 0.0f);
+            else if (property.name == "FoamIntensity")
+                m_foamIntensity = std::max(std::stof(property.value), 0.0f);
+            else if (property.name == "InvertAreaMask")
+                m_invertAreaMask = property.value == "true";
+            else if (property.name == "AreaCount")
+                areaCount = std::max(std::stoi(property.value), 0);
             else if (property.name.rfind("Areas.", 0) == 0)
             {
                 const std::size_t secondDot = property.name.find('.', 6);

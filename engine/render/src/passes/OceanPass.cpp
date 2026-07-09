@@ -132,6 +132,13 @@ namespace PlutoGE::render
 
                 const float PI = 3.14159265359;
 
+                mat2 Rotation(float radians)
+                {
+                    float s = sin(radians);
+                    float c = cos(radians);
+                    return mat2(c, -s, s, c);
+                }
+
                 vec3 ReconstructWorldPosition(vec2 uv, float depth)
                 {
                     vec4 clip = vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
@@ -170,13 +177,28 @@ namespace PlutoGE::render
                     float value = 0.0;
                     float amplitude = 0.5;
                     float frequency = 1.0;
+                    mat2 rotation = Rotation(0.61);
                     for (int octave = 0; octave < 4; ++octave)
                     {
                         value += ValueNoise(p * frequency) * amplitude;
+                        p = rotation * p + vec2(17.13, -9.47);
                         frequency *= 2.03;
                         amplitude *= 0.5;
                     }
                     return value;
+                }
+
+                float LayeredNoise(vec2 p, float phase)
+                {
+                    vec2 warpedP = Rotation(0.41) * p;
+                    vec2 warp = vec2(
+                        Fbm(warpedP * 0.73 + vec2(phase * 0.05, -phase * 0.03)),
+                        Fbm(Rotation(-0.93) * warpedP * 0.91 + vec2(-phase * 0.04, phase * 0.06)));
+                    vec2 flow = warpedP + warp * 1.9;
+                    float low = Fbm(flow * 1.35 + vec2(phase * 0.07, phase * 0.05));
+                    float detail = Fbm(Rotation(1.17) * flow * 4.9 + vec2(phase * 0.22, -phase * 0.19));
+                    float ripple = Fbm(Rotation(-1.43) * flow * 11.2 + vec2(-phase * 0.48, phase * 0.43));
+                    return low * 0.14 + detail * 0.06 + ripple * 0.025;
                 }
 
                 float DirectionalWave(vec2 direction, vec2 position, float frequency, float phase, float sharpness)
@@ -199,8 +221,9 @@ namespace PlutoGE::render
                     for (int pointIndex = 0; pointIndex < pointCount; ++pointIndex)
                     {
                         vec2 current = uAreaPoints[baseIndex + pointIndex];
+                        float edgeDeltaY = previous.y - current.y;
                         bool intersects = ((current.y > point.y) != (previous.y > point.y)) &&
-                                          (point.x < (previous.x - current.x) * (point.y - current.y) / max(previous.y - current.y, 0.000001) + current.x);
+                                          (point.x < (previous.x - current.x) * (point.y - current.y) / edgeDeltaY + current.x);
                         if (intersects)
                         {
                             inside = !inside;
@@ -213,6 +236,11 @@ namespace PlutoGE::render
 
                 bool MaskReject(vec2 point)
                 {
+                    if (uAreaCount <= 0)
+                    {
+                        return false;
+                    }
+
                     bool insideAny = false;
                     for (int areaIndex = 0; areaIndex < uAreaCount; ++areaIndex)
                     {
@@ -233,15 +261,40 @@ namespace PlutoGE::render
                     float mediumWave = DirectionalWave(vec2(0.74, -0.67), xz, baseWaveNumber * 1.35, phase * 1.28 - 0.8, sharpness + 0.6) * 0.16;
 
                     vec2 swellUv = xz / max(uWaveLength, 0.01);
-                    vec2 warp = vec2(
-                        Fbm(swellUv * 0.85 + vec2(phase * 0.05, -phase * 0.03)),
-                        Fbm(swellUv * 1.1 + vec2(-phase * 0.04, phase * 0.06))) * 1.7;
-                    float lowNoise = Fbm(swellUv * 1.35 + warp + vec2(phase * 0.07, phase * 0.05)) * 0.14;
-                    float detailNoise = Fbm(swellUv * 5.4 + warp * 1.8 + vec2(phase * 0.22, -phase * 0.19)) * 0.06;
-                    float rippleNoise = Fbm(swellUv * 12.0 + warp * 2.7 + vec2(-phase * 0.48, phase * 0.43)) * 0.025;
+                    float noisyDetail = LayeredNoise(swellUv, phase);
 
-                    float stackedWaves = largeSwell + crossingSwell + mediumWave + lowNoise + detailNoise + rippleNoise;
+                    float stackedWaves = largeSwell + crossingSwell + mediumWave + noisyDetail;
                     return stackedWaves * uWaveAmplitude;
+                }
+
+                bool SolveWaveIntersection(vec3 rayOriginLocal, vec3 rayDirectionLocal, out vec3 localHit)
+                {
+                    if (abs(rayDirectionLocal.y) < 0.00001)
+                    {
+                        return false;
+                    }
+
+                    float t = -rayOriginLocal.y / rayDirectionLocal.y;
+                    if (t <= 0.0)
+                    {
+                        return false;
+                    }
+
+                    for (int iteration = 0; iteration < 6; ++iteration)
+                    {
+                        vec3 samplePoint = rayOriginLocal + rayDirectionLocal * t;
+                        float surfaceDelta = samplePoint.y - WaveHeight(samplePoint.xz);
+                        t -= surfaceDelta / rayDirectionLocal.y;
+                    }
+
+                    if (t <= 0.0)
+                    {
+                        return false;
+                    }
+
+                    localHit = rayOriginLocal + rayDirectionLocal * t;
+                    localHit.y = WaveHeight(localHit.xz);
+                    return true;
                 }
 
                 vec3 WaveNormal(vec2 xz)
@@ -258,25 +311,17 @@ namespace PlutoGE::render
                     vec3 viewDirection = WorldDirection(vUv);
                     vec3 rayOriginLocal = (uInverseOceanTransform * vec4(uCameraPosition, 1.0)).xyz;
                     vec3 rayDirectionLocal = normalize((uInverseOceanTransform * vec4(viewDirection, 0.0)).xyz);
-                    if (abs(rayDirectionLocal.y) < 0.00001)
+                    vec3 localHit;
+                    if (!SolveWaveIntersection(rayOriginLocal, rayDirectionLocal, localHit))
                     {
                         discard;
                     }
 
-                    float t = -rayOriginLocal.y / rayDirectionLocal.y;
-                    if (t <= 0.0)
-                    {
-                        discard;
-                    }
-
-                    vec3 localHit = rayOriginLocal + rayDirectionLocal * t;
                     if (MaskReject(localHit.xz))
                     {
                         discard;
                     }
 
-                    float waveOffset = WaveHeight(localHit.xz);
-                    localHit.y = waveOffset;
                     vec3 worldHit = (uOceanTransform * vec4(localHit, 1.0)).xyz;
                     float waterDistance = length(worldHit - uCameraPosition);
 

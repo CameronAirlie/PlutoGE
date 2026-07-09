@@ -1342,8 +1342,8 @@ namespace PlutoGE::ui
             for (const auto &field : fields)
             {
                 scripting::ScriptFieldValue fieldValue = scripting::IsFieldValueCompatible(field.type, field.defaultValue)
-                                                            ? field.defaultValue
-                                                            : scripting::MakeDefaultFieldValue(field.type);
+                                                             ? field.defaultValue
+                                                             : scripting::MakeDefaultFieldValue(field.type);
                 if (const auto iterator = fieldValues.find(field.name); iterator != fieldValues.end())
                 {
                     fieldValue = iterator->second;

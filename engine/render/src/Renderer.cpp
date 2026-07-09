@@ -621,6 +621,8 @@ namespace PlutoGE::render
         }
         frameResources->lastRenderedCameraData = activeCameraData;
         frameResources->hasLastRenderedCameraData = true;
+        frameResources->lastUnjitteredCameraData = cameraData;
+        frameResources->hasLastUnjitteredCameraData = true;
 
         UpdateRenderCommandLods(activeCameraData, renderHeight);
         EnsureRenderCommandsSorted();
@@ -721,6 +723,18 @@ namespace PlutoGE::render
         }
 
         cameraData = iterator->second->lastRenderedCameraData;
+        return true;
+    }
+
+    bool Renderer::GetLastUnjitteredCameraData(RenderTarget *renderTarget, CameraData &cameraData) const
+    {
+        const auto iterator = m_frameResources.find(renderTarget);
+        if (iterator == m_frameResources.end() || !iterator->second || !iterator->second->hasLastUnjitteredCameraData)
+        {
+            return false;
+        }
+
+        cameraData = iterator->second->lastUnjitteredCameraData;
         return true;
     }
 

@@ -195,6 +195,7 @@ namespace PlutoGE::render
         [[nodiscard]] int GetProfiledRenderCount() const { return m_profiledRenderCount; }
         [[nodiscard]] std::size_t GetQueuedRenderCommandCount() const { return m_renderCommands.size(); }
         [[nodiscard]] bool GetLastRenderedCameraData(RenderTarget *renderTarget, CameraData &cameraData) const;
+        [[nodiscard]] bool GetLastUnjitteredCameraData(RenderTarget *renderTarget, CameraData &cameraData) const;
 
         void BeginLightingStageTiming(std::size_t stageIndex);
         void EndLightingStageTiming(std::size_t stageIndex);
@@ -270,9 +271,11 @@ namespace PlutoGE::render
             CameraData previousCameraData;
             CameraData previousShadowCameraData;
             CameraData lastRenderedCameraData;
+            CameraData lastUnjitteredCameraData;
             bool hasPreviousCameraData = false;
             bool hasPreviousShadowCameraData = false;
             bool hasLastRenderedCameraData = false;
+            bool hasLastUnjitteredCameraData = false;
         };
 
         struct GpuTimerQueryState

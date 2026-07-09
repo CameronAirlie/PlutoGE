@@ -1953,14 +1953,46 @@ namespace PlutoGE::ui
 
             const glm::mat4 entityWorldTransform = selectedEntity->GetWorldTransform();
             glm::mat4 entityTransform = entityWorldTransform;
+
+            if (oceanComponent && oceanComponent->IsEnabled())
+            {
+                const auto &areas = oceanComponent->GetAreas();
+                if (m_selectedOceanAreaIndex >= static_cast<int>(areas.size()))
+                {
+                    m_selectedOceanAreaIndex = -1;
+                    m_selectedOceanPointIndex = -1;
+                }
+                else if (m_selectedOceanAreaIndex >= 0)
+                {
+                    const auto &selectedArea = areas[static_cast<std::size_t>(m_selectedOceanAreaIndex)].points;
+                    if (m_selectedOceanPointIndex >= static_cast<int>(selectedArea.size()))
+                    {
+                        m_selectedOceanPointIndex = -1;
+                    }
+                }
+            }
+
             const bool editingSplinePoint = splineComponent &&
                                             m_selectedSplinePointIndex >= 0 &&
                                             m_selectedSplinePointIndex < static_cast<int>(splineComponent->GetPoints().size());
-            const bool editingOceanPoint = oceanComponent &&
-                                           m_selectedOceanAreaIndex >= 0 &&
-                                           m_selectedOceanAreaIndex < static_cast<int>(oceanComponent->GetAreas().size()) &&
-                                           m_selectedOceanPointIndex >= 0 &&
-                                           m_selectedOceanPointIndex < static_cast<int>(oceanComponent->GetAreas()[static_cast<std::size_t>(m_selectedOceanAreaIndex)].points.size());
+            const auto hasValidSelectedOceanPoint = [&]()
+            {
+                if (!oceanComponent || !oceanComponent->IsEnabled() ||
+                    m_selectedOceanAreaIndex < 0 ||
+                    m_selectedOceanPointIndex < 0)
+                {
+                    return false;
+                }
+
+                const auto &areas = oceanComponent->GetAreas();
+                if (m_selectedOceanAreaIndex >= static_cast<int>(areas.size()))
+                {
+                    return false;
+                }
+
+                const auto &selectedArea = areas[static_cast<std::size_t>(m_selectedOceanAreaIndex)].points;
+                return m_selectedOceanPointIndex < static_cast<int>(selectedArea.size());
+            };
             if (editingSplinePoint)
             {
                 if (m_gizmoOperation == ImGuizmo::SCALE || m_gizmoOperation == ImGuizmo::BOUNDS)
@@ -1974,7 +2006,7 @@ namespace PlutoGE::ui
                                                  glm::eulerAngleXYZ(rotationRadians.x, rotationRadians.y, rotationRadians.z);
                 entityTransform *= pointTransform;
             }
-            else if (editingOceanPoint)
+            else if (hasValidSelectedOceanPoint())
             {
                 if (m_gizmoOperation == ImGuizmo::SCALE || m_gizmoOperation == ImGuizmo::BOUNDS || m_gizmoOperation == ImGuizmo::ROTATE)
                 {
@@ -2003,19 +2035,6 @@ namespace PlutoGE::ui
             if (oceanComponent && oceanComponent->IsEnabled())
             {
                 const auto &areas = oceanComponent->GetAreas();
-                if (m_selectedOceanAreaIndex >= static_cast<int>(areas.size()))
-                {
-                    m_selectedOceanAreaIndex = -1;
-                    m_selectedOceanPointIndex = -1;
-                }
-                else if (m_selectedOceanAreaIndex >= 0)
-                {
-                    const auto &selectedArea = areas[static_cast<std::size_t>(m_selectedOceanAreaIndex)].points;
-                    if (m_selectedOceanPointIndex >= static_cast<int>(selectedArea.size()))
-                    {
-                        m_selectedOceanPointIndex = -1;
-                    }
-                }
 
                 auto *drawList = ImGui::GetWindowDrawList();
                 drawList->PushClipRect(viewportMin, ImVec2(viewportMin.x + viewportSize.x, viewportMin.y + viewportSize.y), true);
@@ -2082,9 +2101,9 @@ namespace PlutoGE::ui
                                               static_cast<int>(pointIndex) == m_selectedOceanPointIndex;
                         const bool hovered = static_cast<int>(areaIndex) == hoveredAreaIndex &&
                                              static_cast<int>(pointIndex) == hoveredPointIndex;
-                        const ImU32 fillColor = selected             ? IM_COL32(95, 215, 255, 255)
-                                                : hovered          ? IM_COL32(170, 235, 255, 255)
-                                                                   : IM_COL32(45, 155, 230, 245);
+                        const ImU32 fillColor = selected  ? IM_COL32(95, 215, 255, 255)
+                                                : hovered ? IM_COL32(170, 235, 255, 255)
+                                                          : IM_COL32(45, 155, 230, 245);
                         drawList->AddCircleFilled(projected.screen, selected ? 8.5f : kOceanPointRadius, fillColor, 16);
                         drawList->AddCircle(projected.screen, selected ? 8.5f : kOceanPointRadius, IM_COL32(10, 25, 35, 255), 16, 2.0f);
 
@@ -2144,8 +2163,7 @@ namespace PlutoGE::ui
                     editorShell.ExecuteSceneEdit("Insert Ocean Area Point", [oceanComponent, selectedEntity, hoveredInsertAreaIndex, insertionIndex, newPoint]()
                                                  {
                                                      oceanComponent->InsertPoint(static_cast<std::size_t>(hoveredInsertAreaIndex), insertionIndex, newPoint);
-                                                     selectedEntity->AddPrefabOverride("Component:OceanComponent:Areas." + std::to_string(hoveredInsertAreaIndex) + ".PointCount");
-                                                 });
+                                                     selectedEntity->AddPrefabOverride("Component:OceanComponent:Areas." + std::to_string(hoveredInsertAreaIndex) + ".PointCount"); });
                     m_selectedOceanAreaIndex = hoveredInsertAreaIndex;
                     m_selectedOceanPointIndex = static_cast<int>(insertionIndex);
                     splineHandleClicked = true;
@@ -2155,12 +2173,6 @@ namespace PlutoGE::ui
                 if (oceanPointClickConsumed)
                 {
                     return;
-                }
-
-                if (viewportClicked && !controlsHovered && hoveredAreaIndex < 0 && hoveredInsertAreaIndex < 0 && !ImGuizmo::IsUsing())
-                {
-                    m_selectedOceanAreaIndex = -1;
-                    m_selectedOceanPointIndex = -1;
                 }
             }
             if (splineComponent && splineComponent->IsEnabled())
@@ -2326,7 +2338,8 @@ namespace PlutoGE::ui
                                          m_enableSnap ? &m_translateSnap.x : nullptr);
 
                     const bool pointGizmoUsing = ImGuizmo::IsUsing();
-                    gizmoBlocksSelection = pointGizmoUsing || splineHandleClicked;
+                    const bool pointGizmoHovered = ImGuizmo::IsOver();
+                    gizmoBlocksSelection = pointGizmoUsing || pointGizmoHovered || splineHandleClicked;
                     if (pointGizmoUsing && !m_isSplinePointGizmoUsing)
                     {
                         editorShell.BeginSceneEdit("Move Spline Point");
@@ -2346,14 +2359,14 @@ namespace PlutoGE::ui
                     }
                     m_isSplinePointGizmoUsing = pointGizmoUsing;
 
-                    if (viewportClicked && !splineHandleClicked && !pointGizmoUsing && !controlsHovered)
+                    if (viewportClicked && !splineHandleClicked && !pointGizmoUsing && !pointGizmoHovered && !controlsHovered)
                     {
                         m_selectedSplinePoint = -1;
                     }
                 }
                 else
                 {
-                    if (editingOceanPoint)
+                    if (hasValidSelectedOceanPoint())
                     {
                         const glm::vec2 point = oceanComponent->GetAreas()[static_cast<std::size_t>(m_selectedOceanAreaIndex)].points[static_cast<std::size_t>(m_selectedOceanPointIndex)];
                         glm::mat4 pointTransform = entityWorldTransform;
@@ -2367,7 +2380,8 @@ namespace PlutoGE::ui
                                              m_enableSnap ? &m_translateSnap.x : nullptr);
 
                         const bool pointGizmoUsing = ImGuizmo::IsUsing();
-                        gizmoBlocksSelection = pointGizmoUsing || splineHandleClicked;
+                        const bool pointGizmoHovered = ImGuizmo::IsOver();
+                        gizmoBlocksSelection = pointGizmoUsing || pointGizmoHovered || splineHandleClicked;
                         if (pointGizmoUsing && !m_isOceanPointGizmoUsing)
                         {
                             editorShell.BeginSceneEdit("Move Ocean Area Point");
@@ -2389,7 +2403,7 @@ namespace PlutoGE::ui
                         }
                         m_isOceanPointGizmoUsing = pointGizmoUsing;
 
-                        if (viewportClicked && !splineHandleClicked && !pointGizmoUsing && !controlsHovered)
+                        if (viewportClicked && !splineHandleClicked && !pointGizmoUsing && !pointGizmoHovered && !controlsHovered)
                         {
                             m_selectedOceanAreaIndex = -1;
                             m_selectedOceanPointIndex = -1;
@@ -2416,7 +2430,7 @@ namespace PlutoGE::ui
                     m_isSplinePointGizmoUsing = false;
                 }
                 m_selectedSplinePoint = -1;
-                if (editingOceanPoint)
+                if (hasValidSelectedOceanPoint())
                 {
                     const glm::vec2 point = oceanComponent->GetAreas()[static_cast<std::size_t>(m_selectedOceanAreaIndex)].points[static_cast<std::size_t>(m_selectedOceanPointIndex)];
                     glm::mat4 pointTransform = entityWorldTransform;
@@ -2430,7 +2444,8 @@ namespace PlutoGE::ui
                                          m_enableSnap ? &m_translateSnap.x : nullptr);
 
                     const bool pointGizmoUsing = ImGuizmo::IsUsing();
-                    gizmoBlocksSelection = pointGizmoUsing || splineHandleClicked;
+                    const bool pointGizmoHovered = ImGuizmo::IsOver();
+                    gizmoBlocksSelection = pointGizmoUsing || pointGizmoHovered || splineHandleClicked;
                     if (pointGizmoUsing && !m_isOceanPointGizmoUsing)
                     {
                         editorShell.BeginSceneEdit("Move Ocean Area Point");
@@ -2452,7 +2467,7 @@ namespace PlutoGE::ui
                     }
                     m_isOceanPointGizmoUsing = pointGizmoUsing;
 
-                    if (viewportClicked && !splineHandleClicked && !pointGizmoUsing && !controlsHovered)
+                    if (viewportClicked && !splineHandleClicked && !pointGizmoUsing && !pointGizmoHovered && !controlsHovered)
                     {
                         m_selectedOceanAreaIndex = -1;
                         m_selectedOceanPointIndex = -1;

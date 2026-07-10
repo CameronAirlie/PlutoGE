@@ -159,6 +159,10 @@ namespace PlutoGE::render
         std::uint64_t frameSequence = 0;
         bool renderEditorGrid = false;
         bool interactivePreview = false;
+        // Keep extension fields at the end so incremental builds compiled
+        // against the older RenderContext layout retain valid field offsets.
+        RenderTarget *oceanSurfaceDepthRenderTarget = nullptr;
+        RenderTarget *oceanSceneColorCopyRenderTarget = nullptr;
     };
 
     class IRenderPass;
@@ -267,6 +271,8 @@ namespace PlutoGE::render
         {
             std::unique_ptr<RenderTarget> temporaryRenderTarget;
             std::unique_ptr<RenderTarget> postProcessIntermediateRenderTarget;
+            std::unique_ptr<RenderTarget> oceanSurfaceDepthRenderTarget;
+            std::unique_ptr<RenderTarget> oceanSceneColorCopyRenderTarget;
             GBuffer gBuffer;
             CameraData previousCameraData;
             CameraData previousShadowCameraData;

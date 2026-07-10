@@ -859,6 +859,8 @@ namespace PlutoGE::render
             }
 
             auto *lpvPass = ctx.lightPropagationVolumePass;
+            // RenderContext extension fields are appended to preserve this
+            // pointer's offset across incremental editor builds.
             auto *lpvTexture = lpvPass ? lpvPass->GetVolumeTexture() : nullptr;
             glActiveTexture(GL_TEXTURE0 + kLightPropagationVolumeTextureSlot);
             glBindTexture(GL_TEXTURE_3D, lpvTexture ? lpvTexture->GetTextureID() : 0);

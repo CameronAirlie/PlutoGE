@@ -758,6 +758,7 @@ namespace PlutoGE::ui
         m_editorCamera.AddPostProcessEffectByType("RSM");
         m_editorCamera.AddPostProcessEffectByType("VolumetricFog");
         m_editorCamera.AddPostProcessEffectByType("LSAO");
+        m_editorCamera.AddPostProcessEffectByType("SSR");
         m_editorCamera.AddPostProcessEffectByType("TAA");
         if (m_editorCamera.AddPostProcessEffectByType("MotionBlur"))
         {

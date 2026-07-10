@@ -6,6 +6,7 @@
 #include "PlutoGE/render/Camera.h"
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
+#include "PlutoGE/scene/components/ClothComponent.h"
 #include "PlutoGE/scene/components/IblCaptureComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
@@ -374,6 +375,10 @@ namespace PlutoGE::ui
         {
             CreatePresetEntity(EntityPreset::Terrain, parent);
         }
+        if (ImGui::MenuItem("Cloth"))
+        {
+            CreatePresetEntity(EntityPreset::Cloth, parent);
+        }
         if (ImGui::MenuItem("Particle System"))
         {
             CreatePresetEntity(EntityPreset::ParticleSystem, parent);
@@ -421,6 +426,9 @@ namespace PlutoGE::ui
             break;
         case EntityPreset::Terrain:
             editLabel = "Create Terrain";
+            break;
+        case EntityPreset::Cloth:
+            editLabel = "Create Cloth";
             break;
         case EntityPreset::ParticleSystem:
             editLabel = "Create Particle System";
@@ -542,6 +550,15 @@ namespace PlutoGE::ui
                                                                 {
                                                                     terrainComponent->SetMaterialAssetReference(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference));
                                                                 }
+                                                            }
+                                                            break;
+                                                        }
+                                                        case EntityPreset::Cloth:
+                                                        {
+                                                            auto *entity = addEntity("Cloth");
+                                                            if (entity)
+                                                            {
+                                                                entity->CreateComponent<scene::ClothComponent>();
                                                             }
                                                             break;
                                                         }

@@ -15,14 +15,14 @@
 #include <vector>
 
 #undef assert
-#define assert(condition)                                                                                              \
-    do                                                                                                                 \
-    {                                                                                                                  \
-        if (!(condition))                                                                                              \
-        {                                                                                                              \
-            std::cerr << "Check failed at line " << __LINE__ << ": " #condition << '\n';                           \
-            return 1;                                                                                                  \
-        }                                                                                                              \
+#define assert(condition)                                                                \
+    do                                                                                   \
+    {                                                                                    \
+        if (!(condition))                                                                \
+        {                                                                                \
+            std::cerr << "Check failed at line " << __LINE__ << ": " #condition << '\n'; \
+            return 1;                                                                    \
+        }                                                                                \
     } while (false)
 
 int main()
@@ -139,13 +139,13 @@ int main()
         {
             const auto topLeft = static_cast<std::uint16_t>(y * 5 + x);
             indices.insert(indices.end(), {
-                topLeft,
-                static_cast<std::uint16_t>(topLeft + 1),
-                static_cast<std::uint16_t>(topLeft + 5),
-                static_cast<std::uint16_t>(topLeft + 1),
-                static_cast<std::uint16_t>(topLeft + 6),
-                static_cast<std::uint16_t>(topLeft + 5),
-            });
+                                              topLeft,
+                                              static_cast<std::uint16_t>(topLeft + 1),
+                                              static_cast<std::uint16_t>(topLeft + 5),
+                                              static_cast<std::uint16_t>(topLeft + 1),
+                                              static_cast<std::uint16_t>(topLeft + 6),
+                                              static_cast<std::uint16_t>(topLeft + 5),
+                                          });
         }
     }
     std::ofstream gridBinary(gridBinaryPath, std::ios::binary | std::ios::trunc);

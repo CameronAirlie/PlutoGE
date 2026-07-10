@@ -689,6 +689,31 @@ namespace PlutoGE::render
             return m_submeshHasUsableLightmapUvs[submeshIndex];
         }
         const MeshData &GetMeshData() const { return m_meshData; }
+        void UpdateVertexData(const std::vector<MeshVertexData> &vertices)
+        {
+            if (vertices.size() != m_meshData.vertices.size())
+            {
+                return;
+            }
+
+            m_meshData.vertices = vertices;
+            if (!HasValidTangents(m_meshData))
+            {
+                GenerateTangents(m_meshData);
+            }
+
+            m_bounds = ComputeBounds(m_meshData);
+            for (auto &submesh : m_config.submeshes)
+            {
+                submesh.bounds = ComputeBounds(m_meshData, submesh.indexOffset, submesh.indexCount);
+            }
+
+            glBindBuffer(GL_ARRAY_BUFFER, m_VBO);
+            glBufferData(GL_ARRAY_BUFFER,
+                         m_meshData.vertices.size() * sizeof(MeshVertexData),
+                         m_meshData.vertices.data(),
+                         GL_DYNAMIC_DRAW);
+        }
 
         GLuint GetVAO() const { return m_VAO; }
         GLuint GetVBO() const { return m_VBO; }

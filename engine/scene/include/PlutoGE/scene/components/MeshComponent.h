@@ -51,6 +51,7 @@ namespace PlutoGE::scene
 
         void SetMesh(render::Mesh *mesh);
         render::Mesh *GetMesh() const { return m_mesh; }
+        void NotifyMeshDataChanged() { MarkRenderCommandsDirty(); }
         void SetStatic(bool isStatic)
         {
             if (m_isStatic == isStatic)

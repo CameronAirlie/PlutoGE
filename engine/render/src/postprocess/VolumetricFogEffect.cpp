@@ -699,6 +699,15 @@ namespace PlutoGE::render
 
         m_shader->Bind();
         BindCommonInputs(m_shader, internalContext);
+        const GLuint oceanSurfaceDepthTexture = context.renderContext.oceanSurfaceDepthRenderTarget
+                                                     ? context.renderContext.oceanSurfaceDepthRenderTarget->GetDepthTextureID()
+                                                     : 0;
+        if (oceanSurfaceDepthTexture != 0)
+        {
+            glActiveTexture(GL_TEXTURE1);
+            glBindTexture(GL_TEXTURE_2D, oceanSurfaceDepthTexture);
+            m_shader->SetUniform("uSceneDepthTexture", 1);
+        }
         BindDirectionalShadowInputs(m_shader, primaryDirectionalLight);
         m_shader->SetUniform("uViewMatrix", context.renderContext.cameraData.view);
         m_shader->SetUniform("uInverseViewMatrix", inverseView);

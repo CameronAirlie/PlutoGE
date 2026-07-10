@@ -2,8 +2,6 @@
 
 #include "PlutoGE/render/passes/IRenderPass.h"
 
-#include <memory>
-
 namespace PlutoGE::render
 {
     class RenderTarget;
@@ -18,6 +16,5 @@ namespace PlutoGE::render
 
     private:
         Shader *m_shader = nullptr;
-        std::unique_ptr<RenderTarget> m_sceneColorCopy;
     };
 }

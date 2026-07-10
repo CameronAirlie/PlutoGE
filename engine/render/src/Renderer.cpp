@@ -480,6 +480,8 @@ namespace PlutoGE::render
             .lightPropagationVolumePass = m_lightPropagationVolumePass,
             .postProcessDebugView = m_postProcessDebugView,
             .frameSequence = m_frameSequence,
+            .oceanSurfaceDepthRenderTarget = frameResources->oceanSurfaceDepthRenderTarget.get(),
+            .oceanSceneColorCopyRenderTarget = frameResources->oceanSceneColorCopyRenderTarget.get(),
         };
 
         ExecutePassWithGpuTiming(*m_shadowPass, ctx, 0);
@@ -676,6 +678,8 @@ namespace PlutoGE::render
             .frameSequence = m_frameSequence,
             .renderEditorGrid = renderEditorGrid,
             .interactivePreview = interactivePreview,
+            .oceanSurfaceDepthRenderTarget = frameResources->oceanSurfaceDepthRenderTarget.get(),
+            .oceanSceneColorCopyRenderTarget = frameResources->oceanSceneColorCopyRenderTarget.get(),
         };
 
         if (m_shadowPass)
@@ -1145,7 +1149,9 @@ namespace PlutoGE::render
         };
 
         if (!ensureSizedRenderTarget(entry->temporaryRenderTarget) ||
-            !ensureSizedRenderTarget(entry->postProcessIntermediateRenderTarget))
+            !ensureSizedRenderTarget(entry->postProcessIntermediateRenderTarget) ||
+            !ensureSizedRenderTarget(entry->oceanSurfaceDepthRenderTarget) ||
+            !ensureSizedRenderTarget(entry->oceanSceneColorCopyRenderTarget))
         {
             std::cerr << "Failed to resize post process render targets" << std::endl;
             return nullptr;
@@ -1173,6 +1179,18 @@ namespace PlutoGE::render
             {
                 resources->postProcessIntermediateRenderTarget->Cleanup();
                 resources->postProcessIntermediateRenderTarget.reset();
+            }
+
+            if (resources->oceanSurfaceDepthRenderTarget)
+            {
+                resources->oceanSurfaceDepthRenderTarget->Cleanup();
+                resources->oceanSurfaceDepthRenderTarget.reset();
+            }
+
+            if (resources->oceanSceneColorCopyRenderTarget)
+            {
+                resources->oceanSceneColorCopyRenderTarget->Cleanup();
+                resources->oceanSceneColorCopyRenderTarget.reset();
             }
 
             resources->gBuffer.Cleanup();

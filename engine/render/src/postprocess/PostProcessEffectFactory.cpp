@@ -14,6 +14,7 @@
 #include "PlutoGE/render/postprocess/RSMEffect.h"
 #include "PlutoGE/render/postprocess/SceneCompositeEffect.h"
 #include "PlutoGE/render/postprocess/SSGIEffect.h"
+#include "PlutoGE/render/postprocess/SSREffect.h"
 #include "PlutoGE/render/postprocess/TAAEffect.h"
 #include "PlutoGE/render/postprocess/ToneMappingEffect.h"
 #include "PlutoGE/render/postprocess/VolumetricFogEffect.h"
@@ -28,6 +29,7 @@ namespace PlutoGE::render
             "Bloom",
             "LSAO",
             "SSGI",
+            "SSR",
             "LPV",
             "RSM",
             "VolumetricFog",
@@ -64,6 +66,11 @@ namespace PlutoGE::render
         if (typeName == "SSGI")
         {
             return std::make_unique<SSGIEffect>();
+        }
+
+        if (typeName == "SSR")
+        {
+            return std::make_unique<SSREffect>();
         }
 
         if (typeName == "LPV")

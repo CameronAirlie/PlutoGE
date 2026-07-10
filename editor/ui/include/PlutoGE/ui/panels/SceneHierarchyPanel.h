@@ -37,6 +37,7 @@ namespace PlutoGE::ui
             Sky,
             Ocean,
             Terrain,
+            Cloth,
             ParticleSystem,
             IblCapture,
         };

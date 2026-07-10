@@ -1,6 +1,7 @@
 add_library(PlutoGERender
     src/Renderer.cpp
     src/TextureManager.cpp
+    src/TexturePainter.cpp
     src/Shader.cpp
     src/Texture.cpp
     src/ShaderGraph.cpp
@@ -16,6 +17,7 @@ add_library(PlutoGERender
     src/postprocess/ToneMappingEffect.cpp
     src/postprocess/SSAOEffect.cpp
     src/postprocess/SSGIEffect.cpp
+    src/postprocess/SSREffect.cpp
     src/postprocess/RSMEffect.cpp
     src/postprocess/VolumetricFogEffect.cpp
     src/postprocess/TAAEffect.cpp

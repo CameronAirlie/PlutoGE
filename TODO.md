@@ -27,4 +27,4 @@
 15. [x] - Implement ocean component for water 'simulation'.
         - [x] - Handle areas that should not have ocean using spline-like area tool. this can be inverted for lakes.
 16. [ ] - Implement fast cloth simulation used in hanging cloths and capes etc.
-17. [ ] - Implement texture painting. For use in decal placement and landscape texture painting.
+17. [x] - Implement texture painting. For use in decal placement and landscape texture painting.

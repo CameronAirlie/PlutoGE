@@ -5,6 +5,7 @@
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
 #include "PlutoGE/scene/components/AnimationComponent.h"
+#include "PlutoGE/scene/components/ClothComponent.h"
 #include "PlutoGE/scene/components/ColliderComponent.h"
 #include "PlutoGE/scene/components/FoliageComponent.h"
 #include "PlutoGE/scene/components/IblCaptureComponent.h"
@@ -192,6 +193,10 @@ namespace PlutoGE::scene
             {
                 return "TerrainComponent";
             }
+            if (dynamic_cast<const ClothComponent *>(&component))
+            {
+                return "ClothComponent";
+            }
             if (dynamic_cast<const OceanComponent *>(&component))
             {
                 return "OceanComponent";
@@ -290,6 +295,10 @@ namespace PlutoGE::scene
             {
                 return std::make_unique<TerrainComponent>(TerrainComponentConfig{});
             }
+            if (componentType == "ClothComponent")
+            {
+                return std::make_unique<ClothComponent>();
+            }
             if (componentType == "OceanComponent")
             {
                 return std::make_unique<OceanComponent>();
@@ -387,6 +396,10 @@ namespace PlutoGE::scene
             if (componentType == "TerrainComponent")
             {
                 return propertyName == "HeightMap" || propertyName == "MaterialAsset";
+            }
+            if (componentType == "ClothComponent")
+            {
+                return false;
             }
             if (componentType == "OceanComponent")
             {

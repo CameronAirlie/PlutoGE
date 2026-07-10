@@ -105,6 +105,8 @@ namespace PlutoGE::render
                 uniform sampler2D uSceneDepth;
                 uniform mat4 uInverseView;
                 uniform mat4 uInverseProjection;
+                uniform mat4 uView;
+                uniform mat4 uProjection;
                 uniform vec3 uCameraPosition;
                 uniform mat4 uOceanTransform;
                 uniform mat4 uInverseOceanTransform;
@@ -129,6 +131,7 @@ namespace PlutoGE::render
                 uniform vec3 uSunDirection;
                 uniform vec3 uSunColor;
                 uniform float uSunIntensity;
+                uniform int uDepthOnly;
 
                 const float PI = 3.14159265359;
 
@@ -306,6 +309,111 @@ namespace PlutoGE::render
                     return normalize(vec3(-hx / offset, 1.0, -hz / offset));
                 }
 
+                bool ProjectWorldPosition(vec3 worldPosition, out vec2 uv)
+                {
+                    vec4 clip = uProjection * uView * vec4(worldPosition, 1.0);
+                    if (clip.w <= 0.0001)
+                    {
+                        return false;
+                    }
+
+                    uv = clip.xy / clip.w * 0.5 + 0.5;
+                    return all(greaterThanEqual(uv, vec2(0.0))) && all(lessThanEqual(uv, vec2(1.0)));
+                }
+
+                float ViewDepth(vec3 worldPosition)
+                {
+                    return -(uView * vec4(worldPosition, 1.0)).z;
+                }
+
+                bool TraceScreenSpaceReflection(vec3 worldHit, vec3 normal, vec3 viewVector, out vec2 reflectionUv, out float confidence)
+                {
+                    const int stepCount = 48;
+                    const int binaryStepCount = 5;
+                    const float maxDistance = 45.0;
+                    const float thickness = 0.4;
+
+                    vec3 reflectionDirection = normalize(reflect(-viewVector, normal));
+                    vec3 rayOrigin = worldHit + normal * 0.08;
+                    float previousTravel = 0.08;
+                    float previousDepthDelta = -1.0;
+                    float hitTravel = -1.0;
+
+                    for (int stepIndex = 0; stepIndex < stepCount; ++stepIndex)
+                    {
+                        float fraction = (float(stepIndex) + 1.0) / float(stepCount);
+                        float travel = 0.08 + maxDistance * fraction * fraction;
+                        vec3 rayPosition = rayOrigin + reflectionDirection * travel;
+                        vec2 rayUv;
+                        if (!ProjectWorldPosition(rayPosition, rayUv))
+                        {
+                            break;
+                        }
+
+                        float sceneDepth = texture(uSceneDepth, rayUv).r;
+                        if (sceneDepth >= 0.999999)
+                        {
+                            previousTravel = travel;
+                            previousDepthDelta = -1.0;
+                            continue;
+                        }
+
+                        vec3 sceneWorld = ReconstructWorldPosition(rayUv, sceneDepth);
+                        float depthDelta = ViewDepth(rayPosition) - ViewDepth(sceneWorld);
+                        float adaptiveThickness = thickness * (1.0 + travel / maxDistance);
+                        bool crossedSurface = previousDepthDelta < 0.0 && depthDelta >= 0.0;
+                        if (crossedSurface || (depthDelta >= 0.0 && depthDelta <= adaptiveThickness))
+                        {
+                            float low = previousTravel;
+                            float high = travel;
+                            for (int binaryIndex = 0; binaryIndex < binaryStepCount; ++binaryIndex)
+                            {
+                                float middle = (low + high) * 0.5;
+                                vec3 middlePosition = rayOrigin + reflectionDirection * middle;
+                                vec2 middleUv;
+                                if (!ProjectWorldPosition(middlePosition, middleUv))
+                                {
+                                    high = middle;
+                                    continue;
+                                }
+
+                                float middleDepth = texture(uSceneDepth, middleUv).r;
+                                if (middleDepth >= 0.999999)
+                                {
+                                    low = middle;
+                                    continue;
+                                }
+
+                                vec3 middleSceneWorld = ReconstructWorldPosition(middleUv, middleDepth);
+                                float middleDelta = ViewDepth(middlePosition) - ViewDepth(middleSceneWorld);
+                                if (middleDelta >= 0.0) high = middle;
+                                else low = middle;
+                            }
+
+                            hitTravel = high;
+                            if (!ProjectWorldPosition(rayOrigin + reflectionDirection * high, reflectionUv))
+                            {
+                                return false;
+                            }
+                            break;
+                        }
+
+                        previousTravel = travel;
+                        previousDepthDelta = depthDelta;
+                    }
+
+                    if (hitTravel < 0.0)
+                    {
+                        return false;
+                    }
+
+                    float edgeDistance = min(min(reflectionUv.x, 1.0 - reflectionUv.x), min(reflectionUv.y, 1.0 - reflectionUv.y));
+                    float edgeConfidence = smoothstep(0.0, 0.12, edgeDistance);
+                    float distanceConfidence = 1.0 - smoothstep(maxDistance * 0.25, maxDistance, hitTravel);
+                    confidence = edgeConfidence * distanceConfidence;
+                    return confidence > 0.001;
+                }
+
                 void main()
                 {
                     vec3 viewDirection = WorldDirection(vUv);
@@ -345,6 +453,14 @@ namespace PlutoGE::render
                         waterDepth = clamp(localHit.y - sceneLocal.y, 0.0, uMaxVisibilityDepth);
                     }
 
+                    vec4 waterClip = uProjection * uView * vec4(worldHit, 1.0);
+                    gl_FragDepth = waterClip.z / waterClip.w * 0.5 + 0.5;
+                    if (uDepthOnly != 0)
+                    {
+                        FragColor = vec4(0.0);
+                        return;
+                    }
+
                     vec3 normalLocal = WaveNormal(localHit.xz);
                     vec3 normal = normalize(mat3(transpose(uInverseOceanTransform)) * normalLocal);
                     vec2 distortion = normal.xz * uRefractionStrength;
@@ -354,7 +470,16 @@ namespace PlutoGE::render
                     vec3 waterTint = mix(uShallowColor, uDeepColor, depthFactor);
                     vec3 viewVector = normalize(uCameraPosition - worldHit);
                     float fresnel = pow(1.0 - clamp(dot(viewVector, normal), 0.0, 1.0), 5.0);
-                    vec3 reflectionColor = mix(sceneColor, vec3(0.42, 0.58, 0.72), 0.55);
+                    // The fallback must not contain the undisplaced scene color,
+                    // otherwise submerged geometry appears both directly and refracted.
+                    vec3 reflectionColor = mix(vec3(0.12, 0.24, 0.34), vec3(0.42, 0.58, 0.72), fresnel);
+                    vec2 reflectionUv;
+                    float reflectionConfidence;
+                    if (TraceScreenSpaceReflection(worldHit, normal, viewVector, reflectionUv, reflectionConfidence))
+                    {
+                        vec3 screenSpaceReflection = texture(uSceneColor, reflectionUv).rgb;
+                        reflectionColor = mix(reflectionColor, screenSpaceReflection, reflectionConfidence);
+                    }
                     vec3 halfVector = normalize(viewVector + normalize(uSunDirection));
                     float sunSpecular = pow(max(dot(normal, halfVector), 0.0), mix(16.0, 256.0, clamp(uSmoothness, 0.0, 1.0))) * max(uSunIntensity, 0.0);
                     vec3 sunGlint = uSunColor * sunSpecular * 0.015;
@@ -362,9 +487,17 @@ namespace PlutoGE::render
                     foam *= 0.65 + 0.35 * Hash12(localHit.xz * 0.3 + uSimulationTime);
 
                     vec3 composed = mix(refractedColor, waterTint, 0.58);
-                    composed = mix(composed, reflectionColor + sunGlint, fresnel * clamp(uSmoothness, 0.0, 1.0));
+                    float reflectionStrength = mix(0.12, 1.0, fresnel) * clamp(uSmoothness, 0.0, 1.0);
+                    composed = mix(composed, reflectionColor + sunGlint, reflectionStrength);
                     composed = mix(composed, uFoamColor, clamp(foam, 0.0, 1.0));
-                    FragColor = vec4(composed, clamp(uOpacity, 0.0, 1.0));
+
+                    // Refraction has already sampled and displaced the scene behind
+                    // the water. Alpha blending this over that same scene would draw
+                    // submerged geometry twice (original plus refracted).
+                    float waterOpacity = clamp(uOpacity, 0.0, 1.0);
+                    composed = mix(refractedColor, composed, waterOpacity);
+                    FragColor = vec4(composed, 1.0);
+
                 }
             )";
             return Shader::Create(source);
@@ -372,7 +505,10 @@ namespace PlutoGE::render
 
         void CopySceneColor(RenderTarget &source, RenderTarget &destination)
         {
-            destination.Resize(source.GetWidth(), source.GetHeight());
+            if (!destination.IsInitialized() || source.GetWidth() != destination.GetWidth() || source.GetHeight() != destination.GetHeight())
+            {
+                return;
+            }
             glBindFramebuffer(GL_READ_FRAMEBUFFER, source.GetFramebufferID());
             glBindFramebuffer(GL_DRAW_FRAMEBUFFER, destination.GetFramebufferID());
             glBlitFramebuffer(
@@ -380,6 +516,22 @@ namespace PlutoGE::render
                 0, 0, destination.GetWidth(), destination.GetHeight(),
                 GL_COLOR_BUFFER_BIT,
                 GL_LINEAR);
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        }
+
+        void CopyGeometryDepth(const GBuffer &source, RenderTarget &destination)
+        {
+            if (!destination.IsInitialized() || source.GetWidth() != destination.GetWidth() || source.GetHeight() != destination.GetHeight())
+            {
+                return;
+            }
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, source.GetFBO());
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, destination.GetFramebufferID());
+            glBlitFramebuffer(
+                0, 0, source.GetWidth(), source.GetHeight(),
+                0, 0, destination.GetWidth(), destination.GetHeight(),
+                GL_DEPTH_BUFFER_BIT,
+                GL_NEAREST);
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
         }
     }
@@ -391,10 +543,15 @@ namespace PlutoGE::render
 
     void OceanPass::Execute(const RenderContext &ctx)
     {
-        if (!m_shader || !ctx.scene || !ctx.temporaryRenderTarget || !ctx.gBuffer || !ctx.hasCameraData)
+        if (!m_shader || !ctx.scene || !ctx.temporaryRenderTarget || !ctx.oceanSurfaceDepthRenderTarget ||
+            !ctx.oceanSceneColorCopyRenderTarget || !ctx.gBuffer || !ctx.hasCameraData)
         {
             return;
         }
+
+        // Keep this per-frame target valid even when the scene has no oceans;
+        // fog then sees the same geometry depth it normally would.
+        CopyGeometryDepth(*ctx.gBuffer, *ctx.oceanSurfaceDepthRenderTarget);
 
         std::vector<OceanDraw> oceans;
         for (const auto *root : ctx.scene->GetRootEntities())
@@ -407,15 +564,7 @@ namespace PlutoGE::render
             return;
         }
 
-        if (!m_sceneColorCopy)
-        {
-            m_sceneColorCopy = std::make_unique<RenderTarget>(RenderTargetConfig{
-                .width = ctx.temporaryRenderTarget->GetWidth(),
-                .height = ctx.temporaryRenderTarget->GetHeight(),
-                .clearColor = glm::vec4(0.0f),
-            });
-        }
-        CopySceneColor(*ctx.temporaryRenderTarget, *m_sceneColorCopy);
+        CopySceneColor(*ctx.temporaryRenderTarget, *ctx.oceanSceneColorCopyRenderTarget);
 
         const scene::Light *sun = FindPrimaryDirectionalLight(ctx);
         glm::vec3 sunDirection = sun ? -sun->direction : glm::vec3(0.25f, 0.8f, 0.35f);
@@ -444,13 +593,15 @@ namespace PlutoGE::render
 
         m_shader->Bind();
         glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, m_sceneColorCopy->GetColorTextureID());
+        glBindTexture(GL_TEXTURE_2D, ctx.oceanSceneColorCopyRenderTarget->GetColorTextureID());
         m_shader->SetUniform("uSceneColor", 0);
         glActiveTexture(GL_TEXTURE1);
         glBindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetDepthTextureID());
         m_shader->SetUniform("uSceneDepth", 1);
         m_shader->SetUniform("uInverseView", inverseView);
         m_shader->SetUniform("uInverseProjection", glm::inverse(ctx.cameraData.projection));
+        m_shader->SetUniform("uView", ctx.cameraData.view);
+        m_shader->SetUniform("uProjection", ctx.cameraData.projection);
         m_shader->SetUniform("uCameraPosition", cameraPosition);
         m_shader->SetUniform("uSunDirection", sunDirection);
         m_shader->SetUniform("uSunColor", sunColor);
@@ -500,12 +651,25 @@ namespace PlutoGE::render
                 m_shader->SetUniform("uAreaPoints[" + std::to_string(pointIndex) + "]", flattenedPoints[static_cast<std::size_t>(pointIndex)]);
             }
 
+            m_shader->SetUniform("uDepthOnly", 0);
+            Graphics::BindRenderTarget(ctx.temporaryRenderTarget);
+            glViewport(0, 0, ctx.temporaryRenderTarget->GetWidth(), ctx.temporaryRenderTarget->GetHeight());
+            glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+            glDepthMask(GL_FALSE);
+            Graphics::DrawFullscreenTriangle();
+
+            m_shader->SetUniform("uDepthOnly", 1);
+            Graphics::BindRenderTarget(ctx.oceanSurfaceDepthRenderTarget);
+            glViewport(0, 0, ctx.oceanSurfaceDepthRenderTarget->GetWidth(), ctx.oceanSurfaceDepthRenderTarget->GetHeight());
+            glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+            glDepthMask(GL_TRUE);
             Graphics::DrawFullscreenTriangle();
         }
 
         m_shader->Unbind();
-        glDisable(GL_BLEND);
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
         glDepthMask(GL_TRUE);
+        glDisable(GL_BLEND);
         Graphics::UnbindRenderTarget();
     }
 }

@@ -4,6 +4,7 @@
 #include "PlutoGE/ui/panels/ContentBrowserPanel.h"
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/scene/components/AnimationComponent.h"
+#include "PlutoGE/scene/components/ClothComponent.h"
 #include "PlutoGE/scene/components/Component.h"
 #include "PlutoGE/scene/components/FoliageComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
@@ -89,24 +90,25 @@ namespace PlutoGE::ui
             Terrain = 1,
             Foliage = 2,
             Animation = 3,
-            Camera = 4,
-            Light = 5,
-            Rigidbody = 6,
-            Collider = 7,
-            IblCapture = 8,
-            PhysicalSky = 9,
-            VolumetricCloud = 10,
-            ParticleSystem = 11,
-            Spline = 12,
-            Ocean = 13,
-            Script = 14,
-            SoundEmitter = 15,
-            SoundListener = 16,
-            Canvas = 17,
-            RectTransform = 18,
-            UIImage = 19,
-            UIText = 20,
-            UIButton = 21,
+            Cloth = 4,
+            Camera = 5,
+            Light = 6,
+            Rigidbody = 7,
+            Collider = 8,
+            IblCapture = 9,
+            PhysicalSky = 10,
+            VolumetricCloud = 11,
+            ParticleSystem = 12,
+            Spline = 13,
+            Ocean = 14,
+            Script = 15,
+            SoundEmitter = 16,
+            SoundListener = 17,
+            Canvas = 18,
+            RectTransform = 19,
+            UIImage = 20,
+            UIText = 21,
+            UIButton = 22,
         };
 
         struct ScriptAssetOption
@@ -1468,6 +1470,10 @@ namespace PlutoGE::ui
             {
                 return "Foliage Component";
             }
+            if (dynamic_cast<const scene::ClothComponent *>(&component))
+            {
+                return "Cloth Component";
+            }
             if (dynamic_cast<const scene::ParticleSystemComponent *>(&component))
             {
                 return "Particle System Component";
@@ -1560,6 +1566,8 @@ namespace PlutoGE::ui
                 return "TerrainComponent";
             if (dynamic_cast<const scene::FoliageComponent *>(&component))
                 return "FoliageComponent";
+            if (dynamic_cast<const scene::ClothComponent *>(&component))
+                return "ClothComponent";
             if (dynamic_cast<const scene::ParticleSystemComponent *>(&component))
                 return "ParticleSystemComponent";
             if (dynamic_cast<const scene::AnimationComponent *>(&component))
@@ -1684,6 +1692,8 @@ namespace PlutoGE::ui
                 return !entity.HasComponent<scene::TerrainComponent>();
             case AddableComponentType::Foliage:
                 return !entity.HasComponent<scene::FoliageComponent>();
+            case AddableComponentType::Cloth:
+                return !entity.HasComponent<scene::ClothComponent>();
             case AddableComponentType::ParticleSystem:
                 return !entity.HasComponent<scene::ParticleSystemComponent>();
             case AddableComponentType::Spline:
@@ -1745,6 +1755,7 @@ namespace PlutoGE::ui
                 renderItem("Spline Track", AddableComponentType::Spline);
                 renderItem("Ocean", AddableComponentType::Ocean);
                 renderItem("Foliage", AddableComponentType::Foliage);
+                renderItem("Cloth", AddableComponentType::Cloth);
                 renderItem("Particle System", AddableComponentType::ParticleSystem);
                 renderItem("Camera", AddableComponentType::Camera);
                 renderItem("Light", AddableComponentType::Light);
@@ -1829,6 +1840,9 @@ namespace PlutoGE::ui
                 }
                 break;
             }
+            case AddableComponentType::Cloth:
+                entity.CreateComponent<scene::ClothComponent>();
+                break;
             case AddableComponentType::ParticleSystem:
                 entity.CreateComponent<scene::ParticleSystemComponent>();
                 break;

@@ -72,6 +72,8 @@ namespace PlutoGE::scene
         render::Material *GetMaterial() const { return m_material; }
         void SetMaterialAssetReference(const std::string &materialAssetReference);
         const std::string &GetMaterialAssetReference() const { return m_materialAssetReference; }
+        void SetPaintedAlbedoPath(const std::string &path);
+        const std::string &GetPaintedAlbedoPath() const { return m_paintedAlbedoPath; }
         const std::string &GetHeightMapPath() const { return m_heightMapPath; }
 
         void SetPaintEnabled(bool enabled) { m_paintEnabled = enabled; }
@@ -107,6 +109,7 @@ namespace PlutoGE::scene
         std::unique_ptr<render::Mesh> m_mesh;
         render::Material *m_material = nullptr;
         std::string m_materialAssetReference;
+        std::string m_paintedAlbedoPath;
         std::string m_heightMapPath;
         bool m_meshDirty = true;
 

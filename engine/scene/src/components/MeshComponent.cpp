@@ -206,6 +206,7 @@ namespace PlutoGE::scene
         struct SerializedMaterialData
         {
             std::optional<std::string> materialAsset;
+            std::optional<std::string> albedoPath;
             std::optional<glm::vec4> color;
             std::optional<render::MaterialSurfaceType> surfaceType;
             std::optional<render::AlphaMode> alphaMode;
@@ -227,6 +228,7 @@ namespace PlutoGE::scene
         void SerializeInlineMaterialProperties(std::vector<Property> &properties, const std::string &prefix, const render::MaterialConfig &config)
         {
             properties.push_back({prefix + "Color", PropertyType::String, SerializeVec4(config.color)});
+            properties.push_back({prefix + "AlbedoPath", PropertyType::String, config.albedoTexture ? config.albedoTexture->GetFilePath() : std::string{}});
             properties.push_back({prefix + "SurfaceType", PropertyType::String, ToString(config.surfaceType)});
             properties.push_back({prefix + "AlphaMode", PropertyType::String, config.alphaMode == render::AlphaMode::Blend ? "Blend" : config.alphaMode == render::AlphaMode::Mask ? "Mask" : "Opaque"});
             properties.push_back({prefix + "AlphaCutoff", PropertyType::Float, std::to_string(config.alphaCutoff)});
@@ -249,6 +251,10 @@ namespace PlutoGE::scene
             if (fieldName == "MaterialAsset")
             {
                 serializedMaterial.materialAsset = value;
+            }
+            else if (fieldName == "AlbedoPath")
+            {
+                serializedMaterial.albedoPath = value;
             }
             else if (fieldName == "Color")
             {
@@ -322,6 +328,12 @@ namespace PlutoGE::scene
 
         void ApplySerializedMaterialData(render::Material &material, const SerializedMaterialData &serializedMaterial)
         {
+            if (serializedMaterial.albedoPath.has_value())
+            {
+                material.SetAlbedoTexture(serializedMaterial.albedoPath->empty()
+                                              ? nullptr
+                                              : render::Texture::LoadFromFile(serializedMaterial.albedoPath->c_str()));
+            }
             if (serializedMaterial.color.has_value())
             {
                 material.SetColor(*serializedMaterial.color);

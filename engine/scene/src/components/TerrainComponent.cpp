@@ -1,4 +1,5 @@
 #include "PlutoGE/scene/components/TerrainComponent.h"
+#include "PlutoGE/render/Texture.h"
 
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/core/Engine.h"
@@ -230,6 +231,7 @@ namespace PlutoGE::scene
             {"HeightMap", PropertyType::String, m_heightMapPath},
             {"HeightSamples", PropertyType::String, SerializeHeightSamples(m_heights)},
             {"MaterialAsset", PropertyType::String, m_materialAssetReference},
+            {"PaintedAlbedo", PropertyType::String, m_paintedAlbedoPath},
             {"PaintEnabled", PropertyType::Bool, m_paintEnabled ? "true" : "false"},
             {"PaintMode", PropertyType::String, std::to_string(static_cast<int>(m_paintMode))},
             {"BrushRadius", PropertyType::Float, std::to_string(m_brushRadius)},
@@ -242,6 +244,7 @@ namespace PlutoGE::scene
     {
         std::string heightMapPath = m_heightMapPath;
         std::string materialAssetReference = m_materialAssetReference;
+        std::string paintedAlbedoPath = m_paintedAlbedoPath;
         std::string serializedHeightSamples;
         for (const auto &property : properties)
         {
@@ -265,6 +268,8 @@ namespace PlutoGE::scene
                 serializedHeightSamples = property.value;
             else if (property.name == "MaterialAsset")
                 materialAssetReference = property.value;
+            else if (property.name == "PaintedAlbedo")
+                paintedAlbedoPath = property.value;
             else if (property.name == "PaintEnabled")
                 m_paintEnabled = property.value == "true" || property.value == "1";
             else if (property.name == "PaintMode")
@@ -296,6 +301,8 @@ namespace PlutoGE::scene
 
         m_materialAssetReference = materialAssetReference;
         RebuildMaterialFromReference();
+        if (!paintedAlbedoPath.empty())
+            SetPaintedAlbedoPath(paintedAlbedoPath);
     }
 
     bool TerrainComponent::LoadHeightMap(const std::string &filePath)
@@ -564,6 +571,19 @@ namespace PlutoGE::scene
 
         m_materialAssetReference = materialAssetReference;
         RebuildMaterialFromReference();
+    }
+
+    void TerrainComponent::SetPaintedAlbedoPath(const std::string &path)
+    {
+        if (path.empty())
+            return;
+        auto *texture = render::Texture::LoadFromFile(path.c_str());
+        if (!texture)
+            return;
+        auto *uniqueMaterial = m_material ? new render::Material(m_material->GetConfig()) : new render::Material();
+        uniqueMaterial->SetAlbedoTexture(texture);
+        m_material = uniqueMaterial;
+        m_paintedAlbedoPath = path;
     }
 
     float TerrainComponent::GetHeightSample(int x, int z) const

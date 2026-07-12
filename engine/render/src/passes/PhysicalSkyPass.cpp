@@ -197,7 +197,7 @@ namespace PlutoGE::render
 
                 void main()
                 {
-                    if (uEnvironmentCapture == 0 && texture(uSceneDepth, vUv).r < 0.999999)
+                    if (uEnvironmentCapture == 0 && texture(uSceneDepth, vUv).r > 0.000001)
                         discard;
                     FragColor = vec4(max(Atmosphere(WorldDirection(vUv)), vec3(0.0)), 1.0);
                 }

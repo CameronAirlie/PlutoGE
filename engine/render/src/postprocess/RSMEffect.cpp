@@ -370,7 +370,7 @@ namespace PlutoGE::render
 
             const float nearPlane = glm::max(0.1f, -maxBounds.z);
             const float farPlane = glm::max(nearPlane + 0.1f, -minBounds.z);
-            const glm::mat4 lightProjection = glm::ortho(minBounds.x, maxBounds.x, minBounds.y, maxBounds.y, nearPlane, farPlane);
+            const glm::mat4 lightProjection = glm::ortho(minBounds.x, maxBounds.x, minBounds.y, maxBounds.y, farPlane, nearPlane);
             return lightProjection * lightView;
         }
 

@@ -341,6 +341,8 @@ namespace PlutoGE::render
         glViewport(0, 0, extents.width, extents.height);
 
         glEnable(GL_DEPTH_TEST);
+        glClearDepth(0.0);
+        glDepthFunc(GL_GREATER);
         glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);
 
         auto geometryPass = new GeometryPass();
@@ -525,7 +527,7 @@ namespace PlutoGE::render
         {
             CameraData cameraData;
             cameraData.view = glm::lookAt(position, position + directions[faceIndex], upVectors[faceIndex]);
-            cameraData.projection = glm::perspective(glm::radians(90.0f), 1.0f, 0.1f, captureFarPlane);
+            cameraData.projection = glm::perspective(glm::radians(90.0f), 1.0f, captureFarPlane, 0.1f);
             cameraData.nearPlane = 0.1f;
             cameraData.farPlane = captureFarPlane;
 

@@ -1164,7 +1164,7 @@ void main()
     vec4 normalRoughness = texture(gNormal, UV);
     vec4 albedoMetallic = texture(gAlbedoSpec, UV);
 
-    if (depth >= 0.999999 || dot(normalRoughness.rgb, normalRoughness.rgb) <= 0.000001)
+    if (depth <= 0.000001 || dot(normalRoughness.rgb, normalRoughness.rgb) <= 0.000001)
     {
         if (uPassMode == PASS_MODE_AMBIENT)
         {
@@ -1292,6 +1292,7 @@ void main()
             
             float LinearizeDepth(float depth)
             {
+                depth = 1.0 - depth;
                 float near = 0.1; // Match with camera near plane
                 float far = 100.0; // Match with camera far plane
                 float z = depth * 2.0 - 1.0; // Convert from [0, 1] to [-1, 1]

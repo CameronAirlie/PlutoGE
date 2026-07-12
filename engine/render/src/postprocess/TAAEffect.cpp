@@ -230,7 +230,7 @@ namespace PlutoGE::render
                 {
                     vec2 sampleUv = clamp(baseUv + offsets[sampleIndex] * texelSize, vec2(0.0), vec2(1.0));
                     float depth = texture(uSceneDepthTexture, sampleUv).r;
-                    if (depth < closestDepth)
+                    if (depth > closestDepth)
                     {
                         closestDepth = depth;
                         bestMotion = texture(uSceneMotionTexture, sampleUv).xy;

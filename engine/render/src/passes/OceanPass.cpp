@@ -453,7 +453,7 @@ namespace PlutoGE::render
                         }
 
                         float sceneDepth = texture(uSceneDepth, rayUv).r;
-                        if (sceneDepth >= 0.999999)
+                        if (sceneDepth <= 0.000001)
                         {
                             previousTravel = travel;
                             previousDepthDelta = -1.0;
@@ -480,7 +480,7 @@ namespace PlutoGE::render
                                 }
 
                                 float middleDepth = texture(uSceneDepth, middleUv).r;
-                                if (middleDepth >= 0.999999)
+                                if (middleDepth <= 0.000001)
                                 {
                                     low = middle;
                                     continue;
@@ -529,7 +529,7 @@ namespace PlutoGE::render
                         float sceneDepth = texture(uSceneDepth, vUv).r;
                         float travelDistance = uMaxVisibilityDepth * 4.0;
                         float sceneDistance = 1e20;
-                        if (sceneDepth < 0.999999)
+                        if (sceneDepth > 0.000001)
                         {
                             vec3 sceneWorld = ReconstructWorldPosition(vUv, sceneDepth);
                             sceneDistance = length(sceneWorld - uCameraPosition);
@@ -616,7 +616,7 @@ namespace PlutoGE::render
                     float sceneDepth = texture(uSceneDepth, vUv).r;
                     vec3 sceneColor = texture(uSceneColor, vUv).rgb;
                     float waterDepth = uMaxVisibilityDepth;
-                    if (sceneDepth < 0.999999)
+                    if (sceneDepth > 0.000001)
                     {
                         vec3 sceneWorld = ReconstructWorldPosition(vUv, sceneDepth);
                         float sceneDistance = length(sceneWorld - uCameraPosition);
@@ -640,7 +640,7 @@ namespace PlutoGE::render
                     // and makes later fog/cloud passes classify the ocean as sky.
                     // Keep a valid distant surface just inside the far plane.
                     gl_FragDepth = clamp(waterClip.z / waterClip.w * 0.5 + 0.5,
-                                         0.0, 0.999999);
+                                         0.000001, 1.0);
                     if (uDepthOnly != 0)
                     {
                         FragColor = vec4(0.0);
@@ -886,7 +886,7 @@ namespace PlutoGE::render
             glViewport(0, 0, ctx.oceanSurfaceDepthRenderTarget->GetWidth(), ctx.oceanSurfaceDepthRenderTarget->GetHeight());
             glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
             glEnable(GL_DEPTH_TEST);
-            glDepthFunc(GL_LESS);
+            glDepthFunc(GL_GREATER);
             glDepthMask(GL_TRUE);
             Graphics::DrawFullscreenTriangle();
             glDisable(GL_DEPTH_TEST);

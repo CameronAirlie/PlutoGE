@@ -239,7 +239,7 @@ namespace PlutoGE::render
                 float OpaqueDistance(vec2 uv, vec3 rayDirection)
                 {
                     float depth = texture(uSceneDepth, uv).r;
-                    if (depth >= 0.999999) return uFarPlane;
+                    if (depth <= 0.000001) return uFarPlane;
                     vec4 view = uInverseProjection * vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
                     view /= max(view.w, 0.0001);
                     vec3 world = (uInverseView * view).xyz;

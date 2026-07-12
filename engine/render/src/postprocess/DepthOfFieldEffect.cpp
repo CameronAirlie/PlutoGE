@@ -134,6 +134,7 @@ namespace PlutoGE::render
 
             float LinearizeDepth(float depth)
             {
+                depth = 1.0 - depth;
                 float z = depth * 2.0 - 1.0;
                 return (2.0 * uNearPlane * uFarPlane) / max(uFarPlane + uNearPlane - z * (uFarPlane - uNearPlane), 0.0001);
             }
@@ -154,7 +155,7 @@ namespace PlutoGE::render
             {
                 vec2 texelSize = 1.0 / vec2(textureSize(uSceneTexture, 0));
                 float centerDepthRaw = texture(uSceneDepthTexture, UV).r;
-                if (centerDepthRaw >= 0.999999 || uMaxBlurRadius <= 0.001)
+                if (centerDepthRaw <= 0.000001 || uMaxBlurRadius <= 0.001)
                 {
                     FragColor = vec4(SampleScene(UV), 1.0);
                     return;
@@ -188,7 +189,7 @@ namespace PlutoGE::render
                     vec2 sampleUv = UV + disk * uMaxBlurRadius * texelSize;
 
                     float sampleDepthRaw = texture(uSceneDepthTexture, clamp(sampleUv, vec2(0.0), vec2(1.0))).r;
-                    float sampleDepth = sampleDepthRaw >= 0.999999 ? uFarPlane : LinearizeDepth(sampleDepthRaw);
+                    float sampleDepth = sampleDepthRaw <= 0.000001 ? uFarPlane : LinearizeDepth(sampleDepthRaw);
                     float sampleCoC = ComputeSignedCoC(sampleDepth);
                     float sampleBlurPixels = abs(sampleCoC) * uMaxBlurRadius;
 
@@ -298,7 +299,7 @@ namespace PlutoGE::render
             for (int x = 0; x < sampleSize; ++x)
             {
                 const float depth = depthSamples[static_cast<std::size_t>(y * sampleSize + x)];
-                if (depth >= 0.999999f)
+                if (depth <= 0.000001f)
                 {
                     continue;
                 }
@@ -326,6 +327,7 @@ namespace PlutoGE::render
 
     float DepthOfFieldEffect::LinearizeDepth(float depth, float nearPlane, float farPlane) const
     {
+        depth = 1.0f - depth;
         const float z = depth * 2.0f - 1.0f;
         return (2.0f * nearPlane * farPlane) / std::max(farPlane + nearPlane - z * (farPlane - nearPlane), 0.0001f);
     }

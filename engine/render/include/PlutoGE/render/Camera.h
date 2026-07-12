@@ -54,7 +54,9 @@ namespace PlutoGE::render
             const glm::vec3 up = glm::normalize(glm::vec3(transform[1]));       // Extract up direction
 
             data.view = glm::lookAt(position, position + forward, up);
-            data.projection = glm::perspective(glm::radians(m_config.fovY), static_cast<float>(width) / static_cast<float>(height), m_config.nearPlane, m_config.farPlane);
+            // Swap near/far to map near -> 1 and far -> 0. With floating-point
+            // depth this preserves substantially more precision at distance.
+            data.projection = glm::perspective(glm::radians(m_config.fovY), static_cast<float>(width) / static_cast<float>(height), m_config.farPlane, m_config.nearPlane);
             data.nearPlane = m_config.nearPlane;
             data.farPlane = m_config.farPlane;
             return data;

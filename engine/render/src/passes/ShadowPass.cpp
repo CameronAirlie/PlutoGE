@@ -1537,5 +1537,8 @@ namespace PlutoGE::render
         glCullFace(GL_BACK);
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         glViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
+        // Shadow maps remain conventional; restore the scene's reversed-Z state.
+        glClearDepth(0.0);
+        glDepthFunc(GL_GREATER);
     }
 }

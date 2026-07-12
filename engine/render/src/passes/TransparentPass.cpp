@@ -381,7 +381,7 @@ namespace PlutoGE::render
             glViewport(0, 0, targetWidth, targetHeight);
         }
         glEnable(GL_DEPTH_TEST);
-        glDepthFunc(GL_LEQUAL);
+        glDepthFunc(GL_GEQUAL);
         glDepthMask(GL_FALSE);
         glDisable(GL_CULL_FACE);
         glEnable(GL_BLEND);
@@ -460,7 +460,7 @@ namespace PlutoGE::render
         glDepthMask(GL_TRUE);
         glEnable(GL_CULL_FACE);
         glCullFace(GL_BACK);
-        glDepthFunc(GL_LESS);
+        glDepthFunc(GL_GREATER);
         Graphics::UnbindRenderTarget();
     }
 }

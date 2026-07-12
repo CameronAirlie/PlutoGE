@@ -99,6 +99,7 @@ namespace PlutoGE::render
 
             float LinearizeDepth(float depth)
             {
+                depth = 1.0 - depth;
                 float z = depth * 2.0 - 1.0;
                 return (2.0 * uNearPlane * uFarPlane) / max(uFarPlane + uNearPlane - z * (uFarPlane - uNearPlane), 0.0001);
             }
@@ -142,7 +143,7 @@ namespace PlutoGE::render
                 float velocityLength = length(velocityPixels);
                 vec3 centerColor = SampleScene(UV);
 
-                if (centerDepthRaw >= 0.999999 || velocityLength <= uVelocityThreshold || uMaxBlurRadius <= 0.001)
+                if (centerDepthRaw <= 0.000001 || velocityLength <= uVelocityThreshold || uMaxBlurRadius <= 0.001)
                 {
                     FragColor = vec4(centerColor, 1.0);
                     return;
@@ -167,7 +168,7 @@ namespace PlutoGE::render
                     vec2 sampleUv = UV + blurUv * t;
                     vec2 clampedUv = clamp(sampleUv, vec2(0.0), vec2(1.0));
                     float sampleDepthRaw = texture(uSceneDepthTexture, clampedUv).r;
-                    float sampleDepth = sampleDepthRaw >= 0.999999 ? uFarPlane : LinearizeDepth(sampleDepthRaw);
+                    float sampleDepth = sampleDepthRaw <= 0.000001 ? uFarPlane : LinearizeDepth(sampleDepthRaw);
                     vec2 sampleVelocity = texture(uSceneMotionTexture, clampedUv).xy * textureSizeValue;
 
                     float depthDelta = abs(sampleDepth - centerDepth) / max(min(sampleDepth, centerDepth), 0.1);

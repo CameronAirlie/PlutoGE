@@ -111,7 +111,7 @@ namespace PlutoGE::render
 
                     float gridDepth = ndc.z * 0.5 + 0.5;
                     float sceneDepth = texture(uSceneDepthTexture, gl_FragCoord.xy / uViewportSize).r;
-                    if (sceneDepth < 0.999999 && gridDepth >= sceneDepth)
+                    if (sceneDepth > 0.000001 && gridDepth <= sceneDepth)
                     {
                         discard;
                     }

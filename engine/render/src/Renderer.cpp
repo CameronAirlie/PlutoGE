@@ -369,13 +369,13 @@ namespace PlutoGE::render
         gridPass->Initialize();
         m_renderPasses.push_back(gridPass);
 
-        auto volumetricCloudPass = new VolumetricCloudPass();
-        volumetricCloudPass->Initialize();
-        m_renderPasses.push_back(volumetricCloudPass);
-
         auto oceanPass = new OceanPass();
         oceanPass->Initialize();
         m_renderPasses.push_back(oceanPass);
+
+        auto volumetricCloudPass = new VolumetricCloudPass();
+        volumetricCloudPass->Initialize();
+        m_renderPasses.push_back(volumetricCloudPass);
 
         auto particlePass = new ParticlePass();
         particlePass->Initialize();

@@ -37,6 +37,21 @@ internal static unsafe class ScriptBridge
     }
 
     [StructLayout(LayoutKind.Sequential)]
+    internal struct NativeQuaternion
+    {
+        public float X;
+        public float Y;
+        public float Z;
+        public float W;
+
+        public readonly Quaternion ToManaged() => new(X, Y, Z, W);
+        public static NativeQuaternion FromManaged(Quaternion value) => new()
+        {
+            X = value.X, Y = value.Y, Z = value.Z, W = value.W
+        };
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
     internal struct NativeRaycastHit
     {
         public uint EntityId;
@@ -108,6 +123,8 @@ internal static unsafe class ScriptBridge
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3> _getEntityWorldRotation;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3, void> _setEntityRotation;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3, void> _setEntityWorldRotation;
+    private static delegate* unmanaged[Cdecl]<uint, NativeQuaternion> _getEntityRotationQuaternion;
+    private static delegate* unmanaged[Cdecl]<uint, NativeQuaternion, void> _setEntityRotationQuaternion;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3> _getEntityScale;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3, void> _setEntityScale;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3> _getEntityForward;
@@ -421,7 +438,9 @@ internal static unsafe class ScriptBridge
         delegate* unmanaged[Cdecl]<byte*, int, uint> getEntityByTag,
         delegate* unmanaged[Cdecl]<uint, NativeVector3, void> setEntityWorldPosition,
         delegate* unmanaged[Cdecl]<uint, NativeVector3> getEntityWorldRotation,
-        delegate* unmanaged[Cdecl]<uint, NativeVector3, void> setEntityWorldRotation)
+        delegate* unmanaged[Cdecl]<uint, NativeVector3, void> setEntityWorldRotation,
+        delegate* unmanaged[Cdecl]<uint, NativeQuaternion> getEntityRotationQuaternion,
+        delegate* unmanaged[Cdecl]<uint, NativeQuaternion, void> setEntityRotationQuaternion)
     {
         if (getEntityPosition == null ||
             getEntityWorldPosition == null ||
@@ -443,7 +462,9 @@ internal static unsafe class ScriptBridge
             getEntityByTag == null ||
             setEntityWorldPosition == null ||
             getEntityWorldRotation == null ||
-            setEntityWorldRotation == null)
+            setEntityWorldRotation == null ||
+            getEntityRotationQuaternion == null ||
+            setEntityRotationQuaternion == null)
         {
             SetError("Managed game object API registration received a null function pointer.");
             return 0;
@@ -457,6 +478,8 @@ internal static unsafe class ScriptBridge
         _getEntityWorldRotation = getEntityWorldRotation;
         _setEntityRotation = setEntityRotation;
         _setEntityWorldRotation = setEntityWorldRotation;
+        _getEntityRotationQuaternion = getEntityRotationQuaternion;
+        _setEntityRotationQuaternion = setEntityRotationQuaternion;
         _getEntityScale = getEntityScale;
         _setEntityScale = setEntityScale;
         _getEntityForward = getEntityForward;
@@ -1382,6 +1405,19 @@ internal static unsafe class ScriptBridge
         }
 
         _setEntityWorldRotation(entityId, NativeVector3.FromManaged(rotation));
+    }
+
+    internal static Quaternion GetEntityRotationQuaternion(uint entityId)
+    {
+        return _getEntityRotationQuaternion == null
+            ? Quaternion.Identity
+            : _getEntityRotationQuaternion(entityId).ToManaged();
+    }
+
+    internal static void SetEntityRotationQuaternion(uint entityId, Quaternion rotation)
+    {
+        if (_setEntityRotationQuaternion != null)
+            _setEntityRotationQuaternion(entityId, NativeQuaternion.FromManaged(rotation));
     }
 
     internal static Vector3 GetEntityScale(uint entityId)

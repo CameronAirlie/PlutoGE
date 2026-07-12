@@ -39,6 +39,13 @@ public sealed class GameObject
         set => ScriptBridge.SetEntityWorldRotation(EntityId, value);
     }
 
+    /// <summary>Local rotation without managed-side Euler conversion.</summary>
+    public Quaternion RotationQuaternion
+    {
+        get => ScriptBridge.GetEntityRotationQuaternion(EntityId);
+        set => ScriptBridge.SetEntityRotationQuaternion(EntityId, Quaternion.Normalize(value));
+    }
+
     public Vector3 Scale
     {
         get => ScriptBridge.GetEntityScale(EntityId);

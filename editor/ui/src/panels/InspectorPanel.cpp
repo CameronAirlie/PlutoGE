@@ -2929,7 +2929,10 @@ namespace PlutoGE::ui
 
             float farPlane = camera.camera.GetFarPlane();
             const float minFarPlane = camera.camera.GetNearPlane() + 0.001f;
-            if (ImGui::DragFloat("Far Plane", &farPlane, 0.1f, minFarPlane, 10000.0f))
+            // Large aerial and ocean scenes need intersections far beyond the
+            // previous 10 km editor ceiling. Camera::SetFarPlane itself has no
+            // such cap, so do not impose one in the inspector.
+            if (ImGui::DragFloat("Far Plane", &farPlane, 10.0f, minFarPlane, 1000000.0f, "%.1f"))
             {
                 camera.camera.SetFarPlane(farPlane);
                 editorShell.MarkProjectDirty();

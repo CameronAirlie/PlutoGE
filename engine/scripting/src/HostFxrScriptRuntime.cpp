@@ -32,6 +32,10 @@
 #include <string_view>
 #include <vector>
 
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtc/quaternion.hpp>
+#include <glm/gtx/euler_angles.hpp>
+
 #ifdef _WIN32
 #include <Windows.h>
 #endif
@@ -79,7 +83,7 @@ namespace PlutoGE::scripting
         using invoke_on_collision_fn = int(__cdecl *)(int64_t, uint32_t);
         using apply_field_data_fn = int(__cdecl *)(int64_t, const char *);
         using set_entity_id_fn = int(__cdecl *)(int64_t, uint32_t);
-        using register_game_object_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
+        using register_game_object_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_prefab_api_fn = int(__cdecl *)(void *);
         using register_scene_api_fn = int(__cdecl *)(void *);
         using register_scriptable_object_api_fn = int(__cdecl *)(void *);
@@ -110,6 +114,14 @@ namespace PlutoGE::scripting
             float z = 0.0f;
         };
 
+        struct NativeQuaternion
+        {
+            float x = 0.0f;
+            float y = 0.0f;
+            float z = 0.0f;
+            float w = 1.0f;
+        };
+
         struct NativeRaycastHit
         {
             uint32_t entityId = 0;
@@ -120,6 +132,8 @@ namespace PlutoGE::scripting
 
         using get_entity_vector3_fn = NativeVector3(__cdecl *)(uint32_t);
         using set_entity_vector3_fn = void(__cdecl *)(uint32_t, NativeVector3);
+        using get_entity_quaternion_fn = NativeQuaternion(__cdecl *)(uint32_t);
+        using set_entity_quaternion_fn = void(__cdecl *)(uint32_t, NativeQuaternion);
         using get_entity_active_fn = int(__cdecl *)(uint32_t);
         using set_entity_active_fn = void(__cdecl *)(uint32_t, int32_t);
         using get_entity_tag_count_fn = int(__cdecl *)(uint32_t);
@@ -939,6 +953,32 @@ namespace PlutoGE::scripting
             }
 
             entity->SetWorldRotation(glm::vec3(rotation.x, rotation.y, rotation.z));
+        }
+
+        NativeQuaternion GetEntityRotationQuaternion(uint32_t entityId)
+        {
+            auto *entity = FindEntity(entityId);
+            if (!entity)
+                return {};
+
+            const glm::vec3 radians = glm::radians(entity->GetRotation());
+            const glm::quat rotation = glm::normalize(glm::quat_cast(
+                glm::eulerAngleXYZ(radians.x, radians.y, radians.z)));
+            return {rotation.x, rotation.y, rotation.z, rotation.w};
+        }
+
+        void SetEntityRotationQuaternion(uint32_t entityId, NativeQuaternion value)
+        {
+            auto *entity = FindEntity(entityId);
+            const glm::quat input(value.w, value.x, value.y, value.z);
+            const float lengthSquared = glm::dot(input, input);
+            if (!entity || !std::isfinite(lengthSquared) || lengthSquared <= 1.0e-12f)
+                return;
+
+            const glm::mat4 matrix = glm::mat4_cast(glm::normalize(input));
+            float x = 0.0f, y = 0.0f, z = 0.0f;
+            glm::extractEulerAngleXYZ(matrix, x, y, z);
+            entity->SetRotation(glm::degrees(glm::vec3(x, y, z)));
         }
 
         NativeVector3 GetEntityScale(uint32_t entityId)
@@ -3245,7 +3285,9 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(static_cast<get_entity_by_tag_fn>(&GetEntityByTag)),
                 reinterpret_cast<void *>(static_cast<set_entity_vector3_fn>(&SetEntityWorldPosition)),
                 reinterpret_cast<void *>(static_cast<get_entity_vector3_fn>(&GetEntityWorldRotation)),
-                reinterpret_cast<void *>(static_cast<set_entity_vector3_fn>(&SetEntityWorldRotation))) == 0)
+                reinterpret_cast<void *>(static_cast<set_entity_vector3_fn>(&SetEntityWorldRotation)),
+                reinterpret_cast<void *>(static_cast<get_entity_quaternion_fn>(&GetEntityRotationQuaternion)),
+                reinterpret_cast<void *>(static_cast<set_entity_quaternion_fn>(&SetEntityRotationQuaternion))) == 0)
         {
             setManagedBridgeFailure("RegisterGameObjectApi");
             return false;

@@ -313,27 +313,43 @@ namespace PlutoGE::render
 
                 bool SolveWaveIntersection(vec3 rayOriginLocal, vec3 rayDirectionLocal, out vec3 localHit)
                 {
-                    if (abs(rayDirectionLocal.y) < 0.00001)
+                    // Parallel/upward rays cannot hit an infinite water plane.
+                    if (rayDirectionLocal.y >= -0.0000001)
                     {
                         return false;
                     }
 
-                    float t = -rayOriginLocal.y / rayDirectionLocal.y;
-                    if (t <= 0.0)
+                    float flatT = -rayOriginLocal.y / rayDirectionLocal.y;
+                    if (flatT <= 0.0)
                     {
                         return false;
                     }
+
+                    // At grazing angles Newton corrections divide by a nearly
+                    // horizontal ray and can jump behind the camera. Distant
+                    // waves are sub-pixel anyway, so use the stable mean plane
+                    // for the final strip approaching the horizon.
+                    if (abs(rayDirectionLocal.y) < 0.002)
+                    {
+                        localHit = rayOriginLocal + rayDirectionLocal * flatT;
+                        localHit.y = 0.0;
+                        return true;
+                    }
+
+                    float t = flatT;
 
                     for (int iteration = 0; iteration < 6; ++iteration)
                     {
                         vec3 samplePoint = rayOriginLocal + rayDirectionLocal * t;
                         float surfaceDelta = samplePoint.y - WaveHeight(samplePoint.xz);
-                        t -= surfaceDelta / rayDirectionLocal.y;
+                        float correction = surfaceDelta / rayDirectionLocal.y;
+                        correction = clamp(correction, -flatT * 0.25, flatT * 0.25);
+                        t -= correction;
                     }
 
                     if (t <= 0.0)
                     {
-                        return false;
+                        t = flatT;
                     }
 
                     localHit = rayOriginLocal + rayDirectionLocal * t;
@@ -618,7 +634,13 @@ namespace PlutoGE::render
                     }
 
                     vec4 waterClip = uProjection * uView * vec4(worldHit, 1.0);
-                    gl_FragDepth = waterClip.z / waterClip.w * 0.5 + 0.5;
+                    // The analytic ocean is not geometry-clipped by the camera
+                    // frustum. Intersections beyond the far plane project to a
+                    // depth of 1, which fails the depth-only pass's GL_LESS test
+                    // and makes later fog/cloud passes classify the ocean as sky.
+                    // Keep a valid distant surface just inside the far plane.
+                    gl_FragDepth = clamp(waterClip.z / waterClip.w * 0.5 + 0.5,
+                                         0.0, 0.999999);
                     if (uDepthOnly != 0)
                     {
                         FragColor = vec4(0.0);

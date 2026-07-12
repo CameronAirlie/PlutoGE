@@ -430,7 +430,13 @@ namespace PlutoGE::render
         m_shader->SetUniform("uFrameIndex", hasTemporalAA ? static_cast<float>(ctx.frameSequence % 4096) : 0.0f);
         m_shader->SetUniform("uTemporalSampling", hasTemporalAA ? 1 : 0);
         glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, ctx.temporaryRenderTarget->GetDepthTextureID());
+        // OceanPass runs first and writes the nearest geometry/ocean surface.
+        // Marching against that combined depth prevents clouds behind the sea
+        // surface from being composited over the water.
+        const GLuint sceneDepth = ctx.oceanSurfaceDepthRenderTarget
+            ? ctx.oceanSurfaceDepthRenderTarget->GetDepthTextureID()
+            : ctx.temporaryRenderTarget->GetDepthTextureID();
+        glBindTexture(GL_TEXTURE_2D, sceneDepth);
         m_shader->SetUniform("uSceneDepth", 0);
         glBindVertexArray(m_vao);
 

@@ -1554,6 +1554,24 @@ internal static unsafe class ScriptBridge
         return invoked;
     }
 
+    internal static T? GetScript<T>(uint entityId) where T : class
+    {
+        if (entityId == 0)
+        {
+            return null;
+        }
+
+        foreach (var instance in Instances.Values)
+        {
+            if (instance.EntityId == entityId && instance is T script)
+            {
+                return script;
+            }
+        }
+
+        return null;
+    }
+
     private static bool TryFindInvokableMethod(Type instanceType, string methodName, object?[] args, out MethodInfo method, out object?[] convertedArgs)
     {
         foreach (var candidate in instanceType.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))

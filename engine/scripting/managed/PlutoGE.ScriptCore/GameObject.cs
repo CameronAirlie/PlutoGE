@@ -122,7 +122,7 @@ public sealed class GameObject
             var type when type == typeof(UIButtonComponent) => ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.UIButton),
             var type when type == typeof(ParticleSystemComponent) => ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.ParticleSystem),
             var type when type == typeof(SoundEmitterComponent) => ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.SoundEmitter),
-            _ => false,
+            _ => ScriptBridge.GetScript<T>(EntityId) is not null,
         };
     }
 
@@ -193,7 +193,7 @@ public sealed class GameObject
             return new SoundEmitterComponent(EntityId) as T;
         }
 
-        return null;
+        return ScriptBridge.GetScript<T>(EntityId);
     }
 
     public override string ToString()

@@ -103,6 +103,7 @@ namespace PlutoGE::render
                 uniform int uPrimarySteps;
                 uniform int uLightSteps;
                 uniform float uFrameIndex;
+                uniform int uTemporalSampling;
 
                 float Hash(vec3 p)
                 {
@@ -254,7 +255,12 @@ namespace PlutoGE::render
                     if (end <= start) discard;
 
                     float stepLength = (end - start) / float(max(uPrimarySteps, 1));
-                    float jitter = PixelJitter(gl_FragCoord.xy, uFrameIndex);
+                    // Stochastic offsets need temporal accumulation. Without TAA,
+                    // use a deterministic midpoint march; a frozen noise pattern
+                    // is perceived as dotted diagonal lines on slowly moving clouds.
+                    float jitter = uTemporalSampling != 0
+                        ? PixelJitter(gl_FragCoord.xy, uFrameIndex)
+                        : 0.5;
                     float distanceAlongRay = start + jitter * stepLength;
                     float transmittance = 1.0;
                     vec3 radiance = vec3(0.0);
@@ -306,9 +312,20 @@ namespace PlutoGE::render
                 in vec2 vUv;
                 out vec4 FragColor;
                 uniform sampler2D uCloudTexture;
+                uniform vec2 uCloudTexelSize;
                 void main()
                 {
-                    FragColor = texture(uCloudTexture, vUv);
+                    // A compact tent resolve suppresses low-resolution ray-march
+                    // stippling while retaining substantially more shape than a blur.
+                    vec4 c = texture(uCloudTexture, vUv) * 4.0;
+                    c += texture(uCloudTexture, vUv + vec2( uCloudTexelSize.x, 0.0)) * 2.0;
+                    c += texture(uCloudTexture, vUv + vec2(-uCloudTexelSize.x, 0.0)) * 2.0;
+                    c += texture(uCloudTexture, vUv + vec2(0.0,  uCloudTexelSize.y)) * 2.0;
+                    c += texture(uCloudTexture, vUv + vec2(0.0, -uCloudTexelSize.y)) * 2.0;
+                    c += texture(uCloudTexture, vUv + uCloudTexelSize) + texture(uCloudTexture, vUv - uCloudTexelSize);
+                    c += texture(uCloudTexture, vUv + vec2(uCloudTexelSize.x, -uCloudTexelSize.y));
+                    c += texture(uCloudTexture, vUv + vec2(-uCloudTexelSize.x, uCloudTexelSize.y));
+                    FragColor = c / 16.0;
                 }
             )";
             return Shader::Create(source);
@@ -411,6 +428,7 @@ namespace PlutoGE::render
         m_shader->SetUniform("uLightIntensity", lightIntensity);
         m_shader->SetUniform("uFarPlane", std::max(ctx.cameraData.farPlane, 1.0f));
         m_shader->SetUniform("uFrameIndex", hasTemporalAA ? static_cast<float>(ctx.frameSequence % 4096) : 0.0f);
+        m_shader->SetUniform("uTemporalSampling", hasTemporalAA ? 1 : 0);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, ctx.temporaryRenderTarget->GetDepthTextureID());
         m_shader->SetUniform("uSceneDepth", 0);
@@ -455,6 +473,7 @@ namespace PlutoGE::render
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, m_cloudTarget->GetColorTextureID());
         m_compositeShader->SetUniform("uCloudTexture", 0);
+        m_compositeShader->SetUniform("uCloudTexelSize", glm::vec2(1.0f / static_cast<float>(cloudWidth), 1.0f / static_cast<float>(cloudHeight)));
         Graphics::DrawFullscreenTriangle();
         m_compositeShader->Unbind();
         glDisable(GL_BLEND);

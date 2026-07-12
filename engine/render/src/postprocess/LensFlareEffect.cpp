@@ -153,6 +153,8 @@ namespace PlutoGE::render
             uniform float uThreshold;
             uniform float uScale;
             uniform float uGhostDispersal;
+            uniform vec2 uTexelSize;
+            uniform float uAspectRatio;
 
             float Luma(vec3 color)
             {
@@ -166,9 +168,20 @@ namespace PlutoGE::render
                     return vec3(0.0);
                 }
 
-                vec3 color = max(texture(uSceneTexture, uv).rgb, vec3(0.0));
-                float brightness = max(Luma(color) - uThreshold, 0.0);
-                return color * brightness / max(Luma(color), 0.0001);
+                // A small cross filter stabilises sub-pixel highlights and the
+                // soft knee avoids the hard, flickering cutoff of a simple threshold.
+                vec3 color = texture(uSceneTexture, uv).rgb * 0.5;
+                color += texture(uSceneTexture, uv + vec2(uTexelSize.x, 0.0)).rgb * 0.125;
+                color += texture(uSceneTexture, uv - vec2(uTexelSize.x, 0.0)).rgb * 0.125;
+                color += texture(uSceneTexture, uv + vec2(0.0, uTexelSize.y)).rgb * 0.125;
+                color += texture(uSceneTexture, uv - vec2(0.0, uTexelSize.y)).rgb * 0.125;
+                color = max(color, vec3(0.0));
+                float luminance = Luma(color);
+                float knee = max(uThreshold * 0.5, 0.05);
+                float soft = clamp(luminance - uThreshold + knee, 0.0, 2.0 * knee);
+                soft = soft * soft / (4.0 * knee + 0.0001);
+                float contribution = max(luminance - uThreshold, soft) / max(luminance, 0.0001);
+                return color * contribution;
             }
 
             vec3 FlareMask(vec2 uv, float scale)
@@ -187,21 +200,40 @@ namespace PlutoGE::render
             {
                 vec4 source = texture(uSceneTexture, UV);
                 vec2 center = vec2(0.5);
-                vec2 direction = center - UV;
                 vec3 flare = vec3(0.0);
 
-                const float ghostWeights[5] = float[5](1.0, 0.78, 0.58, 0.42, 0.30);
-                for (int index = 0; index < 5; ++index)
+                // Ghosts lie on the line through the optical centre. Separate
+                // channel samples provide restrained lateral chromatic aberration.
+                const float ghostWeights[6] = float[6](0.95, 0.72, 0.52, 0.38, 0.27, 0.18);
+                for (int index = 0; index < 6; ++index)
                 {
-                    float stepValue = (float(index) + 1.0) * uGhostDispersal;
-                    vec2 sampleUv = UV + direction * stepValue;
-                    vec3 bright = BrightSample(sampleUv);
-                    vec3 mask = FlareMask(center + (UV - center) * (1.0 + float(index) * 0.28), uScale);
-                    flare += bright * mask * ghostWeights[index];
+                    float offset = (float(index) + 1.0) * uGhostDispersal;
+                    vec2 ghostUv = mix(UV, vec2(1.0) - UV, offset);
+                    vec2 axis = ghostUv - center;
+                    vec2 chroma = normalize(axis + vec2(0.0001)) * uTexelSize * 2.0;
+                    vec3 bright = vec3(BrightSample(ghostUv + chroma).r,
+                                       BrightSample(ghostUv).g,
+                                       BrightSample(ghostUv - chroma).b);
+                    vec2 shaped = axis * vec2(uAspectRatio, 1.0);
+                    float vignette = smoothstep(0.78, 0.08, length(shaped));
+                    vec3 mask = FlareMask(center + axis * (1.0 + float(index) * 0.22), uScale);
+                    flare += bright * mask * ghostWeights[index] * vignette;
                 }
 
-                vec2 mirrorUv = vec2(1.0) - UV;
-                flare += BrightSample(mirrorUv) * FlareMask(UV, uScale) * 0.75;
+                vec2 axis = (UV - center) * vec2(uAspectRatio, 1.0);
+                float radius = length(axis);
+                vec2 haloUv = center - (UV - center) * (0.75 + uGhostDispersal * 0.35);
+                float halo = exp(-pow((radius - 0.28 * uScale) / max(0.035 * uScale, 0.01), 2.0));
+                flare += BrightSample(haloUv) * halo * 0.35;
+
+                // Subtle anamorphic glare around the brightest source pixels.
+                vec3 glare = vec3(0.0);
+                for (int tap = -4; tap <= 4; ++tap)
+                {
+                    float x = float(tap);
+                    glare += BrightSample(UV + vec2(x * uTexelSize.x * 5.0, 0.0)) * exp(-abs(x) * 0.65);
+                }
+                flare += glare * FlareMask(UV, uScale * 1.25) * 0.08;
 
                 vec3 color = source.rgb + flare * uIntensity;
                 FragColor = vec4(max(color, vec3(0.0)), source.a);
@@ -265,6 +297,10 @@ namespace PlutoGE::render
         m_shader->SetUniform("uThreshold", m_threshold);
         m_shader->SetUniform("uScale", m_scale);
         m_shader->SetUniform("uGhostDispersal", m_ghostDispersal);
+        const float width = static_cast<float>(std::max(context.sourceRenderTarget->GetWidth(), 1));
+        const float height = static_cast<float>(std::max(context.sourceRenderTarget->GetHeight(), 1));
+        m_shader->SetUniform("uTexelSize", glm::vec2(1.0f / width, 1.0f / height));
+        m_shader->SetUniform("uAspectRatio", width / height);
         DrawFullscreenTriangle();
 
         EndApply();

@@ -305,11 +305,9 @@ namespace PlutoGE::render
             uniform float uMaxOpacity;
             uniform float uShadowSoftness;
             uniform float uCascadeBlendDistance;
-            uniform float uFrameIndex;
             uniform int uStepCount;
             uniform int uCascadeCount;
             uniform int uHasDirectionalLight;
-            uniform int uUseTemporalShadowSampling;
             uniform vec3 uCascadeWorldOrigins[4];
             uniform mat4 uCascadeLightSpaceMatrices[4];
             uniform float uCascadeSplits[4];
@@ -360,11 +358,6 @@ namespace PlutoGE::render
                 return uFogColor;
             }
 
-            float InterleavedGradientNoise(vec2 pixelPosition)
-            {
-                return fract(52.9829189 * fract(dot(pixelPosition, vec2(0.06711056, 0.00583715))));
-            }
-
             float SampleShadowMapPCF(sampler2D shadowMap, vec3 projectedCoords)
             {
                 float receiverDepth = projectedCoords.z - 0.00045;
@@ -385,15 +378,11 @@ namespace PlutoGE::render
                     vec2( 0.5,  0.5)
                 );
                 float shadow = 0.0;
-                int sampleCount = uUseTemporalShadowSampling != 0 ? 2 : 4;
-                int temporalOffset = int(mod(floor(uFrameIndex) + floor(gl_FragCoord.x) + floor(gl_FragCoord.y), 2.0));
+                const int sampleCount = 4;
 
                 for (int sampleIndex = 0; sampleIndex < sampleCount; ++sampleIndex)
                 {
-                    int offsetIndex = uUseTemporalShadowSampling != 0
-                        ? (sampleIndex == 0 ? temporalOffset : 3 - temporalOffset)
-                        : sampleIndex;
-                    vec2 sampleCoords = projectedCoords.xy + offsets[offsetIndex] * texelSize * filterRadius;
+                    vec2 sampleCoords = projectedCoords.xy + offsets[sampleIndex] * texelSize * filterRadius;
                     float closestDepth = texture(shadowMap, sampleCoords).r;
                     shadow += receiverDepth > closestDepth ? 1.0 : 0.0;
                 }
@@ -530,7 +519,6 @@ namespace PlutoGE::render
                 float directionalInscattering = uHasDirectionalLight != 0
                     ? ComputeDirectionalInscattering(dot(rayDirection, normalize(uLightDirection)))
                     : 0.0;
-                float rayJitter = fract(InterleavedGradientNoise(gl_FragCoord.xy) + uFrameIndex * 0.61803398875);
                 int shadowSampleStride = uHasDirectionalLight != 0 && uStepCount >= 12 ? 2 : 1;
                 float cachedLightVisibility = 1.0;
                 bool hasCachedLightVisibility = false;
@@ -543,8 +531,9 @@ namespace PlutoGE::render
                     }
 
                     float segmentLength = min(stepLength, hitDistance - currentDistance);
-                    float sampleJitter = fract(rayJitter + float(stepIndex) * 0.61803398875);
-                    vec3 samplePosition = uCameraPosition + rayDirection * (currentDistance + sampleJitter * segmentLength);
+                    // Deterministic midpoint integration prevents both persistent
+                    // screen-space patterns and temporal sparkle in smooth fog.
+                    vec3 samplePosition = uCameraPosition + rayDirection * (currentDistance + 0.5 * segmentLength);
                     float density = ComputeDensity(samplePosition);
                     float extinction = max(density * segmentLength, 0.0);
                     float segmentTransmittance = exp(-extinction);
@@ -658,25 +647,6 @@ namespace PlutoGE::render
         const glm::mat4 inverseProjection = glm::inverse(context.renderContext.cameraData.projection);
         const glm::vec3 cameraPosition = glm::vec3(inverseView[3]);
         const scene::Light *primaryDirectionalLight = FindPrimaryDirectionalLight(context.renderContext);
-        bool hasTemporalAAAfterFog = false;
-        if (context.renderContext.postProcessEffects)
-        {
-            bool foundFog = false;
-            for (const auto *effect : *context.renderContext.postProcessEffects)
-            {
-                if (effect == this)
-                {
-                    foundFog = true;
-                    continue;
-                }
-                if (foundFog && effect && effect->IsEnabled() && effect->GetTypeName() == "TAA")
-                {
-                    hasTemporalAAAfterFog = true;
-                    break;
-                }
-            }
-        }
-
         glm::vec3 lightDirection = glm::vec3(0.0f, 1.0f, 0.0f);
         glm::vec3 lightColor = glm::vec3(1.0f);
         float lightIntensity = 0.0f;
@@ -741,8 +711,6 @@ namespace PlutoGE::render
         m_shader->SetUniform("uAmbientContribution", m_ambientContribution);
         m_shader->SetUniform("uDirectionalContribution", m_directionalContribution);
         m_shader->SetUniform("uMaxOpacity", m_maxOpacity);
-        m_shader->SetUniform("uFrameIndex", hasTemporalAAAfterFog ? static_cast<float>(context.renderContext.frameSequence % 4096) : 0.0f);
-        m_shader->SetUniform("uUseTemporalShadowSampling", hasTemporalAAAfterFog ? 1 : 0);
         m_shader->SetUniform("uStepCount", std::clamp(m_stepCount, kMinStepCount, kMaxStepCount));
         m_shader->SetUniform("uHasDirectionalLight", hasDirectionalLight);
         DrawFullscreenTriangle();

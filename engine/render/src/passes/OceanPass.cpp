@@ -4,6 +4,7 @@
 #include "PlutoGE/render/RenderTarget.h"
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/Shader.h"
+#include "PlutoGE/render/Texture.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/LightComponent.h"
@@ -137,6 +138,9 @@ namespace PlutoGE::render
 
                 uniform sampler2D uSceneColor;
                 uniform sampler2D uSceneDepth;
+                uniform sampler2D uEnvironmentMap;
+                uniform int uEnvironmentEnabled;
+                uniform float uEnvironmentIntensity;
                 uniform mat4 uInverseView;
                 uniform mat4 uInverseProjection;
                 uniform mat4 uView;
@@ -244,10 +248,12 @@ namespace PlutoGE::render
                     return low * 0.14 + detail * 0.06 + ripple * 0.025;
                 }
 
-                float DirectionalWave(vec2 direction, vec2 position, float frequency, float phase, float sharpness)
+                float GerstnerHeight(vec2 direction, vec2 position, float waveNumber, float amplitude, float phaseOffset)
                 {
-                    float wave = sin(dot(position, normalize(direction)) * frequency + phase);
-                    return sign(wave) * pow(abs(wave), sharpness);
+                    direction = normalize(direction);
+                    float omega = sqrt(9.81 * waveNumber);
+                    float phase = dot(position, direction) * waveNumber - omega * uSimulationTime * uWaveSpeed + phaseOffset;
+                    return sin(phase) * amplitude;
                 }
 
                 bool PointInPolygon(vec2 point, int areaIndex)
@@ -295,19 +301,14 @@ namespace PlutoGE::render
 
                 float WaveHeight(vec2 xz)
                 {
-                    float baseWaveNumber = (2.0 * PI) / max(uWaveLength, 0.01);
-                    float phase = uSimulationTime * uWaveSpeed;
-                    float sharpness = mix(1.0, 2.6, clamp(uWaveChoppiness * 0.35, 0.0, 1.0));
-
-                    float largeSwell = DirectionalWave(vec2(0.92, 0.38), xz, baseWaveNumber * 0.42, phase * 0.55, sharpness) * 0.48;
-                    float crossingSwell = DirectionalWave(vec2(-0.35, 0.94), xz, baseWaveNumber * 0.63, phase * 0.76 + 1.4, sharpness + 0.25) * 0.28;
-                    float mediumWave = DirectionalWave(vec2(0.74, -0.67), xz, baseWaveNumber * 1.35, phase * 1.28 - 0.8, sharpness + 0.6) * 0.16;
-
-                    vec2 swellUv = xz / max(uWaveLength, 0.01);
-                    float noisyDetail = LayeredNoise(swellUv, phase);
-
-                    float stackedWaves = largeSwell + crossingSwell + mediumWave + noisyDetail;
-                    return stackedWaves * uWaveAmplitude;
+                    float k = (2.0 * PI) / max(uWaveLength, 0.01);
+                    float h = 0.0;
+                    h += GerstnerHeight(vec2(0.94, 0.34), xz, k * 0.55, uWaveAmplitude * 0.48, 0.0);
+                    h += GerstnerHeight(vec2(0.78, 0.63), xz, k * 0.82, uWaveAmplitude * 0.25, 1.7);
+                    h += GerstnerHeight(vec2(0.99, -0.14), xz, k * 1.35, uWaveAmplitude * 0.14, 3.2);
+                    h += GerstnerHeight(vec2(0.55, 0.84), xz, k * 2.10, uWaveAmplitude * 0.08, 0.8);
+                    h += GerstnerHeight(vec2(-0.25, 0.97), xz, k * 3.40, uWaveAmplitude * 0.05, 4.1);
+                    return h;
                 }
 
                 bool SolveWaveIntersection(vec3 rayOriginLocal, vec3 rayDirectionLocal, out vec3 localHit)
@@ -343,13 +344,55 @@ namespace PlutoGE::render
             )";
             source.fragmentSource += R"(
 
+                vec2 RippleSlope(vec2 xz)
+                {
+                    // Small waves affect reflection/refraction without changing the
+                    // ray-intersected silhouette. Analytic derivatives avoid the
+                    // lumpy, temporally unstable normals produced by noise gradients.
+                    float detailLength = clamp(uWaveLength * 0.10, 0.75, 2.5);
+                    float baseK = (2.0 * PI) / detailLength;
+                    float time = uSimulationTime * uWaveSpeed;
+                    float strength = 0.018 * mix(0.75, 1.5, clamp(uWaveChoppiness * 0.25, 0.0, 1.0));
+                    vec2 slope = vec2(0.0);
+
+                    vec2 d0 = normalize(vec2(0.96, 0.28));
+                    vec2 d1 = normalize(vec2(0.72, 0.69));
+                    vec2 d2 = normalize(vec2(0.99, -0.12));
+                    vec2 d3 = normalize(vec2(0.45, 0.89));
+                    float p0 = dot(xz, d0) * baseK - time * 2.1;
+                    float p1 = dot(xz, d1) * baseK * 1.73 - time * 2.7 + 1.3;
+                    float p2 = dot(xz, d2) * baseK * 2.41 - time * 3.4 + 3.1;
+                    float p3 = dot(xz, d3) * baseK * 3.17 - time * 4.0 + 0.6;
+
+                    // Fade frequencies that approach pixel size to prevent distant
+                    // ripples from sparkling and crawling as the camera moves.
+                    float a0 = 1.0 - smoothstep(0.45, 1.25, fwidth(p0));
+                    float a1 = 1.0 - smoothstep(0.45, 1.25, fwidth(p1));
+                    float a2 = 1.0 - smoothstep(0.45, 1.25, fwidth(p2));
+                    float a3 = 1.0 - smoothstep(0.45, 1.25, fwidth(p3));
+                    slope += d0 * cos(p0) * strength * baseK * a0;
+                    slope += d1 * cos(p1) * strength * 0.52 * baseK * 1.73 * a1;
+                    slope += d2 * cos(p2) * strength * 0.27 * baseK * 2.41 * a2;
+                    slope += d3 * cos(p3) * strength * 0.14 * baseK * 3.17 * a3;
+                    return slope;
+                }
+
                 vec3 WaveNormal(vec2 xz)
                 {
                     float offset = max(uWaveLength * 0.01, 0.025);
                     float center = WaveHeight(xz);
                     float hx = WaveHeight(xz + vec2(offset, 0.0)) - center;
                     float hz = WaveHeight(xz + vec2(0.0, offset)) - center;
-                    return normalize(vec3(-hx / offset, 1.0, -hz / offset));
+                    vec2 slope = vec2(hx, hz) / offset + RippleSlope(xz);
+                    return normalize(vec3(-slope.x, 1.0, -slope.y));
+                }
+
+                vec3 SampleEnvironment(vec3 direction)
+                {
+                    direction = normalize(direction);
+                    vec2 uv = vec2(atan(direction.z, direction.x) / (2.0 * PI) + 0.5,
+                                   asin(clamp(direction.y, -1.0, 1.0)) / PI + 0.5);
+                    return texture(uEnvironmentMap, uv).rgb * uEnvironmentIntensity;
                 }
 
                 bool ProjectWorldPosition(vec3 worldPosition, out vec2 uv)
@@ -457,6 +500,8 @@ namespace PlutoGE::render
                     return confidence > 0.001;
                 }
 
+            )";
+            source.fragmentSource += R"(
                 void main()
                 {
                     vec3 viewDirection = WorldDirection(vUv);
@@ -467,19 +512,24 @@ namespace PlutoGE::render
                     {
                         float sceneDepth = texture(uSceneDepth, vUv).r;
                         float travelDistance = uMaxVisibilityDepth * 4.0;
+                        float sceneDistance = 1e20;
                         if (sceneDepth < 0.999999)
                         {
                             vec3 sceneWorld = ReconstructWorldPosition(vUv, sceneDepth);
-                            travelDistance = min(length(sceneWorld - uCameraPosition), uMaxVisibilityDepth * 4.0);
+                            sceneDistance = length(sceneWorld - uCameraPosition);
+                            travelDistance = min(sceneDistance, uMaxVisibilityDepth * 4.0);
                         }
 
                         // Looking upward exits the water at the animated surface;
                         // only the submerged portion of that ray contributes haze.
                         vec3 exitHitLocal;
-                        if (SolveWaveIntersection(rayOriginLocal, rayDirectionLocal, exitHitLocal) && !MaskReject(exitHitLocal.xz))
+                        bool exitsSurface = SolveWaveIntersection(rayOriginLocal, rayDirectionLocal, exitHitLocal) && !MaskReject(exitHitLocal.xz);
+                        float exitDistance = 1e20;
+                        if (exitsSurface)
                         {
                             vec3 exitHitWorld = (uOceanTransform * vec4(exitHitLocal, 1.0)).xyz;
-                            travelDistance = min(travelDistance, length(exitHitWorld - uCameraPosition));
+                            exitDistance = length(exitHitWorld - uCameraPosition);
+                            travelDistance = min(travelDistance, exitDistance);
                         }
 
                         vec3 cameraSurfaceLocal = vec3(rayOriginLocal.x, WaveHeight(rayOriginLocal.xz), rayOriginLocal.z);
@@ -490,7 +540,21 @@ namespace PlutoGE::render
                         float depthVisibility = exp(-cameraDepth * max(uUnderwaterDepthFalloff, 0.0) / surfaceVisibility);
                         float availableLight = exp(-cameraDepth * max(uUnderwaterLightFalloff, 0.0) / surfaceVisibility);
                         float visibility = surfaceVisibility * mix(0.15, 1.0, depthVisibility);
-                        vec3 sceneColor = texture(uSceneColor, vUv).rgb;
+                        vec2 underwaterUv = vUv;
+                        // Refract only when the viewing ray reaches the water/air
+                        // boundary before geometry. Otherwise displaced background
+                        // colour leaks through foreground objects below the surface.
+                        bool surfaceBeforeScene = exitsSurface && exitDistance < sceneDistance - 0.01;
+                        if (surfaceBeforeScene)
+                        {
+                            vec3 exitNormal = WaveNormal(exitHitLocal.xz);
+                            vec2 surfaceWarp = exitNormal.xz * uRefractionStrength * (2.2 + min(travelDistance, 8.0) * 0.12);
+                            float shimmer = LayeredNoise(exitHitLocal.xz / max(uWaveLength, 0.01) * 5.0,
+                                                       uSimulationTime * uWaveSpeed);
+                            underwaterUv = clamp(vUv + surfaceWarp + vec2(shimmer, -shimmer) * uRefractionStrength * 0.35,
+                                                 vec2(0.002), vec2(0.998));
+                        }
+                        vec3 sceneColor = texture(uSceneColor, underwaterUv).rgb;
 
                         // Beer-Lambert extinction over the actual camera-to-surface
                         // distance. Red light is absorbed faster than blue/green.
@@ -573,10 +637,15 @@ namespace PlutoGE::render
                     vec3 waterTransmission = exp(-vec3(6.0, 4.0, 2.8) * depthFactor);
                     refractedColor = refractedColor * waterTransmission + waterTint * (vec3(1.0) - waterTransmission);
                     vec3 viewVector = normalize(uCameraPosition - worldHit);
-                    float fresnel = pow(1.0 - clamp(dot(viewVector, normal), 0.0, 1.0), 5.0);
+                    float ndotv = clamp(dot(viewVector, normal), 0.0, 1.0);
+                    const float waterF0 = 0.0204;
+                    float fresnel = waterF0 + (1.0 - waterF0) * pow(1.0 - ndotv, 5.0);
                     // The fallback must not contain the undisplaced scene color,
                     // otherwise submerged geometry appears both directly and refracted.
-                    vec3 reflectionColor = mix(vec3(0.12, 0.24, 0.34), vec3(0.42, 0.58, 0.72), fresnel);
+                    vec3 reflectionDirection = normalize(reflect(-viewVector, normal));
+                    vec3 reflectionColor = uEnvironmentEnabled != 0
+                        ? SampleEnvironment(reflectionDirection)
+                        : mix(vec3(0.12, 0.24, 0.34), vec3(0.42, 0.58, 0.72), max(reflectionDirection.y, 0.0));
                     vec2 reflectionUv;
                     float reflectionConfidence;
                     if (TraceScreenSpaceReflection(worldHit, normal, viewVector, reflectionUv, reflectionConfidence))
@@ -587,8 +656,11 @@ namespace PlutoGE::render
                     vec3 halfVector = normalize(viewVector + normalize(uSunDirection));
                     float sunSpecular = pow(max(dot(normal, halfVector), 0.0), mix(16.0, 256.0, clamp(uSmoothness, 0.0, 1.0))) * max(uSunIntensity, 0.0);
                     vec3 sunGlint = uSunColor * sunSpecular * 0.015;
-                    float foam = (1.0 - smoothstep(0.0, max(uFoamDistance, 0.0001), waterDepth)) * uFoamIntensity;
-                    foam *= 0.65 + 0.35 * Hash12(localHit.xz * 0.3 + uSimulationTime);
+                    float shoreFoam = 1.0 - smoothstep(0.0, max(uFoamDistance, 0.0001), waterDepth);
+                    float crest = smoothstep(0.32, 0.72, 1.0 - normalLocal.y) *
+                                  smoothstep(0.05, max(uWaveAmplitude * 0.45, 0.051), localHit.y);
+                    float foamNoise = Fbm(localHit.xz * 0.18 + vec2(uSimulationTime * 0.05, -uSimulationTime * 0.035));
+                    float foam = max(shoreFoam, crest * (0.65 + 0.35 * foamNoise)) * uFoamIntensity;
 
                     vec3 composed = mix(refractedColor, waterTint, 0.58);
                     float reflectionStrength = mix(0.12, 1.0, fresnel) * clamp(uSmoothness, 0.0, 1.0);
@@ -714,6 +786,13 @@ namespace PlutoGE::render
         glActiveTexture(GL_TEXTURE1);
         glBindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetDepthTextureID());
         m_shader->SetUniform("uSceneDepth", 1);
+        const auto *environmentTexture = ctx.scene->GetEnvironmentMapTexture();
+        const GLuint physicalSkyTexture = ctx.renderer ? ctx.renderer->GetPhysicalSkyEnvironmentTextureID() : 0;
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D, physicalSkyTexture ? physicalSkyTexture : (environmentTexture ? environmentTexture->GetTextureID() : 0));
+        m_shader->SetUniform("uEnvironmentMap", 2);
+        m_shader->SetUniform("uEnvironmentEnabled", physicalSkyTexture || environmentTexture ? 1 : 0);
+        m_shader->SetUniform("uEnvironmentIntensity", ctx.scene->GetEnvironmentIntensity());
         m_shader->SetUniform("uInverseView", inverseView);
         m_shader->SetUniform("uInverseProjection", glm::inverse(ctx.cameraData.projection));
         m_shader->SetUniform("uView", ctx.cameraData.view);

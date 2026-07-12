@@ -27,6 +27,40 @@ namespace PlutoGE::render
             glm::mat4 inverseTransform{1.0f};
         };
 
+        bool PointInPolygon(const glm::vec2 &point, const scene::OceanAreaPolygon &area)
+        {
+            if (area.points.size() < 3)
+                return false;
+
+            bool inside = false;
+            std::size_t previous = area.points.size() - 1;
+            for (std::size_t current = 0; current < area.points.size(); ++current)
+            {
+                const glm::vec2 &a = area.points[current];
+                const glm::vec2 &b = area.points[previous];
+                if (((a.y > point.y) != (b.y > point.y)) &&
+                    point.x < (b.x - a.x) * (point.y - a.y) / (b.y - a.y) + a.x)
+                    inside = !inside;
+                previous = current;
+            }
+            return inside;
+        }
+
+        bool IsCameraInsideOcean(const OceanDraw &ocean, const glm::vec3 &cameraPosition)
+        {
+            const glm::vec3 localCamera = glm::vec3(ocean.inverseTransform * glm::vec4(cameraPosition, 1.0f));
+            if (localCamera.y >= 0.0f)
+                return false;
+
+            bool insideArea = false;
+            for (const auto &area : ocean.component->GetAreas())
+                insideArea = insideArea || PointInPolygon(glm::vec2(localCamera.x, localCamera.z), area);
+
+            if (ocean.component->GetAreas().empty())
+                return true;
+            return ocean.component->GetInvertAreaMask() ? insideArea : !insideArea;
+        }
+
         const scene::Light *FindPrimaryDirectionalLight(const RenderContext &ctx)
         {
             if (!ctx.lights)
@@ -116,6 +150,11 @@ namespace PlutoGE::render
                 uniform float uOpacity;
                 uniform float uSmoothness;
                 uniform float uMaxVisibilityDepth;
+                uniform float uUnderwaterFadeStart;
+                uniform float uUnderwaterFadeSoftness;
+                uniform float uUnderwaterDepthFalloff;
+                uniform float uUnderwaterLightFalloff;
+                uniform float uUnderwaterTurbidity;
                 uniform float uRefractionStrength;
                 uniform float uWaveAmplitude;
                 uniform float uWaveLength;
@@ -132,6 +171,7 @@ namespace PlutoGE::render
                 uniform vec3 uSunColor;
                 uniform float uSunIntensity;
                 uniform int uDepthOnly;
+                uniform int uUnderwater;
 
                 const float PI = 3.14159265359;
 
@@ -300,6 +340,9 @@ namespace PlutoGE::render
                     return true;
                 }
 
+            )";
+            source.fragmentSource += R"(
+
                 vec3 WaveNormal(vec2 xz)
                 {
                     float offset = max(uWaveLength * 0.01, 0.025);
@@ -419,6 +462,63 @@ namespace PlutoGE::render
                     vec3 viewDirection = WorldDirection(vUv);
                     vec3 rayOriginLocal = (uInverseOceanTransform * vec4(uCameraPosition, 1.0)).xyz;
                     vec3 rayDirectionLocal = normalize((uInverseOceanTransform * vec4(viewDirection, 0.0)).xyz);
+
+                    if (uUnderwater != 0 && uDepthOnly == 0)
+                    {
+                        float sceneDepth = texture(uSceneDepth, vUv).r;
+                        float travelDistance = uMaxVisibilityDepth * 4.0;
+                        if (sceneDepth < 0.999999)
+                        {
+                            vec3 sceneWorld = ReconstructWorldPosition(vUv, sceneDepth);
+                            travelDistance = min(length(sceneWorld - uCameraPosition), uMaxVisibilityDepth * 4.0);
+                        }
+
+                        // Looking upward exits the water at the animated surface;
+                        // only the submerged portion of that ray contributes haze.
+                        vec3 exitHitLocal;
+                        if (SolveWaveIntersection(rayOriginLocal, rayDirectionLocal, exitHitLocal) && !MaskReject(exitHitLocal.xz))
+                        {
+                            vec3 exitHitWorld = (uOceanTransform * vec4(exitHitLocal, 1.0)).xyz;
+                            travelDistance = min(travelDistance, length(exitHitWorld - uCameraPosition));
+                        }
+
+                        vec3 cameraSurfaceLocal = vec3(rayOriginLocal.x, WaveHeight(rayOriginLocal.xz), rayOriginLocal.z);
+                        vec3 cameraSurfaceWorld = (uOceanTransform * vec4(cameraSurfaceLocal, 1.0)).xyz;
+                        vec3 surfaceNormalWorld = normalize(mat3(transpose(uInverseOceanTransform)) * WaveNormal(rayOriginLocal.xz));
+                        float cameraDepth = max(dot(cameraSurfaceWorld - uCameraPosition, surfaceNormalWorld), 0.0);
+                        float surfaceVisibility = max(uMaxVisibilityDepth, 0.1);
+                        float depthVisibility = exp(-cameraDepth * max(uUnderwaterDepthFalloff, 0.0) / surfaceVisibility);
+                        float availableLight = exp(-cameraDepth * max(uUnderwaterLightFalloff, 0.0) / surfaceVisibility);
+                        float visibility = surfaceVisibility * mix(0.15, 1.0, depthVisibility);
+                        vec3 sceneColor = texture(uSceneColor, vUv).rgb;
+
+                        // Beer-Lambert extinction over the actual camera-to-surface
+                        // distance. Red light is absorbed faster than blue/green.
+                        vec3 extinction = vec3(4.5, 2.2, 1.2) * max(uUnderwaterTurbidity, 0.0) / visibility;
+                        vec3 transmittance = exp(-extinction * travelDistance);
+                        float fogAmount = 1.0 - exp(-2.0 * travelDistance / visibility);
+                        float visibilityRatio = travelDistance / visibility;
+                        float fadeStart = clamp(uUnderwaterFadeStart, 0.0, 1.0);
+                        float fadeEnd = fadeStart + max(uUnderwaterFadeSoftness, 0.01);
+                        float distanceCutoff = smoothstep(fadeStart, fadeEnd, visibilityRatio);
+                        transmittance *= 1.0 - distanceCutoff;
+                        float depthColorFactor = 1.0 - availableLight;
+                        vec3 waterColor = mix(uShallowColor, uDeepColor, clamp(max(fogAmount, depthColorFactor), 0.0, 1.0));
+                        waterColor *= mix(0.08, 1.0, availableLight);
+                        vec3 inScattering = waterColor * (vec3(1.0) - transmittance);
+                        vec3 composed = sceneColor * transmittance * mix(0.12, 1.0, availableLight) + inScattering;
+
+                        // Even nearby objects inherit a slight water cast, avoiding
+                        // the appearance of an unchanged scene behind a screen filter.
+                        composed = mix(composed, composed * (uShallowColor * 1.5 + vec3(0.25)), 0.12);
+                        // Beyond Max Visibility Depth no scene detail survives;
+                        // only the deep-water scattering colour remains.
+                        vec3 visibilityLimitColor = uDeepColor * mix(0.03, 0.8, availableLight);
+                        composed = mix(composed, visibilityLimitColor, distanceCutoff);
+                        FragColor = vec4(composed, 1.0);
+                        return;
+                    }
+
                     vec3 localHit;
                     if (!SolveWaveIntersection(rayOriginLocal, rayDirectionLocal, localHit))
                     {
@@ -450,7 +550,7 @@ namespace PlutoGE::render
                         {
                             discard;
                         }
-                        waterDepth = clamp(localHit.y - sceneLocal.y, 0.0, uMaxVisibilityDepth);
+                        waterDepth = clamp(length(sceneWorld - worldHit), 0.0, uMaxVisibilityDepth);
                     }
 
                     vec4 waterClip = uProjection * uView * vec4(worldHit, 1.0);
@@ -468,6 +568,10 @@ namespace PlutoGE::render
 
                     float depthFactor = clamp(waterDepth / max(uMaxVisibilityDepth, 0.0001), 0.0, 1.0);
                     vec3 waterTint = mix(uShallowColor, uDeepColor, depthFactor);
+                    // Attenuate the seabed through the water column. Without this,
+                    // bright sand remains visible through arbitrarily deep water.
+                    vec3 waterTransmission = exp(-vec3(6.0, 4.0, 2.8) * depthFactor);
+                    refractedColor = refractedColor * waterTransmission + waterTint * (vec3(1.0) - waterTransmission);
                     vec3 viewVector = normalize(uCameraPosition - worldHit);
                     float fresnel = pow(1.0 - clamp(dot(viewVector, normal), 0.0, 1.0), 5.0);
                     // The fallback must not contain the undisplaced scene color,
@@ -534,6 +638,14 @@ namespace PlutoGE::render
                 GL_NEAREST);
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
         }
+
+        void SetCameraUnderwaterMarker(RenderTarget &target, bool underwater)
+        {
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, target.GetFramebufferID());
+            const GLfloat marker[4] = {underwater ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f};
+            glClearBufferfv(GL_COLOR, 0, marker);
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        }
     }
 
     void OceanPass::Initialize()
@@ -552,6 +664,7 @@ namespace PlutoGE::render
         // Keep this per-frame target valid even when the scene has no oceans;
         // fog then sees the same geometry depth it normally would.
         CopyGeometryDepth(*ctx.gBuffer, *ctx.oceanSurfaceDepthRenderTarget);
+        SetCameraUnderwaterMarker(*ctx.oceanSurfaceDepthRenderTarget, false);
 
         std::vector<OceanDraw> oceans;
         for (const auto *root : ctx.scene->GetRootEntities())
@@ -581,6 +694,9 @@ namespace PlutoGE::render
         const float sunIntensity = sun ? std::max(sun->intensity, 0.0f) * sunVisibility : 1.0f;
         const glm::mat4 inverseView = glm::inverse(ctx.cameraData.view);
         const glm::vec3 cameraPosition(inverseView[3]);
+        const bool cameraUnderwater = std::any_of(oceans.begin(), oceans.end(), [&](const OceanDraw &ocean)
+                                                  { return IsCameraInsideOcean(ocean, cameraPosition); });
+        SetCameraUnderwaterMarker(*ctx.oceanSurfaceDepthRenderTarget, cameraUnderwater);
 
         Graphics::BindRenderTarget(ctx.temporaryRenderTarget);
         glViewport(0, 0, ctx.temporaryRenderTarget->GetWidth(), ctx.temporaryRenderTarget->GetHeight());
@@ -632,6 +748,11 @@ namespace PlutoGE::render
             m_shader->SetUniform("uOpacity", ocean.component->GetOpacity());
             m_shader->SetUniform("uSmoothness", ocean.component->GetSmoothness());
             m_shader->SetUniform("uMaxVisibilityDepth", ocean.component->GetMaxVisibilityDepth());
+            m_shader->SetUniform("uUnderwaterFadeStart", ocean.component->GetUnderwaterFadeStart());
+            m_shader->SetUniform("uUnderwaterFadeSoftness", ocean.component->GetUnderwaterFadeSoftness());
+            m_shader->SetUniform("uUnderwaterDepthFalloff", ocean.component->GetUnderwaterDepthFalloff());
+            m_shader->SetUniform("uUnderwaterLightFalloff", ocean.component->GetUnderwaterLightFalloff());
+            m_shader->SetUniform("uUnderwaterTurbidity", ocean.component->GetUnderwaterTurbidity());
             m_shader->SetUniform("uRefractionStrength", ocean.component->GetRefractionStrength());
             m_shader->SetUniform("uWaveAmplitude", ocean.component->GetWaveAmplitude());
             m_shader->SetUniform("uWaveLength", ocean.component->GetWaveLength());
@@ -642,6 +763,7 @@ namespace PlutoGE::render
             m_shader->SetUniform("uSimulationTime", ocean.component->GetSimulationTime());
             m_shader->SetUniform("uInvertAreaMask", ocean.component->GetInvertAreaMask() ? 1 : 0);
             m_shader->SetUniform("uAreaCount", areaCount);
+            m_shader->SetUniform("uUnderwater", IsCameraInsideOcean(ocean, cameraPosition) ? 1 : 0);
             for (int areaIndex = 0; areaIndex < kMaxOceanAreas; ++areaIndex)
             {
                 m_shader->SetUniform("uAreaPointCounts[" + std::to_string(areaIndex) + "]", pointCounts[static_cast<std::size_t>(areaIndex)]);
@@ -662,8 +784,11 @@ namespace PlutoGE::render
             Graphics::BindRenderTarget(ctx.oceanSurfaceDepthRenderTarget);
             glViewport(0, 0, ctx.oceanSurfaceDepthRenderTarget->GetWidth(), ctx.oceanSurfaceDepthRenderTarget->GetHeight());
             glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+            glEnable(GL_DEPTH_TEST);
+            glDepthFunc(GL_LESS);
             glDepthMask(GL_TRUE);
             Graphics::DrawFullscreenTriangle();
+            glDisable(GL_DEPTH_TEST);
         }
 
         m_shader->Unbind();

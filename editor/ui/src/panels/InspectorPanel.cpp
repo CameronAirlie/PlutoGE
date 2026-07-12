@@ -2807,6 +2807,7 @@ namespace PlutoGE::ui
                 if (ImGui::Checkbox("Enabled", &isEnabled))
                 {
                     effect->SetEnabled(isEnabled);
+                    EditorShell::GetInstance().MarkSceneDirty();
                 }
 
                 if (ImGui::Button("Up") && effectIndex > 0)
@@ -3048,6 +3049,7 @@ namespace PlutoGE::ui
                 if (ImGui::Checkbox("Enabled", &isEnabled))
                 {
                     effect->SetEnabled(isEnabled);
+                    EditorShell::GetInstance().MarkProjectDirty();
                 }
 
                 if (ImGui::Button("Up") && effectIndex > 0)
@@ -4504,6 +4506,11 @@ namespace PlutoGE::ui
                                 {"Opacity", scene::PropertyType::Float, std::to_string(oceanComponent->GetOpacity())},
                                 {"Smoothness", scene::PropertyType::Float, std::to_string(oceanComponent->GetSmoothness())},
                                 {"MaxVisibilityDepth", scene::PropertyType::Float, std::to_string(oceanComponent->GetMaxVisibilityDepth())},
+                                {"UnderwaterFadeStart", scene::PropertyType::Float, std::to_string(oceanComponent->GetUnderwaterFadeStart())},
+                                {"UnderwaterFadeSoftness", scene::PropertyType::Float, std::to_string(oceanComponent->GetUnderwaterFadeSoftness())},
+                                {"UnderwaterDepthFalloff", scene::PropertyType::Float, std::to_string(oceanComponent->GetUnderwaterDepthFalloff())},
+                                {"UnderwaterLightFalloff", scene::PropertyType::Float, std::to_string(oceanComponent->GetUnderwaterLightFalloff())},
+                                {"UnderwaterTurbidity", scene::PropertyType::Float, std::to_string(oceanComponent->GetUnderwaterTurbidity())},
                                 {"RefractionStrength", scene::PropertyType::Float, std::to_string(oceanComponent->GetRefractionStrength())},
                                 {"WaveAmplitude", scene::PropertyType::Float, std::to_string(oceanComponent->GetWaveAmplitude())},
                                 {"WaveLength", scene::PropertyType::Float, std::to_string(oceanComponent->GetWaveLength())},

@@ -2,6 +2,7 @@
 
 #include "PlutoGE/render/postprocess/IPostProcessEffect.h"
 #include "PlutoGE/render/postprocess/SSAOEffect.h"
+#include "PlutoGE/render/postprocess/TAAEffect.h"
 #include "PlutoGE/render/RenderTarget.h"
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
@@ -58,6 +59,33 @@ namespace PlutoGE::render
         }
 
         const auto &effects = *ctx.postProcessEffects;
+
+        std::vector<bool> enabledStates;
+        enabledStates.reserve(effects.size());
+        for (const auto *effect : effects)
+        {
+            enabledStates.push_back(effect && effect->IsEnabled());
+        }
+
+        // One pass instance renders multiple viewports. Keep their stack state
+        // separate so rendering the game view cannot mask a change in the
+        // editor view (or vice versa).
+        const RenderTarget *viewportKey = ctx.renderTarget;
+        auto previousStates = m_previousEnabledStates.find(viewportKey);
+        const bool chainStateChanged = previousStates != m_previousEnabledStates.end() &&
+                                       enabledStates != previousStates->second;
+        m_previousEnabledStates[viewportKey] = std::move(enabledStates);
+        if (chainStateChanged)
+        {
+            for (auto *effect : effects)
+            {
+                if (auto *taa = dynamic_cast<TAAEffect *>(effect))
+                {
+                    taa->ResetHistory();
+                }
+            }
+        }
+
         if (effects.empty())
         {
             BlitColorBuffer(ctx.temporaryRenderTarget, ctx.renderTarget);
@@ -100,6 +128,11 @@ namespace PlutoGE::render
             {
                 continue;
             }
+
+            // Post-process targets are reused between frames. Seed every stage
+            // with its current input so an effect that is disabled or returns
+            // early can never expose stale output from a previous frame.
+            BlitColorBuffer(source, destination);
 
             const bool gpuTimingActive = ctx.renderer && ctx.renderer->BeginPostProcessEffectTiming(effect->GetTypeName());
             effect->Apply(PostProcessContext{

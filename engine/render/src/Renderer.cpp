@@ -239,7 +239,7 @@ namespace PlutoGE::render
             return nullptr;
         }
 
-        void ApplyAmbientOcclusionBeforeParticles(const RenderContext &ctx)
+        void ApplyAmbientOcclusionBeforeVolumetrics(const RenderContext &ctx)
         {
             if (!ctx.postProcessEffects || !ctx.temporaryRenderTarget || !ctx.postProcessIntermediateRenderTarget)
             {
@@ -704,9 +704,9 @@ namespace PlutoGE::render
 
         for (std::size_t index = 0; index < m_renderPasses.size(); ++index)
         {
-            if (std::string_view(m_renderPasses[index]->GetName()) == "Particles")
+            if (std::string_view(m_renderPasses[index]->GetName()) == "Volumetric Clouds")
             {
-                ApplyAmbientOcclusionBeforeParticles(ctx);
+                ApplyAmbientOcclusionBeforeVolumetrics(ctx);
             }
 
             ExecutePassWithGpuTiming(*m_renderPasses[index], ctx, index + 1);

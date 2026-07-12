@@ -317,6 +317,7 @@ namespace PlutoGE::render
     void BloomEffect::RenderPrefilter(GLuint sourceTexture, int sourceWidth, int sourceHeight, RenderTarget &destination)
     {
         Graphics::BindRenderTarget(&destination);
+        glViewport(0, 0, destination.GetWidth(), destination.GetHeight());
         glDisable(GL_BLEND);
         m_prefilterShader->Bind();
         glActiveTexture(GL_TEXTURE0 + kSourceTextureSlot);
@@ -331,6 +332,7 @@ namespace PlutoGE::render
     void BloomEffect::RenderDownsample(GLuint sourceTexture, int sourceWidth, int sourceHeight, RenderTarget &destination)
     {
         Graphics::BindRenderTarget(&destination);
+        glViewport(0, 0, destination.GetWidth(), destination.GetHeight());
         glDisable(GL_BLEND);
         m_downsampleShader->Bind();
         glActiveTexture(GL_TEXTURE0 + kSourceTextureSlot);
@@ -343,6 +345,7 @@ namespace PlutoGE::render
     void BloomEffect::RenderCopy(GLuint sourceTexture, RenderTarget &destination)
     {
         Graphics::BindRenderTarget(&destination);
+        glViewport(0, 0, destination.GetWidth(), destination.GetHeight());
         glDisable(GL_BLEND);
         m_copyShader->Bind();
         glActiveTexture(GL_TEXTURE0 + kSourceTextureSlot);
@@ -354,6 +357,7 @@ namespace PlutoGE::render
     void BloomEffect::RenderUpsample(GLuint baseTexture, GLuint bloomTexture, int bloomWidth, int bloomHeight, RenderTarget &destination)
     {
         Graphics::BindRenderTarget(&destination);
+        glViewport(0, 0, destination.GetWidth(), destination.GetHeight());
         glDisable(GL_BLEND);
         m_upsampleShader->Bind();
         glActiveTexture(GL_TEXTURE0 + kBaseTextureSlot);

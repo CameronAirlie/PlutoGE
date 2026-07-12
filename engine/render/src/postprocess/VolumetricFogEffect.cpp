@@ -13,6 +13,7 @@ namespace PlutoGE::render
     namespace
     {
         constexpr int kDirectionalShadowCascadeTextureStartSlot = 5;
+        constexpr int kOceanStateTextureSlot = 9;
         constexpr int kMinStepCount = 16;
         constexpr int kMaxStepCount = 64;
 
@@ -280,6 +281,7 @@ namespace PlutoGE::render
             out vec4 FragColor;
 
             uniform sampler2D uSceneDepthTexture;
+            uniform sampler2D uOceanStateTexture;
             uniform sampler2D uShadowCascadeMap0;
             uniform sampler2D uShadowCascadeMap1;
             uniform sampler2D uShadowCascadeMap2;
@@ -497,6 +499,12 @@ namespace PlutoGE::render
 
             void main()
             {
+                if (texture(uOceanStateTexture, vec2(0.5)).r > 0.5)
+                {
+                    FragColor = vec4(0.0);
+                    return;
+                }
+
                 float sceneDepth = texture(uSceneDepthTexture, UV).r;
                 vec3 rayDirection = GetWorldRayDirection(UV);
                 vec3 fogTint = max(uFogColor, vec3(0.0));
@@ -707,6 +715,13 @@ namespace PlutoGE::render
             glActiveTexture(GL_TEXTURE1);
             glBindTexture(GL_TEXTURE_2D, oceanSurfaceDepthTexture);
             m_shader->SetUniform("uSceneDepthTexture", 1);
+
+            // Shadow cascades occupy slots 5-8. Keep ocean state outside that
+            // range or the third cascade replaces it and makes fog depend on
+            // the sampled shadow map (most visibly around the horizon).
+            glActiveTexture(GL_TEXTURE0 + kOceanStateTextureSlot);
+            glBindTexture(GL_TEXTURE_2D, context.renderContext.oceanSurfaceDepthRenderTarget->GetColorTextureID());
+            m_shader->SetUniform("uOceanStateTexture", kOceanStateTextureSlot);
         }
         BindDirectionalShadowInputs(m_shader, primaryDirectionalLight);
         m_shader->SetUniform("uViewMatrix", context.renderContext.cameraData.view);

@@ -25,6 +25,11 @@ namespace PlutoGE::scene
         float GetOpacity() const { return m_opacity; }
         float GetSmoothness() const { return m_smoothness; }
         float GetMaxVisibilityDepth() const { return m_maxVisibilityDepth; }
+        float GetUnderwaterFadeStart() const { return m_underwaterFadeStart; }
+        float GetUnderwaterFadeSoftness() const { return m_underwaterFadeSoftness; }
+        float GetUnderwaterDepthFalloff() const { return m_underwaterDepthFalloff; }
+        float GetUnderwaterLightFalloff() const { return m_underwaterLightFalloff; }
+        float GetUnderwaterTurbidity() const { return m_underwaterTurbidity; }
         float GetRefractionStrength() const { return m_refractionStrength; }
         float GetWaveAmplitude() const { return m_waveAmplitude; }
         float GetWaveLength() const { return m_waveLength; }
@@ -50,6 +55,11 @@ namespace PlutoGE::scene
         float m_opacity = 0.82f;
         float m_smoothness = 0.9f;
         float m_maxVisibilityDepth = 10.0f;
+        float m_underwaterFadeStart = 0.35f;
+        float m_underwaterFadeSoftness = 0.65f;
+        float m_underwaterDepthFalloff = 1.0f;
+        float m_underwaterLightFalloff = 1.0f;
+        float m_underwaterTurbidity = 1.0f;
         float m_refractionStrength = 0.02f;
         float m_waveAmplitude = 0.18f;
         float m_waveLength = 18.0f;

@@ -65,6 +65,11 @@ namespace PlutoGE::scene
             {"Opacity", PropertyType::Float, std::to_string(m_opacity)},
             {"Smoothness", PropertyType::Float, std::to_string(m_smoothness)},
             {"MaxVisibilityDepth", PropertyType::Float, std::to_string(m_maxVisibilityDepth)},
+            {"UnderwaterFadeStart", PropertyType::Float, std::to_string(m_underwaterFadeStart)},
+            {"UnderwaterFadeSoftness", PropertyType::Float, std::to_string(m_underwaterFadeSoftness)},
+            {"UnderwaterDepthFalloff", PropertyType::Float, std::to_string(m_underwaterDepthFalloff)},
+            {"UnderwaterLightFalloff", PropertyType::Float, std::to_string(m_underwaterLightFalloff)},
+            {"UnderwaterTurbidity", PropertyType::Float, std::to_string(m_underwaterTurbidity)},
             {"RefractionStrength", PropertyType::Float, std::to_string(m_refractionStrength)},
             {"WaveAmplitude", PropertyType::Float, std::to_string(m_waveAmplitude)},
             {"WaveLength", PropertyType::Float, std::to_string(m_waveLength)},
@@ -108,6 +113,16 @@ namespace PlutoGE::scene
                 m_smoothness = std::clamp(std::stof(property.value), 0.0f, 1.0f);
             else if (property.name == "MaxVisibilityDepth")
                 m_maxVisibilityDepth = std::max(std::stof(property.value), 0.01f);
+            else if (property.name == "UnderwaterFadeStart")
+                m_underwaterFadeStart = std::clamp(std::stof(property.value), 0.0f, 1.0f);
+            else if (property.name == "UnderwaterFadeSoftness")
+                m_underwaterFadeSoftness = std::clamp(std::stof(property.value), 0.01f, 2.0f);
+            else if (property.name == "UnderwaterDepthFalloff")
+                m_underwaterDepthFalloff = std::max(std::stof(property.value), 0.0f);
+            else if (property.name == "UnderwaterLightFalloff")
+                m_underwaterLightFalloff = std::max(std::stof(property.value), 0.0f);
+            else if (property.name == "UnderwaterTurbidity")
+                m_underwaterTurbidity = std::max(std::stof(property.value), 0.0f);
             else if (property.name == "RefractionStrength")
                 m_refractionStrength = std::clamp(std::stof(property.value), 0.0f, 0.2f);
             else if (property.name == "WaveAmplitude")

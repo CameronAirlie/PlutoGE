@@ -15,7 +15,7 @@ namespace PlutoGE::render
     {
         bool IsLightingManagedEffect(const IPostProcessEffect *effect)
         {
-            return effect && (effect->GetTypeName() == "SSGI" || effect->GetTypeName() == "LPV" || effect->GetTypeName() == "RSM");
+            return effect && (effect->GetTypeName() == "SSGI" || effect->GetTypeName() == "LPV" || effect->GetTypeName() == "RSM" || effect->GetTypeName() == "VCTGI");
         }
 
         bool IsPreParticleEffect(const IPostProcessEffect *effect)

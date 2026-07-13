@@ -9,6 +9,7 @@
 #include "PlutoGE/render/postprocess/RSMEffect.h"
 #include "PlutoGE/render/postprocess/SceneCompositeEffect.h"
 #include "PlutoGE/render/postprocess/SSGIEffect.h"
+#include "PlutoGE/render/postprocess/VoxelConeTracingEffect.h"
 #include "PlutoGE/render/passes/LightPropagationVolumePass.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/Scene.h"
@@ -110,6 +111,16 @@ namespace PlutoGE::render
                 return static_cast<RSMEffect *>(effect);
             }
 
+            return nullptr;
+        }
+
+        VoxelConeTracingEffect *FindEnabledVctEffect(const RenderContext &ctx)
+        {
+            if (!ctx.postProcessEffects)
+                return nullptr;
+            for (auto *effect : *ctx.postProcessEffects)
+                if (effect && effect->IsEnabled() && effect->GetTypeName() == "VCTGI")
+                    return static_cast<VoxelConeTracingEffect *>(effect);
             return nullptr;
         }
 
@@ -1541,6 +1552,22 @@ namespace PlutoGE::render
                     ctx.renderer->EndPostProcessEffectTiming();
                 }
                 compositeIndirectTarget(resolvedIndirectTarget, compositeRsmOnly);
+            }
+        }
+
+        if (m_indirectCompositeShader)
+        {
+            if (auto *vctEffect = FindEnabledVctEffect(ctx))
+            {
+                const int resolveWidth = std::max(1, ctx.temporaryRenderTarget->GetWidth() / 2);
+                const int resolveHeight = std::max(1, ctx.temporaryRenderTarget->GetHeight() / 2);
+                const bool gpuTimingActive = ctx.renderer && ctx.renderer->BeginPostProcessEffectTiming(vctEffect->GetTypeName());
+                RenderTarget *indirect = vctEffect->GenerateResolvedIndirectLighting(PostProcessContext{
+                    .renderContext = ctx, .sourceRenderTarget = ctx.temporaryRenderTarget, .destinationRenderTarget = nullptr},
+                    resolveWidth, resolveHeight);
+                if (gpuTimingActive)
+                    ctx.renderer->EndPostProcessEffectTiming();
+                compositeIndirectTarget(indirect, vctEffect->OutputsIndirectOnly());
             }
         }
 

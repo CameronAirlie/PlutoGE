@@ -18,6 +18,7 @@
 #include "PlutoGE/render/postprocess/TAAEffect.h"
 #include "PlutoGE/render/postprocess/ToneMappingEffect.h"
 #include "PlutoGE/render/postprocess/VolumetricFogEffect.h"
+#include "PlutoGE/render/postprocess/VoxelConeTracingEffect.h"
 
 #include <memory>
 
@@ -32,6 +33,7 @@ namespace PlutoGE::render
             "SSR",
             "LPV",
             "RSM",
+            "VCTGI",
             "VolumetricFog",
             "AutoExposure",
             "TAA",
@@ -81,6 +83,11 @@ namespace PlutoGE::render
         if (typeName == "RSM")
         {
             return std::make_unique<RSMEffect>();
+        }
+
+        if (typeName == "VCTGI")
+        {
+            return std::make_unique<VoxelConeTracingEffect>();
         }
 
         if (typeName == "VolumetricFog")

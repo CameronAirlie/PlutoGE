@@ -393,7 +393,10 @@ namespace
 
         for (int z = 0; z < 2; ++z)
         {
-            const float clipZ = z == 0 ? -1.0f : 1.0f;
+            // The scene camera uses reversed Z: clip-space +1 is the near plane
+            // and -1 is the far plane. Keep the returned corners ordered as
+            // near first, far second for cascade slicing below.
+            const float clipZ = z == 0 ? 1.0f : -1.0f;
             for (int y = 0; y < 2; ++y)
             {
                 const float clipY = y == 0 ? -1.0f : 1.0f;

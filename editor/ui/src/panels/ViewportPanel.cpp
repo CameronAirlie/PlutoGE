@@ -1991,13 +1991,24 @@ namespace PlutoGE::ui
         const render::CameraData freshCameraData = editorCamera.camera.GetCameraDataForTransform(cameraTransform,
                                                                                                  m_renderTarget->GetWidth(),
                                                                                                  m_renderTarget->GetHeight());
-        const render::CameraData cameraData = m_hasEditorCameraData
-                                                  ? m_editorCameraData
-                                                  : freshCameraData;
+        const auto isFiniteMatrix = [](const glm::mat4 &matrix)
+        {
+            for (int column = 0; column < 4; ++column)
+                if (glm::any(glm::isnan(matrix[column])) || glm::any(glm::isinf(matrix[column])))
+                    return false;
+            return true;
+        };
+        const bool cachedCameraValid = m_hasEditorCameraData &&
+                                       isFiniteMatrix(m_editorCameraData.view) &&
+                                       isFiniteMatrix(m_editorCameraData.projection);
+        const render::CameraData cameraData = cachedCameraValid ? m_editorCameraData : freshCameraData;
 
         ImGuizmo::SetOrthographic(false);
         ImGuizmo::Enable(true);
-        ImGuizmo::SetDrawlist();
+        // The settings overlay creates a temporary ImGui window immediately
+        // before this call. Bind the editor viewport's draw list explicitly so
+        // ImGuizmo cannot retain or infer the overlay window's draw list.
+        ImGuizmo::SetDrawlist(ImGui::GetWindowDrawList());
         ImGuizmo::SetRect(viewportMin.x, viewportMin.y, viewportSize.x, viewportSize.y);
         bool gizmoBlocksSelection = false;
         bool splineHandleClicked = false;

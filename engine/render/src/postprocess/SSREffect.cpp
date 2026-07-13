@@ -140,8 +140,29 @@ namespace PlutoGE::render
                             float middleDelta = -middlePosition.z - SceneViewDepth(middleUv);
                             if (middleDelta >= 0.0) high = middle; else low = middle;
                         }
-                        hitTravel = high;
-                        ProjectToUv(rayOrigin + rayDirection * high, hitUv);
+                        vec3 refinedPosition = rayOrigin + rayDirection * high;
+                        vec2 refinedUv;
+                        if (!ProjectToUv(refinedPosition, refinedUv)) break;
+
+                        float refinedSceneDepth = SceneViewDepth(refinedUv);
+                        float refinedDepthDelta = -refinedPosition.z - refinedSceneDepth;
+                        float refinedThickness = uThickness * (1.0 + high / uMaxRayDistance);
+                        vec3 refinedWorldNormal = texture(uSceneNormalTexture, refinedUv).xyz;
+                        float refinedNormalLengthSq = dot(refinedWorldNormal, refinedWorldNormal);
+                        vec3 refinedViewNormal = mat3(uView) * refinedWorldNormal;
+                        refinedViewNormal /= sqrt(max(dot(refinedViewNormal, refinedViewNormal), 0.0001));
+
+                        // A depth sign change can also be caused by stepping across
+                        // a foreground silhouette. Only accept a hit when the ray is
+                        // actually close to, and entering the front of, the surface.
+                        bool withinSurfaceThickness = refinedDepthDelta >= 0.0 && refinedDepthDelta <= refinedThickness;
+                        bool frontFacingSurface = refinedNormalLengthSq >= 0.01 &&
+                                                  dot(rayDirection, refinedViewNormal) < -0.01;
+                        if (withinSurfaceThickness && frontFacingSurface)
+                        {
+                            hitTravel = high;
+                            hitUv = refinedUv;
+                        }
                         break;
                     }
                     previousTravel = travel;

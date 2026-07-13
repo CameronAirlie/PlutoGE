@@ -3,6 +3,7 @@
 #include "PlutoGE/render/passes/IRenderPass.h"
 
 #include <unordered_map>
+#include <string>
 #include <vector>
 
 namespace PlutoGE::render
@@ -17,7 +18,7 @@ namespace PlutoGE::render
         const char *GetName() const override { return "Post Process"; }
 
     private:
-        std::unordered_map<const RenderTarget *, std::vector<bool>> m_previousEnabledStates;
+        std::unordered_map<const RenderTarget *, std::vector<std::string>> m_previousEffectStates;
     };
 
 }

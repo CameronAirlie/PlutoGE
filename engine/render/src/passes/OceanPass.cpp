@@ -411,6 +411,28 @@ namespace PlutoGE::render
                     return texture(uEnvironmentMap, uv).rgb * uEnvironmentIntensity;
                 }
 
+                vec3 SampleEnvironmentDiffuse(vec3 normal)
+                {
+                    if (uEnvironmentEnabled == 0)
+                    {
+                        return vec3(0.35);
+                    }
+
+                    // A small cosine-weighted hemisphere approximation gives the
+                    // water body the colour of its surroundings. Reflections alone
+                    // only affect grazing angles and leave most of the surface
+                    // looking like an unlit, constant-colour overlay.
+                    vec3 up = abs(normal.y) < 0.999 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+                    vec3 tangent = normalize(cross(up, normal));
+                    vec3 bitangent = cross(normal, tangent);
+                    vec3 irradiance = SampleEnvironment(normal) * 0.40;
+                    irradiance += SampleEnvironment(normalize(normal + tangent * 0.85)) * 0.15;
+                    irradiance += SampleEnvironment(normalize(normal - tangent * 0.85)) * 0.15;
+                    irradiance += SampleEnvironment(normalize(normal + bitangent * 0.85)) * 0.15;
+                    irradiance += SampleEnvironment(normalize(normal - bitangent * 0.85)) * 0.15;
+                    return max(irradiance, vec3(0.0));
+                }
+
                 bool ProjectWorldPosition(vec3 worldPosition, out vec2 uv)
                 {
                     vec4 clip = uProjection * uView * vec4(worldPosition, 1.0);
@@ -654,10 +676,16 @@ namespace PlutoGE::render
 
                     float depthFactor = clamp(waterDepth / max(uMaxVisibilityDepth, 0.0001), 0.0, 1.0);
                     vec3 waterTint = mix(uShallowColor, uDeepColor, depthFactor);
+                    vec3 environmentLight = SampleEnvironmentDiffuse(normal);
+                    float sunDiffuse = max(dot(normal, normalize(uSunDirection)), 0.0) * max(uSunIntensity, 0.0);
+                    vec3 incidentLight = environmentLight + uSunColor * sunDiffuse;
+                    // Retain a little visibility in fully dark environments while
+                    // allowing daylight, sunsets, and coloured maps to tint the sea.
+                    vec3 litWaterTint = waterTint * (vec3(0.08) + incidentLight);
                     // Attenuate the seabed through the water column. Without this,
                     // bright sand remains visible through arbitrarily deep water.
                     vec3 waterTransmission = exp(-vec3(6.0, 4.0, 2.8) * depthFactor);
-                    refractedColor = refractedColor * waterTransmission + waterTint * (vec3(1.0) - waterTransmission);
+                    refractedColor = refractedColor * waterTransmission + litWaterTint * (vec3(1.0) - waterTransmission);
                     vec3 viewVector = normalize(uCameraPosition - worldHit);
                     float ndotv = clamp(dot(viewVector, normal), 0.0, 1.0);
                     const float waterF0 = 0.0204;
@@ -684,10 +712,11 @@ namespace PlutoGE::render
                     float foamNoise = Fbm(localHit.xz * 0.18 + vec2(uSimulationTime * 0.05, -uSimulationTime * 0.035));
                     float foam = max(shoreFoam, crest * (0.65 + 0.35 * foamNoise)) * uFoamIntensity;
 
-                    vec3 composed = mix(refractedColor, waterTint, 0.58);
+                    vec3 composed = mix(refractedColor, litWaterTint, 0.58);
                     float reflectionStrength = mix(0.12, 1.0, fresnel) * clamp(uSmoothness, 0.0, 1.0);
                     composed = mix(composed, reflectionColor + sunGlint, reflectionStrength);
-                    composed = mix(composed, uFoamColor, clamp(foam, 0.0, 1.0));
+                    vec3 litFoamColor = uFoamColor * (vec3(0.08) + incidentLight);
+                    composed = mix(composed, litFoamColor, clamp(foam, 0.0, 1.0));
 
                     // Refraction has already sampled and displaced the scene behind
                     // the water. Alpha blending this over that same scene would draw

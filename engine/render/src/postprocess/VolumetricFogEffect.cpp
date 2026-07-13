@@ -491,12 +491,16 @@ namespace PlutoGE::render
                 }
 
                 float sceneDepth = texture(uSceneDepthTexture, UV).r;
+                bool isSky = sceneDepth <= 0.000001;
                 vec3 rayDirection = GetWorldRayDirection(UV);
                 vec3 fogTint = max(uFogColor, vec3(0.0));
                 vec3 ambientFogColor = ComputeFogAmbientColor();
 
                 float hitDistance = uMaxDistance;
-                if (sceneDepth < 0.9999)
+                // PlutoGE uses reversed-Z: cleared sky is zero and geometry is
+                // greater than zero. Reconstructing a zero-depth sky sample as
+                // a surface collapses its march distance and leaves it unfogged.
+                if (sceneDepth > 0.000001)
                 {
                     vec3 surfacePosition = ReconstructWorldPosition(UV, sceneDepth);
                     hitDistance = min(distance(surfacePosition, uCameraPosition), uMaxDistance);
@@ -550,7 +554,10 @@ namespace PlutoGE::render
 
                     if (transmittance <= 0.001)
                     {
-                        transmittance = 0.001;
+                        // Below this threshold the remaining source radiance is
+                        // negligible. Resolve it to fully opaque so very bright
+                        // HDR backgrounds cannot leak through the early exit.
+                        transmittance = 0.0;
                         break;
                     }
 
@@ -565,7 +572,11 @@ namespace PlutoGE::render
                 }
 
                 vec3 fogRadiance = accumulatedLight / max(totalFog, 0.0001);
-                float fogFactor = min(totalFog, uMaxOpacity);
+                // Max Opacity is an artistic cap for finite scene surfaces.
+                // Applying it to HDR sky pixels guarantees a persistent clear
+                // sky contribution which tone mapping and bloom amplify. Sky
+                // must retain the march's actual transmittance instead.
+                float fogFactor = isSky ? totalFog : min(totalFog, uMaxOpacity);
                 FragColor = vec4(fogRadiance, fogFactor);
             }
         )";

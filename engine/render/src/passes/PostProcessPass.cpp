@@ -77,21 +77,36 @@ namespace PlutoGE::render
 
         const auto &effects = *ctx.postProcessEffects;
 
-        std::vector<bool> enabledStates;
-        enabledStates.reserve(effects.size());
+        std::vector<std::string> effectStates;
+        effectStates.reserve(effects.size());
         for (const auto *effect : effects)
         {
-            enabledStates.push_back(effect && effect->IsEnabled());
+            if (!effect)
+            {
+                effectStates.emplace_back("<null>");
+                continue;
+            }
+
+            std::string state = effect->GetTypeName();
+            state += effect->IsEnabled() ? "\nenabled" : "\ndisabled";
+            for (const auto &parameter : effect->GetParameters())
+            {
+                state += '\n';
+                state += parameter.name;
+                state += '=';
+                state += parameter.value;
+            }
+            effectStates.push_back(std::move(state));
         }
 
         // One pass instance renders multiple viewports. Keep their stack state
         // separate so rendering the game view cannot mask a change in the
         // editor view (or vice versa).
         const RenderTarget *viewportKey = ctx.renderTarget;
-        auto previousStates = m_previousEnabledStates.find(viewportKey);
-        const bool chainStateChanged = previousStates != m_previousEnabledStates.end() &&
-                                       enabledStates != previousStates->second;
-        m_previousEnabledStates[viewportKey] = std::move(enabledStates);
+        auto previousStates = m_previousEffectStates.find(viewportKey);
+        const bool chainStateChanged = previousStates != m_previousEffectStates.end() &&
+                                       effectStates != previousStates->second;
+        m_previousEffectStates[viewportKey] = std::move(effectStates);
         if (chainStateChanged)
         {
             for (auto *effect : effects)

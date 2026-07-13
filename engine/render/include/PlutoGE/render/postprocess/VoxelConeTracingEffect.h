@@ -35,6 +35,7 @@ namespace PlutoGE::render
         void ResetHistory();
 
         Shader *m_voxelizationShader = nullptr;
+        Shader *m_voxelResolveShader = nullptr;
         Shader *m_coneTraceShader = nullptr;
         Shader *m_temporalResolveShader = nullptr;
         Shader *m_historyMetadataShader = nullptr;
@@ -43,6 +44,8 @@ namespace PlutoGE::render
         std::array<std::unique_ptr<RenderTarget>, 2> m_historyMetadataTargets;
         unsigned int m_radianceVolume = 0;
         unsigned int m_pendingRadianceVolume = 0;
+        unsigned int m_voxelAccumulationRG = 0;
+        unsigned int m_voxelAccumulationBCount = 0;
         unsigned int m_voxelFramebuffer = 0;
         int m_allocatedResolution = 0;
         int m_resolution = 64;

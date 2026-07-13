@@ -149,11 +149,13 @@ namespace PlutoGE::render
     // Helper function to create shader from source
     Shader *Shader::CreateShaderFromSource(const ShaderSource &source)
     {
-        GLuint vertexShader = CompileShader(GL_VERTEX_SHADER, source.vertexSource.c_str());
+        const bool isCompute = !source.computeSource.empty();
+        GLuint vertexShader = isCompute ? 0 : CompileShader(GL_VERTEX_SHADER, source.vertexSource.c_str());
         GLuint geometryShader = source.geometrySource.empty() ? 0 : CompileShader(GL_GEOMETRY_SHADER, source.geometrySource.c_str());
         GLuint fragmentShader = source.fragmentSource.empty() ? 0 : CompileShader(GL_FRAGMENT_SHADER, source.fragmentSource.c_str());
+        GLuint computeShader = isCompute ? CompileShader(GL_COMPUTE_SHADER, source.computeSource.c_str()) : 0;
 
-        if (vertexShader == 0 || (!source.geometrySource.empty() && geometryShader == 0) || (!source.fragmentSource.empty() && fragmentShader == 0))
+        if ((!isCompute && vertexShader == 0) || (isCompute && computeShader == 0) || (!source.geometrySource.empty() && geometryShader == 0) || (!source.fragmentSource.empty() && fragmentShader == 0))
         {
             // Handle error: failed to compile shaders
             std::cerr << "Failed to compile shaders from source." << std::endl;
@@ -161,7 +163,10 @@ namespace PlutoGE::render
         }
 
         GLuint programID = glCreateProgram();
-        glAttachShader(programID, vertexShader);
+        if (vertexShader != 0)
+            glAttachShader(programID, vertexShader);
+        if (computeShader != 0)
+            glAttachShader(programID, computeShader);
         if (geometryShader != 0)
         {
             glAttachShader(programID, geometryShader);
@@ -192,7 +197,8 @@ namespace PlutoGE::render
         }
 
         // Clean up shaders as they are no longer needed after linking
-        glDeleteShader(vertexShader);
+        if (vertexShader != 0)
+            glDeleteShader(vertexShader);
         if (geometryShader != 0)
         {
             glDeleteShader(geometryShader);
@@ -200,6 +206,10 @@ namespace PlutoGE::render
         if (fragmentShader != 0)
         {
             glDeleteShader(fragmentShader);
+        }
+        if (computeShader != 0)
+        {
+            glDeleteShader(computeShader);
         }
 
         Shader *shader = new Shader();

@@ -14,6 +14,7 @@ namespace PlutoGE::render
         std::string vertexSource;
         std::string geometrySource;
         std::string fragmentSource;
+        std::string computeSource;
         std::vector<std::string> transformFeedbackVaryings;
         GLenum transformFeedbackBufferMode = GL_INTERLEAVED_ATTRIBS;
     };

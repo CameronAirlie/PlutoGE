@@ -183,8 +183,8 @@ namespace PlutoGE::render
         ShaderSource voxel;
         voxel.vertexSource = R"(#version 430 core
 layout(location=0) in vec3 aPos; layout(location=1) in vec3 aNormal; layout(location=2) in vec2 aUV;
-uniform mat4 uModel; out VS { vec3 p; vec3 n; vec2 uv; } v;
-void main(){ vec4 p=uModel*vec4(aPos,1); v.p=p.xyz; v.n=normalize(transpose(inverse(mat3(uModel)))*aNormal); v.uv=aUV; gl_Position=p; })";
+uniform mat4 uModel;uniform vec2 uUVScale;out VS { vec3 p; vec3 n; vec2 uv; } v;
+void main(){ vec4 p=uModel*vec4(aPos,1); v.p=p.xyz; v.n=normalize(transpose(inverse(mat3(uModel)))*aNormal); v.uv=aUV*uUVScale; gl_Position=p; })";
         voxel.geometrySource = R"(#version 430 core
 layout(triangles) in; layout(triangle_strip,max_vertices=3) out;
 in VS { vec3 p; vec3 n; vec2 uv; } vin[]; out GS { vec3 p; vec3 n; vec2 uv; } g;
@@ -193,19 +193,34 @@ void main(){ vec3 n=abs(cross(vin[1].p-vin[0].p,vin[2].p-vin[0].p)); int axis=n.
  for(int i=0;i<3;i++){ vec3 q=(vin[i].p-uVolumeOrigin)/uVolumeSize*2.0-1.0; g.p=vin[i].p;g.n=vin[i].n;g.uv=vin[i].uv;
  gl_Position=axis==0?vec4(q.zy,0,1):axis==1?vec4(q.xz,0,1):vec4(q.xy,0,1);EmitVertex();}EndPrimitive();})";
         voxel.fragmentSource = R"(#version 430 core
-layout(rgba16f,binding=0) uniform image3D uVolume; in GS { vec3 p; vec3 n; vec2 uv; } g;
+layout(r32ui,binding=0) uniform uimage3D uAccumulationRG;layout(r32ui,binding=1) uniform uimage3D uAccumulationBCount;in GS { vec3 p; vec3 n; vec2 uv; } g;
 uniform vec3 uVolumeOrigin,uLightDirection,uLightColor,uEmission; uniform float uVolumeSize,uLightIntensity;
-uniform vec4 uColor; uniform sampler2D uAlbedoTexture; uniform float uHasAlbedoTexture;
+uniform vec4 uColor;uniform sampler2D uAlbedoTexture,uMetallicTexture;uniform float uHasAlbedoTexture,uHasMetallicTexture,uMetallicFactor;uniform int uMetallicTextureChannel;
 uniform sampler2D uShadow0,uShadow1,uShadow2,uShadow3;uniform mat4 uShadowMatrix[4];uniform vec3 uShadowOrigin[4];uniform float uShadowSplit[4];uniform vec3 uCameraPosition;uniform int uShadowCascadeCount;
 float shadowSample(int c,vec2 uv){if(c==0)return texture(uShadow0,uv).r;if(c==1)return texture(uShadow1,uv).r;if(c==2)return texture(uShadow2,uv).r;return texture(uShadow3,uv).r;}
+bool claimSample(ivec3 coord,uint blue){uint oldValue=imageLoad(uAccumulationBCount,coord).r;for(int attempt=0;attempt<64;attempt++){uint count=oldValue>>16;if(count>=64u)return false;uint blueSum=oldValue&65535u;uint nextValue=(min(blueSum+blue,65535u)&65535u)|((count+1u)<<16);uint observed=imageAtomicCompSwap(uAccumulationBCount,coord,oldValue,nextValue);if(observed==oldValue)return true;oldValue=observed;}return false;}
+void accumulateRG(ivec3 coord,uvec2 value){uint oldValue=imageLoad(uAccumulationRG,coord).r;for(int attempt=0;attempt<64;attempt++){uvec2 sum=uvec2(oldValue&65535u,oldValue>>16);sum=min(sum+value,uvec2(65535u));uint nextValue=(sum.x&65535u)|(sum.y<<16);uint observed=imageAtomicCompSwap(uAccumulationRG,coord,oldValue,nextValue);if(observed==oldValue)return;oldValue=observed;}}
 float visibility(vec3 p,vec3 n){if(uShadowCascadeCount<=0)return 1;float d=length(p-uCameraPosition);int c=uShadowCascadeCount-1;for(int i=0;i<4;i++){if(i>=uShadowCascadeCount)break;if(d<=uShadowSplit[i]){c=i;break;}}
  vec4 lp=uShadowMatrix[c]*vec4(p-uShadowOrigin[c],1);vec3 q=lp.xyz/max(lp.w,.0001);q=q*.5+.5;if(any(lessThan(q,vec3(0)))||any(greaterThan(q,vec3(1))))return 1;
  float bias=max(.00015*(1.0-max(dot(normalize(n),-normalize(uLightDirection)),0.0)),.00003);return q.z-bias<=shadowSample(c,q.xy)?1:0;}
 void main(){ vec3 tc=(g.p-uVolumeOrigin)/uVolumeSize; if(any(lessThan(tc,vec3(0)))||any(greaterThanEqual(tc,vec3(1))))discard;
  vec4 a=uColor;if(uHasAlbedoTexture>.5)a*=texture(uAlbedoTexture,g.uv);if(a.a<.1)discard;
- float ndl=max(dot(normalize(g.n),-normalize(uLightDirection)),0); vec3 r=a.rgb*uLightColor*uLightIntensity*ndl*visibility(g.p,g.n)+uEmission;
- imageStore(uVolume,ivec3(tc*imageSize(uVolume)),vec4(r,clamp(a.a,0,1)));})";
+ float metallic=clamp(uMetallicFactor,0,1);if(uHasMetallicTexture>.5){vec4 packedMetallic=texture(uMetallicTexture,g.uv);metallic*=uMetallicTextureChannel==0?packedMetallic.r:uMetallicTextureChannel==1?packedMetallic.g:uMetallicTextureChannel==2?packedMetallic.b:packedMetallic.a;}
+ float occupancy=clamp(a.a,0,1);float ndl=max(dot(normalize(g.n),-normalize(uLightDirection)),0);vec3 diffuseBounce=a.rgb*(1-metallic)*uLightColor*uLightIntensity*ndl*visibility(g.p,g.n)/3.14159265;vec3 r=diffuseBounce+uEmission;
+ // Keep invalid or extreme material/light values out of the half-float mip chain.
+ // RGB is premultiplied by occupancy so partially occupied mip voxels cannot
+ // contribute the radiance of a completely filled voxel.
+ if(any(isnan(r))||any(isinf(r)))r=vec3(0);r=clamp(r*occupancy,vec3(0),vec3(64));uvec3 encoded=uvec3(round(r*(1023.0/64.0)));ivec3 coord=ivec3(tc*imageSize(uAccumulationRG));if(claimSample(coord,encoded.b))accumulateRG(coord,encoded.rg);})";
         m_voxelizationShader = Shader::Create(voxel);
+
+        ShaderSource resolve;
+        resolve.computeSource = R"(#version 430 core
+layout(local_size_x=4,local_size_y=4,local_size_z=4)in;
+layout(r32ui,binding=0)readonly uniform uimage3D uAccumulationRG;
+layout(r32ui,binding=1)readonly uniform uimage3D uAccumulationBCount;
+layout(rgba16f,binding=2)writeonly uniform image3D uResolvedVolume;
+void main(){ivec3 coord=ivec3(gl_GlobalInvocationID);ivec3 size=imageSize(uResolvedVolume);if(any(greaterThanEqual(coord,size)))return;uint rg=imageLoad(uAccumulationRG,coord).r;uint bc=imageLoad(uAccumulationBCount,coord).r;uint count=bc>>16;if(count==0u){imageStore(uResolvedVolume,coord,vec4(0));return;}vec3 sums=vec3(float(rg&65535u),float(rg>>16),float(bc&65535u));vec3 radiance=sums*(64.0/1023.0)/float(count);imageStore(uResolvedVolume,coord,vec4(radiance,1));})";
+        m_voxelResolveShader = Shader::Create(resolve);
 
         ShaderSource trace;
         trace.vertexSource = R"(#version 430 core
@@ -216,7 +231,7 @@ uniform vec3 uVolumeOrigin;uniform float uVolumeSize,uIntensity,uAperture,uMaxDi
 const float PI=3.14159265; vec3 cone(vec3 o,vec3 d){float vox=uVolumeSize/float(textureSize(uVoxelVolume,0).x),dist=vox*uNormalBias;vec4 sum=vec4(0);
  for(int i=0;i<48&&dist<uMaxDistance&&sum.a<.98;i++){float dia=max(vox,2.0*uAperture*dist);float lod=clamp(log2(dia/vox),0,uMaxMip);vec3 tc=(o+d*dist-uVolumeOrigin)/uVolumeSize;if(any(lessThan(tc,vec3(0)))||any(greaterThan(tc,vec3(1))))break;
  vec4 s=textureLod(uVoxelVolume,tc,lod);sum.rgb+=(1-sum.a)*s.rgb;sum.a+=(1-sum.a)*s.a;dist+=max(vox,dia*.5);}return sum.rgb;}
-void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,n=normalize(texture(uSceneNormalTexture,UV).xyz),alb=texture(uSceneAlbedoTexture,UV).rgb;if(dot(n,n)<.1){FragColor=vec4(0);return;}
+void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uSceneNormalTexture,UV).xyz;vec4 albedoMetallic=texture(uSceneAlbedoTexture,UV);vec3 alb=albedoMetallic.rgb*(1-clamp(albedoMetallic.a,0,1));float normalLengthSquared=dot(rawNormal,rawNormal);if(!(normalLengthSquared>=.1&&normalLengthSquared<=1e6)){FragColor=vec4(0);return;}vec3 n=rawNormal*inversesqrt(normalLengthSquared);
  vec3 up=abs(n.y)<.99?vec3(0,1,0):vec3(1,0,0),t=normalize(cross(up,n)),b=cross(n,t);vec3 total=cone(p,n);
  for(int i=1;i<6;i++){if(i>=uConeCount)break;float a=6.2831853*float(i-1)/max(float(uConeCount-1),1);vec3 d=normalize(n*.55+(t*cos(a)+b*sin(a))*.835);total+=cone(p,d);}
  FragColor=vec4(alb*total*(uIntensity/max(float(uConeCount),1.0))/PI,1);})";
@@ -230,8 +245,8 @@ uniform sampler2D uCurrentIndirectTexture,uHistoryColorTexture,uHistoryMetadataT
 uniform mat4 uPreviousView;uniform float uNearPlane,uFarPlane,uTemporalBlend,uHistoryDepthThreshold,uHistoryNormalThreshold;uniform int uHasHistory;
 vec3 decodeNormal(vec2 e){vec2 f=e*2-1;vec3 n=vec3(f,1-abs(f.x)-abs(f.y));float t=clamp(-n.z,0,1);n.xy+=vec2(n.x>=0?-t:t,n.y>=0?-t:t);return normalize(n);}
 float depthNorm(float d){return clamp((d-uNearPlane)/max(uFarPlane-uNearPlane,.0001),0,1);}
-void main(){vec3 current=texture(uCurrentIndirectTexture,UV).rgb,resolved=current;vec3 p=texture(uScenePositionTexture,UV).xyz,n=normalize(texture(uSceneNormalTexture,UV).xyz);
-if(uHasHistory!=0&&dot(n,n)>.01){vec2 motion=texture(uSceneMotionTexture,UV).xy,huv=UV-motion;if(all(greaterThanEqual(huv,vec2(0)))&&all(lessThanEqual(huv,vec2(1)))){vec4 meta=texture(uHistoryMetadataTexture,huv);float pd=depthNorm(-(uPreviousView*vec4(p,1)).z);if(meta.w>.5&&abs(meta.z-pd)<=uHistoryDepthThreshold&&dot(decodeNormal(meta.xy),n)>=uHistoryNormalThreshold){vec2 texel=1.0/vec2(textureSize(uCurrentIndirectTexture,0));vec3 lo=vec3(1e20),hi=vec3(-1e20);for(int y=-1;y<=1;y++)for(int x=-1;x<=1;x++){vec3 s=texture(uCurrentIndirectTexture,UV+vec2(x,y)*texel).rgb;lo=min(lo,s);hi=max(hi,s);}vec3 padding=max((hi-lo)*.5,vec3(.03));vec3 history=clamp(texture(uHistoryColorTexture,huv).rgb,lo-padding,hi+padding);resolved=mix(current,history,uTemporalBlend*clamp(1-length(motion)*8,0,1));}}}
+void main(){vec3 current=texture(uCurrentIndirectTexture,UV).rgb,resolved=current;vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uSceneNormalTexture,UV).xyz;float normalLengthSquared=dot(rawNormal,rawNormal);bool validNormal=normalLengthSquared>.01&&normalLengthSquared<1e6;vec3 n=validNormal?rawNormal*inversesqrt(normalLengthSquared):vec3(0);
+if(uHasHistory!=0&&validNormal){vec2 motion=texture(uSceneMotionTexture,UV).xy,huv=UV-motion;if(all(greaterThanEqual(huv,vec2(0)))&&all(lessThanEqual(huv,vec2(1)))){vec4 meta=texture(uHistoryMetadataTexture,huv);float pd=depthNorm(-(uPreviousView*vec4(p,1)).z);if(meta.w>.5&&abs(meta.z-pd)<=uHistoryDepthThreshold&&dot(decodeNormal(meta.xy),n)>=uHistoryNormalThreshold){vec2 texel=1.0/vec2(textureSize(uCurrentIndirectTexture,0));vec3 lo=vec3(1e20),hi=vec3(-1e20);for(int y=-1;y<=1;y++)for(int x=-1;x<=1;x++){vec3 s=texture(uCurrentIndirectTexture,UV+vec2(x,y)*texel).rgb;lo=min(lo,s);hi=max(hi,s);}vec3 padding=max((hi-lo)*.5,vec3(.03));vec3 history=clamp(texture(uHistoryColorTexture,huv).rgb,lo-padding,hi+padding);resolved=mix(current,history,uTemporalBlend*clamp(1-length(motion)*8,0,1));}}}
 FragColor=vec4(max(resolved,vec3(0)),1);})";
         m_temporalResolveShader = Shader::Create(temporal);
 
@@ -240,7 +255,7 @@ FragColor=vec4(max(resolved,vec3(0)),1);})";
         metadata.fragmentSource = R"(#version 430 core
 in vec2 UV;out vec4 FragColor;uniform sampler2D uScenePositionTexture,uSceneNormalTexture;uniform mat4 uView;uniform float uNearPlane,uFarPlane;
 vec2 encodeNormal(vec3 n){n/=abs(n.x)+abs(n.y)+abs(n.z);if(n.z<0)n.xy=(1-abs(n.yx))*sign(n.xy);return n.xy*.5+.5;}
-void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,n=normalize(texture(uSceneNormalTexture,UV).xyz);if(dot(n,n)<.01){FragColor=vec4(0);return;}float d=-(uView*vec4(p,1)).z;FragColor=vec4(encodeNormal(n),clamp((d-uNearPlane)/max(uFarPlane-uNearPlane,.0001),0,1),1);})";
+void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uSceneNormalTexture,UV).xyz;float normalLengthSquared=dot(rawNormal,rawNormal);if(!(normalLengthSquared>=.01&&normalLengthSquared<=1e6)){FragColor=vec4(0);return;}vec3 n=rawNormal*inversesqrt(normalLengthSquared);float d=-(uView*vec4(p,1)).z;FragColor=vec4(encodeNormal(n),clamp((d-uNearPlane)/max(uFarPlane-uNearPlane,.0001),0,1),1);})";
         m_historyMetadataShader = Shader::Create(metadata);
     }
 
@@ -255,6 +270,12 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,n=normalize(texture(uSc
         if (m_pendingRadianceVolume)
             glDeleteTextures(1, &m_pendingRadianceVolume);
         m_pendingRadianceVolume = 0;
+        if (m_voxelAccumulationRG)
+            glDeleteTextures(1, &m_voxelAccumulationRG);
+        m_voxelAccumulationRG = 0;
+        if (m_voxelAccumulationBCount)
+            glDeleteTextures(1, &m_voxelAccumulationBCount);
+        m_voxelAccumulationBCount = 0;
         m_voxelizationInProgress = false;
         m_allocatedResolution = 0;
     }
@@ -277,6 +298,17 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,n=normalize(texture(uSc
                 glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
                 glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
                 glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_BORDER);
+            }
+            unsigned int accumulationVolumes[2]{};
+            glGenTextures(2, accumulationVolumes);
+            m_voxelAccumulationRG = accumulationVolumes[0];
+            m_voxelAccumulationBCount = accumulationVolumes[1];
+            for (const unsigned int volume : accumulationVolumes)
+            {
+                glBindTexture(GL_TEXTURE_3D, volume);
+                glTexStorage3D(GL_TEXTURE_3D, 1, GL_R32UI, m_resolution, m_resolution, m_resolution);
+                glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+                glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
             }
             glGenFramebuffers(1, &m_voxelFramebuffer);
             glBindFramebuffer(GL_FRAMEBUFFER, m_voxelFramebuffer);
@@ -312,17 +344,19 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,n=normalize(texture(uSc
         m_voxelizationCommandIndex = 0;
         m_voxelizationInProgress = true;
 
-        const float zero[4] = {0, 0, 0, 0};
+        const unsigned int zero[4] = {0, 0, 0, 0};
         glBindFramebuffer(GL_FRAMEBUFFER, m_voxelFramebuffer);
-        glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, m_pendingRadianceVolume, 0);
-        glClearBufferfv(GL_COLOR, 0, zero);
+        glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, m_voxelAccumulationRG, 0);
+        glClearBufferuiv(GL_COLOR, 0, zero);
+        glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, m_voxelAccumulationBCount, 0);
+        glClearBufferuiv(GL_COLOR, 0, zero);
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
     }
 
     bool VoxelConeTracingEffect::VoxelizeChunk(const PostProcessContext &context)
     {
         const auto &rc = context.renderContext;
-        if (!m_voxelizationShader)
+        if (!m_voxelizationShader || !m_voxelResolveShader)
             return false;
         const auto *commands = rc.renderer ? &rc.renderer->GetSceneRenderCommands() : rc.renderCommands;
         if (!commands)
@@ -348,7 +382,8 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,n=normalize(texture(uSc
         glDisable(GL_DEPTH_TEST);
         glDisable(GL_CULL_FACE);
         glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
-        glBindImageTexture(0, m_pendingRadianceVolume, 0, GL_TRUE, 0, GL_WRITE_ONLY, GL_RGBA16F);
+        glBindImageTexture(0, m_voxelAccumulationRG, 0, GL_TRUE, 0, GL_READ_WRITE, GL_R32UI);
+        glBindImageTexture(1, m_voxelAccumulationBCount, 0, GL_TRUE, 0, GL_READ_WRITE, GL_R32UI);
         m_voxelizationShader->Bind();
         m_voxelizationShader->SetUniform("uVolumeOrigin", m_pendingVolumeOrigin);
         m_voxelizationShader->SetUniform("uVolumeSize", m_volumeSize);
@@ -394,6 +429,13 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,n=normalize(texture(uSc
         if (m_voxelizationCommandIndex < commands->size())
             return false;
 
+        glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+        m_voxelResolveShader->Bind();
+        glBindImageTexture(0, m_voxelAccumulationRG, 0, GL_TRUE, 0, GL_READ_ONLY, GL_R32UI);
+        glBindImageTexture(1, m_voxelAccumulationBCount, 0, GL_TRUE, 0, GL_READ_ONLY, GL_R32UI);
+        glBindImageTexture(2, m_pendingRadianceVolume, 0, GL_TRUE, 0, GL_WRITE_ONLY, GL_RGBA16F);
+        const GLuint groupCount = static_cast<GLuint>((m_resolution + 3) / 4);
+        glDispatchCompute(groupCount, groupCount, groupCount);
         glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
         glBindTexture(GL_TEXTURE_3D, m_pendingRadianceVolume);
         glGenerateMipmap(GL_TEXTURE_3D);
@@ -403,6 +445,9 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,n=normalize(texture(uSc
         m_lastLightSignature = m_pendingLightSignature;
         m_voxelizationInProgress = false;
         m_hasVoxelVolume = true;
+        // History generated from the previous volume must not keep isolated bad
+        // voxels alive after a newly resolved volume becomes active.
+        ResetHistory();
         return true;
     }
 

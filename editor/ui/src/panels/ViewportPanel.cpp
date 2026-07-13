@@ -2002,13 +2002,14 @@ namespace PlutoGE::ui
                                        isFiniteMatrix(m_editorCameraData.view) &&
                                        isFiniteMatrix(m_editorCameraData.projection);
         const render::CameraData cameraData = cachedCameraValid ? m_editorCameraData : freshCameraData;
+        const glm::mat4 gizmoProjection = glm::perspective(glm::radians(editorCamera.camera.GetFOV()),
+                                                            viewportSize.x / viewportSize.y,
+                                                            editorCamera.camera.GetNearPlane(),
+                                                            editorCamera.camera.GetFarPlane());
 
         ImGuizmo::SetOrthographic(false);
         ImGuizmo::Enable(true);
-        // The settings overlay creates a temporary ImGui window immediately
-        // before this call. Bind the editor viewport's draw list explicitly so
-        // ImGuizmo cannot retain or infer the overlay window's draw list.
-        ImGuizmo::SetDrawlist(ImGui::GetWindowDrawList());
+        ImGuizmo::SetDrawlist();
         ImGuizmo::SetRect(viewportMin.x, viewportMin.y, viewportSize.x, viewportSize.y);
         bool gizmoBlocksSelection = false;
         bool splineHandleClicked = false;
@@ -2261,6 +2262,45 @@ namespace PlutoGE::ui
 
             const glm::mat4 entityWorldTransform = selectedEntity->GetWorldTransform();
             glm::mat4 entityTransform = entityWorldTransform;
+            glm::mat4 entityGizmoDelta(1.0f);
+            bool entityGizmoUsesBoundsCenter = false;
+
+            const auto submitEntityGizmo = [&](float *gizmoSnap)
+            {
+                auto *drawList = ImGui::GetWindowDrawList();
+                const int vertexCountBefore = drawList->VtxBuffer.Size;
+                ImGuizmo::Manipulate(glm::value_ptr(cameraData.view),
+                                     glm::value_ptr(gizmoProjection),
+                                     m_gizmoOperation,
+                                     m_gizmoMode,
+                                     glm::value_ptr(entityTransform),
+                                     glm::value_ptr(entityGizmoDelta),
+                                     gizmoSnap);
+                if (drawList->VtxBuffer.Size > vertexCountBefore)
+                    return;
+
+                auto *meshComponent = selectedEntity->GetComponent<scene::MeshComponent>();
+                const auto *mesh = meshComponent ? meshComponent->GetMesh() : nullptr;
+                if (!mesh)
+                    return;
+
+                glm::vec3 localCenter = mesh->GetBounds().center;
+                const int submeshIndex = meshComponent->GetSubmeshIndex();
+                if (submeshIndex >= 0 && static_cast<std::size_t>(submeshIndex) < mesh->GetSubmeshCount())
+                    localCenter = mesh->GetSubmesh(static_cast<std::size_t>(submeshIndex)).bounds.center;
+
+                entityTransform = entityWorldTransform;
+                entityTransform[3] = entityWorldTransform * glm::vec4(localCenter, 1.0f);
+                entityGizmoDelta = glm::mat4(1.0f);
+                entityGizmoUsesBoundsCenter = true;
+                ImGuizmo::Manipulate(glm::value_ptr(cameraData.view),
+                                     glm::value_ptr(gizmoProjection),
+                                     m_gizmoOperation,
+                                     m_gizmoMode,
+                                     glm::value_ptr(entityTransform),
+                                     glm::value_ptr(entityGizmoDelta),
+                                     gizmoSnap);
+            };
 
             if (oceanComponent && oceanComponent->IsEnabled())
             {
@@ -2638,7 +2678,7 @@ namespace PlutoGE::ui
                     glm::mat4 pointTransform = entityWorldTransform;
                     pointTransform[3] = glm::vec4(worldPoints[static_cast<std::size_t>(m_selectedSplinePoint)], 1.0f);
                     ImGuizmo::Manipulate(glm::value_ptr(cameraData.view),
-                                         glm::value_ptr(cameraData.projection),
+                                         glm::value_ptr(gizmoProjection),
                                          ImGuizmo::TRANSLATE,
                                          m_gizmoMode,
                                          glm::value_ptr(pointTransform),
@@ -2680,7 +2720,7 @@ namespace PlutoGE::ui
                         glm::mat4 pointTransform = entityWorldTransform;
                         pointTransform[3] = glm::vec4(glm::vec3(entityWorldTransform * glm::vec4(point.x, 0.0f, point.y, 1.0f)), 1.0f);
                         ImGuizmo::Manipulate(glm::value_ptr(cameraData.view),
-                                             glm::value_ptr(cameraData.projection),
+                                             glm::value_ptr(gizmoProjection),
                                              ImGuizmo::TRANSLATE,
                                              m_gizmoMode,
                                              glm::value_ptr(pointTransform),
@@ -2719,13 +2759,7 @@ namespace PlutoGE::ui
                     }
                     else
                     {
-                        ImGuizmo::Manipulate(glm::value_ptr(cameraData.view),
-                                             glm::value_ptr(cameraData.projection),
-                                             m_gizmoOperation,
-                                             m_gizmoMode,
-                                             glm::value_ptr(entityTransform),
-                                             nullptr,
-                                             snapValues);
+                        submitEntityGizmo(snapValues);
                         entityGizmoSubmitted = true;
                     }
                 }
@@ -2744,7 +2778,7 @@ namespace PlutoGE::ui
                     glm::mat4 pointTransform = entityWorldTransform;
                     pointTransform[3] = glm::vec4(glm::vec3(entityWorldTransform * glm::vec4(point.x, 0.0f, point.y, 1.0f)), 1.0f);
                     ImGuizmo::Manipulate(glm::value_ptr(cameraData.view),
-                                         glm::value_ptr(cameraData.projection),
+                                         glm::value_ptr(gizmoProjection),
                                          ImGuizmo::TRANSLATE,
                                          m_gizmoMode,
                                          glm::value_ptr(pointTransform),
@@ -2783,13 +2817,7 @@ namespace PlutoGE::ui
                 }
                 else
                 {
-                    ImGuizmo::Manipulate(glm::value_ptr(cameraData.view),
-                                         glm::value_ptr(cameraData.projection),
-                                         m_gizmoOperation,
-                                         m_gizmoMode,
-                                         glm::value_ptr(entityTransform),
-                                         nullptr,
-                                         snapValues);
+                    submitEntityGizmo(snapValues);
                     entityGizmoSubmitted = true;
                 }
             }
@@ -2829,6 +2857,8 @@ namespace PlutoGE::ui
                     }
                     else
                     {
+                        if (entityGizmoUsesBoundsCenter)
+                            entityTransform = entityGizmoDelta * entityWorldTransform;
                         ApplyWorldTransformToEntity(*selectedEntity, entityTransform);
                     }
                     editorShell.MarkSceneDirty();

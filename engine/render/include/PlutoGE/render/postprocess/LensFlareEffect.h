@@ -2,18 +2,20 @@
 
 #include "PlutoGE/render/postprocess/ShaderPostProcessEffect.h"
 
+#include <memory>
 #include <string>
 
 namespace PlutoGE::render
 {
     class Shader;
     class Texture;
+    class RenderTarget;
 
     class LensFlareEffect : public ShaderPostProcessEffect
     {
     public:
         LensFlareEffect() = default;
-        ~LensFlareEffect() override = default;
+        ~LensFlareEffect() override;
 
         void Initialize() override;
         void Apply(const PostProcessContext &context) override;
@@ -24,8 +26,11 @@ namespace PlutoGE::render
 
     private:
         Texture *ResolveFlareTexture();
+        void EnsureBrightTarget(int width, int height);
 
         Shader *m_shader = nullptr;
+        Shader *m_brightPassShader = nullptr;
+        std::unique_ptr<RenderTarget> m_brightTarget;
         Texture *m_flareTexture = nullptr;
         std::string m_texturePath;
         std::string m_loadedTexturePath;

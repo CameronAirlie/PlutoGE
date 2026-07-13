@@ -1,6 +1,8 @@
 #include "PlutoGE/render/postprocess/LensFlareEffect.h"
 
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/render/Graphics.h"
+#include "PlutoGE/render/RenderTarget.h"
 #include "PlutoGE/render/Shader.h"
 #include "PlutoGE/render/Texture.h"
 #include "PlutoGE/render/TextureManager.h"
@@ -54,6 +56,14 @@ namespace PlutoGE::render
             }
 
             return pixels;
+        }
+    }
+
+    LensFlareEffect::~LensFlareEffect()
+    {
+        if (m_brightTarget)
+        {
+            m_brightTarget->Cleanup();
         }
     }
 
@@ -141,6 +151,38 @@ namespace PlutoGE::render
             }
         )";
 
+        ShaderSource brightPassSource;
+        brightPassSource.vertexSource = source.vertexSource;
+        brightPassSource.fragmentSource = R"(
+            #version 330 core
+            in vec2 UV;
+            out vec4 FragColor;
+            uniform sampler2D uSceneTexture;
+            uniform vec2 uTexelSize;
+            uniform float uThreshold;
+
+            float Luma(vec3 color)
+            {
+                return dot(color, vec3(0.2126, 0.7152, 0.0722));
+            }
+
+            void main()
+            {
+                vec3 color = texture(uSceneTexture, UV).rgb * 0.5;
+                color += texture(uSceneTexture, UV + vec2(uTexelSize.x, 0.0)).rgb * 0.125;
+                color += texture(uSceneTexture, UV - vec2(uTexelSize.x, 0.0)).rgb * 0.125;
+                color += texture(uSceneTexture, UV + vec2(0.0, uTexelSize.y)).rgb * 0.125;
+                color += texture(uSceneTexture, UV - vec2(0.0, uTexelSize.y)).rgb * 0.125;
+                color = max(color, vec3(0.0));
+                float luminance = Luma(color);
+                float knee = max(uThreshold * 0.5, 0.05);
+                float soft = clamp(luminance - uThreshold + knee, 0.0, 2.0 * knee);
+                soft = soft * soft / (4.0 * knee + 0.0001);
+                float contribution = max(luminance - uThreshold, soft) / max(luminance, 0.0001);
+                FragColor = vec4(color * contribution, 1.0);
+            }
+        )";
+
         source.fragmentSource = R"(
             #version 330 core
 
@@ -149,17 +191,12 @@ namespace PlutoGE::render
 
             uniform sampler2D uSceneTexture;
             uniform sampler2D uFlareTexture;
+            uniform sampler2D uBrightTexture;
             uniform float uIntensity;
-            uniform float uThreshold;
             uniform float uScale;
             uniform float uGhostDispersal;
             uniform vec2 uTexelSize;
             uniform float uAspectRatio;
-
-            float Luma(vec3 color)
-            {
-                return dot(color, vec3(0.2126, 0.7152, 0.0722));
-            }
 
             vec3 BrightSample(vec2 uv)
             {
@@ -168,20 +205,7 @@ namespace PlutoGE::render
                     return vec3(0.0);
                 }
 
-                // A small cross filter stabilises sub-pixel highlights and the
-                // soft knee avoids the hard, flickering cutoff of a simple threshold.
-                vec3 color = texture(uSceneTexture, uv).rgb * 0.5;
-                color += texture(uSceneTexture, uv + vec2(uTexelSize.x, 0.0)).rgb * 0.125;
-                color += texture(uSceneTexture, uv - vec2(uTexelSize.x, 0.0)).rgb * 0.125;
-                color += texture(uSceneTexture, uv + vec2(0.0, uTexelSize.y)).rgb * 0.125;
-                color += texture(uSceneTexture, uv - vec2(0.0, uTexelSize.y)).rgb * 0.125;
-                color = max(color, vec3(0.0));
-                float luminance = Luma(color);
-                float knee = max(uThreshold * 0.5, 0.05);
-                float soft = clamp(luminance - uThreshold + knee, 0.0, 2.0 * knee);
-                soft = soft * soft / (4.0 * knee + 0.0001);
-                float contribution = max(luminance - uThreshold, soft) / max(luminance, 0.0001);
-                return color * contribution;
+                return texture(uBrightTexture, uv).rgb;
             }
 
             vec3 FlareMask(vec2 uv, float scale)
@@ -240,7 +264,24 @@ namespace PlutoGE::render
             }
         )";
 
+        m_brightPassShader = Shader::Create(brightPassSource);
         m_shader = Shader::Create(source);
+    }
+
+    void LensFlareEffect::EnsureBrightTarget(int width, int height)
+    {
+        if (!m_brightTarget)
+        {
+            m_brightTarget = std::make_unique<RenderTarget>(RenderTargetConfig{
+                .width = width,
+                .height = height,
+                .clearColor = glm::vec4(0.0f),
+            });
+        }
+        else if (m_brightTarget->GetWidth() != width || m_brightTarget->GetHeight() != height)
+        {
+            m_brightTarget->Resize(width, height);
+        }
     }
 
     Texture *LensFlareEffect::ResolveFlareTexture()
@@ -275,7 +316,7 @@ namespace PlutoGE::render
 
     void LensFlareEffect::Apply(const PostProcessContext &context)
     {
-        if (!m_shader || !context.sourceRenderTarget)
+        if (!m_shader || !m_brightPassShader || !context.sourceRenderTarget)
         {
             return;
         }
@@ -286,6 +327,25 @@ namespace PlutoGE::render
             return;
         }
 
+        const int targetWidth = std::max(context.sourceRenderTarget->GetWidth(), 1);
+        const int targetHeight = std::max(context.sourceRenderTarget->GetHeight(), 1);
+        EnsureBrightTarget(targetWidth, targetHeight);
+
+        // Evaluate the stabilising cross filter and soft threshold once per
+        // source pixel, then reuse it for every ghost, halo, and glare tap.
+        Graphics::BindRenderTarget(m_brightTarget.get());
+        glViewport(0, 0, targetWidth, targetHeight);
+        glDisable(GL_DEPTH_TEST);
+        glDisable(GL_CULL_FACE);
+        glDisable(GL_BLEND);
+        m_brightPassShader->Bind();
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, context.sourceRenderTarget->GetColorTextureID());
+        m_brightPassShader->SetUniform("uSceneTexture", 0);
+        m_brightPassShader->SetUniform("uTexelSize", glm::vec2(1.0f / targetWidth, 1.0f / targetHeight));
+        m_brightPassShader->SetUniform("uThreshold", m_threshold);
+        DrawFullscreenTriangle();
+
         BeginApply(context);
 
         m_shader->Bind();
@@ -293,12 +353,14 @@ namespace PlutoGE::render
         glActiveTexture(GL_TEXTURE5);
         glBindTexture(GL_TEXTURE_2D, flareTexture->GetTextureID());
         m_shader->SetUniform("uFlareTexture", 5);
+        glActiveTexture(GL_TEXTURE6);
+        glBindTexture(GL_TEXTURE_2D, m_brightTarget->GetColorTextureID());
+        m_shader->SetUniform("uBrightTexture", 6);
         m_shader->SetUniform("uIntensity", m_intensity);
-        m_shader->SetUniform("uThreshold", m_threshold);
         m_shader->SetUniform("uScale", m_scale);
         m_shader->SetUniform("uGhostDispersal", m_ghostDispersal);
-        const float width = static_cast<float>(std::max(context.sourceRenderTarget->GetWidth(), 1));
-        const float height = static_cast<float>(std::max(context.sourceRenderTarget->GetHeight(), 1));
+        const float width = static_cast<float>(targetWidth);
+        const float height = static_cast<float>(targetHeight);
         m_shader->SetUniform("uTexelSize", glm::vec2(1.0f / width, 1.0f / height));
         m_shader->SetUniform("uAspectRatio", width / height);
         DrawFullscreenTriangle();

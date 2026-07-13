@@ -207,12 +207,12 @@ namespace PlutoGE::render
             in vec2 UV;
             out vec4 FragColor;
 
-            uniform sampler2D uScenePositionTexture;
             uniform sampler2D uSceneNormalTexture;
+            uniform sampler2D uSceneDepthTexture;
             uniform sampler2D uNoiseTexture;
             uniform mat4 uView;
-            uniform mat4 uInverseView;
-            uniform mat4 uViewProjection;
+            uniform mat4 uProjection;
+            uniform mat4 uInverseProjection;
             uniform vec3 uSamples[32];
             uniform int uSampleCount;
             uniform float uRadius;
@@ -220,9 +220,14 @@ namespace PlutoGE::render
             uniform float uIntensity;
             uniform float uPower;
 
+            vec3 ReconstructViewPosition(vec2 uv, float depth)
+            {
+                vec4 position = uInverseProjection * vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+                return position.xyz / max(position.w, 0.000001);
+            }
+
             void main()
             {
-                vec3 fragPos = texture(uScenePositionTexture, UV).rgb;
                 vec3 worldNormal = normalize(texture(uSceneNormalTexture, UV).xyz);
 
                 if (dot(worldNormal, worldNormal) < 0.01)
@@ -231,10 +236,11 @@ namespace PlutoGE::render
                     return;
                 }
 
-                vec3 fragViewPos = vec3(uView * vec4(fragPos, 1.0));
+                float centerDepth = texture(uSceneDepthTexture, UV).r;
+                vec3 fragViewPos = ReconstructViewPosition(UV, centerDepth);
                 vec3 normal = normalize(mat3(uView) * worldNormal);
 
-                vec2 noiseScale = vec2(textureSize(uScenePositionTexture, 0)) / vec2(textureSize(uNoiseTexture, 0));
+                vec2 noiseScale = vec2(textureSize(uSceneDepthTexture, 0)) / vec2(textureSize(uNoiseTexture, 0));
                 vec3 randomVec = normalize(texture(uNoiseTexture, UV * noiseScale).xyz * 2.0 - 1.0);
                 vec3 tangent = normalize(randomVec - normal * dot(randomVec, normal));
                 if (dot(tangent, tangent) < 0.0001)
@@ -253,8 +259,7 @@ namespace PlutoGE::render
                     }
 
                     vec3 sampleViewPos = fragViewPos + (tbn * uSamples[sampleIndex]) * uRadius;
-                    vec4 sampleWorldPos = uInverseView * vec4(sampleViewPos, 1.0);
-                    vec4 clipPos = uViewProjection * sampleWorldPos;
+                    vec4 clipPos = uProjection * vec4(sampleViewPos, 1.0);
                     if (clipPos.w <= 0.0001)
                     {
                         continue;
@@ -267,8 +272,12 @@ namespace PlutoGE::render
                         continue;
                     }
 
-                    vec3 sceneSampleWorldPos = texture(uScenePositionTexture, sampleUv).rgb;
-                    vec3 sceneSampleViewPos = vec3(uView * vec4(sceneSampleWorldPos, 1.0));
+                    float sceneDepth = texture(uSceneDepthTexture, sampleUv).r;
+                    if (sceneDepth <= 0.0)
+                    {
+                        continue;
+                    }
+                    vec3 sceneSampleViewPos = ReconstructViewPosition(sampleUv, sceneDepth);
                     vec3 sceneDelta = sceneSampleViewPos - fragViewPos;
                     float sceneDistance = length(sceneDelta);
                     if (sceneDistance <= 0.0001)
@@ -305,11 +314,13 @@ namespace PlutoGE::render
             in vec2 UV;
             out vec4 FragColor;
 
-            uniform sampler2D uScenePositionTexture;
             uniform sampler2D uSceneNormalTexture;
+            uniform sampler2D uSceneDepthTexture;
             uniform sampler2D uRawAoTexture;
             uniform sampler2D uHistoryTexture;
             uniform mat4 uView;
+            uniform mat4 uInverseView;
+            uniform mat4 uInverseProjection;
             uniform mat4 uPreviousView;
             uniform mat4 uPreviousViewProjection;
             uniform int uBlurRadius;
@@ -317,6 +328,12 @@ namespace PlutoGE::render
             uniform float uTemporalBlend;
             uniform float uHistoryDepthThreshold;
             uniform float uHistoryNormalThreshold;
+
+            vec3 ReconstructViewPosition(vec2 uv, float depth)
+            {
+                vec4 position = uInverseProjection * vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+                return position.xyz / max(position.w, 0.000001);
+            }
 
             vec2 EncodeNormal(vec3 normal)
             {
@@ -338,14 +355,14 @@ namespace PlutoGE::render
                 return normalize(normal);
             }
 
-            float ResolveAo(vec3 centerPos, vec3 centerNormal, out float minAo, out float maxAo)
+            float ResolveAo(vec3 centerViewPos, vec3 centerNormal, out float minAo, out float maxAo)
             {
                 vec2 texelSize = 1.0 / vec2(textureSize(uRawAoTexture, 0));
                 float aoSum = 0.0;
                 float weightSum = 0.0;
                 minAo = 1.0;
                 maxAo = 0.0;
-                float centerViewDepth = -(uView * vec4(centerPos, 1.0)).z;
+                float centerViewDepth = -centerViewPos.z;
 
                 for (int offsetY = -4; offsetY <= 4; ++offsetY)
                 {
@@ -363,10 +380,15 @@ namespace PlutoGE::render
 
                         vec2 offset = vec2(float(offsetX), float(offsetY));
                         vec2 sampleUv = clamp(UV + offset * texelSize, vec2(0.0), vec2(1.0));
-                        vec3 samplePos = texture(uScenePositionTexture, sampleUv).rgb;
+                        float sampleDepth = texture(uSceneDepthTexture, sampleUv).r;
+                        if (sampleDepth <= 0.0)
+                        {
+                            continue;
+                        }
+                        vec3 sampleViewPos = ReconstructViewPosition(sampleUv, sampleDepth);
                         vec3 sampleNormal = normalize(texture(uSceneNormalTexture, sampleUv).xyz);
                         float sampleAo = texture(uRawAoTexture, sampleUv).r;
-                        float sampleViewDepth = -(uView * vec4(samplePos, 1.0)).z;
+                        float sampleViewDepth = -sampleViewPos.z;
                         float depthDelta = abs(sampleViewDepth - centerViewDepth);
                         if (depthDelta > 0.35)
                         {
@@ -374,7 +396,7 @@ namespace PlutoGE::render
                         }
 
                         float spatialWeight = exp(-dot(offset, offset) * 0.35);
-                        float positionWeight = 1.0 / (1.0 + length(samplePos - centerPos) * 16.0);
+                        float positionWeight = 1.0 / (1.0 + length(sampleViewPos - centerViewPos) * 16.0);
                         float depthWeight = exp(-depthDelta * 24.0);
                         float normalWeight = pow(max(dot(centerNormal, sampleNormal), 0.0), 16.0);
                         float weight = spatialWeight * positionWeight * depthWeight * normalWeight;
@@ -399,11 +421,13 @@ namespace PlutoGE::render
 
             void main()
             {
-                vec3 centerPos = texture(uScenePositionTexture, UV).rgb;
+                float centerDepth = texture(uSceneDepthTexture, UV).r;
+                vec3 centerViewPos = ReconstructViewPosition(UV, centerDepth);
+                vec3 centerPos = vec3(uInverseView * vec4(centerViewPos, 1.0));
                 vec3 centerNormal = normalize(texture(uSceneNormalTexture, UV).xyz);
                 float minAo;
                 float maxAo;
-                float currentAo = ResolveAo(centerPos, centerNormal, minAo, maxAo);
+                float currentAo = ResolveAo(centerViewPos, centerNormal, minAo, maxAo);
                 float resolvedAo = currentAo;
 
                 if (uHasHistory != 0)
@@ -429,7 +453,7 @@ namespace PlutoGE::render
                     }
                 }
 
-                float viewDepth = -(uView * vec4(centerPos, 1.0)).z;
+                float viewDepth = -centerViewPos.z;
                 vec2 encodedNormal = EncodeNormal(centerNormal);
                 FragColor = vec4(resolvedAo, viewDepth, encodedNormal.x, encodedNormal.y);
             }
@@ -498,6 +522,7 @@ namespace PlutoGE::render
 
         const glm::mat4 viewProjection = renderContext.cameraData.projection * renderContext.cameraData.view;
         const glm::mat4 inverseView = glm::inverse(renderContext.cameraData.view);
+        const glm::mat4 inverseProjection = glm::inverse(renderContext.cameraData.projection);
         const PostProcessContext internalContext{
             .renderContext = renderContext,
             .sourceRenderTarget = m_rawAoRenderTarget.get(),
@@ -514,9 +539,12 @@ namespace PlutoGE::render
         glActiveTexture(GL_TEXTURE5);
         glBindTexture(GL_TEXTURE_2D, m_noiseTexture);
         m_ssaoShader->SetUniform("uNoiseTexture", 5);
+        glActiveTexture(GL_TEXTURE6);
+        glBindTexture(GL_TEXTURE_2D, renderContext.gBuffer->GetDepthTextureID());
+        m_ssaoShader->SetUniform("uSceneDepthTexture", 6);
         m_ssaoShader->SetUniform("uView", renderContext.cameraData.view);
-        m_ssaoShader->SetUniform("uInverseView", inverseView);
-        m_ssaoShader->SetUniform("uViewProjection", viewProjection);
+        m_ssaoShader->SetUniform("uProjection", renderContext.cameraData.projection);
+        m_ssaoShader->SetUniform("uInverseProjection", inverseProjection);
         m_ssaoShader->SetUniform("uSampleCount", m_sampleCount);
         m_ssaoShader->SetUniform("uRadius", m_radius);
         m_ssaoShader->SetUniform("uBias", m_bias);
@@ -541,7 +569,12 @@ namespace PlutoGE::render
         glActiveTexture(GL_TEXTURE6);
         glBindTexture(GL_TEXTURE_2D, previousHistoryTarget->GetColorTextureID());
         m_resolveShader->SetUniform("uHistoryTexture", 6);
+        glActiveTexture(GL_TEXTURE7);
+        glBindTexture(GL_TEXTURE_2D, renderContext.gBuffer->GetDepthTextureID());
+        m_resolveShader->SetUniform("uSceneDepthTexture", 7);
         m_resolveShader->SetUniform("uView", renderContext.cameraData.view);
+        m_resolveShader->SetUniform("uInverseView", inverseView);
+        m_resolveShader->SetUniform("uInverseProjection", inverseProjection);
         m_resolveShader->SetUniform("uPreviousView", m_previousView);
         m_resolveShader->SetUniform("uPreviousViewProjection", m_previousViewProjection);
         m_resolveShader->SetUniform("uBlurRadius", m_blurRadius);

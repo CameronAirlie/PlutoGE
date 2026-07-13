@@ -361,33 +361,29 @@ namespace PlutoGE::render
             float SampleShadowMapPCF(sampler2D shadowMap, vec3 projectedCoords)
             {
                 float receiverDepth = projectedCoords.z - 0.00045;
-                if (uShadowSoftness <= 0.001)
-                {
-                    float closestDepth = texture(shadowMap, projectedCoords.xy).r;
-                    return receiverDepth > closestDepth ? 1.0 : 0.0;
-                }
+                // Compare exact depth texels before filtering. Sampling the
+                // linearly filtered depth and comparing afterwards creates
+                // false depth contours, while averaging displaced PCF taps
+                // exposes each tap as a separate shaft border.
+                ivec2 mapSize = textureSize(shadowMap, 0);
+                vec2 texelPosition = projectedCoords.xy * vec2(mapSize) - vec2(0.5);
+                ivec2 baseTexel = ivec2(floor(texelPosition));
+                vec2 blend = fract(texelPosition);
+                ivec2 maxTexel = mapSize - ivec2(1);
 
-                vec2 texelSize = 1.0 / vec2(textureSize(shadowMap, 0));
-                // A wide, sparse kernel projects every tap into the fog as a
-                // separate god-ray edge. Keep the footprint compact and dense.
-                float filterRadius = clamp(uShadowSoftness, 0.0, 2.0);
-                vec2 offsets[4] = vec2[](
-                    vec2(-0.5, -0.5),
-                    vec2( 0.5, -0.5),
-                    vec2(-0.5,  0.5),
-                    vec2( 0.5,  0.5)
-                );
-                float shadow = 0.0;
-                const int sampleCount = 4;
+                ivec2 texel00 = clamp(baseTexel, ivec2(0), maxTexel);
+                ivec2 texel10 = clamp(baseTexel + ivec2(1, 0), ivec2(0), maxTexel);
+                ivec2 texel01 = clamp(baseTexel + ivec2(0, 1), ivec2(0), maxTexel);
+                ivec2 texel11 = clamp(baseTexel + ivec2(1, 1), ivec2(0), maxTexel);
 
-                for (int sampleIndex = 0; sampleIndex < sampleCount; ++sampleIndex)
-                {
-                    vec2 sampleCoords = projectedCoords.xy + offsets[sampleIndex] * texelSize * filterRadius;
-                    float closestDepth = texture(shadowMap, sampleCoords).r;
-                    shadow += receiverDepth > closestDepth ? 1.0 : 0.0;
-                }
+                float shadow00 = receiverDepth > texelFetch(shadowMap, texel00, 0).r ? 1.0 : 0.0;
+                float shadow10 = receiverDepth > texelFetch(shadowMap, texel10, 0).r ? 1.0 : 0.0;
+                float shadow01 = receiverDepth > texelFetch(shadowMap, texel01, 0).r ? 1.0 : 0.0;
+                float shadow11 = receiverDepth > texelFetch(shadowMap, texel11, 0).r ? 1.0 : 0.0;
 
-                return shadow / float(sampleCount);
+                float shadowBottom = mix(shadow00, shadow10, blend.x);
+                float shadowTop = mix(shadow01, shadow11, blend.x);
+                return mix(shadowBottom, shadowTop, blend.y);
             }
 
             float SampleDirectionalCascadeShadow(int cascadeIndex, vec3 projectedCoords)
@@ -519,9 +515,6 @@ namespace PlutoGE::render
                 float directionalInscattering = uHasDirectionalLight != 0
                     ? ComputeDirectionalInscattering(dot(rayDirection, normalize(uLightDirection)))
                     : 0.0;
-                int shadowSampleStride = uHasDirectionalLight != 0 && uStepCount >= 12 ? 2 : 1;
-                float cachedLightVisibility = 1.0;
-                bool hasCachedLightVisibility = false;
 
                 for (int stepIndex = 0; stepIndex < uStepCount; ++stepIndex)
                 {
@@ -538,16 +531,13 @@ namespace PlutoGE::render
                     float extinction = max(density * segmentLength, 0.0);
                     float segmentTransmittance = exp(-extinction);
                     float segmentFog = 1.0 - segmentTransmittance;
-                    float lightVisibility = 1.0;
-                    if (uHasDirectionalLight != 0)
-                    {
-                        if (!hasCachedLightVisibility || (stepIndex % shadowSampleStride) == 0)
-                        {
-                            cachedLightVisibility = 1.0 - ComputeDirectionalLightShadow(samplePosition);
-                            hasCachedLightVisibility = true;
-                        }
-                        lightVisibility = cachedLightVisibility;
-                    }
+                    // Reusing a shadow result for adjacent march segments
+                    // creates discrete, camera-relative copies of occluder
+                    // silhouettes in the fog. Sample each segment so shaft
+                    // boundaries remain anchored to their world-space caster.
+                    float lightVisibility = uHasDirectionalLight != 0
+                        ? 1.0 - ComputeDirectionalLightShadow(samplePosition)
+                        : 1.0;
                     float multipleScattering = 1.0 - exp(-density * segmentLength * 6.0);
                     vec3 ambientScatter = ambientFogColor * uAmbientContribution * (0.55 + 0.45 * multipleScattering);
                     vec3 directionalScatter = uHasDirectionalLight != 0

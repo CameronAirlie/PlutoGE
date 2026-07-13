@@ -333,13 +333,36 @@ namespace PlutoGE::render
                 {
                     vec2 texelSize = 1.0 / vec2(textureSize(shadowMap, 0));
                     float receiverDepth = projectedCoords.z - depthBias;
-                    if (uOutputShadowMask != 0)
+
+                    // A compact, weighted PCF kernel gives the same useful
+                    // quality/cost trade-off used by production engines: one
+                    // centre tap preserves contact detail and four rotated
+                    // taps soften the stair-stepped texel boundary.  The old
+                    // path only performed the centre comparison, despite the
+                    // PCF name, so ShadowSoftness had no effect for 2D maps.
+                    if (softness <= 0.001)
                     {
                         return receiverDepth > texture(shadowMap, projectedCoords.xy).r ? 1.0 : 0.0;
                     }
 
-                    float closestDepth = texture(shadowMap, projectedCoords.xy).r;
-                    return receiverDepth > closestDepth ? 1.0 : 0.0;
+                    float kernelRadius = clamp(softness, 0.5, 3.0);
+                    vec2 diagonal = texelSize * kernelRadius * 0.70710678;
+                    vec2 sampleOffsets[4] = vec2[](
+                        vec2( diagonal.x,  diagonal.y),
+                        vec2(-diagonal.x,  diagonal.y),
+                        vec2( diagonal.x, -diagonal.y),
+                        vec2(-diagonal.x, -diagonal.y)
+                    );
+
+                    // Weight the centre twice. This behaves like a small tent
+                    // filter while requiring only five texture fetches.
+                    float shadow = receiverDepth > texture(shadowMap, projectedCoords.xy).r ? 2.0 : 0.0;
+                    for (int sampleIndex = 0; sampleIndex < 4; ++sampleIndex)
+                    {
+                        float closestDepth = texture(shadowMap, projectedCoords.xy + sampleOffsets[sampleIndex]).r;
+                        shadow += receiverDepth > closestDepth ? 1.0 : 0.0;
+                    }
+                    return shadow / 6.0;
                 }
 
                 float SampleDirectionalCascadeShadow(int cascadeIndex, vec3 projectedCoords, float depthBias, float softness)
@@ -496,6 +519,18 @@ namespace PlutoGE::render
                                 shadow = mix(shadow, nextShadow, blendFactor);
                             }
                         }
+                    }
+
+                    // Fade the final cascade over its outer ten percent. This
+                    // hides the otherwise abrupt shadow-distance cutoff and
+                    // avoids paying for an additional far cascade.
+                    if (cascadeIndex == light.CascadeCount - 1)
+                    {
+                        float cascadeNear = cascadeIndex > 0 ? light.CascadeSplits[cascadeIndex - 1] : 0.0;
+                        float cascadeLength = max(light.CascadeSplits[cascadeIndex] - cascadeNear, 0.0001);
+                        float fadeStart = light.CascadeSplits[cascadeIndex] - cascadeLength * 0.1;
+                        float distanceFade = 1.0 - smoothstep(fadeStart, light.CascadeSplits[cascadeIndex], cameraDistance);
+                        shadow *= distanceFade;
                     }
 
                     return shadow;

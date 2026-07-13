@@ -29,7 +29,7 @@ namespace PlutoGE::render
 
     private:
         void EnsureResources(int width, int height);
-        void Voxelize(const PostProcessContext &context);
+        void Voxelize(const PostProcessContext &context, const glm::vec3 &volumeOrigin);
         void ReleaseVolume();
         void ResetHistory();
 
@@ -45,6 +45,7 @@ namespace PlutoGE::render
         int m_allocatedResolution = 0;
         int m_resolution = 64;
         int m_coneCount = 5;
+        int m_voxelizationLodBias = 2;
         int m_updateInterval = 1;
         float m_volumeSize = 48.0f;
         float m_intensity = 1.0f;

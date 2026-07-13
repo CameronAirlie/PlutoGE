@@ -198,6 +198,7 @@ namespace PlutoGE::render
         [[nodiscard]] float GetTotalCpuPassTimeMs() const;
         [[nodiscard]] int GetProfiledRenderCount() const { return m_profiledRenderCount; }
         [[nodiscard]] std::size_t GetQueuedRenderCommandCount() const { return m_renderCommands.size(); }
+        [[nodiscard]] const std::vector<RenderCommand> &GetSceneRenderCommands() const { return m_renderCommands; }
         [[nodiscard]] bool GetLastRenderedCameraData(RenderTarget *renderTarget, CameraData &cameraData) const;
         [[nodiscard]] bool GetLastUnjitteredCameraData(RenderTarget *renderTarget, CameraData &cameraData) const;
 

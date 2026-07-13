@@ -44,29 +44,44 @@ namespace PlutoGE::render
 
         std::size_t ComputeSceneSignature(const std::vector<RenderCommand> &commands)
         {
+            // Render commands are sorted using their camera-selected LOD. Build an
+            // order-independent signature which describes world content instead,
+            // otherwise moving the camera can invalidate the voxel cache even when
+            // no object has changed.
             std::size_t hash = HashValue(commands.size(), 1469598103934665603ull);
+            std::size_t sum = 0;
+            std::size_t mixed = 0;
             for (const auto &command : commands)
             {
-                hash = HashValue(command.mesh, hash);
-                hash = HashValue(command.material, hash);
-                hash = HashValue(command.submeshIndex, hash);
-                hash = HashValue(command.lodIndex, hash);
-                hash = HashBytes(glm::value_ptr(command.model), sizeof(glm::mat4), hash);
+                std::size_t commandHash = HashValue(command.mesh, 1469598103934665603ull);
+                commandHash = HashValue(command.material, commandHash);
+                commandHash = HashValue(command.submeshIndex, commandHash);
+                commandHash = HashBytes(glm::value_ptr(command.model), sizeof(glm::mat4), commandHash);
                 if (command.instanceModels)
                 {
-                    hash = HashValue(command.instanceModels->size(), hash);
+                    commandHash = HashValue(command.instanceModels->size(), commandHash);
                     for (const auto &model : *command.instanceModels)
-                        hash = HashBytes(glm::value_ptr(model), sizeof(glm::mat4), hash);
+                        commandHash = HashBytes(glm::value_ptr(model), sizeof(glm::mat4), commandHash);
                 }
                 if (command.material)
                 {
                     const auto &config = command.material->GetConfig();
-                    hash = HashBytes(glm::value_ptr(config.color), sizeof(glm::vec4), hash);
-                    hash = HashBytes(glm::value_ptr(config.emission), sizeof(glm::vec3), hash);
-                    hash = HashValue(config.albedoTexture, hash);
+                    commandHash = HashBytes(glm::value_ptr(config.color), sizeof(glm::vec4), commandHash);
+                    commandHash = HashBytes(glm::value_ptr(config.emission), sizeof(glm::vec3), commandHash);
+                    commandHash = HashValue(config.albedoTexture, commandHash);
                 }
+                sum += commandHash;
+                mixed ^= commandHash + 0x9e3779b97f4a7c15ull + (commandHash << 6u) + (commandHash >> 2u);
             }
-            return hash;
+            hash = HashValue(sum, hash);
+            return HashValue(mixed, hash);
+        }
+
+        bool IntersectsVoxelVolume(const RenderCommand &command, const glm::vec3 &origin, float size)
+        {
+            const glm::vec3 closest = glm::clamp(command.worldBounds.center, origin, origin + glm::vec3(size));
+            const glm::vec3 offset = command.worldBounds.center - closest;
+            return glm::dot(offset, offset) <= command.worldBounds.radius * command.worldBounds.radius;
         }
 
         std::size_t ComputeLightSignature(const std::vector<scene::Light *> *lights)
@@ -83,11 +98,6 @@ namespace PlutoGE::render
                 hash = HashValue(light->intensity, hash);
                 hash = HashValue(light->castsShadows, hash);
                 hash = HashValue(light->activeShadowCascadeCount, hash);
-                for (int cascade = 0; cascade < light->activeShadowCascadeCount; ++cascade)
-                {
-                    hash = HashBytes(glm::value_ptr(light->shadowCascadeWorldOrigins[cascade]), sizeof(glm::vec3), hash);
-                    hash = HashBytes(glm::value_ptr(light->shadowCascadeMatrices[cascade]), sizeof(glm::mat4), hash);
-                }
             }
             return hash;
         }
@@ -104,6 +114,7 @@ namespace PlutoGE::render
             {"Volume Size", PostProcessParameterType::Float, std::to_string(m_volumeSize)},
             {"Intensity", PostProcessParameterType::Float, std::to_string(m_intensity)},
             {"Cone Count", PostProcessParameterType::Int, std::to_string(m_coneCount)},
+            {"Voxelization LOD Bias", PostProcessParameterType::Int, std::to_string(m_voxelizationLodBias)},
             {"Cone Aperture", PostProcessParameterType::Float, std::to_string(m_aperture)},
             {"Max Distance", PostProcessParameterType::Float, std::to_string(m_maxDistance)},
             {"Normal Bias", PostProcessParameterType::Float, std::to_string(m_normalBias)},
@@ -134,6 +145,16 @@ namespace PlutoGE::render
                 m_intensity = std::clamp(std::stof(p.value), 0.0f, 8.0f);
             else if (p.name == "Cone Count")
                 m_coneCount = std::clamp(std::stoi(p.value), 1, 6);
+            else if (p.name == "Voxelization LOD Bias")
+            {
+                const int next = std::clamp(std::stoi(p.value), 0, 8);
+                if (next != m_voxelizationLodBias)
+                {
+                    m_voxelizationLodBias = next;
+                    m_hasVoxelVolume = false;
+                    ResetHistory();
+                }
+            }
             else if (p.name == "Cone Aperture")
                 m_aperture = std::clamp(std::stof(p.value), 0.1f, 1.2f);
             else if (p.name == "Max Distance")
@@ -173,10 +194,9 @@ uniform vec3 uVolumeOrigin,uLightDirection,uLightColor,uEmission; uniform float 
 uniform vec4 uColor; uniform sampler2D uAlbedoTexture; uniform float uHasAlbedoTexture;
 uniform sampler2D uShadow0,uShadow1,uShadow2,uShadow3;uniform mat4 uShadowMatrix[4];uniform vec3 uShadowOrigin[4];uniform float uShadowSplit[4];uniform vec3 uCameraPosition;uniform int uShadowCascadeCount;
 float shadowSample(int c,vec2 uv){if(c==0)return texture(uShadow0,uv).r;if(c==1)return texture(uShadow1,uv).r;if(c==2)return texture(uShadow2,uv).r;return texture(uShadow3,uv).r;}
-vec2 shadowTexel(int c){if(c==0)return 1.0/vec2(textureSize(uShadow0,0));if(c==1)return 1.0/vec2(textureSize(uShadow1,0));if(c==2)return 1.0/vec2(textureSize(uShadow2,0));return 1.0/vec2(textureSize(uShadow3,0));}
 float visibility(vec3 p,vec3 n){if(uShadowCascadeCount<=0)return 1;float d=length(p-uCameraPosition);int c=uShadowCascadeCount-1;for(int i=0;i<4;i++){if(i>=uShadowCascadeCount)break;if(d<=uShadowSplit[i]){c=i;break;}}
  vec4 lp=uShadowMatrix[c]*vec4(p-uShadowOrigin[c],1);vec3 q=lp.xyz/max(lp.w,.0001);q=q*.5+.5;if(any(lessThan(q,vec3(0)))||any(greaterThan(q,vec3(1))))return 1;
- float bias=max(.00015*(1.0-max(dot(normalize(n),-normalize(uLightDirection)),0.0)),.00003),sum=0;vec2 texel=shadowTexel(c);for(int y=-1;y<=1;y++)for(int x=-1;x<=1;x++)sum+=q.z-bias<=shadowSample(c,q.xy+vec2(x,y)*texel)?1:0;return sum/9;}
+ float bias=max(.00015*(1.0-max(dot(normalize(n),-normalize(uLightDirection)),0.0)),.00003);return q.z-bias<=shadowSample(c,q.xy)?1:0;}
 void main(){ vec3 tc=(g.p-uVolumeOrigin)/uVolumeSize; if(any(lessThan(tc,vec3(0)))||any(greaterThanEqual(tc,vec3(1))))discard;
  vec4 a=uColor;if(uHasAlbedoTexture>.5)a*=texture(uAlbedoTexture,g.uv);if(a.a<.1)discard;
  float ndl=max(dot(normalize(g.n),-normalize(uLightDirection)),0); vec3 r=a.rgb*uLightColor*uLightIntensity*ndl*visibility(g.p,g.n)+uEmission;
@@ -270,14 +290,16 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,n=normalize(texture(uSc
         if (resized) ResetHistory();
     }
 
-    void VoxelConeTracingEffect::Voxelize(const PostProcessContext &context)
+    void VoxelConeTracingEffect::Voxelize(const PostProcessContext &context, const glm::vec3 &volumeOrigin)
     {
         const auto &rc = context.renderContext;
-        if (!rc.renderCommands || !m_voxelizationShader)
+        if (!m_voxelizationShader)
+            return;
+        const auto *commands = rc.renderer ? &rc.renderer->GetSceneRenderCommands() : rc.renderCommands;
+        if (!commands)
             return;
         const glm::vec3 camera = glm::vec3(glm::inverse(rc.cameraData.view)[3]);
-        const float voxel = m_volumeSize / float(m_resolution);
-        m_volumeOrigin = glm::floor((camera - glm::vec3(m_volumeSize * .5f)) / voxel) * voxel;
+        m_volumeOrigin = volumeOrigin;
         const float zero[4] = {0, 0, 0, 0};
         glBindFramebuffer(GL_FRAMEBUFFER, m_voxelFramebuffer);
         glClearBufferfv(GL_COLOR, 0, zero);
@@ -325,12 +347,16 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,n=normalize(texture(uSc
             m_voxelizationShader->SetUniform("uShadowOrigin[" + std::to_string(cascade) + "]", directionalLight ? directionalLight->shadowCascadeWorldOrigins[cascade] : glm::vec3(0.0f));
             m_voxelizationShader->SetUniform("uShadowSplit[" + std::to_string(cascade) + "]", directionalLight ? directionalLight->shadowCascadeSplits[cascade] : 0.0f);
         }
-        for (const auto &c : *rc.renderCommands)
+        for (const auto &c : *commands)
         {
-            if (!c.mesh || !c.material)
+            if (!c.mesh || !c.material || !IntersectsVoxelVolume(c, m_volumeOrigin, m_volumeSize))
                 continue;
+            const std::size_t lodCount = c.mesh->GetSubmeshLodCount(c.submeshIndex);
+            const std::size_t voxelLod = lodCount > 0
+                                             ? std::min<std::size_t>(c.lodIndex + static_cast<std::size_t>(m_voxelizationLodBias), lodCount - 1)
+                                             : 0;
             auto draw = [&](const glm::mat4 &model)
-            {m_voxelizationShader->SetUniform("uModel",model);m_voxelizationShader->SetUniform("uEmission",c.material->GetConfig().emission);c.material->Bind(m_voxelizationShader);c.mesh->DrawSubmesh(c.submeshIndex,c.lodIndex); };
+            {m_voxelizationShader->SetUniform("uModel",model);m_voxelizationShader->SetUniform("uEmission",c.material->GetConfig().emission);c.material->Bind(m_voxelizationShader);c.mesh->DrawSubmesh(c.submeshIndex,voxelLod); };
             if (c.instanceModels)
                 for (const auto &m : *c.instanceModels)
                     draw(m);
@@ -372,14 +398,15 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,n=normalize(texture(uSc
                 snappedOrigin = glm::floor((cameraPosition - glm::vec3(m_volumeSize * 0.5f)) / scrollStep) * scrollStep;
             }
         }
-        const std::size_t sceneSignature = renderContext.renderCommands ? ComputeSceneSignature(*renderContext.renderCommands) : 0;
+        const auto *sceneCommands = renderContext.renderer ? &renderContext.renderer->GetSceneRenderCommands() : renderContext.renderCommands;
+        const std::size_t sceneSignature = sceneCommands ? ComputeSceneSignature(*sceneCommands) : 0;
         const std::size_t lightSignature = ComputeLightSignature(renderContext.lights);
         const bool originChanged = !m_hasVoxelVolume || glm::any(glm::notEqual(snappedOrigin, m_volumeOrigin));
         const bool contentChanged = !m_hasVoxelVolume || sceneSignature != m_lastSceneSignature || lightSignature != m_lastLightSignature;
         const bool updateDue = m_lastVoxelizedFrame == ~0ull || renderContext.frameSequence - m_lastVoxelizedFrame >= static_cast<unsigned>(m_updateInterval);
         if ((originChanged || contentChanged) && updateDue)
         {
-            Voxelize(context);
+            Voxelize(context, snappedOrigin);
             m_lastVoxelizedFrame = renderContext.frameSequence;
             m_lastSceneSignature = sceneSignature;
             m_lastLightSignature = lightSignature;

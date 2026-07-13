@@ -64,6 +64,7 @@ namespace PlutoGE::render
         glm::vec3 m_volumeOrigin{0.0f};
         glm::vec3 m_pendingVolumeOrigin{0.0f};
         glm::mat4 m_previousView{1.0f};
+        glm::vec3 m_previousCameraPosition{0.0f};
         std::size_t m_lastSceneSignature = 0;
         std::size_t m_lastLightSignature = 0;
         std::size_t m_pendingSceneSignature = 0;
@@ -74,6 +75,7 @@ namespace PlutoGE::render
         bool m_voxelizationInProgress = false;
         std::uint8_t m_historyIndex = 0;
         bool m_hasHistory = false;
+        bool m_hasPreviousCameraPosition = false;
         bool m_indirectOnly = false;
     };
 }

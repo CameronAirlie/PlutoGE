@@ -486,6 +486,14 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
         const bool originChanged = !m_hasVoxelVolume || glm::any(glm::notEqual(snappedOrigin, m_volumeOrigin));
         const bool contentChanged = !m_hasVoxelVolume || sceneSignature != m_lastSceneSignature || lightSignature != m_lastLightSignature;
         const bool updateDue = m_lastVoxelizedFrame == ~0ull || renderContext.frameSequence - m_lastVoxelizedFrame >= static_cast<unsigned>(m_updateInterval);
+        // A chunked rebuild may span several frames. If the camera crosses another
+        // tracking step before it completes, discard the stale partial volume and
+        // restart at the current origin instead of briefly swapping in radiance at
+        // an out-of-date spatial mapping.
+        if (m_voxelizationInProgress && glm::any(glm::notEqual(snappedOrigin, m_pendingVolumeOrigin)))
+        {
+            BeginVoxelization(snappedOrigin, sceneSignature, lightSignature);
+        }
         if (!m_voxelizationInProgress && (originChanged || contentChanged) && updateDue)
         {
             BeginVoxelization(snappedOrigin, sceneSignature, lightSignature);
@@ -494,6 +502,12 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
             m_lastVoxelizedFrame = renderContext.frameSequence;
         if (!m_hasVoxelVolume)
             return nullptr;
+        // Motion vectors and depth/normal rejection handle normal movement, but a
+        // multi-voxel displacement can reproject unrelated surfaces onto one
+        // another. Treat it as a GI camera cut so bright history cannot trail
+        // through the scene during fast traversal.
+        if (m_hasPreviousCameraPosition && glm::length(cameraPosition - m_previousCameraPosition) > voxelSize * 2.0f)
+            ResetHistory();
         Graphics::BindRenderTarget(m_indirectTarget.get());
         glViewport(0, 0, width, height);
         glDisable(GL_DEPTH_TEST);
@@ -546,6 +560,8 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
         DrawFullscreenTriangle();
         m_historyIndex = next;
         m_previousView = context.renderContext.cameraData.view;
+        m_previousCameraPosition = cameraPosition;
+        m_hasPreviousCameraPosition = true;
         m_hasHistory = true;
         return resolvedColor;
     }

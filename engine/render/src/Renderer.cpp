@@ -850,7 +850,15 @@ namespace PlutoGE::render
             }
         }
 
-        return false;
+        // Camera-frustum submission culling must not remove potential shadow
+        // casters. An object outside every camera view can still lie inside a
+        // light's shadow frustum and cast onto visible geometry. The shadow
+        // pass performs its own light-space culling, while RenderFrame builds
+        // a separately camera-culled list for the geometry passes.
+        return command.castsShadow &&
+               command.material &&
+               command.material->GetConfig().castsShadow &&
+               command.material->GetConfig().alphaMode != AlphaMode::Blend;
     }
 
     bool Renderer::CompareRenderCommandKeys(const RenderCommand &a, const RenderCommand &b)

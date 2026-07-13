@@ -58,11 +58,13 @@ namespace PlutoGE::render
             out vec4 FragColor;
 
             uniform sampler2D uSceneTexture;
+            uniform sampler2D uGBufferDepthTexture;
             uniform sampler2D uScenePositionTexture;
             uniform sampler2D uSceneNormalTexture;
             uniform sampler2D uSceneAlbedoTexture;
             uniform mat4 uView;
             uniform mat4 uProjection;
+            uniform mat4 uInverseProjection;
             uniform float uIntensity;
             uniform float uMaxRayDistance;
             uniform float uThickness;
@@ -86,10 +88,13 @@ namespace PlutoGE::render
 
             float SceneViewDepth(vec2 uv)
             {
-                vec3 worldPosition = texture(uScenePositionTexture, uv).xyz;
-                vec3 worldNormal = texture(uSceneNormalTexture, uv).xyz;
-                if (dot(worldNormal, worldNormal) < 0.01) return 1e20;
-                return -(uView * vec4(worldPosition, 1.0)).z;
+                float depth = texture(uGBufferDepthTexture, uv).r;
+                // The renderer uses reversed-Z and clears uncovered pixels to
+                // zero. Reconstructing from depth avoids fetching a 96-bit
+                // world position and a normal at every ray-march step.
+                if (depth <= 0.0) return 1e20;
+                vec4 viewPosition = uInverseProjection * vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+                return -viewPosition.z / max(viewPosition.w, 0.000001);
             }
 
             void main()
@@ -198,8 +203,12 @@ namespace PlutoGE::render
         BeginApply(context);
         m_shader->Bind();
         BindCommonInputs(m_shader, context);
+        glActiveTexture(GL_TEXTURE6);
+        glBindTexture(GL_TEXTURE_2D, context.renderContext.gBuffer->GetDepthTextureID());
+        m_shader->SetUniform("uGBufferDepthTexture", 6);
         m_shader->SetUniform("uView", context.renderContext.cameraData.view);
         m_shader->SetUniform("uProjection", context.renderContext.cameraData.projection);
+        m_shader->SetUniform("uInverseProjection", glm::inverse(context.renderContext.cameraData.projection));
         m_shader->SetUniform("uIntensity", m_intensity);
         m_shader->SetUniform("uMaxRayDistance", m_maxRayDistance);
         m_shader->SetUniform("uThickness", m_thickness);

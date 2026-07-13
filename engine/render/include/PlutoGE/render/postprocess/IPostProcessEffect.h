@@ -30,6 +30,10 @@ namespace PlutoGE::render
         const RenderContext &renderContext;
         RenderTarget *sourceRenderTarget = nullptr;
         RenderTarget *destinationRenderTarget = nullptr;
+        // Standalone effects propagate depth to their output. The post-process
+        // chain prepares its reused targets once and disables the per-effect
+        // copy to avoid repeatedly moving the same full-resolution buffer.
+        bool copyDepthToDestination = true;
     };
 
     class IPostProcessEffect

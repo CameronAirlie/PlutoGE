@@ -39,6 +39,23 @@ namespace PlutoGE::render
                 GL_NEAREST);
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
         }
+
+        void BlitDepthBuffer(RenderTarget *source, RenderTarget *destination)
+        {
+            if (!source || !destination || source == destination)
+            {
+                return;
+            }
+
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, source->GetFramebufferID());
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, destination->GetFramebufferID());
+            glBlitFramebuffer(
+                0, 0, source->GetWidth(), source->GetHeight(),
+                0, 0, destination->GetWidth(), destination->GetHeight(),
+                GL_DEPTH_BUFFER_BIT,
+                GL_NEAREST);
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        }
     }
 
     void PostProcessPass::Initialize()
@@ -113,6 +130,11 @@ namespace PlutoGE::render
         RenderTarget *nextIntermediate = scratchB;
         size_t appliedEffectCount = 0;
 
+        // Every stage reads the same scene depth. Populate each reusable output
+        // once instead of copying depth again for every effect in the chain.
+        BlitDepthBuffer(ctx.temporaryRenderTarget, scratchB);
+        BlitDepthBuffer(ctx.temporaryRenderTarget, ctx.renderTarget);
+
         for (size_t index = 0; index < effects.size(); ++index)
         {
             auto *effect = effects[index];
@@ -139,6 +161,7 @@ namespace PlutoGE::render
                 .renderContext = ctx,
                 .sourceRenderTarget = source,
                 .destinationRenderTarget = destination,
+                .copyDepthToDestination = false,
             });
             if (gpuTimingActive)
             {

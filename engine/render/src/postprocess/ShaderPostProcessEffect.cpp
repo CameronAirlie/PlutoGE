@@ -36,7 +36,10 @@ namespace PlutoGE::render
 
         if (context.destinationRenderTarget)
         {
-            CopyDepthBuffer(context.sourceRenderTarget, context.destinationRenderTarget);
+            if (context.copyDepthToDestination)
+            {
+                CopyDepthBuffer(context.sourceRenderTarget, context.destinationRenderTarget);
+            }
             Graphics::BindRenderTarget(context.destinationRenderTarget);
             glViewport(0, 0, context.destinationRenderTarget->GetWidth(), context.destinationRenderTarget->GetHeight());
             return;

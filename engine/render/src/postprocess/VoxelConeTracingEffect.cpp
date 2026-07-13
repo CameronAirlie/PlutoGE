@@ -115,6 +115,7 @@ namespace PlutoGE::render
             {"Intensity", PostProcessParameterType::Float, std::to_string(m_intensity)},
             {"Cone Count", PostProcessParameterType::Int, std::to_string(m_coneCount)},
             {"Voxelization LOD Bias", PostProcessParameterType::Int, std::to_string(m_voxelizationLodBias)},
+            {"Voxelization Command Budget", PostProcessParameterType::Int, std::to_string(m_voxelizationCommandBudget)},
             {"Cone Aperture", PostProcessParameterType::Float, std::to_string(m_aperture)},
             {"Max Distance", PostProcessParameterType::Float, std::to_string(m_maxDistance)},
             {"Normal Bias", PostProcessParameterType::Float, std::to_string(m_normalBias)},
@@ -152,9 +153,12 @@ namespace PlutoGE::render
                 {
                     m_voxelizationLodBias = next;
                     m_hasVoxelVolume = false;
+                    m_voxelizationInProgress = false;
                     ResetHistory();
                 }
             }
+            else if (p.name == "Voxelization Command Budget")
+                m_voxelizationCommandBudget = std::clamp(std::stoi(p.value), 1, 256);
             else if (p.name == "Cone Aperture")
                 m_aperture = std::clamp(std::stof(p.value), 0.1f, 1.2f);
             else if (p.name == "Max Distance")
@@ -248,6 +252,10 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,n=normalize(texture(uSc
         if (m_radianceVolume)
             glDeleteTextures(1, &m_radianceVolume);
         m_radianceVolume = 0;
+        if (m_pendingRadianceVolume)
+            glDeleteTextures(1, &m_pendingRadianceVolume);
+        m_pendingRadianceVolume = 0;
+        m_voxelizationInProgress = false;
         m_allocatedResolution = 0;
     }
 
@@ -256,17 +264,23 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,n=normalize(texture(uSc
         if (m_allocatedResolution != m_resolution)
         {
             ReleaseVolume();
-            glGenTextures(1, &m_radianceVolume);
-            glBindTexture(GL_TEXTURE_3D, m_radianceVolume);
-            glTexStorage3D(GL_TEXTURE_3D, 1 + static_cast<int>(std::floor(std::log2(m_resolution))), GL_RGBA16F, m_resolution, m_resolution, m_resolution);
-            glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-            glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-            glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
-            glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
-            glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_BORDER);
+            unsigned int volumes[2]{};
+            glGenTextures(2, volumes);
+            m_radianceVolume = volumes[0];
+            m_pendingRadianceVolume = volumes[1];
+            for (const unsigned int volume : volumes)
+            {
+                glBindTexture(GL_TEXTURE_3D, volume);
+                glTexStorage3D(GL_TEXTURE_3D, 1 + static_cast<int>(std::floor(std::log2(m_resolution))), GL_RGBA16F, m_resolution, m_resolution, m_resolution);
+                glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+                glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+                glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+                glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_BORDER);
+            }
             glGenFramebuffers(1, &m_voxelFramebuffer);
             glBindFramebuffer(GL_FRAMEBUFFER, m_voxelFramebuffer);
-            glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, m_radianceVolume, 0);
+            glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, m_pendingRadianceVolume, 0);
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
             m_allocatedResolution = m_resolution;
             m_lastVoxelizedFrame = ~0ull;
@@ -290,19 +304,30 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,n=normalize(texture(uSc
         if (resized) ResetHistory();
     }
 
-    void VoxelConeTracingEffect::Voxelize(const PostProcessContext &context, const glm::vec3 &volumeOrigin)
+    void VoxelConeTracingEffect::BeginVoxelization(const glm::vec3 &volumeOrigin, std::size_t sceneSignature, std::size_t lightSignature)
+    {
+        m_pendingVolumeOrigin = volumeOrigin;
+        m_pendingSceneSignature = sceneSignature;
+        m_pendingLightSignature = lightSignature;
+        m_voxelizationCommandIndex = 0;
+        m_voxelizationInProgress = true;
+
+        const float zero[4] = {0, 0, 0, 0};
+        glBindFramebuffer(GL_FRAMEBUFFER, m_voxelFramebuffer);
+        glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, m_pendingRadianceVolume, 0);
+        glClearBufferfv(GL_COLOR, 0, zero);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    }
+
+    bool VoxelConeTracingEffect::VoxelizeChunk(const PostProcessContext &context)
     {
         const auto &rc = context.renderContext;
         if (!m_voxelizationShader)
-            return;
+            return false;
         const auto *commands = rc.renderer ? &rc.renderer->GetSceneRenderCommands() : rc.renderCommands;
         if (!commands)
-            return;
+            return false;
         const glm::vec3 camera = glm::vec3(glm::inverse(rc.cameraData.view)[3]);
-        m_volumeOrigin = volumeOrigin;
-        const float zero[4] = {0, 0, 0, 0};
-        glBindFramebuffer(GL_FRAMEBUFFER, m_voxelFramebuffer);
-        glClearBufferfv(GL_COLOR, 0, zero);
         glm::vec3 ld(0, -1, 0), lc(0);
         float li = 0;
         const scene::Light *directionalLight = nullptr;
@@ -319,14 +344,13 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,n=normalize(texture(uSc
                 }
             }
         }
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
         glViewport(0, 0, m_resolution, m_resolution);
         glDisable(GL_DEPTH_TEST);
         glDisable(GL_CULL_FACE);
         glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
-        glBindImageTexture(0, m_radianceVolume, 0, GL_TRUE, 0, GL_WRITE_ONLY, GL_RGBA16F);
+        glBindImageTexture(0, m_pendingRadianceVolume, 0, GL_TRUE, 0, GL_WRITE_ONLY, GL_RGBA16F);
         m_voxelizationShader->Bind();
-        m_voxelizationShader->SetUniform("uVolumeOrigin", m_volumeOrigin);
+        m_voxelizationShader->SetUniform("uVolumeOrigin", m_pendingVolumeOrigin);
         m_voxelizationShader->SetUniform("uVolumeSize", m_volumeSize);
         m_voxelizationShader->SetUniform("uLightDirection", ld);
         m_voxelizationShader->SetUniform("uLightColor", lc);
@@ -347,10 +371,13 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,n=normalize(texture(uSc
             m_voxelizationShader->SetUniform("uShadowOrigin[" + std::to_string(cascade) + "]", directionalLight ? directionalLight->shadowCascadeWorldOrigins[cascade] : glm::vec3(0.0f));
             m_voxelizationShader->SetUniform("uShadowSplit[" + std::to_string(cascade) + "]", directionalLight ? directionalLight->shadowCascadeSplits[cascade] : 0.0f);
         }
-        for (const auto &c : *commands)
+        int submittedCommands = 0;
+        while (m_voxelizationCommandIndex < commands->size() && submittedCommands < m_voxelizationCommandBudget)
         {
-            if (!c.mesh || !c.material || !IntersectsVoxelVolume(c, m_volumeOrigin, m_volumeSize))
+            const auto &c = (*commands)[m_voxelizationCommandIndex++];
+            if (!c.mesh || !c.material || !IntersectsVoxelVolume(c, m_pendingVolumeOrigin, m_volumeSize))
                 continue;
+            ++submittedCommands;
             const std::size_t lodCount = c.mesh->GetSubmeshLodCount(c.submeshIndex);
             const std::size_t voxelLod = lodCount > 0
                                              ? std::min<std::size_t>(c.lodIndex + static_cast<std::size_t>(m_voxelizationLodBias), lodCount - 1)
@@ -363,10 +390,20 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,n=normalize(texture(uSc
             else
                 draw(c.model);
         }
-        glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
-        glBindTexture(GL_TEXTURE_3D, m_radianceVolume);
-        glGenerateMipmap(GL_TEXTURE_3D);
         glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        if (m_voxelizationCommandIndex < commands->size())
+            return false;
+
+        glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
+        glBindTexture(GL_TEXTURE_3D, m_pendingRadianceVolume);
+        glGenerateMipmap(GL_TEXTURE_3D);
+        std::swap(m_radianceVolume, m_pendingRadianceVolume);
+        m_volumeOrigin = m_pendingVolumeOrigin;
+        m_lastSceneSignature = m_pendingSceneSignature;
+        m_lastLightSignature = m_pendingLightSignature;
+        m_voxelizationInProgress = false;
+        m_hasVoxelVolume = true;
+        return true;
     }
 
     RenderTarget *VoxelConeTracingEffect::GenerateResolvedIndirectLighting(const PostProcessContext &context, int width, int height)
@@ -404,14 +441,14 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,n=normalize(texture(uSc
         const bool originChanged = !m_hasVoxelVolume || glm::any(glm::notEqual(snappedOrigin, m_volumeOrigin));
         const bool contentChanged = !m_hasVoxelVolume || sceneSignature != m_lastSceneSignature || lightSignature != m_lastLightSignature;
         const bool updateDue = m_lastVoxelizedFrame == ~0ull || renderContext.frameSequence - m_lastVoxelizedFrame >= static_cast<unsigned>(m_updateInterval);
-        if ((originChanged || contentChanged) && updateDue)
+        if (!m_voxelizationInProgress && (originChanged || contentChanged) && updateDue)
         {
-            Voxelize(context, snappedOrigin);
-            m_lastVoxelizedFrame = renderContext.frameSequence;
-            m_lastSceneSignature = sceneSignature;
-            m_lastLightSignature = lightSignature;
-            m_hasVoxelVolume = true;
+            BeginVoxelization(snappedOrigin, sceneSignature, lightSignature);
         }
+        if (m_voxelizationInProgress && VoxelizeChunk(context))
+            m_lastVoxelizedFrame = renderContext.frameSequence;
+        if (!m_hasVoxelVolume)
+            return nullptr;
         Graphics::BindRenderTarget(m_indirectTarget.get());
         glViewport(0, 0, width, height);
         glDisable(GL_DEPTH_TEST);

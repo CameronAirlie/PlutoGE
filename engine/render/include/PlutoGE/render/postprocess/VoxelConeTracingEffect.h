@@ -29,7 +29,8 @@ namespace PlutoGE::render
 
     private:
         void EnsureResources(int width, int height);
-        void Voxelize(const PostProcessContext &context, const glm::vec3 &volumeOrigin);
+        void BeginVoxelization(const glm::vec3 &volumeOrigin, std::size_t sceneSignature, std::size_t lightSignature);
+        bool VoxelizeChunk(const PostProcessContext &context);
         void ReleaseVolume();
         void ResetHistory();
 
@@ -41,11 +42,13 @@ namespace PlutoGE::render
         std::array<std::unique_ptr<RenderTarget>, 2> m_historyColorTargets;
         std::array<std::unique_ptr<RenderTarget>, 2> m_historyMetadataTargets;
         unsigned int m_radianceVolume = 0;
+        unsigned int m_pendingRadianceVolume = 0;
         unsigned int m_voxelFramebuffer = 0;
         int m_allocatedResolution = 0;
         int m_resolution = 64;
         int m_coneCount = 5;
         int m_voxelizationLodBias = 2;
+        int m_voxelizationCommandBudget = 8;
         int m_updateInterval = 1;
         float m_volumeSize = 48.0f;
         float m_intensity = 1.0f;
@@ -56,11 +59,16 @@ namespace PlutoGE::render
         float m_historyDepthThreshold = 0.03f;
         float m_historyNormalThreshold = 0.9f;
         glm::vec3 m_volumeOrigin{0.0f};
+        glm::vec3 m_pendingVolumeOrigin{0.0f};
         glm::mat4 m_previousView{1.0f};
         std::size_t m_lastSceneSignature = 0;
         std::size_t m_lastLightSignature = 0;
+        std::size_t m_pendingSceneSignature = 0;
+        std::size_t m_pendingLightSignature = 0;
+        std::size_t m_voxelizationCommandIndex = 0;
         unsigned long long m_lastVoxelizedFrame = ~0ull;
         bool m_hasVoxelVolume = false;
+        bool m_voxelizationInProgress = false;
         std::uint8_t m_historyIndex = 0;
         bool m_hasHistory = false;
         bool m_indirectOnly = false;

@@ -18,7 +18,7 @@ namespace PlutoGE::assets
         Mesh,
         Animation,
         AnimationClip,
-        SourceModel,
+        Model,
         Material,
         ShaderGraph,
         AnimationGraph,

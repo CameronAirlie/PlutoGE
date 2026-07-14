@@ -1017,6 +1017,16 @@ namespace PlutoGE::ui
 
             meshComponent.SetMesh(mesh);
             meshComponent.SetMeshAssetReference(meshAssetReference);
+            if (assets::Project::IsEngineAssetReference(meshAssetReference))
+            {
+                meshComponent.SetModelObjectIdentity(meshAssetReference, 1);
+            }
+            else
+            {
+                const auto &metadata = engine.GetAssetManager().GetMeshAssetMetadata(meshAssetReference);
+                if (metadata.sourceAssetId.empty() || metadata.sourceObjectId == 0) return false;
+                meshComponent.SetModelObjectIdentity(metadata.sourceAssetId, metadata.sourceObjectId);
+            }
             meshComponent.SetUseGeneratedLods(false);
 
             const auto &materialReferences = engine.GetAssetManager().GetMeshAssetMaterialReferences(meshAssetReference);
@@ -3405,7 +3415,6 @@ namespace PlutoGE::ui
                         {
                             if (AssignMeshAsset(*meshComponent, option.reference, engine))
                             {
-                                meshComponent->CreateSubmeshChildEntities();
                                 editorShell.MarkSceneDirty();
                             }
                         }
@@ -3422,7 +3431,6 @@ namespace PlutoGE::ui
                 {
                     if (AssignMeshAsset(*meshComponent, *droppedMeshReference, engine))
                     {
-                        meshComponent->CreateSubmeshChildEntities();
                         editorShell.MarkSceneDirty();
                     }
                 }
@@ -3430,10 +3438,24 @@ namespace PlutoGE::ui
                 if (meshComponent->GetMesh())
                 {
                     const auto *mesh = meshComponent->GetMesh();
-                    ImGui::TextDisabled("Submeshes: %zu | Material Slots: %zu",
+                    ImGui::TextDisabled("Mesh object: %zu draw submeshes | %zu material slots",
                                         mesh->GetSubmeshCount(),
                                         materialSlotUsageSummaries.size());
-                    ImGui::TextDisabled("Reference: %s", meshComponent->GetMeshAssetReference().empty() ? "Runtime Mesh" : meshComponent->GetMeshAssetReference().c_str());
+                    if (meshComponent->GetMeshAssetReference().empty())
+                    {
+                        ImGui::TextDisabled("Runtime mesh (not backed by an imported artifact)");
+                    }
+                    else
+                    {
+                        ImGui::TextWrapped("Artifact: %s", meshComponent->GetMeshAssetReference().c_str());
+                        ImGui::TextWrapped("Model asset ID: %s", meshComponent->GetModelAssetId().c_str());
+                        ImGui::Text("Local object ID: %llu", static_cast<unsigned long long>(meshComponent->GetModelObjectId()));
+                        const auto &metadata = engine.GetAssetManager().GetMeshAssetMetadata(meshComponent->GetMeshAssetReference());
+                        if (!metadata.sourceAssetReference.empty())
+                        {
+                            ImGui::TextWrapped("Imported from: %s", metadata.sourceAssetReference.c_str());
+                        }
+                    }
                 }
                 else
                 {
@@ -3465,25 +3487,10 @@ namespace PlutoGE::ui
                 const int isolatedSubmeshIndex = meshComponent->GetSubmeshIndex();
                 const bool editingIsolatedSubmesh = isolatedSubmeshIndex >= 0 && meshComponent->GetMesh() &&
                                                     static_cast<size_t>(isolatedSubmeshIndex) < meshComponent->GetMesh()->GetSubmeshCount();
-                if (meshComponent->GetMesh() && meshComponent->GetMesh()->GetSubmeshCount() > 1)
+                if (meshComponent->GetMesh() && meshComponent->GetMesh()->GetSubmeshCount() > 1 && editingIsolatedSubmesh)
                 {
-                    if (editingIsolatedSubmesh)
-                    {
-                        const auto &submesh = meshComponent->GetMesh()->GetSubmesh(static_cast<size_t>(isolatedSubmeshIndex));
-                        ImGui::TextDisabled("Editing submesh %d, material slot %u.", isolatedSubmeshIndex, submesh.materialIndex);
-                    }
-                    else
-                    {
-                        if (ImGui::Button("Create Selectable Submesh Entities"))
-                        {
-                            if (meshComponent->CreateSubmeshChildEntities())
-                            {
-                                editorShell.MarkSceneDirty();
-                            }
-                        }
-                        ImGui::SameLine();
-                        ImGui::TextDisabled("Use this to pick visible model parts in the viewport/hierarchy.");
-                    }
+                    const auto &submesh = meshComponent->GetMesh()->GetSubmesh(static_cast<size_t>(isolatedSubmeshIndex));
+                    ImGui::TextDisabled("Editing submesh %d, material slot %u.", isolatedSubmeshIndex, submesh.materialIndex);
                 }
 
                 ImGui::Separator();

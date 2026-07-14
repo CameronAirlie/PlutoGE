@@ -314,7 +314,7 @@ namespace PlutoGE::ui
             const auto meshStem = meshPath.stem().string();
             for (const auto &asset : project.GetManifest().assetEntries)
             {
-                if (asset.type != assets::ProjectAssetType::SourceModel)
+                if (asset.type != assets::ProjectAssetType::Model)
                 {
                     continue;
                 }

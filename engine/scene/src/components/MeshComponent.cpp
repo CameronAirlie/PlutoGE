@@ -24,7 +24,6 @@ namespace PlutoGE::scene
     {
         constexpr const char *kMaterialSlotPrefix = "MaterialSlots.";
         constexpr const char *kSubmeshOverridePrefix = "SubmeshOverrides.";
-        constexpr size_t kMaxAutomaticSubmeshChildren = 256;
 
         render::MeshBounds ComputeWorldBounds(const render::Mesh &mesh, std::size_t submeshIndex, const glm::mat4 &modelMatrix)
         {
@@ -40,17 +39,6 @@ namespace PlutoGE::scene
                 .center = worldCenter,
                 .radius = bounds.radius * std::max(scaleX, std::max(scaleY, scaleZ)),
             };
-        }
-
-        std::string BuildSubmeshEntityName(const render::Submesh &submesh, size_t submeshIndex)
-        {
-            std::string childName = "Submesh " + std::to_string(submeshIndex);
-            if (!submesh.name.empty())
-            {
-                childName += " - " + submesh.name;
-            }
-            childName += " (Slot " + std::to_string(submesh.materialIndex) + ")";
-            return childName;
         }
 
         std::string BuildSkeletonAttachmentEntityName(const render::SkeletonJoint &joint, size_t jointIndex)
@@ -479,99 +467,6 @@ namespace PlutoGE::scene
         return uniqueMaterial;
     }
 
-    bool MeshComponent::CreateSubmeshChildEntities()
-    {
-        auto *owner = GetOwner();
-        auto *scene = owner ? owner->GetScene() : nullptr;
-        if (!owner || !scene || !m_mesh || m_mesh->GetSubmeshCount() <= 1 || m_submeshIndex >= 0)
-        {
-            return false;
-        }
-
-        bool hasExistingSubmeshChildren = false;
-        for (auto *child : owner->GetChildren())
-        {
-            auto *childMeshComponent = child ? child->GetComponent<MeshComponent>() : nullptr;
-            const bool sameMesh = childMeshComponent && childMeshComponent->GetMesh() == m_mesh;
-            const bool sameSourceMesh = childMeshComponent &&
-                                        !m_sourceMeshPath.empty() &&
-                                        childMeshComponent->GetSourceMeshPath() == m_sourceMeshPath;
-            if (childMeshComponent &&
-                (sameMesh || sameSourceMesh) &&
-                childMeshComponent->GetSubmeshIndex() >= 0)
-            {
-                const auto childSubmeshIndex = static_cast<size_t>(childMeshComponent->GetSubmeshIndex());
-                if (childSubmeshIndex < m_mesh->GetSubmeshCount())
-                {
-                    auto *submeshMaterialOverride = childMeshComponent->HasMaterialOverrideForSubmesh(childSubmeshIndex)
-                                                        ? childMeshComponent->GetMaterialForSubmesh(childSubmeshIndex)
-                                                        : nullptr;
-                    const std::string submeshMaterialAssetOverride = childMeshComponent->GetMaterialAssetForSubmesh(childSubmeshIndex);
-                    childMeshComponent->SetMesh(m_mesh);
-                    childMeshComponent->SetMaterials(m_materials);
-                    childMeshComponent->SetSourceMeshPath(m_sourceMeshPath);
-                    childMeshComponent->SetUseGeneratedLods(m_useGeneratedLods);
-                    childMeshComponent->SetStatic(m_isStatic);
-                    childMeshComponent->SetMeshPositionOffset(m_meshPositionOffset);
-                    childMeshComponent->SetMeshRotationOffset(m_meshRotationOffset);
-                    childMeshComponent->SetVisible(true);
-                    if (submeshMaterialOverride)
-                    {
-                        childMeshComponent->SetMaterialForSubmesh(childSubmeshIndex, submeshMaterialOverride);
-                    }
-                    if (!submeshMaterialAssetOverride.empty())
-                    {
-                        childMeshComponent->SetMaterialAssetForSubmesh(childSubmeshIndex, submeshMaterialAssetOverride);
-                    }
-                    child->SetName(BuildSubmeshEntityName(m_mesh->GetSubmesh(childSubmeshIndex), childSubmeshIndex));
-                }
-                hasExistingSubmeshChildren = true;
-            }
-        }
-        if (hasExistingSubmeshChildren)
-        {
-            return false;
-        }
-
-        if (m_mesh->GetSubmeshCount() > kMaxAutomaticSubmeshChildren)
-        {
-            SetVisible(true);
-            return false;
-        }
-
-        SetVisible(false);
-        for (size_t submeshIndex = 0; submeshIndex < m_mesh->GetSubmeshCount(); ++submeshIndex)
-        {
-            const auto &submesh = m_mesh->GetSubmesh(submeshIndex);
-            auto child = std::make_unique<Entity>(EntityConfig{
-                .name = BuildSubmeshEntityName(submesh, submeshIndex),
-            });
-            auto *childPtr = child.get();
-            auto *childMeshComponent = childPtr->CreateComponent<MeshComponent>(MeshComponentConfig{
-                .mesh = m_mesh,
-                .material = m_material,
-                .materials = m_materials,
-            });
-            childMeshComponent->SetSourceMeshPath(m_sourceMeshPath);
-            childMeshComponent->SetUseGeneratedLods(m_useGeneratedLods);
-            childMeshComponent->SetStatic(m_isStatic);
-            childMeshComponent->SetMeshPositionOffset(m_meshPositionOffset);
-            childMeshComponent->SetMeshRotationOffset(m_meshRotationOffset);
-            childMeshComponent->SetSubmeshIndex(static_cast<int>(submeshIndex));
-            if (submeshIndex < m_submeshMaterials.size() && m_submeshMaterials[submeshIndex])
-            {
-                childMeshComponent->SetMaterialForSubmesh(submeshIndex, m_submeshMaterials[submeshIndex]);
-            }
-            if (submeshIndex < m_submeshMaterialAssetReferences.size() && !m_submeshMaterialAssetReferences[submeshIndex].empty())
-            {
-                childMeshComponent->SetMaterialAssetForSubmesh(submeshIndex, m_submeshMaterialAssetReferences[submeshIndex]);
-            }
-            scene->AddEntity(std::move(child), owner);
-        }
-
-        return true;
-    }
-
     bool MeshComponent::CreateSkeletonAttachmentEntities()
     {
         auto *owner = GetOwner();
@@ -640,7 +535,8 @@ namespace PlutoGE::scene
             {"Visible", PropertyType::Bool, m_visible ? "true" : "false"},
             {"SubmeshIndex", PropertyType::Int, std::to_string(m_submeshIndex)},
             {"SubmeshCount", PropertyType::Int, std::to_string(m_submeshCount)},
-            {"MeshAsset", PropertyType::String, m_sourceMeshPath},
+            {"ModelAssetId", PropertyType::String, m_modelAssetId},
+            {"ModelObjectId", PropertyType::String, std::to_string(m_modelObjectId)},
             {"UseGeneratedLods", PropertyType::Bool, m_useGeneratedLods ? "true" : "false"},
             {"MeshPositionOffset", PropertyType::Vec3, SerializeVec3(m_meshPositionOffset)},
             {"MeshRotationOffset", PropertyType::Vec3, SerializeVec3(m_meshRotationOffset)},
@@ -692,7 +588,9 @@ namespace PlutoGE::scene
     {
         std::map<size_t, SerializedMaterialData> serializedMaterials;
         std::map<size_t, SerializedMaterialData> serializedSubmeshMaterials;
-        std::string sourceMeshPath = m_sourceMeshPath;
+        std::string sourceMeshPath;
+        std::string modelAssetId;
+        std::uint64_t modelObjectId = 0;
         bool useGeneratedLods = m_useGeneratedLods;
 
         for (const auto &property : properties)
@@ -713,9 +611,13 @@ namespace PlutoGE::scene
             {
                 m_submeshCount = std::max(1, std::stoi(property.value));
             }
-            else if (property.name == "MeshAsset" || property.name == "SourceMesh")
+            else if (property.name == "ModelAssetId")
             {
-                sourceMeshPath = property.value;
+                modelAssetId = property.value;
+            }
+            else if (property.name == "ModelObjectId")
+            {
+                try { modelObjectId = std::stoull(property.value); } catch (...) { modelObjectId = 0; }
             }
             else if (property.name == "UseGeneratedLods")
             {
@@ -759,9 +661,13 @@ namespace PlutoGE::scene
             }
         }
 
-        if (!sourceMeshPath.empty())
+        if (!modelAssetId.empty())
         {
             auto &engine = core::Engine::GetInstance();
+            sourceMeshPath = assets::Project::IsEngineAssetReference(modelAssetId)
+                                 ? modelAssetId
+                                 : engine.GetAssetManager().ResolveModelObject(modelAssetId, modelObjectId);
+            if (sourceMeshPath.empty()) return;
             if (auto *builtinMesh = engine.GetAssetManager().LoadMeshAsset(sourceMeshPath))
             {
                 SetMesh(builtinMesh);
@@ -782,6 +688,8 @@ namespace PlutoGE::scene
                     SetMaterialAssetForMaterialSlot(materialSlotIndex, materialReferences[materialSlotIndex]);
                 }
                 m_sourceMeshPath = sourceMeshPath;
+                m_modelAssetId = modelAssetId;
+                m_modelObjectId = modelObjectId;
                 m_useGeneratedLods = false;
             }
             else
@@ -793,6 +701,8 @@ namespace PlutoGE::scene
                     SetMesh(importedMeshAsset.mesh);
                     SetMaterials(importedMeshAsset.materials);
                     m_sourceMeshPath = sourceMeshPath;
+                    m_modelAssetId = modelAssetId;
+                    m_modelObjectId = modelObjectId;
                     m_useGeneratedLods = useGeneratedLods;
                     if (importedMeshAsset.animations && !importedMeshAsset.animations->empty())
                     {

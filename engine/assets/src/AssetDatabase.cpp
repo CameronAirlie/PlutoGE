@@ -87,7 +87,7 @@ namespace PlutoGE::assets
         bool ShouldCook(ProjectAssetType type, const CookOptions &options)
         {
             if (type == ProjectAssetType::Script) return false;
-            if (!options.includeSourceAssets && type == ProjectAssetType::SourceModel) return false;
+            if (!options.includeSourceAssets && type == ProjectAssetType::Model) return false;
             return true;
         }
     }

@@ -1725,13 +1725,9 @@ namespace PlutoGE::ui
                 {
                     InstantiateMeshAssetIntoScene(reference, nullptr);
                 }
-            }
-            if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kContentBrowserMeshSubassetDragDropPayload))
-            {
-                const auto *meshPayload = static_cast<const ContentBrowserMeshSubassetPayload *>(payload->Data);
-                if (meshPayload)
+                else if (assets::Project::GetAssetTypeForReference(reference) == assets::ProjectAssetType::Model)
                 {
-                    InstantiateMeshAssetIntoScene(meshPayload->sourceReference, nullptr, meshPayload->submeshIndex, meshPayload->submeshCount, meshPayload->materialSlot);
+                    InstantiateModelAssetIntoScene(reference, nullptr);
                 }
             }
             ImGui::EndDragDropTarget();

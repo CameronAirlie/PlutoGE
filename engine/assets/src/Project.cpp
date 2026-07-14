@@ -982,7 +982,7 @@ namespace PlutoGE::assets
         }
         if (EndsWithInsensitive(reference, ".gltf") || EndsWithInsensitive(reference, ".glb") || EndsWithInsensitive(reference, ".fbx"))
         {
-            return ProjectAssetType::SourceModel;
+            return ProjectAssetType::Model;
         }
         if (EndsWithInsensitive(reference, ".png") || EndsWithInsensitive(reference, ".jpg") ||
             EndsWithInsensitive(reference, ".jpeg") || EndsWithInsensitive(reference, ".tga") ||
@@ -1014,8 +1014,8 @@ namespace PlutoGE::assets
             return "Animation";
         case ProjectAssetType::AnimationClip:
             return "Animation Clip";
-        case ProjectAssetType::SourceModel:
-            return "Source Model";
+        case ProjectAssetType::Model:
+            return "Model";
         case ProjectAssetType::Material:
             return "Material";
         case ProjectAssetType::ShaderGraph:
@@ -1054,8 +1054,8 @@ namespace PlutoGE::assets
             return ProjectAssetType::Animation;
         if (typeName == "Animation Clip" || typeName == "AnimationClip")
             return ProjectAssetType::AnimationClip;
-        if (typeName == "Source Model" || typeName == "SourceModel")
-            return ProjectAssetType::SourceModel;
+        if (typeName == "Model")
+            return ProjectAssetType::Model;
         if (typeName == "Material")
             return ProjectAssetType::Material;
         if (typeName == "Shader Graph" || typeName == "ShaderGraph")
@@ -1164,7 +1164,7 @@ namespace PlutoGE::assets
                 continue;
             }
 
-            if (iterator->path().extension() == ".plutometa")
+            if (iterator->path().extension() == ".plutometa" || iterator->path().extension() == ".plutomodel")
             {
                 continue;
             }

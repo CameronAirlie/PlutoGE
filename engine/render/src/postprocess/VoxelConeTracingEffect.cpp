@@ -93,9 +93,11 @@ namespace PlutoGE::render
                 hash = HashValue(light, hash);
                 if (!light) continue;
                 hash = HashValue(light->type, hash);
+                hash = HashBytes(glm::value_ptr(light->position), sizeof(glm::vec3), hash);
                 hash = HashBytes(glm::value_ptr(light->direction), sizeof(glm::vec3), hash);
                 hash = HashBytes(glm::value_ptr(light->color), sizeof(glm::vec3), hash);
                 hash = HashValue(light->intensity, hash);
+                hash = HashValue(light->range, hash);
                 hash = HashValue(light->castsShadows, hash);
                 hash = HashValue(light->activeShadowCascadeCount, hash);
             }
@@ -194,19 +196,19 @@ void main(){ vec3 n=abs(cross(vin[1].p-vin[0].p,vin[2].p-vin[0].p)); int axis=n.
  gl_Position=axis==0?vec4(q.zy,0,1):axis==1?vec4(q.xz,0,1):vec4(q.xy,0,1);EmitVertex();}EndPrimitive();})";
         voxel.fragmentSource = R"(#version 430 core
 layout(r32ui,binding=0) uniform uimage3D uAccumulationRG;layout(r32ui,binding=1) uniform uimage3D uAccumulationBCount;in GS { vec3 p; vec3 n; vec2 uv; } g;
-uniform vec3 uVolumeOrigin,uLightDirection,uLightColor,uEmission; uniform float uVolumeSize,uLightIntensity;
+const int MAX_LIGHTS=16;uniform vec3 uVolumeOrigin,uEmission;uniform float uVolumeSize;uniform int uLightCount,uShadowLightIndex,uLightType[MAX_LIGHTS];uniform vec3 uLightPosition[MAX_LIGHTS],uLightDirection[MAX_LIGHTS],uLightColor[MAX_LIGHTS];uniform float uLightIntensity[MAX_LIGHTS],uLightRange[MAX_LIGHTS];
 uniform vec4 uColor;uniform sampler2D uAlbedoTexture,uMetallicTexture;uniform float uHasAlbedoTexture,uHasMetallicTexture,uMetallicFactor;uniform int uMetallicTextureChannel;
 uniform sampler2D uShadow0,uShadow1,uShadow2,uShadow3;uniform mat4 uShadowMatrix[4];uniform vec3 uShadowOrigin[4];uniform float uShadowSplit[4];uniform vec3 uCameraPosition;uniform int uShadowCascadeCount;
 float shadowSample(int c,vec2 uv){if(c==0)return texture(uShadow0,uv).r;if(c==1)return texture(uShadow1,uv).r;if(c==2)return texture(uShadow2,uv).r;return texture(uShadow3,uv).r;}
 bool claimSample(ivec3 coord,uint blue){uint oldValue=imageLoad(uAccumulationBCount,coord).r;for(int attempt=0;attempt<64;attempt++){uint count=oldValue>>16;if(count>=64u)return false;uint blueSum=oldValue&65535u;uint nextValue=(min(blueSum+blue,65535u)&65535u)|((count+1u)<<16);uint observed=imageAtomicCompSwap(uAccumulationBCount,coord,oldValue,nextValue);if(observed==oldValue)return true;oldValue=observed;}return false;}
 void accumulateRG(ivec3 coord,uvec2 value){uint oldValue=imageLoad(uAccumulationRG,coord).r;for(int attempt=0;attempt<64;attempt++){uvec2 sum=uvec2(oldValue&65535u,oldValue>>16);sum=min(sum+value,uvec2(65535u));uint nextValue=(sum.x&65535u)|(sum.y<<16);uint observed=imageAtomicCompSwap(uAccumulationRG,coord,oldValue,nextValue);if(observed==oldValue)return;oldValue=observed;}}
-float visibility(vec3 p,vec3 n){if(uShadowCascadeCount<=0)return 1;float d=length(p-uCameraPosition);int c=uShadowCascadeCount-1;for(int i=0;i<4;i++){if(i>=uShadowCascadeCount)break;if(d<=uShadowSplit[i]){c=i;break;}}
+float visibility(vec3 p,vec3 n,vec3 lightDirection){if(uShadowCascadeCount<=0)return 1;float d=length(p-uCameraPosition);int c=uShadowCascadeCount-1;for(int i=0;i<4;i++){if(i>=uShadowCascadeCount)break;if(d<=uShadowSplit[i]){c=i;break;}}
  vec4 lp=uShadowMatrix[c]*vec4(p-uShadowOrigin[c],1);vec3 q=lp.xyz/max(lp.w,.0001);q=q*.5+.5;if(any(lessThan(q,vec3(0)))||any(greaterThan(q,vec3(1))))return 1;
- float bias=max(.00015*(1.0-max(dot(normalize(n),-normalize(uLightDirection)),0.0)),.00003);return q.z-bias<=shadowSample(c,q.xy)?1:0;}
+ float bias=max(.00015*(1.0-max(dot(normalize(n),-normalize(lightDirection)),0.0)),.00003);return q.z-bias<=shadowSample(c,q.xy)?1:0;}
 void main(){ vec3 tc=(g.p-uVolumeOrigin)/uVolumeSize; if(any(lessThan(tc,vec3(0)))||any(greaterThanEqual(tc,vec3(1))))discard;
  vec4 a=uColor;if(uHasAlbedoTexture>.5)a*=texture(uAlbedoTexture,g.uv);if(a.a<.1)discard;
  float metallic=clamp(uMetallicFactor,0,1);if(uHasMetallicTexture>.5){vec4 packedMetallic=texture(uMetallicTexture,g.uv);metallic*=uMetallicTextureChannel==0?packedMetallic.r:uMetallicTextureChannel==1?packedMetallic.g:uMetallicTextureChannel==2?packedMetallic.b:packedMetallic.a;}
- float occupancy=clamp(a.a,0,1);float ndl=max(dot(normalize(g.n),-normalize(uLightDirection)),0);vec3 diffuseBounce=a.rgb*(1-metallic)*uLightColor*uLightIntensity*ndl*visibility(g.p,g.n)/3.14159265;vec3 r=diffuseBounce+uEmission;
+ float occupancy=clamp(a.a,0,1);vec3 normal=normalize(g.n),directRadiance=vec3(0);for(int i=0;i<MAX_LIGHTS;i++){if(i>=uLightCount)break;vec3 lightDir;float attenuation=1;if(uLightType[i]==1){lightDir=normalize(-uLightDirection[i]);}else{vec3 toLight=uLightPosition[i]-g.p;float distanceToLight=length(toLight);lightDir=toLight/max(distanceToLight,.0001);float normalizedDistance=distanceToLight/max(uLightRange[i],.0001);attenuation=pow(clamp(1-normalizedDistance,0,1),2);if(uLightType[i]==2){float spotEffect=dot(-lightDir,normalize(uLightDirection[i]));attenuation*=smoothstep(.9,.975,spotEffect);}}float ndl=max(dot(normal,lightDir),0);float shadow=i==uShadowLightIndex?visibility(g.p,g.n,uLightDirection[i]):1;directRadiance+=uLightColor[i]*uLightIntensity[i]*attenuation*ndl*shadow;}vec3 diffuseBounce=a.rgb*(1-metallic)*directRadiance/3.14159265;vec3 r=diffuseBounce+uEmission;
  // Keep invalid or extreme material/light values out of the half-float mip chain.
  // RGB is premultiplied by occupancy so partially occupied mip voxels cannot
  // contribute the radiance of a completely filled voxel.
@@ -362,19 +364,19 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
         if (!commands)
             return false;
         const glm::vec3 camera = glm::vec3(glm::inverse(rc.cameraData.view)[3]);
-        glm::vec3 ld(0, -1, 0), lc(0);
-        float li = 0;
         const scene::Light *directionalLight = nullptr;
+        int shadowLightIndex = -1;
         if (rc.lights)
         {
-            for (auto *l : *rc.lights)
+            const int candidateCount = std::min<int>(static_cast<int>(rc.lights->size()), 16);
+            for (int lightIndex = 0; lightIndex < candidateCount; ++lightIndex)
             {
-                if (l && l->type == scene::LightType::Directional && l->intensity > li)
+                auto *l = (*rc.lights)[lightIndex];
+                if (l && l->type == scene::LightType::Directional && l->castsShadows &&
+                    (!directionalLight || l->intensity > directionalLight->intensity))
                 {
-                    ld = l->direction;
-                    lc = l->color;
-                    li = l->intensity;
                     directionalLight = l;
+                    shadowLightIndex = lightIndex;
                 }
             }
         }
@@ -387,9 +389,20 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
         m_voxelizationShader->Bind();
         m_voxelizationShader->SetUniform("uVolumeOrigin", m_pendingVolumeOrigin);
         m_voxelizationShader->SetUniform("uVolumeSize", m_volumeSize);
-        m_voxelizationShader->SetUniform("uLightDirection", ld);
-        m_voxelizationShader->SetUniform("uLightColor", lc);
-        m_voxelizationShader->SetUniform("uLightIntensity", li);
+        constexpr int maxLights = 16;
+        const int lightCount = std::min<int>(rc.lights ? static_cast<int>(rc.lights->size()) : 0, maxLights);
+        m_voxelizationShader->SetUniform("uLightCount", lightCount);
+        m_voxelizationShader->SetUniform("uShadowLightIndex", shadowLightIndex);
+        for (int lightIndex = 0; lightIndex < lightCount; ++lightIndex)
+        {
+            const auto *light = (*rc.lights)[lightIndex];
+            m_voxelizationShader->SetUniform("uLightType[" + std::to_string(lightIndex) + "]", light ? static_cast<int>(light->type) : 0);
+            m_voxelizationShader->SetUniform("uLightPosition[" + std::to_string(lightIndex) + "]", light ? light->position : glm::vec3(0.0f));
+            m_voxelizationShader->SetUniform("uLightDirection[" + std::to_string(lightIndex) + "]", light ? light->direction : glm::vec3(0.0f, -1.0f, 0.0f));
+            m_voxelizationShader->SetUniform("uLightColor[" + std::to_string(lightIndex) + "]", light ? light->color : glm::vec3(0.0f));
+            m_voxelizationShader->SetUniform("uLightIntensity[" + std::to_string(lightIndex) + "]", light ? light->intensity : 0.0f);
+            m_voxelizationShader->SetUniform("uLightRange[" + std::to_string(lightIndex) + "]", light ? light->range : 0.0f);
+        }
         m_voxelizationShader->SetUniform("uCameraPosition", camera);
         const int cascadeCount = directionalLight && directionalLight->castsShadows
                                      ? std::clamp(directionalLight->activeShadowCascadeCount, 0, scene::kMaxDirectionalShadowCascades)

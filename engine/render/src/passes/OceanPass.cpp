@@ -174,6 +174,15 @@ namespace PlutoGE::render
                 uniform vec3 uSunDirection;
                 uniform vec3 uSunColor;
                 uniform float uSunIntensity;
+                uniform sampler2D uShadowCascadeMap0;
+                uniform sampler2D uShadowCascadeMap1;
+                uniform sampler2D uShadowCascadeMap2;
+                uniform sampler2D uShadowCascadeMap3;
+                uniform int uShadowCascadeCount;
+                uniform vec3 uShadowCascadeWorldOrigins[4];
+                uniform mat4 uShadowCascadeMatrices[4];
+                uniform float uShadowCascadeSplits[4];
+                uniform float uShadowSoftness;
                 uniform int uDepthOnly;
                 uniform int uUnderwater;
 
@@ -415,7 +424,7 @@ namespace PlutoGE::render
                 {
                     if (uEnvironmentEnabled == 0)
                     {
-                        return vec3(0.35);
+                        return vec3(0.0);
                     }
 
                     // A small cosine-weighted hemisphere approximation gives the
@@ -448,6 +457,69 @@ namespace PlutoGE::render
                 float ViewDepth(vec3 worldPosition)
                 {
                     return -(uView * vec4(worldPosition, 1.0)).z;
+                }
+
+                float SampleShadowCascade(int cascadeIndex, vec3 projectedCoords, float bias)
+                {
+                    vec2 texelSize;
+                    if (cascadeIndex == 0) texelSize = 1.0 / vec2(textureSize(uShadowCascadeMap0, 0));
+                    else if (cascadeIndex == 1) texelSize = 1.0 / vec2(textureSize(uShadowCascadeMap1, 0));
+                    else if (cascadeIndex == 2) texelSize = 1.0 / vec2(textureSize(uShadowCascadeMap2, 0));
+                    else texelSize = 1.0 / vec2(textureSize(uShadowCascadeMap3, 0));
+
+                    float shadow = 0.0;
+                    float radius = clamp(uShadowSoftness, 0.5, 3.0);
+                    for (int y = -1; y <= 1; ++y)
+                    {
+                        for (int x = -1; x <= 1; ++x)
+                        {
+                            vec2 uv = projectedCoords.xy + vec2(x, y) * texelSize * radius;
+                            float closestDepth;
+                            if (cascadeIndex == 0) closestDepth = texture(uShadowCascadeMap0, uv).r;
+                            else if (cascadeIndex == 1) closestDepth = texture(uShadowCascadeMap1, uv).r;
+                            else if (cascadeIndex == 2) closestDepth = texture(uShadowCascadeMap2, uv).r;
+                            else closestDepth = texture(uShadowCascadeMap3, uv).r;
+                            shadow += projectedCoords.z - bias > closestDepth ? 1.0 : 0.0;
+                        }
+                    }
+                    return shadow / 9.0;
+                }
+
+                float DirectionalShadowVisibility(vec3 worldPosition, vec3 normal)
+                {
+                    if (uShadowCascadeCount <= 0)
+                    {
+                        return 1.0;
+                    }
+
+                    float cameraDepth = ViewDepth(worldPosition);
+                    int cascadeIndex = uShadowCascadeCount - 1;
+                    for (int index = 0; index < uShadowCascadeCount; ++index)
+                    {
+                        if (cameraDepth <= uShadowCascadeSplits[index])
+                        {
+                            cascadeIndex = index;
+                            break;
+                        }
+                    }
+                    if (cameraDepth > uShadowCascadeSplits[uShadowCascadeCount - 1])
+                    {
+                        return 1.0;
+                    }
+
+                    float ndotl = max(dot(normal, normalize(uSunDirection)), 0.0);
+                    vec3 receiver = worldPosition + normal * max(0.004 * (1.0 - ndotl), 0.00075);
+                    vec4 lightPosition = uShadowCascadeMatrices[cascadeIndex] *
+                                         vec4(receiver - uShadowCascadeWorldOrigins[cascadeIndex], 1.0);
+                    vec3 projected = lightPosition.xyz / max(lightPosition.w, 0.0001) * 0.5 + 0.5;
+                    if (any(lessThan(projected, vec3(0.0))) || any(greaterThan(projected, vec3(1.0))))
+                    {
+                        return 1.0;
+                    }
+                    float biasScale = clamp(uShadowCascadeSplits[cascadeIndex] /
+                                            max(uShadowCascadeSplits[0], 0.0001), 1.0, 8.0);
+                    float bias = max(0.00012 + (1.0 - ndotl) * 0.00035, 0.00004) * biasScale;
+                    return 1.0 - SampleShadowCascade(cascadeIndex, projected, bias);
                 }
 
                 bool TraceScreenSpaceReflection(vec3 worldHit, vec3 normal, vec3 viewVector, out vec2 reflectionUv, out float confidence)
@@ -677,11 +749,13 @@ namespace PlutoGE::render
                     float depthFactor = clamp(waterDepth / max(uMaxVisibilityDepth, 0.0001), 0.0, 1.0);
                     vec3 waterTint = mix(uShallowColor, uDeepColor, depthFactor);
                     vec3 environmentLight = SampleEnvironmentDiffuse(normal);
-                    float sunDiffuse = max(dot(normal, normalize(uSunDirection)), 0.0) * max(uSunIntensity, 0.0);
+                    float shadowVisibility = DirectionalShadowVisibility(worldHit, normal);
+                    // Most incident sunlight is reflected or absorbed rather than
+                    // returning as diffuse light from the water body.
+                    float sunDiffuse = max(dot(normal, normalize(uSunDirection)), 0.0) *
+                                       max(uSunIntensity, 0.0) * shadowVisibility * 0.12;
                     vec3 incidentLight = environmentLight + uSunColor * sunDiffuse;
-                    // Retain a little visibility in fully dark environments while
-                    // allowing daylight, sunsets, and coloured maps to tint the sea.
-                    vec3 litWaterTint = waterTint * (vec3(0.08) + incidentLight);
+                    vec3 litWaterTint = waterTint * incidentLight;
                     // Attenuate the seabed through the water column. Without this,
                     // bright sand remains visible through arbitrarily deep water.
                     vec3 waterTransmission = exp(-vec3(6.0, 4.0, 2.8) * depthFactor);
@@ -695,7 +769,7 @@ namespace PlutoGE::render
                     vec3 reflectionDirection = normalize(reflect(-viewVector, normal));
                     vec3 reflectionColor = uEnvironmentEnabled != 0
                         ? SampleEnvironment(reflectionDirection)
-                        : mix(vec3(0.12, 0.24, 0.34), vec3(0.42, 0.58, 0.72), max(reflectionDirection.y, 0.0));
+                        : vec3(0.0);
                     vec2 reflectionUv;
                     float reflectionConfidence;
                     if (TraceScreenSpaceReflection(worldHit, normal, viewVector, reflectionUv, reflectionConfidence))
@@ -705,7 +779,7 @@ namespace PlutoGE::render
                     }
                     vec3 halfVector = normalize(viewVector + normalize(uSunDirection));
                     float sunSpecular = pow(max(dot(normal, halfVector), 0.0), mix(16.0, 256.0, clamp(uSmoothness, 0.0, 1.0))) * max(uSunIntensity, 0.0);
-                    vec3 sunGlint = uSunColor * sunSpecular * 0.015;
+                    vec3 sunGlint = uSunColor * sunSpecular * shadowVisibility * 0.015;
                     float shoreFoam = 1.0 - smoothstep(0.0, max(uFoamDistance, 0.0001), waterDepth);
                     float crest = smoothstep(0.32, 0.72, 1.0 - normalLocal.y) *
                                   smoothstep(0.05, max(uWaveAmplitude * 0.45, 0.051), localHit.y);
@@ -715,7 +789,7 @@ namespace PlutoGE::render
                     vec3 composed = mix(refractedColor, litWaterTint, 0.58);
                     float reflectionStrength = mix(0.12, 1.0, fresnel) * clamp(uSmoothness, 0.0, 1.0);
                     composed = mix(composed, reflectionColor + sunGlint, reflectionStrength);
-                    vec3 litFoamColor = uFoamColor * (vec3(0.08) + incidentLight);
+                    vec3 litFoamColor = uFoamColor * incidentLight;
                     composed = mix(composed, litFoamColor, clamp(foam, 0.0, 1.0));
 
                     // Refraction has already sampled and displaced the scene behind
@@ -812,9 +886,22 @@ namespace PlutoGE::render
         {
             sunDirection = glm::vec3(0.0f, 1.0f, 0.0f);
         }
-        const glm::vec3 sunColor = sun ? glm::max(sun->color, glm::vec3(0.0f)) : glm::vec3(1.0f);
+        const glm::vec3 sunColor = sun ? glm::max(sun->color, glm::vec3(0.0f)) : glm::vec3(0.0f);
         const float sunVisibility = ctx.renderer ? ctx.renderer->GetPhysicalSkyDirectionalLightVisibility(sun) : 1.0f;
-        const float sunIntensity = sun ? std::max(sun->intensity, 0.0f) * sunVisibility : 1.0f;
+        const float sunIntensity = sun ? std::max(sun->intensity, 0.0f) * sunVisibility : 0.0f;
+        int shadowCascadeCount = 0;
+        if (sun && sun->castsShadows)
+        {
+            shadowCascadeCount = std::clamp(sun->activeShadowCascadeCount, 0, scene::kMaxDirectionalShadowCascades);
+            for (int cascadeIndex = 0; cascadeIndex < shadowCascadeCount; ++cascadeIndex)
+            {
+                if (!sun->shadowCascadeMaps[static_cast<std::size_t>(cascadeIndex)])
+                {
+                    shadowCascadeCount = cascadeIndex;
+                    break;
+                }
+            }
+        }
         const glm::mat4 inverseView = glm::inverse(ctx.cameraData.view);
         const glm::vec3 cameraPosition(inverseView[3]);
         const bool cameraUnderwater = std::any_of(oceans.begin(), oceans.end(), [&](const OceanDraw &ocean)
@@ -844,6 +931,23 @@ namespace PlutoGE::render
         m_shader->SetUniform("uEnvironmentMap", 2);
         m_shader->SetUniform("uEnvironmentEnabled", physicalSkyTexture || environmentTexture ? 1 : 0);
         m_shader->SetUniform("uEnvironmentIntensity", ctx.scene->GetEnvironmentIntensity());
+        for (int cascadeIndex = 0; cascadeIndex < scene::kMaxDirectionalShadowCascades; ++cascadeIndex)
+        {
+            glActiveTexture(GL_TEXTURE3 + cascadeIndex);
+            const GLuint shadowTexture = cascadeIndex < shadowCascadeCount
+                ? sun->shadowCascadeMaps[static_cast<std::size_t>(cascadeIndex)]->GetTextureID()
+                : 0;
+            glBindTexture(GL_TEXTURE_2D, shadowTexture);
+            m_shader->SetUniform("uShadowCascadeMap" + std::to_string(cascadeIndex), 3 + cascadeIndex);
+            m_shader->SetUniform("uShadowCascadeWorldOrigins[" + std::to_string(cascadeIndex) + "]",
+                                 sun ? sun->shadowCascadeWorldOrigins[static_cast<std::size_t>(cascadeIndex)] : glm::vec3(0.0f));
+            m_shader->SetUniform("uShadowCascadeMatrices[" + std::to_string(cascadeIndex) + "]",
+                                 sun ? sun->shadowCascadeMatrices[static_cast<std::size_t>(cascadeIndex)] : glm::mat4(1.0f));
+            m_shader->SetUniform("uShadowCascadeSplits[" + std::to_string(cascadeIndex) + "]",
+                                 sun ? sun->shadowCascadeSplits[static_cast<std::size_t>(cascadeIndex)] : 0.0f);
+        }
+        m_shader->SetUniform("uShadowCascadeCount", shadowCascadeCount);
+        m_shader->SetUniform("uShadowSoftness", sun ? sun->directionalShadowSettings.softness : 0.0f);
         m_shader->SetUniform("uInverseView", inverseView);
         m_shader->SetUniform("uInverseProjection", glm::inverse(ctx.cameraData.projection));
         m_shader->SetUniform("uView", ctx.cameraData.view);

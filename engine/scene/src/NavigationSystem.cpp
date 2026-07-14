@@ -21,6 +21,7 @@ namespace PlutoGE::scene
     {
         m_cells.clear();
         m_debugPoints.clear();
+        m_agentWalkabilityCache.clear();
         m_width = m_depth = 0;
     }
 
@@ -74,7 +75,7 @@ namespace PlutoGE::scene
                 m_settings.boundsMin.z + (z + 0.5f) * m_settings.cellSize};
     }
 
-    bool NavigationSystem::IsCellWalkableForAgent(int index, float agentRadius, float agentHeight) const
+    bool NavigationSystem::ComputeCellWalkableForAgent(int index, float agentRadius, float agentHeight) const
     {
         if (index < 0 || index >= static_cast<int>(m_cells.size()) || !m_cells[index].walkable)
             return false;
@@ -103,6 +104,27 @@ namespace PlutoGE::scene
             }
         }
         return true;
+    }
+
+    const std::vector<std::uint8_t> &NavigationSystem::GetAgentWalkability(float agentRadius, float agentHeight) const
+    {
+        const auto radiusKey = static_cast<std::uint32_t>(std::lround(std::max(0.0f, agentRadius) * 1000.0f));
+        const auto heightKey = static_cast<std::uint32_t>(std::lround(std::max(0.0f, agentHeight) * 1000.0f));
+        const std::uint64_t key = (static_cast<std::uint64_t>(radiusKey) << 32u) | heightKey;
+        if (const auto found = m_agentWalkabilityCache.find(key); found != m_agentWalkabilityCache.end())
+            return found->second;
+
+        std::vector<std::uint8_t> mask(m_cells.size(), 0);
+        for (int index = 0; index < static_cast<int>(m_cells.size()); ++index)
+            mask[index] = ComputeCellWalkableForAgent(index, agentRadius, agentHeight) ? 1 : 0;
+        return m_agentWalkabilityCache.emplace(key, std::move(mask)).first->second;
+    }
+
+    bool NavigationSystem::IsCellWalkableForAgent(int index, float agentRadius, float agentHeight) const
+    {
+        if (index < 0 || index >= static_cast<int>(m_cells.size()))
+            return false;
+        return GetAgentWalkability(agentRadius, agentHeight)[index] != 0;
     }
 
     int NavigationSystem::FindNearestCell(const glm::vec3 &point, float agentRadius, float agentHeight) const
@@ -184,6 +206,7 @@ namespace PlutoGE::scene
         std::priority_queue<OpenNode> open;
         std::vector<float> costs(m_cells.size(), std::numeric_limits<float>::max());
         std::vector<int> parents(m_cells.size(), -1);
+        std::vector<std::uint8_t> closed(m_cells.size(), 0);
         costs[start] = 0.0f;
         open.push({start, 0.0f});
         constexpr int directions[8][2] = {{1,0},{-1,0},{0,1},{0,-1},{1,1},{1,-1},{-1,1},{-1,-1}};
@@ -192,6 +215,9 @@ namespace PlutoGE::scene
         {
             const int current = open.top().index;
             open.pop();
+            if (closed[current])
+                continue;
+            closed[current] = 1;
             if (current == goal)
                 break;
             const int x = current % m_width;

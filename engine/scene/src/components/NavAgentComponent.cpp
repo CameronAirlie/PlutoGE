@@ -62,6 +62,7 @@ namespace PlutoGE::scene
             m_path.clear();
             m_nextPoint = 0;
             m_velocity = {};
+            m_repathTimer = std::max(0.05f, m_config.repathInterval);
             return false;
         }
         auto path = navigation->FindPath(GetOwner()->GetWorldPosition(), destination, m_config.agentRadius, m_config.agentHeight);
@@ -205,8 +206,17 @@ namespace PlutoGE::scene
         m_repathTimer -= deltaTime;
         const glm::vec3 targetMovement = destination - m_lastPathDestination;
         const bool targetMoved = glm::dot(targetMovement, targetMovement) > 0.01f;
-        if (targetMoved || !HasPath())
+        glm::vec3 toDestination = destination - owner->GetWorldPosition();
+        toDestination.y = 0.0f;
+        const bool stillNeedsPath = glm::dot(toDestination, toDestination) > m_config.stoppingDistance * m_config.stoppingDistance;
+        if (m_repathTimer <= 0.0f && ((targetMoved && stillNeedsPath) || (!HasPath() && stillNeedsPath)))
             RefreshPath(destination);
+
+        if (!HasPath())
+        {
+            m_velocity = {};
+            return;
+        }
 
         auto position = owner->GetWorldPosition();
 

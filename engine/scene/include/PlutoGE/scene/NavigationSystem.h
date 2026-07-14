@@ -1,5 +1,7 @@
 #pragma once
 #include <glm/glm.hpp>
+#include <cstdint>
+#include <unordered_map>
 #include <vector>
 namespace PlutoGE::scene {
 class Scene;
@@ -12,6 +14,6 @@ public:
  bool IsBaked() const{return !m_cells.empty();} const NavigationBakeSettings& GetSettings()const{return m_settings;}
  int GetWidth()const{return m_width;} int GetDepth()const{return m_depth;} const std::vector<glm::vec3>& GetDebugWalkablePoints()const{return m_debugPoints;}
 private:
- struct Cell{float height=0;float clearance=0;bool walkable=false;}; int FindNearestCell(const glm::vec3&,float,float)const; glm::vec3 CellPosition(int)const; bool IsCellWalkableForAgent(int,float,float)const; bool IsSegmentWalkable(const glm::vec3&,const glm::vec3&,float,float)const;
- NavigationBakeSettings m_settings; int m_width=0,m_depth=0; std::vector<Cell>m_cells; std::vector<glm::vec3>m_debugPoints;
+ struct Cell{float height=0;float clearance=0;bool walkable=false;}; int FindNearestCell(const glm::vec3&,float,float)const; glm::vec3 CellPosition(int)const; bool ComputeCellWalkableForAgent(int,float,float)const; bool IsCellWalkableForAgent(int,float,float)const; const std::vector<std::uint8_t>& GetAgentWalkability(float,float)const; bool IsSegmentWalkable(const glm::vec3&,const glm::vec3&,float,float)const;
+ NavigationBakeSettings m_settings; int m_width=0,m_depth=0; std::vector<Cell>m_cells; std::vector<glm::vec3>m_debugPoints; mutable std::unordered_map<std::uint64_t,std::vector<std::uint8_t>>m_agentWalkabilityCache;
 }; }

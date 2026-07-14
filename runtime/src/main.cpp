@@ -22,6 +22,20 @@ namespace PlutoGE
 {
     namespace
     {
+        struct TemporaryContentDirectory
+        {
+            std::filesystem::path path;
+
+            ~TemporaryContentDirectory()
+            {
+                if (!path.empty())
+                {
+                    std::error_code errorCode;
+                    std::filesystem::remove_all(path, errorCode);
+                }
+            }
+        };
+
 #ifdef _WIN32
         struct RuntimeDiagnostics
         {
@@ -297,9 +311,30 @@ int main(int argc, char **argv)
     }
 
     const auto executablePath = PlutoGE::ResolveExecutablePath(argv);
-    const auto manifestPath = argc > 1
-                                  ? std::filesystem::path(argv[1])
-                                  : PlutoGE::assets::GetRuntimeManifestPathForExecutable(executablePath);
+    PlutoGE::TemporaryContentDirectory temporaryContent;
+    auto manifestPath = argc > 1
+                            ? std::filesystem::path(argv[1])
+                            : PlutoGE::assets::GetRuntimeManifestPathForExecutable(executablePath);
+
+    if (argc <= 1)
+    {
+        const auto contentPackPath = PlutoGE::assets::GetRuntimeContentPackPathForExecutable(executablePath);
+        if (std::filesystem::exists(contentPackPath))
+        {
+            std::error_code temporaryError;
+            const auto temporaryRoot = std::filesystem::temp_directory_path(temporaryError);
+            const auto uniqueName = executablePath.stem().string() + "-" +
+                                    std::to_string(std::chrono::high_resolution_clock::now().time_since_epoch().count());
+            temporaryContent.path = temporaryRoot / "PlutoGE" / "Content" / uniqueName;
+            std::string unpackError;
+            if (temporaryError || !PlutoGE::assets::ExtractStandaloneProjectContent(contentPackPath, temporaryContent.path, &unpackError))
+            {
+                std::cerr << (unpackError.empty() ? "Failed to mount the game content pack." : unpackError) << std::endl;
+                return 1;
+            }
+            manifestPath = temporaryContent.path / PlutoGE::assets::GetRuntimeManifestPathForExecutable(executablePath).filename();
+        }
+    }
 
 #ifdef _WIN32
     PlutoGE::g_runtimeDiagnostics.Initialize(executablePath);

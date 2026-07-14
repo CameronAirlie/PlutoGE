@@ -1,4 +1,5 @@
 add_library(PlutoGEAssets
+    src/AssetDatabase.cpp
     src/AssetManager.cpp
     src/ParticleSystemAsset.cpp
     src/PostProcessPresetAsset.cpp

@@ -26,6 +26,7 @@
 #include "PlutoGE/scene/components/PhysicalSkyComponent.h"
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
 #include "PlutoGE/scene/components/RigidbodyComponent.h"
+#include "PlutoGE/scene/components/NavAgentComponent.h"
 #include "PlutoGE/scene/components/SoundEmitterComponent.h"
 #include "PlutoGE/scene/components/SoundListenerComponent.h"
 #include "PlutoGE/scene/components/UIComponent.h"
@@ -84,6 +85,7 @@ namespace PlutoGE::ui
         }
         constexpr const char *kPostProcessEffectDragDropPayload = "PGE_PP_FX";
         constexpr const char *kEditorPostProcessEffectDragDropPayload = "PGE_ED_PP_FX";
+        constexpr const char *kHierarchyEntityDragDropPayload = "PLUTOGE_SCENE_ENTITY";
         enum class AddableComponentType
         {
             Mesh = 0,
@@ -109,6 +111,7 @@ namespace PlutoGE::ui
             UIImage = 20,
             UIText = 21,
             UIButton = 22,
+            NavAgent = 23,
         };
 
         struct ScriptAssetOption
@@ -1506,6 +1509,8 @@ namespace PlutoGE::ui
             {
                 return "Rigidbody Component";
             }
+            if (dynamic_cast<const scene::NavAgentComponent *>(&component))
+                return "Navigation Agent Component";
             if (dynamic_cast<const scene::ColliderComponent *>(&component))
             {
                 return "Collider Component";
@@ -1580,6 +1585,8 @@ namespace PlutoGE::ui
                 return "LightComponent";
             if (dynamic_cast<const scene::RigidbodyComponent *>(&component))
                 return "RigidbodyComponent";
+            if (dynamic_cast<const scene::NavAgentComponent *>(&component))
+                return "NavAgentComponent";
             if (dynamic_cast<const scene::ColliderComponent *>(&component))
                 return "ColliderComponent";
             if (dynamic_cast<const scene::IblCaptureComponent *>(&component))
@@ -1708,6 +1715,8 @@ namespace PlutoGE::ui
                 return !entity.HasComponent<scene::LightComponent>();
             case AddableComponentType::Rigidbody:
                 return !entity.HasComponent<scene::RigidbodyComponent>();
+            case AddableComponentType::NavAgent:
+                return !entity.HasComponent<scene::NavAgentComponent>();
             case AddableComponentType::Collider:
                 return !entity.HasComponent<scene::ColliderComponent>();
             case AddableComponentType::IblCapture:
@@ -1770,6 +1779,11 @@ namespace PlutoGE::ui
             {
                 renderItem("Rigidbody", AddableComponentType::Rigidbody);
                 renderItem("Collider", AddableComponentType::Collider);
+                ImGui::EndMenu();
+            }
+            if (ImGui::BeginMenu("AI"))
+            {
+                renderItem("Navigation Agent", AddableComponentType::NavAgent);
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Environment"))
@@ -1883,6 +1897,9 @@ namespace PlutoGE::ui
                 break;
             case AddableComponentType::Rigidbody:
                 entity.CreateComponent<scene::RigidbodyComponent>();
+                break;
+            case AddableComponentType::NavAgent:
+                entity.CreateComponent<scene::NavAgentComponent>();
                 break;
             case AddableComponentType::Collider:
                 entity.CreateComponent<scene::ColliderComponent>(scene::ColliderComponentConfig{
@@ -2140,6 +2157,58 @@ namespace PlutoGE::ui
                 ImGui::EndCombo();
             }
             break;
+        }
+        case scene::PropertyType::Entity:
+        {
+            scene::EntityID selectedId = 0;
+            try { selectedId = static_cast<scene::EntityID>(std::stoul(property.value)); }
+            catch (...) { property.value = "0"; }
+
+            auto *currentScene = core::Engine::GetInstance().GetScene();
+            auto *selectedEntity = currentScene && selectedId != 0 ? currentScene->FindEntityByID(selectedId) : nullptr;
+            const std::string preview = selectedEntity ? selectedEntity->GetName() : "None";
+            bool changed = false;
+            if (ImGui::BeginCombo(property.name.c_str(), preview.c_str()))
+            {
+                if (ImGui::Selectable("None", selectedId == 0))
+                {
+                    property.value = "0";
+                    changed = true;
+                }
+                const auto renderEntities = [&](scene::Entity *entity, const auto &self) -> void
+                {
+                    if (!entity) return;
+                    const bool selected = entity->GetID() == selectedId;
+                    if (ImGui::Selectable((entity->GetName() + "##" + std::to_string(entity->GetID())).c_str(), selected))
+                    {
+                        property.value = std::to_string(entity->GetID());
+                        changed = true;
+                    }
+                    for (auto *child : entity->GetChildren()) self(child, self);
+                };
+                if (currentScene)
+                    for (auto *root : currentScene->GetRootEntities()) renderEntities(root, renderEntities);
+                ImGui::EndCombo();
+            }
+            if (ImGui::BeginDragDropTarget())
+            {
+                if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kHierarchyEntityDragDropPayload))
+                {
+                    auto *dropped = *static_cast<scene::Entity *const *>(payload->Data);
+                    if (dropped)
+                    {
+                        property.value = std::to_string(dropped->GetID());
+                        changed = true;
+                    }
+                }
+                ImGui::EndDragDropTarget();
+            }
+            if (selectedEntity)
+            {
+                ImGui::SameLine();
+                ImGui::TextDisabled("ID %u", selectedId);
+            }
+            return changed;
         }
         default:
             break;

@@ -1,4 +1,5 @@
 #include "PlutoGE/scene/Scene.h"
+#include "PlutoGE/scene/NavigationSystem.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/components/ColliderComponent.h"
@@ -1038,8 +1039,11 @@ namespace PlutoGE::scene
         std::unique_ptr<BulletRuntimeWorld> world;
     };
 
-    Scene::Scene() = default;
+    Scene::Scene() : m_navigation(std::make_unique<NavigationSystem>()) {}
     Scene::~Scene() = default;
+
+    NavigationSystem &Scene::GetNavigation() { return *m_navigation; }
+    const NavigationSystem &Scene::GetNavigation() const { return *m_navigation; }
 
     Scene::PhysicsQueryCache &Scene::GetPhysicsQueryCache() const
     {
@@ -1236,6 +1240,11 @@ namespace PlutoGE::scene
 
         ResetRuntimePhysicsState();
         m_pendingRigidbodyForces.clear();
+
+        if (!m_navigation->IsBaked())
+        {
+            m_navigation->Bake(*this, NavigationBakeSettings{});
+        }
 
         for (auto *scriptComponent : GatherRuntimeScriptComponents(m_rootEntities))
         {

@@ -1,4 +1,5 @@
 #include "PlutoGE/assets/Project.h"
+#include "PlutoGE/assets/AssetDatabase.h"
 
 #include <algorithm>
 #include <array>
@@ -1054,6 +1055,11 @@ namespace PlutoGE::assets
                 continue;
             }
 
+            if (iterator->path().extension() == ".plutometa")
+            {
+                continue;
+            }
+
             ProjectAssetEntry entry;
             entry.reference = MakeAssetReference(iterator->path());
             entry.size = iterator->file_size(errorCode);
@@ -1220,7 +1226,8 @@ namespace PlutoGE::assets
         }
 
         const auto exportedAssetDirectory = normalizedDestinationExecutablePath.parent_path() / project.GetManifest().assetDirectory;
-        if (!CopyDirectoryRecursive(project.GetAssetDirectoryPath(), exportedAssetDirectory, errorMessage))
+        Project cookProject(project.GetManifestPath(), project.GetManifest());
+        if (!CookProjectContent(cookProject, exportedAssetDirectory, {}, errorMessage))
         {
             return false;
         }

@@ -63,6 +63,8 @@ namespace PlutoGE::ui
         float m_renderScale = 1.0f;
         bool m_showGrid = true;
         bool m_showDebugShapes = true;
+        bool m_showNavigation = false;
+        bool m_showAgentPaths = true;
         bool m_enableSnap = false;
         ImGuizmo::OPERATION m_gizmoOperation = ImGuizmo::TRANSLATE;
         ImGuizmo::MODE m_gizmoMode = ImGuizmo::LOCAL;

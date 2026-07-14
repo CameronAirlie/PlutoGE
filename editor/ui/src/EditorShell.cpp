@@ -13,6 +13,7 @@
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/render/RenderTarget.h"
 #include "PlutoGE/scene/Scene.h"
+#include "PlutoGE/scene/NavigationSystem.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/Mesh.h"
@@ -3071,6 +3072,25 @@ namespace PlutoGE::ui
                     {
                         forceEditorCursorVisible = !forceEditorCursorVisible;
                         window.SetCursorLockOverride(forceEditorCursorVisible);
+                    }
+                    ImGui::EndDisabled();
+                    ImGui::EndMenu();
+                }
+                if (ImGui::BeginMenu("AI"))
+                {
+                    ImGui::BeginDisabled(m_scene == nullptr);
+                    if (ImGui::MenuItem("Bake Navigation"))
+                    {
+                        scene::NavigationBakeSettings settings;
+                        const bool baked = m_scene->GetNavigation().Bake(*m_scene, settings);
+                        m_statusMessage = baked
+                            ? "Navigation baked: " + std::to_string(m_scene->GetNavigation().GetDebugWalkablePoints().size()) + " walkable cells."
+                            : "Navigation bake produced no walkable cells. Ensure the scene has non-trigger colliders.";
+                    }
+                    if (ImGui::MenuItem("Clear Navigation"))
+                    {
+                        m_scene->GetNavigation().Clear();
+                        m_statusMessage = "Navigation data cleared.";
                     }
                     ImGui::EndDisabled();
                     ImGui::EndMenu();

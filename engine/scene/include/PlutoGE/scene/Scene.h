@@ -17,6 +17,7 @@ namespace PlutoGE::render
 
 namespace PlutoGE::scene
 {
+    class NavigationSystem;
     class Entity;
     class FoliageComponent;
     class MeshComponent;
@@ -150,6 +151,8 @@ namespace PlutoGE::scene
         void SetIblCaptureVolume(std::size_t index, IblCaptureVolume captureVolume);
         void RemoveIblCaptureVolume(std::size_t index);
         void ClearIblCaptureVolumes();
+        NavigationSystem &GetNavigation();
+        const NavigationSystem &GetNavigation() const;
 
     protected:
         friend class Entity;
@@ -206,6 +209,7 @@ namespace PlutoGE::scene
         mutable std::unique_ptr<PhysicsQueryCache> m_physicsQueryCache;
         uint64_t m_updateSequence = 0;
         std::unique_ptr<RuntimePhysicsState> m_runtimePhysicsState;
+        std::unique_ptr<NavigationSystem> m_navigation;
         std::vector<PendingRigidbodyForce> m_pendingRigidbodyForces;
         struct RuntimeUIInputOverride
         {

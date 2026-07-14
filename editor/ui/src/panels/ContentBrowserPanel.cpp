@@ -481,6 +481,63 @@ void main() {
             return project.GetAssetDirectoryPath() / std::filesystem::path(std::string(fallbackFolder));
         }
 
+        std::filesystem::path MakeUniqueAssetPath(const std::filesystem::path &directory,
+                                                  const std::filesystem::path &sourcePath,
+                                                  std::string_view preferredName)
+        {
+            std::string fileName(preferredName);
+            for (char &character : fileName)
+            {
+                if (character == '<' || character == '>' || character == ':' || character == '"' ||
+                    character == '/' || character == '\\' || character == '|' || character == '?' || character == '*')
+                {
+                    character = '_';
+                }
+            }
+            if (fileName.empty()) fileName = sourcePath.stem().string();
+
+            const auto extension = sourcePath.extension();
+            auto candidate = directory / (fileName + extension.string());
+            for (unsigned int suffix = 1; std::filesystem::exists(candidate); ++suffix)
+            {
+                candidate = directory / (fileName + "_" + std::to_string(suffix) + extension.string());
+            }
+            return candidate;
+        }
+
+        bool ExtractModelSubAsset(const assets::Project &project,
+                                  const assets::ModelSubAsset &object,
+                                  std::string_view selectedFolder,
+                                  std::string *extractedReference,
+                                  std::string *errorMessage)
+        {
+            const auto sourcePath = project.ResolveAssetReference(object.reference);
+            if (sourcePath.empty() || !std::filesystem::is_regular_file(sourcePath))
+            {
+                if (errorMessage) *errorMessage = "Imported object is missing: " + object.reference;
+                return false;
+            }
+
+            const auto destinationDirectory = GetCreateDirectory(project, selectedFolder, {});
+            std::error_code error;
+            std::filesystem::create_directories(destinationDirectory, error);
+            if (error)
+            {
+                if (errorMessage) *errorMessage = "Failed to create extraction directory: " + error.message();
+                return false;
+            }
+
+            const auto destinationPath = MakeUniqueAssetPath(destinationDirectory, sourcePath, object.name);
+            std::filesystem::copy_file(sourcePath, destinationPath, std::filesystem::copy_options::none, error);
+            if (error)
+            {
+                if (errorMessage) *errorMessage = "Failed to extract '" + object.name + "': " + error.message();
+                return false;
+            }
+            if (extractedReference) *extractedReference = project.MakeAssetReference(destinationPath);
+            return true;
+        }
+
         std::string DisplayCreatePath(const assets::Project &project, const std::filesystem::path &path, std::string_view fileName)
         {
             std::error_code errorCode;
@@ -2127,6 +2184,8 @@ void main() {
                 if (ImGui::IsItemClicked())
                 {
                     m_selectedFolder = folder;
+                    m_openModelReference.clear();
+                    m_openModelObjects.clear();
                     m_selectedAssetIndex = -1;
                 }
                 if (open)
@@ -2159,6 +2218,8 @@ void main() {
         if (ImGui::IsItemClicked())
         {
             m_selectedFolder.clear();
+            m_openModelReference.clear();
+            m_openModelObjects.clear();
             m_selectedAssetIndex = -1;
         }
         if (rootOpen)
@@ -2175,6 +2236,8 @@ void main() {
             if (ImGui::SmallButton("Assets"))
             {
                 m_selectedFolder.clear();
+                m_openModelReference.clear();
+                m_openModelObjects.clear();
                 m_selectedAssetIndex = -1;
             }
             std::string breadcrumb;
@@ -2191,6 +2254,8 @@ void main() {
                 if (ImGui::SmallButton(label.c_str()))
                 {
                     m_selectedFolder = breadcrumb;
+                    m_openModelReference.clear();
+                    m_openModelObjects.clear();
                     m_selectedAssetIndex = -1;
                 }
                 ImGui::PopID();
@@ -2204,7 +2269,22 @@ void main() {
         }
         else
         {
-            ImGui::TextDisabled("Assets");
+            if (!m_openModelReference.empty() && ImGui::SmallButton("Assets"))
+            {
+                m_openModelReference.clear();
+                m_openModelObjects.clear();
+            }
+            else if (m_openModelReference.empty())
+            {
+                ImGui::TextDisabled("Assets");
+            }
+        }
+        if (!m_openModelReference.empty())
+        {
+            ImGui::SameLine();
+            ImGui::TextUnformatted("/");
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s", m_openModelName.c_str());
         }
         ImGui::Separator();
         ImGui::SetNextItemWidth(120.0f);
@@ -2228,7 +2308,7 @@ void main() {
 
         if (ImGui::BeginTable("AssetIconGrid", columnCount, ImGuiTableFlags_SizingFixedFit))
         {
-            if (!hasSearch)
+            if (m_openModelReference.empty() && !hasSearch)
             {
                 for (std::size_t folderIndex = 0; folderIndex < m_cachedChildFolders.size(); ++folderIndex)
                 {
@@ -2253,6 +2333,8 @@ void main() {
                     if (hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
                     {
                         m_selectedFolder = folder;
+                        m_openModelReference.clear();
+                        m_openModelObjects.clear();
                         m_selectedAssetIndex = -1;
                     }
                     ImGui::PopID();
@@ -2263,6 +2345,7 @@ void main() {
                 ImGui::TextDisabled("Search results in %s", m_selectedFolder.empty() ? "Assets" : m_selectedFolder.c_str());
             }
 
+            if (m_openModelReference.empty())
             for (int filteredIndex = 0; filteredIndex < static_cast<int>(m_filteredAssetIndices.size()); ++filteredIndex)
             {
                 const int index = m_filteredAssetIndices[static_cast<std::size_t>(filteredIndex)];
@@ -2305,7 +2388,27 @@ void main() {
                                   ImGui::GetColorU32(ImGuiCol_TextDisabled), typeName.c_str());
 
                 if (ImGui::IsItemClicked()) m_selectedAssetIndex = index;
-                if (hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) OpenAsset(editorShell, *project, asset);
+                if (hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+                {
+                    if (asset.type == assets::ProjectAssetType::Model)
+                    {
+                        assets::ModelAsset model;
+                        std::string modelError;
+                        if (assets::LoadModelAsset(GetImportedModelManifestPath(*project, asset.reference).string(), model, &modelError))
+                        {
+                            m_openModelReference = asset.reference;
+                            m_openModelName = std::filesystem::path(fileName).stem().string();
+                            m_openModelObjects = std::move(model.objects);
+                            m_selectedAssetIndex = -1;
+                        }
+                        else
+                        {
+                            editorShell.Log(EditorShell::ConsoleSeverity::Error,
+                                            modelError.empty() ? "Import the model before opening it." : modelError);
+                        }
+                    }
+                    else OpenAsset(editorShell, *project, asset);
+                }
                 if (ImGui::BeginDragDropSource())
                 {
                     ImGui::SetDragDropPayload(kContentBrowserAssetDragDropPayload, asset.reference.c_str(), asset.reference.size() + 1);
@@ -2313,6 +2416,68 @@ void main() {
                     ImGui::EndDragDropSource();
                 }
                 if (hovered) ImGui::SetTooltip("%s\n%s", fileName.c_str(), asset.reference.c_str());
+                ImGui::PopID();
+            }
+
+            if (!m_openModelReference.empty())
+            for (std::size_t objectIndex = 0; objectIndex < m_openModelObjects.size(); ++objectIndex)
+            {
+                const auto &object = m_openModelObjects[objectIndex];
+                const assets::ProjectAssetEntry asset{.reference = object.reference, .type = object.type};
+                ImGui::TableNextColumn();
+                ImGui::PushID(static_cast<int>(objectIndex));
+                ImGui::InvisibleButton("ModelObjectCard", ImVec2(cardWidth - 6.0f, cardHeight));
+                const bool hovered = ImGui::IsItemHovered();
+                drawCardBackground(false, hovered);
+                const ImVec2 minimum = ImGui::GetItemRectMin();
+                const ImVec2 previewMin(minimum.x + 8.0f, minimum.y + 8.0f);
+                const ImVec2 previewMax(minimum.x + cardWidth - 14.0f, minimum.y + m_thumbnailSize + 2.0f);
+                auto *drawList = ImGui::GetWindowDrawList();
+                drawList->AddRectFilled(previewMin, previewMax, IM_COL32(27, 30, 35, 255), 4.0f);
+                const GLuint thumbnail = m_thumbnailCache->Get(*project, editorShell.GetEngine(), asset);
+                const std::string typeName(assets::Project::GetAssetTypeName(object.type));
+                if (thumbnail != 0)
+                    drawList->AddImage(static_cast<ImTextureID>(thumbnail), previewMin, previewMax, ImVec2(0, 1), ImVec2(1, 0));
+                else
+                {
+                    const ImVec2 typeSize = ImGui::CalcTextSize(typeName.c_str());
+                    drawList->AddText(ImVec2((previewMin.x + previewMax.x - typeSize.x) * 0.5f,
+                                             (previewMin.y + previewMax.y - typeSize.y) * 0.5f),
+                                      ImGui::GetColorU32(ImGuiCol_TextDisabled), typeName.c_str());
+                }
+                const std::string shownName = object.name.size() > 22 ? object.name.substr(0, 20) + "..." : object.name;
+                const ImVec2 nameSize = ImGui::CalcTextSize(shownName.c_str());
+                drawList->AddText(ImVec2(minimum.x + std::max(5.0f, (cardWidth - 6.0f - nameSize.x) * 0.5f),
+                                         minimum.y + m_thumbnailSize + 10.0f),
+                                  ImGui::GetColorU32(ImGuiCol_Text), shownName.c_str());
+                const ImVec2 typeSize = ImGui::CalcTextSize(typeName.c_str());
+                drawList->AddText(ImVec2(minimum.x + std::max(5.0f, (cardWidth - 6.0f - typeSize.x) * 0.5f),
+                                         minimum.y + m_thumbnailSize + 10.0f + ImGui::GetTextLineHeightWithSpacing()),
+                                  ImGui::GetColorU32(ImGuiCol_TextDisabled), typeName.c_str());
+                if (hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) OpenAsset(editorShell, *project, asset);
+                if (ImGui::BeginDragDropSource())
+                {
+                    ImGui::SetDragDropPayload(kContentBrowserAssetDragDropPayload, object.reference.c_str(), object.reference.size() + 1);
+                    ImGui::TextUnformatted(object.name.c_str());
+                    ImGui::EndDragDropSource();
+                }
+                if (ImGui::BeginPopupContextItem("ModelObjectContext"))
+                {
+                    if (ImGui::MenuItem("Extract"))
+                    {
+                        std::string extractedReference, extractionError;
+                        if (ExtractModelSubAsset(*project, object, m_selectedFolder, &extractedReference, &extractionError))
+                        {
+                            project->RefreshAssetRegistry();
+                            m_assetCacheDirty = true;
+                            editorShell.MarkProjectDirty();
+                            editorShell.Log(EditorShell::ConsoleSeverity::Info, "Extracted model sub-asset: " + extractedReference);
+                        }
+                        else editorShell.Log(EditorShell::ConsoleSeverity::Error, extractionError);
+                    }
+                    ImGui::EndPopup();
+                }
+                if (hovered) ImGui::SetTooltip("%s\n%s\nRight-click to extract", object.name.c_str(), object.reference.c_str());
                 ImGui::PopID();
             }
             ImGui::EndTable();
@@ -2486,6 +2651,75 @@ void main() {
                     ImGui::TextWrapped("Asset ID: %s", model.sourceAssetId.empty() ? "Unavailable" : model.sourceAssetId.c_str());
                     ImGui::Text("Source hash: %016llx", static_cast<unsigned long long>(model.sourceContentHash));
                     ImGui::Text("Importer version: %u", model.importerVersion);
+
+                    ImGui::SeparatorText("Sub-assets");
+                    ImGui::TextDisabled("Extract to: Assets%s%s",
+                                        m_selectedFolder.empty() ? "" : "/",
+                                        m_selectedFolder.c_str());
+                    if (ImGui::Button("Extract All"))
+                    {
+                        std::size_t extractedCount = 0;
+                        std::string firstError;
+                        for (const auto &object : model.objects)
+                        {
+                            std::string extractedReference;
+                            std::string extractionError;
+                            if (ExtractModelSubAsset(*project, object, m_selectedFolder, &extractedReference, &extractionError))
+                            {
+                                ++extractedCount;
+                            }
+                            else if (firstError.empty())
+                            {
+                                firstError = std::move(extractionError);
+                            }
+                        }
+                        project->RefreshAssetRegistry();
+                        m_assetCacheDirty = true;
+                        if (extractedCount > 0) editorShell.MarkProjectDirty();
+                        if (!firstError.empty()) editorShell.Log(EditorShell::ConsoleSeverity::Error, firstError);
+                        editorShell.Log(EditorShell::ConsoleSeverity::Info,
+                                        "Extracted " + std::to_string(extractedCount) + " model sub-assets.");
+                    }
+
+                    if (ImGui::BeginTable("ModelSubAssets", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp))
+                    {
+                        ImGui::TableSetupColumn("Name");
+                        ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 90.0f);
+                        ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 72.0f);
+                        ImGui::TableHeadersRow();
+                        for (std::size_t objectIndex = 0; objectIndex < model.objects.size(); ++objectIndex)
+                        {
+                            const auto &object = model.objects[objectIndex];
+                            ImGui::PushID(static_cast<int>(objectIndex));
+                            ImGui::TableNextRow();
+                            ImGui::TableSetColumnIndex(0);
+                            ImGui::TextUnformatted(object.name.c_str());
+                            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", object.reference.c_str());
+                            ImGui::TableSetColumnIndex(1);
+                            const std::string objectType(assets::Project::GetAssetTypeName(object.type));
+                            ImGui::TextUnformatted(objectType.c_str());
+                            ImGui::TableSetColumnIndex(2);
+                            if (ImGui::SmallButton("Extract"))
+                            {
+                                std::string extractedReference;
+                                std::string extractionError;
+                                if (ExtractModelSubAsset(*project, object, m_selectedFolder, &extractedReference, &extractionError))
+                                {
+                                    project->RefreshAssetRegistry();
+                                    m_assetCacheDirty = true;
+                                    editorShell.MarkProjectDirty();
+                                    editorShell.Log(EditorShell::ConsoleSeverity::Info,
+                                                    "Extracted model sub-asset: " + extractedReference);
+                                }
+                                else
+                                {
+                                    editorShell.Log(EditorShell::ConsoleSeverity::Error, extractionError);
+                                }
+                            }
+                            ImGui::PopID();
+                        }
+                        ImGui::EndTable();
+                    }
                 }
                 else
                 {

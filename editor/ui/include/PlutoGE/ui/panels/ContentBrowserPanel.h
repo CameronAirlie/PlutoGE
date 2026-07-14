@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PlutoGE/ui/panels/Panel.h"
+#include "PlutoGE/assets/ModelAsset.h"
 
 #include <array>
 #include <cstdint>
@@ -57,6 +58,9 @@ namespace PlutoGE::ui
         int m_newScriptableObjectClassIndex = 0;
         int m_selectedAssetIndex = -1;
         std::string m_selectedFolder;
+        std::string m_openModelReference;
+        std::string m_openModelName;
+        std::vector<assets::ModelSubAsset> m_openModelObjects;
         bool m_assetCacheDirty = true;
         const assets::Project *m_cachedProject = nullptr;
         std::string m_cachedFilter;

@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -20,6 +21,7 @@ namespace PlutoGE::scene
 
 namespace PlutoGE::ui
 {
+    class AssetThumbnailCache;
     inline constexpr const char *kContentBrowserAssetDragDropPayload = "PLUTOGE_CONTENT_BROWSER_ASSET";
     bool InstantiateMeshAssetIntoScene(std::string reference, scene::Entity *parent = nullptr);
     bool InstantiateModelAssetIntoScene(const std::string &reference, scene::Entity *parent = nullptr);
@@ -27,8 +29,8 @@ namespace PlutoGE::ui
     class ContentBrowserPanel : public Panel
     {
     public:
-        ContentBrowserPanel(const PanelConfig &config) : Panel(config) {}
-        ~ContentBrowserPanel() override = default;
+        ContentBrowserPanel(const PanelConfig &config);
+        ~ContentBrowserPanel() override;
 
         void Render() override;
 
@@ -75,5 +77,7 @@ namespace PlutoGE::ui
         std::vector<int> m_filteredAssetIndices;
         std::vector<std::string> m_filteredAssetDisplayNames;
         PendingMenuAction m_pendingMenuAction = PendingMenuAction::None;
+        std::unique_ptr<AssetThumbnailCache> m_thumbnailCache;
+        float m_thumbnailSize = 96.0f;
     };
 }

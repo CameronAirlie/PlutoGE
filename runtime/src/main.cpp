@@ -213,6 +213,36 @@ namespace PlutoGE
 
 int main(int argc, char **argv)
 {
+    if (argc > 1 && std::string_view(argv[1]) == "--export")
+    {
+        if (argc != 4)
+        {
+            std::cerr << "Usage: PlutoGERuntime --export <project.plutoproject> <output executable>" << std::endl;
+            return 2;
+        }
+
+        std::string exportError;
+        const auto sourceProject = PlutoGE::assets::Project::Load(std::filesystem::path(argv[2]), &exportError);
+        if (!sourceProject)
+        {
+            std::cerr << (exportError.empty() ? "Failed to load the project for export." : exportError) << std::endl;
+            return 1;
+        }
+
+        const auto exporterExecutable = PlutoGE::ResolveExecutablePath(argv);
+        if (!PlutoGE::assets::ExportStandaloneProject(*sourceProject,
+                                                       std::filesystem::path(argv[3]),
+                                                       exporterExecutable,
+                                                       &exportError))
+        {
+            std::cerr << (exportError.empty() ? "Failed to export the game." : exportError) << std::endl;
+            return 1;
+        }
+
+        std::cout << "Exported game to " << std::filesystem::absolute(argv[3]).lexically_normal().string() << std::endl;
+        return 0;
+    }
+
     if (argc > 2 && std::string_view(argv[1]) == "--import-bench")
     {
         const std::filesystem::path meshPath = std::filesystem::absolute(argv[2]).lexically_normal();
@@ -327,10 +357,27 @@ int main(int argc, char **argv)
         const std::string scriptAssemblyPath = engine.GetAssetManager().ResolveAssetPath(project->GetManifest().scriptAssembly);
         if (scriptAssemblyPath.empty() || !std::filesystem::exists(scriptAssemblyPath) || !engine.GetScriptEngine().LoadAssembly(scriptAssemblyPath))
         {
+            std::string scriptError;
+            if (scriptAssemblyPath.empty())
+            {
+                scriptError = "The configured assembly path could not be resolved: " + project->GetManifest().scriptAssembly;
+            }
+            else if (!std::filesystem::exists(scriptAssemblyPath))
+            {
+                scriptError = "The script assembly does not exist: " + scriptAssemblyPath;
+            }
+            else
+            {
+                scriptError = engine.GetScriptEngine().GetLastError();
+                if (scriptError.empty())
+                {
+                    scriptError = "The managed runtime rejected the script assembly: " + scriptAssemblyPath;
+                }
+            }
 #ifdef _WIN32
-            PlutoGE::g_runtimeDiagnostics.Log("Failed to load script assembly: " + project->GetManifest().scriptAssembly);
+            PlutoGE::g_runtimeDiagnostics.Log("Failed to load script assembly: " + scriptError);
 #endif
-            std::cerr << "Failed to load project script assembly." << std::endl;
+            std::cerr << "Failed to load project script assembly: " << scriptError << std::endl;
             engine.Shutdown();
             return 1;
         }

@@ -1196,6 +1196,19 @@ namespace PlutoGE::assets
             return false;
         }
 
+        const auto &manifest = project.GetManifest();
+        if (!manifest.scriptAssembly.empty() && !Project::IsEngineAssetReference(manifest.scriptAssembly))
+        {
+            const auto scriptAssemblyPath = project.ResolveAssetReference(manifest.scriptAssembly);
+            if (scriptAssemblyPath.empty() || !std::filesystem::exists(scriptAssemblyPath))
+            {
+                SetError(errorMessage,
+                         "Project script assembly was not found. Build project scripts before exporting: " +
+                             (scriptAssemblyPath.empty() ? manifest.scriptAssembly : PathToUtf8String(scriptAssemblyPath)));
+                return false;
+            }
+        }
+
         const auto normalizedDestinationExecutablePath = NormalizeAbsolutePath(destinationExecutablePath);
         std::error_code errorCode;
         std::filesystem::create_directories(normalizedDestinationExecutablePath.parent_path(), errorCode);

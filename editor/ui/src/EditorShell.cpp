@@ -2153,6 +2153,29 @@ namespace PlutoGE::ui
             return false;
         }
 
+        const auto &manifest = m_project->GetManifest();
+        if (!manifest.scriptAssembly.empty())
+        {
+            const auto scriptProjectPath = GetProjectScriptProjectPath();
+            const auto scriptSourceDirectory = GetProjectScriptSourceDirectory();
+            if (std::filesystem::exists(scriptProjectPath) || std::filesystem::exists(scriptSourceDirectory))
+            {
+                if (!BuildProjectScripts())
+                {
+                    m_statusMessage = "Game export stopped because project scripts failed to build. " + m_statusMessage;
+                    return false;
+                }
+            }
+
+            const auto scriptAssemblyPath = ResolveProjectScriptAssemblyPath();
+            if (scriptAssemblyPath.empty() || !std::filesystem::exists(scriptAssemblyPath))
+            {
+                m_statusMessage = "Game export stopped because the configured script assembly was not found: " +
+                                  (scriptAssemblyPath.empty() ? manifest.scriptAssembly : scriptAssemblyPath.string());
+                return false;
+            }
+        }
+
         const auto runtimeExecutablePath = assets::FindRuntimeExecutable(GetProcessDirectory());
         if (runtimeExecutablePath.empty())
         {

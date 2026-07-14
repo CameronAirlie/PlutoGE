@@ -25,7 +25,8 @@ namespace PlutoGE::render
             glm::vec4 flags{0.0f};
         };
 
-        bool CanBatchGeometryCommands(const RenderCommand &a, const RenderCommand &b)
+        bool CanBatchGeometryCommands(const RenderCommand &a, std::size_t aLodIndex,
+                                      const RenderCommand &b, std::size_t bLodIndex)
         {
             if (a.jointMatrices || b.jointMatrices)
             {
@@ -34,8 +35,8 @@ namespace PlutoGE::render
 
             return a.material == b.material &&
                    a.mesh == b.mesh &&
-                   a.mesh->GetSubmeshLodRange(a.submeshIndex, a.lodIndex).indexOffset == b.mesh->GetSubmeshLodRange(b.submeshIndex, b.lodIndex).indexOffset &&
-                   a.mesh->GetSubmeshLodRange(a.submeshIndex, a.lodIndex).indexCount == b.mesh->GetSubmeshLodRange(b.submeshIndex, b.lodIndex).indexCount;
+                   a.mesh->GetSubmeshLodRange(a.submeshIndex, aLodIndex).indexOffset == b.mesh->GetSubmeshLodRange(b.submeshIndex, bLodIndex).indexOffset &&
+                   a.mesh->GetSubmeshLodRange(a.submeshIndex, aLodIndex).indexCount == b.mesh->GetSubmeshLodRange(b.submeshIndex, bLodIndex).indexCount;
         }
 
         bool IsBlendMaterial(const Material *material)
@@ -43,24 +44,32 @@ namespace PlutoGE::render
             return material && material->GetConfig().alphaMode == AlphaMode::Blend;
         }
 
-        glm::vec4 BuildInstanceFlags(const RenderCommand &command)
+        glm::vec4 BuildInstanceFlags(const RenderCommand &command, std::size_t lodIndex,
+                                     float lodFade, bool incomingLod)
         {
             const float lodMaxIndex = command.mesh ? static_cast<float>(command.mesh->GetSubmeshLodCount(command.submeshIndex) - 1) : 0.0f;
+            // Pack the fade into the fractional part of the existing LOD flag;
+            // all 16 guaranteed GL 3.3 vertex attributes are already occupied.
+            // [0,.25] is the outgoing LOD and [.5,.75] the incoming LOD.
+            const float packedLod = static_cast<float>(lodIndex) +
+                                    (incomingLod ? 0.5f + lodFade * 0.25f : lodFade * 0.25f);
             return glm::vec4(
                 command.isStatic ? 1.0f : 0.0f,
                 command.usePrimaryUvForLightmap ? 1.0f : 0.0f,
-                static_cast<float>(command.lodIndex),
+                packedLod,
                 lodMaxIndex);
         }
 
-        void AppendGeometryInstances(const RenderCommand &command, std::vector<GeometryInstanceData> &instances)
+        void AppendGeometryInstances(const RenderCommand &command, std::size_t lodIndex,
+                                     float lodFade, bool incomingLod,
+                                     std::vector<GeometryInstanceData> &instances)
         {
             if (!command.instanceModels || command.instanceModels->empty())
             {
                 instances.push_back(GeometryInstanceData{
                     .model = command.model,
                     .previousModel = command.previousModel,
-                    .flags = BuildInstanceFlags(command),
+                    .flags = BuildInstanceFlags(command, lodIndex, lodFade, incomingLod),
                 });
                 return;
             }
@@ -75,7 +84,7 @@ namespace PlutoGE::render
                 instances.push_back(GeometryInstanceData{
                     .model = model,
                     .previousModel = previousModel,
-                    .flags = BuildInstanceFlags(command),
+                    .flags = BuildInstanceFlags(command, lodIndex, lodFade, incomingLod),
                 });
             }
         }
@@ -124,6 +133,7 @@ namespace PlutoGE::render
         struct PreparedGeometryDraw
         {
             const RenderCommand *command = nullptr;
+            std::size_t lodIndex = 0;
             std::size_t firstInstance = 0;
             std::size_t instanceCount = 0;
         };
@@ -245,21 +255,37 @@ namespace PlutoGE::render
                 continue;
             }
 
-            const bool appendToPrevious = !command.jointMatrices &&
-                                          !draws.empty() &&
-                                          !draws.back().command->jointMatrices &&
-                                          CanBatchGeometryCommands(*draws.back().command, command);
-            if (!appendToPrevious)
+            const auto appendDraw = [&](std::size_t lodIndex, float lodFade, bool incomingLod)
             {
-                draws.push_back(PreparedGeometryDraw{
-                    .command = &command,
-                    .firstInstance = instances.size(),
-                });
-            }
+                const bool appendToPrevious = !command.jointMatrices &&
+                                              !draws.empty() &&
+                                              !draws.back().command->jointMatrices &&
+                                              CanBatchGeometryCommands(*draws.back().command, draws.back().lodIndex,
+                                                                       command, lodIndex);
+                if (!appendToPrevious)
+                {
+                    draws.push_back(PreparedGeometryDraw{
+                        .command = &command,
+                        .lodIndex = lodIndex,
+                        .firstInstance = instances.size(),
+                    });
+                }
 
-            const std::size_t previousInstanceCount = instances.size();
-            AppendGeometryInstances(command, instances);
-            draws.back().instanceCount += instances.size() - previousInstanceCount;
+                const std::size_t previousInstanceCount = instances.size();
+                AppendGeometryInstances(command, lodIndex, lodFade, incomingLod, instances);
+                draws.back().instanceCount += instances.size() - previousInstanceCount;
+            };
+
+            const std::size_t transitionLodIndex = command.GetLodTransitionIndex();
+            const float transitionFade = command.GetLodTransitionFade();
+            const bool transitioning = transitionLodIndex != command.lodIndex &&
+                                       transitionFade > 0.0f &&
+                                       transitionFade < 1.0f;
+            appendDraw(command.lodIndex, transitioning ? transitionFade : 0.0f, false);
+            if (transitioning)
+            {
+                appendDraw(transitionLodIndex, transitionFade, true);
+            }
         }
 
         UploadGeometryInstances(m_instanceBuffer, m_instanceCapacity, instances);
@@ -314,7 +340,7 @@ namespace PlutoGE::render
                     const auto &groupedDraw = draws[groupedDrawIndex];
                     const auto range = groupedDraw.command->mesh->GetSubmeshLodRange(
                         groupedDraw.command->submeshIndex,
-                        groupedDraw.command->lodIndex);
+                        groupedDraw.lodIndex);
                     indirectCommands.push_back(BuildDrawElementsIndirectCommand(
                         range.indexCount,
                         groupedDraw.instanceCount,
@@ -415,7 +441,7 @@ namespace PlutoGE::render
                             directDraw.command->submeshIndex,
                             directDraw.instanceCount,
                             directDraw.firstInstance,
-                            directDraw.command->lodIndex);
+                            directDraw.lodIndex);
                     }
                     apiDrawCalls += static_cast<int>(group.drawCount);
                 }
@@ -432,7 +458,7 @@ namespace PlutoGE::render
                 command.mesh->DrawSubmeshInstancedBaseInstanceBound(command.submeshIndex,
                                                                     draw.instanceCount,
                                                                     draw.firstInstance,
-                                                                    command.lodIndex);
+                                                                    draw.lodIndex);
                 boundMesh = command.mesh;
                 ++apiDrawCalls;
             }
@@ -445,11 +471,11 @@ namespace PlutoGE::render
                 {
                     const auto &groupedDraw = draws[groupedDrawIndex];
                     const auto &groupedCommand = *groupedDraw.command;
-                    const auto indexCount = groupedCommand.mesh->GetSubmeshLodIndexCount(groupedCommand.submeshIndex, groupedCommand.lodIndex);
+                    const auto indexCount = groupedCommand.mesh->GetSubmeshLodIndexCount(groupedCommand.submeshIndex, groupedDraw.lodIndex);
                     ctx.renderer->RecordGeometryBatch(
                         static_cast<int>(groupedDraw.instanceCount),
                         static_cast<int>((indexCount / 3) * groupedDraw.instanceCount),
-                        groupedCommand.lodIndex);
+                        groupedDraw.lodIndex);
                 }
             }
         }

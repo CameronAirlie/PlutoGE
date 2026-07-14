@@ -316,6 +316,30 @@ namespace PlutoGE::render
                 return value.r;
             }
 
+            float LodDitherThreshold()
+            {
+                float pattern[16] = float[16](
+                    0.0, 8.0, 2.0, 10.0,
+                    12.0, 4.0, 14.0, 6.0,
+                    3.0, 11.0, 1.0, 9.0,
+                    15.0, 7.0, 13.0, 5.0);
+                ivec2 pixel = ivec2(gl_FragCoord.xy) & ivec2(3);
+                return (pattern[pixel.y * 4 + pixel.x] + 0.5) / 16.0;
+            }
+
+            void ApplyLodDither()
+            {
+                float packedFade = fract(InstanceFlags.z);
+                if (packedFade > 0.0 && packedFade < 0.3)
+                {
+                    if (LodDitherThreshold() < packedFade * 4.0) discard;
+                }
+                else if (packedFade > 0.45)
+                {
+                    if (LodDitherThreshold() >= (packedFade - 0.5) * 4.0) discard;
+                }
+            }
+
             float ToFloat(float value) { return value; }
             float ToFloat(vec2 value) { return value.x; }
             float ToFloat(vec3 value) { return value.x; }
@@ -348,6 +372,7 @@ namespace PlutoGE::render
 
             void main()
             {
+                ApplyLodDither();
                 gPosition = FragPos;
                 vec3 graphAlbedo = uColor.rgb;
                 float graphOpacity = uColor.a;
@@ -407,7 +432,7 @@ namespace PlutoGE::render
                 gEmission = max(finalEmission, vec3(0.0));
                 gBakedLighting = vec4(0.0, 0.0, 0.0, )" +
                                std::string(initialBakedLightingAlpha) + R"();
-                gDebug = InstanceFlags.w <= 0.5 ? -1.0 : clamp(InstanceFlags.z / InstanceFlags.w, 0.0, 1.0);
+                gDebug = InstanceFlags.w <= 0.5 ? -1.0 : clamp(floor(InstanceFlags.z) / InstanceFlags.w, 0.0, 1.0);
 
                 if ()" + std::string(allowLightmap) +
                                R"( && InstanceFlags.x > 0.5 && uHasLightmapTexture > 0.5)

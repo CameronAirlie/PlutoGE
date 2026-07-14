@@ -9,6 +9,7 @@ add_library(PlutoGEScene
     src/components/ClothComponent.cpp
     src/components/MeshComponent.cpp
     src/components/NavAgentComponent.cpp
+    src/components/NavigationMeshComponent.cpp
     src/components/OceanComponent.cpp
     src/components/SkeletonAttachmentComponent.cpp
     src/components/CameraComponent.cpp

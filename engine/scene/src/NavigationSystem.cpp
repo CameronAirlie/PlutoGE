@@ -1,16 +1,268 @@
 #include "PlutoGE/scene/NavigationSystem.h"
 #include "PlutoGE/scene/Scene.h"
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
 #include <queue>
-namespace PlutoGE::scene {
-void NavigationSystem::Clear(){m_cells.clear();m_debugPoints.clear();m_width=m_depth=0;}
-bool NavigationSystem::Bake(const Scene&s,const NavigationBakeSettings&v){Clear();m_settings=v;m_settings.cellSize=std::max(.1f,v.cellSize);m_width=std::max(1,(int)std::ceil((v.boundsMax.x-v.boundsMin.x)/m_settings.cellSize));m_depth=std::max(1,(int)std::ceil((v.boundsMax.z-v.boundsMin.z)/m_settings.cellSize));if((uint64_t)m_width*m_depth>4000000)return false;m_cells.resize((size_t)m_width*m_depth);float len=std::max(.1f,v.boundsMax.y-v.boundsMin.y),minY=std::cos(glm::radians(std::clamp(v.maxSlopeDegrees,0.f,89.f)));for(int z=0;z<m_depth;++z)for(int x=0;x<m_width;++x){glm::vec3 o{v.boundsMin.x+(x+.5f)*m_settings.cellSize,v.boundsMax.y,v.boundsMin.z+(z+.5f)*m_settings.cellSize};PhysicsRaycastHit h;auto&c=m_cells[(size_t)z*m_width+x];if(s.Raycast(o,{0,-1,0},len,h)&&h.normal.y>=minY){c.walkable=true;c.height=h.point.y;}}
-auto source=m_cells;int radius=(int)std::ceil(std::max(0.f,v.agentRadius)/m_settings.cellSize);for(int z=0;z<m_depth;++z)for(int x=0;x<m_width;++x){auto&c=m_cells[(size_t)z*m_width+x];if(!c.walkable)continue;for(int dz=-radius;dz<=radius&&c.walkable;++dz)for(int dx=-radius;dx<=radius;++dx){if(dx*dx+dz*dz>radius*radius)continue;int nx=x+dx,nz=z+dz;if(nx<0||nz<0||nx>=m_width||nz>=m_depth){c.walkable=false;break;}const auto&neighbor=source[(size_t)nz*m_width+nx];if(!neighbor.walkable||std::abs(neighbor.height-c.height)>v.maxStepHeight){c.walkable=false;break;}}}for(int i=0;i<(int)m_cells.size();++i)if(m_cells[i].walkable)m_debugPoints.push_back(CellPosition(i));return !m_debugPoints.empty();}
-glm::vec3 NavigationSystem::CellPosition(int i)const{int x=i%m_width,z=i/m_width;return{m_settings.boundsMin.x+(x+.5f)*m_settings.cellSize,m_cells[i].height,m_settings.boundsMin.z+(z+.5f)*m_settings.cellSize};}
-int NavigationSystem::FindNearestCell(const glm::vec3&p)const{if(m_cells.empty())return-1;int cx=(int)((p.x-m_settings.boundsMin.x)/m_settings.cellSize),cz=(int)((p.z-m_settings.boundsMin.z)/m_settings.cellSize),best=-1;float bd=std::numeric_limits<float>::max();for(int r=0;r<=8&&best<0;++r)for(int z=cz-r;z<=cz+r;++z)for(int x=cx-r;x<=cx+r;++x){if(x<0||z<0||x>=m_width||z>=m_depth)continue;int i=z*m_width+x;if(!m_cells[i].walkable)continue;glm::vec3 d=CellPosition(i)-p;float q=glm::dot(d,d);if(q<bd){bd=q;best=i;}}return best;}
-bool NavigationSystem::ProjectPoint(const glm::vec3&p,glm::vec3&o)const{int i=FindNearestCell(p);if(i<0)return false;o=CellPosition(i);return true;}
-bool NavigationSystem::IsSegmentWalkable(const glm::vec3&a,const glm::vec3&b)const{glm::vec3 delta=b-a;delta.y=0;const float distance=glm::length(delta);const int samples=std::max(1,(int)std::ceil(distance/(m_settings.cellSize*.25f)));float previousHeight=a.y;for(int sample=0;sample<=samples;++sample){float t=(float)sample/(float)samples;glm::vec3 point=glm::mix(a,b,t);int x=(int)std::floor((point.x-m_settings.boundsMin.x)/m_settings.cellSize),z=(int)std::floor((point.z-m_settings.boundsMin.z)/m_settings.cellSize);if(x<0||z<0||x>=m_width||z>=m_depth)return false;const auto&cell=m_cells[(size_t)z*m_width+x];if(!cell.walkable||std::abs(cell.height-previousHeight)>m_settings.maxStepHeight)return false;previousHeight=cell.height;}return true;}
-NavigationPath NavigationSystem::FindPath(const glm::vec3&a,const glm::vec3&b)const{NavigationPath out;int start=FindNearestCell(a),goal=FindNearestCell(b);if(start<0||goal<0)return out;struct N{int i;float f;bool operator<(const N&o)const{return f>o.f;}};std::priority_queue<N>q;std::vector<float>g(m_cells.size(),std::numeric_limits<float>::max());std::vector<int>parent(m_cells.size(),-1);g[start]=0;q.push({start,0});constexpr int d[8][2]={{1,0},{-1,0},{0,1},{0,-1},{1,1},{1,-1},{-1,1},{-1,-1}};while(!q.empty()){int c=q.top().i;q.pop();if(c==goal)break;int x=c%m_width,z=c/m_width;for(auto&o:d){int nx=x+o[0],nz=z+o[1];if(nx<0||nz<0||nx>=m_width||nz>=m_depth)continue;int n=nz*m_width+nx;if(!m_cells[n].walkable||std::abs(m_cells[n].height-m_cells[c].height)>m_settings.maxStepHeight)continue;if(o[0]&&o[1]){const int sideX=z*m_width+nx,sideZ=nz*m_width+x;if(!m_cells[sideX].walkable||!m_cells[sideZ].walkable)continue;}float ng=g[c]+(o[0]&&o[1]?1.4142f:1.f);if(ng>=g[n])continue;g[n]=ng;parent[n]=c;int gx=goal%m_width,gz=goal/m_width;q.push({n,ng+std::hypot((float)(gx-nx),(float)(gz-nz))});}}if(goal!=start&&parent[goal]<0)return out;for(int i=goal;i>=0;i=parent[i]){out.points.push_back(CellPosition(i));if(i==start)break;}std::reverse(out.points.begin(),out.points.end());if(out.points.size()>2){std::vector<glm::vec3>simplified;simplified.push_back(out.points.front());size_t anchor=0;while(anchor+1<out.points.size()){size_t furthest=anchor+1;for(size_t candidate=out.points.size()-1;candidate>anchor+1;--candidate){if(IsSegmentWalkable(out.points[anchor],out.points[candidate])){furthest=candidate;break;}}simplified.push_back(out.points[furthest]);anchor=furthest;}out.points=std::move(simplified);}if(!out.points.empty()){out.points.front()=a;out.points.back()=b;}out.complete=true;return out;}
+
+namespace PlutoGE::scene
+{
+    namespace
+    {
+        float MaxTraversableHeightDelta(const NavigationBakeSettings &settings, float horizontalDistance)
+        {
+            const float slope = std::tan(glm::radians(std::clamp(settings.maxSlopeDegrees, 0.0f, 89.0f)));
+            return std::max(std::max(0.0f, settings.maxStepHeight), slope * std::max(0.0f, horizontalDistance)) + 0.001f;
+        }
+    }
+
+    void NavigationSystem::Clear()
+    {
+        m_cells.clear();
+        m_debugPoints.clear();
+        m_width = m_depth = 0;
+    }
+
+    bool NavigationSystem::Bake(const Scene &scene, const NavigationBakeSettings &settings)
+    {
+        Clear();
+        m_settings = settings;
+        m_settings.cellSize = std::max(0.1f, settings.cellSize);
+        m_width = std::max(1, static_cast<int>(std::ceil((settings.boundsMax.x - settings.boundsMin.x) / m_settings.cellSize)));
+        m_depth = std::max(1, static_cast<int>(std::ceil((settings.boundsMax.z - settings.boundsMin.z) / m_settings.cellSize)));
+        if (static_cast<uint64_t>(m_width) * m_depth > 4000000)
+            return false;
+
+        m_cells.resize(static_cast<size_t>(m_width) * m_depth);
+        const float rayLength = std::max(0.1f, settings.boundsMax.y - settings.boundsMin.y);
+        const float minimumNormalY = std::cos(glm::radians(std::clamp(settings.maxSlopeDegrees, 0.0f, 89.0f)));
+        for (int z = 0; z < m_depth; ++z)
+        {
+            for (int x = 0; x < m_width; ++x)
+            {
+                const glm::vec3 origin{settings.boundsMin.x + (x + 0.5f) * m_settings.cellSize,
+                                       settings.boundsMax.y,
+                                       settings.boundsMin.z + (z + 0.5f) * m_settings.cellSize};
+                PhysicsRaycastHit floorHit;
+                auto &cell = m_cells[static_cast<size_t>(z) * m_width + x];
+                if (!scene.Raycast(origin, {0.0f, -1.0f, 0.0f}, rayLength, floorHit) || floorHit.normal.y < minimumNormalY)
+                    continue;
+
+                cell.walkable = true;
+                cell.height = floorHit.point.y;
+                cell.clearance = std::max(0.0f, settings.boundsMax.y - cell.height);
+                PhysicsRaycastHit ceilingHit;
+                const glm::vec3 clearanceOrigin = floorHit.point + glm::vec3(0.0f, 0.05f, 0.0f);
+                if (scene.Raycast(clearanceOrigin, {0.0f, 1.0f, 0.0f}, cell.clearance, ceilingHit))
+                    cell.clearance = std::max(0.0f, ceilingHit.distance + 0.05f);
+            }
+        }
+
+        for (int index = 0; index < static_cast<int>(m_cells.size()); ++index)
+            if (m_cells[index].walkable)
+                m_debugPoints.push_back(CellPosition(index));
+        return !m_debugPoints.empty();
+    }
+
+    glm::vec3 NavigationSystem::CellPosition(int index) const
+    {
+        const int x = index % m_width;
+        const int z = index / m_width;
+        return {m_settings.boundsMin.x + (x + 0.5f) * m_settings.cellSize,
+                m_cells[index].height,
+                m_settings.boundsMin.z + (z + 0.5f) * m_settings.cellSize};
+    }
+
+    bool NavigationSystem::IsCellWalkableForAgent(int index, float agentRadius, float agentHeight) const
+    {
+        if (index < 0 || index >= static_cast<int>(m_cells.size()) || !m_cells[index].walkable)
+            return false;
+        agentRadius = std::max(0.0f, agentRadius);
+        agentHeight = std::max(0.0f, agentHeight);
+        const int centerX = index % m_width;
+        const int centerZ = index / m_width;
+        const int radiusInCells = static_cast<int>(std::ceil(agentRadius / m_settings.cellSize));
+        const float centerHeight = m_cells[index].height;
+
+        for (int dz = -radiusInCells; dz <= radiusInCells; ++dz)
+        {
+            for (int dx = -radiusInCells; dx <= radiusInCells; ++dx)
+            {
+                const float distance = m_settings.cellSize * std::hypot(static_cast<float>(dx), static_cast<float>(dz));
+                if (distance > agentRadius + m_settings.cellSize * 0.5f)
+                    continue;
+                const int x = centerX + dx;
+                const int z = centerZ + dz;
+                if (x < 0 || z < 0 || x >= m_width || z >= m_depth)
+                    return false;
+                const auto &cell = m_cells[static_cast<size_t>(z) * m_width + x];
+                if (!cell.walkable || cell.clearance + 0.001f < agentHeight ||
+                    std::abs(cell.height - centerHeight) > MaxTraversableHeightDelta(m_settings, distance))
+                    return false;
+            }
+        }
+        return true;
+    }
+
+    int NavigationSystem::FindNearestCell(const glm::vec3 &point, float agentRadius, float agentHeight) const
+    {
+        if (m_cells.empty())
+            return -1;
+        const int centerX = static_cast<int>((point.x - m_settings.boundsMin.x) / m_settings.cellSize);
+        const int centerZ = static_cast<int>((point.z - m_settings.boundsMin.z) / m_settings.cellSize);
+        int best = -1;
+        float bestDistance = std::numeric_limits<float>::max();
+        for (int radius = 0; radius <= 8 && best < 0; ++radius)
+        {
+            for (int z = centerZ - radius; z <= centerZ + radius; ++z)
+            {
+                for (int x = centerX - radius; x <= centerX + radius; ++x)
+                {
+                    if (x < 0 || z < 0 || x >= m_width || z >= m_depth)
+                        continue;
+                    const int index = z * m_width + x;
+                    if (!IsCellWalkableForAgent(index, agentRadius, agentHeight))
+                        continue;
+                    const glm::vec3 delta = CellPosition(index) - point;
+                    const float distance = glm::dot(delta, delta);
+                    if (distance < bestDistance)
+                    {
+                        bestDistance = distance;
+                        best = index;
+                    }
+                }
+            }
+        }
+        return best;
+    }
+
+    bool NavigationSystem::ProjectPoint(const glm::vec3 &point, glm::vec3 &projected, float agentRadius, float agentHeight) const
+    {
+        const int index = FindNearestCell(point, agentRadius, agentHeight);
+        if (index < 0)
+            return false;
+        projected = CellPosition(index);
+        return true;
+    }
+
+    bool NavigationSystem::IsSegmentWalkable(const glm::vec3 &start, const glm::vec3 &end, float agentRadius, float agentHeight) const
+    {
+        glm::vec3 horizontalDelta = end - start;
+        horizontalDelta.y = 0.0f;
+        const float distance = glm::length(horizontalDelta);
+        const int samples = std::max(1, static_cast<int>(std::ceil(distance / (m_settings.cellSize * 0.25f))));
+        float previousHeight = start.y;
+        for (int sample = 0; sample <= samples; ++sample)
+        {
+            const float t = static_cast<float>(sample) / samples;
+            const glm::vec3 point = glm::mix(start, end, t);
+            const int x = static_cast<int>(std::floor((point.x - m_settings.boundsMin.x) / m_settings.cellSize));
+            const int z = static_cast<int>(std::floor((point.z - m_settings.boundsMin.z) / m_settings.cellSize));
+            if (x < 0 || z < 0 || x >= m_width || z >= m_depth)
+                return false;
+            const int index = z * m_width + x;
+            const auto &cell = m_cells[index];
+            if (!IsCellWalkableForAgent(index, agentRadius, agentHeight) ||
+                std::abs(cell.height - previousHeight) > m_settings.maxStepHeight + 0.001f)
+                return false;
+            previousHeight = cell.height;
+        }
+        return true;
+    }
+
+    NavigationPath NavigationSystem::FindPath(const glm::vec3 &startPoint, const glm::vec3 &endPoint,
+                                               float agentRadius, float agentHeight) const
+    {
+        NavigationPath output;
+        const int start = FindNearestCell(startPoint, agentRadius, agentHeight);
+        const int goal = FindNearestCell(endPoint, agentRadius, agentHeight);
+        if (start < 0 || goal < 0)
+            return output;
+
+        struct OpenNode { int index; float score; bool operator<(const OpenNode &other) const { return score > other.score; } };
+        std::priority_queue<OpenNode> open;
+        std::vector<float> costs(m_cells.size(), std::numeric_limits<float>::max());
+        std::vector<int> parents(m_cells.size(), -1);
+        costs[start] = 0.0f;
+        open.push({start, 0.0f});
+        constexpr int directions[8][2] = {{1,0},{-1,0},{0,1},{0,-1},{1,1},{1,-1},{-1,1},{-1,-1}};
+
+        while (!open.empty())
+        {
+            const int current = open.top().index;
+            open.pop();
+            if (current == goal)
+                break;
+            const int x = current % m_width;
+            const int z = current / m_width;
+            for (const auto &direction : directions)
+            {
+                const int nextX = x + direction[0];
+                const int nextZ = z + direction[1];
+                if (nextX < 0 || nextZ < 0 || nextX >= m_width || nextZ >= m_depth)
+                    continue;
+                const int next = nextZ * m_width + nextX;
+                const bool diagonal = direction[0] != 0 && direction[1] != 0;
+                const float linkDistance = m_settings.cellSize * (diagonal ? 1.41421356f : 1.0f);
+                if (!IsCellWalkableForAgent(next, agentRadius, agentHeight) ||
+                    std::abs(m_cells[next].height - m_cells[current].height) > MaxTraversableHeightDelta(m_settings, linkDistance))
+                    continue;
+                if (diagonal)
+                {
+                    const int sideX = z * m_width + nextX;
+                    const int sideZ = nextZ * m_width + x;
+                    if (!IsCellWalkableForAgent(sideX, agentRadius, agentHeight) ||
+                        !IsCellWalkableForAgent(sideZ, agentRadius, agentHeight))
+                        continue;
+                }
+                const float newCost = costs[current] + (diagonal ? 1.4142f : 1.0f);
+                if (newCost >= costs[next])
+                    continue;
+                costs[next] = newCost;
+                parents[next] = current;
+                const int goalX = goal % m_width;
+                const int goalZ = goal / m_width;
+                open.push({next, newCost + std::hypot(static_cast<float>(goalX - nextX), static_cast<float>(goalZ - nextZ))});
+            }
+        }
+
+        if (goal != start && parents[goal] < 0)
+            return output;
+        for (int index = goal; index >= 0; index = parents[index])
+        {
+            output.points.push_back(CellPosition(index));
+            if (index == start)
+                break;
+        }
+        std::reverse(output.points.begin(), output.points.end());
+
+        if (output.points.size() > 2)
+        {
+            std::vector<glm::vec3> simplified{output.points.front()};
+            size_t anchor = 0;
+            while (anchor + 1 < output.points.size())
+            {
+                size_t furthest = anchor + 1;
+                for (size_t candidate = output.points.size() - 1; candidate > anchor + 1; --candidate)
+                {
+                    if (IsSegmentWalkable(output.points[anchor], output.points[candidate], agentRadius, agentHeight))
+                    {
+                        furthest = candidate;
+                        break;
+                    }
+                }
+                simplified.push_back(output.points[furthest]);
+                anchor = furthest;
+            }
+            output.points = std::move(simplified);
+        }
+        if (!output.points.empty())
+        {
+            output.points.front() = startPoint;
+            output.points.back() = endPoint;
+        }
+        output.complete = true;
+        return output;
+    }
 }

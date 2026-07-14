@@ -27,6 +27,7 @@
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
 #include "PlutoGE/scene/components/RigidbodyComponent.h"
 #include "PlutoGE/scene/components/NavAgentComponent.h"
+#include "PlutoGE/scene/components/NavigationMeshComponent.h"
 #include "PlutoGE/scene/components/SoundEmitterComponent.h"
 #include "PlutoGE/scene/components/SoundListenerComponent.h"
 #include "PlutoGE/scene/components/UIComponent.h"
@@ -112,6 +113,7 @@ namespace PlutoGE::ui
             UIText = 21,
             UIButton = 22,
             NavAgent = 23,
+            NavigationMesh = 24,
         };
 
         struct ScriptAssetOption
@@ -1511,6 +1513,8 @@ namespace PlutoGE::ui
             }
             if (dynamic_cast<const scene::NavAgentComponent *>(&component))
                 return "Navigation Agent Component";
+            if (dynamic_cast<const scene::NavigationMeshComponent *>(&component))
+                return "Navigation Mesh Component";
             if (dynamic_cast<const scene::ColliderComponent *>(&component))
             {
                 return "Collider Component";
@@ -1587,6 +1591,8 @@ namespace PlutoGE::ui
                 return "RigidbodyComponent";
             if (dynamic_cast<const scene::NavAgentComponent *>(&component))
                 return "NavAgentComponent";
+            if (dynamic_cast<const scene::NavigationMeshComponent *>(&component))
+                return "NavigationMeshComponent";
             if (dynamic_cast<const scene::ColliderComponent *>(&component))
                 return "ColliderComponent";
             if (dynamic_cast<const scene::IblCaptureComponent *>(&component))
@@ -1717,6 +1723,8 @@ namespace PlutoGE::ui
                 return !entity.HasComponent<scene::RigidbodyComponent>();
             case AddableComponentType::NavAgent:
                 return !entity.HasComponent<scene::NavAgentComponent>();
+            case AddableComponentType::NavigationMesh:
+                return !entity.HasComponent<scene::NavigationMeshComponent>();
             case AddableComponentType::Collider:
                 return !entity.HasComponent<scene::ColliderComponent>();
             case AddableComponentType::IblCapture:
@@ -1784,6 +1792,7 @@ namespace PlutoGE::ui
             if (ImGui::BeginMenu("AI"))
             {
                 renderItem("Navigation Agent", AddableComponentType::NavAgent);
+                renderItem("Navigation Mesh", AddableComponentType::NavigationMesh);
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Environment"))
@@ -1900,6 +1909,9 @@ namespace PlutoGE::ui
                 break;
             case AddableComponentType::NavAgent:
                 entity.CreateComponent<scene::NavAgentComponent>();
+                break;
+            case AddableComponentType::NavigationMesh:
+                entity.CreateComponent<scene::NavigationMeshComponent>();
                 break;
             case AddableComponentType::Collider:
                 entity.CreateComponent<scene::ColliderComponent>(scene::ColliderComponentConfig{
@@ -4353,6 +4365,36 @@ namespace PlutoGE::ui
                             {
                                 iblCaptureComponent->MarkDirty();
                             }
+                        }
+                        else if (auto *navigationMesh = dynamic_cast<scene::NavigationMeshComponent *>(componentPtr))
+                        {
+                            properties = navigationMesh->Serialize();
+                            std::erase_if(properties, [](const scene::Property &property)
+                                          { return property.name == "Baked"; });
+                            propertiesProvided = true;
+
+                            const auto &navigation = navigationMesh->GetNavigation();
+                            ImGui::Text("Status: %s", navigation.IsBaked() ? "Baked" : "Not baked");
+                            ImGui::Text("Grid: %d x %d", navigation.GetWidth(), navigation.GetDepth());
+                            ImGui::Text("Walkable cells: %zu", navigation.GetDebugWalkablePoints().size());
+                            if (ImGui::Button("Bake"))
+                            {
+                                const bool baked = navigationMesh->Bake();
+                                editorShell.SetStatusMessage(baked
+                                    ? "Navigation mesh baked: " + std::to_string(navigationMesh->GetNavigation().GetDebugWalkablePoints().size()) + " walkable cells."
+                                    : "Navigation mesh bake produced no walkable cells. Check its bounds and scene colliders.");
+                                entity->AddPrefabOverride("Component:NavigationMeshComponent:Baked");
+                                editorShell.MarkSceneDirty();
+                            }
+                            ImGui::SameLine();
+                            if (ImGui::Button("Clear"))
+                            {
+                                navigationMesh->Clear();
+                                editorShell.SetStatusMessage("Navigation mesh cleared.");
+                                entity->AddPrefabOverride("Component:NavigationMeshComponent:Baked");
+                                editorShell.MarkSceneDirty();
+                            }
+                            ImGui::SeparatorText("Bake Settings (World Space)");
                         }
                         else if (auto *terrainComponent = dynamic_cast<scene::TerrainComponent *>(componentPtr))
                         {

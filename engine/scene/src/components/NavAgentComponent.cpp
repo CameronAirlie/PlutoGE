@@ -4,6 +4,7 @@
 #include "PlutoGE/scene/NavigationSystem.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/RigidbodyComponent.h"
+#include "PlutoGE/scene/components/NavigationMeshComponent.h"
 
 #include <algorithm>
 #include <cmath>
@@ -48,7 +49,22 @@ namespace PlutoGE::scene
         if (!GetOwner() || !GetOwner()->GetScene())
             return false;
 
-        auto path = GetOwner()->GetScene()->GetNavigation().FindPath(GetOwner()->GetWorldPosition(), destination);
+        auto *scene = GetOwner()->GetScene();
+        NavigationSystem *navigation = nullptr;
+        if (auto *meshEntity = scene->FindEntityByID(m_config.navigationMeshEntityId))
+            if (auto *mesh = meshEntity->GetComponent<NavigationMeshComponent>())
+            {
+                if (!mesh->GetNavigation().IsBaked() && mesh->ShouldHaveBake()) mesh->Bake();
+                navigation = &mesh->GetNavigation();
+            }
+        if (!navigation || !navigation->IsBaked())
+        {
+            m_path.clear();
+            m_nextPoint = 0;
+            m_velocity = {};
+            return false;
+        }
+        auto path = navigation->FindPath(GetOwner()->GetWorldPosition(), destination, m_config.agentRadius, m_config.agentHeight);
         m_path = std::move(path.points);
         if (m_path.size() < 2)
         {
@@ -83,6 +99,7 @@ namespace PlutoGE::scene
         m_path.clear();
         m_nextPoint = 0;
         m_velocity = {};
+        m_verticalVelocity = 0.0f;
         m_steeringDirection = {};
         m_avoidanceDirection = {};
         m_repathTimer = 0.0f;
@@ -166,6 +183,23 @@ namespace PlutoGE::scene
         }
         if (deltaTime <= 0.0f || !m_config.navigateOnStart)
             return;
+
+        // Kinematic bodies are not integrated by Bullet. Apply gravity through
+        // the same swept movement used by navigation so an agent remains
+        // collision-safe while falling from ledges or descending to lower
+        // surfaces. Horizontal sweeps still project motion up walkable ramps.
+        if (m_config.useGravity)
+        {
+            m_verticalVelocity = std::max(m_verticalVelocity - std::max(0.0f, m_config.gravity) * deltaTime, -50.0f);
+            const float requestedFall = m_verticalVelocity * deltaTime;
+            const glm::vec3 actualFall = scene->MoveKinematic(*owner, {0.0f, requestedFall, 0.0f});
+            if (requestedFall < 0.0f && actualFall.y > requestedFall + 0.0001f)
+                m_verticalVelocity = 0.0f;
+        }
+        else
+        {
+            m_verticalVelocity = 0.0f;
+        }
 
         const glm::vec3 destination = ResolveDestination();
         m_repathTimer -= deltaTime;
@@ -268,10 +302,15 @@ namespace PlutoGE::scene
             {"Repath Interval", PropertyType::Float, std::to_string(m_config.repathInterval)},
             {"Avoidance Distance", PropertyType::Float, std::to_string(m_config.avoidanceDistance)},
             {"Turn Speed", PropertyType::Float, std::to_string(m_config.turnSpeedDegrees)},
+            {"Agent Radius", PropertyType::Float, std::to_string(m_config.agentRadius)},
+            {"Agent Height", PropertyType::Float, std::to_string(m_config.agentHeight)},
+            {"Use Gravity", PropertyType::Bool, m_config.useGravity ? "true" : "false"},
+            {"Gravity", PropertyType::Float, std::to_string(m_config.gravity)},
             {"Rotate To Velocity", PropertyType::Bool, m_config.rotateToVelocity ? "true" : "false"},
             {"Navigate On Start", PropertyType::Bool, m_config.navigateOnStart ? "true" : "false"},
             {"Destination", PropertyType::Vec3, std::to_string(m_config.destination.x) + "," + std::to_string(m_config.destination.y) + "," + std::to_string(m_config.destination.z)},
             {"Target Entity", PropertyType::Entity, std::to_string(m_config.targetEntityId)},
+            {"Navigation Mesh", PropertyType::Entity, std::to_string(m_config.navigationMeshEntityId)},
         };
     }
 
@@ -285,6 +324,10 @@ namespace PlutoGE::scene
             else if (property.name == "Repath Interval") m_config.repathInterval = std::stof(property.value);
             else if (property.name == "Avoidance Distance") m_config.avoidanceDistance = std::stof(property.value);
             else if (property.name == "Turn Speed") m_config.turnSpeedDegrees = std::stof(property.value);
+            else if (property.name == "Agent Radius") m_config.agentRadius = std::stof(property.value);
+            else if (property.name == "Agent Height") m_config.agentHeight = std::stof(property.value);
+            else if (property.name == "Use Gravity") m_config.useGravity = ParseBool(property.value);
+            else if (property.name == "Gravity") m_config.gravity = std::stof(property.value);
             else if (property.name == "Rotate To Velocity") m_config.rotateToVelocity = ParseBool(property.value);
             else if (property.name == "Navigate On Start") m_config.navigateOnStart = ParseBool(property.value);
             else if (property.name == "Destination") std::sscanf(property.value.c_str(), "%f,%f,%f", &m_config.destination.x, &m_config.destination.y, &m_config.destination.z);
@@ -292,6 +335,11 @@ namespace PlutoGE::scene
             {
                 try { m_config.targetEntityId = static_cast<std::uint32_t>(std::stoul(property.value)); }
                 catch (...) { m_config.targetEntityId = 0; }
+            }
+            else if (property.name == "Navigation Mesh")
+            {
+                try { m_config.navigationMeshEntityId = static_cast<std::uint32_t>(std::stoul(property.value)); }
+                catch (...) { m_config.navigationMeshEntityId = 0; }
             }
         }
     }

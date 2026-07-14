@@ -15,10 +15,15 @@ namespace PlutoGE::scene
         float repathInterval = 0.25f;
         float avoidanceDistance = 1.5f;
         float turnSpeedDegrees = 360.0f;
+        float agentRadius = 0.5f;
+        float agentHeight = 1.8f;
+        float gravity = 9.81f;
+        bool useGravity = true;
         bool rotateToVelocity = true;
         bool navigateOnStart = false;
         glm::vec3 destination{0.0f};
         std::uint32_t targetEntityId = 0;
+        std::uint32_t navigationMeshEntityId = 0;
     };
 
     class NavAgentComponent : public TypedComponent<NavAgentComponent>
@@ -52,6 +57,7 @@ namespace PlutoGE::scene
         bool m_hasPreviousPosition = false;
         glm::vec3 m_steeringDirection{0.0f};
         glm::vec3 m_avoidanceDirection{0.0f};
+        float m_verticalVelocity = 0.0f;
         bool m_runtimeInitialized = false;
         float m_repathTimer = 0.0f;
     };

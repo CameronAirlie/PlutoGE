@@ -1,11 +1,11 @@
 #include "PlutoGE/scene/Scene.h"
-#include "PlutoGE/scene/NavigationSystem.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/components/ColliderComponent.h"
 #include "PlutoGE/scene/components/FoliageComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
+#include "PlutoGE/scene/components/NavigationMeshComponent.h"
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
 #include "PlutoGE/scene/components/RigidbodyComponent.h"
 #include "PlutoGE/scene/components/ScriptComponent.h"
@@ -1039,11 +1039,8 @@ namespace PlutoGE::scene
         std::unique_ptr<BulletRuntimeWorld> world;
     };
 
-    Scene::Scene() : m_navigation(std::make_unique<NavigationSystem>()) {}
+    Scene::Scene() = default;
     Scene::~Scene() = default;
-
-    NavigationSystem &Scene::GetNavigation() { return *m_navigation; }
-    const NavigationSystem &Scene::GetNavigation() const { return *m_navigation; }
 
     Scene::PhysicsQueryCache &Scene::GetPhysicsQueryCache() const
     {
@@ -1241,10 +1238,22 @@ namespace PlutoGE::scene
         ResetRuntimePhysicsState();
         m_pendingRigidbodyForces.clear();
 
-        if (!m_navigation->IsBaked())
+        // Refresh component-owned meshes against the runtime physics/query
+        // world before agents begin requesting paths.
+        const auto bakeNavigationMeshes = [&](Entity *entity, const auto &self) -> void
         {
-            m_navigation->Bake(*this, NavigationBakeSettings{});
-        }
+            if (!entity || !entity->IsActive())
+                return;
+            if (auto *navigationMesh = entity->GetComponent<NavigationMeshComponent>();
+                navigationMesh && navigationMesh->IsEnabled() && navigationMesh->ShouldHaveBake())
+            {
+                navigationMesh->Bake();
+            }
+            for (auto *child : entity->GetChildren())
+                self(child, self);
+        };
+        for (auto *rootEntity : m_rootEntities)
+            bakeNavigationMeshes(rootEntity, bakeNavigationMeshes);
 
         for (auto *scriptComponent : GatherRuntimeScriptComponents(m_rootEntities))
         {

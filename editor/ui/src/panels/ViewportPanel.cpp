@@ -19,6 +19,7 @@
 #include "PlutoGE/scene/components/FoliageComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/scene/components/NavAgentComponent.h"
+#include "PlutoGE/scene/components/NavigationMeshComponent.h"
 #include "PlutoGE/scene/NavigationSystem.h"
 #include "PlutoGE/scene/components/OceanComponent.h"
 #include "PlutoGE/scene/components/SplineComponent.h"
@@ -1867,8 +1868,8 @@ namespace PlutoGE::ui
             {
                 ImGui::MenuItem("Grid", nullptr, &m_showGrid);
                 ImGui::MenuItem("Debug Shapes", nullptr, &m_showDebugShapes);
-                ImGui::MenuItem("Navigation Cells", nullptr, &m_showNavigation);
-                ImGui::MenuItem("Agent Paths", nullptr, &m_showAgentPaths);
+                ImGui::MenuItem("Navigation Mesh", nullptr, &m_showNavigation);
+                ImGui::MenuItem("Selected Agent Path", nullptr, &m_showAgentPaths);
                 ImGui::Separator();
             }
             ImGui::TextUnformatted("Debug View");
@@ -2034,27 +2035,35 @@ namespace PlutoGE::ui
 
             if (m_showNavigation)
             {
-                const auto &points = activeScene->GetNavigation().GetDebugWalkablePoints();
-                // Keep large bakes responsive while still showing their complete extent.
-                const std::size_t stride = std::max<std::size_t>(1, (points.size() + 9999) / 10000);
-                for (std::size_t index = 0; index < points.size(); index += stride)
+                const auto drawNavigation = [&](const scene::NavigationSystem &navigation)
                 {
-                    const auto projected = ProjectWorldPoint(points[index] + glm::vec3(0.0f, 0.035f, 0.0f),
-                                                             cameraData, viewportMin, viewportSize);
-                    if (!projected.visible)
-                        continue;
-                    drawList->AddRectFilled(ImVec2(projected.screen.x - 1.5f, projected.screen.y - 1.5f),
-                                            ImVec2(projected.screen.x + 1.5f, projected.screen.y + 1.5f),
-                                            IM_COL32(40, 220, 135, 145));
-                }
+                    const auto &points = navigation.GetDebugWalkablePoints();
+                    const float halfCell = navigation.GetSettings().cellSize * 0.5f;
+                    const std::size_t stride = std::max<std::size_t>(1, (points.size() + 9999) / 10000);
+                    for (std::size_t index = 0; index < points.size(); index += stride)
+                    {
+                        const glm::vec3 center = points[index] + glm::vec3(0.0f, 0.035f, 0.0f);
+                        const auto c0=ProjectWorldPoint(center+glm::vec3(-halfCell,0,-halfCell),cameraData,viewportMin,viewportSize);
+                        const auto c1=ProjectWorldPoint(center+glm::vec3( halfCell,0,-halfCell),cameraData,viewportMin,viewportSize);
+                        const auto c2=ProjectWorldPoint(center+glm::vec3( halfCell,0, halfCell),cameraData,viewportMin,viewportSize);
+                        const auto c3=ProjectWorldPoint(center+glm::vec3(-halfCell,0, halfCell),cameraData,viewportMin,viewportSize);
+                        if(!c0.visible||!c1.visible||!c2.visible||!c3.visible) continue;
+                        drawList->AddQuadFilled(c0.screen,c1.screen,c2.screen,c3.screen,IM_COL32(35,205,125,72));
+                        drawList->AddQuad(c0.screen,c1.screen,c2.screen,c3.screen,IM_COL32(70,245,165,135),0.75f);
+                    }
+                };
+                const auto visit = [&](scene::Entity *entity, const auto &self) -> void
+                {
+                    if (auto *mesh = entity->GetComponent<scene::NavigationMeshComponent>()) drawNavigation(mesh->GetNavigation());
+                    for (auto *child : entity->GetChildren()) self(child, self);
+                };
+                for (auto *root : activeScene->GetRootEntities()) visit(root, visit);
             }
 
             if (m_showAgentPaths)
             {
-                const auto drawAgentPaths = [&](scene::Entity *entity, const auto &self) -> void
+                if (auto *entity = editorShell.GetSelectedEntity())
                 {
-                    if (!entity)
-                        return;
                     if (const auto *agent = entity->GetComponent<scene::NavAgentComponent>())
                     {
                         const auto &path = agent->GetPath();
@@ -2080,11 +2089,7 @@ namespace PlutoGE::ui
                             }
                         }
                     }
-                    for (auto *child : entity->GetChildren())
-                        self(child, self);
-                };
-                for (auto *rootEntity : activeScene->GetRootEntities())
-                    drawAgentPaths(rootEntity, drawAgentPaths);
+                }
             }
             drawList->PopClipRect();
         }

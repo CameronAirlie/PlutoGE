@@ -5,6 +5,7 @@
 #include "PlutoGE/scene/components/FoliageComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
+#include "PlutoGE/scene/components/NavigationMeshComponent.h"
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
 #include "PlutoGE/scene/components/RigidbodyComponent.h"
 #include "PlutoGE/scene/components/ScriptComponent.h"
@@ -1236,6 +1237,23 @@ namespace PlutoGE::scene
 
         ResetRuntimePhysicsState();
         m_pendingRigidbodyForces.clear();
+
+        // Refresh component-owned meshes against the runtime physics/query
+        // world before agents begin requesting paths.
+        const auto bakeNavigationMeshes = [&](Entity *entity, const auto &self) -> void
+        {
+            if (!entity || !entity->IsActive())
+                return;
+            if (auto *navigationMesh = entity->GetComponent<NavigationMeshComponent>();
+                navigationMesh && navigationMesh->IsEnabled() && navigationMesh->ShouldHaveBake())
+            {
+                navigationMesh->Bake();
+            }
+            for (auto *child : entity->GetChildren())
+                self(child, self);
+        };
+        for (auto *rootEntity : m_rootEntities)
+            bakeNavigationMeshes(rootEntity, bakeNavigationMeshes);
 
         for (auto *scriptComponent : GatherRuntimeScriptComponents(m_rootEntities))
         {

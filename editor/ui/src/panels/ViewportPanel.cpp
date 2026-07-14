@@ -18,6 +18,9 @@
 #include "PlutoGE/scene/components/ColliderComponent.h"
 #include "PlutoGE/scene/components/FoliageComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
+#include "PlutoGE/scene/components/NavAgentComponent.h"
+#include "PlutoGE/scene/components/NavigationMeshComponent.h"
+#include "PlutoGE/scene/NavigationSystem.h"
 #include "PlutoGE/scene/components/OceanComponent.h"
 #include "PlutoGE/scene/components/SplineComponent.h"
 #include "PlutoGE/scene/components/TerrainComponent.h"
@@ -1722,13 +1725,9 @@ namespace PlutoGE::ui
                 {
                     InstantiateMeshAssetIntoScene(reference, nullptr);
                 }
-            }
-            if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kContentBrowserMeshSubassetDragDropPayload))
-            {
-                const auto *meshPayload = static_cast<const ContentBrowserMeshSubassetPayload *>(payload->Data);
-                if (meshPayload)
+                else if (assets::Project::GetAssetTypeForReference(reference) == assets::ProjectAssetType::Model)
                 {
-                    InstantiateMeshAssetIntoScene(meshPayload->sourceReference, nullptr, meshPayload->submeshIndex, meshPayload->submeshCount, meshPayload->materialSlot);
+                    InstantiateModelAssetIntoScene(reference, nullptr);
                 }
             }
             ImGui::EndDragDropTarget();
@@ -1865,6 +1864,8 @@ namespace PlutoGE::ui
             {
                 ImGui::MenuItem("Grid", nullptr, &m_showGrid);
                 ImGui::MenuItem("Debug Shapes", nullptr, &m_showDebugShapes);
+                ImGui::MenuItem("Navigation Mesh", nullptr, &m_showNavigation);
+                ImGui::MenuItem("Selected Agent Path", nullptr, &m_showAgentPaths);
                 ImGui::Separator();
             }
             ImGui::TextUnformatted("Debug View");
@@ -2018,6 +2019,75 @@ namespace PlutoGE::ui
         if (m_showDebugShapes)
         {
             DrawEditorDebugShapes(editorShell.GetEngine().GetScene(), editorShell.GetSelectedEntity(), cameraData, viewportMin, viewportSize);
+        }
+
+        auto *activeScene = editorShell.GetEngine().GetScene();
+        if (activeScene && (m_showNavigation || m_showAgentPaths))
+        {
+            auto *drawList = ImGui::GetWindowDrawList();
+            drawList->PushClipRect(viewportMin,
+                                   ImVec2(viewportMin.x + viewportSize.x, viewportMin.y + viewportSize.y),
+                                   true);
+
+            if (m_showNavigation)
+            {
+                const auto drawNavigation = [&](const scene::NavigationSystem &navigation)
+                {
+                    const auto &points = navigation.GetDebugWalkablePoints();
+                    const float halfCell = navigation.GetSettings().cellSize * 0.5f;
+                    const std::size_t stride = std::max<std::size_t>(1, (points.size() + 9999) / 10000);
+                    for (std::size_t index = 0; index < points.size(); index += stride)
+                    {
+                        const glm::vec3 center = points[index] + glm::vec3(0.0f, 0.035f, 0.0f);
+                        const auto c0=ProjectWorldPoint(center+glm::vec3(-halfCell,0,-halfCell),cameraData,viewportMin,viewportSize);
+                        const auto c1=ProjectWorldPoint(center+glm::vec3( halfCell,0,-halfCell),cameraData,viewportMin,viewportSize);
+                        const auto c2=ProjectWorldPoint(center+glm::vec3( halfCell,0, halfCell),cameraData,viewportMin,viewportSize);
+                        const auto c3=ProjectWorldPoint(center+glm::vec3(-halfCell,0, halfCell),cameraData,viewportMin,viewportSize);
+                        if(!c0.visible||!c1.visible||!c2.visible||!c3.visible) continue;
+                        drawList->AddQuadFilled(c0.screen,c1.screen,c2.screen,c3.screen,IM_COL32(35,205,125,72));
+                        drawList->AddQuad(c0.screen,c1.screen,c2.screen,c3.screen,IM_COL32(70,245,165,135),0.75f);
+                    }
+                };
+                const auto visit = [&](scene::Entity *entity, const auto &self) -> void
+                {
+                    if (auto *mesh = entity->GetComponent<scene::NavigationMeshComponent>()) drawNavigation(mesh->GetNavigation());
+                    for (auto *child : entity->GetChildren()) self(child, self);
+                };
+                for (auto *root : activeScene->GetRootEntities()) visit(root, visit);
+            }
+
+            if (m_showAgentPaths)
+            {
+                if (auto *entity = editorShell.GetSelectedEntity())
+                {
+                    if (const auto *agent = entity->GetComponent<scene::NavAgentComponent>())
+                    {
+                        const auto &path = agent->GetPath();
+                        const std::size_t nextPoint = agent->GetNextPathPointIndex();
+                        if (agent->HasPath() && nextPoint < path.size())
+                        {
+                            DrawWorldLine(drawList, entity->GetWorldPosition() + glm::vec3(0.0f, 0.08f, 0.0f),
+                                          path[nextPoint] + glm::vec3(0.0f, 0.08f, 0.0f), cameraData,
+                                          viewportMin, viewportSize, IM_COL32(255, 195, 40, 245), 2.5f);
+                            for (std::size_t pointIndex = nextPoint; pointIndex + 1 < path.size(); ++pointIndex)
+                            {
+                                DrawWorldLine(drawList, path[pointIndex] + glm::vec3(0.0f, 0.08f, 0.0f),
+                                              path[pointIndex + 1] + glm::vec3(0.0f, 0.08f, 0.0f), cameraData,
+                                              viewportMin, viewportSize, IM_COL32(255, 195, 40, 245), 2.5f);
+                            }
+                            for (std::size_t pointIndex = nextPoint; pointIndex < path.size(); ++pointIndex)
+                            {
+                                const auto &point = path[pointIndex];
+                                const auto projected = ProjectWorldPoint(point + glm::vec3(0.0f, 0.08f, 0.0f),
+                                                                         cameraData, viewportMin, viewportSize);
+                                if (projected.visible)
+                                    drawList->AddCircleFilled(projected.screen, 3.5f, IM_COL32(255, 225, 105, 255), 10);
+                            }
+                        }
+                    }
+                }
+            }
+            drawList->PopClipRect();
         }
 
         if (auto *selectedEntity = editorShell.GetSelectedEntity())

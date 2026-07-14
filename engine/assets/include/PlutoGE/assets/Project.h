@@ -18,7 +18,7 @@ namespace PlutoGE::assets
         Mesh,
         Animation,
         AnimationClip,
-        SourceModel,
+        Model,
         Material,
         ShaderGraph,
         AnimationGraph,
@@ -132,6 +132,10 @@ namespace PlutoGE::assets
     };
 
     std::filesystem::path GetRuntimeManifestPathForExecutable(const std::filesystem::path &executablePath);
+    std::filesystem::path GetRuntimeContentPackPathForExecutable(const std::filesystem::path &executablePath);
+    bool ExtractStandaloneProjectContent(const std::filesystem::path &contentPackPath,
+                                         const std::filesystem::path &destinationDirectory,
+                                         std::string *errorMessage = nullptr);
     std::filesystem::path FindRuntimeExecutable(const std::filesystem::path &searchRoot);
     bool ExportStandaloneProject(const Project &project,
                                  const std::filesystem::path &destinationExecutablePath,

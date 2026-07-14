@@ -100,6 +100,13 @@ namespace PlutoGE::scene
         int GetSubmeshRangeCount() const { return m_submeshCount; }
         void SetMeshAssetReference(const std::string &meshAssetReference) { m_sourceMeshPath = meshAssetReference; }
         const std::string &GetMeshAssetReference() const { return m_sourceMeshPath; }
+        void SetModelObjectIdentity(const std::string &modelAssetId, std::uint64_t localObjectId)
+        {
+            m_modelAssetId = modelAssetId;
+            m_modelObjectId = localObjectId;
+        }
+        const std::string &GetModelAssetId() const { return m_modelAssetId; }
+        std::uint64_t GetModelObjectId() const { return m_modelObjectId; }
         void SetSourceMeshPath(const std::string &sourceMeshPath) { SetMeshAssetReference(sourceMeshPath); }
         const std::string &GetSourceMeshPath() const { return GetMeshAssetReference(); }
         void SetUseGeneratedLods(bool useGeneratedLods) { m_useGeneratedLods = useGeneratedLods; }
@@ -215,7 +222,6 @@ namespace PlutoGE::scene
         }
         render::Material *CreateUniqueMaterialForMaterialSlot(size_t materialSlotIndex);
         render::Material *CreateUniqueMaterialForSubmesh(size_t submeshIndex);
-        bool CreateSubmeshChildEntities();
         bool CreateSkeletonAttachmentEntities();
 
     private:
@@ -238,6 +244,8 @@ namespace PlutoGE::scene
         glm::mat4 m_cachedRenderCommandModel = glm::mat4(1.0f);
         std::vector<render::RenderCommand> m_cachedRenderCommands;
         std::string m_sourceMeshPath;
+        std::string m_modelAssetId;
+        std::uint64_t m_modelObjectId = 0;
         glm::vec3 m_meshPositionOffset{0.0f};
         glm::vec3 m_meshRotationOffset{0.0f};
         int m_submeshIndex = -1;

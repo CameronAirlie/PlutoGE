@@ -4,9 +4,12 @@ add_library(PlutoGEScene
     src/Scene.cpp
     src/SceneBaker.cpp
     src/SceneSerializer.cpp
+    src/NavigationSystem.cpp
     src/components/AnimationComponent.cpp
     src/components/ClothComponent.cpp
     src/components/MeshComponent.cpp
+    src/components/NavAgentComponent.cpp
+    src/components/NavigationMeshComponent.cpp
     src/components/OceanComponent.cpp
     src/components/SkeletonAttachmentComponent.cpp
     src/components/CameraComponent.cpp

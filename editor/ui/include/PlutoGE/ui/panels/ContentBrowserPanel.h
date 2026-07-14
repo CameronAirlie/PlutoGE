@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -20,38 +21,20 @@ namespace PlutoGE::scene
 
 namespace PlutoGE::ui
 {
+    class AssetThumbnailCache;
     inline constexpr const char *kContentBrowserAssetDragDropPayload = "PLUTOGE_CONTENT_BROWSER_ASSET";
-    inline constexpr const char *kContentBrowserMeshSubassetDragDropPayload = "PLUTOGE_MESH_SUBASSET";
-
-    struct ContentBrowserMeshSubassetPayload
-    {
-        char sourceReference[512]{};
-        int submeshIndex = -1;
-        int submeshCount = 1;
-        int materialSlot = -1;
-    };
-
-    bool InstantiateMeshAssetIntoScene(std::string reference, scene::Entity *parent = nullptr, int submeshIndex = -1, int submeshCount = 1, int materialSlot = -1);
+    bool InstantiateMeshAssetIntoScene(std::string reference, scene::Entity *parent = nullptr);
+    bool InstantiateModelAssetIntoScene(const std::string &reference, scene::Entity *parent = nullptr);
 
     class ContentBrowserPanel : public Panel
     {
     public:
-        ContentBrowserPanel(const PanelConfig &config) : Panel(config) {}
-        ~ContentBrowserPanel() override = default;
+        ContentBrowserPanel(const PanelConfig &config);
+        ~ContentBrowserPanel() override;
 
         void Render() override;
 
     private:
-        struct MeshSubassetRow
-        {
-            std::string displayName;
-            std::string slotSummary;
-            std::uint32_t indexCount = 0;
-            int submeshIndex = -1;
-            int submeshCount = 1;
-            int materialSlot = -1;
-        };
-
         enum class PendingMenuAction
         {
             None,
@@ -93,7 +76,8 @@ namespace PlutoGE::ui
         std::vector<int> m_cachedRootFolderIndices;
         std::vector<int> m_filteredAssetIndices;
         std::vector<std::string> m_filteredAssetDisplayNames;
-        std::unordered_map<std::string, std::vector<MeshSubassetRow>> m_meshSubassetRows;
         PendingMenuAction m_pendingMenuAction = PendingMenuAction::None;
+        std::unique_ptr<AssetThumbnailCache> m_thumbnailCache;
+        float m_thumbnailSize = 96.0f;
     };
 }

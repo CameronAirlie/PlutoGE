@@ -1,4 +1,5 @@
 #include <PlutoGE/assets/AssetManager.h>
+#include <PlutoGE/assets/ModelAsset.h>
 #include <PlutoGE/render/Mesh.h>
 #include <PlutoGE/render/Texture.h>
 #include <PlutoGE/render/Material.h>
@@ -18,6 +19,71 @@
 
 namespace PlutoGE::assets
 {
+    std::string AssetManager::GetStableAssetId(const std::string &assetReference) const
+    {
+        if (!Project::IsProjectAssetReference(assetReference) || m_projectRootDirectory.empty())
+        {
+            return {};
+        }
+        const auto relative = assetReference.substr(Project::kProjectAssetScheme.size());
+        const auto metadataPath = std::filesystem::path(m_projectRootDirectory) / m_projectAssetDirectory /
+                                  std::filesystem::path(relative + ".plutometa");
+        std::ifstream input(metadataPath);
+        std::string line;
+        while (std::getline(input, line))
+        {
+            if (line.rfind("ID\t", 0) == 0) return line.substr(3);
+        }
+        return {};
+    }
+
+    std::string AssetManager::ResolveStableAssetId(const std::string &assetId, const std::string &fallbackReference) const
+    {
+        if (assetId.empty() || m_projectRootDirectory.empty()) return fallbackReference;
+        const auto assetRoot = std::filesystem::path(m_projectRootDirectory) / m_projectAssetDirectory;
+        std::error_code error;
+        for (std::filesystem::recursive_directory_iterator iterator(assetRoot, std::filesystem::directory_options::skip_permission_denied, error), end;
+             iterator != end; iterator.increment(error))
+        {
+            if (error || !iterator->is_regular_file() || iterator->path().extension() != ".plutometa")
+            {
+                error.clear();
+                continue;
+            }
+            std::ifstream input(iterator->path());
+            std::string line;
+            while (std::getline(input, line))
+            {
+                if (line == "ID\t" + assetId)
+                {
+                    auto assetPath = iterator->path();
+                    assetPath.replace_extension();
+                    const auto relative = std::filesystem::relative(assetPath, assetRoot, error);
+                    if (!error) return std::string(Project::kProjectAssetScheme) + relative.generic_string();
+                    break;
+                }
+            }
+        }
+        return fallbackReference;
+    }
+
+    std::string AssetManager::ResolveModelObject(const std::string &modelAssetId, std::uint64_t localId) const
+    {
+        const auto sourceReference = ResolveStableAssetId(modelAssetId);
+        if (sourceReference.empty() || localId == 0) return {};
+        const auto sourceRelative = sourceReference.substr(Project::kProjectAssetScheme.size());
+        const auto sourcePath = std::filesystem::path(m_projectRootDirectory) / m_projectAssetDirectory / sourceRelative;
+        const auto manifestPath = std::filesystem::path(m_projectRootDirectory) / m_projectAssetDirectory / "Imported" /
+                                  sourcePath.stem() / (sourcePath.stem().string() + ".plutomodel");
+        ModelAsset model;
+        if (!LoadModelAsset(manifestPath.string(), model)) return {};
+        for (const auto &object : model.objects)
+        {
+            if (object.localId == localId) return object.reference;
+        }
+        return {};
+    }
+
     namespace
     {
         std::string NormalizePath(const std::string &filePath)
@@ -1043,7 +1109,7 @@ namespace PlutoGE::assets
         bool WriteGeneratedMeshAsset(std::ostream &output, const render::MeshConfig &config, const std::vector<std::string> &materialReferences, const MeshAssetMetadata &metadata)
         {
             constexpr std::uint32_t kMagic = 0x4d47504c; // LPGM
-            constexpr std::uint32_t kVersion = 4;
+            constexpr std::uint32_t kVersion = 5;
             WritePod(output, kMagic);
             WritePod(output, kVersion);
 
@@ -1115,6 +1181,8 @@ namespace PlutoGE::assets
                 WriteString(output, materialReference);
             }
             WriteString(output, metadata.sourceAssetReference);
+            WriteString(output, metadata.sourceAssetId);
+            WritePod(output, metadata.sourceObjectId);
             WritePod<std::uint8_t>(output, metadata.importOptions.generateLods ? 1 : 0);
             WritePod<std::uint8_t>(output, metadata.importOptions.optimizeVertexCache ? 1 : 0);
             WritePod<std::uint8_t>(output, metadata.importOptions.optimizeOverdraw ? 1 : 0);
@@ -1126,7 +1194,7 @@ namespace PlutoGE::assets
             constexpr std::uint32_t kMagic = 0x4d47504c; // LPGM
             const auto magic = ReadPod<std::uint32_t>(input);
             const auto version = ReadPod<std::uint32_t>(input);
-            if (magic != kMagic || version < 1 || version > 4)
+            if (magic != kMagic || version < 1 || version > 5)
             {
                 return false;
             }
@@ -1213,6 +1281,11 @@ namespace PlutoGE::assets
             if (version >= 4)
             {
                 metadata.sourceAssetReference = ReadString(input);
+                if (version >= 5)
+                {
+                    metadata.sourceAssetId = ReadString(input);
+                    metadata.sourceObjectId = ReadPod<std::uint64_t>(input);
+                }
                 metadata.importOptions.generateLods = ReadPod<std::uint8_t>(input) != 0;
                 metadata.importOptions.optimizeVertexCache = ReadPod<std::uint8_t>(input) != 0;
                 metadata.importOptions.optimizeOverdraw = ReadPod<std::uint8_t>(input) != 0;

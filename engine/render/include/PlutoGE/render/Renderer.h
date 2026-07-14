@@ -81,6 +81,23 @@ namespace PlutoGE::render
         bool isStatic = false;
         bool castsShadow = true;
         bool usePrimaryUvForLightmap = false;
+
+        // LOD transition state is transient and packed into the otherwise
+        // unused high bits of minLodIndex. Keeping RenderCommand's original
+        // layout avoids invalidating cached commands containing shared_ptrs.
+        uint32_t GetMinLodIndex() const { return minLodIndex & 0xffu; }
+        uint32_t GetLodTransitionIndex() const { return (minLodIndex >> 8u) & 0xffu; }
+        float GetLodTransitionFade() const
+        {
+            return static_cast<float>((minLodIndex >> 16u) & 0xffffu) / 65535.0f;
+        }
+        void SetLodTransition(uint32_t transitionIndex, float fade)
+        {
+            const uint32_t encodedFade = static_cast<uint32_t>(glm::clamp(fade, 0.0f, 1.0f) * 65535.0f + 0.5f);
+            minLodIndex = GetMinLodIndex() |
+                          ((transitionIndex & 0xffu) << 8u) |
+                          ((encodedFade & 0xffffu) << 16u);
+        }
     };
 
     struct GpuPassTiming

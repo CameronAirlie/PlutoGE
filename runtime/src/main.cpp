@@ -22,6 +22,20 @@ namespace PlutoGE
 {
     namespace
     {
+        struct TemporaryContentDirectory
+        {
+            std::filesystem::path path;
+
+            ~TemporaryContentDirectory()
+            {
+                if (!path.empty())
+                {
+                    std::error_code errorCode;
+                    std::filesystem::remove_all(path, errorCode);
+                }
+            }
+        };
+
 #ifdef _WIN32
         struct RuntimeDiagnostics
         {
@@ -213,6 +227,36 @@ namespace PlutoGE
 
 int main(int argc, char **argv)
 {
+    if (argc > 1 && std::string_view(argv[1]) == "--export")
+    {
+        if (argc != 4)
+        {
+            std::cerr << "Usage: PlutoGERuntime --export <project.plutoproject> <output executable>" << std::endl;
+            return 2;
+        }
+
+        std::string exportError;
+        const auto sourceProject = PlutoGE::assets::Project::Load(std::filesystem::path(argv[2]), &exportError);
+        if (!sourceProject)
+        {
+            std::cerr << (exportError.empty() ? "Failed to load the project for export." : exportError) << std::endl;
+            return 1;
+        }
+
+        const auto exporterExecutable = PlutoGE::ResolveExecutablePath(argv);
+        if (!PlutoGE::assets::ExportStandaloneProject(*sourceProject,
+                                                       std::filesystem::path(argv[3]),
+                                                       exporterExecutable,
+                                                       &exportError))
+        {
+            std::cerr << (exportError.empty() ? "Failed to export the game." : exportError) << std::endl;
+            return 1;
+        }
+
+        std::cout << "Exported game to " << std::filesystem::absolute(argv[3]).lexically_normal().string() << std::endl;
+        return 0;
+    }
+
     if (argc > 2 && std::string_view(argv[1]) == "--import-bench")
     {
         const std::filesystem::path meshPath = std::filesystem::absolute(argv[2]).lexically_normal();
@@ -267,9 +311,30 @@ int main(int argc, char **argv)
     }
 
     const auto executablePath = PlutoGE::ResolveExecutablePath(argv);
-    const auto manifestPath = argc > 1
-                                  ? std::filesystem::path(argv[1])
-                                  : PlutoGE::assets::GetRuntimeManifestPathForExecutable(executablePath);
+    PlutoGE::TemporaryContentDirectory temporaryContent;
+    auto manifestPath = argc > 1
+                            ? std::filesystem::path(argv[1])
+                            : PlutoGE::assets::GetRuntimeManifestPathForExecutable(executablePath);
+
+    if (argc <= 1)
+    {
+        const auto contentPackPath = PlutoGE::assets::GetRuntimeContentPackPathForExecutable(executablePath);
+        if (std::filesystem::exists(contentPackPath))
+        {
+            std::error_code temporaryError;
+            const auto temporaryRoot = std::filesystem::temp_directory_path(temporaryError);
+            const auto uniqueName = executablePath.stem().string() + "-" +
+                                    std::to_string(std::chrono::high_resolution_clock::now().time_since_epoch().count());
+            temporaryContent.path = temporaryRoot / "PlutoGE" / "Content" / uniqueName;
+            std::string unpackError;
+            if (temporaryError || !PlutoGE::assets::ExtractStandaloneProjectContent(contentPackPath, temporaryContent.path, &unpackError))
+            {
+                std::cerr << (unpackError.empty() ? "Failed to mount the game content pack." : unpackError) << std::endl;
+                return 1;
+            }
+            manifestPath = temporaryContent.path / PlutoGE::assets::GetRuntimeManifestPathForExecutable(executablePath).filename();
+        }
+    }
 
 #ifdef _WIN32
     PlutoGE::g_runtimeDiagnostics.Initialize(executablePath);
@@ -327,10 +392,27 @@ int main(int argc, char **argv)
         const std::string scriptAssemblyPath = engine.GetAssetManager().ResolveAssetPath(project->GetManifest().scriptAssembly);
         if (scriptAssemblyPath.empty() || !std::filesystem::exists(scriptAssemblyPath) || !engine.GetScriptEngine().LoadAssembly(scriptAssemblyPath))
         {
+            std::string scriptError;
+            if (scriptAssemblyPath.empty())
+            {
+                scriptError = "The configured assembly path could not be resolved: " + project->GetManifest().scriptAssembly;
+            }
+            else if (!std::filesystem::exists(scriptAssemblyPath))
+            {
+                scriptError = "The script assembly does not exist: " + scriptAssemblyPath;
+            }
+            else
+            {
+                scriptError = engine.GetScriptEngine().GetLastError();
+                if (scriptError.empty())
+                {
+                    scriptError = "The managed runtime rejected the script assembly: " + scriptAssemblyPath;
+                }
+            }
 #ifdef _WIN32
-            PlutoGE::g_runtimeDiagnostics.Log("Failed to load script assembly: " + project->GetManifest().scriptAssembly);
+            PlutoGE::g_runtimeDiagnostics.Log("Failed to load script assembly: " + scriptError);
 #endif
-            std::cerr << "Failed to load project script assembly." << std::endl;
+            std::cerr << "Failed to load project script assembly: " << scriptError << std::endl;
             engine.Shutdown();
             return 1;
         }

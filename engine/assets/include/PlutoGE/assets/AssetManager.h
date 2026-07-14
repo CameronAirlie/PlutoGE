@@ -31,6 +31,8 @@ namespace PlutoGE::assets
     struct MeshAssetMetadata
     {
         std::string sourceAssetReference;
+        std::string sourceAssetId;
+        std::uint64_t sourceObjectId = 0;
         assetimport::MeshImportOptions importOptions;
     };
 
@@ -44,6 +46,9 @@ namespace PlutoGE::assets
         std::string ResolveAssetPath(const std::string &assetPath) const;
         std::string ResolveMeshAssetSourcePath(const std::string &assetReference);
         std::string PersistAssetPath(const std::string &filePath) const;
+        std::string GetStableAssetId(const std::string &assetReference) const;
+        std::string ResolveStableAssetId(const std::string &assetId, const std::string &fallbackReference = {}) const;
+        std::string ResolveModelObject(const std::string &modelAssetId, std::uint64_t localId) const;
 
         render::Texture *LoadTexture(const char *filePath);
         render::Mesh *LoadMeshAsset(const std::string &assetReference);

@@ -1,9 +1,12 @@
 #include "PlutoGE/ui/panels/ContentBrowserPanel.h"
 
 #include "PlutoGE/assets/Project.h"
+#include "PlutoGE/assets/AssetDatabase.h"
+#include "PlutoGE/assets/ModelAsset.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/import/MeshImporter.h"
 #include "PlutoGE/render/Material.h"
+#include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/render/ShaderGraph.h"
 #include "PlutoGE/render/Texture.h"
 #include "PlutoGE/scene/Entity.h"
@@ -28,6 +31,8 @@
 #include <sstream>
 
 #include <imgui.h>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
 #ifdef _WIN32
 #include <windows.h>
 #include <commdlg.h>
@@ -42,6 +47,267 @@
 
 namespace PlutoGE::ui
 {
+    class AssetThumbnailCache
+    {
+    public:
+        ~AssetThumbnailCache()
+        {
+            for (const auto &[reference, entry] : m_entries)
+            {
+                (void)reference;
+                if (entry.texture != 0) glDeleteTextures(1, &entry.texture);
+            }
+            if (m_depthBuffer != 0) glDeleteRenderbuffers(1, &m_depthBuffer);
+            if (m_framebuffer != 0) glDeleteFramebuffers(1, &m_framebuffer);
+            if (m_program != 0) glDeleteProgram(m_program);
+        }
+
+        void BeginFrame()
+        {
+            m_generationBudget = 2;
+        }
+
+        GLuint Get(const assets::Project &project, core::Engine &engine, const assets::ProjectAssetEntry &asset)
+        {
+            if (asset.type == assets::ProjectAssetType::Texture)
+            {
+                const auto path = project.ResolveAssetReference(asset.reference).string();
+                auto *texture = engine.GetAssetManager().LoadTexture(path.c_str());
+                return texture ? texture->GetTextureID() : 0;
+            }
+
+            std::string renderReference = asset.reference;
+            if (asset.type == assets::ProjectAssetType::Model)
+            {
+                const auto sourcePath = project.ResolveAssetReference(asset.reference);
+                const auto manifestPath = project.GetAssetDirectoryPath() / "Imported" / sourcePath.stem() /
+                                          (sourcePath.stem().string() + ".plutomodel");
+                assets::ModelAsset model;
+                if (!assets::LoadModelAsset(manifestPath.string(), model)) return 0;
+                const auto mesh = std::find_if(model.objects.begin(), model.objects.end(), [](const auto &object)
+                                               { return object.type == assets::ProjectAssetType::Mesh; });
+                if (mesh == model.objects.end()) return 0;
+                renderReference = mesh->reference;
+            }
+
+            if (asset.type != assets::ProjectAssetType::Model &&
+                asset.type != assets::ProjectAssetType::Mesh &&
+                asset.type != assets::ProjectAssetType::Material)
+            {
+                return 0;
+            }
+
+            const auto stamp = GetStamp(project, asset.reference);
+            const auto found = m_entries.find(asset.reference);
+            if (found != m_entries.end() && found->second.stamp == stamp)
+            {
+                return found->second.texture;
+            }
+            if (m_generationBudget <= 0) return 0;
+            --m_generationBudget;
+
+            render::Mesh *mesh = nullptr;
+            render::Material *material = nullptr;
+            if (asset.type == assets::ProjectAssetType::Material)
+            {
+                material = engine.GetAssetManager().LoadMaterialAsset(asset.reference);
+                mesh = engine.GetAssetManager().LoadMeshAsset(std::string(assets::Project::kBuiltinSphereMeshReference));
+            }
+            else
+            {
+                mesh = engine.GetAssetManager().LoadMeshAsset(renderReference);
+                const auto &materials = engine.GetAssetManager().GetMeshAssetMaterialReferences(renderReference);
+                if (!materials.empty()) material = engine.GetAssetManager().LoadMaterialAsset(materials.front());
+            }
+            if (!mesh) return 0;
+
+            auto &entry = m_entries[asset.reference];
+            if (entry.texture == 0) entry.texture = CreateTexture();
+            if (!Render(entry.texture, *mesh, material)) return 0;
+            entry.stamp = stamp;
+            return entry.texture;
+        }
+
+        void Clear()
+        {
+            for (const auto &[reference, entry] : m_entries)
+            {
+                (void)reference;
+                if (entry.texture != 0) glDeleteTextures(1, &entry.texture);
+            }
+            m_entries.clear();
+        }
+
+    private:
+        struct Entry
+        {
+            GLuint texture = 0;
+            std::uint64_t stamp = 0;
+        };
+
+        static constexpr int kSize = 128;
+        std::unordered_map<std::string, Entry> m_entries;
+        GLuint m_framebuffer = 0;
+        GLuint m_depthBuffer = 0;
+        GLuint m_program = 0;
+        int m_generationBudget = 0;
+
+        static std::uint64_t GetStamp(const assets::Project &project, const std::string &reference)
+        {
+            std::error_code error;
+            const auto time = std::filesystem::last_write_time(project.ResolveAssetReference(reference), error);
+            return error ? 0 : static_cast<std::uint64_t>(time.time_since_epoch().count());
+        }
+
+        static GLuint Compile(GLenum type, const char *source)
+        {
+            const GLuint shader = glCreateShader(type);
+            glShaderSource(shader, 1, &source, nullptr);
+            glCompileShader(shader);
+            GLint compiled = GL_FALSE;
+            glGetShaderiv(shader, GL_COMPILE_STATUS, &compiled);
+            if (compiled == GL_FALSE)
+            {
+                glDeleteShader(shader);
+                return 0;
+            }
+            return shader;
+        }
+
+        bool Initialize()
+        {
+            if (m_program != 0) return true;
+            constexpr const char *vertexSource = R"GLSL(#version 450 core
+layout(location=0) in vec3 position;
+layout(location=1) in vec3 normal;
+layout(location=2) in vec2 uv;
+uniform mat4 mvp;
+uniform mat4 model;
+out vec3 worldNormal;
+out vec2 texCoord;
+void main() {
+    gl_Position = mvp * vec4(position, 1.0);
+    worldNormal = mat3(transpose(inverse(model))) * normal;
+    texCoord = uv;
+})GLSL";
+            constexpr const char *fragmentSource = R"GLSL(#version 450 core
+in vec3 worldNormal;
+in vec2 texCoord;
+layout(location=0) out vec4 colorOut;
+uniform vec4 baseColor;
+uniform sampler2D albedo;
+uniform bool useAlbedo;
+void main() {
+    vec3 n = normalize(worldNormal);
+    vec3 lightDirection = normalize(vec3(0.5, 0.8, 0.7));
+    float diffuse = max(dot(n, lightDirection), 0.0);
+    float rim = pow(1.0 - max(n.z, 0.0), 3.0) * 0.18;
+    vec4 surface = baseColor * (useAlbedo ? texture(albedo, texCoord) : vec4(1.0));
+    colorOut = vec4(surface.rgb * (0.28 + diffuse * 0.72) + rim, surface.a);
+})GLSL";
+            const GLuint vertex = Compile(GL_VERTEX_SHADER, vertexSource);
+            const GLuint fragment = Compile(GL_FRAGMENT_SHADER, fragmentSource);
+            if (vertex == 0 || fragment == 0) return false;
+            m_program = glCreateProgram();
+            glAttachShader(m_program, vertex);
+            glAttachShader(m_program, fragment);
+            glLinkProgram(m_program);
+            glDeleteShader(vertex);
+            glDeleteShader(fragment);
+            GLint linked = GL_FALSE;
+            glGetProgramiv(m_program, GL_LINK_STATUS, &linked);
+            if (linked == GL_FALSE) return false;
+
+            glGenFramebuffers(1, &m_framebuffer);
+            glGenRenderbuffers(1, &m_depthBuffer);
+            glBindRenderbuffer(GL_RENDERBUFFER, m_depthBuffer);
+            glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, kSize, kSize);
+            glBindRenderbuffer(GL_RENDERBUFFER, 0);
+            return true;
+        }
+
+        static GLuint CreateTexture()
+        {
+            GLuint texture = 0;
+            glGenTextures(1, &texture);
+            glBindTexture(GL_TEXTURE_2D, texture);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, kSize, kSize, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            return texture;
+        }
+
+        bool Render(GLuint target, render::Mesh &mesh, render::Material *material)
+        {
+            if (!Initialize()) return false;
+            GLint previousFramebuffer = 0, previousProgram = 0, previousVao = 0;
+            GLint previousActiveTexture = 0, previousTexture = 0, previousCullMode = 0;
+            GLint previousViewport[4]{};
+            GLfloat previousClearColor[4]{};
+            glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &previousFramebuffer);
+            glGetIntegerv(GL_CURRENT_PROGRAM, &previousProgram);
+            glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &previousVao);
+            glGetIntegerv(GL_ACTIVE_TEXTURE, &previousActiveTexture);
+            glActiveTexture(GL_TEXTURE0);
+            glGetIntegerv(GL_TEXTURE_BINDING_2D, &previousTexture);
+            glGetIntegerv(GL_CULL_FACE_MODE, &previousCullMode);
+            glGetIntegerv(GL_VIEWPORT, previousViewport);
+            glGetFloatv(GL_COLOR_CLEAR_VALUE, previousClearColor);
+            const GLboolean depthEnabled = glIsEnabled(GL_DEPTH_TEST);
+            const GLboolean cullEnabled = glIsEnabled(GL_CULL_FACE);
+
+            glBindFramebuffer(GL_FRAMEBUFFER, m_framebuffer);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, target, 0);
+            glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, m_depthBuffer);
+            glViewport(0, 0, kSize, kSize);
+            glEnable(GL_DEPTH_TEST);
+            glEnable(GL_CULL_FACE);
+            glCullFace(GL_BACK);
+            glClearColor(0.105f, 0.115f, 0.13f, 1.0f);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+            const auto bounds = mesh.GetBounds();
+            const float radius = std::max(bounds.radius, 0.001f);
+            glm::mat4 model(1.0f);
+            model = glm::rotate(model, glm::radians(-18.0f), glm::vec3(1, 0, 0));
+            model = glm::rotate(model, glm::radians(32.0f), glm::vec3(0, 1, 0));
+            model = glm::scale(model, glm::vec3(0.78f / radius));
+            model = glm::translate(model, -bounds.center);
+            const glm::mat4 view = glm::lookAt(glm::vec3(0, 0, 2.4f), glm::vec3(0), glm::vec3(0, 1, 0));
+            const glm::mat4 projection = glm::perspective(glm::radians(32.0f), 1.0f, 0.01f, 10.0f);
+            const glm::mat4 mvp = projection * view * model;
+
+            glUseProgram(m_program);
+            glUniformMatrix4fv(glGetUniformLocation(m_program, "mvp"), 1, GL_FALSE, glm::value_ptr(mvp));
+            glUniformMatrix4fv(glGetUniformLocation(m_program, "model"), 1, GL_FALSE, glm::value_ptr(model));
+            const auto config = material ? material->GetConfig() : render::MaterialConfig{};
+            glUniform4fv(glGetUniformLocation(m_program, "baseColor"), 1, glm::value_ptr(config.color));
+            const bool useAlbedo = config.albedoTexture && config.albedoTexture->GetTextureID() != 0;
+            glUniform1i(glGetUniformLocation(m_program, "useAlbedo"), useAlbedo ? 1 : 0);
+            glUniform1i(glGetUniformLocation(m_program, "albedo"), 0);
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, useAlbedo ? config.albedoTexture->GetTextureID() : 0);
+            mesh.Draw();
+
+            glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previousFramebuffer));
+            glUseProgram(static_cast<GLuint>(previousProgram));
+            glBindVertexArray(static_cast<GLuint>(previousVao));
+            glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(previousTexture));
+            glActiveTexture(static_cast<GLenum>(previousActiveTexture));
+            glCullFace(static_cast<GLenum>(previousCullMode));
+            glClearColor(previousClearColor[0], previousClearColor[1], previousClearColor[2], previousClearColor[3]);
+            glViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
+            if (!depthEnabled) glDisable(GL_DEPTH_TEST);
+            if (!cullEnabled) glDisable(GL_CULL_FACE);
+            return true;
+        }
+    };
+
+    ContentBrowserPanel::ContentBrowserPanel(const PanelConfig &config) : Panel(config) {}
+    ContentBrowserPanel::~ContentBrowserPanel() = default;
+
     namespace
     {
         bool ContainsInsensitive(std::string_view text, std::string_view filter)
@@ -172,6 +438,13 @@ namespace PlutoGE::ui
             const auto separator = relativePath.find_last_of('/');
             const auto fileName = separator == std::string::npos ? relativePath : relativePath.substr(separator + 1);
             return fileName.empty() ? DisplayAssetReference(asset.reference) : fileName;
+        }
+
+        std::filesystem::path GetImportedModelManifestPath(const assets::Project &project, std::string_view sourceReference)
+        {
+            const auto sourcePath = project.ResolveAssetReference(sourceReference);
+            return project.GetAssetDirectoryPath() / "Imported" / sourcePath.stem() /
+                   (sourcePath.stem().string() + ".plutomodel");
         }
 
         std::string GetAssetFolderName(std::string_view folder)
@@ -931,16 +1204,8 @@ namespace PlutoGE::ui
             return engine.GetAssetManager().SaveAnimationAssetReferences(animationReference, clipReferences, errorMessage);
         }
 
-        render::Mesh *GetOrCreateIsolatedSubmeshRuntimeMesh(const std::string &reference,
-                                                            int submeshIndex,
-                                                            int submeshCount,
-                                                            const render::Mesh &sourceMesh);
-
         bool ConfigureMeshComponentForReference(scene::Entity &entity,
                                                 const std::string &reference,
-                                                int submeshIndex,
-                                                int submeshCount,
-                                                int materialSlot,
                                                 std::string *errorMessage)
         {
             auto &engine = core::Engine::GetInstance();
@@ -950,6 +1215,16 @@ namespace PlutoGE::ui
             {
                 meshComponent->SetMesh(mesh);
                 meshComponent->SetSourceMeshPath(reference);
+                if (assets::Project::IsEngineAssetReference(reference))
+                {
+                    meshComponent->SetModelObjectIdentity(reference, 1);
+                }
+                else
+                {
+                    const auto &metadata = engine.GetAssetManager().GetMeshAssetMetadata(reference);
+                    if (metadata.sourceAssetId.empty() || metadata.sourceObjectId == 0) return false;
+                    meshComponent->SetModelObjectIdentity(metadata.sourceAssetId, metadata.sourceObjectId);
+                }
                 const auto &materialReferences = engine.GetAssetManager().GetMeshAssetMaterialReferences(reference);
                 const auto materials = LoadMaterialReferences(engine, materialReferences);
                 meshComponent->SetMaterials(materials);
@@ -957,92 +1232,28 @@ namespace PlutoGE::ui
                 {
                     meshComponent->SetMaterialAssetForMaterialSlot(materialSlotIndex, materialReferences[materialSlotIndex]);
                 }
-                if (submeshIndex >= 0)
-                {
-                    meshComponent->SetSubmeshRange(submeshIndex, submeshCount);
-                    if (static_cast<size_t>(submeshIndex) < mesh->GetSubmeshCount())
-                    {
-                        const auto materialSlot = static_cast<size_t>(mesh->GetSubmesh(static_cast<size_t>(submeshIndex)).materialIndex);
-                        if (materialSlot < materials.size())
-                        {
-                            meshComponent->SetMaterialForSubmesh(static_cast<size_t>(submeshIndex), materials[materialSlot]);
-                        }
-                    }
-                }
-                else
-                {
-                    meshComponent->CreateSubmeshChildEntities();
-                }
                 AttachAnimationAsset(entity, FindSiblingAnimationAssetReference(EditorShell::GetInstance().GetProject(), reference));
                 return true;
             }
-
-            const std::string resolvedPath = engine.GetAssetManager().ResolveMeshAssetSourcePath(reference);
-            if (!engine.GetMeshImporter().SupportsFileType(resolvedPath))
-            {
-                if (errorMessage)
-                {
-                    *errorMessage = "Unsupported mesh format for model subassets: " + reference;
-                }
-                return false;
-            }
-
-            auto importedMeshAsset = engine.ImportMeshAsset(resolvedPath);
-            if (!importedMeshAsset.mesh)
-            {
-                if (errorMessage)
-                {
-                    *errorMessage = "Failed to import mesh asset: " + reference;
-                }
-                return false;
-            }
-
-            meshComponent->SetMesh(importedMeshAsset.mesh);
-            meshComponent->SetMaterials(importedMeshAsset.materials);
-            meshComponent->SetSourceMeshPath(reference);
-            if (submeshIndex >= 0)
-            {
-                if (static_cast<size_t>(submeshIndex) < importedMeshAsset.mesh->GetSubmeshCount())
-                {
-                    const auto &submesh = importedMeshAsset.mesh->GetSubmesh(static_cast<size_t>(submeshIndex));
-                    const uint32_t resolvedMaterialSlot = materialSlot >= 0
-                                                              ? static_cast<uint32_t>(materialSlot)
-                                                              : submesh.materialIndex;
-                    if (resolvedMaterialSlot < importedMeshAsset.materials.size())
-                    {
-                        if (auto *isolatedMesh = GetOrCreateIsolatedSubmeshRuntimeMesh(reference, submeshIndex, submeshCount, *importedMeshAsset.mesh))
-                        {
-                            meshComponent->SetMesh(isolatedMesh);
-                        }
-                        meshComponent->SetMaterials(importedMeshAsset.materials);
-                        meshComponent->SetMaterialForSubmesh(static_cast<size_t>(submeshIndex),
-                                                             importedMeshAsset.materials[resolvedMaterialSlot]);
-                    }
-                    meshComponent->SetSubmeshRange(submeshIndex, submeshCount);
-                    if (!submesh.name.empty())
-                    {
-                        entity.SetName(submesh.name);
-                    }
-                }
-            }
-            else
-            {
-                meshComponent->CreateSubmeshChildEntities();
-            }
-
-            AttachImportedAnimations(entity, reference, importedMeshAsset);
-            return true;
+            if (errorMessage) *errorMessage = "Mesh object is not a valid imported model artifact: " + reference;
+            return false;
         }
 
-        bool ImportSourceModelAsset(const assets::Project &project, const assets::ProjectAssetEntry &asset, std::string *errorMessage)
+        bool ImportSourceModelAsset(assets::Project &project, const assets::ProjectAssetEntry &asset, std::string *errorMessage)
         {
-            if (asset.type != assets::ProjectAssetType::SourceModel)
+            if (asset.type != assets::ProjectAssetType::Model)
             {
                 return false;
             }
 
             auto &engine = core::Engine::GetInstance();
             const auto sourcePath = project.ResolveAssetReference(asset.reference);
+            assets::AssetDatabase assetDatabase;
+            if (!assetDatabase.Scan(project, errorMessage))
+            {
+                return false;
+            }
+            const auto *sourceRecord = assetDatabase.FindByReference(asset.reference);
             assetimport::ImportedMeshSourceAsset importedSourceAsset;
             try
             {
@@ -1072,6 +1283,11 @@ namespace PlutoGE::ui
 
             const auto importDirectory = project.GetAssetDirectoryPath() / "Imported" / sourcePath.stem();
             const std::string meshReference = project.MakeAssetReference(importDirectory / (sourcePath.stem().string() + ".plutomesh"));
+            assets::ModelAsset modelAsset;
+            modelAsset.sourceReference = asset.reference;
+            modelAsset.sourceAssetId = sourceRecord ? sourceRecord->id : std::string{};
+            modelAsset.sourceContentHash = sourceRecord ? sourceRecord->contentHash : 0;
+            modelAsset.importerVersion = 1;
             std::vector<std::string> textureReferences;
             if (!importedSourceAsset.textures.empty())
             {
@@ -1084,6 +1300,15 @@ namespace PlutoGE::ui
                     {
                         return false;
                     }
+                    const std::string textureName = !texture.sourcePath.empty()
+                                                        ? std::filesystem::path(texture.sourcePath).stem().string()
+                                                        : "Texture " + std::to_string(textureIndex);
+                    modelAsset.objects.push_back({
+                        .localId = assets::MakeModelSubAssetId(assets::ProjectAssetType::Texture, textureName),
+                        .type = assets::ProjectAssetType::Texture,
+                        .name = textureName,
+                        .reference = textureReferences.back(),
+                    });
                 }
             }
 
@@ -1107,6 +1332,12 @@ namespace PlutoGE::ui
                         return false;
                     }
                     materialReferences.push_back(materialReference);
+                    modelAsset.objects.push_back({
+                        .localId = assets::MakeModelSubAssetId(assets::ProjectAssetType::Material, materialName),
+                        .type = assets::ProjectAssetType::Material,
+                        .name = materialName,
+                        .reference = materialReference,
+                    });
                 }
             }
 
@@ -1122,10 +1353,20 @@ namespace PlutoGE::ui
 
                 assets::MeshAssetMetadata meshMetadata;
                 meshMetadata.sourceAssetReference = asset.reference;
+                const std::string meshName = sourcePath.stem().string();
+                const auto meshObjectId = assets::MakeModelSubAssetId(assets::ProjectAssetType::Mesh, meshName);
+                meshMetadata.sourceAssetId = modelAsset.sourceAssetId;
+                meshMetadata.sourceObjectId = meshObjectId;
                 if (!engine.GetAssetManager().SaveMeshAsset(meshReference, meshConfig, materialReferences, errorMessage, meshMetadata))
                 {
                     return false;
                 }
+                modelAsset.objects.insert(modelAsset.objects.begin(), {
+                    .localId = meshObjectId,
+                    .type = assets::ProjectAssetType::Mesh,
+                    .name = meshName,
+                    .reference = meshReference,
+                });
             }
 
             if (hasAnimations)
@@ -1140,9 +1381,43 @@ namespace PlutoGE::ui
                 {
                     return false;
                 }
+                modelAsset.objects.push_back({
+                    .localId = assets::MakeModelSubAssetId(assets::ProjectAssetType::Animation, sourcePath.stem().string()),
+                    .type = assets::ProjectAssetType::Animation,
+                    .name = sourcePath.stem().string() + " Animations",
+                    .reference = animationReference,
+                });
+                for (std::size_t clipIndex = 0; clipIndex < clipReferences.size(); ++clipIndex)
+                {
+                    const std::string clipName = clipIndex < importedSourceAsset.animations.size()
+                                                     ? importedSourceAsset.animations[clipIndex].name
+                                                     : "Clip " + std::to_string(clipIndex);
+                    modelAsset.objects.push_back({
+                        .localId = assets::MakeModelSubAssetId(assets::ProjectAssetType::AnimationClip, clipName),
+                        .type = assets::ProjectAssetType::AnimationClip,
+                        .name = clipName,
+                        .reference = clipReferences[clipIndex],
+                    });
+                }
             }
 
-            return true;
+            std::error_code directoryError;
+            std::filesystem::create_directories(importDirectory, directoryError);
+            if (directoryError)
+            {
+                if (errorMessage) *errorMessage = "Failed to create imported model directory: " + directoryError.message();
+                return false;
+            }
+            const auto modelPath = importDirectory / (sourcePath.stem().string() + ".plutomodel");
+            if (!assets::SaveModelAsset(modelPath.string(), modelAsset, errorMessage))
+            {
+                return false;
+            }
+
+            // Register every generated artifact immediately so scene references
+            // receive stable IDs on the first drag, not only after an editor restart.
+            assets::AssetDatabase generatedAssetDatabase;
+            return generatedAssetDatabase.Scan(project, errorMessage);
         }
 
         bool ImportExternalSourceModelIntoAssets(assets::Project &project, std::string *importedReference, std::string *errorMessage)
@@ -1162,7 +1437,7 @@ namespace PlutoGE::ui
             const std::string sourceReference = project.MakeAssetReference(importedSourcePath);
             assets::ProjectAssetEntry sourceAsset{};
             sourceAsset.reference = sourceReference;
-            sourceAsset.type = assets::ProjectAssetType::SourceModel;
+            sourceAsset.type = assets::ProjectAssetType::Model;
             std::error_code errorCode;
             sourceAsset.size = std::filesystem::file_size(importedSourcePath, errorCode);
 
@@ -1178,47 +1453,9 @@ namespace PlutoGE::ui
             return true;
         }
 
-        render::Mesh *GetOrCreateIsolatedSubmeshRuntimeMesh(const std::string &reference,
-                                                            int submeshIndex,
-                                                            int submeshCount,
-                                                            const render::Mesh &sourceMesh)
-        {
-            if (submeshIndex < 0 || static_cast<size_t>(submeshIndex) >= sourceMesh.GetSubmeshCount())
-            {
-                return nullptr;
-            }
-
-            static std::unordered_map<std::string, std::unique_ptr<render::Mesh>> isolatedMeshes;
-            const int normalizedCount = std::max(1, submeshCount);
-            const size_t submeshEnd = std::min(static_cast<size_t>(submeshIndex + normalizedCount), sourceMesh.GetSubmeshCount());
-            const std::string key = reference + "#submesh:" + std::to_string(submeshIndex) + "+" + std::to_string(submeshEnd - static_cast<size_t>(submeshIndex));
-            const auto cached = isolatedMeshes.find(key);
-            if (cached != isolatedMeshes.end())
-            {
-                return cached->second.get();
-            }
-
-            std::vector<render::Submesh> submeshes(submeshEnd);
-            for (size_t index = static_cast<size_t>(submeshIndex); index < submeshEnd; ++index)
-            {
-                submeshes[index] = sourceMesh.GetSubmesh(index);
-            }
-
-            render::MeshConfig config;
-            config.data = sourceMesh.GetMeshData();
-            config.submeshes = std::move(submeshes);
-            config.hasLightmapUvs = sourceMesh.HasLightmapUvs();
-            config.skeleton = sourceMesh.GetSkeleton();
-            config.animationNodes = sourceMesh.GetAnimationNodes();
-            config.animations = sourceMesh.GetAnimations();
-            auto mesh = std::unique_ptr<render::Mesh>(render::Mesh::FromConfig(std::move(config)));
-            auto *meshPtr = mesh.get();
-            isolatedMeshes.emplace(key, std::move(mesh));
-            return meshPtr;
-        }
     }
 
-    bool InstantiateMeshAssetIntoScene(std::string reference, scene::Entity *parent, int submeshIndex, int submeshCount, int materialSlot)
+    bool InstantiateMeshAssetIntoScene(std::string reference, scene::Entity *parent)
     {
         if (reference.empty() || assets::Project::GetAssetTypeForReference(reference) != assets::ProjectAssetType::Mesh)
         {
@@ -1234,14 +1471,14 @@ namespace PlutoGE::ui
 
         scene::Entity *createdEntity = nullptr;
         std::string errorMessage;
-        editorShell.ExecuteSceneEdit(submeshIndex >= 0 ? "Instantiate Mesh Subasset" : "Instantiate Mesh Asset",
-                                     [scene, parent, reference, submeshIndex, submeshCount, materialSlot, &createdEntity, &errorMessage]()
+        editorShell.ExecuteSceneEdit("Instantiate Model Mesh Object",
+                                     [scene, parent, reference, &createdEntity, &errorMessage]()
                                      {
                                          auto entity = std::make_unique<scene::Entity>(scene::EntityConfig{
                                              .name = BuildEntityNameForMeshReference(reference),
                                          });
                                          createdEntity = scene->AddEntity(std::move(entity), parent);
-                                         if (!createdEntity || !ConfigureMeshComponentForReference(*createdEntity, reference, submeshIndex, submeshCount, materialSlot, &errorMessage))
+                                         if (!createdEntity || !ConfigureMeshComponentForReference(*createdEntity, reference, &errorMessage))
                                          {
                                              if (createdEntity)
                                              {
@@ -1264,6 +1501,26 @@ namespace PlutoGE::ui
             editorShell.Log(EditorShell::ConsoleSeverity::Error, errorMessage);
         }
         return false;
+    }
+
+    bool InstantiateModelAssetIntoScene(const std::string &reference, scene::Entity *parent)
+    {
+        auto &editorShell = EditorShell::GetInstance();
+        auto *project = editorShell.GetProject();
+        if (!project || assets::Project::GetAssetTypeForReference(reference) != assets::ProjectAssetType::Model)
+        {
+            return false;
+        }
+
+        assets::ModelAsset model;
+        if (!assets::LoadModelAsset(GetImportedModelManifestPath(*project, reference).string(), model))
+        {
+            editorShell.Log(EditorShell::ConsoleSeverity::Error, "Import the model before placing it in a scene.");
+            return false;
+        }
+        const auto meshObject = std::find_if(model.objects.begin(), model.objects.end(), [](const auto &object)
+                                             { return object.type == assets::ProjectAssetType::Mesh; });
+        return meshObject != model.objects.end() && InstantiateMeshAssetIntoScene(meshObject->reference, parent);
     }
 
     void ContentBrowserPanel::Render()
@@ -1669,6 +1926,7 @@ namespace PlutoGE::ui
 
         if (registryChanged)
         {
+            if (m_thumbnailCache) m_thumbnailCache->Clear();
             m_assetCacheDirty = false;
             m_cachedProject = project;
             m_cachedAssetReferences.clear();
@@ -1676,7 +1934,6 @@ namespace PlutoGE::ui
             m_cachedAssetFileNames.clear();
             m_cachedAssetRelativePaths.clear();
             m_cachedFolders.clear();
-            m_meshSubassetRows.clear();
             m_cachedAssetReferences.reserve(assets.size());
             m_cachedAssetFolders.reserve(assets.size());
             m_cachedAssetFileNames.reserve(assets.size());
@@ -1691,14 +1948,15 @@ namespace PlutoGE::ui
                 m_cachedAssetReferences.push_back(asset.reference);
 
                 const std::string relativePath = GetReferenceRelativePath(*project, asset);
-                const std::string folder = GetAssetFolderParent(relativePath);
+                const bool internalArtifact = relativePath == "Imported" || relativePath.rfind("Imported/", 0) == 0;
+                const std::string folder = internalArtifact ? "__internal__" : GetAssetFolderParent(relativePath);
                 const auto separator = relativePath.find_last_of('/');
                 const std::string fileName = separator == std::string::npos ? relativePath : relativePath.substr(separator + 1);
                 m_cachedAssetRelativePaths.push_back(relativePath);
                 m_cachedAssetFolders.push_back(folder);
                 m_cachedAssetFileNames.push_back(fileName.empty() ? DisplayAssetReference(asset.reference) : fileName);
 
-                std::string folderPath = folder;
+                std::string folderPath = internalArtifact ? std::string{} : folder;
                 while (!folderPath.empty())
                 {
                     folderSet.insert(folderPath);
@@ -1727,7 +1985,11 @@ namespace PlutoGE::ui
                     const auto relativePath = std::filesystem::relative(iterator->path(), assetDirectory, relativeError);
                     if (!relativeError)
                     {
-                        folderSet.insert(NormalizeAssetRelativePath(relativePath));
+                        const auto normalized = NormalizeAssetRelativePath(relativePath);
+                        if (normalized != "Imported" && normalized.rfind("Imported/", 0) != 0)
+                        {
+                            folderSet.insert(normalized);
+                        }
                     }
                 }
             }
@@ -1791,6 +2053,10 @@ namespace PlutoGE::ui
             {
                 const auto &asset = assets[static_cast<std::size_t>(index)];
                 const std::size_t cacheIndex = static_cast<std::size_t>(index);
+                if (m_cachedAssetFolders[cacheIndex] == "__internal__")
+                {
+                    continue;
+                }
                 const bool inVisibleScope = filter.empty()
                                                 ? m_cachedAssetFolders[cacheIndex] == m_selectedFolder
                                                 : IsFolderAncestorOrSelf(m_selectedFolder, m_cachedAssetFolders[cacheIndex]);
@@ -1941,198 +2207,115 @@ namespace PlutoGE::ui
             ImGui::TextDisabled("Assets");
         }
         ImGui::Separator();
+        ImGui::SetNextItemWidth(120.0f);
+        ImGui::SliderFloat("Thumbnail Size", &m_thumbnailSize, 72.0f, 144.0f, "%.0f px");
+        ImGui::Separator();
 
-        auto renderAssetRow = [&](int filteredIndex)
+        if (!m_thumbnailCache) m_thumbnailCache = std::make_unique<AssetThumbnailCache>();
+        m_thumbnailCache->BeginFrame();
+        const float cardWidth = m_thumbnailSize + 18.0f;
+        const float cardHeight = m_thumbnailSize + ImGui::GetTextLineHeightWithSpacing() * 2.4f + 12.0f;
+        const int columnCount = std::max(1, static_cast<int>(ImGui::GetContentRegionAvail().x / cardWidth));
+
+        const auto drawCardBackground = [&](bool selected, bool hovered)
         {
-            const int index = m_filteredAssetIndices[static_cast<std::size_t>(filteredIndex)];
-            const auto &asset = assets[static_cast<std::size_t>(index)];
-            const auto &displayName = m_filteredAssetDisplayNames[static_cast<std::size_t>(filteredIndex)];
-
-            const bool selected = m_selectedAssetIndex == index;
-            const bool canExpandMesh = asset.type == assets::ProjectAssetType::Mesh &&
-                                       !assets::Project::IsEngineAssetReference(asset.reference);
-            bool rowActivated = false;
-            bool treeOpen = false;
-            ImGui::PushID(index);
-            if (canExpandMesh)
-            {
-                const ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow |
-                                                 ImGuiTreeNodeFlags_OpenOnDoubleClick |
-                                                 ImGuiTreeNodeFlags_SpanAvailWidth |
-                                                 (selected ? ImGuiTreeNodeFlags_Selected : 0);
-                treeOpen = ImGui::TreeNodeEx("AssetTreeNode", flags, "%s", displayName.c_str());
-                rowActivated = ImGui::IsItemClicked();
-            }
-            else
-            {
-                rowActivated = ImGui::Selectable(displayName.c_str(), selected);
-            }
-
-            if (rowActivated)
-            {
-                m_selectedAssetIndex = index;
-            }
-
-            if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
-            {
-                OpenAsset(editorShell, *project, asset);
-            }
-
-            if (ImGui::BeginDragDropSource())
-            {
-                ImGui::SetDragDropPayload(kContentBrowserAssetDragDropPayload,
-                                          asset.reference.c_str(),
-                                          asset.reference.size() + 1);
-                ImGui::TextUnformatted(displayName.c_str());
-                ImGui::EndDragDropSource();
-            }
-
-            if (canExpandMesh && treeOpen)
-            {
-                try
-                {
-                    auto cachedRows = m_meshSubassetRows.find(asset.reference);
-                    if (cachedRows == m_meshSubassetRows.end())
-                    {
-                        std::vector<MeshSubassetRow> rows;
-                        auto *mesh = editorShell.GetEngine().GetAssetManager().LoadMeshAsset(asset.reference);
-                        if (mesh)
-                        {
-                            rows.reserve(mesh->GetSubmeshCount());
-                            for (size_t submeshIndex = 0; submeshIndex < mesh->GetSubmeshCount();)
-                            {
-                                const auto &submesh = mesh->GetSubmesh(submeshIndex);
-                                const std::string submeshName = submesh.name.empty()
-                                                                    ? std::string("Mesh ") + std::to_string(submeshIndex)
-                                                                    : submesh.name;
-                                size_t groupEnd = submeshIndex + 1;
-                                while (groupEnd < mesh->GetSubmeshCount())
-                                {
-                                    const auto &nextSubmesh = mesh->GetSubmesh(groupEnd);
-                                    const std::string nextName = nextSubmesh.name.empty()
-                                                                     ? std::string("Mesh ") + std::to_string(groupEnd)
-                                                                     : nextSubmesh.name;
-                                    if (nextName != submeshName)
-                                    {
-                                        break;
-                                    }
-                                    ++groupEnd;
-                                }
-
-                                std::string slotSummary;
-                                uint32_t indexCount = 0;
-                                for (size_t groupedIndex = submeshIndex; groupedIndex < groupEnd; ++groupedIndex)
-                                {
-                                    const auto &groupedSubmesh = mesh->GetSubmesh(groupedIndex);
-                                    if (!slotSummary.empty())
-                                    {
-                                        slotSummary += ", ";
-                                    }
-                                    slotSummary += std::to_string(groupedSubmesh.materialIndex);
-                                    indexCount += groupedSubmesh.indexCount;
-                                }
-
-                                const int groupCount = static_cast<int>(groupEnd - submeshIndex);
-                                rows.push_back(MeshSubassetRow{
-                                    .displayName = submeshName +
-                                                   (groupCount > 1 ? " [" + std::to_string(groupCount) + " parts, slots " + slotSummary + "]"
-                                                                   : " [Slot " + slotSummary + "]"),
-                                    .slotSummary = std::move(slotSummary),
-                                    .indexCount = indexCount,
-                                    .submeshIndex = static_cast<int>(submeshIndex),
-                                    .submeshCount = groupCount,
-                                    .materialSlot = static_cast<int>(submesh.materialIndex),
-                                });
-                                submeshIndex = groupEnd;
-                            }
-                        }
-                        cachedRows = m_meshSubassetRows.emplace(asset.reference, std::move(rows)).first;
-                    }
-
-                    const auto &rows = cachedRows->second;
-                    if (rows.empty())
-                    {
-                        ImGui::TextDisabled("No mesh children.");
-                    }
-                    else
-                    {
-                        // Imported meshes can contain hundreds of named parts. Keep
-                        // expansion useful without submitting every child to ImGui.
-                        const float rowHeight = ImGui::GetTextLineHeightWithSpacing();
-                        const float childHeight = std::min(rowHeight * static_cast<float>(rows.size()), rowHeight * 12.0f);
-                        ImGui::BeginChild("MeshSubassets", ImVec2(0.0f, childHeight), false);
-                        ImGuiListClipper submeshClipper;
-                        submeshClipper.Begin(static_cast<int>(rows.size()), rowHeight);
-                        while (submeshClipper.Step())
-                        {
-                            for (int rowIndex = submeshClipper.DisplayStart; rowIndex < submeshClipper.DisplayEnd; ++rowIndex)
-                            {
-                                const auto &row = rows[static_cast<std::size_t>(rowIndex)];
-                                ImGui::PushID(row.submeshIndex);
-                                ImGui::Selectable(row.displayName.c_str(), false);
-                                if (ImGui::BeginDragDropSource())
-                                {
-                                    ContentBrowserMeshSubassetPayload payload{};
-                                    strncpy_s(payload.sourceReference, asset.reference.c_str(), _TRUNCATE);
-                                        payload.submeshIndex = row.submeshIndex;
-                                        payload.submeshCount = row.submeshCount;
-                                        payload.materialSlot = row.materialSlot;
-                                    ImGui::SetDragDropPayload(kContentBrowserMeshSubassetDragDropPayload,
-                                                              &payload,
-                                                              sizeof(payload));
-                                    ImGui::Text("%s", row.displayName.c_str());
-                                    ImGui::TextDisabled("Material slots %s, %u indices", row.slotSummary.c_str(), row.indexCount);
-                                    ImGui::EndDragDropSource();
-                                }
-                                ImGui::SameLine();
-                                ImGui::TextDisabled("slots %s, %u indices", row.slotSummary.c_str(), row.indexCount);
-                                ImGui::PopID();
-                            }
-                        }
-                        ImGui::EndChild();
-                    }
-                }
-                catch (const std::exception &exception)
-                {
-                    ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f), "%s", exception.what());
-                }
-                ImGui::TreePop();
-            }
-            ImGui::PopID();
+            const ImVec2 minimum = ImGui::GetItemRectMin();
+            const ImVec2 maximum = ImGui::GetItemRectMax();
+            const ImU32 fill = ImGui::GetColorU32(selected ? ImGuiCol_HeaderActive : hovered ? ImGuiCol_HeaderHovered : ImGuiCol_FrameBg);
+            ImGui::GetWindowDrawList()->AddRectFilled(minimum, maximum, fill, 5.0f);
+            ImGui::GetWindowDrawList()->AddRect(minimum, maximum, ImGui::GetColorU32(selected ? ImGuiCol_NavHighlight : ImGuiCol_Border), 5.0f);
         };
 
-        if (!hasSearch)
+        if (ImGui::BeginTable("AssetIconGrid", columnCount, ImGuiTableFlags_SizingFixedFit))
         {
-            for (std::size_t folderIndex = 0; folderIndex < m_cachedChildFolders.size(); ++folderIndex)
+            if (!hasSearch)
             {
-                const auto &folder = m_cachedChildFolders[folderIndex];
-                const auto &label = m_cachedChildFolderDisplayNames[folderIndex];
-                ImGui::PushID(folder.c_str());
-                const bool selected = m_selectedAssetIndex < 0 && folder == m_selectedFolder;
-                if (ImGui::Selectable(label.c_str(), selected, ImGuiSelectableFlags_AllowDoubleClick))
+                for (std::size_t folderIndex = 0; folderIndex < m_cachedChildFolders.size(); ++folderIndex)
                 {
-                    if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+                    ImGui::TableNextColumn();
+                    const auto &folder = m_cachedChildFolders[folderIndex];
+                    const auto &label = m_cachedChildFolderLabels[folderIndex];
+                    ImGui::PushID(folder.c_str());
+                    ImGui::InvisibleButton("FolderCard", ImVec2(cardWidth - 6.0f, cardHeight));
+                    const bool hovered = ImGui::IsItemHovered();
+                    drawCardBackground(false, hovered);
+                    const ImVec2 minimum = ImGui::GetItemRectMin();
+                    const ImVec2 iconMin(minimum.x + 10.0f, minimum.y + 18.0f);
+                    const ImVec2 iconMax(minimum.x + cardWidth - 16.0f, minimum.y + m_thumbnailSize - 4.0f);
+                    auto *drawList = ImGui::GetWindowDrawList();
+                    const ImU32 folderColor = IM_COL32(216, 167, 64, 255);
+                    drawList->AddRectFilled(ImVec2(iconMin.x, iconMin.y + 13.0f), iconMax, folderColor, 5.0f);
+                    drawList->AddRectFilled(iconMin, ImVec2(iconMin.x + (iconMax.x - iconMin.x) * 0.46f, iconMin.y + 25.0f), folderColor, 4.0f);
+                    const ImVec2 textSize = ImGui::CalcTextSize(label.c_str());
+                    drawList->AddText(ImVec2(minimum.x + (cardWidth - 6.0f - std::min(textSize.x, cardWidth - 16.0f)) * 0.5f,
+                                             minimum.y + m_thumbnailSize + 10.0f),
+                                      ImGui::GetColorU32(ImGuiCol_Text), label.c_str());
+                    if (hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
                     {
                         m_selectedFolder = folder;
                         m_selectedAssetIndex = -1;
                     }
+                    ImGui::PopID();
                 }
+            }
+            else
+            {
+                ImGui::TextDisabled("Search results in %s", m_selectedFolder.empty() ? "Assets" : m_selectedFolder.c_str());
+            }
+
+            for (int filteredIndex = 0; filteredIndex < static_cast<int>(m_filteredAssetIndices.size()); ++filteredIndex)
+            {
+                const int index = m_filteredAssetIndices[static_cast<std::size_t>(filteredIndex)];
+                const auto &asset = assets[static_cast<std::size_t>(index)];
+                const std::string &fileName = m_cachedAssetFileNames[static_cast<std::size_t>(index)];
+                const bool selected = m_selectedAssetIndex == index;
+                ImGui::TableNextColumn();
+                ImGui::PushID(index);
+                ImGui::InvisibleButton("AssetCard", ImVec2(cardWidth - 6.0f, cardHeight));
+                const bool hovered = ImGui::IsItemHovered();
+                drawCardBackground(selected, hovered);
+                const ImVec2 minimum = ImGui::GetItemRectMin();
+                const ImVec2 previewMin(minimum.x + 8.0f, minimum.y + 8.0f);
+                const ImVec2 previewMax(minimum.x + cardWidth - 14.0f, minimum.y + m_thumbnailSize + 2.0f);
+                auto *drawList = ImGui::GetWindowDrawList();
+                drawList->AddRectFilled(previewMin, previewMax, IM_COL32(27, 30, 35, 255), 4.0f);
+                const GLuint thumbnail = m_thumbnailCache->Get(*project, editorShell.GetEngine(), asset);
+                if (thumbnail != 0)
+                {
+                    drawList->AddImage(static_cast<ImTextureID>(thumbnail), previewMin, previewMax,
+                                       ImVec2(0, 1), ImVec2(1, 0));
+                }
+                else
+                {
+                    const std::string typeLabel(assets::Project::GetAssetTypeName(asset.type));
+                    const ImVec2 typeSize = ImGui::CalcTextSize(typeLabel.c_str());
+                    drawList->AddText(ImVec2((previewMin.x + previewMax.x - typeSize.x) * 0.5f,
+                                             (previewMin.y + previewMax.y - typeSize.y) * 0.5f),
+                                      ImGui::GetColorU32(ImGuiCol_TextDisabled), typeLabel.c_str());
+                }
+                const std::string shownName = fileName.size() > 22 ? fileName.substr(0, 20) + "..." : fileName;
+                const ImVec2 textSize = ImGui::CalcTextSize(shownName.c_str());
+                drawList->AddText(ImVec2(minimum.x + std::max(5.0f, (cardWidth - 6.0f - textSize.x) * 0.5f),
+                                         minimum.y + m_thumbnailSize + 10.0f),
+                                  ImGui::GetColorU32(ImGuiCol_Text), shownName.c_str());
+                const std::string typeName(assets::Project::GetAssetTypeName(asset.type));
+                const ImVec2 typeSize = ImGui::CalcTextSize(typeName.c_str());
+                drawList->AddText(ImVec2(minimum.x + std::max(5.0f, (cardWidth - 6.0f - typeSize.x) * 0.5f),
+                                         minimum.y + m_thumbnailSize + 10.0f + ImGui::GetTextLineHeightWithSpacing()),
+                                  ImGui::GetColorU32(ImGuiCol_TextDisabled), typeName.c_str());
+
+                if (ImGui::IsItemClicked()) m_selectedAssetIndex = index;
+                if (hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) OpenAsset(editorShell, *project, asset);
+                if (ImGui::BeginDragDropSource())
+                {
+                    ImGui::SetDragDropPayload(kContentBrowserAssetDragDropPayload, asset.reference.c_str(), asset.reference.size() + 1);
+                    ImGui::TextUnformatted(fileName.c_str());
+                    ImGui::EndDragDropSource();
+                }
+                if (hovered) ImGui::SetTooltip("%s\n%s", fileName.c_str(), asset.reference.c_str());
                 ImGui::PopID();
             }
-        }
-        else
-        {
-            ImGui::TextDisabled("Search results in %s", m_selectedFolder.empty() ? "Assets" : m_selectedFolder.c_str());
-        }
-
-        ImGuiListClipper clipper;
-        clipper.Begin(static_cast<int>(m_filteredAssetIndices.size()));
-        while (clipper.Step())
-        {
-            for (int filteredIndex = clipper.DisplayStart; filteredIndex < clipper.DisplayEnd; ++filteredIndex)
-            {
-                renderAssetRow(filteredIndex);
-            }
+            ImGui::EndTable();
         }
 
         if (ImGui::BeginPopupContextWindow("ContentBrowserContextMenu", ImGuiPopupFlags_NoOpenOverItems))
@@ -2290,6 +2473,41 @@ namespace PlutoGE::ui
                     editorShell.OpenMeshAsset(asset.reference);
                 }
             }
+            else if (asset.type == assets::ProjectAssetType::Model)
+            {
+                assets::ModelAsset model;
+                std::string modelError;
+                const auto manifestPath = GetImportedModelManifestPath(*project, asset.reference);
+                const bool imported = assets::LoadModelAsset(manifestPath.string(), model, &modelError);
+                if (imported)
+                {
+                    ImGui::SeparatorText("Imported Model");
+                    ImGui::Text("Objects: %zu", model.objects.size());
+                    ImGui::TextWrapped("Asset ID: %s", model.sourceAssetId.empty() ? "Unavailable" : model.sourceAssetId.c_str());
+                    ImGui::Text("Source hash: %016llx", static_cast<unsigned long long>(model.sourceContentHash));
+                    ImGui::Text("Importer version: %u", model.importerVersion);
+                }
+                else
+                {
+                    ImGui::TextDisabled("This model has not been imported yet.");
+                }
+                if (ImGui::Button(imported ? "Reimport" : "Import"))
+                {
+                    std::string errorMessage;
+                    if (ImportSourceModelAsset(*project, asset, &errorMessage))
+                    {
+                        project->RefreshAssetRegistry();
+                        m_assetCacheDirty = true;
+                        editorShell.MarkProjectDirty();
+                        editorShell.Log(EditorShell::ConsoleSeverity::Info, "Imported model: " + asset.reference);
+                    }
+                    else
+                    {
+                        editorShell.Log(EditorShell::ConsoleSeverity::Error,
+                                        errorMessage.empty() ? "Failed to import model." : errorMessage);
+                    }
+                }
+            }
             else if (asset.type == assets::ProjectAssetType::ShaderGraph)
             {
                 if (ImGui::Button("Open Shader Graph"))
@@ -2309,25 +2527,6 @@ namespace PlutoGE::ui
                 if (ImGui::Button("Open Particle System"))
                 {
                     editorShell.OpenParticleSystemAsset(asset.reference);
-                }
-            }
-            else if (asset.type == assets::ProjectAssetType::SourceModel)
-            {
-                if (ImGui::Button("Import Model"))
-                {
-                    std::string errorMessage;
-                    if (ImportSourceModelAsset(*project, asset, &errorMessage))
-                    {
-                        project->RefreshAssetRegistry();
-                        m_assetCacheDirty = true;
-                        editorShell.MarkProjectDirty();
-                        editorShell.Log(EditorShell::ConsoleSeverity::Info, "Imported model assets: " + asset.reference);
-                    }
-                    else
-                    {
-                        editorShell.Log(EditorShell::ConsoleSeverity::Error,
-                                        errorMessage.empty() ? "Failed to import model." : errorMessage);
-                    }
                 }
             }
         }

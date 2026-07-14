@@ -15,6 +15,8 @@
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
 #include "PlutoGE/scene/components/PhysicalSkyComponent.h"
 #include "PlutoGE/scene/components/RigidbodyComponent.h"
+#include "PlutoGE/scene/components/NavAgentComponent.h"
+#include "PlutoGE/scene/components/NavigationMeshComponent.h"
 #include "PlutoGE/scene/components/ScriptComponent.h"
 #include "PlutoGE/scene/components/SkeletonAttachmentComponent.h"
 #include "PlutoGE/scene/components/SoundEmitterComponent.h"
@@ -233,6 +235,10 @@ namespace PlutoGE::scene
             {
                 return "RigidbodyComponent";
             }
+            if (dynamic_cast<const NavAgentComponent *>(&component))
+                return "NavAgentComponent";
+            if (dynamic_cast<const NavigationMeshComponent *>(&component))
+                return "NavigationMeshComponent";
             if (dynamic_cast<const ColliderComponent *>(&component))
             {
                 return "ColliderComponent";
@@ -335,6 +341,10 @@ namespace PlutoGE::scene
             {
                 return std::make_unique<RigidbodyComponent>();
             }
+            if (componentType == "NavAgentComponent")
+                return std::make_unique<NavAgentComponent>();
+            if (componentType == "NavigationMeshComponent")
+                return std::make_unique<NavigationMeshComponent>();
             if (componentType == "ColliderComponent")
             {
                 return std::make_unique<ColliderComponent>();

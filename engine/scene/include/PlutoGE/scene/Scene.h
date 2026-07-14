@@ -17,6 +17,7 @@ namespace PlutoGE::render
 
 namespace PlutoGE::scene
 {
+    class NavigationSystem;
     class Entity;
     class FoliageComponent;
     class MeshComponent;

@@ -34,6 +34,7 @@
 #include <vector>
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <limits>
 #include <numeric>
 #include <string_view>
@@ -787,6 +788,7 @@ namespace PlutoGE::render
 
     void Renderer::UpdateRenderCommandLods(const CameraData &cameraData, int viewportHeight)
     {
+        constexpr float kLodTransitionWidth = 0.15f;
         const glm::mat4 inverseView = glm::inverse(cameraData.view);
         const glm::vec3 cameraPosition = glm::vec3(inverseView[3]);
         const float projectionScaleY = std::abs(cameraData.projection[1][1]);
@@ -810,11 +812,52 @@ namespace PlutoGE::render
             const float projectedRadiusPixels = (std::max(command.worldBounds.radius, 0.001f) / safeDistance) * projectionScaleY * halfViewportHeight;
             const uint32_t selectedLodIndex = static_cast<uint32_t>(command.mesh->SelectSubmeshLodByProjectedRadius(command.submeshIndex, projectedRadiusPixels));
             const std::size_t lodCount = command.mesh->GetSubmeshLodCount(command.submeshIndex);
-            const uint32_t minLodIndex = lodCount > 0 ? std::min(command.minLodIndex, static_cast<uint32_t>(lodCount - 1)) : 0u;
+            const uint32_t minLodIndex = lodCount > 0 ? std::min(command.GetMinLodIndex(), static_cast<uint32_t>(lodCount - 1)) : 0u;
             const uint32_t lodIndex = std::max(selectedLodIndex, minLodIndex);
-            if (command.lodIndex != lodIndex)
+            uint32_t transitionIndex = lodIndex;
+            uint32_t transitionBaseIndex = lodIndex;
+            float transitionFade = 0.0f;
+
+            // Cross-fade adjacent levels over a band centred on the configured
+            // projected-radius threshold. The lower index is the near LOD and
+            // the higher index is the far LOD.
+            for (uint32_t farLodIndex = 1; farLodIndex < lodCount; ++farLodIndex)
             {
-                command.lodIndex = lodIndex;
+                const uint32_t nearLodIndex = farLodIndex - 1;
+                if (nearLodIndex < minLodIndex)
+                {
+                    continue;
+                }
+
+                const float threshold = command.mesh->GetSubmeshLodRange(command.submeshIndex, farLodIndex).maxScreenRadiusPixels;
+                if (!std::isfinite(threshold) || threshold <= 0.0f)
+                {
+                    continue;
+                }
+
+                const float upperRadius = threshold * (1.0f + kLodTransitionWidth);
+                const float lowerRadius = threshold * (1.0f - kLodTransitionWidth);
+                if (projectedRadiusPixels <= upperRadius && projectedRadiusPixels >= lowerRadius)
+                {
+                    transitionBaseIndex = nearLodIndex;
+                    transitionIndex = farLodIndex;
+                    transitionFade = glm::clamp((upperRadius - projectedRadiusPixels) /
+                                                    std::max(upperRadius - lowerRadius, 0.001f),
+                                                0.0f,
+                                                1.0f);
+                    break;
+                }
+            }
+
+            const uint32_t resolvedLodIndex = transitionFade > 0.0f && transitionFade < 1.0f
+                                                  ? transitionBaseIndex
+                                                  : lodIndex;
+            if (command.lodIndex != resolvedLodIndex ||
+                command.GetLodTransitionIndex() != transitionIndex ||
+                std::abs(command.GetLodTransitionFade() - transitionFade) > (1.0f / 65535.0f))
+            {
+                command.lodIndex = resolvedLodIndex;
+                command.SetLodTransition(transitionIndex, transitionFade);
                 changed = true;
             }
         }

@@ -27,6 +27,22 @@
                 "CMAKE_C_COMPILER": "cl.exe",
                 "CMAKE_CXX_COMPILER": "cl.exe"
             }
+        },
+        {
+            "name": "msvc-shipping",
+            "displayName": "Windows Shipping Runtime",
+            "description": "Release-only runtime used to export distributable games",
+            "generator": "Visual Studio 17 2022",
+            "toolset": "host=x64",
+            "architecture": "x64",
+            "binaryDir": "${sourceDir}/out/build/${presetName}",
+            "cacheVariables": {
+                "PLUTO_BUILD_EDITOR": "OFF",
+                "PLUTO_BUILD_RUNTIME": "ON",
+                "PLUTO_BUILD_SAMPLES": "OFF",
+                "BUILD_TESTING": "OFF",
+                "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}"
+            }
         }
     ],
     "buildPresets": [
@@ -47,6 +63,15 @@
             "displayName": "Visual Studio Community 2022 Release - amd64 - Debug",
             "configurePreset": "msvc",
             "configuration": "Debug"
+        },
+        {
+            "name": "shipping",
+            "displayName": "Build Windows Shipping Runtime",
+            "configurePreset": "msvc-shipping",
+            "configuration": "Release",
+            "targets": [
+                "PlutoGERuntime"
+            ]
         }
     ]
 }

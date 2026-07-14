@@ -26,6 +26,8 @@
 #include "PlutoGE/scene/components/PhysicalSkyComponent.h"
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
 #include "PlutoGE/scene/components/RigidbodyComponent.h"
+#include "PlutoGE/scene/components/NavAgentComponent.h"
+#include "PlutoGE/scene/components/NavigationMeshComponent.h"
 #include "PlutoGE/scene/components/SoundEmitterComponent.h"
 #include "PlutoGE/scene/components/SoundListenerComponent.h"
 #include "PlutoGE/scene/components/UIComponent.h"
@@ -84,6 +86,7 @@ namespace PlutoGE::ui
         }
         constexpr const char *kPostProcessEffectDragDropPayload = "PGE_PP_FX";
         constexpr const char *kEditorPostProcessEffectDragDropPayload = "PGE_ED_PP_FX";
+        constexpr const char *kHierarchyEntityDragDropPayload = "PLUTOGE_SCENE_ENTITY";
         enum class AddableComponentType
         {
             Mesh = 0,
@@ -109,6 +112,8 @@ namespace PlutoGE::ui
             UIImage = 20,
             UIText = 21,
             UIButton = 22,
+            NavAgent = 23,
+            NavigationMesh = 24,
         };
 
         struct ScriptAssetOption
@@ -1012,6 +1017,16 @@ namespace PlutoGE::ui
 
             meshComponent.SetMesh(mesh);
             meshComponent.SetMeshAssetReference(meshAssetReference);
+            if (assets::Project::IsEngineAssetReference(meshAssetReference))
+            {
+                meshComponent.SetModelObjectIdentity(meshAssetReference, 1);
+            }
+            else
+            {
+                const auto &metadata = engine.GetAssetManager().GetMeshAssetMetadata(meshAssetReference);
+                if (metadata.sourceAssetId.empty() || metadata.sourceObjectId == 0) return false;
+                meshComponent.SetModelObjectIdentity(metadata.sourceAssetId, metadata.sourceObjectId);
+            }
             meshComponent.SetUseGeneratedLods(false);
 
             const auto &materialReferences = engine.GetAssetManager().GetMeshAssetMaterialReferences(meshAssetReference);
@@ -1506,6 +1521,10 @@ namespace PlutoGE::ui
             {
                 return "Rigidbody Component";
             }
+            if (dynamic_cast<const scene::NavAgentComponent *>(&component))
+                return "Navigation Agent Component";
+            if (dynamic_cast<const scene::NavigationMeshComponent *>(&component))
+                return "Navigation Mesh Component";
             if (dynamic_cast<const scene::ColliderComponent *>(&component))
             {
                 return "Collider Component";
@@ -1580,6 +1599,10 @@ namespace PlutoGE::ui
                 return "LightComponent";
             if (dynamic_cast<const scene::RigidbodyComponent *>(&component))
                 return "RigidbodyComponent";
+            if (dynamic_cast<const scene::NavAgentComponent *>(&component))
+                return "NavAgentComponent";
+            if (dynamic_cast<const scene::NavigationMeshComponent *>(&component))
+                return "NavigationMeshComponent";
             if (dynamic_cast<const scene::ColliderComponent *>(&component))
                 return "ColliderComponent";
             if (dynamic_cast<const scene::IblCaptureComponent *>(&component))
@@ -1708,6 +1731,10 @@ namespace PlutoGE::ui
                 return !entity.HasComponent<scene::LightComponent>();
             case AddableComponentType::Rigidbody:
                 return !entity.HasComponent<scene::RigidbodyComponent>();
+            case AddableComponentType::NavAgent:
+                return !entity.HasComponent<scene::NavAgentComponent>();
+            case AddableComponentType::NavigationMesh:
+                return !entity.HasComponent<scene::NavigationMeshComponent>();
             case AddableComponentType::Collider:
                 return !entity.HasComponent<scene::ColliderComponent>();
             case AddableComponentType::IblCapture:
@@ -1770,6 +1797,12 @@ namespace PlutoGE::ui
             {
                 renderItem("Rigidbody", AddableComponentType::Rigidbody);
                 renderItem("Collider", AddableComponentType::Collider);
+                ImGui::EndMenu();
+            }
+            if (ImGui::BeginMenu("AI"))
+            {
+                renderItem("Navigation Agent", AddableComponentType::NavAgent);
+                renderItem("Navigation Mesh", AddableComponentType::NavigationMesh);
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Environment"))
@@ -1883,6 +1916,12 @@ namespace PlutoGE::ui
                 break;
             case AddableComponentType::Rigidbody:
                 entity.CreateComponent<scene::RigidbodyComponent>();
+                break;
+            case AddableComponentType::NavAgent:
+                entity.CreateComponent<scene::NavAgentComponent>();
+                break;
+            case AddableComponentType::NavigationMesh:
+                entity.CreateComponent<scene::NavigationMeshComponent>();
                 break;
             case AddableComponentType::Collider:
                 entity.CreateComponent<scene::ColliderComponent>(scene::ColliderComponentConfig{
@@ -2140,6 +2179,58 @@ namespace PlutoGE::ui
                 ImGui::EndCombo();
             }
             break;
+        }
+        case scene::PropertyType::Entity:
+        {
+            scene::EntityID selectedId = 0;
+            try { selectedId = static_cast<scene::EntityID>(std::stoul(property.value)); }
+            catch (...) { property.value = "0"; }
+
+            auto *currentScene = core::Engine::GetInstance().GetScene();
+            auto *selectedEntity = currentScene && selectedId != 0 ? currentScene->FindEntityByID(selectedId) : nullptr;
+            const std::string preview = selectedEntity ? selectedEntity->GetName() : "None";
+            bool changed = false;
+            if (ImGui::BeginCombo(property.name.c_str(), preview.c_str()))
+            {
+                if (ImGui::Selectable("None", selectedId == 0))
+                {
+                    property.value = "0";
+                    changed = true;
+                }
+                const auto renderEntities = [&](scene::Entity *entity, const auto &self) -> void
+                {
+                    if (!entity) return;
+                    const bool selected = entity->GetID() == selectedId;
+                    if (ImGui::Selectable((entity->GetName() + "##" + std::to_string(entity->GetID())).c_str(), selected))
+                    {
+                        property.value = std::to_string(entity->GetID());
+                        changed = true;
+                    }
+                    for (auto *child : entity->GetChildren()) self(child, self);
+                };
+                if (currentScene)
+                    for (auto *root : currentScene->GetRootEntities()) renderEntities(root, renderEntities);
+                ImGui::EndCombo();
+            }
+            if (ImGui::BeginDragDropTarget())
+            {
+                if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kHierarchyEntityDragDropPayload))
+                {
+                    auto *dropped = *static_cast<scene::Entity *const *>(payload->Data);
+                    if (dropped)
+                    {
+                        property.value = std::to_string(dropped->GetID());
+                        changed = true;
+                    }
+                }
+                ImGui::EndDragDropTarget();
+            }
+            if (selectedEntity)
+            {
+                ImGui::SameLine();
+                ImGui::TextDisabled("ID %u", selectedId);
+            }
+            return changed;
         }
         default:
             break;
@@ -3324,7 +3415,6 @@ namespace PlutoGE::ui
                         {
                             if (AssignMeshAsset(*meshComponent, option.reference, engine))
                             {
-                                meshComponent->CreateSubmeshChildEntities();
                                 editorShell.MarkSceneDirty();
                             }
                         }
@@ -3341,7 +3431,6 @@ namespace PlutoGE::ui
                 {
                     if (AssignMeshAsset(*meshComponent, *droppedMeshReference, engine))
                     {
-                        meshComponent->CreateSubmeshChildEntities();
                         editorShell.MarkSceneDirty();
                     }
                 }
@@ -3349,10 +3438,24 @@ namespace PlutoGE::ui
                 if (meshComponent->GetMesh())
                 {
                     const auto *mesh = meshComponent->GetMesh();
-                    ImGui::TextDisabled("Submeshes: %zu | Material Slots: %zu",
+                    ImGui::TextDisabled("Mesh object: %zu draw submeshes | %zu material slots",
                                         mesh->GetSubmeshCount(),
                                         materialSlotUsageSummaries.size());
-                    ImGui::TextDisabled("Reference: %s", meshComponent->GetMeshAssetReference().empty() ? "Runtime Mesh" : meshComponent->GetMeshAssetReference().c_str());
+                    if (meshComponent->GetMeshAssetReference().empty())
+                    {
+                        ImGui::TextDisabled("Runtime mesh (not backed by an imported artifact)");
+                    }
+                    else
+                    {
+                        ImGui::TextWrapped("Artifact: %s", meshComponent->GetMeshAssetReference().c_str());
+                        ImGui::TextWrapped("Model asset ID: %s", meshComponent->GetModelAssetId().c_str());
+                        ImGui::Text("Local object ID: %llu", static_cast<unsigned long long>(meshComponent->GetModelObjectId()));
+                        const auto &metadata = engine.GetAssetManager().GetMeshAssetMetadata(meshComponent->GetMeshAssetReference());
+                        if (!metadata.sourceAssetReference.empty())
+                        {
+                            ImGui::TextWrapped("Imported from: %s", metadata.sourceAssetReference.c_str());
+                        }
+                    }
                 }
                 else
                 {
@@ -3384,25 +3487,10 @@ namespace PlutoGE::ui
                 const int isolatedSubmeshIndex = meshComponent->GetSubmeshIndex();
                 const bool editingIsolatedSubmesh = isolatedSubmeshIndex >= 0 && meshComponent->GetMesh() &&
                                                     static_cast<size_t>(isolatedSubmeshIndex) < meshComponent->GetMesh()->GetSubmeshCount();
-                if (meshComponent->GetMesh() && meshComponent->GetMesh()->GetSubmeshCount() > 1)
+                if (meshComponent->GetMesh() && meshComponent->GetMesh()->GetSubmeshCount() > 1 && editingIsolatedSubmesh)
                 {
-                    if (editingIsolatedSubmesh)
-                    {
-                        const auto &submesh = meshComponent->GetMesh()->GetSubmesh(static_cast<size_t>(isolatedSubmeshIndex));
-                        ImGui::TextDisabled("Editing submesh %d, material slot %u.", isolatedSubmeshIndex, submesh.materialIndex);
-                    }
-                    else
-                    {
-                        if (ImGui::Button("Create Selectable Submesh Entities"))
-                        {
-                            if (meshComponent->CreateSubmeshChildEntities())
-                            {
-                                editorShell.MarkSceneDirty();
-                            }
-                        }
-                        ImGui::SameLine();
-                        ImGui::TextDisabled("Use this to pick visible model parts in the viewport/hierarchy.");
-                    }
+                    const auto &submesh = meshComponent->GetMesh()->GetSubmesh(static_cast<size_t>(isolatedSubmeshIndex));
+                    ImGui::TextDisabled("Editing submesh %d, material slot %u.", isolatedSubmeshIndex, submesh.materialIndex);
                 }
 
                 ImGui::Separator();
@@ -4284,6 +4372,36 @@ namespace PlutoGE::ui
                             {
                                 iblCaptureComponent->MarkDirty();
                             }
+                        }
+                        else if (auto *navigationMesh = dynamic_cast<scene::NavigationMeshComponent *>(componentPtr))
+                        {
+                            properties = navigationMesh->Serialize();
+                            std::erase_if(properties, [](const scene::Property &property)
+                                          { return property.name == "Baked"; });
+                            propertiesProvided = true;
+
+                            const auto &navigation = navigationMesh->GetNavigation();
+                            ImGui::Text("Status: %s", navigation.IsBaked() ? "Baked" : "Not baked");
+                            ImGui::Text("Grid: %d x %d", navigation.GetWidth(), navigation.GetDepth());
+                            ImGui::Text("Walkable cells: %zu", navigation.GetDebugWalkablePoints().size());
+                            if (ImGui::Button("Bake"))
+                            {
+                                const bool baked = navigationMesh->Bake();
+                                editorShell.SetStatusMessage(baked
+                                    ? "Navigation mesh baked: " + std::to_string(navigationMesh->GetNavigation().GetDebugWalkablePoints().size()) + " walkable cells."
+                                    : "Navigation mesh bake produced no walkable cells. Check its bounds and scene colliders.");
+                                entity->AddPrefabOverride("Component:NavigationMeshComponent:Baked");
+                                editorShell.MarkSceneDirty();
+                            }
+                            ImGui::SameLine();
+                            if (ImGui::Button("Clear"))
+                            {
+                                navigationMesh->Clear();
+                                editorShell.SetStatusMessage("Navigation mesh cleared.");
+                                entity->AddPrefabOverride("Component:NavigationMeshComponent:Baked");
+                                editorShell.MarkSceneDirty();
+                            }
+                            ImGui::SeparatorText("Bake Settings (World Space)");
                         }
                         else if (auto *terrainComponent = dynamic_cast<scene::TerrainComponent *>(componentPtr))
                         {

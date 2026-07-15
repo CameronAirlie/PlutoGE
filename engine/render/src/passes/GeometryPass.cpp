@@ -363,6 +363,8 @@ namespace PlutoGE::render
         Material *boundMaterial = nullptr;
         Mesh *boundMesh = nullptr;
         bool skinningEnabled = false;
+        bool bakedLightingWriteEnabled = true;
+        bool emissionWriteEnabled = true;
         int apiDrawCalls = 0;
         for (const auto &group : groups)
         {
@@ -374,6 +376,29 @@ namespace PlutoGE::render
                 Shader *shader = bindGeometryShader(command.material->GetShader());
                 command.material->Bind(shader);
                 boundMaterial = command.material;
+
+                // The HDR auxiliary targets were cleared above. Avoid writing
+                // their zero defaults for ordinary materials; at high
+                // resolutions this removes substantial G-buffer traffic per
+                // covered sample. Custom shaders remain fully enabled
+                // because their graph outputs cannot be inferred here.
+                const auto &materialConfig = command.material->GetConfig();
+                const bool usesCustomShader = command.material->GetShader() != nullptr;
+                const bool shouldWriteBakedLighting = usesCustomShader || materialConfig.lightmapTexture != nullptr;
+                const bool shouldWriteEmission = usesCustomShader ||
+                                                 glm::any(glm::greaterThan(materialConfig.emission, glm::vec3(0.0f)));
+                if (bakedLightingWriteEnabled != shouldWriteBakedLighting)
+                {
+                    glColorMaski(4, shouldWriteBakedLighting, shouldWriteBakedLighting,
+                                shouldWriteBakedLighting, shouldWriteBakedLighting);
+                    bakedLightingWriteEnabled = shouldWriteBakedLighting;
+                }
+                if (emissionWriteEnabled != shouldWriteEmission)
+                {
+                    glColorMaski(6, shouldWriteEmission, shouldWriteEmission,
+                                shouldWriteEmission, shouldWriteEmission);
+                    emissionWriteEnabled = shouldWriteEmission;
+                }
                 if (activeShader != previousShader)
                 {
                     skinningEnabled = false;
@@ -481,6 +506,16 @@ namespace PlutoGE::render
         }
 
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
+        // Color masks are context state and must not leak into later passes or
+        // the next frame's G-buffer clear.
+        if (!bakedLightingWriteEnabled)
+        {
+            glColorMaski(4, GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        }
+        if (!emissionWriteEnabled)
+        {
+            glColorMaski(6, GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        }
         if (ctx.renderer)
         {
             ctx.renderer->RecordGeometryDriverSubmission(static_cast<int>(groups.size()), apiDrawCalls);

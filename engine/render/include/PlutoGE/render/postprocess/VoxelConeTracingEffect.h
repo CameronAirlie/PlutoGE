@@ -43,8 +43,10 @@ namespace PlutoGE::render
         {
             std::array<unsigned int, kDirectionCount> radianceVolumes{};
             unsigned int pendingBaseVolume = 0;
-            unsigned int accumulationRG = 0;
-            unsigned int accumulationBCount = 0;
+            unsigned int accumulationR = 0;
+            unsigned int accumulationG = 0;
+            unsigned int accumulationB = 0;
+            unsigned int accumulationCount = 0;
             unsigned int accumulationOpacity = 0;
             unsigned int framebuffer = 0;
             glm::vec3 origin{0.0f};

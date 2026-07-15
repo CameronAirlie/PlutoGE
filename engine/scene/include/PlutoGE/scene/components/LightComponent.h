@@ -64,6 +64,7 @@ namespace PlutoGE::scene
         bool isStatic = false;       // Static lights only refresh shadow data when dirty
         bool isDirty = true;         // Dirty lights need their shadow data refreshed
         bool shadowRefreshPending = false;
+        std::uint8_t pendingPointShadowFaceMask = 0;
         std::uint8_t pendingShadowCascadeMask = 0;
         int nextShadowCascadeToRefresh = 0;
     };

@@ -27,8 +27,9 @@ namespace
 {
     constexpr int kProjectedShadowPassMode = 0;
     constexpr int kPointShadowPassMode = 1;
-    constexpr int kMaxIncrementalShadowSurfaceUpdatesPerFrame = 4;
-    constexpr int kMaxMotionDrivenDirectionalCascadeUpdatesPerLight = 2;
+    constexpr int kMaxIncrementalShadowSurfaceUpdatesPerFrame = 1;
+    constexpr int kMaxMotionDrivenDirectionalCascadeUpdatesPerLight = 1;
+    constexpr std::uint8_t kAllPointShadowFacesMask = 0x3fu;
     constexpr float kDirectionalShadowPadding = 2.0f;
     constexpr float kShadowUpdateMatrixEpsilon = 0.0001f;
     constexpr float kNearCascadeMinCasterTexelRadius = 0.35f;
@@ -111,12 +112,32 @@ namespace
         return true;
     }
 
-    bool HasCameraDataChanged(const PlutoGE::render::CameraData &current, const PlutoGE::render::CameraData &previous)
+    bool HasDirectionalCameraOrientationOrProjectionChanged(const PlutoGE::render::CameraData &current,
+                                                            const PlutoGE::render::CameraData &previous)
     {
-        return !AreMatricesApproximatelyEqual(current.view, previous.view) ||
-               !AreMatricesApproximatelyEqual(current.projection, previous.projection) ||
-               std::abs(current.nearPlane - previous.nearPlane) > kShadowUpdateMatrixEpsilon ||
-               std::abs(current.farPlane - previous.farPlane) > kShadowUpdateMatrixEpsilon;
+        if (!AreMatricesApproximatelyEqual(current.projection, previous.projection) ||
+            std::abs(current.nearPlane - previous.nearPlane) > kShadowUpdateMatrixEpsilon ||
+            std::abs(current.farPlane - previous.farPlane) > kShadowUpdateMatrixEpsilon)
+        {
+            return true;
+        }
+
+        // A view matrix's upper-left 3x3 contains camera orientation. Ignore its
+        // translation here: directional cascades have their own distance-based
+        // recenter thresholds, and treating every sub-texel camera movement as a
+        // camera invalidation continuously requeues all cascades.
+        for (int column = 0; column < 3; ++column)
+        {
+            for (int row = 0; row < 3; ++row)
+            {
+                if (std::abs(current.view[column][row] - previous.view[column][row]) > kShadowUpdateMatrixEpsilon)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     bool ShouldRefreshCameraRelativeCascade(const glm::vec3 &currentOrigin,
@@ -221,8 +242,15 @@ namespace
                                            int shadowResolution)
     {
         const bool isFarthestCascade = cascadeIndex >= cascadeCount - 1;
-        const std::size_t automaticShadowLod = (isFarthestCascade || shadowResolution <= 1024) ? 1u : 0u;
-        const std::size_t sceneLod = isFarthestCascade ? command.lodIndex : 0u;
+        // Never make a shadow draw more detailed than the LOD already selected
+        // for visible scene geometry. The previous path forced LOD 0 in every
+        // non-farthest cascade, which made a camera-driven shadow refresh submit
+        // maximum-detail terrain, foliage and meshes across large scenes.
+        const std::size_t sceneLod = command.lodIndex;
+        const std::size_t cascadeLodFloor = cascadeIndex > 0 ? 1u : 0u;
+        const std::size_t resolutionLodFloor = shadowResolution <= 1024 ? 1u : 0u;
+        const std::size_t farCascadeLodFloor = isFarthestCascade ? 1u : 0u;
+        const std::size_t automaticShadowLod = std::max({cascadeLodFloor, resolutionLodFloor, farCascadeLodFloor});
         return ClampShadowLodIndex(command, std::max<std::size_t>(
                                                 std::max<std::size_t>(sceneLod, automaticShadowLod),
                                                 command.minShadowLodIndex));
@@ -1098,7 +1126,9 @@ namespace PlutoGE::render
             m_hasShadowCasterFingerprint = true;
         }
         const auto sortedShadowCasters = BuildSortedShadowCasters(shadowCasters);
-        const bool cameraDataChanged = ctx.hasCameraData && (!ctx.hasPreviousCameraData || HasCameraDataChanged(ctx.cameraData, ctx.previousCameraData));
+        const bool cameraDataChanged = ctx.hasCameraData &&
+                                       (!ctx.hasPreviousCameraData ||
+                                        HasDirectionalCameraOrientationOrProjectionChanged(ctx.cameraData, ctx.previousCameraData));
         std::vector<TransformInstanceData> shadowBatchInstances;
         int incrementalShadowSurfaceUpdates = 0;
         auto reserveIncrementalShadowSurfaceUpdate = [&]()
@@ -1119,10 +1149,26 @@ namespace PlutoGE::render
                 continue;
             }
 
+            // Preserve caster-driven work explicitly so it can be consumed over
+            // several frames even after the caster's moved flag has cleared.
+            if (!light->isDirty && shadowCastersChanged)
+            {
+                if (light->type == scene::LightType::Point)
+                {
+                    light->pendingPointShadowFaceMask |= kAllPointShadowFacesMask;
+                }
+                else if (light->type == scene::LightType::Spot)
+                {
+                    light->shadowRefreshPending = true;
+                }
+            }
+
             const bool hasPendingDirectionalRefresh = light->type == scene::LightType::Directional && light->pendingShadowCascadeMask != 0;
-            const bool hasPendingIncrementalRefresh = (light->shadowRefreshPending || hasPendingDirectionalRefresh) && !light->isDirty;
+            const bool hasPendingPointRefresh = light->type == scene::LightType::Point && light->pendingPointShadowFaceMask != 0;
+            const bool hasPendingIncrementalRefresh = (light->shadowRefreshPending || hasPendingDirectionalRefresh || hasPendingPointRefresh) && !light->isDirty;
             bool deferredShadowRefresh = false;
             bool directionalCascadeOriginMismatch = false;
+            std::uint8_t directionalCascadeOriginMismatchMask = 0;
             if (light->type == scene::LightType::Directional && ctx.hasCameraData)
             {
                 const glm::vec3 currentShadowWorldOrigin = glm::vec3(glm::inverse(ctx.cameraData.view)[3]);
@@ -1142,7 +1188,7 @@ namespace PlutoGE::render
                                                            cascadeFar))
                     {
                         directionalCascadeOriginMismatch = true;
-                        break;
+                        directionalCascadeOriginMismatchMask |= static_cast<std::uint8_t>(1u << cascadeIndex);
                     }
                 }
             }
@@ -1174,6 +1220,10 @@ namespace PlutoGE::render
                 const float farPlane = glm::max(light->range, 0.1f);
                 light->shadowFarPlane = farPlane;
                 const auto shadowMatrices = BuildPointShadowMatrices(*light, farPlane);
+                if (!light->isDirty && light->shadowRefreshPending && light->pendingPointShadowFaceMask == 0)
+                {
+                    light->pendingPointShadowFaceMask = kAllPointShadowFacesMask;
+                }
                 glViewport(0, 0, shadowMap->GetWidth(), shadowMap->GetHeight());
 
                 m_shadowPassShader->SetUniform("uShadowPassMode", kPointShadowPassMode);
@@ -1183,7 +1233,8 @@ namespace PlutoGE::render
                 for (unsigned int face = 0; face < shadowMatrices.size(); ++face)
                 {
                     const auto faceFrustumPlanes = ExtractFrustumPlanes(shadowMatrices[face]);
-                    bool faceNeedsIncrementalRefresh = hasPendingIncrementalRefresh;
+                    const std::uint8_t faceBit = static_cast<std::uint8_t>(1u << face);
+                    bool faceNeedsIncrementalRefresh = (light->pendingPointShadowFaceMask & faceBit) != 0;
                     if (!light->isDirty && !faceNeedsIncrementalRefresh)
                     {
                         faceNeedsIncrementalRefresh = AnyMovedShadowCasterRelevant(
@@ -1202,7 +1253,7 @@ namespace PlutoGE::render
                             continue;
                         }
 
-                        if (!shadowCastersChanged && !reserveIncrementalShadowSurfaceUpdate())
+                        if (!reserveIncrementalShadowSurfaceUpdate())
                         {
                             deferredShadowRefresh = true;
                             continue;
@@ -1212,6 +1263,8 @@ namespace PlutoGE::render
                     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, shadowMap->GetTextureID(), 0);
                     if (!ValidateShadowFramebuffer("point shadow"))
                     {
+                        light->pendingPointShadowFaceMask |= faceBit;
+                        deferredShadowRefresh = true;
                         continue;
                     }
                     glClear(GL_DEPTH_BUFFER_BIT);
@@ -1245,10 +1298,11 @@ namespace PlutoGE::render
                             drawStats.apiDrawCalls,
                             false);
                     }
+                    light->pendingPointShadowFaceMask &= static_cast<std::uint8_t>(~faceBit);
                 }
 
                 light->isDirty = false;
-                light->shadowRefreshPending = deferredShadowRefresh;
+                light->shadowRefreshPending = deferredShadowRefresh || light->pendingPointShadowFaceMask != 0;
                 continue;
             }
 
@@ -1262,13 +1316,21 @@ namespace PlutoGE::render
                 const glm::vec3 currentShadowWorldOrigin = glm::vec3(glm::inverse(ctx.cameraData.view)[3]);
                 const int cascadeCount = GetDirectionalCascadeCount(*light);
                 const auto cascadeSplits = BuildDirectionalCascadeSplits(ctx.cameraData, light->directionalShadowSettings, cascadeCount);
-                const bool forceFullCascadeUpdate = light->isDirty || !ctx.hasPreviousCameraData || directionalCascadeOriginMismatch;
+                // A camera-relative origin recenter is normal traversal work. Keep
+                // using the old cascade until its queued replacement is rendered;
+                // only initialization or an explicit light/settings change redraws
+                // every cascade synchronously.
+                const bool forceFullCascadeUpdate = light->isDirty || !ctx.hasPreviousCameraData;
                 const bool casterOnlyCascadeInvalidation = shadowCastersChanged && !light->isDirty && !cameraDataChanged && !hasPendingIncrementalRefresh;
                 const bool cameraOnlyInvalidation = cameraDataChanged && !light->isDirty && !shadowCastersChanged;
                 const std::uint8_t allCascadeMask = static_cast<std::uint8_t>((1u << cascadeCount) - 1u);
-                if (forceFullCascadeUpdate || cameraDataChanged || shadowCastersChanged || directionalCascadeOriginMismatch)
+                if (forceFullCascadeUpdate || cameraDataChanged || shadowCastersChanged)
                 {
                     light->pendingShadowCascadeMask |= allCascadeMask;
+                }
+                else if (directionalCascadeOriginMismatch)
+                {
+                    light->pendingShadowCascadeMask |= directionalCascadeOriginMismatchMask;
                 }
                 else if (light->shadowRefreshPending && light->pendingShadowCascadeMask == 0)
                 {
@@ -1478,7 +1540,7 @@ namespace PlutoGE::render
                     continue;
                 }
 
-                if (!shadowCastersChanged && !reserveIncrementalShadowSurfaceUpdate())
+                if (!reserveIncrementalShadowSurfaceUpdate())
                 {
                     light->shadowRefreshPending = true;
                     continue;

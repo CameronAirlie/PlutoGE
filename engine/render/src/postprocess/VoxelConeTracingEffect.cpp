@@ -94,34 +94,27 @@ namespace PlutoGE::render
         std::size_t ComputeLightSignature(const std::vector<scene::Light *> *lights)
         {
             if (!lights) return 0;
-            std::size_t hash = HashValue(lights->size(), 1469598103934665603ull);
+            std::size_t hash = 1469598103934665603ull;
+            std::size_t directionalLightCount = 0;
             for (const auto *light : *lights)
             {
-                hash = HashValue(light, hash);
-                if (!light) continue;
+                // VCT currently injects directional lights only. Point/spot
+                // movement must not invalidate a volume that never uses them.
+                if (!light || light->type != scene::LightType::Directional)
+                    continue;
+
+                ++directionalLightCount;
                 hash = HashValue(light->type, hash);
-                hash = HashBytes(glm::value_ptr(light->position), sizeof(glm::vec3), hash);
                 hash = HashBytes(glm::value_ptr(light->direction), sizeof(glm::vec3), hash);
                 hash = HashBytes(glm::value_ptr(light->color), sizeof(glm::vec3), hash);
                 hash = HashValue(light->intensity, hash);
-                hash = HashValue(light->range, hash);
                 hash = HashValue(light->castsShadows, hash);
-                hash = HashValue(light->activeShadowCascadeCount, hash);
-                if (light->type == scene::LightType::Directional && light->castsShadows)
-                {
-                    for (int cascade = 0; cascade < light->activeShadowCascadeCount; ++cascade)
-                    {
-                        hash = HashBytes(glm::value_ptr(light->shadowCascadeMatrices[cascade]), sizeof(glm::mat4), hash);
-                        hash = HashBytes(glm::value_ptr(light->shadowCascadeWorldOrigins[cascade]), sizeof(glm::vec3), hash);
-                        hash = HashValue(light->shadowCascadeSplits[cascade], hash);
-                        const unsigned int textureId = light->shadowCascadeMaps[cascade]
-                                                           ? light->shadowCascadeMaps[cascade]->GetTextureID()
-                                                           : 0;
-                        hash = HashValue(textureId, hash);
-                    }
-                }
+
+                // Shadow matrices, origins and splits are camera-relative cache
+                // data. Hashing them restarted progressive voxelization whenever
+                // a shadow cascade refreshed while the actual light was unchanged.
             }
-            return hash;
+            return HashValue(directionalLightCount, hash);
         }
     }
 
@@ -232,34 +225,41 @@ void main(){ vec3 n=abs(cross(vin[1].p-vin[0].p,vin[2].p-vin[0].p)); int axis=n.
  for(int i=0;i<3;i++){ vec3 q=(vin[i].p-uVolumeOrigin)/uVolumeSize*2.0-1.0; g.p=vin[i].p;g.n=vin[i].n;g.uv=vin[i].uv;
  gl_Position=axis==0?vec4(q.zy,0,1):axis==1?vec4(q.xz,0,1):vec4(q.xy,0,1);EmitVertex();}EndPrimitive();})";
         voxel.fragmentSource = R"(#version 430 core
-layout(r32ui,binding=0) uniform uimage3D uAccumulationRG;layout(r32ui,binding=1) uniform uimage3D uAccumulationBCount;layout(r32ui,binding=2) uniform uimage3D uAccumulationOpacity;in GS { vec3 p; vec3 n; vec2 uv; } g;
+layout(r32ui,binding=0) uniform uimage3D uAccumulationR;layout(r32ui,binding=1) uniform uimage3D uAccumulationG;layout(r32ui,binding=2) uniform uimage3D uAccumulationB;layout(r32ui,binding=3) uniform uimage3D uAccumulationCount;layout(r32ui,binding=4) uniform uimage3D uAccumulationOpacity;in GS { vec3 p; vec3 n; vec2 uv; } g;
 const int MAX_LIGHTS=16;uniform vec3 uVolumeOrigin,uEmission;uniform float uVolumeSize;uniform int uLightCount,uShadowLightIndex,uLightType[MAX_LIGHTS];uniform vec3 uLightPosition[MAX_LIGHTS],uLightDirection[MAX_LIGHTS],uLightColor[MAX_LIGHTS];uniform float uLightIntensity[MAX_LIGHTS],uLightRange[MAX_LIGHTS];
 uniform vec4 uColor;uniform sampler2D uAlbedoTexture,uMetallicTexture;uniform float uHasAlbedoTexture,uHasMetallicTexture,uMetallicFactor,uAlphaCutoff;uniform int uMetallicTextureChannel,uAlphaMode,uSurfaceType;
 uniform sampler2D uShadow0,uShadow1,uShadow2,uShadow3;uniform mat4 uShadowMatrix[4];uniform vec3 uShadowOrigin[4];uniform float uShadowSplit[4];uniform vec3 uCameraPosition;uniform int uShadowCascadeCount;
 float shadowSample(int c,vec2 uv){if(c==0)return texture(uShadow0,uv).r;if(c==1)return texture(uShadow1,uv).r;if(c==2)return texture(uShadow2,uv).r;return texture(uShadow3,uv).r;}
-bool claimSample(ivec3 coord,uint blue){uint oldValue=imageLoad(uAccumulationBCount,coord).r;for(int attempt=0;attempt<64;attempt++){uint count=oldValue>>16;if(count>=64u)return false;uint blueSum=oldValue&65535u;uint nextValue=(min(blueSum+blue,65535u)&65535u)|((count+1u)<<16);uint observed=imageAtomicCompSwap(uAccumulationBCount,coord,oldValue,nextValue);if(observed==oldValue)return true;oldValue=observed;}return false;}
-void accumulateRG(ivec3 coord,uvec2 value){uint oldValue=imageLoad(uAccumulationRG,coord).r;for(int attempt=0;attempt<64;attempt++){uvec2 sum=uvec2(oldValue&65535u,oldValue>>16);sum=min(sum+value,uvec2(65535u));uint nextValue=(sum.x&65535u)|(sum.y<<16);uint observed=imageAtomicCompSwap(uAccumulationRG,coord,oldValue,nextValue);if(observed==oldValue)return;oldValue=observed;}}
+bool claimSample(ivec3 coord){uint oldValue=imageLoad(uAccumulationCount,coord).r;for(;;){if(oldValue>=64u)return false;uint observed=imageAtomicCompSwap(uAccumulationCount,coord,oldValue,oldValue+1u);if(observed==oldValue)return true;oldValue=observed;}}
 float visibility(vec3 p,vec3 n,vec3 lightDirection){if(uShadowCascadeCount<=0)return 1;float d=length(p-uCameraPosition);int c=uShadowCascadeCount-1;for(int i=0;i<4;i++){if(i>=uShadowCascadeCount)break;if(d<=uShadowSplit[i]){c=i;break;}}
  vec4 lp=uShadowMatrix[c]*vec4(p-uShadowOrigin[c],1);vec3 q=lp.xyz/max(lp.w,.0001);q=q*.5+.5;if(any(lessThan(q,vec3(0)))||any(greaterThan(q,vec3(1))))return 1;
  float bias=max(.00015*(1.0-max(dot(normalize(n),-normalize(lightDirection)),0.0)),.00003);return q.z-bias<=shadowSample(c,q.xy)?1:0;}
 void main(){ vec3 tc=(g.p-uVolumeOrigin)/uVolumeSize; if(any(lessThan(tc,vec3(0)))||any(greaterThanEqual(tc,vec3(1))))discard;
  vec4 a=uColor;if(uHasAlbedoTexture>.5)a*=texture(uAlbedoTexture,g.uv);if(uAlphaMode==1&&a.a<uAlphaCutoff)discard;
  float metallic=clamp(uMetallicFactor,0,1);if(uHasMetallicTexture>.5){vec4 packedMetallic=texture(uMetallicTexture,g.uv);metallic*=uMetallicTextureChannel==0?packedMetallic.r:uMetallicTextureChannel==1?packedMetallic.g:uMetallicTextureChannel==2?packedMetallic.b:packedMetallic.a;}
- bool translucent=uSurfaceType==1||uAlphaMode==2;float radianceCoverage=translucent?clamp(a.a,0,1):1.0;float opacity=translucent?0.0:1.0;vec3 normal=normalize(g.n),directRadiance=vec3(0);for(int i=0;i<MAX_LIGHTS;i++){if(i>=uLightCount)break;vec3 lightDir;float attenuation=1;if(uLightType[i]==1){lightDir=normalize(-uLightDirection[i]);}else{vec3 toLight=uLightPosition[i]-g.p;float distanceToLight=length(toLight);lightDir=toLight/max(distanceToLight,.0001);float normalizedDistance=distanceToLight/max(uLightRange[i],.0001);attenuation=pow(clamp(1-normalizedDistance,0,1),2);if(uLightType[i]==2){float spotEffect=dot(-lightDir,normalize(uLightDirection[i]));attenuation*=smoothstep(.9,.975,spotEffect);}}float ndl=max(dot(normal,lightDir),0);float shadow=i==uShadowLightIndex?visibility(g.p,g.n,uLightDirection[i]):1;directRadiance+=uLightColor[i]*uLightIntensity[i]*attenuation*ndl*shadow;}vec3 diffuseBounce=uSurfaceType==0?a.rgb*(1-metallic)*directRadiance*(radianceCoverage/3.14159265):vec3(0);vec3 r=diffuseBounce+max(uEmission,vec3(0))*radianceCoverage;
+ bool translucent=uSurfaceType==1||uAlphaMode==2;float radianceCoverage=translucent?clamp(a.a,0,1):1.0;float opacity=translucent?0.0:1.0;vec3 normal=normalize(g.n),directRadiance=vec3(0);for(int i=0;i<MAX_LIGHTS;i++){if(i>=uLightCount)break;
+ // Local-light shadow maps are not bound by this pass. Injecting point or spot
+ // lights without visibility fills the completed voxel volume with coloured
+ // energy through walls. Until those shadow surfaces are supported, inject only
+ // the directional light for which visibility can be evaluated.
+ if(uLightType[i]!=1)continue;
+ vec3 lightDir=normalize(-uLightDirection[i]);float ndl=max(dot(normal,lightDir),0);float shadow=i==uShadowLightIndex?visibility(g.p,g.n,uLightDirection[i]):1;directRadiance+=uLightColor[i]*uLightIntensity[i]*ndl*shadow;}vec3 diffuseBounce=uSurfaceType==0?a.rgb*(1-metallic)*directRadiance*(radianceCoverage/3.14159265):vec3(0);vec3 r=diffuseBounce+max(uEmission,vec3(0))*radianceCoverage;
  // Keep invalid or extreme material/light values out of the half-float mip chain.
  // RGB is premultiplied by occupancy so partially occupied mip voxels cannot
  // contribute the radiance of a completely filled voxel.
- if(any(isnan(r))||any(isinf(r)))r=vec3(0);r=clamp(r,vec3(0),vec3(64));uvec3 encoded=uvec3(round(r*(1023.0/64.0)));uint encodedOpacity=uint(round(opacity*1023.0));ivec3 coord=ivec3(tc*imageSize(uAccumulationRG));if(claimSample(coord,encoded.b)){accumulateRG(coord,encoded.rg);imageAtomicAdd(uAccumulationOpacity,coord,encodedOpacity);}})";
+ if(any(isnan(r))||any(isinf(r)))r=vec3(0);r=clamp(r,vec3(0),vec3(64));uvec3 encoded=uvec3(round(r*(65535.0/64.0)));uint encodedOpacity=uint(round(opacity*65535.0));ivec3 coord=ivec3(tc*imageSize(uAccumulationR));if(claimSample(coord)){imageAtomicAdd(uAccumulationR,coord,encoded.r);imageAtomicAdd(uAccumulationG,coord,encoded.g);imageAtomicAdd(uAccumulationB,coord,encoded.b);imageAtomicAdd(uAccumulationOpacity,coord,encodedOpacity);}})";
         m_voxelizationShader = Shader::Create(voxel);
 
         ShaderSource resolve;
         resolve.computeSource = R"(#version 430 core
 layout(local_size_x=4,local_size_y=4,local_size_z=4)in;
-layout(r32ui,binding=0)readonly uniform uimage3D uAccumulationRG;
-layout(r32ui,binding=1)readonly uniform uimage3D uAccumulationBCount;
-layout(r32ui,binding=2)readonly uniform uimage3D uAccumulationOpacity;
-layout(rgba16f,binding=3)writeonly uniform image3D uResolvedVolume;
-void main(){ivec3 coord=ivec3(gl_GlobalInvocationID);ivec3 size=imageSize(uResolvedVolume);if(any(greaterThanEqual(coord,size)))return;uint rg=imageLoad(uAccumulationRG,coord).r;uint bc=imageLoad(uAccumulationBCount,coord).r;uint count=bc>>16;if(count==0u){imageStore(uResolvedVolume,coord,vec4(0));return;}vec3 sums=vec3(float(rg&65535u),float(rg>>16),float(bc&65535u));vec3 radiance=sums*(64.0/1023.0)/float(count);float opacity=clamp(float(imageLoad(uAccumulationOpacity,coord).r)/(1023.0*float(count)),0.0,1.0);imageStore(uResolvedVolume,coord,vec4(radiance,opacity));})";
+layout(r32ui,binding=0)readonly uniform uimage3D uAccumulationR;
+layout(r32ui,binding=1)readonly uniform uimage3D uAccumulationG;
+layout(r32ui,binding=2)readonly uniform uimage3D uAccumulationB;
+layout(r32ui,binding=3)readonly uniform uimage3D uAccumulationCount;
+layout(r32ui,binding=4)readonly uniform uimage3D uAccumulationOpacity;
+layout(rgba16f,binding=5)writeonly uniform image3D uResolvedVolume;
+void main(){ivec3 coord=ivec3(gl_GlobalInvocationID);ivec3 size=imageSize(uResolvedVolume);if(any(greaterThanEqual(coord,size)))return;uint count=imageLoad(uAccumulationCount,coord).r;if(count==0u){imageStore(uResolvedVolume,coord,vec4(0));return;}vec3 sums=vec3(imageLoad(uAccumulationR,coord).r,imageLoad(uAccumulationG,coord).r,imageLoad(uAccumulationB,coord).r);vec3 radiance=sums*(64.0/65535.0)/float(count);float opacity=clamp(float(imageLoad(uAccumulationOpacity,coord).r)/(65535.0*float(count)),0.0,1.0);imageStore(uResolvedVolume,coord,vec4(radiance,opacity));})";
         m_voxelResolveShader = Shader::Create(resolve);
 
         ShaderSource directionalMip;
@@ -322,12 +322,15 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
             glDeleteTextures(static_cast<GLsizei>(cascade.radianceVolumes.size()), cascade.radianceVolumes.data());
             cascade.radianceVolumes.fill(0);
             const unsigned int transientTextures[] = {
-                cascade.pendingBaseVolume, cascade.accumulationRG,
-                cascade.accumulationBCount, cascade.accumulationOpacity};
+                cascade.pendingBaseVolume, cascade.accumulationR,
+                cascade.accumulationG, cascade.accumulationB,
+                cascade.accumulationCount, cascade.accumulationOpacity};
             glDeleteTextures(static_cast<GLsizei>(std::size(transientTextures)), transientTextures);
             cascade.pendingBaseVolume = 0;
-            cascade.accumulationRG = 0;
-            cascade.accumulationBCount = 0;
+            cascade.accumulationR = 0;
+            cascade.accumulationG = 0;
+            cascade.accumulationB = 0;
+            cascade.accumulationCount = 0;
             cascade.accumulationOpacity = 0;
             cascade.jobs.clear();
             cascade.hasVolume = false;
@@ -341,7 +344,12 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
         if (m_allocatedResolution != m_resolution)
         {
             ReleaseVolume();
-            m_activeCascadeCount = m_resolution >= 128 ? 2u : kCascadeCount;
+            // Only the near cascade currently has stable radiance density. The
+            // coarser cascades become active several seconds after scene load and
+            // inject disproportionately bright, aliased colour when a cone crosses
+            // the cascade boundary. Keep tracing deterministic until cross-cascade
+            // radiance normalization/blending is implemented.
+            m_activeCascadeCount = 1u;
             const int mipCount = 1 + static_cast<int>(std::floor(std::log2(m_resolution)));
             for (std::size_t cascadeIndex = 0; cascadeIndex < m_activeCascadeCount; ++cascadeIndex)
             {
@@ -364,11 +372,13 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
                 glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
                 glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
-                unsigned int accumulationVolumes[3]{};
-                glGenTextures(3, accumulationVolumes);
-                cascade.accumulationRG = accumulationVolumes[0];
-                cascade.accumulationBCount = accumulationVolumes[1];
-                cascade.accumulationOpacity = accumulationVolumes[2];
+                unsigned int accumulationVolumes[5]{};
+                glGenTextures(5, accumulationVolumes);
+                cascade.accumulationR = accumulationVolumes[0];
+                cascade.accumulationG = accumulationVolumes[1];
+                cascade.accumulationB = accumulationVolumes[2];
+                cascade.accumulationCount = accumulationVolumes[3];
+                cascade.accumulationOpacity = accumulationVolumes[4];
                 for (const unsigned int volume : accumulationVolumes)
                 {
                     glBindTexture(GL_TEXTURE_3D, volume);
@@ -425,12 +435,14 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
 
         const unsigned int zero[4] = {0, 0, 0, 0};
         glBindFramebuffer(GL_FRAMEBUFFER, cascade.framebuffer);
-        glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, cascade.accumulationRG, 0);
-        glClearBufferuiv(GL_COLOR, 0, zero);
-        glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, cascade.accumulationBCount, 0);
-        glClearBufferuiv(GL_COLOR, 0, zero);
-        glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, cascade.accumulationOpacity, 0);
-        glClearBufferuiv(GL_COLOR, 0, zero);
+        const unsigned int accumulationVolumes[] = {
+            cascade.accumulationR, cascade.accumulationG, cascade.accumulationB,
+            cascade.accumulationCount, cascade.accumulationOpacity};
+        for (const unsigned int volume : accumulationVolumes)
+        {
+            glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, volume, 0);
+            glClearBufferuiv(GL_COLOR, 0, zero);
+        }
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
     }
 
@@ -492,9 +504,11 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
         glDisable(GL_DEPTH_TEST);
         glDisable(GL_CULL_FACE);
         glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
-        glBindImageTexture(0, cascade.accumulationRG, 0, GL_TRUE, 0, GL_READ_WRITE, GL_R32UI);
-        glBindImageTexture(1, cascade.accumulationBCount, 0, GL_TRUE, 0, GL_READ_WRITE, GL_R32UI);
-        glBindImageTexture(2, cascade.accumulationOpacity, 0, GL_TRUE, 0, GL_READ_WRITE, GL_R32UI);
+        glBindImageTexture(0, cascade.accumulationR, 0, GL_TRUE, 0, GL_READ_WRITE, GL_R32UI);
+        glBindImageTexture(1, cascade.accumulationG, 0, GL_TRUE, 0, GL_READ_WRITE, GL_R32UI);
+        glBindImageTexture(2, cascade.accumulationB, 0, GL_TRUE, 0, GL_READ_WRITE, GL_R32UI);
+        glBindImageTexture(3, cascade.accumulationCount, 0, GL_TRUE, 0, GL_READ_WRITE, GL_R32UI);
+        glBindImageTexture(4, cascade.accumulationOpacity, 0, GL_TRUE, 0, GL_READ_WRITE, GL_R32UI);
         m_voxelizationShader->Bind();
         m_voxelizationShader->SetUniform("uVolumeOrigin", cascade.pendingOrigin);
         m_voxelizationShader->SetUniform("uVolumeSize", cascade.size);
@@ -550,13 +564,19 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
 
         glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
         m_voxelResolveShader->Bind();
-        glBindImageTexture(0, cascade.accumulationRG, 0, GL_TRUE, 0, GL_READ_ONLY, GL_R32UI);
-        glBindImageTexture(1, cascade.accumulationBCount, 0, GL_TRUE, 0, GL_READ_ONLY, GL_R32UI);
-        glBindImageTexture(2, cascade.accumulationOpacity, 0, GL_TRUE, 0, GL_READ_ONLY, GL_R32UI);
-        glBindImageTexture(3, cascade.pendingBaseVolume, 0, GL_TRUE, 0, GL_WRITE_ONLY, GL_RGBA16F);
+        glBindImageTexture(0, cascade.accumulationR, 0, GL_TRUE, 0, GL_READ_ONLY, GL_R32UI);
+        glBindImageTexture(1, cascade.accumulationG, 0, GL_TRUE, 0, GL_READ_ONLY, GL_R32UI);
+        glBindImageTexture(2, cascade.accumulationB, 0, GL_TRUE, 0, GL_READ_ONLY, GL_R32UI);
+        glBindImageTexture(3, cascade.accumulationCount, 0, GL_TRUE, 0, GL_READ_ONLY, GL_R32UI);
+        glBindImageTexture(4, cascade.accumulationOpacity, 0, GL_TRUE, 0, GL_READ_ONLY, GL_R32UI);
+        glBindImageTexture(5, cascade.pendingBaseVolume, 0, GL_TRUE, 0, GL_WRITE_ONLY, GL_RGBA16F);
         const GLuint groupCount = static_cast<GLuint>((m_resolution + 3) / 4);
         glDispatchCompute(groupCount, groupCount, groupCount);
-        glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
+        // The resolved image is consumed by glCopyImageSubData before mip
+        // generation. Include the texture-update domain, not just shader reads.
+        glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT |
+                        GL_TEXTURE_FETCH_BARRIER_BIT |
+                        GL_TEXTURE_UPDATE_BARRIER_BIT);
         GenerateDirectionalMips(cascade);
         cascade.origin = cascade.pendingOrigin;
         cascade.lastSceneSignature = cascade.pendingSceneSignature;

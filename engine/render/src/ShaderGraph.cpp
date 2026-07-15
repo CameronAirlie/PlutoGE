@@ -571,7 +571,14 @@ namespace PlutoGE::render
                 vec4 currentWorldPos = aModel * skinnedPosition;
                 vec4 previousWorldPos = aPreviousModel * skinnedPosition;
                 FragPos = currentWorldPos.xyz;
-                mat3 normalMatrix = transpose(inverse(mat3(aModel)));
+                // Normalization cancels the inverse determinant. The signed
+                // cofactor is exact and considerably cheaper per vertex.
+                mat3 model3 = mat3(aModel);
+                vec3 cofactor0 = cross(model3[1], model3[2]);
+                vec3 cofactor1 = cross(model3[2], model3[0]);
+                vec3 cofactor2 = cross(model3[0], model3[1]);
+                float orientation = dot(model3[0], cofactor0) < 0.0 ? -1.0 : 1.0;
+                mat3 normalMatrix = mat3(cofactor0, cofactor1, cofactor2) * orientation;
                 vec3 worldNormal = normalize(normalMatrix * skinnedNormal);
                 vec3 worldTangent = normalize(normalMatrix * skinnedTangent);
                 worldTangent = normalize(worldTangent - dot(worldTangent, worldNormal) * worldNormal);

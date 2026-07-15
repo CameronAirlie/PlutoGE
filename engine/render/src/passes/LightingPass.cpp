@@ -1594,8 +1594,11 @@ namespace PlutoGE::render
         {
             if (auto *vctEffect = FindEnabledVctEffect(ctx))
             {
-                const int resolveWidth = std::max(1, ctx.temporaryRenderTarget->GetWidth() / 2);
-                const int resolveHeight = std::max(1, ctx.temporaryRenderTarget->GetHeight() / 2);
+                // Cone tracing is the dominant steady-state VCT cost. Temporal
+                // accumulation reconstructs it well enough at quarter resolution
+                // and this reduces trace, history and metadata pixels by 4x.
+                const int resolveWidth = std::max(1, ctx.temporaryRenderTarget->GetWidth() / 4);
+                const int resolveHeight = std::max(1, ctx.temporaryRenderTarget->GetHeight() / 4);
                 const bool gpuTimingActive = ctx.renderer && ctx.renderer->BeginPostProcessEffectTiming(vctEffect->GetTypeName());
                 RenderTarget *indirect = vctEffect->GenerateResolvedIndirectLighting(PostProcessContext{
                     .renderContext = ctx, .sourceRenderTarget = ctx.temporaryRenderTarget, .destinationRenderTarget = nullptr},

@@ -65,6 +65,7 @@ namespace PlutoGE::ui
         void BeginFrame()
         {
             m_generationBudget = 2;
+            ++m_frameSequence;
         }
 
         GLuint Get(const assets::Project &project, core::Engine &engine, const assets::ProjectAssetEntry &asset)
@@ -75,6 +76,29 @@ namespace PlutoGE::ui
                 auto *texture = engine.GetAssetManager().LoadTexture(path.c_str());
                 return texture ? texture->GetTextureID() : 0;
             }
+
+            if (asset.type != assets::ProjectAssetType::Model &&
+                asset.type != assets::ProjectAssetType::Mesh &&
+                asset.type != assets::ProjectAssetType::Material)
+            {
+                return 0;
+            }
+
+            const auto found = m_entries.find(asset.reference);
+            if (found != m_entries.end() &&
+                m_frameSequence - found->second.lastValidatedFrame < kValidationIntervalFrames)
+            {
+                return found->second.texture;
+            }
+
+            const auto stamp = GetStamp(project, asset.reference);
+            if (found != m_entries.end() && found->second.stamp == stamp)
+            {
+                found->second.lastValidatedFrame = m_frameSequence;
+                return found->second.texture;
+            }
+            if (m_generationBudget <= 0) return 0;
+            --m_generationBudget;
 
             std::string renderReference = asset.reference;
             if (asset.type == assets::ProjectAssetType::Model)
@@ -89,22 +113,6 @@ namespace PlutoGE::ui
                 if (mesh == model.objects.end()) return 0;
                 renderReference = mesh->reference;
             }
-
-            if (asset.type != assets::ProjectAssetType::Model &&
-                asset.type != assets::ProjectAssetType::Mesh &&
-                asset.type != assets::ProjectAssetType::Material)
-            {
-                return 0;
-            }
-
-            const auto stamp = GetStamp(project, asset.reference);
-            const auto found = m_entries.find(asset.reference);
-            if (found != m_entries.end() && found->second.stamp == stamp)
-            {
-                return found->second.texture;
-            }
-            if (m_generationBudget <= 0) return 0;
-            --m_generationBudget;
 
             render::Mesh *mesh = nullptr;
             render::Material *material = nullptr;
@@ -125,6 +133,7 @@ namespace PlutoGE::ui
             if (entry.texture == 0) entry.texture = CreateTexture();
             if (!Render(entry.texture, *mesh, material)) return 0;
             entry.stamp = stamp;
+            entry.lastValidatedFrame = m_frameSequence;
             return entry.texture;
         }
 
@@ -143,14 +152,17 @@ namespace PlutoGE::ui
         {
             GLuint texture = 0;
             std::uint64_t stamp = 0;
+            std::uint64_t lastValidatedFrame = 0;
         };
 
         static constexpr int kSize = 128;
+        static constexpr std::uint64_t kValidationIntervalFrames = 60;
         std::unordered_map<std::string, Entry> m_entries;
         GLuint m_framebuffer = 0;
         GLuint m_depthBuffer = 0;
         GLuint m_program = 0;
         int m_generationBudget = 0;
+        std::uint64_t m_frameSequence = 0;
 
         static std::uint64_t GetStamp(const assets::Project &project, const std::string &reference)
         {
@@ -1315,10 +1327,15 @@ void main() {
                 return false;
             }
             const auto *sourceRecord = assetDatabase.FindByReference(asset.reference);
+            const assetimport::MeshImportOptions importOptions{
+                .generateLods = false,
+                .optimizeVertexCache = true,
+                .optimizeOverdraw = true,
+            };
             assetimport::ImportedMeshSourceAsset importedSourceAsset;
             try
             {
-                importedSourceAsset = engine.GetMeshImporter().ImportMeshSourceAsset(sourcePath.string());
+                importedSourceAsset = engine.GetMeshImporter().ImportMeshSourceAsset(sourcePath.string(), importOptions);
             }
             catch (const std::exception &exception)
             {
@@ -1414,6 +1431,7 @@ void main() {
 
                 assets::MeshAssetMetadata meshMetadata;
                 meshMetadata.sourceAssetReference = asset.reference;
+                meshMetadata.importOptions = importOptions;
                 const std::string meshName = sourcePath.stem().string();
                 const auto meshObjectId = assets::MakeModelSubAssetId(assets::ProjectAssetType::Mesh, meshName);
                 meshMetadata.sourceAssetId = modelAsset.sourceAssetId;
@@ -2310,179 +2328,218 @@ void main() {
             ImGui::GetWindowDrawList()->AddRect(minimum, maximum, ImGui::GetColorU32(selected ? ImGuiCol_NavHighlight : ImGuiCol_Border), 5.0f);
         };
 
-        if (ImGui::BeginTable("AssetIconGrid", columnCount, ImGuiTableFlags_SizingFixedFit))
+        const auto renderFolderCard = [&](std::size_t folderIndex)
         {
-            if (m_openModelReference.empty() && !hasSearch)
+            const auto &folder = m_cachedChildFolders[folderIndex];
+            const auto &label = m_cachedChildFolderLabels[folderIndex];
+            ImGui::PushID(folder.c_str());
+            ImGui::InvisibleButton("FolderCard", ImVec2(cardWidth - 6.0f, cardHeight));
+            const bool hovered = ImGui::IsItemHovered();
+            drawCardBackground(false, hovered);
+            const ImVec2 minimum = ImGui::GetItemRectMin();
+            const ImVec2 iconMin(minimum.x + 10.0f, minimum.y + 18.0f);
+            const ImVec2 iconMax(minimum.x + cardWidth - 16.0f, minimum.y + m_thumbnailSize - 4.0f);
+            auto *drawList = ImGui::GetWindowDrawList();
+            const ImU32 folderColor = IM_COL32(216, 167, 64, 255);
+            drawList->AddRectFilled(ImVec2(iconMin.x, iconMin.y + 13.0f), iconMax, folderColor, 5.0f);
+            drawList->AddRectFilled(iconMin, ImVec2(iconMin.x + (iconMax.x - iconMin.x) * 0.46f, iconMin.y + 25.0f), folderColor, 4.0f);
+            const ImVec2 textSize = ImGui::CalcTextSize(label.c_str());
+            drawList->AddText(ImVec2(minimum.x + (cardWidth - 6.0f - std::min(textSize.x, cardWidth - 16.0f)) * 0.5f,
+                                     minimum.y + m_thumbnailSize + 10.0f),
+                              ImGui::GetColorU32(ImGuiCol_Text), label.c_str());
+            if (hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
             {
-                for (std::size_t folderIndex = 0; folderIndex < m_cachedChildFolders.size(); ++folderIndex)
-                {
-                    ImGui::TableNextColumn();
-                    const auto &folder = m_cachedChildFolders[folderIndex];
-                    const auto &label = m_cachedChildFolderLabels[folderIndex];
-                    ImGui::PushID(folder.c_str());
-                    ImGui::InvisibleButton("FolderCard", ImVec2(cardWidth - 6.0f, cardHeight));
-                    const bool hovered = ImGui::IsItemHovered();
-                    drawCardBackground(false, hovered);
-                    const ImVec2 minimum = ImGui::GetItemRectMin();
-                    const ImVec2 iconMin(minimum.x + 10.0f, minimum.y + 18.0f);
-                    const ImVec2 iconMax(minimum.x + cardWidth - 16.0f, minimum.y + m_thumbnailSize - 4.0f);
-                    auto *drawList = ImGui::GetWindowDrawList();
-                    const ImU32 folderColor = IM_COL32(216, 167, 64, 255);
-                    drawList->AddRectFilled(ImVec2(iconMin.x, iconMin.y + 13.0f), iconMax, folderColor, 5.0f);
-                    drawList->AddRectFilled(iconMin, ImVec2(iconMin.x + (iconMax.x - iconMin.x) * 0.46f, iconMin.y + 25.0f), folderColor, 4.0f);
-                    const ImVec2 textSize = ImGui::CalcTextSize(label.c_str());
-                    drawList->AddText(ImVec2(minimum.x + (cardWidth - 6.0f - std::min(textSize.x, cardWidth - 16.0f)) * 0.5f,
-                                             minimum.y + m_thumbnailSize + 10.0f),
-                                      ImGui::GetColorU32(ImGuiCol_Text), label.c_str());
-                    if (hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
-                    {
-                        m_selectedFolder = folder;
-                        m_openModelReference.clear();
-                        m_openModelObjects.clear();
-                        m_selectedAssetIndex = -1;
-                    }
-                    ImGui::PopID();
-                }
+                m_selectedFolder = folder;
+                m_openModelReference.clear();
+                m_openModelObjects.clear();
+                m_selectedAssetIndex = -1;
+            }
+            ImGui::PopID();
+        };
+
+        const auto renderAssetCard = [&](std::size_t filteredIndex)
+        {
+            const int index = m_filteredAssetIndices[filteredIndex];
+            const auto &asset = assets[static_cast<std::size_t>(index)];
+            const std::string &fileName = m_cachedAssetFileNames[static_cast<std::size_t>(index)];
+            const bool selected = m_selectedAssetIndex == index;
+            ImGui::PushID(index);
+            ImGui::InvisibleButton("AssetCard", ImVec2(cardWidth - 6.0f, cardHeight));
+            const bool hovered = ImGui::IsItemHovered();
+            drawCardBackground(selected, hovered);
+            const ImVec2 minimum = ImGui::GetItemRectMin();
+            const ImVec2 previewMin(minimum.x + 8.0f, minimum.y + 8.0f);
+            const ImVec2 previewMax(minimum.x + cardWidth - 14.0f, minimum.y + m_thumbnailSize + 2.0f);
+            auto *drawList = ImGui::GetWindowDrawList();
+            drawList->AddRectFilled(previewMin, previewMax, IM_COL32(27, 30, 35, 255), 4.0f);
+            const GLuint thumbnail = m_thumbnailCache->Get(*project, editorShell.GetEngine(), asset);
+            if (thumbnail != 0)
+            {
+                drawList->AddImage(static_cast<ImTextureID>(thumbnail), previewMin, previewMax,
+                                   ImVec2(0, 1), ImVec2(1, 0));
             }
             else
             {
-                ImGui::TextDisabled("Search results in %s", m_selectedFolder.empty() ? "Assets" : m_selectedFolder.c_str());
+                const std::string typeLabel(assets::Project::GetAssetTypeName(asset.type));
+                const ImVec2 typeSize = ImGui::CalcTextSize(typeLabel.c_str());
+                drawList->AddText(ImVec2((previewMin.x + previewMax.x - typeSize.x) * 0.5f,
+                                         (previewMin.y + previewMax.y - typeSize.y) * 0.5f),
+                                  ImGui::GetColorU32(ImGuiCol_TextDisabled), typeLabel.c_str());
             }
+            const std::string shownName = fileName.size() > 22 ? fileName.substr(0, 20) + "..." : fileName;
+            const ImVec2 textSize = ImGui::CalcTextSize(shownName.c_str());
+            drawList->AddText(ImVec2(minimum.x + std::max(5.0f, (cardWidth - 6.0f - textSize.x) * 0.5f),
+                                     minimum.y + m_thumbnailSize + 10.0f),
+                              ImGui::GetColorU32(ImGuiCol_Text), shownName.c_str());
+            const std::string typeName(assets::Project::GetAssetTypeName(asset.type));
+            const ImVec2 typeSize = ImGui::CalcTextSize(typeName.c_str());
+            drawList->AddText(ImVec2(minimum.x + std::max(5.0f, (cardWidth - 6.0f - typeSize.x) * 0.5f),
+                                     minimum.y + m_thumbnailSize + 10.0f + ImGui::GetTextLineHeightWithSpacing()),
+                              ImGui::GetColorU32(ImGuiCol_TextDisabled), typeName.c_str());
 
-            if (m_openModelReference.empty())
-            for (int filteredIndex = 0; filteredIndex < static_cast<int>(m_filteredAssetIndices.size()); ++filteredIndex)
+            if (ImGui::IsItemClicked()) m_selectedAssetIndex = index;
+            if (hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
             {
-                const int index = m_filteredAssetIndices[static_cast<std::size_t>(filteredIndex)];
-                const auto &asset = assets[static_cast<std::size_t>(index)];
-                const std::string &fileName = m_cachedAssetFileNames[static_cast<std::size_t>(index)];
-                const bool selected = m_selectedAssetIndex == index;
-                ImGui::TableNextColumn();
-                ImGui::PushID(index);
-                ImGui::InvisibleButton("AssetCard", ImVec2(cardWidth - 6.0f, cardHeight));
-                const bool hovered = ImGui::IsItemHovered();
-                drawCardBackground(selected, hovered);
-                const ImVec2 minimum = ImGui::GetItemRectMin();
-                const ImVec2 previewMin(minimum.x + 8.0f, minimum.y + 8.0f);
-                const ImVec2 previewMax(minimum.x + cardWidth - 14.0f, minimum.y + m_thumbnailSize + 2.0f);
-                auto *drawList = ImGui::GetWindowDrawList();
-                drawList->AddRectFilled(previewMin, previewMax, IM_COL32(27, 30, 35, 255), 4.0f);
-                const GLuint thumbnail = m_thumbnailCache->Get(*project, editorShell.GetEngine(), asset);
-                if (thumbnail != 0)
+                if (asset.type == assets::ProjectAssetType::Model)
                 {
-                    drawList->AddImage(static_cast<ImTextureID>(thumbnail), previewMin, previewMax,
-                                       ImVec2(0, 1), ImVec2(1, 0));
-                }
-                else
-                {
-                    const std::string typeLabel(assets::Project::GetAssetTypeName(asset.type));
-                    const ImVec2 typeSize = ImGui::CalcTextSize(typeLabel.c_str());
-                    drawList->AddText(ImVec2((previewMin.x + previewMax.x - typeSize.x) * 0.5f,
-                                             (previewMin.y + previewMax.y - typeSize.y) * 0.5f),
-                                      ImGui::GetColorU32(ImGuiCol_TextDisabled), typeLabel.c_str());
-                }
-                const std::string shownName = fileName.size() > 22 ? fileName.substr(0, 20) + "..." : fileName;
-                const ImVec2 textSize = ImGui::CalcTextSize(shownName.c_str());
-                drawList->AddText(ImVec2(minimum.x + std::max(5.0f, (cardWidth - 6.0f - textSize.x) * 0.5f),
-                                         minimum.y + m_thumbnailSize + 10.0f),
-                                  ImGui::GetColorU32(ImGuiCol_Text), shownName.c_str());
-                const std::string typeName(assets::Project::GetAssetTypeName(asset.type));
-                const ImVec2 typeSize = ImGui::CalcTextSize(typeName.c_str());
-                drawList->AddText(ImVec2(minimum.x + std::max(5.0f, (cardWidth - 6.0f - typeSize.x) * 0.5f),
-                                         minimum.y + m_thumbnailSize + 10.0f + ImGui::GetTextLineHeightWithSpacing()),
-                                  ImGui::GetColorU32(ImGuiCol_TextDisabled), typeName.c_str());
-
-                if (ImGui::IsItemClicked()) m_selectedAssetIndex = index;
-                if (hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
-                {
-                    if (asset.type == assets::ProjectAssetType::Model)
+                    assets::ModelAsset model;
+                    std::string modelError;
+                    if (assets::LoadModelAsset(GetImportedModelManifestPath(*project, asset.reference).string(), model, &modelError))
                     {
-                        assets::ModelAsset model;
-                        std::string modelError;
-                        if (assets::LoadModelAsset(GetImportedModelManifestPath(*project, asset.reference).string(), model, &modelError))
+                        m_openModelReference = asset.reference;
+                        m_openModelName = std::filesystem::path(fileName).stem().string();
+                        m_openModelObjects = std::move(model.objects);
+                        m_selectedAssetIndex = -1;
+                    }
+                    else
+                    {
+                        editorShell.Log(EditorShell::ConsoleSeverity::Error,
+                                        modelError.empty() ? "Import the model before opening it." : modelError);
+                    }
+                }
+                else OpenAsset(editorShell, *project, asset);
+            }
+            if (ImGui::BeginDragDropSource())
+            {
+                ImGui::SetDragDropPayload(kContentBrowserAssetDragDropPayload, asset.reference.c_str(), asset.reference.size() + 1);
+                ImGui::TextUnformatted(fileName.c_str());
+                ImGui::EndDragDropSource();
+            }
+            if (hovered) ImGui::SetTooltip("%s\n%s", fileName.c_str(), asset.reference.c_str());
+            ImGui::PopID();
+        };
+
+        const auto renderModelObjectCard = [&](std::size_t objectIndex)
+        {
+            const auto &object = m_openModelObjects[objectIndex];
+            const assets::ProjectAssetEntry asset{.reference = object.reference, .type = object.type};
+            ImGui::PushID(static_cast<int>(objectIndex));
+            ImGui::InvisibleButton("ModelObjectCard", ImVec2(cardWidth - 6.0f, cardHeight));
+            const bool hovered = ImGui::IsItemHovered();
+            drawCardBackground(false, hovered);
+            const ImVec2 minimum = ImGui::GetItemRectMin();
+            const ImVec2 previewMin(minimum.x + 8.0f, minimum.y + 8.0f);
+            const ImVec2 previewMax(minimum.x + cardWidth - 14.0f, minimum.y + m_thumbnailSize + 2.0f);
+            auto *drawList = ImGui::GetWindowDrawList();
+            drawList->AddRectFilled(previewMin, previewMax, IM_COL32(27, 30, 35, 255), 4.0f);
+            const GLuint thumbnail = m_thumbnailCache->Get(*project, editorShell.GetEngine(), asset);
+            const std::string typeName(assets::Project::GetAssetTypeName(object.type));
+            if (thumbnail != 0)
+                drawList->AddImage(static_cast<ImTextureID>(thumbnail), previewMin, previewMax, ImVec2(0, 1), ImVec2(1, 0));
+            else
+            {
+                const ImVec2 typeSize = ImGui::CalcTextSize(typeName.c_str());
+                drawList->AddText(ImVec2((previewMin.x + previewMax.x - typeSize.x) * 0.5f,
+                                         (previewMin.y + previewMax.y - typeSize.y) * 0.5f),
+                                  ImGui::GetColorU32(ImGuiCol_TextDisabled), typeName.c_str());
+            }
+            const std::string shownName = object.name.size() > 22 ? object.name.substr(0, 20) + "..." : object.name;
+            const ImVec2 nameSize = ImGui::CalcTextSize(shownName.c_str());
+            drawList->AddText(ImVec2(minimum.x + std::max(5.0f, (cardWidth - 6.0f - nameSize.x) * 0.5f),
+                                     minimum.y + m_thumbnailSize + 10.0f),
+                              ImGui::GetColorU32(ImGuiCol_Text), shownName.c_str());
+            const ImVec2 typeSize = ImGui::CalcTextSize(typeName.c_str());
+            drawList->AddText(ImVec2(minimum.x + std::max(5.0f, (cardWidth - 6.0f - typeSize.x) * 0.5f),
+                                     minimum.y + m_thumbnailSize + 10.0f + ImGui::GetTextLineHeightWithSpacing()),
+                              ImGui::GetColorU32(ImGuiCol_TextDisabled), typeName.c_str());
+            if (hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) OpenAsset(editorShell, *project, asset);
+            if (ImGui::BeginDragDropSource())
+            {
+                ImGui::SetDragDropPayload(kContentBrowserAssetDragDropPayload, object.reference.c_str(), object.reference.size() + 1);
+                ImGui::TextUnformatted(object.name.c_str());
+                ImGui::EndDragDropSource();
+            }
+            if (ImGui::BeginPopupContextItem("ModelObjectContext"))
+            {
+                if (ImGui::MenuItem("Extract"))
+                {
+                    std::string extractedReference, extractionError;
+                    if (ExtractModelSubAsset(*project, object, m_selectedFolder, &extractedReference, &extractionError))
+                    {
+                        project->RefreshAssetRegistry();
+                        m_assetCacheDirty = true;
+                        editorShell.MarkProjectDirty();
+                        editorShell.Log(EditorShell::ConsoleSeverity::Info, "Extracted model sub-asset: " + extractedReference);
+                    }
+                    else editorShell.Log(EditorShell::ConsoleSeverity::Error, extractionError);
+                }
+                ImGui::EndPopup();
+            }
+            if (hovered) ImGui::SetTooltip("%s\n%s\nRight-click to extract", object.name.c_str(), object.reference.c_str());
+            ImGui::PopID();
+        };
+
+        const bool showFolders = m_openModelReference.empty() && !hasSearch;
+        const std::size_t folderItemCount = showFolders ? m_cachedChildFolders.size() : 0;
+        const std::size_t contentItemCount = m_openModelReference.empty()
+                                                 ? m_filteredAssetIndices.size()
+                                                 : m_openModelObjects.size();
+        const std::size_t totalItemCount = folderItemCount + contentItemCount;
+        const int rowCount = static_cast<int>((totalItemCount + static_cast<std::size_t>(columnCount) - 1) /
+                                              static_cast<std::size_t>(columnCount));
+
+        if (hasSearch)
+        {
+            ImGui::TextDisabled("Search results in %s", m_selectedFolder.empty() ? "Assets" : m_selectedFolder.c_str());
+        }
+
+        if (ImGui::BeginTable("AssetIconGrid", columnCount, ImGuiTableFlags_SizingFixedFit))
+        {
+            ImGuiListClipper clipper;
+            clipper.Begin(rowCount);
+            while (clipper.Step())
+            {
+                for (int rowIndex = clipper.DisplayStart; rowIndex < clipper.DisplayEnd; ++rowIndex)
+                {
+                    ImGui::TableNextRow(ImGuiTableRowFlags_None, cardHeight);
+                    for (int columnIndex = 0; columnIndex < columnCount; ++columnIndex)
+                    {
+                        const std::size_t itemIndex =
+                            static_cast<std::size_t>(rowIndex) * static_cast<std::size_t>(columnCount) +
+                            static_cast<std::size_t>(columnIndex);
+                        if (itemIndex >= totalItemCount)
                         {
-                            m_openModelReference = asset.reference;
-                            m_openModelName = std::filesystem::path(fileName).stem().string();
-                            m_openModelObjects = std::move(model.objects);
-                            m_selectedAssetIndex = -1;
+                            break;
+                        }
+
+                        ImGui::TableSetColumnIndex(columnIndex);
+                        if (itemIndex < folderItemCount)
+                        {
+                            renderFolderCard(itemIndex);
+                            continue;
+                        }
+
+                        const std::size_t contentIndex = itemIndex - folderItemCount;
+                        if (m_openModelReference.empty())
+                        {
+                            renderAssetCard(contentIndex);
                         }
                         else
                         {
-                            editorShell.Log(EditorShell::ConsoleSeverity::Error,
-                                            modelError.empty() ? "Import the model before opening it." : modelError);
+                            renderModelObjectCard(contentIndex);
                         }
                     }
-                    else OpenAsset(editorShell, *project, asset);
                 }
-                if (ImGui::BeginDragDropSource())
-                {
-                    ImGui::SetDragDropPayload(kContentBrowserAssetDragDropPayload, asset.reference.c_str(), asset.reference.size() + 1);
-                    ImGui::TextUnformatted(fileName.c_str());
-                    ImGui::EndDragDropSource();
-                }
-                if (hovered) ImGui::SetTooltip("%s\n%s", fileName.c_str(), asset.reference.c_str());
-                ImGui::PopID();
-            }
-
-            if (!m_openModelReference.empty())
-            for (std::size_t objectIndex = 0; objectIndex < m_openModelObjects.size(); ++objectIndex)
-            {
-                const auto &object = m_openModelObjects[objectIndex];
-                const assets::ProjectAssetEntry asset{.reference = object.reference, .type = object.type};
-                ImGui::TableNextColumn();
-                ImGui::PushID(static_cast<int>(objectIndex));
-                ImGui::InvisibleButton("ModelObjectCard", ImVec2(cardWidth - 6.0f, cardHeight));
-                const bool hovered = ImGui::IsItemHovered();
-                drawCardBackground(false, hovered);
-                const ImVec2 minimum = ImGui::GetItemRectMin();
-                const ImVec2 previewMin(minimum.x + 8.0f, minimum.y + 8.0f);
-                const ImVec2 previewMax(minimum.x + cardWidth - 14.0f, minimum.y + m_thumbnailSize + 2.0f);
-                auto *drawList = ImGui::GetWindowDrawList();
-                drawList->AddRectFilled(previewMin, previewMax, IM_COL32(27, 30, 35, 255), 4.0f);
-                const GLuint thumbnail = m_thumbnailCache->Get(*project, editorShell.GetEngine(), asset);
-                const std::string typeName(assets::Project::GetAssetTypeName(object.type));
-                if (thumbnail != 0)
-                    drawList->AddImage(static_cast<ImTextureID>(thumbnail), previewMin, previewMax, ImVec2(0, 1), ImVec2(1, 0));
-                else
-                {
-                    const ImVec2 typeSize = ImGui::CalcTextSize(typeName.c_str());
-                    drawList->AddText(ImVec2((previewMin.x + previewMax.x - typeSize.x) * 0.5f,
-                                             (previewMin.y + previewMax.y - typeSize.y) * 0.5f),
-                                      ImGui::GetColorU32(ImGuiCol_TextDisabled), typeName.c_str());
-                }
-                const std::string shownName = object.name.size() > 22 ? object.name.substr(0, 20) + "..." : object.name;
-                const ImVec2 nameSize = ImGui::CalcTextSize(shownName.c_str());
-                drawList->AddText(ImVec2(minimum.x + std::max(5.0f, (cardWidth - 6.0f - nameSize.x) * 0.5f),
-                                         minimum.y + m_thumbnailSize + 10.0f),
-                                  ImGui::GetColorU32(ImGuiCol_Text), shownName.c_str());
-                const ImVec2 typeSize = ImGui::CalcTextSize(typeName.c_str());
-                drawList->AddText(ImVec2(minimum.x + std::max(5.0f, (cardWidth - 6.0f - typeSize.x) * 0.5f),
-                                         minimum.y + m_thumbnailSize + 10.0f + ImGui::GetTextLineHeightWithSpacing()),
-                                  ImGui::GetColorU32(ImGuiCol_TextDisabled), typeName.c_str());
-                if (hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) OpenAsset(editorShell, *project, asset);
-                if (ImGui::BeginDragDropSource())
-                {
-                    ImGui::SetDragDropPayload(kContentBrowserAssetDragDropPayload, object.reference.c_str(), object.reference.size() + 1);
-                    ImGui::TextUnformatted(object.name.c_str());
-                    ImGui::EndDragDropSource();
-                }
-                if (ImGui::BeginPopupContextItem("ModelObjectContext"))
-                {
-                    if (ImGui::MenuItem("Extract"))
-                    {
-                        std::string extractedReference, extractionError;
-                        if (ExtractModelSubAsset(*project, object, m_selectedFolder, &extractedReference, &extractionError))
-                        {
-                            project->RefreshAssetRegistry();
-                            m_assetCacheDirty = true;
-                            editorShell.MarkProjectDirty();
-                            editorShell.Log(EditorShell::ConsoleSeverity::Info, "Extracted model sub-asset: " + extractedReference);
-                        }
-                        else editorShell.Log(EditorShell::ConsoleSeverity::Error, extractionError);
-                    }
-                    ImGui::EndPopup();
-                }
-                if (hovered) ImGui::SetTooltip("%s\n%s\nRight-click to extract", object.name.c_str(), object.reference.c_str());
-                ImGui::PopID();
             }
             ImGui::EndTable();
         }

@@ -138,6 +138,14 @@ namespace PlutoGE::render
             std::size_t instanceCount = 0;
         };
 
+        struct PreparedGeometryGroup
+        {
+            std::size_t firstDraw = 0;
+            std::size_t drawCount = 0;
+            std::size_t firstIndirectCommand = 0;
+            bool usesIndirect = false;
+        };
+
         void UploadGeometryInstances(unsigned int &instanceBuffer,
                                      std::size_t &instanceCapacity,
                                      const std::vector<GeometryInstanceData> &instances)
@@ -156,21 +164,39 @@ namespace PlutoGE::render
             if (instanceCapacity < instances.size())
             {
                 instanceCapacity = std::max(instances.size(), instanceCapacity == 0 ? instances.size() : instanceCapacity * 2);
+                glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(instanceCapacity * sizeof(GeometryInstanceData)), nullptr, GL_STREAM_DRAW);
             }
 
-            glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(instanceCapacity * sizeof(GeometryInstanceData)), nullptr, GL_STREAM_DRAW);
             glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(instances.size() * sizeof(GeometryInstanceData)), instances.data());
             glBindBuffer(GL_ARRAY_BUFFER, 0);
         }
     }
 
+    class GeometryPassScratch
+    {
+    public:
+        std::vector<GeometryInstanceData> instances;
+        std::vector<PreparedGeometryDraw> draws;
+        std::vector<DrawElementsIndirectCommand> indirectCommands;
+        std::vector<PreparedGeometryGroup> groups;
+    };
+
+    GeometryPass::GeometryPass()
+        : m_scratch(std::make_unique<GeometryPassScratch>())
+    {
+    }
+
+    GeometryPass::~GeometryPass()
+    {
+        glDeleteBuffers(static_cast<GLsizei>(m_instanceBuffers.size()), m_instanceBuffers.data());
+        glDeleteBuffers(static_cast<GLsizei>(m_indirectBuffers.size()), m_indirectBuffers.data());
+    }
+
     void GeometryPass::Initialize()
     {
         m_geometryPassShader = Shader::CreateGeometryPassShader();
-        if (m_instanceBuffer == 0)
-        {
-            glGenBuffers(1, &m_instanceBuffer);
-        }
+        glGenBuffers(static_cast<GLsizei>(m_instanceBuffers.size()), m_instanceBuffers.data());
+        glGenBuffers(static_cast<GLsizei>(m_indirectBuffers.size()), m_indirectBuffers.data());
     }
 
     void GeometryPass::Execute(const RenderContext &ctx)
@@ -240,9 +266,11 @@ namespace PlutoGE::render
 
         bindGeometryShader(m_geometryPassShader);
 
-        std::vector<GeometryInstanceData> instances;
+        auto &instances = m_scratch->instances;
+        instances.clear();
         instances.reserve(ctx.renderCommands->size());
-        std::vector<PreparedGeometryDraw> draws;
+        auto &draws = m_scratch->draws;
+        draws.clear();
         draws.reserve(ctx.renderCommands->size());
 
         // Build one contiguous instance stream for the entire pass. Uploading and
@@ -288,19 +316,19 @@ namespace PlutoGE::render
             }
         }
 
-        UploadGeometryInstances(m_instanceBuffer, m_instanceCapacity, instances);
+        const std::size_t streamBufferIndex = m_streamBufferIndex;
+        m_streamBufferIndex = (m_streamBufferIndex + 1) % kStreamBufferCount;
+        auto &instanceBuffer = m_instanceBuffers[streamBufferIndex];
+        auto &instanceCapacity = m_instanceCapacities[streamBufferIndex];
+        auto &indirectBuffer = m_indirectBuffers[streamBufferIndex];
+        auto &indirectCapacity = m_indirectCapacities[streamBufferIndex];
+        UploadGeometryInstances(instanceBuffer, instanceCapacity, instances);
 
-        struct PreparedGeometryGroup
-        {
-            std::size_t firstDraw = 0;
-            std::size_t drawCount = 0;
-            std::size_t firstIndirectCommand = 0;
-            bool usesIndirect = false;
-        };
-
-        std::vector<DrawElementsIndirectCommand> indirectCommands;
+        auto &indirectCommands = m_scratch->indirectCommands;
+        indirectCommands.clear();
         indirectCommands.reserve(draws.size());
-        std::vector<PreparedGeometryGroup> groups;
+        auto &groups = m_scratch->groups;
+        groups.clear();
         groups.reserve(draws.size());
         for (std::size_t drawIndex = 0; drawIndex < draws.size();)
         {
@@ -358,7 +386,7 @@ namespace PlutoGE::render
             drawIndex = drawEnd;
         }
 
-        UploadIndirectDrawCommands(m_indirectBuffer, m_indirectCapacity, indirectCommands);
+        UploadIndirectDrawCommands(indirectBuffer, indirectCapacity, indirectCommands);
 
         Material *boundMaterial = nullptr;
         Mesh *boundMesh = nullptr;
@@ -414,7 +442,7 @@ namespace PlutoGE::render
                 }
                 if (command.mesh != boundMesh)
                 {
-                    BindGeometryInstanceAttributes(*command.mesh, m_instanceBuffer, 0);
+                    BindGeometryInstanceAttributes(*command.mesh, instanceBuffer, 0);
                     boundMesh = command.mesh;
                 }
                 bool submittedIndirectly = false;
@@ -427,7 +455,7 @@ namespace PlutoGE::render
                         {
                         }
                     }
-                    glBindBuffer(GL_DRAW_INDIRECT_BUFFER, m_indirectBuffer);
+                    glBindBuffer(GL_DRAW_INDIRECT_BUFFER, indirectBuffer);
                     glMultiDrawElementsIndirect(
                         GL_TRIANGLES,
                         GL_UNSIGNED_INT,
@@ -479,7 +507,7 @@ namespace PlutoGE::render
             {
                 UploadJointMatrices(activeShader, command.jointMatrices);
                 skinningEnabled = true;
-                BindGeometryInstanceAttributes(*command.mesh, m_instanceBuffer, 0);
+                BindGeometryInstanceAttributes(*command.mesh, instanceBuffer, 0);
                 command.mesh->DrawSubmeshInstancedBaseInstanceBound(command.submeshIndex,
                                                                     draw.instanceCount,
                                                                     draw.firstInstance,

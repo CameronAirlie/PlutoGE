@@ -81,6 +81,7 @@ namespace PlutoGE::scripting
         using invoke_on_update_fn = int(__cdecl *)(int64_t, float);
         using invoke_on_late_update_fn = int(__cdecl *)(int64_t, float);
         using invoke_on_collision_fn = int(__cdecl *)(int64_t, uint32_t);
+        using invoke_on_animation_event_fn = int(__cdecl *)(int64_t, const char *, const char *, float, int32_t);
         using apply_field_data_fn = int(__cdecl *)(int64_t, const char *);
         using set_entity_id_fn = int(__cdecl *)(int64_t, uint32_t);
         using register_game_object_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
@@ -2624,6 +2625,7 @@ namespace PlutoGE::scripting
         invoke_on_late_update_fn invokeOnLateUpdate = nullptr;
         invoke_on_collision_fn invokeOnCollisionEnter = nullptr;
         invoke_on_collision_fn invokeOnCollisionExit = nullptr;
+        invoke_on_animation_event_fn invokeOnAnimationEvent = nullptr;
         apply_field_data_fn applyFieldData = nullptr;
         set_entity_id_fn setEntityId = nullptr;
         register_game_object_api_fn registerGameObjectApi = nullptr;
@@ -3042,6 +3044,7 @@ namespace PlutoGE::scripting
                 LoadManagedExport(impl, L"InvokeOnLateUpdate", impl.invokeOnLateUpdate) &&
                 LoadManagedExport(impl, L"InvokeOnCollisionEnter", impl.invokeOnCollisionEnter) &&
                 LoadManagedExport(impl, L"InvokeOnCollisionExit", impl.invokeOnCollisionExit) &&
+                LoadManagedExport(impl, L"InvokeOnAnimationEvent", impl.invokeOnAnimationEvent) &&
                 LoadManagedExport(impl, L"ApplyFieldData", impl.applyFieldData) &&
                 LoadManagedExport(impl, L"SetEntityId", impl.setEntityId) &&
                 LoadManagedExport(impl, L"RegisterGameObjectApi", impl.registerGameObjectApi) &&
@@ -3178,6 +3181,18 @@ namespace PlutoGE::scripting
                 if (m_impl && m_impl->invokeOnCollisionExit)
                 {
                     m_impl->invokeOnCollisionExit(m_instanceHandle, otherEntityId);
+                }
+            }
+
+            void OnAnimationEvent(std::string_view name, std::string_view stringParameter,
+                                  float floatParameter, int intParameter) override
+            {
+                if (m_impl && m_impl->invokeOnAnimationEvent)
+                {
+                    const std::string eventName(name);
+                    const std::string eventString(stringParameter);
+                    m_impl->invokeOnAnimationEvent(m_instanceHandle, eventName.c_str(), eventString.c_str(),
+                                                   floatParameter, intParameter);
                 }
             }
 

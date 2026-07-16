@@ -33,4 +33,8 @@ public abstract class ScriptBehaviour
     public virtual void OnCollisionExit(GameObject other)
     {
     }
+
+    public virtual void OnAnimationEvent(AnimationEvent animationEvent)
+    {
+    }
 }

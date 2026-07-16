@@ -168,11 +168,13 @@ namespace PlutoGE::ui
         void OpenMeshAsset(std::string meshAssetReference);
         void OpenShaderGraphAsset(std::string shaderGraphAssetReference);
         void OpenAnimationGraphAsset(std::string animationGraphAssetReference);
+        void OpenAnimationClipAsset(std::string animationClipAssetReference);
         void OpenParticleSystemAsset(std::string particleSystemAssetReference);
         const std::string &GetActiveMaterialAssetReference() const { return m_activeMaterialAssetReference; }
         const std::string &GetActiveMeshAssetReference() const { return m_activeMeshAssetReference; }
         const std::string &GetActiveShaderGraphAssetReference() const { return m_activeShaderGraphAssetReference; }
         const std::string &GetActiveAnimationGraphAssetReference() const { return m_activeAnimationGraphAssetReference; }
+        const std::string &GetActiveAnimationClipAssetReference() const { return m_activeAnimationClipAssetReference; }
         const std::string &GetActiveParticleSystemAssetReference() const { return m_activeParticleSystemAssetReference; }
         bool ConsumeMaterialEditorOpenRequest()
         {
@@ -196,6 +198,12 @@ namespace PlutoGE::ui
         {
             const bool requested = m_openAnimationGraphEditorRequested;
             m_openAnimationGraphEditorRequested = false;
+            return requested;
+        }
+        bool ConsumeAnimationClipEditorOpenRequest()
+        {
+            const bool requested = m_openAnimationClipEditorRequested;
+            m_openAnimationClipEditorRequested = false;
             return requested;
         }
         bool ConsumeParticleSystemEditorOpenRequest()
@@ -296,6 +304,7 @@ namespace PlutoGE::ui
         std::string m_activeMeshAssetReference;
         std::string m_activeShaderGraphAssetReference;
         std::string m_activeAnimationGraphAssetReference;
+        std::string m_activeAnimationClipAssetReference;
         std::string m_activeParticleSystemAssetReference;
         std::string m_runtimeSceneSnapshot;
         std::string m_runtimeSceneSnapshotPath;
@@ -304,6 +313,7 @@ namespace PlutoGE::ui
         bool m_openMeshEditorRequested = false;
         bool m_openShaderGraphEditorRequested = false;
         bool m_openAnimationGraphEditorRequested = false;
+        bool m_openAnimationClipEditorRequested = false;
         bool m_openParticleSystemEditorRequested = false;
     };
 }

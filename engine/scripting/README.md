@@ -1,30 +1,16 @@
 # PlutoGE Scripting
 
-## Outline
+PlutoGE executes .NET 8 C# scripts through its `hostfxr` runtime. The scripting
+system includes managed project compilation, assembly loading and reflection,
+editor-exposed serialized fields, entity-attached behaviours, scriptable-object
+data assets, and native engine API wrappers.
 
-The scripting system is split into three layers:
+For the complete public C# API and AI authoring rules, see
+[`docs/CSHARP_SCRIPTING.md`](../../docs/CSHARP_SCRIPTING.md).
 
-1. `PlutoGE::scripting::ScriptEngine` owns script class registration, managed project builds, and runtime loading.
-2. `PlutoGE::scene::ScriptComponent` stores the selected script class plus serialized field values on an entity, then creates and ticks the script instance during `Scene::Update`.
-3. A future managed runtime implementation of `IScriptRuntime` hosts the compiled C# assembly and materializes `ScriptInstance` objects from reflected C# types.
+The implementation is split into:
 
-## Unity-style serialized fields
-
-`ScriptClassDefinition` and `ScriptFieldDefinition` model the same data the editor needs to expose Unity-like serialized fields:
-
-- `scriptClass`: the fully-qualified managed class name, such as `Game.PlayerController`
-- `fields`: the declared serialized members exposed by the script type
-- `fieldValues`: per-entity overrides stored by `ScriptComponent`
-
-When a `ScriptComponent` resolves its class, it backfills any missing serialized values from the field defaults and applies them to the script instance before `OnCreate` runs.
-
-## Current state
-
-The native side now supports:
-
-- a dedicated `engine/scripting` CMake library
-- managed project compilation through `dotnet build`
-- script class and serialized field registration
-- entity-attached `ScriptComponent` instances that participate in the engine update loop
-
-What is still intentionally pluggable is the CLR host. To execute compiled C# code, the next step is to add an `IScriptRuntime` implementation backed by either `hostfxr` or Mono embedding and populate `ScriptClassDefinition` data via reflection.
+1. `ScriptEngine`, which builds projects and owns runtime/class registration.
+2. `HostFxrScriptRuntime`, which hosts .NET and communicates through the managed bridge.
+3. `ScriptComponent`, which stores the selected class and per-entity field values and invokes its lifecycle.
+4. `PlutoGE.ScriptCore`, which provides the public C# gameplay API.

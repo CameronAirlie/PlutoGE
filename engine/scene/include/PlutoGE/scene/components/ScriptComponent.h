@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Component.h"
+#include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/scripting/ScriptTypes.h"
 
 #include <cstdint>
@@ -36,6 +37,7 @@ namespace PlutoGE::scene
         void LateUpdate(float deltaTime);
         void OnCollisionEnter(uint32_t otherEntityId);
         void OnCollisionExit(uint32_t otherEntityId);
+        void OnAnimationEvent(const render::AnimationClip::Event &event);
         std::vector<Property> Serialize() const override;
         void Deserialize(const std::vector<Property> &properties) override;
 

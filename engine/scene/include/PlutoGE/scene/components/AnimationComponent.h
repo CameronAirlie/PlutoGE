@@ -238,6 +238,7 @@ namespace PlutoGE::scene
         float GetBlendSpaceDuration(const AnimationState &state) const;
         std::vector<BlendSpaceSample> ResolveBlendSpaceSamples(const AnimationState &state) const;
         float GetBlendSpaceClipTime(const AnimationState &state, int clipIndex, float stateTime) const;
+        void DispatchClipEvents(int clipIndex, float previousTime, float currentTime, bool looping, float speed);
 
         void EvaluateJointMatrices(const render::Skeleton &skeleton);
         void EvaluateNodeMatrices(const std::vector<render::AnimationNode> &nodes);

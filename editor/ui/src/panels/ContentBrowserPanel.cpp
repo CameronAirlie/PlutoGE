@@ -572,6 +572,10 @@ void main() {
             {
                 editorShell.OpenAnimationGraphAsset(asset.reference);
             }
+            else if (asset.type == assets::ProjectAssetType::AnimationClip)
+            {
+                editorShell.OpenAnimationClipAsset(asset.reference);
+            }
             else if (asset.type == assets::ProjectAssetType::ParticleSystem)
             {
                 editorShell.OpenParticleSystemAsset(asset.reference);
@@ -2755,6 +2759,11 @@ void main() {
                 {
                     editorShell.OpenAnimationGraphAsset(asset.reference);
                 }
+            }
+            else if (asset.type == assets::ProjectAssetType::AnimationClip)
+            {
+                if (ImGui::Button("Open Animation Clip"))
+                    editorShell.OpenAnimationClipAsset(asset.reference);
             }
             else if (asset.type == assets::ProjectAssetType::ParticleSystem)
             {

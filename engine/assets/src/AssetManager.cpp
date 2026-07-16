@@ -471,7 +471,7 @@ namespace PlutoGE::assets
         }
 
         const auto version = ReadPod<std::uint32_t>(input);
-        if (magic != kMagic || version < 1 || version > 5)
+        if (magic != kMagic || version < 1 || version > 6)
         {
             return false;
         }
@@ -501,7 +501,7 @@ namespace PlutoGE::assets
         }
 
         constexpr std::uint32_t kMagic = 0x4347504c; // LPGC
-        constexpr std::uint32_t kVersion = 4;
+        constexpr std::uint32_t kVersion = 5;
         const auto magic = ReadPod<std::uint32_t>(input);
         const auto version = ReadPod<std::uint32_t>(input);
         if (magic != kMagic || version < 1 || version > kVersion)
@@ -509,7 +509,7 @@ namespace PlutoGE::assets
             return false;
         }
 
-        clip = ReadAnimationClip(input, version >= 4 ? 5 : version >= 3 ? 4
+        clip = ReadAnimationClip(input, version >= 5 ? 6 : version >= 4 ? 5 : version >= 3 ? 4
                                                        : version >= 2   ? 3
                                                                         : 2);
         return input.good();
@@ -600,7 +600,7 @@ namespace PlutoGE::assets
         }
 
         constexpr std::uint32_t kMagic = 0x4147504c; // LPGA
-        constexpr std::uint32_t kVersion = 5;
+        constexpr std::uint32_t kVersion = 6;
         WritePod(output, kMagic);
         WritePod(output, kVersion);
         WritePod<std::uint64_t>(output, static_cast<std::uint64_t>(clips.size()));
@@ -726,7 +726,7 @@ namespace PlutoGE::assets
         }
 
         constexpr std::uint32_t kMagic = 0x4347504c; // LPGC
-        constexpr std::uint32_t kVersion = 4;
+        constexpr std::uint32_t kVersion = 5;
         WritePod(output, kMagic);
         WritePod(output, kVersion);
         WriteAnimationClip(output, clip);
@@ -1050,6 +1050,15 @@ namespace PlutoGE::assets
                     output.write(reinterpret_cast<const char *>(channel.values.data()), static_cast<std::streamsize>(channel.values.size() * sizeof(glm::vec4)));
                 }
             }
+            WritePod<std::uint64_t>(output, static_cast<std::uint64_t>(clip.events.size()));
+            for (const auto &event : clip.events)
+            {
+                WritePod(output, event.time);
+                WriteString(output, event.name);
+                WriteString(output, event.stringParameter);
+                WritePod(output, event.floatParameter);
+                WritePod(output, event.intParameter);
+            }
         }
 
         render::AnimationClip ReadAnimationClip(std::istream &input, std::uint32_t version)
@@ -1102,6 +1111,21 @@ namespace PlutoGE::assets
                     input.read(reinterpret_cast<char *>(channel.values.data()), static_cast<std::streamsize>(channel.values.size() * sizeof(glm::vec4)));
                 }
                 clip.channels.push_back(std::move(channel));
+            }
+            if (version >= 6)
+            {
+                const auto eventCount = ReadPod<std::uint64_t>(input);
+                clip.events.reserve(static_cast<std::size_t>(eventCount));
+                for (std::uint64_t index = 0; index < eventCount; ++index)
+                {
+                    render::AnimationClip::Event event;
+                    event.time = ReadPod<float>(input);
+                    event.name = ReadString(input);
+                    event.stringParameter = ReadString(input);
+                    event.floatParameter = ReadPod<float>(input);
+                    event.intParameter = ReadPod<int>(input);
+                    clip.events.push_back(std::move(event));
+                }
             }
             return clip;
         }

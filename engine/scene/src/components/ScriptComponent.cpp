@@ -296,6 +296,15 @@ namespace PlutoGE::scene
         }
     }
 
+    void ScriptComponent::OnAnimationEvent(const render::AnimationClip::Event &event)
+    {
+        if (!core::Engine::GetInstance().IsRuntimeRunning() || m_scriptClass.empty())
+            return;
+        Start();
+        if (m_instance)
+            m_instance->OnAnimationEvent(event.name, event.stringParameter, event.floatParameter, event.intParameter);
+    }
+
     std::vector<Property> ScriptComponent::Serialize() const
     {
         std::vector<Property> properties;

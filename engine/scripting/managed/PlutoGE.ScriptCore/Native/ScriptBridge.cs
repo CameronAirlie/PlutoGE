@@ -1279,6 +1279,32 @@ internal static unsafe class ScriptBridge
         }
     }
 
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "InvokeOnAnimationEvent")]
+    public static int InvokeOnAnimationEvent(long handle, nint namePtr, nint stringParameterPtr,
+                                             float floatParameter, int intParameter)
+    {
+        try
+        {
+            if (!Instances.TryGetValue(handle, out var instance))
+            {
+                SetError($"Unknown managed script instance handle '{handle}'.");
+                return 0;
+            }
+
+            instance.OnAnimationEvent(new AnimationEvent(
+                Marshal.PtrToStringUTF8(namePtr) ?? string.Empty,
+                Marshal.PtrToStringUTF8(stringParameterPtr) ?? string.Empty,
+                floatParameter,
+                intParameter));
+            return 1;
+        }
+        catch (Exception exception)
+        {
+            SetError(exception.ToString());
+            return 0;
+        }
+    }
+
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "ApplyFieldData")]
     public static int ApplyFieldData(long handle, nint fieldDataPtr)
     {

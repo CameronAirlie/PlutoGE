@@ -1,5 +1,7 @@
 #include "PlutoGE/scene/components/AnimationComponent.h"
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/scene/Entity.h"
+#include "PlutoGE/scene/components/ScriptComponent.h"
 
 #include <algorithm>
 #include <cmath>
@@ -906,7 +908,9 @@ namespace PlutoGE::scene
         }
         else
         {
+            const float previousTime = m_time;
             SetTime(m_time + deltaTime * m_speed);
+            DispatchClipEvents(m_currentClipIndex, previousTime, m_time, m_looping, m_speed);
         }
         for (const size_t parameterIndex : m_layerTriggersToReset)
         {
@@ -915,6 +919,31 @@ namespace PlutoGE::scene
         }
         m_jointMatricesDirty = true;
         m_nodeMatricesDirty = true;
+    }
+
+    void AnimationComponent::DispatchClipEvents(int clipIndex, float previousTime, float currentTime,
+                                                bool looping, float speed)
+    {
+        if (clipIndex < 0 || clipIndex >= static_cast<int>(m_clips.size()) || speed == 0.0f || !GetOwner())
+            return;
+
+        const auto &clip = m_clips[static_cast<std::size_t>(clipIndex)];
+        const bool wrapped = looping && ((speed > 0.0f && currentTime < previousTime) ||
+                                         (speed < 0.0f && currentTime > previousTime));
+        for (const auto &event : clip.events)
+        {
+            const bool crossed = speed > 0.0f
+                                     ? (wrapped ? event.time > previousTime || event.time <= currentTime
+                                                : event.time > previousTime && event.time <= currentTime)
+                                     : (wrapped ? event.time < previousTime || event.time >= currentTime
+                                                : event.time < previousTime && event.time >= currentTime);
+            if (!crossed)
+                continue;
+
+            for (auto *script : GetOwner()->GetComponents<ScriptComponent>())
+                if (script && script->IsEnabled())
+                    script->OnAnimationEvent(event);
+        }
     }
 
     std::vector<Property> AnimationComponent::Serialize() const
@@ -2206,8 +2235,11 @@ namespace PlutoGE::scene
         {
             const auto &source = m_states[static_cast<size_t>(m_transition.sourceStateIndex)];
             const auto &destination = m_states[static_cast<size_t>(m_transition.destinationStateIndex)];
+            const float previousDestinationTime = m_transition.destinationTime;
             m_transition.sourceTime = AdvanceStateTime(source, m_transition.sourceTime, deltaTime);
             m_transition.destinationTime = AdvanceStateTime(destination, m_transition.destinationTime, deltaTime);
+            DispatchClipEvents(destination.clipIndex, previousDestinationTime, m_transition.destinationTime,
+                               destination.loop, destination.speed * m_speed);
             m_transition.elapsed += std::max(0.0f, deltaTime);
 
             if (m_transition.elapsed >= m_transition.duration)
@@ -2221,7 +2253,9 @@ namespace PlutoGE::scene
         {
             auto &state = m_states[static_cast<size_t>(m_graphCurrentStateIndex)];
             bool finished = false;
+            const float previousStateTime = m_graphStateTime;
             m_graphStateTime = AdvanceStateTime(state, m_graphStateTime, deltaTime, 1.0f, &finished);
+            DispatchClipEvents(state.clipIndex, previousStateTime, m_graphStateTime, state.loop, state.speed * m_speed);
 
             bool startedTransition = false;
             for (const auto &transition : state.transitions)

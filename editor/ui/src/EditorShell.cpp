@@ -3,6 +3,7 @@
 #include "PlutoGE/ui/panels/ConsolePanel.h"
 #include "PlutoGE/ui/panels/ContentBrowserPanel.h"
 #include "PlutoGE/ui/panels/AnimationGraphEditorPanel.h"
+#include "PlutoGE/ui/panels/AnimationClipEditorPanel.h"
 #include "PlutoGE/ui/panels/MaterialEditorPanel.h"
 #include "PlutoGE/ui/panels/ParticleSystemEditorPanel.h"
 #include "PlutoGE/ui/panels/MeshEditorPanel.h"
@@ -1945,6 +1946,15 @@ namespace PlutoGE::ui
         Log(ConsoleSeverity::Info, "Opened animation graph: " + m_activeAnimationGraphAssetReference);
     }
 
+    void EditorShell::OpenAnimationClipAsset(std::string animationClipAssetReference)
+    {
+        if (animationClipAssetReference.empty())
+            return;
+        m_activeAnimationClipAssetReference = std::move(animationClipAssetReference);
+        m_openAnimationClipEditorRequested = true;
+        Log(ConsoleSeverity::Info, "Opened animation clip: " + m_activeAnimationClipAssetReference);
+    }
+
     void EditorShell::OpenParticleSystemAsset(std::string particleSystemAssetReference)
     {
         if (particleSystemAssetReference.empty())
@@ -2456,6 +2466,10 @@ namespace PlutoGE::ui
         animationGraphEditorPanel->Initialize();
         m_panelManager.AddPanel(animationGraphEditorPanel);
 
+        auto animationClipEditorPanel = new AnimationClipEditorPanel(PanelConfig{"Animation Clip Editor", false});
+        animationClipEditorPanel->Initialize();
+        m_panelManager.AddPanel(animationClipEditorPanel);
+
         auto particleSystemEditorPanel = new ParticleSystemEditorPanel(PanelConfig{"Particle System Editor", false});
         particleSystemEditorPanel->Initialize();
         m_panelManager.AddPanel(particleSystemEditorPanel);
@@ -2859,6 +2873,8 @@ namespace PlutoGE::ui
                 {
                     animationGraphEditorPanel->SetOpen(true);
                 }
+                if (ConsumeAnimationClipEditorOpenRequest())
+                    animationClipEditorPanel->SetOpen(true);
                 if (ConsumeParticleSystemEditorOpenRequest())
                 {
                     particleSystemEditorPanel->SetOpen(true);

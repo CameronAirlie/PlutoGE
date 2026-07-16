@@ -80,10 +80,22 @@ namespace PlutoGE::render
 
     struct AnimationClip
     {
+        struct Event
+        {
+            float time = 0.0f;
+            std::string name;
+            std::string stringParameter;
+            float floatParameter = 0.0f;
+            int intParameter = 0;
+
+            bool operator==(const Event &) const = default;
+        };
+
         std::string name;
         float duration = 0.0f;
         int channelCount = 0;
         std::vector<AnimationChannel> channels;
+        std::vector<Event> events;
     };
 
     struct MeshData

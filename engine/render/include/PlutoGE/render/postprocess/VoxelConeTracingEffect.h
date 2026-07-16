@@ -28,6 +28,7 @@ namespace PlutoGE::render
         void SetParameters(const std::vector<PostProcessParameter> &parameters) override;
         RenderTarget *GenerateResolvedIndirectLighting(const PostProcessContext &context, int width, int height);
         bool OutputsIndirectOnly() const { return m_indirectOnly; }
+        int GetDebugView() const { return m_debugView; }
 
     private:
         // The current implementation deliberately uses one camera-following
@@ -53,6 +54,18 @@ namespace PlutoGE::render
             unsigned int accumulationCount = 0;
             unsigned int accumulationOpacity = 0;
             unsigned int framebuffer = 0;
+            std::array<unsigned int, 4> pendingShadowMaps{};
+            std::array<glm::mat4, 4> pendingShadowMatrices{
+                glm::mat4(1.0f), glm::mat4(1.0f), glm::mat4(1.0f), glm::mat4(1.0f)};
+            std::array<glm::vec3, 4> pendingShadowOrigins{
+                glm::vec3(0.0f), glm::vec3(0.0f), glm::vec3(0.0f), glm::vec3(0.0f)};
+            std::array<float, 4> pendingShadowSplits{};
+            glm::mat4 pendingView{1.0f};
+            glm::vec3 pendingLightDirection{0.0f, -1.0f, 0.0f};
+            glm::vec3 pendingLightColor{0.0f};
+            float pendingLightIntensity = 0.0f;
+            int pendingShadowCascadeCount = 0;
+            bool pendingHasInjectionLight = false;
             glm::vec3 origin{0.0f};
             glm::vec3 pendingOrigin{0.0f};
             float size = 0.0f;
@@ -70,7 +83,8 @@ namespace PlutoGE::render
         void EnsureResources(int width, int height);
         void BeginVoxelization(std::size_t cascadeIndex, const glm::vec3 &volumeOrigin,
                                std::size_t sceneSignature, std::size_t lightSignature,
-                               const std::vector<RenderCommand> &commands);
+                               const std::vector<RenderCommand> &commands,
+                               const RenderContext &renderContext);
         bool VoxelizeChunk(std::size_t cascadeIndex, const PostProcessContext &context);
         void GenerateDirectionalMips(VoxelCascade &cascade);
         void ReleaseVolume();
@@ -83,6 +97,7 @@ namespace PlutoGE::render
         Shader *m_temporalResolveShader = nullptr;
         Shader *m_historyMetadataShader = nullptr;
         std::unique_ptr<RenderTarget> m_indirectTarget;
+        std::unique_ptr<RenderTarget> m_debugTarget;
         std::array<std::unique_ptr<RenderTarget>, 2> m_historyColorTargets;
         std::array<std::unique_ptr<RenderTarget>, 2> m_historyMetadataTargets;
         std::array<VoxelCascade, kCascadeCount> m_cascades;
@@ -92,6 +107,7 @@ namespace PlutoGE::render
         int m_coneCount = 5;
         int m_voxelizationCommandBudget = 8;
         int m_updateInterval = 1;
+        int m_debugView = 0;
         float m_volumeSize = 48.0f;
         float m_intensity = 1.0f;
         float m_aperture = 0.55f;

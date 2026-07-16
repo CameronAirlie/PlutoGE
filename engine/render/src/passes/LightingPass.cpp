@@ -1097,14 +1097,18 @@ namespace PlutoGE::render
             uniform sampler2D uEmissionTexture;
             uniform sampler2D uScenePositionTexture;
             uniform sampler2D uSceneNormalTexture;
+            uniform sampler2D uSceneAlbedoTexture;
             uniform sampler2D uBakedLightingTexture;
             uniform mat4 uViewMatrix;
             uniform int uMaskEmission;
             uniform int uMaskBakedLighting;
             uniform int uBilateralUpsample;
+            uniform int uApplyReceiverAlbedo;
+            uniform int uDebugUpsample;
 
-            vec3 SampleIndirect()
+            vec3 SampleIndirect(out vec3 upsampleDebug)
             {
+                upsampleDebug = vec3(1.0);
                 if (uBilateralUpsample == 0)
                 {
                     return texture(uIndirectTexture, UV).rgb;
@@ -1115,6 +1119,7 @@ namespace PlutoGE::render
                 float centerNormalLength = dot(centerNormalRaw, centerNormalRaw);
                 if (centerNormalLength < 0.01)
                 {
+                    upsampleDebug = vec3(0.0, 0.5, 1.0);
                     return vec3(0.0);
                 }
 
@@ -1125,6 +1130,9 @@ namespace PlutoGE::render
                 ivec2 base = ivec2(floor(lowPosition));
                 vec3 indirectSum = vec3(0.0);
                 float weightSum = 0.0;
+                vec3 bestIndirect = vec3(0.0);
+                float bestGeometryError = 1e20;
+                bool foundCompatibleSample = false;
 
                 for (int y = -1; y <= 2; ++y)
                 {
@@ -1145,23 +1153,59 @@ namespace PlutoGE::render
                         float spatialWeight = exp(-dot(spatialOffset, spatialOffset) * 0.75);
                         float normalWeight = pow(max(dot(centerNormal, sampleNormal), 0.0), 24.0);
                         float depthTolerance = max(0.2, centerDepth * 0.01);
-                        float depthWeight = exp(-abs(indirectDepth.a - centerDepth) / depthTolerance);
+                        float depthDifference = abs(indirectDepth.a - centerDepth);
+                        float depthWeight = exp(-depthDifference / depthTolerance);
                         float weight = spatialWeight * normalWeight * depthWeight;
                         indirectSum += indirectDepth.rgb * weight;
                         weightSum += weight;
+
+                        // Keep a geometry-compatible fallback for sub-pixel
+                        // surfaces, but never copy an arbitrary nearest pixel
+                        // across a silhouette. That fallback caused material-
+                        // coloured flashes which changed with camera angle.
+                        float normalAgreement = dot(centerNormal, sampleNormal);
+                        if (normalAgreement >= 0.75 && depthDifference <= depthTolerance * 2.0)
+                        {
+                            float geometryError =
+                                depthDifference / max(depthTolerance, 0.0001) +
+                                (1.0 - normalAgreement) * 4.0 +
+                                dot(spatialOffset, spatialOffset) * 0.02;
+                            if (geometryError < bestGeometryError)
+                            {
+                                bestGeometryError = geometryError;
+                                bestIndirect = indirectDepth.rgb;
+                                foundCompatibleSample = true;
+                            }
+                        }
                     }
                 }
 
                 if (weightSum <= 0.0001)
                 {
-                    return texelFetch(uIndirectTexture, clamp(ivec2(round(lowPosition)), ivec2(0), lowSize - ivec2(1)), 0).rgb;
+                    upsampleDebug = foundCompatibleSample
+                                        ? vec3(1.0, 0.8, 0.0)
+                                        : vec3(1.0, 0.0, 0.0);
+                    return foundCompatibleSample ? bestIndirect : vec3(0.0);
                 }
+                upsampleDebug = vec3(0.0, clamp(weightSum, 0.15, 1.0), 0.0);
                 return indirectSum / weightSum;
             }
 
             void main()
             {
-                vec3 indirect = SampleIndirect();
+                vec3 upsampleDebug;
+                vec3 indirect = SampleIndirect(upsampleDebug);
+                if (uDebugUpsample != 0)
+                {
+                    FragColor = vec4(upsampleDebug, 1.0);
+                    return;
+                }
+                if (uApplyReceiverAlbedo != 0)
+                {
+                    vec4 albedoMetallic = texture(uSceneAlbedoTexture, UV);
+                    indirect *= albedoMetallic.rgb *
+                                (1.0 - clamp(albedoMetallic.a, 0.0, 1.0));
+                }
                 if (uMaskEmission != 0)
                 {
                     vec3 emission = max(texture(uEmissionTexture, UV).rgb, vec3(0.0));
@@ -1381,7 +1425,8 @@ namespace PlutoGE::render
         bool compositeSsgiOnly = false;
 
         const auto compositeIndirectTarget = [&](RenderTarget *resolvedIndirectTarget, bool indirectOnly,
-                                                  bool maskBakedLighting = false, bool depthAwareUpsample = false)
+                                                  bool maskBakedLighting = false, bool depthAwareUpsample = false,
+                                                  bool applyReceiverAlbedo = false, bool debugUpsample = false)
         {
             if (!resolvedIndirectTarget)
             {
@@ -1417,9 +1462,14 @@ namespace PlutoGE::render
             glActiveTexture(GL_TEXTURE4);
             glBindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetBakedLightingTextureID());
             m_indirectCompositeShader->SetUniform("uBakedLightingTexture", 4);
+            glActiveTexture(GL_TEXTURE5);
+            glBindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetAlbedoTextureID());
+            m_indirectCompositeShader->SetUniform("uSceneAlbedoTexture", 5);
             m_indirectCompositeShader->SetUniform("uViewMatrix", ctx.cameraData.view);
             m_indirectCompositeShader->SetUniform("uMaskEmission", indirectOnly ? 0 : 1);
             m_indirectCompositeShader->SetUniform("uMaskBakedLighting", maskBakedLighting ? 1 : 0);
+            m_indirectCompositeShader->SetUniform("uApplyReceiverAlbedo", applyReceiverAlbedo ? 1 : 0);
+            m_indirectCompositeShader->SetUniform("uDebugUpsample", debugUpsample ? 1 : 0);
             m_indirectCompositeShader->SetUniform(
                 "uBilateralUpsample",
                 depthAwareUpsample &&
@@ -1682,18 +1732,27 @@ namespace PlutoGE::render
         {
             if (auto *vctEffect = FindEnabledVctEffect(ctx))
             {
-                // Cone tracing is the dominant steady-state VCT cost. Temporal
-                // accumulation reconstructs it well enough at quarter resolution
-                // and this reduces trace, history and metadata pixels by 4x.
-                const int resolveWidth = std::max(1, ctx.temporaryRenderTarget->GetWidth() / 4);
-                const int resolveHeight = std::max(1, ctx.temporaryRenderTarget->GetHeight() / 4);
+                // Half resolution is one quarter of the full-resolution pixel
+                // count. Quarter width/height was only one sixteenth and made
+                // thin foliage, wall contacts and silhouettes view-dependent.
+                const int resolveWidth = std::max(1, ctx.temporaryRenderTarget->GetWidth() / 2);
+                const int resolveHeight = std::max(1, ctx.temporaryRenderTarget->GetHeight() / 2);
                 const bool gpuTimingActive = ctx.renderer && ctx.renderer->BeginPostProcessEffectTiming(vctEffect->GetTypeName());
                 RenderTarget *indirect = vctEffect->GenerateResolvedIndirectLighting(PostProcessContext{
                     .renderContext = ctx, .sourceRenderTarget = ctx.temporaryRenderTarget, .destinationRenderTarget = nullptr},
                     resolveWidth, resolveHeight);
                 if (gpuTimingActive)
                     ctx.renderer->EndPostProcessEffectTiming();
-                compositeIndirectTarget(indirect, vctEffect->OutputsIndirectOnly(), true, true);
+                const int debugView = vctEffect->GetDebugView();
+                const bool debugEnabled = debugView != 0;
+                const bool inspectUpsample = debugView == 6;
+                compositeIndirectTarget(
+                    indirect,
+                    debugEnabled || vctEffect->OutputsIndirectOnly(),
+                    !debugEnabled,
+                    !debugEnabled || inspectUpsample,
+                    !debugEnabled,
+                    inspectUpsample);
             }
         }
 

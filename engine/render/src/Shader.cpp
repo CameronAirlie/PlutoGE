@@ -75,35 +75,31 @@ namespace PlutoGE::render
 
             auto &cache = GetRenderStateCache();
             auto &textureUnits = GetTextureUnitCache();
-            if (slot >= static_cast<int>(textureUnits.size()))
-            {
-                glActiveTexture(GL_TEXTURE0 + slot);
-                glBindTexture(textureType, textureId);
-                cache.activeTextureSlot = slot;
-                return;
-            }
-
-            if (cache.activeTextureSlot != slot)
-            {
-                glActiveTexture(GL_TEXTURE0 + slot);
-                cache.activeTextureSlot = slot;
-            }
-
-            const int textureCacheIndex = GetTextureCacheIndex(textureType);
-            if (textureCacheIndex < 0)
-            {
-                glBindTexture(textureType, textureId);
-                return;
-            }
-
-            auto &unitState = textureUnits[slot];
-            if (unitState.textureIds[textureCacheIndex] == textureId)
-            {
-                return;
-            }
-
+            // A significant amount of renderer code binds textures directly
+            // with glActiveTexture/glBindTexture. Those calls cannot update this
+            // private cache, so treating the cached active unit or texture ID as
+            // authoritative can bind a material texture to the wrong unit or
+            // skip the bind entirely. Progressive passes are especially exposed:
+            // another pass changes unit 0 between chunks, then the next material
+            // incorrectly samples a shadow map, G-buffer texture, or a previous
+            // material as its albedo.
+            //
+            // Always establish both pieces of GL state here. Keep the cache
+            // synchronized for diagnostics and for callers of ResetStateCache,
+            // but do not use it to elide texture binds until all direct binding
+            // sites have been routed through one shared state tracker.
+            glActiveTexture(GL_TEXTURE0 + slot);
             glBindTexture(textureType, textureId);
-            unitState.textureIds[textureCacheIndex] = textureId;
+            cache.activeTextureSlot = slot;
+
+            if (slot < static_cast<int>(textureUnits.size()))
+            {
+                const int textureCacheIndex = GetTextureCacheIndex(textureType);
+                if (textureCacheIndex >= 0)
+                {
+                    textureUnits[slot].textureIds[textureCacheIndex] = textureId;
+                }
+            }
         }
     }
 

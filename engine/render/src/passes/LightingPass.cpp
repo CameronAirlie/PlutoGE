@@ -1732,11 +1732,9 @@ namespace PlutoGE::render
         {
             if (auto *vctEffect = FindEnabledVctEffect(ctx))
             {
-                // Half resolution is one quarter of the full-resolution pixel
-                // count. Quarter width/height was only one sixteenth and made
-                // thin foliage, wall contacts and silhouettes view-dependent.
-                const int resolveWidth = std::max(1, ctx.temporaryRenderTarget->GetWidth() / 2);
-                const int resolveHeight = std::max(1, ctx.temporaryRenderTarget->GetHeight() / 2);
+                const int traceDivisor = std::clamp(vctEffect->GetTraceResolutionDivisor(), 2, 4);
+                const int resolveWidth = std::max(1, ctx.temporaryRenderTarget->GetWidth() / traceDivisor);
+                const int resolveHeight = std::max(1, ctx.temporaryRenderTarget->GetHeight() / traceDivisor);
                 const bool gpuTimingActive = ctx.renderer && ctx.renderer->BeginPostProcessEffectTiming(vctEffect->GetTypeName());
                 RenderTarget *indirect = vctEffect->GenerateResolvedIndirectLighting(PostProcessContext{
                     .renderContext = ctx, .sourceRenderTarget = ctx.temporaryRenderTarget, .destinationRenderTarget = nullptr},

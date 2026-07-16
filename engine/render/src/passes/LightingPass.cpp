@@ -1095,16 +1095,82 @@ namespace PlutoGE::render
 
             uniform sampler2D uIndirectTexture;
             uniform sampler2D uEmissionTexture;
+            uniform sampler2D uScenePositionTexture;
+            uniform sampler2D uSceneNormalTexture;
+            uniform sampler2D uBakedLightingTexture;
+            uniform mat4 uViewMatrix;
             uniform int uMaskEmission;
+            uniform int uMaskBakedLighting;
+            uniform int uBilateralUpsample;
+
+            vec3 SampleIndirect()
+            {
+                if (uBilateralUpsample == 0)
+                {
+                    return texture(uIndirectTexture, UV).rgb;
+                }
+
+                vec3 centerPosition = texture(uScenePositionTexture, UV).xyz;
+                vec3 centerNormalRaw = texture(uSceneNormalTexture, UV).xyz;
+                float centerNormalLength = dot(centerNormalRaw, centerNormalRaw);
+                if (centerNormalLength < 0.01)
+                {
+                    return vec3(0.0);
+                }
+
+                vec3 centerNormal = centerNormalRaw * inversesqrt(centerNormalLength);
+                float centerDepth = max(-(uViewMatrix * vec4(centerPosition, 1.0)).z, 0.0);
+                ivec2 lowSize = textureSize(uIndirectTexture, 0);
+                vec2 lowPosition = UV * vec2(lowSize) - 0.5;
+                ivec2 base = ivec2(floor(lowPosition));
+                vec3 indirectSum = vec3(0.0);
+                float weightSum = 0.0;
+
+                for (int y = -1; y <= 2; ++y)
+                {
+                    for (int x = -1; x <= 2; ++x)
+                    {
+                        ivec2 sampleCoord = clamp(base + ivec2(x, y), ivec2(0), lowSize - ivec2(1));
+                        vec2 sampleUv = (vec2(sampleCoord) + 0.5) / vec2(lowSize);
+                        vec4 indirectDepth = texelFetch(uIndirectTexture, sampleCoord, 0);
+                        vec3 sampleNormalRaw = texture(uSceneNormalTexture, sampleUv).xyz;
+                        float sampleNormalLength = dot(sampleNormalRaw, sampleNormalRaw);
+                        if (sampleNormalLength < 0.01)
+                        {
+                            continue;
+                        }
+
+                        vec3 sampleNormal = sampleNormalRaw * inversesqrt(sampleNormalLength);
+                        vec2 spatialOffset = vec2(sampleCoord) - lowPosition;
+                        float spatialWeight = exp(-dot(spatialOffset, spatialOffset) * 0.75);
+                        float normalWeight = pow(max(dot(centerNormal, sampleNormal), 0.0), 24.0);
+                        float depthTolerance = max(0.2, centerDepth * 0.01);
+                        float depthWeight = exp(-abs(indirectDepth.a - centerDepth) / depthTolerance);
+                        float weight = spatialWeight * normalWeight * depthWeight;
+                        indirectSum += indirectDepth.rgb * weight;
+                        weightSum += weight;
+                    }
+                }
+
+                if (weightSum <= 0.0001)
+                {
+                    return texelFetch(uIndirectTexture, clamp(ivec2(round(lowPosition)), ivec2(0), lowSize - ivec2(1)), 0).rgb;
+                }
+                return indirectSum / weightSum;
+            }
 
             void main()
             {
-                vec3 indirect = texture(uIndirectTexture, UV).rgb;
+                vec3 indirect = SampleIndirect();
                 if (uMaskEmission != 0)
                 {
                     vec3 emission = max(texture(uEmissionTexture, UV).rgb, vec3(0.0));
                     float emissionCoverage = clamp(max(max(emission.r, emission.g), emission.b), 0.0, 1.0);
                     indirect *= 1.0 - emissionCoverage;
+                }
+                if (uMaskBakedLighting != 0)
+                {
+                    indirect *= 1.0 - clamp(texture(uBakedLightingTexture, UV).a, 0.0, 1.0);
                 }
                 FragColor = vec4(indirect, 1.0);
             }
@@ -1314,7 +1380,8 @@ namespace PlutoGE::render
         bool compositeRsmOnly = false;
         bool compositeSsgiOnly = false;
 
-        const auto compositeIndirectTarget = [&](RenderTarget *resolvedIndirectTarget, bool indirectOnly)
+        const auto compositeIndirectTarget = [&](RenderTarget *resolvedIndirectTarget, bool indirectOnly,
+                                                  bool maskBakedLighting = false, bool depthAwareUpsample = false)
         {
             if (!resolvedIndirectTarget)
             {
@@ -1341,7 +1408,25 @@ namespace PlutoGE::render
             glActiveTexture(GL_TEXTURE1);
             glBindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetEmissionTextureID());
             m_indirectCompositeShader->SetUniform("uEmissionTexture", 1);
+            glActiveTexture(GL_TEXTURE2);
+            glBindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetPositionTextureID());
+            m_indirectCompositeShader->SetUniform("uScenePositionTexture", 2);
+            glActiveTexture(GL_TEXTURE3);
+            glBindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetNormalTextureID());
+            m_indirectCompositeShader->SetUniform("uSceneNormalTexture", 3);
+            glActiveTexture(GL_TEXTURE4);
+            glBindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetBakedLightingTextureID());
+            m_indirectCompositeShader->SetUniform("uBakedLightingTexture", 4);
+            m_indirectCompositeShader->SetUniform("uViewMatrix", ctx.cameraData.view);
             m_indirectCompositeShader->SetUniform("uMaskEmission", indirectOnly ? 0 : 1);
+            m_indirectCompositeShader->SetUniform("uMaskBakedLighting", maskBakedLighting ? 1 : 0);
+            m_indirectCompositeShader->SetUniform(
+                "uBilateralUpsample",
+                depthAwareUpsample &&
+                        (resolvedIndirectTarget->GetWidth() != ctx.temporaryRenderTarget->GetWidth() ||
+                         resolvedIndirectTarget->GetHeight() != ctx.temporaryRenderTarget->GetHeight())
+                    ? 1
+                    : 0);
             Graphics::DrawFullscreenTriangle();
         };
 
@@ -1467,6 +1552,9 @@ namespace PlutoGE::render
                     glActiveTexture(GL_TEXTURE0 + kIndirectTextureSlot);
                     glBindTexture(GL_TEXTURE_2D, shadowMask->GetColorTextureID());
                     m_indirectCompositeShader->SetUniform("uIndirectTexture", kIndirectTextureSlot);
+                    m_indirectCompositeShader->SetUniform("uMaskEmission", 0);
+                    m_indirectCompositeShader->SetUniform("uMaskBakedLighting", 0);
+                    m_indirectCompositeShader->SetUniform("uBilateralUpsample", 0);
                     Graphics::DrawFullscreenTriangle();
                     break;
                 }
@@ -1605,7 +1693,7 @@ namespace PlutoGE::render
                     resolveWidth, resolveHeight);
                 if (gpuTimingActive)
                     ctx.renderer->EndPostProcessEffectTiming();
-                compositeIndirectTarget(indirect, vctEffect->OutputsIndirectOnly());
+                compositeIndirectTarget(indirect, vctEffect->OutputsIndirectOnly(), true, true);
             }
         }
 

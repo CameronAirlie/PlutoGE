@@ -30,19 +30,23 @@ namespace PlutoGE::render
         bool OutputsIndirectOnly() const { return m_indirectOnly; }
 
     private:
-        static constexpr std::size_t kCascadeCount = 3;
+        // The current implementation deliberately uses one camera-following
+        // volume. Keeping the compile-time layout in sync avoids binding twelve
+        // unused fragment samplers on drivers with a 16-unit fragment limit.
+        static constexpr std::size_t kCascadeCount = 1;
         static constexpr std::size_t kDirectionCount = 6;
 
         struct VoxelizationJob
         {
             RenderCommand command;
-            std::size_t voxelLod = 0;
+            std::shared_ptr<Material> material;
+            std::shared_ptr<const std::vector<glm::mat4>> jointMatrices;
+            std::size_t nextInstance = 0;
         };
 
         struct VoxelCascade
         {
             std::array<unsigned int, kDirectionCount> radianceVolumes{};
-            unsigned int pendingBaseVolume = 0;
             unsigned int accumulationR = 0;
             unsigned int accumulationG = 0;
             unsigned int accumulationB = 0;
@@ -86,16 +90,16 @@ namespace PlutoGE::render
         std::size_t m_activeCascadeCount = kCascadeCount;
         int m_resolution = 64;
         int m_coneCount = 5;
-        int m_voxelizationLodBias = 2;
         int m_voxelizationCommandBudget = 8;
         int m_updateInterval = 1;
         float m_volumeSize = 48.0f;
         float m_intensity = 1.0f;
         float m_aperture = 0.55f;
         float m_maxDistance = 24.0f;
-        float m_normalBias = 1.5f;
+        float m_normalBias = 0.35f;
         float m_temporalBlend = 0.92f;
-        float m_historyDepthThreshold = 0.03f;
+        // World-space view-depth tolerance used for temporal disocclusion.
+        float m_historyDepthThreshold = 0.25f;
         float m_historyNormalThreshold = 0.9f;
         glm::mat4 m_previousView{1.0f};
         glm::vec3 m_previousCameraPosition{0.0f};
@@ -103,6 +107,7 @@ namespace PlutoGE::render
         std::uint8_t m_historyIndex = 0;
         bool m_hasHistory = false;
         bool m_hasPreviousCameraPosition = false;
+        bool m_volumeChangedThisFrame = false;
         bool m_indirectOnly = false;
     };
 }

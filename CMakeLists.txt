@@ -11,6 +11,11 @@ option(PLUTO_BUILD_EDITOR "Build the PlutoGE Editor" ON)
 option(PLUTO_BUILD_RUNTIME "Build the PlutoGE Runtime" ON)
 option(PLUTO_BUILD_SAMPLES "Build sample applications" ON)
 option(PLUTO_BUILD_ENGINE_SHARED "Build the engine as a single shared library (PlutoGE.dll on Windows)" OFF)
+option(PLUTO_BUILD_ELECTRON_EDITOR_HOST "Build the native host used by the Electron editor" ${PLUTO_BUILD_ENGINE_SHARED})
+
+if (PLUTO_BUILD_ELECTRON_EDITOR_HOST AND NOT PLUTO_BUILD_ENGINE_SHARED)
+    message(FATAL_ERROR "PLUTO_BUILD_ELECTRON_EDITOR_HOST requires PLUTO_BUILD_ENGINE_SHARED=ON")
+endif()
 
 if (PLUTO_BUILD_ENGINE_SHARED)
     # Static third-party libraries linked into PlutoGE must be suitable for a

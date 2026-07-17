@@ -18,6 +18,11 @@ namespace PlutoGE::platform
         bool visible = true;
         bool fullscreen = false;
         std::function<void(int, int)> resizeCallback = nullptr;
+        // When set, the native engine window is presented over this platform
+        // window. Windows uses an owned, borderless overlay because Chromium's
+        // DirectComposition surface occludes cross-process child HWNDs.
+        void *nativeParent = nullptr;
+        bool embedded = false;
     };
 
     struct WindowExtents
@@ -39,6 +44,7 @@ namespace PlutoGE::platform
         [[nodiscard]] WindowExtents GetExtents() const;
         [[nodiscard]] const WindowConfig GetConfig() const;
         [[nodiscard]] void *GetWindow() const;
+        [[nodiscard]] void *GetNativeHandle() const;
         [[nodiscard]] InputState &GetInputState() { return m_inputState; }
         [[nodiscard]] bool IsCursorLocked() const;
         [[nodiscard]] bool IsCursorLockRequested() const { return m_requestedScriptCursorLocked; }
@@ -50,6 +56,8 @@ namespace PlutoGE::platform
         void SetEditorCursorLocked(bool locked);
         void SetCursorLockOverride(bool forceVisible);
         void SetScriptInputEnabled(bool enabled);
+        bool SetEmbeddedBounds(int x, int y, int width, int height);
+        void SetEmbeddedVisible(bool visible);
 
         void SetContextCurrent();
         bool EnsureOpenGLContextCurrent(bool reloadFunctions = false);

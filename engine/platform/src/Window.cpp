@@ -1,5 +1,16 @@
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <Windows.h>
+#endif
+
 #include "PlutoGE/platform/Window.h"
 #include <iostream>
+
+#ifdef _WIN32
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3native.h>
+#endif
 
 namespace PlutoGE::platform
 {
@@ -35,6 +46,7 @@ namespace PlutoGE::platform
         glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
         glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
         glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+        glfwWindowHint(GLFW_VISIBLE, m_config.visible ? GLFW_TRUE : GLFW_FALSE);
 #ifdef __APPLE__
         glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
 #endif
@@ -63,6 +75,63 @@ namespace PlutoGE::platform
         {
             glfwSetWindowMonitor(m_window, glfwGetPrimaryMonitor(), 0, 0, m_clientWidth, m_clientHeight, GLFW_DONT_CARE);
         }
+
+#ifdef _WIN32
+        if (m_config.embedded && m_config.nativeParent)
+        {
+            auto *nativeWindow = glfwGetWin32Window(m_window);
+            auto *nativeParent = static_cast<HWND>(m_config.nativeParent);
+            if (!nativeWindow || !nativeParent)
+            {
+                std::cerr << "Failed to resolve native handles for embedded window." << std::endl;
+                Close();
+                return false;
+            }
+
+            LONG_PTR style = GetWindowLongPtrW(nativeWindow, GWL_STYLE);
+            style &= ~(WS_CHILD | WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU);
+            style |= WS_POPUP | WS_CLIPSIBLINGS | WS_CLIPCHILDREN;
+            SetWindowLongPtrW(nativeWindow, GWL_STYLE, style);
+
+            LONG_PTR extendedStyle = GetWindowLongPtrW(nativeWindow, GWL_EXSTYLE);
+            extendedStyle &= ~(WS_EX_APPWINDOW | WS_EX_WINDOWEDGE | WS_EX_CLIENTEDGE);
+            extendedStyle |= WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
+            SetWindowLongPtrW(nativeWindow, GWL_EXSTYLE, extendedStyle);
+
+            // A WS_CHILD window is composited underneath Electron's Chromium
+            // surface even when Win32 reports it at the top of the child
+            // z-order. Make the engine surface an owned top-level overlay so
+            // OpenGL remains GPU-native and is presented above Chromium.
+            SetLastError(ERROR_SUCCESS);
+            const auto previousOwner = SetWindowLongPtrW(nativeWindow,
+                                                         GWLP_HWNDPARENT,
+                                                         reinterpret_cast<LONG_PTR>(nativeParent));
+            if (!previousOwner && GetLastError() != ERROR_SUCCESS)
+            {
+                std::cerr << "Failed to attach the engine window to its native owner." << std::endl;
+                Close();
+                return false;
+            }
+
+            POINT parentOrigin{0, 0};
+            if (!ClientToScreen(nativeParent, &parentOrigin))
+            {
+                std::cerr << "Failed to resolve the native owner client origin." << std::endl;
+                Close();
+                return false;
+            }
+
+            UINT positionFlags = SWP_FRAMECHANGED | SWP_NOACTIVATE;
+            positionFlags |= m_config.visible ? SWP_SHOWWINDOW : SWP_HIDEWINDOW;
+            SetWindowPos(nativeWindow,
+                         HWND_TOP,
+                         parentOrigin.x,
+                         parentOrigin.y,
+                         m_clientWidth,
+                         m_clientHeight,
+                         positionFlags);
+        }
+#endif
         if (m_config.resizeCallback)
         {
             SetResizeCallback(config.resizeCallback);
@@ -198,6 +267,78 @@ namespace PlutoGE::platform
     void *Window::GetWindow() const
     {
         return m_window;
+    }
+
+    void *Window::GetNativeHandle() const
+    {
+#ifdef _WIN32
+        return m_window ? static_cast<void *>(glfwGetWin32Window(m_window)) : nullptr;
+#else
+        return nullptr;
+#endif
+    }
+
+    bool Window::SetEmbeddedBounds(int x, int y, int width, int height)
+    {
+        if (!m_window || width <= 0 || height <= 0)
+        {
+            return false;
+        }
+
+        m_clientWidth = width;
+        m_clientHeight = height;
+
+#ifdef _WIN32
+        if (m_config.embedded)
+        {
+            auto *nativeWindow = glfwGetWin32Window(m_window);
+            auto *nativeParent = static_cast<HWND>(m_config.nativeParent);
+            POINT parentOrigin{0, 0};
+            if (!nativeWindow || !nativeParent || !ClientToScreen(nativeParent, &parentOrigin))
+            {
+                return false;
+            }
+            return nativeWindow && SetWindowPos(nativeWindow,
+                                                HWND_TOP,
+                                                parentOrigin.x + x,
+                                                parentOrigin.y + y,
+                                                width,
+                                                height,
+                                                SWP_NOACTIVATE | SWP_NOOWNERZORDER) != FALSE;
+        }
+#endif
+
+        glfwSetWindowPos(m_window, x, y);
+        glfwSetWindowSize(m_window, width, height);
+        return true;
+    }
+
+    void Window::SetEmbeddedVisible(bool visible)
+    {
+        if (!m_window)
+        {
+            return;
+        }
+
+#ifdef _WIN32
+        if (m_config.embedded)
+        {
+            if (auto *nativeWindow = glfwGetWin32Window(m_window))
+            {
+                ShowWindow(nativeWindow, visible ? SW_SHOWNA : SW_HIDE);
+            }
+            return;
+        }
+#endif
+
+        if (visible)
+        {
+            glfwShowWindow(m_window);
+        }
+        else
+        {
+            glfwHideWindow(m_window);
+        }
     }
 
     void Window::SetResizeCallback(const std::function<void(int, int)> &callback)

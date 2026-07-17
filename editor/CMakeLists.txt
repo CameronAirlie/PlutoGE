@@ -4,6 +4,10 @@ add_executable(PlutoGEEditor
 
 add_subdirectory(ui)
 
+if (PLUTO_BUILD_ELECTRON_EDITOR_HOST)
+    add_subdirectory(host)
+endif()
+
 target_include_directories(PlutoGEEditor
     PRIVATE 
         ${CMAKE_CURRENT_SOURCE_DIR}

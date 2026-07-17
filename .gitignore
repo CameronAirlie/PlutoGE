@@ -3,3 +3,6 @@ out/
 build/
 .plutoge-cache/
 **/.plutoge-cache/
+editor/electron/node_modules/
+editor/electron/.webpack/
+editor/electron/out/

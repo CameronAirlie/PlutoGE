@@ -548,7 +548,15 @@ namespace PlutoGE::render
 
     void ParticlePass::Execute(const RenderContext &ctx)
     {
-        if (!ctx.scene || !ctx.hasCameraData || !m_updateShader || !m_renderShader || !m_trailShader || !GLAD_GL_VERSION_3_3)
+        // A render without a scene (for example the Electron host's empty
+        // editor grid) simply has no particle systems to draw. It does not
+        // indicate that GPU particle initialization failed.
+        if (!ctx.scene || !ctx.hasCameraData)
+        {
+            return;
+        }
+
+        if (!m_updateShader || !m_renderShader || !m_trailShader || !GLAD_GL_VERSION_3_3)
         {
             if (!m_loggedUnsupported)
             {

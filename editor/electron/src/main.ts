@@ -1,4 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron';
+import fs from 'node:fs';
 import path from 'node:path';
 import { NativeHost } from './native-host';
 
@@ -152,6 +153,85 @@ ipcMain.handle('editor:save-scene', async (event, saveAs: unknown) => {
   sendEditorCommand(`save_scene ${encode(path)}`);
 });
 
+const isPathInside = (parent: string, candidate: string): boolean => {
+  const relative = path.relative(parent, candidate);
+  return Boolean(relative) && !relative.startsWith('..') && !path.isAbsolute(relative);
+};
+
+const uniqueImportDirectory = (assetRoot: string, sourcePath: string): string => {
+  const modelsRoot = path.join(assetRoot, 'Models');
+  const stem = path.parse(sourcePath).name.replace(/[^a-zA-Z0-9._-]+/g, '_') || 'Model';
+  let candidate = path.join(modelsRoot, stem);
+  for (let suffix = 2; fs.existsSync(candidate); suffix += 1) candidate = path.join(modelsRoot, `${stem}_${suffix}`);
+  return candidate;
+};
+
+const copyGltfPackage = (sourcePath: string, destinationDirectory: string, warnings: string[]): string => {
+  const sourceDirectory = path.dirname(sourcePath);
+  const destinationPath = path.join(destinationDirectory, path.basename(sourcePath));
+  let document: { buffers?: Array<{ uri?: string }>; images?: Array<{ uri?: string }> };
+  try {
+    document = JSON.parse(fs.readFileSync(sourcePath, 'utf8')) as typeof document;
+  } catch {
+    fs.copyFileSync(sourcePath, destinationPath);
+    warnings.push(`${path.basename(sourcePath)} could not be parsed; external glTF resources were not copied.`);
+    return destinationPath;
+  }
+
+  const resources = [...(document.buffers ?? []), ...(document.images ?? [])];
+  for (const resource of resources) {
+    if (!resource.uri || /^(data:|https?:|blob:)/i.test(resource.uri)) continue;
+    const cleanUri = decodeURIComponent(resource.uri.split(/[?#]/, 1)[0]);
+    const dependencySource = path.resolve(sourceDirectory, cleanUri);
+    if (!fs.existsSync(dependencySource) || !fs.statSync(dependencySource).isFile()) {
+      warnings.push(`Missing glTF dependency: ${resource.uri}`);
+      continue;
+    }
+    let dependencyDestination = path.resolve(destinationDirectory, cleanUri);
+    if (!isPathInside(destinationDirectory, dependencyDestination)) {
+      dependencyDestination = path.join(destinationDirectory, 'Dependencies', path.basename(cleanUri));
+      resource.uri = path.relative(destinationDirectory, dependencyDestination).replace(/\\/g, '/');
+    }
+    fs.mkdirSync(path.dirname(dependencyDestination), { recursive: true });
+    fs.copyFileSync(dependencySource, dependencyDestination);
+  }
+  fs.writeFileSync(destinationPath, `${JSON.stringify(document, null, 2)}\n`, 'utf8');
+  return destinationPath;
+};
+
+ipcMain.handle('assets:import-models', async (event): Promise<ModelImportResult> => {
+  const result: ModelImportResult = { imported: [], warnings: [] };
+  if (!isTrustedSender(event) || !mainWindow) return result;
+  const assetRoot = nativeHost?.getEditorState()?.assetDirectoryPath;
+  if (!assetRoot) {
+    result.warnings.push('Open a project before importing models.');
+    return result;
+  }
+  const selection = await dialog.showOpenDialog(mainWindow, {
+    title: 'Import 3D Models',
+    properties: ['openFile', 'multiSelections'],
+    filters: [{ name: '3D Models', extensions: ['glb', 'gltf', 'fbx'] }],
+  });
+  if (selection.canceled) return result;
+
+  for (const sourcePath of selection.filePaths) {
+    try {
+      const destinationDirectory = uniqueImportDirectory(assetRoot, sourcePath);
+      fs.mkdirSync(destinationDirectory, { recursive: true });
+      const destinationPath = path.extname(sourcePath).toLowerCase() === '.gltf'
+        ? copyGltfPackage(sourcePath, destinationDirectory, result.warnings)
+        : path.join(destinationDirectory, path.basename(sourcePath));
+      if (path.extname(sourcePath).toLowerCase() !== '.gltf') fs.copyFileSync(sourcePath, destinationPath);
+      const relative = path.relative(assetRoot, destinationPath).replace(/\\/g, '/');
+      result.imported.push(`project://${relative}`);
+    } catch (error) {
+      result.warnings.push(`${path.basename(sourcePath)}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  if (result.imported.length) sendEditorCommand('refresh_assets');
+  return result;
+});
+
 ipcMain.on('editor:command', (event, action: unknown, ...args: unknown[]) => {
   if (!isTrustedSender(event) || typeof action !== 'string') return;
   const number = (value: unknown): number => Number.isFinite(Number(value)) ? Number(value) : 0;
@@ -175,6 +255,8 @@ ipcMain.on('editor:command', (event, action: unknown, ...args: unknown[]) => {
     case 'editor-effect-preset': sendEditorCommand(`editor_effect_preset ${encode(args[0])}`); break;
     case 'editor-effect-save-preset': sendEditorCommand('editor_effect_save_preset'); break;
     case 'save-project': sendEditorCommand('save_project'); break;
+    case 'refresh-assets': sendEditorCommand('refresh_assets'); break;
+    case 'instantiate-asset': sendEditorCommand(`instantiate_asset ${encode(args[0])}`); break;
     case 'select': case 'delete': sendEditorCommand(`${action} ${number(args[0])}`); break;
     case 'create': sendEditorCommand(`create ${encode(args[0])} ${number(args[1])}`); break;
     case 'reparent': sendEditorCommand(`reparent ${number(args[0])} ${number(args[1])}`); break;

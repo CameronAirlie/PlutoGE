@@ -537,6 +537,7 @@ namespace PlutoGE::scene
             {"SubmeshCount", PropertyType::Int, std::to_string(m_submeshCount)},
             {"ModelAssetId", PropertyType::String, m_modelAssetId},
             {"ModelObjectId", PropertyType::String, std::to_string(m_modelObjectId)},
+            {"SourceMeshPath", PropertyType::String, m_sourceMeshPath},
             {"UseGeneratedLods", PropertyType::Bool, m_useGeneratedLods ? "true" : "false"},
             {"MeshPositionOffset", PropertyType::Vec3, SerializeVec3(m_meshPositionOffset)},
             {"MeshRotationOffset", PropertyType::Vec3, SerializeVec3(m_meshRotationOffset)},
@@ -618,6 +619,10 @@ namespace PlutoGE::scene
             else if (property.name == "ModelObjectId")
             {
                 try { modelObjectId = std::stoull(property.value); } catch (...) { modelObjectId = 0; }
+            }
+            else if (property.name == "SourceMeshPath")
+            {
+                sourceMeshPath = property.value;
             }
             else if (property.name == "UseGeneratedLods")
             {
@@ -714,6 +719,29 @@ namespace PlutoGE::scene
                                 animationComponent->SetSourceAnimationPath(sourceMeshPath);
                             }
                         }
+                    }
+                }
+            }
+        }
+        else if (!sourceMeshPath.empty())
+        {
+            auto &engine = core::Engine::GetInstance();
+            const std::string resolvedMeshPath = engine.GetAssetManager().ResolveMeshAssetSourcePath(sourceMeshPath);
+            auto importedMeshAsset = useGeneratedLods ? engine.GenerateMeshAssetLods(resolvedMeshPath) : engine.ImportMeshAsset(resolvedMeshPath);
+            if (importedMeshAsset.mesh)
+            {
+                SetMesh(importedMeshAsset.mesh);
+                SetMaterials(importedMeshAsset.materials);
+                m_sourceMeshPath = sourceMeshPath;
+                m_useGeneratedLods = useGeneratedLods;
+                if (importedMeshAsset.animations && !importedMeshAsset.animations->empty())
+                {
+                    if (auto *owner = GetOwner())
+                    {
+                        auto *animationComponent = owner->GetComponent<AnimationComponent>();
+                        if (!animationComponent) animationComponent = owner->CreateComponent<AnimationComponent>();
+                        animationComponent->SetClipsFromImportedAnimations(*importedMeshAsset.animations);
+                        animationComponent->SetSourceAnimationPath(sourceMeshPath);
                     }
                 }
             }

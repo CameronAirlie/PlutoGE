@@ -72,9 +72,22 @@ interface ViewportStats {
   renderableMeshComponents: number;
 }
 
+interface EditorAsset {
+  reference: string;
+  size: number;
+  type: string;
+}
+
+interface ModelImportResult {
+  imported: string[];
+  warnings: string[];
+}
+
 interface EditorState {
   projectPath: string;
   projectName: string;
+  assetDirectoryPath: string;
+  assets: EditorAsset[];
   scenePath: string;
   dirty: boolean;
   postProcessEffectTypes: string[];
@@ -100,6 +113,9 @@ interface PlutoEditorApi {
   saveProject(): void;
   openScene(): Promise<void>;
   saveScene(saveAs?: boolean): Promise<void>;
+  importModels(): Promise<ModelImportResult>;
+  refreshAssets(): void;
+  instantiateAsset(reference: string): void;
   undo(): void;
   redo(): void;
   setRuntime(running: boolean): void;

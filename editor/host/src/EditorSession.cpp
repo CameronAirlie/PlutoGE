@@ -736,6 +736,18 @@ bool EditorSession::HandleCommand(const std::string &commandLine, std::string &e
     std::string before;
     CaptureScene(before);
 
+    if (command == "refresh_assets")
+    {
+        if (!m_project)
+        {
+            errorMessage = "Open a project before refreshing assets.";
+            return false;
+        }
+        m_project->RefreshAssetRegistry();
+        if (!m_project->Save(&errorMessage)) return false;
+        return true;
+    }
+
     if (command == "create")
     {
         std::string preset;
@@ -781,6 +793,45 @@ bool EditorSession::HandleCommand(const std::string &commandLine, std::string &e
         else if (presetName == "Ocean") PlutoGE::scene::AddComponentByTypeName(*created, "OceanComponent");
         else if (presetName == "Terrain") PlutoGE::scene::AddComponentByTypeName(*created, "TerrainComponent");
         else if (presetName == "Particle System") PlutoGE::scene::AddComponentByTypeName(*created, "ParticleSystemComponent");
+        m_selectedEntityId = created->GetID();
+    }
+    else if (command == "instantiate_asset")
+    {
+        std::string encodedReference;
+        input >> encodedReference;
+        const std::string reference = Decode(encodedReference);
+        if (!m_project || PlutoGE::assets::Project::GetAssetTypeForReference(reference) != PlutoGE::assets::ProjectAssetType::Model)
+        {
+            errorMessage = "Only imported project model assets can be placed in the scene.";
+            return false;
+        }
+        const auto sourcePath = m_project->ResolveAssetReference(reference);
+        PlutoGE::core::ImportedRenderMeshAsset imported;
+        try
+        {
+            imported = m_engine.ImportMeshAsset(sourcePath.string());
+        }
+        catch (const std::exception &exception)
+        {
+            errorMessage = std::string("Failed to import model: ") + exception.what();
+            return false;
+        }
+        if (!imported.mesh)
+        {
+            errorMessage = "The selected model did not contain a renderable mesh.";
+            return false;
+        }
+        auto entity = std::make_unique<PlutoGE::scene::Entity>(PlutoGE::scene::EntityConfig{.name = sourcePath.stem().string()});
+        auto *created = m_scene->AddEntity(std::move(entity));
+        auto *mesh = PlutoGE::scene::AddMeshComponent(*created, imported.mesh, nullptr);
+        mesh->SetMaterials(imported.materials);
+        mesh->SetSourceMeshPath(reference);
+        if (imported.animations && !imported.animations->empty())
+        {
+            auto *animation = created->CreateComponent<PlutoGE::scene::AnimationComponent>();
+            animation->SetClipsFromImportedAnimations(*imported.animations);
+            animation->SetSourceAnimationPath(reference);
+        }
         m_selectedEntityId = created->GetID();
     }
     else if (command == "delete")
@@ -957,7 +1008,21 @@ std::string EditorSession::BuildSnapshotEvent() const
     std::ostringstream output;
     output << "{\"type\":\"editor-state\",\"projectPath\":\"" << JsonEscape(m_projectPath)
            << "\",\"projectName\":\"" << JsonEscape(m_project ? m_project->GetManifest().name : std::string{})
-           << "\",\"scenePath\":\"" << JsonEscape(m_scenePath)
+           << "\",\"assetDirectoryPath\":\"" << JsonEscape(m_project ? m_project->GetAssetDirectoryPath().string() : std::string{})
+           << "\",\"assets\":[";
+    if (m_project)
+    {
+        const auto &assets = m_project->GetManifest().assetEntries;
+        for (std::size_t assetIndex = 0; assetIndex < assets.size(); ++assetIndex)
+        {
+            if (assetIndex > 0) output << ',';
+            output << "{\"reference\":\"" << JsonEscape(assets[assetIndex].reference)
+                   << "\",\"size\":" << assets[assetIndex].size
+                   << ",\"type\":\"" << PlutoGE::assets::Project::GetAssetTypeName(assets[assetIndex].type) << "\"}";
+        }
+    }
+    output << ']'
+           << ",\"scenePath\":\"" << JsonEscape(m_scenePath)
            << "\",\"dirty\":" << (m_dirty ? "true" : "false")
            << ",\"postProcessEffectTypes\":[";
     const auto &registeredEffectTypes = PlutoGE::render::GetRegisteredPostProcessEffectTypes();

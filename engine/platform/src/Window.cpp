@@ -453,6 +453,11 @@ namespace PlutoGE::platform
         m_isCursorLocked = (scriptLockActive || m_requestedEditorCursorLocked) && !m_forceCursorVisible;
         if (m_window)
         {
+            if (glfwRawMouseMotionSupported())
+            {
+                glfwSetInputMode(static_cast<GLFWwindow *>(m_window), GLFW_RAW_MOUSE_MOTION,
+                                 m_isCursorLocked ? GLFW_TRUE : GLFW_FALSE);
+            }
             glfwSetInputMode(static_cast<GLFWwindow *>(m_window), GLFW_CURSOR, m_isCursorLocked ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
         }
     }

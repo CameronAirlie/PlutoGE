@@ -129,6 +129,8 @@ h4 { margin: 0 0 11px; color: #c5cbd5; font-size: 11px; }
 .component-properties small { color: #687180; }
 .property-row { display: grid; grid-template-columns: minmax(75px, .8fr) minmax(85px, 1.2fr); align-items: center; gap: 7px; margin: 7px 0; color: #8d96a5; font-size: 10px; }
 .property-row input[type='text'], .property-row input[type='number'], .property-row select { width: 100%; min-width: 0; padding: 5px 6px; border: 1px solid #2c333e; border-radius: 3px; color: #cbd1db; background: #10141a; }
+.numeric-input { cursor: ew-resize; font-variant-numeric: tabular-nums; user-select: none; }
+.numeric-input:focus { cursor: text; user-select: text; }
 .property-row input[type='checkbox'] { justify-self: end; }
 .add-component { display: grid; grid-template-columns: 1fr auto; gap: 5px; margin-top: 10px; }
 .add-component select, .add-component button, .camera-actions button { min-width: 0; padding: 7px; border: 1px solid #303744; border-radius: 4px; color: #c5ccd7; background: #20252e; }

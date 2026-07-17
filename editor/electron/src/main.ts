@@ -10,7 +10,6 @@ type NativeSurface = { bounds?: [number, number, number, number]; visible: boole
 const sceneSurface: NativeSurface = { visible: false };
 const gameSurface: NativeSurface = { visible: false };
 const viewportOcclusions = new Set<string>();
-let previousEditorState: EditorState | undefined;
 let mirroredProjectPath = '';
 let mirroredScenePath = '';
 
@@ -34,7 +33,6 @@ const syncViewports = (): void => {
 
 const createWindow = (): void => {
   viewportOcclusions.clear();
-  previousEditorState = undefined;
   mirroredProjectPath = '';
   mirroredScenePath = '';
   sceneSurface.bounds = undefined;
@@ -77,18 +75,7 @@ const createWindow = (): void => {
           gameHost.send(state.scenePath ? `load_scene ${encode(state.scenePath)}` : 'new_scene');
           mirroredScenePath = state.scenePath;
         }
-        const previousEntities = new Map(previousEditorState?.entities.map((entity) => [entity.id, entity]));
-        for (const entity of state.entities) {
-          const previous = previousEntities.get(entity.id);
-          const transformChanged = previous && (
-            previous.position.some((value, index) => value !== entity.position[index]) ||
-            previous.rotation.some((value, index) => value !== entity.rotation[index]) ||
-            previous.scale.some((value, index) => value !== entity.scale[index])
-          );
-          if (transformChanged) gameHost.send(`set_transform ${entity.id} ${[...entity.position, ...entity.rotation, ...entity.scale].join(' ')}`);
-        }
       }
-      previousEditorState = state;
       if (!editorWindow.isDestroyed()) editorWindow.webContents.send('editor:state', state);
     },
   );
@@ -200,17 +187,13 @@ const sendEditorCommand = (command: string): void => {
   const primaryOnly = new Set([
     'load_project', 'create_project', 'load_scene', 'save_scene', 'save_project', 'refresh_assets',
     'editor_effect_save_preset', 'camera_effect_save_preset',
-    // The game host renders its own scene copy. Applying editor mutations to
-    // it directly is unsafe because entity/component indices can diverge.
-    // Transform changes are mirrored once from the authoritative snapshot.
-    'undo', 'redo', 'select', 'create', 'delete', 'duplicate', 'instantiate_asset',
-    'reparent', 'set_name', 'set_active', 'set_transform',
+    // Selection and editor-camera state belong only to the interactive Scene
+    // View. Scene mutations are mirrored to keep the Game View's scene copy
+    // current, including unsaved camera and component changes.
+    'select',
     'gizmo_operation', 'gizmo_space', 'set_editor_camera', 'reset_editor_camera', 'frame_selected',
     'editor_effect_add', 'editor_effect_remove', 'editor_effect_move',
     'editor_effect_enabled', 'editor_effect_parameter', 'editor_effect_preset',
-    'component_enabled', 'set_property', 'add_component', 'remove_component',
-    'camera_effect_add', 'camera_effect_remove', 'camera_effect_move',
-    'camera_effect_enabled', 'camera_effect_parameter', 'camera_effect_preset',
   ]);
   if (!primaryOnly.has(name)) gameHost?.send(command);
 };

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { PanelFrame } from '../components/PanelFrame';
 import { componentTypes, displayComponentName } from '../constants';
 import { NameDialog } from '../components/NameDialog';
+import { NumericInput } from '../components/NumericInput';
 
 function VectorEditor({ label, value, onCommit, disabled }: { label: string; value: Vec3; onCommit(value: Vec3): void; disabled: boolean }): React.JSX.Element {
   const update = (index: number, raw: string): void => {
@@ -11,7 +12,7 @@ function VectorEditor({ label, value, onCommit, disabled }: { label: string; val
     onCommit(next);
   };
   return <div className="vector-field"><span>{label}</span><div>
-    {value.map((number, index) => <label key={`${label}-${index}`}><i>{'XYZ'[index]}</i><input disabled={disabled} type="number" step="0.1" defaultValue={number} onBlur={(event) => update(index, event.currentTarget.value)} /></label>)}
+    {value.map((number, index) => <label key={`${label}-${index}`}><i>{'XYZ'[index]}</i><NumericInput disabled={disabled} value={number} onCommit={(next) => update(index, String(next))} /></label>)}
   </div></div>;
 }
 
@@ -20,7 +21,8 @@ function PropertyEditor({ property, entityId, componentIndex, propertyIndex, dis
   if (property.type === 4) return <label className="property-row"><span>{property.name}</span><input disabled={disabled} type="checkbox" checked={property.value === 'true' || property.value === '1'} onChange={(event) => commit(event.currentTarget.checked ? 'true' : 'false')} /></label>;
   if (property.type === 6 && property.enumOptions.length) return <label className="property-row"><span>{property.name}</span><select disabled={disabled} value={property.value} onChange={(event) => commit(event.currentTarget.value)}>{property.enumOptions.map((option) => <option key={option}>{option}</option>)}</select></label>;
   const numeric = property.type === 0 || property.type === 1 || property.type === 8;
-  return <label className="property-row"><span>{property.name}</span><input disabled={disabled} type={numeric ? 'number' : 'text'} step="any" defaultValue={property.value} onBlur={(event) => { if (event.currentTarget.value !== property.value) commit(event.currentTarget.value); }} /></label>;
+  if (numeric) return <label className="property-row"><span>{property.name}</span><NumericInput disabled={disabled} integer={property.type === 1 || property.type === 8} value={Number(property.value) || 0} onCommit={(value) => commit(String(value))} /></label>;
+  return <label className="property-row"><span>{property.name}</span><input disabled={disabled} type="text" defaultValue={property.value} onBlur={(event) => { if (event.currentTarget.value !== property.value) commit(event.currentTarget.value); }} /></label>;
 }
 
 function PostProcessParameterEditor({ parameter, disabled, onCommit }: { parameter: EditorProperty; disabled: boolean; onCommit(value: string): void }): React.JSX.Element {
@@ -30,7 +32,8 @@ function PostProcessParameterEditor({ parameter, disabled, onCommit }: { paramet
     return <label className="property-row"><span>{parameter.name}</span><select disabled={disabled} value={parameter.value} onChange={(event) => onCommit(event.currentTarget.value)}>{parameter.enumOptions.map((option, index) => <option key={option} value={usesIndex ? String(index) : option}>{option}</option>)}</select></label>;
   }
   const numeric = parameter.type === 0 || parameter.type === 1 || parameter.type === 8;
-  return <label className="property-row"><span>{parameter.name}</span><input disabled={disabled} type={numeric ? 'number' : 'text'} step="any" defaultValue={parameter.value} onBlur={(event) => { if (event.currentTarget.value !== parameter.value) onCommit(event.currentTarget.value); }} /></label>;
+  if (numeric) return <label className="property-row"><span>{parameter.name}</span><NumericInput disabled={disabled} integer={parameter.type === 1 || parameter.type === 8} value={Number(parameter.value) || 0} onCommit={(value) => onCommit(String(value))} /></label>;
+  return <label className="property-row"><span>{parameter.name}</span><input disabled={disabled} type="text" defaultValue={parameter.value} onBlur={(event) => { if (event.currentTarget.value !== parameter.value) onCommit(event.currentTarget.value); }} /></label>;
 }
 
 function PostProcessStackEditor({ effects, effectTypes, presetReference, disabled, onAdd, onRemove, onMove, onEnabled, onParameter, onPreset, onSavePreset, onSavePresetAs }: {
@@ -73,7 +76,7 @@ function EntityInspector({ entity, running, effectTypes }: { entity?: EditorEnti
 
 function EditorCameraInspector({ camera, running, hasSelection, effectTypes }: { camera: EditorCameraState; running: boolean; hasSelection: boolean; effectTypes: string[] }): React.JSX.Element {
   const commit = (changes: Partial<EditorCameraState>): void => window.plutoEditor.setEditorCamera({ ...camera, ...changes });
-  const scalar = (label: string, field: keyof EditorCameraState, step: number, min?: number): React.JSX.Element => <label className="property-row"><span>{label}</span><input disabled={running} type="number" step={step} min={min} defaultValue={camera[field] as number} onBlur={(event) => { const value = Number(event.currentTarget.value); if (Number.isFinite(value) && value !== camera[field]) commit({ [field]: value }); }} /></label>;
+  const scalar = (label: string, field: keyof EditorCameraState, step: number, min?: number): React.JSX.Element => <label className="property-row"><span>{label}</span><NumericInput disabled={running} value={camera[field] as number} step={step} min={min} onCommit={(value) => commit({ [field]: value })} /></label>;
   return <div className="inspector-content camera-inspector"><p className="camera-description">Controls the edit viewport only. Play mode uses the scene’s main Camera component.</p>
     <section><h4>Transform</h4><VectorEditor label="Position" value={camera.position} disabled={running} onCommit={(position) => commit({ position })} />{scalar('Yaw', 'yawDegrees', 1)}{scalar('Pitch', 'pitchDegrees', 1)}</section>
     <section><h4>Projection</h4>{scalar('Field of view', 'fovY', 1, 1)}{scalar('Near plane', 'nearPlane', 0.01, 0.001)}{scalar('Far plane', 'farPlane', 1, 0.002)}</section>

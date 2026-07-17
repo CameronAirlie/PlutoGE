@@ -1,4 +1,4 @@
-add_library(PlutoGERender
+pluto_add_engine_module(PlutoGERender PlutoGE::Render PLUTO_RENDER_TARGET
     src/Renderer.cpp
     src/TextureManager.cpp
     src/TexturePainter.cpp
@@ -42,18 +42,17 @@ add_library(PlutoGERender
     src/passes/RuntimeUIPass.cpp
 )
 
-add_library(PlutoGE::Render ALIAS PlutoGERender)
-
-target_include_directories(PlutoGERender PUBLIC
+target_include_directories(${PLUTO_RENDER_TARGET} PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
-target_link_libraries(PlutoGERender PUBLIC
-    # Add dependencies here
-    PlutoGE::Platform
-    PlutoGE::Assets
-    PlutoGE::Core
-    PlutoGE::glad
-    PlutoGE::Scene
-    PlutoGE::stb_image
-)
+if (NOT PLUTO_BUILD_ENGINE_SHARED)
+    target_link_libraries(${PLUTO_RENDER_TARGET} PUBLIC
+        PlutoGE::Platform
+        PlutoGE::Assets
+        PlutoGE::Core
+        PlutoGE::Scene
+        PlutoGE::glad
+        PlutoGE::stb_image
+    )
+endif()

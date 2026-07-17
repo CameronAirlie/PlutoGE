@@ -10,6 +10,17 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(PLUTO_BUILD_EDITOR "Build the PlutoGE Editor" ON)
 option(PLUTO_BUILD_RUNTIME "Build the PlutoGE Runtime" ON)
 option(PLUTO_BUILD_SAMPLES "Build sample applications" ON)
+option(PLUTO_BUILD_ENGINE_SHARED "Build the engine as a single shared library (PlutoGE.dll on Windows)" OFF)
+
+if (PLUTO_BUILD_ENGINE_SHARED)
+    # Static third-party libraries linked into PlutoGE must be suitable for a
+    # shared library on platforms that require position-independent code.
+    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+    # Keep the engine DLL and its consumers together so editor/runtime targets
+    # can be launched directly from the build tree on Windows.
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+endif()
 
 add_subdirectory(engine)
 add_subdirectory(third_party)

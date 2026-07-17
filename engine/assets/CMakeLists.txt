@@ -1,4 +1,4 @@
-add_library(PlutoGEAssets
+pluto_add_engine_module(PlutoGEAssets PlutoGE::Assets PLUTO_ASSETS_TARGET
     src/AssetDatabase.cpp
     src/ModelAsset.cpp
     src/AssetManager.cpp
@@ -7,14 +7,14 @@ add_library(PlutoGEAssets
     src/Project.cpp
 )
 
-add_library(PlutoGE::Assets ALIAS PlutoGEAssets)
+if (NOT PLUTO_BUILD_ENGINE_SHARED)
+    target_link_libraries(${PLUTO_ASSETS_TARGET} PUBLIC
+        PlutoGE::Platform
+        PlutoGE::Render
+        PlutoGE::glm
+    )
+endif()
 
-target_link_libraries(PlutoGEAssets PUBLIC
-    PlutoGE::Platform
-    PlutoGE::Render
-    PlutoGE::glm
-)
-
-target_include_directories(PlutoGEAssets PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
+target_include_directories(${PLUTO_ASSETS_TARGET} PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
 )

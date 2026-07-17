@@ -1,4 +1,4 @@
-add_library(PlutoGEScene
+pluto_add_engine_module(PlutoGEScene PlutoGE::Scene PLUTO_SCENE_TARGET
     src/Entity.cpp
     src/Prefab.cpp
     src/Scene.cpp
@@ -29,18 +29,19 @@ add_library(PlutoGEScene
     src/components/VolumetricCloudComponent.cpp
 )
 
-add_library(PlutoGE::Scene ALIAS PlutoGEScene)
-target_include_directories(PlutoGEScene PUBLIC
+target_include_directories(${PLUTO_SCENE_TARGET} PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../import/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../import/include
 )
 
-target_link_libraries(PlutoGEScene PUBLIC
-    PlutoGE::Core
-    PlutoGE::Render
-    PlutoGE::Assets
-    PlutoGE::Scripting
-    PlutoGE::bullet
-    PlutoGE::stb_image
-)
+if (NOT PLUTO_BUILD_ENGINE_SHARED)
+    target_link_libraries(${PLUTO_SCENE_TARGET} PUBLIC
+        PlutoGE::Core
+        PlutoGE::Render
+        PlutoGE::Assets
+        PlutoGE::Scripting
+        PlutoGE::bullet
+        PlutoGE::stb_image
+    )
+endif()

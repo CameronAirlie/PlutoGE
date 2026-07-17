@@ -1,16 +1,16 @@
-add_library(PlutoGEScripting
+pluto_add_engine_module(PlutoGEScripting PlutoGE::Scripting PLUTO_SCRIPTING_TARGET
     src/HostFxrScriptRuntime.cpp
     src/ScriptEngine.cpp
 )
 
-add_library(PlutoGE::Scripting ALIAS PlutoGEScripting)
-
-target_include_directories(PlutoGEScripting PUBLIC
+target_include_directories(${PLUTO_SCRIPTING_TARGET} PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
-target_link_libraries(PlutoGEScripting PUBLIC
-    PlutoGE::glm
-    PlutoGE::Core
-    PlutoGE::Scene
-)
+if (NOT PLUTO_BUILD_ENGINE_SHARED)
+    target_link_libraries(${PLUTO_SCRIPTING_TARGET} PUBLIC
+        PlutoGE::glm
+        PlutoGE::Core
+        PlutoGE::Scene
+    )
+endif()

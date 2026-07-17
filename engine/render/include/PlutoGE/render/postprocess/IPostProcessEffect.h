@@ -44,6 +44,19 @@ namespace PlutoGE::render
         virtual void Initialize() = 0;
         virtual void Apply(const PostProcessContext &context) = 0;
 
+        void EnsureInitialized()
+        {
+            if (m_isInitialized)
+            {
+                return;
+            }
+
+            Initialize();
+            m_isInitialized = true;
+        }
+
+        bool IsInitialized() const { return m_isInitialized; }
+
         virtual std::string GetTypeName() const = 0;
         virtual std::string GetDisplayName() const { return GetTypeName(); }
         virtual std::vector<PostProcessParameter> GetParameters() const { return {}; }
@@ -54,5 +67,6 @@ namespace PlutoGE::render
 
     private:
         bool m_isEnabled = true;
+        bool m_isInitialized = false;
     };
 }

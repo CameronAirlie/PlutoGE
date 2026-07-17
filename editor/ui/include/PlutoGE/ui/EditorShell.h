@@ -71,7 +71,6 @@ namespace PlutoGE::ui
                     return;
                 }
 
-                effect->Initialize();
                 postProcessEffects.push_back(std::move(effect));
             }
 
@@ -90,6 +89,12 @@ namespace PlutoGE::ui
             bool RemovePostProcessEffect(size_t index)
             {
                 if (index >= postProcessEffects.size())
+                {
+                    return false;
+                }
+
+                auto &window = core::Engine::GetInstance().GetWindow();
+                if (window.IsOpen() && !window.EnsureOpenGLContextCurrent(true))
                 {
                     return false;
                 }
@@ -125,7 +130,7 @@ namespace PlutoGE::ui
             const std::string &GetPostProcessPresetAssetReference() const { return postProcessPresetAssetReference; }
         };
 
-        void Initialize();
+        bool Initialize();
         void Render();
         void Shutdown();
 

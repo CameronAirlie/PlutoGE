@@ -203,6 +203,7 @@ namespace PlutoGE::render
         void ClearSubmissionCullingCameras();
 
         void SetVSyncEnabled(bool enabled);
+        [[nodiscard]] bool IsInitialized() const { return m_isInitialized; }
         [[nodiscard]] bool IsVSyncEnabled() const { return m_vsyncEnabled; }
         void SetPostProcessDebugView(PostProcessDebugView debugView) { m_postProcessDebugView = debugView; }
         PostProcessDebugView GetPostProcessDebugView() const { return m_postProcessDebugView; }

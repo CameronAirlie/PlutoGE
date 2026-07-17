@@ -34,7 +34,7 @@ namespace PlutoGE::render
 
     private:
         void EnsureResources();
-        void ClearVolume();
+        void ClearVolume(bool uploadGpu = true);
         void EnsureGpuPassResources();
         void ReleaseGpuPassResources();
         void RenderGpuInjection(const RenderContext &ctx);

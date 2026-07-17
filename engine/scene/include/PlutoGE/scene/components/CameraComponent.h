@@ -20,7 +20,7 @@ namespace PlutoGE::scene
     class CameraComponent : public TypedComponent<CameraComponent>
     {
     public:
-        explicit CameraComponent(render::Camera *camera = nullptr);
+        explicit CameraComponent(render::Camera *camera = nullptr, bool createDefaultEffects = true);
         ~CameraComponent() override;
 
         void Update(float deltaTime) override;

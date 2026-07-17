@@ -274,4 +274,50 @@ namespace PlutoGE::platform
             glfwMakeContextCurrent(static_cast<GLFWwindow *>(m_window));
         }
     }
+
+    bool Window::EnsureOpenGLContextCurrent(bool reloadFunctions)
+    {
+        if (!m_window)
+        {
+            return false;
+        }
+
+        glfwMakeContextCurrent(m_window);
+        if (glfwGetCurrentContext() != m_window)
+        {
+            return false;
+        }
+
+        const bool textureDispatchReady =
+            glad_glGenTextures != nullptr &&
+            glad_glDeleteTextures != nullptr &&
+            glad_glBindTexture != nullptr &&
+            glad_glTexImage2D != nullptr &&
+            glad_glTexStorage2D != nullptr &&
+            glad_glTexSubImage2D != nullptr &&
+            glad_glTexParameteri != nullptr &&
+            glad_glBindBuffer != nullptr &&
+            glad_glPixelStorei != nullptr &&
+            glad_glGenerateMipmap != nullptr;
+
+        if (reloadFunctions || !GLAD_GL_VERSION_4_3 || !textureDispatchReady)
+        {
+            if (!gladLoadGLLoader(reinterpret_cast<GLADloadproc>(glfwGetProcAddress)))
+            {
+                return false;
+            }
+        }
+
+        return GLAD_GL_VERSION_4_3 &&
+               glad_glGenTextures != nullptr &&
+               glad_glDeleteTextures != nullptr &&
+               glad_glBindTexture != nullptr &&
+               glad_glTexImage2D != nullptr &&
+               glad_glTexStorage2D != nullptr &&
+               glad_glTexSubImage2D != nullptr &&
+               glad_glTexParameteri != nullptr &&
+               glad_glBindBuffer != nullptr &&
+               glad_glPixelStorei != nullptr &&
+               glad_glGenerateMipmap != nullptr;
+    }
 }

@@ -4,6 +4,11 @@
 #include <string>
 #include <glad/glad.h>
 
+namespace PlutoGE::platform
+{
+    class Window;
+}
+
 namespace PlutoGE::render
 {
     class Texture;
@@ -12,6 +17,8 @@ namespace PlutoGE::render
     public:
         TextureManager() = default;
         ~TextureManager() = default;
+
+        void SetWindow(platform::Window *window) { m_window = window; }
 
         Texture *FindTexture(const std::string &cacheKey) const;
         Texture *LoadTextureFromFile(const char *filePath);
@@ -26,6 +33,9 @@ namespace PlutoGE::render
         Texture *CreateColorCubemap(int width, int height);
 
     private:
+        bool PrepareForGpuAccess() const;
+
+        platform::Window *m_window = nullptr;
         GLuint m_nextTextureID = 1;                                // Start from 1 since 0 is reserved for "no texture"
         std::unordered_map<std::string, Texture *> m_textureCache; // Cache for loaded textures
     };

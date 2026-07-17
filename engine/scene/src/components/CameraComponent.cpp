@@ -82,8 +82,13 @@ namespace PlutoGE::scene
         }
     }
 
-    CameraComponent::CameraComponent(render::Camera *camera) : m_camera(camera)
+    CameraComponent::CameraComponent(render::Camera *camera, bool createDefaultEffects) : m_camera(camera)
     {
+        if (!createDefaultEffects)
+        {
+            return;
+        }
+
         auto &ssgiEffect = EmplacePostProcessEffect<render::SSGIEffect>();
         ssgiEffect.SetEnabled(false);
 
@@ -112,7 +117,14 @@ namespace PlutoGE::scene
         EmplacePostProcessEffect<render::SceneCompositeEffect>();
     }
 
-    CameraComponent::~CameraComponent() = default;
+    CameraComponent::~CameraComponent()
+    {
+        auto &window = core::Engine::GetInstance().GetWindow();
+        if (window.IsOpen())
+        {
+            window.EnsureOpenGLContextCurrent(true);
+        }
+    }
 
     void CameraComponent::Update(float deltaTime)
     {
@@ -144,7 +156,6 @@ namespace PlutoGE::scene
             return;
         }
 
-        effect->Initialize();
         m_postProcessEffects.push_back(std::move(effect));
     }
 
@@ -162,12 +173,23 @@ namespace PlutoGE::scene
 
     void CameraComponent::ClearPostProcessEffects()
     {
+        auto &window = core::Engine::GetInstance().GetWindow();
+        if (window.IsOpen() && !window.EnsureOpenGLContextCurrent(true))
+        {
+            return;
+        }
         m_postProcessEffects.clear();
     }
 
     bool CameraComponent::RemovePostProcessEffect(size_t index)
     {
         if (index >= m_postProcessEffects.size())
+        {
+            return false;
+        }
+
+        auto &window = core::Engine::GetInstance().GetWindow();
+        if (window.IsOpen() && !window.EnsureOpenGLContextCurrent(true))
         {
             return false;
         }
@@ -211,6 +233,12 @@ namespace PlutoGE::scene
 
     bool CameraComponent::SetPostProcessPresetAssetReference(std::string assetReference)
     {
+        auto &window = core::Engine::GetInstance().GetWindow();
+        if (window.IsOpen() && !window.EnsureOpenGLContextCurrent(true))
+        {
+            return false;
+        }
+
         if (assetReference.empty())
         {
             m_postProcessPresetAssetReference.clear();
@@ -379,7 +407,6 @@ namespace PlutoGE::scene
             }
 
             effect->SetEnabled(serializedEffect.enabled);
-            effect->Initialize();
             effect->SetParameters(serializedEffect.parameters);
             m_postProcessEffects.push_back(std::move(effect));
         }

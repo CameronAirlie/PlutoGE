@@ -43,7 +43,6 @@ namespace PlutoGE::assets
                 continue;
             effect->SetEnabled(serialized.enabled);
             effect->SetParameters(serialized.parameters);
-            effect->Initialize();
             effects.push_back(std::move(effect));
         }
         return effects;

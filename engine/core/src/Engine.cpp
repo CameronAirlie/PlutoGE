@@ -183,11 +183,15 @@ namespace PlutoGE::core
             return false;
         }
 
+        m_textureManager.SetWindow(&m_window);
+
         render::RendererConfig rendererConfig;
         rendererConfig.window = &m_window;
         if (!m_renderer.Initialize(rendererConfig))
         {
             std::cerr << "Failed to initialize renderer." << std::endl;
+            m_textureManager.SetWindow(nullptr);
+            m_window.Close();
             return false;
         }
 
@@ -577,6 +581,7 @@ namespace PlutoGE::core
         m_scriptEngine.Shutdown();
         m_audioSystem.Shutdown();
         m_renderer.Shutdown();
+        m_textureManager.SetWindow(nullptr);
         m_window.Close();
         m_isInitialized = false;
     }

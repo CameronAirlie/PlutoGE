@@ -321,20 +321,11 @@ namespace PlutoGE::render
             return false;
         }
 
-        window->SetContextCurrent();
         window->SetResizeCallback(ResizeCallback);
 
-        if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
+        if (!window->EnsureOpenGLContextCurrent(true))
         {
-            std::cerr << "Failed to load OpenGL functions." << std::endl;
-            return false;
-        }
-
-        if (!GLAD_GL_VERSION_4_3)
-        {
-            const auto *version = reinterpret_cast<const char *>(glGetString(GL_VERSION));
-            std::cerr << "PlutoGE requires OpenGL 4.3 core; driver reported "
-                      << (version ? version : "an unknown version") << "." << std::endl;
+            std::cerr << "Failed to prepare the required OpenGL 4.3 context and function dispatch." << std::endl;
             return false;
         }
 
@@ -412,6 +403,11 @@ namespace PlutoGE::render
         if (!m_isInitialized)
             return;
 
+        if (!m_config.window || !m_config.window->EnsureOpenGLContextCurrent())
+        {
+            return;
+        }
+
         ++m_frameSequence;
 
         if (renderTarget)
@@ -449,6 +445,11 @@ namespace PlutoGE::render
     {
         if (!m_isInitialized || !m_shadowPass)
             return;
+
+        if (!m_config.window || !m_config.window->EnsureOpenGLContextCurrent())
+        {
+            return;
+        }
 
         Shader::ResetStateCache();
 
@@ -588,6 +589,32 @@ namespace PlutoGE::render
     {
         if (!m_isInitialized)
             return;
+
+        if (!m_config.window || !m_config.window->EnsureOpenGLContextCurrent())
+        {
+            return;
+        }
+
+        if (postProcessEffects)
+        {
+            const bool hasUninitializedEffect = std::any_of(postProcessEffects->begin(), postProcessEffects->end(),
+                                                            [](const IPostProcessEffect *effect)
+                                                            {
+                                                                return effect && !effect->IsInitialized();
+                                                            });
+            if (hasUninitializedEffect && !m_config.window->EnsureOpenGLContextCurrent(true))
+            {
+                return;
+            }
+
+            for (auto *effect : *postProcessEffects)
+            {
+                if (effect)
+                {
+                    effect->EnsureInitialized();
+                }
+            }
+        }
 
         Shader::ResetStateCache();
 

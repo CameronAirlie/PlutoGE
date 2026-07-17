@@ -55,6 +55,12 @@ namespace PlutoGE::ui
 {
     bool EditorShell::EditorViewportCamera::SetPostProcessPresetAssetReference(std::string assetReference)
     {
+        auto &window = core::Engine::GetInstance().GetWindow();
+        if (window.IsOpen() && !window.EnsureOpenGLContextCurrent(true))
+        {
+            return false;
+        }
+
         if (assetReference.empty())
         {
             postProcessPresetAssetReference.clear();
@@ -494,6 +500,11 @@ namespace PlutoGE::ui
                 return;
             }
 
+            auto &window = core::Engine::GetInstance().GetWindow();
+            if (window.IsOpen())
+            {
+                window.EnsureOpenGLContextCurrent(true);
+            }
             camera.postProcessEffects.clear();
             for (const auto &serializedEffect : serializedEffects)
             {
@@ -1765,6 +1776,7 @@ namespace PlutoGE::ui
         }
 
         m_pendingIblCaptureEntities.clear();
+        m_engine.GetWindow().EnsureOpenGLContextCurrent(true);
 
         // Keep the previous scene alive until Engine::SetScene has stopped its
         // runtime and switched the non-owning scene pointer.
@@ -2351,7 +2363,7 @@ namespace PlutoGE::ui
         return true;
     }
 
-    void EditorShell::Initialize()
+    bool EditorShell::Initialize()
     {
         auto config = core::EngineConfig{
             platform::WindowConfig{
@@ -2365,6 +2377,7 @@ namespace PlutoGE::ui
         if (!m_engine.Initialize(config))
         {
             std::cerr << "Failed to initialize Engine in EditorShell" << std::endl;
+            return false;
         }
 
         scripting::SetScriptLogSink(
@@ -2394,7 +2407,15 @@ namespace PlutoGE::ui
         m_statusMessage = "Ready";
         UpdateWindowTitle();
 
-        m_panelManager.InitializeImGui(&m_engine.GetWindow());
+        if (!m_panelManager.InitializeImGui(&m_engine.GetWindow()))
+        {
+            m_editorCamera.postProcessEffects.clear();
+            m_scene.reset();
+            m_engine.Shutdown();
+            return false;
+        }
+
+        return true;
     }
 
     glm::vec3 randomColour()
@@ -3358,8 +3379,10 @@ namespace PlutoGE::ui
         }
         m_selectedEntity = nullptr;
         m_engine.SetScene(nullptr);
+        m_engine.GetWindow().EnsureOpenGLContextCurrent(true);
         m_scene.reset();
         m_project.reset();
+        m_editorCamera.postProcessEffects.clear();
         m_engine.GetAssetManager().ClearProjectContext();
         scripting::ClearScriptLogSink();
         m_panelManager.ShutdownPanels();

@@ -1,11 +1,13 @@
 #include "PlutoGE/render/TextureManager.h"
 #include "PlutoGE/render/Texture.h"
+#include "PlutoGE/platform/Window.h"
 #include <glad/glad.h>
 
 #include <algorithm>
 #include <cmath>
 #include <cctype>
 #include <fstream>
+#include <limits>
 #include <vector>
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -68,7 +70,17 @@ namespace PlutoGE::render
                 return false;
             }
 
-            const std::size_t pixelCount = static_cast<std::size_t>(outImage.width * outImage.height * outImage.channels);
+            const std::size_t width = static_cast<std::size_t>(outImage.width);
+            const std::size_t height = static_cast<std::size_t>(outImage.height);
+            const std::size_t channels = static_cast<std::size_t>(outImage.channels);
+            if (width > std::numeric_limits<std::size_t>::max() / height ||
+                width * height > std::numeric_limits<std::size_t>::max() / channels)
+            {
+                outImage = {};
+                return false;
+            }
+
+            const std::size_t pixelCount = width * height * channels;
             outImage.pixels.resize(pixelCount);
             input.read(reinterpret_cast<char *>(outImage.pixels.data()), static_cast<std::streamsize>(pixelCount * sizeof(float)));
             if (!input)
@@ -179,6 +191,89 @@ namespace PlutoGE::render
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, generateMipmaps ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         }
+
+        GLint ResolveByteTextureInternalFormat(int channels)
+        {
+            switch (channels)
+            {
+            case 1:
+                return GL_R8;
+            case 2:
+                return GL_RG8;
+            case 3:
+                return GL_RGB8;
+            case 4:
+                return GL_RGBA8;
+            default:
+                return GL_RGBA8;
+            }
+        }
+
+        std::vector<unsigned char> ExpandRgbPixelsToRgba(const unsigned char *pixels, int width, int height)
+        {
+            const std::size_t pixelCount = static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
+            std::vector<unsigned char> rgbaPixels(pixelCount * 4, 255);
+            for (std::size_t pixelIndex = 0; pixelIndex < pixelCount; ++pixelIndex)
+            {
+                const std::size_t srcOffset = pixelIndex * 3;
+                const std::size_t dstOffset = pixelIndex * 4;
+                rgbaPixels[dstOffset] = pixels[srcOffset];
+                rgbaPixels[dstOffset + 1] = pixels[srcOffset + 1];
+                rgbaPixels[dstOffset + 2] = pixels[srcOffset + 2];
+            }
+            return rgbaPixels;
+        }
+
+        bool IsTextureSizeSupported(int width, int height)
+        {
+            if (width <= 0 || height <= 0)
+            {
+                return false;
+            }
+
+            GLint maximumTextureSize = 0;
+            glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maximumTextureSize);
+            return maximumTextureSize > 0 && width <= maximumTextureSize && height <= maximumTextureSize;
+        }
+
+        void UploadTexture2D(GLint internalFormat, int width, int height, GLenum format, GLenum type, const void *pixels)
+        {
+            // A CPU pointer is interpreted as a byte offset whenever a pixel-unpack buffer is bound.
+            // Scene loading can happen between editor render passes, so never inherit that state from
+            // another uploader. Reset every unpack stride/offset that changes how the driver reads the
+            // supplied allocation before entering glTexImage2D.
+            glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+            glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+            glPixelStorei(GL_UNPACK_IMAGE_HEIGHT, 0);
+            glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
+            glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
+            glPixelStorei(GL_UNPACK_SKIP_IMAGES, 0);
+
+            GLsizei mipLevels = 1;
+            for (int largestDimension = std::max(width, height); largestDimension > 1; largestDimension /= 2)
+            {
+                ++mipLevels;
+            }
+
+            // Keep allocation separate from the client-memory transfer. Besides requiring an explicit
+            // storage format, this avoids the AMD glTexImage2D path that was crashing during scene load.
+            glTexStorage2D(GL_TEXTURE_2D, mipLevels, static_cast<GLenum>(internalFormat), width, height);
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, format, type, pixels);
+        }
+    }
+
+    bool TextureManager::PrepareForGpuAccess() const
+    {
+        if (!m_window || !m_window->IsOpen())
+        {
+            return false;
+        }
+
+        // File and scene resource uploads can occur between editor render passes,
+        // after a platform viewport used a different context. Refresh dispatch for
+        // the restored engine context before issuing allocation calls.
+        return m_window->EnsureOpenGLContextCurrent(true);
     }
 
     Texture *TextureManager::FindTexture(const std::string &cacheKey) const
@@ -194,11 +289,21 @@ namespace PlutoGE::render
 
     Texture *TextureManager::LoadTextureFromFile(const char *filePath)
     {
+        if (!filePath || filePath[0] == '\0')
+        {
+            return nullptr;
+        }
+
         // Check if the texture is already loaded
         auto it = m_textureCache.find(filePath);
         if (it != m_textureCache.end())
         {
             return it->second;
+        }
+
+        if (!PrepareForGpuAccess())
+        {
+            return nullptr;
         }
 
         // Load the texture
@@ -207,6 +312,12 @@ namespace PlutoGE::render
         unsigned char *data = stbi_load(filePath, &width, &height, &channels, 0);
         if (data)
         {
+            if (channels < 1 || channels > 4 || !IsTextureSizeSupported(width, height))
+            {
+                stbi_image_free(data);
+                return nullptr;
+            }
+
             TextureConfig config;
             config.filePath = filePath;
             Texture *texture = new Texture(config);
@@ -214,13 +325,24 @@ namespace PlutoGE::render
             glGenTextures(1, &texture->m_textureID);
             glBindTexture(GL_TEXTURE_2D, texture->m_textureID);
             ConfigureTexture2D(GL_REPEAT, true);
-            const GLenum format = ResolveTextureFormat(channels);
-            glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, GL_UNSIGNED_BYTE, data);
+            // RGB file textures (normal maps in particular) use a driver-sensitive three-byte row
+            // layout. Upload an explicit RGBA8 allocation instead; alpha is opaque and RGB is exact.
+            std::vector<unsigned char> expandedPixels;
+            const unsigned char *uploadPixels = data;
+            int uploadChannels = channels;
+            if (channels == 3)
+            {
+                expandedPixels = ExpandRgbPixelsToRgba(data, width, height);
+                uploadPixels = expandedPixels.data();
+                uploadChannels = 4;
+            }
+            const GLenum format = ResolveTextureFormat(uploadChannels);
+            UploadTexture2D(ResolveByteTextureInternalFormat(uploadChannels), width, height, format, GL_UNSIGNED_BYTE, uploadPixels);
             glGenerateMipmap(GL_TEXTURE_2D);
 
             texture->m_width = width;
             texture->m_height = height;
-            texture->m_channels = channels;
+            texture->m_channels = uploadChannels;
 
             stbi_image_free(data);
             if (!texture)
@@ -243,7 +365,17 @@ namespace PlutoGE::render
             return it->second;
         }
 
-        if (!pixels || width <= 0 || height <= 0 || channels <= 0)
+        if (!pixels || channels < 1 || channels > 4)
+        {
+            return nullptr;
+        }
+
+        if (!PrepareForGpuAccess())
+        {
+            return nullptr;
+        }
+
+        if (!IsTextureSizeSupported(width, height))
         {
             return nullptr;
         }
@@ -256,7 +388,7 @@ namespace PlutoGE::render
         glBindTexture(GL_TEXTURE_2D, texture->m_textureID);
         ConfigureTexture2D(GL_REPEAT, true);
         const GLenum format = ResolveTextureFormat(channels);
-        glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, GL_UNSIGNED_BYTE, pixels);
+        UploadTexture2D(ResolveByteTextureInternalFormat(channels), width, height, format, GL_UNSIGNED_BYTE, pixels);
         glGenerateMipmap(GL_TEXTURE_2D);
 
         texture->m_width = width;
@@ -280,6 +412,11 @@ namespace PlutoGE::render
             return it->second;
         }
 
+        if (!PrepareForGpuAccess())
+        {
+            return nullptr;
+        }
+
         const std::string environmentPath(filePath);
         const std::string lowerPath = ToLower(environmentPath);
         const bool isPfm = lowerPath.size() >= 4 && lowerPath.compare(lowerPath.size() - 4, 4, ".pfm") == 0;
@@ -289,6 +426,11 @@ namespace PlutoGE::render
         {
             PfmImageData pfmImage;
             if (!LoadPfm(filePath, pfmImage))
+            {
+                return nullptr;
+            }
+
+            if (!IsTextureSizeSupported(pfmImage.width, pfmImage.height))
             {
                 return nullptr;
             }
@@ -312,7 +454,7 @@ namespace PlutoGE::render
             glGenTextures(1, &texture->m_textureID);
             glBindTexture(GL_TEXTURE_2D, texture->m_textureID);
             ConfigureEnvironmentTexture2D(true);
-            glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, pfmImage.width, pfmImage.height, 0, format, GL_FLOAT, uploadPixels);
+            UploadTexture2D(static_cast<GLint>(internalFormat), pfmImage.width, pfmImage.height, format, GL_FLOAT, uploadPixels);
             glGenerateMipmap(GL_TEXTURE_2D);
 
             texture->m_width = pfmImage.width;
@@ -331,6 +473,12 @@ namespace PlutoGE::render
             float *data = stbi_loadf(filePath, &width, &height, &channels, 0);
             if (!data)
             {
+                return nullptr;
+            }
+
+            if (channels < 1 || channels > 4 || !IsTextureSizeSupported(width, height))
+            {
+                stbi_image_free(data);
                 return nullptr;
             }
 
@@ -354,7 +502,7 @@ namespace PlutoGE::render
             glGenTextures(1, &texture->m_textureID);
             glBindTexture(GL_TEXTURE_2D, texture->m_textureID);
             ConfigureEnvironmentTexture2D(true);
-            glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, width, height, 0, format, GL_FLOAT, uploadPixels);
+            UploadTexture2D(static_cast<GLint>(internalFormat), width, height, format, GL_FLOAT, uploadPixels);
             glGenerateMipmap(GL_TEXTURE_2D);
 
             texture->m_width = width;
@@ -376,6 +524,12 @@ namespace PlutoGE::render
             return nullptr;
         }
 
+        if (channels < 1 || channels > 4 || !IsTextureSizeSupported(width, height))
+        {
+            stbi_image_free(data);
+            return nullptr;
+        }
+
         TextureConfig config;
         config.filePath = environmentPath;
         Texture *texture = new Texture(config);
@@ -384,7 +538,7 @@ namespace PlutoGE::render
         glBindTexture(GL_TEXTURE_2D, texture->m_textureID);
         ConfigureEnvironmentTexture2D(true);
         const GLenum format = ResolveTextureFormat(channels);
-        glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, GL_UNSIGNED_BYTE, data);
+        UploadTexture2D(ResolveByteTextureInternalFormat(channels), width, height, format, GL_UNSIGNED_BYTE, data);
         glGenerateMipmap(GL_TEXTURE_2D);
 
         texture->m_width = width;
@@ -399,10 +553,20 @@ namespace PlutoGE::render
 
     Texture *TextureManager::LoadLightmapFromFile(const char *filePath)
     {
+        if (!filePath || filePath[0] == '\0')
+        {
+            return nullptr;
+        }
+
         auto it = m_textureCache.find(filePath);
         if (it != m_textureCache.end())
         {
             return it->second;
+        }
+
+        if (!PrepareForGpuAccess())
+        {
+            return nullptr;
         }
 
         const std::string lightmapPath(filePath ? filePath : "");
@@ -411,6 +575,11 @@ namespace PlutoGE::render
         {
             PfmImageData pfmImage;
             if (!LoadPfm(filePath, pfmImage))
+            {
+                return nullptr;
+            }
+
+            if (!IsTextureSizeSupported(pfmImage.width, pfmImage.height))
             {
                 return nullptr;
             }
@@ -424,7 +593,7 @@ namespace PlutoGE::render
             glGenTextures(1, &texture->m_textureID);
             glBindTexture(GL_TEXTURE_2D, texture->m_textureID);
             ConfigureTexture2D(GL_CLAMP_TO_EDGE, true);
-            glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, pfmImage.width, pfmImage.height, 0, format, GL_FLOAT, pfmImage.pixels.data());
+            UploadTexture2D(static_cast<GLint>(internalFormat), pfmImage.width, pfmImage.height, format, GL_FLOAT, pfmImage.pixels.data());
             glGenerateMipmap(GL_TEXTURE_2D);
 
             texture->m_width = pfmImage.width;
@@ -444,6 +613,12 @@ namespace PlutoGE::render
             return nullptr;
         }
 
+        if (channels < 1 || channels > 4 || !IsTextureSizeSupported(width, height))
+        {
+            stbi_image_free(data);
+            return nullptr;
+        }
+
         TextureConfig config;
         config.filePath = filePath;
         Texture *texture = new Texture(config);
@@ -452,7 +627,7 @@ namespace PlutoGE::render
         glBindTexture(GL_TEXTURE_2D, texture->m_textureID);
         ConfigureTexture2D(GL_CLAMP_TO_EDGE, true);
         const GLenum format = ResolveTextureFormat(channels);
-        glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, GL_UNSIGNED_BYTE, data);
+        UploadTexture2D(ResolveByteTextureInternalFormat(channels), width, height, format, GL_UNSIGNED_BYTE, data);
         glGenerateMipmap(GL_TEXTURE_2D);
 
         texture->m_width = width;
@@ -473,7 +648,17 @@ namespace PlutoGE::render
             return it->second;
         }
 
-        if (!pixels || width <= 0 || height <= 0 || channels <= 0)
+        if (!pixels || channels < 1 || channels > 4)
+        {
+            return nullptr;
+        }
+
+        if (!PrepareForGpuAccess())
+        {
+            return nullptr;
+        }
+
+        if (!IsTextureSizeSupported(width, height))
         {
             return nullptr;
         }
@@ -486,7 +671,7 @@ namespace PlutoGE::render
         glBindTexture(GL_TEXTURE_2D, texture->m_textureID);
         ConfigureTexture2D(GL_CLAMP_TO_EDGE, true);
         const GLenum format = ResolveTextureFormat(channels);
-        glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, GL_UNSIGNED_BYTE, pixels);
+        UploadTexture2D(ResolveByteTextureInternalFormat(channels), width, height, format, GL_UNSIGNED_BYTE, pixels);
         glGenerateMipmap(GL_TEXTURE_2D);
 
         texture->m_width = width;
@@ -505,7 +690,17 @@ namespace PlutoGE::render
             return it->second;
         }
 
-        if (!pixels || width <= 0 || height <= 0 || channels <= 0)
+        if (!pixels || channels < 1 || channels > 4)
+        {
+            return nullptr;
+        }
+
+        if (!PrepareForGpuAccess())
+        {
+            return nullptr;
+        }
+
+        if (!IsTextureSizeSupported(width, height))
         {
             return nullptr;
         }
@@ -519,7 +714,7 @@ namespace PlutoGE::render
         glGenTextures(1, &texture->m_textureID);
         glBindTexture(GL_TEXTURE_2D, texture->m_textureID);
         ConfigureTexture2D(GL_CLAMP_TO_EDGE, true);
-        glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, width, height, 0, format, GL_FLOAT, pixels);
+        UploadTexture2D(static_cast<GLint>(internalFormat), width, height, format, GL_FLOAT, pixels);
         glGenerateMipmap(GL_TEXTURE_2D);
 
         texture->m_width = width;
@@ -532,6 +727,11 @@ namespace PlutoGE::render
 
     Texture *TextureManager::CreateDepthTexture(int width, int height)
     {
+        if (width <= 0 || height <= 0 || !PrepareForGpuAccess())
+        {
+            return nullptr;
+        }
+
         TextureConfig config;
         Texture *texture = new Texture(config);
         glGenTextures(1, &texture->m_textureID);
@@ -554,6 +754,11 @@ namespace PlutoGE::render
 
     Texture *TextureManager::CreateDepthCubemap(int width, int height)
     {
+        if (width <= 0 || height <= 0 || !PrepareForGpuAccess())
+        {
+            return nullptr;
+        }
+
         TextureConfig config;
         Texture *texture = new Texture(config);
         texture->m_type = GL_TEXTURE_CUBE_MAP;
@@ -580,7 +785,7 @@ namespace PlutoGE::render
 
     Texture *TextureManager::CreateColorCubemap(int width, int height)
     {
-        if (width <= 0 || height <= 0)
+        if (width <= 0 || height <= 0 || !PrepareForGpuAccess())
         {
             return nullptr;
         }

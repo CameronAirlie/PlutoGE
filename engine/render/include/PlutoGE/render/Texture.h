@@ -14,13 +14,7 @@ namespace PlutoGE::render
     {
     public:
         Texture(const TextureConfig &config) : m_filePath(config.filePath) {}
-        ~Texture()
-        {
-            if (m_textureID != 0)
-            {
-                glDeleteTextures(1, &m_textureID);
-            }
-        }
+        ~Texture();
 
         GLenum GetType() const { return m_type; }
 

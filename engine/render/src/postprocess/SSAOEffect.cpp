@@ -18,16 +18,9 @@ namespace PlutoGE::render
         constexpr int kCompositeMode = 0;
         constexpr int kAoOnlyMode = 1;
         constexpr int kMaxBlurRadius = 4;
-        constexpr int kNoiseTextureSize = 4;
-
         bool ParseBool(const std::string &value)
         {
             return value == "true" || value == "1";
-        }
-
-        glm::vec4 EncodeNoiseVector(const glm::vec3 &vector)
-        {
-            return glm::vec4(vector * 0.5f + 0.5f, 1.0f);
         }
     }
 
@@ -51,14 +44,7 @@ namespace PlutoGE::render
     {
     }
 
-    SSAOEffect::~SSAOEffect()
-    {
-        if (m_noiseTexture != 0)
-        {
-            glDeleteTextures(1, &m_noiseTexture);
-            m_noiseTexture = 0;
-        }
-    }
+    SSAOEffect::~SSAOEffect() = default;
 
     std::vector<PostProcessParameter> SSAOEffect::GetParameters() const
     {
@@ -180,7 +166,6 @@ namespace PlutoGE::render
     void SSAOEffect::Initialize()
     {
         GenerateKernel();
-        GenerateNoiseTexture();
 
         ShaderSource ssaoSource;
 
@@ -209,7 +194,6 @@ namespace PlutoGE::render
 
             uniform sampler2D uSceneNormalTexture;
             uniform sampler2D uSceneDepthTexture;
-            uniform sampler2D uNoiseTexture;
             uniform mat4 uView;
             uniform mat4 uProjection;
             uniform mat4 uInverseProjection;
@@ -226,6 +210,13 @@ namespace PlutoGE::render
                 return position.xyz / max(position.w, 0.000001);
             }
 
+            vec3 KernelRotation(vec2 fragmentPosition)
+            {
+                vec2 tilePosition = mod(floor(fragmentPosition), 4.0);
+                float angle = fract(sin(dot(tilePosition, vec2(12.9898, 78.233))) * 43758.5453) * 6.2831853;
+                return vec3(cos(angle), sin(angle), 0.0);
+            }
+
             void main()
             {
                 vec3 worldNormal = normalize(texture(uSceneNormalTexture, UV).xyz);
@@ -240,8 +231,7 @@ namespace PlutoGE::render
                 vec3 fragViewPos = ReconstructViewPosition(UV, centerDepth);
                 vec3 normal = normalize(mat3(uView) * worldNormal);
 
-                vec2 noiseScale = vec2(textureSize(uSceneDepthTexture, 0)) / vec2(textureSize(uNoiseTexture, 0));
-                vec3 randomVec = normalize(texture(uNoiseTexture, UV * noiseScale).xyz * 2.0 - 1.0);
+                vec3 randomVec = KernelRotation(gl_FragCoord.xy);
                 vec3 tangent = normalize(randomVec - normal * dot(randomVec, normal));
                 if (dot(tangent, tangent) < 0.0001)
                 {
@@ -537,11 +527,8 @@ namespace PlutoGE::render
         m_ssaoShader->Bind();
         BindCommonInputs(m_ssaoShader, internalContext);
         glActiveTexture(GL_TEXTURE5);
-        glBindTexture(GL_TEXTURE_2D, m_noiseTexture);
-        m_ssaoShader->SetUniform("uNoiseTexture", 5);
-        glActiveTexture(GL_TEXTURE6);
         glBindTexture(GL_TEXTURE_2D, renderContext.gBuffer->GetDepthTextureID());
-        m_ssaoShader->SetUniform("uSceneDepthTexture", 6);
+        m_ssaoShader->SetUniform("uSceneDepthTexture", 5);
         m_ssaoShader->SetUniform("uView", renderContext.cameraData.view);
         m_ssaoShader->SetUniform("uProjection", renderContext.cameraData.projection);
         m_ssaoShader->SetUniform("uInverseProjection", inverseProjection);
@@ -708,36 +695,6 @@ namespace PlutoGE::render
             const float lerpedScale = 0.1f + (scale * scale) * 0.9f;
             m_kernel[index] = sample * lerpedScale;
         }
-    }
-
-    void SSAOEffect::GenerateNoiseTexture()
-    {
-        if (m_noiseTexture != 0)
-        {
-            glDeleteTextures(1, &m_noiseTexture);
-            m_noiseTexture = 0;
-        }
-
-        std::mt19937 generator(4242u);
-        std::uniform_real_distribution<float> randomSigned(-1.0f, 1.0f);
-        std::array<glm::vec4, kNoiseTextureSize * kNoiseTextureSize> noiseData{};
-
-        for (glm::vec4 &noiseSample : noiseData)
-        {
-            const glm::vec3 noiseVector = glm::normalize(glm::vec3(
-                randomSigned(generator),
-                randomSigned(generator),
-                0.0f));
-            noiseSample = EncodeNoiseVector(noiseVector);
-        }
-
-        glGenTextures(1, &m_noiseTexture);
-        glBindTexture(GL_TEXTURE_2D, m_noiseTexture);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, kNoiseTextureSize, kNoiseTextureSize, 0, GL_RGBA, GL_FLOAT, noiseData.data());
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
     }
 
     void SSAOEffect::ResetHistory()

@@ -10,7 +10,10 @@ int main(int argc, char **argv)
 {
     auto &editor = PlutoGE::ui::EditorShell::GetInstance();
 
-    editor.Initialize();
+    if (!editor.Initialize())
+    {
+        return 1;
+    }
 
     editor.Render();
 

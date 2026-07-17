@@ -3,6 +3,24 @@
 
 namespace PlutoGE::render
 {
+    namespace
+    {
+        bool PrepareTextureGpuAccess(bool reloadFunctions = false)
+        {
+            auto &window = PlutoGE::core::Engine::GetInstance().GetWindow();
+            return window.IsOpen() && window.EnsureOpenGLContextCurrent(reloadFunctions);
+        }
+    }
+
+    Texture::~Texture()
+    {
+        if (m_textureID != 0 && PrepareTextureGpuAccess())
+        {
+            glDeleteTextures(1, &m_textureID);
+        }
+        m_textureID = 0;
+    }
+
     Texture *Texture::LoadFromFile(const char *filePath)
     {
         auto &engine = PlutoGE::core::Engine::GetInstance();
@@ -57,7 +75,7 @@ namespace PlutoGE::render
 
     Texture *Texture::ColorVolume(int width, int height, int depth)
     {
-        if (width <= 0 || height <= 0 || depth <= 0)
+        if (width <= 0 || height <= 0 || depth <= 0 || !PrepareTextureGpuAccess())
         {
             return nullptr;
         }
@@ -84,7 +102,7 @@ namespace PlutoGE::render
 
     void Texture::Upload3D(GLenum format, GLenum type, const void *data) const
     {
-        if (m_textureID == 0 || m_type != GL_TEXTURE_3D)
+        if (m_textureID == 0 || m_type != GL_TEXTURE_3D || !data || !PrepareTextureGpuAccess())
         {
             return;
         }

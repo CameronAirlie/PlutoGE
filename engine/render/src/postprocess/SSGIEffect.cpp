@@ -17,27 +17,13 @@ namespace PlutoGE::render
     {
         constexpr int kCompositeMode = 0;
         constexpr int kIndirectOnlyMode = 1;
-        constexpr int kNoiseTextureSize = 4;
-
         bool ParseBool(const std::string &value)
         {
             return value == "true" || value == "1";
         }
-
-        glm::vec4 EncodeNoiseVector(const glm::vec3 &vector)
-        {
-            return glm::vec4(vector * 0.5f + 0.5f, 1.0f);
-        }
     }
 
-    SSGIEffect::~SSGIEffect()
-    {
-        if (m_noiseTexture != 0)
-        {
-            glDeleteTextures(1, &m_noiseTexture);
-            m_noiseTexture = 0;
-        }
-    }
+    SSGIEffect::~SSGIEffect() = default;
 
     std::vector<PostProcessParameter> SSGIEffect::GetParameters() const
     {
@@ -185,8 +171,6 @@ namespace PlutoGE::render
 
     void SSGIEffect::Initialize()
     {
-        GenerateNoiseTexture();
-
         ShaderSource traceSource;
 
         traceSource.vertexSource = R"(
@@ -216,7 +200,6 @@ namespace PlutoGE::render
             uniform sampler2D uScenePositionTexture;
             uniform sampler2D uSceneNormalTexture;
             uniform sampler2D uSceneAlbedoTexture;
-            uniform sampler2D uNoiseTexture;
             uniform mat4 uView;
             uniform mat4 uProjection;
             uniform float uIntensity;
@@ -290,6 +273,14 @@ namespace PlutoGE::render
                 return candidateDirection;
             }
 
+            vec3 KernelRotation(vec2 fragmentPosition, float frameJitter)
+            {
+                vec2 frameOffset = vec2(floor(frameJitter * 64.0), floor(fract(frameJitter * 0.75487766) * 64.0));
+                vec2 tilePosition = mod(floor(fragmentPosition) + frameOffset, 4.0);
+                float angle = fract(sin(dot(tilePosition, vec2(12.9898, 78.233))) * 43758.5453) * 2.0 * PI;
+                return normalize(vec3(cos(angle), sin(angle), sin(angle * 0.5) * 0.25));
+            }
+
             void main()
             {
                 vec3 centerWorldPos = texture(uScenePositionTexture, UV).rgb;
@@ -307,9 +298,7 @@ namespace PlutoGE::render
                 float centerMetallic = clamp(centerAlbedoMetallic.a, 0.0, 1.0);
                 vec3 centerAlbedo = centerAlbedoMetallic.rgb;
 
-                vec2 noiseScale = vec2(textureSize(uScenePositionTexture, 0)) / vec2(textureSize(uNoiseTexture, 0));
-                vec2 jitterUv = UV * noiseScale + vec2(uFrameJitter, fract(uFrameJitter * 0.75487766));
-                vec3 randomVec = normalize(texture(uNoiseTexture, jitterUv).xyz * 2.0 - 1.0);
+                vec3 randomVec = KernelRotation(gl_FragCoord.xy, uFrameJitter);
                 vec3 tangent = BuildTangent(centerViewNormal, randomVec);
                 vec3 bitangent = normalize(cross(centerViewNormal, tangent));
                 mat3 tbn = mat3(tangent, bitangent, centerViewNormal);
@@ -738,9 +727,6 @@ namespace PlutoGE::render
 
         m_traceShader->Bind();
         BindCommonInputs(m_traceShader, internalContext);
-        glActiveTexture(GL_TEXTURE5);
-        glBindTexture(GL_TEXTURE_2D, m_noiseTexture);
-        m_traceShader->SetUniform("uNoiseTexture", 5);
         m_traceShader->SetUniform("uView", context.renderContext.cameraData.view);
         m_traceShader->SetUniform("uProjection", context.renderContext.cameraData.projection);
         m_traceShader->SetUniform("uIntensity", m_intensity);
@@ -898,36 +884,6 @@ namespace PlutoGE::render
                 historyMetadataRenderTarget->Resize(m_internalWidth, m_internalHeight);
             }
         }
-    }
-
-    void SSGIEffect::GenerateNoiseTexture()
-    {
-        if (m_noiseTexture != 0)
-        {
-            glDeleteTextures(1, &m_noiseTexture);
-            m_noiseTexture = 0;
-        }
-
-        std::mt19937 generator(2121u);
-        std::uniform_real_distribution<float> randomSigned(-1.0f, 1.0f);
-        std::array<glm::vec4, kNoiseTextureSize * kNoiseTextureSize> noiseData{};
-
-        for (glm::vec4 &noiseSample : noiseData)
-        {
-            glm::vec3 noiseVector(
-                randomSigned(generator),
-                randomSigned(generator),
-                randomSigned(generator) * 0.25f);
-            noiseSample = EncodeNoiseVector(glm::normalize(noiseVector));
-        }
-
-        glGenTextures(1, &m_noiseTexture);
-        glBindTexture(GL_TEXTURE_2D, m_noiseTexture);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, kNoiseTextureSize, kNoiseTextureSize, 0, GL_RGBA, GL_FLOAT, noiseData.data());
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
     }
 
     void SSGIEffect::ResetHistory()

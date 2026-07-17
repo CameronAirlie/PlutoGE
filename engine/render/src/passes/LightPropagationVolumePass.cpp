@@ -418,8 +418,18 @@ namespace PlutoGE::render
         }
     }
 
-    void LightPropagationVolumePass::ClearVolume()
+    void LightPropagationVolumePass::ClearVolume(bool uploadGpu)
     {
+        if (!uploadGpu)
+        {
+            m_previousGridOrigin = m_gridOrigin;
+            m_previousGridSize = m_gridSize;
+            m_transitionActive = false;
+            m_pendingFullInjection = false;
+            m_hasValidVolume = false;
+            return;
+        }
+
         EnsureResources();
         std::fill(m_currentRadiance.begin(), m_currentRadiance.end(), glm::vec3(0.0f));
         std::fill(m_historyRadiance.begin(), m_historyRadiance.end(), glm::vec3(0.0f));
@@ -1032,7 +1042,7 @@ namespace PlutoGE::render
         {
             if (m_hasValidVolume || m_transitionActive || m_pendingFullInjection)
             {
-                ClearVolume();
+                ClearVolume(false);
             }
             return;
         }

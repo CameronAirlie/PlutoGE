@@ -52,6 +52,7 @@ namespace PlutoGE::platform
         void SetScriptInputEnabled(bool enabled);
 
         void SetContextCurrent();
+        bool EnsureOpenGLContextCurrent(bool reloadFunctions = false);
 
         std::function<void(int, int)> GetResizeCallback() const
         {

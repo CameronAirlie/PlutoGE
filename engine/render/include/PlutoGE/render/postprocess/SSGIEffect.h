@@ -33,7 +33,6 @@ namespace PlutoGE::render
 
         void RenderComposite(const PostProcessContext &context, RenderTarget *resolvedIndirectTarget);
         void EnsureInternalTargets(int width, int height);
-        void GenerateNoiseTexture();
         void ResetHistory();
 
         Shader *m_traceShader = nullptr;
@@ -60,7 +59,6 @@ namespace PlutoGE::render
         int m_outputMode = 0;
         int m_internalWidth = 0;
         int m_internalHeight = 0;
-        GLuint m_noiseTexture = 0;
         std::uint8_t m_historyIndex = 0;
         bool m_hasHistory = false;
         bool m_halfResolution = true;

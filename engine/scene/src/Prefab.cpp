@@ -108,7 +108,7 @@ namespace PlutoGE::scene
             if (componentType == "SkeletonAttachmentComponent")
                 return std::make_unique<SkeletonAttachmentComponent>();
             if (componentType == "CameraComponent")
-                return std::make_unique<CameraComponent>(new render::Camera(render::CameraConfig{}));
+                return std::make_unique<CameraComponent>(new render::Camera(render::CameraConfig{}), false);
             if (componentType == "LightComponent")
                 return std::make_unique<LightComponent>();
             if (componentType == "RigidbodyComponent")

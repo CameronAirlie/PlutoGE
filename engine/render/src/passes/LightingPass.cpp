@@ -1732,7 +1732,14 @@ namespace PlutoGE::render
         {
             if (auto *vctEffect = FindEnabledVctEffect(ctx))
             {
-                const int traceDivisor = std::clamp(vctEffect->GetTraceResolutionDivisor(), 2, 4);
+                // The editor viewport is explicitly an interactive preview and
+                // is already upscaled into its panel. Trace VCTGI more coarsely
+                // there; the game viewport and runtime retain the configured
+                // Balanced/High quality exactly.
+                const int configuredTraceDivisor = std::clamp(vctEffect->GetTraceResolutionDivisor(), 2, 4);
+                const int traceDivisor = ctx.interactivePreview && vctEffect->GetDebugView() == 0
+                                             ? std::max(configuredTraceDivisor, 6)
+                                             : configuredTraceDivisor;
                 const int resolveWidth = std::max(1, ctx.temporaryRenderTarget->GetWidth() / traceDivisor);
                 const int resolveHeight = std::max(1, ctx.temporaryRenderTarget->GetHeight() / traceDivisor);
                 const bool gpuTimingActive = ctx.renderer && ctx.renderer->BeginPostProcessEffectTiming(vctEffect->GetTypeName());

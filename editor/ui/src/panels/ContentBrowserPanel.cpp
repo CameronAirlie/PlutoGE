@@ -1328,7 +1328,7 @@ void main() {
             }
             const auto *sourceRecord = assetDatabase.FindByReference(asset.reference);
             const assetimport::MeshImportOptions importOptions{
-                .generateLods = false,
+                .generateLods = true,
                 .optimizeVertexCache = true,
                 .optimizeOverdraw = true,
             };
@@ -1365,7 +1365,7 @@ void main() {
             modelAsset.sourceReference = asset.reference;
             modelAsset.sourceAssetId = sourceRecord ? sourceRecord->id : std::string{};
             modelAsset.sourceContentHash = sourceRecord ? sourceRecord->contentHash : 0;
-            modelAsset.importerVersion = 1;
+            modelAsset.importerVersion = 2;
             std::vector<std::string> textureReferences;
             if (!importedSourceAsset.textures.empty())
             {

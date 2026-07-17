@@ -150,6 +150,10 @@ namespace PlutoGE::render
         BlitDepthBuffer(ctx.temporaryRenderTarget, scratchB);
         BlitDepthBuffer(ctx.temporaryRenderTarget, ctx.renderTarget);
 
+        // Every chain effect writes a complete destination image. Do not seed
+        // that destination with a color blit: RenderTarget color is RGBA16F,
+        // so doing so before every effect doubles full-resolution HDR traffic
+        // without contributing to the result.
         for (size_t index = 0; index < effects.size(); ++index)
         {
             auto *effect = effects[index];
@@ -165,11 +169,6 @@ namespace PlutoGE::render
             {
                 continue;
             }
-
-            // Post-process targets are reused between frames. Seed every stage
-            // with its current input so an effect that is disabled or returns
-            // early can never expose stale output from a previous frame.
-            BlitColorBuffer(source, destination);
 
             const bool gpuTimingActive = ctx.renderer && ctx.renderer->BeginPostProcessEffectTiming(effect->GetTypeName());
             effect->Apply(PostProcessContext{

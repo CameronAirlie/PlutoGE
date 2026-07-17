@@ -8,19 +8,20 @@ export function ViewportPanel({ host }: { host: HostState }): React.JSX.Element 
     const element = viewport.current;
     if (!element) return;
     let animationFrame = 0;
+    let previousBounds = '';
     const updateBounds = (): void => {
-      cancelAnimationFrame(animationFrame);
-      animationFrame = requestAnimationFrame(() => {
-        const bounds = element.getBoundingClientRect();
-        const scale = window.devicePixelRatio;
-        window.plutoEditor.setViewportBounds({ x: bounds.left * scale, y: bounds.top * scale, width: bounds.width * scale, height: bounds.height * scale });
-      });
+      const bounds = element.getBoundingClientRect();
+      const scale = window.devicePixelRatio;
+      const next = [bounds.left, bounds.top, bounds.width, bounds.height].map((value) => Math.round(value * scale));
+      const key = next.join(',');
+      if (key !== previousBounds && next[2] > 0 && next[3] > 0) {
+        previousBounds = key;
+        window.plutoEditor.setViewportBounds({ x: next[0], y: next[1], width: next[2], height: next[3] });
+      }
+      animationFrame = requestAnimationFrame(updateBounds);
     };
-    const observer = new ResizeObserver(updateBounds);
-    observer.observe(element);
-    window.addEventListener('resize', updateBounds);
     updateBounds();
-    return () => { cancelAnimationFrame(animationFrame); observer.disconnect(); window.removeEventListener('resize', updateBounds); window.plutoEditor.setViewportVisible(false); };
+    return () => { cancelAnimationFrame(animationFrame); window.plutoEditor.setViewportVisible(false); };
   }, []);
 
   useEffect(() => {

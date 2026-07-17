@@ -2,6 +2,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <Windows.h>
+#include <DbgHelp.h>
 #endif
 
 #include "PlutoGE/core/Engine.h"
@@ -30,6 +31,42 @@
 
 namespace
 {
+#ifdef _WIN32
+    const char *g_hostPhase = "startup";
+
+    LONG WINAPI HostUnhandledExceptionFilter(EXCEPTION_POINTERS *exceptionPointers)
+    {
+        const auto code = exceptionPointers && exceptionPointers->ExceptionRecord
+                            ? exceptionPointers->ExceptionRecord->ExceptionCode
+                            : 0ul;
+        std::cerr << "Unhandled native exception 0x" << std::hex << code << std::dec
+                  << " during " << g_hostPhase << '\n';
+        HANDLE process = GetCurrentProcess();
+        SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS | SYMOPT_LOAD_LINES);
+        if (SymInitialize(process, nullptr, TRUE))
+        {
+            void *frames[32]{};
+            const USHORT count = CaptureStackBackTrace(0, 32, frames, nullptr);
+            alignas(SYMBOL_INFO) char storage[sizeof(SYMBOL_INFO) + MAX_SYM_NAME]{};
+            auto *symbol = reinterpret_cast<SYMBOL_INFO *>(storage);
+            symbol->SizeOfStruct = sizeof(SYMBOL_INFO);
+            symbol->MaxNameLen = MAX_SYM_NAME;
+            for (USHORT index = 0; index < count; ++index)
+            {
+                const DWORD64 address = reinterpret_cast<DWORD64>(frames[index]);
+                DWORD64 displacement = 0;
+                if (SymFromAddr(process, address, &displacement, symbol))
+                    std::cerr << "  " << symbol->Name << "+0x" << std::hex << displacement << std::dec << '\n';
+                else
+                    std::cerr << "  0x" << std::hex << address << std::dec << '\n';
+            }
+            SymCleanup(process);
+        }
+        std::cerr.flush();
+        return EXCEPTION_EXECUTE_HANDLER;
+    }
+#endif
+
     struct HostOptions
     {
         void *parentWindow = nullptr;
@@ -204,6 +241,7 @@ int main(int argc, char **argv)
     }
 
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    SetUnhandledExceptionFilter(HostUnhandledExceptionFilter);
 
     const auto options = ParseOptions(argc, argv);
     const bool embedded = options.parentWindow != nullptr;
@@ -261,6 +299,7 @@ int main(int argc, char **argv)
 
         for (const auto &commandLine : commands)
         {
+            g_hostPhase = "command handling";
             std::istringstream command(commandLine);
             std::string name;
             command >> name;
@@ -309,7 +348,9 @@ int main(int argc, char **argv)
             }
         }
 
-        window.PollEvents();
+        g_hostPhase = "window event polling";
+        if (embedded) window.PollEmbeddedEvents();
+        else window.PollEvents();
         const auto currentFrameTime = std::chrono::steady_clock::now();
         const float deltaTime = std::min(std::chrono::duration<float>(currentFrameTime - previousFrameTime).count(), 0.1f);
         previousFrameTime = currentFrameTime;
@@ -370,6 +411,7 @@ int main(int argc, char **argv)
         if (options.gameView) renderer.ClearSubmissionCullingCameras();
         else renderer.SetSubmissionCullingCameras({editorCameraData});
         renderer.BeginProfilingFrame();
+        g_hostPhase = "scene update";
         editorSession.Update(deltaTime);
 
         if (visible)
@@ -381,13 +423,16 @@ int main(int argc, char **argv)
             {
                 if (effect) editorPostProcessEffects.push_back(effect.get());
             }
+            g_hostPhase = "renderer begin frame";
             renderer.BeginFrame();
             if (options.gameView)
             {
+                g_hostPhase = "game view render";
                 if (auto *runtimeCamera = FindRuntimeCamera(scene)) renderer.RenderFrame(*runtimeCamera, nullptr, scene ? scene->GetLights() : std::vector<PlutoGE::scene::Light *>{});
             }
             else
             {
+                g_hostPhase = "scene view render";
                 renderer.RenderFrame(editorCameraData, nullptr, scene ? scene->GetLights() : std::vector<PlutoGE::scene::Light *>{}, &editorPostProcessEffects, scene, editorCamera.gridVisible, true);
                 if (!engine.IsRuntimeRunning()) viewportInteraction.Render(editorSession, editorCameraData, extents.width, extents.height);
             }
@@ -397,6 +442,7 @@ int main(int argc, char **argv)
                 WriteEvent(editorSession.BuildSnapshotEvent());
             }
             renderer.ClearRenderCommands();
+            g_hostPhase = "renderer end frame";
             renderer.EndFrame();
         }
         else

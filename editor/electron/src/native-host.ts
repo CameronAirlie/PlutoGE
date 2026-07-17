@@ -16,6 +16,7 @@ export class NativeHost {
   private state: HostState = { status: 'stopped' };
   private editorState?: NativeEditorState;
   private stopping = false;
+  private readonly diagnostics: string[] = [];
 
   public constructor(
     private readonly window: BrowserWindow,
@@ -55,6 +56,7 @@ export class NativeHost {
       : BigInt(nativeHandle.readUInt32LE(0));
 
     this.stopping = false;
+    this.diagnostics.length = 0;
     this.updateState({ status: 'starting' });
     const child = spawn(executable, ['--parent-hwnd', `0x${handle.toString(16)}`, ...this.extraArguments], {
       cwd: path.dirname(executable),
@@ -81,14 +83,19 @@ export class NativeHost {
 
     const diagnostics = readline.createInterface({ input: child.stderr });
     diagnostics.on('line', (line) => {
-      if (line.trim()) console.warn(`[${this.diagnosticLabel}] ${line}`);
+      if (line.trim()) {
+        this.diagnostics.push(line.trim());
+        if (this.diagnostics.length > 40) this.diagnostics.shift();
+        console.warn(`[${this.diagnosticLabel}] ${line}`);
+      }
     });
     child.on('error', (error) => this.updateState({ status: 'error', message: error.message }));
     child.on('exit', (code) => {
       if (this.process !== child) return;
       this.process = undefined;
       if (!this.stopping && code !== 0) {
-        this.updateState({ status: 'error', message: `Native host exited with code ${code ?? 'unknown'}.` });
+        const detail = this.diagnostics.length ? `\n${this.diagnostics.join('\n')}` : '';
+        this.updateState({ status: 'error', message: `Native host exited with code ${code ?? 'unknown'}.${detail}` });
       } else {
         this.updateState({ status: 'stopped' });
       }

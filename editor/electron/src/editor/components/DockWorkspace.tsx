@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { panelTitles, type PanelId } from './PanelFrame';
 import { ContentBrowserPanel } from '../panels/ContentBrowserPanel';
 import { GameViewportPanel } from '../panels/GameViewportPanel';
@@ -12,6 +12,7 @@ export type DockNode = DockTabs | DockSplit;
 export type DockDropPosition = 'center' | 'left' | 'right' | 'top' | 'bottom';
 
 const panelIds: PanelId[] = ['hierarchy', 'viewport', 'game', 'inspector', 'content'];
+const setPanelDragOccluded = (occluded: boolean): void => window.plutoEditor.setViewportOccluded('panel-drag', occluded);
 let nextDockId = 1;
 const createDockId = (): string => `dock-${Date.now().toString(36)}-${nextDockId++}`;
 const tabs = (id: string, panels: PanelId[], active = panels[0]): DockTabs => ({ type: 'tabs', id, panels, active });
@@ -124,7 +125,11 @@ export function useDockLayout(): {
   reset(): void;
 } {
   const [layout, setLayoutState] = useState(loadLayout);
-  const setLayout = (next: DockNode): void => { setLayoutState(next); localStorage.setItem('plutoge:dock-tree:v2', JSON.stringify(next)); };
+  const setLayout = (next: DockNode): void => setLayoutState(next);
+  useEffect(() => {
+    const timeout = window.setTimeout(() => localStorage.setItem('plutoge:dock-tree:v2', JSON.stringify(layout)), 150);
+    return () => window.clearTimeout(timeout);
+  }, [layout]);
   const togglePanel = (panel: PanelId): void => {
     if (collectPanels(layout).has(panel)) {
       const next = removePanel(layout, panel);
@@ -200,7 +205,12 @@ function DockTabsView({ node, panels, onActivate, onClose, onDropPanel }: {
     onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropPosition(undefined); }}
     onDrop={(event) => {
       const source = event.dataTransfer.getData('application/x-plutoge-panel') as PanelId;
-      if (isPanelId(source) && dropPosition) { event.preventDefault(); onDropPanel(source, node.id, dropPosition); }
+      if (isPanelId(source) && dropPosition) {
+        event.preventDefault();
+        // Splitting can unmount the dragged tab before its dragend event fires.
+        setPanelDragOccluded(false);
+        onDropPanel(source, node.id, dropPosition);
+      }
       setDropPosition(undefined);
     }}
   >
@@ -214,9 +224,9 @@ function DockTabsView({ node, panels, onActivate, onClose, onDropPanel }: {
           onDragStart={(event) => {
             event.dataTransfer.effectAllowed = 'move';
             event.dataTransfer.setData('application/x-plutoge-panel', panel);
-            window.plutoEditor.setViewportOccluded('panel-drag', true);
+            setPanelDragOccluded(true);
           }}
-          onDragEnd={() => window.plutoEditor.setViewportOccluded('panel-drag', false)}
+          onDragEnd={() => setPanelDragOccluded(false)}
           onClick={() => onActivate(panel)}
         >{panelTitles[panel]}</button>
         <button className="dock-tab-close" title={`Close ${panelTitles[panel]}`} onClick={() => onClose(panel)}>×</button>
@@ -258,6 +268,18 @@ export function DockWorkspace({ layout, onLayoutChange, onTogglePanel, host, gam
   selectedEntity?: EditorEntity;
   showEditorCamera: boolean;
 }): React.JSX.Element {
+  useEffect(() => {
+    // Also recover from cancelled or external drops whose source tab disappears.
+    const finishPanelDrag = (): void => setPanelDragOccluded(false);
+    window.addEventListener('dragend', finishPanelDrag);
+    window.addEventListener('drop', finishPanelDrag);
+    return () => {
+      window.removeEventListener('dragend', finishPanelDrag);
+      window.removeEventListener('drop', finishPanelDrag);
+      finishPanelDrag();
+    };
+  }, []);
+
   const panels = useMemo<Record<PanelId, React.JSX.Element>>(() => ({
     hierarchy: <HierarchyPanel editor={editor} selectedEntity={selectedEntity} />,
     viewport: <ViewportPanel host={host} />,

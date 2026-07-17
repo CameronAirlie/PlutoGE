@@ -200,6 +200,17 @@ const sendEditorCommand = (command: string): void => {
   const primaryOnly = new Set([
     'load_project', 'create_project', 'load_scene', 'save_scene', 'save_project', 'refresh_assets',
     'editor_effect_save_preset', 'camera_effect_save_preset',
+    // The game host renders its own scene copy. Applying editor mutations to
+    // it directly is unsafe because entity/component indices can diverge.
+    // Transform changes are mirrored once from the authoritative snapshot.
+    'undo', 'redo', 'select', 'create', 'delete', 'duplicate', 'instantiate_asset',
+    'reparent', 'set_name', 'set_active', 'set_transform',
+    'gizmo_operation', 'gizmo_space', 'set_editor_camera', 'reset_editor_camera', 'frame_selected',
+    'editor_effect_add', 'editor_effect_remove', 'editor_effect_move',
+    'editor_effect_enabled', 'editor_effect_parameter', 'editor_effect_preset',
+    'component_enabled', 'set_property', 'add_component', 'remove_component',
+    'camera_effect_add', 'camera_effect_remove', 'camera_effect_move',
+    'camera_effect_enabled', 'camera_effect_parameter', 'camera_effect_preset',
   ]);
   if (!primaryOnly.has(name)) gameHost?.send(command);
 };

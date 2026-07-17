@@ -36,6 +36,7 @@ namespace PlutoGE::platform
     public:
         bool Create(const WindowConfig &config);
         void PollEvents();
+        void PollEmbeddedEvents();
         void Close();
         void SetTitle(const std::string &title);
 

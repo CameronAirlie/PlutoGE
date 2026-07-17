@@ -220,6 +220,47 @@ namespace PlutoGE::platform
         glfwPollEvents();
     }
 
+    void Window::PollEmbeddedEvents()
+    {
+        m_inputState.BeginFrame();
+#ifdef _WIN32
+        // Pump the owned overlay's messages without GLFW's global cursor
+        // recentering pass. A second embedded GLFW process can otherwise act
+        // on cursor capture owned by the interactive Scene View and dereference
+        // stale Win32 cursor-window state.
+        MSG message{};
+        while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+        {
+            if (message.message == WM_QUIT)
+            {
+                continue;
+            }
+            TranslateMessage(&message);
+            DispatchMessageW(&message);
+        }
+
+        // GLFW normally performs this after dispatching all messages through
+        // process-global cursor state. Embedded overlays can transfer focus to
+        // an owned window in another process, making that global state stale.
+        // Recenter only this Window's known-valid GLFW handle instead.
+        if (m_isCursorLocked && m_window)
+        {
+            int width = 0;
+            int height = 0;
+            double cursorX = 0.0;
+            double cursorY = 0.0;
+            glfwGetWindowSize(m_window, &width, &height);
+            glfwGetCursorPos(m_window, &cursorX, &cursorY);
+            if (static_cast<int>(cursorX) != width / 2 || static_cast<int>(cursorY) != height / 2)
+            {
+                glfwSetCursorPos(m_window, width / 2.0, height / 2.0);
+            }
+        }
+#else
+        glfwPollEvents();
+#endif
+    }
+
     void Window::Close()
     {
         if (m_window)

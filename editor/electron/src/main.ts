@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain } from 'electron';
 import path from 'node:path';
 import { NativeHost } from './native-host';
 
@@ -39,10 +39,16 @@ const createWindow = (): void => {
   editorWindow.removeMenu();
   void editorWindow.loadURL(MAIN_WINDOW_WEBPACK_ENTRY);
 
-  nativeHost = new NativeHost(editorWindow, (state) => {
-    if (!editorWindow.isDestroyed()) editorWindow.webContents.send('host:state', state);
-    if (state.status === 'ready') syncViewport();
-  });
+  nativeHost = new NativeHost(
+    editorWindow,
+    (state) => {
+      if (!editorWindow.isDestroyed()) editorWindow.webContents.send('host:state', state);
+      if (state.status === 'ready') syncViewport();
+    },
+    (state) => {
+      if (!editorWindow.isDestroyed()) editorWindow.webContents.send('editor:state', state);
+    },
+  );
   editorWindow.webContents.once('did-finish-load', () => nativeHost?.start());
   editorWindow.on('move', syncViewport);
   editorWindow.on('minimize', () => nativeHost?.send('visible 0'));
@@ -80,6 +86,103 @@ ipcMain.handle('host:restart', async (event) => {
 ipcMain.handle('host:get-state', (event) => {
   if (!isTrustedSender(event)) return { status: 'error', message: 'Untrusted IPC sender.' };
   return nativeHost?.getState() ?? { status: 'stopped' };
+});
+
+// Prefix encoded arguments so even an empty string remains a token in the
+// host's whitespace-delimited command protocol.
+const encode = (value: unknown): string => `~${encodeURIComponent(String(value))}`;
+const sendEditorCommand = (command: string): void => nativeHost?.send(command);
+const confirmDiscardUnsavedChanges = async (): Promise<boolean> => {
+  if (!mainWindow || !nativeHost?.getEditorState()?.dirty) return true;
+  const result = await dialog.showMessageBox(mainWindow, {
+    type: 'warning',
+    title: 'Unsaved scene',
+    message: 'Discard unsaved scene changes?',
+    detail: 'This action cannot be undone.',
+    buttons: ['Cancel', 'Discard'],
+    defaultId: 0,
+    cancelId: 0,
+  });
+  return result.response === 1;
+};
+
+ipcMain.handle('editor:get-state', (event) => {
+  if (!isTrustedSender(event)) return undefined;
+  return nativeHost?.getEditorState();
+});
+
+ipcMain.handle('editor:new-scene', async (event) => {
+  if (isTrustedSender(event) && await confirmDiscardUnsavedChanges()) sendEditorCommand('new_scene');
+});
+
+ipcMain.handle('editor:open-project', async (event) => {
+  if (!isTrustedSender(event) || !mainWindow) return;
+  if (!await confirmDiscardUnsavedChanges()) return;
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Open PlutoGE Project',
+    properties: ['openFile'],
+    filters: [{ name: 'PlutoGE Project', extensions: ['plutoproject'] }],
+  });
+  if (!result.canceled && result.filePaths[0]) sendEditorCommand(`load_project ${encode(result.filePaths[0])}`);
+});
+
+ipcMain.handle('editor:open-scene', async (event) => {
+  if (!isTrustedSender(event) || !mainWindow) return;
+  if (!await confirmDiscardUnsavedChanges()) return;
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Open PlutoGE Scene',
+    properties: ['openFile'],
+    filters: [{ name: 'PlutoGE Scene', extensions: ['plutoscene'] }],
+  });
+  if (!result.canceled && result.filePaths[0]) sendEditorCommand(`load_scene ${encode(result.filePaths[0])}`);
+});
+
+ipcMain.handle('editor:save-scene', async (event, saveAs: unknown) => {
+  if (!isTrustedSender(event) || !mainWindow) return;
+  let path = saveAs === true ? '' : nativeHost?.getEditorState()?.scenePath ?? '';
+  if (!path) {
+    const result = await dialog.showSaveDialog(mainWindow, {
+      title: 'Save PlutoGE Scene',
+      defaultPath: 'Untitled.plutoscene',
+      filters: [{ name: 'PlutoGE Scene', extensions: ['plutoscene'] }],
+    });
+    if (result.canceled || !result.filePath) return;
+    path = result.filePath;
+  }
+  sendEditorCommand(`save_scene ${encode(path)}`);
+});
+
+ipcMain.on('editor:command', (event, action: unknown, ...args: unknown[]) => {
+  if (!isTrustedSender(event) || typeof action !== 'string') return;
+  const number = (value: unknown): number => Number.isFinite(Number(value)) ? Number(value) : 0;
+  switch (action) {
+    case 'undo': case 'redo': sendEditorCommand(action); break;
+    case 'runtime': sendEditorCommand(`runtime ${args[0] === true ? 1 : 0}`); break;
+    case 'set-editor-camera': {
+      const camera = args[0] && typeof args[0] === 'object' ? args[0] as Partial<EditorCameraState> : {};
+      const position = Array.isArray(camera.position) ? camera.position.map(number).slice(0, 3) : [0, 2, 6];
+      while (position.length < 3) position.push(0);
+      sendEditorCommand(`set_editor_camera ${position.join(' ')} ${number(camera.yawDegrees)} ${number(camera.pitchDegrees)} ${number(camera.fovY)} ${number(camera.nearPlane)} ${number(camera.farPlane)} ${number(camera.moveSpeed)} ${number(camera.speedAdjustment)} ${camera.gridVisible === false ? 0 : 1}`);
+      break;
+    }
+    case 'reset-editor-camera': sendEditorCommand('reset_editor_camera'); break;
+    case 'frame-selected': sendEditorCommand('frame_selected'); break;
+    case 'save-project': sendEditorCommand('save_project'); break;
+    case 'select': case 'delete': sendEditorCommand(`${action} ${number(args[0])}`); break;
+    case 'create': sendEditorCommand(`create ${encode(args[0])} ${number(args[1])}`); break;
+    case 'reparent': sendEditorCommand(`reparent ${number(args[0])} ${number(args[1])}`); break;
+    case 'set-name': sendEditorCommand(`set_name ${number(args[0])} ${encode(args[1])}`); break;
+    case 'set-active': sendEditorCommand(`set_active ${number(args[0])} ${args[1] === true ? 1 : 0}`); break;
+    case 'set-transform': {
+      const values = [args[1], args[2], args[3]].flatMap((value) => Array.isArray(value) ? value.map(number) : [0, 0, 0]);
+      sendEditorCommand(`set_transform ${number(args[0])} ${values.join(' ')}`);
+      break;
+    }
+    case 'component-enabled': sendEditorCommand(`component_enabled ${number(args[0])} ${number(args[1])} ${args[2] === true ? 1 : 0}`); break;
+    case 'set-property': sendEditorCommand(`set_property ${number(args[0])} ${number(args[1])} ${number(args[2])} ${encode(args[3])}`); break;
+    case 'add-component': sendEditorCommand(`add_component ${number(args[0])} ${encode(args[1])}`); break;
+    case 'remove-component': sendEditorCommand(`remove_component ${number(args[0])} ${number(args[1])}`); break;
+  }
 });
 
 app.whenReady().then(() => {

@@ -95,7 +95,9 @@ namespace PlutoGE::platform
 
             LONG_PTR extendedStyle = GetWindowLongPtrW(nativeWindow, GWL_EXSTYLE);
             extendedStyle &= ~(WS_EX_APPWINDOW | WS_EX_WINDOWEDGE | WS_EX_CLIENTEDGE);
-            extendedStyle |= WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
+            // Keep the overlay out of the taskbar, but allow it to receive
+            // focus when the user clicks the viewport so GLFW gets WASD/QE.
+            extendedStyle |= WS_EX_TOOLWINDOW;
             SetWindowLongPtrW(nativeWindow, GWL_EXSTYLE, extendedStyle);
 
             // A WS_CHILD window is composited underneath Electron's Chromium

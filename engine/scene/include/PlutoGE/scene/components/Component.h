@@ -4,17 +4,18 @@
 #include <vector>
 #include <type_traits>
 #include <string>
+#include <typeinfo>
 
 namespace PlutoGE::scene
 {
     class Entity;
     using ComponentTypeID = std::size_t;
 
-    inline ComponentTypeID GenerateComponentTypeID()
-    {
-        static ComponentTypeID nextTypeID = 0;
-        return nextTypeID++;
-    }
+    // Component IDs must come from one process-wide registry. In shared-engine
+    // builds, header-local counters are duplicated between PlutoGE.dll and its
+    // host executable, making a component created by the host invisible to
+    // typed lookups performed inside the engine DLL.
+    ComponentTypeID GetOrCreateComponentTypeID(const char *typeName);
 
     enum class PropertyType
     {
@@ -67,7 +68,7 @@ namespace PlutoGE::scene
     {
         static_assert(std::is_base_of_v<Component, T>, "T must derive from Component");
 
-        static const ComponentTypeID typeID = GenerateComponentTypeID();
+        static const ComponentTypeID typeID = GetOrCreateComponentTypeID(typeid(T).name());
         return typeID;
     }
 

@@ -9,18 +9,26 @@ export type HostState = {
   message?: string;
 };
 
+export type NativeEditorState = EditorState;
+
 export class NativeHost {
   private process?: ChildProcessWithoutNullStreams;
   private state: HostState = { status: 'stopped' };
+  private editorState?: NativeEditorState;
   private stopping = false;
 
   public constructor(
     private readonly window: BrowserWindow,
     private readonly onState: (state: HostState) => void,
+    private readonly onEditorState: (state: NativeEditorState) => void,
   ) {}
 
   public getState(): HostState {
     return this.state;
+  }
+
+  public getEditorState(): NativeEditorState | undefined {
+    return this.editorState;
   }
 
   public start(): void {
@@ -56,9 +64,14 @@ export class NativeHost {
     const output = readline.createInterface({ input: child.stdout });
     output.on('line', (line) => {
       try {
-        const event = JSON.parse(line) as { type?: string; message?: string };
+        const event = JSON.parse(line) as { type?: string; message?: string } & Partial<NativeEditorState>;
         if (event.type === 'ready') this.updateState({ status: 'ready' });
         if (event.type === 'error') this.updateState({ status: 'error', message: event.message });
+        if (event.type === 'editor-error' && event.message) console.warn(`[PlutoGEEditorHost] ${event.message}`);
+        if (event.type === 'editor-state') {
+          this.editorState = event as NativeEditorState;
+          this.onEditorState(this.editorState);
+        }
       } catch {
         // Engine diagnostics also use stdout; keep the IPC parser tolerant.
       }

@@ -25,7 +25,7 @@ if (-not $SkipNativeBuild) {
         -DPLUTO_BUILD_RUNTIME=OFF `
         -DPLUTO_BUILD_SAMPLES=OFF `
         -DBUILD_TESTING=OFF `
-        -DCMAKE_BUILD_TYPE=$Configuration `
+        "-DCMAKE_BUILD_TYPE=$Configuration" `
         -DPLUTO_BUILD_ENGINE_SHARED=ON `
         -DPLUTO_BUILD_ELECTRON_EDITOR_HOST=ON
     if ($LASTEXITCODE -ne 0) { throw 'CMake configuration failed.' }

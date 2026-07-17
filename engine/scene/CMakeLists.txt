@@ -5,6 +5,8 @@ pluto_add_engine_module(PlutoGEScene PlutoGE::Scene PLUTO_SCENE_TARGET
     src/SceneBaker.cpp
     src/SceneSerializer.cpp
     src/NavigationSystem.cpp
+    src/components/Component.cpp
+    src/components/ComponentFactory.cpp
     src/components/AnimationComponent.cpp
     src/components/ClothComponent.cpp
     src/components/MeshComponent.cpp

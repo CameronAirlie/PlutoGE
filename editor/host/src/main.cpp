@@ -6,6 +6,12 @@
 
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/render/Camera.h"
+#include "PlutoGE/scene/Entity.h"
+#include "PlutoGE/scene/Scene.h"
+#include "PlutoGE/scene/components/CameraComponent.h"
+#include "PlutoGE/scene/components/ComponentFactory.h"
+#include "PlutoGE/scene/components/MeshComponent.h"
+#include "EditorSession.h"
 
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -122,20 +128,53 @@ namespace
         std::cout << json << '\n' << std::flush;
     }
 
-    PlutoGE::render::CameraData BuildCamera(int width, int height, float yaw, float pitch, float distance)
+    constexpr float kCameraBoostMultiplier = 2.5f;
+    constexpr float kCameraScrollStepFactor = 1.2f;
+    constexpr float kCameraMouseSensitivity = 0.12f;
+
+    glm::mat4 BuildEditorCameraTransform(const glm::vec3 &position, float yawDegrees, float pitchDegrees)
+    {
+        glm::mat4 transform = glm::translate(glm::mat4(1.0f), position);
+        transform = glm::rotate(transform, glm::radians(yawDegrees), glm::vec3(0.0f, 1.0f, 0.0f));
+        return glm::rotate(transform, glm::radians(pitchDegrees), glm::vec3(1.0f, 0.0f, 0.0f));
+    }
+
+    PlutoGE::render::CameraData BuildEditorCamera(int width, int height, const EditorSession::EditorCameraState &cameraState)
     {
         const float safeAspect = static_cast<float>(std::max(1, width)) / static_cast<float>(std::max(1, height));
-        const glm::vec3 target(0.0f);
-        const glm::vec3 position{
-            target.x + distance * std::cos(pitch) * std::sin(yaw),
-            target.y + distance * std::sin(pitch),
-            target.z + distance * std::cos(pitch) * std::cos(yaw),
-        };
-
+        const glm::mat4 transform = BuildEditorCameraTransform(cameraState.position, cameraState.yawDegrees, cameraState.pitchDegrees);
+        const glm::vec3 forward = -glm::normalize(glm::vec3(transform[2]));
+        const glm::vec3 up = glm::normalize(glm::vec3(transform[1]));
         PlutoGE::render::CameraData camera;
-        camera.view = glm::lookAt(position, target, glm::vec3(0.0f, 1.0f, 0.0f));
-        camera.projection = glm::perspective(glm::radians(50.0f), safeAspect, camera.farPlane, camera.nearPlane);
+        camera.view = glm::lookAt(cameraState.position, cameraState.position + forward, up);
+        camera.projection = glm::perspective(glm::radians(cameraState.fovY), safeAspect, cameraState.farPlane, cameraState.nearPlane);
+        camera.nearPlane = cameraState.nearPlane;
+        camera.farPlane = cameraState.farPlane;
         return camera;
+    }
+
+    void CollectSceneCameras(PlutoGE::scene::Entity *entity,
+                             PlutoGE::scene::CameraComponent *&mainCamera,
+                             PlutoGE::scene::CameraComponent *&fallbackCamera)
+    {
+        if (!entity || !entity->IsActive()) return;
+        if (auto *camera = entity->GetComponent<PlutoGE::scene::CameraComponent>(); camera && camera->IsEnabled() && camera->GetCamera())
+        {
+            if (!fallbackCamera) fallbackCamera = camera;
+            if (camera->IsMainCamera()) mainCamera = camera;
+        }
+        for (auto *child : entity->GetChildren()) CollectSceneCameras(child, mainCamera, fallbackCamera);
+    }
+
+    PlutoGE::scene::CameraComponent *FindRuntimeCamera(PlutoGE::scene::Scene *scene)
+    {
+        PlutoGE::scene::CameraComponent *mainCamera = nullptr;
+        PlutoGE::scene::CameraComponent *fallbackCamera = nullptr;
+        if (scene)
+        {
+            for (auto *root : scene->GetRootEntities()) CollectSceneCameras(root, mainCamera, fallbackCamera);
+        }
+        return mainCamera ? mainCamera : fallbackCamera;
     }
 }
 
@@ -145,6 +184,19 @@ int main(int argc, char **argv)
     std::cerr << "PlutoGEEditorHost embedded mode is currently supported on Windows only.\n";
     return 2;
 #else
+    if (argc == 2 && std::string_view(argv[1]) == "--component-registry-smoke")
+    {
+        PlutoGE::scene::Scene scene;
+        auto entity = std::make_unique<PlutoGE::scene::Entity>(PlutoGE::scene::EntityConfig{.name = "Registry Smoke"});
+        auto *created = scene.AddEntity(std::move(entity));
+        auto *component = PlutoGE::scene::AddComponentByTypeName(*created, "MeshComponent");
+        const bool registered = component && scene.GetMeshComponents().size() == 1;
+        const bool typedLookup = created->GetComponent<PlutoGE::scene::MeshComponent>() == component;
+        std::cout << "{\"registered\":" << (registered ? "true" : "false")
+                  << ",\"typedLookup\":" << (typedLookup ? "true" : "false") << "}" << std::endl;
+        return registered && typedLookup ? 0 : 2;
+    }
+
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
     const auto options = ParseOptions(argc, argv);
@@ -174,14 +226,23 @@ int main(int argc, char **argv)
     auto &renderer = engine.GetRenderer();
     renderer.SetVSyncEnabled(true);
 
+    EditorSession editorSession(engine);
+    if (!editorSession.Initialize())
+    {
+        WriteEvent(R"({"type":"error","message":"Editor scene initialization failed"})");
+        engine.Shutdown();
+        return 1;
+    }
+
     CommandStream commandStream;
     bool running = true;
     bool visible = !embedded;
-    float yaw = glm::radians(35.0f);
-    float pitch = glm::radians(28.0f);
-    float distance = 8.0f;
+    bool editorCameraLookActive = false;
+    bool editorCameraInputChanged = false;
+    auto previousFrameTime = std::chrono::steady_clock::now();
 
     WriteEvent(R"({"type":"ready","protocol":1})");
+    WriteEvent(editorSession.BuildSnapshotEvent());
 
     while (running && !window.ShouldClose())
     {
@@ -226,35 +287,116 @@ int main(int argc, char **argv)
             {
                 running = false;
             }
+            else
+            {
+                std::string errorMessage;
+                if (editorSession.HandleCommand(commandLine, errorMessage))
+                {
+                    WriteEvent(editorSession.BuildSnapshotEvent());
+                }
+                else
+                {
+                    WriteEvent(R"({"type":"editor-error","message":"Editor command failed; see native diagnostics"})");
+                    if (!errorMessage.empty()) std::cerr << errorMessage << std::endl;
+                }
+            }
         }
 
         window.PollEvents();
+        const auto currentFrameTime = std::chrono::steady_clock::now();
+        const float deltaTime = std::min(std::chrono::duration<float>(currentFrameTime - previousFrameTime).count(), 0.1f);
+        previousFrameTime = currentFrameTime;
         const auto &input = window.GetInputState();
-        if (input.IsMouseButtonDown(1))
+        auto &editorCamera = editorSession.GetEditorCamera();
+        if (!engine.IsRuntimeRunning() && input.IsMouseButtonDown(GLFW_MOUSE_BUTTON_RIGHT))
         {
-            yaw -= static_cast<float>(input.mouseState.deltaX) * 0.005f;
-            pitch = std::clamp(pitch - static_cast<float>(input.mouseState.deltaY) * 0.005f,
-                               glm::radians(-85.0f),
-                               glm::radians(85.0f));
+            if (!editorCameraLookActive)
+            {
+                editorCameraLookActive = true;
+                window.SetEditorCursorLocked(true);
+            }
+
+            editorCamera.yawDegrees -= static_cast<float>(input.mouseState.deltaX) * kCameraMouseSensitivity;
+            editorCamera.pitchDegrees = std::clamp(editorCamera.pitchDegrees - static_cast<float>(input.mouseState.deltaY) * kCameraMouseSensitivity, -89.0f, 89.0f);
+            editorCameraInputChanged = editorCameraInputChanged || input.mouseState.deltaX != 0.0 || input.mouseState.deltaY != 0.0;
+            if (input.mouseState.scrollDeltaY != 0.0)
+            {
+                editorCamera.speedAdjustment = std::clamp(editorCamera.speedAdjustment * std::pow(kCameraScrollStepFactor, static_cast<float>(input.mouseState.scrollDeltaY)), 0.1f, 10.0f);
+                editorCameraInputChanged = true;
+            }
+
+            const glm::mat4 transform = BuildEditorCameraTransform(editorCamera.position, editorCamera.yawDegrees, editorCamera.pitchDegrees);
+            const glm::vec3 forward = -glm::normalize(glm::vec3(transform[2]));
+            const glm::vec3 right = glm::normalize(glm::vec3(transform[0]));
+            glm::vec3 movement(0.0f);
+            if (input.keys[GLFW_KEY_W]) movement += forward;
+            if (input.keys[GLFW_KEY_S]) movement -= forward;
+            if (input.keys[GLFW_KEY_D]) movement += right;
+            if (input.keys[GLFW_KEY_A]) movement -= right;
+            if (input.keys[GLFW_KEY_E]) movement.y += 1.0f;
+            if (input.keys[GLFW_KEY_Q]) movement.y -= 1.0f;
+            if (glm::dot(movement, movement) > 0.0f)
+            {
+                float speed = editorCamera.moveSpeed * editorCamera.speedAdjustment;
+                if (input.keys[GLFW_KEY_LEFT_SHIFT] || input.keys[GLFW_KEY_RIGHT_SHIFT]) speed *= kCameraBoostMultiplier;
+                editorCamera.position += glm::normalize(movement) * speed * deltaTime;
+                editorCameraInputChanged = true;
+            }
         }
-        distance = std::clamp(distance - static_cast<float>(input.mouseState.scrollDeltaY) * 0.7f, 2.0f, 40.0f);
+        else if (editorCameraLookActive)
+        {
+            window.SetEditorCursorLocked(false);
+            editorCameraLookActive = false;
+            if (editorCameraInputChanged)
+            {
+                WriteEvent(editorSession.BuildSnapshotEvent());
+                editorCameraInputChanged = false;
+            }
+        }
+
+        const auto extents = window.GetExtents();
+        const auto editorCameraData = BuildEditorCamera(extents.width, extents.height, editorCamera);
+        if (engine.IsRuntimeRunning()) renderer.ClearSubmissionCullingCameras();
+        else renderer.SetSubmissionCullingCameras({editorCameraData});
+        renderer.BeginProfilingFrame();
+        editorSession.Update(deltaTime);
 
         if (visible)
         {
-            const auto extents = window.GetExtents();
-            const auto camera = BuildCamera(extents.width, extents.height, yaw, pitch, distance);
+            auto *scene = editorSession.GetScene();
+            std::vector<PlutoGE::render::IPostProcessEffect *> editorPostProcessEffects;
+            editorPostProcessEffects.reserve(editorSession.GetEditorPostProcessEffects().size());
+            for (const auto &effect : editorSession.GetEditorPostProcessEffects())
+            {
+                if (effect) editorPostProcessEffects.push_back(effect.get());
+            }
             renderer.BeginFrame();
-            renderer.RenderFrame(camera, nullptr, {}, nullptr, nullptr, true, true);
+            if (engine.IsRuntimeRunning())
+            {
+                if (auto *runtimeCamera = FindRuntimeCamera(scene)) renderer.RenderFrame(*runtimeCamera, nullptr, scene ? scene->GetLights() : std::vector<PlutoGE::scene::Light *>{});
+                else renderer.RenderFrame(editorCameraData, nullptr, scene ? scene->GetLights() : std::vector<PlutoGE::scene::Light *>{}, &editorPostProcessEffects, scene, false, false);
+            }
+            else
+            {
+                renderer.RenderFrame(editorCameraData, nullptr, scene ? scene->GetLights() : std::vector<PlutoGE::scene::Light *>{}, &editorPostProcessEffects, scene, editorCamera.gridVisible, true);
+            }
+            const auto &frameStats = renderer.GetCpuFrameStats();
+            if (editorSession.SetViewportStats(frameStats.submittedRenderCommandCount, frameStats.visibleRenderCommandCount))
+            {
+                WriteEvent(editorSession.BuildSnapshotEvent());
+            }
             renderer.ClearRenderCommands();
             renderer.EndFrame();
         }
         else
         {
+            renderer.ClearRenderCommands();
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
     }
 
     WriteEvent(R"({"type":"stopping"})");
+    editorSession.Shutdown();
     engine.Shutdown();
     return 0;
 #endif

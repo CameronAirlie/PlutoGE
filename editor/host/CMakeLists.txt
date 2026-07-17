@@ -1,5 +1,6 @@
 add_executable(PlutoGEEditorHost
     src/main.cpp
+    src/EditorSession.cpp
 )
 
 target_link_libraries(PlutoGEEditorHost PRIVATE

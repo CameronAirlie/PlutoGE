@@ -44,6 +44,14 @@ For the normal edit/build/run loop, use the repository script:
 ./tools/Start-ElectronEditor.ps1
 ```
 
+When the repository is open in VS Code, no terminal command is required. Pick
+**PlutoGE: Electron Editor** in the Run and Debug view and press `F5`, or press
+`Ctrl+Shift+B` to run the default build task. Both actions call the same script
+above, including configuration, native build, dependency installation, and
+launch. After the first successful build, use **PlutoGE: Electron Editor
+(Fast)** from Run and Debug or **Tasks: Run Task** to skip the native build and
+dependency check.
+
 On its first run it configures and builds `PlutoGEEditorHost`, installs the UI
 dependencies, and starts Electron. Later runs can skip work when appropriate:
 
@@ -55,6 +63,25 @@ The host/editor boundary is deliberately narrow: Electron sends viewport
 bounds and visibility commands over standard input, while the host returns
 newline-delimited JSON lifecycle events. Keep engine and scene APIs in the
 native host rather than exposing C++ objects directly to the renderer process.
+
+The Electron editor currently exposes native scene hierarchy and selection,
+entity transforms and activation, serialized component properties, component
+creation/removal, reparenting, scene open/save, undo/redo, and play/stop. The
+engine remains the source of truth; React renders snapshots and submits typed
+commands through the secure preload bridge.
+
+The edit viewport uses the same fly-camera controls as the ImGui editor: hold
+the right mouse button and use WASD/QE, hold Shift to boost, and use the wheel
+to adjust movement speed. Use the Camera button to edit its transform,
+projection, movement speed, grid visibility, or frame the selected entity.
+Play mode renders through the scene's main camera.
+
+Use Project... in the Electron toolbar to open a `.plutoproject`. This applies
+the same project asset context, startup scene, VSync setting, and saved editor
+camera settings used by the ImGui editor. Opening only a scene without its
+project can leave `project://` mesh and material references unresolved. Use
+Save Project to persist the Editor Camera transform, projection, and base move
+speed back into the project manifest.
 
 To run the UI manually, point it at a built host before starting Forge:
 

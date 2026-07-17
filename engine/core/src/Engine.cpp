@@ -15,6 +15,12 @@
 
 namespace PlutoGE::core
 {
+    Engine &Engine::GetInstance()
+    {
+        static Engine instance;
+        return instance;
+    }
+
     namespace
     {
         using ImportClock = std::chrono::steady_clock;

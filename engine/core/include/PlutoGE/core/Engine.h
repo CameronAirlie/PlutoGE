@@ -61,11 +61,10 @@ namespace PlutoGE::core
         void Run();
         void Shutdown();
 
-        static Engine &GetInstance()
-        {
-            static Engine instance;
-            return instance;
-        }
+        // Defined out of line so shared-engine builds have one process-wide
+        // instance rather than separate header-local instances in the DLL and
+        // each host executable.
+        static Engine &GetInstance();
 
         [[nodiscard]] const EngineConfig &GetConfig() const { return m_config; }
 

@@ -1,4 +1,6 @@
-.vscode/
+.vscode/*
+!.vscode/tasks.json
+!.vscode/launch.json
 out/
 build/
 .plutoge-cache/

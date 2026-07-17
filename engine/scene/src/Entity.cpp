@@ -290,30 +290,31 @@ namespace PlutoGE::scene
 
         if (m_scene)
         {
-            if (auto *lightComponent = dynamic_cast<LightComponent *>(component))
+            if (component->GetTypeID() == GetComponentTypeID<LightComponent>())
             {
+                auto *lightComponent = static_cast<LightComponent *>(component);
                 m_scene->AddLight(&lightComponent->GetLight());
             }
 
-            if (dynamic_cast<MeshComponent *>(component))
+            if (component->GetTypeID() == GetComponentTypeID<MeshComponent>())
             {
                 m_scene->RegisterMeshComponent(static_cast<MeshComponent *>(component));
                 m_scene->MarkShadowLightsDirty();
             }
 
-            if (dynamic_cast<TerrainComponent *>(component))
+            if (component->GetTypeID() == GetComponentTypeID<TerrainComponent>())
             {
                 m_scene->RegisterTerrainComponent(static_cast<TerrainComponent *>(component));
                 m_scene->MarkShadowLightsDirty();
             }
 
-            if (dynamic_cast<FoliageComponent *>(component))
+            if (component->GetTypeID() == GetComponentTypeID<FoliageComponent>())
             {
                 m_scene->RegisterFoliageComponent(static_cast<FoliageComponent *>(component));
                 m_scene->MarkShadowLightsDirty();
             }
 
-            if (dynamic_cast<ParticleSystemComponent *>(component))
+            if (component->GetTypeID() == GetComponentTypeID<ParticleSystemComponent>())
             {
                 m_scene->RegisterParticleSystemComponent(static_cast<ParticleSystemComponent *>(component));
             }
@@ -331,30 +332,31 @@ namespace PlutoGE::scene
 
         if (m_scene)
         {
-            if (auto *lightComponent = dynamic_cast<LightComponent *>(component))
+            if (component->GetTypeID() == GetComponentTypeID<LightComponent>())
             {
+                auto *lightComponent = static_cast<LightComponent *>(component);
                 m_scene->RemoveLight(&lightComponent->GetLight());
             }
 
-            if (dynamic_cast<MeshComponent *>(component))
+            if (component->GetTypeID() == GetComponentTypeID<MeshComponent>())
             {
                 m_scene->UnregisterMeshComponent(static_cast<MeshComponent *>(component));
                 m_scene->MarkShadowLightsDirty();
             }
 
-            if (dynamic_cast<TerrainComponent *>(component))
+            if (component->GetTypeID() == GetComponentTypeID<TerrainComponent>())
             {
                 m_scene->UnregisterTerrainComponent(static_cast<TerrainComponent *>(component));
                 m_scene->MarkShadowLightsDirty();
             }
 
-            if (dynamic_cast<FoliageComponent *>(component))
+            if (component->GetTypeID() == GetComponentTypeID<FoliageComponent>())
             {
                 m_scene->UnregisterFoliageComponent(static_cast<FoliageComponent *>(component));
                 m_scene->MarkShadowLightsDirty();
             }
 
-            if (dynamic_cast<ParticleSystemComponent *>(component))
+            if (component->GetTypeID() == GetComponentTypeID<ParticleSystemComponent>())
             {
                 m_scene->UnregisterParticleSystemComponent(static_cast<ParticleSystemComponent *>(component));
             }

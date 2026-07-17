@@ -438,8 +438,10 @@ ipcMain.on('editor:command', (event, action: unknown, ...args: unknown[]) => {
     case 'editor-effect-parameter': sendEditorCommand(`editor_effect_parameter ${number(args[0])} ${number(args[1])} ${encode(args[2])}`); break;
     case 'editor-effect-preset': sendEditorCommand(`editor_effect_preset ${encode(args[0])}`); break;
     case 'editor-effect-save-preset': sendEditorCommand('editor_effect_save_preset'); break;
+    case 'editor-effect-save-preset-as': sendEditorCommand(`editor_effect_save_preset_as ${encode(args[0])}`); break;
     case 'save-project': sendEditorCommand('save_project'); break;
     case 'refresh-assets': sendEditorCommand('refresh_assets'); break;
+    case 'create-asset': sendEditorCommand(`create_asset ${encode(args[0])} ${encode(args[1])}`); break;
     case 'instantiate-asset': sendEditorCommand(`instantiate_asset ${encode(args[0])}`); break;
     case 'select': case 'delete': case 'duplicate': sendEditorCommand(`${action} ${number(args[0])}`); break;
     case 'create': sendEditorCommand(`create ${encode(args[0])} ${number(args[1])}`); break;
@@ -462,6 +464,7 @@ ipcMain.on('editor:command', (event, action: unknown, ...args: unknown[]) => {
     case 'camera-effect-parameter': sendEditorCommand(`camera_effect_parameter ${number(args[0])} ${number(args[1])} ${number(args[2])} ${number(args[3])} ${encode(args[4])}`); break;
     case 'camera-effect-preset': sendEditorCommand(`camera_effect_preset ${number(args[0])} ${number(args[1])} ${encode(args[2])}`); break;
     case 'camera-effect-save-preset': sendEditorCommand(`camera_effect_save_preset ${number(args[0])} ${number(args[1])}`); break;
+    case 'camera-effect-save-preset-as': sendEditorCommand(`camera_effect_save_preset_as ${number(args[0])} ${number(args[1])} ${encode(args[2])}`); break;
   }
 });
 

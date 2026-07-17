@@ -87,6 +87,54 @@ namespace PlutoGE::ui
         constexpr const char *kPostProcessEffectDragDropPayload = "PGE_PP_FX";
         constexpr const char *kEditorPostProcessEffectDragDropPayload = "PGE_ED_PP_FX";
         constexpr const char *kHierarchyEntityDragDropPayload = "PLUTOGE_SCENE_ENTITY";
+
+        std::string SanitizePostProcessPresetName(std::string_view text)
+        {
+            std::string name;
+            name.reserve(text.size());
+            for (const char rawCharacter : text)
+            {
+                const auto character = static_cast<unsigned char>(rawCharacter);
+                if (std::isalnum(character) != 0 || rawCharacter == '_' || rawCharacter == '-')
+                    name.push_back(rawCharacter);
+                else if (!name.empty() && name.back() != '_')
+                    name.push_back('_');
+            }
+            while (!name.empty() && name.back() == '_') name.pop_back();
+            return name;
+        }
+
+        bool SavePostProcessStackAsAsset(
+            std::string_view requestedName,
+            const std::vector<std::unique_ptr<render::IPostProcessEffect>> &effects,
+            std::string &savedReference,
+            std::string &errorMessage)
+        {
+            auto &editorShell = EditorShell::GetInstance();
+            auto *project = editorShell.GetProject();
+            const std::string name = SanitizePostProcessPresetName(requestedName);
+            if (!project || name.empty())
+            {
+                errorMessage = project ? "Enter a preset name." : "No project is open.";
+                return false;
+            }
+
+            const auto path = project->GetAssetDirectoryPath() / "PostProcessing" / (name + ".plutopostprocess");
+            if (std::filesystem::exists(path))
+            {
+                errorMessage = "A post process preset with that name already exists.";
+                return false;
+            }
+
+            savedReference = project->MakeAssetReference(path);
+            if (!core::Engine::GetInstance().GetAssetManager().SavePostProcessPresetAsset(
+                    savedReference, assets::CapturePostProcessPreset(effects), &errorMessage))
+                return false;
+
+            project->RefreshAssetRegistry();
+            editorShell.Log(EditorShell::ConsoleSeverity::Info, "Created post process preset: " + savedReference);
+            return true;
+        }
         enum class AddableComponentType
         {
             Mesh = 0,
@@ -2979,6 +3027,36 @@ namespace PlutoGE::ui
             if (!core::Engine::GetInstance().GetAssetManager().SavePostProcessPresetAsset(presetReference, preset, &errorMessage))
                 EditorShell::GetInstance().Log(EditorShell::ConsoleSeverity::Error, errorMessage);
         }
+        if (!presetReference.empty()) ImGui::SameLine();
+        if (ImGui::Button("Save As Preset..."))
+        {
+            ImGui::OpenPopup("Save Camera Post Process Preset");
+        }
+        if (ImGui::BeginPopupModal("Save Camera Post Process Preset", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        {
+            static std::array<char, 96> nameBuffer{};
+            ImGui::InputText("Name", nameBuffer.data(), nameBuffer.size());
+            const std::string sanitizedName = SanitizePostProcessPresetName(nameBuffer.data());
+            ImGui::TextDisabled("Creates Assets/PostProcessing/%s.plutopostprocess", sanitizedName.empty() ? "<Name>" : sanitizedName.c_str());
+            ImGui::BeginDisabled(sanitizedName.empty());
+            if (ImGui::Button("Save"))
+            {
+                std::string reference;
+                std::string errorMessage;
+                if (SavePostProcessStackAsAsset(nameBuffer.data(), cameraComponent.GetPostProcessEffects(), reference, errorMessage))
+                {
+                    cameraComponent.SetPostProcessPresetAssetReference(reference);
+                    EditorShell::GetInstance().MarkSceneDirty();
+                    nameBuffer.fill('\0');
+                    ImGui::CloseCurrentPopup();
+                }
+                else EditorShell::GetInstance().Log(EditorShell::ConsoleSeverity::Error, errorMessage);
+            }
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+        }
         ImGui::TreePop();
     }
 
@@ -3223,6 +3301,36 @@ namespace PlutoGE::ui
             auto preset = assets::CapturePostProcessPreset(camera.GetPostProcessEffects());
             if (!core::Engine::GetInstance().GetAssetManager().SavePostProcessPresetAsset(presetReference, preset, &errorMessage))
                 EditorShell::GetInstance().Log(EditorShell::ConsoleSeverity::Error, errorMessage);
+        }
+        if (!presetReference.empty()) ImGui::SameLine();
+        if (ImGui::Button("Save As Preset..."))
+        {
+            ImGui::OpenPopup("Save Editor Camera Post Process Preset");
+        }
+        if (ImGui::BeginPopupModal("Save Editor Camera Post Process Preset", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        {
+            static std::array<char, 96> nameBuffer{};
+            ImGui::InputText("Name", nameBuffer.data(), nameBuffer.size());
+            const std::string sanitizedName = SanitizePostProcessPresetName(nameBuffer.data());
+            ImGui::TextDisabled("Creates Assets/PostProcessing/%s.plutopostprocess", sanitizedName.empty() ? "<Name>" : sanitizedName.c_str());
+            ImGui::BeginDisabled(sanitizedName.empty());
+            if (ImGui::Button("Save"))
+            {
+                std::string reference;
+                std::string errorMessage;
+                if (SavePostProcessStackAsAsset(nameBuffer.data(), camera.GetPostProcessEffects(), reference, errorMessage))
+                {
+                    camera.SetPostProcessPresetAssetReference(reference);
+                    EditorShell::GetInstance().MarkProjectDirty();
+                    nameBuffer.fill('\0');
+                    ImGui::CloseCurrentPopup();
+                }
+                else EditorShell::GetInstance().Log(EditorShell::ConsoleSeverity::Error, errorMessage);
+            }
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
         }
         ImGui::TreePop();
     }

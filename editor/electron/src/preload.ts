@@ -36,6 +36,7 @@ const api: PlutoEditorApi = {
   saveScene: (saveAs = false) => ipcRenderer.invoke('editor:save-scene', saveAs),
   importModels: () => ipcRenderer.invoke('assets:import-models'),
   refreshAssets: () => ipcRenderer.send('editor:command', 'refresh-assets'),
+  createAsset: (type, reference) => ipcRenderer.send('editor:command', 'create-asset', type, reference),
   instantiateAsset: (reference) => ipcRenderer.send('editor:command', 'instantiate-asset', reference),
   undo: () => ipcRenderer.send('editor:command', 'undo'),
   redo: () => ipcRenderer.send('editor:command', 'redo'),
@@ -52,6 +53,7 @@ const api: PlutoEditorApi = {
   setEditorPostProcessParameter: (effectIndex, parameterIndex, value) => ipcRenderer.send('editor:command', 'editor-effect-parameter', effectIndex, parameterIndex, value),
   setEditorPostProcessPreset: (reference) => ipcRenderer.send('editor:command', 'editor-effect-preset', reference),
   saveEditorPostProcessPreset: () => ipcRenderer.send('editor:command', 'editor-effect-save-preset'),
+  saveEditorPostProcessPresetAs: (reference) => ipcRenderer.send('editor:command', 'editor-effect-save-preset-as', reference),
   selectEntity: (id) => ipcRenderer.send('editor:command', 'select', id),
   createEntity: (name, parentId = 0) => ipcRenderer.send('editor:command', 'create', name, parentId),
   deleteEntity: (id) => ipcRenderer.send('editor:command', 'delete', id),
@@ -71,6 +73,7 @@ const api: PlutoEditorApi = {
   setCameraPostProcessParameter: (entityId, componentIndex, effectIndex, parameterIndex, value) => ipcRenderer.send('editor:command', 'camera-effect-parameter', entityId, componentIndex, effectIndex, parameterIndex, value),
   setCameraPostProcessPreset: (entityId, componentIndex, reference) => ipcRenderer.send('editor:command', 'camera-effect-preset', entityId, componentIndex, reference),
   saveCameraPostProcessPreset: (entityId, componentIndex) => ipcRenderer.send('editor:command', 'camera-effect-save-preset', entityId, componentIndex),
+  saveCameraPostProcessPresetAs: (entityId, componentIndex, reference) => ipcRenderer.send('editor:command', 'camera-effect-save-preset-as', entityId, componentIndex, reference),
 };
 
 contextBridge.exposeInMainWorld('plutoEditor', api);

@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { PanelFrame } from '../components/PanelFrame';
 import { PopupMenu, type PopupMenuItem, type PopupMenuState } from '../components/PopupMenu';
+import { NameDialog } from '../components/NameDialog';
 
 const assetPath = (reference: string): string => reference.replace(/^(project|engine):\/\//, '');
 const parentFolder = (value: string): string => value.includes('/') ? value.slice(0, value.lastIndexOf('/')) : '';
@@ -17,6 +18,7 @@ export function ContentBrowserPanel({ editor }: { editor?: EditorState }): React
   const [message, setMessage] = useState('');
   const [importing, setImporting] = useState(false);
   const [menu, setMenu] = useState<PopupMenuState>();
+  const [createType, setCreateType] = useState<'material' | 'post-process'>();
   const projectAssets = useMemo(() => (editor?.assets ?? []).filter((asset) => asset.reference.startsWith('project://')), [editor?.assets]);
 
   const folders = useMemo(() => {
@@ -61,6 +63,26 @@ export function ContentBrowserPanel({ editor }: { editor?: EditorState }): React
     );
   };
 
+  const createAsset = (type: 'material' | 'post-process', rawName: string): void => {
+    const extension = type === 'material' ? '.plutomaterial' : '.plutopostprocess';
+    const name = rawName.replace(/[^a-zA-Z0-9_-]+/g, '_').replace(/^_+|_+$/g, '');
+    if (!name) { setMessage('Enter a valid asset name.'); return; }
+    const reference = `project://${folder ? `${folder}/` : ''}${name}${extension}`;
+    if (projectAssets.some((asset) => asset.reference.toLowerCase() === reference.toLowerCase())) {
+      setMessage(`${assetName(reference)} already exists.`);
+      return;
+    }
+    window.plutoEditor.createAsset(type, reference);
+    setCreateType(undefined);
+    setSelected(reference);
+    setMessage(`Creating ${reference}`);
+  };
+
+  const createItems: PopupMenuItem[] = [
+    { label: 'Material', action: () => setCreateType('material') },
+    { label: 'Post Process Preset', action: () => setCreateType('post-process') },
+  ];
+
   const openAssetContextMenu = (event: React.MouseEvent, asset: EditorAsset): void => {
     event.preventDefault();
     event.stopPropagation();
@@ -82,6 +104,7 @@ export function ContentBrowserPanel({ editor }: { editor?: EditorState }): React
     setSelected(`folder:${path}`);
     setMenu({ x: event.clientX, y: event.clientY, items: [
       { label: 'Open Folder', action: () => setFolder(path) },
+      { label: 'Create', separatorBefore: true, children: createItems },
       { label: 'Refresh Assets', separatorBefore: true, action: () => window.plutoEditor.refreshAssets() },
     ] });
   };
@@ -89,6 +112,7 @@ export function ContentBrowserPanel({ editor }: { editor?: EditorState }): React
   const openBackgroundContextMenu = (event: React.MouseEvent): void => {
     event.preventDefault();
     setMenu({ x: event.clientX, y: event.clientY, items: [
+      { label: 'Create', children: createItems },
       { label: 'Import 3D Models…', disabled: importing, action: () => void importModels() },
       { label: 'Refresh Assets', action: () => window.plutoEditor.refreshAssets() },
     ] });
@@ -127,5 +151,6 @@ export function ContentBrowserPanel({ editor }: { editor?: EditorState }): React
       </div>
     </>}
     <PopupMenu menu={menu} onClose={() => setMenu(undefined)} />
+    {createType && <NameDialog title={`Create ${createType === 'material' ? 'Material' : 'Post Process Preset'}`} onClose={() => setCreateType(undefined)} onConfirm={(name) => createAsset(createType, name)} />}
   </PanelFrame>;
 }

@@ -726,22 +726,48 @@ namespace PlutoGE::scene
         else if (!sourceMeshPath.empty())
         {
             auto &engine = core::Engine::GetInstance();
-            const std::string resolvedMeshPath = engine.GetAssetManager().ResolveMeshAssetSourcePath(sourceMeshPath);
-            auto importedMeshAsset = useGeneratedLods ? engine.GenerateMeshAssetLods(resolvedMeshPath) : engine.ImportMeshAsset(resolvedMeshPath);
-            if (importedMeshAsset.mesh)
+            auto &assetManager = engine.GetAssetManager();
+            if (auto *nativeMesh = assetManager.LoadMeshAsset(sourceMeshPath))
             {
-                SetMesh(importedMeshAsset.mesh);
-                SetMaterials(importedMeshAsset.materials);
-                m_sourceMeshPath = sourceMeshPath;
-                m_useGeneratedLods = useGeneratedLods;
-                if (importedMeshAsset.animations && !importedMeshAsset.animations->empty())
+                SetMesh(nativeMesh);
+                const auto &materialReferences = assetManager.GetMeshAssetMaterialReferences(sourceMeshPath);
+                std::vector<render::Material *> loadedMaterials;
+                loadedMaterials.reserve((std::max<std::size_t>)(materialReferences.size(), 1));
+                for (const auto &materialReference : materialReferences)
                 {
-                    if (auto *owner = GetOwner())
+                    loadedMaterials.push_back(assetManager.LoadMaterialAsset(materialReference));
+                }
+                if (loadedMaterials.empty())
+                {
+                    loadedMaterials.push_back(assetManager.LoadMaterialAsset(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference)));
+                }
+                SetMaterials(loadedMaterials);
+                for (size_t materialSlotIndex = 0; materialSlotIndex < materialReferences.size(); ++materialSlotIndex)
+                {
+                    SetMaterialAssetForMaterialSlot(materialSlotIndex, materialReferences[materialSlotIndex]);
+                }
+                m_sourceMeshPath = sourceMeshPath;
+                m_useGeneratedLods = false;
+            }
+            else
+            {
+                const std::string resolvedMeshPath = assetManager.ResolveMeshAssetSourcePath(sourceMeshPath);
+                auto importedMeshAsset = useGeneratedLods ? engine.GenerateMeshAssetLods(resolvedMeshPath) : engine.ImportMeshAsset(resolvedMeshPath);
+                if (importedMeshAsset.mesh)
+                {
+                    SetMesh(importedMeshAsset.mesh);
+                    SetMaterials(importedMeshAsset.materials);
+                    m_sourceMeshPath = sourceMeshPath;
+                    m_useGeneratedLods = useGeneratedLods;
+                    if (importedMeshAsset.animations && !importedMeshAsset.animations->empty())
                     {
-                        auto *animationComponent = owner->GetComponent<AnimationComponent>();
-                        if (!animationComponent) animationComponent = owner->CreateComponent<AnimationComponent>();
-                        animationComponent->SetClipsFromImportedAnimations(*importedMeshAsset.animations);
-                        animationComponent->SetSourceAnimationPath(sourceMeshPath);
+                        if (auto *owner = GetOwner())
+                        {
+                            auto *animationComponent = owner->GetComponent<AnimationComponent>();
+                            if (!animationComponent) animationComponent = owner->CreateComponent<AnimationComponent>();
+                            animationComponent->SetClipsFromImportedAnimations(*importedMeshAsset.animations);
+                            animationComponent->SetSourceAnimationPath(sourceMeshPath);
+                        }
                     }
                 }
             }

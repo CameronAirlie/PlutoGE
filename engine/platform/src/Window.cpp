@@ -253,6 +253,12 @@ namespace PlutoGE::platform
             glfwGetCursorPos(m_window, &cursorX, &cursorY);
             if (static_cast<int>(cursorX) != width / 2 || static_cast<int>(cursorY) != height / 2)
             {
+                // glfwSetCursorPos invokes our cursor callback synchronously on
+                // Windows. Account for the warp before making it so the
+                // callback does not add an equal-and-opposite delta and cancel
+                // the physical mouse movement collected above.
+                m_inputState.mouseState.x = width / 2.0;
+                m_inputState.mouseState.y = height / 2.0;
                 glfwSetCursorPos(m_window, width / 2.0, height / 2.0);
             }
         }

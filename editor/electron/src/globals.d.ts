@@ -126,6 +126,7 @@ interface PlutoEditorApi {
   saveScene(saveAs?: boolean): Promise<void>;
   importModels(): Promise<ModelImportResult>;
   refreshAssets(): void;
+  createAsset(type: 'material' | 'post-process', reference: string): void;
   instantiateAsset(reference: string): void;
   undo(): void;
   redo(): void;
@@ -142,6 +143,7 @@ interface PlutoEditorApi {
   setEditorPostProcessParameter(effectIndex: number, parameterIndex: number, value: string): void;
   setEditorPostProcessPreset(reference: string): void;
   saveEditorPostProcessPreset(): void;
+  saveEditorPostProcessPresetAs(reference: string): void;
   selectEntity(id: number): void;
   createEntity(name: string, parentId?: number): void;
   deleteEntity(id: number): void;
@@ -161,6 +163,7 @@ interface PlutoEditorApi {
   setCameraPostProcessParameter(entityId: number, componentIndex: number, effectIndex: number, parameterIndex: number, value: string): void;
   setCameraPostProcessPreset(entityId: number, componentIndex: number, reference: string): void;
   saveCameraPostProcessPreset(entityId: number, componentIndex: number): void;
+  saveCameraPostProcessPresetAs(entityId: number, componentIndex: number, reference: string): void;
 }
 
 interface Window {

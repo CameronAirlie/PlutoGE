@@ -4,6 +4,7 @@
 #include "PlutoGE/assets/PostProcessPresetAsset.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/render/Camera.h"
+#include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/postprocess/IPostProcessEffect.h"
 #include "PlutoGE/render/postprocess/PostProcessEffectFactory.h"
 #include "PlutoGE/scene/Entity.h"
@@ -37,6 +38,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <filesystem>
 #include <iomanip>
 #include <sstream>
 #include <string_view>
@@ -591,6 +593,27 @@ bool EditorSession::HandleCommand(const std::string &commandLine, std::string &e
             const auto preset = PlutoGE::assets::CapturePostProcessPreset(m_editorPostProcessEffects);
             if (!m_engine.GetAssetManager().SavePostProcessPresetAsset(m_editorPostProcessPresetReference, preset, &errorMessage)) return false;
         }
+        else if (command == "editor_effect_save_preset_as")
+        {
+            std::string encodedReference;
+            input >> encodedReference;
+            const std::string reference = Decode(encodedReference);
+            if (!m_project || PlutoGE::assets::Project::GetAssetTypeForReference(reference) != PlutoGE::assets::ProjectAssetType::PostProcessPreset)
+            {
+                errorMessage = "Choose a project .plutopostprocess asset reference.";
+                return false;
+            }
+            const auto path = m_project->ResolveAssetReference(reference);
+            if (std::filesystem::exists(path))
+            {
+                errorMessage = "A post-process preset already exists at that path.";
+                return false;
+            }
+            const auto preset = PlutoGE::assets::CapturePostProcessPreset(m_editorPostProcessEffects);
+            if (!m_engine.GetAssetManager().SavePostProcessPresetAsset(reference, preset, &errorMessage)) return false;
+            m_editorPostProcessPresetReference = reference;
+            m_project->RefreshAssetRegistry();
+        }
         else
         {
             errorMessage = "Unknown editor camera post-process command.";
@@ -826,6 +849,43 @@ bool EditorSession::HandleCommand(const std::string &commandLine, std::string &e
         }
         m_project->RefreshAssetRegistry();
         if (!m_project->Save(&errorMessage)) return false;
+        return true;
+    }
+
+    if (command == "create_asset")
+    {
+        std::string encodedType, encodedReference;
+        input >> encodedType >> encodedReference;
+        const std::string type = Decode(encodedType);
+        const std::string reference = Decode(encodedReference);
+        if (!m_project || !reference.starts_with("project://"))
+        {
+            errorMessage = "Open a project before creating assets.";
+            return false;
+        }
+        const auto path = m_project->ResolveAssetReference(reference);
+        if (path.empty() || std::filesystem::exists(path))
+        {
+            errorMessage = "An asset already exists at that path.";
+            return false;
+        }
+
+        bool saved = false;
+        if (type == "material" && PlutoGE::assets::Project::GetAssetTypeForReference(reference) == PlutoGE::assets::ProjectAssetType::Material)
+        {
+            PlutoGE::render::MaterialConfig material;
+            material.color = {0.82f, 0.84f, 0.88f, 1.0f};
+            material.roughness = 0.55f;
+            saved = m_engine.GetAssetManager().SaveMaterialAsset(reference, material, &errorMessage);
+        }
+        else if (type == "post-process" && PlutoGE::assets::Project::GetAssetTypeForReference(reference) == PlutoGE::assets::ProjectAssetType::PostProcessPreset)
+        {
+            saved = m_engine.GetAssetManager().SavePostProcessPresetAsset(reference, PlutoGE::assets::CreateDefaultPostProcessPresetAsset(), &errorMessage);
+        }
+        else errorMessage = "Unsupported asset type or file extension.";
+
+        if (!saved) return false;
+        m_project->RefreshAssetRegistry();
         return true;
     }
 
@@ -1072,6 +1132,31 @@ bool EditorSession::HandleCommand(const std::string &commandLine, std::string &e
             }
             const auto preset = PlutoGE::assets::CapturePostProcessPreset(camera->GetPostProcessEffects());
             if (!m_engine.GetAssetManager().SavePostProcessPresetAsset(reference, preset, &errorMessage)) return false;
+        }
+        else if (command == "camera_effect_save_preset_as")
+        {
+            std::string encodedReference;
+            input >> encodedReference;
+            const std::string reference = Decode(encodedReference);
+            if (!m_project || PlutoGE::assets::Project::GetAssetTypeForReference(reference) != PlutoGE::assets::ProjectAssetType::PostProcessPreset)
+            {
+                errorMessage = "Choose a project .plutopostprocess asset reference.";
+                return false;
+            }
+            const auto path = m_project->ResolveAssetReference(reference);
+            if (std::filesystem::exists(path))
+            {
+                errorMessage = "A post-process preset already exists at that path.";
+                return false;
+            }
+            const auto preset = PlutoGE::assets::CapturePostProcessPreset(camera->GetPostProcessEffects());
+            if (!m_engine.GetAssetManager().SavePostProcessPresetAsset(reference, preset, &errorMessage)) return false;
+            if (!camera->SetPostProcessPresetAssetReference(reference))
+            {
+                errorMessage = "The new post-process preset could not be assigned to the camera.";
+                return false;
+            }
+            m_project->RefreshAssetRegistry();
         }
         else
         {

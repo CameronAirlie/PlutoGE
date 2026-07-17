@@ -1,12 +1,15 @@
 import React, { useState } from 'react';
 import { entityPresets } from '../constants';
+import { panelTitles, type PanelId } from './PanelFrame';
 import { PopupMenu, type PopupMenuItem, type PopupMenuState } from './PopupMenu';
 
-export function Toolbar({ editor, running, showEditorCamera, onToggleCamera, onResetLayout }: {
+export function Toolbar({ editor, running, showEditorCamera, visiblePanels, onToggleCamera, onTogglePanel, onResetLayout }: {
   editor?: EditorState;
   running: boolean;
   showEditorCamera: boolean;
+  visiblePanels: Set<PanelId>;
   onToggleCamera(): void;
+  onTogglePanel(panel: PanelId): void;
   onResetLayout(): void;
 }): React.JSX.Element {
   const [menu, setMenu] = useState<PopupMenuState>();
@@ -39,11 +42,17 @@ export function Toolbar({ editor, running, showEditorCamera, onToggleCamera, onR
     disabled: !editor || running,
     action: () => window.plutoEditor.createEntity(name),
   }));
-  const viewItems: PopupMenuItem[] = [
-    { label: `${showEditorCamera ? '✓ ' : ''}Editor Camera`, disabled: !editor, action: onToggleCamera },
+  const viewItems: PopupMenuItem[] = ([
+    'hierarchy', 'viewport', 'game', 'inspector', 'content',
+  ] as PanelId[]).map((panel) => ({
+    label: `${visiblePanels.has(panel) ? '✓ ' : ''}${panelTitles[panel]}`,
+    action: () => onTogglePanel(panel),
+  }));
+  viewItems.push(
+    { label: `${showEditorCamera ? '✓ ' : ''}Editor Camera Settings`, disabled: !editor, separatorBefore: true, action: onToggleCamera },
     { label: 'Frame Selected', shortcut: 'F', disabled: !editor?.selectedEntityId, action: () => window.plutoEditor.frameSelected() },
     { label: 'Reset Panel Layout', separatorBefore: true, action: onResetLayout },
-  ];
+  );
 
   return <header className="toolbar">
     <div className="brand"><span className="brand-mark">P</span><span>PlutoGE</span></div>

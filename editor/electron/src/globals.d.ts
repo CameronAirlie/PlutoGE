@@ -105,10 +105,15 @@ interface EditorState {
 interface PlutoEditorApi {
   setViewportBounds(bounds: ViewportBounds): void;
   setViewportVisible(visible: boolean): void;
+  setGameViewportBounds(bounds: ViewportBounds): void;
+  setGameViewportVisible(visible: boolean): void;
   setViewportOccluded(token: string, occluded: boolean): void;
   getHostState(): Promise<HostState>;
   restartHost(): Promise<void>;
   onHostState(callback: (state: HostState) => void): () => void;
+  getGameHostState(): Promise<HostState>;
+  restartGameHost(): Promise<void>;
+  onGameHostState(callback: (state: HostState) => void): () => void;
   getEditorState(): Promise<EditorState | undefined>;
   onEditorState(callback: (state: EditorState) => void): () => void;
   newScene(): Promise<void>;

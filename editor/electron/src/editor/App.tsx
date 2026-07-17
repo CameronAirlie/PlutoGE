@@ -5,6 +5,7 @@ import { Toolbar } from './components/Toolbar';
 
 export function App(): React.JSX.Element {
   const [host, setHost] = useState<HostState>({ status: 'starting' });
+  const [gameHost, setGameHost] = useState<HostState>({ status: 'starting' });
   const [editor, setEditor] = useState<EditorState>();
   const [showEditorCamera, setShowEditorCamera] = useState(false);
   const dock = useDockLayout();
@@ -12,10 +13,12 @@ export function App(): React.JSX.Element {
 
   useEffect(() => {
     const removeHostListener = window.plutoEditor.onHostState(setHost);
+    const removeGameHostListener = window.plutoEditor.onGameHostState(setGameHost);
     const removeEditorListener = window.plutoEditor.onEditorState(setEditor);
     void window.plutoEditor.getHostState().then(setHost);
+    void window.plutoEditor.getGameHostState().then(setGameHost);
     void window.plutoEditor.getEditorState().then((state) => { if (state) setEditor(state); });
-    return () => { removeHostListener(); removeEditorListener(); };
+    return () => { removeHostListener(); removeGameHostListener(); removeEditorListener(); };
   }, []);
 
   useEffect(() => {
@@ -41,8 +44,8 @@ export function App(): React.JSX.Element {
 
   const running = editor?.running ?? false;
   return <div className="editor-shell">
-    <Toolbar editor={editor} running={running} showEditorCamera={showEditorCamera} onToggleCamera={() => setShowEditorCamera((visible) => !visible)} onResetLayout={dock.reset} />
-    <DockWorkspace layout={dock.layout} sizes={dock.sizes} onLayoutChange={dock.setLayout} onSizesChange={dock.setSizes} host={host} editor={editor} selectedEntity={selectedEntity} showEditorCamera={showEditorCamera} />
+    <Toolbar editor={editor} running={running} showEditorCamera={showEditorCamera} visiblePanels={dock.visiblePanels} onToggleCamera={() => setShowEditorCamera((visible) => !visible)} onTogglePanel={dock.togglePanel} onResetLayout={dock.reset} />
+    <DockWorkspace layout={dock.layout} onLayoutChange={dock.setLayout} onTogglePanel={dock.togglePanel} host={host} gameHost={gameHost} editor={editor} selectedEntity={selectedEntity} showEditorCamera={showEditorCamera} />
     <StatusBar host={host} editor={editor} />
   </div>;
 }

@@ -21,6 +21,8 @@ export class NativeHost {
     private readonly window: BrowserWindow,
     private readonly onState: (state: HostState) => void,
     private readonly onEditorState: (state: NativeEditorState) => void,
+    private readonly extraArguments: string[] = [],
+    private readonly diagnosticLabel = 'PlutoGEEditorHost',
   ) {}
 
   public getState(): HostState {
@@ -54,7 +56,7 @@ export class NativeHost {
 
     this.stopping = false;
     this.updateState({ status: 'starting' });
-    const child = spawn(executable, ['--parent-hwnd', `0x${handle.toString(16)}`], {
+    const child = spawn(executable, ['--parent-hwnd', `0x${handle.toString(16)}`, ...this.extraArguments], {
       cwd: path.dirname(executable),
       windowsHide: true,
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -67,7 +69,7 @@ export class NativeHost {
         const event = JSON.parse(line) as { type?: string; message?: string } & Partial<NativeEditorState>;
         if (event.type === 'ready') this.updateState({ status: 'ready' });
         if (event.type === 'error') this.updateState({ status: 'error', message: event.message });
-        if (event.type === 'editor-error' && event.message) console.warn(`[PlutoGEEditorHost] ${event.message}`);
+        if (event.type === 'editor-error' && event.message) console.warn(`[${this.diagnosticLabel}] ${event.message}`);
         if (event.type === 'editor-state') {
           this.editorState = event as NativeEditorState;
           this.onEditorState(this.editorState);
@@ -79,7 +81,7 @@ export class NativeHost {
 
     const diagnostics = readline.createInterface({ input: child.stderr });
     diagnostics.on('line', (line) => {
-      if (line.trim()) console.warn(`[PlutoGEEditorHost] ${line}`);
+      if (line.trim()) console.warn(`[${this.diagnosticLabel}] ${line}`);
     });
     child.on('error', (error) => this.updateState({ status: 'error', message: error.message }));
     child.on('exit', (code) => {

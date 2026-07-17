@@ -489,6 +489,9 @@ bool EditorViewportInteraction::Update(EditorSession &session,
                 }
                 entity->SetRotation(ExtractEulerDegrees(localRotation));
             }
+            // Publish live transform snapshots so inspectors and additional
+            // native views stay synchronized throughout the drag.
+            snapshotChanged = true;
         }
         if (!input.IsMouseButtonDown(0))
         {

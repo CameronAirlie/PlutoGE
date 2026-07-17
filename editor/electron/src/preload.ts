@@ -3,6 +3,8 @@ import { contextBridge, ipcRenderer } from 'electron';
 const api: PlutoEditorApi = {
   setViewportBounds: (bounds) => ipcRenderer.send('viewport:set-bounds', bounds),
   setViewportVisible: (visible) => ipcRenderer.send('viewport:set-visible', visible),
+  setGameViewportBounds: (bounds) => ipcRenderer.send('game-viewport:set-bounds', bounds),
+  setGameViewportVisible: (visible) => ipcRenderer.send('game-viewport:set-visible', visible),
   setViewportOccluded: (token, occluded) => ipcRenderer.send('viewport:set-occluded', token, occluded),
   getHostState: () => ipcRenderer.invoke('host:get-state'),
   restartHost: () => ipcRenderer.invoke('host:restart'),
@@ -10,6 +12,13 @@ const api: PlutoEditorApi = {
     const listener = (_event: Electron.IpcRendererEvent, state: HostState) => callback(state);
     ipcRenderer.on('host:state', listener);
     return () => ipcRenderer.removeListener('host:state', listener);
+  },
+  getGameHostState: () => ipcRenderer.invoke('game-host:get-state'),
+  restartGameHost: () => ipcRenderer.invoke('game-host:restart'),
+  onGameHostState: (callback) => {
+    const listener = (_event: Electron.IpcRendererEvent, state: HostState) => callback(state);
+    ipcRenderer.on('game-host:state', listener);
+    return () => ipcRenderer.removeListener('game-host:state', listener);
   },
   getEditorState: () => ipcRenderer.invoke('editor:get-state'),
   onEditorState: (callback) => {

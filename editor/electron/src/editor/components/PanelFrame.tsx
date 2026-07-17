@@ -1,6 +1,14 @@
 import React from 'react';
 
-export type PanelId = 'hierarchy' | 'viewport' | 'inspector' | 'content';
+export type PanelId = 'hierarchy' | 'viewport' | 'game' | 'inspector' | 'content';
+
+export const panelTitles: Record<PanelId, string> = {
+  hierarchy: 'Hierarchy',
+  viewport: 'Scene View',
+  game: 'Game View',
+  inspector: 'Inspector',
+  content: 'Content Browser',
+};
 
 export function PanelFrame({ id, title, actions, children, className = '' }: {
   id: PanelId;
@@ -10,19 +18,7 @@ export function PanelFrame({ id, title, actions, children, className = '' }: {
   className?: string;
 }): React.JSX.Element {
   return <section className={`dock-panel ${className}`} data-panel-id={id}>
-    <header
-      className="dock-panel-header"
-      draggable
-      title="Drag this tab onto another panel to move it"
-      onDragStart={(event) => {
-        event.dataTransfer.effectAllowed = 'move';
-        event.dataTransfer.setData('application/x-plutoge-panel', id);
-      }}
-    >
-      <span className="panel-grip">⠿</span>
-      <h2>{title}</h2>
-      {actions && <div className="panel-actions" onMouseDown={(event) => event.stopPropagation()}>{actions}</div>}
-    </header>
+    {actions && <header className="dock-panel-toolbar" aria-label={`${title} actions`}><div className="panel-actions">{actions}</div></header>}
     <div className="dock-panel-body">{children}</div>
   </section>;
 }

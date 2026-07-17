@@ -5,25 +5,42 @@ import { NativeHost } from './native-host';
 
 let mainWindow: BrowserWindow | undefined;
 let nativeHost: NativeHost | undefined;
-let viewportBounds: [number, number, number, number] | undefined;
-let viewportVisible = true;
+let gameHost: NativeHost | undefined;
+type NativeSurface = { bounds?: [number, number, number, number]; visible: boolean };
+const sceneSurface: NativeSurface = { visible: false };
+const gameSurface: NativeSurface = { visible: false };
 const viewportOcclusions = new Set<string>();
+let previousEditorState: EditorState | undefined;
+let mirroredProjectPath = '';
+let mirroredScenePath = '';
 
 const isTrustedSender = (event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent): boolean =>
   Boolean(mainWindow && event.sender.id === mainWindow.webContents.id);
 
-const syncViewport = (): void => {
-  if (!viewportBounds) {
-    nativeHost?.send('visible 0');
+const syncSurface = (host: NativeHost | undefined, surface: NativeSurface): void => {
+  if (!surface.bounds) {
+    host?.send('visible 0');
     return;
   }
-  nativeHost?.send(`bounds ${viewportBounds.join(' ')}`);
+  host?.send(`bounds ${surface.bounds.join(' ')}`);
   const windowCanShowViewport = Boolean(mainWindow?.isVisible() && !mainWindow.isMinimized());
-  nativeHost?.send(`visible ${viewportVisible && viewportOcclusions.size === 0 && windowCanShowViewport ? 1 : 0}`);
+  host?.send(`visible ${surface.visible && viewportOcclusions.size === 0 && windowCanShowViewport ? 1 : 0}`);
+};
+
+const syncViewports = (): void => {
+  syncSurface(nativeHost, sceneSurface);
+  syncSurface(gameHost, gameSurface);
 };
 
 const createWindow = (): void => {
   viewportOcclusions.clear();
+  previousEditorState = undefined;
+  mirroredProjectPath = '';
+  mirroredScenePath = '';
+  sceneSurface.bounds = undefined;
+  sceneSurface.visible = false;
+  gameSurface.bounds = undefined;
+  gameSurface.visible = false;
   const editorWindow = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -47,22 +64,65 @@ const createWindow = (): void => {
     editorWindow,
     (state) => {
       if (!editorWindow.isDestroyed()) editorWindow.webContents.send('host:state', state);
-      if (state.status === 'ready') syncViewport();
+      if (state.status === 'ready') syncSurface(nativeHost, sceneSurface);
     },
     (state) => {
+      if (gameHost?.getState().status === 'ready') {
+        if (state.projectPath !== mirroredProjectPath) {
+          if (state.projectPath) gameHost.send(`load_project ${encode(state.projectPath)}`);
+          else gameHost.send('new_scene');
+          mirroredProjectPath = state.projectPath;
+          mirroredScenePath = state.scenePath;
+        } else if (state.scenePath !== mirroredScenePath) {
+          gameHost.send(state.scenePath ? `load_scene ${encode(state.scenePath)}` : 'new_scene');
+          mirroredScenePath = state.scenePath;
+        }
+        const previousEntities = new Map(previousEditorState?.entities.map((entity) => [entity.id, entity]));
+        for (const entity of state.entities) {
+          const previous = previousEntities.get(entity.id);
+          const transformChanged = previous && (
+            previous.position.some((value, index) => value !== entity.position[index]) ||
+            previous.rotation.some((value, index) => value !== entity.rotation[index]) ||
+            previous.scale.some((value, index) => value !== entity.scale[index])
+          );
+          if (transformChanged) gameHost.send(`set_transform ${entity.id} ${[...entity.position, ...entity.rotation, ...entity.scale].join(' ')}`);
+        }
+      }
+      previousEditorState = state;
       if (!editorWindow.isDestroyed()) editorWindow.webContents.send('editor:state', state);
     },
   );
-  editorWindow.webContents.once('did-finish-load', () => nativeHost?.start());
+  gameHost = new NativeHost(
+    editorWindow,
+    (state) => {
+      if (!editorWindow.isDestroyed()) editorWindow.webContents.send('game-host:state', state);
+      if (state.status === 'ready') {
+        mirroredProjectPath = '';
+        mirroredScenePath = '';
+        syncSurface(gameHost, gameSurface);
+        const editorState = nativeHost?.getEditorState();
+        if (editorState?.projectPath) {
+          gameHost?.send(`load_project ${encode(editorState.projectPath)}`);
+          if (editorState.scenePath) gameHost?.send(`load_scene ${encode(editorState.scenePath)}`);
+          mirroredProjectPath = editorState.projectPath;
+          mirroredScenePath = editorState.scenePath;
+        }
+      }
+    },
+    () => { /* The primary host owns editor state. */ },
+    ['--view-mode', 'game'],
+    'PlutoGEGameViewHost',
+  );
+  editorWindow.webContents.once('did-finish-load', () => { nativeHost?.start(); gameHost?.start(); });
   editorWindow.webContents.on('did-finish-load', () => {
     viewportOcclusions.clear();
-    syncViewport();
+    syncViewports();
   });
-  editorWindow.on('move', syncViewport);
-  editorWindow.on('minimize', syncViewport);
-  editorWindow.on('restore', syncViewport);
-  editorWindow.on('hide', syncViewport);
-  editorWindow.on('show', syncViewport);
+  editorWindow.on('move', syncViewports);
+  editorWindow.on('minimize', syncViewports);
+  editorWindow.on('restore', syncViewports);
+  editorWindow.on('hide', syncViewports);
+  editorWindow.on('show', syncViewports);
   editorWindow.on('closed', () => {
     if (mainWindow === editorWindow) mainWindow = undefined;
   });
@@ -75,14 +135,32 @@ ipcMain.on('viewport:set-bounds', (event, value: unknown) => {
   if (!numbers.every(Number.isFinite)) return;
   const [x, y, width, height] = numbers.map(Math.round);
   if (width <= 0 || height <= 0) return;
-  viewportBounds = [x, y, width, height];
-  syncViewport();
+  sceneSurface.bounds = [x, y, width, height];
+  syncSurface(nativeHost, sceneSurface);
 });
 
 ipcMain.on('viewport:set-visible', (event, visible: unknown) => {
   if (isTrustedSender(event) && typeof visible === 'boolean') {
-    viewportVisible = visible;
-    syncViewport();
+    sceneSurface.visible = visible;
+    syncSurface(nativeHost, sceneSurface);
+  }
+});
+
+ipcMain.on('game-viewport:set-bounds', (event, value: unknown) => {
+  if (!isTrustedSender(event) || !value || typeof value !== 'object') return;
+  const bounds = value as Record<string, unknown>;
+  const numbers = ['x', 'y', 'width', 'height'].map((key) => Number(bounds[key]));
+  if (!numbers.every(Number.isFinite)) return;
+  const [x, y, width, height] = numbers.map(Math.round);
+  if (width <= 0 || height <= 0) return;
+  gameSurface.bounds = [x, y, width, height];
+  syncSurface(gameHost, gameSurface);
+});
+
+ipcMain.on('game-viewport:set-visible', (event, visible: unknown) => {
+  if (isTrustedSender(event) && typeof visible === 'boolean') {
+    gameSurface.visible = visible;
+    syncSurface(gameHost, gameSurface);
   }
 });
 
@@ -90,7 +168,7 @@ ipcMain.on('viewport:set-occluded', (event, token: unknown, occluded: unknown) =
   if (!isTrustedSender(event) || typeof token !== 'string' || !token || token.length > 128 || typeof occluded !== 'boolean') return;
   if (occluded) viewportOcclusions.add(token);
   else viewportOcclusions.delete(token);
-  syncViewport();
+  syncViewports();
 });
 
 ipcMain.handle('host:restart', async (event) => {
@@ -103,10 +181,28 @@ ipcMain.handle('host:get-state', (event) => {
   return nativeHost?.getState() ?? { status: 'stopped' };
 });
 
+ipcMain.handle('game-host:restart', async (event) => {
+  if (!isTrustedSender(event)) return;
+  await gameHost?.restart();
+});
+
+ipcMain.handle('game-host:get-state', (event) => {
+  if (!isTrustedSender(event)) return { status: 'error', message: 'Untrusted IPC sender.' };
+  return gameHost?.getState() ?? { status: 'stopped' };
+});
+
 // Prefix encoded arguments so even an empty string remains a token in the
 // host's whitespace-delimited command protocol.
 const encode = (value: unknown): string => `~${encodeURIComponent(String(value))}`;
-const sendEditorCommand = (command: string): void => nativeHost?.send(command);
+const sendEditorCommand = (command: string): void => {
+  nativeHost?.send(command);
+  const name = command.split(' ', 1)[0];
+  const primaryOnly = new Set([
+    'load_project', 'create_project', 'load_scene', 'save_scene', 'save_project', 'refresh_assets',
+    'editor_effect_save_preset', 'camera_effect_save_preset',
+  ]);
+  if (!primaryOnly.has(name)) gameHost?.send(command);
+};
 const confirmDiscardUnsavedChanges = async (): Promise<boolean> => {
   if (!mainWindow || !nativeHost?.getEditorState()?.dirty) return true;
   const result = await dialog.showMessageBox(mainWindow, {
@@ -366,10 +462,12 @@ app.whenReady().then(() => {
 });
 
 app.on('before-quit', (event) => {
-  if (!nativeHost || nativeHost.getState().status === 'stopped') return;
+  const hosts = [nativeHost, gameHost].filter((host): host is NativeHost => Boolean(host && host.getState().status !== 'stopped'));
+  if (!hosts.length) return;
   event.preventDefault();
-  void nativeHost.stop().finally(() => {
+  void Promise.all(hosts.map((host) => host.stop())).finally(() => {
     nativeHost = undefined;
+    gameHost = undefined;
     app.quit();
   });
 });

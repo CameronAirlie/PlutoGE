@@ -35,6 +35,7 @@ namespace
         void *parentWindow = nullptr;
         int width = 960;
         int height = 640;
+        bool gameView = false;
     };
 
     HostOptions ParseOptions(int argc, char **argv)
@@ -55,6 +56,10 @@ namespace
             else if (argument == "--height" && index + 1 < argc)
             {
                 options.height = std::max(1, std::atoi(argv[++index]));
+            }
+            else if (argument == "--view-mode" && index + 1 < argc)
+            {
+                options.gameView = std::string_view(argv[++index]) == "game";
             }
         }
         return options;
@@ -206,7 +211,7 @@ int main(int argc, char **argv)
     auto &engine = PlutoGE::core::Engine::GetInstance();
     PlutoGE::core::EngineConfig config{
         PlutoGE::platform::WindowConfig{
-            .title = "PlutoGE Engine Viewport",
+            .title = options.gameView ? "PlutoGE Game View" : "PlutoGE Scene View",
             .width = options.width,
             .height = options.height,
             .resizable = !embedded,
@@ -310,7 +315,7 @@ int main(int argc, char **argv)
         previousFrameTime = currentFrameTime;
         const auto &input = window.GetInputState();
         auto &editorCamera = editorSession.GetEditorCamera();
-        if (!engine.IsRuntimeRunning() && input.IsMouseButtonDown(GLFW_MOUSE_BUTTON_RIGHT))
+        if (!options.gameView && !engine.IsRuntimeRunning() && input.IsMouseButtonDown(GLFW_MOUSE_BUTTON_RIGHT))
         {
             if (!editorCameraLookActive)
             {
@@ -358,11 +363,11 @@ int main(int argc, char **argv)
 
         const auto extents = window.GetExtents();
         const auto editorCameraData = BuildEditorCamera(extents.width, extents.height, editorCamera);
-        if (viewportInteraction.Update(editorSession, editorCameraData, input, extents.width, extents.height, engine.IsRuntimeRunning()))
+        if (!options.gameView && viewportInteraction.Update(editorSession, editorCameraData, input, extents.width, extents.height, engine.IsRuntimeRunning()))
         {
             WriteEvent(editorSession.BuildSnapshotEvent());
         }
-        if (engine.IsRuntimeRunning()) renderer.ClearSubmissionCullingCameras();
+        if (options.gameView) renderer.ClearSubmissionCullingCameras();
         else renderer.SetSubmissionCullingCameras({editorCameraData});
         renderer.BeginProfilingFrame();
         editorSession.Update(deltaTime);
@@ -377,15 +382,14 @@ int main(int argc, char **argv)
                 if (effect) editorPostProcessEffects.push_back(effect.get());
             }
             renderer.BeginFrame();
-            if (engine.IsRuntimeRunning())
+            if (options.gameView)
             {
                 if (auto *runtimeCamera = FindRuntimeCamera(scene)) renderer.RenderFrame(*runtimeCamera, nullptr, scene ? scene->GetLights() : std::vector<PlutoGE::scene::Light *>{});
-                else renderer.RenderFrame(editorCameraData, nullptr, scene ? scene->GetLights() : std::vector<PlutoGE::scene::Light *>{}, &editorPostProcessEffects, scene, false, false);
             }
             else
             {
                 renderer.RenderFrame(editorCameraData, nullptr, scene ? scene->GetLights() : std::vector<PlutoGE::scene::Light *>{}, &editorPostProcessEffects, scene, editorCamera.gridVisible, true);
-                viewportInteraction.Render(editorSession, editorCameraData, extents.width, extents.height);
+                if (!engine.IsRuntimeRunning()) viewportInteraction.Render(editorSession, editorCameraData, extents.width, extents.height);
             }
             const auto &frameStats = renderer.GetCpuFrameStats();
             if (editorSession.SetViewportStats(frameStats.submittedRenderCommandCount, frameStats.visibleRenderCommandCount))

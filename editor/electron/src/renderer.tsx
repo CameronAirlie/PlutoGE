@@ -82,7 +82,73 @@ function PropertyEditor({ property, entityId, componentIndex, propertyIndex, dis
   }} /></label>;
 }
 
-function Inspector({ entity, running }: { entity?: EditorEntity; running: boolean }): React.JSX.Element {
+function PostProcessParameterEditor({ parameter, disabled, onCommit }: {
+  parameter: EditorProperty;
+  disabled: boolean;
+  onCommit(value: string): void;
+}): React.JSX.Element {
+  if (parameter.type === 4) {
+    return <label className="property-row"><span>{parameter.name}</span><input disabled={disabled} type="checkbox" checked={parameter.value === 'true' || parameter.value === '1'} onChange={(event) => onCommit(event.currentTarget.checked ? 'true' : 'false')} /></label>;
+  }
+  if (parameter.type === 6 && parameter.enumOptions.length) {
+    const usesIndex = /^\d+$/.test(parameter.value);
+    return <label className="property-row"><span>{parameter.name}</span><select disabled={disabled} value={parameter.value} onChange={(event) => onCommit(event.currentTarget.value)}>{parameter.enumOptions.map((option, index) => <option key={option} value={usesIndex ? String(index) : option}>{option}</option>)}</select></label>;
+  }
+  const numeric = parameter.type === 0 || parameter.type === 1 || parameter.type === 8;
+  return <label className="property-row"><span>{parameter.name}</span><input disabled={disabled} type={numeric ? 'number' : 'text'} step="any" defaultValue={parameter.value} onBlur={(event) => {
+    if (event.currentTarget.value !== parameter.value) onCommit(event.currentTarget.value);
+  }} /></label>;
+}
+
+function PostProcessStackEditor({ effects, effectTypes, presetReference, disabled, onAdd, onRemove, onMove, onEnabled, onParameter, onPreset, onSavePreset }: {
+  effects: PostProcessEffectState[];
+  effectTypes: string[];
+  presetReference: string;
+  disabled: boolean;
+  onAdd(type: string): void;
+  onRemove(index: number): void;
+  onMove(from: number, to: number): void;
+  onEnabled(index: number, enabled: boolean): void;
+  onParameter(effectIndex: number, parameterIndex: number, value: string): void;
+  onPreset(reference: string): void;
+  onSavePreset(): void;
+}): React.JSX.Element {
+  const [effectType, setEffectType] = useState(effectTypes[0] ?? '');
+  const [preset, setPreset] = useState(presetReference);
+  useEffect(() => setPreset(presetReference), [presetReference]);
+
+  return <div className="post-process-stack">
+    <div className="preset-row">
+      <input disabled={disabled} value={preset} placeholder="project://presets/editor.pppreset" onChange={(event) => setPreset(event.currentTarget.value)} />
+      <button disabled={disabled || preset === presetReference} onClick={() => onPreset(preset)}>Load</button>
+      <button disabled={disabled || !presetReference} onClick={onSavePreset}>Save</button>
+      <button disabled={disabled || (!preset && !presetReference)} onClick={() => { setPreset(''); onPreset(''); }}>Clear</button>
+    </div>
+    <div className="effect-add-row">
+      <select disabled={disabled || !effectTypes.length} value={effectType} onChange={(event) => setEffectType(event.currentTarget.value)}>{effectTypes.map((type) => <option key={type}>{type}</option>)}</select>
+      <button disabled={disabled || !effectType} onClick={() => onAdd(effectType)}>Add effect</button>
+    </div>
+    <div className="effect-list">
+      {effects.map((effect, effectIndex) => <details className="effect-card" open key={`${effect.typeName}-${effectIndex}`}>
+        <summary>
+          <input disabled={disabled} type="checkbox" checked={effect.enabled} onClick={(event) => event.stopPropagation()} onChange={(event) => onEnabled(effectIndex, event.currentTarget.checked)} />
+          <span>{effect.displayName || effect.typeName}</span>
+          <div className="effect-actions">
+            <button disabled={disabled || effectIndex === 0} title="Move up" onClick={(event) => { event.preventDefault(); onMove(effectIndex, effectIndex - 1); }}>↑</button>
+            <button disabled={disabled || effectIndex + 1 === effects.length} title="Move down" onClick={(event) => { event.preventDefault(); onMove(effectIndex, effectIndex + 1); }}>↓</button>
+            <button disabled={disabled} title="Remove effect" onClick={(event) => { event.preventDefault(); onRemove(effectIndex); }}>×</button>
+          </div>
+        </summary>
+        <div className="effect-parameters">
+          {effect.parameters.length ? effect.parameters.map((parameter, parameterIndex) => <PostProcessParameterEditor key={`${parameter.name}-${parameterIndex}`} parameter={parameter} disabled={disabled} onCommit={(value) => onParameter(effectIndex, parameterIndex, value)} />) : <small>No settings.</small>}
+        </div>
+      </details>)}
+      {!effects.length && <small>No post-processing effects. Add one above or load a preset.</small>}
+    </div>
+  </div>;
+}
+
+function Inspector({ entity, running, effectTypes }: { entity?: EditorEntity; running: boolean; effectTypes: string[] }): React.JSX.Element {
   const [componentToAdd, setComponentToAdd] = useState('');
   if (!entity) return <aside className="inspector panel"><h2>Inspector</h2><div className="empty-state">Select an entity to inspect it.</div></aside>;
   const updateTransform = (field: 'position' | 'rotation' | 'scale', value: Vec3): void => {
@@ -111,7 +177,20 @@ function Inspector({ entity, running }: { entity?: EditorEntity; running: boolea
           <button disabled={running} title="Remove component" onClick={(event) => { event.preventDefault(); window.plutoEditor.removeComponent(entity.id, componentIndex); }}>×</button>
         </summary>
         <div className="component-properties">
-          {component.properties.length ? component.properties.map((property, propertyIndex) => <PropertyEditor key={`${property.name}-${propertyIndex}`} property={property} entityId={entity.id} componentIndex={componentIndex} propertyIndex={propertyIndex} disabled={running} />) : <small>No editable serialized properties.</small>}
+          {component.properties.length ? component.properties.map((property, propertyIndex) => component.type === 'CameraComponent' && (property.name === 'PostProcessEffectCount' || property.name === 'PostProcessPresetAsset' || property.name.startsWith('PostProcessEffects.')) ? null : <PropertyEditor key={`${property.name}-${propertyIndex}`} property={property} entityId={entity.id} componentIndex={componentIndex} propertyIndex={propertyIndex} disabled={running} />) : <small>No editable serialized properties.</small>}
+          {component.type === 'CameraComponent' && <PostProcessStackEditor
+            effects={component.postProcessEffects ?? []}
+            effectTypes={effectTypes}
+            presetReference={component.postProcessPresetReference ?? ''}
+            disabled={running}
+            onAdd={(type) => window.plutoEditor.addCameraPostProcessEffect(entity.id, componentIndex, type)}
+            onRemove={(index) => window.plutoEditor.removeCameraPostProcessEffect(entity.id, componentIndex, index)}
+            onMove={(from, to) => window.plutoEditor.moveCameraPostProcessEffect(entity.id, componentIndex, from, to)}
+            onEnabled={(index, enabled) => window.plutoEditor.setCameraPostProcessEffectEnabled(entity.id, componentIndex, index, enabled)}
+            onParameter={(effectIndex, parameterIndex, value) => window.plutoEditor.setCameraPostProcessParameter(entity.id, componentIndex, effectIndex, parameterIndex, value)}
+            onPreset={(reference) => window.plutoEditor.setCameraPostProcessPreset(entity.id, componentIndex, reference)}
+            onSavePreset={() => window.plutoEditor.saveCameraPostProcessPreset(entity.id, componentIndex)}
+          />}
         </div>
       </details>)}
       <div className="add-component"><select disabled={running} value={componentToAdd} onChange={(event) => setComponentToAdd(event.currentTarget.value)}><option value="">Add component…</option>{componentTypes.map((type) => <option key={type} value={type}>{displayComponentName(type)}</option>)}</select><button disabled={running || !componentToAdd} onClick={() => { window.plutoEditor.addComponent(entity.id, componentToAdd); setComponentToAdd(''); }}>Add</button></div>
@@ -119,10 +198,11 @@ function Inspector({ entity, running }: { entity?: EditorEntity; running: boolea
   </aside>;
 }
 
-function EditorCameraInspector({ camera, running, hasSelection }: {
+function EditorCameraInspector({ camera, running, hasSelection, effectTypes }: {
   camera: EditorCameraState;
   running: boolean;
   hasSelection: boolean;
+  effectTypes: string[];
 }): React.JSX.Element {
   const commit = (changes: Partial<EditorCameraState>): void => window.plutoEditor.setEditorCamera({ ...camera, ...changes });
   const scalar = (label: string, field: keyof EditorCameraState, step: number, min?: number): React.JSX.Element =>
@@ -161,8 +241,19 @@ function EditorCameraInspector({ camera, running, hasSelection }: {
     </section>
     <section>
       <h4>Post-processing</h4>
-      <div className="property-row"><span>Loaded effects</span><small>{camera.postProcessEffectCount}</small></div>
-      <div className="property-row"><span>Source</span><small title={camera.postProcessPresetReference}>{camera.postProcessPresetReference || 'Project settings'}</small></div>
+      <PostProcessStackEditor
+        effects={camera.postProcessEffects}
+        effectTypes={effectTypes}
+        presetReference={camera.postProcessPresetReference}
+        disabled={running}
+        onAdd={(type) => window.plutoEditor.addEditorPostProcessEffect(type)}
+        onRemove={(index) => window.plutoEditor.removeEditorPostProcessEffect(index)}
+        onMove={(from, to) => window.plutoEditor.moveEditorPostProcessEffect(from, to)}
+        onEnabled={(index, enabled) => window.plutoEditor.setEditorPostProcessEffectEnabled(index, enabled)}
+        onParameter={(effectIndex, parameterIndex, value) => window.plutoEditor.setEditorPostProcessParameter(effectIndex, parameterIndex, value)}
+        onPreset={(reference) => window.plutoEditor.setEditorPostProcessPreset(reference)}
+        onSavePreset={() => window.plutoEditor.saveEditorPostProcessPreset()}
+      />
     </section>
     <div className="camera-actions">
       <button disabled={running || !hasSelection} onClick={() => window.plutoEditor.frameSelected()}>Frame selected</button>
@@ -247,8 +338,8 @@ function App(): React.JSX.Element {
     </aside>
     <main className="viewport-frame"><div ref={viewport} className="viewport" aria-label="Engine viewport">{host.status !== 'ready' && <div className="viewport-message"><strong>{host.status === 'starting' ? 'Starting engine…' : 'Viewport unavailable'}</strong>{host.message && <span>{host.message}</span>}{host.status === 'error' && <button onClick={() => void window.plutoEditor.restartHost()}>Restart host</button>}</div>}</div></main>
     {showEditorCamera && editor
-      ? <EditorCameraInspector key={JSON.stringify(editor.editorCamera)} camera={editor.editorCamera} running={running} hasSelection={Boolean(selectedEntity)} />
-      : <Inspector key={selectedEntity ? JSON.stringify(selectedEntity) : 'none'} entity={selectedEntity} running={running} />}
+      ? <EditorCameraInspector key={JSON.stringify(editor.editorCamera)} camera={editor.editorCamera} running={running} hasSelection={Boolean(selectedEntity)} effectTypes={editor.postProcessEffectTypes} />
+      : <Inspector key={selectedEntity ? JSON.stringify(selectedEntity) : 'none'} entity={selectedEntity} running={running} effectTypes={editor?.postProcessEffectTypes ?? []} />}
     <footer className="statusbar"><span className={`status-dot ${host.status}`} /> Engine {host.status}<span>{running ? 'Play mode · Scene camera' : editor?.dirty ? 'Unsaved changes' : 'Scene saved'}</span>{editor && <span title="visible / submitted · renderable / registered meshes">Draw {editor.viewportStats.visibleRenderCommands}/{editor.viewportStats.submittedRenderCommands} · Mesh {editor.viewportStats.renderableMeshComponents}/{editor.viewportStats.registeredMeshComponents}</span>}<span className="status-hint">Hold RMB + WASD/QE to fly · Shift boosts · Wheel changes speed</span></footer>
   </div>;
 }

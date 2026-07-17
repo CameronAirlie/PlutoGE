@@ -150,6 +150,54 @@ namespace
         return nullptr;
     }
 
+    int PostProcessPropertyType(render::PostProcessParameterType type)
+    {
+        switch (type)
+        {
+        case render::PostProcessParameterType::Float: return static_cast<int>(scene::PropertyType::Float);
+        case render::PostProcessParameterType::Int: return static_cast<int>(scene::PropertyType::Int);
+        case render::PostProcessParameterType::Bool: return static_cast<int>(scene::PropertyType::Bool);
+        case render::PostProcessParameterType::Enum: return static_cast<int>(scene::PropertyType::Enum);
+        case render::PostProcessParameterType::String:
+        default: return static_cast<int>(scene::PropertyType::String);
+        }
+    }
+
+    void WritePostProcessEffectsJson(
+        std::ostream &output,
+        const std::vector<std::unique_ptr<render::IPostProcessEffect>> &effects)
+    {
+        output << '[';
+        bool firstEffect = true;
+        for (const auto &effect : effects)
+        {
+            if (!effect) continue;
+            if (!firstEffect) output << ',';
+            firstEffect = false;
+            output << "{\"typeName\":\"" << JsonEscape(effect->GetTypeName())
+                   << "\",\"displayName\":\"" << JsonEscape(effect->GetDisplayName())
+                   << "\",\"enabled\":" << (effect->IsEnabled() ? "true" : "false")
+                   << ",\"parameters\":[";
+            const auto parameters = effect->GetParameters();
+            for (std::size_t parameterIndex = 0; parameterIndex < parameters.size(); ++parameterIndex)
+            {
+                const auto &parameter = parameters[parameterIndex];
+                if (parameterIndex > 0) output << ',';
+                output << "{\"name\":\"" << JsonEscape(parameter.name)
+                       << "\",\"type\":" << PostProcessPropertyType(parameter.type)
+                       << ",\"value\":\"" << JsonEscape(parameter.value) << "\",\"enumOptions\":[";
+                for (std::size_t optionIndex = 0; optionIndex < parameter.enumOptions.size(); ++optionIndex)
+                {
+                    if (optionIndex > 0) output << ',';
+                    output << '"' << JsonEscape(parameter.enumOptions[optionIndex]) << '"';
+                }
+                output << "]}";
+            }
+            output << "]}";
+        }
+        output << ']';
+    }
+
     void WriteEntityJson(std::ostream &output, const scene::Entity &entity)
     {
         const auto position = entity.GetPosition();
@@ -188,7 +236,15 @@ namespace
                     }
                     output << "]}";
                 }
-                output << "]}";
+                output << ']';
+                if (const auto *camera = dynamic_cast<const scene::CameraComponent *>(component))
+                {
+                    output << ",\"postProcessPresetReference\":\""
+                           << JsonEscape(camera->GetPostProcessPresetAssetReference())
+                           << "\",\"postProcessEffects\":";
+                    WritePostProcessEffectsJson(output, camera->GetPostProcessEffects());
+                }
+                output << '}';
             }
         }
         output << "]}";
@@ -390,6 +446,110 @@ bool EditorSession::HandleCommand(const std::string &commandLine, std::string &e
         m_editorCamera.moveSpeed = std::clamp(m_editorCamera.moveSpeed, 0.1f, 1000.0f);
         m_editorCamera.speedAdjustment = std::clamp(m_editorCamera.speedAdjustment, 0.1f, 10.0f);
         m_editorCamera.gridVisible = gridVisible != 0;
+        return true;
+    }
+
+    if (command.rfind("editor_effect_", 0) == 0)
+    {
+        if (m_engine.IsRuntimeRunning())
+        {
+            errorMessage = "Stop play mode before editing the editor camera post-process stack.";
+            return false;
+        }
+
+        if (command == "editor_effect_add")
+        {
+            std::string type;
+            input >> type;
+            if (auto effect = PlutoGE::render::CreatePostProcessEffect(Decode(type)))
+            {
+                m_editorPostProcessEffects.push_back(std::move(effect));
+            }
+        }
+        else if (command == "editor_effect_remove")
+        {
+            std::size_t index = 0;
+            input >> index;
+            if (index < m_editorPostProcessEffects.size())
+            {
+                m_engine.GetWindow().EnsureOpenGLContextCurrent(true);
+                m_editorPostProcessEffects.erase(m_editorPostProcessEffects.begin() + static_cast<std::ptrdiff_t>(index));
+            }
+        }
+        else if (command == "editor_effect_move")
+        {
+            std::size_t from = 0, to = 0;
+            input >> from >> to;
+            if (from < m_editorPostProcessEffects.size() && to < m_editorPostProcessEffects.size() && from != to)
+            {
+                auto effect = std::move(m_editorPostProcessEffects[from]);
+                m_editorPostProcessEffects.erase(m_editorPostProcessEffects.begin() + static_cast<std::ptrdiff_t>(from));
+                m_editorPostProcessEffects.insert(m_editorPostProcessEffects.begin() + static_cast<std::ptrdiff_t>(to), std::move(effect));
+            }
+        }
+        else if (command == "editor_effect_enabled")
+        {
+            std::size_t index = 0;
+            int enabled = 1;
+            input >> index >> enabled;
+            if (index < m_editorPostProcessEffects.size() && m_editorPostProcessEffects[index])
+            {
+                m_editorPostProcessEffects[index]->SetEnabled(enabled != 0);
+            }
+        }
+        else if (command == "editor_effect_parameter")
+        {
+            std::size_t effectIndex = 0, parameterIndex = 0;
+            std::string value;
+            input >> effectIndex >> parameterIndex >> value;
+            if (effectIndex < m_editorPostProcessEffects.size() && m_editorPostProcessEffects[effectIndex])
+            {
+                auto parameters = m_editorPostProcessEffects[effectIndex]->GetParameters();
+                if (parameterIndex < parameters.size())
+                {
+                    parameters[parameterIndex].value = Decode(value);
+                    m_editorPostProcessEffects[effectIndex]->SetParameters(parameters);
+                }
+            }
+        }
+        else if (command == "editor_effect_preset")
+        {
+            std::string reference;
+            input >> reference;
+            const auto decodedReference = Decode(reference);
+            if (decodedReference.empty())
+            {
+                m_editorPostProcessEffects.clear();
+                m_editorPostProcessPresetReference.clear();
+            }
+            else
+            {
+                bool loaded = false;
+                const auto preset = m_engine.GetAssetManager().LoadPostProcessPresetAsset(decodedReference, &loaded);
+                if (!loaded)
+                {
+                    errorMessage = "Could not load editor camera post-process preset: " + decodedReference;
+                    return false;
+                }
+                m_editorPostProcessEffects = PlutoGE::assets::InstantiatePostProcessPreset(preset);
+                m_editorPostProcessPresetReference = decodedReference;
+            }
+        }
+        else if (command == "editor_effect_save_preset")
+        {
+            if (m_editorPostProcessPresetReference.empty())
+            {
+                errorMessage = "Set an editor camera post-process preset reference before saving.";
+                return false;
+            }
+            const auto preset = PlutoGE::assets::CapturePostProcessPreset(m_editorPostProcessEffects);
+            if (!m_engine.GetAssetManager().SavePostProcessPresetAsset(m_editorPostProcessPresetReference, preset, &errorMessage)) return false;
+        }
+        else
+        {
+            errorMessage = "Unknown editor camera post-process command.";
+            return false;
+        }
         return true;
     }
 
@@ -693,6 +853,86 @@ bool EditorSession::HandleCommand(const std::string &commandLine, std::string &e
         input >> id >> componentIndex;
         if (auto *entity = FindEntity(id)) if (auto *component = ComponentAt(*entity, componentIndex)) entity->RemoveComponent(component);
     }
+    else if (command.rfind("camera_effect_", 0) == 0)
+    {
+        std::uint32_t id = 0;
+        std::size_t componentIndex = 0;
+        input >> id >> componentIndex;
+        auto *entity = FindEntity(id);
+        auto *camera = entity ? dynamic_cast<PlutoGE::scene::CameraComponent *>(ComponentAt(*entity, componentIndex)) : nullptr;
+        if (!camera)
+        {
+            errorMessage = "The selected component is not a camera.";
+            return false;
+        }
+
+        if (command == "camera_effect_add")
+        {
+            std::string type;
+            input >> type;
+            camera->AddPostProcessEffectByType(Decode(type));
+        }
+        else if (command == "camera_effect_remove")
+        {
+            std::size_t index = 0;
+            input >> index;
+            camera->RemovePostProcessEffect(index);
+        }
+        else if (command == "camera_effect_move")
+        {
+            std::size_t from = 0, to = 0;
+            input >> from >> to;
+            camera->MovePostProcessEffect(from, to);
+        }
+        else if (command == "camera_effect_enabled")
+        {
+            std::size_t index = 0;
+            int enabled = 1;
+            input >> index >> enabled;
+            if (auto *effect = camera->GetPostProcessEffect(index)) effect->SetEnabled(enabled != 0);
+        }
+        else if (command == "camera_effect_parameter")
+        {
+            std::size_t effectIndex = 0, parameterIndex = 0;
+            std::string value;
+            input >> effectIndex >> parameterIndex >> value;
+            if (auto *effect = camera->GetPostProcessEffect(effectIndex))
+            {
+                auto parameters = effect->GetParameters();
+                if (parameterIndex < parameters.size())
+                {
+                    parameters[parameterIndex].value = Decode(value);
+                    effect->SetParameters(parameters);
+                }
+            }
+        }
+        else if (command == "camera_effect_preset")
+        {
+            std::string reference;
+            input >> reference;
+            if (!camera->SetPostProcessPresetAssetReference(Decode(reference)))
+            {
+                errorMessage = "Could not load camera post-process preset.";
+                return false;
+            }
+        }
+        else if (command == "camera_effect_save_preset")
+        {
+            const auto &reference = camera->GetPostProcessPresetAssetReference();
+            if (reference.empty())
+            {
+                errorMessage = "Set a camera post-process preset reference before saving.";
+                return false;
+            }
+            const auto preset = PlutoGE::assets::CapturePostProcessPreset(camera->GetPostProcessEffects());
+            if (!m_engine.GetAssetManager().SavePostProcessPresetAsset(reference, preset, &errorMessage)) return false;
+        }
+        else
+        {
+            errorMessage = "Unknown camera post-process command.";
+            return false;
+        }
+    }
     else
     {
         errorMessage = "Unknown editor command: " + command;
@@ -719,6 +959,14 @@ std::string EditorSession::BuildSnapshotEvent() const
            << "\",\"projectName\":\"" << JsonEscape(m_project ? m_project->GetManifest().name : std::string{})
            << "\",\"scenePath\":\"" << JsonEscape(m_scenePath)
            << "\",\"dirty\":" << (m_dirty ? "true" : "false")
+           << ",\"postProcessEffectTypes\":[";
+    const auto &registeredEffectTypes = PlutoGE::render::GetRegisteredPostProcessEffectTypes();
+    for (std::size_t typeIndex = 0; typeIndex < registeredEffectTypes.size(); ++typeIndex)
+    {
+        if (typeIndex > 0) output << ',';
+        output << '"' << JsonEscape(registeredEffectTypes[typeIndex]) << '"';
+    }
+    output << ']'
            << ",\"running\":" << (m_engine.IsRuntimeRunning() ? "true" : "false")
            << ",\"selectedEntityId\":" << m_selectedEntityId
            << ",\"canUndo\":" << (!m_undo.empty() ? "true" : "false")
@@ -733,7 +981,10 @@ std::string EditorSession::BuildSnapshotEvent() const
            << ",\"speedAdjustment\":" << m_editorCamera.speedAdjustment
            << ",\"gridVisible\":" << (m_editorCamera.gridVisible ? "true" : "false")
            << ",\"postProcessEffectCount\":" << m_editorPostProcessEffects.size()
-           << ",\"postProcessPresetReference\":\"" << JsonEscape(m_editorPostProcessPresetReference) << "\"}"
+           << ",\"postProcessPresetReference\":\"" << JsonEscape(m_editorPostProcessPresetReference)
+           << "\",\"postProcessEffects\":";
+    WritePostProcessEffectsJson(output, m_editorPostProcessEffects);
+    output << '}'
            << ",\"viewportStats\":{\"submittedRenderCommands\":" << m_submittedRenderCommands
            << ",\"visibleRenderCommands\":" << m_visibleRenderCommands
            << ",\"registeredMeshComponents\":" << registeredMeshComponents

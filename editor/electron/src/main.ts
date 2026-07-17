@@ -167,6 +167,13 @@ ipcMain.on('editor:command', (event, action: unknown, ...args: unknown[]) => {
     }
     case 'reset-editor-camera': sendEditorCommand('reset_editor_camera'); break;
     case 'frame-selected': sendEditorCommand('frame_selected'); break;
+    case 'editor-effect-add': sendEditorCommand(`editor_effect_add ${encode(args[0])}`); break;
+    case 'editor-effect-remove': sendEditorCommand(`editor_effect_remove ${number(args[0])}`); break;
+    case 'editor-effect-move': sendEditorCommand(`editor_effect_move ${number(args[0])} ${number(args[1])}`); break;
+    case 'editor-effect-enabled': sendEditorCommand(`editor_effect_enabled ${number(args[0])} ${args[1] === true ? 1 : 0}`); break;
+    case 'editor-effect-parameter': sendEditorCommand(`editor_effect_parameter ${number(args[0])} ${number(args[1])} ${encode(args[2])}`); break;
+    case 'editor-effect-preset': sendEditorCommand(`editor_effect_preset ${encode(args[0])}`); break;
+    case 'editor-effect-save-preset': sendEditorCommand('editor_effect_save_preset'); break;
     case 'save-project': sendEditorCommand('save_project'); break;
     case 'select': case 'delete': sendEditorCommand(`${action} ${number(args[0])}`); break;
     case 'create': sendEditorCommand(`create ${encode(args[0])} ${number(args[1])}`); break;
@@ -182,6 +189,13 @@ ipcMain.on('editor:command', (event, action: unknown, ...args: unknown[]) => {
     case 'set-property': sendEditorCommand(`set_property ${number(args[0])} ${number(args[1])} ${number(args[2])} ${encode(args[3])}`); break;
     case 'add-component': sendEditorCommand(`add_component ${number(args[0])} ${encode(args[1])}`); break;
     case 'remove-component': sendEditorCommand(`remove_component ${number(args[0])} ${number(args[1])}`); break;
+    case 'camera-effect-add': sendEditorCommand(`camera_effect_add ${number(args[0])} ${number(args[1])} ${encode(args[2])}`); break;
+    case 'camera-effect-remove': sendEditorCommand(`camera_effect_remove ${number(args[0])} ${number(args[1])} ${number(args[2])}`); break;
+    case 'camera-effect-move': sendEditorCommand(`camera_effect_move ${number(args[0])} ${number(args[1])} ${number(args[2])} ${number(args[3])}`); break;
+    case 'camera-effect-enabled': sendEditorCommand(`camera_effect_enabled ${number(args[0])} ${number(args[1])} ${number(args[2])} ${args[3] === true ? 1 : 0}`); break;
+    case 'camera-effect-parameter': sendEditorCommand(`camera_effect_parameter ${number(args[0])} ${number(args[1])} ${number(args[2])} ${number(args[3])} ${encode(args[4])}`); break;
+    case 'camera-effect-preset': sendEditorCommand(`camera_effect_preset ${number(args[0])} ${number(args[1])} ${encode(args[2])}`); break;
+    case 'camera-effect-save-preset': sendEditorCommand(`camera_effect_save_preset ${number(args[0])} ${number(args[1])}`); break;
   }
 });
 

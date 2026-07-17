@@ -76,6 +76,14 @@ to adjust movement speed. Use the Camera button to edit its transform,
 projection, movement speed, grid visibility, or frame the selected entity.
 Play mode renders through the scene's main camera.
 
+The Camera inspector also exposes the editor camera's ordered post-processing
+stack. Effects can be added from the engine registry, enabled or disabled,
+moved up or down, removed, and edited through their typed parameters. Preset
+references can be loaded, cleared, or saved. Selecting an entity with a Camera
+component exposes the same stack controls for that scene camera. Editor-camera
+settings are persisted by Save Project; scene-camera settings are persisted by
+Save Scene.
+
 Use Project... in the Electron toolbar to open a `.plutoproject`. This applies
 the same project asset context, startup scene, VSync setting, and saved editor
 camera settings used by the ImGui editor. Opening only a scene without its

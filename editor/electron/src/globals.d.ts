@@ -24,10 +24,19 @@ interface EditorProperty {
   enumOptions: string[];
 }
 
+interface PostProcessEffectState {
+  typeName: string;
+  displayName: string;
+  enabled: boolean;
+  parameters: EditorProperty[];
+}
+
 interface EditorComponent {
   type: string;
   enabled: boolean;
   properties: EditorProperty[];
+  postProcessPresetReference?: string;
+  postProcessEffects?: PostProcessEffectState[];
 }
 
 interface EditorEntity {
@@ -53,6 +62,7 @@ interface EditorCameraState {
   gridVisible: boolean;
   postProcessEffectCount: number;
   postProcessPresetReference: string;
+  postProcessEffects: PostProcessEffectState[];
 }
 
 interface ViewportStats {
@@ -67,6 +77,7 @@ interface EditorState {
   projectName: string;
   scenePath: string;
   dirty: boolean;
+  postProcessEffectTypes: string[];
   running: boolean;
   selectedEntityId: number;
   canUndo: boolean;
@@ -95,6 +106,13 @@ interface PlutoEditorApi {
   setEditorCamera(camera: EditorCameraState): void;
   resetEditorCamera(): void;
   frameSelected(): void;
+  addEditorPostProcessEffect(type: string): void;
+  removeEditorPostProcessEffect(index: number): void;
+  moveEditorPostProcessEffect(from: number, to: number): void;
+  setEditorPostProcessEffectEnabled(index: number, enabled: boolean): void;
+  setEditorPostProcessParameter(effectIndex: number, parameterIndex: number, value: string): void;
+  setEditorPostProcessPreset(reference: string): void;
+  saveEditorPostProcessPreset(): void;
   selectEntity(id: number): void;
   createEntity(name: string, parentId?: number): void;
   deleteEntity(id: number): void;
@@ -106,6 +124,13 @@ interface PlutoEditorApi {
   setComponentProperty(entityId: number, componentIndex: number, propertyIndex: number, value: string): void;
   addComponent(entityId: number, type: string): void;
   removeComponent(entityId: number, componentIndex: number): void;
+  addCameraPostProcessEffect(entityId: number, componentIndex: number, type: string): void;
+  removeCameraPostProcessEffect(entityId: number, componentIndex: number, index: number): void;
+  moveCameraPostProcessEffect(entityId: number, componentIndex: number, from: number, to: number): void;
+  setCameraPostProcessEffectEnabled(entityId: number, componentIndex: number, index: number, enabled: boolean): void;
+  setCameraPostProcessParameter(entityId: number, componentIndex: number, effectIndex: number, parameterIndex: number, value: string): void;
+  setCameraPostProcessPreset(entityId: number, componentIndex: number, reference: string): void;
+  saveCameraPostProcessPreset(entityId: number, componentIndex: number): void;
 }
 
 interface Window {

@@ -87,6 +87,21 @@ h4 { margin: 0 0 12px; font-size: 12px; }
 .camera-actions { display: grid; gap: 6px; }
 .camera-actions button { padding: 7px; color: #c8ced9; border: 1px solid #303744; border-radius: 4px; background: #20252e; }
 .camera-actions button:hover:not(:disabled) { background: #2b3240; }
+.post-process-stack { min-width: 0; }
+.preset-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; gap: 4px; margin-bottom: 7px; }
+.preset-row input, .preset-row button, .effect-add-row select, .effect-add-row button, .effect-actions button {
+  min-width: 0; padding: 5px 6px; border: 1px solid #303744; border-radius: 4px; color: #c5ccd7; background: #20252e;
+}
+.preset-row input { color: #cbd1db; background: #10141a; }
+.effect-add-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px; margin-bottom: 8px; }
+.effect-list { display: grid; gap: 5px; }
+.effect-card { border: 1px solid #2b323d; border-radius: 4px; overflow: hidden; background: #11151b; }
+.effect-card > summary { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 6px; color: #cbd1dc; cursor: pointer; list-style: none; background: #1b2028; }
+.effect-card > summary > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.effect-actions { display: flex; gap: 2px; }
+.effect-actions button { width: 24px; height: 24px; padding: 0; }
+.effect-parameters { padding: 5px 7px 8px; }
+.effect-parameters small, .effect-list > small { display: block; padding: 6px; color: #687180; }
 
 .statusbar { grid-column: 1 / -1; display: flex; align-items: center; gap: 14px; padding: 0 11px; border-top: 1px solid #292e39; color: #7f8897; background: #14181e; font-size: 11px; }
 .status-dot { width: 7px; height: 7px; border-radius: 50%; background: #717988; }

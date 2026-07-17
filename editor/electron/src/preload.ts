@@ -27,6 +27,13 @@ const api: PlutoEditorApi = {
   setEditorCamera: (camera) => ipcRenderer.send('editor:command', 'set-editor-camera', camera),
   resetEditorCamera: () => ipcRenderer.send('editor:command', 'reset-editor-camera'),
   frameSelected: () => ipcRenderer.send('editor:command', 'frame-selected'),
+  addEditorPostProcessEffect: (type) => ipcRenderer.send('editor:command', 'editor-effect-add', type),
+  removeEditorPostProcessEffect: (index) => ipcRenderer.send('editor:command', 'editor-effect-remove', index),
+  moveEditorPostProcessEffect: (from, to) => ipcRenderer.send('editor:command', 'editor-effect-move', from, to),
+  setEditorPostProcessEffectEnabled: (index, enabled) => ipcRenderer.send('editor:command', 'editor-effect-enabled', index, enabled),
+  setEditorPostProcessParameter: (effectIndex, parameterIndex, value) => ipcRenderer.send('editor:command', 'editor-effect-parameter', effectIndex, parameterIndex, value),
+  setEditorPostProcessPreset: (reference) => ipcRenderer.send('editor:command', 'editor-effect-preset', reference),
+  saveEditorPostProcessPreset: () => ipcRenderer.send('editor:command', 'editor-effect-save-preset'),
   selectEntity: (id) => ipcRenderer.send('editor:command', 'select', id),
   createEntity: (name, parentId = 0) => ipcRenderer.send('editor:command', 'create', name, parentId),
   deleteEntity: (id) => ipcRenderer.send('editor:command', 'delete', id),
@@ -38,6 +45,13 @@ const api: PlutoEditorApi = {
   setComponentProperty: (entityId, componentIndex, propertyIndex, value) => ipcRenderer.send('editor:command', 'set-property', entityId, componentIndex, propertyIndex, value),
   addComponent: (entityId, type) => ipcRenderer.send('editor:command', 'add-component', entityId, type),
   removeComponent: (entityId, componentIndex) => ipcRenderer.send('editor:command', 'remove-component', entityId, componentIndex),
+  addCameraPostProcessEffect: (entityId, componentIndex, type) => ipcRenderer.send('editor:command', 'camera-effect-add', entityId, componentIndex, type),
+  removeCameraPostProcessEffect: (entityId, componentIndex, index) => ipcRenderer.send('editor:command', 'camera-effect-remove', entityId, componentIndex, index),
+  moveCameraPostProcessEffect: (entityId, componentIndex, from, to) => ipcRenderer.send('editor:command', 'camera-effect-move', entityId, componentIndex, from, to),
+  setCameraPostProcessEffectEnabled: (entityId, componentIndex, index, enabled) => ipcRenderer.send('editor:command', 'camera-effect-enabled', entityId, componentIndex, index, enabled),
+  setCameraPostProcessParameter: (entityId, componentIndex, effectIndex, parameterIndex, value) => ipcRenderer.send('editor:command', 'camera-effect-parameter', entityId, componentIndex, effectIndex, parameterIndex, value),
+  setCameraPostProcessPreset: (entityId, componentIndex, reference) => ipcRenderer.send('editor:command', 'camera-effect-preset', entityId, componentIndex, reference),
+  saveCameraPostProcessPreset: (entityId, componentIndex) => ipcRenderer.send('editor:command', 'camera-effect-save-preset', entityId, componentIndex),
 };
 
 contextBridge.exposeInMainWorld('plutoEditor', api);

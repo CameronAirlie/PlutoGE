@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { NativeHost } from './native-host';
@@ -154,23 +154,70 @@ ipcMain.handle('editor:open-scene', async (event) => {
 
 ipcMain.handle('editor:save-scene', async (event, saveAs: unknown) => {
   if (!isTrustedSender(event) || !mainWindow) return;
-  let path = saveAs === true ? '' : nativeHost?.getEditorState()?.scenePath ?? '';
-  if (!path) {
+  const state = nativeHost?.getEditorState();
+  let scenePath = saveAs === true ? '' : state?.scenePath ?? '';
+  if (!scenePath) {
+    const defaultName = `${state?.projectName?.replace(/[^a-zA-Z0-9._-]+/g, '_') || 'Untitled'}.plutoscene`;
     const result = await dialog.showSaveDialog(mainWindow, {
       title: 'Save PlutoGE Scene',
-      defaultPath: 'Untitled.plutoscene',
+      defaultPath: state?.assetDirectoryPath ? path.join(state.assetDirectoryPath, 'Scenes', defaultName) : defaultName,
       filters: [{ name: 'PlutoGE Scene', extensions: ['plutoscene'] }],
     });
     if (result.canceled || !result.filePath) return;
-    path = result.filePath;
+    scenePath = result.filePath;
   }
-  sendEditorCommand(`save_scene ${encode(path)}`);
+  sendEditorCommand(`save_scene ${encode(scenePath)}`);
 });
 
 const isPathInside = (parent: string, candidate: string): boolean => {
   const relative = path.relative(parent, candidate);
   return Boolean(relative) && !relative.startsWith('..') && !path.isAbsolute(relative);
 };
+
+const resolveProjectAsset = (reference: unknown): { asset: EditorAsset; filePath: string } | undefined => {
+  if (typeof reference !== 'string' || !reference.startsWith('project://')) return undefined;
+  const state = nativeHost?.getEditorState();
+  const assetRoot = state?.assetDirectoryPath;
+  const asset = state?.assets.find((candidate) => candidate.reference === reference);
+  if (!assetRoot || !asset) return undefined;
+  const filePath = path.resolve(assetRoot, reference.slice('project://'.length));
+  return isPathInside(assetRoot, filePath) ? { asset, filePath } : undefined;
+};
+
+ipcMain.handle('editor:open-asset', async (event, reference: unknown) => {
+  if (!isTrustedSender(event)) return;
+  const resolved = resolveProjectAsset(reference);
+  if (!resolved || resolved.asset.type !== 'Scene' || !await confirmDiscardUnsavedChanges()) return;
+  sendEditorCommand(`load_scene ${encode(resolved.filePath)}`);
+});
+
+ipcMain.handle('assets:reveal', async (event, reference: unknown) => {
+  if (!isTrustedSender(event)) return;
+  const resolved = resolveProjectAsset(reference);
+  if (resolved) shell.showItemInFolder(resolved.filePath);
+});
+
+ipcMain.handle('editor:save-project', async (event) => {
+  if (!isTrustedSender(event) || !mainWindow) return;
+  const state = nativeHost?.getEditorState();
+  if (!state?.projectPath) return;
+
+  let scenePath = state.scenePath;
+  const sceneIsInProject = Boolean(scenePath && state.assetDirectoryPath && isPathInside(state.assetDirectoryPath, scenePath));
+  if (!sceneIsInProject)
+  {
+    const defaultName = `${state.projectName.replace(/[^a-zA-Z0-9._-]+/g, '_') || 'Main'}.plutoscene`;
+    const result = await dialog.showSaveDialog(mainWindow, {
+      title: 'Save Project Scene',
+      defaultPath: path.join(state.assetDirectoryPath, 'Scenes', defaultName),
+      filters: [{ name: 'PlutoGE Scene', extensions: ['plutoscene'] }],
+    });
+    if (result.canceled || !result.filePath) return;
+    scenePath = result.filePath;
+  }
+  sendEditorCommand(`save_scene ${encode(scenePath)}`);
+  sendEditorCommand('save_project');
+});
 
 const uniqueImportDirectory = (assetRoot: string, sourcePath: string): string => {
   const modelsRoot = path.join(assetRoot, 'Models');
@@ -273,7 +320,7 @@ ipcMain.on('editor:command', (event, action: unknown, ...args: unknown[]) => {
     case 'save-project': sendEditorCommand('save_project'); break;
     case 'refresh-assets': sendEditorCommand('refresh_assets'); break;
     case 'instantiate-asset': sendEditorCommand(`instantiate_asset ${encode(args[0])}`); break;
-    case 'select': case 'delete': sendEditorCommand(`${action} ${number(args[0])}`); break;
+    case 'select': case 'delete': case 'duplicate': sendEditorCommand(`${action} ${number(args[0])}`); break;
     case 'create': sendEditorCommand(`create ${encode(args[0])} ${number(args[1])}`); break;
     case 'reparent': sendEditorCommand(`reparent ${number(args[0])} ${number(args[1])}`); break;
     case 'set-name': sendEditorCommand(`set_name ${number(args[0])} ${encode(args[1])}`); break;

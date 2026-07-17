@@ -7,6 +7,7 @@
 #include "PlutoGE/render/postprocess/IPostProcessEffect.h"
 #include "PlutoGE/render/postprocess/PostProcessEffectFactory.h"
 #include "PlutoGE/scene/Entity.h"
+#include "PlutoGE/scene/Prefab.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/SceneSerializer.h"
 #include "PlutoGE/scene/components/ComponentFactory.h"
@@ -692,16 +693,31 @@ bool EditorSession::HandleCommand(const std::string &commandLine, std::string &e
         }
 
         std::unique_ptr<PlutoGE::scene::Scene> loadedScene;
+        std::string startupSceneReference;
         std::string startupScenePath;
         bool loadedStartupScene = false;
         if (!manifest.startupScene.empty())
         {
-            startupScenePath = m_engine.GetAssetManager().ResolveAssetPath(manifest.startupScene);
-            if (!startupScenePath.empty())
+            // FindSceneAssetReference accepts project:// references, absolute
+            // paths, legacy relative paths, file names, and scene stems.
+            startupSceneReference = project->FindSceneAssetReference(manifest.startupScene);
+        }
+        else
+        {
+            // Older editor projects did not persist the active scene. Opening
+            // the sole scene is an unambiguous and useful migration path.
+            for (const auto &asset : manifest.assetEntries)
             {
-                loadedScene = PlutoGE::scene::SceneSerializer::Load(startupScenePath, &errorMessage);
-                loadedStartupScene = loadedScene != nullptr;
+                if (asset.type != PlutoGE::assets::ProjectAssetType::Scene) continue;
+                if (!startupSceneReference.empty()) { startupSceneReference.clear(); break; }
+                startupSceneReference = asset.reference;
             }
+        }
+        if (!startupSceneReference.empty())
+        {
+            startupScenePath = project->ResolveAssetReference(startupSceneReference).string();
+            loadedScene = PlutoGE::scene::SceneSerializer::Load(startupScenePath, &errorMessage);
+            loadedStartupScene = loadedScene != nullptr;
         }
         if (!loadedScene) loadedScene = std::make_unique<PlutoGE::scene::Scene>();
 
@@ -734,6 +750,10 @@ bool EditorSession::HandleCommand(const std::string &commandLine, std::string &e
             return false;
         }
         auto &manifest = m_project->GetManifest();
+        if (!m_scenePath.empty() && m_project->IsInAssetDirectory(m_scenePath))
+        {
+            manifest.startupScene = m_project->MakeAssetReference(m_scenePath);
+        }
         manifest.editorCamera = PlutoGE::assets::ProjectEditorCameraSettings{
             .positionX = m_editorCamera.position.x,
             .positionY = m_editorCamera.position.y,
@@ -761,6 +781,12 @@ bool EditorSession::HandleCommand(const std::string &commandLine, std::string &e
         if (m_scenePath.empty()) { errorMessage = "No scene path was provided."; return false; }
         if (!PlutoGE::scene::SceneSerializer::Save(*m_scene, m_scenePath, &errorMessage)) return false;
         m_dirty = false;
+        if (m_project && m_project->IsInAssetDirectory(m_scenePath))
+        {
+            m_project->GetManifest().startupScene = m_project->MakeAssetReference(m_scenePath);
+            m_project->RefreshAssetRegistry();
+            if (!m_project->Save(&errorMessage)) return false;
+        }
         return true;
     }
 
@@ -894,6 +920,20 @@ bool EditorSession::HandleCommand(const std::string &commandLine, std::string &e
         std::uint32_t id = 0;
         input >> id;
         if (m_scene->DestroyEntity(id) && m_selectedEntityId == id) m_selectedEntityId = 0;
+    }
+    else if (command == "duplicate")
+    {
+        std::uint32_t id = 0;
+        input >> id;
+        auto *source = FindEntity(id);
+        auto *duplicate = source ? PlutoGE::scene::Prefab::DuplicateEntity(*m_scene, *source, source->GetParent(), true) : nullptr;
+        if (!duplicate)
+        {
+            errorMessage = "Could not duplicate the selected entity.";
+            return false;
+        }
+        duplicate->SetName(source->GetName() + " Copy");
+        m_selectedEntityId = duplicate->GetID();
     }
     else if (command == "set_name")
     {

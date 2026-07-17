@@ -24,6 +24,7 @@ export function App(): React.JSX.Element {
       const editingText = target?.matches('input, textarea, select, [contenteditable="true"]') ?? false;
       if (!(event.ctrlKey || event.metaKey) || !editor) {
         if (!editingText && event.key === 'Delete' && editor?.selectedEntityId && !editor.running) window.plutoEditor.deleteEntity(editor.selectedEntityId);
+        if (!editingText && event.key.toLowerCase() === 'f' && editor?.selectedEntityId) window.plutoEditor.frameSelected();
         if (!editingText && !editor?.running && event.key.toLowerCase() === 'w') window.plutoEditor.setGizmoOperation('translate');
         if (!editingText && !editor?.running && event.key.toLowerCase() === 'e') window.plutoEditor.setGizmoOperation('rotate');
         if (!editingText && !editor?.running && event.key.toLowerCase() === 'r') window.plutoEditor.setGizmoOperation('scale');
@@ -32,6 +33,7 @@ export function App(): React.JSX.Element {
       if (event.key.toLowerCase() === 's') { event.preventDefault(); void window.plutoEditor.saveScene(event.shiftKey); }
       if (event.key.toLowerCase() === 'z') { event.preventDefault(); event.shiftKey ? window.plutoEditor.redo() : window.plutoEditor.undo(); }
       if (event.key.toLowerCase() === 'y') { event.preventDefault(); window.plutoEditor.redo(); }
+      if (event.key.toLowerCase() === 'd' && editor.selectedEntityId && !editor.running) { event.preventDefault(); window.plutoEditor.duplicateEntity(editor.selectedEntityId); }
     };
     window.addEventListener('keydown', shortcuts);
     return () => window.removeEventListener('keydown', shortcuts);

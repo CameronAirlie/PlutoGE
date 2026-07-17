@@ -113,8 +113,10 @@ interface PlutoEditorApi {
   newScene(): Promise<void>;
   newProject(): Promise<void>;
   openProject(): Promise<void>;
-  saveProject(): void;
+  saveProject(): Promise<void>;
   openScene(): Promise<void>;
+  openAsset(reference: string): Promise<void>;
+  revealAsset(reference: string): Promise<void>;
   saveScene(saveAs?: boolean): Promise<void>;
   importModels(): Promise<ModelImportResult>;
   refreshAssets(): void;
@@ -137,6 +139,7 @@ interface PlutoEditorApi {
   selectEntity(id: number): void;
   createEntity(name: string, parentId?: number): void;
   deleteEntity(id: number): void;
+  duplicateEntity(id: number): void;
   reparentEntity(id: number, parentId: number): void;
   setEntityName(id: number, name: string): void;
   setEntityActive(id: number, active: boolean): void;

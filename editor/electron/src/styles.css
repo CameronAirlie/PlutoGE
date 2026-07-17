@@ -16,22 +16,32 @@ button:disabled, select:disabled, input:disabled { opacity: .45; cursor: not-all
 .toolbar { display: flex; align-items: center; gap: 14px; min-width: 0; padding: 0 12px; border-bottom: 1px solid #2c323d; background: #171b22; }
 .brand { display: flex; align-items: center; gap: 9px; margin-right: 8px; font-weight: 700; letter-spacing: .02em; }
 .brand-mark { display: grid; place-items: center; width: 25px; height: 25px; border-radius: 7px; color: #fff; background: linear-gradient(145deg, #815cff, #4a63ff); box-shadow: 0 0 18px #6b58ff55; }
-.toolbar-group, .menu-actions { display: flex; gap: 3px; }
+.toolbar-menubar { display: flex; align-items: center; gap: 1px; }
+.toolbar-menubar > button { padding: 6px 9px; border: 0; border-radius: 4px; color: #abb4c1; background: transparent; }
+.toolbar-menubar > button:hover, .toolbar-menubar > button.active { color: #eef0f4; background: #292f39; }
 .gizmo-toolbar { display: flex; gap: 2px; padding: 3px; border: 1px solid #2d3440; border-radius: 5px; background: #11151b; }
 .gizmo-toolbar button { padding: 4px 7px; border: 1px solid transparent; border-radius: 3px; color: #8f99a8; background: transparent; font-size: 10px; }
 .gizmo-toolbar button:hover:not(:disabled) { color: #e2e5eb; background: #252b35; }
 .gizmo-toolbar button.active { color: #eeeaff; border-color: #5d5199; background: #342e55; }
 .gizmo-toolbar .gizmo-space { min-width: 42px; margin-left: 3px; border-left-color: #353c48; color: #b4bdca; }
 .toolbar-divider { width: 1px; height: 22px; background: #303640; }
-.menu-actions button, .layout-button { padding: 5px 9px; border: 0; color: #abb4c1; background: transparent; border-radius: 4px; }
-.menu-actions button:hover:not(:disabled), .layout-button:hover { color: #eef0f4; background: #252b35; }
-.tool-button, .camera-button, .play-button, .viewport-message button { border: 1px solid #343b48; color: #ccd2dd; background: #20252e; border-radius: 5px; }
-.tool-button { width: 29px; height: 29px; }
-.tool-button:hover:not(:disabled), .camera-button:hover:not(:disabled), .viewport-message button:hover { background: #2b3240; }
-.camera-button { padding: 6px 12px; }
-.camera-button.active { color: #ddd7ff; border-color: #6555a8; background: #302953; }
+.play-button, .viewport-message button { border: 1px solid #343b48; color: #ccd2dd; background: #20252e; border-radius: 5px; }
+.viewport-message button:hover { background: #2b3240; }
 .play-button { margin-left: auto; padding: 6px 19px; color: #dcd5ff; border-color: #51458e; background: #2a2450; }
 .play-button.running { color: #ffd4d7; border-color: #8c454d; background: #4c252c; }
+
+.popup-menu { position: fixed; z-index: 10000; width: 224px; padding: 5px; border: 1px solid #3a414e; border-radius: 6px; color: #cbd1dc; background: #1b2028; box-shadow: 0 12px 35px #000a, 0 1px 0 #ffffff0a inset; }
+.popup-menu-entry { position: relative; }
+.popup-menu-entry > button { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 10px; width: 100%; min-height: 28px; padding: 5px 8px; border: 0; border-radius: 3px; color: #c5ccd7; background: transparent; text-align: left; }
+.popup-menu-entry > button:hover:not(:disabled), .popup-menu-entry.has-children:hover > button { color: #f0f1f5; background: #5c4fa0; }
+.popup-menu-entry > button.danger { color: #e39aa0; }
+.popup-menu-entry > button.danger:hover:not(:disabled) { color: #fff; background: #8b3e47; }
+.popup-menu-entry kbd { color: #737d8c; font-family: inherit; font-size: 10px; }
+.popup-menu-entry i { color: #8f98a6; font-size: 16px; font-style: normal; line-height: 10px; }
+.popup-menu-separator { height: 1px; margin: 4px 5px; background: #343b46; }
+.popup-submenu { position: absolute; z-index: 1; top: -5px; left: calc(100% - 2px); display: none; width: 224px; max-height: min(420px, calc(100vh - 12px)); padding: 5px; overflow-y: auto; border: 1px solid #3a414e; border-radius: 6px; background: #1b2028; box-shadow: 0 12px 35px #000a; }
+.popup-menu.open-left .popup-submenu { right: calc(100% - 2px); left: auto; }
+.popup-menu-entry.has-children:hover > .popup-submenu { display: block; }
 
 .dock-workspace { position: relative; display: grid; grid-template-columns: var(--dock-left) minmax(280px, 1fr) var(--dock-right); grid-template-rows: minmax(180px, 1fr) var(--dock-bottom); gap: 3px; min-width: 0; min-height: 0; padding: 3px; background: #090b0f; }
 .dock-slot { position: relative; min-width: 0; min-height: 0; transition: box-shadow .12s ease; }
@@ -146,9 +156,8 @@ h4 { margin: 0 0 11px; color: #c5cbd5; font-size: 11px; }
 .status-hint { margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 @media (max-width: 1120px) {
-  .layout-button { display: none; }
   .toolbar { gap: 8px; }
-  .menu-actions button { padding-inline: 6px; }
+  .toolbar-menubar > button { padding-inline: 6px; }
   .gizmo-toolbar button { padding-inline: 5px; font-size: 0; }
   .gizmo-toolbar button::first-letter { font-size: 10px; }
   .gizmo-toolbar .gizmo-space { font-size: 9px; }

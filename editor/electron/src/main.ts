@@ -116,6 +116,20 @@ ipcMain.handle('editor:new-scene', async (event) => {
   if (isTrustedSender(event) && await confirmDiscardUnsavedChanges()) sendEditorCommand('new_scene');
 });
 
+ipcMain.handle('editor:new-project', async (event) => {
+  if (!isTrustedSender(event) || !mainWindow) return;
+  if (!await confirmDiscardUnsavedChanges()) return;
+  const result = await dialog.showSaveDialog(mainWindow, {
+    title: 'Create PlutoGE Project',
+    defaultPath: path.join(app.getPath('documents'), 'NewProject', 'NewProject.plutoproject'),
+    buttonLabel: 'Create Project',
+    filters: [{ name: 'PlutoGE Project', extensions: ['plutoproject'] }],
+  });
+  if (result.canceled || !result.filePath) return;
+  const projectName = path.basename(result.filePath, path.extname(result.filePath));
+  sendEditorCommand(`create_project ${encode(result.filePath)} ${encode(projectName)}`);
+});
+
 ipcMain.handle('editor:open-project', async (event) => {
   if (!isTrustedSender(event) || !mainWindow) return;
   if (!await confirmDiscardUnsavedChanges()) return;

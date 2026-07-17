@@ -597,12 +597,22 @@ bool EditorSession::HandleCommand(const std::string &commandLine, std::string &e
         return SetScene(std::make_unique<PlutoGE::scene::Scene>(), false);
     }
 
-    if (command == "load_project")
+    if (command == "load_project" || command == "create_project")
     {
         std::string encodedPath;
         input >> encodedPath;
         const auto path = Decode(encodedPath);
-        auto project = PlutoGE::assets::Project::Load(path, &errorMessage);
+        std::unique_ptr<PlutoGE::assets::Project> project;
+        if (command == "create_project")
+        {
+            std::string encodedName;
+            input >> encodedName;
+            project = PlutoGE::assets::Project::Create(path, Decode(encodedName), &errorMessage);
+        }
+        else
+        {
+            project = PlutoGE::assets::Project::Load(path, &errorMessage);
+        }
         if (!project) return false;
 
         m_engine.GetAssetManager().SetProjectContext(project->GetRootDirectory().string(), project->GetManifest().assetDirectory);

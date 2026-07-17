@@ -10,11 +10,12 @@ export function Toolbar({ editor, running, showEditorCamera, onToggleCamera, onR
   return <header className="toolbar">
     <div className="brand"><span className="brand-mark">P</span><span>PlutoGE</span></div>
     <nav className="menu-actions">
-      <button onClick={() => void window.plutoEditor.openProject()}>Project…</button>
+      <button onClick={() => void window.plutoEditor.newProject()}>New Project…</button>
+      <button onClick={() => void window.plutoEditor.openProject()}>Open Project…</button>
       <button disabled={!editor?.projectPath} onClick={() => window.plutoEditor.saveProject()}>Save Project</button>
-      <button onClick={() => void window.plutoEditor.newScene()}>New</button>
-      <button onClick={() => void window.plutoEditor.openScene()}>Open</button>
-      <button onClick={() => void window.plutoEditor.saveScene()}>Save</button>
+      <button onClick={() => void window.plutoEditor.newScene()}>New Scene</button>
+      <button onClick={() => void window.plutoEditor.openScene()}>Open Scene</button>
+      <button onClick={() => void window.plutoEditor.saveScene()}>Save Scene</button>
     </nav>
     <div className="toolbar-divider" />
     <div className="toolbar-group">

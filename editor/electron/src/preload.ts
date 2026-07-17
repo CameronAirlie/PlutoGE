@@ -17,6 +17,7 @@ const api: PlutoEditorApi = {
     return () => ipcRenderer.removeListener('editor:state', listener);
   },
   newScene: () => ipcRenderer.invoke('editor:new-scene'),
+  newProject: () => ipcRenderer.invoke('editor:new-project'),
   openProject: () => ipcRenderer.invoke('editor:open-project'),
   saveProject: () => ipcRenderer.send('editor:command', 'save-project'),
   openScene: () => ipcRenderer.invoke('editor:open-scene'),

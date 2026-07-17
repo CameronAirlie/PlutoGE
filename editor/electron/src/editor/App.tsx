@@ -37,7 +37,7 @@ export function App(): React.JSX.Element {
   const running = editor?.running ?? false;
   return <div className="editor-shell">
     <Toolbar editor={editor} running={running} showEditorCamera={showEditorCamera} onToggleCamera={() => setShowEditorCamera((visible) => !visible)} onResetLayout={dock.reset} />
-    <DockWorkspace layout={dock.layout} onLayoutChange={dock.setLayout} host={host} editor={editor} selectedEntity={selectedEntity} showEditorCamera={showEditorCamera} />
+    <DockWorkspace layout={dock.layout} sizes={dock.sizes} onLayoutChange={dock.setLayout} onSizesChange={dock.setSizes} host={host} editor={editor} selectedEntity={selectedEntity} showEditorCamera={showEditorCamera} />
     <StatusBar host={host} editor={editor} />
   </div>;
 }

@@ -109,6 +109,7 @@ interface PlutoEditorApi {
   getEditorState(): Promise<EditorState | undefined>;
   onEditorState(callback: (state: EditorState) => void): () => void;
   newScene(): Promise<void>;
+  newProject(): Promise<void>;
   openProject(): Promise<void>;
   saveProject(): void;
   openScene(): Promise<void>;

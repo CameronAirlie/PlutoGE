@@ -7,6 +7,6 @@ export function StatusBar({ host, editor }: { host: HostState; editor?: EditorSt
     <span>Engine {host.status}</span>
     <span>{running ? 'Play mode · Scene camera' : editor?.dirty ? 'Unsaved changes' : 'Scene saved'}</span>
     {editor && <span title="visible / submitted · renderable / registered meshes">Draw {editor.viewportStats.visibleRenderCommands}/{editor.viewportStats.submittedRenderCommands} · Mesh {editor.viewportStats.renderableMeshComponents}/{editor.viewportStats.registeredMeshComponents}</span>}
-    <span className="status-hint">Drag panel tabs to rearrange · Hold RMB + WASD/QE to fly</span>
+    <span className="status-hint">Drag tabs to rearrange · Drag separators to resize · Hold RMB + WASD/QE to fly</span>
   </footer>;
 }

@@ -28,13 +28,22 @@ button:disabled, select:disabled, input:disabled { opacity: .45; cursor: not-all
 .play-button { margin-left: auto; padding: 6px 19px; color: #dcd5ff; border-color: #51458e; background: #2a2450; }
 .play-button.running { color: #ffd4d7; border-color: #8c454d; background: #4c252c; }
 
-.dock-workspace { display: grid; grid-template-columns: 230px minmax(360px, 1fr) 300px; grid-template-rows: minmax(280px, 1fr) minmax(170px, 34%); gap: 3px; min-width: 0; min-height: 0; padding: 3px; background: #090b0f; }
+.dock-workspace { position: relative; display: grid; grid-template-columns: var(--dock-left) minmax(280px, 1fr) var(--dock-right); grid-template-rows: minmax(180px, 1fr) var(--dock-bottom); gap: 3px; min-width: 0; min-height: 0; padding: 3px; background: #090b0f; }
 .dock-slot { position: relative; min-width: 0; min-height: 0; transition: box-shadow .12s ease; }
 .dock-left { grid-area: 1 / 1 / 3 / 2; }
 .dock-center { grid-area: 1 / 2 / 2 / 3; }
 .dock-right { grid-area: 1 / 3 / 3 / 4; }
 .dock-bottom { grid-area: 2 / 2 / 3 / 3; }
 .dock-slot.drop-target { box-shadow: inset 0 0 0 2px #7464d8, inset 0 0 30px #6857c833; }
+.dock-resizer { position: absolute; z-index: 10; border-radius: 3px; outline: none; touch-action: none; }
+.dock-resizer::after { position: absolute; content: ''; background: transparent; transition: background .12s ease; }
+.dock-resizer:hover::after, .dock-resizer:focus::after, .dock-resizer:active::after { background: #7565d9; }
+.dock-resizer-left, .dock-resizer-right { top: 3px; bottom: 3px; width: 7px; cursor: col-resize; transform: translateX(-2px); }
+.dock-resizer-left { left: calc(var(--dock-left) + 3px); }
+.dock-resizer-right { right: calc(var(--dock-right) + 1px); }
+.dock-resizer-left::after, .dock-resizer-right::after { top: 0; bottom: 0; left: 3px; width: 1px; }
+.dock-resizer-bottom { right: calc(var(--dock-right) + 4px); bottom: calc(var(--dock-bottom) + 1px); left: calc(var(--dock-left) + 4px); height: 7px; cursor: row-resize; transform: translateY(2px); }
+.dock-resizer-bottom::after { top: 3px; right: 0; left: 0; height: 1px; }
 .dock-panel { display: flex; flex-direction: column; width: 100%; height: 100%; min-width: 0; min-height: 0; margin: 0; padding: 0; border: 1px solid #292f39; background: #161a21; overflow: hidden; }
 .dock-panel-header { display: flex; align-items: center; gap: 7px; flex: 0 0 34px; min-width: 0; padding: 0 8px; border-bottom: 1px solid #2a303a; color: #aeb7c5; background: #1c2129; cursor: grab; user-select: none; }
 .dock-panel-header:active { cursor: grabbing; }
@@ -132,7 +141,6 @@ h4 { margin: 0 0 11px; color: #c5cbd5; font-size: 11px; }
 .status-hint { margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 @media (max-width: 1120px) {
-  .dock-workspace { grid-template-columns: 190px minmax(320px, 1fr) 250px; }
   .layout-button { display: none; }
   .toolbar { gap: 8px; }
   .menu-actions button { padding-inline: 6px; }

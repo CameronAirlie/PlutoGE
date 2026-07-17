@@ -12,6 +12,7 @@
 #include "PlutoGE/scene/components/ComponentFactory.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
 #include "EditorSession.h"
+#include "EditorViewportInteraction.h"
 
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -239,6 +240,7 @@ int main(int argc, char **argv)
     bool visible = !embedded;
     bool editorCameraLookActive = false;
     bool editorCameraInputChanged = false;
+    EditorViewportInteraction viewportInteraction;
     auto previousFrameTime = std::chrono::steady_clock::now();
 
     WriteEvent(R"({"type":"ready","protocol":1})");
@@ -356,6 +358,10 @@ int main(int argc, char **argv)
 
         const auto extents = window.GetExtents();
         const auto editorCameraData = BuildEditorCamera(extents.width, extents.height, editorCamera);
+        if (viewportInteraction.Update(editorSession, editorCameraData, input, extents.width, extents.height, engine.IsRuntimeRunning()))
+        {
+            WriteEvent(editorSession.BuildSnapshotEvent());
+        }
         if (engine.IsRuntimeRunning()) renderer.ClearSubmissionCullingCameras();
         else renderer.SetSubmissionCullingCameras({editorCameraData});
         renderer.BeginProfilingFrame();
@@ -379,6 +385,7 @@ int main(int argc, char **argv)
             else
             {
                 renderer.RenderFrame(editorCameraData, nullptr, scene ? scene->GetLights() : std::vector<PlutoGE::scene::Light *>{}, &editorPostProcessEffects, scene, editorCamera.gridVisible, true);
+                viewportInteraction.Render(editorSession, editorCameraData, extents.width, extents.height);
             }
             const auto &frameStats = renderer.GetCpuFrameStats();
             if (editorSession.SetViewportStats(frameStats.submittedRenderCommandCount, frameStats.visibleRenderCommandCount))
@@ -396,6 +403,7 @@ int main(int argc, char **argv)
     }
 
     WriteEvent(R"({"type":"stopping"})");
+    viewportInteraction.Shutdown();
     editorSession.Shutdown();
     engine.Shutdown();
     return 0;

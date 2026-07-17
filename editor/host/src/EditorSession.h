@@ -31,6 +31,9 @@ namespace PlutoGE::render
 class EditorSession
 {
 public:
+    enum class GizmoOperation { Translate, Rotate, Scale };
+    enum class GizmoSpace { Local, World };
+
     struct EditorCameraState
     {
         glm::vec3 position{0.0f, 2.0f, 6.0f};
@@ -52,6 +55,14 @@ public:
     bool HandleCommand(const std::string &commandLine, std::string &errorMessage);
     std::string BuildSnapshotEvent() const;
     PlutoGE::scene::Scene *GetScene() const;
+    PlutoGE::scene::Entity *GetSelectedEntity() const;
+    void SetSelectedEntity(PlutoGE::scene::Entity *entity);
+    bool BeginGizmoEdit();
+    bool EndGizmoEdit();
+    GizmoOperation GetGizmoOperation() const { return m_gizmoOperation; }
+    GizmoSpace GetGizmoSpace() const { return m_gizmoSpace; }
+    void SetGizmoOperation(GizmoOperation operation) { m_gizmoOperation = operation; }
+    void SetGizmoSpace(GizmoSpace space) { m_gizmoSpace = space; }
     EditorCameraState &GetEditorCamera() { return m_editorCamera; }
     const EditorCameraState &GetEditorCamera() const { return m_editorCamera; }
     const std::vector<std::unique_ptr<PlutoGE::render::IPostProcessEffect>> &GetEditorPostProcessEffects() const { return m_editorPostProcessEffects; }
@@ -86,4 +97,8 @@ private:
     int m_visibleRenderCommands = 0;
     std::vector<HistoryEntry> m_undo;
     std::vector<HistoryEntry> m_redo;
+    GizmoOperation m_gizmoOperation = GizmoOperation::Translate;
+    GizmoSpace m_gizmoSpace = GizmoSpace::Local;
+    std::string m_gizmoEditBefore;
+    bool m_gizmoEditActive = false;
 };

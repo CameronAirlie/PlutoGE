@@ -252,6 +252,8 @@ ipcMain.on('editor:command', (event, action: unknown, ...args: unknown[]) => {
   switch (action) {
     case 'undo': case 'redo': sendEditorCommand(action); break;
     case 'runtime': sendEditorCommand(`runtime ${args[0] === true ? 1 : 0}`); break;
+    case 'gizmo-operation': sendEditorCommand(`gizmo_operation ${args[0] === 'rotate' || args[0] === 'scale' ? args[0] : 'translate'}`); break;
+    case 'gizmo-space': sendEditorCommand(`gizmo_space ${args[0] === 'world' ? 'world' : 'local'}`); break;
     case 'set-editor-camera': {
       const camera = args[0] && typeof args[0] === 'object' ? args[0] as Partial<EditorCameraState> : {};
       const position = Array.isArray(camera.position) ? camera.position.map(number).slice(0, 3) : [0, 2, 6];

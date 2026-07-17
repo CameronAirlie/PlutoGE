@@ -24,6 +24,9 @@ export function App(): React.JSX.Element {
       const editingText = target?.matches('input, textarea, select, [contenteditable="true"]') ?? false;
       if (!(event.ctrlKey || event.metaKey) || !editor) {
         if (!editingText && event.key === 'Delete' && editor?.selectedEntityId && !editor.running) window.plutoEditor.deleteEntity(editor.selectedEntityId);
+        if (!editingText && !editor?.running && event.key.toLowerCase() === 'w') window.plutoEditor.setGizmoOperation('translate');
+        if (!editingText && !editor?.running && event.key.toLowerCase() === 'e') window.plutoEditor.setGizmoOperation('rotate');
+        if (!editingText && !editor?.running && event.key.toLowerCase() === 'r') window.plutoEditor.setGizmoOperation('scale');
         return;
       }
       if (event.key.toLowerCase() === 's') { event.preventDefault(); void window.plutoEditor.saveScene(event.shiftKey); }

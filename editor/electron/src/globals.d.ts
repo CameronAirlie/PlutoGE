@@ -92,6 +92,8 @@ interface EditorState {
   dirty: boolean;
   postProcessEffectTypes: string[];
   running: boolean;
+  gizmoOperation: 'translate' | 'rotate' | 'scale';
+  gizmoSpace: 'local' | 'world';
   selectedEntityId: number;
   canUndo: boolean;
   canRedo: boolean;
@@ -120,6 +122,8 @@ interface PlutoEditorApi {
   undo(): void;
   redo(): void;
   setRuntime(running: boolean): void;
+  setGizmoOperation(operation: 'translate' | 'rotate' | 'scale'): void;
+  setGizmoSpace(space: 'local' | 'world'): void;
   setEditorCamera(camera: EditorCameraState): void;
   resetEditorCamera(): void;
   frameSelected(): void;

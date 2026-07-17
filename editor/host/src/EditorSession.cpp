@@ -418,6 +418,33 @@ PlutoGE::scene::Entity *EditorSession::FindEntity(std::uint32_t id) const
     return m_scene ? m_scene->FindEntityByID(id) : nullptr;
 }
 
+PlutoGE::scene::Entity *EditorSession::GetSelectedEntity() const
+{
+    return FindEntity(m_selectedEntityId);
+}
+
+void EditorSession::SetSelectedEntity(PlutoGE::scene::Entity *entity)
+{
+    m_selectedEntityId = entity ? entity->GetID() : 0;
+}
+
+bool EditorSession::BeginGizmoEdit()
+{
+    if (m_gizmoEditActive) return true;
+    m_gizmoEditBefore.clear();
+    m_gizmoEditActive = CaptureScene(m_gizmoEditBefore);
+    return m_gizmoEditActive;
+}
+
+bool EditorSession::EndGizmoEdit()
+{
+    if (!m_gizmoEditActive) return false;
+    m_gizmoEditActive = false;
+    const bool committed = CommitEdit(m_gizmoEditBefore);
+    m_gizmoEditBefore.clear();
+    return committed;
+}
+
 bool EditorSession::HandleCommand(const std::string &commandLine, std::string &errorMessage)
 {
     std::istringstream input(commandLine);
@@ -429,6 +456,24 @@ bool EditorSession::HandleCommand(const std::string &commandLine, std::string &e
     {
         input >> m_selectedEntityId;
         if (m_selectedEntityId != 0 && !FindEntity(m_selectedEntityId)) m_selectedEntityId = 0;
+        return true;
+    }
+
+    if (command == "gizmo_operation")
+    {
+        std::string operation;
+        input >> operation;
+        if (operation == "rotate") m_gizmoOperation = GizmoOperation::Rotate;
+        else if (operation == "scale") m_gizmoOperation = GizmoOperation::Scale;
+        else m_gizmoOperation = GizmoOperation::Translate;
+        return true;
+    }
+
+    if (command == "gizmo_space")
+    {
+        std::string space;
+        input >> space;
+        m_gizmoSpace = space == "world" ? GizmoSpace::World : GizmoSpace::Local;
         return true;
     }
 
@@ -1043,6 +1088,8 @@ std::string EditorSession::BuildSnapshotEvent() const
     }
     output << ']'
            << ",\"running\":" << (m_engine.IsRuntimeRunning() ? "true" : "false")
+           << ",\"gizmoOperation\":\"" << (m_gizmoOperation == GizmoOperation::Rotate ? "rotate" : m_gizmoOperation == GizmoOperation::Scale ? "scale" : "translate") << '"'
+           << ",\"gizmoSpace\":\"" << (m_gizmoSpace == GizmoSpace::World ? "world" : "local") << '"'
            << ",\"selectedEntityId\":" << m_selectedEntityId
            << ",\"canUndo\":" << (!m_undo.empty() ? "true" : "false")
            << ",\"canRedo\":" << (!m_redo.empty() ? "true" : "false")

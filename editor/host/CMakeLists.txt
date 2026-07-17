@@ -1,6 +1,7 @@
 add_executable(PlutoGEEditorHost
     src/main.cpp
     src/EditorSession.cpp
+    src/EditorViewportInteraction.cpp
 )
 
 target_link_libraries(PlutoGEEditorHost PRIVATE
@@ -9,7 +10,7 @@ target_link_libraries(PlutoGEEditorHost PRIVATE
 )
 
 if (WIN32)
-    target_link_libraries(PlutoGEEditorHost PRIVATE user32)
+    target_link_libraries(PlutoGEEditorHost PRIVATE user32 opengl32)
 endif()
 
 install(TARGETS PlutoGEEditorHost

@@ -105,6 +105,7 @@ interface EditorState {
 interface PlutoEditorApi {
   setViewportBounds(bounds: ViewportBounds): void;
   setViewportVisible(visible: boolean): void;
+  setViewportOccluded(token: string, occluded: boolean): void;
   getHostState(): Promise<HostState>;
   restartHost(): Promise<void>;
   onHostState(callback: (state: HostState) => void): () => void;

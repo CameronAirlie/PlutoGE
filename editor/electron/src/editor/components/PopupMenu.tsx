@@ -1,5 +1,7 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
+
+let nextPopupMenuId = 1;
 
 export interface PopupMenuItem {
   label: string;
@@ -46,6 +48,15 @@ export function PopupMenu({ menu, onClose, className = '' }: {
   onClose(): void;
   className?: string;
 }): React.JSX.Element | null {
+  const [occlusionToken] = React.useState(() => `popup-menu-${nextPopupMenuId++}`);
+  const menuOpen = Boolean(menu);
+
+  useLayoutEffect(() => {
+    if (!menuOpen) return undefined;
+    window.plutoEditor.setViewportOccluded(occlusionToken, true);
+    return () => window.plutoEditor.setViewportOccluded(occlusionToken, false);
+  }, [menuOpen, occlusionToken]);
+
   useEffect(() => {
     if (!menu) return undefined;
     const close = (): void => onClose();

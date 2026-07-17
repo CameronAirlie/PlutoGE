@@ -3,6 +3,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 const api: PlutoEditorApi = {
   setViewportBounds: (bounds) => ipcRenderer.send('viewport:set-bounds', bounds),
   setViewportVisible: (visible) => ipcRenderer.send('viewport:set-visible', visible),
+  setViewportOccluded: (token, occluded) => ipcRenderer.send('viewport:set-occluded', token, occluded),
   getHostState: () => ipcRenderer.invoke('host:get-state'),
   restartHost: () => ipcRenderer.invoke('host:restart'),
   onHostState: (callback) => {

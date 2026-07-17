@@ -7,6 +7,7 @@ let mainWindow: BrowserWindow | undefined;
 let nativeHost: NativeHost | undefined;
 let viewportBounds: [number, number, number, number] | undefined;
 let viewportVisible = true;
+const viewportOcclusions = new Set<string>();
 
 const isTrustedSender = (event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent): boolean =>
   Boolean(mainWindow && event.sender.id === mainWindow.webContents.id);
@@ -17,10 +18,12 @@ const syncViewport = (): void => {
     return;
   }
   nativeHost?.send(`bounds ${viewportBounds.join(' ')}`);
-  nativeHost?.send(`visible ${viewportVisible ? 1 : 0}`);
+  const windowCanShowViewport = Boolean(mainWindow?.isVisible() && !mainWindow.isMinimized());
+  nativeHost?.send(`visible ${viewportVisible && viewportOcclusions.size === 0 && windowCanShowViewport ? 1 : 0}`);
 };
 
 const createWindow = (): void => {
+  viewportOcclusions.clear();
   const editorWindow = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -51,10 +54,14 @@ const createWindow = (): void => {
     },
   );
   editorWindow.webContents.once('did-finish-load', () => nativeHost?.start());
+  editorWindow.webContents.on('did-finish-load', () => {
+    viewportOcclusions.clear();
+    syncViewport();
+  });
   editorWindow.on('move', syncViewport);
-  editorWindow.on('minimize', () => nativeHost?.send('visible 0'));
+  editorWindow.on('minimize', syncViewport);
   editorWindow.on('restore', syncViewport);
-  editorWindow.on('hide', () => nativeHost?.send('visible 0'));
+  editorWindow.on('hide', syncViewport);
   editorWindow.on('show', syncViewport);
   editorWindow.on('closed', () => {
     if (mainWindow === editorWindow) mainWindow = undefined;
@@ -77,6 +84,13 @@ ipcMain.on('viewport:set-visible', (event, visible: unknown) => {
     viewportVisible = visible;
     syncViewport();
   }
+});
+
+ipcMain.on('viewport:set-occluded', (event, token: unknown, occluded: unknown) => {
+  if (!isTrustedSender(event) || typeof token !== 'string' || !token || token.length > 128 || typeof occluded !== 'boolean') return;
+  if (occluded) viewportOcclusions.add(token);
+  else viewportOcclusions.delete(token);
+  syncViewport();
 });
 
 ipcMain.handle('host:restart', async (event) => {

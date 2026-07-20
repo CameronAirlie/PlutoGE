@@ -78,9 +78,9 @@ const syncSurface = (
 	const shouldShow =
 		surface.visible && viewportOcclusions.size === 0 && windowCanShowViewport;
 	if (!shouldShow) {
-		// Avoid moving an owned native window while Windows is minimizing or
-		// hiding its Electron owner. Cross-process SetWindowPos calls during that
-		// transition can stall the owner's window-state change.
+		// Hide first while Electron is minimizing or changing visibility. The
+		// native host owns the overlay z-order and should not reposition it during
+		// that transition.
 		host?.send("visible 0");
 		return;
 	}
@@ -101,6 +101,20 @@ const setEditorOperation = (state: EditorOperationState): void => {
 	else viewportOcclusions.delete("editor-operation");
 	sendToEditorWindows("editor:operation", state);
 	syncViewports();
+};
+
+const withViewportOccluded = async <T>(
+	token: string,
+	operation: () => Promise<T>,
+): Promise<T> => {
+	viewportOcclusions.add(token);
+	syncViewports();
+	try {
+		return await operation();
+	} finally {
+		viewportOcclusions.delete(token);
+		syncViewports();
+	}
 };
 
 const completeEditorOperation = (result: {
@@ -635,55 +649,61 @@ ipcMain.handle("editor:new-scene", async (event) => {
 ipcMain.handle("editor:new-project", async (event) => {
 	if (!isTrustedSender(event) || !mainWindow) return;
 	if (!(await confirmDiscardUnsavedChanges())) return;
-	const result = await dialog.showSaveDialog(mainWindow, {
-		title: "Create PlutoGE Project",
-		defaultPath: path.join(
-			app.getPath("documents"),
-			"NewProject",
-			"NewProject.plutoproject",
-		),
-		buttonLabel: "Create Project",
-		filters: [{ name: "PlutoGE Project", extensions: ["plutoproject"] }],
+	await withViewportOccluded("native-dialog:new-project", async () => {
+		const result = await dialog.showSaveDialog(mainWindow!, {
+			title: "Create PlutoGE Project",
+			defaultPath: path.join(
+				app.getPath("documents"),
+				"NewProject",
+				"NewProject.plutoproject",
+			),
+			buttonLabel: "Create Project",
+			filters: [{ name: "PlutoGE Project", extensions: ["plutoproject"] }],
+		});
+		if (result.canceled || !result.filePath) return;
+		const projectName = path.basename(
+			result.filePath,
+			path.extname(result.filePath),
+		);
+		beginEditorOperation(
+			"Creating project…",
+			`create_project ${encode(result.filePath)} ${encode(projectName)}`,
+		);
 	});
-	if (result.canceled || !result.filePath) return;
-	const projectName = path.basename(
-		result.filePath,
-		path.extname(result.filePath),
-	);
-	beginEditorOperation(
-		"Creating project…",
-		`create_project ${encode(result.filePath)} ${encode(projectName)}`,
-	);
 });
 
 ipcMain.handle("editor:open-project", async (event) => {
 	if (!isTrustedSender(event) || !mainWindow) return;
 	if (!(await confirmDiscardUnsavedChanges())) return;
-	const result = await dialog.showOpenDialog(mainWindow, {
-		title: "Open PlutoGE Project",
-		properties: ["openFile"],
-		filters: [{ name: "PlutoGE Project", extensions: ["plutoproject"] }],
+	await withViewportOccluded("native-dialog:open-project", async () => {
+		const result = await dialog.showOpenDialog(mainWindow!, {
+			title: "Open PlutoGE Project",
+			properties: ["openFile"],
+			filters: [{ name: "PlutoGE Project", extensions: ["plutoproject"] }],
+		});
+		if (!result.canceled && result.filePaths[0])
+			beginEditorOperation(
+				"Loading project…",
+				`load_project ${encode(result.filePaths[0])}`,
+			);
 	});
-	if (!result.canceled && result.filePaths[0])
-		beginEditorOperation(
-			"Loading project…",
-			`load_project ${encode(result.filePaths[0])}`,
-		);
 });
 
 ipcMain.handle("editor:open-scene", async (event) => {
 	if (!isTrustedSender(event) || !mainWindow) return;
 	if (!(await confirmDiscardUnsavedChanges())) return;
-	const result = await dialog.showOpenDialog(mainWindow, {
-		title: "Open PlutoGE Scene",
-		properties: ["openFile"],
-		filters: [{ name: "PlutoGE Scene", extensions: ["plutoscene"] }],
+	await withViewportOccluded("native-dialog:open-scene", async () => {
+		const result = await dialog.showOpenDialog(mainWindow!, {
+			title: "Open PlutoGE Scene",
+			properties: ["openFile"],
+			filters: [{ name: "PlutoGE Scene", extensions: ["plutoscene"] }],
+		});
+		if (!result.canceled && result.filePaths[0])
+			beginEditorOperation(
+				"Loading scene…",
+				`load_scene ${encode(result.filePaths[0])}`,
+			);
 	});
-	if (!result.canceled && result.filePaths[0])
-		beginEditorOperation(
-			"Loading scene…",
-			`load_scene ${encode(result.filePaths[0])}`,
-		);
 });
 
 ipcMain.handle("editor:save-scene", async (event, saveAs: unknown) => {

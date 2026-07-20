@@ -18,9 +18,9 @@ namespace PlutoGE::platform
         bool visible = true;
         bool fullscreen = false;
         std::function<void(int, int)> resizeCallback = nullptr;
-        // When set, the native engine window is presented over this platform
-        // window. Windows uses an owned, borderless overlay because Chromium's
-        // DirectComposition surface occludes cross-process child HWNDs.
+        // When set, the native engine window is positioned over this platform
+        // window. Windows uses an independently managed borderless overlay
+        // because Chromium's DirectComposition surface occludes child HWNDs.
         void *nativeParent = nullptr;
         bool embedded = false;
     };
@@ -59,6 +59,7 @@ namespace PlutoGE::platform
         void SetScriptInputEnabled(bool enabled);
         bool SetEmbeddedBounds(int x, int y, int width, int height);
         bool SetEmbeddedOwner(void *nativeParent);
+        void SetEmbeddedInteractionEnabled(bool enabled);
         void SetEmbeddedVisible(bool visible);
 
         void SetContextCurrent();

@@ -166,6 +166,7 @@ namespace
         HANDLE m_input = INVALID_HANDLE_VALUE;
         std::string m_pending;
     };
+
 #endif
 
     void WriteEvent(std::string_view json)
@@ -321,10 +322,9 @@ int main(int argc, char **argv)
 
     auto &window = engine.GetWindow();
     auto &renderer = engine.GetRenderer();
-    // The embedded surfaces are owned top-level windows layered over Chromium.
-    // Some drivers can leave SwapBuffers waiting indefinitely when Chromium
-    // hides or occludes an owned window in response to a UI control. Pace the
-    // embedded loop ourselves so presentation can never be held by VSync.
+    // Embedded viewports start uncapped. Loading a project or changing its
+    // settings applies the project's VSync preference through the renderer,
+    // just as it does for a standalone engine window.
     renderer.SetVSyncEnabled(!embedded);
 
     EditorSession editorSession(engine);
@@ -404,9 +404,8 @@ int main(int argc, char **argv)
                     visible = nextVisible != 0;
                     // Apply hides immediately, before any following synchronous
                     // load command in this batch. Waiting until the end of the
-                    // frame leaves an owned native HWND above Chromium while
-                    // its thread is not pumping messages, which Windows reports
-                    // as a cross-process application hang.
+                    // frame leaves the native HWND above Chromium while its
+                    // thread is not pumping messages.
                     if (embedded && !visible && surfaceShown)
                     {
                         if (editorCameraLookActive)
@@ -417,12 +416,10 @@ int main(int argc, char **argv)
                         }
                         window.SetCursorLockOverride(true);
                         window.GetInputState().ClearKeyStates();
+                        window.SetEmbeddedInteractionEnabled(false);
                         window.SetEmbeddedVisible(false);
-                        // SetEmbeddedVisible uses ShowWindowAsync for an owned
-                        // cross-process overlay. Dispatch that queued hide
-                        // before entering a synchronous project/scene load so
-                        // Windows never has to interact with a visible HWND
-                        // whose thread is busy deserializing assets.
+                        // Dispatch any queued input/focus messages before
+                        // entering a synchronous project/scene load.
                         window.PollEmbeddedEvents();
                         surfaceShown = false;
                     }
@@ -472,6 +469,7 @@ int main(int argc, char **argv)
                     }
                     window.SetCursorLockOverride(true);
                     window.GetInputState().ClearKeyStates();
+                    window.SetEmbeddedInteractionEnabled(false);
                     window.SetEmbeddedVisible(false);
                     window.PollEmbeddedEvents();
                     surfaceShown = false;
@@ -479,11 +477,6 @@ int main(int argc, char **argv)
 
                 std::string errorMessage;
                 const bool succeeded = editorSession.HandleCommand(commandLine, errorMessage);
-                // Project manifests contain runtime VSync preferences, but an
-                // embedded editor surface must remain independently paced. A
-                // synchronous project load must not re-enable a cross-process
-                // SwapBuffers wait.
-                if (embedded) renderer.SetVSyncEnabled(false);
                 if (succeeded)
                 {
                     WriteEvent(editorSession.BuildSnapshotEvent());
@@ -580,7 +573,7 @@ int main(int argc, char **argv)
         updateMs = std::chrono::duration<float, std::milli>(updateEnd - updateStart).count();
 
         // Keep the native HWND and renderer state together. Merely skipping a
-        // present leaves an invisible owned window in front of Chromium, where
+        // present leaves an invisible native window in front of Chromium, where
         // it still consumes mouse input. Also hide while a native dialog or a
         // different application has focus so the overlay cannot cover it.
         auto *nativeOwner = static_cast<HWND>(window.GetConfig().nativeParent);
@@ -594,6 +587,7 @@ int main(int argc, char **argv)
         {
             if (shouldShowSurface)
             {
+                window.SetEmbeddedInteractionEnabled(true);
                 window.SetEmbeddedVisible(true);
                 window.SetCursorLockOverride(false);
             }
@@ -614,6 +608,7 @@ int main(int argc, char **argv)
                 }
                 window.SetCursorLockOverride(true);
                 window.GetInputState().ClearKeyStates();
+                window.SetEmbeddedInteractionEnabled(false);
                 window.SetEmbeddedVisible(false);
             }
             surfaceShown = shouldShowSurface;
@@ -663,18 +658,6 @@ int main(int argc, char **argv)
             const auto waitStart = std::chrono::steady_clock::now();
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
             waitMs += std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - waitStart).count();
-        }
-
-        if (embedded && shouldShowSurface)
-        {
-            constexpr auto embeddedFrameInterval = std::chrono::microseconds(16667);
-            const auto nextFrame = loopStart + embeddedFrameInterval;
-            if (const auto now = std::chrono::steady_clock::now(); now < nextFrame)
-            {
-                const auto waitStart = now;
-                std::this_thread::sleep_until(nextFrame);
-                waitMs += std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - waitStart).count();
-            }
         }
 
         const auto loopEnd = std::chrono::steady_clock::now();

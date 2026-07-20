@@ -102,18 +102,11 @@ namespace PlutoGE::platform
 
             // A WS_CHILD window is composited underneath Electron's Chromium
             // surface even when Win32 reports it at the top of the child
-            // z-order. Make the engine surface an owned top-level overlay so
-            // OpenGL remains GPU-native and is presented above Chromium.
-            SetLastError(ERROR_SUCCESS);
-            const auto previousOwner = SetWindowLongPtrW(nativeWindow,
-                                                         GWLP_HWNDPARENT,
-                                                         reinterpret_cast<LONG_PTR>(nativeParent));
-            if (!previousOwner && GetLastError() != ERROR_SUCCESS)
-            {
-                std::cerr << "Failed to attach the engine window to its native owner." << std::endl;
-                Close();
-                return false;
-            }
+            // z-order. Keep the engine surface as an unowned top-level overlay
+            // and manage its position, visibility and z-order explicitly.
+            // Cross-process ownership makes Windows synchronously coordinate
+            // the two UI threads during focus, menu and minimize transitions;
+            // if the renderer is busy, that coordination can hang Electron.
 
             POINT parentOrigin{0, 0};
             if (!ClientToScreen(nativeParent, &parentOrigin))
@@ -126,7 +119,7 @@ namespace PlutoGE::platform
             UINT positionFlags = SWP_FRAMECHANGED | SWP_NOACTIVATE;
             positionFlags |= m_config.visible ? SWP_SHOWWINDOW : SWP_HIDEWINDOW;
             SetWindowPos(nativeWindow,
-                         HWND_TOP,
+                         HWND_TOPMOST,
                          parentOrigin.x,
                          parentOrigin.y,
                          m_clientWidth,
@@ -224,7 +217,7 @@ namespace PlutoGE::platform
     {
         m_inputState.BeginFrame();
 #ifdef _WIN32
-        // Pump the owned overlay's messages without GLFW's global cursor
+        // Pump the embedded overlay's messages without GLFW's global cursor
         // recentering pass. A second embedded GLFW process can otherwise act
         // on cursor capture owned by the interactive Scene View and dereference
         // stale Win32 cursor-window state.
@@ -241,7 +234,7 @@ namespace PlutoGE::platform
 
         // GLFW normally performs this after dispatching all messages through
         // process-global cursor state. Embedded overlays can transfer focus to
-        // an owned window in another process, making that global state stale.
+        // a window in another process, making that global state stale.
         // Recenter only this Window's known-valid GLFW handle instead.
         if (m_isCursorLocked && m_window)
         {
@@ -348,12 +341,12 @@ namespace PlutoGE::platform
                 return false;
             }
             return nativeWindow && SetWindowPos(nativeWindow,
-                                                HWND_TOP,
+                                                HWND_TOPMOST,
                                                 parentOrigin.x + x,
                                                 parentOrigin.y + y,
                                                 width,
                                                 height,
-                                                SWP_NOACTIVATE | SWP_NOOWNERZORDER) != FALSE;
+                                                SWP_NOACTIVATE) != FALSE;
         }
 #endif
 
@@ -370,25 +363,42 @@ namespace PlutoGE::platform
         }
 
 #ifdef _WIN32
-        auto *nativeWindow = glfwGetWin32Window(m_window);
         auto *nextOwner = static_cast<HWND>(nativeParent);
-        if (!nativeWindow || !IsWindow(nextOwner))
+        if (!IsWindow(nextOwner))
         {
             return false;
         }
 
-        SetLastError(ERROR_SUCCESS);
-        const auto previousOwner = SetWindowLongPtrW(nativeWindow,
-                                                     GWLP_HWNDPARENT,
-                                                     reinterpret_cast<LONG_PTR>(nextOwner));
-        if (!previousOwner && GetLastError() != ERROR_SUCCESS)
-        {
-            return false;
-        }
+        // This handle is a positioning/visibility reference only. Deliberately
+        // do not establish a Win32 owner relationship across processes.
         m_config.nativeParent = nativeParent;
         return true;
 #else
         return false;
+#endif
+    }
+
+    void Window::SetEmbeddedInteractionEnabled(bool enabled)
+    {
+#ifdef _WIN32
+        if (!m_window || !m_config.embedded)
+        {
+            return;
+        }
+
+        if (auto *nativeWindow = glfwGetWin32Window(m_window))
+        {
+            // Disable before hiding so there is no interval in which a click
+            // can focus the surface after its thread has entered a synchronous
+            // project or scene load.
+            if (!enabled && GetCapture() == nativeWindow)
+            {
+                ReleaseCapture();
+            }
+            EnableWindow(nativeWindow, enabled ? TRUE : FALSE);
+        }
+#else
+        (void)enabled;
 #endif
     }
 
@@ -404,12 +414,18 @@ namespace PlutoGE::platform
         {
             if (auto *nativeWindow = glfwGetWin32Window(m_window))
             {
-                // Owned windows can synchronously notify their owner during a
-                // visibility transition. The owner is Electron in another
-                // process, so use the asynchronous form to avoid a cross-process
-                // wait cycle while Electron is handling the UI action that
-                // requested this transition.
-                ShowWindowAsync(nativeWindow, visible ? SW_SHOWNA : SW_HIDE);
+                // The overlay is intentionally unowned, so these same-thread
+                // transitions cannot synchronously enter Electron. Promote it
+                // only while visible; when hidden it should not retain a
+                // process-wide topmost z-order position.
+                SetWindowPos(nativeWindow,
+                             visible ? HWND_TOPMOST : HWND_NOTOPMOST,
+                             0,
+                             0,
+                             0,
+                             0,
+                             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE |
+                                 (visible ? SWP_SHOWWINDOW : SWP_HIDEWINDOW));
             }
             return;
         }

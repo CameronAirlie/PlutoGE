@@ -59,6 +59,7 @@ namespace PlutoGE::platform
         void SetScriptInputEnabled(bool enabled);
         bool SetEmbeddedBounds(int x, int y, int width, int height);
         bool SetEmbeddedOwner(void *nativeParent);
+        bool Focus();
         void SetEmbeddedInteractionEnabled(bool enabled);
         void SetEmbeddedVisible(bool visible);
 

@@ -378,6 +378,31 @@ namespace PlutoGE::platform
 #endif
     }
 
+    bool Window::Focus()
+    {
+        if (!m_window)
+        {
+            return false;
+        }
+
+#ifdef _WIN32
+        if (m_config.embedded)
+        {
+            auto *nativeWindow = glfwGetWin32Window(m_window);
+            if (!nativeWindow || !IsWindowEnabled(nativeWindow) || !IsWindowVisible(nativeWindow))
+            {
+                return false;
+            }
+
+            BringWindowToTop(nativeWindow);
+            SetForegroundWindow(nativeWindow);
+        }
+#endif
+
+        glfwFocusWindow(m_window);
+        return glfwGetWindowAttrib(m_window, GLFW_FOCUSED) == GLFW_TRUE;
+    }
+
     void Window::SetEmbeddedInteractionEnabled(bool enabled)
     {
 #ifdef _WIN32

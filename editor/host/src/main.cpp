@@ -440,6 +440,10 @@ int main(int argc, char **argv)
                 command >> token;
                 WriteEvent("{\"type\":\"pong\",\"token\":\"" + token + "\"}");
             }
+            else if (name == "focus")
+            {
+                window.Focus();
+            }
             else if (name == "shutdown")
             {
                 running = false;
@@ -498,6 +502,8 @@ int main(int argc, char **argv)
             }
         }
         commandMs = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - loopStart).count();
+
+        window.SetScriptInputEnabled(engine.IsRuntimeRunning());
 
         g_hostPhase = "window event polling";
         const auto eventPollingStart = std::chrono::steady_clock::now();

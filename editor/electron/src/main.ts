@@ -42,6 +42,7 @@ let mirroredScenePath = "";
 let nextEditorOperationId = 1;
 let nextGameMirrorOperationId = 1;
 let editorOperation: EditorOperationState = { busy: false, label: "" };
+let activeEditorOperationCommand = "";
 let activeAsset: AssetDocument | undefined;
 const assetDirtyWindows = new Set<number>();
 let nextConsoleMessageId = 1;
@@ -150,6 +151,8 @@ const completeEditorOperation = (result: {
 	message?: string;
 }): void => {
 	if (!editorOperation.busy || result.token !== editorOperation.token) return;
+	const completedCommand = activeEditorOperationCommand;
+	activeEditorOperationCommand = "";
 	appendConsoleMessage(
 		result.success ? "info" : "error",
 		"Editor",
@@ -164,13 +167,28 @@ const completeEditorOperation = (result: {
 			? undefined
 			: result.message || "The editor operation failed.",
 	});
+	if (
+		result.success &&
+		(completedCommand.startsWith("build_scripts") ||
+			completedCommand.startsWith("build_project"))
+	) {
+		const state = nativeHost?.getEditorState();
+		if (state && mirrorPrimaryStateToGame(state)) {
+			mirroredProjectPath = state.projectPath;
+			mirroredScenePath = state.scenePath;
+		}
+	}
 };
 
 const beginEditorOperation = (label: string, command: string): boolean => {
 	if (editorOperation.busy) return false;
 	const token = String(nextEditorOperationId++);
 	setEditorOperation({ busy: true, label, token });
-	if (nativeHost?.sendOperation(command, token)) return true;
+	if (nativeHost?.sendOperation(command, token)) {
+		activeEditorOperationCommand = command;
+		return true;
+	}
+	activeEditorOperationCommand = "";
 	setEditorOperation({
 		busy: false,
 		label: "",
@@ -187,6 +205,15 @@ const sendGameMirrorOperation = (commands: string[]): boolean => {
 		`mirror-${nextGameMirrorOperationId++}`,
 	);
 };
+
+function mirrorPrimaryStateToGame(state: EditorState): boolean {
+	if (!state.projectPath) return sendGameMirrorOperation(["new_scene"]);
+	const commands = [`load_project ${encode(state.projectPath)}`];
+	if (state.scenePath) commands.push(`load_scene ${encode(state.scenePath)}`);
+	if (state.projectSettings.scriptAssembly) commands.push("reload_scripts");
+	if (state.running) commands.push("runtime 1");
+	return sendGameMirrorOperation(commands);
+}
 
 const clearWindowOcclusions = (webContentsId: number): void => {
 	const prefix = `${webContentsId}:`;
@@ -377,10 +404,7 @@ const createWindow = (): void => {
 		(state) => {
 			if (gameHost?.getState().status === "ready") {
 				if (state.projectPath !== mirroredProjectPath) {
-					const commands = state.projectPath
-						? [`load_project ${encode(state.projectPath)}`]
-						: ["new_scene"];
-					if (sendGameMirrorOperation(commands)) {
+					if (mirrorPrimaryStateToGame(state)) {
 						mirroredProjectPath = state.projectPath;
 						mirroredScenePath = state.scenePath;
 					}
@@ -416,8 +440,7 @@ const createWindow = (): void => {
 				syncSurface(gameHost, gameSurface);
 				const editorState = nativeHost?.getEditorState();
 				if (editorState?.projectPath) {
-					const commands = [`load_project ${encode(editorState.projectPath)}`];
-					if (sendGameMirrorOperation(commands)) {
+					if (mirrorPrimaryStateToGame(editorState)) {
 						mirroredProjectPath = editorState.projectPath;
 						mirroredScenePath = editorState.scenePath;
 					}
@@ -1201,6 +1224,10 @@ ipcMain.on("editor:command", (event, action: unknown, ...args: unknown[]) => {
 			break;
 		case "runtime":
 			sendEditorCommand(`runtime ${args[0] === true ? 1 : 0}`);
+			if (args[0] === true) {
+				const inputHost = gameSurface.visible ? gameHost : nativeHost;
+				inputHost?.send("focus");
+			}
 			break;
 		case "bake-scene": {
 			const settings =

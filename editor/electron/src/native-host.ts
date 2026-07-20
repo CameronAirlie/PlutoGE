@@ -203,7 +203,16 @@ export class NativeHost {
 				}
 			} catch {
 				// Engine diagnostics also use stdout; keep the IPC parser tolerant.
-				if (line.trim()) this.onDiagnostic("info", line.trim());
+				const diagnostic = line.trim();
+				if (diagnostic) {
+					const severity =
+						/: error (?:CS|MSB|NU)\d+|\bBuild FAILED\b/i.test(diagnostic)
+							? "error"
+							: /: warning (?:CS|MSB|NU)\d+|\bwarning\b/i.test(diagnostic)
+								? "warning"
+								: "info";
+					this.onDiagnostic(severity, diagnostic);
+				}
 			}
 		});
 

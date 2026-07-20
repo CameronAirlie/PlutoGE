@@ -188,34 +188,70 @@ namespace
         return {};
     }
 
+    std::string MakeRelativeOrAbsoluteGenericPath(const std::filesystem::path &path,
+                                                  const std::filesystem::path &base)
+    {
+        std::error_code errorCode;
+        const auto relative = std::filesystem::relative(path, base, errorCode);
+        if (!errorCode && !relative.empty()) return relative.generic_string();
+        errorCode.clear();
+        const auto absolute = std::filesystem::absolute(path, errorCode);
+        return errorCode ? std::string{} : absolute.lexically_normal().generic_string();
+    }
+
     std::filesystem::path EnsureScriptProject(assets::Project &project, std::string &errorMessage)
     {
-        if (const auto existing = FindScriptProject(project); !existing.empty()) return existing;
         const auto scriptCore = FindScriptCoreProject();
         if (scriptCore.empty()) { errorMessage = "Could not locate PlutoGE.ScriptCore.csproj."; return {}; }
         auto name = SanitizeIdentifier(project.GetManifest().name);
         if (name.empty()) name = "PlutoGEProject";
-        const auto projectPath = project.GetRootDirectory() / (name + ".Scripts.csproj");
+        const auto existingProjectPath = FindScriptProject(project);
+        const auto projectPath = existingProjectPath.empty()
+                                     ? project.GetRootDirectory() / (name + ".Scripts.csproj")
+                                     : existingProjectPath;
         const auto sourceDirectory = project.GetAssetDirectoryPath() / "Scripts";
         const auto outputDirectory = project.GetAssetDirectoryPath() / "Managed";
         std::error_code errorCode;
         std::filesystem::create_directories(sourceDirectory, errorCode);
         std::filesystem::create_directories(outputDirectory, errorCode);
         if (errorCode) { errorMessage = "Could not create the script project directories."; return {}; }
-        const auto sourcePattern = std::filesystem::relative(sourceDirectory, projectPath.parent_path(), errorCode).generic_string() + "/**/*.cs";
-        const auto outputPath = std::filesystem::relative(outputDirectory, projectPath.parent_path(), errorCode).generic_string();
-        const auto coreReference = std::filesystem::relative(scriptCore, projectPath.parent_path(), errorCode).generic_string();
-        if (errorCode) { errorMessage = "Could not construct relative script project paths."; return {}; }
+        const auto sourceDirectoryPath = MakeRelativeOrAbsoluteGenericPath(sourceDirectory, projectPath.parent_path());
+        const auto outputPath = MakeRelativeOrAbsoluteGenericPath(outputDirectory, projectPath.parent_path());
+        const auto coreReference = MakeRelativeOrAbsoluteGenericPath(scriptCore, projectPath.parent_path());
+        const auto coreDirectory = MakeRelativeOrAbsoluteGenericPath(scriptCore.parent_path(), projectPath.parent_path());
+        if (sourceDirectoryPath.empty() || outputPath.empty() || coreReference.empty() || coreDirectory.empty())
+        {
+            errorMessage = "Could not construct the script project paths.";
+            return {};
+        }
+        const auto sourcePattern = sourceDirectoryPath + "/**/*.cs";
         std::ofstream output(projectPath, std::ios::trunc);
         if (!output) { errorMessage = "Could not create the script project file."; return {}; }
         output << "<Project Sdk=\"Microsoft.NET.Sdk\">\n"
-               << "  <PropertyGroup><TargetFramework>net8.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><EnableDefaultCompileItems>false</EnableDefaultCompileItems><AssemblyName>" << name << ".Scripts</AssemblyName><RootNamespace>" << name << ".Scripts</RootNamespace><OutputPath>" << outputPath << "/</OutputPath><AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath></PropertyGroup>\n"
+               << "  <PropertyGroup>\n"
+               << "    <TargetFramework>net8.0</TargetFramework>\n"
+               << "    <ImplicitUsings>enable</ImplicitUsings>\n"
+               << "    <Nullable>enable</Nullable>\n"
+               << "    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>\n"
+               << "    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>\n"
+               << "    <AssemblyName>" << name << ".Scripts</AssemblyName>\n"
+               << "    <RootNamespace>" << name << ".Scripts</RootNamespace>\n"
+               << "    <OutputPath>" << outputPath << "/</OutputPath>\n"
+               << "    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>\n"
+               << "  </PropertyGroup>\n"
                << "  <ItemGroup><Compile Include=\"" << sourcePattern << "\" /></ItemGroup>\n"
                << "  <ItemGroup><ProjectReference Include=\"" << coreReference << "\" /></ItemGroup>\n"
+               << "  <Target Name=\"CopyScriptCoreRuntimeFiles\" AfterTargets=\"Build\">\n"
+               << "    <ItemGroup>\n"
+               << "      <ScriptCoreRuntimeFiles Include=\"" << coreDirectory << "/bin/$(Configuration)/$(TargetFramework)/PlutoGE.ScriptCore.runtimeconfig.json\" />\n"
+               << "      <ScriptCoreRuntimeFiles Include=\"" << coreDirectory << "/bin/$(Configuration)/$(TargetFramework)/PlutoGE.ScriptCore.deps.json\" Condition=\"Exists('" << coreDirectory << "/bin/$(Configuration)/$(TargetFramework)/PlutoGE.ScriptCore.deps.json')\" />\n"
+               << "    </ItemGroup>\n"
+               << "    <Copy SourceFiles=\"@(ScriptCoreRuntimeFiles)\" DestinationFolder=\"$(OutputPath)\" SkipUnchangedFiles=\"true\" Condition=\"@(ScriptCoreRuntimeFiles) != ''\" />\n"
+               << "  </Target>\n"
                << "</Project>\n";
         if (!output.good()) { errorMessage = "Could not write the script project file."; return {}; }
         project.GetManifest().scriptAssembly = project.MakeAssetReference(outputDirectory / (name + ".Scripts.dll"));
-        project.Save(&errorMessage);
+        if (!project.Save(&errorMessage)) return {};
         return projectPath;
     }
 
@@ -1107,8 +1143,16 @@ bool EditorSession::HandleCommand(const std::string &commandLine, std::string &e
         if (wasRunning) m_engine.StopRuntime();
         auto &scriptEngine = m_engine.GetScriptEngine();
         scriptEngine.Shutdown();
+        const auto assembly = m_project->ResolveAssetReference(m_project->GetManifest().scriptAssembly);
+        if (assembly.empty())
+        {
+            scriptEngine.Initialize();
+            errorMessage = "The project script assembly path is invalid.";
+            return false;
+        }
         PlutoGE::scripting::ScriptBuildConfig config;
         config.projectPath = projectPath;
+        config.outputDirectory = assembly.parent_path();
         config.configuration = "Debug";
         config.framework = "net8.0";
         const auto result = scriptEngine.BuildProject(config);
@@ -1116,16 +1160,26 @@ bool EditorSession::HandleCommand(const std::string &commandLine, std::string &e
         if (!result.succeeded)
         {
             errorMessage = "Script build failed with exit code " + std::to_string(result.exitCode) + ".";
+            const bool restoredPreviousAssembly = std::filesystem::exists(assembly) && scriptEngine.LoadAssembly(assembly);
+            if (wasRunning && restoredPreviousAssembly) m_engine.StartRuntime();
             return false;
         }
-        const auto assembly = m_project->ResolveAssetReference(m_project->GetManifest().scriptAssembly);
+        if (!std::filesystem::exists(assembly))
+        {
+            errorMessage = "Script build completed without producing the configured assembly: " + assembly.string();
+            return false;
+        }
         if (!assembly.empty() && !scriptEngine.LoadAssembly(assembly))
         {
             errorMessage = scriptEngine.GetLastError();
             return false;
         }
         m_project->RefreshAssetRegistry();
-        m_project->Save(&errorMessage);
+        if (!m_project->Save(&errorMessage))
+        {
+            if (wasRunning) m_engine.StartRuntime();
+            return false;
+        }
         if (wasRunning) m_engine.StartRuntime();
         return true;
     }
@@ -1139,7 +1193,12 @@ bool EditorSession::HandleCommand(const std::string &commandLine, std::string &e
         scriptEngine.Shutdown();
         scriptEngine.Initialize();
         const auto assembly = m_project->ResolveAssetReference(m_project->GetManifest().scriptAssembly);
-        if (!assembly.empty() && !scriptEngine.LoadAssembly(assembly))
+        if (assembly.empty() || !std::filesystem::exists(assembly))
+        {
+            errorMessage = "The configured script assembly does not exist: " + assembly.string();
+            return false;
+        }
+        if (!scriptEngine.LoadAssembly(assembly))
         {
             errorMessage = scriptEngine.GetLastError();
             return false;

@@ -40,7 +40,7 @@ export class NativeHost {
 	private readonly diagnostics: string[] = [];
 
 	public constructor(
-		private readonly window: BrowserWindow,
+		private window: BrowserWindow,
 		private readonly onState: (state: HostState) => void,
 		private readonly onEditorState: (state: NativeEditorState) => void,
 		private readonly onPerformance: (performance: HostPerformance) => void,
@@ -169,6 +169,18 @@ export class NativeHost {
 
 	public send(command: string): void {
 		if (this.process?.stdin.writable) this.process.stdin.write(`${command}\n`);
+	}
+
+	public setOwnerWindow(window: BrowserWindow): void {
+		if (this.window === window) return;
+		this.window = window;
+		if (!this.process) return;
+		const nativeHandle = window.getNativeWindowHandle();
+		const handle =
+			nativeHandle.length >= 8
+				? nativeHandle.readBigUInt64LE(0)
+				: BigInt(nativeHandle.readUInt32LE(0));
+		this.send(`owner 0x${handle.toString(16)}`);
 	}
 
 	public async restart(): Promise<void> {

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, screen, shell } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import { NativeHost } from "./native-host";
@@ -6,9 +6,30 @@ import { NativeHost } from "./native-host";
 let mainWindow: BrowserWindow | undefined;
 let nativeHost: NativeHost | undefined;
 let gameHost: NativeHost | undefined;
+type PanelId =
+	| "hierarchy"
+	| "viewport"
+	| "game"
+	| "inspector"
+	| "content"
+	| "performance";
+const panelTitles: Record<PanelId, string> = {
+	hierarchy: "Hierarchy",
+	viewport: "Scene View",
+	game: "Game View",
+	inspector: "Inspector",
+	content: "Content Browser",
+	performance: "Performance",
+};
+const isPanelId = (value: unknown): value is PanelId =>
+	typeof value === "string" &&
+	Object.prototype.hasOwnProperty.call(panelTitles, value);
+const editorWindows = new Set<BrowserWindow>();
+const panelWindows = new Map<PanelId, BrowserWindow>();
 type NativeSurface = {
 	bounds?: [number, number, number, number];
 	visible: boolean;
+	owner?: BrowserWindow;
 };
 const sceneSurface: NativeSurface = { visible: false };
 const gameSurface: NativeSurface = { visible: false };
@@ -19,18 +40,38 @@ let mirroredScenePath = "";
 const isTrustedSender = (
 	event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent,
 ): boolean =>
-	Boolean(mainWindow && event.sender.id === mainWindow.webContents.id);
+	[...editorWindows].some(
+		(window) =>
+			!window.isDestroyed() &&
+			!window.webContents.isDestroyed() &&
+			event.sender.id === window.webContents.id,
+	);
+
+const senderWindow = (
+	event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent,
+): BrowserWindow | undefined => {
+	const window = BrowserWindow.fromWebContents(event.sender) ?? undefined;
+	return window && editorWindows.has(window) ? window : undefined;
+};
+
+const sendToEditorWindows = (channel: string, value: unknown): void => {
+	for (const window of editorWindows) {
+		if (!window.isDestroyed() && !window.webContents.isDestroyed())
+			window.webContents.send(channel, value);
+	}
+};
 
 const syncSurface = (
 	host: NativeHost | undefined,
 	surface: NativeSurface,
 ): void => {
-	if (!surface.bounds) {
+	const owner = surface.owner;
+	if (!surface.bounds || !owner || owner.isDestroyed()) {
 		host?.send("visible 0");
 		return;
 	}
 	const windowCanShowViewport = Boolean(
-		mainWindow?.isVisible() && !mainWindow.isMinimized(),
+		owner.isVisible() && !owner.isMinimized(),
 	);
 	const shouldShow =
 		surface.visible && viewportOcclusions.size === 0 && windowCanShowViewport;
@@ -42,6 +83,7 @@ const syncSurface = (
 		return;
 	}
 
+	host?.setOwnerWindow(owner);
 	host?.send(`bounds ${surface.bounds.join(" ")}`);
 	host?.send("visible 1");
 };
@@ -51,19 +93,157 @@ const syncViewports = (): void => {
 	syncSurface(gameHost, gameSurface);
 };
 
+const clearWindowOcclusions = (webContentsId: number): void => {
+	const prefix = `${webContentsId}:`;
+	for (const token of viewportOcclusions) {
+		if (token.startsWith(prefix)) viewportOcclusions.delete(token);
+	}
+};
+
+const wireEditorWindow = (window: BrowserWindow): void => {
+	// BrowserWindow.webContents cannot be read safely from a `closed` callback.
+	// Capture the stable ID while the window is still alive.
+	const webContentsId = window.webContents.id;
+	editorWindows.add(window);
+	window.on("move", syncViewports);
+	window.on("minimize", syncViewports);
+	window.on("restore", syncViewports);
+	window.on("hide", syncViewports);
+	window.on("show", syncViewports);
+	window.on("closed", () => {
+		clearWindowOcclusions(webContentsId);
+		editorWindows.delete(window);
+		if (sceneSurface.owner === window) {
+			sceneSurface.owner = undefined;
+			sceneSurface.bounds = undefined;
+			sceneSurface.visible = false;
+		}
+		if (gameSurface.owner === window) {
+			gameSurface.owner = undefined;
+			gameSurface.bounds = undefined;
+			gameSurface.visible = false;
+		}
+		syncViewports();
+	});
+};
+
+const createPanelWindow = (
+	panel: PanelId,
+	position?: { x: number; y: number },
+): BrowserWindow => {
+	const existing = panelWindows.get(panel);
+	if (existing && !existing.isDestroyed()) {
+		existing.show();
+		existing.focus();
+		return existing;
+	}
+
+	const viewport = panel === "viewport" || panel === "game";
+	const panelWindow = new BrowserWindow({
+		x: position?.x,
+		y: position?.y,
+		width: viewport ? 900 : 480,
+		height: viewport ? 650 : 620,
+		minWidth: viewport ? 480 : 280,
+		minHeight: viewport ? 320 : 240,
+		show: false,
+		frame: false,
+		backgroundColor: "#101319",
+		title: `${panelTitles[panel]} — PlutoGE`,
+		webPreferences: {
+			preload: MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY,
+			contextIsolation: true,
+			nodeIntegration: false,
+			sandbox: true,
+		},
+	});
+	panelWindows.set(panel, panelWindow);
+	wireEditorWindow(panelWindow);
+	let dockHovered = false;
+	let manualMove = false;
+	const updateDockHover = (): boolean => {
+		const editorWindow = mainWindow;
+		const point = screen.getCursorScreenPoint();
+		const bounds = editorWindow?.getBounds();
+		const hovered = Boolean(
+			editorWindow &&
+				!editorWindow.isDestroyed() &&
+				editorWindow.isVisible() &&
+				!editorWindow.isMinimized() &&
+				bounds &&
+				point.x >= bounds.x &&
+				point.x < bounds.x + bounds.width &&
+				point.y >= bounds.y &&
+				point.y < bounds.y + bounds.height,
+		);
+		if (hovered !== dockHovered) {
+			dockHovered = hovered;
+			if (
+				editorWindow &&
+				!editorWindow.isDestroyed() &&
+				!editorWindow.webContents.isDestroyed()
+			)
+				editorWindow.webContents.send("panel:dock-hover", panel, hovered);
+		}
+		return hovered;
+	};
+	panelWindow.removeMenu();
+	const url = new URL(MAIN_WINDOW_WEBPACK_ENTRY);
+	url.searchParams.set("panel", panel);
+	void panelWindow.loadURL(url.toString());
+	panelWindow.once("ready-to-show", () => panelWindow.show());
+	panelWindow.on("will-move", () => {
+		manualMove = true;
+		updateDockHover();
+	});
+	panelWindow.on("move", () => {
+		if (manualMove) updateDockHover();
+	});
+	panelWindow.on("moved", () => {
+		const shouldDock =
+			process.platform === "win32" && manualMove && updateDockHover();
+		manualMove = false;
+		if (shouldDock) panelWindow.close();
+	});
+	panelWindow.on("close", () => {
+		if (
+			dockHovered &&
+			mainWindow &&
+			!mainWindow.isDestroyed() &&
+			!mainWindow.webContents.isDestroyed()
+		)
+			mainWindow.webContents.send("panel:dock-hover", panel, false);
+		dockHovered = false;
+	});
+	panelWindow.on("closed", () => {
+		if (panelWindows.get(panel) !== panelWindow) return;
+		panelWindows.delete(panel);
+		if (
+			mainWindow &&
+			!mainWindow.isDestroyed() &&
+			!mainWindow.webContents.isDestroyed()
+		)
+			mainWindow.webContents.send("panel:closed", panel);
+	});
+	return panelWindow;
+};
+
 const createWindow = (): void => {
 	viewportOcclusions.clear();
 	mirroredProjectPath = "";
 	mirroredScenePath = "";
 	sceneSurface.bounds = undefined;
 	sceneSurface.visible = false;
+	sceneSurface.owner = undefined;
 	gameSurface.bounds = undefined;
 	gameSurface.visible = false;
+	gameSurface.owner = undefined;
 	const editorWindow = new BrowserWindow({
 		width: 1440,
 		height: 900,
 		minWidth: 960,
 		minHeight: 640,
+		frame: false,
 		backgroundColor: "#101319",
 		title: "PlutoGE Editor",
 		webPreferences: {
@@ -74,6 +254,7 @@ const createWindow = (): void => {
 		},
 	});
 	mainWindow = editorWindow;
+	wireEditorWindow(editorWindow);
 
 	editorWindow.removeMenu();
 	void editorWindow.loadURL(MAIN_WINDOW_WEBPACK_ENTRY);
@@ -81,8 +262,7 @@ const createWindow = (): void => {
 	nativeHost = new NativeHost(
 		editorWindow,
 		(state) => {
-			if (!editorWindow.isDestroyed())
-				editorWindow.webContents.send("host:state", state);
+			sendToEditorWindows("host:state", state);
 			if (state.status === "ready") syncSurface(nativeHost, sceneSurface);
 		},
 		(state) => {
@@ -102,19 +282,16 @@ const createWindow = (): void => {
 					mirroredScenePath = state.scenePath;
 				}
 			}
-			if (!editorWindow.isDestroyed())
-				editorWindow.webContents.send("editor:state", state);
+			sendToEditorWindows("editor:state", state);
 		},
 		(performance) => {
-			if (!editorWindow.isDestroyed())
-				editorWindow.webContents.send("host:performance", performance);
+			sendToEditorWindows("host:performance", performance);
 		},
 	);
 	gameHost = new NativeHost(
 		editorWindow,
 		(state) => {
-			if (!editorWindow.isDestroyed())
-				editorWindow.webContents.send("game-host:state", state);
+			sendToEditorWindows("game-host:state", state);
 			if (state.status === "ready") {
 				mirroredProjectPath = "";
 				mirroredScenePath = "";
@@ -133,8 +310,7 @@ const createWindow = (): void => {
 			/* The primary host owns editor state. */
 		},
 		(performance) => {
-			if (!editorWindow.isDestroyed())
-				editorWindow.webContents.send("game-host:performance", performance);
+			sendToEditorWindows("game-host:performance", performance);
 		},
 		["--view-mode", "game"],
 		"PlutoGEGameViewHost",
@@ -147,18 +323,19 @@ const createWindow = (): void => {
 		viewportOcclusions.clear();
 		syncViewports();
 	});
-	editorWindow.on("move", syncViewports);
-	editorWindow.on("minimize", syncViewports);
-	editorWindow.on("restore", syncViewports);
-	editorWindow.on("hide", syncViewports);
-	editorWindow.on("show", syncViewports);
+	editorWindow.on("close", () => {
+		for (const panelWindow of panelWindows.values()) {
+			if (!panelWindow.isDestroyed()) panelWindow.close();
+		}
+	});
 	editorWindow.on("closed", () => {
 		if (mainWindow === editorWindow) mainWindow = undefined;
 	});
 };
 
 ipcMain.on("viewport:set-bounds", (event, value: unknown) => {
-	if (!isTrustedSender(event) || !value || typeof value !== "object") return;
+	const owner = senderWindow(event);
+	if (!owner || !value || typeof value !== "object") return;
 	const bounds = value as Record<string, unknown>;
 	const numbers = ["x", "y", "width", "height"].map((key) =>
 		Number(bounds[key]),
@@ -167,18 +344,26 @@ ipcMain.on("viewport:set-bounds", (event, value: unknown) => {
 	const [x, y, width, height] = numbers.map(Math.round);
 	if (width <= 0 || height <= 0) return;
 	sceneSurface.bounds = [x, y, width, height];
+	sceneSurface.owner = owner;
 	syncSurface(nativeHost, sceneSurface);
 });
 
 ipcMain.on("viewport:set-visible", (event, visible: unknown) => {
-	if (isTrustedSender(event) && typeof visible === "boolean") {
+	const owner = senderWindow(event);
+	if (
+		owner &&
+		typeof visible === "boolean" &&
+		(visible || sceneSurface.owner === owner)
+	) {
+		if (visible) sceneSurface.owner = owner;
 		sceneSurface.visible = visible;
 		syncSurface(nativeHost, sceneSurface);
 	}
 });
 
 ipcMain.on("game-viewport:set-bounds", (event, value: unknown) => {
-	if (!isTrustedSender(event) || !value || typeof value !== "object") return;
+	const owner = senderWindow(event);
+	if (!owner || !value || typeof value !== "object") return;
 	const bounds = value as Record<string, unknown>;
 	const numbers = ["x", "y", "width", "height"].map((key) =>
 		Number(bounds[key]),
@@ -187,11 +372,18 @@ ipcMain.on("game-viewport:set-bounds", (event, value: unknown) => {
 	const [x, y, width, height] = numbers.map(Math.round);
 	if (width <= 0 || height <= 0) return;
 	gameSurface.bounds = [x, y, width, height];
+	gameSurface.owner = owner;
 	syncSurface(gameHost, gameSurface);
 });
 
 ipcMain.on("game-viewport:set-visible", (event, visible: unknown) => {
-	if (isTrustedSender(event) && typeof visible === "boolean") {
+	const owner = senderWindow(event);
+	if (
+		owner &&
+		typeof visible === "boolean" &&
+		(visible || gameSurface.owner === owner)
+	) {
+		if (visible) gameSurface.owner = owner;
 		gameSurface.visible = visible;
 		syncSurface(gameHost, gameSurface);
 	}
@@ -208,11 +400,48 @@ ipcMain.on(
 			typeof occluded !== "boolean"
 		)
 			return;
-		if (occluded) viewportOcclusions.add(token);
-		else viewportOcclusions.delete(token);
+		const key = `${event.sender.id}:${token}`;
+		if (occluded) viewportOcclusions.add(key);
+		else viewportOcclusions.delete(key);
 		syncViewports();
 	},
 );
+
+ipcMain.handle("panel:detach", (event, panel: unknown, value: unknown) => {
+	if (!isTrustedSender(event) || !isPanelId(panel)) return false;
+	const coordinates =
+		value && typeof value === "object"
+			? (value as Record<string, unknown>)
+			: undefined;
+	const x = Number(coordinates?.x);
+	const y = Number(coordinates?.y);
+	createPanelWindow(panel, {
+		x: Number.isFinite(x) ? Math.round(x - 80) : 100,
+		y: Number.isFinite(y) ? Math.round(y - 16) : 100,
+	});
+	return true;
+});
+
+ipcMain.handle("panel:dock", (event, panel: unknown) => {
+	if (!isTrustedSender(event) || !isPanelId(panel)) return;
+	panelWindows.get(panel)?.close();
+});
+
+ipcMain.on("window:control", (event, action: unknown) => {
+	const window = senderWindow(event);
+	if (!window || typeof action !== "string") return;
+	switch (action) {
+		case "minimize":
+			window.minimize();
+			break;
+		case "maximize":
+			window.isMaximized() ? window.unmaximize() : window.maximize();
+			break;
+		case "close":
+			window.close();
+			break;
+	}
+});
 
 ipcMain.handle("host:restart", async (event) => {
 	if (!isTrustedSender(event)) return;
@@ -459,7 +688,10 @@ ipcMain.handle("editor:save-project-settings", (event, value: unknown) => {
 
 	const name = candidate.name.trim();
 	if (!name) return false;
-	const width = Math.max(64, Math.min(16384, Math.round(candidate.windowWidth)));
+	const width = Math.max(
+		64,
+		Math.min(16384, Math.round(candidate.windowWidth)),
+	);
 	const height = Math.max(
 		64,
 		Math.min(16384, Math.round(candidate.windowHeight)),

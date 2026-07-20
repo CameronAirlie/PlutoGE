@@ -362,6 +362,36 @@ namespace PlutoGE::platform
         return true;
     }
 
+    bool Window::SetEmbeddedOwner(void *nativeParent)
+    {
+        if (!m_window || !m_config.embedded || !nativeParent)
+        {
+            return false;
+        }
+
+#ifdef _WIN32
+        auto *nativeWindow = glfwGetWin32Window(m_window);
+        auto *nextOwner = static_cast<HWND>(nativeParent);
+        if (!nativeWindow || !IsWindow(nextOwner))
+        {
+            return false;
+        }
+
+        SetLastError(ERROR_SUCCESS);
+        const auto previousOwner = SetWindowLongPtrW(nativeWindow,
+                                                     GWLP_HWNDPARENT,
+                                                     reinterpret_cast<LONG_PTR>(nextOwner));
+        if (!previousOwner && GetLastError() != ERROR_SUCCESS)
+        {
+            return false;
+        }
+        m_config.nativeParent = nativeParent;
+        return true;
+#else
+        return false;
+#endif
+    }
+
     void Window::SetEmbeddedVisible(bool visible)
     {
         if (!m_window)

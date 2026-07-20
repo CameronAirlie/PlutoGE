@@ -3,6 +3,7 @@ import { DockWorkspace, useDockLayout } from "./components/DockWorkspace";
 import { ProjectSettingsDialog } from "./components/ProjectSettingsDialog";
 import { StatusBar } from "./components/StatusBar";
 import { Toolbar } from "./components/Toolbar";
+import { WindowTitleBar } from "./components/WindowTitleBar";
 
 export function App(): React.JSX.Element {
 	const [host, setHost] = useState<HostState>({ status: "starting" });
@@ -105,6 +106,13 @@ export function App(): React.JSX.Element {
 	const running = editor?.running ?? false;
 	return (
 		<div className="editor-shell">
+			<WindowTitleBar
+				title={
+					editor?.projectName
+						? `${editor.projectName} — PlutoGE Editor`
+						: "PlutoGE Editor"
+				}
+			/>
 			<Toolbar
 				editor={editor}
 				running={running}
@@ -119,6 +127,8 @@ export function App(): React.JSX.Element {
 				layout={dock.layout}
 				onLayoutChange={dock.setLayout}
 				onTogglePanel={dock.togglePanel}
+				onDetachPanel={dock.detachPanel}
+				dockHoverPanel={dock.dockHoverPanel}
 				host={host}
 				gameHost={gameHost}
 				hostPerformance={hostPerformance}

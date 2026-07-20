@@ -342,6 +342,15 @@ int main(int argc, char **argv)
                     visible = nextVisible != 0;
                 }
             }
+            else if (name == "owner")
+            {
+                std::string value;
+                if (command >> value)
+                {
+                    const auto handle = std::stoull(value, nullptr, 0);
+                    window.SetEmbeddedOwner(reinterpret_cast<void *>(static_cast<std::uintptr_t>(handle)));
+                }
+            }
             else if (name == "ping")
             {
                 std::string token;
@@ -443,7 +452,7 @@ int main(int argc, char **argv)
         // present leaves an invisible owned window in front of Chromium, where
         // it still consumes mouse input. Also hide while a native dialog or a
         // different application has focus so the overlay cannot cover it.
-        auto *nativeOwner = static_cast<HWND>(options.parentWindow);
+        auto *nativeOwner = static_cast<HWND>(window.GetConfig().nativeParent);
         auto *nativeSurface = static_cast<HWND>(window.GetNativeHandle());
         auto *foregroundWindow = GetForegroundWindow();
         const bool ownerCanPresent = !embedded ||

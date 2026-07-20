@@ -58,6 +58,7 @@ namespace PlutoGE::platform
         void SetCursorLockOverride(bool forceVisible);
         void SetScriptInputEnabled(bool enabled);
         bool SetEmbeddedBounds(int x, int y, int width, int height);
+        bool SetEmbeddedOwner(void *nativeParent);
         void SetEmbeddedVisible(bool visible);
 
         void SetContextCurrent();

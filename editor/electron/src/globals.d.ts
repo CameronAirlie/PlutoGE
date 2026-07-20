@@ -28,6 +28,14 @@ interface ViewportBounds {
 	height: number;
 }
 
+type EditorPanelId =
+	| "hierarchy"
+	| "viewport"
+	| "game"
+	| "inspector"
+	| "content"
+	| "performance";
+
 type Vec3 = [number, number, number];
 
 interface EditorProperty {
@@ -127,6 +135,18 @@ interface EditorState {
 }
 
 interface PlutoEditorApi {
+	detachPanel(
+		panel: EditorPanelId,
+		position: { x: number; y: number },
+	): Promise<boolean>;
+	dockPanel(panel: EditorPanelId): Promise<void>;
+	minimizeWindow(): void;
+	toggleMaximizeWindow(): void;
+	closeWindow(): void;
+	onPanelDockHover(
+		callback: (panel: EditorPanelId, hovered: boolean) => void,
+	): () => void;
+	onPanelWindowClosed(callback: (panel: EditorPanelId) => void): () => void;
 	setViewportBounds(bounds: ViewportBounds): void;
 	setViewportVisible(visible: boolean): void;
 	setGameViewportBounds(bounds: ViewportBounds): void;

@@ -1,6 +1,29 @@
 import { contextBridge, ipcRenderer } from "electron";
 
 const api: PlutoEditorApi = {
+	detachPanel: (panel, position) =>
+		ipcRenderer.invoke("panel:detach", panel, position),
+	dockPanel: (panel) => ipcRenderer.invoke("panel:dock", panel),
+	minimizeWindow: () => ipcRenderer.send("window:control", "minimize"),
+	toggleMaximizeWindow: () => ipcRenderer.send("window:control", "maximize"),
+	closeWindow: () => ipcRenderer.send("window:control", "close"),
+	onPanelDockHover: (callback) => {
+		const listener = (
+			_event: Electron.IpcRendererEvent,
+			panel: EditorPanelId,
+			hovered: boolean,
+		) => callback(panel, hovered);
+		ipcRenderer.on("panel:dock-hover", listener);
+		return () => ipcRenderer.removeListener("panel:dock-hover", listener);
+	},
+	onPanelWindowClosed: (callback) => {
+		const listener = (
+			_event: Electron.IpcRendererEvent,
+			panel: EditorPanelId,
+		) => callback(panel);
+		ipcRenderer.on("panel:closed", listener);
+		return () => ipcRenderer.removeListener("panel:closed", listener);
+	},
 	setViewportBounds: (bounds) =>
 		ipcRenderer.send("viewport:set-bounds", bounds),
 	setViewportVisible: (visible) =>

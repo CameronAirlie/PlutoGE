@@ -268,11 +268,17 @@ const preferredTarget = (layout: DockNode, panel: PanelId): string => {
 export function useDockLayout(): {
 	layout: DockNode;
 	visiblePanels: Set<PanelId>;
+	dockHoverPanel?: PanelId;
 	setLayout(layout: DockNode): void;
 	togglePanel(panel: PanelId): void;
+	detachPanel(panel: PanelId, position: { x: number; y: number }): void;
 	reset(): void;
 } {
 	const [layout, setLayoutState] = useState(loadLayout);
+	const [detachedPanels, setDetachedPanels] = useState<Set<PanelId>>(
+		() => new Set(),
+	);
+	const [dockHoverPanel, setDockHoverPanel] = useState<PanelId>();
 	const setLayout = (next: DockNode): void => setLayoutState(next);
 	useEffect(() => {
 		const timeout = window.setTimeout(
@@ -282,7 +288,41 @@ export function useDockLayout(): {
 		);
 		return () => window.clearTimeout(timeout);
 	}, [layout]);
+	useEffect(
+		() =>
+			window.plutoEditor.onPanelWindowClosed((panel) => {
+				setDetachedPanels((current) => {
+					const next = new Set(current);
+					next.delete(panel);
+					return next;
+				});
+				setLayoutState((current) =>
+					collectPanels(current).has(panel)
+						? current
+						: insertPanel(
+								current,
+								preferredTarget(current, panel),
+								panel,
+								"center",
+							),
+				);
+			}),
+		[],
+	);
+	useEffect(
+		() =>
+			window.plutoEditor.onPanelDockHover((panel, hovered) =>
+				setDockHoverPanel((current) =>
+					hovered ? panel : current === panel ? undefined : current,
+				),
+			),
+		[],
+	);
 	const togglePanel = (panel: PanelId): void => {
+		if (detachedPanels.has(panel)) {
+			void window.plutoEditor.dockPanel(panel);
+			return;
+		}
 		if (collectPanels(layout).has(panel)) {
 			const next = removePanel(layout, panel);
 			if (next) setLayout(next);
@@ -292,12 +332,35 @@ export function useDockLayout(): {
 			insertPanel(layout, preferredTarget(layout, panel), panel, "center"),
 		);
 	};
-	const reset = (): void => setLayout(cloneDefaultLayout());
+	const detachPanel = (
+		panel: PanelId,
+		position: { x: number; y: number },
+	): void => {
+		if (!removePanel(layout, panel)) return;
+		void window.plutoEditor.detachPanel(panel, position).then((opened) => {
+			if (!opened) return;
+			setLayoutState((current) => removePanel(current, panel) ?? current);
+			setDetachedPanels((current) => new Set(current).add(panel));
+		});
+	};
+	const reset = (): void => {
+		for (const panel of detachedPanels)
+			void window.plutoEditor.dockPanel(panel);
+		setDetachedPanels(new Set());
+		setLayout(cloneDefaultLayout());
+	};
+	const visiblePanels = useMemo(() => {
+		const visible = collectPanels(layout);
+		for (const panel of detachedPanels) visible.add(panel);
+		return visible;
+	}, [detachedPanels, layout]);
 	return {
 		layout,
-		visiblePanels: useMemo(() => collectPanels(layout), [layout]),
+		visiblePanels,
+		dockHoverPanel,
 		setLayout,
 		togglePanel,
+		detachPanel,
 		reset,
 	};
 }
@@ -365,6 +428,7 @@ function DockTabsView({
 	onActivate,
 	onClose,
 	onDropPanel,
+	onDetachPanel,
 }: {
 	node: DockTabs;
 	panels: Record<PanelId, React.JSX.Element>;
@@ -375,6 +439,7 @@ function DockTabsView({
 		targetId: string,
 		position: DockDropPosition,
 	): void;
+	onDetachPanel(panel: PanelId, position: { x: number; y: number }): void;
 }): React.JSX.Element {
 	const [dropPosition, setDropPosition] = useState<DockDropPosition>();
 	const positionForEvent = (event: React.DragEvent): DockDropPosition => {
@@ -434,7 +499,19 @@ function DockTabsView({
 								);
 								setPanelDragOccluded(true);
 							}}
-							onDragEnd={() => setPanelDragOccluded(false)}
+							onDragEnd={(event) => {
+								setPanelDragOccluded(false);
+								const outside =
+									event.screenX < window.screenX ||
+									event.screenX > window.screenX + window.outerWidth ||
+									event.screenY < window.screenY ||
+									event.screenY > window.screenY + window.outerHeight;
+								if (outside)
+									onDetachPanel(panel, {
+										x: event.screenX,
+										y: event.screenY,
+									});
+							}}
 							onClick={() => onActivate(panel)}
 						>
 							{panelTitles[panel]}
@@ -467,6 +544,7 @@ function DockNodeView({
 	onLayoutChange,
 	onClose,
 	onDropPanel,
+	onDetachPanel,
 }: {
 	node: DockNode;
 	panels: Record<PanelId, React.JSX.Element>;
@@ -477,6 +555,7 @@ function DockNodeView({
 		targetId: string,
 		position: DockDropPosition,
 	): void;
+	onDetachPanel(panel: PanelId, position: { x: number; y: number }): void;
 }): React.JSX.Element {
 	if (node.type === "tabs")
 		return (
@@ -486,6 +565,7 @@ function DockNodeView({
 				onActivate={(panel) => onLayoutChange({ ...node, active: panel })}
 				onClose={onClose}
 				onDropPanel={onDropPanel}
+				onDetachPanel={onDetachPanel}
 			/>
 		);
 	return (
@@ -500,6 +580,7 @@ function DockNodeView({
 					onLayoutChange={(first) => onLayoutChange({ ...node, first })}
 					onClose={onClose}
 					onDropPanel={onDropPanel}
+					onDetachPanel={onDetachPanel}
 				/>
 			</div>
 			<SplitHandle
@@ -518,6 +599,7 @@ function DockNodeView({
 					onLayoutChange={(second) => onLayoutChange({ ...node, second })}
 					onClose={onClose}
 					onDropPanel={onDropPanel}
+					onDetachPanel={onDetachPanel}
 				/>
 			</div>
 		</div>
@@ -528,6 +610,8 @@ export function DockWorkspace({
 	layout,
 	onLayoutChange,
 	onTogglePanel,
+	onDetachPanel,
+	dockHoverPanel,
 	host,
 	gameHost,
 	hostPerformance,
@@ -539,6 +623,8 @@ export function DockWorkspace({
 	layout: DockNode;
 	onLayoutChange(layout: DockNode): void;
 	onTogglePanel(panel: PanelId): void;
+	onDetachPanel(panel: PanelId, position: { x: number; y: number }): void;
+	dockHoverPanel?: PanelId;
 	host: HostState;
 	gameHost: HostState;
 	hostPerformance?: HostPerformance;
@@ -618,7 +704,13 @@ export function DockWorkspace({
 				onLayoutChange={onLayoutChange}
 				onClose={onTogglePanel}
 				onDropPanel={movePanel}
+				onDetachPanel={onDetachPanel}
 			/>
+			{dockHoverPanel && (
+				<div className="floating-dock-preview" aria-hidden="true">
+					<span>Release to dock {panelTitles[dockHoverPanel]}</span>
+				</div>
+			)}
 		</main>
 	);
 }

@@ -21,6 +21,15 @@ namespace PlutoGE::render
 {
     namespace
     {
+        // Voxelization uses a geometry shader and image atomics, so a single
+        // instanced draw can contain far more GPU work than an ordinary scene
+        // draw. Keep every submission below a conservative work limit. This is
+        // also what makes m_voxelizationCommandBudget a real per-frame budget:
+        // previously one "command" could contain an unbounded instance count
+        // and prevent the render thread from processing editor commands.
+        constexpr std::size_t kMaxVoxelInstancesPerDraw = 64;
+        constexpr std::size_t kMaxVoxelTrianglesPerDraw = 131072;
+
         bool ParseBool(const std::string &value) { return value == "true" || value == "1"; }
 
         std::size_t HashBytes(const void *data, std::size_t size, std::size_t seed = 1469598103934665603ull)
@@ -939,14 +948,22 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
             if (c.instanceModels && !c.instanceModels->empty())
             {
                 const std::size_t instanceCount = c.instanceModels->size();
+                const std::size_t indexCount = c.mesh->GetSubmeshLodIndexCount(c.submeshIndex, job.voxelLod);
+                const std::size_t trianglesPerInstance = std::max<std::size_t>(indexCount / 3, 1);
+                const std::size_t instancesForTriangleBudget =
+                    std::max<std::size_t>(kMaxVoxelTrianglesPerDraw / trianglesPerInstance, 1);
+                const std::size_t remainingInstances = instanceCount - job.nextInstance;
+                const std::size_t batchInstanceCount = std::min(
+                    remainingInstances,
+                    std::min(kMaxVoxelInstancesPerDraw, instancesForTriangleBudget));
                 if (!m_voxelInstanceBuffer)
                     glGenBuffers(1, &m_voxelInstanceBuffer);
                 glBindBuffer(GL_ARRAY_BUFFER, m_voxelInstanceBuffer);
-                if (m_voxelInstanceCapacity < instanceCount)
+                if (m_voxelInstanceCapacity < batchInstanceCount)
                 {
                     m_voxelInstanceCapacity = std::max(
-                        instanceCount,
-                        m_voxelInstanceCapacity == 0 ? instanceCount : m_voxelInstanceCapacity * 2);
+                        batchInstanceCount,
+                        m_voxelInstanceCapacity == 0 ? batchInstanceCount : m_voxelInstanceCapacity * 2);
                 }
                 glBufferData(
                     GL_ARRAY_BUFFER,
@@ -955,8 +972,8 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
                     GL_STREAM_DRAW);
                 glBufferSubData(
                     GL_ARRAY_BUFFER, 0,
-                    static_cast<GLsizeiptr>(instanceCount * sizeof(glm::mat4)),
-                    c.instanceModels->data());
+                    static_cast<GLsizeiptr>(batchInstanceCount * sizeof(glm::mat4)),
+                    c.instanceModels->data() + job.nextInstance);
                 glBindVertexArray(c.mesh->GetVAO());
                 for (unsigned int column = 0; column < 4; ++column)
                 {
@@ -969,9 +986,11 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
                 }
                 glBindBuffer(GL_ARRAY_BUFFER, 0);
                 m_voxelizationShader->SetUniform("uUseInstancing", 1);
-                c.mesh->DrawSubmeshInstancedBound(c.submeshIndex, instanceCount, job.voxelLod);
-                job.nextInstance = instanceCount;
+                c.mesh->DrawSubmeshInstancedBound(c.submeshIndex, batchInstanceCount, job.voxelLod);
+                job.nextInstance += batchInstanceCount;
                 ++submittedDraws;
+                if (job.nextInstance >= instanceCount)
+                    ++cascade.jobIndex;
             }
             else
             {
@@ -980,8 +999,8 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
                 c.mesh->DrawSubmesh(c.submeshIndex, job.voxelLod);
                 job.nextInstance = 1;
                 ++submittedDraws;
+                ++cascade.jobIndex;
             }
-            ++cascade.jobIndex;
         }
         glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
         if (cascade.jobIndex < cascade.jobs.size())

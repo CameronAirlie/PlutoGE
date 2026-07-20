@@ -666,6 +666,74 @@ bool EditorSession::HandleCommand(const std::string &commandLine, std::string &e
         return SetScene(std::make_unique<PlutoGE::scene::Scene>(), false);
     }
 
+    if (command == "set_project_settings")
+    {
+        if (!m_project)
+        {
+            errorMessage = "No project is open.";
+            return false;
+        }
+
+        int persist = 0;
+        int windowWidth = 0;
+        int windowHeight = 0;
+        int vSyncEnabled = 0;
+        std::string encodedName;
+        std::string encodedStartupScene;
+        std::string encodedScriptAssembly;
+        std::string encodedWindowTitle;
+        if (!(input >> persist >> encodedName >> encodedStartupScene >> encodedScriptAssembly >> encodedWindowTitle
+                    >> windowWidth >> windowHeight >> vSyncEnabled))
+        {
+            errorMessage = "Invalid project settings command.";
+            return false;
+        }
+
+        auto name = Decode(encodedName);
+        const auto startupScene = Decode(encodedStartupScene);
+        const auto scriptAssembly = Decode(encodedScriptAssembly);
+        auto windowTitle = Decode(encodedWindowTitle);
+        if (name.empty())
+        {
+            errorMessage = "Project name cannot be empty.";
+            return false;
+        }
+
+        std::string startupSceneReference;
+        if (!startupScene.empty())
+        {
+            startupSceneReference = m_project->FindSceneAssetReference(startupScene);
+            if (startupSceneReference.empty())
+            {
+                errorMessage = "The selected startup scene is not a project scene asset.";
+                return false;
+            }
+        }
+
+        if (!scriptAssembly.empty() &&
+            PlutoGE::assets::Project::GetAssetTypeForReference(scriptAssembly) != PlutoGE::assets::ProjectAssetType::Assembly)
+        {
+            errorMessage = "The script assembly must be a project assembly asset.";
+            return false;
+        }
+
+        auto &manifest = m_project->GetManifest();
+        manifest.name = std::move(name);
+        manifest.startupScene = std::move(startupSceneReference);
+        manifest.scriptAssembly = scriptAssembly;
+        manifest.windowTitle = std::move(windowTitle);
+        manifest.windowWidth = std::clamp(windowWidth, 64, 16384);
+        manifest.windowHeight = std::clamp(windowHeight, 64, 16384);
+        manifest.vSyncEnabled = vSyncEnabled != 0;
+        m_engine.GetRenderer().SetVSyncEnabled(manifest.vSyncEnabled);
+
+        if (persist != 0 && !m_project->Save(&errorMessage))
+        {
+            return false;
+        }
+        return true;
+    }
+
     if (command == "load_project" || command == "create_project")
     {
         std::string encodedPath;
@@ -773,7 +841,7 @@ bool EditorSession::HandleCommand(const std::string &commandLine, std::string &e
             return false;
         }
         auto &manifest = m_project->GetManifest();
-        if (!m_scenePath.empty() && m_project->IsInAssetDirectory(m_scenePath))
+        if (manifest.startupScene.empty() && !m_scenePath.empty() && m_project->IsInAssetDirectory(m_scenePath))
         {
             manifest.startupScene = m_project->MakeAssetReference(m_scenePath);
         }
@@ -806,7 +874,10 @@ bool EditorSession::HandleCommand(const std::string &commandLine, std::string &e
         m_dirty = false;
         if (m_project && m_project->IsInAssetDirectory(m_scenePath))
         {
-            m_project->GetManifest().startupScene = m_project->MakeAssetReference(m_scenePath);
+            if (m_project->GetManifest().startupScene.empty())
+            {
+                m_project->GetManifest().startupScene = m_project->MakeAssetReference(m_scenePath);
+            }
             m_project->RefreshAssetRegistry();
             if (!m_project->Save(&errorMessage)) return false;
         }
@@ -1189,7 +1260,25 @@ std::string EditorSession::BuildSnapshotEvent() const
     output << "{\"type\":\"editor-state\",\"projectPath\":\"" << JsonEscape(m_projectPath)
            << "\",\"projectName\":\"" << JsonEscape(m_project ? m_project->GetManifest().name : std::string{})
            << "\",\"assetDirectoryPath\":\"" << JsonEscape(m_project ? m_project->GetAssetDirectoryPath().string() : std::string{})
-           << "\",\"assets\":[";
+           << "\",\"projectSettings\":{";
+    if (m_project)
+    {
+        const auto &manifest = m_project->GetManifest();
+        output << "\"name\":\"" << JsonEscape(manifest.name)
+               << "\",\"startupScene\":\"" << JsonEscape(manifest.startupScene)
+               << "\",\"scriptAssembly\":\"" << JsonEscape(manifest.scriptAssembly)
+               << "\",\"windowTitle\":\"" << JsonEscape(manifest.windowTitle)
+               << "\",\"windowWidth\":" << manifest.windowWidth
+               << ",\"windowHeight\":" << manifest.windowHeight
+               << ",\"vSyncEnabled\":" << (manifest.vSyncEnabled ? "true" : "false");
+    }
+    else
+    {
+        output << "\"name\":\"\",\"startupScene\":\"\",\"scriptAssembly\":\"\",\"windowTitle\":\"\","
+               << "\"windowWidth\":1280,\"windowHeight\":720,\"vSyncEnabled\":true";
+    }
+    output << '}'
+           << ",\"assets\":[";
     if (m_project)
     {
         const auto &assets = m_project->GetManifest().assetEntries;

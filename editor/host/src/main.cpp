@@ -22,6 +22,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <iomanip>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -281,16 +282,35 @@ int main(int argc, char **argv)
     CommandStream commandStream;
     bool running = true;
     bool visible = !embedded;
+    bool surfaceShown = !embedded;
     bool editorCameraLookActive = false;
     bool editorCameraInputChanged = false;
     EditorViewportInteraction viewportInteraction;
     auto previousFrameTime = std::chrono::steady_clock::now();
+    auto performanceWindowStart = previousFrameTime;
+    int performanceFrameCount = 0;
+    float performanceFrameTimeTotalMs = 0.0f;
+    float performanceMaxFrameTimeMs = 0.0f;
+    float performanceEventPollingTotalMs = 0.0f;
+    float performanceUpdateTotalMs = 0.0f;
+    float performanceRenderTotalMs = 0.0f;
+    float performancePresentTotalMs = 0.0f;
+    float performanceCpuPassTotalMs = 0.0f;
+    float performanceGpuPassTotalMs = 0.0f;
 
     WriteEvent(R"({"type":"ready","protocol":1})");
     WriteEvent(editorSession.BuildSnapshotEvent());
 
     while (running && !window.ShouldClose())
     {
+        const auto loopStart = std::chrono::steady_clock::now();
+        float eventPollingMs = 0.0f;
+        float updateMs = 0.0f;
+        float renderMs = 0.0f;
+        float presentMs = 0.0f;
+        float cpuPassMs = 0.0f;
+        float gpuPassMs = 0.0f;
+
         std::vector<std::string> commands;
         if (!commandStream.Poll(commands))
         {
@@ -320,7 +340,6 @@ int main(int argc, char **argv)
                 if (command >> nextVisible)
                 {
                     visible = nextVisible != 0;
-                    window.SetEmbeddedVisible(visible);
                 }
             }
             else if (name == "ping")
@@ -349,8 +368,11 @@ int main(int argc, char **argv)
         }
 
         g_hostPhase = "window event polling";
+        const auto eventPollingStart = std::chrono::steady_clock::now();
         if (embedded) window.PollEmbeddedEvents();
         else window.PollEvents();
+        const auto eventPollingEnd = std::chrono::steady_clock::now();
+        eventPollingMs = std::chrono::duration<float, std::milli>(eventPollingEnd - eventPollingStart).count();
         const auto currentFrameTime = std::chrono::steady_clock::now();
         const float deltaTime = std::min(std::chrono::duration<float>(currentFrameTime - previousFrameTime).count(), 0.1f);
         previousFrameTime = currentFrameTime;
@@ -412,10 +434,54 @@ int main(int argc, char **argv)
         else renderer.SetSubmissionCullingCameras({editorCameraData});
         renderer.BeginProfilingFrame();
         g_hostPhase = "scene update";
+        const auto updateStart = std::chrono::steady_clock::now();
         editorSession.Update(deltaTime);
+        const auto updateEnd = std::chrono::steady_clock::now();
+        updateMs = std::chrono::duration<float, std::milli>(updateEnd - updateStart).count();
 
-        if (visible)
+        // Keep the native HWND and renderer state together. Merely skipping a
+        // present leaves an invisible owned window in front of Chromium, where
+        // it still consumes mouse input. Also hide while a native dialog or a
+        // different application has focus so the overlay cannot cover it.
+        auto *nativeOwner = static_cast<HWND>(options.parentWindow);
+        auto *nativeSurface = static_cast<HWND>(window.GetNativeHandle());
+        auto *foregroundWindow = GetForegroundWindow();
+        const bool ownerCanPresent = !embedded ||
+                                     (IsWindow(nativeOwner) && IsWindowVisible(nativeOwner) && !IsIconic(nativeOwner) &&
+                                      (foregroundWindow == nativeOwner || foregroundWindow == nativeSurface));
+        const bool shouldShowSurface = visible && ownerCanPresent;
+        if (embedded && surfaceShown != shouldShowSurface)
         {
+            if (shouldShowSurface)
+            {
+                window.SetEmbeddedVisible(true);
+                window.SetCursorLockOverride(false);
+            }
+            else
+            {
+                // A hidden GLFW window may miss the mouse-button release that
+                // ended camera look. Release capture and clear held input so
+                // it cannot keep controlling the cursor over another window.
+                if (editorCameraLookActive)
+                {
+                    window.SetEditorCursorLocked(false);
+                    editorCameraLookActive = false;
+                    if (editorCameraInputChanged)
+                    {
+                        WriteEvent(editorSession.BuildSnapshotEvent());
+                        editorCameraInputChanged = false;
+                    }
+                }
+                window.SetCursorLockOverride(true);
+                window.GetInputState().ClearKeyStates();
+                window.SetEmbeddedVisible(false);
+            }
+            surfaceShown = shouldShowSurface;
+        }
+
+        if (shouldShowSurface)
+        {
+            const auto renderStart = std::chrono::steady_clock::now();
             auto *scene = editorSession.GetScene();
             std::vector<PlutoGE::render::IPostProcessEffect *> editorPostProcessEffects;
             editorPostProcessEffects.reserve(editorSession.GetEditorPostProcessEffects().size());
@@ -442,13 +508,61 @@ int main(int argc, char **argv)
                 WriteEvent(editorSession.BuildSnapshotEvent());
             }
             renderer.ClearRenderCommands();
+            const auto presentStart = std::chrono::steady_clock::now();
+            renderMs = std::chrono::duration<float, std::milli>(presentStart - renderStart).count();
             g_hostPhase = "renderer end frame";
             renderer.EndFrame();
+            const auto presentEnd = std::chrono::steady_clock::now();
+            presentMs = std::chrono::duration<float, std::milli>(presentEnd - presentStart).count();
+            cpuPassMs = renderer.GetTotalCpuPassTimeMs();
+            gpuPassMs = renderer.GetTotalGpuPassTimeMs();
         }
         else
         {
             renderer.ClearRenderCommands();
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+
+        const auto loopEnd = std::chrono::steady_clock::now();
+        const float frameTimeMs = std::chrono::duration<float, std::milli>(loopEnd - loopStart).count();
+        ++performanceFrameCount;
+        performanceFrameTimeTotalMs += frameTimeMs;
+        performanceMaxFrameTimeMs = std::max(performanceMaxFrameTimeMs, frameTimeMs);
+        performanceEventPollingTotalMs += eventPollingMs;
+        performanceUpdateTotalMs += updateMs;
+        performanceRenderTotalMs += renderMs;
+        performancePresentTotalMs += presentMs;
+        performanceCpuPassTotalMs += cpuPassMs;
+        performanceGpuPassTotalMs += gpuPassMs;
+
+        const float performanceWindowMs = std::chrono::duration<float, std::milli>(loopEnd - performanceWindowStart).count();
+        if (performanceWindowMs >= 250.0f && performanceFrameCount > 0)
+        {
+            const float inverseFrameCount = 1.0f / static_cast<float>(performanceFrameCount);
+            std::ostringstream event;
+            event << std::fixed << std::setprecision(3)
+                  << "{\"type\":\"performance\",\"fps\":" << (static_cast<float>(performanceFrameCount) * 1000.0f / performanceWindowMs)
+                  << ",\"frameTimeMs\":" << (performanceFrameTimeTotalMs * inverseFrameCount)
+                  << ",\"maxFrameTimeMs\":" << performanceMaxFrameTimeMs
+                  << ",\"eventPollingMs\":" << (performanceEventPollingTotalMs * inverseFrameCount)
+                  << ",\"updateMs\":" << (performanceUpdateTotalMs * inverseFrameCount)
+                  << ",\"renderMs\":" << (performanceRenderTotalMs * inverseFrameCount)
+                  << ",\"presentMs\":" << (performancePresentTotalMs * inverseFrameCount)
+                  << ",\"cpuPassMs\":" << (performanceCpuPassTotalMs * inverseFrameCount)
+                  << ",\"gpuPassMs\":" << (performanceGpuPassTotalMs * inverseFrameCount)
+                  << ",\"visible\":" << (shouldShowSurface ? "true" : "false") << "}";
+            WriteEvent(event.str());
+
+            performanceWindowStart = loopEnd;
+            performanceFrameCount = 0;
+            performanceFrameTimeTotalMs = 0.0f;
+            performanceMaxFrameTimeMs = 0.0f;
+            performanceEventPollingTotalMs = 0.0f;
+            performanceUpdateTotalMs = 0.0f;
+            performanceRenderTotalMs = 0.0f;
+            performancePresentTotalMs = 0.0f;
+            performanceCpuPassTotalMs = 0.0f;
+            performanceGpuPassTotalMs = 0.0f;
         }
     }
 

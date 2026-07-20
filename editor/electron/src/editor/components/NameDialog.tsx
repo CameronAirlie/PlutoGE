@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { Button, Modal, TextField } from "./ui";
 
 export function NameDialog({
 	title,
@@ -26,20 +26,18 @@ export function NameDialog({
 	const submit = (): void => {
 		if (value.trim()) onConfirm(value.trim());
 	};
-	return createPortal(
-		<div className="dialog-backdrop" onMouseDown={onClose}>
+	return (
+		<Modal title={title} onOpenChange={(open) => { if (!open) onClose(); }}>
 			<form
 				className="name-dialog"
-				onMouseDown={(event) => event.stopPropagation()}
 				onSubmit={(event) => {
 					event.preventDefault();
 					submit();
 				}}
 			>
-				<h3>{title}</h3>
 				<label>
 					<span>{label}</span>
-					<input
+					<TextField
 						ref={input}
 						value={value}
 						onChange={(event) => setValue(event.currentTarget.value)}
@@ -49,15 +47,14 @@ export function NameDialog({
 					/>
 				</label>
 				<div className="dialog-actions">
-					<button type="button" onClick={onClose}>
+					<Button onClick={onClose}>
 						Cancel
-					</button>
-					<button type="submit" disabled={!value.trim()}>
+					</Button>
+					<Button type="submit" variant="primary" disabled={!value.trim()}>
 						{confirmLabel}
-					</button>
+					</Button>
 				</div>
 			</form>
-		</div>,
-		document.body,
+		</Modal>
 	);
 }

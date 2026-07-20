@@ -63,7 +63,13 @@ export function App(): React.JSX.Element {
 	useEffect(
 		() =>
 			window.plutoEditor.onAssetOpened((asset) => {
-				if (asset) dock.showPanel("asset");
+				if (asset) {
+					// A menu action can activate this panel in the same event that
+					// dismisses its portal. Clear transient panel-drag occlusion and
+					// switch only after the current event has completed.
+					window.plutoEditor.setViewportOccluded("panel-drag", false);
+					window.setTimeout(() => dock.showPanel("asset"), 0);
+				}
 			}),
 		[dock.showPanel],
 	);

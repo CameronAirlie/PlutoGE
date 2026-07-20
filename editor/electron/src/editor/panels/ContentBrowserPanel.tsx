@@ -90,7 +90,7 @@ export function ContentBrowserPanel({
 		try {
 			const result = await window.plutoEditor.importModels();
 			const summary = result.imported.length
-				? `Imported ${result.imported.length} model${result.imported.length === 1 ? "" : "s"}.`
+				? `Queued ${result.imported.length} model${result.imported.length === 1 ? "" : "s"} for the asset pipeline.`
 				: "";
 			setMessage([summary, ...result.warnings].filter(Boolean).join(" "));
 			if (result.imported[0]) setSelected(result.imported[0]);
@@ -342,11 +342,7 @@ export function ContentBrowserPanel({
 								}
 								onClick={() => setSelected(asset.reference)}
 								onContextMenu={(event) => openAssetContextMenu(event, asset)}
-								onDoubleClick={() => {
-									if (asset.type === "Model")
-										window.plutoEditor.instantiateAsset(asset.reference);
-									else void window.plutoEditor.openAsset(asset.reference);
-								}}
+								onDoubleClick={() => void window.plutoEditor.openAsset(asset.reference)}
 							>
 								<span className={`asset-icon type-${asset.type.toLowerCase()}`}>
 									{assetIcon(asset.type)}

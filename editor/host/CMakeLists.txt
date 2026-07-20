@@ -6,6 +6,7 @@ add_executable(PlutoGEEditorHost
 
 target_link_libraries(PlutoGEEditorHost PRIVATE
     PlutoGE::engine
+    PlutoGE::EditorUI
     PlutoGE::glm
 )
 

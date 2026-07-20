@@ -53,7 +53,10 @@ export function NumericInput({
 			onChange={(event) => setText(event.currentTarget.value)}
 			onBlur={commitText}
 			onKeyDown={(event) => {
-				if (event.key === "Enter") event.currentTarget.blur();
+				if (event.key === "Enter") {
+					commitText();
+					event.currentTarget.select();
+				}
 				if (event.key === "Escape") {
 					setText(String(value));
 					event.currentTarget.blur();

@@ -1,124 +1,23 @@
-import React, { useEffect, useLayoutEffect } from "react";
-import { createPortal } from "react-dom";
+import React, { useLayoutEffect } from "react";
+import { DropdownMenu } from "radix-ui";
 
 let nextPopupMenuId = 1;
+export interface PopupMenuItem { label: string; shortcut?: string; disabled?: boolean; danger?: boolean; separatorBefore?: boolean; children?: PopupMenuItem[]; action?: () => void; }
+export interface PopupMenuState { x: number; y: number; items: PopupMenuItem[]; }
 
-export interface PopupMenuItem {
-	label: string;
-	shortcut?: string;
-	disabled?: boolean;
-	danger?: boolean;
-	separatorBefore?: boolean;
-	children?: PopupMenuItem[];
-	action?: () => void;
+function Items({ items, close }: { items: PopupMenuItem[]; close(): void }): React.JSX.Element {
+	return <>{items.map((item, index) => <React.Fragment key={`${item.label}-${index}`}>
+		{item.separatorBefore && <DropdownMenu.Separator className="popup-menu-separator" />}
+		{item.children?.length ? <DropdownMenu.Sub><DropdownMenu.SubTrigger className={`popup-menu-button ${item.danger ? "danger" : ""}`} disabled={item.disabled}><span>{item.label}</span><i>›</i></DropdownMenu.SubTrigger><DropdownMenu.Portal><DropdownMenu.SubContent className="popup-menu"><Items items={item.children} close={close} /></DropdownMenu.SubContent></DropdownMenu.Portal></DropdownMenu.Sub> : <DropdownMenu.Item className={`popup-menu-button ${item.danger ? "danger" : ""}`} disabled={item.disabled} onSelect={() => { const action = item.action; close(); window.setTimeout(() => action?.(), 0); }}><span>{item.label}</span>{item.shortcut && <kbd>{item.shortcut}</kbd>}</DropdownMenu.Item>}
+	</React.Fragment>)}</>;
 }
 
-export interface PopupMenuState {
-	x: number;
-	y: number;
-	items: PopupMenuItem[];
-}
-
-function MenuItems({
-	items,
-	close,
-}: {
-	items: PopupMenuItem[];
-	close(): void;
-}): React.JSX.Element {
-	return (
-		<>
-			{items.map((item, index) => (
-				<React.Fragment key={`${item.label}-${index}`}>
-					{item.separatorBefore && (
-						<div className="popup-menu-separator" role="separator" />
-					)}
-					<div
-						className={`popup-menu-entry ${item.children?.length ? "has-children" : ""}`}
-					>
-						<button
-							type="button"
-							role="menuitem"
-							className={item.danger ? "danger" : ""}
-							disabled={item.disabled}
-							onClick={() => {
-								if (item.disabled || item.children?.length) return;
-								item.action?.();
-								close();
-							}}
-						>
-							<span>{item.label}</span>
-							{item.shortcut && <kbd>{item.shortcut}</kbd>}
-							{item.children?.length ? <i>›</i> : null}
-						</button>
-						{item.children?.length ? (
-							<div className="popup-submenu" role="menu">
-								<MenuItems items={item.children} close={close} />
-							</div>
-						) : null}
-					</div>
-				</React.Fragment>
-			))}
-		</>
-	);
-}
-
-export function PopupMenu({
-	menu,
-	onClose,
-	className = "",
-}: {
-	menu?: PopupMenuState;
-	onClose(): void;
-	className?: string;
-}): React.JSX.Element | null {
-	const [occlusionToken] = React.useState(
-		() => `popup-menu-${nextPopupMenuId++}`,
-	);
-	const menuOpen = Boolean(menu);
-
-	useLayoutEffect(() => {
-		if (!menuOpen) return undefined;
-		window.plutoEditor.setViewportOccluded(occlusionToken, true);
-		return () => window.plutoEditor.setViewportOccluded(occlusionToken, false);
-	}, [menuOpen, occlusionToken]);
-
-	useEffect(() => {
-		if (!menu) return undefined;
-		const close = (): void => onClose();
-		const keydown = (event: KeyboardEvent): void => {
-			if (event.key === "Escape") close();
-		};
-		window.addEventListener("pointerdown", close);
-		window.addEventListener("blur", close);
-		window.addEventListener("resize", close);
-		window.addEventListener("keydown", keydown);
-		return () => {
-			window.removeEventListener("pointerdown", close);
-			window.removeEventListener("blur", close);
-			window.removeEventListener("resize", close);
-			window.removeEventListener("keydown", keydown);
-		};
-	}, [menu, onClose]);
-
+export function PopupMenu({ menu, onClose, className = "" }: { menu?: PopupMenuState; onClose(): void; className?: string; }): React.JSX.Element | null {
+	const [token] = React.useState(() => `popup-menu-${nextPopupMenuId++}`);
+	useLayoutEffect(() => { if (!menu) return undefined; window.plutoEditor.setViewportOccluded(token, true); return () => window.plutoEditor.setViewportOccluded(token, false); }, [menu, token]);
 	if (!menu) return null;
-	const width = 224;
-	const estimatedHeight = Math.min(420, menu.items.length * 30 + 12);
-	const left = Math.max(4, Math.min(menu.x, window.innerWidth - width - 4));
-	const top = Math.max(
-		4,
-		Math.min(menu.y, window.innerHeight - estimatedHeight - 4),
-	);
-	return createPortal(
-		<div
-			className={`popup-menu ${menu.x > window.innerWidth - width * 2 ? "open-left" : ""} ${className}`}
-			role="menu"
-			style={{ left, top }}
-			onPointerDown={(event) => event.stopPropagation()}
-			onContextMenu={(event) => event.preventDefault()}
-		>
-			<MenuItems items={menu.items} close={onClose} />
-		</div>,
-		document.body,
-	);
+	return <DropdownMenu.Root open modal={false} onOpenChange={(open) => { if (!open) onClose(); }}>
+		<DropdownMenu.Trigger aria-hidden tabIndex={-1} style={{ position: "fixed", left: menu.x, top: menu.y, width: 1, height: 1, padding: 0, border: 0, opacity: 0 }} />
+		<DropdownMenu.Portal><DropdownMenu.Content className={`popup-menu ${className}`} side="bottom" align="start" sideOffset={0} collisionPadding={4} onCloseAutoFocus={(event) => event.preventDefault()}><Items items={menu.items} close={onClose} /></DropdownMenu.Content></DropdownMenu.Portal>
+	</DropdownMenu.Root>;
 }

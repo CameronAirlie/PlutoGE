@@ -1,6 +1,7 @@
 import type React from "react";
 import { useEffect, useState } from "react";
 import { PanelFrame } from "../components/PanelFrame";
+import { GraphAssetEditor } from "./GraphAssetEditor";
 
 export function AssetEditorPanel(): React.JSX.Element {
 	const [asset, setAsset] = useState<AssetDocument>();
@@ -37,6 +38,8 @@ export function AssetEditorPanel(): React.JSX.Element {
 		setMessage(saved ? "Saved." : "Could not save this asset.");
 		if (saved) setSavedContent(content);
 	};
+	const isGraph = asset?.type === "Shader Graph" || asset?.type === "ShaderGraph" || asset?.type === "Animation Graph" || asset?.type === "AnimationGraph";
+	const isMesh = asset?.type === "Mesh";
 
 	return (
 		<PanelFrame
@@ -83,7 +86,11 @@ export function AssetEditorPanel(): React.JSX.Element {
 						{content !== savedContent && <span>Modified</span>}
 					</div>
 					{message && <div className="import-message">{message}</div>}
-					{asset.readOnly ? (
+					{isMesh ? (
+						<div className="mesh-editor"><div className="mesh-preview"><span>⬡</span><strong>Mesh Preview</strong><small>The renderer bridge does not expose an isolated preview target yet.</small></div><aside><section><h3>Preview</h3><p>Open the mesh on an entity to inspect it in the scene viewport.</p></section><section><h3>Materials</h3><p>Material slots are stored in the binary mesh asset.</p></section><section><h3>LOD Settings</h3><label><input type="checkbox" disabled /> Generate LODs</label><label><input type="checkbox" disabled /> Optimize vertex cache</label><label><input type="checkbox" disabled /> Optimize overdraw</label></section><section><h3>Humanoid Rig</h3><p>Rig mappings require the native importer data.</p></section><div className="import-message">{asset.message}</div></aside></div>
+					) : isGraph ? (
+						<GraphAssetEditor asset={asset} content={content} onChange={setContent} />
+					) : asset.readOnly ? (
 						<div className="empty-state">{asset.message}</div>
 					) : (
 						<textarea

@@ -1602,6 +1602,24 @@ void main() {
         return meshObject != model.objects.end() && InstantiateMeshAssetIntoScene(meshObject->reference, parent);
     }
 
+    bool ImportModelAssetThroughPipeline(assets::Project &project,
+                                         const std::string &sourceReference,
+                                         std::string *errorMessage)
+    {
+        assets::ProjectAssetEntry sourceAsset{};
+        sourceAsset.reference = sourceReference;
+        sourceAsset.type = assets::ProjectAssetType::Model;
+        const auto sourcePath = project.ResolveAssetReference(sourceReference);
+        std::error_code errorCode;
+        sourceAsset.size = std::filesystem::file_size(sourcePath, errorCode);
+        if (errorCode)
+        {
+            if (errorMessage) *errorMessage = "Could not read source model: " + errorCode.message();
+            return false;
+        }
+        return ImportSourceModelAsset(project, sourceAsset, errorMessage);
+    }
+
     void ContentBrowserPanel::Render()
     {
         auto &editorShell = EditorShell::GetInstance();

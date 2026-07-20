@@ -339,6 +339,7 @@ int main(int argc, char **argv)
     bool running = true;
     bool visible = !embedded;
     bool surfaceShown = !embedded;
+    DWORD peerForegroundProcessId = 0;
     bool editorCameraLookActive = false;
     bool editorCameraInputChanged = false;
     EditorViewportInteraction viewportInteraction;
@@ -432,6 +433,14 @@ int main(int argc, char **argv)
                 {
                     const auto handle = std::stoull(value, nullptr, 0);
                     window.SetEmbeddedOwner(reinterpret_cast<void *>(static_cast<std::uintptr_t>(handle)));
+                }
+            }
+            else if (name == "peer_process")
+            {
+                unsigned long processId = 0;
+                if (command >> processId)
+                {
+                    peerForegroundProcessId = static_cast<DWORD>(processId);
                 }
             }
             else if (name == "ping")
@@ -585,9 +594,15 @@ int main(int argc, char **argv)
         auto *nativeOwner = static_cast<HWND>(window.GetConfig().nativeParent);
         auto *nativeSurface = static_cast<HWND>(window.GetNativeHandle());
         auto *foregroundWindow = GetForegroundWindow();
+        DWORD foregroundProcessId = 0;
+        if (foregroundWindow)
+        {
+            GetWindowThreadProcessId(foregroundWindow, &foregroundProcessId);
+        }
         const bool ownerCanPresent = !embedded ||
                                      (IsWindow(nativeOwner) && IsWindowVisible(nativeOwner) && !IsIconic(nativeOwner) &&
-                                      (foregroundWindow == nativeOwner || foregroundWindow == nativeSurface));
+                                      (foregroundWindow == nativeOwner || foregroundWindow == nativeSurface ||
+                                       (peerForegroundProcessId != 0 && foregroundProcessId == peerForegroundProcessId)));
         const bool shouldShowSurface = visible && ownerCanPresent;
         if (embedded && surfaceShown != shouldShowSurface)
         {

@@ -1,8 +1,13 @@
 import React, { useEffect, useState } from "react";
 import { PanelFrame } from "../components/PanelFrame";
-import { componentTypes, displayComponentName } from "../constants";
+import {
+	componentCategories,
+	componentTypes,
+	displayComponentName,
+} from "../constants";
 import { NameDialog } from "../components/NameDialog";
 import { NumericInput } from "../components/NumericInput";
+import { SearchablePicker } from "../components/SearchablePicker";
 
 function VectorEditor({
 	label,
@@ -476,7 +481,6 @@ function EntityInspector({
 	entities: EditorEntity[];
 	scriptClassNames: string[];
 }): React.JSX.Element {
-	const [componentToAdd, setComponentToAdd] = useState("");
 	if (!entity)
 		return <div className="empty-state">Select an entity to inspect it.</div>;
 	const updateTransform = (
@@ -670,29 +674,18 @@ function EntityInspector({
 						</div>
 					</details>
 				))}
-				<div className="add-component">
-					<select
-						disabled={running}
-						value={componentToAdd}
-						onChange={(event) => setComponentToAdd(event.currentTarget.value)}
-					>
-						<option value="">Add component…</option>
-						{componentTypes.map((type) => (
-							<option key={type} value={type}>
-								{displayComponentName(type)}
-							</option>
-						))}
-					</select>
-					<button
-						disabled={running || !componentToAdd}
-						onClick={() => {
-							window.plutoEditor.addComponent(entity.id, componentToAdd);
-							setComponentToAdd("");
-						}}
-					>
-						Add
-					</button>
-				</div>
+				<SearchablePicker
+					className="add-component"
+					buttonLabel="Add Component"
+					searchPlaceholder="Search components…"
+					disabled={running}
+					items={componentTypes.map((type) => ({
+						value: type,
+						label: displayComponentName(type),
+						category: componentCategories[type],
+					}))}
+					onSelect={(type) => window.plutoEditor.addComponent(entity.id, type)}
+				/>
 			</section>
 		</div>
 	);

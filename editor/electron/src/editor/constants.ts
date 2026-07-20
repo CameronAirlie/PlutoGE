@@ -26,6 +26,34 @@ export const componentTypes = [
 	"UIButtonComponent",
 ];
 
+export const componentCategories: Record<string, string> = {
+	MeshComponent: "Rendering",
+	TerrainComponent: "Rendering",
+	FoliageComponent: "Rendering",
+	ClothComponent: "Rendering",
+	ParticleSystemComponent: "Effects",
+	SplineComponent: "Geometry",
+	OceanComponent: "Environment",
+	AnimationComponent: "Animation",
+	CameraComponent: "Rendering",
+	LightComponent: "Rendering",
+	RigidbodyComponent: "Physics",
+	ColliderComponent: "Physics",
+	NavAgentComponent: "Navigation",
+	NavigationMeshComponent: "Navigation",
+	IblCaptureComponent: "Environment",
+	PhysicalSkyComponent: "Environment",
+	VolumetricCloudComponent: "Environment",
+	ScriptComponent: "Scripting",
+	SoundEmitterComponent: "Audio",
+	SoundListenerComponent: "Audio",
+	CanvasComponent: "UI",
+	RectTransformComponent: "UI",
+	UIImageComponent: "UI",
+	UITextComponent: "UI",
+	UIButtonComponent: "UI",
+};
+
 export const entityPresets = [
 	"Empty Entity",
 	"Cube",

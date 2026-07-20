@@ -91,6 +91,10 @@ export class NativeHost {
 		return this.performance;
 	}
 
+	public getProcessId(): number | undefined {
+		return this.process?.pid;
+	}
+
 	public hasActiveOperation(): boolean {
 		return this.activeOperationToken !== undefined;
 	}

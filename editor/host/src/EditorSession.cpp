@@ -7,6 +7,7 @@
 #endif
 
 #include "PlutoGE/assets/Project.h"
+#include "PlutoGE/assets/ModelAsset.h"
 #include "PlutoGE/assets/PostProcessPresetAsset.h"
 #include "PlutoGE/assets/AnimationGraph.h"
 #include "PlutoGE/assets/ParticleSystemAsset.h"
@@ -33,6 +34,7 @@
 #include "PlutoGE/scene/components/IblCaptureComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
+#include "PlutoGE/ui/ModelAssetPipeline.h"
 #include "PlutoGE/scene/components/NavAgentComponent.h"
 #include "PlutoGE/scene/components/NavigationMeshComponent.h"
 #include "PlutoGE/scene/components/OceanComponent.h"
@@ -1474,6 +1476,29 @@ bool EditorSession::HandleCommand(const std::string &commandLine, std::string &e
         else if (presetName == "IBL Capture") PlutoGE::scene::AddComponentByTypeName(*created, "IblCaptureComponent");
         m_selectedEntityId = created->GetID();
     }
+    else if (command == "import_model_assets")
+    {
+        if (!m_project)
+        {
+            errorMessage = "Open a project before importing models.";
+            return false;
+        }
+        std::string encodedReference;
+        bool importedAny = false;
+        while (input >> encodedReference)
+        {
+            const std::string reference = Decode(encodedReference);
+            if (!PlutoGE::ui::ImportModelAssetThroughPipeline(*m_project, reference, &errorMessage))
+                return false;
+            importedAny = true;
+        }
+        if (!importedAny)
+        {
+            errorMessage = "No source models were supplied to the asset pipeline.";
+            return false;
+        }
+        m_project->RefreshAssetRegistry();
+    }
     else if (command == "instantiate_asset")
     {
         std::string encodedReference;
@@ -1485,31 +1510,49 @@ bool EditorSession::HandleCommand(const std::string &commandLine, std::string &e
             return false;
         }
         const auto sourcePath = m_project->ResolveAssetReference(reference);
-        PlutoGE::core::ImportedRenderMeshAsset imported;
-        try
+        const auto manifestPath = m_project->GetAssetDirectoryPath() / "Imported" / sourcePath.stem() /
+                                  (sourcePath.stem().string() + ".plutomodel");
+        PlutoGE::assets::ModelAsset modelAsset;
+        if (!PlutoGE::assets::LoadModelAsset(manifestPath.string(), modelAsset, &errorMessage))
         {
-            imported = m_engine.ImportMeshAsset(sourcePath.string());
-        }
-        catch (const std::exception &exception)
-        {
-            errorMessage = std::string("Failed to import model: ") + exception.what();
+            if (errorMessage.empty()) errorMessage = "Import the model through the asset pipeline before placing it in the scene.";
             return false;
         }
-        if (!imported.mesh)
+        const auto meshObject = std::find_if(modelAsset.objects.begin(), modelAsset.objects.end(),
+                                             [](const PlutoGE::assets::ModelSubAsset &object)
+                                             { return object.type == PlutoGE::assets::ProjectAssetType::Mesh; });
+        if (meshObject == modelAsset.objects.end())
         {
-            errorMessage = "The selected model did not contain a renderable mesh.";
+            errorMessage = "The imported model has no generated mesh object.";
+            return false;
+        }
+        auto *renderMesh = m_engine.GetAssetManager().LoadMeshAsset(meshObject->reference);
+        if (!renderMesh)
+        {
+            errorMessage = "The generated mesh asset could not be loaded: " + meshObject->reference;
             return false;
         }
         auto entity = std::make_unique<PlutoGE::scene::Entity>(PlutoGE::scene::EntityConfig{.name = sourcePath.stem().string()});
         auto *created = m_scene->AddEntity(std::move(entity));
-        auto *mesh = PlutoGE::scene::AddMeshComponent(*created, imported.mesh, nullptr);
-        mesh->SetMaterials(imported.materials);
-        mesh->SetSourceMeshPath(reference);
-        if (imported.animations && !imported.animations->empty())
+        auto *mesh = PlutoGE::scene::AddMeshComponent(*created, renderMesh, nullptr);
+        mesh->SetSourceMeshPath(meshObject->reference);
+        mesh->SetModelObjectIdentity(modelAsset.sourceAssetId, meshObject->localId);
+        const auto &materialReferences = m_engine.GetAssetManager().GetMeshAssetMaterialReferences(meshObject->reference);
+        std::vector<PlutoGE::render::Material *> materials;
+        for (const auto &materialReference : materialReferences)
+        {
+            materials.push_back(m_engine.GetAssetManager().LoadMaterialAsset(materialReference));
+        }
+        mesh->SetMaterials(materials);
+        for (std::size_t index = 0; index < materialReferences.size(); ++index)
+            mesh->SetMaterialAssetForMaterialSlot(index, materialReferences[index]);
+        const auto animationObject = std::find_if(modelAsset.objects.begin(), modelAsset.objects.end(),
+                                                  [](const PlutoGE::assets::ModelSubAsset &object)
+                                                  { return object.type == PlutoGE::assets::ProjectAssetType::Animation; });
+        if (animationObject != modelAsset.objects.end())
         {
             auto *animation = created->CreateComponent<PlutoGE::scene::AnimationComponent>();
-            animation->SetClipsFromImportedAnimations(*imported.animations);
-            animation->SetSourceAnimationPath(reference);
+            animation->SetAnimationAssetReference(animationObject->reference);
         }
         m_selectedEntityId = created->GetID();
     }

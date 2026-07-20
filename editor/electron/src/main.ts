@@ -123,6 +123,13 @@ const syncViewports = (): void => {
 	syncSurface(gameHost, gameSurface);
 };
 
+const syncViewportPeerProcesses = (): void => {
+	const sceneProcessId = nativeHost?.getProcessId();
+	const gameProcessId = gameHost?.getProcessId();
+	if (gameProcessId) nativeHost?.send(`peer_process ${gameProcessId}`);
+	if (sceneProcessId) gameHost?.send(`peer_process ${sceneProcessId}`);
+};
+
 const setEditorOperation = (state: EditorOperationState): void => {
 	editorOperation = state;
 	if (state.busy) viewportOcclusions.add("editor-operation");
@@ -390,7 +397,10 @@ const createWindow = (): void => {
 		editorWindow,
 		(state) => {
 			sendToEditorWindows("host:state", state);
-			if (state.status === "ready") syncSurface(nativeHost, sceneSurface);
+			if (state.status === "ready") {
+				syncViewportPeerProcesses();
+				syncSurface(nativeHost, sceneSurface);
+			}
 			if (
 				editorOperation.busy &&
 				(state.status === "error" || state.status === "stopped")
@@ -435,6 +445,7 @@ const createWindow = (): void => {
 		(state) => {
 			sendToEditorWindows("game-host:state", state);
 			if (state.status === "ready") {
+				syncViewportPeerProcesses();
 				mirroredProjectPath = "";
 				mirroredScenePath = "";
 				syncSurface(gameHost, gameSurface);
@@ -937,7 +948,7 @@ ipcMain.handle("editor:open-asset", async (event, reference: unknown) => {
 		);
 		return;
 	}
-	const binaryTypes = new Set(["Mesh", "Animation"]);
+	const binaryTypes = new Set(["Mesh", "Animation", "Model"]);
 	const readOnly = binaryTypes.has(resolved.asset.type);
 	activeAsset = {
 		reference: resolved.asset.reference,
@@ -945,7 +956,9 @@ ipcMain.handle("editor:open-asset", async (event, reference: unknown) => {
 		content: readOnly ? "" : fs.readFileSync(resolved.filePath, "utf8"),
 		readOnly,
 		message: readOnly
-			? "This binary asset is managed by the model importer. Use Reimport or Extract from the Content Browser."
+			? resolved.asset.type === "Model"
+				? "This source model is managed by the asset pipeline. Generated meshes, materials, textures, and animations are available under Imported/."
+				: "This binary asset is managed by the model importer. Use Reimport or Extract from the Content Browser."
 			: undefined,
 	};
 	assetDirtyWindows.clear();
@@ -1098,7 +1111,7 @@ const uniqueImportDirectory = (
 	assetRoot: string,
 	sourcePath: string,
 ): string => {
-	const modelsRoot = path.join(assetRoot, "Models");
+	const modelsRoot = path.join(assetRoot, "SourceModels");
 	const stem =
 		path.parse(sourcePath).name.replace(/[^a-zA-Z0-9._-]+/g, "_") || "Model";
 	let candidate = path.join(modelsRoot, stem);
@@ -1208,7 +1221,13 @@ ipcMain.handle(
 				);
 			}
 		}
-		if (result.imported.length) sendEditorCommand("refresh_assets");
+		if (result.imported.length) {
+			const command = `import_model_assets ${result.imported.map(encode).join(" ")}`;
+			if (!beginEditorOperation(
+				result.imported.length === 1 ? "Importing model assets…" : `Importing ${result.imported.length} model assets…`,
+				command,
+			)) result.warnings.push("The native asset pipeline is not ready.");
+		}
 		return result;
 	},
 );

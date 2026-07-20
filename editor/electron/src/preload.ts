@@ -51,6 +51,15 @@ const api: PlutoEditorApi = {
 		ipcRenderer.on("host:performance", listener);
 		return () => ipcRenderer.removeListener("host:performance", listener);
 	},
+	getEditorOperation: () => ipcRenderer.invoke("editor:get-operation"),
+	onEditorOperation: (callback) => {
+		const listener = (
+			_event: Electron.IpcRendererEvent,
+			operation: EditorOperationState,
+		) => callback(operation);
+		ipcRenderer.on("editor:operation", listener);
+		return () => ipcRenderer.removeListener("editor:operation", listener);
+	},
 	getGameHostState: () => ipcRenderer.invoke("game-host:get-state"),
 	restartGameHost: () => ipcRenderer.invoke("game-host:restart"),
 	onGameHostState: (callback) => {

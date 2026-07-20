@@ -1,6 +1,6 @@
-import { app, BrowserWindow, dialog, ipcMain, screen, shell } from "electron";
 import fs from "node:fs";
 import path from "node:path";
+import { app, BrowserWindow, dialog, ipcMain, screen, shell } from "electron";
 import { NativeHost } from "./native-host";
 
 let mainWindow: BrowserWindow | undefined;
@@ -22,8 +22,7 @@ const panelTitles: Record<PanelId, string> = {
 	performance: "Performance",
 };
 const isPanelId = (value: unknown): value is PanelId =>
-	typeof value === "string" &&
-	Object.prototype.hasOwnProperty.call(panelTitles, value);
+	typeof value === "string" && Object.hasOwn(panelTitles, value);
 const editorWindows = new Set<BrowserWindow>();
 const panelWindows = new Map<PanelId, BrowserWindow>();
 type NativeSurface = {
@@ -36,6 +35,9 @@ const gameSurface: NativeSurface = { visible: false };
 const viewportOcclusions = new Set<string>();
 let mirroredProjectPath = "";
 let mirroredScenePath = "";
+let nextEditorOperationId = 1;
+let nextGameMirrorOperationId = 1;
+let editorOperation: EditorOperationState = { busy: false, label: "" };
 
 const isTrustedSender = (
 	event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent,
@@ -91,6 +93,51 @@ const syncSurface = (
 const syncViewports = (): void => {
 	syncSurface(nativeHost, sceneSurface);
 	syncSurface(gameHost, gameSurface);
+};
+
+const setEditorOperation = (state: EditorOperationState): void => {
+	editorOperation = state;
+	if (state.busy) viewportOcclusions.add("editor-operation");
+	else viewportOcclusions.delete("editor-operation");
+	sendToEditorWindows("editor:operation", state);
+	syncViewports();
+};
+
+const completeEditorOperation = (result: {
+	token: string;
+	success: boolean;
+	message?: string;
+}): void => {
+	if (!editorOperation.busy || result.token !== editorOperation.token) return;
+	setEditorOperation({
+		busy: false,
+		label: "",
+		message: result.success
+			? undefined
+			: result.message || "The editor operation failed.",
+	});
+};
+
+const beginEditorOperation = (label: string, command: string): boolean => {
+	if (editorOperation.busy) return false;
+	const token = String(nextEditorOperationId++);
+	setEditorOperation({ busy: true, label, token });
+	if (nativeHost?.sendOperation(command, token)) return true;
+	setEditorOperation({
+		busy: false,
+		label: "",
+		message: "The native editor host is not ready.",
+	});
+	return false;
+};
+
+const sendGameMirrorOperation = (commands: string[]): boolean => {
+	if (!gameHost || !commands.length) return false;
+	gameHost.send("visible 0");
+	return gameHost.sendOperation(
+		commands,
+		`mirror-${nextGameMirrorOperationId++}`,
+	);
 };
 
 const clearWindowOcclusions = (webContentsId: number): void => {
@@ -264,22 +311,35 @@ const createWindow = (): void => {
 		(state) => {
 			sendToEditorWindows("host:state", state);
 			if (state.status === "ready") syncSurface(nativeHost, sceneSurface);
+			if (
+				editorOperation.busy &&
+				(state.status === "error" || state.status === "stopped")
+			)
+				setEditorOperation({
+					busy: false,
+					label: "",
+					message: state.message || "The native editor host stopped.",
+				});
 		},
 		(state) => {
 			if (gameHost?.getState().status === "ready") {
 				if (state.projectPath !== mirroredProjectPath) {
-					if (state.projectPath)
-						gameHost.send(`load_project ${encode(state.projectPath)}`);
-					else gameHost.send("new_scene");
-					mirroredProjectPath = state.projectPath;
-					mirroredScenePath = state.scenePath;
+					const commands = state.projectPath
+						? [`load_project ${encode(state.projectPath)}`]
+						: ["new_scene"];
+					if (sendGameMirrorOperation(commands)) {
+						mirroredProjectPath = state.projectPath;
+						mirroredScenePath = state.scenePath;
+					}
 				} else if (state.scenePath !== mirroredScenePath) {
-					gameHost.send(
-						state.scenePath
-							? `load_scene ${encode(state.scenePath)}`
-							: "new_scene",
-					);
-					mirroredScenePath = state.scenePath;
+					if (
+						sendGameMirrorOperation([
+							state.scenePath
+								? `load_scene ${encode(state.scenePath)}`
+								: "new_scene",
+						])
+					)
+						mirroredScenePath = state.scenePath;
 				}
 			}
 			sendToEditorWindows("editor:state", state);
@@ -287,6 +347,9 @@ const createWindow = (): void => {
 		(performance) => {
 			sendToEditorWindows("host:performance", performance);
 		},
+		[],
+		"PlutoGEEditorHost",
+		completeEditorOperation,
 	);
 	gameHost = new NativeHost(
 		editorWindow,
@@ -298,11 +361,11 @@ const createWindow = (): void => {
 				syncSurface(gameHost, gameSurface);
 				const editorState = nativeHost?.getEditorState();
 				if (editorState?.projectPath) {
-					gameHost?.send(`load_project ${encode(editorState.projectPath)}`);
-					if (editorState.scenePath)
-						gameHost?.send(`load_scene ${encode(editorState.scenePath)}`);
-					mirroredProjectPath = editorState.projectPath;
-					mirroredScenePath = editorState.scenePath;
+					const commands = [`load_project ${encode(editorState.projectPath)}`];
+					if (sendGameMirrorOperation(commands)) {
+						mirroredProjectPath = editorState.projectPath;
+						mirroredScenePath = editorState.scenePath;
+					}
 				}
 			}
 		},
@@ -314,6 +377,32 @@ const createWindow = (): void => {
 		},
 		["--view-mode", "game"],
 		"PlutoGEGameViewHost",
+		(result) => {
+			syncSurface(gameHost, gameSurface);
+			const latest = nativeHost?.getEditorState();
+			if (
+				result.success &&
+				latest &&
+				(latest.projectPath !== mirroredProjectPath ||
+					latest.scenePath !== mirroredScenePath)
+			) {
+				const commands =
+					latest.projectPath !== mirroredProjectPath
+						? latest.projectPath
+							? [`load_project ${encode(latest.projectPath)}`]
+							: ["new_scene"]
+						: [
+								latest.scenePath
+									? `load_scene ${encode(latest.scenePath)}`
+									: "new_scene",
+							];
+				if (sendGameMirrorOperation(commands)) {
+					mirroredProjectPath = latest.projectPath;
+					mirroredScenePath = latest.scenePath;
+					return;
+				}
+			}
+		},
 	);
 	editorWindow.webContents.once("did-finish-load", () => {
 		nativeHost?.start();
@@ -321,6 +410,7 @@ const createWindow = (): void => {
 	});
 	editorWindow.webContents.on("did-finish-load", () => {
 		viewportOcclusions.clear();
+		if (editorOperation.busy) viewportOcclusions.add("editor-operation");
 		syncViewports();
 	});
 	editorWindow.on("close", () => {
@@ -445,6 +535,7 @@ ipcMain.on("window:control", (event, action: unknown) => {
 
 ipcMain.handle("host:restart", async (event) => {
 	if (!isTrustedSender(event)) return;
+	if (editorOperation.busy) setEditorOperation({ busy: false, label: "" });
 	await nativeHost?.restart();
 });
 
@@ -457,6 +548,12 @@ ipcMain.handle("host:get-state", (event) => {
 ipcMain.handle("host:get-performance", (event) => {
 	if (!isTrustedSender(event)) return undefined;
 	return nativeHost?.getPerformance();
+});
+
+ipcMain.handle("editor:get-operation", (event) => {
+	if (!isTrustedSender(event))
+		return { busy: false, label: "", message: "Untrusted IPC sender." };
+	return editorOperation;
 });
 
 ipcMain.handle("game-host:restart", async (event) => {
@@ -479,7 +576,8 @@ ipcMain.handle("game-host:get-performance", (event) => {
 // host's whitespace-delimited command protocol.
 const encode = (value: unknown): string =>
 	`~${encodeURIComponent(String(value))}`;
-const sendEditorCommand = (command: string): void => {
+const sendEditorCommand = (command: string): boolean => {
+	if (editorOperation.busy) return false;
 	nativeHost?.send(command);
 	const name = command.split(" ", 1)[0];
 	const primaryOnly = new Set([
@@ -508,6 +606,7 @@ const sendEditorCommand = (command: string): void => {
 		"editor_effect_preset",
 	]);
 	if (!primaryOnly.has(name)) gameHost?.send(command);
+	return true;
 };
 const confirmDiscardUnsavedChanges = async (): Promise<boolean> => {
 	if (!mainWindow || !nativeHost?.getEditorState()?.dirty) return true;
@@ -530,7 +629,7 @@ ipcMain.handle("editor:get-state", (event) => {
 
 ipcMain.handle("editor:new-scene", async (event) => {
 	if (isTrustedSender(event) && (await confirmDiscardUnsavedChanges()))
-		sendEditorCommand("new_scene");
+		beginEditorOperation("Creating scene…", "new_scene");
 });
 
 ipcMain.handle("editor:new-project", async (event) => {
@@ -551,7 +650,8 @@ ipcMain.handle("editor:new-project", async (event) => {
 		result.filePath,
 		path.extname(result.filePath),
 	);
-	sendEditorCommand(
+	beginEditorOperation(
+		"Creating project…",
 		`create_project ${encode(result.filePath)} ${encode(projectName)}`,
 	);
 });
@@ -565,7 +665,10 @@ ipcMain.handle("editor:open-project", async (event) => {
 		filters: [{ name: "PlutoGE Project", extensions: ["plutoproject"] }],
 	});
 	if (!result.canceled && result.filePaths[0])
-		sendEditorCommand(`load_project ${encode(result.filePaths[0])}`);
+		beginEditorOperation(
+			"Loading project…",
+			`load_project ${encode(result.filePaths[0])}`,
+		);
 });
 
 ipcMain.handle("editor:open-scene", async (event) => {
@@ -577,7 +680,10 @@ ipcMain.handle("editor:open-scene", async (event) => {
 		filters: [{ name: "PlutoGE Scene", extensions: ["plutoscene"] }],
 	});
 	if (!result.canceled && result.filePaths[0])
-		sendEditorCommand(`load_scene ${encode(result.filePaths[0])}`);
+		beginEditorOperation(
+			"Loading scene…",
+			`load_scene ${encode(result.filePaths[0])}`,
+		);
 });
 
 ipcMain.handle("editor:save-scene", async (event, saveAs: unknown) => {
@@ -635,7 +741,10 @@ ipcMain.handle("editor:open-asset", async (event, reference: unknown) => {
 		!(await confirmDiscardUnsavedChanges())
 	)
 		return;
-	sendEditorCommand(`load_scene ${encode(resolved.filePath)}`);
+	beginEditorOperation(
+		"Loading scene…",
+		`load_scene ${encode(resolved.filePath)}`,
+	);
 });
 
 ipcMain.handle("assets:reveal", async (event, reference: unknown) => {
@@ -670,7 +779,11 @@ ipcMain.handle("editor:save-project", async (event) => {
 });
 
 ipcMain.handle("editor:save-project-settings", (event, value: unknown) => {
-	if (!isTrustedSender(event) || !nativeHost?.getEditorState()?.projectPath)
+	if (
+		editorOperation.busy ||
+		!isTrustedSender(event) ||
+		!nativeHost?.getEditorState()?.projectPath
+	)
 		return false;
 	if (!value || typeof value !== "object") return false;
 
@@ -787,7 +900,8 @@ ipcMain.handle(
 	"assets:import-models",
 	async (event): Promise<ModelImportResult> => {
 		const result: ModelImportResult = { imported: [], warnings: [] };
-		if (!isTrustedSender(event) || !mainWindow) return result;
+		if (editorOperation.busy || !isTrustedSender(event) || !mainWindow)
+			return result;
 		const assetRoot = nativeHost?.getEditorState()?.assetDirectoryPath;
 		if (!assetRoot) {
 			result.warnings.push("Open a project before importing models.");

@@ -404,7 +404,12 @@ namespace PlutoGE::platform
         {
             if (auto *nativeWindow = glfwGetWin32Window(m_window))
             {
-                ShowWindow(nativeWindow, visible ? SW_SHOWNA : SW_HIDE);
+                // Owned windows can synchronously notify their owner during a
+                // visibility transition. The owner is Electron in another
+                // process, so use the asynchronous form to avoid a cross-process
+                // wait cycle while Electron is handling the UI action that
+                // requested this transition.
+                ShowWindowAsync(nativeWindow, visible ? SW_SHOWNA : SW_HIDE);
             }
             return;
         }

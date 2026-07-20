@@ -1,6 +1,7 @@
 import type React from "react";
 import { useEffect, useMemo, useState } from "react";
-import { panelTitles, type PanelId } from "./components/PanelFrame";
+import { EditorOperationOverlay } from "./components/EditorOperationOverlay";
+import { type PanelId, panelTitles } from "./components/PanelFrame";
 import { WindowTitleBar } from "./components/WindowTitleBar";
 import { ContentBrowserPanel } from "./panels/ContentBrowserPanel";
 import { GameViewportPanel } from "./panels/GameViewportPanel";
@@ -20,6 +21,10 @@ export function FloatingPanelApp({
 	const [gameHostPerformance, setGameHostPerformance] =
 		useState<HostPerformance>();
 	const [editor, setEditor] = useState<EditorState>();
+	const [operation, setOperation] = useState<EditorOperationState>({
+		busy: false,
+		label: "",
+	});
 	const selectedEntity = useMemo(
 		() =>
 			editor?.entities.find((entity) => entity.id === editor.selectedEntityId),
@@ -35,6 +40,8 @@ export function FloatingPanelApp({
 		const removeGameHostPerformanceListener =
 			window.plutoEditor.onGameHostPerformance(setGameHostPerformance);
 		const removeEditorListener = window.plutoEditor.onEditorState(setEditor);
+		const removeOperationListener =
+			window.plutoEditor.onEditorOperation(setOperation);
 		void window.plutoEditor.getHostState().then(setHost);
 		void window.plutoEditor.getGameHostState().then(setGameHost);
 		void window.plutoEditor.getHostPerformance().then((performance) => {
@@ -46,12 +53,14 @@ export function FloatingPanelApp({
 		void window.plutoEditor.getEditorState().then((state) => {
 			if (state) setEditor(state);
 		});
+		void window.plutoEditor.getEditorOperation().then(setOperation);
 		return () => {
 			removeHostListener();
 			removeGameHostListener();
 			removeHostPerformanceListener();
 			removeGameHostPerformanceListener();
 			removeEditorListener();
+			removeOperationListener();
 		};
 	}, []);
 
@@ -88,9 +97,10 @@ export function FloatingPanelApp({
 	}
 
 	return (
-		<main className="floating-panel-shell">
+		<main className="floating-panel-shell" aria-busy={operation.busy}>
 			<WindowTitleBar title={panelTitles[panel]} dockPanel={panel} />
 			<div className="floating-panel-content">{content}</div>
+			<EditorOperationOverlay operation={operation} />
 		</main>
 	);
 }

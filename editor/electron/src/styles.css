@@ -33,6 +33,7 @@ input:disabled {
 }
 
 .editor-shell {
+	position: relative;
 	display: grid;
 	grid-template-rows: 34px 46px minmax(0, 1fr) 25px;
 	width: 100%;
@@ -438,12 +439,54 @@ input:disabled {
 	overflow: hidden;
 }
 .floating-panel-shell {
+	position: relative;
 	display: grid;
 	grid-template-rows: 34px minmax(0, 1fr);
 	width: 100%;
 	height: 100%;
 	border: 1px solid #303744;
 	background: #090b0f;
+}
+.editor-operation-overlay {
+	position: absolute;
+	z-index: 12000;
+	inset: 34px 0 0;
+	display: grid;
+	place-items: center;
+	background: #080b10b8;
+	backdrop-filter: blur(2px);
+	cursor: wait;
+}
+.editor-operation-message {
+	display: grid;
+	justify-items: center;
+	gap: 8px;
+	max-width: 360px;
+	padding: 20px 24px;
+	border: 1px solid #3a4350;
+	border-radius: 8px;
+	color: #8993a2;
+	background: #171c24;
+	box-shadow: 0 16px 50px #000a;
+	font-size: 10px;
+	text-align: center;
+}
+.editor-operation-message strong {
+	color: #e2e5eb;
+	font-size: 14px;
+}
+.editor-operation-spinner {
+	width: 22px;
+	height: 22px;
+	border: 2px solid #3e4654;
+	border-top-color: #8b7aeb;
+	border-radius: 50%;
+	animation: editor-operation-spin 0.8s linear infinite;
+}
+@keyframes editor-operation-spin {
+	to {
+		transform: rotate(360deg);
+	}
 }
 .window-titlebar {
 	display: flex;
@@ -1352,6 +1395,63 @@ h4 {
 }
 .performance-phases strong {
 	color: #b8c0cb;
+	font-weight: 500;
+	font-variant-numeric: tabular-nums;
+}
+.performance-details {
+	margin-top: 9px;
+	border-top: 1px solid #2a3039;
+}
+.performance-details > summary {
+	padding: 8px 2px 2px;
+	color: #aeb6c3;
+	cursor: pointer;
+	font-size: 9px;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+}
+.performance-detail-content {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+	gap: 8px;
+	padding-top: 8px;
+}
+.performance-detail-content section {
+	min-width: 0;
+	padding: 7px;
+	border: 1px solid #272e38;
+	border-radius: 4px;
+	background: #11161c;
+}
+.performance-detail-content h5 {
+	margin: 0 0 5px;
+	color: #8f99a8;
+	font-size: 8px;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+}
+.performance-detail-rows > div {
+	display: flex;
+	justify-content: space-between;
+	gap: 8px;
+	padding: 3px 0;
+	border-bottom: 1px solid #222831;
+	color: #788291;
+	font-size: 8px;
+}
+.performance-detail-rows > div:last-child {
+	border-bottom: 0;
+}
+.performance-detail-rows span {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.performance-detail-rows strong {
+	flex: 0 0 auto;
+	color: #b5bdc8;
 	font-weight: 500;
 	font-variant-numeric: tabular-nums;
 }

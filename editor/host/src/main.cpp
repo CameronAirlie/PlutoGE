@@ -117,7 +117,7 @@ namespace
             return m_input && m_input != INVALID_HANDLE_VALUE && GetFileType(m_input) == FILE_TYPE_PIPE;
         }
 
-        bool Poll(std::vector<std::string> &commands)
+        bool Poll(std::vector<std::string> &commands, std::size_t maxCommands = 256)
         {
             if (!IsConnected())
             {
@@ -145,7 +145,8 @@ namespace
             }
 
             std::size_t lineEnd = 0;
-            while ((lineEnd = m_pending.find('\n')) != std::string::npos)
+            while (commands.size() < maxCommands &&
+                   (lineEnd = m_pending.find('\n')) != std::string::npos)
             {
                 auto line = m_pending.substr(0, lineEnd);
                 if (!line.empty() && line.back() == '\r')
@@ -170,6 +171,57 @@ namespace
     void WriteEvent(std::string_view json)
     {
         std::cout << json << '\n' << std::flush;
+    }
+
+    std::string JsonEscape(std::string_view value)
+    {
+        std::ostringstream output;
+        for (const unsigned char character : value)
+        {
+            switch (character)
+            {
+            case '"': output << "\\\""; break;
+            case '\\': output << "\\\\"; break;
+            case '\b': output << "\\b"; break;
+            case '\f': output << "\\f"; break;
+            case '\n': output << "\\n"; break;
+            case '\r': output << "\\r"; break;
+            case '\t': output << "\\t"; break;
+            default:
+                if (character < 0x20)
+                    output << "\\u" << std::hex << std::setw(4) << std::setfill('0') << static_cast<int>(character) << std::dec;
+                else
+                    output << static_cast<char>(character);
+            }
+        }
+        return output.str();
+    }
+
+    void AppendCpuPassTimings(std::ostringstream &event, const std::vector<PlutoGE::render::CpuPassTiming> &timings)
+    {
+        event << ",\"cpuPasses\":[";
+        for (std::size_t index = 0; index < timings.size(); ++index)
+        {
+            if (index > 0) event << ',';
+            event << "{\"name\":\"" << JsonEscape(timings[index].name)
+                  << "\",\"timeMs\":" << timings[index].cpuTimeMs << '}';
+        }
+        event << ']';
+    }
+
+    void AppendGpuPassTimings(std::ostringstream &event,
+                              std::string_view field,
+                              const std::vector<PlutoGE::render::GpuPassTiming> &timings)
+    {
+        event << ",\"" << field << "\":[";
+        for (std::size_t index = 0; index < timings.size(); ++index)
+        {
+            if (index > 0) event << ',';
+            event << "{\"name\":\"" << JsonEscape(timings[index].name)
+                  << "\",\"timeMs\":" << timings[index].gpuTimeMs
+                  << ",\"available\":" << (timings[index].hasResult ? "true" : "false") << '}';
+        }
+        event << ']';
     }
 
     constexpr float kCameraBoostMultiplier = 2.5f;
@@ -269,7 +321,11 @@ int main(int argc, char **argv)
 
     auto &window = engine.GetWindow();
     auto &renderer = engine.GetRenderer();
-    renderer.SetVSyncEnabled(true);
+    // The embedded surfaces are owned top-level windows layered over Chromium.
+    // Some drivers can leave SwapBuffers waiting indefinitely when Chromium
+    // hides or occludes an owned window in response to a UI control. Pace the
+    // embedded loop ourselves so presentation can never be held by VSync.
+    renderer.SetVSyncEnabled(!embedded);
 
     EditorSession editorSession(engine);
     if (!editorSession.Initialize())
@@ -295,6 +351,9 @@ int main(int argc, char **argv)
     float performanceUpdateTotalMs = 0.0f;
     float performanceRenderTotalMs = 0.0f;
     float performancePresentTotalMs = 0.0f;
+    float performanceCommandTotalMs = 0.0f;
+    float performanceInteractionTotalMs = 0.0f;
+    float performanceWaitTotalMs = 0.0f;
     float performanceCpuPassTotalMs = 0.0f;
     float performanceGpuPassTotalMs = 0.0f;
 
@@ -308,6 +367,9 @@ int main(int argc, char **argv)
         float updateMs = 0.0f;
         float renderMs = 0.0f;
         float presentMs = 0.0f;
+        float commandMs = 0.0f;
+        float interactionMs = 0.0f;
+        float waitMs = 0.0f;
         float cpuPassMs = 0.0f;
         float gpuPassMs = 0.0f;
 
@@ -340,6 +402,30 @@ int main(int argc, char **argv)
                 if (command >> nextVisible)
                 {
                     visible = nextVisible != 0;
+                    // Apply hides immediately, before any following synchronous
+                    // load command in this batch. Waiting until the end of the
+                    // frame leaves an owned native HWND above Chromium while
+                    // its thread is not pumping messages, which Windows reports
+                    // as a cross-process application hang.
+                    if (embedded && !visible && surfaceShown)
+                    {
+                        if (editorCameraLookActive)
+                        {
+                            window.SetEditorCursorLocked(false);
+                            editorCameraLookActive = false;
+                            editorCameraInputChanged = false;
+                        }
+                        window.SetCursorLockOverride(true);
+                        window.GetInputState().ClearKeyStates();
+                        window.SetEmbeddedVisible(false);
+                        // SetEmbeddedVisible uses ShowWindowAsync for an owned
+                        // cross-process overlay. Dispatch that queued hide
+                        // before entering a synchronous project/scene load so
+                        // Windows never has to interact with a visible HWND
+                        // whose thread is busy deserializing assets.
+                        window.PollEmbeddedEvents();
+                        surfaceShown = false;
+                    }
                 }
             }
             else if (name == "owner")
@@ -363,8 +449,42 @@ int main(int argc, char **argv)
             }
             else
             {
+                std::string requestToken;
+                std::string argument;
+                while (command >> argument)
+                {
+                    if (argument.rfind("request=", 0) == 0)
+                    {
+                        requestToken = argument.substr(8);
+                    }
+                }
+
+                const bool loadingOperation = !requestToken.empty() &&
+                                              (name == "load_project" || name == "create_project" ||
+                                               name == "load_scene" || name == "new_scene");
+                if (embedded && loadingOperation)
+                {
+                    if (editorCameraLookActive)
+                    {
+                        window.SetEditorCursorLocked(false);
+                        editorCameraLookActive = false;
+                        editorCameraInputChanged = false;
+                    }
+                    window.SetCursorLockOverride(true);
+                    window.GetInputState().ClearKeyStates();
+                    window.SetEmbeddedVisible(false);
+                    window.PollEmbeddedEvents();
+                    surfaceShown = false;
+                }
+
                 std::string errorMessage;
-                if (editorSession.HandleCommand(commandLine, errorMessage))
+                const bool succeeded = editorSession.HandleCommand(commandLine, errorMessage);
+                // Project manifests contain runtime VSync preferences, but an
+                // embedded editor surface must remain independently paced. A
+                // synchronous project load must not re-enable a cross-process
+                // SwapBuffers wait.
+                if (embedded) renderer.SetVSyncEnabled(false);
+                if (succeeded)
                 {
                     WriteEvent(editorSession.BuildSnapshotEvent());
                 }
@@ -373,8 +493,18 @@ int main(int argc, char **argv)
                     WriteEvent(R"({"type":"editor-error","message":"Editor command failed; see native diagnostics"})");
                     if (!errorMessage.empty()) std::cerr << errorMessage << std::endl;
                 }
+                if (!requestToken.empty())
+                {
+                    std::ostringstream operation;
+                    operation << "{\"type\":\"operation-complete\",\"token\":\""
+                              << JsonEscape(requestToken) << "\",\"success\":"
+                              << (succeeded ? "true" : "false") << ",\"message\":\""
+                              << JsonEscape(errorMessage) << "\"}";
+                    WriteEvent(operation.str());
+                }
             }
         }
+        commandMs = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - loopStart).count();
 
         g_hostPhase = "window event polling";
         const auto eventPollingStart = std::chrono::steady_clock::now();
@@ -442,6 +572,7 @@ int main(int argc, char **argv)
         if (options.gameView) renderer.ClearSubmissionCullingCameras();
         else renderer.SetSubmissionCullingCameras({editorCameraData});
         renderer.BeginProfilingFrame();
+        interactionMs = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - eventPollingEnd).count();
         g_hostPhase = "scene update";
         const auto updateStart = std::chrono::steady_clock::now();
         editorSession.Update(deltaTime);
@@ -529,7 +660,21 @@ int main(int argc, char **argv)
         else
         {
             renderer.ClearRenderCommands();
+            const auto waitStart = std::chrono::steady_clock::now();
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            waitMs += std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - waitStart).count();
+        }
+
+        if (embedded && shouldShowSurface)
+        {
+            constexpr auto embeddedFrameInterval = std::chrono::microseconds(16667);
+            const auto nextFrame = loopStart + embeddedFrameInterval;
+            if (const auto now = std::chrono::steady_clock::now(); now < nextFrame)
+            {
+                const auto waitStart = now;
+                std::this_thread::sleep_until(nextFrame);
+                waitMs += std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - waitStart).count();
+            }
         }
 
         const auto loopEnd = std::chrono::steady_clock::now();
@@ -541,6 +686,9 @@ int main(int argc, char **argv)
         performanceUpdateTotalMs += updateMs;
         performanceRenderTotalMs += renderMs;
         performancePresentTotalMs += presentMs;
+        performanceCommandTotalMs += commandMs;
+        performanceInteractionTotalMs += interactionMs;
+        performanceWaitTotalMs += waitMs;
         performanceCpuPassTotalMs += cpuPassMs;
         performanceGpuPassTotalMs += gpuPassMs;
 
@@ -548,18 +696,79 @@ int main(int argc, char **argv)
         if (performanceWindowMs >= 250.0f && performanceFrameCount > 0)
         {
             const float inverseFrameCount = 1.0f / static_cast<float>(performanceFrameCount);
+            const float averageFrameTimeMs = performanceFrameTimeTotalMs * inverseFrameCount;
+            const float averageCommandMs = performanceCommandTotalMs * inverseFrameCount;
+            const float averageEventPollingMs = performanceEventPollingTotalMs * inverseFrameCount;
+            const float averageInteractionMs = performanceInteractionTotalMs * inverseFrameCount;
+            const float averageUpdateMs = performanceUpdateTotalMs * inverseFrameCount;
+            const float averageRenderMs = performanceRenderTotalMs * inverseFrameCount;
+            const float averagePresentMs = performancePresentTotalMs * inverseFrameCount;
+            const float averageWaitMs = performanceWaitTotalMs * inverseFrameCount;
+            const float accountedFrameTimeMs = averageCommandMs + averageEventPollingMs + averageInteractionMs +
+                                               averageUpdateMs + averageRenderMs + averagePresentMs + averageWaitMs;
+            const float averageOverheadMs = std::max(0.0f, averageFrameTimeMs - accountedFrameTimeMs);
+            const auto &cpuFrameStats = renderer.GetCpuFrameStats();
+            const auto &lightingTiming = renderer.GetLightingGpuTiming();
+            const auto extents = window.GetExtents();
             std::ostringstream event;
             event << std::fixed << std::setprecision(3)
                   << "{\"type\":\"performance\",\"fps\":" << (static_cast<float>(performanceFrameCount) * 1000.0f / performanceWindowMs)
-                  << ",\"frameTimeMs\":" << (performanceFrameTimeTotalMs * inverseFrameCount)
+                  << ",\"frameTimeMs\":" << averageFrameTimeMs
                   << ",\"maxFrameTimeMs\":" << performanceMaxFrameTimeMs
-                  << ",\"eventPollingMs\":" << (performanceEventPollingTotalMs * inverseFrameCount)
-                  << ",\"updateMs\":" << (performanceUpdateTotalMs * inverseFrameCount)
-                  << ",\"renderMs\":" << (performanceRenderTotalMs * inverseFrameCount)
-                  << ",\"presentMs\":" << (performancePresentTotalMs * inverseFrameCount)
+                  << ",\"commandMs\":" << averageCommandMs
+                  << ",\"eventPollingMs\":" << averageEventPollingMs
+                  << ",\"interactionMs\":" << averageInteractionMs
+                  << ",\"updateMs\":" << averageUpdateMs
+                  << ",\"renderMs\":" << averageRenderMs
+                  << ",\"presentMs\":" << averagePresentMs
+                  << ",\"waitMs\":" << averageWaitMs
+                  << ",\"overheadMs\":" << averageOverheadMs
                   << ",\"cpuPassMs\":" << (performanceCpuPassTotalMs * inverseFrameCount)
                   << ",\"gpuPassMs\":" << (performanceGpuPassTotalMs * inverseFrameCount)
-                  << ",\"visible\":" << (shouldShowSurface ? "true" : "false") << "}";
+                  << ",\"visible\":" << (shouldShowSurface ? "true" : "false")
+                  << ",\"vSync\":" << (renderer.IsVSyncEnabled() ? "true" : "false")
+                  << ",\"profiledRenderCount\":" << renderer.GetProfiledRenderCount()
+                  << ",\"viewportWidth\":" << extents.width
+                  << ",\"viewportHeight\":" << extents.height;
+            AppendCpuPassTimings(event, renderer.GetCpuPassTimings());
+            AppendGpuPassTimings(event, "gpuPasses", renderer.GetGpuPassTimings());
+            AppendGpuPassTimings(event, "postProcessGpuPasses", renderer.GetPostProcessGpuTimings());
+            event << ",\"lighting\":{\"setupMs\":" << lightingTiming.setupMs
+                  << ",\"setupAvailable\":" << (lightingTiming.hasSetupResult ? "true" : "false")
+                  << ",\"ambientMs\":" << lightingTiming.ambientMs
+                  << ",\"ambientAvailable\":" << (lightingTiming.hasAmbientResult ? "true" : "false")
+                  << ",\"lightAccumulationMs\":" << lightingTiming.lightAccumulationMs
+                  << ",\"lightAccumulationAvailable\":" << (lightingTiming.hasLightAccumulationResult ? "true" : "false")
+                  << ",\"lightCount\":" << lightingTiming.lightCount
+                  << ",\"shadowedLightCount\":" << lightingTiming.shadowedLightCount << '}';
+            event << ",\"workload\":{\"submittedRenderCommands\":" << cpuFrameStats.submittedRenderCommandCount
+                  << ",\"submissionCulledRenderCommands\":" << cpuFrameStats.submissionCulledRenderCommandCount
+                  << ",\"visibleRenderCommands\":" << cpuFrameStats.visibleRenderCommandCount
+                  << ",\"frustumCulledRenderCommands\":" << cpuFrameStats.frustumCulledRenderCommandCount
+                  << ",\"visibleSingleLodCommands\":" << cpuFrameStats.visibleSingleLodCommandCount
+                  << ",\"visibleMultiLodCommands\":" << cpuFrameStats.visibleMultiLodCommandCount
+                  << ",\"renderCommandSorts\":" << cpuFrameStats.renderCommandSortCount
+                  << ",\"geometryLogicalBatches\":" << cpuFrameStats.geometrySubmittedBatchCount
+                  << ",\"geometryMaterialGroups\":" << cpuFrameStats.geometryMaterialGroupCount
+                  << ",\"geometryApiDrawCalls\":" << cpuFrameStats.geometryApiDrawCallCount
+                  << ",\"geometryInstances\":" << cpuFrameStats.geometrySubmittedInstanceCount
+                  << ",\"geometryTriangles\":" << cpuFrameStats.geometrySubmittedTriangleCount
+                  << ",\"geometryTrianglesByLod\":[" << cpuFrameStats.geometrySubmittedTrianglesByLod[0] << ','
+                  << cpuFrameStats.geometrySubmittedTrianglesByLod[1] << ','
+                  << cpuFrameStats.geometrySubmittedTrianglesByLod[2] << ','
+                  << cpuFrameStats.geometrySubmittedTrianglesByLod[3] << ']'
+                  << ",\"shadowUpdatedSurfaces\":" << cpuFrameStats.shadowUpdatedSurfaceCount
+                  << ",\"shadowUpdatedDirectionalCascades\":" << cpuFrameStats.shadowUpdatedDirectionalCascadeCount
+                  << ",\"shadowUpdatedPixels\":" << cpuFrameStats.shadowUpdatedPixelCount
+                  << ",\"shadowInstances\":" << cpuFrameStats.shadowSubmittedInstanceCount
+                  << ",\"shadowLogicalBatches\":" << cpuFrameStats.shadowSubmittedBatchCount
+                  << ",\"shadowMaterialGroups\":" << cpuFrameStats.shadowMaterialGroupCount
+                  << ",\"shadowApiDrawCalls\":" << cpuFrameStats.shadowApiDrawCallCount
+                  << ",\"shadowTriangles\":" << cpuFrameStats.shadowSubmittedTriangleCount
+                  << ",\"intermediateTargetResizeMs\":" << cpuFrameStats.intermediateTargetResizeMs
+                  << ",\"intermediateTargetResizes\":" << cpuFrameStats.intermediateTargetResizeCount
+                  << ",\"gBufferResizeMs\":" << cpuFrameStats.gBufferResizeMs
+                  << ",\"gBufferResizes\":" << cpuFrameStats.gBufferResizeCount << "}}";
             WriteEvent(event.str());
 
             performanceWindowStart = loopEnd;
@@ -570,6 +779,9 @@ int main(int argc, char **argv)
             performanceUpdateTotalMs = 0.0f;
             performanceRenderTotalMs = 0.0f;
             performancePresentTotalMs = 0.0f;
+            performanceCommandTotalMs = 0.0f;
+            performanceInteractionTotalMs = 0.0f;
+            performanceWaitTotalMs = 0.0f;
             performanceCpuPassTotalMs = 0.0f;
             performanceGpuPassTotalMs = 0.0f;
         }

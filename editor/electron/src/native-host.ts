@@ -1,8 +1,8 @@
-import { app, BrowserWindow } from "electron";
-import { ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
+import { app, type BrowserWindow } from "electron";
 
 export type HostState = {
 	status: "starting" | "ready" | "stopped" | "error";
@@ -11,22 +11,42 @@ export type HostState = {
 
 export type NativeEditorState = EditorState;
 
+export type HostOperationResult = {
+	token: string;
+	success: boolean;
+	message?: string;
+};
+
 export type HostPerformance = {
 	fps: number;
 	frameTimeMs: number;
 	maxFrameTimeMs: number;
+	commandMs?: number;
 	eventPollingMs: number;
+	interactionMs?: number;
 	updateMs: number;
 	renderMs: number;
 	presentMs: number;
+	waitMs?: number;
+	overheadMs?: number;
 	cpuPassMs: number;
 	gpuPassMs: number;
 	visible: boolean;
+	vSync?: boolean;
+	profiledRenderCount?: number;
+	viewportWidth?: number;
+	viewportHeight?: number;
+	cpuPasses?: HostPassTiming[];
+	gpuPasses?: HostPassTiming[];
+	postProcessGpuPasses?: HostPassTiming[];
+	lighting?: HostLightingPerformance;
+	workload?: HostRendererWorkload;
 };
 
 export class NativeHost {
 	private static readonly heartbeatIntervalMs = 2_000;
 	private static readonly unresponsiveTimeoutMs = 30_000;
+	private static readonly operationTimeoutMs = 5 * 60_000;
 
 	private process?: ChildProcessWithoutNullStreams;
 	private state: HostState = { status: "stopped" };
@@ -37,6 +57,10 @@ export class NativeHost {
 	private lastHeartbeatResponse = 0;
 	private heartbeatSequence = 0;
 	private terminatedAsUnresponsive = false;
+	private activeOperationToken?: string;
+	private operationStartedAt = 0;
+	private writeBlocked = false;
+	private readonly pendingCommands: string[] = [];
 	private readonly diagnostics: string[] = [];
 
 	public constructor(
@@ -46,6 +70,9 @@ export class NativeHost {
 		private readonly onPerformance: (performance: HostPerformance) => void,
 		private readonly extraArguments: string[] = [],
 		private readonly diagnosticLabel = "PlutoGEEditorHost",
+		private readonly onOperationComplete: (
+			result: HostOperationResult,
+		) => void = () => {},
 	) {}
 
 	public getState(): HostState {
@@ -58,6 +85,10 @@ export class NativeHost {
 
 	public getPerformance(): HostPerformance | undefined {
 		return this.performance;
+	}
+
+	public hasActiveOperation(): boolean {
+		return this.activeOperationToken !== undefined;
 	}
 
 	public start(): void {
@@ -88,7 +119,11 @@ export class NativeHost {
 
 		this.stopping = false;
 		this.terminatedAsUnresponsive = false;
+		this.activeOperationToken = undefined;
+		this.operationStartedAt = 0;
 		this.performance = undefined;
+		this.writeBlocked = false;
+		this.pendingCommands.length = 0;
 		this.stopHeartbeat();
 		this.diagnostics.length = 0;
 		this.updateState({ status: "starting" });
@@ -102,6 +137,15 @@ export class NativeHost {
 			},
 		);
 		this.process = child;
+		child.stdin.on("error", (error) => {
+			// A viewport can exit between an IPC handler checking `writable` and
+			// Node completing the pipe write. Handle that race locally instead of
+			// letting an unhandled EPIPE take down Electron's main process.
+			if (this.process === child && !this.stopping)
+				console.warn(
+					`[${this.diagnosticLabel}] command pipe: ${error.message}`,
+				);
+		});
 
 		const output = readline.createInterface({ input: child.stdout });
 		output.on("line", (line) => {
@@ -109,6 +153,8 @@ export class NativeHost {
 				const event = JSON.parse(line) as {
 					type?: string;
 					message?: string;
+					token?: string;
+					success?: boolean;
 				} & Partial<NativeEditorState> &
 					Partial<HostPerformance>;
 				if (event.type === "ready") {
@@ -127,6 +173,22 @@ export class NativeHost {
 				if (event.type === "performance") {
 					this.performance = event as HostPerformance;
 					this.onPerformance(this.performance);
+				}
+				if (
+					event.type === "operation-complete" &&
+					typeof event.token === "string" &&
+					typeof event.success === "boolean"
+				) {
+					if (event.token === this.activeOperationToken) {
+						this.activeOperationToken = undefined;
+						this.operationStartedAt = 0;
+						this.lastHeartbeatResponse = Date.now();
+					}
+					this.onOperationComplete({
+						token: event.token,
+						success: event.success,
+						message: event.message,
+					});
 				}
 			} catch {
 				// Engine diagnostics also use stdout; keep the IPC parser tolerant.
@@ -148,6 +210,10 @@ export class NativeHost {
 			if (this.process !== child) return;
 			this.stopHeartbeat();
 			this.process = undefined;
+			this.writeBlocked = false;
+			this.pendingCommands.length = 0;
+			this.activeOperationToken = undefined;
+			this.operationStartedAt = 0;
 			if (this.terminatedAsUnresponsive) {
 				this.updateState({
 					status: "error",
@@ -168,7 +234,40 @@ export class NativeHost {
 	}
 
 	public send(command: string): void {
-		if (this.process?.stdin.writable) this.process.stdin.write(`${command}\n`);
+		const child = this.process;
+		if (!child?.stdin.writable) return;
+		if (this.writeBlocked) {
+			this.enqueueCommand(command);
+			return;
+		}
+
+		try {
+			if (!child.stdin.write(`${command}\n`)) {
+				this.writeBlocked = true;
+				child.stdin.once("drain", () => this.flushCommands(child));
+			}
+		} catch (error) {
+			if (!this.stopping)
+				console.warn(
+					`[${this.diagnosticLabel}] command write failed: ${error instanceof Error ? error.message : String(error)}`,
+				);
+		}
+	}
+
+	public sendOperation(command: string | string[], token: string): boolean {
+		if (!this.process?.stdin.writable || this.activeOperationToken)
+			return false;
+		const commands = Array.isArray(command) ? command : [command];
+		if (!commands.length) return false;
+		this.activeOperationToken = token;
+		this.operationStartedAt = Date.now();
+		this.lastHeartbeatResponse = this.operationStartedAt;
+		commands.forEach((item, index) => {
+			this.send(
+				index === commands.length - 1 ? `${item} request=${token}` : item,
+			);
+		});
+		return true;
 	}
 
 	public setOwnerWindow(window: BrowserWindow): void {
@@ -246,10 +345,11 @@ export class NativeHost {
 				return;
 			}
 
-			if (
-				Date.now() - this.lastHeartbeatResponse >=
-				NativeHost.unresponsiveTimeoutMs
-			) {
+			const now = Date.now();
+			const timedOut = this.activeOperationToken
+				? now - this.operationStartedAt >= NativeHost.operationTimeoutMs
+				: now - this.lastHeartbeatResponse >= NativeHost.unresponsiveTimeoutMs;
+			if (timedOut) {
 				this.terminatedAsUnresponsive = true;
 				this.stopHeartbeat();
 				if (!child.killed) child.kill();
@@ -259,6 +359,49 @@ export class NativeHost {
 			this.send(`ping ${++this.heartbeatSequence}`);
 		}, NativeHost.heartbeatIntervalMs);
 		this.heartbeatTimer.unref();
+	}
+
+	private enqueueCommand(command: string): void {
+		const commandName = command.split(" ", 1)[0];
+		// These commands describe current transport/window state. When a slow
+		// native frame applies backpressure, only their newest value matters.
+		// Coalescing them prevents resize, visibility and heartbeat traffic from
+		// growing an unbounded queue while preserving every editor mutation.
+		if (["bounds", "visible", "owner", "ping"].includes(commandName)) {
+			const existing = this.pendingCommands.findIndex(
+				(candidate) => candidate.split(" ", 1)[0] === commandName,
+			);
+			if (existing >= 0) this.pendingCommands.splice(existing, 1);
+		}
+		this.pendingCommands.push(command);
+	}
+
+	private flushCommands(child: ChildProcessWithoutNullStreams): void {
+		if (this.process !== child || this.stopping || !child.stdin.writable) {
+			this.writeBlocked = false;
+			this.pendingCommands.length = 0;
+			return;
+		}
+
+		this.writeBlocked = false;
+		while (this.pendingCommands.length) {
+			const command = this.pendingCommands.shift();
+			if (command === undefined) break;
+			try {
+				if (!child.stdin.write(`${command}\n`)) {
+					this.writeBlocked = true;
+					child.stdin.once("drain", () => this.flushCommands(child));
+					return;
+				}
+			} catch (error) {
+				if (!this.stopping)
+					console.warn(
+						`[${this.diagnosticLabel}] command write failed: ${error instanceof Error ? error.message : String(error)}`,
+					);
+				this.pendingCommands.length = 0;
+				return;
+			}
+		}
 	}
 
 	private stopHeartbeat(): void {

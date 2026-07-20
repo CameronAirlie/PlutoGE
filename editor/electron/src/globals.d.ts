@@ -8,17 +8,82 @@ interface HostState {
 	message?: string;
 }
 
+interface EditorOperationState {
+	busy: boolean;
+	label: string;
+	token?: string;
+	message?: string;
+}
+
 interface HostPerformance {
 	fps: number;
 	frameTimeMs: number;
 	maxFrameTimeMs: number;
+	commandMs?: number;
 	eventPollingMs: number;
+	interactionMs?: number;
 	updateMs: number;
 	renderMs: number;
 	presentMs: number;
+	waitMs?: number;
+	overheadMs?: number;
 	cpuPassMs: number;
 	gpuPassMs: number;
 	visible: boolean;
+	vSync?: boolean;
+	profiledRenderCount?: number;
+	viewportWidth?: number;
+	viewportHeight?: number;
+	cpuPasses?: HostPassTiming[];
+	gpuPasses?: HostPassTiming[];
+	postProcessGpuPasses?: HostPassTiming[];
+	lighting?: HostLightingPerformance;
+	workload?: HostRendererWorkload;
+}
+
+interface HostPassTiming {
+	name: string;
+	timeMs: number;
+	available?: boolean;
+}
+
+interface HostLightingPerformance {
+	setupMs: number;
+	setupAvailable: boolean;
+	ambientMs: number;
+	ambientAvailable: boolean;
+	lightAccumulationMs: number;
+	lightAccumulationAvailable: boolean;
+	lightCount: number;
+	shadowedLightCount: number;
+}
+
+interface HostRendererWorkload {
+	submittedRenderCommands: number;
+	submissionCulledRenderCommands: number;
+	visibleRenderCommands: number;
+	frustumCulledRenderCommands: number;
+	visibleSingleLodCommands: number;
+	visibleMultiLodCommands: number;
+	renderCommandSorts: number;
+	geometryLogicalBatches: number;
+	geometryMaterialGroups: number;
+	geometryApiDrawCalls: number;
+	geometryInstances: number;
+	geometryTriangles: number;
+	geometryTrianglesByLod: [number, number, number, number];
+	shadowUpdatedSurfaces: number;
+	shadowUpdatedDirectionalCascades: number;
+	shadowUpdatedPixels: number;
+	shadowInstances: number;
+	shadowLogicalBatches: number;
+	shadowMaterialGroups: number;
+	shadowApiDrawCalls: number;
+	shadowTriangles: number;
+	intermediateTargetResizeMs: number;
+	intermediateTargetResizes: number;
+	gBufferResizeMs: number;
+	gBufferResizes: number;
 }
 
 interface ViewportBounds {
@@ -158,6 +223,10 @@ interface PlutoEditorApi {
 	getHostPerformance(): Promise<HostPerformance | undefined>;
 	onHostPerformance(
 		callback: (performance: HostPerformance) => void,
+	): () => void;
+	getEditorOperation(): Promise<EditorOperationState>;
+	onEditorOperation(
+		callback: (operation: EditorOperationState) => void,
 	): () => void;
 	getGameHostState(): Promise<HostState>;
 	restartGameHost(): Promise<void>;

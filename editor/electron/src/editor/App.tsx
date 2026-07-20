@@ -1,5 +1,7 @@
-import React, { useEffect, useMemo, useState } from "react";
+import type React from "react";
+import { useEffect, useMemo, useState } from "react";
 import { DockWorkspace, useDockLayout } from "./components/DockWorkspace";
+import { EditorOperationOverlay } from "./components/EditorOperationOverlay";
 import { ProjectSettingsDialog } from "./components/ProjectSettingsDialog";
 import { StatusBar } from "./components/StatusBar";
 import { Toolbar } from "./components/Toolbar";
@@ -12,6 +14,10 @@ export function App(): React.JSX.Element {
 	const [gameHostPerformance, setGameHostPerformance] =
 		useState<HostPerformance>();
 	const [editor, setEditor] = useState<EditorState>();
+	const [operation, setOperation] = useState<EditorOperationState>({
+		busy: false,
+		label: "",
+	});
 	const [showEditorCamera, setShowEditorCamera] = useState(false);
 	const [showProjectSettings, setShowProjectSettings] = useState(false);
 	const dock = useDockLayout();
@@ -30,6 +36,8 @@ export function App(): React.JSX.Element {
 		const removeGameHostPerformanceListener =
 			window.plutoEditor.onGameHostPerformance(setGameHostPerformance);
 		const removeEditorListener = window.plutoEditor.onEditorState(setEditor);
+		const removeOperationListener =
+			window.plutoEditor.onEditorOperation(setOperation);
 		void window.plutoEditor.getHostState().then(setHost);
 		void window.plutoEditor.getGameHostState().then(setGameHost);
 		void window.plutoEditor.getHostPerformance().then((performance) => {
@@ -41,12 +49,14 @@ export function App(): React.JSX.Element {
 		void window.plutoEditor.getEditorState().then((state) => {
 			if (state) setEditor(state);
 		});
+		void window.plutoEditor.getEditorOperation().then(setOperation);
 		return () => {
 			removeHostListener();
 			removeGameHostListener();
 			removeHostPerformanceListener();
 			removeGameHostPerformanceListener();
 			removeEditorListener();
+			removeOperationListener();
 		};
 	}, []);
 
@@ -105,7 +115,7 @@ export function App(): React.JSX.Element {
 
 	const running = editor?.running ?? false;
 	return (
-		<div className="editor-shell">
+		<div className="editor-shell" aria-busy={operation.busy}>
 			<WindowTitleBar
 				title={
 					editor?.projectName
@@ -145,6 +155,7 @@ export function App(): React.JSX.Element {
 					onClose={() => setShowProjectSettings(false)}
 				/>
 			) : null}
+			<EditorOperationOverlay operation={operation} />
 		</div>
 	);
 }

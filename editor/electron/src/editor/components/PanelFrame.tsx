@@ -6,6 +6,8 @@ export type PanelId =
 	| "game"
 	| "inspector"
 	| "content"
+	| "console"
+	| "asset"
 	| "performance";
 
 export const panelTitles: Record<PanelId, string> = {
@@ -14,6 +16,8 @@ export const panelTitles: Record<PanelId, string> = {
 	game: "Game View",
 	inspector: "Inspector",
 	content: "Content Browser",
+	console: "Console",
+	asset: "Asset Editor",
 	performance: "Performance",
 };
 

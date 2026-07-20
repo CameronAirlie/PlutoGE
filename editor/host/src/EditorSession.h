@@ -21,6 +21,7 @@ namespace PlutoGE::scene
 {
     class Entity;
     class Scene;
+    class SceneBakeTask;
 }
 
 namespace PlutoGE::render
@@ -66,6 +67,11 @@ public:
     EditorCameraState &GetEditorCamera() { return m_editorCamera; }
     const EditorCameraState &GetEditorCamera() const { return m_editorCamera; }
     const std::vector<std::unique_ptr<PlutoGE::render::IPostProcessEffect>> &GetEditorPostProcessEffects() const { return m_editorPostProcessEffects; }
+    bool GetDebugShapesVisible() const { return m_debugShapes; }
+    bool IsSnapEnabled() const { return m_snapEnabled; }
+    float GetTranslateSnap() const { return m_translateSnap; }
+    float GetRotateSnap() const { return m_rotateSnap; }
+    float GetScaleSnap() const { return m_scaleSnap; }
     bool SetViewportStats(int submittedRenderCommands, int visibleRenderCommands);
     void Update(float deltaTime);
 
@@ -97,8 +103,16 @@ private:
     int m_visibleRenderCommands = 0;
     std::vector<HistoryEntry> m_undo;
     std::vector<HistoryEntry> m_redo;
+    std::unique_ptr<PlutoGE::scene::SceneBakeTask> m_bakeTask;
+    std::string m_bakeStatus;
+    std::uint32_t m_copiedEntityId = 0;
     GizmoOperation m_gizmoOperation = GizmoOperation::Translate;
     GizmoSpace m_gizmoSpace = GizmoSpace::Local;
     std::string m_gizmoEditBefore;
     bool m_gizmoEditActive = false;
+    bool m_debugShapes = true;
+    bool m_snapEnabled = false;
+    float m_translateSnap = 1.0f;
+    float m_rotateSnap = 15.0f;
+    float m_scaleSnap = 0.1f;
 };

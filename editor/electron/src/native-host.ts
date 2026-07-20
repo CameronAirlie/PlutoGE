@@ -73,6 +73,10 @@ export class NativeHost {
 		private readonly onOperationComplete: (
 			result: HostOperationResult,
 		) => void = () => {},
+		private readonly onDiagnostic: (
+			severity: "info" | "warning" | "error",
+			message: string,
+		) => void = () => {},
 	) {}
 
 	public getState(): HostState {
@@ -164,8 +168,15 @@ export class NativeHost {
 				if (event.type === "pong") this.lastHeartbeatResponse = Date.now();
 				if (event.type === "error")
 					this.updateState({ status: "error", message: event.message });
-				if (event.type === "editor-error" && event.message)
+				if (event.type === "editor-error" && event.message) {
 					console.warn(`[${this.diagnosticLabel}] ${event.message}`);
+					this.onDiagnostic("error", event.message);
+				}
+				if (event.type === "editor-log" && event.message)
+					this.onDiagnostic(
+						event.success === false ? "warning" : "info",
+						event.message,
+					);
 				if (event.type === "editor-state") {
 					this.editorState = event as NativeEditorState;
 					this.onEditorState(this.editorState);
@@ -192,6 +203,7 @@ export class NativeHost {
 				}
 			} catch {
 				// Engine diagnostics also use stdout; keep the IPC parser tolerant.
+				if (line.trim()) this.onDiagnostic("info", line.trim());
 			}
 		});
 
@@ -201,6 +213,7 @@ export class NativeHost {
 				this.diagnostics.push(line.trim());
 				if (this.diagnostics.length > 40) this.diagnostics.shift();
 				console.warn(`[${this.diagnosticLabel}] ${line}`);
+				this.onDiagnostic("warning", line.trim());
 			}
 		});
 		child.on("error", (error) =>

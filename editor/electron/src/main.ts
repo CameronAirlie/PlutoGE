@@ -12,6 +12,8 @@ type PanelId =
 	| "game"
 	| "inspector"
 	| "content"
+	| "console"
+	| "asset"
 	| "performance";
 const panelTitles: Record<PanelId, string> = {
 	hierarchy: "Hierarchy",
@@ -19,6 +21,8 @@ const panelTitles: Record<PanelId, string> = {
 	game: "Game View",
 	inspector: "Inspector",
 	content: "Content Browser",
+	console: "Console",
+	asset: "Asset Editor",
 	performance: "Performance",
 };
 const isPanelId = (value: unknown): value is PanelId =>
@@ -38,6 +42,29 @@ let mirroredScenePath = "";
 let nextEditorOperationId = 1;
 let nextGameMirrorOperationId = 1;
 let editorOperation: EditorOperationState = { busy: false, label: "" };
+let activeAsset: AssetDocument | undefined;
+const assetDirtyWindows = new Set<number>();
+let nextConsoleMessageId = 1;
+let allowWindowClose = false;
+let closeConfirmationPending = false;
+const consoleMessages: EditorConsoleMessage[] = [];
+
+const appendConsoleMessage = (
+	severity: EditorConsoleMessage["severity"],
+	source: string,
+	text: string,
+): void => {
+	const message: EditorConsoleMessage = {
+		id: nextConsoleMessageId++,
+		time: new Date().toISOString(),
+		severity,
+		source,
+		text,
+	};
+	consoleMessages.push(message);
+	if (consoleMessages.length > 1000) consoleMessages.shift();
+	sendToEditorWindows("console:message", message);
+};
 
 const isTrustedSender = (
 	event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent,
@@ -123,6 +150,13 @@ const completeEditorOperation = (result: {
 	message?: string;
 }): void => {
 	if (!editorOperation.busy || result.token !== editorOperation.token) return;
+	appendConsoleMessage(
+		result.success ? "info" : "error",
+		"Editor",
+		result.success
+			? `${editorOperation.label.replace(/…$/, "")} completed.`
+			: result.message || "The editor operation failed.",
+	);
 	setEditorOperation({
 		busy: false,
 		label: "",
@@ -173,6 +207,7 @@ const wireEditorWindow = (window: BrowserWindow): void => {
 	window.on("show", syncViewports);
 	window.on("closed", () => {
 		clearWindowOcclusions(webContentsId);
+		assetDirtyWindows.delete(webContentsId);
 		editorWindows.delete(window);
 		if (sceneSurface.owner === window) {
 			sceneSurface.owner = undefined;
@@ -290,6 +325,10 @@ const createPanelWindow = (
 };
 
 const createWindow = (): void => {
+	allowWindowClose = false;
+	closeConfirmationPending = false;
+	activeAsset = undefined;
+	assetDirtyWindows.clear();
 	viewportOcclusions.clear();
 	mirroredProjectPath = "";
 	mirroredScenePath = "";
@@ -364,6 +403,8 @@ const createWindow = (): void => {
 		[],
 		"PlutoGEEditorHost",
 		completeEditorOperation,
+		(severity, message) =>
+			appendConsoleMessage(severity, "Scene Host", message),
 	);
 	gameHost = new NativeHost(
 		editorWindow,
@@ -417,6 +458,7 @@ const createWindow = (): void => {
 				}
 			}
 		},
+		(severity, message) => appendConsoleMessage(severity, "Game Host", message),
 	);
 	editorWindow.webContents.once("did-finish-load", () => {
 		nativeHost?.start();
@@ -427,7 +469,24 @@ const createWindow = (): void => {
 		if (editorOperation.busy) viewportOcclusions.add("editor-operation");
 		syncViewports();
 	});
-	editorWindow.on("close", () => {
+	editorWindow.on("close", (event) => {
+		if (
+			!allowWindowClose &&
+			(nativeHost?.getEditorState()?.dirty || assetDirtyWindows.size > 0)
+		) {
+			event.preventDefault();
+			if (!closeConfirmationPending) {
+				closeConfirmationPending = true;
+				void confirmCloseUnsavedChanges().then((confirmed) => {
+					closeConfirmationPending = false;
+					if (!confirmed || editorWindow.isDestroyed()) return;
+					allowWindowClose = true;
+					editorWindow.close();
+				});
+			}
+			return;
+		}
+		allowWindowClose = true;
 		for (const panelWindow of panelWindows.values()) {
 			if (!panelWindow.isDestroyed()) panelWindow.close();
 		}
@@ -601,6 +660,14 @@ const sendEditorCommand = (command: string): boolean => {
 		"save_scene",
 		"save_project",
 		"refresh_assets",
+		"create_asset",
+		"save_prefab",
+		"create_script",
+		"bake_scene",
+		"cancel_bake",
+		"force_show_cursor",
+		"viewport_debug_view",
+		"viewport_settings",
 		"editor_effect_save_preset",
 		"camera_effect_save_preset",
 		// Selection and editor-camera state belong only to the interactive Scene
@@ -636,9 +703,59 @@ const confirmDiscardUnsavedChanges = async (): Promise<boolean> => {
 	return result.response === 1;
 };
 
+const confirmCloseUnsavedChanges = async (): Promise<boolean> => {
+	if (
+		!mainWindow ||
+		(!nativeHost?.getEditorState()?.dirty && assetDirtyWindows.size === 0)
+	)
+		return true;
+	const detail = [
+		nativeHost?.getEditorState()?.dirty ? "the current scene" : "",
+		assetDirtyWindows.size > 0
+			? (activeAsset?.reference ?? "the active asset")
+			: "",
+	]
+		.filter(Boolean)
+		.join(" and ");
+	const result = await dialog.showMessageBox(mainWindow, {
+		type: "warning",
+		title: "Unsaved changes",
+		message: `Discard unsaved changes to ${detail}?`,
+		detail: "This action cannot be undone.",
+		buttons: ["Cancel", "Discard"],
+		defaultId: 0,
+		cancelId: 0,
+	});
+	return result.response === 1;
+};
+
+const confirmDiscardActiveAssetChanges = async (): Promise<boolean> => {
+	if (!mainWindow || assetDirtyWindows.size === 0) return true;
+	const result = await dialog.showMessageBox(mainWindow, {
+		type: "warning",
+		title: "Unsaved asset",
+		message: `Discard unsaved changes to ${activeAsset?.reference ?? "the active asset"}?`,
+		buttons: ["Cancel", "Discard"],
+		defaultId: 0,
+		cancelId: 0,
+	});
+	if (result.response !== 1) return false;
+	assetDirtyWindows.clear();
+	return true;
+};
+
 ipcMain.handle("editor:get-state", (event) => {
 	if (!isTrustedSender(event)) return undefined;
 	return nativeHost?.getEditorState();
+});
+
+ipcMain.handle("console:get-messages", (event) =>
+	isTrustedSender(event) ? [...consoleMessages] : [],
+);
+ipcMain.on("console:clear", (event) => {
+	if (!isTrustedSender(event)) return;
+	consoleMessages.length = 0;
+	sendToEditorWindows("console:cleared", undefined);
 });
 
 ipcMain.handle("editor:new-scene", async (event) => {
@@ -661,6 +778,9 @@ ipcMain.handle("editor:new-project", async (event) => {
 			filters: [{ name: "PlutoGE Project", extensions: ["plutoproject"] }],
 		});
 		if (result.canceled || !result.filePath) return;
+		if (!(await confirmDiscardActiveAssetChanges())) return;
+		activeAsset = undefined;
+		sendToEditorWindows("asset:opened", undefined);
 		const projectName = path.basename(
 			result.filePath,
 			path.extname(result.filePath),
@@ -681,11 +801,15 @@ ipcMain.handle("editor:open-project", async (event) => {
 			properties: ["openFile"],
 			filters: [{ name: "PlutoGE Project", extensions: ["plutoproject"] }],
 		});
-		if (!result.canceled && result.filePaths[0])
+		if (!result.canceled && result.filePaths[0]) {
+			if (!(await confirmDiscardActiveAssetChanges())) return;
+			activeAsset = undefined;
+			sendToEditorWindows("asset:opened", undefined);
 			beginEditorOperation(
 				"Loading project…",
 				`load_project ${encode(result.filePaths[0])}`,
 			);
+		}
 	});
 });
 
@@ -703,6 +827,24 @@ ipcMain.handle("editor:open-scene", async (event) => {
 				"Loading scene…",
 				`load_scene ${encode(result.filePaths[0])}`,
 			);
+	});
+});
+
+ipcMain.handle("editor:choose-environment", async (event) => {
+	if (!isTrustedSender(event) || !mainWindow) return;
+	return withViewportOccluded("native-dialog:environment", async () => {
+		const result = await dialog.showOpenDialog(mainWindow!, {
+			title: "Choose Scene Environment",
+			properties: ["openFile"],
+			filters: [
+				{
+					name: "Environment Images",
+					extensions: ["hdr", "exr", "png", "jpg", "jpeg", "tga", "bmp"],
+				},
+				{ name: "All Files", extensions: ["*"] },
+			],
+		});
+		return result.canceled ? undefined : result.filePaths[0];
 	});
 });
 
@@ -755,17 +897,103 @@ const resolveProjectAsset = (
 ipcMain.handle("editor:open-asset", async (event, reference: unknown) => {
 	if (!isTrustedSender(event)) return;
 	const resolved = resolveProjectAsset(reference);
+	if (!resolved) return;
 	if (
-		!resolved ||
-		resolved.asset.type !== "Scene" ||
-		!(await confirmDiscardUnsavedChanges())
-	)
+		resolved.asset.type !== "Scene" &&
+		assetDirtyWindows.size > 0 &&
+		activeAsset?.reference !== resolved.asset.reference &&
+		!(await confirmDiscardActiveAssetChanges())
+	) {
 		return;
-	beginEditorOperation(
-		"Loading scene…",
-		`load_scene ${encode(resolved.filePath)}`,
-	);
+	}
+	if (resolved.asset.type === "Scene") {
+		if (!(await confirmDiscardUnsavedChanges())) return;
+		beginEditorOperation(
+			"Loading scene…",
+			`load_scene ${encode(resolved.filePath)}`,
+		);
+		return;
+	}
+	const binaryTypes = new Set(["Mesh", "Animation"]);
+	const readOnly = binaryTypes.has(resolved.asset.type);
+	activeAsset = {
+		reference: resolved.asset.reference,
+		type: resolved.asset.type,
+		content: readOnly ? "" : fs.readFileSync(resolved.filePath, "utf8"),
+		readOnly,
+		message: readOnly
+			? "This binary asset is managed by the model importer. Use Reimport or Extract from the Content Browser."
+			: undefined,
+	};
+	assetDirtyWindows.clear();
+	sendToEditorWindows("asset:opened", activeAsset);
+	return activeAsset;
 });
+
+ipcMain.handle("asset:get-active", (event) =>
+	isTrustedSender(event) ? activeAsset : undefined,
+);
+
+ipcMain.on("asset:set-dirty", (event, dirty: unknown) => {
+	if (!isTrustedSender(event)) return;
+	if (dirty === true) assetDirtyWindows.add(event.sender.id);
+	else assetDirtyWindows.delete(event.sender.id);
+});
+
+ipcMain.handle("asset:save", (event, reference: unknown, content: unknown) => {
+	if (!isTrustedSender(event) || typeof content !== "string") return false;
+	const resolved = resolveProjectAsset(reference);
+	if (!resolved || activeAsset?.readOnly) return false;
+	try {
+		fs.writeFileSync(resolved.filePath, content, "utf8");
+		activeAsset = { ...activeAsset, content } as AssetDocument;
+		assetDirtyWindows.clear();
+		sendToEditorWindows("asset:opened", activeAsset);
+		sendEditorCommand("refresh_assets");
+		appendConsoleMessage(
+			"info",
+			"Asset Editor",
+			`Saved ${resolved.asset.reference}`,
+		);
+		return true;
+	} catch (error) {
+		appendConsoleMessage(
+			"error",
+			"Asset Editor",
+			error instanceof Error ? error.message : String(error),
+		);
+		return false;
+	}
+});
+
+ipcMain.handle(
+	"editor:build-project",
+	async (event, runAfterBuild: unknown) => {
+		if (!isTrustedSender(event) || !mainWindow) return;
+		const state = nativeHost?.getEditorState();
+		if (!state?.projectPath) return;
+		const result = await withViewportOccluded(
+			"native-dialog:build-project",
+			() =>
+				dialog.showSaveDialog(mainWindow!, {
+					title:
+						runAfterBuild === true ? "Build and Run Project" : "Build Project",
+					defaultPath: path.join(
+						path.dirname(state.projectPath),
+						`${state.projectName || "PlutoGEGame"}.exe`,
+					),
+					filters: [{ name: "Windows Executable", extensions: ["exe"] }],
+				}),
+		);
+		if (result.canceled || !result.filePath) return;
+		beginEditorOperation(
+			runAfterBuild === true
+				? "Building and launching project…"
+				: "Building project…",
+			`build_project ${encode(result.filePath)} ${runAfterBuild === true ? 1 : 0}`,
+		);
+	},
+);
 
 ipcMain.handle("assets:reveal", async (event, reference: unknown) => {
 	if (!isTrustedSender(event)) return;
@@ -974,6 +1202,32 @@ ipcMain.on("editor:command", (event, action: unknown, ...args: unknown[]) => {
 		case "runtime":
 			sendEditorCommand(`runtime ${args[0] === true ? 1 : 0}`);
 			break;
+		case "bake-scene": {
+			const settings =
+				args[1] && typeof args[1] === "object"
+					? (args[1] as Record<string, unknown>)
+					: undefined;
+			const suffix = settings
+				? ` ${number(settings.lightmapResolution)} ${number(settings.lightmapTileSize)} ${number(settings.probeDirectionCount)} ${number(settings.indirectBounceSampleCount)} ${settings.bakeIndirectBounce === true ? 1 : 0} ${number(settings.probeBounceStrength)} ${number(settings.lightmapBounceStrength)} ${settings.bakeProbeVolume === true ? 1 : 0}`
+				: "";
+			sendEditorCommand(`bake_scene ${encode(args[0])}${suffix}`);
+			break;
+		}
+		case "cancel-bake":
+			sendEditorCommand("cancel_bake");
+			break;
+		case "build-scripts":
+			beginEditorOperation("Building scripts…", "build_scripts");
+			break;
+		case "reload-scripts":
+			sendEditorCommand("reload_scripts");
+			break;
+		case "create-script":
+			sendEditorCommand(`create_script ${encode(args[0])}`);
+			break;
+		case "force-show-cursor":
+			sendEditorCommand(`force_show_cursor ${args[0] === true ? 1 : 0}`);
+			break;
 		case "gizmo-operation":
 			sendEditorCommand(
 				`gizmo_operation ${args[0] === "rotate" || args[0] === "scale" ? args[0] : "translate"}`,
@@ -1041,7 +1295,9 @@ ipcMain.on("editor:command", (event, action: unknown, ...args: unknown[]) => {
 			sendEditorCommand("refresh_assets");
 			break;
 		case "create-asset":
-			sendEditorCommand(`create_asset ${encode(args[0])} ${encode(args[1])}`);
+			sendEditorCommand(
+				`create_asset ${encode(args[0])} ${encode(args[1])} ${encode(args[2])}`,
+			);
 			break;
 		case "instantiate-asset":
 			sendEditorCommand(`instantiate_asset ${encode(args[0])}`);
@@ -1050,6 +1306,18 @@ ipcMain.on("editor:command", (event, action: unknown, ...args: unknown[]) => {
 		case "delete":
 		case "duplicate":
 			sendEditorCommand(`${action} ${number(args[0])}`);
+			break;
+		case "copy":
+			sendEditorCommand(`copy ${number(args[0])}`);
+			break;
+		case "paste":
+			sendEditorCommand(`paste ${number(args[0])}`);
+			break;
+		case "save-prefab":
+			sendEditorCommand(`save_prefab ${number(args[0])}`);
+			break;
+		case "skeleton-attachments":
+			sendEditorCommand(`skeleton_attachments ${number(args[0])}`);
 			break;
 		case "create":
 			sendEditorCommand(`create ${encode(args[0])} ${number(args[1])}`);
@@ -1090,6 +1358,26 @@ ipcMain.on("editor:command", (event, action: unknown, ...args: unknown[]) => {
 				`remove_component ${number(args[0])} ${number(args[1])}`,
 			);
 			break;
+		case "component-action":
+			sendEditorCommand(
+				`component_action ${number(args[0])} ${number(args[1])} ${encode(args[2])} ${number(args[3])}`,
+			);
+			break;
+		case "scene-environment":
+			sendEditorCommand(
+				`scene_environment ${encode(args[0])} ${number(args[1])}`,
+			);
+			break;
+		case "viewport-debug-view":
+			sendEditorCommand(`viewport_debug_view ${number(args[0])}`);
+			break;
+		case "viewport-settings": {
+			const settings = (args[0] ?? {}) as Record<string, unknown>;
+			sendEditorCommand(
+				`viewport_settings ${number(settings.debugView)} ${settings.debugShapes === true ? 1 : 0} ${settings.snapEnabled === true ? 1 : 0} ${number(settings.translateSnap)} ${number(settings.rotateSnap)} ${number(settings.scaleSnap)}`,
+			);
+			break;
+		}
 		case "camera-effect-add":
 			sendEditorCommand(
 				`camera_effect_add ${number(args[0])} ${number(args[1])} ${encode(args[2])}`,
@@ -1141,6 +1429,11 @@ app.whenReady().then(() => {
 });
 
 app.on("before-quit", (event) => {
+	if (mainWindow && !mainWindow.isDestroyed() && !allowWindowClose) {
+		event.preventDefault();
+		mainWindow.close();
+		return;
+	}
 	const hosts = [nativeHost, gameHost].filter((host): host is NativeHost =>
 		Boolean(host && host.getState().status !== "stopped"),
 	);

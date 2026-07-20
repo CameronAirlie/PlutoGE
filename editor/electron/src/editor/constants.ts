@@ -35,7 +35,9 @@ export const entityPresets = [
 	"Sky",
 	"Ocean",
 	"Terrain",
+	"Cloth",
 	"Particle System",
+	"IBL Capture",
 ];
 
 export const displayComponentName = (type: string): string =>

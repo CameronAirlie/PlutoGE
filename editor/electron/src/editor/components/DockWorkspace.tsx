@@ -6,6 +6,8 @@ import { HierarchyPanel } from "../panels/HierarchyPanel";
 import { InspectorPanel } from "../panels/InspectorPanel";
 import { PerformancePanel } from "../panels/PerformancePanel";
 import { ViewportPanel } from "../panels/ViewportPanel";
+import { ConsolePanel } from "../panels/ConsolePanel";
+import { AssetEditorPanel } from "../panels/AssetEditorPanel";
 
 export type DockTabs = {
 	type: "tabs";
@@ -30,6 +32,8 @@ const panelIds: PanelId[] = [
 	"game",
 	"inspector",
 	"content",
+	"console",
+	"asset",
 	"performance",
 ];
 const setPanelDragOccluded = (occluded: boolean): void =>
@@ -61,7 +65,11 @@ export const defaultDockLayout: DockNode = {
 			direction: "vertical",
 			ratio: 0.68,
 			first: tabs("view-tabs", ["viewport", "game"], "viewport"),
-			second: tabs("content-tabs", ["content", "performance"], "content"),
+			second: tabs(
+				"content-tabs",
+				["content", "asset", "console", "performance"],
+				"content",
+			),
 		},
 		second: tabs("inspector-tabs", ["inspector"]),
 	},
@@ -71,13 +79,16 @@ const cloneDefaultLayout = (): DockNode =>
 	JSON.parse(JSON.stringify(defaultDockLayout)) as DockNode;
 const isPanelId = (value: unknown): value is PanelId =>
 	typeof value === "string" && panelIds.includes(value as PanelId);
-const performancePanelMigrationKey = "plutoge:dock-performance-panel:v1";
+const performancePanelMigrationKey = "plutoge:dock-authoring-panels:v2";
 
 const addPerformancePanel = (node: DockNode): DockNode => {
 	if (node.type === "tabs") {
-		return node.panels.includes("content") &&
-			!node.panels.includes("performance")
-			? { ...node, panels: [...node.panels, "performance"] }
+		if (!node.panels.includes("content")) return node;
+		const additions = (["asset", "console", "performance"] as PanelId[]).filter(
+			(panel) => !node.panels.includes(panel),
+		);
+		return additions.length
+			? { ...node, panels: [...node.panels, ...additions] }
 			: node;
 	}
 	return {
@@ -258,6 +269,9 @@ const preferredTarget = (layout: DockNode, panel: PanelId): string => {
 		hierarchy: "inspector",
 		inspector: "hierarchy",
 		content: "viewport",
+		asset: "content",
+		console: "content",
+		performance: "content",
 	};
 	return (
 		(companion[panel] && findTabsWithPanel(layout, companion[panel]!)) ||
@@ -271,6 +285,7 @@ export function useDockLayout(): {
 	dockHoverPanel?: PanelId;
 	setLayout(layout: DockNode): void;
 	togglePanel(panel: PanelId): void;
+	showPanel(panel: PanelId): void;
 	detachPanel(panel: PanelId, position: { x: number; y: number }): void;
 	reset(): void;
 } {
@@ -332,6 +347,31 @@ export function useDockLayout(): {
 			insertPanel(layout, preferredTarget(layout, panel), panel, "center"),
 		);
 	};
+	const showPanel = (panel: PanelId): void => {
+		if (detachedPanels.has(panel)) {
+			void window.plutoEditor.dockPanel(panel);
+			return;
+		}
+		const activate = (node: DockNode): DockNode => {
+			if (node.type === "tabs")
+				return node.panels.includes(panel) ? { ...node, active: panel } : node;
+			return {
+				...node,
+				first: activate(node.first),
+				second: activate(node.second),
+			};
+		};
+		setLayoutState((current) =>
+			collectPanels(current).has(panel)
+				? activate(current)
+				: insertPanel(
+						current,
+						preferredTarget(current, panel),
+						panel,
+						"center",
+					),
+		);
+	};
 	const detachPanel = (
 		panel: PanelId,
 		position: { x: number; y: number },
@@ -360,6 +400,7 @@ export function useDockLayout(): {
 		dockHoverPanel,
 		setLayout,
 		togglePanel,
+		showPanel,
 		detachPanel,
 		reset,
 	};
@@ -650,7 +691,7 @@ export function DockWorkspace({
 			hierarchy: (
 				<HierarchyPanel editor={editor} selectedEntity={selectedEntity} />
 			),
-			viewport: <ViewportPanel host={host} />,
+			viewport: <ViewportPanel host={host} editor={editor} />,
 			game: <GameViewportPanel host={gameHost} editor={editor} />,
 			inspector: (
 				<InspectorPanel
@@ -660,6 +701,8 @@ export function DockWorkspace({
 				/>
 			),
 			content: <ContentBrowserPanel editor={editor} />,
+			console: <ConsolePanel />,
+			asset: <AssetEditorPanel />,
 			performance: (
 				<PerformancePanel scene={hostPerformance} game={gameHostPerformance} />
 			),

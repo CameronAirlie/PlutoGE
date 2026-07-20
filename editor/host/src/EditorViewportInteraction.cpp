@@ -446,11 +446,11 @@ bool EditorViewportInteraction::Update(EditorSession &session,
         if (input.IsMouseButtonDown(0))
         {
             const float pixels = glm::dot(mouse - m_drag.startMouse, m_drag.screenDirection);
-            const bool snap = input.keys[341] || input.keys[345];
+            const bool snap = session.IsSnapEnabled() || input.keys[341] || input.keys[345];
             if (session.GetGizmoOperation() == EditorSession::GizmoOperation::Translate)
             {
                 float distance = pixels * m_drag.worldUnitsPerPixel;
-                if (snap) distance = std::round(distance);
+                if (snap) distance = std::round(distance / session.GetTranslateSnap()) * session.GetTranslateSnap();
                 const glm::vec3 worldDelta = m_drag.axisWorld * distance;
                 glm::vec3 localDelta = worldDelta;
                 if (auto *parent = entity->GetParent()) localDelta = glm::vec3(glm::inverse(parent->GetWorldTransform()) * glm::vec4(worldDelta, 0.0f));
@@ -460,14 +460,14 @@ bool EditorViewportInteraction::Update(EditorSession &session,
             {
                 glm::vec3 scale = m_drag.scale;
                 float delta = pixels * 0.01f;
-                if (snap) delta = std::round(delta * 10.0f) * 0.1f;
+                if (snap) delta = std::round(delta / session.GetScaleSnap()) * session.GetScaleSnap();
                 scale[m_drag.axis] = std::max(0.001f, scale[m_drag.axis] + delta);
                 entity->SetScale(scale);
             }
             else
             {
                 float angle = pixels * 0.5f;
-                if (snap) angle = std::round(angle / 15.0f) * 15.0f;
+                if (snap) angle = std::round(angle / session.GetRotateSnap()) * session.GetRotateSnap();
                 glm::vec3 axis(0.0f);
                 axis[m_drag.axis] = 1.0f;
                 const glm::mat4 delta = glm::rotate(glm::mat4(1.0f), glm::radians(angle), axis);

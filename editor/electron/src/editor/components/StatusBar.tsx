@@ -27,6 +27,11 @@ export function StatusBar({
 					{editor.viewportStats.registeredMeshComponents}
 				</span>
 			)}
+			{editor?.bakeRunning && (
+				<span className="status-busy">
+					Bake: {editor.bakeStatus || "Working…"}
+				</span>
+			)}
 			<span className="status-hint">
 				Drag tabs to rearrange · Drag separators to resize · Hold RMB + WASD/QE
 				to fly

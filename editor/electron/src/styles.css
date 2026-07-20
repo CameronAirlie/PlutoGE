@@ -1516,3 +1516,94 @@ h4 {
 		font-size: 9px;
 	}
 }
+
+.console-panel .dock-panel-toolbar input {
+	min-width: 10rem;
+}
+.console-level {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.25rem;
+	text-transform: capitalize;
+}
+.console-messages {
+	height: 100%;
+	overflow: auto;
+	font-family: "Martian Mono", monospace;
+	font-size: 0.78rem;
+}
+.console-message {
+	display: grid;
+	grid-template-columns: 5.5rem 7rem 1fr;
+	gap: 0.6rem;
+	padding: 0.3rem 0.55rem;
+	border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+.console-message time {
+	color: var(--text-muted);
+}
+.console-message.warning {
+	color: #f2c66d;
+}
+.console-message.error {
+	color: #ff7b7b;
+}
+.asset-editor-panel .dock-panel-body {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+}
+.asset-editor-heading {
+	display: flex;
+	justify-content: space-between;
+	gap: 1rem;
+	padding: 0.55rem 0.7rem;
+	border-bottom: 1px solid var(--border);
+}
+.asset-editor-heading span {
+	color: #f2c66d;
+}
+.asset-source-editor {
+	flex: 1;
+	width: 100%;
+	min-height: 12rem;
+	resize: none;
+	border: 0;
+	border-radius: 0;
+	padding: 0.75rem;
+	background: #0c0f14;
+	color: var(--text);
+	font-family: "Martian Mono", monospace;
+	line-height: 1.5;
+	tab-size: 4;
+}
+.component-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.4rem;
+	margin: 0.4rem 0;
+}
+.property-path-input {
+	display: flex;
+	min-width: 0;
+	gap: 5px;
+}
+.property-path-input input {
+	min-width: 0;
+	flex: 1;
+}
+.viewport-snap-input {
+	width: 4.5rem;
+}
+.custom-bake-dialog {
+	max-height: 80vh;
+	overflow: auto;
+}
+.custom-bake-dialog > label {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	gap: 1rem;
+	margin: 0.45rem 0;
+	text-transform: capitalize;
+}

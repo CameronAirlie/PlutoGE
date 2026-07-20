@@ -60,16 +60,39 @@ export function App(): React.JSX.Element {
 		};
 	}, []);
 
+	useEffect(
+		() =>
+			window.plutoEditor.onAssetOpened((asset) => {
+				if (asset) dock.showPanel("asset");
+			}),
+		[dock.showPanel],
+	);
+
 	useEffect(() => {
 		const shortcuts = (event: KeyboardEvent): void => {
 			const target = event.target as HTMLElement | null;
 			const editingText =
 				target?.matches('input, textarea, select, [contenteditable="true"]') ??
 				false;
+			if (!editingText && event.key === "F5" && editor) {
+				event.preventDefault();
+				window.plutoEditor.setRuntime(event.shiftKey ? false : !editor.running);
+				return;
+			}
+			if (
+				!editingText &&
+				event.shiftKey &&
+				event.key === "F1" &&
+				editor?.running
+			) {
+				event.preventDefault();
+				window.plutoEditor.setForceShowCursor(true);
+				return;
+			}
 			if (!(event.ctrlKey || event.metaKey) || !editor) {
 				if (
 					!editingText &&
-					event.key === "Delete" &&
+					(event.key === "Delete" || event.key === "Backspace") &&
 					editor?.selectedEntityId &&
 					!editor.running
 				)
@@ -86,6 +109,8 @@ export function App(): React.JSX.Element {
 					window.plutoEditor.setGizmoOperation("rotate");
 				if (!editingText && !editor?.running && event.key.toLowerCase() === "r")
 					window.plutoEditor.setGizmoOperation("scale");
+				if (!editingText && event.key === "Escape")
+					window.plutoEditor.selectEntity(0);
 				return;
 			}
 			if (event.key.toLowerCase() === "s") {
@@ -107,6 +132,18 @@ export function App(): React.JSX.Element {
 			) {
 				event.preventDefault();
 				window.plutoEditor.duplicateEntity(editor.selectedEntityId);
+			}
+			if (
+				event.key.toLowerCase() === "c" &&
+				editor.selectedEntityId &&
+				!editor.running
+			) {
+				event.preventDefault();
+				window.plutoEditor.copyEntity(editor.selectedEntityId);
+			}
+			if (event.key.toLowerCase() === "v" && !editor.running) {
+				event.preventDefault();
+				window.plutoEditor.pasteEntity();
 			}
 		};
 		window.addEventListener("keydown", shortcuts);

@@ -99,6 +99,8 @@ type EditorPanelId =
 	| "game"
 	| "inspector"
 	| "content"
+	| "console"
+	| "asset"
 	| "performance";
 
 type Vec3 = [number, number, number];
@@ -169,6 +171,33 @@ interface ModelImportResult {
 	warnings: string[];
 }
 
+interface EditorConsoleMessage {
+	id: number;
+	time: string;
+	severity: "info" | "warning" | "error";
+	source: string;
+	text: string;
+}
+
+interface AssetDocument {
+	reference: string;
+	type: string;
+	content: string;
+	readOnly: boolean;
+	message?: string;
+}
+
+interface SceneBakeSettings {
+	lightmapResolution: number;
+	lightmapTileSize: number;
+	probeDirectionCount: number;
+	indirectBounceSampleCount: number;
+	bakeIndirectBounce: boolean;
+	probeBounceStrength: number;
+	lightmapBounceStrength: number;
+	bakeProbeVolume: boolean;
+}
+
 interface ProjectSettings {
 	name: string;
 	startupScene: string;
@@ -187,7 +216,13 @@ interface EditorState {
 	assets: EditorAsset[];
 	scenePath: string;
 	dirty: boolean;
+	environmentPath: string;
+	environmentIntensity: number;
+	bakeRunning: boolean;
+	bakeStatus: string;
 	postProcessEffectTypes: string[];
+	scriptClassNames: string[];
+	scriptableObjectClassNames: string[];
 	running: boolean;
 	gizmoOperation: "translate" | "rotate" | "scale";
 	gizmoSpace: "local" | "world";
@@ -196,6 +231,14 @@ interface EditorState {
 	canRedo: boolean;
 	editorCamera: EditorCameraState;
 	viewportStats: ViewportStats;
+	viewportSettings: {
+		debugView: number;
+		debugShapes: boolean;
+		snapEnabled: boolean;
+		translateSnap: number;
+		rotateSnap: number;
+		scaleSnap: number;
+	};
 	entities: EditorEntity[];
 }
 
@@ -237,18 +280,51 @@ interface PlutoEditorApi {
 	): () => void;
 	getEditorState(): Promise<EditorState | undefined>;
 	onEditorState(callback: (state: EditorState) => void): () => void;
+	getConsoleMessages(): Promise<EditorConsoleMessage[]>;
+	onConsoleMessage(
+		callback: (message: EditorConsoleMessage) => void,
+	): () => void;
+	onConsoleCleared(callback: () => void): () => void;
+	clearConsole(): void;
 	newScene(): Promise<void>;
 	newProject(): Promise<void>;
 	openProject(): Promise<void>;
 	saveProject(): Promise<void>;
 	saveProjectSettings(settings: ProjectSettings): Promise<boolean>;
 	openScene(): Promise<void>;
-	openAsset(reference: string): Promise<void>;
+	chooseEnvironmentMap(): Promise<string | undefined>;
+	openAsset(reference: string): Promise<AssetDocument | undefined>;
+	getActiveAsset(): Promise<AssetDocument | undefined>;
+	onAssetOpened(
+		callback: (asset: AssetDocument | undefined) => void,
+	): () => void;
+	saveAsset(reference: string, content: string): Promise<boolean>;
+	setAssetDirty(dirty: boolean): void;
 	revealAsset(reference: string): Promise<void>;
 	saveScene(saveAs?: boolean): Promise<void>;
 	importModels(): Promise<ModelImportResult>;
 	refreshAssets(): void;
-	createAsset(type: "material" | "post-process", reference: string): void;
+	createAsset(
+		type:
+			| "material"
+			| "post-process"
+			| "particle-system"
+			| "shader-graph"
+			| "animation-graph"
+			| "scriptable-object",
+		reference: string,
+		className?: string,
+	): void;
+	buildProject(runAfterBuild?: boolean): Promise<void>;
+	bakeScene(
+		preset: "fast" | "balanced" | "final" | "custom",
+		settings?: SceneBakeSettings,
+	): void;
+	cancelBake(): void;
+	buildScripts(): void;
+	reloadScripts(): void;
+	createScript(name: string): void;
+	setForceShowCursor(enabled: boolean): void;
 	instantiateAsset(reference: string): void;
 	undo(): void;
 	redo(): void;
@@ -274,6 +350,10 @@ interface PlutoEditorApi {
 	createEntity(name: string, parentId?: number): void;
 	deleteEntity(id: number): void;
 	duplicateEntity(id: number): void;
+	copyEntity(id: number): void;
+	pasteEntity(parentId?: number): void;
+	saveEntityAsPrefab(id: number): void;
+	createSkeletonAttachments(id: number): void;
 	reparentEntity(id: number, parentId: number): void;
 	setEntityName(id: number, name: string): void;
 	setEntityActive(id: number, active: boolean): void;
@@ -296,6 +376,15 @@ interface PlutoEditorApi {
 	): void;
 	addComponent(entityId: number, type: string): void;
 	removeComponent(entityId: number, componentIndex: number): void;
+	componentAction(
+		entityId: number,
+		componentIndex: number,
+		action: string,
+		index?: number,
+	): void;
+	setSceneEnvironment(path: string, intensity: number): void;
+	setViewportDebugView(view: number): void;
+	setViewportSettings(settings: EditorState["viewportSettings"]): void;
 	addCameraPostProcessEffect(
 		entityId: number,
 		componentIndex: number,

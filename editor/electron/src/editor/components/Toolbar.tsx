@@ -6,6 +6,7 @@ import {
 	type PopupMenuItem,
 	type PopupMenuState,
 } from "./PopupMenu";
+import { NameDialog } from "./NameDialog";
 
 export function Toolbar({
 	editor,
@@ -28,6 +29,19 @@ export function Toolbar({
 }): React.JSX.Element {
 	const [menu, setMenu] = useState<PopupMenuState>();
 	const [activeMenu, setActiveMenu] = useState("");
+	const [forceShowCursor, setForceShowCursor] = useState(false);
+	const [showCustomBake, setShowCustomBake] = useState(false);
+	const [showNewScript, setShowNewScript] = useState(false);
+	const [bakeSettings, setBakeSettings] = useState<SceneBakeSettings>({
+		lightmapResolution: 64,
+		lightmapTileSize: 16,
+		probeDirectionCount: 8,
+		indirectBounceSampleCount: 6,
+		bakeIndirectBounce: true,
+		probeBounceStrength: 0.65,
+		lightmapBounceStrength: 0.75,
+		bakeProbeVolume: true,
+	});
 	const closeMenu = (): void => {
 		setMenu(undefined);
 		setActiveMenu("");
@@ -66,6 +80,16 @@ export function Toolbar({
 			action: onProjectSettings,
 		},
 		{
+			label: "Build Project…",
+			disabled: !editor?.projectPath,
+			action: () => void window.plutoEditor.buildProject(false),
+		},
+		{
+			label: "Build and Run Project…",
+			disabled: !editor?.projectPath,
+			action: () => void window.plutoEditor.buildProject(true),
+		},
+		{
 			label: "New Scene",
 			separatorBefore: true,
 			action: () => void window.plutoEditor.newScene(),
@@ -80,6 +104,36 @@ export function Toolbar({
 			label: "Save Scene As…",
 			shortcut: "Ctrl+Shift+S",
 			action: () => void window.plutoEditor.saveScene(true),
+		},
+		{
+			label: editor?.bakeRunning ? "Cancel Bake" : "Bake Scene",
+			separatorBefore: true,
+			disabled: !editor,
+			children: editor?.bakeRunning
+				? undefined
+				: [
+						{
+							label: "Fast Preview",
+							action: () => window.plutoEditor.bakeScene("fast"),
+						},
+						{
+							label: "Balanced Preview",
+							action: () => window.plutoEditor.bakeScene("balanced"),
+						},
+						{
+							label: "Final",
+							action: () => window.plutoEditor.bakeScene("final"),
+						},
+						{ label: "Custom…", action: () => setShowCustomBake(true) },
+					],
+			action: editor?.bakeRunning
+				? () => window.plutoEditor.cancelBake()
+				: undefined,
+		},
+		{
+			label: "Exit",
+			separatorBefore: true,
+			action: () => window.plutoEditor.closeWindow(),
 		},
 	];
 	const editItems: PopupMenuItem[] = [
@@ -126,6 +180,8 @@ export function Toolbar({
 			"game",
 			"inspector",
 			"content",
+			"asset",
+			"console",
 			"performance",
 		] as PanelId[]
 	).map((panel) => ({
@@ -151,6 +207,41 @@ export function Toolbar({
 			action: onResetLayout,
 		},
 	);
+	const runtimeItems: PopupMenuItem[] = [
+		{
+			label: running ? "Stop" : "Play",
+			shortcut: running ? "Shift+F5" : "F5",
+			disabled: !editor,
+			action: () => window.plutoEditor.setRuntime(!running),
+		},
+		{
+			label: `${forceShowCursor ? "✓ " : ""}Force Show Cursor`,
+			shortcut: "Shift+F1",
+			disabled: !running,
+			action: () => {
+				const next = !forceShowCursor;
+				setForceShowCursor(next);
+				window.plutoEditor.setForceShowCursor(next);
+			},
+		},
+	];
+	const scriptItems: PopupMenuItem[] = [
+		{
+			label: "New Script…",
+			disabled: !editor?.projectPath,
+			action: () => setShowNewScript(true),
+		},
+		{
+			label: "Build Scripts",
+			disabled: !editor?.projectPath,
+			action: () => window.plutoEditor.buildScripts(),
+		},
+		{
+			label: "Reload Script Assembly",
+			disabled: !editor?.projectPath,
+			action: () => window.plutoEditor.reloadScripts(),
+		},
+	];
 
 	return (
 		<header className="toolbar">
@@ -182,6 +273,18 @@ export function Toolbar({
 					onClick={(event) => openMenu(event, "view", viewItems)}
 				>
 					View
+				</button>
+				<button
+					className={activeMenu === "runtime" ? "active" : ""}
+					onClick={(event) => openMenu(event, "runtime", runtimeItems)}
+				>
+					Runtime
+				</button>
+				<button
+					className={activeMenu === "scripts" ? "active" : ""}
+					onClick={(event) => openMenu(event, "scripts", scriptItems)}
+				>
+					Scripts
 				</button>
 			</nav>
 			<div className="toolbar-divider" />
@@ -239,6 +342,90 @@ export function Toolbar({
 				onClose={closeMenu}
 				className="toolbar-popup-menu"
 			/>
+			{showCustomBake && (
+				<div
+					className="dialog-backdrop"
+					onMouseDown={() => setShowCustomBake(false)}
+				>
+					<div
+						className="name-dialog custom-bake-dialog"
+						onMouseDown={(event) => event.stopPropagation()}
+					>
+						<h3>Custom Scene Bake</h3>
+						{(
+							[
+								"lightmapResolution",
+								"lightmapTileSize",
+								"probeDirectionCount",
+								"indirectBounceSampleCount",
+								"probeBounceStrength",
+								"lightmapBounceStrength",
+							] as const
+						).map((field) => (
+							<label key={field}>
+								{field.replace(/([A-Z])/g, " $1")}
+								<input
+									type="number"
+									value={bakeSettings[field]}
+									onChange={(event) =>
+										setBakeSettings({
+											...bakeSettings,
+											[field]: Number(event.currentTarget.value),
+										})
+									}
+								/>
+							</label>
+						))}
+						<label>
+							<input
+								type="checkbox"
+								checked={bakeSettings.bakeIndirectBounce}
+								onChange={(event) =>
+									setBakeSettings({
+										...bakeSettings,
+										bakeIndirectBounce: event.currentTarget.checked,
+									})
+								}
+							/>{" "}
+							Bake indirect bounce
+						</label>
+						<label>
+							<input
+								type="checkbox"
+								checked={bakeSettings.bakeProbeVolume}
+								onChange={(event) =>
+									setBakeSettings({
+										...bakeSettings,
+										bakeProbeVolume: event.currentTarget.checked,
+									})
+								}
+							/>{" "}
+							Bake probe volume
+						</label>
+						<div className="dialog-actions">
+							<button onClick={() => setShowCustomBake(false)}>Cancel</button>
+							<button
+								onClick={() => {
+									window.plutoEditor.bakeScene("custom", bakeSettings);
+									setShowCustomBake(false);
+								}}
+							>
+								Bake
+							</button>
+						</div>
+					</div>
+				</div>
+			)}
+			{showNewScript && (
+				<NameDialog
+					title="Create Script"
+					onClose={() => setShowNewScript(false)}
+					onConfirm={(name) => {
+						window.plutoEditor.createScript(name);
+						setShowNewScript(false);
+					}}
+				/>
+			)}
 		</header>
 	);
 }

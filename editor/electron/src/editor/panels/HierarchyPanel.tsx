@@ -6,18 +6,23 @@ import {
 	type PopupMenuState,
 } from "../components/PopupMenu";
 import { entityPresets } from "../constants";
+import { NameDialog } from "../components/NameDialog";
 
 function HierarchyNode({
 	entity,
 	entities,
 	selectedId,
 	disabled,
+	collapsed,
+	onToggleCollapsed,
 	openContextMenu,
 }: {
 	entity: EditorEntity;
 	entities: EditorEntity[];
 	selectedId: number;
 	disabled: boolean;
+	collapsed: Set<number>;
+	onToggleCollapsed(id: number): void;
 	openContextMenu(event: React.MouseEvent, entity: EditorEntity): void;
 }): React.JSX.Element {
 	const children = entities.filter(
@@ -46,10 +51,17 @@ function HierarchyNode({
 				onClick={() => window.plutoEditor.selectEntity(entity.id)}
 				onContextMenu={(event) => openContextMenu(event, entity)}
 			>
-				<span>{children.length ? "▾" : "◇"}</span>
+				<span
+					onClick={(event) => {
+						event.stopPropagation();
+						if (children.length) onToggleCollapsed(entity.id);
+					}}
+				>
+					{children.length ? (collapsed.has(entity.id) ? "▸" : "▾") : "◇"}
+				</span>
 				{entity.name || `Entity ${entity.id}`}
 			</button>
-			{children.length > 0 && (
+			{children.length > 0 && !collapsed.has(entity.id) && (
 				<div className="tree-children">
 					{children.map((child) => (
 						<HierarchyNode
@@ -58,6 +70,8 @@ function HierarchyNode({
 							entities={entities}
 							selectedId={selectedId}
 							disabled={disabled}
+							collapsed={collapsed}
+							onToggleCollapsed={onToggleCollapsed}
 							openContextMenu={openContextMenu}
 						/>
 					))}
@@ -75,6 +89,8 @@ export function HierarchyPanel({
 	selectedEntity?: EditorEntity;
 }): React.JSX.Element {
 	const [menu, setMenu] = useState<PopupMenuState>();
+	const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
+	const [renameEntity, setRenameEntity] = useState<EditorEntity>();
 	const running = editor?.running ?? false;
 	const roots =
 		editor?.entities.filter((entity) => entity.parentId === 0) ?? [];
@@ -93,6 +109,13 @@ export function HierarchyPanel({
 		if (entity) window.plutoEditor.selectEntity(entity.id);
 		const items: PopupMenuItem[] = entity
 			? [
+					{ label: "Rename", action: () => setRenameEntity(entity) },
+					{
+						label: "Copy",
+						shortcut: "Ctrl+C",
+						disabled: running,
+						action: () => window.plutoEditor.copyEntity(entity.id),
+					},
 					{
 						label: "Create Child",
 						disabled: running,
@@ -115,6 +138,21 @@ export function HierarchyPanel({
 						action: () =>
 							window.plutoEditor.setEntityActive(entity.id, !entity.active),
 					},
+					{
+						label: "Save As Prefab",
+						disabled: running || !editor?.projectPath,
+						action: () => window.plutoEditor.saveEntityAsPrefab(entity.id),
+					},
+					{
+						label: "Create Skeleton Attachments",
+						disabled:
+							running ||
+							!entity.components.some(
+								(component) => component.type === "MeshComponent",
+							),
+						action: () =>
+							window.plutoEditor.createSkeletonAttachments(entity.id),
+					},
 					...(entity.parentId
 						? [
 								{
@@ -134,6 +172,12 @@ export function HierarchyPanel({
 					},
 				]
 			: [
+					{
+						label: "Paste",
+						shortcut: "Ctrl+V",
+						disabled: running || !editor,
+						action: () => window.plutoEditor.pasteEntity(),
+					},
 					{
 						label: "Create",
 						disabled: running || !editor,
@@ -191,6 +235,14 @@ export function HierarchyPanel({
 						entities={editor?.entities ?? []}
 						selectedId={editor?.selectedEntityId ?? 0}
 						disabled={running}
+						collapsed={collapsed}
+						onToggleCollapsed={(id) =>
+							setCollapsed((current) => {
+								const next = new Set(current);
+								next.has(id) ? next.delete(id) : next.add(id);
+								return next;
+							})
+						}
 						openContextMenu={openContextMenu}
 					/>
 				))}
@@ -208,6 +260,17 @@ export function HierarchyPanel({
 				Delete selected
 			</button>
 			<PopupMenu menu={menu} onClose={() => setMenu(undefined)} />
+			{renameEntity && (
+				<NameDialog
+					title="Rename Entity"
+					initialValue={renameEntity.name}
+					onClose={() => setRenameEntity(undefined)}
+					onConfirm={(name) => {
+						window.plutoEditor.setEntityName(renameEntity.id, name);
+						setRenameEntity(undefined);
+					}}
+				/>
+			)}
 		</PanelFrame>
 	);
 }

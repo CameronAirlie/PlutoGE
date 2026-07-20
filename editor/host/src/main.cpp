@@ -634,7 +634,7 @@ int main(int argc, char **argv)
             else
             {
                 g_hostPhase = "scene view render";
-                renderer.RenderFrame(editorCameraData, nullptr, scene ? scene->GetLights() : std::vector<PlutoGE::scene::Light *>{}, &editorPostProcessEffects, scene, editorCamera.gridVisible, true);
+                renderer.RenderFrame(editorCameraData, nullptr, scene ? scene->GetLights() : std::vector<PlutoGE::scene::Light *>{}, &editorPostProcessEffects, scene, editorCamera.gridVisible, editorSession.GetDebugShapesVisible());
                 if (!engine.IsRuntimeRunning()) viewportInteraction.Render(editorSession, editorCameraData, extents.width, extents.height);
             }
             const auto &frameStats = renderer.GetCpuFrameStats();
@@ -753,6 +753,7 @@ int main(int argc, char **argv)
                   << ",\"gBufferResizeMs\":" << cpuFrameStats.gBufferResizeMs
                   << ",\"gBufferResizes\":" << cpuFrameStats.gBufferResizeCount << "}}";
             WriteEvent(event.str());
+            if (!options.gameView) WriteEvent(editorSession.BuildSnapshotEvent());
 
             performanceWindowStart = loopEnd;
             performanceFrameCount = 0;

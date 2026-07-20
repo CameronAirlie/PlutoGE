@@ -9,6 +9,8 @@ import { HierarchyPanel } from "./panels/HierarchyPanel";
 import { InspectorPanel } from "./panels/InspectorPanel";
 import { PerformancePanel } from "./panels/PerformancePanel";
 import { ViewportPanel } from "./panels/ViewportPanel";
+import { ConsolePanel } from "./panels/ConsolePanel";
+import { AssetEditorPanel } from "./panels/AssetEditorPanel";
 
 export function FloatingPanelApp({
 	panel,
@@ -72,7 +74,7 @@ export function FloatingPanelApp({
 			);
 			break;
 		case "viewport":
-			content = <ViewportPanel host={host} />;
+			content = <ViewportPanel host={host} editor={editor} />;
 			break;
 		case "game":
 			content = <GameViewportPanel host={gameHost} editor={editor} />;
@@ -88,6 +90,12 @@ export function FloatingPanelApp({
 			break;
 		case "content":
 			content = <ContentBrowserPanel editor={editor} />;
+			break;
+		case "console":
+			content = <ConsolePanel />;
+			break;
+		case "asset":
+			content = <AssetEditorPanel />;
 			break;
 		case "performance":
 			content = (

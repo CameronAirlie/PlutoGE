@@ -42,7 +42,16 @@ export function ContentBrowserPanel({
 	const [message, setMessage] = useState("");
 	const [importing, setImporting] = useState(false);
 	const [menu, setMenu] = useState<PopupMenuState>();
-	const [createType, setCreateType] = useState<"material" | "post-process">();
+	type CreatableAsset =
+		| "material"
+		| "post-process"
+		| "particle-system"
+		| "shader-graph"
+		| "animation-graph";
+	const [createType, setCreateType] = useState<CreatableAsset>();
+	const [showScriptableDialog, setShowScriptableDialog] = useState(false);
+	const [scriptableName, setScriptableName] = useState("");
+	const [scriptableClass, setScriptableClass] = useState("");
 	const projectAssets = useMemo(
 		() =>
 			(editor?.assets ?? []).filter((asset) =>
@@ -115,12 +124,16 @@ export function ContentBrowserPanel({
 		);
 	};
 
-	const createAsset = (
-		type: "material" | "post-process",
-		rawName: string,
-	): void => {
-		const extension =
-			type === "material" ? ".plutomaterial" : ".plutopostprocess";
+	const createAsset = (type: CreatableAsset, rawName: string): void => {
+		const extension = (
+			{
+				material: ".plutomaterial",
+				"post-process": ".plutopostprocess",
+				"particle-system": ".plutoparticles",
+				"shader-graph": ".plutoshadergraph",
+				"animation-graph": ".plutoanimgraph",
+			} as const
+		)[type];
 		const name = rawName
 			.replace(/[^a-zA-Z0-9_-]+/g, "_")
 			.replace(/^_+|_+$/g, "");
@@ -146,8 +159,26 @@ export function ContentBrowserPanel({
 	const createItems: PopupMenuItem[] = [
 		{ label: "Material", action: () => setCreateType("material") },
 		{
+			label: "Particle System",
+			action: () => setCreateType("particle-system"),
+		},
+		{
 			label: "Post Process Preset",
 			action: () => setCreateType("post-process"),
+		},
+		{ label: "Shader Graph", action: () => setCreateType("shader-graph") },
+		{
+			label: "Animation Graph",
+			action: () => setCreateType("animation-graph"),
+		},
+		{
+			label: "Scriptable Object",
+			disabled: !editor?.scriptableObjectClassNames.length,
+			action: () => {
+				setScriptableName("");
+				setScriptableClass(editor?.scriptableObjectClassNames[0] ?? "");
+				setShowScriptableDialog(true);
+			},
 		},
 	];
 
@@ -159,15 +190,14 @@ export function ContentBrowserPanel({
 		event.stopPropagation();
 		setSelected(asset.reference);
 		const items: PopupMenuItem[] = [];
+		items.push({
+			label: asset.type === "Scene" ? "Open Scene" : "Open in Asset Editor",
+			action: () => void window.plutoEditor.openAsset(asset.reference),
+		});
 		if (asset.type === "Model")
 			items.push({
 				label: "Add to Scene",
 				action: () => window.plutoEditor.instantiateAsset(asset.reference),
-			});
-		if (asset.type === "Scene")
-			items.push({
-				label: "Open Scene",
-				action: () => void window.plutoEditor.openAsset(asset.reference),
 			});
 		items.push(
 			{
@@ -315,8 +345,7 @@ export function ContentBrowserPanel({
 								onDoubleClick={() => {
 									if (asset.type === "Model")
 										window.plutoEditor.instantiateAsset(asset.reference);
-									if (asset.type === "Scene")
-										void window.plutoEditor.openAsset(asset.reference);
+									else void window.plutoEditor.openAsset(asset.reference);
 								}}
 							>
 								<span className={`asset-icon type-${asset.type.toLowerCase()}`}>
@@ -337,10 +366,77 @@ export function ContentBrowserPanel({
 			<PopupMenu menu={menu} onClose={() => setMenu(undefined)} />
 			{createType && (
 				<NameDialog
-					title={`Create ${createType === "material" ? "Material" : "Post Process Preset"}`}
+					title={`Create ${createType.replaceAll("-", " ")}`}
 					onClose={() => setCreateType(undefined)}
 					onConfirm={(name) => createAsset(createType, name)}
 				/>
+			)}
+			{showScriptableDialog && (
+				<div
+					className="dialog-backdrop"
+					onMouseDown={() => setShowScriptableDialog(false)}
+				>
+					<form
+						className="name-dialog"
+						onMouseDown={(event) => event.stopPropagation()}
+						onSubmit={(event) => {
+							event.preventDefault();
+							const name = scriptableName
+								.replace(/[^a-zA-Z0-9_-]+/g, "_")
+								.replace(/^_+|_+$/g, "");
+							if (!name || !scriptableClass) return;
+							const reference = `project://${folder ? `${folder}/` : ""}${name}.plutoscriptable`;
+							window.plutoEditor.createAsset(
+								"scriptable-object",
+								reference,
+								scriptableClass,
+							);
+							setSelected(reference);
+							setMessage(`Creating ${reference}`);
+							setShowScriptableDialog(false);
+						}}
+					>
+						<h3>Create Scriptable Object</h3>
+						<label>
+							Name
+							<input
+								value={scriptableName}
+								onChange={(event) =>
+									setScriptableName(event.currentTarget.value)
+								}
+							/>
+						</label>
+						<label>
+							Type
+							<select
+								value={scriptableClass}
+								onChange={(event) =>
+									setScriptableClass(event.currentTarget.value)
+								}
+							>
+								{editor?.scriptableObjectClassNames.map((name) => (
+									<option key={name} value={name}>
+										{name}
+									</option>
+								))}
+							</select>
+						</label>
+						<div className="dialog-actions">
+							<button
+								type="button"
+								onClick={() => setShowScriptableDialog(false)}
+							>
+								Cancel
+							</button>
+							<button
+								type="submit"
+								disabled={!scriptableName.trim() || !scriptableClass}
+							>
+								Create
+							</button>
+						</div>
+					</form>
+				</div>
 			)}
 		</PanelFrame>
 	);

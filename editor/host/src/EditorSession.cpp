@@ -1,16 +1,29 @@
 #include "EditorSession.h"
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <Windows.h>
+#endif
+
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/assets/PostProcessPresetAsset.h"
+#include "PlutoGE/assets/AnimationGraph.h"
+#include "PlutoGE/assets/ParticleSystemAsset.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/render/Camera.h"
 #include "PlutoGE/render/Material.h"
+#include "PlutoGE/render/Mesh.h"
+#include "PlutoGE/render/Renderer.h"
+#include "PlutoGE/render/ShaderGraph.h"
+#include "PlutoGE/render/TextureManager.h"
 #include "PlutoGE/render/postprocess/IPostProcessEffect.h"
 #include "PlutoGE/render/postprocess/PostProcessEffectFactory.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Prefab.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/SceneSerializer.h"
+#include "PlutoGE/scene/SceneBaker.h"
 #include "PlutoGE/scene/components/ComponentFactory.h"
 #include "PlutoGE/scene/components/AnimationComponent.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
@@ -34,15 +47,20 @@
 #include "PlutoGE/scene/components/TerrainComponent.h"
 #include "PlutoGE/scene/components/UIComponent.h"
 #include "PlutoGE/scene/components/VolumetricCloudComponent.h"
+#include "PlutoGE/platform/Window.h"
+#include "PlutoGE/scripting/ScriptEngine.h"
 
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <iomanip>
 #include <sstream>
 #include <string_view>
 #include <typeinfo>
+#include <type_traits>
+#include <fstream>
 
 namespace
 {
@@ -105,6 +123,151 @@ namespace
             decoded.push_back(value[index] == '+' ? ' ' : value[index]);
         }
         return decoded;
+    }
+
+    std::string EscapeScriptableText(std::string_view value)
+    {
+        std::string result;
+        for (const char character : value)
+        {
+            if (character == '\\') result += "\\\\";
+            else if (character == '\t') result += "\\t";
+            else if (character == '\n') result += "\\n";
+            else result += character;
+        }
+        return result;
+    }
+
+    std::string SerializeScriptableValue(const scripting::ScriptFieldValue &value)
+    {
+        return std::visit([](const auto &typedValue) -> std::string
+        {
+            using T = std::decay_t<decltype(typedValue)>;
+            if constexpr (std::is_same_v<T, std::monostate>) return {};
+            else if constexpr (std::is_same_v<T, bool>) return typedValue ? "true" : "false";
+            else if constexpr (std::is_same_v<T, std::string>) return typedValue;
+            else if constexpr (std::is_same_v<T, glm::vec2>) return std::to_string(typedValue.x) + "," + std::to_string(typedValue.y);
+            else if constexpr (std::is_same_v<T, glm::vec3>) return std::to_string(typedValue.x) + "," + std::to_string(typedValue.y) + "," + std::to_string(typedValue.z);
+            else return std::to_string(typedValue);
+        }, value);
+    }
+
+    std::filesystem::path FindScriptProject(const assets::Project &project)
+    {
+        std::error_code errorCode;
+        for (const auto &entry : std::filesystem::directory_iterator(project.GetRootDirectory(), errorCode))
+        {
+            if (entry.is_regular_file() && entry.path().filename().string().ends_with(".Scripts.csproj"))
+                return entry.path();
+        }
+        return {};
+    }
+
+    std::string SanitizeIdentifier(std::string value)
+    {
+        std::string result;
+        for (const unsigned char character : value)
+        {
+            if (std::isalnum(character) || character == '_') result.push_back(static_cast<char>(character));
+        }
+        if (!result.empty() && std::isdigit(static_cast<unsigned char>(result.front()))) result.insert(result.begin(), '_');
+        return result;
+    }
+
+    std::filesystem::path FindScriptCoreProject()
+    {
+        auto root = std::filesystem::current_path();
+        for (int depth = 0; depth < 8 && !root.empty(); ++depth)
+        {
+            const auto candidate = root / "engine" / "scripting" / "managed" / "PlutoGE.ScriptCore" / "PlutoGE.ScriptCore.csproj";
+            if (std::filesystem::exists(candidate)) return candidate;
+            const auto parent = root.parent_path();
+            if (parent == root) break;
+            root = parent;
+        }
+        return {};
+    }
+
+    std::filesystem::path EnsureScriptProject(assets::Project &project, std::string &errorMessage)
+    {
+        if (const auto existing = FindScriptProject(project); !existing.empty()) return existing;
+        const auto scriptCore = FindScriptCoreProject();
+        if (scriptCore.empty()) { errorMessage = "Could not locate PlutoGE.ScriptCore.csproj."; return {}; }
+        auto name = SanitizeIdentifier(project.GetManifest().name);
+        if (name.empty()) name = "PlutoGEProject";
+        const auto projectPath = project.GetRootDirectory() / (name + ".Scripts.csproj");
+        const auto sourceDirectory = project.GetAssetDirectoryPath() / "Scripts";
+        const auto outputDirectory = project.GetAssetDirectoryPath() / "Managed";
+        std::error_code errorCode;
+        std::filesystem::create_directories(sourceDirectory, errorCode);
+        std::filesystem::create_directories(outputDirectory, errorCode);
+        if (errorCode) { errorMessage = "Could not create the script project directories."; return {}; }
+        const auto sourcePattern = std::filesystem::relative(sourceDirectory, projectPath.parent_path(), errorCode).generic_string() + "/**/*.cs";
+        const auto outputPath = std::filesystem::relative(outputDirectory, projectPath.parent_path(), errorCode).generic_string();
+        const auto coreReference = std::filesystem::relative(scriptCore, projectPath.parent_path(), errorCode).generic_string();
+        if (errorCode) { errorMessage = "Could not construct relative script project paths."; return {}; }
+        std::ofstream output(projectPath, std::ios::trunc);
+        if (!output) { errorMessage = "Could not create the script project file."; return {}; }
+        output << "<Project Sdk=\"Microsoft.NET.Sdk\">\n"
+               << "  <PropertyGroup><TargetFramework>net8.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><EnableDefaultCompileItems>false</EnableDefaultCompileItems><AssemblyName>" << name << ".Scripts</AssemblyName><RootNamespace>" << name << ".Scripts</RootNamespace><OutputPath>" << outputPath << "/</OutputPath><AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath></PropertyGroup>\n"
+               << "  <ItemGroup><Compile Include=\"" << sourcePattern << "\" /></ItemGroup>\n"
+               << "  <ItemGroup><ProjectReference Include=\"" << coreReference << "\" /></ItemGroup>\n"
+               << "</Project>\n";
+        if (!output.good()) { errorMessage = "Could not write the script project file."; return {}; }
+        project.GetManifest().scriptAssembly = project.MakeAssetReference(outputDirectory / (name + ".Scripts.dll"));
+        project.Save(&errorMessage);
+        return projectPath;
+    }
+
+    bool LaunchProcess(const std::filesystem::path &executable, std::string &errorMessage)
+    {
+#ifdef _WIN32
+        std::wstring commandLine = L"\"" + executable.wstring() + L"\"";
+        std::vector<wchar_t> mutableCommand(commandLine.begin(), commandLine.end());
+        mutableCommand.push_back(L'\0');
+        STARTUPINFOW startup{.cb = sizeof(STARTUPINFOW)};
+        PROCESS_INFORMATION process{};
+        const auto workingDirectory = executable.parent_path().wstring();
+        if (!CreateProcessW(nullptr, mutableCommand.data(), nullptr, nullptr, FALSE, 0, nullptr,
+                            workingDirectory.c_str(), &startup, &process))
+        {
+            errorMessage = "Built the project but could not launch it.";
+            return false;
+        }
+        CloseHandle(process.hThread);
+        CloseHandle(process.hProcess);
+        return true;
+#else
+        (void)executable;
+        errorMessage = "Launching an exported project is only supported on Windows.";
+        return false;
+#endif
+    }
+
+    bool RebuildStandaloneRuntime(const std::filesystem::path &runtimeExecutable, std::string &errorMessage)
+    {
+        auto buildDirectory = runtimeExecutable.parent_path();
+        for (int depth = 0; depth < 8 && !buildDirectory.empty() && !std::filesystem::exists(buildDirectory / "CMakeCache.txt"); ++depth)
+        {
+            const auto parent = buildDirectory.parent_path();
+            if (parent == buildDirectory) break;
+            buildDirectory = parent;
+        }
+        if (buildDirectory.empty() || !std::filesystem::exists(buildDirectory / "CMakeCache.txt"))
+        {
+            errorMessage = "Could not determine the CMake build directory for PlutoGERuntime.";
+            return false;
+        }
+        const auto configuration = runtimeExecutable.parent_path().filename().string();
+        std::string command = "cmake --build \"" + buildDirectory.string() + "\" --target PlutoGERuntime";
+        if (configuration == "Debug" || configuration == "Release" || configuration == "RelWithDebInfo" || configuration == "MinSizeRel")
+            command += " --config " + configuration;
+        if (std::system(command.c_str()) != 0)
+        {
+            errorMessage = "Failed to rebuild PlutoGERuntime before exporting the project.";
+            return false;
+        }
+        return true;
     }
 
     const char *ComponentTypeName(const scene::Component &component)
@@ -329,6 +492,8 @@ EditorSession::~EditorSession()
 
 void EditorSession::Shutdown()
 {
+    if (m_bakeTask) m_bakeTask->Cancel();
+    m_bakeTask.reset();
     m_engine.StopRuntime();
     m_engine.SetScene(nullptr);
     m_scene.reset();
@@ -362,6 +527,17 @@ PlutoGE::scene::Scene *EditorSession::GetScene() const { return m_scene.get(); }
 
 void EditorSession::Update(float deltaTime)
 {
+    if (m_bakeTask)
+    {
+        m_bakeStatus = m_bakeTask->GetStatusMessage();
+        if (m_bakeTask->IsFinished())
+        {
+            const auto result = m_bakeTask->Finalize(*m_scene);
+            m_bakeStatus = result.message;
+            if (result.succeeded) m_dirty = true;
+            m_bakeTask.reset();
+        }
+    }
     m_engine.UpdateAsyncMeshImports();
     if (m_scene) m_scene->Update(deltaTime);
 }
@@ -884,6 +1060,197 @@ bool EditorSession::HandleCommand(const std::string &commandLine, std::string &e
         return true;
     }
 
+    if (command == "build_project")
+    {
+        std::string encodedPath;
+        int runAfterBuild = 0;
+        input >> encodedPath >> runAfterBuild;
+        const auto destination = std::filesystem::path(Decode(encodedPath));
+        if (!m_project || destination.empty())
+        {
+            errorMessage = "Open a project and choose an export path before building.";
+            return false;
+        }
+        const auto scriptProject = FindScriptProject(*m_project);
+        const auto scriptSourceDirectory = m_project->GetAssetDirectoryPath() / "Scripts";
+        if (!m_project->GetManifest().scriptAssembly.empty() || !scriptProject.empty() || std::filesystem::exists(scriptSourceDirectory))
+        {
+            if (!HandleCommand("build_scripts", errorMessage))
+            {
+                errorMessage = "Game export stopped because project scripts failed to build. " + errorMessage;
+                return false;
+            }
+        }
+        if (!m_scenePath.empty() && !PlutoGE::scene::SceneSerializer::Save(*m_scene, m_scenePath, &errorMessage)) return false;
+        if (!m_scenePath.empty() && m_project->IsInAssetDirectory(m_scenePath) && m_project->GetManifest().startupScene.empty())
+            m_project->GetManifest().startupScene = m_project->MakeAssetReference(m_scenePath);
+        m_project->RefreshAssetRegistry();
+        if (!m_project->Save(&errorMessage)) return false;
+        const auto runtime = PlutoGE::assets::FindRuntimeExecutable(std::filesystem::current_path());
+        if (runtime.empty())
+        {
+            errorMessage = "Could not find PlutoGERuntime executable to export.";
+            return false;
+        }
+        if (!RebuildStandaloneRuntime(runtime, errorMessage)) return false;
+        if (!PlutoGE::assets::ExportStandaloneProject(*m_project, destination, runtime, &errorMessage)) return false;
+        m_dirty = false;
+        return runAfterBuild == 0 || LaunchProcess(destination, errorMessage);
+    }
+
+    if (command == "build_scripts")
+    {
+        if (!m_project) { errorMessage = "Open a project before building scripts."; return false; }
+        const auto projectPath = EnsureScriptProject(*m_project, errorMessage);
+        if (projectPath.empty()) return false;
+        const bool wasRunning = m_engine.IsRuntimeRunning();
+        if (wasRunning) m_engine.StopRuntime();
+        auto &scriptEngine = m_engine.GetScriptEngine();
+        scriptEngine.Shutdown();
+        PlutoGE::scripting::ScriptBuildConfig config;
+        config.projectPath = projectPath;
+        config.configuration = "Debug";
+        config.framework = "net8.0";
+        const auto result = scriptEngine.BuildProject(config);
+        scriptEngine.Initialize();
+        if (!result.succeeded)
+        {
+            errorMessage = "Script build failed with exit code " + std::to_string(result.exitCode) + ".";
+            return false;
+        }
+        const auto assembly = m_project->ResolveAssetReference(m_project->GetManifest().scriptAssembly);
+        if (!assembly.empty() && !scriptEngine.LoadAssembly(assembly))
+        {
+            errorMessage = scriptEngine.GetLastError();
+            return false;
+        }
+        m_project->RefreshAssetRegistry();
+        m_project->Save(&errorMessage);
+        if (wasRunning) m_engine.StartRuntime();
+        return true;
+    }
+
+    if (command == "reload_scripts")
+    {
+        if (!m_project) { errorMessage = "Open a project before reloading scripts."; return false; }
+        auto &scriptEngine = m_engine.GetScriptEngine();
+        const bool wasRunning = m_engine.IsRuntimeRunning();
+        if (wasRunning) m_engine.StopRuntime();
+        scriptEngine.Shutdown();
+        scriptEngine.Initialize();
+        const auto assembly = m_project->ResolveAssetReference(m_project->GetManifest().scriptAssembly);
+        if (!assembly.empty() && !scriptEngine.LoadAssembly(assembly))
+        {
+            errorMessage = scriptEngine.GetLastError();
+            return false;
+        }
+        if (wasRunning) m_engine.StartRuntime();
+        return true;
+    }
+
+    if (command == "create_script")
+    {
+        std::string encodedName;
+        input >> encodedName;
+        if (!m_project) { errorMessage = "Open a project before creating scripts."; return false; }
+        auto className = SanitizeIdentifier(Decode(encodedName));
+        if (className.empty()) { errorMessage = "Enter a valid script class name."; return false; }
+        if (EnsureScriptProject(*m_project, errorMessage).empty()) return false;
+        const auto scriptPath = m_project->GetAssetDirectoryPath() / "Scripts" / (className + ".cs");
+        if (std::filesystem::exists(scriptPath)) { errorMessage = "A script with that name already exists."; return false; }
+        std::ofstream output(scriptPath);
+        output << "using PlutoGE.ScriptCore;\n\npublic sealed class " << className << " : ScriptBehaviour\n{\n    public override void OnCreate()\n    {\n    }\n\n    public override void OnUpdate(float deltaTime)\n    {\n    }\n}\n";
+        if (!output.good()) { errorMessage = "Could not create the script source file."; return false; }
+        m_project->RefreshAssetRegistry();
+        return m_project->Save(&errorMessage);
+    }
+
+    if (command == "bake_scene")
+    {
+        if (!m_scene || m_bakeTask) { errorMessage = m_bakeTask ? "A scene bake is already running." : "No scene is loaded."; return false; }
+        std::string encodedPreset;
+        input >> encodedPreset;
+        const auto preset = Decode(encodedPreset);
+        auto settings = preset == "fast" ? PlutoGE::scene::SceneBakeSettings::FastPreview()
+                      : preset == "final" ? PlutoGE::scene::SceneBakeSettings::Final()
+                                            : PlutoGE::scene::SceneBakeSettings::BalancedPreview();
+        if (preset == "custom")
+        {
+            int indirect = 1, probes = 1;
+            input >> settings.lightmapResolution >> settings.lightmapTileSize >> settings.probeDirectionCount
+                  >> settings.indirectBounceSampleCount >> indirect >> settings.probeBounceStrength
+                  >> settings.lightmapBounceStrength >> probes;
+            settings.bakeIndirectBounce = indirect != 0;
+            settings.bakeProbeVolume = probes != 0;
+        }
+        PlutoGE::scene::SceneBakeResult immediate;
+        PlutoGE::scene::SceneBaker baker;
+        m_bakeTask = baker.BeginBake(*m_scene, settings, &immediate);
+        if (!m_bakeTask)
+        {
+            errorMessage = immediate.message.empty() ? "Could not start scene bake." : immediate.message;
+            return false;
+        }
+        m_bakeStatus = m_bakeTask->GetStatusMessage();
+        return true;
+    }
+
+    if (command == "cancel_bake")
+    {
+        if (m_bakeTask) { m_bakeTask->Cancel(); m_bakeStatus = "Cancelling bake…"; }
+        return true;
+    }
+
+    if (command == "force_show_cursor")
+    {
+        int enabled = 0;
+        input >> enabled;
+        m_engine.GetWindow().SetCursorLockOverride(enabled != 0);
+        if (enabled) m_engine.GetWindow().SetEditorCursorLocked(false);
+        return true;
+    }
+
+    if (command == "viewport_debug_view")
+    {
+        int view = 0;
+        input >> view;
+        view = std::clamp(view, 0, static_cast<int>(PlutoGE::render::PostProcessDebugView::Lod));
+        m_engine.GetRenderer().SetPostProcessDebugView(static_cast<PlutoGE::render::PostProcessDebugView>(view));
+        return true;
+    }
+
+    if (command == "viewport_settings")
+    {
+        int view = 0, debugShapes = 1, snapEnabled = 0;
+        input >> view >> debugShapes >> snapEnabled >> m_translateSnap >> m_rotateSnap >> m_scaleSnap;
+        view = std::clamp(view, 0, static_cast<int>(PlutoGE::render::PostProcessDebugView::Lod));
+        m_engine.GetRenderer().SetPostProcessDebugView(static_cast<PlutoGE::render::PostProcessDebugView>(view));
+        m_debugShapes = debugShapes != 0;
+        m_snapEnabled = snapEnabled != 0;
+        m_translateSnap = std::max(0.001f, m_translateSnap);
+        m_rotateSnap = std::max(0.1f, m_rotateSnap);
+        m_scaleSnap = std::max(0.001f, m_scaleSnap);
+        return true;
+    }
+
+    if (command == "scene_environment")
+    {
+        std::string encodedPath;
+        float intensity = 1.0f;
+        input >> encodedPath >> intensity;
+        const auto path = Decode(encodedPath);
+        if (path.empty()) m_scene->ClearEnvironmentMap();
+        else
+        {
+            auto *texture = m_engine.GetTextureManager().LoadEnvironmentTextureFromFile(path.c_str());
+            if (!texture) { errorMessage = "Failed to load the environment map."; return false; }
+            m_scene->SetEnvironmentMap(texture, path);
+        }
+        m_scene->SetEnvironmentIntensity(std::max(0.0f, intensity));
+        m_dirty = true;
+        return true;
+    }
+
     if (command == "runtime")
     {
         int start = 0;
@@ -925,10 +1292,11 @@ bool EditorSession::HandleCommand(const std::string &commandLine, std::string &e
 
     if (command == "create_asset")
     {
-        std::string encodedType, encodedReference;
-        input >> encodedType >> encodedReference;
+        std::string encodedType, encodedReference, encodedClassName;
+        input >> encodedType >> encodedReference >> encodedClassName;
         const std::string type = Decode(encodedType);
         const std::string reference = Decode(encodedReference);
+        const std::string className = Decode(encodedClassName);
         if (!m_project || !reference.starts_with("project://"))
         {
             errorMessage = "Open a project before creating assets.";
@@ -952,6 +1320,44 @@ bool EditorSession::HandleCommand(const std::string &commandLine, std::string &e
         else if (type == "post-process" && PlutoGE::assets::Project::GetAssetTypeForReference(reference) == PlutoGE::assets::ProjectAssetType::PostProcessPreset)
         {
             saved = m_engine.GetAssetManager().SavePostProcessPresetAsset(reference, PlutoGE::assets::CreateDefaultPostProcessPresetAsset(), &errorMessage);
+        }
+        else if (type == "particle-system" && PlutoGE::assets::Project::GetAssetTypeForReference(reference) == PlutoGE::assets::ProjectAssetType::ParticleSystem)
+        {
+            saved = m_engine.GetAssetManager().SaveParticleSystemAsset(reference, PlutoGE::assets::CreateDefaultParticleSystemAsset(), &errorMessage);
+        }
+        else if (type == "shader-graph" && PlutoGE::assets::Project::GetAssetTypeForReference(reference) == PlutoGE::assets::ProjectAssetType::ShaderGraph)
+        {
+            saved = m_engine.GetAssetManager().SaveShaderGraphAsset(reference, PlutoGE::render::CreateDefaultShaderGraph(), &errorMessage);
+        }
+        else if (type == "animation-graph" && PlutoGE::assets::Project::GetAssetTypeForReference(reference) == PlutoGE::assets::ProjectAssetType::AnimationGraph)
+        {
+            saved = m_engine.GetAssetManager().SaveAnimationGraphAsset(reference, PlutoGE::assets::CreateDefaultAnimationGraphAsset(), &errorMessage);
+        }
+        else if (type == "scriptable-object" && PlutoGE::assets::Project::GetAssetTypeForReference(reference) == PlutoGE::assets::ProjectAssetType::ScriptableObject)
+        {
+            const auto *definition = m_engine.GetScriptEngine().FindClass(className);
+            if (!definition || definition->kind != PlutoGE::scripting::ScriptClassKind::ScriptableObject)
+            {
+                errorMessage = "Choose a concrete ScriptableObject class.";
+                return false;
+            }
+            std::error_code errorCode;
+            std::filesystem::create_directories(path.parent_path(), errorCode);
+            std::ofstream output(path, std::ios::trunc);
+            if (!output.is_open()) errorMessage = "Could not create the ScriptableObject asset.";
+            else
+            {
+                output << "SCRIPTABLE\t" << EscapeScriptableText(className) << '\n';
+                for (const auto &field : definition->fields)
+                {
+                    if (!field.serialized) continue;
+                    output << "FIELD\t" << EscapeScriptableText(field.name) << '\t'
+                           << static_cast<int>(field.type) << '\t'
+                           << EscapeScriptableText(SerializeScriptableValue(field.defaultValue)) << '\n';
+                }
+                saved = output.good();
+                if (!saved) errorMessage = "Could not write the ScriptableObject asset.";
+            }
         }
         else errorMessage = "Unsupported asset type or file extension.";
 
@@ -1004,7 +1410,9 @@ bool EditorSession::HandleCommand(const std::string &commandLine, std::string &e
         }
         else if (presetName == "Ocean") PlutoGE::scene::AddComponentByTypeName(*created, "OceanComponent");
         else if (presetName == "Terrain") PlutoGE::scene::AddComponentByTypeName(*created, "TerrainComponent");
+        else if (presetName == "Cloth") PlutoGE::scene::AddComponentByTypeName(*created, "ClothComponent");
         else if (presetName == "Particle System") PlutoGE::scene::AddComponentByTypeName(*created, "ParticleSystemComponent");
+        else if (presetName == "IBL Capture") PlutoGE::scene::AddComponentByTypeName(*created, "IblCaptureComponent");
         m_selectedEntityId = created->GetID();
     }
     else if (command == "instantiate_asset")
@@ -1065,6 +1473,53 @@ bool EditorSession::HandleCommand(const std::string &commandLine, std::string &e
         }
         duplicate->SetName(source->GetName() + " Copy");
         m_selectedEntityId = duplicate->GetID();
+    }
+    else if (command == "copy")
+    {
+        std::uint32_t id = 0;
+        input >> id;
+        if (!FindEntity(id)) { errorMessage = "Select an entity to copy."; return false; }
+        m_copiedEntityId = id;
+        return true;
+    }
+    else if (command == "paste")
+    {
+        std::uint32_t parentId = 0;
+        input >> parentId;
+        auto *source = FindEntity(m_copiedEntityId);
+        if (!source) { errorMessage = "Copy an entity before pasting."; return false; }
+        auto *duplicate = PlutoGE::scene::Prefab::DuplicateEntity(*m_scene, *source, FindEntity(parentId), true);
+        if (!duplicate) { errorMessage = "Could not paste the copied entity."; return false; }
+        duplicate->SetName(source->GetName() + " Copy");
+        m_selectedEntityId = duplicate->GetID();
+    }
+    else if (command == "save_prefab")
+    {
+        std::uint32_t id = 0;
+        input >> id;
+        auto *entity = FindEntity(id);
+        if (!entity || !m_project) { errorMessage = "Open a project and select an entity before saving a prefab."; return false; }
+        std::string name = entity->GetName();
+        for (auto &character : name) if (!std::isalnum(static_cast<unsigned char>(character)) && character != '-' && character != '_') character = '_';
+        if (name.empty()) name = "Prefab";
+        const auto path = m_project->GetAssetDirectoryPath() / "Prefabs" / (name + ".plutoprefab");
+        std::filesystem::create_directories(path.parent_path());
+        if (!PlutoGE::scene::Prefab::SaveFromEntity(*entity, path, &errorMessage)) return false;
+        m_project->RefreshAssetRegistry();
+        return m_project->Save(&errorMessage);
+    }
+    else if (command == "skeleton_attachments")
+    {
+        std::uint32_t id = 0;
+        input >> id;
+        auto *entity = FindEntity(id);
+        auto *mesh = entity ? entity->GetComponent<PlutoGE::scene::MeshComponent>() : nullptr;
+        if (!mesh || !mesh->GetMesh() || !mesh->GetMesh()->HasSkeleton())
+        {
+            errorMessage = "The selected entity has no skeletal mesh.";
+            return false;
+        }
+        mesh->CreateSkeletonAttachmentEntities();
     }
     else if (command == "set_name")
     {
@@ -1129,6 +1584,68 @@ bool EditorSession::HandleCommand(const std::string &commandLine, std::string &e
         std::size_t componentIndex = 0;
         input >> id >> componentIndex;
         if (auto *entity = FindEntity(id)) if (auto *component = ComponentAt(*entity, componentIndex)) entity->RemoveComponent(component);
+    }
+    else if (command == "component_action")
+    {
+        std::uint32_t id = 0;
+        std::size_t componentIndex = 0;
+        std::string encodedAction;
+        int index = -1;
+        input >> id >> componentIndex >> encodedAction >> index;
+        auto *entity = FindEntity(id);
+        auto *component = entity ? ComponentAt(*entity, componentIndex) : nullptr;
+        const auto action = Decode(encodedAction);
+        if (!component) { errorMessage = "The component no longer exists."; return false; }
+        if (auto *navigation = dynamic_cast<PlutoGE::scene::NavigationMeshComponent *>(component))
+        {
+            if (action == "bake") navigation->Bake();
+            else if (action == "clear") navigation->Clear();
+            else { errorMessage = "Unknown navigation action."; return false; }
+        }
+        else if (auto *capture = dynamic_cast<PlutoGE::scene::IblCaptureComponent *>(component))
+        {
+            if (action == "capture")
+            {
+                capture->DiscardCaptureResult();
+                m_scene->ClearIblCaptureVolumes();
+                auto *captureTexture = capture->EnsureCaptureTexture();
+                if (!captureTexture)
+                {
+                    errorMessage = "IBL capture failed: could not create the cubemap.";
+                    return false;
+                }
+                if (!m_engine.GetRenderer().CaptureSceneCubemap(entity->GetWorldPosition(), capture->GetResolution(),
+                                                                 capture->GetFarPlane(), captureTexture,
+                                                                 m_scene->GetLights(), m_scene.get()))
+                {
+                    errorMessage = "IBL scene capture failed.";
+                    return false;
+                }
+                if (!capture->StoreCapturePixelsFromTexture())
+                {
+                    errorMessage = "IBL capture completed, but its pixels could not be stored.";
+                    return false;
+                }
+                capture->ClearDirty();
+                m_scene->AddIblCaptureVolume(capture->BuildCaptureVolume());
+            }
+            else if (action == "mark-dirty") capture->MarkDirty();
+            else if (action == "discard") capture->DiscardCaptureResult();
+            else { errorMessage = "Unknown IBL capture action."; return false; }
+        }
+        else if (auto *spline = dynamic_cast<PlutoGE::scene::SplineComponent *>(component))
+        {
+            if (action == "add-point") spline->AddPoint(spline->GetPoints().empty() ? glm::vec3(0.0f) : spline->GetPoints().back().position + glm::vec3(8.0f, 0.0f, 0.0f));
+            else if (action == "remove-point" && index >= 0 && static_cast<std::size_t>(index) < spline->GetPoints().size()) spline->RemovePoint(static_cast<std::size_t>(index));
+            else { errorMessage = "Unknown spline action."; return false; }
+        }
+        else if (auto *ocean = dynamic_cast<PlutoGE::scene::OceanComponent *>(component))
+        {
+            if (action == "add-area") ocean->AddArea({{-10.0f, -10.0f}, {10.0f, -10.0f}, {10.0f, 10.0f}, {-10.0f, 10.0f}});
+            else if (action == "remove-area" && index >= 0 && static_cast<std::size_t>(index) < ocean->GetAreas().size()) ocean->RemoveArea(static_cast<std::size_t>(index));
+            else { errorMessage = "Unknown ocean action."; return false; }
+        }
+        else { errorMessage = "This component does not support that action."; return false; }
     }
     else if (command.rfind("camera_effect_", 0) == 0)
     {
@@ -1293,6 +1810,25 @@ std::string EditorSession::BuildSnapshotEvent() const
     output << ']'
            << ",\"scenePath\":\"" << JsonEscape(m_scenePath)
            << "\",\"dirty\":" << (m_dirty ? "true" : "false")
+           << ",\"environmentPath\":\"" << JsonEscape(m_scene ? m_scene->GetEnvironmentMapPath() : std::string{})
+           << "\",\"environmentIntensity\":" << (m_scene ? m_scene->GetEnvironmentIntensity() : 1.0f)
+           << ",\"bakeRunning\":" << (m_bakeTask ? "true" : "false")
+           << ",\"bakeStatus\":\"" << JsonEscape(m_bakeStatus) << "\""
+           << ",\"scriptClassNames\":[";
+    const auto scriptClassNames = m_engine.GetScriptEngine().GetClassNames();
+    for (std::size_t classIndex = 0; classIndex < scriptClassNames.size(); ++classIndex)
+    {
+        if (classIndex > 0) output << ',';
+        output << '"' << JsonEscape(scriptClassNames[classIndex]) << '"';
+    }
+    output << "],\"scriptableObjectClassNames\":[";
+    const auto scriptableObjectClassNames = m_engine.GetScriptEngine().GetScriptableObjectClassNames();
+    for (std::size_t classIndex = 0; classIndex < scriptableObjectClassNames.size(); ++classIndex)
+    {
+        if (classIndex > 0) output << ',';
+        output << '"' << JsonEscape(scriptableObjectClassNames[classIndex]) << '"';
+    }
+    output << ']'
            << ",\"postProcessEffectTypes\":[";
     const auto &registeredEffectTypes = PlutoGE::render::GetRegisteredPostProcessEffectTypes();
     for (std::size_t typeIndex = 0; typeIndex < registeredEffectTypes.size(); ++typeIndex)
@@ -1325,6 +1861,12 @@ std::string EditorSession::BuildSnapshotEvent() const
            << ",\"visibleRenderCommands\":" << m_visibleRenderCommands
            << ",\"registeredMeshComponents\":" << registeredMeshComponents
            << ",\"renderableMeshComponents\":" << renderableMeshComponents << '}'
+           << ",\"viewportSettings\":{\"debugView\":" << static_cast<int>(m_engine.GetRenderer().GetPostProcessDebugView())
+           << ",\"debugShapes\":" << (m_debugShapes ? "true" : "false")
+           << ",\"snapEnabled\":" << (m_snapEnabled ? "true" : "false")
+           << ",\"translateSnap\":" << m_translateSnap
+           << ",\"rotateSnap\":" << m_rotateSnap
+           << ",\"scaleSnap\":" << m_scaleSnap << '}'
            << ",\"entities\":[";
     std::vector<const PlutoGE::scene::Entity *> entities;
     if (m_scene)

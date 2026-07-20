@@ -46,12 +46,20 @@ function PropertyEditor({
 	componentIndex,
 	propertyIndex,
 	disabled,
+	assets,
+	entities,
+	componentType,
+	scriptClassNames,
 }: {
 	property: EditorProperty;
 	entityId: number;
 	componentIndex: number;
 	propertyIndex: number;
 	disabled: boolean;
+	assets: EditorAsset[];
+	entities: EditorEntity[];
+	componentType: string;
+	scriptClassNames: string[];
 }): React.JSX.Element {
 	const commit = (value: string): void =>
 		window.plutoEditor.setComponentProperty(
@@ -59,6 +67,66 @@ function PropertyEditor({
 			componentIndex,
 			propertyIndex,
 			value,
+		);
+	if (componentType === "ScriptComponent" && property.name === "Source")
+		return (
+			<label className="property-row">
+				<span>Script Class</span>
+				<select
+					disabled={disabled}
+					value={property.value}
+					onChange={(event) => commit(event.currentTarget.value)}
+				>
+					<option value="">None</option>
+					{scriptClassNames.map((name) => (
+						<option key={name}>{name}</option>
+					))}
+				</select>
+			</label>
+		);
+	if (property.type === 3 || property.type === 5 || property.type === 7) {
+		const count = property.type === 7 ? 2 : property.type === 5 ? 4 : 3;
+		const values = property.value.split(",").map(Number);
+		while (values.length < count)
+			values.push(property.type === 5 && values.length === 3 ? 1 : 0);
+		return (
+			<div className="property-row">
+				<span>{property.name}</span>
+				<div className="vector-editor compact">
+					{values.slice(0, count).map((value, index) => (
+						<NumericInput
+							key={index}
+							disabled={disabled}
+							value={Number.isFinite(value) ? value : 0}
+							step={0.05}
+							onCommit={(next) => {
+								const changed = [...values];
+								changed[index] = next;
+								commit(changed.slice(0, count).join(","));
+							}}
+						/>
+					))}
+				</div>
+			</div>
+		);
+	}
+	if (property.type === 9)
+		return (
+			<label className="property-row">
+				<span>{property.name}</span>
+				<select
+					disabled={disabled}
+					value={property.value}
+					onChange={(event) => commit(event.currentTarget.value)}
+				>
+					<option value="0">None</option>
+					{entities.map((entity) => (
+						<option key={entity.id} value={entity.id}>
+							{entity.name}
+						</option>
+					))}
+				</select>
+			</label>
 		);
 	if (property.type === 4)
 		return (
@@ -103,6 +171,32 @@ function PropertyEditor({
 				/>
 			</label>
 		);
+	if (/asset|source|clip|material|mesh|texture|path/i.test(property.name)) {
+		const listId = `assets-${entityId}-${componentIndex}-${propertyIndex}`;
+		return (
+			<label className="property-row">
+				<span>{property.name}</span>
+				<span>
+					<input
+						disabled={disabled}
+						list={listId}
+						defaultValue={property.value}
+						onBlur={(event) =>
+							event.currentTarget.value !== property.value &&
+							commit(event.currentTarget.value)
+						}
+					/>
+					<datalist id={listId}>
+						{assets.map((asset) => (
+							<option key={asset.reference} value={asset.reference}>
+								{asset.type}
+							</option>
+						))}
+					</datalist>
+				</span>
+			</label>
+		);
+	}
 	return (
 		<label className="property-row">
 			<span>{property.name}</span>
@@ -371,10 +465,16 @@ function EntityInspector({
 	entity,
 	running,
 	effectTypes,
+	assets,
+	entities,
+	scriptClassNames,
 }: {
 	entity?: EditorEntity;
 	running: boolean;
 	effectTypes: string[];
+	assets: EditorAsset[];
+	entities: EditorEntity[];
+	scriptClassNames: string[];
 }): React.JSX.Element {
 	const [componentToAdd, setComponentToAdd] = useState("");
 	if (!entity)
@@ -471,6 +571,12 @@ function EntityInspector({
 							</button>
 						</summary>
 						<div className="component-properties">
+							<ComponentActions
+								entityId={entity.id}
+								componentIndex={componentIndex}
+								component={component}
+								running={running}
+							/>
 							{component.properties.length ? (
 								component.properties.map((property, propertyIndex) =>
 									component.type === "CameraComponent" &&
@@ -484,6 +590,10 @@ function EntityInspector({
 											componentIndex={componentIndex}
 											propertyIndex={propertyIndex}
 											disabled={running}
+											assets={assets}
+											entities={entities}
+											componentType={component.type}
+											scriptClassNames={scriptClassNames}
 										/>
 									),
 								)
@@ -581,6 +691,144 @@ function EntityInspector({
 						}}
 					>
 						Add
+					</button>
+				</div>
+			</section>
+		</div>
+	);
+}
+
+function ComponentActions({
+	entityId,
+	componentIndex,
+	component,
+	running,
+}: {
+	entityId: number;
+	componentIndex: number;
+	component: EditorComponent;
+	running: boolean;
+}): React.JSX.Element | null {
+	const action = (name: string, index = -1): void =>
+		window.plutoEditor.componentAction(entityId, componentIndex, name, index);
+	if (component.type === "NavigationMeshComponent")
+		return (
+			<div className="component-actions">
+				<button disabled={running} onClick={() => action("bake")}>
+					Bake Navigation
+				</button>
+				<button disabled={running} onClick={() => action("clear")}>
+					Clear
+				</button>
+			</div>
+		);
+	if (component.type === "IblCaptureComponent")
+		return (
+			<div className="component-actions">
+				<button disabled={running} onClick={() => action("capture")}>
+					Capture Scene
+				</button>
+				<button disabled={running} onClick={() => action("mark-dirty")}>
+					Mark Dirty
+				</button>
+				<button disabled={running} onClick={() => action("discard")}>
+					Discard Capture
+				</button>
+			</div>
+		);
+	if (component.type === "SplineComponent")
+		return (
+			<div className="component-actions">
+				<button disabled={running} onClick={() => action("add-point")}>
+					Add Control Point
+				</button>
+			</div>
+		);
+	if (component.type === "OceanComponent")
+		return (
+			<div className="component-actions">
+				<button disabled={running} onClick={() => action("add-area")}>
+					Add Exclusion Area
+				</button>
+			</div>
+		);
+	if (component.type === "ScriptComponent")
+		return (
+			<div className="component-actions">
+				<button
+					disabled={running}
+					onClick={() => window.plutoEditor.buildScripts()}
+				>
+					Build Scripts
+				</button>
+				<button
+					disabled={running}
+					onClick={() => window.plutoEditor.reloadScripts()}
+				>
+					Reload Assembly
+				</button>
+			</div>
+		);
+	return null;
+}
+
+function SceneEnvironmentInspector({
+	editor,
+}: {
+	editor: EditorState;
+}): React.JSX.Element {
+	const [path, setPath] = useState(editor.environmentPath);
+	const [intensity, setIntensity] = useState(editor.environmentIntensity);
+	return (
+		<div className="inspector-content">
+			<section>
+				<h4>Scene Environment</h4>
+				<label className="property-row">
+					<span>HDRI Path</span>
+					<span className="property-path-input">
+						<input
+							value={path}
+							onChange={(event) => setPath(event.currentTarget.value)}
+							placeholder="Path to .hdr or image"
+						/>
+						<button
+							type="button"
+							onClick={() =>
+								void window.plutoEditor
+									.chooseEnvironmentMap()
+									.then((selected) => {
+										if (selected) setPath(selected);
+									})
+							}
+						>
+							Browse…
+						</button>
+					</span>
+				</label>
+				<label className="property-row">
+					<span>Intensity</span>
+					<NumericInput
+						value={intensity}
+						min={0}
+						step={0.05}
+						onCommit={setIntensity}
+					/>
+				</label>
+				<div className="component-actions">
+					<button
+						onClick={() =>
+							window.plutoEditor.setSceneEnvironment(path, intensity)
+						}
+					>
+						Apply
+					</button>
+					<button
+						onClick={() => {
+							setPath("");
+							window.plutoEditor.setSceneEnvironment("", intensity);
+						}}
+					>
+						Clear HDRI
 					</button>
 				</div>
 			</section>
@@ -728,13 +976,23 @@ export function InspectorPanel({
 					hasSelection={Boolean(selectedEntity)}
 					effectTypes={editor.postProcessEffectTypes}
 				/>
-			) : (
+			) : selectedEntity ? (
 				<EntityInspector
-					key={selectedEntity ? JSON.stringify(selectedEntity) : "none"}
+					key={JSON.stringify(selectedEntity)}
 					entity={selectedEntity}
 					running={editor?.running ?? false}
 					effectTypes={editor?.postProcessEffectTypes ?? []}
+					assets={editor?.assets ?? []}
+					entities={editor?.entities ?? []}
+					scriptClassNames={editor?.scriptClassNames ?? []}
 				/>
+			) : editor ? (
+				<SceneEnvironmentInspector
+					key={`${editor.environmentPath}-${editor.environmentIntensity}`}
+					editor={editor}
+				/>
+			) : (
+				<div className="empty-state">Waiting for editor state…</div>
 			)}
 		</PanelFrame>
 	);

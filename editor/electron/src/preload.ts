@@ -84,6 +84,21 @@ const api: PlutoEditorApi = {
 		ipcRenderer.on("editor:state", listener);
 		return () => ipcRenderer.removeListener("editor:state", listener);
 	},
+	getConsoleMessages: () => ipcRenderer.invoke("console:get-messages"),
+	onConsoleMessage: (callback) => {
+		const listener = (
+			_event: Electron.IpcRendererEvent,
+			message: EditorConsoleMessage,
+		) => callback(message);
+		ipcRenderer.on("console:message", listener);
+		return () => ipcRenderer.removeListener("console:message", listener);
+	},
+	onConsoleCleared: (callback) => {
+		const listener = () => callback();
+		ipcRenderer.on("console:cleared", listener);
+		return () => ipcRenderer.removeListener("console:cleared", listener);
+	},
+	clearConsole: () => ipcRenderer.send("console:clear"),
 	newScene: () => ipcRenderer.invoke("editor:new-scene"),
 	newProject: () => ipcRenderer.invoke("editor:new-project"),
 	openProject: () => ipcRenderer.invoke("editor:open-project"),
@@ -91,16 +106,46 @@ const api: PlutoEditorApi = {
 	saveProjectSettings: (settings) =>
 		ipcRenderer.invoke("editor:save-project-settings", settings),
 	openScene: () => ipcRenderer.invoke("editor:open-scene"),
+	chooseEnvironmentMap: () => ipcRenderer.invoke("editor:choose-environment"),
 	openAsset: (reference) => ipcRenderer.invoke("editor:open-asset", reference),
+	getActiveAsset: () => ipcRenderer.invoke("asset:get-active"),
+	onAssetOpened: (callback) => {
+		const listener = (
+			_event: Electron.IpcRendererEvent,
+			asset: AssetDocument | undefined,
+		) => callback(asset);
+		ipcRenderer.on("asset:opened", listener);
+		return () => ipcRenderer.removeListener("asset:opened", listener);
+	},
+	saveAsset: (reference, content) =>
+		ipcRenderer.invoke("asset:save", reference, content),
+	setAssetDirty: (dirty) => ipcRenderer.send("asset:set-dirty", dirty),
 	revealAsset: (reference) => ipcRenderer.invoke("assets:reveal", reference),
 	saveScene: (saveAs = false) =>
 		ipcRenderer.invoke("editor:save-scene", saveAs),
 	importModels: () => ipcRenderer.invoke("assets:import-models"),
 	refreshAssets: () => ipcRenderer.send("editor:command", "refresh-assets"),
-	createAsset: (type, reference) =>
-		ipcRenderer.send("editor:command", "create-asset", type, reference),
+	createAsset: (type, reference, className) =>
+		ipcRenderer.send(
+			"editor:command",
+			"create-asset",
+			type,
+			reference,
+			className,
+		),
 	instantiateAsset: (reference) =>
 		ipcRenderer.send("editor:command", "instantiate-asset", reference),
+	buildProject: (runAfterBuild = false) =>
+		ipcRenderer.invoke("editor:build-project", runAfterBuild),
+	bakeScene: (preset, settings) =>
+		ipcRenderer.send("editor:command", "bake-scene", preset, settings),
+	cancelBake: () => ipcRenderer.send("editor:command", "cancel-bake"),
+	buildScripts: () => ipcRenderer.send("editor:command", "build-scripts"),
+	reloadScripts: () => ipcRenderer.send("editor:command", "reload-scripts"),
+	createScript: (name) =>
+		ipcRenderer.send("editor:command", "create-script", name),
+	setForceShowCursor: (enabled) =>
+		ipcRenderer.send("editor:command", "force-show-cursor", enabled),
 	undo: () => ipcRenderer.send("editor:command", "undo"),
 	redo: () => ipcRenderer.send("editor:command", "redo"),
 	setRuntime: (running) =>
@@ -145,6 +190,13 @@ const api: PlutoEditorApi = {
 		ipcRenderer.send("editor:command", "create", name, parentId),
 	deleteEntity: (id) => ipcRenderer.send("editor:command", "delete", id),
 	duplicateEntity: (id) => ipcRenderer.send("editor:command", "duplicate", id),
+	copyEntity: (id) => ipcRenderer.send("editor:command", "copy", id),
+	pasteEntity: (parentId = 0) =>
+		ipcRenderer.send("editor:command", "paste", parentId),
+	saveEntityAsPrefab: (id) =>
+		ipcRenderer.send("editor:command", "save-prefab", id),
+	createSkeletonAttachments: (id) =>
+		ipcRenderer.send("editor:command", "skeleton-attachments", id),
 	reparentEntity: (id, parentId) =>
 		ipcRenderer.send("editor:command", "reparent", id, parentId),
 	setEntityName: (id, name) =>
@@ -186,6 +238,21 @@ const api: PlutoEditorApi = {
 			entityId,
 			componentIndex,
 		),
+	componentAction: (entityId, componentIndex, action, index = -1) =>
+		ipcRenderer.send(
+			"editor:command",
+			"component-action",
+			entityId,
+			componentIndex,
+			action,
+			index,
+		),
+	setSceneEnvironment: (path, intensity) =>
+		ipcRenderer.send("editor:command", "scene-environment", path, intensity),
+	setViewportDebugView: (view) =>
+		ipcRenderer.send("editor:command", "viewport-debug-view", view),
+	setViewportSettings: (settings) =>
+		ipcRenderer.send("editor:command", "viewport-settings", settings),
 	addCameraPostProcessEffect: (entityId, componentIndex, type) =>
 		ipcRenderer.send(
 			"editor:command",

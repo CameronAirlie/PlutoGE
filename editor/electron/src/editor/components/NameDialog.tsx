@@ -5,16 +5,18 @@ export function NameDialog({
 	title,
 	label = "Name",
 	confirmLabel = "Create",
+	initialValue = "",
 	onConfirm,
 	onClose,
 }: {
 	title: string;
 	label?: string;
 	confirmLabel?: string;
+	initialValue?: string;
 	onConfirm(value: string): void;
 	onClose(): void;
 }): React.JSX.Element {
-	const [value, setValue] = useState("");
+	const [value, setValue] = useState(initialValue);
 	const input = useRef<HTMLInputElement>(null);
 	useEffect(() => {
 		input.current?.focus();

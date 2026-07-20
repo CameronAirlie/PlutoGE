@@ -212,15 +212,16 @@ namespace
 
     void AppendGpuPassTimings(std::ostringstream &event,
                               std::string_view field,
-                              const std::vector<PlutoGE::render::GpuPassTiming> &timings)
+                              const std::vector<PlutoGE::render::GpuPassTiming> &timings,
+                              bool rendered)
     {
         event << ",\"" << field << "\":[";
         for (std::size_t index = 0; index < timings.size(); ++index)
         {
             if (index > 0) event << ',';
             event << "{\"name\":\"" << JsonEscape(timings[index].name)
-                  << "\",\"timeMs\":" << timings[index].gpuTimeMs
-                  << ",\"available\":" << (timings[index].hasResult ? "true" : "false") << '}';
+                  << "\",\"timeMs\":" << (rendered ? timings[index].gpuTimeMs : 0.0f)
+                  << ",\"available\":" << (rendered && timings[index].hasResult ? "true" : "false") << '}';
         }
         event << ']';
     }
@@ -345,6 +346,7 @@ int main(int argc, char **argv)
     EditorViewportInteraction viewportInteraction;
     auto previousFrameTime = std::chrono::steady_clock::now();
     auto performanceWindowStart = previousFrameTime;
+    auto previousLoopEnd = previousFrameTime;
     int performanceFrameCount = 0;
     float performanceFrameTimeTotalMs = 0.0f;
     float performanceMaxFrameTimeMs = 0.0f;
@@ -682,7 +684,11 @@ int main(int argc, char **argv)
         }
 
         const auto loopEnd = std::chrono::steady_clock::now();
-        const float frameTimeMs = std::chrono::duration<float, std::milli>(loopEnd - loopStart).count();
+        // Include time spent publishing the preceding performance and snapshot
+        // events. FPS already included that wall time, while loopStart-to-loopEnd
+        // frame timing did not.
+        const float frameTimeMs = std::chrono::duration<float, std::milli>(loopEnd - previousLoopEnd).count();
+        previousLoopEnd = loopEnd;
         ++performanceFrameCount;
         performanceFrameTimeTotalMs += frameTimeMs;
         performanceMaxFrameTimeMs = std::max(performanceMaxFrameTimeMs, frameTimeMs);
@@ -713,6 +719,7 @@ int main(int argc, char **argv)
             const float averageOverheadMs = std::max(0.0f, averageFrameTimeMs - accountedFrameTimeMs);
             const auto &cpuFrameStats = renderer.GetCpuFrameStats();
             const auto &lightingTiming = renderer.GetLightingGpuTiming();
+            const bool renderedThisFrame = renderer.GetProfiledRenderCount() > 0;
             const auto extents = window.GetExtents();
             std::ostringstream event;
             event << std::fixed << std::setprecision(3)
@@ -735,16 +742,16 @@ int main(int argc, char **argv)
                   << ",\"viewportWidth\":" << extents.width
                   << ",\"viewportHeight\":" << extents.height;
             AppendCpuPassTimings(event, renderer.GetCpuPassTimings());
-            AppendGpuPassTimings(event, "gpuPasses", renderer.GetGpuPassTimings());
-            AppendGpuPassTimings(event, "postProcessGpuPasses", renderer.GetPostProcessGpuTimings());
-            event << ",\"lighting\":{\"setupMs\":" << lightingTiming.setupMs
-                  << ",\"setupAvailable\":" << (lightingTiming.hasSetupResult ? "true" : "false")
-                  << ",\"ambientMs\":" << lightingTiming.ambientMs
-                  << ",\"ambientAvailable\":" << (lightingTiming.hasAmbientResult ? "true" : "false")
-                  << ",\"lightAccumulationMs\":" << lightingTiming.lightAccumulationMs
-                  << ",\"lightAccumulationAvailable\":" << (lightingTiming.hasLightAccumulationResult ? "true" : "false")
-                  << ",\"lightCount\":" << lightingTiming.lightCount
-                  << ",\"shadowedLightCount\":" << lightingTiming.shadowedLightCount << '}';
+            AppendGpuPassTimings(event, "gpuPasses", renderer.GetGpuPassTimings(), renderedThisFrame);
+            AppendGpuPassTimings(event, "postProcessGpuPasses", renderer.GetPostProcessGpuTimings(), renderedThisFrame);
+            event << ",\"lighting\":{\"setupMs\":" << (renderedThisFrame ? lightingTiming.setupMs : 0.0f)
+                  << ",\"setupAvailable\":" << (renderedThisFrame && lightingTiming.hasSetupResult ? "true" : "false")
+                  << ",\"ambientMs\":" << (renderedThisFrame ? lightingTiming.ambientMs : 0.0f)
+                  << ",\"ambientAvailable\":" << (renderedThisFrame && lightingTiming.hasAmbientResult ? "true" : "false")
+                  << ",\"lightAccumulationMs\":" << (renderedThisFrame ? lightingTiming.lightAccumulationMs : 0.0f)
+                  << ",\"lightAccumulationAvailable\":" << (renderedThisFrame && lightingTiming.hasLightAccumulationResult ? "true" : "false")
+                  << ",\"lightCount\":" << (renderedThisFrame ? lightingTiming.lightCount : 0)
+                  << ",\"shadowedLightCount\":" << (renderedThisFrame ? lightingTiming.shadowedLightCount : 0) << '}';
             event << ",\"workload\":{\"submittedRenderCommands\":" << cpuFrameStats.submittedRenderCommandCount
                   << ",\"submissionCulledRenderCommands\":" << cpuFrameStats.submissionCulledRenderCommandCount
                   << ",\"visibleRenderCommands\":" << cpuFrameStats.visibleRenderCommandCount

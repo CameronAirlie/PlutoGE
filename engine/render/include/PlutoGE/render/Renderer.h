@@ -68,6 +68,9 @@ namespace PlutoGE::render
         glm::mat4 previousModel = glm::mat4(1.0f);
         MeshBounds worldBounds{};
         MeshBounds previousWorldBounds{};
+        // Optional object-size radius for LOD selection. Instanced batches still
+        // use their combined world bounds for culling.
+        float lodReferenceRadius = 0.0f;
         const std::vector<glm::mat4> *jointMatrices = nullptr;
         bool skinningPoseChanged = false;
         std::shared_ptr<const std::vector<glm::mat4>> instanceModels;
@@ -83,8 +86,8 @@ namespace PlutoGE::render
         bool usePrimaryUvForLightmap = false;
 
         // LOD transition state is transient and packed into the otherwise
-        // unused high bits of minLodIndex. Keeping RenderCommand's original
-        // layout avoids invalidating cached commands containing shared_ptrs.
+        // unused high bits of minLodIndex so cached commands need no separate
+        // transition fields.
         uint32_t GetMinLodIndex() const { return minLodIndex & 0xffu; }
         uint32_t GetLodTransitionIndex() const { return (minLodIndex >> 8u) & 0xffu; }
         float GetLodTransitionFade() const

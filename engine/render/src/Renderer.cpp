@@ -836,7 +836,10 @@ namespace PlutoGE::render
 
             const float distance = glm::length(command.worldBounds.center - cameraPosition);
             const float safeDistance = std::max(distance, 0.001f);
-            const float projectedRadiusPixels = (std::max(command.worldBounds.radius, 0.001f) / safeDistance) * projectionScaleY * halfViewportHeight;
+            const float lodReferenceRadius = command.lodReferenceRadius > 0.0f
+                                                 ? command.lodReferenceRadius
+                                                 : command.worldBounds.radius;
+            const float projectedRadiusPixels = (std::max(lodReferenceRadius, 0.001f) / safeDistance) * projectionScaleY * halfViewportHeight;
             const uint32_t selectedLodIndex = static_cast<uint32_t>(command.mesh->SelectSubmeshLodByProjectedRadius(command.submeshIndex, projectedRadiusPixels));
             const std::size_t lodCount = command.mesh->GetSubmeshLodCount(command.submeshIndex);
             const uint32_t minLodIndex = lodCount > 0 ? std::min(command.GetMinLodIndex(), static_cast<uint32_t>(lodCount - 1)) : 0u;

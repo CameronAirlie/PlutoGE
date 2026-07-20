@@ -193,6 +193,16 @@ namespace PlutoGE::scene
             return render::MeshBounds{.center = center, .radius = radius};
         }
 
+        float ComputeMaxInstanceRadius(const std::vector<glm::mat4> &models, const render::MeshBounds &meshBounds)
+        {
+            float radius = 0.0f;
+            for (const auto &model : models)
+            {
+                radius = (std::max)(radius, TransformBounds(meshBounds, model).radius);
+            }
+            return radius;
+        }
+
         glm::vec3 GetVertexPosition(const render::MeshVertexData &vertex)
         {
             return glm::vec3(vertex.position[0], vertex.position[1], vertex.position[2]);
@@ -572,6 +582,7 @@ namespace PlutoGE::scene
                     command.shader = material->GetShader();
                     command.worldBounds = cluster.bounds;
                     command.previousWorldBounds = command.worldBounds;
+                    command.lodReferenceRadius = ComputeMaxInstanceRadius(*cluster.models, clusterSourceBounds);
                     command.instanceModels = cluster.models;
                     command.previousInstanceModels = cluster.models;
                     command.submeshIndex = static_cast<uint32_t>(submeshIndex);

@@ -236,6 +236,20 @@ struct SharedTexturePublisher::Implementation
         return true;
     }
 
+    bool CanPublish(int width, int height, std::size_t maxFramesInFlight, std::string &error)
+    {
+        auto active = std::find_if(pools.begin(), pools.end(), [](const Pool &pool) { return pool.active; });
+        if (active == pools.end() || active->width != width || active->height != height)
+        {
+            if (!CreatePool(width, height, error)) return false;
+            active = std::find_if(pools.begin(), pools.end(), [](const Pool &pool) { return pool.active; });
+        }
+        if (active == pools.end()) return false;
+        const auto inFlightCount = std::count_if(
+            active->slots.begin(), active->slots.end(), [](const Slot &slot) { return slot.inFlight; });
+        return inFlightCount < static_cast<std::ptrdiff_t>(std::max<std::size_t>(1, maxFramesInFlight));
+    }
+
     std::optional<Frame> Publish(int width, int height, std::string &error)
     {
         auto active = std::find_if(pools.begin(), pools.end(), [](const Pool &pool) { return pool.active; });
@@ -408,6 +422,19 @@ bool SharedTexturePublisher::Initialize(std::uint32_t electronProcessId, std::st
 #else
     (void)electronProcessId;
     error = "Shared textures are currently implemented only on Windows";
+    return false;
+#endif
+}
+
+bool SharedTexturePublisher::CanPublish(int width, int height, std::size_t maxFramesInFlight, std::string &error)
+{
+#ifdef _WIN32
+    return m_implementation && m_implementation->CanPublish(width, height, maxFramesInFlight, error);
+#else
+    (void)width;
+    (void)height;
+    (void)maxFramesInFlight;
+    (void)error;
     return false;
 #endif
 }

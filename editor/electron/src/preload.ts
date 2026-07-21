@@ -6,39 +6,89 @@ type SharedViewportMetadata = {
 	height: number;
 	generation: number;
 	sequence: number;
+	streamEpoch: number;
+	vSync: boolean;
 	flipped: boolean;
 };
 
-sharedTexture.setSharedTextureReceiver(async (received, value: unknown) => {
-	const imported = received.importedSharedTexture;
+const lastSharedFrame = new Map<
+	SharedViewportMetadata["kind"],
+	{ streamEpoch: number; sequence: number }
+>();
+
+type PendingSharedFrame = {
+	imported: Electron.SharedTextureImported;
+	metadata: SharedViewportMetadata;
+};
+
+const paintSharedFrame = ({
+	imported,
+	metadata,
+}: PendingSharedFrame): void => {
 	let videoFrame: VideoFrame | undefined;
 	try {
-		if (!value || typeof value !== "object") return;
-		const metadata = value as Partial<SharedViewportMetadata>;
-		if (
-			(metadata.kind !== "scene" && metadata.kind !== "game") ||
-			typeof metadata.width !== "number" ||
-			typeof metadata.height !== "number"
-		)
-			return;
 		const canvas = document.querySelector<HTMLCanvasElement>(
 			`canvas[data-viewport-kind="${metadata.kind}"]`,
 		);
 		if (!canvas) return;
-		canvas.width = metadata.width;
-		canvas.height = metadata.height;
+		if (canvas.width !== metadata.width) canvas.width = metadata.width;
+		if (canvas.height !== metadata.height) canvas.height = metadata.height;
 		const context = canvas.getContext("2d", { alpha: false });
 		if (!context) return;
 		videoFrame = imported.getVideoFrame();
 		context.save();
-		if (metadata.flipped)
-			context.setTransform(1, 0, 0, -1, 0, metadata.height);
-		context.drawImage(videoFrame, 0, 0, metadata.width, metadata.height);
-		context.restore();
+		try {
+			if (metadata.flipped)
+				context.setTransform(1, 0, 0, -1, 0, metadata.height);
+			context.drawImage(videoFrame, 0, 0, metadata.width, metadata.height);
+		} finally {
+			context.restore();
+		}
 	} finally {
 		videoFrame?.close();
 		imported.release();
 	}
+};
+
+sharedTexture.setSharedTextureReceiver(async (received, value: unknown) => {
+	const imported = received.importedSharedTexture;
+	if (!value || typeof value !== "object") {
+		imported.release();
+		return;
+	}
+	const candidate = value as Partial<SharedViewportMetadata>;
+	if (
+		(candidate.kind !== "scene" && candidate.kind !== "game") ||
+		typeof candidate.width !== "number" ||
+		typeof candidate.height !== "number" ||
+		typeof candidate.sequence !== "number" ||
+		typeof candidate.streamEpoch !== "number" ||
+		typeof candidate.vSync !== "boolean" ||
+		typeof candidate.flipped !== "boolean"
+	) {
+		imported.release();
+		return;
+	}
+	const metadata = candidate as SharedViewportMetadata;
+	const previous = lastSharedFrame.get(metadata.kind);
+	if (
+		previous !== undefined &&
+		(metadata.streamEpoch < previous.streamEpoch ||
+			(metadata.streamEpoch === previous.streamEpoch &&
+				metadata.sequence <= previous.sequence))
+	) {
+		imported.release();
+		return;
+	}
+	lastSharedFrame.set(metadata.kind, {
+		streamEpoch: metadata.streamEpoch,
+		sequence: metadata.sequence,
+	});
+	if (document.hidden) {
+		imported.release();
+		return;
+	}
+	paintSharedFrame({ imported, metadata });
 });
 
 const api: PlutoEditorApi = {
@@ -69,10 +119,13 @@ const api: PlutoEditorApi = {
 		ipcRenderer.send("viewport:set-bounds", bounds),
 	setViewportVisible: (visible) =>
 		ipcRenderer.send("viewport:set-visible", visible),
+	requestViewportFrame: () => ipcRenderer.send("viewport:frame-tick"),
 	setGameViewportBounds: (bounds) =>
 		ipcRenderer.send("game-viewport:set-bounds", bounds),
 	setGameViewportVisible: (visible) =>
 		ipcRenderer.send("game-viewport:set-visible", visible),
+	requestGameViewportFrame: () =>
+		ipcRenderer.send("game-viewport:frame-tick"),
 	sendViewportInput: (input) => ipcRenderer.send("viewport:input", input),
 	sendGameViewportInput: (input) =>
 		ipcRenderer.send("game-viewport:input", input),

@@ -235,7 +235,7 @@ namespace
     class CpuFramePublisher
     {
     public:
-        bool PublishIfDue(int sourceWidth, int sourceHeight)
+        bool PublishIfDue(int sourceWidth, int sourceHeight, bool vSync)
         {
             if (sourceWidth <= 0 || sourceHeight <= 0) return false;
             const auto now = std::chrono::steady_clock::now();
@@ -296,6 +296,7 @@ namespace
                   << ",\"generation\":" << m_generation
                   << ",\"width\":" << width << ",\"height\":" << height
                   << ",\"sourceWidth\":" << sourceWidth << ",\"sourceHeight\":" << sourceHeight
+                  << ",\"vSync\":" << (vSync ? "true" : "false")
                   << ",\"data\":\"" << Base64Encode(m_capturePixels) << "\"}";
             WriteEvent(event.str());
             m_lastPublish = now;
@@ -339,10 +340,13 @@ namespace
             std::copy(buttons.begin(), buttons.end(), input.mouseState.buttons);
             input.mouseState.x = x;
             input.mouseState.y = y;
-            input.mouseState.deltaX += deltaX;
-            input.mouseState.deltaY += deltaY;
-            input.mouseState.scrollDeltaX += scrollX;
-            input.mouseState.scrollDeltaY += scrollY;
+            // Chromium is the authoritative input source for a streamed
+            // viewport. Do not combine it with cursor messages belonging to
+            // the hidden GLFW window; those can contain focus/warp deltas.
+            input.mouseState.deltaX = deltaX;
+            input.mouseState.deltaY = deltaY;
+            input.mouseState.scrollDeltaX = scrollX;
+            input.mouseState.scrollDeltaY = scrollY;
             deltaX = 0.0;
             deltaY = 0.0;
             scrollX = 0.0;
@@ -512,11 +516,17 @@ int main(int argc, char **argv)
         bool succeeded = options.electronProcessId != 0 && publisher.Initialize(options.electronProcessId, error);
         if (succeeded)
         {
+            succeeded = publisher.CanPublish(options.width, options.height, 1, error);
             renderer.BeginFrame();
             const auto frame = publisher.Publish(options.width, options.height, error);
             renderer.EndFrame();
-            succeeded = frame.has_value();
-            if (frame) publisher.Release(frame->generation, frame->slot);
+            succeeded = succeeded && frame.has_value() &&
+                        !publisher.CanPublish(options.width, options.height, 1, error);
+            if (frame)
+            {
+                publisher.Release(frame->generation, frame->slot);
+                succeeded = succeeded && publisher.CanPublish(options.width, options.height, 1, error);
+            }
         }
         publisher.Shutdown();
         std::cout << "{\"sharedTexture\":" << (succeeded ? "true" : "false")
@@ -544,11 +554,12 @@ int main(int argc, char **argv)
     CpuFramePublisher framePublisher;
     SharedTexturePublisher sharedTexturePublisher;
     bool sharedTextureTransportFailed = false;
+    bool streamFrameRequested = true;
     std::chrono::steady_clock::time_point sharedTextureStarvedSince{};
     RemoteInputState remoteInput;
     auto previousFrameTime = std::chrono::steady_clock::now();
     auto performanceWindowStart = previousFrameTime;
-    auto previousLoopEnd = previousFrameTime;
+    auto previousPerformanceFrameEnd = previousFrameTime;
     int performanceFrameCount = 0;
     float performanceFrameTimeTotalMs = 0.0f;
     float performanceMaxFrameTimeMs = 0.0f;
@@ -691,6 +702,14 @@ int main(int argc, char **argv)
                 int down = 0;
                 if (command >> button >> down && button >= 0 && button < static_cast<int>(remoteInput.buttons.size()))
                 {
+                    // Pointer movement queued before the right-button press is
+                    // not a camera-look delta. Commands are applied as a batch,
+                    // so explicitly discard that pre-lock movement here.
+                    if (button == GLFW_MOUSE_BUTTON_RIGHT && down != 0)
+                    {
+                        remoteInput.deltaX = 0.0;
+                        remoteInput.deltaY = 0.0;
+                    }
                     remoteInput.buttons[static_cast<std::size_t>(button)] = down != 0;
                 }
             }
@@ -722,6 +741,11 @@ int main(int argc, char **argv)
                 std::uint64_t generation = 0;
                 std::uint32_t slot = 0;
                 if (command >> generation >> slot) sharedTexturePublisher.Release(generation, slot);
+            }
+            else if (name == "frame_tick")
+            {
+                // Coalesce renderer ticks while a frame is being produced.
+                streamFrameRequested = true;
             }
             else if (name == "shared_texture_failed")
             {
@@ -932,8 +956,45 @@ int main(int argc, char **argv)
             surfaceShown = shouldShowSurface;
         }
 
-        if (shouldRender)
+        const bool waitingForPresentationTick = options.streamed &&
+                                                renderer.IsVSyncEnabled() &&
+                                                !streamFrameRequested;
+        bool canRender = shouldRender && !waitingForPresentationTick;
+        if (canRender && options.streamed &&
+            sharedTexturePublisher.IsAvailable() && !sharedTextureTransportFailed)
         {
+            std::string sharedTextureError;
+            // Two frames keep the GPU copy and Chromium presentation stages
+            // pipelined. A single slot serializes both stages and drops a
+            // 60 Hz display to roughly 30 Hz.
+            const std::size_t maxFramesInFlight = renderer.IsVSyncEnabled() ? 2u : 3u;
+            canRender = sharedTexturePublisher.CanPublish(
+                extents.width, extents.height, maxFramesInFlight, sharedTextureError);
+            if (!sharedTextureError.empty())
+            {
+                WriteEvent("{\"type\":\"editor-log\",\"success\":false,\"message\":\"GPU viewport failed; using CPU fallback: " +
+                           JsonEscape(sharedTextureError) + "\"}");
+                sharedTextureTransportFailed = true;
+                canRender = true;
+            }
+            else if (!canRender)
+            {
+                const auto now = std::chrono::steady_clock::now();
+                if (sharedTextureStarvedSince.time_since_epoch().count() == 0)
+                    sharedTextureStarvedSince = now;
+                else if (now - sharedTextureStarvedSince > std::chrono::seconds(2))
+                {
+                    sharedTextureTransportFailed = true;
+                    canRender = true;
+                    WriteEvent(R"({"type":"editor-log","success":false,"message":"GPU viewport release timed out; CPU fallback enabled"})");
+                }
+            }
+        }
+
+        if (canRender)
+        {
+            if (options.streamed && renderer.IsVSyncEnabled())
+                streamFrameRequested = false;
             const auto renderStart = std::chrono::steady_clock::now();
             auto *scene = editorSession.GetScene();
             std::vector<PlutoGE::render::IPostProcessEffect *> editorPostProcessEffects;
@@ -976,7 +1037,8 @@ int main(int argc, char **argv)
                               << frame->sequence << ",\"generation\":" << frame->generation
                               << ",\"slot\":" << frame->slot << ",\"width\":" << frame->width
                               << ",\"height\":" << frame->height << ",\"handle\":\""
-                              << frame->remoteHandle << "\"}";
+                              << frame->remoteHandle << "\",\"vSync\":"
+                              << (renderer.IsVSyncEnabled() ? "true" : "false") << '}';
                         WriteEvent(event.str());
                         publishedSharedTexture = true;
                         sharedTextureStarvedSince = {};
@@ -1001,7 +1063,8 @@ int main(int argc, char **argv)
                 }
                 if (!publishedSharedTexture &&
                     (!sharedTexturePublisher.IsAvailable() || sharedTextureTransportFailed))
-                    framePublisher.PublishIfDue(extents.width, extents.height);
+                    framePublisher.PublishIfDue(
+                        extents.width, extents.height, renderer.IsVSyncEnabled());
             }
             g_hostPhase = "renderer end frame";
             renderer.EndFrame(nullptr, !options.streamed);
@@ -1010,23 +1073,36 @@ int main(int argc, char **argv)
             cpuPassMs = renderer.GetTotalCpuPassTimeMs();
             gpuPassMs = renderer.GetTotalGpuPassTimeMs();
         }
-        else
+        else if (!shouldRender)
         {
             renderer.ClearRenderCommands();
             const auto waitStart = std::chrono::steady_clock::now();
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
             waitMs += std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - waitStart).count();
         }
+        else
+        {
+            // Wait for Chromium's next presentation request or for a shared
+            // texture slot while continuing to poll input and releases.
+            renderer.ClearRenderCommands();
+            const auto waitStart = std::chrono::steady_clock::now();
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            waitMs += std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - waitStart).count();
+        }
 
         const auto loopEnd = std::chrono::steady_clock::now();
-        // Include time spent publishing the preceding performance and snapshot
-        // events. FPS already included that wall time, while loopStart-to-loopEnd
-        // frame timing did not.
-        const float frameTimeMs = std::chrono::duration<float, std::milli>(loopEnd - previousLoopEnd).count();
-        previousLoopEnd = loopEnd;
-        ++performanceFrameCount;
-        performanceFrameTimeTotalMs += frameTimeMs;
-        performanceMaxFrameTimeMs = std::max(performanceMaxFrameTimeMs, frameTimeMs);
+        // Backpressure iterations still process input and scene updates, but
+        // they are not viewport frames. Count only rendered frames (or hidden
+        // idle ticks) so FPS and frame time describe what the user sees.
+        if (canRender || !shouldRender)
+        {
+            const float frameTimeMs = std::chrono::duration<float, std::milli>(
+                loopEnd - previousPerformanceFrameEnd).count();
+            previousPerformanceFrameEnd = loopEnd;
+            ++performanceFrameCount;
+            performanceFrameTimeTotalMs += frameTimeMs;
+            performanceMaxFrameTimeMs = std::max(performanceMaxFrameTimeMs, frameTimeMs);
+        }
         performanceEventPollingTotalMs += eventPollingMs;
         performanceUpdateTotalMs += updateMs;
         performanceRenderTotalMs += renderMs;
@@ -1119,6 +1195,7 @@ int main(int argc, char **argv)
             if (!options.gameView) WriteEvent(editorSession.BuildSnapshotEvent());
 
             performanceWindowStart = loopEnd;
+            previousPerformanceFrameEnd = loopEnd;
             performanceFrameCount = 0;
             performanceFrameTimeTotalMs = 0.0f;
             performanceMaxFrameTimeMs = 0.0f;

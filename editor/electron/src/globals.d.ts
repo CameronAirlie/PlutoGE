@@ -99,6 +99,8 @@ interface ViewportBounds {
 
 interface ViewportFrame {
 	transport: "cpu" | "shared-texture";
+	vSync: boolean;
+	streamEpoch: number;
 	sequence: number;
 	generation: number;
 	width: number;
@@ -329,8 +331,10 @@ interface PlutoEditorApi {
 	onPanelWindowClosed(callback: (panel: EditorPanelId) => void): () => void;
 	setViewportBounds(bounds: ViewportBounds): void;
 	setViewportVisible(visible: boolean): void;
+	requestViewportFrame(): void;
 	setGameViewportBounds(bounds: ViewportBounds): void;
 	setGameViewportVisible(visible: boolean): void;
+	requestGameViewportFrame(): void;
 	sendViewportInput(input: ViewportInputEvent): void;
 	sendGameViewportInput(input: ViewportInputEvent): void;
 	onViewportFrame(callback: (frame: ViewportFrame) => void): () => void;

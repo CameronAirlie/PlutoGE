@@ -25,6 +25,7 @@ export type HostOperationProgress = {
 
 export type HostCpuViewportFrame = {
 	transport: "cpu";
+	vSync: boolean;
 	sequence: number;
 	generation: number;
 	width: number;
@@ -36,6 +37,7 @@ export type HostCpuViewportFrame = {
 
 export type HostSharedTextureFrame = {
 	transport: "shared-texture";
+	vSync: boolean;
 	sequence: number;
 	generation: number;
 	slot: number;
@@ -256,12 +258,14 @@ export class NativeHost {
 					typeof event.height === "number" &&
 					typeof event.sourceWidth === "number" &&
 					typeof event.sourceHeight === "number" &&
+					typeof event.vSync === "boolean" &&
 					typeof event.data === "string"
 				) {
 					const pixels = Buffer.from(event.data, "base64");
 					if (pixels.length === event.width * event.height * 4)
 						this.onViewportFrame({
 							transport: "cpu",
+							vSync: event.vSync,
 							sequence: event.sequence,
 							generation: event.generation,
 							width: event.width,
@@ -279,10 +283,12 @@ export class NativeHost {
 					typeof event.slot === "number" &&
 					typeof event.width === "number" &&
 					typeof event.height === "number" &&
+					typeof event.vSync === "boolean" &&
 					typeof event.handle === "string"
 				) {
 					this.onViewportFrame({
 						transport: "shared-texture",
+						vSync: event.vSync,
 						sequence: event.sequence,
 						generation: event.generation,
 						slot: event.slot,

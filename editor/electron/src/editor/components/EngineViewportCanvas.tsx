@@ -44,6 +44,7 @@ export function EngineViewportCanvas({
 	const sourceSize = useRef({ width: 1, height: 1 });
 	const pointer = useRef({ x: 0, y: 0, deltaX: 0, deltaY: 0 });
 	const pointerFrame = useRef(0);
+	const lastCpuFrame = useRef({ streamEpoch: -1, sequence: -1 });
 
 	const sendInput = (input: ViewportInputEvent): void => {
 		if (kind === "scene") window.plutoEditor.sendViewportInput(input);
@@ -56,6 +57,7 @@ export function EngineViewportCanvas({
 	};
 
 	const flushPointer = (): void => {
+		if (pointerFrame.current) cancelAnimationFrame(pointerFrame.current);
 		pointerFrame.current = 0;
 		const current = pointer.current;
 		sendInput({
@@ -74,7 +76,17 @@ export function EngineViewportCanvas({
 			pointerFrame.current = requestAnimationFrame(flushPointer);
 	};
 
-	const updatePointerPosition = (event: React.PointerEvent): void => {
+	const discardPointerDelta = (): void => {
+		if (pointerFrame.current) cancelAnimationFrame(pointerFrame.current);
+		pointerFrame.current = 0;
+		pointer.current.deltaX = 0;
+		pointer.current.deltaY = 0;
+	};
+
+	const updatePointerPosition = (
+		event: React.PointerEvent,
+		accumulateDelta = true,
+	): void => {
 		const canvas = canvasRef.current;
 		if (!canvas) return;
 		const bounds = canvas.getBoundingClientRect();
@@ -87,9 +99,11 @@ export function EngineViewportCanvas({
 				((event.clientY - bounds.top) * sourceSize.current.height) /
 				bounds.height;
 		}
-		pointer.current.deltaX += event.movementX;
-		pointer.current.deltaY += event.movementY;
-		schedulePointer();
+		if (accumulateDelta) {
+			pointer.current.deltaX += event.movementX;
+			pointer.current.deltaY += event.movementY;
+			schedulePointer();
+		}
 	};
 
 	useLayoutEffect(() => {
@@ -134,16 +148,46 @@ export function EngineViewportCanvas({
 	}, [kind]);
 
 	useEffect(() => {
-		const receiveFrame = (frame: ViewportFrame): void => {
+		let animationFrame = 0;
+		const requestEngineFrame = (): void => {
 			const canvas = canvasRef.current;
-			if (!canvas || frame.transport !== "cpu") return;
+			if (
+				!document.hidden &&
+				canvas &&
+				canvas.getClientRects().length > 0
+			) {
+				// Keep the input sample and render request in the same ordered IPC
+				// batch. Otherwise the host can begin this frame just before the
+				// separately scheduled pointer callback reaches it.
+				if (pointerFrame.current) flushPointer();
+				if (kind === "scene") window.plutoEditor.requestViewportFrame();
+				else window.plutoEditor.requestGameViewportFrame();
+			}
+			animationFrame = requestAnimationFrame(requestEngineFrame);
+		};
+		animationFrame = requestAnimationFrame(requestEngineFrame);
+		return () => cancelAnimationFrame(animationFrame);
+	}, [kind]);
+
+	useEffect(() => {
+		let presentationFrame = 0;
+		const paintFrame = (frame: ViewportFrame): void => {
+			presentationFrame = 0;
+			const latest = lastCpuFrame.current;
+			if (
+				latest.streamEpoch !== frame.streamEpoch ||
+				latest.sequence !== frame.sequence
+			)
+				return;
+			const canvas = canvasRef.current;
+			if (!canvas) return;
 			const expectedLength = frame.width * frame.height * 4;
 			const bytes = frame.pixels;
 			if (bytes.byteLength !== expectedLength) return;
 			const pixels = new Uint8ClampedArray(expectedLength);
 			pixels.set(bytes);
-			canvas.width = frame.width;
-			canvas.height = frame.height;
+			if (canvas.width !== frame.width) canvas.width = frame.width;
+			if (canvas.height !== frame.height) canvas.height = frame.height;
 			sourceSize.current = {
 				width: frame.sourceWidth,
 				height: frame.sourceHeight,
@@ -152,14 +196,39 @@ export function EngineViewportCanvas({
 				.getContext("2d", { alpha: false })
 				?.putImageData(new ImageData(pixels, frame.width, frame.height), 0, 0);
 		};
-		return kind === "scene"
+		const receiveFrame = (frame: ViewportFrame): void => {
+			if (frame.transport !== "cpu") return;
+			const previous = lastCpuFrame.current;
+			if (
+				frame.streamEpoch < previous.streamEpoch ||
+				(frame.streamEpoch === previous.streamEpoch &&
+					frame.sequence <= previous.sequence)
+			)
+				return;
+			lastCpuFrame.current = {
+				streamEpoch: frame.streamEpoch,
+				sequence: frame.sequence,
+			};
+			if (frame.vSync) {
+				if (presentationFrame) cancelAnimationFrame(presentationFrame);
+				presentationFrame = requestAnimationFrame(() => paintFrame(frame));
+			} else {
+				paintFrame(frame);
+			}
+		};
+		const unsubscribe = kind === "scene"
 			? window.plutoEditor.onViewportFrame(receiveFrame)
 			: window.plutoEditor.onGameViewportFrame(receiveFrame);
+		return () => {
+			if (presentationFrame) cancelAnimationFrame(presentationFrame);
+			unsubscribe();
+		};
 	}, [kind]);
 
 	useEffect(() => {
 		const reset = (): void => sendInput({ type: "reset" });
 		const pointerLockChanged = (): void => {
+			discardPointerDelta();
 			if (document.pointerLockElement !== canvasRef.current) reset();
 		};
 		window.addEventListener("blur", reset);
@@ -184,7 +253,9 @@ export function EngineViewportCanvas({
 			onPointerDown={(event) => {
 				const canvas = event.currentTarget;
 				canvas.focus();
-				updatePointerPosition(event);
+				if (event.button === 2 && kind === "scene")
+					discardPointerDelta();
+				updatePointerPosition(event, false);
 				flushPointer();
 				const button = engineButton(event.button);
 				sendInput({ type: "button", button, down: true });

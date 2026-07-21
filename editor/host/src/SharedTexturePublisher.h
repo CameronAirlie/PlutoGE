@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -25,6 +26,7 @@ public:
     SharedTexturePublisher &operator=(const SharedTexturePublisher &) = delete;
 
     bool Initialize(std::uint32_t electronProcessId, std::string &error);
+    bool CanPublish(int width, int height, std::size_t maxFramesInFlight, std::string &error);
     std::optional<Frame> Publish(int width, int height, std::string &error);
     void Release(std::uint64_t generation, std::uint32_t slot);
     void Shutdown();

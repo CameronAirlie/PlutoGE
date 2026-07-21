@@ -53,6 +53,10 @@ const gameSurface: NativeSurface = { visible: false };
 const viewportOcclusions = new Set<string>();
 const streamViewports = process.env.PLUTOGE_NATIVE_VIEWPORT !== "1";
 const forceCpuViewports = process.env.PLUTOGE_CPU_VIEWPORT === "1";
+let sceneFrameDispatch = Promise.resolve();
+let gameFrameDispatch = Promise.resolve();
+let sceneStreamEpoch = 0;
+let gameStreamEpoch = 0;
 let mirroredProjectPath = "";
 let mirroredScenePath = "";
 let nextEditorOperationId = 1;
@@ -144,7 +148,11 @@ const sendViewportFrame = async (
 	surface: NativeSurface,
 	frame: HostViewportFrame,
 	host: NativeHost | undefined,
+	streamEpoch: number,
 ): Promise<void> => {
+	const isCurrentStream = (): boolean =>
+		streamEpoch ===
+		(channel === "viewport:frame" ? sceneStreamEpoch : gameStreamEpoch);
 	const owner = surface.owner;
 	if (
 		!surface.visible ||
@@ -153,12 +161,12 @@ const sendViewportFrame = async (
 		owner.webContents.isDestroyed()
 	)
 	{
-		if (frame.transport === "shared-texture")
+		if (frame.transport === "shared-texture" && isCurrentStream())
 			host?.send(`frame_release ${frame.generation} ${frame.slot}`);
 		return;
 	}
 	if (frame.transport === "cpu") {
-		owner.webContents.send(channel, frame);
+		owner.webContents.send(channel, { ...frame, streamEpoch });
 		return;
 	}
 
@@ -169,7 +177,8 @@ const sendViewportFrame = async (
 	const releaseHostFrame = (): void => {
 		if (released) return;
 		released = true;
-		host?.send(`frame_release ${frame.generation} ${frame.slot}`);
+		if (isCurrentStream())
+			host?.send(`frame_release ${frame.generation} ${frame.slot}`);
 	};
 	try {
 		const imported = sharedTexture.importSharedTexture({
@@ -199,6 +208,8 @@ const sendViewportFrame = async (
 					height: frame.height,
 					generation: frame.generation,
 					sequence: frame.sequence,
+					streamEpoch,
+					vSync: frame.vSync,
 					flipped: true,
 				},
 			);
@@ -211,9 +222,29 @@ const sendViewportFrame = async (
 			"Viewport",
 			`Shared texture import failed: ${error instanceof Error ? error.message : String(error)}`,
 		);
-		host?.send("shared_texture_failed");
+		if (isCurrentStream()) host?.send("shared_texture_failed");
 		releaseHostFrame();
 	}
+};
+
+const queueViewportFrame = (
+	channel: "viewport:frame" | "game-viewport:frame",
+	surface: NativeSurface,
+	frame: HostViewportFrame,
+	host: NativeHost | undefined,
+	streamEpoch: number,
+): void => {
+	const dispatch =
+		channel === "viewport:frame" ? sceneFrameDispatch : gameFrameDispatch;
+	const next = dispatch
+		.catch(() => {
+			/* Keep later frames flowing after an isolated transfer failure. */
+		})
+		.then(() =>
+			sendViewportFrame(channel, surface, frame, host, streamEpoch),
+		);
+	if (channel === "viewport:frame") sceneFrameDispatch = next;
+	else gameFrameDispatch = next;
 };
 
 const sendViewportInput = (
@@ -551,6 +582,7 @@ const createWindow = (): void => {
 	nativeHost = new NativeHost(
 		editorWindow,
 		(state) => {
+			if (state.status === "starting") ++sceneStreamEpoch;
 			sendToEditorWindows("host:state", state);
 			if (state.status === "ready") {
 				syncViewportPeerProcesses();
@@ -598,11 +630,18 @@ const createWindow = (): void => {
 			appendConsoleMessage(severity, "Scene Host", message),
 		updateEditorOperationProgress,
 		(frame) =>
-			void sendViewportFrame("viewport:frame", sceneSurface, frame, nativeHost),
+			queueViewportFrame(
+				"viewport:frame",
+				sceneSurface,
+				frame,
+				nativeHost,
+				sceneStreamEpoch,
+			),
 	);
 	gameHost = new NativeHost(
 		editorWindow,
 		(state) => {
+			if (state.status === "starting") ++gameStreamEpoch;
 			sendToEditorWindows("game-host:state", state);
 			if (state.status === "ready") {
 				syncViewportPeerProcesses();
@@ -660,11 +699,12 @@ const createWindow = (): void => {
 		(severity, message) => appendConsoleMessage(severity, "Game Host", message),
 		() => {},
 		(frame) =>
-			void sendViewportFrame(
+			queueViewportFrame(
 				"game-viewport:frame",
 				gameSurface,
 				frame,
 				gameHost,
+				gameStreamEpoch,
 			),
 	);
 	editorWindow.webContents.once("did-finish-load", () => {
@@ -731,6 +771,15 @@ ipcMain.on("viewport:set-visible", (event, visible: unknown) => {
 	}
 });
 
+ipcMain.on("viewport:frame-tick", (event) => {
+	if (
+		isTrustedSender(event) &&
+		sceneSurface.visible &&
+		sceneSurface.owner === senderWindow(event)
+	)
+		nativeHost?.send("frame_tick");
+});
+
 ipcMain.on("game-viewport:set-bounds", (event, value: unknown) => {
 	const owner = senderWindow(event);
 	if (!owner || !value || typeof value !== "object") return;
@@ -757,6 +806,15 @@ ipcMain.on("game-viewport:set-visible", (event, visible: unknown) => {
 		gameSurface.visible = visible;
 		syncSurface(gameHost, gameSurface);
 	}
+});
+
+ipcMain.on("game-viewport:frame-tick", (event) => {
+	if (
+		isTrustedSender(event) &&
+		gameSurface.visible &&
+		gameSurface.owner === senderWindow(event)
+	)
+		gameHost?.send("frame_tick");
 });
 
 ipcMain.on("viewport:input", (event, value: unknown) => {

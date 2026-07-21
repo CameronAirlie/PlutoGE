@@ -669,9 +669,13 @@ namespace PlutoGE::scene
         if (!modelAssetId.empty())
         {
             auto &engine = core::Engine::GetInstance();
+            // Stable model-object IDs are resolved through editor metadata and the
+            // generated .plutomodel manifest. Cooked builds deliberately omit those
+            // authoring files, so retain the serialized .plutomesh reference as the
+            // runtime fallback.
             sourceMeshPath = assets::Project::IsEngineAssetReference(modelAssetId)
                                  ? modelAssetId
-                                 : engine.GetAssetManager().ResolveModelObject(modelAssetId, modelObjectId);
+                                 : engine.GetAssetManager().ResolveModelObject(modelAssetId, modelObjectId, sourceMeshPath);
             if (sourceMeshPath.empty()) return;
             if (auto *builtinMesh = engine.GetAssetManager().LoadMeshAsset(sourceMeshPath))
             {

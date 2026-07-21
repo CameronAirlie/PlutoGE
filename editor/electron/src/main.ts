@@ -187,10 +187,36 @@ const completeEditorOperation = (result: {
 	}
 };
 
-const beginEditorOperation = (label: string, command: string): boolean => {
+const updateEditorOperationProgress = (result: {
+	token: string;
+	progress: number;
+	detail?: string;
+}): void => {
+	if (!editorOperation.busy || result.token !== editorOperation.token) return;
+	setEditorOperation({
+		...editorOperation,
+		progress: Math.max(0, Math.min(100, result.progress)),
+		detail: result.detail || editorOperation.detail,
+	});
+};
+
+const beginEditorOperation = (
+	label: string,
+	command: string,
+	information: Pick<
+		EditorOperationState,
+		"progress" | "detail" | "target"
+	> = {},
+): boolean => {
 	if (editorOperation.busy) return false;
 	const token = String(nextEditorOperationId++);
-	setEditorOperation({ busy: true, label, token });
+	setEditorOperation({
+		busy: true,
+		label,
+		token,
+		startedAt: Date.now(),
+		...information,
+	});
 	if (nativeHost?.sendOperation(command, token)) {
 		activeEditorOperationCommand = command;
 		return true;
@@ -439,6 +465,7 @@ const createWindow = (): void => {
 		completeEditorOperation,
 		(severity, message) =>
 			appendConsoleMessage(severity, "Scene Host", message),
+		updateEditorOperationProgress,
 	);
 	gameHost = new NativeHost(
 		editorWindow,
@@ -1029,6 +1056,11 @@ ipcMain.handle(
 				? "Building and launching project…"
 				: "Building project…",
 			`build_project ${encode(result.filePath)} ${runAfterBuild === true ? 1 : 0}`,
+			{
+				progress: 0,
+				detail: "Waiting for the native build host",
+				target: result.filePath,
+			},
 		);
 	},
 );

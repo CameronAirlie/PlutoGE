@@ -9,6 +9,16 @@ import { rendererConfig } from "./webpack.renderer.config";
 const engineBundle = process.env.PLUTOGE_ENGINE_BUNDLE_DIR;
 const electronZipDirectory = process.env.PLUTOGE_ELECTRON_ZIP_DIR;
 const distributionBuild = process.env.PLUTOGE_DISTRIBUTION_BUILD === "1";
+const requestedDevServerPort = Number.parseInt(
+	process.env.PLUTOGE_DEV_SERVER_PORT ?? "3000",
+	10,
+);
+const devServerPort =
+	Number.isInteger(requestedDevServerPort) &&
+	requestedDevServerPort >= 1024 &&
+	requestedDevServerPort <= 65535
+		? requestedDevServerPort
+		: 3000;
 
 if (distributionBuild) {
 	if (!engineBundle || !fs.existsSync(engineBundle)) {
@@ -43,6 +53,7 @@ const config: ForgeConfig = {
 	makers: [new MakerZIP({}, ["win32"])],
 	plugins: [
 		new WebpackPlugin({
+			port: devServerPort,
 			mainConfig,
 			renderer: {
 				config: rendererConfig,

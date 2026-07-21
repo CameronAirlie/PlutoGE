@@ -13,6 +13,10 @@ interface EditorOperationState {
 	label: string;
 	token?: string;
 	message?: string;
+	progress?: number;
+	detail?: string;
+	target?: string;
+	startedAt?: number;
 }
 
 interface HostPerformance {

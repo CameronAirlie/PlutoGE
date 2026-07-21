@@ -17,6 +17,12 @@ export type HostOperationResult = {
 	message?: string;
 };
 
+export type HostOperationProgress = {
+	token: string;
+	progress: number;
+	detail?: string;
+};
+
 export type HostPerformance = {
 	fps: number;
 	frameTimeMs: number;
@@ -76,6 +82,9 @@ export class NativeHost {
 		private readonly onDiagnostic: (
 			severity: "info" | "warning" | "error",
 			message: string,
+		) => void = () => {},
+		private readonly onOperationProgress: (
+			progress: HostOperationProgress,
 		) => void = () => {},
 	) {}
 
@@ -164,6 +173,8 @@ export class NativeHost {
 					message?: string;
 					token?: string;
 					success?: boolean;
+					progress?: number;
+					detail?: string;
 				} & Partial<NativeEditorState> &
 					Partial<HostPerformance>;
 				if (event.type === "ready") {
@@ -189,6 +200,17 @@ export class NativeHost {
 				if (event.type === "performance") {
 					this.performance = event as HostPerformance;
 					this.onPerformance(this.performance);
+				}
+				if (
+					event.type === "operation-progress" &&
+					typeof event.token === "string" &&
+					typeof event.progress === "number"
+				) {
+					this.onOperationProgress({
+						token: event.token,
+						progress: event.progress,
+						detail: event.detail,
+					});
 				}
 				if (
 					event.type === "operation-complete" &&

@@ -1361,8 +1361,14 @@ namespace PlutoGE::assets
     bool ExportStandaloneProject(const Project &project,
                                  const std::filesystem::path &destinationExecutablePath,
                                  const std::filesystem::path &runtimeExecutablePath,
-                                 std::string *errorMessage)
+                                 std::string *errorMessage,
+                                 const ExportProgressCallback &progressCallback)
     {
+        const auto reportProgress = [&progressCallback](int percent, const char *detail)
+        {
+            if (progressCallback) progressCallback(percent, detail);
+        };
+        reportProgress(0, "Validating project content");
         const auto normalizedRuntimeExecutablePath = NormalizeAbsolutePath(runtimeExecutablePath);
         if (!std::filesystem::exists(normalizedRuntimeExecutablePath))
         {
@@ -1410,11 +1416,13 @@ namespace PlutoGE::assets
             return false;
         }
 
+        reportProgress(15, "Copying runtime files");
         if (!CopyRuntimeSidecarFiles(normalizedRuntimeExecutablePath, normalizedDestinationExecutablePath.parent_path(), errorMessage))
         {
             return false;
         }
 
+        reportProgress(30, "Bundling .NET runtime");
         if (!CopyBundledDotnetRuntime(normalizedDestinationExecutablePath.parent_path(), errorMessage))
         {
             return false;
@@ -1431,6 +1439,7 @@ namespace PlutoGE::assets
         }
         const auto exportedAssetDirectory = stagingDirectory / project.GetManifest().assetDirectory;
         Project cookProject(project.GetManifestPath(), project.GetManifest());
+        reportProgress(50, "Cooking project assets");
         if (!CookProjectContent(cookProject, exportedAssetDirectory, {}, errorMessage))
         {
             return false;
@@ -1444,6 +1453,7 @@ namespace PlutoGE::assets
         }
 
         const auto contentPackPath = GetRuntimeContentPackPathForExecutable(normalizedDestinationExecutablePath);
+        reportProgress(80, "Creating content pack");
         if (!CreateContentPack(stagingDirectory, contentPackPath, errorMessage))
         {
             std::filesystem::remove_all(stagingDirectory, errorCode);
@@ -1455,6 +1465,7 @@ namespace PlutoGE::assets
         std::filesystem::remove_all(normalizedDestinationExecutablePath.parent_path() / project.GetManifest().assetDirectory, errorCode);
         std::filesystem::remove(GetRuntimeManifestPathForExecutable(normalizedDestinationExecutablePath), errorCode);
 
+        reportProgress(100, "Project package complete");
         return true;
     }
 }

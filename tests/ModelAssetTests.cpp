@@ -1,3 +1,4 @@
+#include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/assets/ModelAsset.h"
 
 #include <cassert>
@@ -39,6 +40,12 @@ int main()
     assert(loaded.objects[0].localId == meshId);
     assert(loaded.objects[0].type == ProjectAssetType::Mesh);
     assert(loaded.objects[0].reference == source.objects[0].reference);
+
+    // Cooked builds omit the editor metadata used to resolve stable model-object
+    // IDs. The serialized generated mesh reference must remain usable there.
+    AssetManager cookedAssetManager;
+    const std::string cookedMeshReference = "project://Imported/Robot/Robot.plutomesh";
+    assert(cookedAssetManager.ResolveModelObject(source.sourceAssetId, meshId, cookedMeshReference) == cookedMeshReference);
 
     std::filesystem::remove(path);
     return 0;

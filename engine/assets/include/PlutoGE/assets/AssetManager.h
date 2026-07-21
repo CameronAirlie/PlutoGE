@@ -48,7 +48,9 @@ namespace PlutoGE::assets
         std::string PersistAssetPath(const std::string &filePath) const;
         std::string GetStableAssetId(const std::string &assetReference) const;
         std::string ResolveStableAssetId(const std::string &assetId, const std::string &fallbackReference = {}) const;
-        std::string ResolveModelObject(const std::string &modelAssetId, std::uint64_t localId) const;
+        std::string ResolveModelObject(const std::string &modelAssetId,
+                                       std::uint64_t localId,
+                                       const std::string &fallbackReference = {}) const;
 
         render::Texture *LoadTexture(const char *filePath);
         render::Mesh *LoadMeshAsset(const std::string &assetReference);

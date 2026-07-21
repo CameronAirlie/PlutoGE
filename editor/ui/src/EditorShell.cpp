@@ -156,7 +156,7 @@ namespace PlutoGE::ui
         bool RebuildStandaloneRuntime(const std::filesystem::path &runtimeExecutablePath,
                                       std::string *errorMessage)
         {
-            const auto buildDirectory = FindCMakeBuildDirectory(runtimeExecutablePath);
+            auto buildDirectory = FindCMakeBuildDirectory(runtimeExecutablePath);
             if (buildDirectory.empty())
             {
                 if (errorMessage)
@@ -164,6 +164,12 @@ namespace PlutoGE::ui
                     *errorMessage = "Could not determine the CMake build directory for PlutoGERuntime.";
                 }
                 return false;
+            }
+
+            const auto runtimeBuildDirectory = buildDirectory / "runtime";
+            if (std::filesystem::exists(runtimeBuildDirectory / "PlutoGERuntime.vcxproj"))
+            {
+                buildDirectory = runtimeBuildDirectory;
             }
 
             std::string command = "cmake --build " + QuoteShellArgument(buildDirectory) + " --target PlutoGERuntime";

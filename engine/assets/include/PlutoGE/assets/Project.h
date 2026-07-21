@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -9,6 +10,8 @@
 
 namespace PlutoGE::assets
 {
+    using ExportProgressCallback = std::function<void(int, const std::string &)>;
+
     enum class ProjectAssetType
     {
         Unknown,
@@ -140,5 +143,6 @@ namespace PlutoGE::assets
     bool ExportStandaloneProject(const Project &project,
                                  const std::filesystem::path &destinationExecutablePath,
                                  const std::filesystem::path &runtimeExecutablePath,
-                                 std::string *errorMessage = nullptr);
+                                 std::string *errorMessage = nullptr,
+                                 const ExportProgressCallback &progressCallback = {});
 }

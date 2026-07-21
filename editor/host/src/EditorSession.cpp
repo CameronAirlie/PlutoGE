@@ -355,6 +355,11 @@ namespace
             errorMessage = "Could not determine the CMake build directory for PlutoGERuntime.";
             return false;
         }
+        const auto runtimeBuildDirectory = buildDirectory / "runtime";
+        if (std::filesystem::exists(runtimeBuildDirectory / "PlutoGERuntime.vcxproj"))
+        {
+            buildDirectory = runtimeBuildDirectory;
+        }
         const auto configuration = runtimeExecutable.parent_path().filename().string();
         std::string command = "cmake --build \"" + buildDirectory.string() + "\" --target PlutoGERuntime";
         if (configuration == "Debug" || configuration == "Release" || configuration == "RelWithDebInfo" || configuration == "MinSizeRel")
@@ -582,6 +587,17 @@ namespace
 }
 
 EditorSession::EditorSession(PlutoGE::core::Engine &engine) : m_engine(engine) {}
+
+void EditorSession::SetOperationProgressCallback(OperationProgressCallback callback)
+{
+    m_operationProgressCallback = std::move(callback);
+}
+
+void EditorSession::ReportOperationProgress(int percent, const std::string &detail) const
+{
+    if (m_operationProgressCallback) m_operationProgressCallback(std::clamp(percent, 0, 100), detail);
+}
+
 EditorSession::~EditorSession()
 {
     Shutdown();
@@ -1168,31 +1184,53 @@ bool EditorSession::HandleCommand(const std::string &commandLine, std::string &e
             errorMessage = "Open a project and choose an export path before building.";
             return false;
         }
+        ReportOperationProgress(2, "Preparing project build");
         const auto scriptProject = FindScriptProject(*m_project);
         const auto scriptSourceDirectory = m_project->GetAssetDirectoryPath() / "Scripts";
         if (!m_project->GetManifest().scriptAssembly.empty() || !scriptProject.empty() || std::filesystem::exists(scriptSourceDirectory))
         {
+            ReportOperationProgress(8, "Building project scripts");
             if (!HandleCommand("build_scripts", errorMessage))
             {
                 errorMessage = "Game export stopped because project scripts failed to build. " + errorMessage;
                 return false;
             }
         }
+        ReportOperationProgress(30, "Saving scene and project settings");
         if (!m_scenePath.empty() && !PlutoGE::scene::SceneSerializer::Save(*m_scene, m_scenePath, &errorMessage)) return false;
         if (!m_scenePath.empty() && m_project->IsInAssetDirectory(m_scenePath) && m_project->GetManifest().startupScene.empty())
             m_project->GetManifest().startupScene = m_project->MakeAssetReference(m_scenePath);
         m_project->RefreshAssetRegistry();
         if (!m_project->Save(&errorMessage)) return false;
+        ReportOperationProgress(42, "Locating standalone runtime");
         const auto runtime = PlutoGE::assets::FindRuntimeExecutable(std::filesystem::current_path());
         if (runtime.empty())
         {
             errorMessage = "Could not find PlutoGERuntime executable to export.";
             return false;
         }
+        ReportOperationProgress(48, "Rebuilding standalone runtime");
         if (!RebuildStandaloneRuntime(runtime, errorMessage)) return false;
-        if (!PlutoGE::assets::ExportStandaloneProject(*m_project, destination, runtime, &errorMessage)) return false;
+        ReportOperationProgress(68, "Packaging project");
+        if (!PlutoGE::assets::ExportStandaloneProject(
+                *m_project,
+                destination,
+                runtime,
+                &errorMessage,
+                [this](int percent, const std::string &detail)
+                {
+                    ReportOperationProgress(68 + percent * 27 / 100, detail);
+                })) return false;
         m_dirty = false;
-        return runAfterBuild == 0 || LaunchProcess(destination, errorMessage);
+        if (runAfterBuild == 0)
+        {
+            ReportOperationProgress(100, "Build complete");
+            return true;
+        }
+        ReportOperationProgress(97, "Launching built project");
+        if (!LaunchProcess(destination, errorMessage)) return false;
+        ReportOperationProgress(100, "Build complete — project launched");
+        return true;
     }
 
     if (command == "build_scripts")

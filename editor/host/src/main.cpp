@@ -491,7 +491,24 @@ int main(int argc, char **argv)
                 }
 
                 std::string errorMessage;
+                if (!requestToken.empty())
+                {
+                    editorSession.SetOperationProgressCallback(
+                        [requestToken](int percent, const std::string &detail)
+                        {
+                            std::ostringstream progress;
+                            progress << "{\"type\":\"operation-progress\",\"token\":\""
+                                     << JsonEscape(requestToken) << "\",\"progress\":" << percent
+                                     << ",\"detail\":\"" << JsonEscape(detail) << "\"}";
+                            WriteEvent(progress.str());
+                        });
+                }
+                else
+                {
+                    editorSession.SetOperationProgressCallback({});
+                }
                 const bool succeeded = editorSession.HandleCommand(commandLine, errorMessage);
+                editorSession.SetOperationProgressCallback({});
                 if (succeeded)
                 {
                     WriteEvent(editorSession.BuildSnapshotEvent());

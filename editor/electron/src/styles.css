@@ -567,7 +567,7 @@ input:disabled {
 	display: grid;
 	justify-items: center;
 	gap: 8px;
-	max-width: 360px;
+	width: min(430px, calc(100vw - 40px));
 	padding: 20px 24px;
 	border: 1px solid #3a4350;
 	border-radius: 8px;
@@ -580,6 +580,40 @@ input:disabled {
 .editor-operation-message strong {
 	color: #e2e5eb;
 	font-size: 14px;
+}
+.editor-operation-detail {
+	min-height: 14px;
+	color: #b7bfcc;
+}
+.editor-operation-progress {
+	width: 100%;
+	height: 7px;
+	overflow: hidden;
+	border: 1px solid #343c49;
+	border-radius: 999px;
+	background: #0c1016;
+}
+.editor-operation-progress > span {
+	display: block;
+	height: 100%;
+	border-radius: inherit;
+	background: linear-gradient(90deg, #6c5bd7, #9b8cf0);
+	box-shadow: 0 0 10px #8b7aeb66;
+	transition: width 180ms ease-out;
+}
+.editor-operation-meta {
+	display: flex;
+	justify-content: space-between;
+	width: 100%;
+	color: #8993a2;
+	font-variant-numeric: tabular-nums;
+}
+.editor-operation-target {
+	width: 100%;
+	overflow: hidden;
+	color: #687384;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 .editor-operation-spinner {
 	width: 22px;

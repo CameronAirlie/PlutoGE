@@ -39,6 +39,20 @@
             }
         },
         {
+            "name": "electron-editor",
+            "displayName": "PlutoGE Electron Editor",
+            "description": "Native host used by the Electron development workflow",
+            "binaryDir": "${sourceDir}/out/build/electron-editor",
+            "cacheVariables": {
+                "PLUTO_BUILD_EDITOR": "ON",
+                "PLUTO_BUILD_RUNTIME": "OFF",
+                "PLUTO_BUILD_SAMPLES": "OFF",
+                "BUILD_TESTING": "OFF",
+                "PLUTO_BUILD_ENGINE_SHARED": "ON",
+                "PLUTO_BUILD_ELECTRON_EDITOR_HOST": "ON"
+            }
+        },
+        {
             "name": "msvc-shipping",
             "displayName": "Windows Shipping Runtime",
             "description": "Release-only runtime used to export distributable games",
@@ -79,6 +93,33 @@
             "displayName": "Build PlutoGE DLL and consumers (Debug)",
             "configurePreset": "msvc-shared-engine",
             "configuration": "Debug"
+        },
+        {
+            "name": "electron-editor-debug",
+            "displayName": "Build Electron Editor Host (Debug)",
+            "configurePreset": "electron-editor",
+            "configuration": "Debug",
+            "targets": [
+                "PlutoGEEditorHost"
+            ]
+        },
+        {
+            "name": "electron-editor-relwithdebinfo",
+            "displayName": "Build Electron Editor Host (RelWithDebInfo)",
+            "configurePreset": "electron-editor",
+            "configuration": "RelWithDebInfo",
+            "targets": [
+                "PlutoGEEditorHost"
+            ]
+        },
+        {
+            "name": "electron-editor-release",
+            "displayName": "Build Electron Editor Host (Release)",
+            "configurePreset": "electron-editor",
+            "configuration": "Release",
+            "targets": [
+                "PlutoGEEditorHost"
+            ]
         },
         {
             "name": "shipping",

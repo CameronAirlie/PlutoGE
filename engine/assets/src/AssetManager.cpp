@@ -67,21 +67,23 @@ namespace PlutoGE::assets
         return fallbackReference;
     }
 
-    std::string AssetManager::ResolveModelObject(const std::string &modelAssetId, std::uint64_t localId) const
+    std::string AssetManager::ResolveModelObject(const std::string &modelAssetId,
+                                                 std::uint64_t localId,
+                                                 const std::string &fallbackReference) const
     {
         const auto sourceReference = ResolveStableAssetId(modelAssetId);
-        if (sourceReference.empty() || localId == 0) return {};
+        if (sourceReference.empty() || localId == 0) return fallbackReference;
         const auto sourceRelative = sourceReference.substr(Project::kProjectAssetScheme.size());
         const auto sourcePath = std::filesystem::path(m_projectRootDirectory) / m_projectAssetDirectory / sourceRelative;
         const auto manifestPath = std::filesystem::path(m_projectRootDirectory) / m_projectAssetDirectory / "Imported" /
                                   sourcePath.stem() / (sourcePath.stem().string() + ".plutomodel");
         ModelAsset model;
-        if (!LoadModelAsset(manifestPath.string(), model)) return {};
+        if (!LoadModelAsset(manifestPath.string(), model)) return fallbackReference;
         for (const auto &object : model.objects)
         {
             if (object.localId == localId) return object.reference;
         }
-        return {};
+        return fallbackReference;
     }
 
     namespace

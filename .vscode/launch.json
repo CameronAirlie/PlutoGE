@@ -12,7 +12,7 @@
             "name": "PlutoGE: Electron Editor (Fast)",
             "type": "node-terminal",
             "request": "launch",
-            "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"${workspaceFolder}\\tools\\Start-ElectronEditor.ps1\" -SkipNativeBuild -SkipInstall",
+            "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"${workspaceFolder}\\tools\\Start-ElectronEditor.ps1\" -SkipNativeBuild -SkipInstall -SkipTypeCheck",
             "cwd": "${workspaceFolder}"
         },
         {

@@ -2,7 +2,7 @@
     "version": "2.0.0",
     "tasks": [
         {
-            "label": "PlutoGE: Start Electron Editor",
+            "label": "PlutoGE: Build Electron Editor",
             "type": "process",
             "command": "powershell.exe",
             "args": [
@@ -10,7 +10,7 @@
                 "-ExecutionPolicy",
                 "Bypass",
                 "-File",
-                "${workspaceFolder}\\tools\\Start-ElectronEditor.ps1"
+                "${workspaceFolder}\\tools\\Build-ElectronEditor.ps1"
             ],
             "options": {
                 "cwd": "${workspaceFolder}"
@@ -39,7 +39,8 @@
                 "-File",
                 "${workspaceFolder}\\tools\\Start-ElectronEditor.ps1",
                 "-SkipNativeBuild",
-                "-SkipInstall"
+                "-SkipInstall",
+                "-SkipTypeCheck"
             ],
             "options": {
                 "cwd": "${workspaceFolder}"

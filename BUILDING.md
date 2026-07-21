@@ -38,26 +38,39 @@ instead of being copied through JavaScript. On Windows, an owned overlay is
 required because Chromium's DirectComposition surface covers cross-process
 child windows even when their Win32 child z-order is correct.
 
-For the normal edit/build/run loop, use the repository script:
+The development workflow separates **build** from **run**. Build the native
+host, synchronize npm dependencies, and type-check the UI with:
+
+```powershell
+./tools/Build-ElectronEditor.ps1
+```
+
+Then build as needed and launch the development editor with:
 
 ```powershell
 ./tools/Start-ElectronEditor.ps1
 ```
 
 When the repository is open in VS Code, no terminal command is required. Pick
-**PlutoGE: Electron Editor** in the Run and Debug view and press `F5`, or press
-`Ctrl+Shift+B` to run the default build task. Both actions call the same script
-above, including configuration, native build, dependency installation, and
-launch. After the first successful build, use **PlutoGE: Electron Editor
-(Fast)** from Run and Debug or **Tasks: Run Task** to skip the native build and
-dependency check.
+**PlutoGE: Electron Editor** in the Run and Debug view and press `F5`. Press
+`Ctrl+Shift+B` to build without launching. After the first successful build,
+use **PlutoGE: Electron Editor (Fast)** to launch without rebuilding,
+reinstalling dependencies, or repeating the type check.
 
-On its first run it configures and builds `PlutoGEEditorHost`, installs the UI
-dependencies, and starts Electron. Later runs can skip work when appropriate:
+On its first run the start command invokes the same build workflow, then starts
+Electron. Later runs can skip work when appropriate:
 
 ```powershell
-./tools/Start-ElectronEditor.ps1 -SkipNativeBuild -SkipInstall
+./tools/Start-ElectronEditor.ps1 -SkipNativeBuild -SkipInstall -SkipTypeCheck
 ```
+
+The launcher uses port 3000 when available and automatically selects the next
+free port when another editor or web application is already using it. Pass
+`-DevServerPort <port>` to choose a different preferred port.
+
+The native configuration is cached after the first build; CMake's generated
+build system refreshes it when project files change. Use `-Reconfigure` after
+changing toolchains or native configuration options.
 
 The host/editor boundary is deliberately narrow: Electron sends viewport
 bounds and visibility commands over standard input, while the host returns

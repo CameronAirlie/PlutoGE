@@ -401,7 +401,10 @@ namespace PlutoGE::scene
         {
             if (componentType == "MeshComponent")
             {
-                return propertyName == "SourceMesh" || propertyName.ends_with("LightmapPath") || propertyName.ends_with("MaterialAsset");
+                return propertyName == "SourceMeshPath" ||
+                       propertyName == "SourceMesh" ||
+                       propertyName.ends_with("LightmapPath") ||
+                       propertyName.ends_with("MaterialAsset");
             }
             if (componentType == "TerrainComponent")
             {

@@ -3,6 +3,7 @@
 #include <glm/glm.hpp>
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -32,6 +33,8 @@ namespace PlutoGE::render
 class EditorSession
 {
 public:
+    using OperationProgressCallback = std::function<void(int, const std::string &)>;
+
     enum class GizmoOperation { Translate, Rotate, Scale };
     enum class GizmoSpace { Local, World };
 
@@ -54,6 +57,7 @@ public:
     bool Initialize();
     void Shutdown();
     bool HandleCommand(const std::string &commandLine, std::string &errorMessage);
+    void SetOperationProgressCallback(OperationProgressCallback callback);
     std::string BuildSnapshotEvent() const;
     PlutoGE::scene::Scene *GetScene() const;
     PlutoGE::scene::Entity *GetSelectedEntity() const;
@@ -87,10 +91,12 @@ private:
     bool RestoreScene(const std::string &state, bool dirty);
     bool CommitEdit(const std::string &before);
     PlutoGE::scene::Entity *FindEntity(std::uint32_t id) const;
+    void ReportOperationProgress(int percent, const std::string &detail) const;
 
     PlutoGE::core::Engine &m_engine;
     std::unique_ptr<PlutoGE::scene::Scene> m_scene;
     std::unique_ptr<PlutoGE::assets::Project> m_project;
+    OperationProgressCallback m_operationProgressCallback;
     std::uint32_t m_selectedEntityId = 0;
     std::string m_projectPath;
     std::string m_scenePath;

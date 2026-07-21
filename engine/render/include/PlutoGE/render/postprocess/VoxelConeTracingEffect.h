@@ -142,7 +142,6 @@ namespace PlutoGE::render
         std::uint8_t m_historyIndex = 0;
         bool m_hasHistory = false;
         bool m_hasPreviousCameraPosition = false;
-        bool m_volumeChangedThisFrame = false;
         bool m_injectLocalLights = false;
         bool m_indirectOnly = false;
     };

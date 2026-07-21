@@ -518,8 +518,16 @@ void main(){
    }
    if(foundHistory){
     vec3 padding=max((hi-lo)*.5,vec3(.03));
-    vec3 history=clamp(texelFetch(uHistoryColorTexture,bestCoord,0).rgb,lo-padding,hi+padding);
-    float historyWeight=uTemporalBlend*clamp(1-length(motion)*32.0,0,1);
+    vec3 historySample=texelFetch(uHistoryColorTexture,bestCoord,0).rgb;
+    vec3 clippedHistory=clamp(historySample,lo-padding,hi+padding);
+    // A stationary, depth/normal-validated receiver must retain its accumulated
+    // radiance when the voxel lighting changes. Clamping it to the new frame's
+    // neighbourhood would turn a global illumination step into an instant jump.
+    // Reintroduce clipping as motion increases, where stale screen-space samples
+    // are more likely to cause trails.
+    float motionRejection=clamp(length(motion)*32.0,0,1);
+    vec3 history=mix(historySample,clippedHistory,motionRejection);
+    float historyWeight=uTemporalBlend*(1.0-motionRejection);
     resolved=mix(current,history,historyWeight);
     historyDebug=vec3(0,.2+.8*historyWeight,0);
    }
@@ -1048,7 +1056,6 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
         if (!m_indirectTarget)
             return nullptr;
         const auto &renderContext = context.renderContext;
-        m_volumeChangedThisFrame = false;
         const float voxelSize = m_volumeSize / static_cast<float>(m_resolution);
         const glm::vec3 cameraPosition = glm::vec3(glm::inverse(renderContext.cameraData.view)[3]);
         const auto *sceneCommands = renderContext.renderer ? &renderContext.renderer->GetSceneRenderCommands() : renderContext.renderCommands;
@@ -1143,15 +1150,21 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
                 }
             }
         }
+        const bool volumeRelocated = activeRebuild < m_activeCascadeCount &&
+            m_cascades[activeRebuild].hasVolume &&
+            glm::any(glm::notEqual(
+                m_cascades[activeRebuild].pendingOrigin,
+                m_cascades[activeRebuild].origin));
         if (activeRebuild < m_activeCascadeCount && VoxelizeChunk(activeRebuild, context))
         {
             m_cascades[activeRebuild].lastVoxelizedFrame = renderContext.frameSequence;
             m_nextCascadeToUpdate = (activeRebuild + 1) % m_activeCascadeCount;
-            m_volumeChangedThisFrame = true;
-            // The radiance field and often its world-space origin changed
-            // discontinuously. Reprojecting history from the old volume feeds
-            // stale material-coloured samples back into the new result.
-            ResetHistory();
+            // Preserve screen-space history for same-origin radiance updates so
+            // light and emissive changes use the configured temporal response.
+            // A relocated field has different world-space coverage and remains
+            // a hard discontinuity.
+            if (volumeRelocated)
+                ResetHistory();
         }
 
         int availableCascadeCount = 0;
@@ -1230,9 +1243,7 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
         glActiveTexture(GL_TEXTURE8); glBindTexture(GL_TEXTURE_2D, context.renderContext.gBuffer->GetMotionTextureID()); m_temporalResolveShader->SetUniform("uSceneMotionTexture", 8);
         m_temporalResolveShader->SetUniform("uView", context.renderContext.cameraData.view);
         m_temporalResolveShader->SetUniform("uPreviousView", m_previousView);
-        m_temporalResolveShader->SetUniform(
-            "uTemporalBlend",
-            m_volumeChangedThisFrame ? std::min(m_temporalBlend, 0.35f) : m_temporalBlend);
+        m_temporalResolveShader->SetUniform("uTemporalBlend", m_temporalBlend);
         m_temporalResolveShader->SetUniform("uHistoryDepthThreshold", m_historyDepthThreshold);
         m_temporalResolveShader->SetUniform("uHistoryNormalThreshold", m_historyNormalThreshold);
         m_temporalResolveShader->SetUniform("uHasHistory", m_hasHistory ? 1 : 0);

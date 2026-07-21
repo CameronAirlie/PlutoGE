@@ -731,6 +731,16 @@ const sendEditorCommand = (command: string): boolean => {
 		"viewport_settings",
 		"editor_effect_save_preset",
 		"camera_effect_save_preset",
+		"mesh_editor_open",
+		"mesh_editor_close",
+		"mesh_editor_import_options",
+		"mesh_editor_lod_threshold",
+		"mesh_editor_rig_auto_map",
+		"mesh_editor_rig_disable",
+		"mesh_editor_rig_mapping",
+		"mesh_editor_reimport",
+		"mesh_editor_save",
+		"mesh_editor_revert",
 		// Selection and editor-camera state belong only to the interactive Scene
 		// View. Scene mutations are mirrored to keep the Game View's scene copy
 		// current, including unsaved camera and component changes.
@@ -988,6 +998,9 @@ ipcMain.handle("editor:open-asset", async (event, reference: unknown) => {
 				: "This binary asset is managed by the model importer. Use Reimport or Extract from the Content Browser."
 			: undefined,
 	};
+	if (resolved.asset.type === "Mesh")
+		sendEditorCommand(`mesh_editor_open ${encode(resolved.asset.reference)}`);
+	else sendEditorCommand("mesh_editor_close");
 	assetDirtyWindows.clear();
 	sendToEditorWindows("asset:opened", activeAsset);
 	return activeAsset;
@@ -1030,6 +1043,63 @@ ipcMain.handle("asset:save", (event, reference: unknown, content: unknown) => {
 		return false;
 	}
 });
+
+const hasActiveMesh = (): boolean => activeAsset?.type === "Mesh";
+
+ipcMain.handle("mesh:set-import-options", (event, value: unknown) => {
+	if (!isTrustedSender(event) || !hasActiveMesh() || !value || typeof value !== "object") return false;
+	const options = value as Partial<MeshImportOptions>;
+	if (
+		typeof options.generateLods !== "boolean" ||
+		typeof options.optimizeVertexCache !== "boolean" ||
+		typeof options.optimizeOverdraw !== "boolean"
+	) return false;
+	return sendEditorCommand(
+		`mesh_editor_import_options ${Number(options.generateLods)} ${Number(options.optimizeVertexCache)} ${Number(options.optimizeOverdraw)}`,
+	);
+});
+
+ipcMain.handle("mesh:reimport", (event) => {
+	if (!isTrustedSender(event) || !hasActiveMesh()) return false;
+	return beginEditorOperation("Reimporting mesh…", "mesh_editor_reimport", {
+		progress: 0,
+		detail: "Preparing source model",
+		target: activeAsset?.reference,
+	});
+});
+
+ipcMain.handle("mesh:set-lod-threshold", (event, index: unknown, value: unknown) => {
+	if (!isTrustedSender(event) || !hasActiveMesh() || !Number.isInteger(index) || Number(index) <= 0 || typeof value !== "number" || !Number.isFinite(value)) return false;
+	return sendEditorCommand(`mesh_editor_lod_threshold ${index} ${Math.max(1, value)}`);
+});
+
+ipcMain.handle("mesh:rig-auto-map", (event) =>
+	isTrustedSender(event) && hasActiveMesh() && sendEditorCommand("mesh_editor_rig_auto_map"),
+);
+ipcMain.handle("mesh:rig-disable", (event) =>
+	isTrustedSender(event) && hasActiveMesh() && sendEditorCommand("mesh_editor_rig_disable"),
+);
+ipcMain.handle("mesh:set-rig-mapping", (event, value: unknown) => {
+	if (!isTrustedSender(event) || !hasActiveMesh() || !value || typeof value !== "object") return false;
+	const mapping = value as Partial<MeshRigMapping>;
+	if (
+		!Number.isInteger(mapping.boneIndex) || Number(mapping.boneIndex) < 0 ||
+		!Number.isInteger(mapping.targetJointIndex) || Number(mapping.targetJointIndex) < -1 ||
+		typeof mapping.copyTranslation !== "boolean" || typeof mapping.translationScale !== "number" ||
+		!Number.isFinite(mapping.translationScale) || typeof mapping.sourceBoneName !== "string" ||
+		!Array.isArray(mapping.rotationOffsetDegrees) || mapping.rotationOffsetDegrees.length !== 3 ||
+		!mapping.rotationOffsetDegrees.every((item) => typeof item === "number" && Number.isFinite(item))
+	) return false;
+	return sendEditorCommand(
+		`mesh_editor_rig_mapping ${mapping.boneIndex} ${mapping.targetJointIndex} ${Number(mapping.copyTranslation)} ${mapping.translationScale} ${mapping.rotationOffsetDegrees.join(" ")} ${encode(mapping.sourceBoneName)}`,
+	);
+});
+ipcMain.handle("mesh:save", (event) =>
+	isTrustedSender(event) && hasActiveMesh() && sendEditorCommand("mesh_editor_save"),
+);
+ipcMain.handle("mesh:revert", (event) =>
+	isTrustedSender(event) && hasActiveMesh() && sendEditorCommand("mesh_editor_revert"),
+);
 
 ipcMain.handle(
 	"editor:build-project",

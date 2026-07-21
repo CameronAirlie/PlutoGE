@@ -1,5 +1,8 @@
 #pragma once
 
+#include "PlutoGE/assets/AssetManager.h"
+#include "PlutoGE/render/Mesh.h"
+
 #include <glm/glm.hpp>
 
 #include <cstdint>
@@ -90,6 +93,8 @@ private:
     bool CaptureScene(std::string &state) const;
     bool RestoreScene(const std::string &state, bool dirty);
     bool CommitEdit(const std::string &before);
+    bool LoadMeshEditorAsset(const std::string &reference, std::string &errorMessage);
+    void ClearMeshEditorAsset();
     PlutoGE::scene::Entity *FindEntity(std::uint32_t id) const;
     void ReportOperationProgress(int percent, const std::string &detail) const;
 
@@ -121,4 +126,11 @@ private:
     float m_translateSnap = 1.0f;
     float m_rotateSnap = 15.0f;
     float m_scaleSnap = 0.1f;
+    std::string m_meshEditorReference;
+    std::string m_meshEditorSourcePath;
+    PlutoGE::render::MeshConfig m_meshEditorConfig;
+    PlutoGE::render::MeshBounds m_meshEditorBounds;
+    std::vector<std::string> m_meshEditorMaterialReferences;
+    PlutoGE::assets::MeshAssetMetadata m_meshEditorMetadata;
+    bool m_meshEditorDirty = false;
 };

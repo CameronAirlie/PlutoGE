@@ -1,10 +1,10 @@
-#include "EditorSession.h"
-
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <Windows.h>
 #endif
+
+#include "EditorSession.h"
 
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/assets/ModelAsset.h"
@@ -58,10 +58,12 @@
 #include <cstdlib>
 #include <filesystem>
 #include <iomanip>
+#include <limits>
 #include <sstream>
 #include <string_view>
 #include <typeinfo>
 #include <type_traits>
+#include <unordered_set>
 #include <fstream>
 
 namespace
@@ -584,6 +586,138 @@ namespace
         }
         return serializedEffects;
     }
+
+    render::MeshConfig BuildMeshConfig(const render::Mesh &mesh)
+    {
+        render::MeshConfig config;
+        config.data = mesh.GetMeshData();
+        config.hasLightmapUvs = mesh.HasLightmapUvs();
+        config.skeleton = mesh.GetSkeleton();
+        config.animationNodes = mesh.GetAnimationNodes();
+        config.animations = mesh.GetAnimations();
+        config.submeshes.reserve(mesh.GetSubmeshCount());
+        for (std::size_t index = 0; index < mesh.GetSubmeshCount(); ++index)
+            config.submeshes.push_back(mesh.GetSubmesh(index));
+        return config;
+    }
+
+    void EnsureBaseLods(render::MeshConfig &config)
+    {
+        for (auto &submesh : config.submeshes)
+        {
+            if (!submesh.lods.empty()) continue;
+            submesh.lods.push_back(render::Submesh::LodRange{
+                .indexOffset = submesh.indexOffset,
+                .indexCount = submesh.indexCount,
+                .minDistanceFactor = 0.0f,
+                .maxScreenRadiusPixels = std::numeric_limits<float>::max(),
+            });
+        }
+    }
+
+    std::size_t GetMeshLodCount(const render::MeshConfig &config)
+    {
+        std::size_t count = 1;
+        for (const auto &submesh : config.submeshes)
+            count = std::max(count, std::max<std::size_t>(submesh.lods.size(), 1));
+        return count;
+    }
+
+    std::uint64_t CountMeshLodTriangles(const render::MeshConfig &config, std::size_t lodIndex)
+    {
+        std::uint64_t indexCount = 0;
+        for (const auto &submesh : config.submeshes)
+        {
+            if (lodIndex < submesh.lods.size()) indexCount += submesh.lods[lodIndex].indexCount;
+            else if (lodIndex == 0) indexCount += submesh.indexCount;
+        }
+        return indexCount / 3;
+    }
+
+    render::HumanoidBoneMapping *FindHumanoidMapping(render::Skeleton &skeleton, render::HumanoidBone bone)
+    {
+        const auto mapping = std::find_if(skeleton.humanoidBoneMappings.begin(), skeleton.humanoidBoneMappings.end(),
+                                          [bone](const render::HumanoidBoneMapping &candidate) { return candidate.bone == bone; });
+        return mapping == skeleton.humanoidBoneMappings.end() ? nullptr : &*mapping;
+    }
+
+    void EnsureHumanoidMappings(render::Skeleton &skeleton)
+    {
+        skeleton.humanoidBoneMappings.erase(
+            std::remove_if(skeleton.humanoidBoneMappings.begin(), skeleton.humanoidBoneMappings.end(),
+                           [](const render::HumanoidBoneMapping &mapping)
+                           { return static_cast<std::size_t>(mapping.bone) >= render::kHumanoidBoneCount; }),
+            skeleton.humanoidBoneMappings.end());
+        for (std::size_t index = 0; index < render::kHumanoidBoneCount; ++index)
+        {
+            const auto bone = static_cast<render::HumanoidBone>(index);
+            if (!FindHumanoidMapping(skeleton, bone))
+                skeleton.humanoidBoneMappings.push_back({.bone = bone, .copyTranslation = bone == render::HumanoidBone::Hips});
+        }
+    }
+
+    void AutoMapHumanoidRig(render::Skeleton &skeleton)
+    {
+        EnsureHumanoidMappings(skeleton);
+        for (std::size_t jointIndex = 0; jointIndex < skeleton.joints.size(); ++jointIndex)
+        {
+            const auto bone = render::GuessHumanoidBone(skeleton.joints[jointIndex].name);
+            if (!bone) continue;
+            if (auto *mapping = FindHumanoidMapping(skeleton, *bone); mapping && mapping->targetJointIndex < 0)
+                mapping->targetJointIndex = static_cast<int>(jointIndex);
+        }
+    }
+
+    bool IsRequiredHumanoidBone(render::HumanoidBone bone)
+    {
+        switch (bone)
+        {
+        case render::HumanoidBone::Hips:
+        case render::HumanoidBone::Spine:
+        case render::HumanoidBone::Head:
+        case render::HumanoidBone::LeftUpperArm:
+        case render::HumanoidBone::LeftLowerArm:
+        case render::HumanoidBone::LeftHand:
+        case render::HumanoidBone::RightUpperArm:
+        case render::HumanoidBone::RightLowerArm:
+        case render::HumanoidBone::RightHand:
+        case render::HumanoidBone::LeftUpperLeg:
+        case render::HumanoidBone::LeftLowerLeg:
+        case render::HumanoidBone::LeftFoot:
+        case render::HumanoidBone::RightUpperLeg:
+        case render::HumanoidBone::RightLowerLeg:
+        case render::HumanoidBone::RightFoot:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    std::filesystem::path FindMeshSource(const assets::Project &project, const std::string &reference)
+    {
+        const auto meshPath = project.ResolveAssetReference(reference);
+        for (const auto &asset : project.GetManifest().assetEntries)
+        {
+            if (asset.type != assets::ProjectAssetType::Model) continue;
+            const auto source = project.ResolveAssetReference(asset.reference);
+            if (source.stem() == meshPath.stem()) return source;
+        }
+        const auto directory = project.GetAssetDirectoryPath() / "SourceModels" / meshPath.stem();
+        for (const auto *extension : {".gltf", ".glb", ".fbx"})
+        {
+            const auto candidate = directory / (meshPath.stem().string() + extension);
+            if (std::filesystem::exists(candidate)) return candidate;
+        }
+        return {};
+    }
+
+    void RefreshMeshInstances(scene::Entity &entity, const std::string &reference, render::Mesh *mesh)
+    {
+        if (auto *component = entity.GetComponent<scene::MeshComponent>();
+            component && component->GetMeshAssetReference() == reference)
+            component->SetMesh(mesh);
+        for (auto *child : entity.GetChildren()) if (child) RefreshMeshInstances(*child, reference, mesh);
+    }
 }
 
 EditorSession::EditorSession(PlutoGE::core::Engine &engine) : m_engine(engine) {}
@@ -615,6 +749,7 @@ void EditorSession::Shutdown()
     m_engine.GetAssetManager().ClearProjectContext();
     m_project.reset();
     m_projectPath.clear();
+    ClearMeshEditorAsset();
 }
 
 bool EditorSession::Initialize()
@@ -705,6 +840,47 @@ bool EditorSession::CommitEdit(const std::string &before)
     return true;
 }
 
+void EditorSession::ClearMeshEditorAsset()
+{
+    m_meshEditorReference.clear();
+    m_meshEditorSourcePath.clear();
+    m_meshEditorConfig = {};
+    m_meshEditorBounds = {};
+    m_meshEditorMaterialReferences.clear();
+    m_meshEditorMetadata = {};
+    m_meshEditorDirty = false;
+}
+
+bool EditorSession::LoadMeshEditorAsset(const std::string &reference, std::string &errorMessage)
+{
+    ClearMeshEditorAsset();
+    if (!m_project || !reference.starts_with("project://") ||
+        PlutoGE::assets::Project::GetAssetTypeForReference(reference) != PlutoGE::assets::ProjectAssetType::Mesh)
+    {
+        errorMessage = "The mesh editor needs a project mesh asset.";
+        return false;
+    }
+    auto *mesh = m_engine.GetAssetManager().LoadMeshAsset(reference);
+    if (!mesh)
+    {
+        errorMessage = "Could not load mesh asset: " + reference;
+        return false;
+    }
+
+    m_meshEditorReference = reference;
+    m_meshEditorConfig = BuildMeshConfig(*mesh);
+    if (!m_meshEditorConfig.skeleton.humanoidBoneMappings.empty())
+        EnsureHumanoidMappings(m_meshEditorConfig.skeleton);
+    m_meshEditorBounds = mesh->GetBounds();
+    EnsureBaseLods(m_meshEditorConfig);
+    m_meshEditorMaterialReferences = m_engine.GetAssetManager().GetMeshAssetMaterialReferences(reference);
+    m_meshEditorMetadata = m_engine.GetAssetManager().GetMeshAssetMetadata(reference);
+    auto source = m_engine.GetAssetManager().ResolveMeshAssetSourcePath(reference);
+    if (source.empty()) source = FindMeshSource(*m_project, reference).string();
+    m_meshEditorSourcePath = std::move(source);
+    return true;
+}
+
 PlutoGE::scene::Entity *EditorSession::FindEntity(std::uint32_t id) const
 {
     return m_scene ? m_scene->FindEntityByID(id) : nullptr;
@@ -743,6 +919,162 @@ bool EditorSession::HandleCommand(const std::string &commandLine, std::string &e
     std::string command;
     input >> command;
     if (command == "editor_snapshot") return true;
+
+    if (command == "mesh_editor_open")
+    {
+        std::string encodedReference;
+        input >> encodedReference;
+        return LoadMeshEditorAsset(Decode(encodedReference), errorMessage);
+    }
+
+    if (command == "mesh_editor_close")
+    {
+        ClearMeshEditorAsset();
+        return true;
+    }
+
+    if (command == "mesh_editor_revert")
+    {
+        if (m_meshEditorReference.empty()) return true;
+        return LoadMeshEditorAsset(m_meshEditorReference, errorMessage);
+    }
+
+    if (command == "mesh_editor_import_options")
+    {
+        int generateLods = 0, optimizeVertexCache = 0, optimizeOverdraw = 0;
+        if (m_meshEditorReference.empty() || !(input >> generateLods >> optimizeVertexCache >> optimizeOverdraw))
+        {
+            errorMessage = "Invalid mesh import options command.";
+            return false;
+        }
+        m_meshEditorMetadata.importOptions.generateLods = generateLods != 0;
+        m_meshEditorMetadata.importOptions.optimizeVertexCache = optimizeVertexCache != 0;
+        m_meshEditorMetadata.importOptions.optimizeOverdraw = optimizeOverdraw != 0;
+        m_meshEditorDirty = true;
+        return true;
+    }
+
+    if (command == "mesh_editor_lod_threshold")
+    {
+        int requestedLodIndex = 0;
+        float threshold = 0.0f;
+        if (m_meshEditorReference.empty() || !(input >> requestedLodIndex >> threshold) || requestedLodIndex <= 0)
+        {
+            errorMessage = "Invalid mesh LOD threshold command.";
+            return false;
+        }
+        const auto lodIndex = static_cast<std::size_t>(requestedLodIndex);
+        threshold = std::max(1.0f, threshold);
+        bool changed = false;
+        for (auto &submesh : m_meshEditorConfig.submeshes)
+        {
+            if (lodIndex >= submesh.lods.size()) continue;
+            if (submesh.lods[lodIndex].maxScreenRadiusPixels != threshold)
+            {
+                submesh.lods[lodIndex].maxScreenRadiusPixels = threshold;
+                changed = true;
+            }
+        }
+        m_meshEditorDirty |= changed;
+        return true;
+    }
+
+    if (command == "mesh_editor_rig_auto_map")
+    {
+        if (m_meshEditorConfig.skeleton.joints.empty())
+        {
+            errorMessage = "This mesh has no skeleton.";
+            return false;
+        }
+        AutoMapHumanoidRig(m_meshEditorConfig.skeleton);
+        m_meshEditorDirty = true;
+        return true;
+    }
+
+    if (command == "mesh_editor_rig_disable")
+    {
+        m_meshEditorConfig.skeleton.humanoidBoneMappings.clear();
+        m_meshEditorDirty = true;
+        return true;
+    }
+
+    if (command == "mesh_editor_rig_mapping")
+    {
+        std::size_t boneIndex = 0;
+        int targetJointIndex = -1, copyTranslation = 0;
+        float rotationX = 0.0f, rotationY = 0.0f, rotationZ = 0.0f, translationScale = 1.0f;
+        std::string encodedSourceName;
+        if (!(input >> boneIndex >> targetJointIndex >> copyTranslation >> translationScale
+                    >> rotationX >> rotationY >> rotationZ >> encodedSourceName) ||
+            boneIndex >= render::kHumanoidBoneCount ||
+            targetJointIndex < -1 ||
+            targetJointIndex >= static_cast<int>(m_meshEditorConfig.skeleton.joints.size()))
+        {
+            errorMessage = "Invalid humanoid rig mapping command.";
+            return false;
+        }
+        EnsureHumanoidMappings(m_meshEditorConfig.skeleton);
+        auto *mapping = FindHumanoidMapping(m_meshEditorConfig.skeleton, static_cast<render::HumanoidBone>(boneIndex));
+        if (!mapping) return false;
+        mapping->targetJointIndex = targetJointIndex;
+        mapping->copyTranslation = copyTranslation != 0;
+        mapping->translationScale = std::clamp(translationScale, 0.0f, 10.0f);
+        mapping->rotationOffsetDegrees = {
+            std::clamp(rotationX, -180.0f, 180.0f),
+            std::clamp(rotationY, -180.0f, 180.0f),
+            std::clamp(rotationZ, -180.0f, 180.0f)};
+        mapping->sourceBoneName = Decode(encodedSourceName);
+        m_meshEditorDirty = true;
+        return true;
+    }
+
+    if (command == "mesh_editor_reimport")
+    {
+        if (!m_project || m_meshEditorReference.empty() || m_meshEditorSourcePath.empty())
+        {
+            errorMessage = "Reimport needs a matching source model asset.";
+            return false;
+        }
+        ReportOperationProgress(5, "Importing source model");
+        auto imported = m_engine.ImportMeshAsset(m_meshEditorSourcePath, m_meshEditorMetadata.importOptions);
+        if (!imported.mesh)
+        {
+            errorMessage = "The source model could not be imported.";
+            return false;
+        }
+        auto mappings = std::move(m_meshEditorConfig.skeleton.humanoidBoneMappings);
+        m_meshEditorConfig = BuildMeshConfig(*imported.mesh);
+        m_meshEditorBounds = imported.mesh->GetBounds();
+        m_meshEditorConfig.skeleton.humanoidBoneMappings = std::move(mappings);
+        EnsureBaseLods(m_meshEditorConfig);
+        if (m_meshEditorMetadata.sourceAssetReference.empty())
+            m_meshEditorMetadata.sourceAssetReference = m_project->MakeAssetReference(m_meshEditorSourcePath);
+        m_meshEditorDirty = true;
+        ReportOperationProgress(100, "Mesh reimported");
+        return true;
+    }
+
+    if (command == "mesh_editor_save")
+    {
+        if (!m_project || m_meshEditorReference.empty())
+        {
+            errorMessage = "No project mesh is open.";
+            return false;
+        }
+        const auto reference = m_meshEditorReference;
+        if (!m_engine.GetAssetManager().SaveMeshAsset(reference, m_meshEditorConfig,
+                                                       m_meshEditorMaterialReferences, &errorMessage,
+                                                       m_meshEditorMetadata)) return false;
+        auto *mesh = m_engine.GetAssetManager().LoadMeshAsset(reference);
+        if (m_scene && mesh)
+        {
+            for (auto *root : m_scene->GetRootEntities()) if (root) RefreshMeshInstances(*root, reference, mesh);
+            m_scene->MarkShadowLightsDirty();
+        }
+        m_project->RefreshAssetRegistry();
+        if (!m_project->Save(&errorMessage)) return false;
+        return LoadMeshEditorAsset(reference, errorMessage);
+    }
 
     if (command == "select")
     {
@@ -1106,6 +1438,7 @@ bool EditorSession::HandleCommand(const std::string &commandLine, std::string &e
         m_scenePath = loadedStartupScene ? startupScenePath : std::string{};
         m_undo.clear();
         m_redo.clear();
+        ClearMeshEditorAsset();
         return SetScene(std::move(loadedScene), false);
     }
 
@@ -2084,7 +2417,80 @@ std::string EditorSession::BuildSnapshotEvent() const
            << ",\"translateSnap\":" << m_translateSnap
            << ",\"rotateSnap\":" << m_rotateSnap
            << ",\"scaleSnap\":" << m_scaleSnap << '}'
-           << ",\"entities\":[";
+           << ",\"meshAsset\":";
+    if (m_meshEditorReference.empty())
+    {
+        output << "null";
+    }
+    else
+    {
+        output << "{\"reference\":\"" << JsonEscape(m_meshEditorReference)
+               << "\",\"dirty\":" << (m_meshEditorDirty ? "true" : "false")
+               << ",\"canReimport\":" << (!m_meshEditorSourcePath.empty() ? "true" : "false")
+               << ",\"vertexCount\":" << m_meshEditorConfig.data.vertices.size()
+               << ",\"triangleCount\":" << (m_meshEditorConfig.data.indices.size() / 3)
+               << ",\"submeshCount\":" << m_meshEditorConfig.submeshes.size()
+               << ",\"lodCount\":" << GetMeshLodCount(m_meshEditorConfig)
+               << ",\"bounds\":{\"center\":[" << m_meshEditorBounds.center.x << ',' << m_meshEditorBounds.center.y << ',' << m_meshEditorBounds.center.z
+               << "],\"radius\":" << m_meshEditorBounds.radius << '}'
+               << ",\"importOptions\":{\"generateLods\":" << (m_meshEditorMetadata.importOptions.generateLods ? "true" : "false")
+               << ",\"optimizeVertexCache\":" << (m_meshEditorMetadata.importOptions.optimizeVertexCache ? "true" : "false")
+               << ",\"optimizeOverdraw\":" << (m_meshEditorMetadata.importOptions.optimizeOverdraw ? "true" : "false")
+               << "},\"materials\":[";
+        for (std::size_t index = 0; index < m_meshEditorMaterialReferences.size(); ++index)
+        {
+            if (index > 0) output << ',';
+            output << '"' << JsonEscape(m_meshEditorMaterialReferences[index]) << '"';
+        }
+        output << "],\"lods\":[";
+        const auto lodCount = GetMeshLodCount(m_meshEditorConfig);
+        for (std::size_t lodIndex = 0; lodIndex < lodCount; ++lodIndex)
+        {
+            if (lodIndex > 0) output << ',';
+            float threshold = 0.0f;
+            if (lodIndex > 0)
+            {
+                for (const auto &submesh : m_meshEditorConfig.submeshes)
+                {
+                    if (lodIndex < submesh.lods.size())
+                    {
+                        threshold = submesh.lods[lodIndex].maxScreenRadiusPixels;
+                        break;
+                    }
+                }
+            }
+            output << "{\"index\":" << lodIndex
+                   << ",\"triangles\":" << CountMeshLodTriangles(m_meshEditorConfig, lodIndex)
+                   << ",\"maxScreenRadiusPixels\":" << threshold << '}';
+        }
+        output << "],\"skeleton\":{\"joints\":[";
+        for (std::size_t index = 0; index < m_meshEditorConfig.skeleton.joints.size(); ++index)
+        {
+            if (index > 0) output << ',';
+            output << '"' << JsonEscape(m_meshEditorConfig.skeleton.joints[index].name) << '"';
+        }
+        output << "],\"enabled\":" << (!m_meshEditorConfig.skeleton.humanoidBoneMappings.empty() ? "true" : "false")
+               << ",\"mappings\":[";
+        std::unordered_set<int> assignedTargets;
+        for (std::size_t index = 0; index < m_meshEditorConfig.skeleton.humanoidBoneMappings.size(); ++index)
+        {
+            const auto &mapping = m_meshEditorConfig.skeleton.humanoidBoneMappings[index];
+            if (index > 0) output << ',';
+            const bool duplicate = mapping.targetJointIndex >= 0 && !assignedTargets.insert(mapping.targetJointIndex).second;
+            output << "{\"boneIndex\":" << static_cast<int>(mapping.bone)
+                   << ",\"boneName\":\"" << JsonEscape(render::HumanoidBoneName(mapping.bone))
+                   << "\",\"required\":" << (IsRequiredHumanoidBone(mapping.bone) ? "true" : "false")
+                   << ",\"targetJointIndex\":" << mapping.targetJointIndex
+                   << ",\"sourceBoneName\":\"" << JsonEscape(mapping.sourceBoneName)
+                   << "\",\"rotationOffsetDegrees\":[" << mapping.rotationOffsetDegrees.x << ','
+                   << mapping.rotationOffsetDegrees.y << ',' << mapping.rotationOffsetDegrees.z << ']'
+                   << ",\"copyTranslation\":" << (mapping.copyTranslation ? "true" : "false")
+                   << ",\"translationScale\":" << mapping.translationScale
+                   << ",\"duplicateTarget\":" << (duplicate ? "true" : "false") << '}';
+        }
+        output << "]}}";
+    }
+    output << ",\"entities\":[";
     std::vector<const PlutoGE::scene::Entity *> entities;
     if (m_scene)
     {

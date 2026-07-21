@@ -191,6 +191,49 @@ interface AssetDocument {
 	message?: string;
 }
 
+interface MeshImportOptions {
+	generateLods: boolean;
+	optimizeVertexCache: boolean;
+	optimizeOverdraw: boolean;
+}
+
+interface MeshLodState {
+	index: number;
+	triangles: number;
+	maxScreenRadiusPixels: number;
+}
+
+interface MeshRigMapping {
+	boneIndex: number;
+	boneName: string;
+	required: boolean;
+	targetJointIndex: number;
+	sourceBoneName: string;
+	rotationOffsetDegrees: [number, number, number];
+	copyTranslation: boolean;
+	translationScale: number;
+	duplicateTarget: boolean;
+}
+
+interface MeshAssetEditorState {
+	reference: string;
+	dirty: boolean;
+	canReimport: boolean;
+	vertexCount: number;
+	triangleCount: number;
+	submeshCount: number;
+	lodCount: number;
+	bounds: { center: [number, number, number]; radius: number };
+	importOptions: MeshImportOptions;
+	materials: string[];
+	lods: MeshLodState[];
+	skeleton: {
+		joints: string[];
+		enabled: boolean;
+		mappings: MeshRigMapping[];
+	};
+}
+
 interface SceneBakeSettings {
 	lightmapResolution: number;
 	lightmapTileSize: number;
@@ -243,6 +286,7 @@ interface EditorState {
 		rotateSnap: number;
 		scaleSnap: number;
 	};
+	meshAsset?: MeshAssetEditorState | null;
 	entities: EditorEntity[];
 }
 
@@ -303,6 +347,14 @@ interface PlutoEditorApi {
 		callback: (asset: AssetDocument | undefined) => void,
 	): () => void;
 	saveAsset(reference: string, content: string): Promise<boolean>;
+	setMeshImportOptions(options: MeshImportOptions): Promise<boolean>;
+	reimportMesh(): Promise<boolean>;
+	setMeshLodThreshold(index: number, maxScreenRadiusPixels: number): Promise<boolean>;
+	autoMapMeshRig(): Promise<boolean>;
+	disableMeshRetargeting(): Promise<boolean>;
+	setMeshRigMapping(mapping: MeshRigMapping): Promise<boolean>;
+	saveMesh(): Promise<boolean>;
+	revertMesh(): Promise<boolean>;
 	setAssetDirty(dirty: boolean): void;
 	revealAsset(reference: string): Promise<void>;
 	saveScene(saveAs?: boolean): Promise<void>;

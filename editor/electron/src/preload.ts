@@ -119,6 +119,17 @@ const api: PlutoEditorApi = {
 	},
 	saveAsset: (reference, content) =>
 		ipcRenderer.invoke("asset:save", reference, content),
+	setMeshImportOptions: (options) =>
+		ipcRenderer.invoke("mesh:set-import-options", options),
+	reimportMesh: () => ipcRenderer.invoke("mesh:reimport"),
+	setMeshLodThreshold: (index, maxScreenRadiusPixels) =>
+		ipcRenderer.invoke("mesh:set-lod-threshold", index, maxScreenRadiusPixels),
+	autoMapMeshRig: () => ipcRenderer.invoke("mesh:rig-auto-map"),
+	disableMeshRetargeting: () => ipcRenderer.invoke("mesh:rig-disable"),
+	setMeshRigMapping: (mapping) =>
+		ipcRenderer.invoke("mesh:set-rig-mapping", mapping),
+	saveMesh: () => ipcRenderer.invoke("mesh:save"),
+	revertMesh: () => ipcRenderer.invoke("mesh:revert"),
 	setAssetDirty: (dirty) => ipcRenderer.send("asset:set-dirty", dirty),
 	revealAsset: (reference) => ipcRenderer.invoke("assets:reveal", reference),
 	saveScene: (saveAs = false) =>

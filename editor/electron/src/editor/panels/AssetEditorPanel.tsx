@@ -3,12 +3,14 @@ import { useEffect, useState } from "react";
 import { PanelFrame } from "../components/PanelFrame";
 import { GraphAssetEditor } from "./GraphAssetEditor";
 import { MaterialAssetEditor } from "./MaterialAssetEditor";
+import { MeshAssetEditor } from "./MeshAssetEditor";
 
 export function AssetEditorPanel(): React.JSX.Element {
 	const [asset, setAsset] = useState<AssetDocument>();
 	const [content, setContent] = useState("");
 	const [savedContent, setSavedContent] = useState("");
 	const [message, setMessage] = useState("");
+	const [meshState, setMeshState] = useState<MeshAssetEditorState>();
 
 	useEffect(() => {
 		const apply = (next: AssetDocument | undefined): void => {
@@ -28,10 +30,15 @@ export function AssetEditorPanel(): React.JSX.Element {
 		return window.plutoEditor.onAssetOpened(apply);
 	}, []);
 	useEffect(() => {
+		const apply = (state: EditorState | undefined): void => setMeshState(state?.meshAsset ?? undefined);
+		void window.plutoEditor.getEditorState().then(apply);
+		return window.plutoEditor.onEditorState(apply);
+	}, []);
+	useEffect(() => {
 		window.plutoEditor.setAssetDirty(
-			Boolean(asset && content !== savedContent),
+			Boolean(asset && (asset.type === "Mesh" ? meshState?.reference === asset.reference && meshState.dirty : content !== savedContent)),
 		);
-	}, [asset, content, savedContent]);
+	}, [asset, content, savedContent, meshState]);
 
 	const save = async (): Promise<void> => {
 		if (!asset) return;
@@ -46,6 +53,8 @@ export function AssetEditorPanel(): React.JSX.Element {
 		asset?.type === "AnimationGraph";
 	const isMesh = asset?.type === "Mesh";
 	const isMaterial = asset?.type === "Material";
+	const activeMeshState = isMesh && meshState?.reference === asset.reference ? meshState : undefined;
+	const dirty = isMesh ? Boolean(activeMeshState?.dirty) : content !== savedContent;
 
 	return (
 		<PanelFrame
@@ -56,15 +65,15 @@ export function AssetEditorPanel(): React.JSX.Element {
 					<>
 						<button
 							type="button"
-							disabled={asset.readOnly || content === savedContent}
-							onClick={() => void save()}
+							disabled={(asset.readOnly && !isMesh) || !dirty}
+							onClick={() => isMesh ? void window.plutoEditor.saveMesh() : void save()}
 						>
 							Save
 						</button>
 						<button
 							type="button"
-							disabled={content === savedContent}
-							onClick={() => setContent(savedContent)}
+							disabled={!dirty}
+							onClick={() => isMesh ? void window.plutoEditor.revertMesh() : setContent(savedContent)}
 						>
 							Revert
 						</button>
@@ -89,7 +98,7 @@ export function AssetEditorPanel(): React.JSX.Element {
 				<>
 					<div className="asset-editor-heading">
 						<strong>{asset.reference}</strong>
-						{content !== savedContent && <span>Modified</span>}
+						{dirty && <span>Modified</span>}
 					</div>
 					{message && <div className="import-message">{message}</div>}
 					{isMaterial ? (
@@ -99,46 +108,7 @@ export function AssetEditorPanel(): React.JSX.Element {
 							onChange={setContent}
 						/>
 					) : isMesh ? (
-						<div className="mesh-editor">
-							<div className="mesh-preview">
-								<span>⬡</span>
-								<strong>Mesh Preview</strong>
-								<small>
-									The renderer bridge does not expose an isolated preview target
-									yet.
-								</small>
-							</div>
-							<aside>
-								<section>
-									<h3>Preview</h3>
-									<p>
-										Open the mesh on an entity to inspect it in the scene
-										viewport.
-									</p>
-								</section>
-								<section>
-									<h3>Materials</h3>
-									<p>Material slots are stored in the binary mesh asset.</p>
-								</section>
-								<section>
-									<h3>LOD Settings</h3>
-									<label>
-										<input type="checkbox" disabled /> Generate LODs
-									</label>
-									<label>
-										<input type="checkbox" disabled /> Optimize vertex cache
-									</label>
-									<label>
-										<input type="checkbox" disabled /> Optimize overdraw
-									</label>
-								</section>
-								<section>
-									<h3>Humanoid Rig</h3>
-									<p>Rig mappings require the native importer data.</p>
-								</section>
-								<div className="import-message">{asset.message}</div>
-							</aside>
-						</div>
+						<MeshAssetEditor state={activeMeshState} />
 					) : isGraph ? (
 						<GraphAssetEditor
 							asset={asset}

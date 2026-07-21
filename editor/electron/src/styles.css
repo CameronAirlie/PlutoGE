@@ -1183,6 +1183,27 @@ h4 {
 .property-row input[type="checkbox"] {
 	justify-self: end;
 }
+.property-asset-picker {
+	width: 100%;
+}
+.property-color-editor {
+	display: grid;
+	grid-template-columns: minmax(44px, 1fr) minmax(48px, 0.75fr);
+	gap: 4px;
+	min-width: 0;
+}
+.property-color-editor input[type="color"] {
+	width: 100%;
+	height: 28px;
+	min-width: 0;
+	padding: 2px;
+	border: 1px solid #303744;
+	border-radius: 4px;
+	background: #10141a;
+}
+.property-color-editor input[type="color"]:only-child {
+	grid-column: 1 / -1;
+}
 .add-component {
 	width: 100%;
 	margin-top: 10px;
@@ -1286,7 +1307,7 @@ h4 {
 }
 .preset-row {
 	display: grid;
-	grid-template-columns: minmax(0, 1fr) repeat(4, auto);
+	grid-template-columns: minmax(0, 1fr) repeat(3, auto);
 	gap: 4px;
 	margin-bottom: 7px;
 }
@@ -1916,6 +1937,9 @@ h4 {
 	grid-template-columns: minmax(0, 1fr) auto;
 	gap: 4px;
 	min-width: 0;
+}
+.material-asset-picker {
+	width: 100%;
 }
 .material-reference-input button {
 	background: #20252e;

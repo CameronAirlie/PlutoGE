@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import { PanelFrame } from "../components/PanelFrame";
 import {
 	componentCategories,
@@ -8,6 +8,93 @@ import {
 import { NameDialog } from "../components/NameDialog";
 import { NumericInput } from "../components/NumericInput";
 import { SearchablePicker } from "../components/SearchablePicker";
+
+const clampColorComponent = (value: number): number =>
+	Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
+
+const colorHex = (value: number[]): string =>
+	`#${value
+		.slice(0, 3)
+		.map((component) =>
+			Math.round(clampColorComponent(component) * 255)
+				.toString(16)
+				.padStart(2, "0"),
+		)
+		.join("")}`;
+
+const assetLabel = (reference: string): string => {
+	if (!reference) return "None";
+	return reference.replace(/^(project|engine):\/\//, "");
+};
+
+function propertyAssetTypes(
+	componentType: string,
+	propertyName: string,
+): string[] | undefined {
+	if (/post.?process.*preset/i.test(propertyName)) return ["Post Process Preset"];
+	if (/particle.?system.*asset/i.test(propertyName)) return ["Particle System"];
+	if (/animation.?graph/i.test(propertyName)) return ["Animation Graph"];
+	if (/source.?animation/i.test(propertyName))
+		return ["Animation", "Animation Clip"];
+	if (/source.?mesh/i.test(propertyName)) return ["Mesh"];
+	if (/model.?asset/i.test(propertyName)) return ["Model"];
+	if (/material/i.test(propertyName)) return ["Material"];
+	if (/texture|albedo.?path|lightmap.?path|height.?map|painted.?albedo/i.test(propertyName))
+		return ["Texture"];
+	if (componentType === "SoundEmitterComponent" && /clip/i.test(propertyName))
+		return ["Audio"];
+	if (/prefab/i.test(propertyName)) return ["Prefab"];
+	if (/scriptable.?object/i.test(propertyName)) return ["Scriptable Object"];
+	if (/asset/i.test(propertyName)) return [];
+	return undefined;
+}
+
+function ColorPropertyEditor({
+	property,
+	disabled,
+	onCommit,
+}: {
+	property: EditorProperty;
+	disabled: boolean;
+	onCommit(value: string): void;
+}): React.JSX.Element {
+	const parsed = property.value.split(",").map(Number);
+	const componentCount = parsed.length >= 4 ? 4 : 3;
+	while (parsed.length < componentCount) parsed.push(1);
+	const values = parsed
+		.slice(0, componentCount)
+		.map((value) => (Number.isFinite(value) ? value : 1));
+	return (
+		<label className="property-row">
+			<span>{property.name}</span>
+			<span className="property-color-editor">
+				<input
+					disabled={disabled}
+					type="color"
+					value={colorHex(values)}
+					onChange={(event) => {
+						const hex = event.currentTarget.value;
+						const changed = [...values];
+						changed[0] = Number.parseInt(hex.slice(1, 3), 16) / 255;
+						changed[1] = Number.parseInt(hex.slice(3, 5), 16) / 255;
+						changed[2] = Number.parseInt(hex.slice(5, 7), 16) / 255;
+						onCommit(changed.join(","));
+					}}
+				/>
+				{componentCount === 4 && (
+					<NumericInput
+						disabled={disabled}
+						value={values[3]}
+						min={0}
+						max={1}
+						step={0.01}
+						onCommit={(alpha) => onCommit([...values.slice(0, 3), alpha].join(","))}
+					/>
+				)}
+			</span>
+		</label>
+	);
+}
 
 function VectorEditor({
 	label,
@@ -89,11 +176,21 @@ function PropertyEditor({
 				</select>
 			</label>
 		);
-	if (property.type === 3 || property.type === 5 || property.type === 7) {
-		const count = property.type === 7 ? 2 : property.type === 5 ? 4 : 3;
+	if (
+		property.type === 5 ||
+		((property.type === 2 || property.type === 3) && /colou?r/i.test(property.name))
+	)
+		return (
+			<ColorPropertyEditor
+				property={property}
+				disabled={disabled}
+				onCommit={commit}
+			/>
+		);
+	if (property.type === 3 || property.type === 7) {
+		const count = property.type === 7 ? 2 : 3;
 		const values = property.value.split(",").map(Number);
-		while (values.length < count)
-			values.push(property.type === 5 && values.length === 3 ? 1 : 0);
+		while (values.length < count) values.push(0);
 		return (
 			<div className="property-row">
 				<span>{property.name}</span>
@@ -147,21 +244,29 @@ function PropertyEditor({
 				/>
 			</label>
 		);
-	if (property.type === 6 && property.enumOptions.length)
+	if (property.type === 6 && property.enumOptions.length) {
+		const parsedIndex = Number.parseInt(property.value, 10);
+		const namedIndex = property.enumOptions.indexOf(property.value);
+		const selectedIndex = Number.isInteger(parsedIndex) && /^\d+$/.test(property.value)
+			? Math.max(0, Math.min(property.enumOptions.length - 1, parsedIndex))
+			: Math.max(0, namedIndex);
 		return (
 			<label className="property-row">
 				<span>{property.name}</span>
 				<select
 					disabled={disabled}
-					value={property.value}
+					value={String(selectedIndex)}
 					onChange={(event) => commit(event.currentTarget.value)}
 				>
-					{property.enumOptions.map((option) => (
-						<option key={option}>{option}</option>
+					{property.enumOptions.map((option, index) => (
+						<option key={option} value={String(index)}>
+							{option}
+						</option>
 					))}
 				</select>
 			</label>
 		);
+	}
 	const numeric =
 		property.type === 0 || property.type === 1 || property.type === 8;
 	if (numeric)
@@ -176,30 +281,32 @@ function PropertyEditor({
 				/>
 			</label>
 		);
-	if (/asset|source|clip|material|mesh|texture|path/i.test(property.name)) {
-		const listId = `assets-${entityId}-${componentIndex}-${propertyIndex}`;
+	const allowedAssetTypes = propertyAssetTypes(componentType, property.name);
+	if (allowedAssetTypes) {
+		const options = assets.filter(
+			(asset) => !allowedAssetTypes.length || allowedAssetTypes.includes(asset.type),
+		);
 		return (
-			<label className="property-row">
+			<div className="property-row">
 				<span>{property.name}</span>
-				<span>
-					<input
-						disabled={disabled}
-						list={listId}
-						defaultValue={property.value}
-						onBlur={(event) =>
-							event.currentTarget.value !== property.value &&
-							commit(event.currentTarget.value)
-						}
-					/>
-					<datalist id={listId}>
-						{assets.map((asset) => (
-							<option key={asset.reference} value={asset.reference}>
-								{asset.type}
-							</option>
-						))}
-					</datalist>
-				</span>
-			</label>
+				<SearchablePicker
+					className="property-asset-picker"
+					buttonLabel={assetLabel(property.value)}
+					searchPlaceholder={`Search ${allowedAssetTypes.join(" or ") || "assets"}…`}
+					emptyMessage="No matching assets."
+					disabled={disabled}
+					items={[
+						{ value: "", label: "None", category: "Selection" },
+						...options.map((asset) => ({
+							value: asset.reference,
+							label: assetLabel(asset.reference),
+							category: asset.type,
+							keywords: [asset.reference],
+						})),
+					]}
+					onSelect={commit}
+				/>
+			</div>
 		);
 	}
 	return (
@@ -220,13 +327,40 @@ function PropertyEditor({
 
 function PostProcessParameterEditor({
 	parameter,
+	assets,
 	disabled,
 	onCommit,
 }: {
 	parameter: EditorProperty;
+	assets: EditorAsset[];
 	disabled: boolean;
 	onCommit(value: string): void;
 }): React.JSX.Element {
+	if (parameter.type === 2 && /asset|texture/i.test(parameter.name)) {
+		const textureAssets = assets.filter((asset) => asset.type === "Texture");
+		return (
+			<div className="property-row">
+				<span>{parameter.name}</span>
+				<SearchablePicker
+					className="property-asset-picker"
+					buttonLabel={assetLabel(parameter.value)}
+					searchPlaceholder="Search textures…"
+					emptyMessage="No texture assets found."
+					disabled={disabled}
+					items={[
+						{ value: "", label: "None", category: "Selection" },
+						...textureAssets.map((asset) => ({
+							value: asset.reference,
+							label: assetLabel(asset.reference),
+							category: "Texture",
+							keywords: [asset.reference],
+						})),
+					]}
+					onSelect={onCommit}
+				/>
+			</div>
+		);
+	}
 	if (parameter.type === 4)
 		return (
 			<label className="property-row">
@@ -294,6 +428,7 @@ function PostProcessStackEditor({
 	effects,
 	effectTypes,
 	presetReference,
+	assets,
 	disabled,
 	onAdd,
 	onRemove,
@@ -307,6 +442,7 @@ function PostProcessStackEditor({
 	effects: PostProcessEffectState[];
 	effectTypes: string[];
 	presetReference: string;
+	assets: EditorAsset[];
 	disabled: boolean;
 	onAdd(type: string): void;
 	onRemove(index: number): void;
@@ -318,24 +454,30 @@ function PostProcessStackEditor({
 	onSavePresetAs(reference: string): void;
 }): React.JSX.Element {
 	const [effectType, setEffectType] = useState(effectTypes[0] ?? "");
-	const [preset, setPreset] = useState(presetReference);
 	const [savingAs, setSavingAs] = useState(false);
-	useEffect(() => setPreset(presetReference), [presetReference]);
+	const presetAssets = assets.filter(
+		(asset) => asset.type === "Post Process Preset",
+	);
 	return (
 		<div className="post-process-stack">
 			<div className="preset-row">
-				<input
+				<SearchablePicker
+					className="post-process-preset-picker"
+					buttonLabel={assetLabel(presetReference)}
+					searchPlaceholder="Search post-process presets…"
+					emptyMessage="No post-process presets found."
 					disabled={disabled}
-					value={preset}
-					placeholder="project://PostProcessing/MyPreset.plutopostprocess"
-					onChange={(event) => setPreset(event.currentTarget.value)}
+					items={[
+						{ value: "", label: "None", category: "Selection" },
+						...presetAssets.map((asset) => ({
+							value: asset.reference,
+							label: assetLabel(asset.reference),
+							category: "Post Process Preset",
+							keywords: [asset.reference],
+						})),
+					]}
+					onSelect={onPreset}
 				/>
-				<button
-					disabled={disabled || preset === presetReference}
-					onClick={() => onPreset(preset)}
-				>
-					Load
-				</button>
 				<button disabled={disabled || !presetReference} onClick={onSavePreset}>
 					Save
 				</button>
@@ -343,11 +485,8 @@ function PostProcessStackEditor({
 					Save As…
 				</button>
 				<button
-					disabled={disabled || (!preset && !presetReference)}
-					onClick={() => {
-						setPreset("");
-						onPreset("");
-					}}
+					disabled={disabled || !presetReference}
+					onClick={() => onPreset("")}
 				>
 					Clear
 				</button>
@@ -426,6 +565,7 @@ function PostProcessStackEditor({
 									<PostProcessParameterEditor
 										key={`${parameter.name}-${parameterIndex}`}
 										parameter={parameter}
+										assets={assets}
 										disabled={disabled}
 										onCommit={(value) =>
 											onParameter(effectIndex, parameterIndex, value)
@@ -609,6 +749,7 @@ function EntityInspector({
 									effects={component.postProcessEffects ?? []}
 									effectTypes={effectTypes}
 									presetReference={component.postProcessPresetReference ?? ""}
+									assets={assets}
 									disabled={running}
 									onAdd={(type) =>
 										window.plutoEditor.addCameraPostProcessEffect(
@@ -834,11 +975,13 @@ function EditorCameraInspector({
 	running,
 	hasSelection,
 	effectTypes,
+	assets,
 }: {
 	camera: EditorCameraState;
 	running: boolean;
 	hasSelection: boolean;
 	effectTypes: string[];
+	assets: EditorAsset[];
 }): React.JSX.Element {
 	const commit = (changes: Partial<EditorCameraState>): void =>
 		window.plutoEditor.setEditorCamera({ ...camera, ...changes });
@@ -904,6 +1047,7 @@ function EditorCameraInspector({
 					effects={camera.postProcessEffects}
 					effectTypes={effectTypes}
 					presetReference={camera.postProcessPresetReference}
+					assets={assets}
 					disabled={running}
 					onAdd={(type) => window.plutoEditor.addEditorPostProcessEffect(type)}
 					onRemove={(index) =>
@@ -968,6 +1112,7 @@ export function InspectorPanel({
 					running={editor.running}
 					hasSelection={Boolean(selectedEntity)}
 					effectTypes={editor.postProcessEffectTypes}
+					assets={editor.assets}
 				/>
 			) : selectedEntity ? (
 				<EntityInspector

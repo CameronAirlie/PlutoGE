@@ -38,7 +38,7 @@ namespace PlutoGE::scene
             {"Scattering Albedo", PropertyType::Float, std::to_string(m_scatteringAlbedo)},
             {"Anisotropy", PropertyType::Float, std::to_string(m_anisotropy)},
             {"Ambient Light", PropertyType::Float, std::to_string(m_ambientLight)},
-            {"Cloud Color", PropertyType::Vec3, ToString(m_cloudColor)},
+            {"Cloud Color", PropertyType::Color, ToString(m_cloudColor)},
             {"Base Noise Scale", PropertyType::Float, std::to_string(m_baseNoiseScale)},
             {"Detail Noise Scale", PropertyType::Float, std::to_string(m_detailNoiseScale)},
             {"Detail Erosion", PropertyType::Float, std::to_string(m_detailErosion)},

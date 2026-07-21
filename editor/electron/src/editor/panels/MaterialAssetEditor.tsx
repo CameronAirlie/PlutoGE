@@ -1,6 +1,7 @@
 import type React from "react";
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { NumericInput } from "../components/NumericInput";
+import { SearchablePicker } from "../components/SearchablePicker";
 
 type MaterialVector = [number, number, number, number];
 
@@ -216,28 +217,51 @@ function AssetReferenceInput({
 	disabled: boolean;
 	onChange(value: string): void;
 }): React.JSX.Element {
-	const id = useId();
 	const options = assets.filter((asset) => asset.type === type);
+	const label = (reference: string): string => {
+		if (!reference) return "None";
+		if (reference === defaultShaderGraph) return "Default Lit";
+		if (reference === defaultUnlitShaderGraph) return "Default Unlit";
+		return reference.replace(/^(project|engine):\/\//, "");
+	};
+	const builtins =
+		type === "Shader Graph"
+			? [
+					{
+						value: defaultShaderGraph,
+						label: "Default Lit",
+						category: "Built-in",
+					},
+					{
+						value: defaultUnlitShaderGraph,
+						label: "Default Unlit",
+						category: "Built-in",
+					},
+				]
+			: [];
+	const builtinReferences = new Set(builtins.map((item) => item.value));
 	return (
 		<div className="material-reference-input">
-			<input
+			<SearchablePicker
+				className="material-asset-picker"
 				disabled={disabled}
-				list={id}
-				value={value}
-				onChange={(event) => onChange(event.currentTarget.value)}
-				placeholder={type === "Texture" ? "None" : defaultShaderGraph}
+				buttonLabel={label(value)}
+				searchPlaceholder={`Search ${type.toLocaleLowerCase()} assets…`}
+				emptyMessage={`No ${type.toLocaleLowerCase()} assets found.`}
+				items={[
+					{ value: "", label: "None", category: "Selection" },
+					...builtins,
+					...options
+						.filter((asset) => !builtinReferences.has(asset.reference))
+						.map((asset) => ({
+							value: asset.reference,
+							label: label(asset.reference),
+							category: asset.type,
+							keywords: [asset.reference],
+						})),
+				]}
+				onSelect={onChange}
 			/>
-			<datalist id={id}>
-				{type === "Shader Graph" && (
-					<>
-						<option value={defaultShaderGraph}>Default Lit</option>
-						<option value={defaultUnlitShaderGraph}>Default Unlit</option>
-					</>
-				)}
-				{options.map((asset) => (
-					<option key={asset.reference} value={asset.reference} />
-				))}
-			</datalist>
 			<button
 				type="button"
 				disabled={disabled || !value}

@@ -227,7 +227,7 @@ namespace PlutoGE::scene
     std::vector<Property> LightComponent::Serialize() const
     {
         std::vector<Property> properties{
-            {"Color", PropertyType::Vec3, std::to_string(m_config.color.x) + "," + std::to_string(m_config.color.y) + "," + std::to_string(m_config.color.z)},
+            {"Color", PropertyType::Color, std::to_string(m_config.color.x) + "," + std::to_string(m_config.color.y) + "," + std::to_string(m_config.color.z)},
             {"Intensity", PropertyType::Float, std::to_string(m_config.intensity)},
             {"Range", PropertyType::Float, std::to_string(m_config.range)},
             {"CastsShadows", PropertyType::Bool, m_config.castsShadows ? "true" : "false"},

@@ -29,14 +29,14 @@ namespace PlutoGE::scene
             {"Ozone Strength", PropertyType::Float, std::to_string(m_ozoneStrength)},
             {"Sun Intensity", PropertyType::Float, std::to_string(m_sunIntensity)},
             {"Sun Angular Radius", PropertyType::Float, std::to_string(m_sunAngularRadius)},
-            {"Sun Color", PropertyType::Vec3, ToString(m_sunColor)},
+            {"Sun Color", PropertyType::Color, ToString(m_sunColor)},
             {"Exposure", PropertyType::Float, std::to_string(m_exposure)},
             {"Night Intensity", PropertyType::Float, std::to_string(m_nightIntensity)},
             {"Star Intensity", PropertyType::Float, std::to_string(m_starIntensity)},
             {"Moon Intensity", PropertyType::Float, std::to_string(m_moonIntensity)},
             {"Moon Angular Radius", PropertyType::Float, std::to_string(m_moonAngularRadius)},
-            {"Moon Color", PropertyType::Vec3, ToString(m_moonColor)},
-            {"Ground Color", PropertyType::Vec3, ToString(m_groundColor)},
+            {"Moon Color", PropertyType::Color, ToString(m_moonColor)},
+            {"Ground Color", PropertyType::Color, ToString(m_groundColor)},
         };
     }
 

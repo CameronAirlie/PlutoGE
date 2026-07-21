@@ -215,7 +215,7 @@ namespace PlutoGE::scene
 
         void SerializeInlineMaterialProperties(std::vector<Property> &properties, const std::string &prefix, const render::MaterialConfig &config)
         {
-            properties.push_back({prefix + "Color", PropertyType::String, SerializeVec4(config.color)});
+            properties.push_back({prefix + "Color", PropertyType::Color, SerializeVec4(config.color)});
             properties.push_back({prefix + "AlbedoPath", PropertyType::String, config.albedoTexture ? config.albedoTexture->GetFilePath() : std::string{}});
             properties.push_back({prefix + "SurfaceType", PropertyType::String, ToString(config.surfaceType)});
             properties.push_back({prefix + "AlphaMode", PropertyType::String, config.alphaMode == render::AlphaMode::Blend ? "Blend" : config.alphaMode == render::AlphaMode::Mask ? "Mask" : "Opaque"});
@@ -228,7 +228,7 @@ namespace PlutoGE::scene
             properties.push_back({prefix + "Transmission", PropertyType::Float, std::to_string(config.transmission)});
             properties.push_back({prefix + "Ior", PropertyType::Float, std::to_string(config.ior)});
             properties.push_back({prefix + "Thickness", PropertyType::Float, std::to_string(config.thickness)});
-            properties.push_back({prefix + "AttenuationColor", PropertyType::String, SerializeVec3(config.attenuationColor)});
+            properties.push_back({prefix + "AttenuationColor", PropertyType::Color, SerializeVec3(config.attenuationColor)});
             properties.push_back({prefix + "AttenuationDistance", PropertyType::Float, std::to_string(config.attenuationDistance)});
             properties.push_back({prefix + "FlipNormalY", PropertyType::Bool, config.flipNormalY ? "true" : "false"});
             properties.push_back({prefix + "LightmapPath", PropertyType::String, config.lightmapTexture ? config.lightmapTexture->GetFilePath() : std::string{}});
@@ -318,9 +318,12 @@ namespace PlutoGE::scene
         {
             if (serializedMaterial.albedoPath.has_value())
             {
-                material.SetAlbedoTexture(serializedMaterial.albedoPath->empty()
+                auto &engine = core::Engine::GetInstance();
+                const std::string resolvedPath =
+                    engine.GetAssetManager().ResolveAssetPath(*serializedMaterial.albedoPath);
+                material.SetAlbedoTexture(resolvedPath.empty()
                                               ? nullptr
-                                              : render::Texture::LoadFromFile(serializedMaterial.albedoPath->c_str()));
+                                              : engine.GetTextureManager().LoadTextureFromFile(resolvedPath.c_str()));
             }
             if (serializedMaterial.color.has_value())
             {
@@ -390,7 +393,10 @@ namespace PlutoGE::scene
                 }
                 else
                 {
-                    auto *lightmapTexture = core::Engine::GetInstance().GetTextureManager().LoadLightmapFromFile(serializedMaterial.lightmapPath->c_str());
+                    auto &engine = core::Engine::GetInstance();
+                    const std::string resolvedPath =
+                        engine.GetAssetManager().ResolveAssetPath(*serializedMaterial.lightmapPath);
+                    auto *lightmapTexture = engine.GetTextureManager().LoadLightmapFromFile(resolvedPath.c_str());
                     material.SetLightmapTexture(lightmapTexture);
                 }
             }

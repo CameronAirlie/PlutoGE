@@ -294,7 +294,9 @@ namespace PlutoGE::render
         auto &textureManager = core::Engine::GetInstance().GetTextureManager();
         if (!m_texturePath.empty())
         {
-            m_flareTexture = textureManager.LoadTextureFromFile(m_texturePath.c_str());
+            const std::string resolvedTexturePath =
+                core::Engine::GetInstance().GetAssetManager().ResolveAssetPath(m_texturePath);
+            m_flareTexture = textureManager.LoadTextureFromFile(resolvedTexturePath.c_str());
             if (m_flareTexture)
             {
                 m_loadedTexturePath = m_texturePath;

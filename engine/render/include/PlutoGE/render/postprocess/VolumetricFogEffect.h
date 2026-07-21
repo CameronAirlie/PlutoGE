@@ -40,7 +40,7 @@ namespace PlutoGE::render
         float m_ambientContribution = 0.3f;
         float m_directionalContribution = 6.0f;
         float m_maxOpacity = 0.05f;
-        int m_stepCount = 16;
+        int m_stepCount = 64;
         int m_internalWidth = 0;
         int m_internalHeight = 0;
         bool m_halfResolution = true;

@@ -928,6 +928,32 @@ input:disabled {
 	background: #252b34;
 	font-size: 11px;
 }
+.viewport-panel .panel-actions {
+	width: 100%;
+	min-width: 0;
+	margin-left: 0;
+	overflow-x: auto;
+	scrollbar-width: none;
+}
+.viewport-panel .panel-actions::-webkit-scrollbar {
+	display: none;
+}
+.viewport-toolbar-caption {
+	display: flex;
+	align-items: center;
+	flex: 0 0 auto;
+	color: #858f9f;
+	font-size: 10px;
+	text-transform: uppercase;
+}
+.panel-actions .viewport-composite-select {
+	flex: 0 0 145px;
+	min-width: 145px;
+}
+.viewport-panel .panel-actions > label {
+	flex: 0 0 auto;
+	white-space: nowrap;
+}
 .dock-panel-body {
 	flex: 1;
 	min-width: 0;

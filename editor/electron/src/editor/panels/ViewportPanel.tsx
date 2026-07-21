@@ -1,6 +1,19 @@
 import React, { useEffect, useLayoutEffect, useRef } from "react";
 import { PanelFrame } from "../components/PanelFrame";
 
+const compositeViews = [
+	{ value: 0, label: "Composite (Lit)" },
+	{ value: 1, label: "G-buffer Quadrants" },
+	{ value: 2, label: "World Position" },
+	{ value: 3, label: "World Normal" },
+	{ value: 4, label: "Albedo" },
+	{ value: 5, label: "Depth" },
+	{ value: 6, label: "Shadow Cascades" },
+	{ value: 7, label: "Raw Shadow Mask" },
+	{ value: 8, label: "Filtered Shadow Mask" },
+	{ value: 9, label: "LOD" },
+] as const;
+
 export function ViewportPanel({
 	host,
 	editor,
@@ -50,6 +63,9 @@ export function ViewportPanel({
 	}, []);
 
 	const settings = editor?.viewportSettings;
+	const compositeView =
+		compositeViews.find((view) => view.value === settings?.debugView) ??
+		compositeViews[0];
 	const updateSettings = (
 		changes: Partial<EditorState["viewportSettings"]>,
 	): void => {
@@ -58,27 +74,19 @@ export function ViewportPanel({
 	};
 	const actions = editor ? (
 		<>
+			<span className="viewport-toolbar-caption">Composite</span>
 			<select
-				aria-label="Debug view"
+				className="viewport-composite-select"
+				aria-label="Viewport composite"
+				title="Choose the viewport composite or diagnostic render output"
 				value={settings?.debugView ?? 0}
 				onChange={(event) =>
 					updateSettings({ debugView: Number(event.currentTarget.value) })
 				}
 			>
-				{[
-					"Lit",
-					"Quadrants",
-					"Position",
-					"Normal",
-					"Albedo",
-					"Depth",
-					"Shadow Cascades",
-					"Raw Shadow Mask",
-					"Filtered Shadow Mask",
-					"LOD",
-				].map((label, index) => (
-					<option key={label} value={index}>
-						{label}
+				{compositeViews.map((view) => (
+					<option key={view.value} value={view.value}>
+						{view.label}
 					</option>
 				))}
 			</select>
@@ -180,7 +188,7 @@ export function ViewportPanel({
 			>
 				<div className="viewport-overlay">
 					<span>Perspective</span>
-					<span>Lit</span>
+					<span>{compositeView.label}</span>
 				</div>
 				{host.status !== "ready" && (
 					<div className="viewport-message">

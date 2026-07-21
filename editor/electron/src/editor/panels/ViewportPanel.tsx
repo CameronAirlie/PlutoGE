@@ -1,4 +1,5 @@
-import React, { useEffect, useLayoutEffect, useRef } from "react";
+import React from "react";
+import { EngineViewportCanvas } from "../components/EngineViewportCanvas";
 import { PanelFrame } from "../components/PanelFrame";
 
 const compositeViews = [
@@ -21,47 +22,6 @@ export function ViewportPanel({
 	host: HostState;
 	editor?: EditorState;
 }): React.JSX.Element {
-	const viewport = useRef<HTMLDivElement>(null);
-
-	useLayoutEffect(() => {
-		const element = viewport.current;
-		if (!element) return;
-		let animationFrame = 0;
-		let previousBounds = "";
-		const updateBounds = (): void => {
-			const bounds = element.getBoundingClientRect();
-			const scale = window.devicePixelRatio;
-			const next = [bounds.left, bounds.top, bounds.width, bounds.height].map(
-				(value) => Math.round(value * scale),
-			);
-			const key = next.join(",");
-			if (key !== previousBounds && next[2] > 0 && next[3] > 0) {
-				previousBounds = key;
-				window.plutoEditor.setViewportBounds({
-					x: next[0],
-					y: next[1],
-					width: next[2],
-					height: next[3],
-				});
-			}
-			animationFrame = requestAnimationFrame(updateBounds);
-		};
-		updateBounds();
-		return () => {
-			cancelAnimationFrame(animationFrame);
-			window.plutoEditor.setViewportVisible(false);
-		};
-	}, []);
-
-	useEffect(() => {
-		const updateVisibility = (): void =>
-			window.plutoEditor.setViewportVisible(!document.hidden);
-		document.addEventListener("visibilitychange", updateVisibility);
-		updateVisibility();
-		return () =>
-			document.removeEventListener("visibilitychange", updateVisibility);
-	}, []);
-
 	const settings = editor?.viewportSettings;
 	const compositeView =
 		compositeViews.find((view) => view.value === settings?.debugView) ??
@@ -172,7 +132,6 @@ export function ViewportPanel({
 			className="viewport-panel"
 		>
 			<div
-				ref={viewport}
 				className="viewport"
 				aria-label="Engine viewport"
 				onDragOver={(event) => {
@@ -186,6 +145,7 @@ export function ViewportPanel({
 					if (reference) window.plutoEditor.instantiateAsset(reference);
 				}}
 			>
+				<EngineViewportCanvas kind="scene" />
 				<div className="viewport-overlay">
 					<span>Perspective</span>
 					<span>{compositeView.label}</span>

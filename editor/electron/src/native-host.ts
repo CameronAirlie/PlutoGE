@@ -23,6 +23,29 @@ export type HostOperationProgress = {
 	detail?: string;
 };
 
+export type HostCpuViewportFrame = {
+	transport: "cpu";
+	sequence: number;
+	generation: number;
+	width: number;
+	height: number;
+	sourceWidth: number;
+	sourceHeight: number;
+	pixels: Buffer;
+};
+
+export type HostSharedTextureFrame = {
+	transport: "shared-texture";
+	sequence: number;
+	generation: number;
+	slot: number;
+	width: number;
+	height: number;
+	handle: bigint;
+};
+
+export type HostViewportFrame = HostCpuViewportFrame | HostSharedTextureFrame;
+
 export type HostPerformance = {
 	fps: number;
 	frameTimeMs: number;
@@ -86,6 +109,9 @@ export class NativeHost {
 		private readonly onOperationProgress: (
 			progress: HostOperationProgress,
 		) => void = () => {},
+		private readonly onViewportFrame: (
+			frame: HostViewportFrame,
+		) => void = () => {},
 	) {}
 
 	public getState(): HostState {
@@ -146,7 +172,13 @@ export class NativeHost {
 		this.updateState({ status: "starting" });
 		const child = spawn(
 			executable,
-			["--parent-hwnd", `0x${handle.toString(16)}`, ...this.extraArguments],
+			[
+				"--parent-hwnd",
+				`0x${handle.toString(16)}`,
+				"--electron-pid",
+				String(process.pid),
+				...this.extraArguments,
+			],
 			{
 				cwd: path.dirname(executable),
 				env: this.createEnvironment(executable),
@@ -175,6 +207,16 @@ export class NativeHost {
 					success?: boolean;
 					progress?: number;
 					detail?: string;
+					transport?: string;
+					sequence?: number;
+					generation?: number;
+					width?: number;
+					height?: number;
+					sourceWidth?: number;
+					sourceHeight?: number;
+					data?: string;
+					slot?: number;
+					handle?: string;
 				} & Partial<NativeEditorState> &
 					Partial<HostPerformance>;
 				if (event.type === "ready") {
@@ -188,11 +230,15 @@ export class NativeHost {
 					console.warn(`[${this.diagnosticLabel}] ${event.message}`);
 					this.onDiagnostic("error", event.message);
 				}
-				if (event.type === "editor-log" && event.message)
+				if (event.type === "editor-log" && event.message) {
+					console[event.success === false ? "warn" : "info"](
+						`[${this.diagnosticLabel}] ${event.message}`,
+					);
 					this.onDiagnostic(
 						event.success === false ? "warning" : "info",
 						event.message,
 					);
+				}
 				if (event.type === "editor-state") {
 					this.editorState = event as NativeEditorState;
 					this.onEditorState(this.editorState);
@@ -200,6 +246,50 @@ export class NativeHost {
 				if (event.type === "performance") {
 					this.performance = event as HostPerformance;
 					this.onPerformance(this.performance);
+				}
+				if (
+					event.type === "viewport-frame" &&
+					event.transport === "cpu" &&
+					typeof event.sequence === "number" &&
+					typeof event.generation === "number" &&
+					typeof event.width === "number" &&
+					typeof event.height === "number" &&
+					typeof event.sourceWidth === "number" &&
+					typeof event.sourceHeight === "number" &&
+					typeof event.data === "string"
+				) {
+					const pixels = Buffer.from(event.data, "base64");
+					if (pixels.length === event.width * event.height * 4)
+						this.onViewportFrame({
+							transport: "cpu",
+							sequence: event.sequence,
+							generation: event.generation,
+							width: event.width,
+							height: event.height,
+							sourceWidth: event.sourceWidth,
+							sourceHeight: event.sourceHeight,
+							pixels,
+						});
+				}
+				if (
+					event.type === "viewport-shared-frame" &&
+					event.transport === "shared-texture" &&
+					typeof event.sequence === "number" &&
+					typeof event.generation === "number" &&
+					typeof event.slot === "number" &&
+					typeof event.width === "number" &&
+					typeof event.height === "number" &&
+					typeof event.handle === "string"
+				) {
+					this.onViewportFrame({
+						transport: "shared-texture",
+						sequence: event.sequence,
+						generation: event.generation,
+						slot: event.slot,
+						width: event.width,
+						height: event.height,
+						handle: BigInt(event.handle),
+					});
 				}
 				if (
 					event.type === "operation-progress" &&

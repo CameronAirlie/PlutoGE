@@ -199,7 +199,7 @@ namespace PlutoGE::render
         bool CaptureSceneCubemap(const glm::vec3 &position, int resolution, float farPlane, Texture *targetCubemap, std::vector<scene::Light *> lights = {}, const scene::Scene *scene = nullptr);
         void RenderFrame(const scene::CameraComponent &cameraComponent, RenderTarget *renderTarget = nullptr, std::vector<scene::Light *> lights = {});
         void RenderFrame(const CameraData &cameraData, RenderTarget *renderTarget = nullptr, std::vector<scene::Light *> lights = {}, const std::vector<IPostProcessEffect *> *postProcessEffects = nullptr, const scene::Scene *scene = nullptr, bool renderEditorGrid = false, bool interactivePreview = false);
-        void EndFrame(RenderTarget *renderTarget = nullptr);
+        void EndFrame(RenderTarget *renderTarget = nullptr, bool present = true);
         void Shutdown(RenderTarget *renderTarget = nullptr);
         void ClearRenderCommands();
         void SetSubmissionCullingCameras(const std::vector<CameraData> &cameraDatas);

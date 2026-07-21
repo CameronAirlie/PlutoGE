@@ -1,7 +1,15 @@
 import fs from "node:fs";
 import path from "node:path";
-import { app, BrowserWindow, dialog, ipcMain, screen, shell } from "electron";
-import { NativeHost } from "./native-host";
+import {
+	app,
+	BrowserWindow,
+	dialog,
+	ipcMain,
+	screen,
+	sharedTexture,
+	shell,
+} from "electron";
+import { NativeHost, type HostViewportFrame } from "./native-host";
 
 let mainWindow: BrowserWindow | undefined;
 let nativeHost: NativeHost | undefined;
@@ -34,9 +42,17 @@ type NativeSurface = {
 	visible: boolean;
 	owner?: BrowserWindow;
 };
+type ViewportInputPayload =
+	| { type: "pointer"; x: number; y: number; deltaX: number; deltaY: number }
+	| { type: "button"; button: number; down: boolean }
+	| { type: "wheel"; deltaX: number; deltaY: number }
+	| { type: "key"; key: number; down: boolean }
+	| { type: "reset" };
 const sceneSurface: NativeSurface = { visible: false };
 const gameSurface: NativeSurface = { visible: false };
 const viewportOcclusions = new Set<string>();
+const streamViewports = process.env.PLUTOGE_NATIVE_VIEWPORT !== "1";
+const forceCpuViewports = process.env.PLUTOGE_CPU_VIEWPORT === "1";
 let mirroredProjectPath = "";
 let mirroredScenePath = "";
 let nextEditorOperationId = 1;
@@ -121,6 +137,119 @@ const syncSurface = (
 const syncViewports = (): void => {
 	syncSurface(nativeHost, sceneSurface);
 	syncSurface(gameHost, gameSurface);
+};
+
+const sendViewportFrame = async (
+	channel: "viewport:frame" | "game-viewport:frame",
+	surface: NativeSurface,
+	frame: HostViewportFrame,
+	host: NativeHost | undefined,
+): Promise<void> => {
+	const owner = surface.owner;
+	if (
+		!surface.visible ||
+		!owner ||
+		owner.isDestroyed() ||
+		owner.webContents.isDestroyed()
+	)
+	{
+		if (frame.transport === "shared-texture")
+			host?.send(`frame_release ${frame.generation} ${frame.slot}`);
+		return;
+	}
+	if (frame.transport === "cpu") {
+		owner.webContents.send(channel, frame);
+		return;
+	}
+
+	const handle = Buffer.alloc(process.arch === "ia32" ? 4 : 8);
+	if (handle.length === 4) handle.writeUInt32LE(Number(frame.handle));
+	else handle.writeBigUInt64LE(frame.handle);
+	let released = false;
+	const releaseHostFrame = (): void => {
+		if (released) return;
+		released = true;
+		host?.send(`frame_release ${frame.generation} ${frame.slot}`);
+	};
+	try {
+		const imported = sharedTexture.importSharedTexture({
+			textureInfo: {
+				pixelFormat: "bgra",
+				codedSize: { width: frame.width, height: frame.height },
+				visibleRect: {
+					x: 0,
+					y: 0,
+					width: frame.width,
+					height: frame.height,
+				},
+				handle: { ntHandle: handle },
+				timestamp: Math.round(performance.now() * 1000),
+			},
+			allReferencesReleased: releaseHostFrame,
+		});
+		try {
+			await sharedTexture.sendSharedTexture(
+				{
+					frame: owner.webContents.mainFrame,
+					importedSharedTexture: imported,
+				},
+				{
+					kind: channel === "viewport:frame" ? "scene" : "game",
+					width: frame.width,
+					height: frame.height,
+					generation: frame.generation,
+					sequence: frame.sequence,
+					flipped: true,
+				},
+			);
+		} finally {
+			imported.release();
+		}
+	} catch (error) {
+		appendConsoleMessage(
+			"warning",
+			"Viewport",
+			`Shared texture import failed: ${error instanceof Error ? error.message : String(error)}`,
+		);
+		host?.send("shared_texture_failed");
+		releaseHostFrame();
+	}
+};
+
+const sendViewportInput = (
+	host: NativeHost | undefined,
+	value: unknown,
+): void => {
+	if (!host || !value || typeof value !== "object") return;
+	const input = value as Partial<ViewportInputPayload> & Record<string, unknown>;
+	if (input.type === "reset") {
+		host.send("input_reset");
+		return;
+	}
+	if (input.type === "pointer") {
+		const values = [input.x, input.y, input.deltaX, input.deltaY].map(Number);
+		if (!values.every(Number.isFinite)) return;
+		host.send(`input_pointer ${values.join(" ")}`);
+		return;
+	}
+	if (input.type === "button") {
+		const button = Number(input.button);
+		if (!Number.isInteger(button) || button < 0 || button > 7)
+			return;
+		host.send(`input_button ${button} ${input.down === true ? 1 : 0}`);
+		return;
+	}
+	if (input.type === "wheel") {
+		const values = [input.deltaX, input.deltaY].map(Number);
+		if (!values.every(Number.isFinite)) return;
+		host.send(`input_wheel ${values.join(" ")}`);
+		return;
+	}
+	if (input.type === "key") {
+		const key = Number(input.key);
+		if (!Number.isInteger(key) || key < 0 || key >= 512) return;
+		host.send(`input_key ${key} ${input.down === true ? 1 : 0}`);
+	}
 };
 
 const syncViewportPeerProcesses = (): void => {
@@ -460,12 +589,16 @@ const createWindow = (): void => {
 		(performance) => {
 			sendToEditorWindows("host:performance", performance);
 		},
-		[],
+		streamViewports
+			? ["--streamed", ...(forceCpuViewports ? ["--cpu-stream"] : [])]
+			: [],
 		"PlutoGEEditorHost",
 		completeEditorOperation,
 		(severity, message) =>
 			appendConsoleMessage(severity, "Scene Host", message),
 		updateEditorOperationProgress,
+		(frame) =>
+			void sendViewportFrame("viewport:frame", sceneSurface, frame, nativeHost),
 	);
 	gameHost = new NativeHost(
 		editorWindow,
@@ -491,7 +624,12 @@ const createWindow = (): void => {
 		(performance) => {
 			sendToEditorWindows("game-host:performance", performance);
 		},
-		["--view-mode", "game"],
+		[
+			"--view-mode",
+			"game",
+			...(streamViewports ? ["--streamed"] : []),
+			...(forceCpuViewports ? ["--cpu-stream"] : []),
+		],
 		"PlutoGEGameViewHost",
 		(result) => {
 			syncSurface(gameHost, gameSurface);
@@ -520,6 +658,14 @@ const createWindow = (): void => {
 			}
 		},
 		(severity, message) => appendConsoleMessage(severity, "Game Host", message),
+		() => {},
+		(frame) =>
+			void sendViewportFrame(
+				"game-viewport:frame",
+				gameSurface,
+				frame,
+				gameHost,
+			),
 	);
 	editorWindow.webContents.once("did-finish-load", () => {
 		nativeHost?.start();
@@ -611,6 +757,16 @@ ipcMain.on("game-viewport:set-visible", (event, visible: unknown) => {
 		gameSurface.visible = visible;
 		syncSurface(gameHost, gameSurface);
 	}
+});
+
+ipcMain.on("viewport:input", (event, value: unknown) => {
+	if (!isTrustedSender(event) || sceneSurface.owner !== senderWindow(event)) return;
+	sendViewportInput(nativeHost, value);
+});
+
+ipcMain.on("game-viewport:input", (event, value: unknown) => {
+	if (!isTrustedSender(event) || gameSurface.owner !== senderWindow(event)) return;
+	sendViewportInput(gameHost, value);
 });
 
 ipcMain.on(

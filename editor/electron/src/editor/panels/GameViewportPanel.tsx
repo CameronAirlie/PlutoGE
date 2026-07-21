@@ -1,4 +1,5 @@
-import React, { useEffect, useLayoutEffect, useRef } from "react";
+import React from "react";
+import { EngineViewportCanvas } from "../components/EngineViewportCanvas";
 import { PanelFrame } from "../components/PanelFrame";
 
 export function GameViewportPanel({
@@ -8,7 +9,6 @@ export function GameViewportPanel({
 	host: HostState;
 	editor?: EditorState;
 }): React.JSX.Element {
-	const viewport = useRef<HTMLDivElement>(null);
 	const hasCamera =
 		editor?.entities.some(
 			(entity) =>
@@ -19,45 +19,6 @@ export function GameViewportPanel({
 				),
 		) ?? false;
 
-	useLayoutEffect(() => {
-		const element = viewport.current;
-		if (!element) return;
-		let animationFrame = 0;
-		let previousBounds = "";
-		const updateBounds = (): void => {
-			const bounds = element.getBoundingClientRect();
-			const scale = window.devicePixelRatio;
-			const next = [bounds.left, bounds.top, bounds.width, bounds.height].map(
-				(value) => Math.round(value * scale),
-			);
-			const key = next.join(",");
-			if (key !== previousBounds && next[2] > 0 && next[3] > 0) {
-				previousBounds = key;
-				window.plutoEditor.setGameViewportBounds({
-					x: next[0],
-					y: next[1],
-					width: next[2],
-					height: next[3],
-				});
-			}
-			animationFrame = requestAnimationFrame(updateBounds);
-		};
-		updateBounds();
-		return () => {
-			cancelAnimationFrame(animationFrame);
-			window.plutoEditor.setGameViewportVisible(false);
-		};
-	}, []);
-
-	useEffect(() => {
-		const updateVisibility = (): void =>
-			window.plutoEditor.setGameViewportVisible(!document.hidden);
-		document.addEventListener("visibilitychange", updateVisibility);
-		updateVisibility();
-		return () =>
-			document.removeEventListener("visibilitychange", updateVisibility);
-	}, []);
-
 	return (
 		<PanelFrame
 			id="game"
@@ -65,10 +26,10 @@ export function GameViewportPanel({
 			className="viewport-panel game-viewport-panel"
 		>
 			<div
-				ref={viewport}
 				className="viewport"
 				aria-label="Game camera viewport"
 			>
+				<EngineViewportCanvas kind="game" />
 				<div className="viewport-overlay">
 					<span>Game Camera</span>
 					<span>Rendered</span>

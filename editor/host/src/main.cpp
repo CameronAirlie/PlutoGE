@@ -14,10 +14,13 @@
 #include "PlutoGE/scene/components/MeshComponent.h"
 #include "EditorSession.h"
 #include "EditorViewportInteraction.h"
+#include "SharedTexturePublisher.h"
 
+#include <glad/glad.h>
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -74,6 +77,10 @@ namespace
         int width = 960;
         int height = 640;
         bool gameView = false;
+        bool streamed = false;
+        bool cpuStream = false;
+        bool sharedTextureSmoke = false;
+        std::uint32_t electronProcessId = 0;
     };
 
     HostOptions ParseOptions(int argc, char **argv)
@@ -98,6 +105,22 @@ namespace
             else if (argument == "--view-mode" && index + 1 < argc)
             {
                 options.gameView = std::string_view(argv[++index]) == "game";
+            }
+            else if (argument == "--streamed")
+            {
+                options.streamed = true;
+            }
+            else if (argument == "--cpu-stream")
+            {
+                options.cpuStream = true;
+            }
+            else if (argument == "--electron-pid" && index + 1 < argc)
+            {
+                options.electronProcessId = static_cast<std::uint32_t>(std::stoul(argv[++index]));
+            }
+            else if (argument == "--shared-texture-smoke")
+            {
+                options.sharedTextureSmoke = true;
             }
         }
         return options;
@@ -173,6 +196,159 @@ namespace
     {
         std::cout << json << '\n' << std::flush;
     }
+
+    std::string Base64Encode(const std::vector<std::uint8_t> &bytes)
+    {
+        static constexpr char alphabet[] =
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        std::string encoded;
+        encoded.reserve(((bytes.size() + 2) / 3) * 4);
+        for (std::size_t index = 0; index < bytes.size(); index += 3)
+        {
+            const std::uint32_t first = bytes[index];
+            const std::uint32_t second = index + 1 < bytes.size() ? bytes[index + 1] : 0;
+            const std::uint32_t third = index + 2 < bytes.size() ? bytes[index + 2] : 0;
+            const std::uint32_t value = (first << 16u) | (second << 8u) | third;
+            encoded.push_back(alphabet[(value >> 18u) & 0x3fu]);
+            encoded.push_back(alphabet[(value >> 12u) & 0x3fu]);
+            encoded.push_back(index + 1 < bytes.size() ? alphabet[(value >> 6u) & 0x3fu] : '=');
+            encoded.push_back(index + 2 < bytes.size() ? alphabet[value & 0x3fu] : '=');
+        }
+        return encoded;
+    }
+
+#ifdef _WIN32
+    void *LoadHostOpenGlProcedure(const char *name)
+    {
+        static HMODULE openGlModule = LoadLibraryA("opengl32.dll");
+        PROC procedure = wglGetProcAddress(name);
+        if (procedure == nullptr || procedure == reinterpret_cast<PROC>(1) ||
+            procedure == reinterpret_cast<PROC>(2) || procedure == reinterpret_cast<PROC>(3) ||
+            procedure == reinterpret_cast<PROC>(-1))
+        {
+            procedure = openGlModule ? GetProcAddress(openGlModule, name) : nullptr;
+        }
+        return reinterpret_cast<void *>(procedure);
+    }
+#endif
+
+    class CpuFramePublisher
+    {
+    public:
+        bool PublishIfDue(int sourceWidth, int sourceHeight)
+        {
+            if (sourceWidth <= 0 || sourceHeight <= 0) return false;
+            const auto now = std::chrono::steady_clock::now();
+            if (m_lastPublish.time_since_epoch().count() != 0 &&
+                now - m_lastPublish < std::chrono::milliseconds(125))
+            {
+                return false;
+            }
+
+#ifdef _WIN32
+            if (!glad_glReadPixels && !gladLoadGLLoader(&LoadHostOpenGlProcedure)) return false;
+#endif
+            if (!glad_glReadPixels) return false;
+
+            constexpr int maxCaptureDimension = 800;
+            const float captureScale = std::min(
+                1.0f,
+                static_cast<float>(maxCaptureDimension) /
+                    static_cast<float>(std::max(sourceWidth, sourceHeight)));
+            const int width = std::max(1, static_cast<int>(std::round(sourceWidth * captureScale)));
+            const int height = std::max(1, static_cast<int>(std::round(sourceHeight * captureScale)));
+
+            m_sourcePixels.resize(static_cast<std::size_t>(sourceWidth) * sourceHeight * 4u);
+            GLint previousReadFramebuffer = 0;
+            GLint previousReadBuffer = GL_BACK;
+            glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previousReadFramebuffer);
+            glGetIntegerv(GL_READ_BUFFER, &previousReadBuffer);
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+            glPixelStorei(GL_PACK_ALIGNMENT, 1);
+            glReadBuffer(GL_BACK);
+            glReadPixels(0, 0, sourceWidth, sourceHeight, GL_RGBA, GL_UNSIGNED_BYTE, m_sourcePixels.data());
+            glReadBuffer(static_cast<GLenum>(previousReadBuffer));
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(previousReadFramebuffer));
+
+            m_capturePixels.resize(static_cast<std::size_t>(width) * height * 4u);
+            for (int outputY = 0; outputY < height; ++outputY)
+            {
+                const int sourceTopY = std::min(sourceHeight - 1, outputY * sourceHeight / height);
+                const int sourceY = sourceHeight - 1 - sourceTopY;
+                for (int outputX = 0; outputX < width; ++outputX)
+                {
+                    const int sourceX = std::min(sourceWidth - 1, outputX * sourceWidth / width);
+                    const auto sourceOffset = (static_cast<std::size_t>(sourceY) * sourceWidth + sourceX) * 4u;
+                    const auto destinationOffset = (static_cast<std::size_t>(outputY) * width + outputX) * 4u;
+                    std::copy_n(m_sourcePixels.data() + sourceOffset, 4, m_capturePixels.data() + destinationOffset);
+                }
+            }
+
+            if (sourceWidth != m_previousSourceWidth || sourceHeight != m_previousSourceHeight)
+            {
+                ++m_generation;
+                m_previousSourceWidth = sourceWidth;
+                m_previousSourceHeight = sourceHeight;
+            }
+
+            std::ostringstream event;
+            event << "{\"type\":\"viewport-frame\",\"transport\":\"cpu\",\"sequence\":" << ++m_sequence
+                  << ",\"generation\":" << m_generation
+                  << ",\"width\":" << width << ",\"height\":" << height
+                  << ",\"sourceWidth\":" << sourceWidth << ",\"sourceHeight\":" << sourceHeight
+                  << ",\"data\":\"" << Base64Encode(m_capturePixels) << "\"}";
+            WriteEvent(event.str());
+            m_lastPublish = now;
+            return true;
+        }
+
+    private:
+        std::chrono::steady_clock::time_point m_lastPublish{};
+        std::vector<std::uint8_t> m_sourcePixels;
+        std::vector<std::uint8_t> m_capturePixels;
+        std::uint64_t m_sequence = 0;
+        std::uint64_t m_generation = 0;
+        int m_previousSourceWidth = 0;
+        int m_previousSourceHeight = 0;
+    };
+
+    struct RemoteInputState
+    {
+        std::array<bool, 512> keys{};
+        std::array<bool, 8> buttons{};
+        double x = 0.0;
+        double y = 0.0;
+        double deltaX = 0.0;
+        double deltaY = 0.0;
+        double scrollX = 0.0;
+        double scrollY = 0.0;
+
+        void Reset()
+        {
+            keys.fill(false);
+            buttons.fill(false);
+            deltaX = 0.0;
+            deltaY = 0.0;
+            scrollX = 0.0;
+            scrollY = 0.0;
+        }
+
+        void Apply(PlutoGE::platform::InputState &input)
+        {
+            input.keys = keys;
+            std::copy(buttons.begin(), buttons.end(), input.mouseState.buttons);
+            input.mouseState.x = x;
+            input.mouseState.y = y;
+            input.mouseState.deltaX += deltaX;
+            input.mouseState.deltaY += deltaY;
+            input.mouseState.scrollDeltaX += scrollX;
+            input.mouseState.scrollDeltaY += scrollY;
+            deltaX = 0.0;
+            deltaY = 0.0;
+            scrollX = 0.0;
+            scrollY = 0.0;
+        }
+    };
 
     std::string JsonEscape(std::string_view value)
     {
@@ -327,6 +503,27 @@ int main(int argc, char **argv)
     // settings applies the project's VSync preference through the renderer,
     // just as it does for a standalone engine window.
     renderer.SetVSyncEnabled(!embedded);
+    if (options.streamed) window.SetCursorLockOverride(true);
+
+    if (options.sharedTextureSmoke)
+    {
+        SharedTexturePublisher publisher;
+        std::string error;
+        bool succeeded = options.electronProcessId != 0 && publisher.Initialize(options.electronProcessId, error);
+        if (succeeded)
+        {
+            renderer.BeginFrame();
+            const auto frame = publisher.Publish(options.width, options.height, error);
+            renderer.EndFrame();
+            succeeded = frame.has_value();
+            if (frame) publisher.Release(frame->generation, frame->slot);
+        }
+        publisher.Shutdown();
+        std::cout << "{\"sharedTexture\":" << (succeeded ? "true" : "false")
+                  << ",\"message\":\"" << JsonEscape(error) << "\"}" << std::endl;
+        engine.Shutdown();
+        return succeeded ? 0 : 3;
+    }
 
     EditorSession editorSession(engine);
     if (!editorSession.Initialize())
@@ -344,6 +541,11 @@ int main(int argc, char **argv)
     bool editorCameraLookActive = false;
     bool editorCameraInputChanged = false;
     EditorViewportInteraction viewportInteraction;
+    CpuFramePublisher framePublisher;
+    SharedTexturePublisher sharedTexturePublisher;
+    bool sharedTextureTransportFailed = false;
+    std::chrono::steady_clock::time_point sharedTextureStarvedSince{};
+    RemoteInputState remoteInput;
     auto previousFrameTime = std::chrono::steady_clock::now();
     auto performanceWindowStart = previousFrameTime;
     auto previousLoopEnd = previousFrameTime;
@@ -359,6 +561,20 @@ int main(int argc, char **argv)
     float performanceWaitTotalMs = 0.0f;
     float performanceCpuPassTotalMs = 0.0f;
     float performanceGpuPassTotalMs = 0.0f;
+
+    if (options.streamed && !options.cpuStream && options.electronProcessId != 0)
+    {
+        std::string sharedTextureError;
+        if (sharedTexturePublisher.Initialize(options.electronProcessId, sharedTextureError))
+        {
+            WriteEvent(R"({"type":"editor-log","message":"GPU shared-texture viewport transport enabled"})");
+        }
+        else
+        {
+            WriteEvent("{\"type\":\"editor-log\",\"success\":false,\"message\":\"GPU viewport unavailable; using CPU fallback: " +
+                       JsonEscape(sharedTextureError) + "\"}");
+        }
+    }
 
     WriteEvent(R"({"type":"ready","protocol":1})");
     WriteEvent(editorSession.BuildSnapshotEvent());
@@ -453,7 +669,67 @@ int main(int argc, char **argv)
             }
             else if (name == "focus")
             {
-                window.Focus();
+                if (!options.streamed) window.Focus();
+            }
+            else if (name == "input_pointer")
+            {
+                double x = 0.0;
+                double y = 0.0;
+                double deltaX = 0.0;
+                double deltaY = 0.0;
+                if (command >> x >> y >> deltaX >> deltaY)
+                {
+                    remoteInput.x = x;
+                    remoteInput.y = y;
+                    remoteInput.deltaX += deltaX;
+                    remoteInput.deltaY += deltaY;
+                }
+            }
+            else if (name == "input_button")
+            {
+                int button = -1;
+                int down = 0;
+                if (command >> button >> down && button >= 0 && button < static_cast<int>(remoteInput.buttons.size()))
+                {
+                    remoteInput.buttons[static_cast<std::size_t>(button)] = down != 0;
+                }
+            }
+            else if (name == "input_wheel")
+            {
+                double x = 0.0;
+                double y = 0.0;
+                if (command >> x >> y)
+                {
+                    remoteInput.scrollX += x;
+                    remoteInput.scrollY += y;
+                }
+            }
+            else if (name == "input_key")
+            {
+                int key = -1;
+                int down = 0;
+                if (command >> key >> down && key >= 0 && key < static_cast<int>(remoteInput.keys.size()))
+                {
+                    remoteInput.keys[static_cast<std::size_t>(key)] = down != 0;
+                }
+            }
+            else if (name == "input_reset")
+            {
+                remoteInput.Reset();
+            }
+            else if (name == "frame_release")
+            {
+                std::uint64_t generation = 0;
+                std::uint32_t slot = 0;
+                if (command >> generation >> slot) sharedTexturePublisher.Release(generation, slot);
+            }
+            else if (name == "shared_texture_failed")
+            {
+                if (!sharedTextureTransportFailed)
+                {
+                    sharedTextureTransportFailed = true;
+                    WriteEvent(R"({"type":"editor-log","success":false,"message":"Electron rejected the GPU viewport texture; CPU fallback enabled"})");
+                }
             }
             else if (name == "shutdown")
             {
@@ -537,6 +813,7 @@ int main(int argc, char **argv)
         const auto eventPollingStart = std::chrono::steady_clock::now();
         if (embedded) window.PollEmbeddedEvents();
         else window.PollEvents();
+        if (options.streamed) remoteInput.Apply(window.GetInputState());
         const auto eventPollingEnd = std::chrono::steady_clock::now();
         eventPollingMs = std::chrono::duration<float, std::milli>(eventPollingEnd - eventPollingStart).count();
         const auto currentFrameTime = std::chrono::steady_clock::now();
@@ -622,8 +899,9 @@ int main(int argc, char **argv)
                                      (IsWindow(nativeOwner) && IsWindowVisible(nativeOwner) && !IsIconic(nativeOwner) &&
                                       (foregroundWindow == nativeOwner || foregroundWindow == nativeSurface ||
                                        (peerForegroundProcessId != 0 && foregroundProcessId == peerForegroundProcessId)));
-        const bool shouldShowSurface = visible && ownerCanPresent;
-        if (embedded && surfaceShown != shouldShowSurface)
+        const bool shouldShowSurface = visible && ownerCanPresent && !options.streamed;
+        const bool shouldRender = options.streamed ? visible : shouldShowSurface;
+        if (embedded && !options.streamed && surfaceShown != shouldShowSurface)
         {
             if (shouldShowSurface)
             {
@@ -654,7 +932,7 @@ int main(int argc, char **argv)
             surfaceShown = shouldShowSurface;
         }
 
-        if (shouldShowSurface)
+        if (shouldRender)
         {
             const auto renderStart = std::chrono::steady_clock::now();
             auto *scene = editorSession.GetScene();
@@ -685,8 +963,48 @@ int main(int argc, char **argv)
             renderer.ClearRenderCommands();
             const auto presentStart = std::chrono::steady_clock::now();
             renderMs = std::chrono::duration<float, std::milli>(presentStart - renderStart).count();
+            if (options.streamed)
+            {
+                bool publishedSharedTexture = false;
+                if (sharedTexturePublisher.IsAvailable() && !sharedTextureTransportFailed)
+                {
+                    std::string sharedTextureError;
+                    if (const auto frame = sharedTexturePublisher.Publish(extents.width, extents.height, sharedTextureError))
+                    {
+                        std::ostringstream event;
+                        event << "{\"type\":\"viewport-shared-frame\",\"transport\":\"shared-texture\",\"sequence\":"
+                              << frame->sequence << ",\"generation\":" << frame->generation
+                              << ",\"slot\":" << frame->slot << ",\"width\":" << frame->width
+                              << ",\"height\":" << frame->height << ",\"handle\":\""
+                              << frame->remoteHandle << "\"}";
+                        WriteEvent(event.str());
+                        publishedSharedTexture = true;
+                        sharedTextureStarvedSince = {};
+                    }
+                    else if (!sharedTextureError.empty())
+                    {
+                        WriteEvent("{\"type\":\"editor-log\",\"success\":false,\"message\":\"GPU viewport failed; using CPU fallback: " +
+                                   JsonEscape(sharedTextureError) + "\"}");
+                        sharedTextureTransportFailed = true;
+                    }
+                    else
+                    {
+                        const auto now = std::chrono::steady_clock::now();
+                        if (sharedTextureStarvedSince.time_since_epoch().count() == 0)
+                            sharedTextureStarvedSince = now;
+                        else if (now - sharedTextureStarvedSince > std::chrono::seconds(2))
+                        {
+                            sharedTextureTransportFailed = true;
+                            WriteEvent(R"({"type":"editor-log","success":false,"message":"GPU viewport release timed out; CPU fallback enabled"})");
+                        }
+                    }
+                }
+                if (!publishedSharedTexture &&
+                    (!sharedTexturePublisher.IsAvailable() || sharedTextureTransportFailed))
+                    framePublisher.PublishIfDue(extents.width, extents.height);
+            }
             g_hostPhase = "renderer end frame";
-            renderer.EndFrame();
+            renderer.EndFrame(nullptr, !options.streamed);
             const auto presentEnd = std::chrono::steady_clock::now();
             presentMs = std::chrono::duration<float, std::milli>(presentEnd - presentStart).count();
             cpuPassMs = renderer.GetTotalCpuPassTimeMs();
@@ -753,7 +1071,7 @@ int main(int argc, char **argv)
                   << ",\"overheadMs\":" << averageOverheadMs
                   << ",\"cpuPassMs\":" << (performanceCpuPassTotalMs * inverseFrameCount)
                   << ",\"gpuPassMs\":" << (performanceGpuPassTotalMs * inverseFrameCount)
-                  << ",\"visible\":" << (shouldShowSurface ? "true" : "false")
+                  << ",\"visible\":" << (shouldRender ? "true" : "false")
                   << ",\"vSync\":" << (renderer.IsVSyncEnabled() ? "true" : "false")
                   << ",\"profiledRenderCount\":" << renderer.GetProfiledRenderCount()
                   << ",\"viewportWidth\":" << extents.width
@@ -817,6 +1135,7 @@ int main(int argc, char **argv)
     }
 
     WriteEvent(R"({"type":"stopping"})");
+    sharedTexturePublisher.Shutdown();
     viewportInteraction.Shutdown();
     editorSession.Shutdown();
     engine.Shutdown();

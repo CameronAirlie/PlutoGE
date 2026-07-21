@@ -1,4 +1,45 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, sharedTexture } from "electron";
+
+type SharedViewportMetadata = {
+	kind: "scene" | "game";
+	width: number;
+	height: number;
+	generation: number;
+	sequence: number;
+	flipped: boolean;
+};
+
+sharedTexture.setSharedTextureReceiver(async (received, value: unknown) => {
+	const imported = received.importedSharedTexture;
+	let videoFrame: VideoFrame | undefined;
+	try {
+		if (!value || typeof value !== "object") return;
+		const metadata = value as Partial<SharedViewportMetadata>;
+		if (
+			(metadata.kind !== "scene" && metadata.kind !== "game") ||
+			typeof metadata.width !== "number" ||
+			typeof metadata.height !== "number"
+		)
+			return;
+		const canvas = document.querySelector<HTMLCanvasElement>(
+			`canvas[data-viewport-kind="${metadata.kind}"]`,
+		);
+		if (!canvas) return;
+		canvas.width = metadata.width;
+		canvas.height = metadata.height;
+		const context = canvas.getContext("2d", { alpha: false });
+		if (!context) return;
+		videoFrame = imported.getVideoFrame();
+		context.save();
+		if (metadata.flipped)
+			context.setTransform(1, 0, 0, -1, 0, metadata.height);
+		context.drawImage(videoFrame, 0, 0, metadata.width, metadata.height);
+		context.restore();
+	} finally {
+		videoFrame?.close();
+		imported.release();
+	}
+});
 
 const api: PlutoEditorApi = {
 	detachPanel: (panel, position) =>
@@ -32,6 +73,25 @@ const api: PlutoEditorApi = {
 		ipcRenderer.send("game-viewport:set-bounds", bounds),
 	setGameViewportVisible: (visible) =>
 		ipcRenderer.send("game-viewport:set-visible", visible),
+	sendViewportInput: (input) => ipcRenderer.send("viewport:input", input),
+	sendGameViewportInput: (input) =>
+		ipcRenderer.send("game-viewport:input", input),
+	onViewportFrame: (callback) => {
+		const listener = (
+			_event: Electron.IpcRendererEvent,
+			frame: ViewportFrame,
+		) => callback(frame);
+		ipcRenderer.on("viewport:frame", listener);
+		return () => ipcRenderer.removeListener("viewport:frame", listener);
+	},
+	onGameViewportFrame: (callback) => {
+		const listener = (
+			_event: Electron.IpcRendererEvent,
+			frame: ViewportFrame,
+		) => callback(frame);
+		ipcRenderer.on("game-viewport:frame", listener);
+		return () => ipcRenderer.removeListener("game-viewport:frame", listener);
+	},
 	setViewportOccluded: (token, occluded) =>
 		ipcRenderer.send("viewport:set-occluded", token, occluded),
 	getHostState: () => ipcRenderer.invoke("host:get-state"),

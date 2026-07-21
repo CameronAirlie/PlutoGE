@@ -941,7 +941,7 @@ namespace PlutoGE::render
         return CompareRenderCommandKeysImpl(a, b);
     }
 
-    void Renderer::EndFrame(RenderTarget *renderTarget)
+    void Renderer::EndFrame(RenderTarget *renderTarget, bool present)
     {
         m_gpuTimingsResolvedThisFrame = false;
         if (renderTarget)
@@ -952,7 +952,10 @@ namespace PlutoGE::render
 
         if (m_config.window)
         {
-            glfwSwapBuffers(static_cast<GLFWwindow *>(m_config.window->GetWindow()));
+            if (present)
+                glfwSwapBuffers(static_cast<GLFWwindow *>(m_config.window->GetWindow()));
+            else
+                glFlush();
         }
     }
 

@@ -97,6 +97,30 @@ interface ViewportBounds {
 	height: number;
 }
 
+interface ViewportFrame {
+	transport: "cpu" | "shared-texture";
+	sequence: number;
+	generation: number;
+	width: number;
+	height: number;
+	sourceWidth: number;
+	sourceHeight: number;
+	pixels: Uint8Array;
+}
+
+type ViewportInputEvent =
+	| {
+			type: "pointer";
+			x: number;
+			y: number;
+			deltaX: number;
+			deltaY: number;
+	  }
+	| { type: "button"; button: number; down: boolean }
+	| { type: "wheel"; deltaX: number; deltaY: number }
+	| { type: "key"; key: number; down: boolean }
+	| { type: "reset" };
+
 type EditorPanelId =
 	| "hierarchy"
 	| "viewport"
@@ -307,6 +331,10 @@ interface PlutoEditorApi {
 	setViewportVisible(visible: boolean): void;
 	setGameViewportBounds(bounds: ViewportBounds): void;
 	setGameViewportVisible(visible: boolean): void;
+	sendViewportInput(input: ViewportInputEvent): void;
+	sendGameViewportInput(input: ViewportInputEvent): void;
+	onViewportFrame(callback: (frame: ViewportFrame) => void): () => void;
+	onGameViewportFrame(callback: (frame: ViewportFrame) => void): () => void;
 	setViewportOccluded(token: string, occluded: boolean): void;
 	getHostState(): Promise<HostState>;
 	restartHost(): Promise<void>;

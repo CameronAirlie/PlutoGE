@@ -985,6 +985,8 @@ ipcMain.handle("asset:save", (event, reference: unknown, content: unknown) => {
 		activeAsset = { ...activeAsset, content } as AssetDocument;
 		assetDirtyWindows.clear();
 		sendToEditorWindows("asset:opened", activeAsset);
+		if (resolved.asset.type === "Material")
+			sendEditorCommand(`reload_material ${encode(resolved.asset.reference)}`);
 		sendEditorCommand("refresh_assets");
 		appendConsoleMessage(
 			"info",
@@ -1223,10 +1225,15 @@ ipcMain.handle(
 		}
 		if (result.imported.length) {
 			const command = `import_model_assets ${result.imported.map(encode).join(" ")}`;
-			if (!beginEditorOperation(
-				result.imported.length === 1 ? "Importing model assets…" : `Importing ${result.imported.length} model assets…`,
-				command,
-			)) result.warnings.push("The native asset pipeline is not ready.");
+			if (
+				!beginEditorOperation(
+					result.imported.length === 1
+						? "Importing model assets…"
+						: `Importing ${result.imported.length} model assets…`,
+					command,
+				)
+			)
+				result.warnings.push("The native asset pipeline is not ready.");
 		}
 		return result;
 	},

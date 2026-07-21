@@ -140,6 +140,7 @@ export class NativeHost {
 			["--parent-hwnd", `0x${handle.toString(16)}`, ...this.extraArguments],
 			{
 				cwd: path.dirname(executable),
+				env: this.createEnvironment(executable),
 				windowsHide: true,
 				stdio: ["pipe", "pipe", "pipe"],
 			},
@@ -209,12 +210,13 @@ export class NativeHost {
 				// Engine diagnostics also use stdout; keep the IPC parser tolerant.
 				const diagnostic = line.trim();
 				if (diagnostic) {
-					const severity =
-						/: error (?:CS|MSB|NU)\d+|\bBuild FAILED\b/i.test(diagnostic)
-							? "error"
-							: /: warning (?:CS|MSB|NU)\d+|\bwarning\b/i.test(diagnostic)
-								? "warning"
-								: "info";
+					const severity = /: error (?:CS|MSB|NU)\d+|\bBuild FAILED\b/i.test(
+						diagnostic,
+					)
+						? "error"
+						: /: warning (?:CS|MSB|NU)\d+|\bwarning\b/i.test(diagnostic)
+							? "warning"
+							: "info";
 					this.onDiagnostic(severity, diagnostic);
 				}
 			}
@@ -360,6 +362,38 @@ export class NativeHost {
 		return candidates.find((candidate): candidate is string =>
 			Boolean(candidate && fs.existsSync(candidate)),
 		);
+	}
+
+	private createEnvironment(executable: string): NodeJS.ProcessEnv {
+		const environment: NodeJS.ProcessEnv = { ...process.env };
+		if (!app.isPackaged) return environment;
+
+		const engineDirectory = path.dirname(executable);
+		const runtimeExecutable = path.join(
+			engineDirectory,
+			"PlutoGERuntime.exe",
+		);
+		const scriptCoreDirectory = path.join(engineDirectory, "ScriptCore");
+		const dotnetRoot = path.join(engineDirectory, "DotnetRuntime");
+
+		environment.PLUTOGE_RUNTIME_EXECUTABLE = runtimeExecutable;
+		environment.PLUTOGE_RUNTIME_REBUILD = "0";
+		environment.PLUTOGE_SCRIPTCORE_DIR = scriptCoreDirectory;
+		environment.DOTNET_ROOT = dotnetRoot;
+		environment.DOTNET_MULTILEVEL_LOOKUP = "0";
+		environment.DOTNET_SKIP_FIRST_TIME_EXPERIENCE = "1";
+		environment.DOTNET_CLI_TELEMETRY_OPTOUT = "1";
+		environment.DOTNET_CLI_HOME = path.join(app.getPath("userData"), "dotnet");
+		environment.NUGET_PACKAGES = path.join(
+			app.getPath("userData"),
+			"nuget-packages",
+		);
+
+		const pathKey =
+			Object.keys(environment).find((key) => key.toLowerCase() === "path") ??
+			"Path";
+		environment[pathKey] = `${dotnetRoot};${environment[pathKey] ?? ""}`;
+		return environment;
 	}
 
 	private startHeartbeat(child: ChildProcessWithoutNullStreams): void {

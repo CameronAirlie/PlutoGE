@@ -2189,6 +2189,31 @@ namespace PlutoGE::assets
         return material;
     }
 
+    bool AssetManager::ReloadMaterialAsset(const std::string &assetReference)
+    {
+        const auto cached = m_materialCache.find(assetReference);
+        if (cached == m_materialCache.end() || !cached->second)
+        {
+            return LoadMaterialAsset(assetReference) != nullptr;
+        }
+
+        // Keep the cached Material object's address stable because scene components
+        // retain pointers to it. Only replace its configuration with a fresh parse.
+        render::Material *existingMaterial = cached->second;
+        m_materialCache.erase(cached);
+        render::Material *reloadedMaterial = LoadMaterialAsset(assetReference);
+        if (!reloadedMaterial)
+        {
+            m_materialCache[assetReference] = existingMaterial;
+            return false;
+        }
+
+        existingMaterial->GetConfig() = reloadedMaterial->GetConfig();
+        delete reloadedMaterial;
+        m_materialCache[assetReference] = existingMaterial;
+        return true;
+    }
+
     bool AssetManager::SaveMaterialAsset(const std::string &assetReference, const render::MaterialConfig &config, std::string *errorMessage)
     {
         if (assetReference.empty() || Project::IsEngineAssetReference(assetReference))

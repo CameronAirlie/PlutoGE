@@ -1331,6 +1331,12 @@ namespace PlutoGE::assets
 
     std::filesystem::path FindRuntimeExecutable(const std::filesystem::path &searchRoot)
     {
+        if (const auto configuredRuntime = GetEnvironmentPath("PLUTOGE_RUNTIME_EXECUTABLE");
+            !configuredRuntime.empty() && std::filesystem::is_regular_file(configuredRuntime))
+        {
+            return NormalizeAbsolutePath(configuredRuntime);
+        }
+
         const std::string runtimeFileName = "PlutoGERuntime" + GetExecutableExtension();
         auto candidateRoot = NormalizeAbsolutePath(searchRoot);
         for (int depth = 0; depth < kRuntimeSearchAncestorLimit && !candidateRoot.empty(); ++depth)

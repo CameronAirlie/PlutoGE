@@ -240,7 +240,7 @@ namespace PlutoGE::render
             return nullptr;
         }
 
-        void ApplyAmbientOcclusionBeforeVolumetrics(const RenderContext &ctx)
+        void ApplyAmbientOcclusionBeforeOceanAndVolumetrics(const RenderContext &ctx)
         {
             if (!ctx.postProcessEffects || !ctx.temporaryRenderTarget || !ctx.postProcessIntermediateRenderTarget)
             {
@@ -734,9 +734,11 @@ namespace PlutoGE::render
 
         for (std::size_t index = 0; index < m_renderPasses.size(); ++index)
         {
-            if (std::string_view(m_renderPasses[index]->GetName()) == "Volumetric Clouds")
+            // AO belongs to the opaque scene. Apply it before OceanPass composites
+            // water and the full-screen underwater treatment over that scene.
+            if (std::string_view(m_renderPasses[index]->GetName()) == "Ocean")
             {
-                ApplyAmbientOcclusionBeforeVolumetrics(ctx);
+                ApplyAmbientOcclusionBeforeOceanAndVolumetrics(ctx);
             }
 
             ExecutePassWithGpuTiming(*m_renderPasses[index], ctx, index + 1);

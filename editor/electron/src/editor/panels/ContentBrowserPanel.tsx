@@ -342,7 +342,9 @@ export function ContentBrowserPanel({
 								}
 								onClick={() => setSelected(asset.reference)}
 								onContextMenu={(event) => openAssetContextMenu(event, asset)}
-								onDoubleClick={() => void window.plutoEditor.openAsset(asset.reference)}
+								onDoubleClick={() =>
+									void window.plutoEditor.openAsset(asset.reference)
+								}
 							>
 								<span className={`asset-icon type-${asset.type.toLowerCase()}`}>
 									{assetIcon(asset.type)}

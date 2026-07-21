@@ -72,6 +72,7 @@ namespace PlutoGE::assets
                                     const render::AnimationClip &clip,
                                     std::string *errorMessage = nullptr);
         render::Material *LoadMaterialAsset(const std::string &assetReference);
+        bool ReloadMaterialAsset(const std::string &assetReference);
         bool SaveMaterialAsset(const std::string &assetReference, const render::MaterialConfig &config, std::string *errorMessage = nullptr);
         render::ShaderGraph LoadShaderGraphAsset(const std::string &assetReference, bool *loaded = nullptr);
         bool SaveShaderGraphAsset(const std::string &assetReference, const render::ShaderGraph &graph, std::string *errorMessage = nullptr);

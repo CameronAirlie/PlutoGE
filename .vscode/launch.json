@@ -14,6 +14,13 @@
             "request": "launch",
             "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"${workspaceFolder}\\tools\\Start-ElectronEditor.ps1\" -SkipNativeBuild -SkipInstall",
             "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "PlutoGE: Package Electron Editor",
+            "type": "node-terminal",
+            "request": "launch",
+            "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"${workspaceFolder}\\tools\\Package-ElectronEditor.ps1\"",
+            "cwd": "${workspaceFolder}"
         }
     ]
 }

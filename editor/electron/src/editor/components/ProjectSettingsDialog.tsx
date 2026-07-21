@@ -218,7 +218,9 @@ export function ProjectSettingsDialog({
 						<label className="settings-toggle">
 							<span>
 								<strong>Vertical sync</strong>
-								<small>Synchronize presentation with the display refresh rate.</small>
+								<small>
+									Synchronize presentation with the display refresh rate.
+								</small>
 							</span>
 							<input
 								type="checkbox"

@@ -176,8 +176,37 @@ namespace
         return result;
     }
 
+    std::filesystem::path GetEnvironmentPath(const char *name)
+    {
+#ifdef _WIN32
+        char *value = nullptr;
+        size_t valueSize = 0;
+        if (_dupenv_s(&value, &valueSize, name) != 0 || value == nullptr)
+        {
+            return {};
+        }
+
+        std::filesystem::path result(value);
+        std::free(value);
+        return result.lexically_normal();
+#else
+        if (const char *value = std::getenv(name))
+        {
+            return std::filesystem::path(value).lexically_normal();
+        }
+
+        return {};
+#endif
+    }
+
     std::filesystem::path FindScriptCoreProject()
     {
+        if (const auto configuredProject = GetEnvironmentPath("PLUTOGE_SCRIPTCORE_PROJECT");
+            !configuredProject.empty() && std::filesystem::exists(configuredProject))
+        {
+            return configuredProject;
+        }
+
         auto root = std::filesystem::current_path();
         for (int depth = 0; depth < 8 && !root.empty(); ++depth)
         {
@@ -203,8 +232,18 @@ namespace
 
     std::filesystem::path EnsureScriptProject(assets::Project &project, std::string &errorMessage)
     {
-        const auto scriptCore = FindScriptCoreProject();
-        if (scriptCore.empty()) { errorMessage = "Could not locate PlutoGE.ScriptCore.csproj."; return {}; }
+        const auto configuredScriptCoreDirectory = GetEnvironmentPath("PLUTOGE_SCRIPTCORE_DIR");
+        const auto configuredScriptCoreAssembly = configuredScriptCoreDirectory / "PlutoGE.ScriptCore.dll";
+        const bool usePackagedScriptCore = !configuredScriptCoreDirectory.empty() &&
+                                           std::filesystem::exists(configuredScriptCoreAssembly);
+        const auto scriptCoreProject = usePackagedScriptCore ? std::filesystem::path{} : FindScriptCoreProject();
+        if (!usePackagedScriptCore && scriptCoreProject.empty())
+        {
+            errorMessage = configuredScriptCoreDirectory.empty()
+                               ? "Could not locate PlutoGE.ScriptCore.csproj."
+                               : "The packaged PlutoGE.ScriptCore assembly was not found in: " + configuredScriptCoreDirectory.string();
+            return {};
+        }
         auto name = SanitizeIdentifier(project.GetManifest().name);
         if (name.empty()) name = "PlutoGEProject";
         const auto existingProjectPath = FindScriptProject(project);
@@ -219,13 +258,18 @@ namespace
         if (errorCode) { errorMessage = "Could not create the script project directories."; return {}; }
         const auto sourceDirectoryPath = MakeRelativeOrAbsoluteGenericPath(sourceDirectory, projectPath.parent_path());
         const auto outputPath = MakeRelativeOrAbsoluteGenericPath(outputDirectory, projectPath.parent_path());
-        const auto coreReference = MakeRelativeOrAbsoluteGenericPath(scriptCore, projectPath.parent_path());
-        const auto coreDirectory = MakeRelativeOrAbsoluteGenericPath(scriptCore.parent_path(), projectPath.parent_path());
+        const auto scriptCoreReferencePath = usePackagedScriptCore ? configuredScriptCoreAssembly : scriptCoreProject;
+        const auto scriptCoreDirectoryPath = usePackagedScriptCore ? configuredScriptCoreDirectory : scriptCoreProject.parent_path();
+        const auto coreReference = MakeRelativeOrAbsoluteGenericPath(scriptCoreReferencePath, projectPath.parent_path());
+        const auto coreDirectory = MakeRelativeOrAbsoluteGenericPath(scriptCoreDirectoryPath, projectPath.parent_path());
         if (sourceDirectoryPath.empty() || outputPath.empty() || coreReference.empty() || coreDirectory.empty())
         {
             errorMessage = "Could not construct the script project paths.";
             return {};
         }
+        const auto coreRuntimeDirectory = usePackagedScriptCore
+                                              ? coreDirectory
+                                              : coreDirectory + "/bin/$(Configuration)/$(TargetFramework)";
         const auto sourcePattern = sourceDirectoryPath + "/**/*.cs";
         std::ofstream output(projectPath, std::ios::trunc);
         if (!output) { errorMessage = "Could not create the script project file."; return {}; }
@@ -241,12 +285,21 @@ namespace
                << "    <OutputPath>" << outputPath << "/</OutputPath>\n"
                << "    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>\n"
                << "  </PropertyGroup>\n"
-               << "  <ItemGroup><Compile Include=\"" << sourcePattern << "\" /></ItemGroup>\n"
-               << "  <ItemGroup><ProjectReference Include=\"" << coreReference << "\" /></ItemGroup>\n"
+               << "  <ItemGroup><Compile Include=\"" << sourcePattern << "\" /></ItemGroup>\n";
+        if (usePackagedScriptCore)
+        {
+            output << "  <ItemGroup><Reference Include=\"PlutoGE.ScriptCore\"><HintPath>" << coreReference
+                   << "</HintPath><Private>true</Private></Reference></ItemGroup>\n";
+        }
+        else
+        {
+            output << "  <ItemGroup><ProjectReference Include=\"" << coreReference << "\" /></ItemGroup>\n";
+        }
+        output
                << "  <Target Name=\"CopyScriptCoreRuntimeFiles\" AfterTargets=\"Build\">\n"
                << "    <ItemGroup>\n"
-               << "      <ScriptCoreRuntimeFiles Include=\"" << coreDirectory << "/bin/$(Configuration)/$(TargetFramework)/PlutoGE.ScriptCore.runtimeconfig.json\" />\n"
-               << "      <ScriptCoreRuntimeFiles Include=\"" << coreDirectory << "/bin/$(Configuration)/$(TargetFramework)/PlutoGE.ScriptCore.deps.json\" Condition=\"Exists('" << coreDirectory << "/bin/$(Configuration)/$(TargetFramework)/PlutoGE.ScriptCore.deps.json')\" />\n"
+               << "      <ScriptCoreRuntimeFiles Include=\"" << coreRuntimeDirectory << "/PlutoGE.ScriptCore.runtimeconfig.json\" />\n"
+               << "      <ScriptCoreRuntimeFiles Include=\"" << coreRuntimeDirectory << "/PlutoGE.ScriptCore.deps.json\" Condition=\"Exists('" << coreRuntimeDirectory << "/PlutoGE.ScriptCore.deps.json')\" />\n"
                << "    </ItemGroup>\n"
                << "    <Copy SourceFiles=\"@(ScriptCoreRuntimeFiles)\" DestinationFolder=\"$(OutputPath)\" SkipUnchangedFiles=\"true\" Condition=\"@(ScriptCoreRuntimeFiles) != ''\" />\n"
                << "  </Target>\n"
@@ -284,6 +337,12 @@ namespace
 
     bool RebuildStandaloneRuntime(const std::filesystem::path &runtimeExecutable, std::string &errorMessage)
     {
+        if (const auto rebuildSetting = GetEnvironmentPath("PLUTOGE_RUNTIME_REBUILD");
+            rebuildSetting == "0" || rebuildSetting == "false" || rebuildSetting == "FALSE")
+        {
+            return true;
+        }
+
         auto buildDirectory = runtimeExecutable.parent_path();
         for (int depth = 0; depth < 8 && !buildDirectory.empty() && !std::filesystem::exists(buildDirectory / "CMakeCache.txt"); ++depth)
         {
@@ -1326,6 +1385,24 @@ bool EditorSession::HandleCommand(const std::string &commandLine, std::string &e
             m_engine.StopRuntime();
             if (!m_runtimeSnapshot.empty()) RestoreScene(m_runtimeSnapshot, m_dirty);
             m_runtimeSnapshot.clear();
+        }
+        return true;
+    }
+
+    if (command == "reload_material")
+    {
+        std::string encodedReference;
+        input >> encodedReference;
+        const std::string reference = Decode(encodedReference);
+        if (!m_project || PlutoGE::assets::Project::GetAssetTypeForReference(reference) != PlutoGE::assets::ProjectAssetType::Material)
+        {
+            errorMessage = "Could not reload the material asset.";
+            return false;
+        }
+        if (!m_engine.GetAssetManager().ReloadMaterialAsset(reference))
+        {
+            errorMessage = "Failed to reload material: " + reference;
+            return false;
         }
         return true;
     }

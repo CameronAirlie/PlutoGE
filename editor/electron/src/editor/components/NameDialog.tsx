@@ -27,7 +27,12 @@ export function NameDialog({
 		if (value.trim()) onConfirm(value.trim());
 	};
 	return (
-		<Modal title={title} onOpenChange={(open) => { if (!open) onClose(); }}>
+		<Modal
+			title={title}
+			onOpenChange={(open) => {
+				if (!open) onClose();
+			}}
+		>
 			<form
 				className="name-dialog"
 				onSubmit={(event) => {
@@ -47,9 +52,7 @@ export function NameDialog({
 					/>
 				</label>
 				<div className="dialog-actions">
-					<Button onClick={onClose}>
-						Cancel
-					</Button>
+					<Button onClick={onClose}>Cancel</Button>
 					<Button type="submit" variant="primary" disabled={!value.trim()}>
 						{confirmLabel}
 					</Button>

@@ -121,6 +121,18 @@ extern "C"
         char path[512];
     } PlutoEditorSceneInfo;
 
+    typedef struct PlutoEditorProjectSettings
+    {
+        char name[120];
+        char window_title[120];
+        char startup_scene[256];
+        char script_assembly[512];
+        int32_t window_width;
+        int32_t window_height;
+        uint8_t vsync_enabled;
+        float editor_font_size;
+    } PlutoEditorProjectSettings;
+
     typedef struct PlutoEditorComponentInfo
     {
         uint32_t index;
@@ -174,14 +186,29 @@ extern "C"
     PLUTO_EDITOR_API int32_t pluto_editor_viewport_get_stats(PlutoEditorHandle engine, PlutoEditorHandle viewport, PlutoEditorFrameStats *stats);
     PLUTO_EDITOR_API int32_t pluto_editor_scene_get_entity_count(PlutoEditorHandle engine, uint32_t *count);
     PLUTO_EDITOR_API int32_t pluto_editor_scene_get_entity(PlutoEditorHandle engine, uint32_t index, PlutoEditorEntityInfo *entity);
+    PLUTO_EDITOR_API int32_t pluto_editor_entity_get_active(PlutoEditorHandle engine, uint32_t entity_id, uint8_t *active);
+    PLUTO_EDITOR_API int32_t pluto_editor_entity_set_active(PlutoEditorHandle engine, uint32_t entity_id, uint8_t active);
     PLUTO_EDITOR_API int32_t pluto_editor_entity_get_transform(PlutoEditorHandle engine, uint32_t entity_id, PlutoEditorTransform *transform);
     PLUTO_EDITOR_API int32_t pluto_editor_entity_set_transform(PlutoEditorHandle engine, uint32_t entity_id, const PlutoEditorTransform *transform);
     PLUTO_EDITOR_API int32_t pluto_editor_project_load(PlutoEditorHandle engine, const char *manifest_path);
     PLUTO_EDITOR_API int32_t pluto_editor_project_get_info(PlutoEditorHandle engine, PlutoEditorProjectInfo *project);
     PLUTO_EDITOR_API int32_t pluto_editor_project_get_asset_count(PlutoEditorHandle engine, uint32_t *count);
     PLUTO_EDITOR_API int32_t pluto_editor_project_get_asset(PlutoEditorHandle engine, uint32_t index, PlutoEditorAssetInfo *asset);
+    PLUTO_EDITOR_API int32_t pluto_editor_project_refresh(PlutoEditorHandle engine);
+    PLUTO_EDITOR_API int32_t pluto_editor_project_save(PlutoEditorHandle engine);
+    PLUTO_EDITOR_API int32_t pluto_editor_project_get_settings(PlutoEditorHandle engine, PlutoEditorProjectSettings *settings);
+    PLUTO_EDITOR_API int32_t pluto_editor_project_set_settings(PlutoEditorHandle engine, const PlutoEditorProjectSettings *settings);
+    PLUTO_EDITOR_API int32_t pluto_editor_scene_new(PlutoEditorHandle engine);
     PLUTO_EDITOR_API int32_t pluto_editor_scene_load(PlutoEditorHandle engine, const char *path_or_reference);
+    PLUTO_EDITOR_API int32_t pluto_editor_scene_save(PlutoEditorHandle engine, const char *path);
     PLUTO_EDITOR_API int32_t pluto_editor_scene_get_info(PlutoEditorHandle engine, PlutoEditorSceneInfo *scene);
+    PLUTO_EDITOR_API int32_t pluto_editor_runtime_start(PlutoEditorHandle engine);
+    PLUTO_EDITOR_API int32_t pluto_editor_runtime_stop(PlutoEditorHandle engine);
+    PLUTO_EDITOR_API int32_t pluto_editor_runtime_is_running(PlutoEditorHandle engine, uint8_t *running);
+    PLUTO_EDITOR_API int32_t pluto_editor_entity_create(PlutoEditorHandle engine, uint32_t parent_id, const char *name, uint32_t *entity_id);
+    PLUTO_EDITOR_API int32_t pluto_editor_entity_duplicate(PlutoEditorHandle engine, uint32_t source_id, uint32_t *entity_id);
+    PLUTO_EDITOR_API int32_t pluto_editor_entity_delete(PlutoEditorHandle engine, uint32_t entity_id);
+    PLUTO_EDITOR_API int32_t pluto_editor_entity_set_name(PlutoEditorHandle engine, uint32_t entity_id, const char *name);
     PLUTO_EDITOR_API int32_t pluto_editor_entity_get_component_count(PlutoEditorHandle engine, uint32_t entity_id, uint32_t *count);
     PLUTO_EDITOR_API int32_t pluto_editor_entity_get_component(PlutoEditorHandle engine, uint32_t entity_id, uint32_t component_index, PlutoEditorComponentInfo *component);
     PLUTO_EDITOR_API int32_t pluto_editor_component_set_enabled(PlutoEditorHandle engine, uint32_t entity_id, uint32_t component_index, uint8_t enabled);

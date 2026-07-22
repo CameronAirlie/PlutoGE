@@ -4,7 +4,7 @@ namespace PlutoGE.Editor.Avalonia.Native;
 
 internal static unsafe partial class PlutoNative
 {
-    internal const uint ApiVersion = 6;
+    internal const uint ApiVersion = 8;
     internal const string Library = "PlutoGE.Editor.Native";
 
     internal enum Result : int
@@ -148,6 +148,28 @@ internal static unsafe partial class PlutoNative
     }
 
     [StructLayout(LayoutKind.Sequential)]
+    internal struct ProjectSettings
+    {
+        internal fixed byte Name[120];
+        internal fixed byte WindowTitle[120];
+        internal fixed byte StartupScene[256];
+        internal fixed byte ScriptAssembly[512];
+        internal int WindowWidth;
+        internal int WindowHeight;
+        internal byte VSyncEnabled;
+        internal float EditorFontSize;
+
+        internal string GetName() { fixed (byte* value = Name) return ReadUtf8(value); }
+        internal string GetWindowTitle() { fixed (byte* value = WindowTitle) return ReadUtf8(value); }
+        internal string GetStartupScene() { fixed (byte* value = StartupScene) return ReadUtf8(value); }
+        internal string GetScriptAssembly() { fixed (byte* value = ScriptAssembly) return ReadUtf8(value); }
+        internal void SetName(string value) { fixed (byte* target = Name) WriteUtf8(target, 120, value); }
+        internal void SetWindowTitle(string value) { fixed (byte* target = WindowTitle) WriteUtf8(target, 120, value); }
+        internal void SetStartupScene(string value) { fixed (byte* target = StartupScene) WriteUtf8(target, 256, value); }
+        internal void SetScriptAssembly(string value) { fixed (byte* target = ScriptAssembly) WriteUtf8(target, 512, value); }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
     internal struct ComponentInfo
     {
         internal uint Index;
@@ -251,6 +273,12 @@ internal static unsafe partial class PlutoNative
     [LibraryImport(Library, EntryPoint = "pluto_editor_scene_get_entity")]
     internal static partial Result SceneGetEntity(ulong engine, uint index, out EntityInfo entity);
 
+    [LibraryImport(Library, EntryPoint = "pluto_editor_entity_get_active")]
+    internal static partial Result EntityGetActive(ulong engine, uint entityId, out byte active);
+
+    [LibraryImport(Library, EntryPoint = "pluto_editor_entity_set_active")]
+    internal static partial Result EntitySetActive(ulong engine, uint entityId, byte active);
+
     [LibraryImport(Library, EntryPoint = "pluto_editor_entity_get_transform")]
     internal static partial Result EntityGetTransform(ulong engine, uint entityId, out Transform transform);
 
@@ -269,11 +297,50 @@ internal static unsafe partial class PlutoNative
     [LibraryImport(Library, EntryPoint = "pluto_editor_project_get_asset")]
     internal static partial Result ProjectGetAsset(ulong engine, uint index, out AssetInfo asset);
 
+    [LibraryImport(Library, EntryPoint = "pluto_editor_project_refresh")]
+    internal static partial Result ProjectRefresh(ulong engine);
+
+    [LibraryImport(Library, EntryPoint = "pluto_editor_project_save")]
+    internal static partial Result ProjectSave(ulong engine);
+
+    [LibraryImport(Library, EntryPoint = "pluto_editor_project_get_settings")]
+    internal static partial Result ProjectGetSettings(ulong engine, out ProjectSettings settings);
+
+    [LibraryImport(Library, EntryPoint = "pluto_editor_project_set_settings")]
+    internal static partial Result ProjectSetSettings(ulong engine, in ProjectSettings settings);
+
+    [LibraryImport(Library, EntryPoint = "pluto_editor_scene_new")]
+    internal static partial Result SceneNew(ulong engine);
+
     [LibraryImport(Library, EntryPoint = "pluto_editor_scene_load", StringMarshalling = StringMarshalling.Utf8)]
     internal static partial Result SceneLoad(ulong engine, string pathOrReference);
 
+    [LibraryImport(Library, EntryPoint = "pluto_editor_scene_save", StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial Result SceneSave(ulong engine, string? path);
+
     [LibraryImport(Library, EntryPoint = "pluto_editor_scene_get_info")]
     internal static partial Result SceneGetInfo(ulong engine, out SceneInfo scene);
+
+    [LibraryImport(Library, EntryPoint = "pluto_editor_runtime_start")]
+    internal static partial Result RuntimeStart(ulong engine);
+
+    [LibraryImport(Library, EntryPoint = "pluto_editor_runtime_stop")]
+    internal static partial Result RuntimeStop(ulong engine);
+
+    [LibraryImport(Library, EntryPoint = "pluto_editor_runtime_is_running")]
+    internal static partial Result RuntimeIsRunning(ulong engine, out byte running);
+
+    [LibraryImport(Library, EntryPoint = "pluto_editor_entity_create", StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial Result EntityCreate(ulong engine, uint parentId, string name, out uint entityId);
+
+    [LibraryImport(Library, EntryPoint = "pluto_editor_entity_duplicate")]
+    internal static partial Result EntityDuplicate(ulong engine, uint sourceId, out uint entityId);
+
+    [LibraryImport(Library, EntryPoint = "pluto_editor_entity_delete")]
+    internal static partial Result EntityDelete(ulong engine, uint entityId);
+
+    [LibraryImport(Library, EntryPoint = "pluto_editor_entity_set_name", StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial Result EntitySetName(ulong engine, uint entityId, string name);
 
     [LibraryImport(Library, EntryPoint = "pluto_editor_entity_get_component_count")]
     internal static partial Result EntityGetComponentCount(ulong engine, uint entityId, out uint count);
@@ -344,6 +411,13 @@ internal static unsafe partial class PlutoNative
     internal static string GetLastError() => Marshal.PtrToStringUTF8(GetLastErrorNative()) ?? "Unknown native error";
 
     private static string ReadUtf8(byte* value) => Marshal.PtrToStringUTF8((nint)value) ?? string.Empty;
+
+    private static void WriteUtf8(byte* target, int capacity, string? value)
+    {
+        new Span<byte>(target, capacity).Clear();
+        var source = System.Text.Encoding.UTF8.GetBytes(value ?? string.Empty);
+        source.AsSpan(0, Math.Min(source.Length, capacity - 1)).CopyTo(new Span<byte>(target, capacity));
+    }
 
     internal static void ThrowIfFailed(Result result, string operation)
     {

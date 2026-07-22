@@ -17,8 +17,12 @@ The editor follows MVVM around one shared session:
   and docked back without losing pane state.
 - `EditorSessionViewModel` owns the loaded project, scene assets, hierarchy,
   selection, and component inspector state shared by those windows.
-- `ProjectPaneView` opens `.plutoproject` manifests and `.plutoscene` files. It
-  lists the refreshed project asset registry and can load any registered scene.
+- `ProjectPaneView` uses a Unity-style folder tree, breadcrumbs, searchable
+  asset tiles, and contextual open/reveal/create/refresh actions. Registered
+  scenes open directly from the browser.
+- File and Runtime commands create and save scenes, save project manifests,
+  edit project/runtime settings, and enter Play mode with automatic restoration
+  of the pre-Play scene when Stop is pressed.
 - `InspectorPaneView` retains editable transforms and lists every native component
   plus the values exposed by that component's serialization contract.
 - `EngineHost` is the in-process native service/model. C++ handles never leak
@@ -28,6 +32,10 @@ The editor follows MVVM around one shared session:
   pointer/keyboard input. The docked viewport keeps its `ViewportViewModel`
   while moving between regions or floating, and hardware-validation windows
   still use independent viewport state.
+- The Performance pane separates time spent inside the native host call from
+  Avalonia render-callback overhead over a rolling 240-frame window. Its
+  Both/Host/Editor selector also controls which metrics are copied, while the
+  Editor view includes process CPU, memory, thread, and garbage-collection data.
 
 Reusable editor controls live in `Controls`, with their shared visual language
 in `Themes/EditorControls.axaml`. `EditorPanel`, `PropertySection`,

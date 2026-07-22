@@ -24,13 +24,13 @@ internal sealed class RelayCommand<T>(Action<T?> execute, Func<T?, bool>? canExe
     public void RaiseCanExecuteChanged() => CanExecuteChanged?.Invoke(this, EventArgs.Empty);
 }
 
-internal sealed class AsyncRelayCommand(Func<Task> execute) : ICommand
+internal sealed class AsyncRelayCommand(Func<Task> execute, Func<bool>? canExecute = null) : ICommand
 {
     private bool _running;
 
     public event EventHandler? CanExecuteChanged;
 
-    public bool CanExecute(object? parameter) => !_running;
+    public bool CanExecute(object? parameter) => !_running && (canExecute?.Invoke() ?? true);
 
     public async void Execute(object? parameter)
     {
@@ -47,4 +47,7 @@ internal sealed class AsyncRelayCommand(Func<Task> execute) : ICommand
             CanExecuteChanged?.Invoke(this, EventArgs.Empty);
         }
     }
+
+
+    public void RaiseCanExecuteChanged() => CanExecuteChanged?.Invoke(this, EventArgs.Empty);
 }

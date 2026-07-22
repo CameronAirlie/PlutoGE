@@ -32,6 +32,7 @@
     <DataTemplate DataType="vm:EditorCameraPaneViewModel"><views:EditorCameraPaneView /></DataTemplate>
     <DataTemplate DataType="vm:InspectorPaneViewModel"><views:InspectorPaneView /></DataTemplate>
     <DataTemplate DataType="vm:ViewportPaneViewModel"><views:ViewportPaneView /></DataTemplate>
+    <DataTemplate DataType="vm:PerformancePaneViewModel"><views:PerformancePaneView /></DataTemplate>
   </Application.DataTemplates>
 
   <Application.Styles>

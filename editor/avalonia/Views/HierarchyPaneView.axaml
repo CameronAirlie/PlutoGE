@@ -6,13 +6,26 @@
   <Grid RowDefinitions="Auto,Auto,*" Margin="9">
     <TextBlock FontSize="10" Margin="1,0,0,7" Foreground="{DynamicResource EditorMutedTextBrush}"
                Text="{Binding Session.ActiveScene}" />
-    <TextBox Grid.Row="1" Classes="editor-search" Margin="0,0,0,7"
-             PlaceholderText="Search scene…" Text="{Binding Session.SearchText, Mode=TwoWay}" />
+    <Grid Grid.Row="1" ColumnDefinitions="*,Auto" Margin="0,0,0,7">
+      <TextBox Classes="editor-search" PlaceholderText="Search scene…" Text="{Binding Session.SearchText, Mode=TwoWay}" />
+      <Button Grid.Column="1" Margin="6,0,0,0" MinWidth="34" Content="＋" Command="{Binding Session.CreateRootEntityCommand}"
+              ToolTip.Tip="Create GameObject" />
+    </Grid>
     <TreeView Grid.Row="2" Classes="editor-tree" ItemsSource="{Binding Session.Hierarchy}"
               SelectedItem="{Binding Session.SelectedEntity, Mode=TwoWay}">
+      <TreeView.ContextMenu>
+        <ContextMenu>
+          <MenuItem Header="Create Empty" Command="{Binding Session.CreateRootEntityCommand}" />
+          <MenuItem Header="Create Empty Child" Command="{Binding Session.CreateChildEntityCommand}" />
+          <Separator />
+          <MenuItem Header="Duplicate" InputGesture="Ctrl+D" Command="{Binding Session.DuplicateEntityCommand}" />
+          <MenuItem Header="Toggle Active" Command="{Binding Session.ToggleEntityActiveCommand}" />
+          <MenuItem Header="Delete" InputGesture="Delete" Command="{Binding Session.DeleteEntityCommand}" />
+        </ContextMenu>
+      </TreeView.ContextMenu>
       <TreeView.DataTemplates>
         <TreeDataTemplate DataType="vm:EntityNodeViewModel" ItemsSource="{Binding Children}">
-          <StackPanel Orientation="Horizontal" Spacing="8">
+          <StackPanel Orientation="Horizontal" Spacing="8" Opacity="{Binding DisplayOpacity}">
             <Border Width="17" Height="17" CornerRadius="5" Background="{DynamicResource EditorAccentMutedBrush}">
               <Ellipse Width="6" Height="6" Fill="{DynamicResource EditorAccentBrush}"
                        HorizontalAlignment="Center" VerticalAlignment="Center" />

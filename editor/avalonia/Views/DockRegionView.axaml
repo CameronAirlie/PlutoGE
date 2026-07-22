@@ -11,6 +11,20 @@
         <TabControl.ItemTemplate>
           <DataTemplate x:DataType="vm:DockPaneViewModel">
             <Border DragDrop.AllowDrop="True" DragDrop.DragOver="OnDragOver" DragDrop.Drop="OnTabDrop">
+              <Border.ContextMenu>
+                <ContextMenu>
+                  <MenuItem Header="Float" Command="{Binding FloatCommand}" />
+                  <MenuItem Header="Dock Left" Command="{Binding DockLeftCommand}" />
+                  <MenuItem Header="Dock Center" Command="{Binding DockCenterCommand}" />
+                  <MenuItem Header="Dock Right" Command="{Binding DockRightCommand}" />
+                  <MenuItem Header="Dock Bottom" Command="{Binding DockBottomCommand}" />
+                  <Separator />
+                  <MenuItem Header="Move Tab Left" Command="{Binding MovePreviousCommand}" />
+                  <MenuItem Header="Move Tab Right" Command="{Binding MoveNextCommand}" />
+                  <Separator />
+                  <MenuItem Header="Close" Command="{Binding CloseCommand}" />
+                </ContextMenu>
+              </Border.ContextMenu>
               <StackPanel Margin="5,1" Orientation="Horizontal" Spacing="4">
                 <TextBlock Cursor="SizeAll" Text="⠿" PointerPressed="OnDragHandlePressed"
                            Foreground="{DynamicResource EditorMutedTextBrush}" ToolTip.Tip="Drag pane" />

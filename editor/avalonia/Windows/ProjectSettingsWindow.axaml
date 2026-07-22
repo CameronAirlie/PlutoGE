@@ -1,0 +1,51 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:PlutoGE.Editor.Avalonia.ViewModels"
+        x:Class="PlutoGE.Editor.Avalonia.Windows.ProjectSettingsWindow"
+        x:DataType="vm:ProjectSettingsViewModel"
+        Title="Project Settings" Width="620" Height="590" MinWidth="520" MinHeight="500"
+        WindowStartupLocation="CenterOwner" CanResize="True">
+  <Grid RowDefinitions="Auto,*,Auto">
+    <Border Padding="20,16" Background="{DynamicResource EditorRaisedBrush}"
+            BorderBrush="{DynamicResource EditorBorderBrush}" BorderThickness="0,0,0,1">
+      <StackPanel Spacing="3">
+        <TextBlock FontSize="20" FontWeight="SemiBold" Text="Project Settings" />
+        <TextBlock FontSize="11" Foreground="{DynamicResource EditorMutedTextBrush}" Text="Runtime, startup, and editor defaults" />
+      </StackPanel>
+    </Border>
+    <ScrollViewer Grid.Row="1">
+      <StackPanel Margin="22" Spacing="13">
+        <TextBlock FontWeight="SemiBold" Text="General" />
+        <Grid ColumnDefinitions="145,*" RowDefinitions="Auto,Auto,Auto,Auto" RowSpacing="9">
+          <TextBlock VerticalAlignment="Center" Text="Project name" /><TextBox Grid.Column="1" Text="{Binding Name, Mode=TwoWay}" />
+          <TextBlock Grid.Row="1" VerticalAlignment="Center" Text="Window title" /><TextBox Grid.Row="1" Grid.Column="1" Text="{Binding WindowTitle, Mode=TwoWay}" />
+          <TextBlock Grid.Row="2" VerticalAlignment="Center" Text="Startup scene" />
+          <ComboBox Grid.Row="2" Grid.Column="1" ItemsSource="{Binding StartupScenes}" SelectedItem="{Binding StartupScene, Mode=TwoWay}" />
+          <TextBlock Grid.Row="3" VerticalAlignment="Center" Text="Script assembly" /><TextBox Grid.Row="3" Grid.Column="1" Text="{Binding ScriptAssembly, Mode=TwoWay}" />
+        </Grid>
+        <Separator />
+        <TextBlock FontWeight="SemiBold" Text="Runtime window" />
+        <Grid ColumnDefinitions="145,*,14,*" RowDefinitions="Auto,Auto" RowSpacing="9">
+          <TextBlock VerticalAlignment="Center" Text="Resolution" />
+          <NumericUpDown Grid.Column="1" Minimum="64" Maximum="16384" Value="{Binding WindowWidth, Mode=TwoWay}" />
+          <NumericUpDown Grid.Column="3" Minimum="64" Maximum="16384" Value="{Binding WindowHeight, Mode=TwoWay}" />
+          <CheckBox Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3" Content="Vertical sync" IsChecked="{Binding VSyncEnabled, Mode=TwoWay}" />
+        </Grid>
+        <Separator />
+        <Grid ColumnDefinitions="145,*">
+          <TextBlock VerticalAlignment="Center" Text="Editor font size" />
+          <NumericUpDown Grid.Column="1" Minimum="10" Maximum="24" Increment="0.5" Value="{Binding EditorFontSize, Mode=TwoWay}" />
+        </Grid>
+        <TextBlock FontSize="10" TextWrapping="Wrap" Foreground="{DynamicResource EditorMutedTextBrush}" Text="{Binding ProjectPath}" />
+        <TextBlock FontSize="10" TextWrapping="Wrap" Foreground="{DynamicResource EditorMutedTextBrush}" Text="{Binding AssetDirectory}" />
+      </StackPanel>
+    </ScrollViewer>
+    <Border Grid.Row="2" Padding="14" Background="{DynamicResource EditorRaisedBrush}"
+            BorderBrush="{DynamicResource EditorBorderBrush}" BorderThickness="0,1,0,0">
+      <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+        <Button Content="Cancel" Command="{Binding CancelCommand}" />
+        <Button Content="Save Settings" Command="{Binding SaveCommand}" />
+      </StackPanel>
+    </Border>
+  </Grid>
+</Window>

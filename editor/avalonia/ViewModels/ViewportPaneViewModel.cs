@@ -26,6 +26,7 @@ internal sealed class ViewportPaneViewModel : ObservableObject, IDisposable
     }
 
     public ViewportViewModel Viewport { get; }
+    public EditorSessionViewModel Session => _session;
     public ICommand MoveCommand { get; }
     public ICommand RotateCommand { get; }
     public ICommand ScaleCommand { get; }

@@ -9,11 +9,24 @@
     <StackPanel Margin="13" Spacing="14">
       <StackPanel Spacing="14" IsEnabled="{Binding Session.Inspector.HasSelection}">
       <StackPanel Spacing="3">
-        <TextBlock FontSize="17" FontWeight="SemiBold" Text="{Binding Session.Inspector.EntityName}" />
+        <Grid ColumnDefinitions="*,Auto">
+          <TextBox FontSize="17" FontWeight="SemiBold" Background="Transparent" BorderThickness="0" Padding="0"
+                   Text="{Binding Session.Inspector.EntityName, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                   ToolTip.Tip="Rename GameObject" />
+          <CheckBox Grid.Column="1" VerticalAlignment="Center" Content="Active"
+                    IsChecked="{Binding Session.Inspector.IsActive, Mode=TwoWay}" />
+        </Grid>
         <TextBlock FontSize="10" Foreground="{DynamicResource EditorMutedTextBrush}"
                    Text="{Binding Session.Inspector.ComponentCountText}" />
       </StackPanel>
       <controls:PropertySection Header="Transform" IsEnabled="{Binding Session.Inspector.HasTransform}">
+        <controls:PropertySection.ContextMenu>
+          <ContextMenu>
+            <MenuItem Header="Reset Transform" Command="{Binding Session.Inspector.ResetTransformCommand}" />
+            <Separator />
+            <MenuItem Header="Delete GameObject" Command="{Binding Session.DeleteEntityCommand}" />
+          </ContextMenu>
+        </controls:PropertySection.ContextMenu>
         <StackPanel Spacing="11">
           <controls:Vector3Input Label="Position" Increment="0.1"
                                  X="{Binding Session.Inspector.PositionX, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
@@ -46,6 +59,11 @@
                 <Border Margin="0,0,0,8" Padding="10" CornerRadius="7"
                         BorderBrush="{DynamicResource EditorBorderBrush}" BorderThickness="1"
                         Background="{DynamicResource EditorRaisedBrush}">
+                  <Border.ContextMenu>
+                    <ContextMenu>
+                      <MenuItem Header="Remove Component" Command="{Binding RemoveCommand}" />
+                    </ContextMenu>
+                  </Border.ContextMenu>
                   <StackPanel Spacing="8">
                     <Grid ColumnDefinitions="*,Auto,Auto">
                       <TextBlock FontWeight="SemiBold" Text="{Binding Name}" />

@@ -98,13 +98,15 @@ internal sealed class DockWorkspaceViewModel : ObservableObject, IDisposable
         Right = new DockRegionViewModel(DockLocation.Right, this);
         Bottom = new DockRegionViewModel(DockLocation.Bottom, this);
 
+        var viewport = new ViewportPaneViewModel(session);
         _panes = new Dictionary<string, DockPaneViewModel>(StringComparer.OrdinalIgnoreCase)
         {
             ["project"] = new("project", "Project", new ProjectPaneViewModel(session), DockLocation.Bottom, this),
             ["hierarchy"] = new("hierarchy", "Hierarchy", new HierarchyPaneViewModel(session), DockLocation.Left, this),
-            ["viewport"] = new("viewport", "Viewport", new ViewportPaneViewModel(session), DockLocation.Center, this),
+            ["viewport"] = new("viewport", "Viewport", viewport, DockLocation.Center, this),
             ["editor-camera"] = new("editor-camera", "Editor Camera", new EditorCameraPaneViewModel(session), DockLocation.Right, this),
             ["inspector"] = new("inspector", "Inspector", new InspectorPaneViewModel(session), DockLocation.Right, this),
+            ["performance"] = new("performance", "Performance", new PerformancePaneViewModel(viewport.Viewport), DockLocation.Bottom, this),
         };
 
         ShowProjectCommand = new RelayCommand(() => ShowPane("project"));
@@ -112,6 +114,7 @@ internal sealed class DockWorkspaceViewModel : ObservableObject, IDisposable
         ShowViewportCommand = new RelayCommand(() => ShowPane("viewport"));
         ShowEditorCameraCommand = new RelayCommand(() => ShowPane("editor-camera"));
         ShowInspectorCommand = new RelayCommand(() => ShowPane("inspector"));
+        ShowPerformanceCommand = new RelayCommand(() => ShowPane("performance"));
         RestoreDefaultLayoutCommand = new RelayCommand(RestoreDefaultLayout);
         RestoreDefaultLayout();
     }
@@ -129,6 +132,7 @@ internal sealed class DockWorkspaceViewModel : ObservableObject, IDisposable
     public ICommand ShowViewportCommand { get; }
     public ICommand ShowEditorCameraCommand { get; }
     public ICommand ShowInspectorCommand { get; }
+    public ICommand ShowPerformanceCommand { get; }
     public ICommand RestoreDefaultLayoutCommand { get; }
 
     internal void ShowPane(string id)

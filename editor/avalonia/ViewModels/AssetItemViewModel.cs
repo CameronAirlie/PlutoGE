@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Windows.Input;
 using Avalonia.Media;
@@ -5,18 +6,71 @@ using PlutoGE.Editor.Avalonia.Native;
 
 namespace PlutoGE.Editor.Avalonia.ViewModels;
 
-internal sealed record AssetItemViewModel(string Reference, string Type, bool IsScene, string SizeText)
+internal sealed class AssetItemViewModel
 {
-    public string DisplayName
+    internal AssetItemViewModel(string reference, string type, bool isScene, string sizeText, string absolutePath = "")
     {
-        get
-        {
-            const string prefix = "project://";
-            return Reference.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
-                ? Reference[prefix.Length..]
-                : Reference;
-        }
+        Reference = reference;
+        Type = type;
+        IsScene = isScene;
+        SizeText = sizeText;
+        AbsolutePath = absolutePath;
+        RelativePath = StripScheme(reference).Replace('\\', '/').Trim('/');
+        DisplayName = Path.GetFileName(RelativePath);
+        FolderPath = (Path.GetDirectoryName(RelativePath) ?? string.Empty).Replace('\\', '/');
     }
+
+    private AssetItemViewModel(string folderPath)
+    {
+        IsFolder = true;
+        Type = "Folder";
+        RelativePath = folderPath.Replace('\\', '/').Trim('/');
+        FolderPath = (Path.GetDirectoryName(RelativePath) ?? string.Empty).Replace('\\', '/');
+        DisplayName = Path.GetFileName(RelativePath);
+        Reference = RelativePath;
+        SizeText = string.Empty;
+        AbsolutePath = string.Empty;
+    }
+
+    public string Reference { get; }
+    public string Type { get; }
+    public bool IsScene { get; }
+    public bool IsFolder { get; }
+    public string SizeText { get; }
+    public string AbsolutePath { get; }
+    public string RelativePath { get; }
+    public string FolderPath { get; }
+    public string DisplayName { get; }
+    public string IconGlyph => IsFolder ? "▰" : IsScene ? "◇" : Type switch
+    {
+        "Script" => "#",
+        "Material" => "●",
+        "Texture" => "▧",
+        "Audio" => "♫",
+        "Mesh" or "Model" => "◆",
+        _ => "□",
+    };
+
+    internal static AssetItemViewModel Folder(string path) => new(path);
+
+    private static string StripScheme(string reference)
+    {
+        const string prefix = "project://";
+        return reference.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) ? reference[prefix.Length..] : reference;
+    }
+}
+
+internal sealed class AssetFolderViewModel
+{
+    internal AssetFolderViewModel(string name, string path)
+    {
+        Name = name;
+        Path = path;
+    }
+
+    public string Name { get; }
+    public string Path { get; }
+    public ObservableCollection<AssetFolderViewModel> Children { get; } = [];
 }
 
 internal sealed class ComponentPropertyViewModel : ObservableObject

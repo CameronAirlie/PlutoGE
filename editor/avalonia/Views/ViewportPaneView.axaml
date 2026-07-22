@@ -18,6 +18,16 @@
       </Grid>
     </Border>
     <Border Grid.Row="1" Background="#070A0E" ClipToBounds="True">
+      <Border.ContextMenu>
+        <ContextMenu>
+          <MenuItem Header="Play" InputGesture="F5" Command="{Binding Session.PlayCommand}" />
+          <MenuItem Header="Stop" InputGesture="Shift+F5" Command="{Binding Session.StopCommand}" />
+          <Separator />
+          <MenuItem Header="Move Tool" Command="{Binding MoveCommand}" />
+          <MenuItem Header="Rotate Tool" Command="{Binding RotateCommand}" />
+          <MenuItem Header="Scale Tool" Command="{Binding ScaleCommand}" />
+        </ContextMenu>
+      </Border.ContextMenu>
       <controls:EngineViewport ViewModel="{Binding Viewport}" />
     </Border>
     <Grid Grid.Row="2" ColumnDefinitions="*,Auto" Margin="6,0">

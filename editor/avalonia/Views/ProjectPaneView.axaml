@@ -3,47 +3,83 @@
              xmlns:vm="clr-namespace:PlutoGE.Editor.Avalonia.ViewModels"
              x:Class="PlutoGE.Editor.Avalonia.Views.ProjectPaneView"
              x:DataType="vm:ProjectPaneViewModel">
-  <Grid RowDefinitions="Auto,*" Margin="12">
-    <Border Padding="10" CornerRadius="7" Background="{DynamicResource EditorRaisedBrush}">
-      <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
-        <TextBlock FontSize="16" FontWeight="SemiBold" Text="{Binding Session.ProjectName}" />
-        <Button Grid.Column="1" Grid.RowSpan="2" Command="{Binding Session.OpenProjectCommand}" Content="Open Project…" />
-        <TextBlock Grid.Row="1" Margin="0,3,12,0" FontSize="10" TextTrimming="CharacterEllipsis"
-                   Foreground="{DynamicResource EditorMutedTextBrush}" Text="{Binding Session.ProjectPath}" />
+  <Grid RowDefinitions="Auto,Auto,*,22" Margin="8">
+    <Grid ColumnDefinitions="Auto,*,240,Auto,Auto" Margin="0,0,0,7">
+      <Button MinWidth="32" Content="↑" Command="{Binding Session.NavigateAssetFolderUpCommand}" ToolTip.Tip="Parent folder" />
+      <Border Grid.Column="1" Margin="6,0" Padding="10,0" CornerRadius="6"
+              Background="{DynamicResource EditorCanvasBrush}" BorderBrush="{DynamicResource EditorBorderBrush}" BorderThickness="1">
+        <TextBlock VerticalAlignment="Center" FontSize="11" Text="{Binding Session.AssetBreadcrumb}" />
+      </Border>
+      <TextBox Grid.Column="2" Classes="editor-search" MinHeight="30" Height="30" PlaceholderText="Search assets…"
+               Text="{Binding Session.AssetSearchText, Mode=TwoWay}" />
+      <Button Grid.Column="3" Margin="6,0,0,0" MinWidth="32" Content="↻" Command="{Binding Session.RefreshAssetsCommand}" ToolTip.Tip="Refresh" />
+      <Button Grid.Column="4" Margin="6,0,0,0" MinWidth="32" Content="＋" Command="{Binding Session.CreateAssetFolderCommand}" ToolTip.Tip="Create folder" />
+    </Grid>
+
+    <Border Grid.Row="1" Margin="0,0,0,7" Padding="8,6" CornerRadius="6" Background="{DynamicResource EditorRaisedBrush}">
+      <Grid ColumnDefinitions="*,Auto">
+        <TextBlock FontWeight="SemiBold" Text="{Binding Session.ProjectName}" />
+        <Button Grid.Column="1" Padding="8,2" Content="Open Project…" Command="{Binding Session.OpenProjectCommand}" />
       </Grid>
     </Border>
-    <TabControl Grid.Row="1" Margin="0,8,0,0">
-      <TabItem Header="Scenes">
-        <Grid RowDefinitions="*,Auto" Margin="6">
-          <ListBox ItemsSource="{Binding Session.Scenes}" SelectedItem="{Binding Session.SelectedScene, Mode=TwoWay}">
-            <ListBox.ItemTemplate>
-              <DataTemplate x:DataType="vm:AssetItemViewModel">
-                <Grid ColumnDefinitions="*,Auto" Margin="6,4">
-                  <TextBlock TextTrimming="CharacterEllipsis" Text="{Binding DisplayName}" />
-                  <TextBlock Grid.Column="1" FontSize="10" Foreground="{DynamicResource EditorMutedTextBrush}" Text="{Binding SizeText}" />
-                </Grid>
-              </DataTemplate>
-            </ListBox.ItemTemplate>
-          </ListBox>
-          <StackPanel Grid.Row="1" Margin="0,7,0,0" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="7">
-            <Button Command="{Binding Session.OpenSceneCommand}" Content="Open File…" />
-            <Button Command="{Binding Session.OpenSelectedSceneCommand}" Content="Load Selected" />
-          </StackPanel>
-        </Grid>
-      </TabItem>
-      <TabItem Header="Assets">
-        <ListBox Margin="6" ItemsSource="{Binding Session.Assets}">
-          <ListBox.ItemTemplate>
-            <DataTemplate x:DataType="vm:AssetItemViewModel">
-              <Grid ColumnDefinitions="85,*,Auto" Margin="6,4">
-                <TextBlock FontSize="10" Foreground="{DynamicResource EditorAccentBrush}" Text="{Binding Type}" />
-                <TextBlock Grid.Column="1" TextTrimming="CharacterEllipsis" Text="{Binding DisplayName}" />
-                <TextBlock Grid.Column="2" FontSize="10" Foreground="{DynamicResource EditorMutedTextBrush}" Text="{Binding SizeText}" />
+
+    <Grid Grid.Row="2" ColumnDefinitions="205,5,*">
+      <Border Padding="5" CornerRadius="6" Background="{DynamicResource EditorCanvasBrush}"
+              BorderBrush="{DynamicResource EditorBorderBrush}" BorderThickness="1">
+        <TreeView Classes="editor-tree" ItemsSource="{Binding Session.AssetFolders}"
+                  SelectedItem="{Binding Session.SelectedAssetFolder, Mode=TwoWay}">
+          <TreeView.DataTemplates>
+            <TreeDataTemplate DataType="vm:AssetFolderViewModel" ItemsSource="{Binding Children}">
+              <StackPanel Orientation="Horizontal" Spacing="7">
+                <TextBlock Foreground="{DynamicResource EditorAccentBrush}" Text="▰" />
+                <TextBlock Text="{Binding Name}" />
+              </StackPanel>
+            </TreeDataTemplate>
+          </TreeView.DataTemplates>
+        </TreeView>
+      </Border>
+      <GridSplitter Grid.Column="1" Classes="editor-splitter" ResizeDirection="Columns" />
+      <ListBox Grid.Column="2" Margin="3,0,0,0" Background="Transparent"
+               ItemsSource="{Binding Session.BrowserItems}" SelectedItem="{Binding Session.SelectedAsset, Mode=TwoWay}"
+               DoubleTapped="OnAssetDoubleTapped">
+        <ListBox.ContextMenu>
+          <ContextMenu>
+            <MenuItem Header="Open" Command="{Binding Session.OpenSelectedAssetCommand}" />
+            <MenuItem Header="Show in Explorer" Command="{Binding Session.RevealSelectedAssetCommand}" />
+            <Separator />
+            <MenuItem Header="Create Folder" Command="{Binding Session.CreateAssetFolderCommand}" />
+            <MenuItem Header="Refresh" Command="{Binding Session.RefreshAssetsCommand}" />
+          </ContextMenu>
+        </ListBox.ContextMenu>
+        <ListBox.ItemsPanel>
+          <ItemsPanelTemplate>
+            <WrapPanel ItemWidth="116" ItemHeight="102" />
+          </ItemsPanelTemplate>
+        </ListBox.ItemsPanel>
+        <ListBox.ItemTemplate>
+          <DataTemplate x:DataType="vm:AssetItemViewModel">
+            <Border Width="108" Height="94" Margin="3" Padding="7" CornerRadius="7"
+                    Background="{DynamicResource EditorRaisedBrush}" BorderBrush="{DynamicResource EditorBorderBrush}" BorderThickness="1">
+              <Grid RowDefinitions="*,Auto,Auto">
+                <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="30"
+                           Foreground="{DynamicResource EditorAccentBrush}" Text="{Binding IconGlyph}" />
+                <TextBlock Grid.Row="1" HorizontalAlignment="Center" MaxWidth="94" FontSize="11"
+                           TextAlignment="Center" TextTrimming="CharacterEllipsis" Text="{Binding DisplayName}" />
+                <TextBlock Grid.Row="2" HorizontalAlignment="Center" FontSize="8"
+                           Foreground="{DynamicResource EditorMutedTextBrush}" Text="{Binding Type}" />
               </Grid>
-            </DataTemplate>
-          </ListBox.ItemTemplate>
-        </ListBox>
-      </TabItem>
-    </TabControl>
+            </Border>
+          </DataTemplate>
+        </ListBox.ItemTemplate>
+      </ListBox>
+    </Grid>
+
+    <Grid Grid.Row="3" ColumnDefinitions="*,Auto" Margin="4,3,4,0">
+      <TextBlock FontSize="9" Foreground="{DynamicResource EditorMutedTextBrush}" Text="{Binding Session.AssetDirectory}" TextTrimming="CharacterEllipsis" />
+      <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10">
+        <TextBlock FontSize="9" Text="{Binding Session.SelectedAsset.Type}" />
+        <TextBlock FontSize="9" Foreground="{DynamicResource EditorMutedTextBrush}" Text="{Binding Session.SelectedAsset.SizeText}" />
+      </StackPanel>
+    </Grid>
   </Grid>
 </UserControl>

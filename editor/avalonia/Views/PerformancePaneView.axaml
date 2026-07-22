@@ -1,0 +1,94 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:PlutoGE.Editor.Avalonia.ViewModels"
+             x:Class="PlutoGE.Editor.Avalonia.Views.PerformancePaneView"
+             x:DataType="vm:PerformancePaneViewModel">
+  <UserControl.Styles>
+    <Style Selector="Border.metric-card">
+      <Setter Property="Width" Value="174" />
+      <Setter Property="MinHeight" Value="62" />
+      <Setter Property="Padding" Value="10,8" />
+      <Setter Property="Background" Value="{DynamicResource EditorRaisedBrush}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource EditorBorderBrush}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="7" />
+    </Style>
+    <Style Selector="TextBlock.metric-label">
+      <Setter Property="FontSize" Value="10" />
+      <Setter Property="Foreground" Value="{DynamicResource EditorMutedTextBrush}" />
+    </Style>
+    <Style Selector="TextBlock.metric-value">
+      <Setter Property="FontSize" Value="16" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="TextBlock.section-title">
+      <Setter Property="FontSize" Value="11" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Foreground" Value="{DynamicResource EditorAccentBrush}" />
+    </Style>
+  </UserControl.Styles>
+
+  <Grid RowDefinitions="Auto,*">
+    <Border BorderBrush="{DynamicResource EditorBorderBrush}" BorderThickness="0,0,0,1"
+            Background="{DynamicResource EditorSurfaceBrush}" Padding="10,7">
+      <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto">
+        <TextBlock VerticalAlignment="Center" Margin="0,0,8,0"
+                   Foreground="{DynamicResource EditorMutedTextBrush}" Text="Show" />
+        <ComboBox Grid.Column="1" Width="112" ItemsSource="{Binding Scopes}"
+                  SelectedItem="{Binding SelectedScope, Mode=TwoWay}" />
+        <TextBlock Grid.Column="3" Margin="0,0,9,0" VerticalAlignment="Center" FontSize="10"
+                   Foreground="{DynamicResource EditorAccentBrush}" Text="{Binding CopyStatus}" />
+        <Button Grid.Column="4" Padding="12,5" Click="OnCopyMetrics" Content="Copy metrics"
+                ToolTip.Tip="Copy the metrics visible for the selected scope" />
+      </Grid>
+    </Border>
+
+    <ScrollViewer Grid.Row="1">
+      <StackPanel Margin="10" Spacing="12">
+        <StackPanel IsVisible="{Binding ShowCombined}" Spacing="7">
+          <TextBlock Classes="section-title" Text="BOTH · RENDER CALLBACK" />
+          <WrapPanel Orientation="Horizontal" ItemWidth="182" ItemHeight="70">
+            <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Current callback" /><TextBlock Classes="metric-value" Text="{Binding CombinedCurrent}" /></StackPanel></Border>
+            <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Average callback" /><TextBlock Classes="metric-value" Text="{Binding CombinedAverage}" /></StackPanel></Border>
+            <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Current frame interval" /><TextBlock Classes="metric-value" Text="{Binding CurrentFrameInterval}" /></StackPanel></Border>
+            <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Average frame interval" /><TextBlock Classes="metric-value" Text="{Binding AverageFrameInterval}" /></StackPanel></Border>
+            <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Observed frame rate" /><TextBlock Classes="metric-value" Text="{Binding FrameRate}" /></StackPanel></Border>
+            <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Rolling samples" /><TextBlock Classes="metric-value" Text="{Binding SampleCount}" /></StackPanel></Border>
+          </WrapPanel>
+        </StackPanel>
+
+        <StackPanel IsVisible="{Binding ShowHost}" Spacing="7">
+          <TextBlock Classes="section-title" Text="HOST · NATIVE ENGINE" />
+          <WrapPanel Orientation="Horizontal" ItemWidth="182" ItemHeight="70">
+            <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Status" /><TextBlock Classes="metric-value" Text="{Binding HostStatus}" /></StackPanel></Border>
+            <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Current render" /><TextBlock Classes="metric-value" Text="{Binding HostCurrent}" /></StackPanel></Border>
+            <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Average render" /><TextBlock Classes="metric-value" Text="{Binding HostAverage}" /></StackPanel></Border>
+            <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Maximum render" /><TextBlock Classes="metric-value" Text="{Binding HostMaximum}" /></StackPanel></Border>
+            <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Share of callback" /><TextBlock Classes="metric-value" Text="{Binding HostShare}" /></StackPanel></Border>
+            <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Rendered frames" /><TextBlock Classes="metric-value" Text="{Binding HostFrameCount}" /></StackPanel></Border>
+            <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Viewport" /><TextBlock Classes="metric-value" Text="{Binding ViewportSize}" /></StackPanel></Border>
+            <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Target refresh" /><TextBlock Classes="metric-value" Text="{Binding TargetRefreshRate}" /></StackPanel></Border>
+            <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Last target resize" /><TextBlock Classes="metric-value" Text="{Binding LastResize}" /></StackPanel></Border>
+          </WrapPanel>
+        </StackPanel>
+
+        <StackPanel IsVisible="{Binding ShowEditor}" Spacing="7">
+          <TextBlock Classes="section-title" Text="EDITOR · AVALONIA" />
+          <WrapPanel Orientation="Horizontal" ItemWidth="182" ItemHeight="70">
+            <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Current render overhead" /><TextBlock Classes="metric-value" Text="{Binding EditorCurrent}" /></StackPanel></Border>
+            <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Average render overhead" /><TextBlock Classes="metric-value" Text="{Binding EditorAverage}" /></StackPanel></Border>
+            <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Maximum render overhead" /><TextBlock Classes="metric-value" Text="{Binding EditorMaximum}" /></StackPanel></Border>
+            <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Share of callback" /><TextBlock Classes="metric-value" Text="{Binding EditorShare}" /></StackPanel></Border>
+            <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Process CPU (host included)" /><TextBlock Classes="metric-value" Text="{Binding ProcessCpu}" /></StackPanel></Border>
+            <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Working set" /><TextBlock Classes="metric-value" Text="{Binding WorkingSet}" /></StackPanel></Border>
+            <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Private memory" /><TextBlock Classes="metric-value" Text="{Binding PrivateMemory}" /></StackPanel></Border>
+            <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Managed memory" /><TextBlock Classes="metric-value" Text="{Binding ManagedMemory}" /></StackPanel></Border>
+            <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Threads" /><TextBlock Classes="metric-value" Text="{Binding ThreadCount}" /></StackPanel></Border>
+            <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="GC collections" /><TextBlock FontSize="11" FontWeight="SemiBold" Text="{Binding GarbageCollections}" TextWrapping="Wrap" /></StackPanel></Border>
+            <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Editor uptime" /><TextBlock Classes="metric-value" Text="{Binding Uptime}" /></StackPanel></Border>
+          </WrapPanel>
+        </StackPanel>
+      </StackPanel>
+    </ScrollViewer>
+  </Grid>
+</UserControl>

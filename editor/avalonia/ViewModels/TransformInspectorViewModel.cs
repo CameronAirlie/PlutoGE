@@ -1,5 +1,6 @@
 using PlutoGE.Editor.Avalonia.Native;
 using System.Collections.ObjectModel;
+using System.Windows.Input;
 
 namespace PlutoGE.Editor.Avalonia.ViewModels;
 
@@ -7,11 +8,13 @@ internal sealed class TransformInspectorViewModel : ObservableObject
 {
     private readonly EngineHost _host;
     private uint? _entityId;
+    private EntityNodeViewModel? _selectedEntity;
     private bool _suspendWrites;
     private DateTime _lastWrite = DateTime.MinValue;
     private string _entityName = "Nothing selected";
     private bool _hasSelection;
     private bool _hasTransform;
+    private bool _isActive;
     private decimal _positionX;
     private decimal _positionY;
     private decimal _positionZ;
@@ -25,12 +28,23 @@ internal sealed class TransformInspectorViewModel : ObservableObject
     public TransformInspectorViewModel(EngineHost host)
     {
         _host = host;
+        ResetTransformCommand = new RelayCommand(ResetTransform, () => HasTransform);
     }
 
     public string EntityName
     {
         get => _entityName;
-        private set => SetProperty(ref _entityName, value);
+        set
+        {
+            var name = value?.Trim() ?? string.Empty;
+            if (string.IsNullOrEmpty(name) || !SetProperty(ref _entityName, name) || _suspendWrites || _entityId is not { } entityId) return;
+            try
+            {
+                _host.RenameEntity(entityId, name);
+                if (_selectedEntity is not null) _selectedEntity.Name = name;
+            }
+            catch (Exception exception) { _host.ReportStatus(exception.Message); }
+        }
     }
 
     public bool HasSelection
@@ -45,8 +59,35 @@ internal sealed class TransformInspectorViewModel : ObservableObject
         private set => SetProperty(ref _hasTransform, value);
     }
 
+    public bool IsActive
+    {
+        get => _isActive;
+        set
+        {
+            var previous = _isActive;
+            if (!SetProperty(ref _isActive, value) || _suspendWrites || _entityId is not { } entityId) return;
+            try
+            {
+                var committed = _host.WriteEntityActive(entityId, value);
+                if (committed != _isActive)
+                {
+                    _isActive = committed;
+                    OnPropertyChanged();
+                }
+                if (_selectedEntity is not null) _selectedEntity.IsActive = committed;
+            }
+            catch (Exception exception)
+            {
+                _isActive = previous;
+                OnPropertyChanged();
+                _host.ReportStatus(exception.Message);
+            }
+        }
+    }
+
     public ObservableCollection<ComponentViewModel> Components { get; } = [];
     public ObservableCollection<AddableComponentTypeViewModel> AddableComponentTypes { get; } = [];
+    public ICommand ResetTransformCommand { get; }
 
     public string ComponentCountText => Components.Count == 1 ? "1 component" : $"{Components.Count} components";
     public bool HasComponents => Components.Count > 0;
@@ -64,10 +105,14 @@ internal sealed class TransformInspectorViewModel : ObservableObject
 
     public void Select(EntityNodeViewModel? entity)
     {
+        _selectedEntity = entity;
         _entityId = entity?.Id;
+        _suspendWrites = true;
         EntityName = entity?.Name ?? "Nothing selected";
+        _suspendWrites = false;
         HasSelection = entity is not null;
         HasTransform = false;
+        ApplyActive(entity?.IsActive ?? false);
         ApplyTransform(new EntityTransform(0, 0, 0, 0, 0, 0, 1, 1, 1));
         Components.Clear();
         AddableComponentTypes.Clear();
@@ -84,6 +129,12 @@ internal sealed class TransformInspectorViewModel : ObservableObject
             return;
         }
 
+        if (_host.ReadEntityActive(entityId) is { } active)
+        {
+            ApplyActive(active);
+            if (_selectedEntity is not null) _selectedEntity.IsActive = active;
+        }
+
         // Do not replace a value while a NumericUpDown is committing rapid edits.
         if (!force && DateTime.UtcNow - _lastWrite < TimeSpan.FromMilliseconds(600))
         {
@@ -97,6 +148,7 @@ internal sealed class TransformInspectorViewModel : ObservableObject
 
         ApplyTransform(transform);
         HasTransform = true;
+        if (ResetTransformCommand is RelayCommand reset) reset.RaiseCanExecuteChanged();
 
         if (refreshComponents)
         {
@@ -177,6 +229,18 @@ internal sealed class TransformInspectorViewModel : ObservableObject
         }
     }
 
+    private void ResetTransform()
+    {
+        if (!HasTransform) return;
+        ApplyTransform(new EntityTransform(0, 0, 0, 0, 0, 0, 1, 1, 1));
+        if (_entityId is not { } entityId) return;
+        try
+        {
+            ApplyTransform(_host.WriteTransform(entityId, new EntityTransform(0, 0, 0, 0, 0, 0, 1, 1, 1)));
+        }
+        catch (Exception exception) { _host.ReportStatus(exception.Message); }
+    }
+
     private void ApplyTransform(EntityTransform transform)
     {
         _suspendWrites = true;
@@ -191,6 +255,19 @@ internal sealed class TransformInspectorViewModel : ObservableObject
             ScaleX = (decimal)transform.ScaleX;
             ScaleY = (decimal)transform.ScaleY;
             ScaleZ = (decimal)transform.ScaleZ;
+        }
+        finally
+        {
+            _suspendWrites = false;
+        }
+    }
+
+    private void ApplyActive(bool active)
+    {
+        _suspendWrites = true;
+        try
+        {
+            IsActive = active;
         }
         finally
         {

@@ -10,6 +10,7 @@
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/SceneSerializer.h"
+#include "PlutoGE/scene/Prefab.h"
 #include "PlutoGE/scene/components/AnimationComponent.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
 #include "PlutoGE/scene/components/ClothComponent.h"
@@ -57,7 +58,7 @@
 
 namespace
 {
-    constexpr uint32_t kApiVersion = 6;
+    constexpr uint32_t kApiVersion = 8;
     constexpr PlutoEditorHandle kEngineHandle = 0x504c55544f454e47ull;
     thread_local std::string g_lastError;
 
@@ -104,6 +105,8 @@ namespace
         std::vector<std::unique_ptr<PlutoGE::render::IPostProcessEffect>> retiredPostProcessEffects;
         std::unordered_map<PlutoEditorHandle, std::unique_ptr<ViewportState>> viewports;
         std::vector<PendingComponentEdit> pendingComponentEdits;
+        std::string runtimeSceneSnapshot;
+        std::string runtimeScenePath;
         PlutoEditorHandle nextViewportHandle = 1;
         std::mutex mutex;
     };
@@ -775,8 +778,11 @@ namespace
 
     void ReplaceScene(EngineState &state, std::unique_ptr<PlutoGE::scene::Scene> scene)
     {
+        state.engine->StopRuntime();
         state.engine->SetScene(nullptr);
         state.pendingComponentEdits.clear();
+        state.runtimeSceneSnapshot.clear();
+        state.runtimeScenePath.clear();
         state.scene = std::move(scene);
         state.engine->SetScene(state.scene.get());
         for (auto &[handle, viewport] : state.viewports)
@@ -835,6 +841,31 @@ namespace
         for (auto &effect : state.editorCameraPostProcessEffects)
             state.retiredPostProcessEffects.push_back(std::move(effect));
         state.editorCameraPostProcessEffects = std::move(effects);
+    }
+
+    void StoreEditorPostProcessSettings(EngineState &state)
+    {
+        if (!state.project)
+            return;
+        auto &manifest = state.project->GetManifest();
+        manifest.editorCameraPostProcessPreset.clear();
+        manifest.editorCameraPostProcessEffects.clear();
+        manifest.editorCameraPostProcessEffects.reserve(state.editorCameraPostProcessEffects.size());
+        for (const auto &effect : state.editorCameraPostProcessEffects)
+        {
+            PlutoGE::assets::ProjectPostProcessEffect serialized;
+            serialized.typeName = effect->GetTypeName();
+            serialized.enabled = effect->IsEnabled();
+            for (const auto &parameter : effect->GetParameters())
+            {
+                serialized.parameters.push_back(PlutoGE::assets::ProjectPostProcessParameter{
+                    .name = parameter.name,
+                    .type = static_cast<int>(parameter.type),
+                    .value = parameter.value,
+                });
+            }
+            manifest.editorCameraPostProcessEffects.push_back(std::move(serialized));
+        }
     }
 }
 
@@ -1197,6 +1228,31 @@ extern "C"
         return PLUTO_EDITOR_OK;
     }
 
+    int32_t pluto_editor_entity_get_active(PlutoEditorHandle engineHandle, uint32_t entityId, uint8_t *active)
+    {
+        if (!active) return PLUTO_EDITOR_INVALID_ARGUMENT;
+        std::scoped_lock stateLock(g_stateMutex);
+        auto *state = ResolveEngine(engineHandle);
+        if (!state) return PLUTO_EDITOR_INVALID_HANDLE;
+        std::scoped_lock engineLock(state->mutex);
+        const auto *entity = state->scene->FindEntityByID(entityId);
+        if (!entity) return PLUTO_EDITOR_INVALID_ARGUMENT;
+        *active = entity->IsSelfActive() ? 1 : 0;
+        return PLUTO_EDITOR_OK;
+    }
+
+    int32_t pluto_editor_entity_set_active(PlutoEditorHandle engineHandle, uint32_t entityId, uint8_t active)
+    {
+        std::scoped_lock stateLock(g_stateMutex);
+        auto *state = ResolveEngine(engineHandle);
+        if (!state) return PLUTO_EDITOR_INVALID_HANDLE;
+        std::scoped_lock engineLock(state->mutex);
+        auto *entity = state->scene->FindEntityByID(entityId);
+        if (!entity) return PLUTO_EDITOR_INVALID_ARGUMENT;
+        entity->SetActive(active != 0);
+        return PLUTO_EDITOR_OK;
+    }
+
     int32_t pluto_editor_entity_get_transform(PlutoEditorHandle engineHandle, uint32_t entityId, PlutoEditorTransform *transform)
     {
         if (!transform) return PLUTO_EDITOR_INVALID_ARGUMENT;
@@ -1322,6 +1378,122 @@ extern "C"
         return PLUTO_EDITOR_OK;
     }
 
+    int32_t pluto_editor_project_refresh(PlutoEditorHandle engineHandle)
+    {
+        std::scoped_lock stateLock(g_stateMutex);
+        auto *state = ResolveEngine(engineHandle);
+        if (!state) return PLUTO_EDITOR_INVALID_HANDLE;
+        std::scoped_lock engineLock(state->mutex);
+        if (!state->project)
+        {
+            SetError("No project is loaded.");
+            return PLUTO_EDITOR_INVALID_ARGUMENT;
+        }
+        state->project->RefreshAssetRegistry();
+        g_lastError.clear();
+        return PLUTO_EDITOR_OK;
+    }
+
+    int32_t pluto_editor_project_save(PlutoEditorHandle engineHandle)
+    {
+        std::scoped_lock stateLock(g_stateMutex);
+        auto *state = ResolveEngine(engineHandle);
+        if (!state) return PLUTO_EDITOR_INVALID_HANDLE;
+        std::scoped_lock engineLock(state->mutex);
+        if (!state->project)
+        {
+            SetError("No project is loaded.");
+            return PLUTO_EDITOR_INVALID_ARGUMENT;
+        }
+        if (state->engine->IsRuntimeRunning())
+        {
+            SetError("Stop Play mode before saving the project.");
+            return PLUTO_EDITOR_INVALID_ARGUMENT;
+        }
+        if (state->scene)
+        {
+            std::filesystem::path scenePath(state->scene->GetFilePath());
+            if (scenePath.empty())
+                scenePath = state->project->GetAssetDirectoryPath() / "Scenes" / "Main.plutoscene";
+            std::error_code errorCode;
+            std::filesystem::create_directories(scenePath.parent_path(), errorCode);
+            std::string sceneError;
+            if (errorCode || !PlutoGE::scene::SceneSerializer::Save(*state->scene, scenePath.string(), &sceneError))
+            {
+                SetError(errorCode ? "Failed to create the project scene directory."
+                                   : (sceneError.empty() ? "Failed to save the project scene." : sceneError));
+                return PLUTO_EDITOR_INTERNAL_ERROR;
+            }
+            state->scene->SetFilePath(std::filesystem::absolute(scenePath).lexically_normal().string());
+            if (state->project->GetManifest().startupScene.empty())
+                state->project->GetManifest().startupScene = state->project->MakeAssetReference(scenePath);
+        }
+        StoreEditorPostProcessSettings(*state);
+        state->project->RefreshAssetRegistry();
+        std::string errorMessage;
+        if (!state->project->Save(&errorMessage))
+        {
+            SetError(errorMessage.empty() ? "Failed to save project." : errorMessage);
+            return PLUTO_EDITOR_INTERNAL_ERROR;
+        }
+        g_lastError.clear();
+        return PLUTO_EDITOR_OK;
+    }
+
+    int32_t pluto_editor_project_get_settings(PlutoEditorHandle engineHandle, PlutoEditorProjectSettings *settings)
+    {
+        if (!settings) return PLUTO_EDITOR_INVALID_ARGUMENT;
+        std::scoped_lock stateLock(g_stateMutex);
+        auto *state = ResolveEngine(engineHandle);
+        if (!state) return PLUTO_EDITOR_INVALID_HANDLE;
+        std::scoped_lock engineLock(state->mutex);
+        if (!state->project) return PLUTO_EDITOR_INVALID_ARGUMENT;
+        const auto &manifest = state->project->GetManifest();
+        CopyString(settings->name, manifest.name);
+        CopyString(settings->window_title, manifest.windowTitle);
+        CopyString(settings->startup_scene, manifest.startupScene);
+        CopyString(settings->script_assembly, manifest.scriptAssembly);
+        settings->window_width = manifest.windowWidth;
+        settings->window_height = manifest.windowHeight;
+        settings->vsync_enabled = manifest.vSyncEnabled ? 1 : 0;
+        settings->editor_font_size = manifest.editorFontSize;
+        return PLUTO_EDITOR_OK;
+    }
+
+    int32_t pluto_editor_project_set_settings(PlutoEditorHandle engineHandle, const PlutoEditorProjectSettings *settings)
+    {
+        if (!settings) return PLUTO_EDITOR_INVALID_ARGUMENT;
+        std::scoped_lock stateLock(g_stateMutex);
+        auto *state = ResolveEngine(engineHandle);
+        if (!state) return PLUTO_EDITOR_INVALID_HANDLE;
+        std::scoped_lock engineLock(state->mutex);
+        if (!state->project) return PLUTO_EDITOR_INVALID_ARGUMENT;
+        auto &manifest = state->project->GetManifest();
+        manifest.name = settings->name;
+        manifest.windowTitle = settings->window_title;
+        manifest.startupScene = settings->startup_scene;
+        manifest.scriptAssembly = settings->script_assembly;
+        manifest.windowWidth = std::max(settings->window_width, 64);
+        manifest.windowHeight = std::max(settings->window_height, 64);
+        manifest.vSyncEnabled = settings->vsync_enabled != 0;
+        manifest.editorFontSize = std::clamp(settings->editor_font_size, 10.0f, 24.0f);
+        g_lastError.clear();
+        return PLUTO_EDITOR_OK;
+    }
+
+    int32_t pluto_editor_scene_new(PlutoEditorHandle engineHandle)
+    {
+        std::scoped_lock stateLock(g_stateMutex);
+        auto *state = ResolveEngine(engineHandle);
+        if (!state) return PLUTO_EDITOR_INVALID_HANDLE;
+        std::scoped_lock engineLock(state->mutex);
+        auto scene = std::make_unique<PlutoGE::scene::Scene>();
+        PopulateInitialScene(*state->engine, *scene);
+        ReplaceScene(*state, std::move(scene));
+        g_lastError.clear();
+        return PLUTO_EDITOR_OK;
+    }
+
     int32_t pluto_editor_scene_load(PlutoEditorHandle engineHandle, const char *pathOrReference)
     {
         if (!pathOrReference || pathOrReference[0] == '\0') return PLUTO_EDITOR_INVALID_ARGUMENT;
@@ -1349,6 +1521,164 @@ extern "C"
         }
         ReplaceScene(*state, std::move(scene));
         g_lastError.clear();
+        return PLUTO_EDITOR_OK;
+    }
+
+    int32_t pluto_editor_scene_save(PlutoEditorHandle engineHandle, const char *path)
+    {
+        std::scoped_lock stateLock(g_stateMutex);
+        auto *state = ResolveEngine(engineHandle);
+        if (!state) return PLUTO_EDITOR_INVALID_HANDLE;
+        std::scoped_lock engineLock(state->mutex);
+        if (!state->scene)
+        {
+            SetError("No scene is loaded.");
+            return PLUTO_EDITOR_INVALID_ARGUMENT;
+        }
+        if (state->engine->IsRuntimeRunning())
+        {
+            SetError("Stop Play mode before saving the scene.");
+            return PLUTO_EDITOR_INVALID_ARGUMENT;
+        }
+        std::filesystem::path scenePath = path && path[0] != '\0'
+                                              ? std::filesystem::path(path)
+                                              : std::filesystem::path(state->scene->GetFilePath());
+        if (scenePath.empty())
+        {
+            SetError("Choose a file name before saving this scene.");
+            return PLUTO_EDITOR_INVALID_ARGUMENT;
+        }
+        scenePath = std::filesystem::absolute(scenePath).lexically_normal();
+        std::error_code errorCode;
+        std::filesystem::create_directories(scenePath.parent_path(), errorCode);
+        if (errorCode)
+        {
+            SetError("Failed to create the scene directory: " + scenePath.parent_path().string());
+            return PLUTO_EDITOR_INTERNAL_ERROR;
+        }
+        std::string errorMessage;
+        if (!PlutoGE::scene::SceneSerializer::Save(*state->scene, scenePath.string(), &errorMessage))
+        {
+            SetError(errorMessage.empty() ? "Failed to save scene." : errorMessage);
+            return PLUTO_EDITOR_INTERNAL_ERROR;
+        }
+        state->scene->SetFilePath(scenePath.string());
+        g_lastError.clear();
+        return PLUTO_EDITOR_OK;
+    }
+
+    int32_t pluto_editor_runtime_start(PlutoEditorHandle engineHandle)
+    {
+        std::scoped_lock stateLock(g_stateMutex);
+        auto *state = ResolveEngine(engineHandle);
+        if (!state) return PLUTO_EDITOR_INVALID_HANDLE;
+        std::scoped_lock engineLock(state->mutex);
+        if (!state->scene) return PLUTO_EDITOR_INVALID_ARGUMENT;
+        if (state->engine->IsRuntimeRunning()) return PLUTO_EDITOR_OK;
+        std::string errorMessage;
+        if (!PlutoGE::scene::SceneSerializer::SaveToString(*state->scene, state->runtimeSceneSnapshot, &errorMessage))
+        {
+            SetError(errorMessage.empty() ? "Failed to snapshot the scene before Play." : errorMessage);
+            return PLUTO_EDITOR_INTERNAL_ERROR;
+        }
+        state->runtimeScenePath = state->scene->GetFilePath();
+        state->engine->StartRuntime();
+        g_lastError.clear();
+        return PLUTO_EDITOR_OK;
+    }
+
+    int32_t pluto_editor_runtime_stop(PlutoEditorHandle engineHandle)
+    {
+        std::scoped_lock stateLock(g_stateMutex);
+        auto *state = ResolveEngine(engineHandle);
+        if (!state) return PLUTO_EDITOR_INVALID_HANDLE;
+        std::scoped_lock engineLock(state->mutex);
+        if (!state->engine->IsRuntimeRunning()) return PLUTO_EDITOR_OK;
+        state->engine->StopRuntime();
+        if (!state->runtimeSceneSnapshot.empty())
+        {
+            std::string errorMessage;
+            auto restoredScene = PlutoGE::scene::SceneSerializer::LoadFromString(state->runtimeSceneSnapshot, &errorMessage);
+            if (!restoredScene)
+            {
+                SetError(errorMessage.empty() ? "Runtime stopped, but the pre-Play scene could not be restored." : errorMessage);
+                return PLUTO_EDITOR_INTERNAL_ERROR;
+            }
+            restoredScene->SetFilePath(state->runtimeScenePath);
+            ReplaceScene(*state, std::move(restoredScene));
+        }
+        state->runtimeSceneSnapshot.clear();
+        state->runtimeScenePath.clear();
+        g_lastError.clear();
+        return PLUTO_EDITOR_OK;
+    }
+
+    int32_t pluto_editor_runtime_is_running(PlutoEditorHandle engineHandle, uint8_t *running)
+    {
+        if (!running) return PLUTO_EDITOR_INVALID_ARGUMENT;
+        std::scoped_lock stateLock(g_stateMutex);
+        auto *state = ResolveEngine(engineHandle);
+        if (!state) return PLUTO_EDITOR_INVALID_HANDLE;
+        std::scoped_lock engineLock(state->mutex);
+        *running = state->engine->IsRuntimeRunning() ? 1 : 0;
+        return PLUTO_EDITOR_OK;
+    }
+
+    int32_t pluto_editor_entity_create(PlutoEditorHandle engineHandle, uint32_t parentId, const char *name, uint32_t *entityId)
+    {
+        if (!entityId) return PLUTO_EDITOR_INVALID_ARGUMENT;
+        std::scoped_lock stateLock(g_stateMutex);
+        auto *state = ResolveEngine(engineHandle);
+        if (!state) return PLUTO_EDITOR_INVALID_HANDLE;
+        std::scoped_lock engineLock(state->mutex);
+        auto *parent = parentId == 0 ? nullptr : state->scene->FindEntityByID(parentId);
+        if (parentId != 0 && !parent) return PLUTO_EDITOR_INVALID_ARGUMENT;
+        auto entity = std::make_unique<PlutoGE::scene::Entity>(PlutoGE::scene::EntityConfig{
+            .name = name && name[0] != '\0' ? name : "GameObject",
+        });
+        auto *created = state->scene->AddEntity(std::move(entity), parent);
+        if (!created) return PLUTO_EDITOR_INTERNAL_ERROR;
+        *entityId = created->GetID();
+        return PLUTO_EDITOR_OK;
+    }
+
+    int32_t pluto_editor_entity_duplicate(PlutoEditorHandle engineHandle, uint32_t sourceId, uint32_t *entityId)
+    {
+        if (!entityId) return PLUTO_EDITOR_INVALID_ARGUMENT;
+        std::scoped_lock stateLock(g_stateMutex);
+        auto *state = ResolveEngine(engineHandle);
+        if (!state) return PLUTO_EDITOR_INVALID_HANDLE;
+        std::scoped_lock engineLock(state->mutex);
+        auto *source = state->scene->FindEntityByID(sourceId);
+        if (!source) return PLUTO_EDITOR_INVALID_ARGUMENT;
+        auto *duplicate = PlutoGE::scene::Prefab::DuplicateEntity(*state->scene, *source, source->GetParent(), true);
+        if (!duplicate) return PLUTO_EDITOR_INTERNAL_ERROR;
+        duplicate->SetName(source->GetName() + " Copy");
+        duplicate->SetPosition(source->GetPosition() + glm::vec3(0.25f, 0.0f, 0.25f));
+        *entityId = duplicate->GetID();
+        return PLUTO_EDITOR_OK;
+    }
+
+    int32_t pluto_editor_entity_delete(PlutoEditorHandle engineHandle, uint32_t entityId)
+    {
+        std::scoped_lock stateLock(g_stateMutex);
+        auto *state = ResolveEngine(engineHandle);
+        if (!state) return PLUTO_EDITOR_INVALID_HANDLE;
+        std::scoped_lock engineLock(state->mutex);
+        if (!state->scene->FindEntityByID(entityId)) return PLUTO_EDITOR_INVALID_ARGUMENT;
+        return state->scene->DestroyEntity(entityId) ? PLUTO_EDITOR_OK : PLUTO_EDITOR_INTERNAL_ERROR;
+    }
+
+    int32_t pluto_editor_entity_set_name(PlutoEditorHandle engineHandle, uint32_t entityId, const char *name)
+    {
+        if (!name || name[0] == '\0') return PLUTO_EDITOR_INVALID_ARGUMENT;
+        std::scoped_lock stateLock(g_stateMutex);
+        auto *state = ResolveEngine(engineHandle);
+        if (!state) return PLUTO_EDITOR_INVALID_HANDLE;
+        std::scoped_lock engineLock(state->mutex);
+        auto *entity = state->scene->FindEntityByID(entityId);
+        if (!entity) return PLUTO_EDITOR_INVALID_ARGUMENT;
+        entity->SetName(name);
         return PLUTO_EDITOR_OK;
     }
 

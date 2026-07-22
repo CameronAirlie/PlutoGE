@@ -137,6 +137,29 @@ internal sealed unsafe class EngineHost : IDisposable
         }
     }
 
+    internal bool? ReadEntityActive(uint entityId)
+    {
+        lock (_sync)
+            return _engine != 0 && PlutoNative.EntityGetActive(_engine, entityId, out var active) == PlutoNative.Result.Ok
+                ? active != 0
+                : null;
+    }
+
+    internal bool WriteEntityActive(uint entityId, bool active)
+    {
+        lock (_sync)
+        {
+            EnsureReady();
+            PlutoNative.ThrowIfFailed(
+                PlutoNative.EntitySetActive(_engine, entityId, active ? (byte)1 : (byte)0),
+                "Updating GameObject active state");
+            PlutoNative.ThrowIfFailed(
+                PlutoNative.EntityGetActive(_engine, entityId, out var committed),
+                "Verifying GameObject active state");
+            return committed != 0;
+        }
+    }
+
     internal EntityTransform WriteTransform(uint entityId, EntityTransform value)
     {
         lock (_sync)
@@ -189,6 +212,56 @@ internal sealed unsafe class EngineHost : IDisposable
         }
     }
 
+    internal ProjectDocument RefreshProject()
+    {
+        lock (_sync)
+        {
+            EnsureReady();
+            PlutoNative.ThrowIfFailed(PlutoNative.ProjectRefresh(_engine), "Refreshing project assets");
+            return ReadProjectCore();
+        }
+    }
+
+    internal ProjectDocument SaveProject()
+    {
+        lock (_sync)
+        {
+            EnsureReady();
+            PlutoNative.ThrowIfFailed(PlutoNative.ProjectSave(_engine), "Saving project");
+            return ReadProjectCore();
+        }
+    }
+
+    internal ProjectSettingsDocument ReadProjectSettings()
+    {
+        lock (_sync)
+        {
+            EnsureReady();
+            PlutoNative.ThrowIfFailed(PlutoNative.ProjectGetSettings(_engine, out var settings), "Reading project settings");
+            return new ProjectSettingsDocument(
+                settings.GetName(), settings.GetWindowTitle(), settings.GetStartupScene(), settings.GetScriptAssembly(),
+                settings.WindowWidth, settings.WindowHeight, settings.VSyncEnabled != 0, settings.EditorFontSize);
+        }
+    }
+
+    internal void WriteProjectSettings(ProjectSettingsDocument value)
+    {
+        lock (_sync)
+        {
+            EnsureReady();
+            PlutoNative.ProjectSettings settings = default;
+            settings.SetName(value.Name);
+            settings.SetWindowTitle(value.WindowTitle);
+            settings.SetStartupScene(value.StartupScene);
+            settings.SetScriptAssembly(value.ScriptAssembly);
+            settings.WindowWidth = Math.Max(value.WindowWidth, 64);
+            settings.WindowHeight = Math.Max(value.WindowHeight, 64);
+            settings.VSyncEnabled = value.VSyncEnabled ? (byte)1 : (byte)0;
+            settings.EditorFontSize = Math.Clamp(value.EditorFontSize, 10f, 24f);
+            PlutoNative.ThrowIfFailed(PlutoNative.ProjectSetSettings(_engine, in settings), "Updating project settings");
+        }
+    }
+
     private ProjectDocument ReadProjectCore()
     {
         PlutoNative.ThrowIfFailed(PlutoNative.ProjectGetInfo(_engine, out var info), "Reading project");
@@ -226,12 +299,77 @@ internal sealed unsafe class EngineHost : IDisposable
         }
     }
 
+    internal Task NewSceneAsync() => InvokeOnRenderAsync(() =>
+    {
+        PlutoNative.ThrowIfFailed(PlutoNative.SceneNew(_engine), "Creating scene");
+        _loadedScenePath = null;
+        return true;
+    });
+
     internal string ReadScenePath()
     {
         lock (_sync)
             return _engine != 0 && PlutoNative.SceneGetInfo(_engine, out var scene) == PlutoNative.Result.Ok
                 ? scene.GetPath()
                 : string.Empty;
+    }
+
+    internal string SaveScene(string? path = null)
+    {
+        lock (_sync)
+        {
+            EnsureReady();
+            PlutoNative.ThrowIfFailed(PlutoNative.SceneSave(_engine, path), "Saving scene");
+            return ReadScenePath();
+        }
+    }
+
+    internal Task StartRuntimeAsync() => InvokeOnRenderAsync(() =>
+    {
+        PlutoNative.ThrowIfFailed(PlutoNative.RuntimeStart(_engine), "Starting Play mode");
+        return true;
+    });
+
+    internal Task StopRuntimeAsync() => InvokeOnRenderAsync(() =>
+    {
+        PlutoNative.ThrowIfFailed(PlutoNative.RuntimeStop(_engine), "Stopping Play mode");
+        return true;
+    });
+
+    internal bool IsRuntimeRunning
+    {
+        get
+        {
+            lock (_sync)
+                return _engine != 0 && PlutoNative.RuntimeIsRunning(_engine, out var running) == PlutoNative.Result.Ok && running != 0;
+        }
+    }
+
+    internal Task<uint> CreateEntityAsync(uint parentId, string name) => InvokeOnRenderAsync(() =>
+    {
+        PlutoNative.ThrowIfFailed(PlutoNative.EntityCreate(_engine, parentId, name, out var entityId), "Creating GameObject");
+        return entityId;
+    });
+
+    internal Task<uint> DuplicateEntityAsync(uint entityId) => InvokeOnRenderAsync(() =>
+    {
+        PlutoNative.ThrowIfFailed(PlutoNative.EntityDuplicate(_engine, entityId, out var duplicateId), "Duplicating GameObject");
+        return duplicateId;
+    });
+
+    internal Task DeleteEntityAsync(uint entityId) => InvokeOnRenderAsync(() =>
+    {
+        PlutoNative.ThrowIfFailed(PlutoNative.EntityDelete(_engine, entityId), "Deleting GameObject");
+        return true;
+    });
+
+    internal void RenameEntity(uint entityId, string name)
+    {
+        lock (_sync)
+        {
+            EnsureReady();
+            PlutoNative.ThrowIfFailed(PlutoNative.EntitySetName(_engine, entityId, name), "Renaming GameObject");
+        }
     }
 
     internal IReadOnlyList<EntityComponent> ReadComponents(uint entityId)
@@ -421,6 +559,21 @@ internal sealed unsafe class EngineHost : IDisposable
             throw new InvalidOperationException("The engine is not ready yet. Open the Viewport window first.");
     }
 
+    private Task<T> InvokeOnRenderAsync<T>(Func<T> action)
+    {
+        lock (_sync)
+        {
+            EnsureReady();
+            var completion = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
+            _renderActions.Enqueue(() =>
+            {
+                try { completion.SetResult(action()); }
+                catch (Exception exception) { completion.SetException(exception); }
+            });
+            return completion.Task;
+        }
+    }
+
     public void Dispose()
     {
         lock (_sync)
@@ -451,6 +604,16 @@ internal sealed record ProjectDocument(
     IReadOnlyList<ProjectAsset> Assets);
 
 internal sealed record ProjectAsset(string Reference, string Type, bool IsScene, ulong Size);
+
+internal sealed record ProjectSettingsDocument(
+    string Name,
+    string WindowTitle,
+    string StartupScene,
+    string ScriptAssembly,
+    int WindowWidth,
+    int WindowHeight,
+    bool VSyncEnabled,
+    float EditorFontSize);
 
 internal sealed record EntityComponent(
     uint Index,

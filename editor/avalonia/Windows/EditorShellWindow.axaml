@@ -5,14 +5,40 @@
         xmlns:vm="clr-namespace:PlutoGE.Editor.Avalonia.ViewModels"
         x:Class="PlutoGE.Editor.Avalonia.Windows.EditorShellWindow"
         x:DataType="vm:DockWorkspaceViewModel"
-        Title="PlutoGE — Avalonia Editor" Width="1500" Height="900" MinWidth="960" MinHeight="600">
+        Title="PlutoGE — Avalonia Editor" Width="1500" Height="900" MinWidth="960" MinHeight="600"
+        KeyDown="OnKeyDown">
+  <Window.KeyBindings>
+    <KeyBinding Gesture="Ctrl+S" Command="{Binding Session.SaveSceneCommand}" />
+    <KeyBinding Gesture="Ctrl+Shift+S" Command="{Binding Session.SaveSceneAsCommand}" />
+    <KeyBinding Gesture="F5" Command="{Binding Session.PlayCommand}" />
+    <KeyBinding Gesture="Shift+F5" Command="{Binding Session.StopCommand}" />
+  </Window.KeyBindings>
   <Grid RowDefinitions="Auto,34,*,24">
     <Menu Grid.Row="0" Classes="editor-menu">
       <MenuItem Header="_File">
+        <MenuItem Header="New Scene" Command="{Binding Session.NewSceneCommand}" />
+        <Separator />
         <MenuItem Header="Open Project…" Command="{Binding Session.OpenProjectCommand}" />
         <MenuItem Header="Open Scene…" Command="{Binding Session.OpenSceneCommand}" />
         <Separator />
+        <MenuItem Header="Save Scene" HotKey="Ctrl+S" Command="{Binding Session.SaveSceneCommand}" />
+        <MenuItem Header="Save Scene As…" HotKey="Ctrl+Shift+S" Command="{Binding Session.SaveSceneAsCommand}" />
+        <MenuItem Header="Save Project" Command="{Binding Session.SaveProjectCommand}" />
+        <Separator />
+        <MenuItem Header="Project Settings…" Command="{Binding Session.OpenProjectSettingsCommand}" />
+        <Separator />
         <MenuItem Header="Exit" Click="OnExit" />
+      </MenuItem>
+      <MenuItem Header="_GameObject">
+        <MenuItem Header="Create Empty" Command="{Binding Session.CreateRootEntityCommand}" />
+        <MenuItem Header="Create Empty Child" Command="{Binding Session.CreateChildEntityCommand}" />
+        <Separator />
+        <MenuItem Header="Duplicate    Ctrl+D" Command="{Binding Session.DuplicateEntityCommand}" />
+        <MenuItem Header="Delete    Delete" Command="{Binding Session.DeleteEntityCommand}" />
+      </MenuItem>
+      <MenuItem Header="_Runtime">
+        <MenuItem Header="Play" HotKey="F5" Command="{Binding Session.PlayCommand}" />
+        <MenuItem Header="Stop" HotKey="Shift+F5" Command="{Binding Session.StopCommand}" />
       </MenuItem>
       <MenuItem Header="_View">
         <MenuItem Header="Show Project" Command="{Binding ShowProjectCommand}" />
@@ -20,6 +46,7 @@
         <MenuItem Header="Show Viewport" Command="{Binding ShowViewportCommand}" />
         <MenuItem Header="Show Editor Camera" Command="{Binding ShowEditorCameraCommand}" />
         <MenuItem Header="Show Inspector" Command="{Binding ShowInspectorCommand}" />
+        <MenuItem Header="Show Performance" Command="{Binding ShowPerformanceCommand}" />
         <Separator />
         <MenuItem Header="Restore Default Layout" Command="{Binding RestoreDefaultLayoutCommand}" />
       </MenuItem>
@@ -38,9 +65,13 @@
             <TextBlock FontSize="9" Foreground="{DynamicResource EditorMutedTextBrush}" Text="{Binding Session.ActiveScene}" />
           </StackPanel>
         </StackPanel>
-        <TextBlock Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="9"
-                   Foreground="{DynamicResource EditorMutedTextBrush}"
-                   Text="Drag tabs to dock or reorder · ↗ floats · resize with splitters" />
+        <StackPanel Grid.Column="1" HorizontalAlignment="Center" Orientation="Horizontal" Spacing="4">
+          <Button Classes="play-control" Content="▶" Command="{Binding Session.PlayCommand}" ToolTip.Tip="Play (F5)" />
+          <Button Classes="play-control" Content="■" Command="{Binding Session.StopCommand}" ToolTip.Tip="Stop (Shift+F5)" />
+          <Border Margin="7,0,0,0" Padding="8,3" CornerRadius="9" Background="{DynamicResource EditorCanvasBrush}">
+            <TextBlock FontSize="9" VerticalAlignment="Center" Text="{Binding Session.PlayStateText}" />
+          </Border>
+        </StackPanel>
         <controls:StatusPill Grid.Column="2" VerticalAlignment="Center" Text="{Binding Session.EngineStatusText}" />
       </Grid>
     </Border>

@@ -185,6 +185,7 @@ internal sealed class EngineViewport : OpenGlControlBase
             return;
         }
 
+        var editorRenderStart = Stopwatch.GetTimestamp();
         var now = _clock.ElapsedTicks;
         var delta = _previousTicks == 0 ? 1.0f / 60.0f : (float)((now - _previousTicks) / (double)Stopwatch.Frequency);
         _previousTicks = now;
@@ -248,7 +249,9 @@ internal sealed class EngineViewport : OpenGlControlBase
             CameraFarPlane = (float)(ViewModel?.Settings.FarPlane ?? 1000m),
             GetProcAddress = _resolverPointer,
         };
+        var hostRenderStart = Stopwatch.GetTimestamp();
         var result = Host.Render(_viewport, ViewModel?.SelectedEntityId ?? 0, in frame, out var gizmoActive);
+        var hostRenderMs = Stopwatch.GetElapsedTime(hostRenderStart).TotalMilliseconds;
         if (result != PlutoNative.Result.Ok)
         {
             var error = PlutoNative.GetLastError();
@@ -264,6 +267,8 @@ internal sealed class EngineViewport : OpenGlControlBase
             if (gizmoActive) ViewModel?.NotifyTransformManipulated();
         }
 
+        var renderCallbackMs = Stopwatch.GetElapsedTime(editorRenderStart).TotalMilliseconds;
+        ViewModel?.RecordPerformance(delta * 1000.0, hostRenderMs, Math.Max(0.0, renderCallbackMs - hostRenderMs));
         RequestNextFrameRendering();
     }
 

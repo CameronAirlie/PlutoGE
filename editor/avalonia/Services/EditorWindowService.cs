@@ -14,7 +14,7 @@ internal sealed class EditorWindowService : IDisposable
 
     internal EditorWindowService(EngineHost host)
     {
-        Session = new EditorSessionViewModel(host, OpenProjectAsync, OpenSceneAsync);
+        Session = new EditorSessionViewModel(host, OpenProjectAsync, OpenSceneAsync, SaveSceneAsAsync, OpenProjectSettingsAsync);
         Workspace = new DockWorkspaceViewModel(Session);
         Workspace.FloatRequested += OnFloatRequested;
         Workspace.DockRequested += OnDockRequested;
@@ -80,6 +80,26 @@ internal sealed class EditorWindowService : IDisposable
             FileTypeFilter = [new FilePickerFileType("PlutoGE Scene") { Patterns = ["*.plutoscene"] }],
         });
         if (files.Count > 0) await Session.LoadSceneAsync(files[0].Path.LocalPath);
+    }
+
+    private async Task SaveSceneAsAsync()
+    {
+        if (_shell is null) return;
+        var file = await _shell.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+        {
+            Title = "Save PlutoGE Scene",
+            SuggestedFileName = Session.ActiveScene == "Untitled scene" ? "New Scene.plutoscene" : Session.ActiveScene,
+            DefaultExtension = "plutoscene",
+            FileTypeChoices = [new FilePickerFileType("PlutoGE Scene") { Patterns = ["*.plutoscene"] }],
+        });
+        if (file is not null) await Session.SaveSceneToAsync(file.Path.LocalPath);
+    }
+
+    private async Task OpenProjectSettingsAsync()
+    {
+        if (_shell is null || !Session.HasProject) return;
+        var window = new ProjectSettingsWindow(Session);
+        await window.ShowDialog(_shell);
     }
 
     public void Dispose()

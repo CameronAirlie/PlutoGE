@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.Windows.Input;
+using Avalonia.Media;
 using PlutoGE.Editor.Avalonia.Native;
 
 namespace PlutoGE.Editor.Avalonia.ViewModels;
@@ -27,6 +29,7 @@ internal sealed class ComponentPropertyViewModel : ObservableObject
     private decimal _numericValue;
     private bool _boolValue;
     private string? _selectedOption;
+    private Color _colorValue;
 
     internal ComponentPropertyViewModel(EngineHost host, uint entityId, uint componentIndex, ComponentPropertyValue property)
     {
@@ -42,6 +45,7 @@ internal sealed class ComponentPropertyViewModel : ObservableObject
         _boolValue = string.Equals(property.Value, "true", StringComparison.OrdinalIgnoreCase) || property.Value == "1";
         decimal.TryParse(property.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out _numericValue);
         _selectedOption = ResolveEnumOption(property.Value, property.EnumOptions);
+        _colorValue = ParseColor(property.Value);
     }
 
     public string Name { get; }
@@ -52,8 +56,9 @@ internal sealed class ComponentPropertyViewModel : ObservableObject
     public bool IsInteger => Type is 1 or 9;
     public decimal NumericIncrement => IsInteger ? 1m : 0.1m;
     public bool IsBoolean => Type == 4;
+    public bool IsColor => Type == 5;
     public bool IsEnum => Type == 6;
-    public bool IsText => !IsNumeric && !IsBoolean && !IsEnum;
+    public bool IsText => !IsNumeric && !IsBoolean && !IsColor && !IsEnum;
     public bool IsReadOnly => !Editable;
 
     public string Value
@@ -123,6 +128,23 @@ internal sealed class ComponentPropertyViewModel : ObservableObject
         }
     }
 
+    public Color ColorValue
+    {
+        get => _colorValue;
+        set
+        {
+            var previous = _colorValue;
+            if (!Editable || !SetProperty(ref _colorValue, value)) return;
+            var serialized = SerializeColor(value);
+            _value = serialized;
+            if (!Commit(serialized))
+            {
+                _colorValue = previous;
+                OnPropertyChanged();
+            }
+        }
+    }
+
     private bool Commit(string value)
     {
         try
@@ -151,6 +173,23 @@ internal sealed class ComponentPropertyViewModel : ObservableObject
             if (string.Equals(options[index], value, StringComparison.Ordinal)) return index;
         return 0;
     }
+
+    private static Color ParseColor(string value)
+    {
+        var channels = value.Split(',', StringSplitOptions.TrimEntries);
+        var values = new[] { 1f, 1f, 1f, 1f };
+        for (var index = 0; index < Math.Min(channels.Length, values.Length); ++index)
+            if (float.TryParse(channels[index], NumberStyles.Float, CultureInfo.InvariantCulture, out var channel))
+                values[index] = Math.Clamp(channel, 0f, 1f);
+        static byte ToByte(float channel) => (byte)Math.Round(channel * 255f);
+        return Color.FromArgb(ToByte(values[3]), ToByte(values[0]), ToByte(values[1]), ToByte(values[2]));
+    }
+
+    private static string SerializeColor(Color color)
+    {
+        static string Channel(byte value) => (value / 255f).ToString("0.######", CultureInfo.InvariantCulture);
+        return $"{Channel(color.R)},{Channel(color.G)},{Channel(color.B)},{Channel(color.A)}";
+    }
 }
 
 internal sealed class ComponentViewModel : ObservableObject
@@ -160,7 +199,7 @@ internal sealed class ComponentViewModel : ObservableObject
     private readonly uint _componentIndex;
     private bool _enabled;
 
-    internal ComponentViewModel(EngineHost host, uint entityId, EntityComponent component)
+    internal ComponentViewModel(EngineHost host, uint entityId, EntityComponent component, Action remove)
     {
         _host = host;
         _entityId = entityId;
@@ -170,10 +209,12 @@ internal sealed class ComponentViewModel : ObservableObject
         Properties = component.Properties
             .Select(property => new ComponentPropertyViewModel(host, entityId, component.Index, property))
             .ToArray();
+        RemoveCommand = new RelayCommand(remove);
     }
 
     public string Name { get; }
     public IReadOnlyList<ComponentPropertyViewModel> Properties { get; }
+    public ICommand RemoveCommand { get; }
     public bool Enabled
     {
         get => _enabled;

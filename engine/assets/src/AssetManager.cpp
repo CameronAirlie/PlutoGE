@@ -2790,8 +2790,26 @@ namespace PlutoGE::assets
 
     void AssetManager::SetProjectContext(const std::string &projectRootDirectory, const std::string &projectAssetDirectory)
     {
-        m_projectRootDirectory = NormalizePath(projectRootDirectory);
-        m_projectAssetDirectory = projectAssetDirectory.empty() ? "Assets" : projectAssetDirectory;
+        const std::string normalizedRoot = NormalizePath(projectRootDirectory);
+        const std::string normalizedAssetDirectory = projectAssetDirectory.empty() ? "Assets" : projectAssetDirectory;
+        if (normalizedRoot != m_projectRootDirectory || normalizedAssetDirectory != m_projectAssetDirectory)
+        {
+            const auto isProjectAsset = [](const auto &entry)
+            {
+                return Project::IsProjectAssetReference(entry.first);
+            };
+            std::erase_if(m_meshCache, isProjectAsset);
+            std::erase_if(m_meshMaterialReferenceCache, isProjectAsset);
+            std::erase_if(m_meshMetadataCache, isProjectAsset);
+            std::erase_if(m_materialCache, isProjectAsset);
+            std::erase_if(m_shaderGraphCache, isProjectAsset);
+            std::erase_if(m_animationGraphCache, isProjectAsset);
+            std::erase_if(m_particleSystemCache, isProjectAsset);
+            std::erase_if(m_postProcessPresetCache, isProjectAsset);
+            std::erase_if(m_shaderGraphShaderCache, isProjectAsset);
+        }
+        m_projectRootDirectory = normalizedRoot;
+        m_projectAssetDirectory = normalizedAssetDirectory;
     }
 
     void AssetManager::ClearProjectContext()

@@ -92,6 +92,8 @@ internal sealed class EditorSessionViewModel : ObservableObject, IDisposable
         {
             ApplyProject(_host.LoadProject(path));
             LoadHierarchy();
+            SceneCamera.RefreshPostProcessing();
+            Inspector.RefreshFromNative(force: true, refreshComponents: true);
             ActiveScene = FormatSceneName(_host.ReadScenePath());
             StatusText = $"Opened project: {ProjectName}";
             EngineStatusText = "ENGINE LIVE";

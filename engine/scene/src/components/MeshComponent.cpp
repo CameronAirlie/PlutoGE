@@ -535,6 +535,7 @@ namespace PlutoGE::scene
             {"Visible", PropertyType::Bool, m_visible ? "true" : "false"},
             {"SubmeshIndex", PropertyType::Int, std::to_string(m_submeshIndex)},
             {"SubmeshCount", PropertyType::Int, std::to_string(m_submeshCount)},
+            {"SourceMesh", PropertyType::String, m_sourceMeshPath},
             {"ModelAssetId", PropertyType::String, m_modelAssetId},
             {"ModelObjectId", PropertyType::String, std::to_string(m_modelObjectId)},
             {"UseGeneratedLods", PropertyType::Bool, m_useGeneratedLods ? "true" : "false"},
@@ -611,6 +612,10 @@ namespace PlutoGE::scene
             {
                 m_submeshCount = std::max(1, std::stoi(property.value));
             }
+            else if (property.name == "SourceMesh")
+            {
+                sourceMeshPath = property.value;
+            }
             else if (property.name == "ModelAssetId")
             {
                 modelAssetId = property.value;
@@ -664,10 +669,16 @@ namespace PlutoGE::scene
         if (!modelAssetId.empty())
         {
             auto &engine = core::Engine::GetInstance();
-            sourceMeshPath = assets::Project::IsEngineAssetReference(modelAssetId)
-                                 ? modelAssetId
-                                 : engine.GetAssetManager().ResolveModelObject(modelAssetId, modelObjectId);
-            if (sourceMeshPath.empty()) return;
+            const std::string resolvedModelObject = assets::Project::IsEngineAssetReference(modelAssetId)
+                                                        ? modelAssetId
+                                                        : engine.GetAssetManager().ResolveModelObject(modelAssetId, modelObjectId);
+            if (!resolvedModelObject.empty())
+                sourceMeshPath = resolvedModelObject;
+        }
+
+        if (!sourceMeshPath.empty())
+        {
+            auto &engine = core::Engine::GetInstance();
             if (auto *builtinMesh = engine.GetAssetManager().LoadMeshAsset(sourceMeshPath))
             {
                 SetMesh(builtinMesh);

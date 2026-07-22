@@ -49,6 +49,7 @@
 #include <mutex>
 #include <limits>
 #include <map>
+#include <iterator>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -56,7 +57,7 @@
 
 namespace
 {
-    constexpr uint32_t kApiVersion = 5;
+    constexpr uint32_t kApiVersion = 6;
     constexpr PlutoEditorHandle kEngineHandle = 0x504c55544f454e47ull;
     thread_local std::string g_lastError;
 
@@ -614,6 +615,164 @@ namespace
         return "Component";
     }
 
+    enum class AddableComponentType
+    {
+        Mesh, Terrain, Spline, Ocean, Foliage, Cloth, ParticleSystem, Camera, Light,
+        Animation, Rigidbody, Collider, NavAgent, NavigationMesh, IblCapture,
+        PhysicalSky, VolumetricCloud, Script, SoundEmitter, SoundListener,
+        Canvas, RectTransform, UIImage, UIText, UIButton,
+    };
+
+    struct AddableComponentDefinition
+    {
+        const char *typeName;
+        const char *displayName;
+        const char *category;
+        AddableComponentType type;
+    };
+
+    constexpr AddableComponentDefinition kAddableComponentDefinitions[] = {
+        {"MeshComponent", "Mesh", "Rendering", AddableComponentType::Mesh},
+        {"TerrainComponent", "Terrain", "Rendering", AddableComponentType::Terrain},
+        {"SplineComponent", "Spline Track", "Rendering", AddableComponentType::Spline},
+        {"OceanComponent", "Ocean", "Rendering", AddableComponentType::Ocean},
+        {"FoliageComponent", "Foliage", "Rendering", AddableComponentType::Foliage},
+        {"ClothComponent", "Cloth", "Rendering", AddableComponentType::Cloth},
+        {"ParticleSystemComponent", "Particle System", "Rendering", AddableComponentType::ParticleSystem},
+        {"CameraComponent", "Camera", "Rendering", AddableComponentType::Camera},
+        {"LightComponent", "Light", "Rendering", AddableComponentType::Light},
+        {"AnimationComponent", "Animation", "Animation", AddableComponentType::Animation},
+        {"RigidbodyComponent", "Rigidbody", "Physics", AddableComponentType::Rigidbody},
+        {"ColliderComponent", "Collider", "Physics", AddableComponentType::Collider},
+        {"NavAgentComponent", "Navigation Agent", "AI", AddableComponentType::NavAgent},
+        {"NavigationMeshComponent", "Navigation Mesh", "AI", AddableComponentType::NavigationMesh},
+        {"IblCaptureComponent", "IBL Capture", "Environment", AddableComponentType::IblCapture},
+        {"PhysicalSkyComponent", "Physical Sky", "Environment", AddableComponentType::PhysicalSky},
+        {"VolumetricCloudComponent", "Volumetric Cloud", "Environment", AddableComponentType::VolumetricCloud},
+        {"ScriptComponent", "Script", "Scripting", AddableComponentType::Script},
+        {"SoundEmitterComponent", "Sound Emitter", "Audio", AddableComponentType::SoundEmitter},
+        {"SoundListenerComponent", "Sound Listener", "Audio", AddableComponentType::SoundListener},
+        {"CanvasComponent", "Canvas", "UI", AddableComponentType::Canvas},
+        {"RectTransformComponent", "Rect Transform", "UI", AddableComponentType::RectTransform},
+        {"UIImageComponent", "Image", "UI", AddableComponentType::UIImage},
+        {"UITextComponent", "Text", "UI", AddableComponentType::UIText},
+        {"UIButtonComponent", "Button", "UI", AddableComponentType::UIButton},
+    };
+
+    bool CanAddComponent(const PlutoGE::scene::Entity &entity, AddableComponentType type)
+    {
+        using namespace PlutoGE::scene;
+        switch (type)
+        {
+        case AddableComponentType::Mesh: return !entity.HasComponent<MeshComponent>();
+        case AddableComponentType::Terrain: return !entity.HasComponent<TerrainComponent>();
+        case AddableComponentType::Spline: return !entity.HasComponent<SplineComponent>();
+        case AddableComponentType::Ocean: return !entity.HasComponent<OceanComponent>();
+        case AddableComponentType::Foliage: return !entity.HasComponent<FoliageComponent>();
+        case AddableComponentType::Cloth: return !entity.HasComponent<ClothComponent>();
+        case AddableComponentType::ParticleSystem: return !entity.HasComponent<ParticleSystemComponent>();
+        case AddableComponentType::Camera: return !entity.HasComponent<CameraComponent>();
+        case AddableComponentType::Light: return !entity.HasComponent<LightComponent>();
+        case AddableComponentType::Animation: return !entity.HasComponent<AnimationComponent>();
+        case AddableComponentType::Rigidbody: return !entity.HasComponent<RigidbodyComponent>();
+        case AddableComponentType::Collider: return !entity.HasComponent<ColliderComponent>();
+        case AddableComponentType::NavAgent: return !entity.HasComponent<NavAgentComponent>();
+        case AddableComponentType::NavigationMesh: return !entity.HasComponent<NavigationMeshComponent>();
+        case AddableComponentType::IblCapture: return !entity.HasComponent<IblCaptureComponent>();
+        case AddableComponentType::PhysicalSky: return !entity.HasComponent<PhysicalSkyComponent>();
+        case AddableComponentType::VolumetricCloud: return !entity.HasComponent<VolumetricCloudComponent>();
+        case AddableComponentType::Script: return !entity.HasComponent<ScriptComponent>();
+        case AddableComponentType::SoundEmitter: return !entity.HasComponent<SoundEmitterComponent>();
+        case AddableComponentType::SoundListener: return !entity.HasComponent<SoundListenerComponent>();
+        case AddableComponentType::Canvas: return !entity.HasComponent<CanvasComponent>();
+        case AddableComponentType::RectTransform: return !entity.HasComponent<RectTransformComponent>();
+        case AddableComponentType::UIImage: return !entity.HasComponent<UIImageComponent>();
+        case AddableComponentType::UIText: return !entity.HasComponent<UITextComponent>();
+        case AddableComponentType::UIButton: return !entity.HasComponent<UIButtonComponent>();
+        }
+        return false;
+    }
+
+    bool AddComponent(EngineState &state, PlutoGE::scene::Entity &entity, AddableComponentType type)
+    {
+        using namespace PlutoGE;
+        if (!CanAddComponent(entity, type)) return false;
+        auto &assetManager = state.engine->GetAssetManager();
+        switch (type)
+        {
+        case AddableComponentType::Mesh:
+        {
+            auto *component = entity.CreateComponent<scene::MeshComponent>(scene::MeshComponentConfig{
+                .mesh = nullptr,
+                .material = assetManager.LoadMaterialAsset(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference)),
+            });
+            if (component) component->SetMaterialAssetForMaterialSlot(0, std::string(assets::Project::kBuiltinDefaultShadedMaterialReference));
+            return component != nullptr;
+        }
+        case AddableComponentType::Terrain:
+        {
+            auto *component = entity.CreateComponent<scene::TerrainComponent>(scene::TerrainComponentConfig{
+                .material = assetManager.LoadMaterialAsset(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference)),
+            });
+            if (component) component->SetMaterialAssetReference(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference));
+            return component != nullptr;
+        }
+        case AddableComponentType::Spline:
+        {
+            auto *component = entity.CreateComponent<scene::SplineComponent>(scene::SplineComponentConfig{
+                .material = assetManager.LoadMaterialAsset(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference)),
+                .materialAssetReference = std::string(assets::Project::kBuiltinDefaultShadedMaterialReference),
+            });
+            if (component) component->Rebuild();
+            return component != nullptr;
+        }
+        case AddableComponentType::Ocean: return entity.CreateComponent<scene::OceanComponent>() != nullptr;
+        case AddableComponentType::Foliage:
+        {
+            auto *component = entity.CreateComponent<scene::FoliageComponent>();
+            if (component) component->SetMaterialAssetReference(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference));
+            return component != nullptr;
+        }
+        case AddableComponentType::Cloth: return entity.CreateComponent<scene::ClothComponent>() != nullptr;
+        case AddableComponentType::ParticleSystem: return entity.CreateComponent<scene::ParticleSystemComponent>() != nullptr;
+        case AddableComponentType::Camera:
+        {
+            bool hasCamera = false;
+            if (entity.GetScene())
+                for (auto *candidate : FlattenScene(*entity.GetScene()))
+                    hasCamera |= candidate && candidate->HasComponent<scene::CameraComponent>();
+            auto *component = entity.CreateComponent<scene::CameraComponent>(new render::Camera(render::CameraConfig{
+                .fovY = 60.0f, .nearPlane = 0.1f, .farPlane = 100.0f,
+            }));
+            if (component) component->SetMainCamera(!hasCamera);
+            return component != nullptr;
+        }
+        case AddableComponentType::Light: return entity.CreateComponent<scene::LightComponent>() != nullptr;
+        case AddableComponentType::Animation: return entity.CreateComponent<scene::AnimationComponent>() != nullptr;
+        case AddableComponentType::Rigidbody: return entity.CreateComponent<scene::RigidbodyComponent>() != nullptr;
+        case AddableComponentType::Collider:
+            return entity.CreateComponent<scene::ColliderComponent>(scene::ColliderComponentConfig{
+                .shape = entity.HasComponent<scene::TerrainComponent>() ? scene::ColliderShape::Terrain
+                       : entity.HasComponent<scene::SplineComponent>() ? scene::ColliderShape::Mesh
+                                                                      : scene::ColliderShape::Box,
+            }) != nullptr;
+        case AddableComponentType::NavAgent: return entity.CreateComponent<scene::NavAgentComponent>() != nullptr;
+        case AddableComponentType::NavigationMesh: return entity.CreateComponent<scene::NavigationMeshComponent>() != nullptr;
+        case AddableComponentType::IblCapture: return entity.CreateComponent<scene::IblCaptureComponent>() != nullptr;
+        case AddableComponentType::PhysicalSky: return entity.CreateComponent<scene::PhysicalSkyComponent>() != nullptr;
+        case AddableComponentType::VolumetricCloud: return entity.CreateComponent<scene::VolumetricCloudComponent>() != nullptr;
+        case AddableComponentType::Script: return entity.CreateComponent<scene::ScriptComponent>(scene::ScriptComponentConfig{}) != nullptr;
+        case AddableComponentType::SoundEmitter: return entity.CreateComponent<scene::SoundEmitterComponent>() != nullptr;
+        case AddableComponentType::SoundListener: return entity.CreateComponent<scene::SoundListenerComponent>() != nullptr;
+        case AddableComponentType::Canvas: return entity.CreateComponent<scene::CanvasComponent>() != nullptr;
+        case AddableComponentType::RectTransform: return entity.CreateComponent<scene::RectTransformComponent>() != nullptr;
+        case AddableComponentType::UIImage: return entity.CreateComponent<scene::UIImageComponent>() != nullptr;
+        case AddableComponentType::UIText: return entity.CreateComponent<scene::UITextComponent>() != nullptr;
+        case AddableComponentType::UIButton: return entity.CreateComponent<scene::UIButtonComponent>() != nullptr;
+        }
+        return false;
+    }
+
     void ReplaceScene(EngineState &state, std::unique_ptr<PlutoGE::scene::Scene> scene)
     {
         state.engine->SetScene(nullptr);
@@ -622,6 +781,60 @@ namespace
         state.engine->SetScene(state.scene.get());
         for (auto &[handle, viewport] : state.viewports)
             viewport->selectedEntityId = 0;
+    }
+
+    void ApplyProjectEditorPostProcess(EngineState &state, const PlutoGE::assets::ProjectManifest &manifest)
+    {
+        std::vector<std::unique_ptr<PlutoGE::render::IPostProcessEffect>> effects;
+        bool projectStackApplied = false;
+
+        if (!manifest.editorCameraPostProcessPreset.empty())
+        {
+            bool loaded = false;
+            const auto preset = state.engine->GetAssetManager().LoadPostProcessPresetAsset(
+                manifest.editorCameraPostProcessPreset, &loaded);
+            if (loaded)
+            {
+                effects = PlutoGE::assets::InstantiatePostProcessPreset(preset);
+                projectStackApplied = true;
+            }
+        }
+
+        if (!projectStackApplied && !manifest.editorCameraPostProcessEffects.empty())
+        {
+            projectStackApplied = true;
+            effects.reserve(manifest.editorCameraPostProcessEffects.size());
+            for (const auto &serializedEffect : manifest.editorCameraPostProcessEffects)
+            {
+                auto effect = PlutoGE::render::CreatePostProcessEffect(serializedEffect.typeName);
+                if (!effect)
+                    continue;
+
+                effect->SetEnabled(serializedEffect.enabled);
+                auto parameters = effect->GetParameters();
+                for (const auto &serializedParameter : serializedEffect.parameters)
+                {
+                    const auto parameter = std::find_if(parameters.begin(), parameters.end(),
+                                                        [&serializedParameter](const PlutoGE::render::PostProcessParameter &candidate)
+                                                        {
+                                                            return candidate.name == serializedParameter.name;
+                                                        });
+                    if (parameter == parameters.end())
+                        continue;
+                    parameter->type = static_cast<PlutoGE::render::PostProcessParameterType>(serializedParameter.type);
+                    parameter->value = serializedParameter.value;
+                }
+                effect->SetParameters(parameters);
+                effects.push_back(std::move(effect));
+            }
+        }
+
+        if (!projectStackApplied)
+            effects = PlutoGE::assets::InstantiatePostProcessPreset(PlutoGE::assets::CreateDefaultPostProcessPresetAsset());
+
+        for (auto &effect : state.editorCameraPostProcessEffects)
+            state.retiredPostProcessEffects.push_back(std::move(effect));
+        state.editorCameraPostProcessEffects = std::move(effects);
     }
 }
 
@@ -1033,6 +1246,7 @@ extern "C"
         project->RefreshAssetRegistry();
         state->engine->GetAssetManager().SetProjectContext(
             project->GetRootDirectory().string(), project->GetManifest().assetDirectory);
+        ApplyProjectEditorPostProcess(*state, project->GetManifest());
 
         std::unique_ptr<PlutoGE::scene::Scene> scene;
         const auto &startupScene = project->GetManifest().startupScene;
@@ -1241,6 +1455,76 @@ extern "C"
             existing->value = value;
         else
             state->pendingComponentEdits.push_back(PendingComponentEdit{entityId, componentIndex, propertyIndex, value});
+        return PLUTO_EDITOR_OK;
+    }
+
+    int32_t pluto_editor_entity_get_addable_component_type_count(PlutoEditorHandle engineHandle, uint32_t entityId, uint32_t *count)
+    {
+        if (!count) return PLUTO_EDITOR_INVALID_ARGUMENT;
+        std::scoped_lock stateLock(g_stateMutex);
+        auto *state = ResolveEngine(engineHandle);
+        if (!state) return PLUTO_EDITOR_INVALID_HANDLE;
+        std::scoped_lock engineLock(state->mutex);
+        if (!state->scene || !state->scene->FindEntityByID(entityId)) return PLUTO_EDITOR_INVALID_ARGUMENT;
+        *count = static_cast<uint32_t>(std::size(kAddableComponentDefinitions));
+        return PLUTO_EDITOR_OK;
+    }
+
+    int32_t pluto_editor_entity_get_addable_component_type(PlutoEditorHandle engineHandle, uint32_t entityId, uint32_t typeIndex, PlutoEditorAddableComponentType *componentType)
+    {
+        if (!componentType) return PLUTO_EDITOR_INVALID_ARGUMENT;
+        std::scoped_lock stateLock(g_stateMutex);
+        auto *state = ResolveEngine(engineHandle);
+        if (!state) return PLUTO_EDITOR_INVALID_HANDLE;
+        std::scoped_lock engineLock(state->mutex);
+        auto *entity = state->scene ? state->scene->FindEntityByID(entityId) : nullptr;
+        if (!entity || typeIndex >= std::size(kAddableComponentDefinitions)) return PLUTO_EDITOR_INVALID_ARGUMENT;
+        const auto &definition = kAddableComponentDefinitions[typeIndex];
+        componentType->can_add = CanAddComponent(*entity, definition.type) ? 1 : 0;
+        CopyString(componentType->type_name, definition.typeName);
+        CopyString(componentType->display_name, definition.displayName);
+        CopyString(componentType->category, definition.category);
+        return PLUTO_EDITOR_OK;
+    }
+
+    int32_t pluto_editor_entity_add_component(PlutoEditorHandle engineHandle, uint32_t entityId, const char *typeName)
+    {
+        if (!typeName) return PLUTO_EDITOR_INVALID_ARGUMENT;
+        std::scoped_lock stateLock(g_stateMutex);
+        auto *state = ResolveEngine(engineHandle);
+        if (!state) return PLUTO_EDITOR_INVALID_HANDLE;
+        std::scoped_lock engineLock(state->mutex);
+        auto *entity = state->scene ? state->scene->FindEntityByID(entityId) : nullptr;
+        if (!entity) return PLUTO_EDITOR_INVALID_ARGUMENT;
+        if (!ApplyPendingComponentEdits(*state)) return PLUTO_EDITOR_INVALID_ARGUMENT;
+        const auto definition = std::find_if(std::begin(kAddableComponentDefinitions), std::end(kAddableComponentDefinitions),
+                                             [typeName](const AddableComponentDefinition &candidate)
+                                             {
+                                                 return std::string_view(candidate.typeName) == typeName;
+                                             });
+        if (definition == std::end(kAddableComponentDefinitions) || !AddComponent(*state, *entity, definition->type))
+        {
+            SetError("The selected component cannot be added to this GameObject.");
+            return PLUTO_EDITOR_INVALID_ARGUMENT;
+        }
+        return PLUTO_EDITOR_OK;
+    }
+
+    int32_t pluto_editor_entity_remove_component(PlutoEditorHandle engineHandle, uint32_t entityId, uint32_t componentIndex)
+    {
+        std::scoped_lock stateLock(g_stateMutex);
+        auto *state = ResolveEngine(engineHandle);
+        if (!state) return PLUTO_EDITOR_INVALID_HANDLE;
+        std::scoped_lock engineLock(state->mutex);
+        auto *entity = state->scene ? state->scene->FindEntityByID(entityId) : nullptr;
+        if (!entity) return PLUTO_EDITOR_INVALID_ARGUMENT;
+        if (!ApplyPendingComponentEdits(*state)) return PLUTO_EDITOR_INVALID_ARGUMENT;
+        const auto components = FlattenComponents(*entity);
+        if (componentIndex >= components.size() || !entity->RemoveComponent(components[componentIndex]))
+        {
+            SetError("The selected component could not be removed.");
+            return PLUTO_EDITOR_INVALID_ARGUMENT;
+        }
         return PLUTO_EDITOR_OK;
     }
 

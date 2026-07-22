@@ -1,6 +1,7 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:controls="clr-namespace:PlutoGE.Editor.Avalonia.Controls"
+             xmlns:colorPicker="clr-namespace:Avalonia.Controls;assembly=Avalonia.Controls.ColorPicker"
              xmlns:vm="clr-namespace:PlutoGE.Editor.Avalonia.ViewModels"
              x:Class="PlutoGE.Editor.Avalonia.Views.InspectorPaneView"
              x:DataType="vm:InspectorPaneViewModel">
@@ -34,6 +35,8 @@
                  Text="Waiting for the entity transform…" />
       <controls:PropertySection Header="Components">
         <StackPanel Spacing="8">
+          <Button HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                  Content="＋ Add Component⌄" Click="OnAddComponentClick" />
           <TextBlock IsVisible="{Binding Session.Inspector.HasNoComponents}" FontSize="10" FontStyle="Italic"
                      Foreground="{DynamicResource EditorMutedTextBrush}"
                      Text="This GameObject has no attached components." />
@@ -44,10 +47,12 @@
                         BorderBrush="{DynamicResource EditorBorderBrush}" BorderThickness="1"
                         Background="{DynamicResource EditorRaisedBrush}">
                   <StackPanel Spacing="8">
-                    <Grid ColumnDefinitions="*,Auto">
+                    <Grid ColumnDefinitions="*,Auto,Auto">
                       <TextBlock FontWeight="SemiBold" Text="{Binding Name}" />
                       <CheckBox Grid.Column="1" FontSize="10" Content="{Binding StateText}"
                                 IsChecked="{Binding Enabled, Mode=TwoWay}" />
+                      <Button Grid.Column="2" Classes="dock-action" Margin="6,0,0,0" Content="×"
+                              Command="{Binding RemoveCommand}" ToolTip.Tip="Remove component" />
                     </Grid>
                     <ItemsControl ItemsSource="{Binding Properties}">
                       <ItemsControl.ItemTemplate>
@@ -62,6 +67,9 @@
                             <CheckBox Grid.Column="1" VerticalAlignment="Center"
                                       IsVisible="{Binding IsBoolean}" IsEnabled="{Binding Editable}"
                                       IsChecked="{Binding BoolValue, Mode=TwoWay}" />
+                            <colorPicker:ColorPicker Grid.Column="1" MinHeight="28"
+                                                     IsVisible="{Binding IsColor}" IsEnabled="{Binding Editable}"
+                                                     Color="{Binding ColorValue, Mode=TwoWay}" />
                             <ComboBox Grid.Column="1" MinHeight="26"
                                       IsVisible="{Binding IsEnum}" IsEnabled="{Binding Editable}"
                                       ItemsSource="{Binding EnumOptions}"

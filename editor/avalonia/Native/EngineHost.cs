@@ -255,6 +255,46 @@ internal sealed unsafe class EngineHost : IDisposable
         }
     }
 
+    internal IReadOnlyList<AddableComponentTypeValue> ReadAddableComponentTypes(uint entityId)
+    {
+        lock (_sync)
+        {
+            EnsureReady();
+            PlutoNative.ThrowIfFailed(
+                PlutoNative.EntityGetAddableComponentTypeCount(_engine, entityId, out var count),
+                "Reading addable component types");
+            var componentTypes = new List<AddableComponentTypeValue>((int)count);
+            for (uint index = 0; index < count; ++index)
+            {
+                PlutoNative.ThrowIfFailed(
+                    PlutoNative.EntityGetAddableComponentType(_engine, entityId, index, out var componentType),
+                    "Reading an addable component type");
+                if (componentType.CanAdd != 0)
+                    componentTypes.Add(new AddableComponentTypeValue(
+                        componentType.GetTypeName(), componentType.GetDisplayName(), componentType.GetCategory()));
+            }
+            return componentTypes;
+        }
+    }
+
+    internal void AddComponent(uint entityId, string typeName)
+    {
+        lock (_sync)
+        {
+            EnsureReady();
+            PlutoNative.ThrowIfFailed(PlutoNative.EntityAddComponent(_engine, entityId, typeName), "Adding component");
+        }
+    }
+
+    internal void RemoveComponent(uint entityId, uint componentIndex)
+    {
+        lock (_sync)
+        {
+            EnsureReady();
+            PlutoNative.ThrowIfFailed(PlutoNative.EntityRemoveComponent(_engine, entityId, componentIndex), "Removing component");
+        }
+    }
+
     internal IReadOnlyList<string> ReadRegisteredPostProcessTypes()
     {
         lock (_sync)
@@ -399,6 +439,8 @@ internal sealed record ComponentPropertyValue(
     int Type,
     bool Editable,
     IReadOnlyList<string> EnumOptions);
+
+internal sealed record AddableComponentTypeValue(string TypeName, string DisplayName, string Category);
 
 internal sealed record EditorCameraPostProcessEffect(
     uint Index,

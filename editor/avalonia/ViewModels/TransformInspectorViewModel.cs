@@ -46,6 +46,7 @@ internal sealed class TransformInspectorViewModel : ObservableObject
     }
 
     public ObservableCollection<ComponentViewModel> Components { get; } = [];
+    public ObservableCollection<AddableComponentTypeViewModel> AddableComponentTypes { get; } = [];
 
     public string ComponentCountText => Components.Count == 1 ? "1 component" : $"{Components.Count} components";
     public bool HasComponents => Components.Count > 0;
@@ -69,6 +70,7 @@ internal sealed class TransformInspectorViewModel : ObservableObject
         HasTransform = false;
         ApplyTransform(new EntityTransform(0, 0, 0, 0, 0, 0, 1, 1, 1));
         Components.Clear();
+        AddableComponentTypes.Clear();
         OnPropertyChanged(nameof(ComponentCountText));
         OnPropertyChanged(nameof(HasComponents));
         OnPropertyChanged(nameof(HasNoComponents));
@@ -99,9 +101,11 @@ internal sealed class TransformInspectorViewModel : ObservableObject
         if (refreshComponents)
         {
             IReadOnlyList<EntityComponent> nativeComponents;
+            IReadOnlyList<AddableComponentTypeValue> addableComponentTypes;
             try
             {
                 nativeComponents = _host.ReadComponents(entityId);
+                addableComponentTypes = _host.ReadAddableComponentTypes(entityId);
             }
             catch (Exception exception)
             {
@@ -110,10 +114,43 @@ internal sealed class TransformInspectorViewModel : ObservableObject
             }
             Components.Clear();
             foreach (var component in nativeComponents)
-                Components.Add(new ComponentViewModel(_host, entityId, component));
+                Components.Add(new ComponentViewModel(_host, entityId, component, () => RemoveComponent(component.Index)));
+            AddableComponentTypes.Clear();
+            foreach (var componentType in addableComponentTypes)
+                AddableComponentTypes.Add(new AddableComponentTypeViewModel(
+                    componentType.TypeName, componentType.DisplayName, componentType.Category,
+                    () => AddComponent(componentType.TypeName)));
             OnPropertyChanged(nameof(ComponentCountText));
             OnPropertyChanged(nameof(HasComponents));
             OnPropertyChanged(nameof(HasNoComponents));
+        }
+    }
+
+    private void AddComponent(string typeName)
+    {
+        if (_entityId is not { } entityId) return;
+        try
+        {
+            _host.AddComponent(entityId, typeName);
+            RefreshFromNative(force: true, refreshComponents: true);
+        }
+        catch (Exception exception)
+        {
+            _host.ReportStatus(exception.Message);
+        }
+    }
+
+    private void RemoveComponent(uint componentIndex)
+    {
+        if (_entityId is not { } entityId) return;
+        try
+        {
+            _host.RemoveComponent(entityId, componentIndex);
+            RefreshFromNative(force: true, refreshComponents: true);
+        }
+        catch (Exception exception)
+        {
+            _host.ReportStatus(exception.Message);
         }
     }
 
@@ -160,4 +197,20 @@ internal sealed class TransformInspectorViewModel : ObservableObject
             _suspendWrites = false;
         }
     }
+}
+
+internal sealed class AddableComponentTypeViewModel
+{
+    internal AddableComponentTypeViewModel(string typeName, string displayName, string category, Action add)
+    {
+        TypeName = typeName;
+        DisplayName = displayName;
+        Category = category;
+        AddCommand = new RelayCommand(add);
+    }
+
+    public string TypeName { get; }
+    public string DisplayName { get; }
+    public string Category { get; }
+    public RelayCommand AddCommand { get; }
 }

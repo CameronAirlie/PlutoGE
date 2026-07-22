@@ -4,7 +4,7 @@ namespace PlutoGE.Editor.Avalonia.Native;
 
 internal static unsafe partial class PlutoNative
 {
-    internal const uint ApiVersion = 5;
+    internal const uint ApiVersion = 6;
     internal const string Library = "PlutoGE.Editor.Native";
 
     internal enum Result : int
@@ -174,6 +174,18 @@ internal static unsafe partial class PlutoNative
     }
 
     [StructLayout(LayoutKind.Sequential)]
+    internal struct AddableComponentType
+    {
+        internal byte CanAdd;
+        internal fixed byte TypeName[120];
+        internal fixed byte DisplayName[120];
+        internal fixed byte Category[64];
+        internal string GetTypeName() { fixed (byte* value = TypeName) return ReadUtf8(value); }
+        internal string GetDisplayName() { fixed (byte* value = DisplayName) return ReadUtf8(value); }
+        internal string GetCategory() { fixed (byte* value = Category) return ReadUtf8(value); }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
     internal struct PostProcessEffectInfo
     {
         internal uint Index;
@@ -280,6 +292,18 @@ internal static unsafe partial class PlutoNative
 
     [LibraryImport(Library, EntryPoint = "pluto_editor_component_set_property", StringMarshalling = StringMarshalling.Utf8)]
     internal static partial Result ComponentSetProperty(ulong engine, uint entityId, uint componentIndex, uint propertyIndex, string value);
+
+    [LibraryImport(Library, EntryPoint = "pluto_editor_entity_get_addable_component_type_count")]
+    internal static partial Result EntityGetAddableComponentTypeCount(ulong engine, uint entityId, out uint count);
+
+    [LibraryImport(Library, EntryPoint = "pluto_editor_entity_get_addable_component_type")]
+    internal static partial Result EntityGetAddableComponentType(ulong engine, uint entityId, uint typeIndex, out AddableComponentType componentType);
+
+    [LibraryImport(Library, EntryPoint = "pluto_editor_entity_add_component", StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial Result EntityAddComponent(ulong engine, uint entityId, string typeName);
+
+    [LibraryImport(Library, EntryPoint = "pluto_editor_entity_remove_component")]
+    internal static partial Result EntityRemoveComponent(ulong engine, uint entityId, uint componentIndex);
 
     [LibraryImport(Library, EntryPoint = "pluto_editor_post_process_get_registered_type_count")]
     internal static partial Result PostProcessGetRegisteredTypeCount(ulong engine, out uint count);

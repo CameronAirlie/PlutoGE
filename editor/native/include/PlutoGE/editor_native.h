@@ -137,6 +137,14 @@ extern "C"
         char enum_options[512];
     } PlutoEditorComponentProperty;
 
+    typedef struct PlutoEditorAddableComponentType
+    {
+        uint8_t can_add;
+        char type_name[120];
+        char display_name[120];
+        char category[64];
+    } PlutoEditorAddableComponentType;
+
     typedef struct PlutoEditorPostProcessEffectInfo
     {
         uint32_t index;
@@ -180,6 +188,10 @@ extern "C"
     PLUTO_EDITOR_API int32_t pluto_editor_component_get_property_count(PlutoEditorHandle engine, uint32_t entity_id, uint32_t component_index, uint32_t *count);
     PLUTO_EDITOR_API int32_t pluto_editor_component_get_property(PlutoEditorHandle engine, uint32_t entity_id, uint32_t component_index, uint32_t property_index, PlutoEditorComponentProperty *property);
     PLUTO_EDITOR_API int32_t pluto_editor_component_set_property(PlutoEditorHandle engine, uint32_t entity_id, uint32_t component_index, uint32_t property_index, const char *value);
+    PLUTO_EDITOR_API int32_t pluto_editor_entity_get_addable_component_type_count(PlutoEditorHandle engine, uint32_t entity_id, uint32_t *count);
+    PLUTO_EDITOR_API int32_t pluto_editor_entity_get_addable_component_type(PlutoEditorHandle engine, uint32_t entity_id, uint32_t type_index, PlutoEditorAddableComponentType *component_type);
+    PLUTO_EDITOR_API int32_t pluto_editor_entity_add_component(PlutoEditorHandle engine, uint32_t entity_id, const char *type_name);
+    PLUTO_EDITOR_API int32_t pluto_editor_entity_remove_component(PlutoEditorHandle engine, uint32_t entity_id, uint32_t component_index);
     PLUTO_EDITOR_API int32_t pluto_editor_post_process_get_registered_type_count(PlutoEditorHandle engine, uint32_t *count);
     PLUTO_EDITOR_API int32_t pluto_editor_post_process_get_registered_type(PlutoEditorHandle engine, uint32_t type_index, char *type_name, uint32_t type_name_size);
     PLUTO_EDITOR_API int32_t pluto_editor_camera_get_post_process_effect_count(PlutoEditorHandle engine, uint32_t *count);

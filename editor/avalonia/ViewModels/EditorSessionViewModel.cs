@@ -86,11 +86,11 @@ internal sealed class EditorSessionViewModel : ObservableObject, IDisposable
     public string AssetDirectory { get => _assetDirectory; private set => SetProperty(ref _assetDirectory, value); }
     public string ActiveScene { get => _activeScene; private set => SetProperty(ref _activeScene, value); }
 
-    internal void LoadProject(string path)
+    internal async Task LoadProjectAsync(string path)
     {
         try
         {
-            ApplyProject(_host.LoadProject(path));
+            ApplyProject(await _host.LoadProjectAsync(path));
             LoadHierarchy();
             SceneCamera.RefreshPostProcessing();
             Inspector.RefreshFromNative(force: true, refreshComponents: true);
@@ -104,11 +104,11 @@ internal sealed class EditorSessionViewModel : ObservableObject, IDisposable
         }
     }
 
-    internal void LoadScene(string pathOrReference)
+    internal async Task LoadSceneAsync(string pathOrReference)
     {
         try
         {
-            ActiveScene = FormatSceneName(_host.LoadScene(pathOrReference));
+            ActiveScene = FormatSceneName(await _host.LoadSceneAsync(pathOrReference));
             LoadHierarchy();
             StatusText = $"Opened scene: {ActiveScene}";
         }
@@ -134,9 +134,9 @@ internal sealed class EditorSessionViewModel : ObservableObject, IDisposable
         SelectedEntity = entity;
     }
 
-    private void OpenSelectedScene()
+    private async void OpenSelectedScene()
     {
-        if (SelectedScene is { } scene) LoadScene(scene.Reference);
+        if (SelectedScene is { } scene) await LoadSceneAsync(scene.Reference);
     }
 
     private void OnEngineReady(object? sender, EventArgs e) => Dispatcher.UIThread.Post(() =>

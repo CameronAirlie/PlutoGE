@@ -7,6 +7,7 @@ internal sealed unsafe class EngineHost : IDisposable
 {
     private readonly object _sync = new();
     private readonly HashSet<ulong> _viewports = [];
+    private readonly Queue<Action> _renderActions = [];
     private ulong _engine;
     private string? _loadedProjectPath;
     private string? _loadedScenePath;
@@ -68,6 +69,7 @@ internal sealed unsafe class EngineHost : IDisposable
         {
             gizmoActive = false;
             if (_engine == 0) return PlutoNative.Result.InvalidHandle;
+            while (_renderActions.TryDequeue(out var action)) action();
             PlutoNative.ViewportSetSelectedEntity(_engine, viewport, selectedEntityId);
             var result = PlutoNative.ViewportRender(_engine, viewport, in frame);
             if (result == PlutoNative.Result.Ok &&
@@ -153,15 +155,27 @@ internal sealed unsafe class EngineHost : IDisposable
         }
     }
 
-    internal ProjectDocument LoadProject(string manifestPath)
+    internal Task<ProjectDocument> LoadProjectAsync(string manifestPath)
     {
         lock (_sync)
         {
             EnsureReady();
-            PlutoNative.ThrowIfFailed(PlutoNative.ProjectLoad(_engine, manifestPath), "Loading project");
-            _loadedProjectPath = manifestPath;
-            _loadedScenePath = null;
-            return ReadProjectCore();
+            var completion = new TaskCompletionSource<ProjectDocument>(TaskCreationOptions.RunContinuationsAsynchronously);
+            _renderActions.Enqueue(() =>
+            {
+                try
+                {
+                    PlutoNative.ThrowIfFailed(PlutoNative.ProjectLoad(_engine, manifestPath), "Loading project");
+                    _loadedProjectPath = manifestPath;
+                    _loadedScenePath = null;
+                    completion.SetResult(ReadProjectCore());
+                }
+                catch (Exception exception)
+                {
+                    completion.SetException(exception);
+                }
+            });
+            return completion.Task;
         }
     }
 
@@ -188,15 +202,27 @@ internal sealed unsafe class EngineHost : IDisposable
         return new ProjectDocument(info.GetName(), info.GetManifestPath(), info.GetAssetDirectory(), info.GetStartupScene(), assets);
     }
 
-    internal string LoadScene(string pathOrReference)
+    internal Task<string> LoadSceneAsync(string pathOrReference)
     {
         lock (_sync)
         {
             EnsureReady();
-            PlutoNative.ThrowIfFailed(PlutoNative.SceneLoad(_engine, pathOrReference), "Loading scene");
-            PlutoNative.ThrowIfFailed(PlutoNative.SceneGetInfo(_engine, out var scene), "Reading scene");
-            _loadedScenePath = scene.GetPath();
-            return _loadedScenePath;
+            var completion = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+            _renderActions.Enqueue(() =>
+            {
+                try
+                {
+                    PlutoNative.ThrowIfFailed(PlutoNative.SceneLoad(_engine, pathOrReference), "Loading scene");
+                    PlutoNative.ThrowIfFailed(PlutoNative.SceneGetInfo(_engine, out var scene), "Reading scene");
+                    _loadedScenePath = scene.GetPath();
+                    completion.SetResult(_loadedScenePath);
+                }
+                catch (Exception exception)
+                {
+                    completion.SetException(exception);
+                }
+            });
+            return completion.Task;
         }
     }
 

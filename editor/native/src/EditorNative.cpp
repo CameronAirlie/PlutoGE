@@ -1014,13 +1014,16 @@ extern "C"
             viewport->height = frame->height;
         }
 
-        auto &renderer = state->engine->GetRenderer();
-        renderer.BeginProfilingFrame();
-        renderer.ClearRenderCommands();
-        state->scene->SubmitRenderCommands();
         const auto cameraData = BuildCameraData(*frame);
         viewport->lastCameraData = cameraData;
         viewport->hasCameraData = true;
+
+        auto &renderer = state->engine->GetRenderer();
+        renderer.BeginProfilingFrame();
+        renderer.ClearRenderCommands();
+        renderer.SetSubmissionCullingCameras({cameraData});
+        state->engine->UpdateAsyncMeshImports();
+        state->scene->Update(std::clamp(frame->delta_seconds, 0.0f, 0.25f));
         renderer.BeginFrame(viewport->renderTarget.get());
         std::vector<PlutoGE::render::IPostProcessEffect *> postProcessEffects;
         postProcessEffects.reserve(state->editorCameraPostProcessEffects.size());
@@ -1246,6 +1249,11 @@ extern "C"
         project->RefreshAssetRegistry();
         state->engine->GetAssetManager().SetProjectContext(
             project->GetRootDirectory().string(), project->GetManifest().assetDirectory);
+        if (!state->engine->GetWindow().EnsureOpenGLContextCurrent(true))
+        {
+            SetError("Failed to make the PlutoGE resource context current while loading the project.");
+            return PLUTO_EDITOR_OPENGL_UNAVAILABLE;
+        }
         ApplyProjectEditorPostProcess(*state, project->GetManifest());
 
         std::unique_ptr<PlutoGE::scene::Scene> scene;
@@ -1325,6 +1333,12 @@ extern "C"
         std::filesystem::path scenePath(pathOrReference);
         if (state->project && PlutoGE::assets::Project::IsProjectAssetReference(pathOrReference))
             scenePath = state->project->ResolveAssetReference(pathOrReference);
+
+        if (!state->engine->GetWindow().EnsureOpenGLContextCurrent(true))
+        {
+            SetError("Failed to make the PlutoGE resource context current while loading the scene.");
+            return PLUTO_EDITOR_OPENGL_UNAVAILABLE;
+        }
 
         std::string errorMessage;
         auto scene = PlutoGE::scene::SceneSerializer::Load(scenePath.string(), &errorMessage);

@@ -67,7 +67,7 @@ internal sealed class EditorWindowService : IDisposable
             AllowMultiple = false,
             FileTypeFilter = [new FilePickerFileType("PlutoGE Project") { Patterns = ["*.plutoproject"] }],
         });
-        if (files.Count > 0) Session.LoadProject(files[0].Path.LocalPath);
+        if (files.Count > 0) await Session.LoadProjectAsync(files[0].Path.LocalPath);
     }
 
     private async Task OpenSceneAsync()
@@ -79,7 +79,7 @@ internal sealed class EditorWindowService : IDisposable
             AllowMultiple = false,
             FileTypeFilter = [new FilePickerFileType("PlutoGE Scene") { Patterns = ["*.plutoscene"] }],
         });
-        if (files.Count > 0) Session.LoadScene(files[0].Path.LocalPath);
+        if (files.Count > 0) await Session.LoadSceneAsync(files[0].Path.LocalPath);
     }
 
     public void Dispose()

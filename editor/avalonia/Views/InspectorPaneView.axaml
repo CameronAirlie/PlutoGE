@@ -5,7 +5,8 @@
              x:Class="PlutoGE.Editor.Avalonia.Views.InspectorPaneView"
              x:DataType="vm:InspectorPaneViewModel">
   <ScrollViewer>
-    <StackPanel Margin="13" Spacing="14" IsEnabled="{Binding Session.Inspector.HasSelection}">
+    <StackPanel Margin="13" Spacing="14">
+      <StackPanel Spacing="14" IsEnabled="{Binding Session.Inspector.HasSelection}">
       <StackPanel Spacing="3">
         <TextBlock FontSize="17" FontWeight="SemiBold" Text="{Binding Session.Inspector.EntityName}" />
         <TextBlock FontSize="10" Foreground="{DynamicResource EditorMutedTextBrush}"
@@ -40,14 +41,29 @@
               <StackPanel Spacing="8">
                 <Grid ColumnDefinitions="*,Auto">
                   <TextBlock FontWeight="SemiBold" Text="{Binding Name}" />
-                  <TextBlock Grid.Column="1" FontSize="10" Foreground="{DynamicResource EditorAccentBrush}" Text="{Binding StateText}" />
+                  <CheckBox Grid.Column="1" FontSize="10" Content="{Binding StateText}"
+                            IsChecked="{Binding Enabled, Mode=TwoWay}" />
                 </Grid>
                 <ItemsControl ItemsSource="{Binding Properties}">
                   <ItemsControl.ItemTemplate>
                     <DataTemplate x:DataType="vm:ComponentPropertyViewModel">
                       <Grid ColumnDefinitions="2*,3*" Margin="0,2">
-                        <TextBlock FontSize="10" Foreground="{DynamicResource EditorMutedTextBrush}" Text="{Binding Name}" />
-                        <TextBlock Grid.Column="1" FontSize="10" TextWrapping="Wrap" Text="{Binding Value}" />
+                        <TextBlock FontSize="10" Margin="0,5,7,0" TextWrapping="Wrap"
+                                   Foreground="{DynamicResource EditorMutedTextBrush}" Text="{Binding Name}" />
+                        <NumericUpDown Grid.Column="1" Classes="editor-number" MinHeight="26"
+                                       IsVisible="{Binding IsNumeric}" IsEnabled="{Binding Editable}"
+                                       Increment="{Binding NumericIncrement}" FormatString="0.###"
+                                       Value="{Binding NumericValue, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                        <CheckBox Grid.Column="1" VerticalAlignment="Center"
+                                  IsVisible="{Binding IsBoolean}" IsEnabled="{Binding Editable}"
+                                  IsChecked="{Binding BoolValue, Mode=TwoWay}" />
+                        <ComboBox Grid.Column="1" MinHeight="26"
+                                  IsVisible="{Binding IsEnum}" IsEnabled="{Binding Editable}"
+                                  ItemsSource="{Binding EnumOptions}"
+                                  SelectedItem="{Binding SelectedOption, Mode=TwoWay}" />
+                        <TextBox Grid.Column="1" MinHeight="26"
+                                 IsVisible="{Binding IsText}" IsReadOnly="{Binding IsReadOnly}"
+                                 Text="{Binding Value, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" />
                       </Grid>
                     </DataTemplate>
                   </ItemsControl.ItemTemplate>
@@ -59,6 +75,7 @@
           </DataTemplate>
         </ItemsControl.ItemTemplate>
       </ItemsControl>
+      </StackPanel>
     </StackPanel>
   </ScrollViewer>
 </UserControl>

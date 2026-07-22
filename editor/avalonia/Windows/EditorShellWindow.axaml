@@ -18,6 +18,7 @@
         <MenuItem Header="Show Project" Command="{Binding ShowProjectCommand}" />
         <MenuItem Header="Show Hierarchy" Command="{Binding ShowHierarchyCommand}" />
         <MenuItem Header="Show Viewport" Command="{Binding ShowViewportCommand}" />
+        <MenuItem Header="Show Editor Camera" Command="{Binding ShowEditorCameraCommand}" />
         <MenuItem Header="Show Inspector" Command="{Binding ShowInspectorCommand}" />
         <Separator />
         <MenuItem Header="Restore Default Layout" Command="{Binding RestoreDefaultLayoutCommand}" />

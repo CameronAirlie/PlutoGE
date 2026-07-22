@@ -243,7 +243,9 @@ internal sealed class EngineViewport : OpenGlControlBase
             CameraZ = cameraPosition.Z,
             CameraYawDegrees = cameraYaw,
             CameraPitchDegrees = cameraPitch,
-            CameraFovDegrees = 45.0f,
+            CameraFovDegrees = (float)(ViewModel?.Settings.FieldOfView ?? 45m),
+            CameraNearPlane = (float)(ViewModel?.Settings.NearPlane ?? 0.1m),
+            CameraFarPlane = (float)(ViewModel?.Settings.FarPlane ?? 1000m),
             GetProcAddress = _resolverPointer,
         };
         var result = Host.Render(_viewport, ViewModel?.SelectedEntityId ?? 0, in frame, out var gizmoActive);
@@ -287,7 +289,7 @@ internal sealed class EngineViewport : OpenGlControlBase
                 if (_left && alt)
                 {
                     (_cameraYaw, _cameraPitch) = ViewportCameraController.AdvanceLook(
-                        _cameraYaw, _cameraPitch, deltaX, deltaY);
+                        _cameraYaw, _cameraPitch, deltaX, deltaY, (float)(ViewModel?.Settings.LookSensitivity ?? 0.18m));
                     _cameraPosition = ViewportCameraController.OrbitPosition(
                         _cameraPivot, _cameraYaw, _cameraPitch, _cameraOrbitDistance);
                 }
@@ -309,7 +311,7 @@ internal sealed class EngineViewport : OpenGlControlBase
                 else if (_right)
                 {
                     (_cameraYaw, _cameraPitch) = ViewportCameraController.AdvanceLook(
-                        _cameraYaw, _cameraPitch, deltaX, deltaY);
+                        _cameraYaw, _cameraPitch, deltaX, deltaY, (float)(ViewModel?.Settings.LookSensitivity ?? 0.18m));
                     _cameraPivot = _cameraPosition +
                         ViewportCameraController.Forward(_cameraYaw, _cameraPitch) * _cameraOrbitDistance;
                 }
@@ -442,7 +444,9 @@ internal sealed class EngineViewport : OpenGlControlBase
         if (_keys.Contains(Key.A)) localMovement.X -= 1.0f;
         if (_keys.Contains(Key.E)) localMovement.Y += 1.0f;
         if (_keys.Contains(Key.Q)) localMovement.Y -= 1.0f;
-        var speed = _keys.Contains(Key.LeftShift) || _keys.Contains(Key.RightShift) ? 18.0f : 6.0f;
+        var speed = _keys.Contains(Key.LeftShift) || _keys.Contains(Key.RightShift)
+            ? (float)(ViewModel?.Settings.BoostSpeed ?? 18m)
+            : (float)(ViewModel?.Settings.MoveSpeed ?? 6m);
         var previousPosition = _cameraPosition;
         _cameraPosition = ViewportCameraController.AdvancePosition(
             _cameraPosition, _cameraYaw, _cameraPitch, localMovement, speed, deltaSeconds);

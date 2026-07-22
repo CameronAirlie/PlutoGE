@@ -8,5 +8,7 @@
   <ItemGroup>
     <Compile Include="..\Testing\ViewportValidationMath.cs" Link="ViewportValidationMath.cs" />
     <Compile Include="..\Testing\ViewportCameraController.cs" Link="ViewportCameraController.cs" />
+    <Compile Include="..\ViewModels\ObservableObject.cs" Link="ObservableObject.cs" />
+    <Compile Include="..\ViewModels\SceneCameraSettingsValuesViewModel.cs" Link="SceneCameraSettingsValuesViewModel.cs" />
   </ItemGroup>
 </Project>

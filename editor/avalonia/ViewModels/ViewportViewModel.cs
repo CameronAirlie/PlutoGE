@@ -11,15 +11,17 @@ internal sealed class ViewportViewModel : ObservableObject
     private float _continuousYawDegreesPerSecond;
     private string _frameStats = "Waiting for viewport";
 
-    public ViewportViewModel(EngineHost host)
+    public ViewportViewModel(EngineHost host, SceneCameraSettingsViewModel settings)
     {
         _host = host;
+        Settings = settings;
     }
 
     public event Action<uint>? EntityPicked;
     internal event Action? TransformManipulated;
 
     internal EngineHost Host => _host;
+    internal SceneCameraSettingsViewModel Settings { get; }
     internal ulong ViewportHandle => _viewportHandle;
     internal uint SelectedEntityId => _selectedEntityId;
 

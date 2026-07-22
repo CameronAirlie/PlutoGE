@@ -12,7 +12,7 @@ internal sealed class ViewportPaneViewModel : ObservableObject, IDisposable
     internal ViewportPaneViewModel(EditorSessionViewModel session)
     {
         _session = session;
-        Viewport = new ViewportViewModel(session.Host);
+        Viewport = new ViewportViewModel(session.Host, session.SceneCamera);
         Viewport.SelectEntity(session.SelectedEntity?.Id ?? 0);
         Viewport.EntityPicked += OnEntityPicked;
         Viewport.TransformManipulated += OnTransformManipulated;

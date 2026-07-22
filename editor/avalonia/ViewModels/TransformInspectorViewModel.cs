@@ -9,7 +9,6 @@ internal sealed class TransformInspectorViewModel : ObservableObject
     private uint? _entityId;
     private bool _suspendWrites;
     private DateTime _lastWrite = DateTime.MinValue;
-    private DateTime _lastComponentRefresh = DateTime.MinValue;
     private string _entityName = "Nothing selected";
     private bool _hasSelection;
     private bool _hasTransform;
@@ -69,10 +68,10 @@ internal sealed class TransformInspectorViewModel : ObservableObject
         ApplyTransform(new EntityTransform(0, 0, 0, 0, 0, 0, 1, 1, 1));
         Components.Clear();
         OnPropertyChanged(nameof(ComponentCountText));
-        RefreshFromNative(force: true);
+        RefreshFromNative(force: true, refreshComponents: true);
     }
 
-    public void RefreshFromNative(bool force = false)
+    public void RefreshFromNative(bool force = false, bool refreshComponents = false)
     {
         if (_entityId is not { } entityId)
         {
@@ -93,17 +92,11 @@ internal sealed class TransformInspectorViewModel : ObservableObject
         ApplyTransform(transform);
         HasTransform = true;
 
-        if (force || DateTime.UtcNow - _lastComponentRefresh >= TimeSpan.FromSeconds(1))
+        if (refreshComponents)
         {
-            _lastComponentRefresh = DateTime.UtcNow;
             Components.Clear();
             foreach (var component in _host.ReadComponents(entityId))
-            {
-                Components.Add(new ComponentViewModel(
-                    component.Name,
-                    component.Enabled,
-                    component.Properties.Select(property => new ComponentPropertyViewModel(property.Name, property.Value)).ToArray()));
-            }
+                Components.Add(new ComponentViewModel(_host, entityId, component));
             OnPropertyChanged(nameof(ComponentCountText));
         }
     }

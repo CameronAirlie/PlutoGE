@@ -42,8 +42,23 @@ Require(ViewportCameraController.DollyDistance(orbitDistance, 1.0f) < orbitDista
 Require(ViewportCameraController.FrameDistance(2.0f) > ViewportCameraController.FrameDistance(0.25f),
     "Selection framing did not account for transform scale.");
 
+var sceneCamera = new PlutoGE.Editor.Avalonia.ViewModels.SceneCameraSettingsViewModel
+{
+    FieldOfView = 200m,
+    NearPlane = 0.25m,
+    FarPlane = 5000m,
+    MoveSpeed = 12m,
+    BoostSpeed = 40m,
+    LookSensitivity = 0.3m,
+};
+Require(sceneCamera.FieldOfView == 150m, "Scene camera FOV was not clamped to its supported range.");
+Require(sceneCamera.NearPlane == 0.25m && sceneCamera.FarPlane == 5000m,
+    "Scene camera clipping settings were not retained.");
+Require(sceneCamera.MoveSpeed == 12m && sceneCamera.BoostSpeed == 40m && sceneCamera.LookSensitivity == 0.3m,
+    "Scene camera navigation settings were not retained.");
+
 var windowOneYaw = ViewportValidationMath.AdvanceYaw(10.0f, 20.0f, 1.0f);
 var windowTwoYaw = ViewportValidationMath.AdvanceYaw(-30.0f, -10.0f, 1.0f);
 Require(windowOneYaw != windowTwoYaw, "Independent viewport state was aliased across windows.");
 
-Console.WriteLine("Viewport validation passed: Unity-style orbit/pan/fly/zoom/framing, continuous rotation, resize sequence, 60/120/144 Hz cadence, and independent window state.");
+Console.WriteLine("Viewport validation passed: Unity-style navigation, editable Scene camera settings, continuous rotation, resize sequence, 60/120/144 Hz cadence, and independent window state.");

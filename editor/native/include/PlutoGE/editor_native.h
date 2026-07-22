@@ -69,6 +69,8 @@ extern "C"
         float camera_yaw_degrees;
         float camera_pitch_degrees;
         float camera_fov_degrees;
+        float camera_near_plane;
+        float camera_far_plane;
         PlutoEditorGLProcAddress get_proc_address;
         void *user_data;
     } PlutoEditorViewportFrame;
@@ -129,9 +131,27 @@ extern "C"
     typedef struct PlutoEditorComponentProperty
     {
         int32_t type;
+        uint8_t editable;
         char name[120];
         char value[512];
+        char enum_options[512];
     } PlutoEditorComponentProperty;
+
+    typedef struct PlutoEditorPostProcessEffectInfo
+    {
+        uint32_t index;
+        uint8_t enabled;
+        char type_name[120];
+        char display_name[120];
+    } PlutoEditorPostProcessEffectInfo;
+
+    typedef struct PlutoEditorPostProcessParameter
+    {
+        int32_t type;
+        char name[120];
+        char value[512];
+        char enum_options[512];
+    } PlutoEditorPostProcessParameter;
 
     PLUTO_EDITOR_API uint32_t pluto_editor_api_version(void);
     PLUTO_EDITOR_API int32_t pluto_editor_engine_create(const PlutoEditorEngineConfig *config, PlutoEditorHandle *engine);
@@ -156,8 +176,21 @@ extern "C"
     PLUTO_EDITOR_API int32_t pluto_editor_scene_get_info(PlutoEditorHandle engine, PlutoEditorSceneInfo *scene);
     PLUTO_EDITOR_API int32_t pluto_editor_entity_get_component_count(PlutoEditorHandle engine, uint32_t entity_id, uint32_t *count);
     PLUTO_EDITOR_API int32_t pluto_editor_entity_get_component(PlutoEditorHandle engine, uint32_t entity_id, uint32_t component_index, PlutoEditorComponentInfo *component);
+    PLUTO_EDITOR_API int32_t pluto_editor_component_set_enabled(PlutoEditorHandle engine, uint32_t entity_id, uint32_t component_index, uint8_t enabled);
     PLUTO_EDITOR_API int32_t pluto_editor_component_get_property_count(PlutoEditorHandle engine, uint32_t entity_id, uint32_t component_index, uint32_t *count);
     PLUTO_EDITOR_API int32_t pluto_editor_component_get_property(PlutoEditorHandle engine, uint32_t entity_id, uint32_t component_index, uint32_t property_index, PlutoEditorComponentProperty *property);
+    PLUTO_EDITOR_API int32_t pluto_editor_component_set_property(PlutoEditorHandle engine, uint32_t entity_id, uint32_t component_index, uint32_t property_index, const char *value);
+    PLUTO_EDITOR_API int32_t pluto_editor_post_process_get_registered_type_count(PlutoEditorHandle engine, uint32_t *count);
+    PLUTO_EDITOR_API int32_t pluto_editor_post_process_get_registered_type(PlutoEditorHandle engine, uint32_t type_index, char *type_name, uint32_t type_name_size);
+    PLUTO_EDITOR_API int32_t pluto_editor_camera_get_post_process_effect_count(PlutoEditorHandle engine, uint32_t *count);
+    PLUTO_EDITOR_API int32_t pluto_editor_camera_get_post_process_effect(PlutoEditorHandle engine, uint32_t effect_index, PlutoEditorPostProcessEffectInfo *effect);
+    PLUTO_EDITOR_API int32_t pluto_editor_camera_add_post_process_effect(PlutoEditorHandle engine, const char *type_name);
+    PLUTO_EDITOR_API int32_t pluto_editor_camera_remove_post_process_effect(PlutoEditorHandle engine, uint32_t effect_index);
+    PLUTO_EDITOR_API int32_t pluto_editor_camera_move_post_process_effect(PlutoEditorHandle engine, uint32_t from_index, uint32_t to_index);
+    PLUTO_EDITOR_API int32_t pluto_editor_camera_set_post_process_effect_enabled(PlutoEditorHandle engine, uint32_t effect_index, uint8_t enabled);
+    PLUTO_EDITOR_API int32_t pluto_editor_camera_get_post_process_parameter_count(PlutoEditorHandle engine, uint32_t effect_index, uint32_t *count);
+    PLUTO_EDITOR_API int32_t pluto_editor_camera_get_post_process_parameter(PlutoEditorHandle engine, uint32_t effect_index, uint32_t parameter_index, PlutoEditorPostProcessParameter *parameter);
+    PLUTO_EDITOR_API int32_t pluto_editor_camera_set_post_process_parameter(PlutoEditorHandle engine, uint32_t effect_index, uint32_t parameter_index, const char *value);
     PLUTO_EDITOR_API const char *pluto_editor_get_last_error(void);
 
 #ifdef __cplusplus

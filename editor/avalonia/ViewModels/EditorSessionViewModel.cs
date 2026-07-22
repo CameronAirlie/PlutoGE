@@ -24,6 +24,7 @@ internal sealed class EditorSessionViewModel : ObservableObject, IDisposable
     internal EditorSessionViewModel(EngineHost host, Func<Task> openProject, Func<Task> openScene)
     {
         _host = host;
+        SceneCamera = new SceneCameraSettingsViewModel(host);
         Inspector = new TransformInspectorViewModel(host);
         OpenProjectCommand = new AsyncRelayCommand(openProject);
         OpenSceneCommand = new AsyncRelayCommand(openScene);
@@ -43,6 +44,7 @@ internal sealed class EditorSessionViewModel : ObservableObject, IDisposable
     public ObservableCollection<AssetItemViewModel> Assets { get; } = [];
     public ObservableCollection<AssetItemViewModel> Scenes { get; } = [];
     public TransformInspectorViewModel Inspector { get; }
+    public SceneCameraSettingsViewModel SceneCamera { get; }
     public ICommand OpenProjectCommand { get; }
     public ICommand OpenSceneCommand { get; }
     public RelayCommand OpenSelectedSceneCommand { get; }

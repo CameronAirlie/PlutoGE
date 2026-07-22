@@ -4,7 +4,7 @@ namespace PlutoGE.Editor.Avalonia.Native;
 
 internal static unsafe partial class PlutoNative
 {
-    internal const uint ApiVersion = 3;
+    internal const uint ApiVersion = 5;
     internal const string Library = "PlutoGE.Editor.Native";
 
     internal enum Result : int
@@ -54,6 +54,8 @@ internal static unsafe partial class PlutoNative
         internal float CameraYawDegrees;
         internal float CameraPitchDegrees;
         internal float CameraFovDegrees;
+        internal float CameraNearPlane;
+        internal float CameraFarPlane;
         internal nint GetProcAddress;
         internal nint UserData;
     }
@@ -158,10 +160,44 @@ internal static unsafe partial class PlutoNative
     internal struct ComponentProperty
     {
         internal int Type;
+        internal byte Editable;
         internal fixed byte Name[120];
         internal fixed byte Value[512];
+        internal fixed byte EnumOptions[512];
         internal string GetName() { fixed (byte* value = Name) return ReadUtf8(value); }
         internal string GetValue() { fixed (byte* value = Value) return ReadUtf8(value); }
+        internal string[] GetEnumOptions()
+        {
+            fixed (byte* value = EnumOptions)
+                return ReadUtf8(value).Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct PostProcessEffectInfo
+    {
+        internal uint Index;
+        internal byte Enabled;
+        internal fixed byte TypeName[120];
+        internal fixed byte DisplayName[120];
+        internal string GetTypeName() { fixed (byte* value = TypeName) return ReadUtf8(value); }
+        internal string GetDisplayName() { fixed (byte* value = DisplayName) return ReadUtf8(value); }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct PostProcessParameter
+    {
+        internal int Type;
+        internal fixed byte Name[120];
+        internal fixed byte Value[512];
+        internal fixed byte EnumOptions[512];
+        internal string GetName() { fixed (byte* value = Name) return ReadUtf8(value); }
+        internal string GetValue() { fixed (byte* value = Value) return ReadUtf8(value); }
+        internal string[] GetEnumOptions()
+        {
+            fixed (byte* value = EnumOptions)
+                return ReadUtf8(value).Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        }
     }
 
     [LibraryImport(Library, EntryPoint = "pluto_editor_api_version")]
@@ -233,11 +269,50 @@ internal static unsafe partial class PlutoNative
     [LibraryImport(Library, EntryPoint = "pluto_editor_entity_get_component")]
     internal static partial Result EntityGetComponent(ulong engine, uint entityId, uint componentIndex, out ComponentInfo component);
 
+    [LibraryImport(Library, EntryPoint = "pluto_editor_component_set_enabled")]
+    internal static partial Result ComponentSetEnabled(ulong engine, uint entityId, uint componentIndex, byte enabled);
+
     [LibraryImport(Library, EntryPoint = "pluto_editor_component_get_property_count")]
     internal static partial Result ComponentGetPropertyCount(ulong engine, uint entityId, uint componentIndex, out uint count);
 
     [LibraryImport(Library, EntryPoint = "pluto_editor_component_get_property")]
     internal static partial Result ComponentGetProperty(ulong engine, uint entityId, uint componentIndex, uint propertyIndex, out ComponentProperty property);
+
+    [LibraryImport(Library, EntryPoint = "pluto_editor_component_set_property", StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial Result ComponentSetProperty(ulong engine, uint entityId, uint componentIndex, uint propertyIndex, string value);
+
+    [LibraryImport(Library, EntryPoint = "pluto_editor_post_process_get_registered_type_count")]
+    internal static partial Result PostProcessGetRegisteredTypeCount(ulong engine, out uint count);
+
+    [LibraryImport(Library, EntryPoint = "pluto_editor_post_process_get_registered_type")]
+    internal static partial Result PostProcessGetRegisteredType(ulong engine, uint typeIndex, byte* typeName, uint typeNameSize);
+
+    [LibraryImport(Library, EntryPoint = "pluto_editor_camera_get_post_process_effect_count")]
+    internal static partial Result EditorCameraGetPostProcessEffectCount(ulong engine, out uint count);
+
+    [LibraryImport(Library, EntryPoint = "pluto_editor_camera_get_post_process_effect")]
+    internal static partial Result EditorCameraGetPostProcessEffect(ulong engine, uint effectIndex, out PostProcessEffectInfo effect);
+
+    [LibraryImport(Library, EntryPoint = "pluto_editor_camera_add_post_process_effect", StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial Result EditorCameraAddPostProcessEffect(ulong engine, string typeName);
+
+    [LibraryImport(Library, EntryPoint = "pluto_editor_camera_remove_post_process_effect")]
+    internal static partial Result EditorCameraRemovePostProcessEffect(ulong engine, uint effectIndex);
+
+    [LibraryImport(Library, EntryPoint = "pluto_editor_camera_move_post_process_effect")]
+    internal static partial Result EditorCameraMovePostProcessEffect(ulong engine, uint fromIndex, uint toIndex);
+
+    [LibraryImport(Library, EntryPoint = "pluto_editor_camera_set_post_process_effect_enabled")]
+    internal static partial Result EditorCameraSetPostProcessEffectEnabled(ulong engine, uint effectIndex, byte enabled);
+
+    [LibraryImport(Library, EntryPoint = "pluto_editor_camera_get_post_process_parameter_count")]
+    internal static partial Result EditorCameraGetPostProcessParameterCount(ulong engine, uint effectIndex, out uint count);
+
+    [LibraryImport(Library, EntryPoint = "pluto_editor_camera_get_post_process_parameter")]
+    internal static partial Result EditorCameraGetPostProcessParameter(ulong engine, uint effectIndex, uint parameterIndex, out PostProcessParameter parameter);
+
+    [LibraryImport(Library, EntryPoint = "pluto_editor_camera_set_post_process_parameter", StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial Result EditorCameraSetPostProcessParameter(ulong engine, uint effectIndex, uint parameterIndex, string value);
 
     [LibraryImport(Library, EntryPoint = "pluto_editor_get_last_error")]
     private static partial nint GetLastErrorNative();

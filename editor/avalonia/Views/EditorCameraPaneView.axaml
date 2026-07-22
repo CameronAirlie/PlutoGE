@@ -1,0 +1,100 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:PlutoGE.Editor.Avalonia.Controls"
+             xmlns:vm="clr-namespace:PlutoGE.Editor.Avalonia.ViewModels"
+             x:Class="PlutoGE.Editor.Avalonia.Views.EditorCameraPaneView"
+             x:DataType="vm:EditorCameraPaneViewModel">
+  <ScrollViewer>
+    <StackPanel Margin="13" Spacing="14">
+      <controls:PropertySection Header="Projection">
+        <StackPanel Spacing="7">
+          <Grid ColumnDefinitions="2*,3*">
+            <TextBlock VerticalAlignment="Center" FontSize="10" Foreground="{DynamicResource EditorMutedTextBrush}" Text="Field of View" />
+            <NumericUpDown Grid.Column="1" Classes="editor-number" MinHeight="27" Minimum="10" Maximum="150" Increment="1"
+                           Value="{Binding Session.SceneCamera.FieldOfView, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+          </Grid>
+          <Grid ColumnDefinitions="2*,3*">
+            <TextBlock VerticalAlignment="Center" FontSize="10" Foreground="{DynamicResource EditorMutedTextBrush}" Text="Near Plane" />
+            <NumericUpDown Grid.Column="1" Classes="editor-number" MinHeight="27" Minimum="0.001" Increment="0.01" FormatString="0.###"
+                           Value="{Binding Session.SceneCamera.NearPlane, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+          </Grid>
+          <Grid ColumnDefinitions="2*,3*">
+            <TextBlock VerticalAlignment="Center" FontSize="10" Foreground="{DynamicResource EditorMutedTextBrush}" Text="Far Plane" />
+            <NumericUpDown Grid.Column="1" Classes="editor-number" MinHeight="27" Maximum="100000" Increment="10" FormatString="0.###"
+                           Value="{Binding Session.SceneCamera.FarPlane, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+          </Grid>
+        </StackPanel>
+      </controls:PropertySection>
+
+      <controls:PropertySection Header="Navigation">
+        <StackPanel Spacing="7">
+          <Grid ColumnDefinitions="2*,3*">
+            <TextBlock VerticalAlignment="Center" FontSize="10" Foreground="{DynamicResource EditorMutedTextBrush}" Text="Fly Speed" />
+            <NumericUpDown Grid.Column="1" Classes="editor-number" MinHeight="27" Minimum="0.01" Increment="0.5" FormatString="0.##"
+                           Value="{Binding Session.SceneCamera.MoveSpeed, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+          </Grid>
+          <Grid ColumnDefinitions="2*,3*">
+            <TextBlock VerticalAlignment="Center" FontSize="10" Foreground="{DynamicResource EditorMutedTextBrush}" Text="Boost Speed" />
+            <NumericUpDown Grid.Column="1" Classes="editor-number" MinHeight="27" Minimum="0.01" Increment="1" FormatString="0.##"
+                           Value="{Binding Session.SceneCamera.BoostSpeed, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+          </Grid>
+          <Grid ColumnDefinitions="2*,3*">
+            <TextBlock VerticalAlignment="Center" FontSize="10" Foreground="{DynamicResource EditorMutedTextBrush}" Text="Look Sensitivity" />
+            <NumericUpDown Grid.Column="1" Classes="editor-number" MinHeight="27" Minimum="0.01" Maximum="2" Increment="0.01" FormatString="0.##"
+                           Value="{Binding Session.SceneCamera.LookSensitivity, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+          </Grid>
+        </StackPanel>
+      </controls:PropertySection>
+
+      <controls:PropertySection Header="Post Processing">
+        <StackPanel Spacing="9">
+          <Grid ColumnDefinitions="*,Auto">
+            <ComboBox MinHeight="28" ItemsSource="{Binding Session.SceneCamera.RegisteredEffectTypes}"
+                      SelectedItem="{Binding Session.SceneCamera.SelectedEffectType, Mode=TwoWay}" />
+            <Button Grid.Column="1" Margin="7,0,0,0" Content="Add Effect"
+                    Command="{Binding Session.SceneCamera.AddEffectCommand}" />
+          </Grid>
+
+          <ItemsControl ItemsSource="{Binding Session.SceneCamera.PostProcessEffects}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vm:PostProcessEffectViewModel">
+                <Border Margin="0,0,0,8" Padding="10" CornerRadius="7"
+                        BorderBrush="{DynamicResource EditorBorderBrush}" BorderThickness="1"
+                        Background="{DynamicResource EditorRaisedBrush}">
+                  <StackPanel Spacing="8">
+                    <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto">
+                      <CheckBox VerticalAlignment="Center" IsChecked="{Binding Enabled, Mode=TwoWay}" />
+                      <TextBlock Grid.Column="1" Margin="7,0" VerticalAlignment="Center" FontWeight="SemiBold" Text="{Binding DisplayName}" />
+                      <Button Grid.Column="2" Classes="dock-action" Content="↑" Command="{Binding MoveUpCommand}" ToolTip.Tip="Move up" />
+                      <Button Grid.Column="3" Classes="dock-action" Content="↓" Command="{Binding MoveDownCommand}" ToolTip.Tip="Move down" />
+                      <Button Grid.Column="4" Classes="dock-action" Content="×" Command="{Binding RemoveCommand}" ToolTip.Tip="Remove effect" />
+                    </Grid>
+                    <ItemsControl ItemsSource="{Binding Parameters}">
+                      <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="vm:PostProcessParameterViewModel">
+                          <Grid ColumnDefinitions="2*,3*" Margin="0,2">
+                            <TextBlock Margin="0,5,7,0" FontSize="10" TextWrapping="Wrap"
+                                       Foreground="{DynamicResource EditorMutedTextBrush}" Text="{Binding Name}" />
+                            <NumericUpDown Grid.Column="1" Classes="editor-number" MinHeight="26"
+                                           IsVisible="{Binding IsNumeric}" Increment="{Binding NumericIncrement}" FormatString="0.###"
+                                           Value="{Binding NumericValue, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                            <CheckBox Grid.Column="1" VerticalAlignment="Center" IsVisible="{Binding IsBoolean}"
+                                      IsChecked="{Binding BoolValue, Mode=TwoWay}" />
+                            <ComboBox Grid.Column="1" MinHeight="26" IsVisible="{Binding IsEnum}"
+                                      ItemsSource="{Binding EnumOptions}" SelectedItem="{Binding SelectedOption, Mode=TwoWay}" />
+                            <TextBox Grid.Column="1" MinHeight="26" IsVisible="{Binding IsText}"
+                                     Text="{Binding Value, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" />
+                          </Grid>
+                        </DataTemplate>
+                      </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                  </StackPanel>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </StackPanel>
+      </controls:PropertySection>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

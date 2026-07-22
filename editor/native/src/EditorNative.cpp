@@ -2,8 +2,11 @@
 
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/assets/Project.h"
+#include "PlutoGE/assets/PostProcessPresetAsset.h"
 #include "PlutoGE/render/Camera.h"
 #include "PlutoGE/render/RenderTarget.h"
+#include "PlutoGE/render/postprocess/IPostProcessEffect.h"
+#include "PlutoGE/render/postprocess/PostProcessEffectFactory.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/SceneSerializer.h"
@@ -45,6 +48,7 @@
 #include <memory>
 #include <mutex>
 #include <limits>
+#include <map>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -52,7 +56,7 @@
 
 namespace
 {
-    constexpr uint32_t kApiVersion = 3;
+    constexpr uint32_t kApiVersion = 5;
     constexpr PlutoEditorHandle kEngineHandle = 0x504c55544f454e47ull;
     thread_local std::string g_lastError;
 
@@ -82,12 +86,23 @@ namespace
         bool hasCameraData = false;
     };
 
+    struct PendingComponentEdit
+    {
+        uint32_t entityId = 0;
+        uint32_t componentIndex = 0;
+        uint32_t propertyIndex = 0;
+        std::string value;
+    };
+
     struct EngineState
     {
         PlutoGE::core::Engine *engine = nullptr;
         std::unique_ptr<PlutoGE::assets::Project> project;
         std::unique_ptr<PlutoGE::scene::Scene> scene;
+        std::vector<std::unique_ptr<PlutoGE::render::IPostProcessEffect>> editorCameraPostProcessEffects;
+        std::vector<std::unique_ptr<PlutoGE::render::IPostProcessEffect>> retiredPostProcessEffects;
         std::unordered_map<PlutoEditorHandle, std::unique_ptr<ViewportState>> viewports;
+        std::vector<PendingComponentEdit> pendingComponentEdits;
         PlutoEditorHandle nextViewportHandle = 1;
         std::mutex mutex;
     };
@@ -236,8 +251,8 @@ namespace
 
         PlutoGE::render::Camera camera(PlutoGE::render::CameraConfig{
             .fovY = std::clamp(frame.camera_fov_degrees, 10.0f, 150.0f),
-            .nearPlane = 0.1f,
-            .farPlane = 1000.0f,
+            .nearPlane = std::clamp(frame.camera_near_plane, 0.001f, 1000.0f),
+            .farPlane = std::max(frame.camera_far_plane, frame.camera_near_plane + 0.001f),
         });
         return camera.GetCameraDataForTransform(transform, std::max(frame.width, 1), std::max(frame.height, 1));
     }
@@ -484,6 +499,81 @@ namespace
         std::memcpy(destination, source.data(), std::min(source.size(), Size - 1));
     }
 
+    void CopyString(char *destination, uint32_t destinationSize, std::string_view source)
+    {
+        if (!destination || destinationSize == 0)
+            return;
+        std::memset(destination, 0, destinationSize);
+        std::memcpy(destination, source.data(), std::min(source.size(), static_cast<size_t>(destinationSize - 1)));
+    }
+
+    std::string JoinOptions(const std::vector<std::string> &options)
+    {
+        std::string joined;
+        for (const auto &option : options)
+        {
+            if (!joined.empty()) joined.push_back('\n');
+            joined += option;
+        }
+        return joined;
+    }
+
+    bool IsEditableProperty(const PlutoGE::scene::Property &property)
+    {
+        if (property.name == "PostProcessEffectCount") return false;
+        return property.name.size() < 5 || property.name.substr(property.name.size() - 5) != ".Type";
+    }
+
+    std::vector<PlutoGE::scene::Component *> FlattenComponents(PlutoGE::scene::Entity &entity);
+
+    bool ApplyPendingComponentEdits(EngineState &state)
+    {
+        if (state.pendingComponentEdits.empty()) return true;
+
+        std::map<std::pair<uint32_t, uint32_t>, std::vector<PendingComponentEdit>> groupedEdits;
+        for (auto &edit : state.pendingComponentEdits)
+            groupedEdits[{edit.entityId, edit.componentIndex}].push_back(std::move(edit));
+        state.pendingComponentEdits.clear();
+
+        for (const auto &[componentKey, edits] : groupedEdits)
+        {
+            auto *entity = state.scene->FindEntityByID(componentKey.first);
+            if (!entity)
+            {
+                SetError("The component's entity no longer exists.");
+                return false;
+            }
+            const auto components = FlattenComponents(*entity);
+            if (componentKey.second >= components.size())
+            {
+                SetError("The component no longer exists.");
+                return false;
+            }
+
+            auto properties = components[componentKey.second]->Serialize();
+            for (const auto &edit : edits)
+            {
+                if (edit.propertyIndex >= properties.size() || !IsEditableProperty(properties[edit.propertyIndex]))
+                {
+                    SetError("The component property is no longer available.");
+                    return false;
+                }
+                properties[edit.propertyIndex].value = edit.value;
+            }
+
+            try
+            {
+                components[componentKey.second]->Deserialize(properties);
+            }
+            catch (const std::exception &exception)
+            {
+                SetError(exception.what());
+                return false;
+            }
+        }
+        return true;
+    }
+
     std::vector<PlutoGE::scene::Component *> FlattenComponents(PlutoGE::scene::Entity &entity)
     {
         std::vector<PlutoGE::scene::Component *> components;
@@ -527,6 +617,7 @@ namespace
     void ReplaceScene(EngineState &state, std::unique_ptr<PlutoGE::scene::Scene> scene)
     {
         state.engine->SetScene(nullptr);
+        state.pendingComponentEdits.clear();
         state.scene = std::move(scene);
         state.engine->SetScene(state.scene.get());
         for (auto &[handle, viewport] : state.viewports)
@@ -571,6 +662,8 @@ extern "C"
             return PLUTO_EDITOR_OPENGL_UNAVAILABLE;
         }
 
+        state->editorCameraPostProcessEffects = PlutoGE::assets::InstantiatePostProcessPreset(
+            PlutoGE::assets::CreateDefaultPostProcessPresetAsset());
         state->scene = std::make_unique<PlutoGE::scene::Scene>();
         PopulateInitialScene(*state->engine, *state->scene);
         state->engine->SetScene(state->scene.get());
@@ -599,6 +692,8 @@ extern "C"
             state->viewports.clear();
             state->engine->SetScene(nullptr);
             state->scene.reset();
+            state->retiredPostProcessEffects.clear();
+            state->editorCameraPostProcessEffects.clear();
             state->engine->Shutdown();
         }
         g_state.reset();
@@ -686,6 +781,13 @@ extern "C"
             return PLUTO_EDITOR_CONTEXT_NOT_SHARED;
         }
 
+        // Effect destructors can release GPU resources, so defer removals until
+        // Avalonia has made the viewport's shared OpenGL context current.
+        state->retiredPostProcessEffects.clear();
+
+        if (!ApplyPendingComponentEdits(*state))
+            return PLUTO_EDITOR_INVALID_ARGUMENT;
+
         if (viewport->width != frame->width || viewport->height != frame->height)
         {
             const auto resizeStart = std::chrono::steady_clock::now();
@@ -707,10 +809,14 @@ extern "C"
         viewport->lastCameraData = cameraData;
         viewport->hasCameraData = true;
         renderer.BeginFrame(viewport->renderTarget.get());
+        std::vector<PlutoGE::render::IPostProcessEffect *> postProcessEffects;
+        postProcessEffects.reserve(state->editorCameraPostProcessEffects.size());
+        for (const auto &effect : state->editorCameraPostProcessEffects)
+            postProcessEffects.push_back(effect.get());
         renderer.RenderFrame(cameraData,
                              viewport->renderTarget.get(),
                              state->scene->GetLights(),
-                             nullptr,
+                             &postProcessEffects,
                              state->scene.get(),
                              true,
                              true);
@@ -1060,6 +1166,20 @@ extern "C"
         return PLUTO_EDITOR_OK;
     }
 
+    int32_t pluto_editor_component_set_enabled(PlutoEditorHandle engineHandle, uint32_t entityId, uint32_t componentIndex, uint8_t enabled)
+    {
+        std::scoped_lock stateLock(g_stateMutex);
+        auto *state = ResolveEngine(engineHandle);
+        if (!state) return PLUTO_EDITOR_INVALID_HANDLE;
+        std::scoped_lock engineLock(state->mutex);
+        auto *entity = state->scene->FindEntityByID(entityId);
+        if (!entity) return PLUTO_EDITOR_INVALID_ARGUMENT;
+        const auto components = FlattenComponents(*entity);
+        if (componentIndex >= components.size()) return PLUTO_EDITOR_INVALID_ARGUMENT;
+        components[componentIndex]->SetEnabled(enabled != 0);
+        return PLUTO_EDITOR_OK;
+    }
+
     int32_t pluto_editor_component_get_property_count(PlutoEditorHandle engineHandle, uint32_t entityId, uint32_t componentIndex, uint32_t *count)
     {
         if (!count) return PLUTO_EDITOR_INVALID_ARGUMENT;
@@ -1090,8 +1210,184 @@ extern "C"
         if (propertyIndex >= properties.size()) return PLUTO_EDITOR_INVALID_ARGUMENT;
         const auto &property = properties[propertyIndex];
         propertyInfo->type = static_cast<int32_t>(property.type);
+        propertyInfo->editable = IsEditableProperty(property) ? 1 : 0;
         CopyString(propertyInfo->name, property.name);
         CopyString(propertyInfo->value, property.value);
+        CopyString(propertyInfo->enum_options, JoinOptions(property.enumOptions));
+        return PLUTO_EDITOR_OK;
+    }
+
+    int32_t pluto_editor_component_set_property(PlutoEditorHandle engineHandle, uint32_t entityId, uint32_t componentIndex, uint32_t propertyIndex, const char *value)
+    {
+        if (!value) return PLUTO_EDITOR_INVALID_ARGUMENT;
+        std::scoped_lock stateLock(g_stateMutex);
+        auto *state = ResolveEngine(engineHandle);
+        if (!state) return PLUTO_EDITOR_INVALID_HANDLE;
+        std::scoped_lock engineLock(state->mutex);
+        auto *entity = state->scene->FindEntityByID(entityId);
+        if (!entity) return PLUTO_EDITOR_INVALID_ARGUMENT;
+        const auto components = FlattenComponents(*entity);
+        if (componentIndex >= components.size()) return PLUTO_EDITOR_INVALID_ARGUMENT;
+        auto properties = components[componentIndex]->Serialize();
+        if (propertyIndex >= properties.size() || !IsEditableProperty(properties[propertyIndex]))
+            return PLUTO_EDITOR_INVALID_ARGUMENT;
+        auto existing = std::find_if(state->pendingComponentEdits.begin(), state->pendingComponentEdits.end(),
+                                     [entityId, componentIndex, propertyIndex](const PendingComponentEdit &edit)
+                                     {
+                                         return edit.entityId == entityId && edit.componentIndex == componentIndex &&
+                                                edit.propertyIndex == propertyIndex;
+                                     });
+        if (existing != state->pendingComponentEdits.end())
+            existing->value = value;
+        else
+            state->pendingComponentEdits.push_back(PendingComponentEdit{entityId, componentIndex, propertyIndex, value});
+        return PLUTO_EDITOR_OK;
+    }
+
+    int32_t pluto_editor_post_process_get_registered_type_count(PlutoEditorHandle engineHandle, uint32_t *count)
+    {
+        if (!count) return PLUTO_EDITOR_INVALID_ARGUMENT;
+        std::scoped_lock stateLock(g_stateMutex);
+        if (!ResolveEngine(engineHandle)) return PLUTO_EDITOR_INVALID_HANDLE;
+        *count = static_cast<uint32_t>(PlutoGE::render::GetRegisteredPostProcessEffectTypes().size());
+        return PLUTO_EDITOR_OK;
+    }
+
+    int32_t pluto_editor_post_process_get_registered_type(PlutoEditorHandle engineHandle, uint32_t typeIndex, char *typeName, uint32_t typeNameSize)
+    {
+        if (!typeName || typeNameSize == 0) return PLUTO_EDITOR_INVALID_ARGUMENT;
+        std::scoped_lock stateLock(g_stateMutex);
+        if (!ResolveEngine(engineHandle)) return PLUTO_EDITOR_INVALID_HANDLE;
+        const auto &types = PlutoGE::render::GetRegisteredPostProcessEffectTypes();
+        if (typeIndex >= types.size()) return PLUTO_EDITOR_INVALID_ARGUMENT;
+        CopyString(typeName, typeNameSize, types[typeIndex]);
+        return PLUTO_EDITOR_OK;
+    }
+
+    int32_t pluto_editor_camera_get_post_process_effect_count(PlutoEditorHandle engineHandle, uint32_t *count)
+    {
+        if (!count) return PLUTO_EDITOR_INVALID_ARGUMENT;
+        std::scoped_lock stateLock(g_stateMutex);
+        auto *state = ResolveEngine(engineHandle);
+        if (!state) return PLUTO_EDITOR_INVALID_HANDLE;
+        std::scoped_lock engineLock(state->mutex);
+        *count = static_cast<uint32_t>(state->editorCameraPostProcessEffects.size());
+        return PLUTO_EDITOR_OK;
+    }
+
+    int32_t pluto_editor_camera_get_post_process_effect(PlutoEditorHandle engineHandle, uint32_t effectIndex, PlutoEditorPostProcessEffectInfo *effectInfo)
+    {
+        if (!effectInfo) return PLUTO_EDITOR_INVALID_ARGUMENT;
+        std::scoped_lock stateLock(g_stateMutex);
+        auto *state = ResolveEngine(engineHandle);
+        if (!state) return PLUTO_EDITOR_INVALID_HANDLE;
+        std::scoped_lock engineLock(state->mutex);
+        if (effectIndex >= state->editorCameraPostProcessEffects.size()) return PLUTO_EDITOR_INVALID_ARGUMENT;
+        const auto &effect = state->editorCameraPostProcessEffects[effectIndex];
+        effectInfo->index = effectIndex;
+        effectInfo->enabled = effect->IsEnabled() ? 1 : 0;
+        CopyString(effectInfo->type_name, effect->GetTypeName());
+        CopyString(effectInfo->display_name, effect->GetDisplayName());
+        return PLUTO_EDITOR_OK;
+    }
+
+    int32_t pluto_editor_camera_add_post_process_effect(PlutoEditorHandle engineHandle, const char *typeName)
+    {
+        if (!typeName) return PLUTO_EDITOR_INVALID_ARGUMENT;
+        std::scoped_lock stateLock(g_stateMutex);
+        auto *state = ResolveEngine(engineHandle);
+        if (!state) return PLUTO_EDITOR_INVALID_HANDLE;
+        std::scoped_lock engineLock(state->mutex);
+        auto effect = PlutoGE::render::CreatePostProcessEffect(typeName);
+        if (!effect)
+        {
+            SetError("Unknown post-process effect type.");
+            return PLUTO_EDITOR_INVALID_ARGUMENT;
+        }
+        state->editorCameraPostProcessEffects.push_back(std::move(effect));
+        return PLUTO_EDITOR_OK;
+    }
+
+    int32_t pluto_editor_camera_remove_post_process_effect(PlutoEditorHandle engineHandle, uint32_t effectIndex)
+    {
+        std::scoped_lock stateLock(g_stateMutex);
+        auto *state = ResolveEngine(engineHandle);
+        if (!state) return PLUTO_EDITOR_INVALID_HANDLE;
+        std::scoped_lock engineLock(state->mutex);
+        if (effectIndex >= state->editorCameraPostProcessEffects.size()) return PLUTO_EDITOR_INVALID_ARGUMENT;
+        state->retiredPostProcessEffects.push_back(std::move(state->editorCameraPostProcessEffects[effectIndex]));
+        state->editorCameraPostProcessEffects.erase(state->editorCameraPostProcessEffects.begin() + effectIndex);
+        return PLUTO_EDITOR_OK;
+    }
+
+    int32_t pluto_editor_camera_move_post_process_effect(PlutoEditorHandle engineHandle, uint32_t fromIndex, uint32_t toIndex)
+    {
+        std::scoped_lock stateLock(g_stateMutex);
+        auto *state = ResolveEngine(engineHandle);
+        if (!state) return PLUTO_EDITOR_INVALID_HANDLE;
+        std::scoped_lock engineLock(state->mutex);
+        auto &effects = state->editorCameraPostProcessEffects;
+        if (fromIndex >= effects.size() || toIndex >= effects.size()) return PLUTO_EDITOR_INVALID_ARGUMENT;
+        if (fromIndex == toIndex) return PLUTO_EDITOR_OK;
+        auto effect = std::move(effects[fromIndex]);
+        effects.erase(effects.begin() + fromIndex);
+        effects.insert(effects.begin() + toIndex, std::move(effect));
+        return PLUTO_EDITOR_OK;
+    }
+
+    int32_t pluto_editor_camera_set_post_process_effect_enabled(PlutoEditorHandle engineHandle, uint32_t effectIndex, uint8_t enabled)
+    {
+        std::scoped_lock stateLock(g_stateMutex);
+        auto *state = ResolveEngine(engineHandle);
+        if (!state) return PLUTO_EDITOR_INVALID_HANDLE;
+        std::scoped_lock engineLock(state->mutex);
+        if (effectIndex >= state->editorCameraPostProcessEffects.size()) return PLUTO_EDITOR_INVALID_ARGUMENT;
+        state->editorCameraPostProcessEffects[effectIndex]->SetEnabled(enabled != 0);
+        return PLUTO_EDITOR_OK;
+    }
+
+    int32_t pluto_editor_camera_get_post_process_parameter_count(PlutoEditorHandle engineHandle, uint32_t effectIndex, uint32_t *count)
+    {
+        if (!count) return PLUTO_EDITOR_INVALID_ARGUMENT;
+        std::scoped_lock stateLock(g_stateMutex);
+        auto *state = ResolveEngine(engineHandle);
+        if (!state) return PLUTO_EDITOR_INVALID_HANDLE;
+        std::scoped_lock engineLock(state->mutex);
+        if (effectIndex >= state->editorCameraPostProcessEffects.size()) return PLUTO_EDITOR_INVALID_ARGUMENT;
+        *count = static_cast<uint32_t>(state->editorCameraPostProcessEffects[effectIndex]->GetParameters().size());
+        return PLUTO_EDITOR_OK;
+    }
+
+    int32_t pluto_editor_camera_get_post_process_parameter(PlutoEditorHandle engineHandle, uint32_t effectIndex, uint32_t parameterIndex, PlutoEditorPostProcessParameter *parameterInfo)
+    {
+        if (!parameterInfo) return PLUTO_EDITOR_INVALID_ARGUMENT;
+        std::scoped_lock stateLock(g_stateMutex);
+        auto *state = ResolveEngine(engineHandle);
+        if (!state) return PLUTO_EDITOR_INVALID_HANDLE;
+        std::scoped_lock engineLock(state->mutex);
+        if (effectIndex >= state->editorCameraPostProcessEffects.size()) return PLUTO_EDITOR_INVALID_ARGUMENT;
+        const auto parameters = state->editorCameraPostProcessEffects[effectIndex]->GetParameters();
+        if (parameterIndex >= parameters.size()) return PLUTO_EDITOR_INVALID_ARGUMENT;
+        const auto &parameter = parameters[parameterIndex];
+        parameterInfo->type = static_cast<int32_t>(parameter.type);
+        CopyString(parameterInfo->name, parameter.name);
+        CopyString(parameterInfo->value, parameter.value);
+        CopyString(parameterInfo->enum_options, JoinOptions(parameter.enumOptions));
+        return PLUTO_EDITOR_OK;
+    }
+
+    int32_t pluto_editor_camera_set_post_process_parameter(PlutoEditorHandle engineHandle, uint32_t effectIndex, uint32_t parameterIndex, const char *value)
+    {
+        if (!value) return PLUTO_EDITOR_INVALID_ARGUMENT;
+        std::scoped_lock stateLock(g_stateMutex);
+        auto *state = ResolveEngine(engineHandle);
+        if (!state) return PLUTO_EDITOR_INVALID_HANDLE;
+        std::scoped_lock engineLock(state->mutex);
+        if (effectIndex >= state->editorCameraPostProcessEffects.size()) return PLUTO_EDITOR_INVALID_ARGUMENT;
+        auto parameters = state->editorCameraPostProcessEffects[effectIndex]->GetParameters();
+        if (parameterIndex >= parameters.size()) return PLUTO_EDITOR_INVALID_ARGUMENT;
+        parameters[parameterIndex].value = value;
+        state->editorCameraPostProcessEffects[effectIndex]->SetParameters(parameters);
         return PLUTO_EDITOR_OK;
     }
 

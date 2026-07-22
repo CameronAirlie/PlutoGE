@@ -223,11 +223,117 @@ internal sealed unsafe class EngineHost : IDisposable
                 for (uint propertyIndex = 0; propertyIndex < propertyCount; ++propertyIndex)
                 {
                     PlutoNative.ThrowIfFailed(PlutoNative.ComponentGetProperty(_engine, entityId, componentIndex, propertyIndex, out var property), "Reading component property");
-                    properties.Add(new ComponentPropertyValue(property.GetName(), property.GetValue(), property.Type));
+                    properties.Add(new ComponentPropertyValue(
+                        propertyIndex, property.GetName(), property.GetValue(), property.Type,
+                        property.Editable != 0, property.GetEnumOptions()));
                 }
                 components.Add(new EntityComponent(component.Index, component.GetName(), component.Enabled != 0, properties));
             }
             return components;
+        }
+    }
+
+    internal void WriteComponentEnabled(uint entityId, uint componentIndex, bool enabled)
+    {
+        lock (_sync)
+        {
+            EnsureReady();
+            PlutoNative.ThrowIfFailed(
+                PlutoNative.ComponentSetEnabled(_engine, entityId, componentIndex, enabled ? (byte)1 : (byte)0),
+                "Updating component state");
+        }
+    }
+
+    internal void WriteComponentProperty(uint entityId, uint componentIndex, uint propertyIndex, string value)
+    {
+        lock (_sync)
+        {
+            EnsureReady();
+            PlutoNative.ThrowIfFailed(
+                PlutoNative.ComponentSetProperty(_engine, entityId, componentIndex, propertyIndex, value),
+                "Updating component property");
+        }
+    }
+
+    internal IReadOnlyList<string> ReadRegisteredPostProcessTypes()
+    {
+        lock (_sync)
+        {
+            EnsureReady();
+            PlutoNative.ThrowIfFailed(PlutoNative.PostProcessGetRegisteredTypeCount(_engine, out var count), "Reading post-process effect types");
+            var types = new List<string>((int)count);
+            Span<byte> buffer = stackalloc byte[120];
+            for (uint index = 0; index < count; ++index)
+            {
+                buffer.Clear();
+                fixed (byte* value = buffer)
+                {
+                    PlutoNative.ThrowIfFailed(
+                        PlutoNative.PostProcessGetRegisteredType(_engine, index, value, (uint)buffer.Length),
+                        "Reading a post-process effect type");
+                    types.Add(System.Text.Encoding.UTF8.GetString(buffer[..buffer.IndexOf((byte)0)]));
+                }
+            }
+            return types;
+        }
+    }
+
+    internal IReadOnlyList<EditorCameraPostProcessEffect> ReadEditorCameraPostProcessEffects()
+    {
+        lock (_sync)
+        {
+            EnsureReady();
+            PlutoNative.ThrowIfFailed(
+                PlutoNative.EditorCameraGetPostProcessEffectCount(_engine, out var effectCount),
+                "Reading editor-camera post processing");
+            var effects = new List<EditorCameraPostProcessEffect>((int)effectCount);
+            for (uint effectIndex = 0; effectIndex < effectCount; ++effectIndex)
+            {
+                PlutoNative.ThrowIfFailed(
+                    PlutoNative.EditorCameraGetPostProcessEffect(_engine, effectIndex, out var effect),
+                    "Reading a post-process effect");
+                PlutoNative.ThrowIfFailed(
+                    PlutoNative.EditorCameraGetPostProcessParameterCount(_engine, effectIndex, out var parameterCount),
+                    "Reading post-process parameters");
+                var parameters = new List<PostProcessParameterValue>((int)parameterCount);
+                for (uint parameterIndex = 0; parameterIndex < parameterCount; ++parameterIndex)
+                {
+                    PlutoNative.ThrowIfFailed(
+                        PlutoNative.EditorCameraGetPostProcessParameter(_engine, effectIndex, parameterIndex, out var parameter),
+                        "Reading a post-process parameter");
+                    parameters.Add(new PostProcessParameterValue(
+                        parameterIndex, parameter.GetName(), parameter.GetValue(), parameter.Type, parameter.GetEnumOptions()));
+                }
+                effects.Add(new EditorCameraPostProcessEffect(
+                    effect.Index, effect.GetTypeName(), effect.GetDisplayName(), effect.Enabled != 0, parameters));
+            }
+            return effects;
+        }
+    }
+
+    internal void AddEditorCameraPostProcessEffect(string typeName) => InvokePostProcess(
+        () => PlutoNative.EditorCameraAddPostProcessEffect(_engine, typeName), "Adding a post-process effect");
+
+    internal void RemoveEditorCameraPostProcessEffect(uint effectIndex) => InvokePostProcess(
+        () => PlutoNative.EditorCameraRemovePostProcessEffect(_engine, effectIndex), "Removing a post-process effect");
+
+    internal void MoveEditorCameraPostProcessEffect(uint fromIndex, uint toIndex) => InvokePostProcess(
+        () => PlutoNative.EditorCameraMovePostProcessEffect(_engine, fromIndex, toIndex), "Reordering post-process effects");
+
+    internal void SetEditorCameraPostProcessEffectEnabled(uint effectIndex, bool enabled) => InvokePostProcess(
+        () => PlutoNative.EditorCameraSetPostProcessEffectEnabled(_engine, effectIndex, enabled ? (byte)1 : (byte)0),
+        "Updating a post-process effect");
+
+    internal void SetEditorCameraPostProcessParameter(uint effectIndex, uint parameterIndex, string value) => InvokePostProcess(
+        () => PlutoNative.EditorCameraSetPostProcessParameter(_engine, effectIndex, parameterIndex, value),
+        "Updating a post-process parameter");
+
+    private void InvokePostProcess(Func<PlutoNative.Result> action, string operation)
+    {
+        lock (_sync)
+        {
+            EnsureReady();
+            PlutoNative.ThrowIfFailed(action(), operation);
         }
     }
 
@@ -286,4 +392,24 @@ internal sealed record EntityComponent(
     bool Enabled,
     IReadOnlyList<ComponentPropertyValue> Properties);
 
-internal sealed record ComponentPropertyValue(string Name, string Value, int Type);
+internal sealed record ComponentPropertyValue(
+    uint Index,
+    string Name,
+    string Value,
+    int Type,
+    bool Editable,
+    IReadOnlyList<string> EnumOptions);
+
+internal sealed record EditorCameraPostProcessEffect(
+    uint Index,
+    string TypeName,
+    string DisplayName,
+    bool Enabled,
+    IReadOnlyList<PostProcessParameterValue> Parameters);
+
+internal sealed record PostProcessParameterValue(
+    uint Index,
+    string Name,
+    string Value,
+    int Type,
+    IReadOnlyList<string> EnumOptions);

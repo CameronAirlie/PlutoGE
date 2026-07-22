@@ -1,0 +1,64 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:PlutoGE.Editor.Avalonia.Controls"
+             xmlns:vm="clr-namespace:PlutoGE.Editor.Avalonia.ViewModels"
+             x:Class="PlutoGE.Editor.Avalonia.Views.InspectorPaneView"
+             x:DataType="vm:InspectorPaneViewModel">
+  <ScrollViewer>
+    <StackPanel Margin="13" Spacing="14" IsEnabled="{Binding Session.Inspector.HasSelection}">
+      <StackPanel Spacing="3">
+        <TextBlock FontSize="17" FontWeight="SemiBold" Text="{Binding Session.Inspector.EntityName}" />
+        <TextBlock FontSize="10" Foreground="{DynamicResource EditorMutedTextBrush}"
+                   Text="{Binding Session.Inspector.ComponentCountText}" />
+      </StackPanel>
+      <controls:PropertySection Header="Transform" IsEnabled="{Binding Session.Inspector.HasTransform}">
+        <StackPanel Spacing="11">
+          <controls:Vector3Input Label="Position" Increment="0.1"
+                                 X="{Binding Session.Inspector.PositionX, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                 Y="{Binding Session.Inspector.PositionY, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                 Z="{Binding Session.Inspector.PositionZ, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+          <controls:Vector3Input Label="Rotation" Increment="1"
+                                 X="{Binding Session.Inspector.RotationX, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                 Y="{Binding Session.Inspector.RotationY, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                 Z="{Binding Session.Inspector.RotationZ, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+          <controls:Vector3Input Label="Scale" Increment="0.1" Minimum="0.001"
+                                 X="{Binding Session.Inspector.ScaleX, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                 Y="{Binding Session.Inspector.ScaleY, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                 Z="{Binding Session.Inspector.ScaleZ, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+        </StackPanel>
+      </controls:PropertySection>
+      <TextBlock IsVisible="{Binding !Session.Inspector.HasTransform}"
+                 FontSize="10" FontStyle="Italic"
+                 Foreground="{DynamicResource EditorMutedTextBrush}"
+                 Text="Waiting for the entity transform…" />
+      <ItemsControl ItemsSource="{Binding Session.Inspector.Components}">
+        <ItemsControl.ItemTemplate>
+          <DataTemplate x:DataType="vm:ComponentViewModel">
+            <Border Margin="0,0,0,8" Padding="10" CornerRadius="7"
+                    BorderBrush="{DynamicResource EditorBorderBrush}" BorderThickness="1"
+                    Background="{DynamicResource EditorRaisedBrush}">
+              <StackPanel Spacing="8">
+                <Grid ColumnDefinitions="*,Auto">
+                  <TextBlock FontWeight="SemiBold" Text="{Binding Name}" />
+                  <TextBlock Grid.Column="1" FontSize="10" Foreground="{DynamicResource EditorAccentBrush}" Text="{Binding StateText}" />
+                </Grid>
+                <ItemsControl ItemsSource="{Binding Properties}">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="vm:ComponentPropertyViewModel">
+                      <Grid ColumnDefinitions="2*,3*" Margin="0,2">
+                        <TextBlock FontSize="10" Foreground="{DynamicResource EditorMutedTextBrush}" Text="{Binding Name}" />
+                        <TextBlock Grid.Column="1" FontSize="10" TextWrapping="Wrap" Text="{Binding Value}" />
+                      </Grid>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+                <TextBlock IsVisible="{Binding !HasProperties}" FontSize="10" FontStyle="Italic"
+                           Foreground="{DynamicResource EditorMutedTextBrush}" Text="No serialized properties" />
+              </StackPanel>
+            </Border>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

@@ -1,0 +1,210 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:PlutoGE.Editor.Avalonia.Controls">
+  <Style Selector="Window">
+    <Setter Property="Background" Value="{DynamicResource EditorCanvasBrush}" />
+    <Setter Property="Foreground" Value="{DynamicResource EditorTextBrush}" />
+    <Setter Property="FontFamily" Value="Inter, Segoe UI, sans-serif" />
+  </Style>
+
+  <Style Selector="Menu.editor-menu">
+    <Setter Property="Background" Value="{DynamicResource EditorSurfaceBrush}" />
+    <Setter Property="Padding" Value="8,2" />
+  </Style>
+
+  <Style Selector="GridSplitter.editor-splitter">
+    <Setter Property="Background" Value="Transparent" />
+  </Style>
+  <Style Selector="GridSplitter.editor-splitter:pointerover">
+    <Setter Property="Background" Value="{DynamicResource EditorAccentBrush}" />
+  </Style>
+
+  <Style Selector="Button.dock-action">
+    <Setter Property="MinWidth" Value="25" />
+    <Setter Property="Width" Value="25" />
+    <Setter Property="Height" Value="25" />
+    <Setter Property="Padding" Value="0" />
+    <Setter Property="FontSize" Value="11" />
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="BorderBrush" Value="Transparent" />
+  </Style>
+  <Style Selector="Button.dock-action:pointerover">
+    <Setter Property="Background" Value="{DynamicResource EditorHoverBrush}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource EditorBorderBrush}" />
+  </Style>
+
+  <Style Selector="TextBox.editor-search">
+    <Setter Property="MinHeight" Value="34" />
+    <Setter Property="CornerRadius" Value="7" />
+    <Setter Property="Background" Value="{DynamicResource EditorCanvasBrush}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource EditorBorderBrush}" />
+    <Setter Property="Padding" Value="10,6" />
+  </Style>
+  <Style Selector="TextBox.editor-search:focus">
+    <Setter Property="BorderBrush" Value="{DynamicResource EditorAccentBrush}" />
+  </Style>
+
+  <Style Selector="TreeView.editor-tree">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="BorderThickness" Value="0" />
+  </Style>
+  <Style Selector="TreeView.editor-tree TreeViewItem">
+    <Setter Property="MinHeight" Value="30" />
+    <Setter Property="Margin" Value="0,1" />
+  </Style>
+
+  <Style Selector="NumericUpDown.editor-number">
+    <Setter Property="MinHeight" Value="32" />
+    <Setter Property="Background" Value="{DynamicResource EditorCanvasBrush}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource EditorBorderBrush}" />
+    <Setter Property="CornerRadius" Value="6" />
+  </Style>
+  <Style Selector="NumericUpDown.editor-number:focus-within">
+    <Setter Property="BorderBrush" Value="{DynamicResource EditorAccentBrush}" />
+  </Style>
+
+  <Style Selector="controls|EditorPanel">
+    <Setter Property="Template">
+      <ControlTemplate>
+        <Border Background="{DynamicResource EditorSurfaceBrush}"
+                BorderBrush="{DynamicResource EditorBorderBrush}"
+                BorderThickness="1"
+                CornerRadius="9"
+                ClipToBounds="True">
+          <Grid RowDefinitions="45,*">
+            <Border Grid.Row="0" BorderBrush="{DynamicResource EditorBorderBrush}" BorderThickness="0,0,0,1"
+                    Background="{DynamicResource EditorRaisedBrush}">
+              <TextBlock Margin="14,0" VerticalAlignment="Center"
+                         FontSize="12" FontWeight="SemiBold" LetterSpacing="0.8"
+                         Foreground="{DynamicResource EditorMutedTextBrush}"
+                         Text="{TemplateBinding Header}" />
+            </Border>
+            <ContentPresenter Grid.Row="1" Content="{TemplateBinding Content}" />
+          </Grid>
+        </Border>
+      </ControlTemplate>
+    </Setter>
+  </Style>
+
+  <Style Selector="controls|PropertySection">
+    <Setter Property="Template">
+      <ControlTemplate>
+        <StackPanel Spacing="10">
+          <Grid ColumnDefinitions="Auto,*">
+            <Border Width="3" Height="14" CornerRadius="2" Background="{DynamicResource EditorAccentBrush}"
+                    VerticalAlignment="Center" />
+            <TextBlock Grid.Column="1" Margin="8,0,0,0" VerticalAlignment="Center"
+                       FontWeight="SemiBold" Text="{TemplateBinding Header}" />
+          </Grid>
+          <ContentPresenter Content="{TemplateBinding Content}" />
+        </StackPanel>
+      </ControlTemplate>
+    </Setter>
+  </Style>
+
+  <Style Selector="controls|EditorToolButton">
+    <Setter Property="MinWidth" Value="82" />
+    <Setter Property="Height" Value="34" />
+    <Setter Property="Padding" Value="8,0" />
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="BorderBrush" Value="Transparent" />
+    <Setter Property="CornerRadius" Value="7" />
+    <Setter Property="Template">
+      <ControlTemplate>
+        <Border Name="PART_Border" Background="{TemplateBinding Background}"
+                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1"
+                CornerRadius="{TemplateBinding CornerRadius}">
+          <Grid ColumnDefinitions="22,*,Auto" Margin="8,0">
+            <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource EditorAccentBrush}"
+                       FontWeight="Bold" Text="{TemplateBinding Glyph}" />
+            <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="{TemplateBinding Label}" />
+            <Border Grid.Column="2" Margin="7,0,0,0" Padding="5,2" CornerRadius="4"
+                    Background="{DynamicResource EditorCanvasBrush}">
+              <TextBlock FontSize="10" Foreground="{DynamicResource EditorMutedTextBrush}"
+                         Text="{TemplateBinding Shortcut}" />
+            </Border>
+          </Grid>
+        </Border>
+      </ControlTemplate>
+    </Setter>
+  </Style>
+  <Style Selector="controls|EditorToolButton:pointerover /template/ Border#PART_Border">
+    <Setter Property="Background" Value="{DynamicResource EditorHoverBrush}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource EditorBorderBrush}" />
+  </Style>
+  <Style Selector="controls|EditorToolButton:pressed /template/ Border#PART_Border">
+    <Setter Property="Background" Value="{DynamicResource EditorAccentMutedBrush}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource EditorAccentBrush}" />
+  </Style>
+
+  <Style Selector="controls|StatusPill">
+    <Setter Property="Template">
+      <ControlTemplate>
+        <Border Background="{DynamicResource EditorAccentMutedBrush}" CornerRadius="10" Padding="8,3">
+          <StackPanel Orientation="Horizontal" Spacing="6">
+            <Ellipse Width="6" Height="6" Fill="{DynamicResource EditorAccentBrush}" VerticalAlignment="Center" />
+            <TextBlock FontSize="11" Foreground="{DynamicResource EditorAccentBrush}"
+                       Text="{TemplateBinding Text}" />
+          </StackPanel>
+        </Border>
+      </ControlTemplate>
+    </Setter>
+  </Style>
+
+  <Style Selector="controls|Vector3Input">
+    <Setter Property="Template">
+      <ControlTemplate>
+        <StackPanel Spacing="6">
+          <TextBlock FontSize="11" FontWeight="Medium" Foreground="{DynamicResource EditorMutedTextBrush}"
+                     Text="{TemplateBinding Label}" />
+          <Grid ColumnDefinitions="*,8,*,8,*">
+            <Grid Grid.Column="0" ColumnDefinitions="24,*">
+              <Border Background="#4B252B" CornerRadius="6,0,0,6">
+                <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center" FontWeight="Bold" Foreground="#FF7B89" Text="X" />
+              </Border>
+              <NumericUpDown Grid.Column="1" Classes="editor-number" CornerRadius="0,6,6,0" FormatString="0.###"
+                             Value="{Binding X, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                             Increment="{Binding Increment, RelativeSource={RelativeSource TemplatedParent}}"
+                             Minimum="{Binding Minimum, RelativeSource={RelativeSource TemplatedParent}}"
+                             Maximum="{Binding Maximum, RelativeSource={RelativeSource TemplatedParent}}" />
+            </Grid>
+            <Grid Grid.Column="2" ColumnDefinitions="24,*">
+              <Border Background="#214231" CornerRadius="6,0,0,6">
+                <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center" FontWeight="Bold" Foreground="#67D996" Text="Y" />
+              </Border>
+              <NumericUpDown Grid.Column="1" Classes="editor-number" CornerRadius="0,6,6,0" FormatString="0.###"
+                             Value="{Binding Y, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                             Increment="{Binding Increment, RelativeSource={RelativeSource TemplatedParent}}"
+                             Minimum="{Binding Minimum, RelativeSource={RelativeSource TemplatedParent}}"
+                             Maximum="{Binding Maximum, RelativeSource={RelativeSource TemplatedParent}}" />
+            </Grid>
+            <Grid Grid.Column="4" ColumnDefinitions="24,*">
+              <Border Background="#20384D" CornerRadius="6,0,0,6">
+                <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center" FontWeight="Bold" Foreground="#68B9FF" Text="Z" />
+              </Border>
+              <NumericUpDown Grid.Column="1" Classes="editor-number" CornerRadius="0,6,6,0" FormatString="0.###"
+                             Value="{Binding Z, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                             Increment="{Binding Increment, RelativeSource={RelativeSource TemplatedParent}}"
+                             Minimum="{Binding Minimum, RelativeSource={RelativeSource TemplatedParent}}"
+                             Maximum="{Binding Maximum, RelativeSource={RelativeSource TemplatedParent}}" />
+            </Grid>
+          </Grid>
+        </StackPanel>
+      </ControlTemplate>
+    </Setter>
+  </Style>
+
+  <Style Selector="controls|LabeledNumberInput">
+    <Setter Property="Template">
+      <ControlTemplate>
+        <Grid ColumnDefinitions="110,*">
+          <TextBlock VerticalAlignment="Center" Foreground="{DynamicResource EditorMutedTextBrush}"
+                     Text="{TemplateBinding Label}" />
+          <NumericUpDown Grid.Column="1" Classes="editor-number" FormatString="0.###"
+                         Value="{Binding Value, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}"
+                         Increment="{Binding Increment, RelativeSource={RelativeSource TemplatedParent}}" />
+        </Grid>
+      </ControlTemplate>
+    </Setter>
+  </Style>
+</Styles>

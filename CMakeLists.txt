@@ -6,6 +6,9 @@ include(CTest)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+# Engine libraries are linked into the in-process editor DLL on Unix-like
+# platforms, so their object code must be position independent.
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 option(PLUTO_BUILD_EDITOR "Build the PlutoGE Editor" ON)
 option(PLUTO_BUILD_RUNTIME "Build the PlutoGE Runtime" ON)

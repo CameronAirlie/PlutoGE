@@ -3,3 +3,5 @@ out/
 build/
 .plutoge-cache/
 **/.plutoge-cache/
+editor/avalonia/**/bin/
+editor/avalonia/**/obj/

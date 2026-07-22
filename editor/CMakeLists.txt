@@ -3,6 +3,20 @@ add_executable(PlutoGEEditor
 )
 
 add_subdirectory(ui)
+add_subdirectory(native)
+
+find_program(PLUTO_DOTNET_EXECUTABLE dotnet)
+if (PLUTO_DOTNET_EXECUTABLE)
+    add_custom_target(PlutoGEAvaloniaEditor
+        COMMAND ${PLUTO_DOTNET_EXECUTABLE} build
+            ${CMAKE_CURRENT_SOURCE_DIR}/avalonia/PlutoGE.Editor.Avalonia.csproj
+            --configuration $<IF:$<CONFIG:Debug>,Debug,Release>
+            /p:PlutoNativeBuildDir=$<TARGET_FILE_DIR:PlutoGEEditorNative>
+        DEPENDS PlutoGEEditorNative
+        USES_TERMINAL
+        VERBATIM
+    )
+endif()
 
 target_include_directories(PlutoGEEditor
     PRIVATE 

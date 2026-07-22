@@ -1,0 +1,63 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:PlutoGE.Editor.Avalonia.Controls"
+        xmlns:views="clr-namespace:PlutoGE.Editor.Avalonia.Views"
+        xmlns:vm="clr-namespace:PlutoGE.Editor.Avalonia.ViewModels"
+        x:Class="PlutoGE.Editor.Avalonia.Windows.EditorShellWindow"
+        x:DataType="vm:DockWorkspaceViewModel"
+        Title="PlutoGE — Avalonia Editor" Width="1500" Height="900" MinWidth="960" MinHeight="600">
+  <Grid RowDefinitions="Auto,34,*,24">
+    <Menu Grid.Row="0" Classes="editor-menu">
+      <MenuItem Header="_File">
+        <MenuItem Header="Open Project…" Command="{Binding Session.OpenProjectCommand}" />
+        <MenuItem Header="Open Scene…" Command="{Binding Session.OpenSceneCommand}" />
+        <Separator />
+        <MenuItem Header="Exit" Click="OnExit" />
+      </MenuItem>
+      <MenuItem Header="_View">
+        <MenuItem Header="Show Project" Command="{Binding ShowProjectCommand}" />
+        <MenuItem Header="Show Hierarchy" Command="{Binding ShowHierarchyCommand}" />
+        <MenuItem Header="Show Viewport" Command="{Binding ShowViewportCommand}" />
+        <MenuItem Header="Show Inspector" Command="{Binding ShowInspectorCommand}" />
+        <Separator />
+        <MenuItem Header="Restore Default Layout" Command="{Binding RestoreDefaultLayoutCommand}" />
+      </MenuItem>
+    </Menu>
+
+    <Border Grid.Row="1" Background="{DynamicResource EditorSurfaceBrush}"
+            BorderBrush="{DynamicResource EditorBorderBrush}" BorderThickness="0,0,0,1">
+      <Grid ColumnDefinitions="Auto,*,Auto" Margin="9,3">
+        <StackPanel Orientation="Horizontal" Spacing="9" VerticalAlignment="Center">
+          <Border Width="24" Height="24" CornerRadius="6" Background="{DynamicResource EditorAccentMutedBrush}">
+            <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center" FontWeight="Bold"
+                       Foreground="{DynamicResource EditorAccentBrush}" Text="P" />
+          </Border>
+          <StackPanel Spacing="-2">
+            <TextBlock FontWeight="SemiBold" Text="{Binding Session.ProjectName}" />
+            <TextBlock FontSize="9" Foreground="{DynamicResource EditorMutedTextBrush}" Text="{Binding Session.ActiveScene}" />
+          </StackPanel>
+        </StackPanel>
+        <TextBlock Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="9"
+                   Foreground="{DynamicResource EditorMutedTextBrush}"
+                   Text="Drag tabs to dock or reorder · ↗ floats · resize with splitters" />
+        <controls:StatusPill Grid.Column="2" VerticalAlignment="Center" Text="{Binding Session.EngineStatusText}" />
+      </Grid>
+    </Border>
+
+    <Grid Grid.Row="2" Margin="6" ColumnDefinitions="285,5,*,5,350" RowDefinitions="*,5,245">
+      <views:DockRegionView Grid.Row="0" Grid.Column="0" DataContext="{Binding Left}" />
+      <GridSplitter Grid.Row="0" Grid.Column="1" Classes="editor-splitter" ResizeDirection="Columns" />
+      <views:DockRegionView Grid.Row="0" Grid.Column="2" DataContext="{Binding Center}" />
+      <GridSplitter Grid.Row="0" Grid.Column="3" Classes="editor-splitter" ResizeDirection="Columns" />
+      <views:DockRegionView Grid.Row="0" Grid.Column="4" DataContext="{Binding Right}" />
+
+      <GridSplitter Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="5" Classes="editor-splitter" ResizeDirection="Rows" />
+      <views:DockRegionView Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="5" DataContext="{Binding Bottom}" />
+    </Grid>
+
+    <Border Grid.Row="3" Background="{DynamicResource EditorSurfaceBrush}"
+            BorderBrush="{DynamicResource EditorBorderBrush}" BorderThickness="0,1,0,0">
+      <TextBlock Margin="10,0" VerticalAlignment="Center" FontSize="11" Text="{Binding Session.StatusText}" />
+    </Border>
+  </Grid>
+</Window>

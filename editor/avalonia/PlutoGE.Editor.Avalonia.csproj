@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <PlutoNativeBuildDir Condition="'$(PlutoNativeBuildDir)' == ''">$(MSBuildThisFileDirectory)..\..\out\build\editor\editor\native\$(Configuration)</PlutoNativeBuildDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="12.1.0" />
+    <PackageReference Include="Avalonia.Desktop" Version="12.1.0" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="tests\**\*.cs" />
+    <AvaloniaResource Remove="tests\**\*" />
+  </ItemGroup>
+
+  <Target Name="CopyPlutoNativeBridge" AfterTargets="Build"
+          Condition="Exists('$(PlutoNativeBuildDir)\PlutoGE.Editor.Native.dll')">
+    <ItemGroup>
+      <PlutoNativeRuntime Include="$(PlutoNativeBuildDir)\PlutoGE.Editor.Native.dll" />
+      <PlutoNativeRuntime Include="$(PlutoNativeBuildDir)\OpenAL*.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(PlutoNativeRuntime)" DestinationFolder="$(OutDir)" />
+  </Target>
+</Project>

@@ -1,0 +1,29 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:PlutoGE.Editor.Avalonia.Controls"
+             xmlns:vm="clr-namespace:PlutoGE.Editor.Avalonia.ViewModels"
+             x:Class="PlutoGE.Editor.Avalonia.Views.ViewportPaneView"
+             x:DataType="vm:ViewportPaneViewModel">
+  <Grid RowDefinitions="29,*,21">
+    <Border Background="{DynamicResource EditorSurfaceBrush}"
+            BorderBrush="{DynamicResource EditorBorderBrush}" BorderThickness="0,0,0,1">
+      <Grid ColumnDefinitions="*,Auto" Margin="7,2">
+        <TextBlock VerticalAlignment="Center" FontSize="10" Foreground="{DynamicResource EditorMutedTextBrush}"
+                   Text="{Binding ActiveScene}" />
+        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="2">
+          <Button Classes="dock-action" Content="W" Command="{Binding MoveCommand}" ToolTip.Tip="Move gizmo" />
+          <Button Classes="dock-action" Content="E" Command="{Binding RotateCommand}" ToolTip.Tip="Rotate gizmo" />
+          <Button Classes="dock-action" Content="R" Command="{Binding ScaleCommand}" ToolTip.Tip="Scale gizmo" />
+        </StackPanel>
+      </Grid>
+    </Border>
+    <Border Grid.Row="1" Background="#070A0E" ClipToBounds="True">
+      <controls:EngineViewport ViewModel="{Binding Viewport}" />
+    </Border>
+    <Grid Grid.Row="2" ColumnDefinitions="*,Auto" Margin="6,0">
+      <TextBlock VerticalAlignment="Center" FontSize="9" Text="Alt+LMB orbit · MMB pan · RMB fly · F frame · Wheel zoom" />
+      <TextBlock Grid.Column="1" VerticalAlignment="Center" FontSize="10"
+                 Foreground="{DynamicResource EditorMutedTextBrush}" Text="{Binding FrameStats}" />
+    </Grid>
+  </Grid>
+</UserControl>

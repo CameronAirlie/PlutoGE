@@ -1,0 +1,39 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:PlutoGE.Editor.Avalonia.ViewModels"
+             x:Class="PlutoGE.Editor.Avalonia.Views.DockRegionView"
+             x:DataType="vm:DockRegionViewModel"
+             DragDrop.AllowDrop="True" DragDrop.DragOver="OnDragOver" DragDrop.Drop="OnRegionDrop">
+  <Border Background="{DynamicResource EditorSurfaceBrush}" BorderBrush="{DynamicResource EditorBorderBrush}"
+          BorderThickness="1" CornerRadius="7" ClipToBounds="True">
+    <Grid>
+      <TabControl ItemsSource="{Binding Panes}" SelectedItem="{Binding SelectedPane, Mode=TwoWay}">
+        <TabControl.ItemTemplate>
+          <DataTemplate x:DataType="vm:DockPaneViewModel">
+            <Border DragDrop.AllowDrop="True" DragDrop.DragOver="OnDragOver" DragDrop.Drop="OnTabDrop">
+              <StackPanel Margin="5,1" Orientation="Horizontal" Spacing="4">
+                <TextBlock Cursor="SizeAll" Text="⠿" PointerPressed="OnDragHandlePressed"
+                           Foreground="{DynamicResource EditorMutedTextBrush}" ToolTip.Tip="Drag pane" />
+                <TextBlock VerticalAlignment="Center" FontSize="11" Text="{Binding Title}" />
+                <Button Classes="dock-action" Width="22" MinWidth="22" Height="22" Content="↗"
+                        Command="{Binding FloatCommand}" ToolTip.Tip="Float pane" />
+                <Button Classes="dock-action" Width="22" MinWidth="22" Height="22" Content="×"
+                        Command="{Binding CloseCommand}" ToolTip.Tip="Close pane" />
+              </StackPanel>
+            </Border>
+          </DataTemplate>
+        </TabControl.ItemTemplate>
+        <TabControl.ContentTemplate>
+          <DataTemplate x:DataType="vm:DockPaneViewModel">
+            <ContentControl Content="{Binding Content}" />
+          </DataTemplate>
+        </TabControl.ContentTemplate>
+      </TabControl>
+      <StackPanel IsVisible="{Binding !HasPanes}" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="5">
+        <TextBlock HorizontalAlignment="Center" FontSize="12" Foreground="{DynamicResource EditorMutedTextBrush}" Text="EMPTY DOCK REGION" />
+        <TextBlock HorizontalAlignment="Center" FontSize="10" Foreground="{DynamicResource EditorMutedTextBrush}"
+                   Text="Use View to add a pane" />
+      </StackPanel>
+    </Grid>
+  </Border>
+</UserControl>

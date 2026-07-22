@@ -9,6 +9,8 @@
 
 namespace PlutoGE::platform
 {
+    using OpenGLProcAddressCallback = void *(*)(const char *name, void *userData);
+
     struct WindowConfig
     {
         std::string title = "PlutoGE Window";
@@ -18,6 +20,11 @@ namespace PlutoGE::platform
         bool visible = true;
         bool fullscreen = false;
         std::function<void(int, int)> resizeCallback = nullptr;
+        // When supplied, PlutoGE renders into a context owned by the host
+        // application. The host must keep that context current for every call
+        // into rendering code. This is used by the Avalonia editor viewport.
+        OpenGLProcAddressCallback externalOpenGLProcAddress = nullptr;
+        void *externalOpenGLUserData = nullptr;
     };
 
     struct WindowExtents
@@ -53,6 +60,11 @@ namespace PlutoGE::platform
 
         void SetContextCurrent();
         bool EnsureOpenGLContextCurrent(bool reloadFunctions = false);
+        void SetExternalOpenGLContext(OpenGLProcAddressCallback callback, void *userData);
+        void SetExternalExtents(int width, int height);
+        void SwapBuffers();
+        void SetSwapInterval(bool enabled);
+        [[nodiscard]] bool IsExternalOpenGLContext() const { return m_externalOpenGLContext; }
 
         std::function<void(int, int)> GetResizeCallback() const
         {
@@ -72,6 +84,9 @@ namespace PlutoGE::platform
         bool m_requestedScriptCursorLocked = false;
         bool m_requestedEditorCursorLocked = false;
         bool m_forceCursorVisible = false;
+        bool m_externalOpenGLContext = false;
+        OpenGLProcAddressCallback m_externalOpenGLProcAddress = nullptr;
+        void *m_externalOpenGLUserData = nullptr;
 
         void ApplyCursorMode();
     };

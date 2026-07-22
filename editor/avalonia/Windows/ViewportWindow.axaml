@@ -1,0 +1,35 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:PlutoGE.Editor.Avalonia.Controls"
+        xmlns:vm="clr-namespace:PlutoGE.Editor.Avalonia.ViewModels"
+        x:Class="PlutoGE.Editor.Avalonia.Windows.ViewportWindow"
+        x:DataType="vm:ViewportPaneViewModel"
+        Title="PlutoGE — Viewport" Width="980" Height="700" MinWidth="500" MinHeight="360">
+  <Grid RowDefinitions="48,*,28">
+    <Border Background="{DynamicResource EditorSurfaceBrush}"
+            BorderBrush="{DynamicResource EditorBorderBrush}" BorderThickness="0,0,0,1">
+      <Grid ColumnDefinitions="*,Auto,*" Margin="10,6">
+        <TextBlock VerticalAlignment="Center" FontSize="11" Foreground="{DynamicResource EditorMutedTextBrush}"
+                   Text="{Binding ActiveScene}" />
+        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="3">
+          <controls:EditorToolButton Glyph="↗" Label="Move" Shortcut="W" Command="{Binding MoveCommand}" />
+          <controls:EditorToolButton Glyph="⟳" Label="Rotate" Shortcut="E" Command="{Binding RotateCommand}" />
+          <controls:EditorToolButton Glyph="◇" Label="Scale" Shortcut="R" Command="{Binding ScaleCommand}" />
+        </StackPanel>
+      </Grid>
+    </Border>
+    <Border Grid.Row="1" Margin="7" Background="#070A0E" BorderBrush="{DynamicResource EditorBorderBrush}"
+            BorderThickness="1" CornerRadius="9" ClipToBounds="True">
+      <controls:EngineViewport ViewModel="{Binding Viewport}" />
+    </Border>
+    <Border Grid.Row="2" Background="{DynamicResource EditorSurfaceBrush}"
+            BorderBrush="{DynamicResource EditorBorderBrush}" BorderThickness="0,1,0,0">
+      <Grid ColumnDefinitions="*,Auto" Margin="10,0">
+        <TextBlock VerticalAlignment="Center" FontSize="11"
+                   Text="Right-drag look · WASD/QE fly · Shift boost · click to select" />
+        <TextBlock Grid.Column="1" VerticalAlignment="Center" FontSize="11"
+                   Foreground="{DynamicResource EditorMutedTextBrush}" Text="{Binding FrameStats}" />
+      </Grid>
+    </Border>
+  </Grid>
+</Window>

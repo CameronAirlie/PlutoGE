@@ -17,6 +17,16 @@ if (TARGET OpenAL)
     )
 endif()
 
+find_program(PLUTO_DOTNET_EXECUTABLE dotnet)
+if (PLUTO_DOTNET_EXECUTABLE AND PLUTO_BUILD_EDITOR)
+    add_test(
+        NAME PlutoGEAvaloniaViewportValidation
+        COMMAND ${PLUTO_DOTNET_EXECUTABLE} run
+            --project ${CMAKE_SOURCE_DIR}/editor/avalonia/tests/PlutoGE.Editor.Avalonia.Validation.csproj
+            --configuration Debug
+    )
+endif()
+
 add_executable(PlutoGEModelAssetTests
     ModelAssetTests.cpp
 )

@@ -947,7 +947,7 @@ namespace PlutoGE::render
 
         if (m_config.window)
         {
-            glfwSwapBuffers(static_cast<GLFWwindow *>(m_config.window->GetWindow()));
+            m_config.window->SwapBuffers();
         }
     }
 
@@ -966,6 +966,35 @@ namespace PlutoGE::render
         m_physicalSkyPass = nullptr;
         ShutdownGpuTimers();
         glBindBuffer(GL_ARRAY_BUFFER, 0);
+    }
+
+    void Renderer::ReleaseRenderTarget(RenderTarget *renderTarget)
+    {
+        if (!renderTarget)
+        {
+            return;
+        }
+
+        const auto iterator = m_frameResources.find(renderTarget);
+        if (iterator != m_frameResources.end() && iterator->second)
+        {
+            auto &resources = *iterator->second;
+            const auto cleanupTarget = [](std::unique_ptr<RenderTarget> &target)
+            {
+                if (target)
+                {
+                    target->Cleanup();
+                    target.reset();
+                }
+            };
+            cleanupTarget(resources.temporaryRenderTarget);
+            cleanupTarget(resources.postProcessIntermediateRenderTarget);
+            cleanupTarget(resources.oceanSurfaceDepthRenderTarget);
+            cleanupTarget(resources.oceanSceneColorCopyRenderTarget);
+            resources.gBuffer.Cleanup();
+            m_frameResources.erase(iterator);
+        }
+        renderTarget->Cleanup();
     }
 
     bool Renderer::PreparePhysicalSkyEnvironment(const RenderContext &ctx)
@@ -1178,7 +1207,10 @@ namespace PlutoGE::render
     void Renderer::SetVSyncEnabled(bool enabled)
     {
         m_vsyncEnabled = enabled;
-        glfwSwapInterval(enabled ? 1 : 0);
+        if (m_config.window)
+        {
+            m_config.window->SetSwapInterval(enabled);
+        }
     }
 
     void Renderer::CleanupResources(RenderTarget *renderTarget)

@@ -1,0 +1,49 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:PlutoGE.Editor.Avalonia.ViewModels"
+             x:Class="PlutoGE.Editor.Avalonia.Views.ProjectPaneView"
+             x:DataType="vm:ProjectPaneViewModel">
+  <Grid RowDefinitions="Auto,*" Margin="12">
+    <Border Padding="10" CornerRadius="7" Background="{DynamicResource EditorRaisedBrush}">
+      <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
+        <TextBlock FontSize="16" FontWeight="SemiBold" Text="{Binding Session.ProjectName}" />
+        <Button Grid.Column="1" Grid.RowSpan="2" Command="{Binding Session.OpenProjectCommand}" Content="Open Project…" />
+        <TextBlock Grid.Row="1" Margin="0,3,12,0" FontSize="10" TextTrimming="CharacterEllipsis"
+                   Foreground="{DynamicResource EditorMutedTextBrush}" Text="{Binding Session.ProjectPath}" />
+      </Grid>
+    </Border>
+    <TabControl Grid.Row="1" Margin="0,8,0,0">
+      <TabItem Header="Scenes">
+        <Grid RowDefinitions="*,Auto" Margin="6">
+          <ListBox ItemsSource="{Binding Session.Scenes}" SelectedItem="{Binding Session.SelectedScene, Mode=TwoWay}">
+            <ListBox.ItemTemplate>
+              <DataTemplate x:DataType="vm:AssetItemViewModel">
+                <Grid ColumnDefinitions="*,Auto" Margin="6,4">
+                  <TextBlock TextTrimming="CharacterEllipsis" Text="{Binding DisplayName}" />
+                  <TextBlock Grid.Column="1" FontSize="10" Foreground="{DynamicResource EditorMutedTextBrush}" Text="{Binding SizeText}" />
+                </Grid>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+          <StackPanel Grid.Row="1" Margin="0,7,0,0" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="7">
+            <Button Command="{Binding Session.OpenSceneCommand}" Content="Open File…" />
+            <Button Command="{Binding Session.OpenSelectedSceneCommand}" Content="Load Selected" />
+          </StackPanel>
+        </Grid>
+      </TabItem>
+      <TabItem Header="Assets">
+        <ListBox Margin="6" ItemsSource="{Binding Session.Assets}">
+          <ListBox.ItemTemplate>
+            <DataTemplate x:DataType="vm:AssetItemViewModel">
+              <Grid ColumnDefinitions="85,*,Auto" Margin="6,4">
+                <TextBlock FontSize="10" Foreground="{DynamicResource EditorAccentBrush}" Text="{Binding Type}" />
+                <TextBlock Grid.Column="1" TextTrimming="CharacterEllipsis" Text="{Binding DisplayName}" />
+                <TextBlock Grid.Column="2" FontSize="10" Foreground="{DynamicResource EditorMutedTextBrush}" Text="{Binding SizeText}" />
+              </Grid>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+      </TabItem>
+    </TabControl>
+  </Grid>
+</UserControl>

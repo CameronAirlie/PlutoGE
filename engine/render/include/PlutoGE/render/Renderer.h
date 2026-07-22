@@ -198,6 +198,7 @@ namespace PlutoGE::render
         void RenderFrame(const CameraData &cameraData, RenderTarget *renderTarget = nullptr, std::vector<scene::Light *> lights = {}, const std::vector<IPostProcessEffect *> *postProcessEffects = nullptr, const scene::Scene *scene = nullptr, bool renderEditorGrid = false, bool interactivePreview = false);
         void EndFrame(RenderTarget *renderTarget = nullptr);
         void Shutdown(RenderTarget *renderTarget = nullptr);
+        void ReleaseRenderTarget(RenderTarget *renderTarget);
         void ClearRenderCommands();
         void SetSubmissionCullingCameras(const std::vector<CameraData> &cameraDatas);
         void ClearSubmissionCullingCameras();

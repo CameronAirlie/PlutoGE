@@ -1,0 +1,40 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:PlutoGE.Editor.Avalonia.ViewModels"
+             xmlns:views="clr-namespace:PlutoGE.Editor.Avalonia.Views"
+             x:Class="PlutoGE.Editor.Avalonia.App"
+             RequestedThemeVariant="Dark">
+  <Application.Resources>
+    <Color x:Key="EditorCanvasColor">#0C0F13</Color>
+    <Color x:Key="EditorSurfaceColor">#15191F</Color>
+    <Color x:Key="EditorRaisedColor">#1B2028</Color>
+    <Color x:Key="EditorHoverColor">#252C36</Color>
+    <Color x:Key="EditorBorderColor">#2B333E</Color>
+    <Color x:Key="EditorAccentColor">#65D1C8</Color>
+    <Color x:Key="EditorAccentMutedColor">#253F42</Color>
+    <Color x:Key="EditorTextColor">#E6EBF1</Color>
+    <Color x:Key="EditorMutedTextColor">#8F9BA9</Color>
+
+    <SolidColorBrush x:Key="EditorCanvasBrush" Color="{StaticResource EditorCanvasColor}" />
+    <SolidColorBrush x:Key="EditorSurfaceBrush" Color="{StaticResource EditorSurfaceColor}" />
+    <SolidColorBrush x:Key="EditorRaisedBrush" Color="{StaticResource EditorRaisedColor}" />
+    <SolidColorBrush x:Key="EditorHoverBrush" Color="{StaticResource EditorHoverColor}" />
+    <SolidColorBrush x:Key="EditorBorderBrush" Color="{StaticResource EditorBorderColor}" />
+    <SolidColorBrush x:Key="EditorAccentBrush" Color="{StaticResource EditorAccentColor}" />
+    <SolidColorBrush x:Key="EditorAccentMutedBrush" Color="{StaticResource EditorAccentMutedColor}" />
+    <SolidColorBrush x:Key="EditorTextBrush" Color="{StaticResource EditorTextColor}" />
+    <SolidColorBrush x:Key="EditorMutedTextBrush" Color="{StaticResource EditorMutedTextColor}" />
+  </Application.Resources>
+
+  <Application.DataTemplates>
+    <DataTemplate DataType="vm:ProjectPaneViewModel"><views:ProjectPaneView /></DataTemplate>
+    <DataTemplate DataType="vm:HierarchyPaneViewModel"><views:HierarchyPaneView /></DataTemplate>
+    <DataTemplate DataType="vm:InspectorPaneViewModel"><views:InspectorPaneView /></DataTemplate>
+    <DataTemplate DataType="vm:ViewportPaneViewModel"><views:ViewportPaneView /></DataTemplate>
+  </Application.DataTemplates>
+
+  <Application.Styles>
+    <FluentTheme />
+    <StyleInclude Source="avares://PlutoGE.Editor.Avalonia/Themes/EditorControls.axaml" />
+  </Application.Styles>
+</Application>

@@ -3,6 +3,24 @@
 
 namespace PlutoGE::platform
 {
+    namespace
+    {
+        thread_local Window *g_externalLoaderWindow = nullptr;
+
+        void *LoadExternalOpenGLProcedure(const char *name)
+        {
+            if (!g_externalLoaderWindow)
+            {
+                return nullptr;
+            }
+
+            const auto config = g_externalLoaderWindow->GetConfig();
+            return config.externalOpenGLProcAddress
+                       ? config.externalOpenGLProcAddress(name, config.externalOpenGLUserData)
+                       : nullptr;
+        }
+    }
+
     static void GLFWFramebufferResizeCallback(GLFWwindow *window, int width, int height)
     {
         auto *instance = static_cast<Window *>(glfwGetWindowUserPointer(window));
@@ -25,6 +43,14 @@ namespace PlutoGE::platform
         m_config = config;
         m_clientWidth = config.width;
         m_clientHeight = config.height;
+
+        if (config.externalOpenGLProcAddress)
+        {
+            m_externalOpenGLContext = true;
+            m_externalOpenGLProcAddress = config.externalOpenGLProcAddress;
+            m_externalOpenGLUserData = config.externalOpenGLUserData;
+            return true;
+        }
 
         if (!glfwInit())
         {
@@ -146,7 +172,10 @@ namespace PlutoGE::platform
     void Window::PollEvents()
     {
         m_inputState.BeginFrame();
-        glfwPollEvents();
+        if (!m_externalOpenGLContext)
+        {
+            glfwPollEvents();
+        }
     }
 
     void Window::Close()
@@ -156,7 +185,13 @@ namespace PlutoGE::platform
             glfwDestroyWindow(m_window);
             m_window = nullptr;
         }
-        glfwTerminate();
+        if (!m_externalOpenGLContext)
+        {
+            glfwTerminate();
+        }
+        m_externalOpenGLContext = false;
+        m_externalOpenGLProcAddress = nullptr;
+        m_externalOpenGLUserData = nullptr;
     }
 
     void Window::SetTitle(const std::string &title)
@@ -170,11 +205,15 @@ namespace PlutoGE::platform
 
     bool Window::IsOpen() const
     {
-        return m_window != nullptr;
+        return m_window != nullptr || m_externalOpenGLContext;
     }
 
     bool Window::ShouldClose() const
     {
+        if (m_externalOpenGLContext)
+        {
+            return false;
+        }
         return m_window ? glfwWindowShouldClose(m_window) : true;
     }
 
@@ -277,6 +316,37 @@ namespace PlutoGE::platform
 
     bool Window::EnsureOpenGLContextCurrent(bool reloadFunctions)
     {
+        if (m_externalOpenGLContext)
+        {
+            if (!m_externalOpenGLProcAddress)
+            {
+                return false;
+            }
+
+            m_config.externalOpenGLProcAddress = m_externalOpenGLProcAddress;
+            m_config.externalOpenGLUserData = m_externalOpenGLUserData;
+            const bool textureDispatchReady =
+                glad_glGenTextures != nullptr &&
+                glad_glDeleteTextures != nullptr &&
+                glad_glBindTexture != nullptr &&
+                glad_glTexImage2D != nullptr &&
+                glad_glTexParameteri != nullptr &&
+                glad_glBindBuffer != nullptr;
+
+            if (reloadFunctions || !GLAD_GL_VERSION_4_3 || !textureDispatchReady)
+            {
+                g_externalLoaderWindow = this;
+                const int loaded = gladLoadGLLoader(reinterpret_cast<GLADloadproc>(LoadExternalOpenGLProcedure));
+                g_externalLoaderWindow = nullptr;
+                if (!loaded)
+                {
+                    return false;
+                }
+            }
+
+            return GLAD_GL_VERSION_4_3 != 0;
+        }
+
         if (!m_window)
         {
             return false;
@@ -319,5 +389,47 @@ namespace PlutoGE::platform
                glad_glBindBuffer != nullptr &&
                glad_glPixelStorei != nullptr &&
                glad_glGenerateMipmap != nullptr;
+    }
+
+    void Window::SetExternalOpenGLContext(OpenGLProcAddressCallback callback, void *userData)
+    {
+        if (!m_externalOpenGLContext)
+        {
+            return;
+        }
+
+        m_externalOpenGLProcAddress = callback;
+        m_externalOpenGLUserData = userData;
+        m_config.externalOpenGLProcAddress = callback;
+        m_config.externalOpenGLUserData = userData;
+    }
+
+    void Window::SetExternalExtents(int width, int height)
+    {
+        if (!m_externalOpenGLContext)
+        {
+            return;
+        }
+
+        m_clientWidth = width;
+        m_clientHeight = height;
+        m_config.width = width;
+        m_config.height = height;
+    }
+
+    void Window::SwapBuffers()
+    {
+        if (m_window)
+        {
+            glfwSwapBuffers(m_window);
+        }
+    }
+
+    void Window::SetSwapInterval(bool enabled)
+    {
+        if (!m_externalOpenGLContext)
+        {
+            glfwSwapInterval(enabled ? 1 : 0);
+        }
     }
 }

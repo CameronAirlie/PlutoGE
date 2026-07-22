@@ -141,6 +141,8 @@ internal sealed class EditorSessionViewModel : ObservableObject, IDisposable
     {
         if (_host.ReadProject() is { } project) ApplyProject(project);
         LoadHierarchy();
+        SceneCamera.RefreshPostProcessing();
+        Inspector.RefreshFromNative(force: true, refreshComponents: true);
         ActiveScene = FormatSceneName(_host.ReadScenePath());
         StatusText = "PlutoGE connected";
         EngineStatusText = "ENGINE LIVE";
@@ -201,7 +203,13 @@ internal sealed class EditorSessionViewModel : ObservableObject, IDisposable
         return null;
     }
 
-    private void OnRefreshTick(object? sender, EventArgs e) => Inspector.RefreshFromNative();
+    private void OnRefreshTick(object? sender, EventArgs e)
+    {
+        if (!_host.IsReady) return;
+        Inspector.RefreshFromNative(refreshComponents: Inspector.HasSelection && Inspector.Components.Count == 0);
+        if (!SceneCamera.PostProcessingLoaded)
+            SceneCamera.RefreshPostProcessing();
+    }
 
     private void ReportError(string message)
     {

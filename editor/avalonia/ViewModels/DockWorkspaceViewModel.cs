@@ -134,6 +134,10 @@ internal sealed class DockWorkspaceViewModel : ObservableObject, IDisposable
     internal void ShowPane(string id)
     {
         if (!_panes.TryGetValue(id, out var pane)) return;
+        if (string.Equals(id, "editor-camera", StringComparison.OrdinalIgnoreCase))
+            Session.SceneCamera.RefreshPostProcessing();
+        else if (string.Equals(id, "inspector", StringComparison.OrdinalIgnoreCase))
+            Session.Inspector.RefreshFromNative(force: true, refreshComponents: true);
         pane.IsVisible = true;
         if (pane.IsFloating)
         {

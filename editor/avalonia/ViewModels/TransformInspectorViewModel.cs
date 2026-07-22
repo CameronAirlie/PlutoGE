@@ -48,6 +48,8 @@ internal sealed class TransformInspectorViewModel : ObservableObject
     public ObservableCollection<ComponentViewModel> Components { get; } = [];
 
     public string ComponentCountText => Components.Count == 1 ? "1 component" : $"{Components.Count} components";
+    public bool HasComponents => Components.Count > 0;
+    public bool HasNoComponents => Components.Count == 0;
 
     public decimal PositionX { get => _positionX; set => SetComponent(ref _positionX, value); }
     public decimal PositionY { get => _positionY; set => SetComponent(ref _positionY, value); }
@@ -68,6 +70,8 @@ internal sealed class TransformInspectorViewModel : ObservableObject
         ApplyTransform(new EntityTransform(0, 0, 0, 0, 0, 0, 1, 1, 1));
         Components.Clear();
         OnPropertyChanged(nameof(ComponentCountText));
+        OnPropertyChanged(nameof(HasComponents));
+        OnPropertyChanged(nameof(HasNoComponents));
         RefreshFromNative(force: true, refreshComponents: true);
     }
 
@@ -94,10 +98,22 @@ internal sealed class TransformInspectorViewModel : ObservableObject
 
         if (refreshComponents)
         {
+            IReadOnlyList<EntityComponent> nativeComponents;
+            try
+            {
+                nativeComponents = _host.ReadComponents(entityId);
+            }
+            catch (Exception exception)
+            {
+                _host.ReportStatus(exception.Message);
+                return;
+            }
             Components.Clear();
-            foreach (var component in _host.ReadComponents(entityId))
+            foreach (var component in nativeComponents)
                 Components.Add(new ComponentViewModel(_host, entityId, component));
             OnPropertyChanged(nameof(ComponentCountText));
+            OnPropertyChanged(nameof(HasComponents));
+            OnPropertyChanged(nameof(HasNoComponents));
         }
     }
 

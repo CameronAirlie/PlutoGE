@@ -32,49 +32,56 @@
                  FontSize="10" FontStyle="Italic"
                  Foreground="{DynamicResource EditorMutedTextBrush}"
                  Text="Waiting for the entity transform…" />
-      <ItemsControl ItemsSource="{Binding Session.Inspector.Components}">
-        <ItemsControl.ItemTemplate>
-          <DataTemplate x:DataType="vm:ComponentViewModel">
-            <Border Margin="0,0,0,8" Padding="10" CornerRadius="7"
-                    BorderBrush="{DynamicResource EditorBorderBrush}" BorderThickness="1"
-                    Background="{DynamicResource EditorRaisedBrush}">
-              <StackPanel Spacing="8">
-                <Grid ColumnDefinitions="*,Auto">
-                  <TextBlock FontWeight="SemiBold" Text="{Binding Name}" />
-                  <CheckBox Grid.Column="1" FontSize="10" Content="{Binding StateText}"
-                            IsChecked="{Binding Enabled, Mode=TwoWay}" />
-                </Grid>
-                <ItemsControl ItemsSource="{Binding Properties}">
-                  <ItemsControl.ItemTemplate>
-                    <DataTemplate x:DataType="vm:ComponentPropertyViewModel">
-                      <Grid ColumnDefinitions="2*,3*" Margin="0,2">
-                        <TextBlock FontSize="10" Margin="0,5,7,0" TextWrapping="Wrap"
-                                   Foreground="{DynamicResource EditorMutedTextBrush}" Text="{Binding Name}" />
-                        <NumericUpDown Grid.Column="1" Classes="editor-number" MinHeight="26"
-                                       IsVisible="{Binding IsNumeric}" IsEnabled="{Binding Editable}"
-                                       Increment="{Binding NumericIncrement}" FormatString="0.###"
-                                       Value="{Binding NumericValue, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
-                        <CheckBox Grid.Column="1" VerticalAlignment="Center"
-                                  IsVisible="{Binding IsBoolean}" IsEnabled="{Binding Editable}"
-                                  IsChecked="{Binding BoolValue, Mode=TwoWay}" />
-                        <ComboBox Grid.Column="1" MinHeight="26"
-                                  IsVisible="{Binding IsEnum}" IsEnabled="{Binding Editable}"
-                                  ItemsSource="{Binding EnumOptions}"
-                                  SelectedItem="{Binding SelectedOption, Mode=TwoWay}" />
-                        <TextBox Grid.Column="1" MinHeight="26"
-                                 IsVisible="{Binding IsText}" IsReadOnly="{Binding IsReadOnly}"
-                                 Text="{Binding Value, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" />
-                      </Grid>
-                    </DataTemplate>
-                  </ItemsControl.ItemTemplate>
-                </ItemsControl>
-                <TextBlock IsVisible="{Binding !HasProperties}" FontSize="10" FontStyle="Italic"
-                           Foreground="{DynamicResource EditorMutedTextBrush}" Text="No serialized properties" />
-              </StackPanel>
-            </Border>
-          </DataTemplate>
-        </ItemsControl.ItemTemplate>
-      </ItemsControl>
+      <controls:PropertySection Header="Components">
+        <StackPanel Spacing="8">
+          <TextBlock IsVisible="{Binding Session.Inspector.HasNoComponents}" FontSize="10" FontStyle="Italic"
+                     Foreground="{DynamicResource EditorMutedTextBrush}"
+                     Text="This GameObject has no attached components." />
+          <ItemsControl ItemsSource="{Binding Session.Inspector.Components}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vm:ComponentViewModel">
+                <Border Margin="0,0,0,8" Padding="10" CornerRadius="7"
+                        BorderBrush="{DynamicResource EditorBorderBrush}" BorderThickness="1"
+                        Background="{DynamicResource EditorRaisedBrush}">
+                  <StackPanel Spacing="8">
+                    <Grid ColumnDefinitions="*,Auto">
+                      <TextBlock FontWeight="SemiBold" Text="{Binding Name}" />
+                      <CheckBox Grid.Column="1" FontSize="10" Content="{Binding StateText}"
+                                IsChecked="{Binding Enabled, Mode=TwoWay}" />
+                    </Grid>
+                    <ItemsControl ItemsSource="{Binding Properties}">
+                      <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="vm:ComponentPropertyViewModel">
+                          <Grid ColumnDefinitions="2*,3*" Margin="0,2">
+                            <TextBlock FontSize="10" Margin="0,5,7,0" TextWrapping="Wrap"
+                                       Foreground="{DynamicResource EditorMutedTextBrush}" Text="{Binding Name}" />
+                            <NumericUpDown Grid.Column="1" Classes="editor-number" MinHeight="26"
+                                           IsVisible="{Binding IsNumeric}" IsEnabled="{Binding Editable}"
+                                           Increment="{Binding NumericIncrement}" FormatString="0.###"
+                                           Value="{Binding NumericValue, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                            <CheckBox Grid.Column="1" VerticalAlignment="Center"
+                                      IsVisible="{Binding IsBoolean}" IsEnabled="{Binding Editable}"
+                                      IsChecked="{Binding BoolValue, Mode=TwoWay}" />
+                            <ComboBox Grid.Column="1" MinHeight="26"
+                                      IsVisible="{Binding IsEnum}" IsEnabled="{Binding Editable}"
+                                      ItemsSource="{Binding EnumOptions}"
+                                      SelectedItem="{Binding SelectedOption, Mode=TwoWay}" />
+                            <TextBox Grid.Column="1" MinHeight="26"
+                                     IsVisible="{Binding IsText}" IsReadOnly="{Binding IsReadOnly}"
+                                     Text="{Binding Value, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" />
+                          </Grid>
+                        </DataTemplate>
+                      </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock IsVisible="{Binding !HasProperties}" FontSize="10" FontStyle="Italic"
+                               Foreground="{DynamicResource EditorMutedTextBrush}" Text="No serialized properties" />
+                  </StackPanel>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </StackPanel>
+      </controls:PropertySection>
       </StackPanel>
     </StackPanel>
   </ScrollViewer>

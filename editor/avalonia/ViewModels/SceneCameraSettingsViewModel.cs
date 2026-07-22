@@ -9,6 +9,7 @@ internal sealed partial class SceneCameraSettingsViewModel : ObservableObject
 {
     private readonly EngineHost? _host;
     private string? _selectedEffectType;
+    private bool _postProcessingLoaded;
 
     internal SceneCameraSettingsViewModel(EngineHost host)
     {
@@ -20,6 +21,7 @@ internal sealed partial class SceneCameraSettingsViewModel : ObservableObject
     public ObservableCollection<string> RegisteredEffectTypes { get; } = [];
     public ObservableCollection<PostProcessEffectViewModel> PostProcessEffects { get; } = [];
     public ICommand AddEffectCommand { get; } = new RelayCommand(() => { }, () => false);
+    internal bool PostProcessingLoaded => _postProcessingLoaded;
 
     public string? SelectedEffectType
     {
@@ -33,20 +35,24 @@ internal sealed partial class SceneCameraSettingsViewModel : ObservableObject
 
     internal void RefreshPostProcessing()
     {
-        if (_host is null) return;
+        if (_host is null || !_host.IsReady) return;
         try
         {
+            var registeredTypes = _host.ReadRegisteredPostProcessTypes();
+            var effects = _host.ReadEditorCameraPostProcessEffects();
+
             RegisteredEffectTypes.Clear();
-            foreach (var type in _host.ReadRegisteredPostProcessTypes()) RegisteredEffectTypes.Add(type);
+            foreach (var type in registeredTypes) RegisteredEffectTypes.Add(type);
             SelectedEffectType ??= RegisteredEffectTypes.FirstOrDefault();
 
             PostProcessEffects.Clear();
-            var effects = _host.ReadEditorCameraPostProcessEffects();
             foreach (var effect in effects)
                 PostProcessEffects.Add(new PostProcessEffectViewModel(_host, this, effect, effects.Count));
+            _postProcessingLoaded = true;
         }
         catch (Exception exception)
         {
+            _postProcessingLoaded = false;
             _host.ReportStatus(exception.Message);
         }
     }

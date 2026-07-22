@@ -58,7 +58,7 @@
 
 namespace
 {
-    constexpr uint32_t kApiVersion = 8;
+    constexpr uint32_t kApiVersion = 9;
     constexpr PlutoEditorHandle kEngineHandle = 0x504c55544f454e47ull;
     thread_local std::string g_lastError;
 
@@ -81,6 +81,7 @@ namespace
         int width = 0;
         int height = 0;
         float targetRefreshHz = 0.0f;
+        float gpuFrameMs = -1.0f;
         bool previousMouseButtons[3]{};
         bool previousFocus = false;
         bool gizmoActive = false;
@@ -1068,6 +1069,7 @@ extern "C"
                              true,
                              true);
         renderer.EndFrame(viewport->renderTarget.get());
+        viewport->gpuFrameMs = renderer.GetTotalGpuPassTimeMs();
 
         glBindFramebuffer(GL_READ_FRAMEBUFFER, viewport->renderTarget->GetFramebufferID());
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(frame->framebuffer));
@@ -1195,6 +1197,7 @@ extern "C"
         stats->width = viewport->width;
         stats->height = viewport->height;
         stats->target_refresh_hz = viewport->targetRefreshHz;
+        stats->gpu_frame_ms = viewport->gpuFrameMs;
         return PLUTO_EDITOR_OK;
     }
 

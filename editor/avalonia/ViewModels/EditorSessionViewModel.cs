@@ -64,7 +64,10 @@ internal sealed class EditorSessionViewModel : ObservableObject, IDisposable
 
         _host.EngineReady += OnEngineReady;
         _host.StatusChanged += OnStatusChanged;
-        _refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+        _refreshTimer = new DispatcherTimer(DispatcherPriority.Background)
+        {
+            Interval = TimeSpan.FromMilliseconds(500),
+        };
         _refreshTimer.Tick += OnRefreshTick;
         _refreshTimer.Start();
     }

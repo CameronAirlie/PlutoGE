@@ -4,7 +4,7 @@ namespace PlutoGE.Editor.Avalonia.Native;
 
 internal static unsafe partial class PlutoNative
 {
-    internal const uint ApiVersion = 8;
+    internal const uint ApiVersion = 9;
     internal const string Library = "PlutoGE.Editor.Native";
 
     internal enum Result : int
@@ -93,6 +93,7 @@ internal static unsafe partial class PlutoNative
         internal int Width;
         internal int Height;
         internal float TargetRefreshHz;
+        internal float GpuFrameMs;
     }
 
     internal enum ProjectAssetType

@@ -52,7 +52,9 @@
             <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Average callback" /><TextBlock Classes="metric-value" Text="{Binding CombinedAverage}" /></StackPanel></Border>
             <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Current frame interval" /><TextBlock Classes="metric-value" Text="{Binding CurrentFrameInterval}" /></StackPanel></Border>
             <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Average frame interval" /><TextBlock Classes="metric-value" Text="{Binding AverageFrameInterval}" /></StackPanel></Border>
+            <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Maximum frame interval" /><TextBlock Classes="metric-value" Text="{Binding MaximumFrameInterval}" /></StackPanel></Border>
             <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Observed frame rate" /><TextBlock Classes="metric-value" Text="{Binding FrameRate}" /></StackPanel></Border>
+            <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Outside callback average" /><TextBlock Classes="metric-value" Text="{Binding UnaccountedAverage}" /></StackPanel></Border>
             <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Rolling samples" /><TextBlock Classes="metric-value" Text="{Binding SampleCount}" /></StackPanel></Border>
           </WrapPanel>
         </StackPanel>
@@ -67,7 +69,8 @@
             <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Share of callback" /><TextBlock Classes="metric-value" Text="{Binding HostShare}" /></StackPanel></Border>
             <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Rendered frames" /><TextBlock Classes="metric-value" Text="{Binding HostFrameCount}" /></StackPanel></Border>
             <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Viewport" /><TextBlock Classes="metric-value" Text="{Binding ViewportSize}" /></StackPanel></Border>
-            <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Target refresh" /><TextBlock Classes="metric-value" Text="{Binding TargetRefreshRate}" /></StackPanel></Border>
+            <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Observed refresh" /><TextBlock Classes="metric-value" Text="{Binding TargetRefreshRate}" /></StackPanel></Border>
+            <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="GPU passes" /><TextBlock Classes="metric-value" Text="{Binding GpuFrameTime}" /></StackPanel></Border>
             <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Last target resize" /><TextBlock Classes="metric-value" Text="{Binding LastResize}" /></StackPanel></Border>
           </WrapPanel>
         </StackPanel>

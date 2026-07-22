@@ -99,6 +99,7 @@ extern "C"
         int32_t width;
         int32_t height;
         float target_refresh_hz;
+        float gpu_frame_ms;
     } PlutoEditorFrameStats;
 
     typedef struct PlutoEditorProjectInfo

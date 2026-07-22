@@ -24,7 +24,9 @@ internal sealed class PerformancePaneViewModel : ObservableObject, IDisposable
     private string _hostStatus = "Waiting for viewport";
     private string _currentFrameInterval = "—";
     private string _averageFrameInterval = "—";
+    private string _maximumFrameInterval = "—";
     private string _frameRate = "—";
+    private string _unaccountedAverage = "—";
     private string _combinedCurrent = "—";
     private string _combinedAverage = "—";
     private string _sampleCount = "0";
@@ -35,6 +37,7 @@ internal sealed class PerformancePaneViewModel : ObservableObject, IDisposable
     private string _hostFrameCount = "0";
     private string _viewportSize = "—";
     private string _targetRefreshRate = "—";
+    private string _gpuFrameTime = "—";
     private string _lastResize = "—";
     private string _editorCurrent = "—";
     private string _editorAverage = "—";
@@ -54,7 +57,10 @@ internal sealed class PerformancePaneViewModel : ObservableObject, IDisposable
         Scopes = Enum.GetValues<PerformanceScope>();
         _previousCpuTime = _process.TotalProcessorTime;
         _previousSampleTimestamp = Stopwatch.GetTimestamp();
-        _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+        _timer = new DispatcherTimer(DispatcherPriority.Background)
+        {
+            Interval = TimeSpan.FromMilliseconds(500),
+        };
         _timer.Tick += OnTick;
         _timer.Start();
         Refresh();
@@ -82,7 +88,9 @@ internal sealed class PerformancePaneViewModel : ObservableObject, IDisposable
     public string HostStatus { get => _hostStatus; private set => SetProperty(ref _hostStatus, value); }
     public string CurrentFrameInterval { get => _currentFrameInterval; private set => SetProperty(ref _currentFrameInterval, value); }
     public string AverageFrameInterval { get => _averageFrameInterval; private set => SetProperty(ref _averageFrameInterval, value); }
+    public string MaximumFrameInterval { get => _maximumFrameInterval; private set => SetProperty(ref _maximumFrameInterval, value); }
     public string FrameRate { get => _frameRate; private set => SetProperty(ref _frameRate, value); }
+    public string UnaccountedAverage { get => _unaccountedAverage; private set => SetProperty(ref _unaccountedAverage, value); }
     public string CombinedCurrent { get => _combinedCurrent; private set => SetProperty(ref _combinedCurrent, value); }
     public string CombinedAverage { get => _combinedAverage; private set => SetProperty(ref _combinedAverage, value); }
     public string SampleCount { get => _sampleCount; private set => SetProperty(ref _sampleCount, value); }
@@ -93,6 +101,7 @@ internal sealed class PerformancePaneViewModel : ObservableObject, IDisposable
     public string HostFrameCount { get => _hostFrameCount; private set => SetProperty(ref _hostFrameCount, value); }
     public string ViewportSize { get => _viewportSize; private set => SetProperty(ref _viewportSize, value); }
     public string TargetRefreshRate { get => _targetRefreshRate; private set => SetProperty(ref _targetRefreshRate, value); }
+    public string GpuFrameTime { get => _gpuFrameTime; private set => SetProperty(ref _gpuFrameTime, value); }
     public string LastResize { get => _lastResize; private set => SetProperty(ref _lastResize, value); }
     public string EditorCurrent { get => _editorCurrent; private set => SetProperty(ref _editorCurrent, value); }
     public string EditorAverage { get => _editorAverage; private set => SetProperty(ref _editorAverage, value); }
@@ -119,9 +128,12 @@ internal sealed class PerformancePaneViewModel : ObservableObject, IDisposable
         HostStatus = metrics.IsHostReady ? "Running" : "Waiting for viewport";
         CurrentFrameInterval = FormatMilliseconds(metrics.CurrentFrameIntervalMs, hasSamples);
         AverageFrameInterval = FormatMilliseconds(metrics.AverageFrameIntervalMs, hasSamples);
+        MaximumFrameInterval = FormatMilliseconds(metrics.MaximumFrameIntervalMs, hasSamples);
         FrameRate = hasSamples && metrics.AverageFrameIntervalMs > 0.001
             ? $"{1000.0 / metrics.AverageFrameIntervalMs:F1} FPS"
             : "—";
+        UnaccountedAverage = FormatMilliseconds(
+            Math.Max(0.0, metrics.AverageFrameIntervalMs - combinedAverageMs), hasSamples);
         CombinedCurrent = FormatMilliseconds(combinedCurrentMs, hasSamples);
         CombinedAverage = FormatMilliseconds(combinedAverageMs, hasSamples);
         SampleCount = metrics.SampleCount.ToString("N0", CultureInfo.CurrentCulture);
@@ -133,6 +145,7 @@ internal sealed class PerformancePaneViewModel : ObservableObject, IDisposable
         HostFrameCount = metrics.FrameCount.ToString("N0", CultureInfo.CurrentCulture);
         ViewportSize = metrics.Width > 0 && metrics.Height > 0 ? $"{metrics.Width:N0} × {metrics.Height:N0}" : "—";
         TargetRefreshRate = metrics.TargetRefreshHz > 0.0f ? $"{metrics.TargetRefreshHz:F1} Hz" : "—";
+        GpuFrameTime = metrics.GpuFrameMs >= 0.0f ? $"{metrics.GpuFrameMs:F2} ms" : "—";
         LastResize = FormatMilliseconds(metrics.LastResizeMs, metrics.Width > 0);
 
         EditorCurrent = FormatMilliseconds(metrics.CurrentEditorRenderMs, hasSamples);
@@ -188,7 +201,9 @@ internal sealed class PerformancePaneViewModel : ObservableObject, IDisposable
             AppendMetric(report, "Render callback average", CombinedAverage);
             AppendMetric(report, "Frame interval current", CurrentFrameInterval);
             AppendMetric(report, "Frame interval average", AverageFrameInterval);
+            AppendMetric(report, "Frame interval maximum", MaximumFrameInterval);
             AppendMetric(report, "Frame rate", FrameRate);
+            AppendMetric(report, "Outside callback average", UnaccountedAverage);
             AppendMetric(report, "Rolling samples", SampleCount);
         }
 
@@ -203,7 +218,8 @@ internal sealed class PerformancePaneViewModel : ObservableObject, IDisposable
             AppendMetric(report, "Callback share", HostShare);
             AppendMetric(report, "Rendered frames", HostFrameCount);
             AppendMetric(report, "Viewport", ViewportSize);
-            AppendMetric(report, "Target refresh", TargetRefreshRate);
+            AppendMetric(report, "Observed refresh", TargetRefreshRate);
+            AppendMetric(report, "GPU passes", GpuFrameTime);
             AppendMetric(report, "Last resize", LastResize);
         }
 

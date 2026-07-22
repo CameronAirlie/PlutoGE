@@ -20,7 +20,10 @@ internal sealed class ViewportPaneViewModel : ObservableObject, IDisposable
         MoveCommand = new RelayCommand(() => Viewport.SetGizmoOperation(0));
         RotateCommand = new RelayCommand(() => Viewport.SetGizmoOperation(1));
         ScaleCommand = new RelayCommand(() => Viewport.SetGizmoOperation(2));
-        _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+        _timer = new DispatcherTimer(DispatcherPriority.Background)
+        {
+            Interval = TimeSpan.FromMilliseconds(500),
+        };
         _timer.Tick += OnTick;
         _timer.Start();
     }

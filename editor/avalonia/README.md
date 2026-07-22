@@ -36,6 +36,8 @@ The editor follows MVVM around one shared session:
   Avalonia render-callback overhead over a rolling 240-frame window. Its
   Both/Host/Editor selector also controls which metrics are copied, while the
   Editor view includes process CPU, memory, thread, and garbage-collection data.
+  It also reports the rolling maximum interval, time outside the callback, and
+  native GPU-pass timing so compositor stalls are distinguishable from GPU work.
 
 Reusable editor controls live in `Controls`, with their shared visual language
 in `Themes/EditorControls.axaml`. `EditorPanel`, `PropertySection`,
@@ -77,8 +79,11 @@ tree and reports that situation directly rather than failing during linking.
 
 PlutoGE currently requires desktop OpenGL 4.3. Windows is therefore configured
 for Avalonia's WGL renderer rather than its default ANGLE renderer. X11 requests
-GLX 4.3. macOS cannot run the current renderer until PlutoGE gains an OpenGL 4.1
-or another graphics backend, even though the surrounding Avalonia UI is portable.
+GLX 4.3. The Windows WGL/redirection-surface path keeps Avalonia's background
+render clock and requests 1 ms Windows timer resolution while the editor is open,
+preventing its 16.67 ms frame waits from rounding up to coarse timer ticks. macOS
+cannot run the current renderer until PlutoGE gains an OpenGL 4.1 or another
+graphics backend, even though the surrounding Avalonia UI is portable.
 
 ## Validation
 

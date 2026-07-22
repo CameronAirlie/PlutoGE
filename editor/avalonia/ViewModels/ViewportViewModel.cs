@@ -123,7 +123,8 @@ internal sealed class ViewportViewModel : ObservableObject
             if (sampleCount == 0)
                 return new ViewportPerformanceSnapshot(_viewportHandle != 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                     _nativeStats?.FrameCount ?? 0, _nativeStats?.ResizeMs ?? 0.0,
-                    _nativeStats?.Width ?? 0, _nativeStats?.Height ?? 0, _nativeStats?.TargetRefreshHz ?? 0.0f);
+                    _nativeStats?.Width ?? 0, _nativeStats?.Height ?? 0, _nativeStats?.TargetRefreshHz ?? 0.0f,
+                    _nativeStats?.GpuFrameMs ?? -1.0f);
 
             var latestIndex = (_nextPerformanceSample + PerformanceSampleCapacity - 1) % PerformanceSampleCapacity;
             double frameTotal = 0.0;
@@ -158,7 +159,8 @@ internal sealed class ViewportViewModel : ObservableObject
                 _nativeStats?.ResizeMs ?? 0.0,
                 _nativeStats?.Width ?? 0,
                 _nativeStats?.Height ?? 0,
-                _nativeStats?.TargetRefreshHz ?? 0.0f);
+                _nativeStats?.TargetRefreshHz ?? 0.0f,
+                _nativeStats?.GpuFrameMs ?? -1.0f);
         }
     }
 }
@@ -179,4 +181,5 @@ internal readonly record struct ViewportPerformanceSnapshot(
     double LastResizeMs,
     int Width,
     int Height,
-    float TargetRefreshHz);
+    float TargetRefreshHz,
+    float GpuFrameMs);

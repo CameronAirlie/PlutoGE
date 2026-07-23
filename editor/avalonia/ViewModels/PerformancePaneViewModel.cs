@@ -35,6 +35,8 @@ internal sealed class PerformancePaneViewModel : ObservableObject, IDisposable
     private string _hostMaximum = "—";
     private string _hostShare = "—";
     private string _hostFrameCount = "0";
+    private string _producedFrameInterval = "—";
+    private string _producedFrameRate = "—";
     private string _viewportSize = "—";
     private string _targetRefreshRate = "—";
     private string _gpuFrameTime = "—";
@@ -99,6 +101,8 @@ internal sealed class PerformancePaneViewModel : ObservableObject, IDisposable
     public string HostMaximum { get => _hostMaximum; private set => SetProperty(ref _hostMaximum, value); }
     public string HostShare { get => _hostShare; private set => SetProperty(ref _hostShare, value); }
     public string HostFrameCount { get => _hostFrameCount; private set => SetProperty(ref _hostFrameCount, value); }
+    public string ProducedFrameInterval { get => _producedFrameInterval; private set => SetProperty(ref _producedFrameInterval, value); }
+    public string ProducedFrameRate { get => _producedFrameRate; private set => SetProperty(ref _producedFrameRate, value); }
     public string ViewportSize { get => _viewportSize; private set => SetProperty(ref _viewportSize, value); }
     public string TargetRefreshRate { get => _targetRefreshRate; private set => SetProperty(ref _targetRefreshRate, value); }
     public string GpuFrameTime { get => _gpuFrameTime; private set => SetProperty(ref _gpuFrameTime, value); }
@@ -143,6 +147,10 @@ internal sealed class PerformancePaneViewModel : ObservableObject, IDisposable
         HostMaximum = FormatMilliseconds(metrics.MaximumHostRenderMs, hasSamples);
         HostShare = FormatShare(metrics.AverageHostRenderMs, combinedAverageMs, hasSamples);
         HostFrameCount = metrics.FrameCount.ToString("N0", CultureInfo.CurrentCulture);
+        ProducedFrameInterval = FormatMilliseconds(metrics.ProducedFrameIntervalMs, metrics.FrameCount > 0);
+        ProducedFrameRate = metrics.ProducedFrameIntervalMs > 0.001
+            ? $"{1000.0 / metrics.ProducedFrameIntervalMs:F1} FPS"
+            : "—";
         ViewportSize = metrics.Width > 0 && metrics.Height > 0 ? $"{metrics.Width:N0} × {metrics.Height:N0}" : "—";
         TargetRefreshRate = metrics.TargetRefreshHz > 0.0f ? $"{metrics.TargetRefreshHz:F1} Hz" : "—";
         GpuFrameTime = metrics.GpuFrameMs >= 0.0f ? $"{metrics.GpuFrameMs:F2} ms" : "—";
@@ -212,11 +220,13 @@ internal sealed class PerformancePaneViewModel : ObservableObject, IDisposable
             report.AppendLine();
             report.AppendLine("[Host]");
             AppendMetric(report, "Status", HostStatus);
-            AppendMetric(report, "Render current", HostCurrent);
-            AppendMetric(report, "Render average", HostAverage);
-            AppendMetric(report, "Render maximum", HostMaximum);
+            AppendMetric(report, "Native callback current", HostCurrent);
+            AppendMetric(report, "Native callback average", HostAverage);
+            AppendMetric(report, "Native callback maximum", HostMaximum);
             AppendMetric(report, "Callback share", HostShare);
-            AppendMetric(report, "Rendered frames", HostFrameCount);
+            AppendMetric(report, "Produced frames", HostFrameCount);
+            AppendMetric(report, "Producer frame interval", ProducedFrameInterval);
+            AppendMetric(report, "Producer frame rate", ProducedFrameRate);
             AppendMetric(report, "Viewport", ViewportSize);
             AppendMetric(report, "Observed refresh", TargetRefreshRate);
             AppendMetric(report, "GPU passes", GpuFrameTime);

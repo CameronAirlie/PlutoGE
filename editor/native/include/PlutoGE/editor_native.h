@@ -177,6 +177,8 @@ extern "C"
     PLUTO_EDITOR_API uint32_t pluto_editor_api_version(void);
     PLUTO_EDITOR_API int32_t pluto_editor_engine_create(const PlutoEditorEngineConfig *config, PlutoEditorHandle *engine);
     PLUTO_EDITOR_API int32_t pluto_editor_engine_destroy(PlutoEditorHandle engine);
+    PLUTO_EDITOR_API int32_t pluto_editor_engine_acquire_render_context(PlutoEditorHandle engine);
+    PLUTO_EDITOR_API int32_t pluto_editor_engine_release_render_context(PlutoEditorHandle engine);
     PLUTO_EDITOR_API int32_t pluto_editor_viewport_create(PlutoEditorHandle engine, PlutoEditorHandle *viewport);
     PLUTO_EDITOR_API int32_t pluto_editor_viewport_destroy(PlutoEditorHandle engine, PlutoEditorHandle viewport);
     PLUTO_EDITOR_API int32_t pluto_editor_viewport_render(PlutoEditorHandle engine, PlutoEditorHandle viewport, const PlutoEditorViewportFrame *frame);

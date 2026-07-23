@@ -1,10 +1,13 @@
 # PlutoGE Avalonia editor
 
-This editor hosts PlutoGE in the Avalonia process. Avalonia owns each OpenGL
-context and compositor surface; `PlutoGE.Editor.Native` receives the current
-framebuffer and GL procedure resolver only during `OpenGlControlBase` lifecycle
-callbacks. The native boundary uses opaque engine and viewport handles plus
-fixed-layout scene, transform, input, and timing records.
+This editor hosts PlutoGE in the Avalonia process. Avalonia owns each viewport
+surface and presentation context. On Windows, `PlutoGE.Editor.Native` creates a
+second WGL context in Avalonia's share group and renders continuously into three
+fenced offscreen targets. `OpenGlControlBase` callbacks submit the latest input
+and blit the newest completed target, so engine production is independent of
+the compositor clock. Other platforms retain the synchronous callback path.
+The native boundary uses opaque engine and viewport handles plus fixed-layout
+scene, transform, input, and timing records.
 
 ## UI architecture
 
@@ -32,12 +35,13 @@ The editor follows MVVM around one shared session:
   pointer/keyboard input. The docked viewport keeps its `ViewportViewModel`
   while moving between regions or floating, and hardware-validation windows
   still use independent viewport state.
-- The Performance pane separates time spent inside the native host call from
-  Avalonia render-callback overhead over a rolling 240-frame window. Its
+- The Performance pane separates time spent inside the native presentation call
+  from Avalonia render-callback overhead over a rolling 240-frame window. Its
   Both/Host/Editor selector also controls which metrics are copied, while the
   Editor view includes process CPU, memory, thread, and garbage-collection data.
-  It also reports the rolling maximum interval, time outside the callback, and
-  native GPU-pass timing so compositor stalls are distinguishable from GPU work.
+  It reports producer frame rate separately from observed presentation cadence,
+  plus the rolling maximum callback interval, time outside the callback, and
+  native GPU-pass timing.
 
 Reusable editor controls live in `Controls`, with their shared visual language
 in `Themes/EditorControls.axaml`. `EditorPanel`, `PropertySection`,
@@ -81,9 +85,14 @@ PlutoGE currently requires desktop OpenGL 4.3. Windows is therefore configured
 for Avalonia's WGL renderer rather than its default ANGLE renderer. X11 requests
 GLX 4.3. The Windows WGL/redirection-surface path keeps Avalonia's background
 render clock and requests 1 ms Windows timer resolution while the editor is open,
-preventing its 16.67 ms frame waits from rounding up to coarse timer ticks. macOS
-cannot run the current renderer until PlutoGE gains an OpenGL 4.1 or another
-graphics backend, even though the surrounding Avalonia UI is portable.
+preventing its 16.67 ms frame waits from rounding up to coarse timer ticks.
+When project VSync is off, PlutoGE's worker runs independently of presentation
+with an adaptive headroom limit based on compositor cadence and measured GPU
+time. This keeps simulation/rendering above the observed refresh where hardware
+allows without starving Avalonia's compositor. With project VSync on, it is
+paced to the observed compositor cadence. macOS cannot run the current renderer
+until PlutoGE gains an OpenGL 4.1 or another graphics backend, even though the
+surrounding Avalonia UI is portable.
 
 ## Validation
 

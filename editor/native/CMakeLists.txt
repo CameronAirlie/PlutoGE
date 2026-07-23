@@ -1,3 +1,5 @@
+find_package(Threads REQUIRED)
+
 add_library(PlutoGEEditorNative SHARED
     src/EditorNative.cpp
 )
@@ -12,7 +14,12 @@ target_link_libraries(PlutoGEEditorNative PRIVATE
     PlutoGE::imguizmo
     PlutoGE::glad
     PlutoGE::glm
+    Threads::Threads
 )
+
+if (WIN32)
+    target_link_libraries(PlutoGEEditorNative PRIVATE opengl32 gdi32 user32)
+endif()
 
 set_target_properties(PlutoGEEditorNative PROPERTIES
     OUTPUT_NAME "PlutoGE.Editor.Native"

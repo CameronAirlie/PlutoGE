@@ -43,8 +43,10 @@
 #include <glm/gtc/type_ptr.hpp>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstring>
 #include <memory>
 #include <mutex>
@@ -53,13 +55,28 @@
 #include <iterator>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifdef APIENTRY
+#undef APIENTRY
+#endif
+#include <windows.h>
+#endif
+
 namespace
 {
-    constexpr uint32_t kApiVersion = 9;
+    constexpr uint32_t kApiVersion = 10;
     constexpr PlutoEditorHandle kEngineHandle = 0x504c55544f454e47ull;
+    constexpr std::size_t kSharedRenderTargetCount = 3;
     thread_local std::string g_lastError;
 
     void SetError(std::string message)
@@ -67,10 +84,24 @@ namespace
         g_lastError = std::move(message);
     }
 
+    struct SharedRenderSlot
+    {
+        std::unique_ptr<PlutoGE::render::RenderTarget> renderTarget;
+        GLsync producerFence = nullptr;
+        GLsync consumerFence = nullptr;
+        uint64_t serial = 0;
+    };
+
     struct ViewportState
     {
         PlutoEditorHandle handle = 0;
         std::unique_ptr<PlutoGE::render::RenderTarget> renderTarget;
+        std::array<SharedRenderSlot, kSharedRenderTargetCount> sharedRenderSlots;
+        std::size_t nextSharedRenderSlot = 0;
+        uint64_t nextSharedRenderSerial = 1;
+        PlutoEditorViewportFrame latestFrame{};
+        bool hasLatestFrame = false;
+        std::chrono::steady_clock::time_point lastFrameSubmission{};
         ImGuiContext *imguiContext = nullptr;
         uint32_t selectedEntityId = 0;
         ImGuizmo::OPERATION gizmoOperation = ImGuizmo::TRANSLATE;
@@ -85,9 +116,148 @@ namespace
         bool previousMouseButtons[3]{};
         bool previousFocus = false;
         bool gizmoActive = false;
+        bool overlayWantsMouse = false;
+        std::string workerError;
         PlutoGE::render::CameraData lastCameraData{};
         bool hasCameraData = false;
     };
+
+#if defined(_WIN32)
+    class SharedWglContext
+    {
+    public:
+        bool Create()
+        {
+            m_sourceContext = wglGetCurrentContext();
+            HDC sourceDc = wglGetCurrentDC();
+            if (!m_sourceContext || !sourceDc)
+            {
+                m_error = "Avalonia did not expose a current WGL context.";
+                return false;
+            }
+
+            const int pixelFormat = GetPixelFormat(sourceDc);
+            PIXELFORMATDESCRIPTOR descriptor{};
+            descriptor.nSize = sizeof(descriptor);
+            descriptor.nVersion = 1;
+            if (pixelFormat <= 0 ||
+                DescribePixelFormat(sourceDc, pixelFormat, sizeof(descriptor), &descriptor) == 0)
+            {
+                m_error = "Unable to inspect Avalonia's WGL pixel format.";
+                return false;
+            }
+
+            constexpr wchar_t windowClassName[] = L"PlutoGESharedRenderContextWindow";
+            const HINSTANCE module = GetModuleHandleW(nullptr);
+            WNDCLASSEXW windowClass{};
+            windowClass.cbSize = sizeof(windowClass);
+            windowClass.style = CS_OWNDC;
+            windowClass.lpfnWndProc = DefWindowProcW;
+            windowClass.hInstance = module;
+            windowClass.lpszClassName = windowClassName;
+            if (!RegisterClassExW(&windowClass) &&
+                GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
+            {
+                m_error = "Unable to register the hidden WGL render-window class.";
+                return false;
+            }
+
+            m_window = CreateWindowExW(
+                0, windowClassName, L"PlutoGE shared render context", WS_POPUP,
+                0, 0, 1, 1, nullptr, nullptr, module, nullptr);
+            if (!m_window)
+            {
+                m_error = "Unable to create the hidden WGL render window.";
+                return false;
+            }
+
+            m_dc = GetDC(m_window);
+            if (!m_dc || !SetPixelFormat(m_dc, pixelFormat, &descriptor))
+            {
+                m_error = "Unable to apply Avalonia's pixel format to the shared WGL context.";
+                Destroy();
+                return false;
+            }
+
+            using CreateContextAttribs = HGLRC(WINAPI *)(HDC, HGLRC, const int *);
+            auto createContextAttribs = reinterpret_cast<CreateContextAttribs>(
+                wglGetProcAddress("wglCreateContextAttribsARB"));
+            if (!createContextAttribs)
+            {
+                m_error = "WGL_ARB_create_context is unavailable.";
+                Destroy();
+                return false;
+            }
+
+            constexpr int WglContextMajorVersionArb = 0x2091;
+            constexpr int WglContextMinorVersionArb = 0x2092;
+            constexpr int WglContextProfileMaskArb = 0x9126;
+            constexpr int WglContextCoreProfileBitArb = 0x00000001;
+            const int attributes[]{
+                WglContextMajorVersionArb, 4,
+                WglContextMinorVersionArb, 3,
+                WglContextProfileMaskArb, WglContextCoreProfileBitArb,
+                0,
+            };
+            m_context = createContextAttribs(m_dc, m_sourceContext, attributes);
+            if (!m_context)
+            {
+                m_error = "Unable to create an OpenGL 4.3 context in Avalonia's share group.";
+                Destroy();
+                return false;
+            }
+            return true;
+        }
+
+        bool MakeCurrent()
+        {
+            if (!m_dc || !m_context || !wglMakeCurrent(m_dc, m_context))
+            {
+                m_error = "Unable to make the shared WGL render context current.";
+                return false;
+            }
+            return true;
+        }
+
+        void ClearCurrent()
+        {
+            if (wglGetCurrentContext() == m_context)
+                wglMakeCurrent(nullptr, nullptr);
+        }
+
+        void Destroy()
+        {
+            ClearCurrent();
+            if (m_context)
+            {
+                wglDeleteContext(m_context);
+                m_context = nullptr;
+            }
+            if (m_dc && m_window)
+            {
+                ReleaseDC(m_window, m_dc);
+                m_dc = nullptr;
+            }
+            if (m_window)
+            {
+                DestroyWindow(m_window);
+                m_window = nullptr;
+            }
+            m_sourceContext = nullptr;
+        }
+
+        [[nodiscard]] const std::string &GetError() const { return m_error; }
+
+        ~SharedWglContext() { Destroy(); }
+
+    private:
+        HWND m_window = nullptr;
+        HDC m_dc = nullptr;
+        HGLRC m_context = nullptr;
+        HGLRC m_sourceContext = nullptr;
+        std::string m_error;
+    };
+#endif
 
     struct PendingComponentEdit
     {
@@ -105,11 +275,28 @@ namespace
         std::vector<std::unique_ptr<PlutoGE::render::IPostProcessEffect>> editorCameraPostProcessEffects;
         std::vector<std::unique_ptr<PlutoGE::render::IPostProcessEffect>> retiredPostProcessEffects;
         std::unordered_map<PlutoEditorHandle, std::unique_ptr<ViewportState>> viewports;
+        std::vector<std::unique_ptr<ViewportState>> retiredViewports;
         std::vector<PendingComponentEdit> pendingComponentEdits;
         std::string runtimeSceneSnapshot;
         std::string runtimeScenePath;
         PlutoEditorHandle nextViewportHandle = 1;
         std::mutex mutex;
+        std::condition_variable renderCondition;
+        std::thread renderThread;
+        bool workerEnabled = false;
+        bool workerStopRequested = false;
+        bool workerPauseRequested = false;
+        bool workerPaused = false;
+        bool workerOperational = false;
+        bool workerInitializationComplete = false;
+        bool workerInitializationSucceeded = false;
+        std::string workerError;
+#if defined(_WIN32)
+        std::unique_ptr<SharedWglContext> sharedContext;
+        HDC pausedCallerDc = nullptr;
+        HGLRC pausedCallerContext = nullptr;
+        DWORD pausedCallerThreadId = 0;
+#endif
     };
 
     std::unique_ptr<EngineState> g_state;
@@ -185,7 +372,17 @@ namespace
         scene.AddEntity(std::make_unique<PlutoGE::scene::Entity>(PlutoGE::scene::EntityConfig{.name = "Camera"}));
     }
 
-    bool InitializeViewport(ViewportState &viewport, int width, int height)
+    std::unique_ptr<PlutoGE::render::RenderTarget> CreateViewportRenderTarget(int width, int height)
+    {
+        PlutoGE::render::RenderTargetConfig targetConfig;
+        targetConfig.width = std::max(width, 1);
+        targetConfig.height = std::max(height, 1);
+        targetConfig.clearColor = glm::vec4(0.055f, 0.065f, 0.08f, 1.0f);
+        auto renderTarget = std::make_unique<PlutoGE::render::RenderTarget>(targetConfig);
+        return renderTarget->IsInitialized() ? std::move(renderTarget) : nullptr;
+    }
+
+    bool InitializeViewport(ViewportState &viewport, int width, int height, bool sharedWorker)
     {
         viewport.imguiContext = ImGui::CreateContext();
         if (!viewport.imguiContext)
@@ -208,23 +405,47 @@ namespace
             return false;
         }
 
-        PlutoGE::render::RenderTargetConfig targetConfig;
-        targetConfig.width = std::max(width, 1);
-        targetConfig.height = std::max(height, 1);
-        targetConfig.clearColor = glm::vec4(0.055f, 0.065f, 0.08f, 1.0f);
-        viewport.renderTarget = std::make_unique<PlutoGE::render::RenderTarget>(targetConfig);
-        if (!viewport.renderTarget->IsInitialized())
+        if (sharedWorker)
+        {
+            for (auto &slot : viewport.sharedRenderSlots)
+            {
+                slot.renderTarget = CreateViewportRenderTarget(width, height);
+                if (!slot.renderTarget)
+                    break;
+            }
+        }
+        else
+        {
+            viewport.renderTarget = CreateViewportRenderTarget(width, height);
+        }
+
+        const bool targetsInitialized = sharedWorker
+                                            ? std::all_of(
+                                                  viewport.sharedRenderSlots.begin(),
+                                                  viewport.sharedRenderSlots.end(),
+                                                  [](const SharedRenderSlot &slot)
+                                                  { return slot.renderTarget != nullptr; })
+                                            : viewport.renderTarget != nullptr;
+        if (!targetsInitialized)
         {
             SetError("Failed to create the PlutoGE viewport render target.");
             ImGui_ImplOpenGL3_Shutdown();
             ImGui::DestroyContext(viewport.imguiContext);
             viewport.imguiContext = nullptr;
             viewport.renderTarget.reset();
+            for (auto &slot : viewport.sharedRenderSlots)
+            {
+                if (slot.renderTarget)
+                {
+                    slot.renderTarget->Cleanup();
+                    slot.renderTarget.reset();
+                }
+            }
             return false;
         }
 
-        viewport.width = targetConfig.width;
-        viewport.height = targetConfig.height;
+        viewport.width = std::max(width, 1);
+        viewport.height = std::max(height, 1);
         return true;
     }
 
@@ -239,6 +460,25 @@ namespace
         {
             state.engine->GetRenderer().ReleaseRenderTarget(viewport.renderTarget.get());
             viewport.renderTarget.reset();
+        }
+        for (auto &slot : viewport.sharedRenderSlots)
+        {
+            if (slot.consumerFence)
+            {
+                glWaitSync(slot.consumerFence, 0, GL_TIMEOUT_IGNORED);
+                glDeleteSync(slot.consumerFence);
+                slot.consumerFence = nullptr;
+            }
+            if (slot.producerFence)
+            {
+                glDeleteSync(slot.producerFence);
+                slot.producerFence = nullptr;
+            }
+            if (slot.renderTarget)
+            {
+                state.engine->GetRenderer().ReleaseRenderTarget(slot.renderTarget.get());
+                slot.renderTarget.reset();
+            }
         }
         if (viewport.imguiContext)
         {
@@ -484,6 +724,7 @@ namespace
 
         ApplyGizmo(state, viewport, frame, cameraData);
         ImGui::Render();
+        viewport.overlayWantsMouse = io.WantCaptureMouse || ImGuizmo::IsOver() || ImGuizmo::IsUsing();
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     }
 
@@ -868,6 +1109,425 @@ namespace
             manifest.editorCameraPostProcessEffects.push_back(std::move(serialized));
         }
     }
+
+    bool InitializeEngineState(EngineState &state, const PlutoGE::core::EngineConfig &engineConfig)
+    {
+        if (!state.engine->Initialize(engineConfig))
+            return false;
+
+        state.editorCameraPostProcessEffects = PlutoGE::assets::InstantiatePostProcessPreset(
+            PlutoGE::assets::CreateDefaultPostProcessPresetAsset());
+        state.scene = std::make_unique<PlutoGE::scene::Scene>();
+        PopulateInitialScene(*state.engine, *state.scene);
+        state.engine->SetScene(state.scene.get());
+        return true;
+    }
+
+    void DestroyEngineStateResources(EngineState &state)
+    {
+        for (auto &[handle, viewport] : state.viewports)
+            DestroyViewport(state, *viewport);
+        state.viewports.clear();
+        for (auto &viewport : state.retiredViewports)
+            DestroyViewport(state, *viewport);
+        state.retiredViewports.clear();
+        state.engine->SetScene(nullptr);
+        state.scene.reset();
+        state.retiredPostProcessEffects.clear();
+        state.editorCameraPostProcessEffects.clear();
+        state.engine->Shutdown();
+    }
+
+    void WaitForConsumer(SharedRenderSlot &slot)
+    {
+        if (!slot.consumerFence)
+            return;
+        glWaitSync(slot.consumerFence, 0, GL_TIMEOUT_IGNORED);
+        glDeleteSync(slot.consumerFence);
+        slot.consumerFence = nullptr;
+    }
+
+    void WaitForProducer(SharedRenderSlot &slot)
+    {
+        if (!slot.producerFence)
+            return;
+        glClientWaitSync(slot.producerFence, GL_SYNC_FLUSH_COMMANDS_BIT, GL_TIMEOUT_IGNORED);
+        glDeleteSync(slot.producerFence);
+        slot.producerFence = nullptr;
+    }
+
+    bool ResizeViewportTargets(
+        EngineState &state,
+        ViewportState &viewport,
+        int width,
+        int height,
+        bool sharedWorker)
+    {
+        if (viewport.width == width && viewport.height == height)
+            return true;
+
+        const auto resizeStart = std::chrono::steady_clock::now();
+        if (sharedWorker)
+        {
+            for (auto &slot : viewport.sharedRenderSlots)
+            {
+                WaitForConsumer(slot);
+                WaitForProducer(slot);
+                slot.serial = 0;
+                if (!slot.renderTarget || !slot.renderTarget->Resize(width, height))
+                {
+                    viewport.workerError = "Failed to resize a shared PlutoGE viewport render target.";
+                    return false;
+                }
+            }
+        }
+        else if (!viewport.renderTarget || !viewport.renderTarget->Resize(width, height))
+        {
+            SetError("Failed to resize the PlutoGE viewport render target.");
+            return false;
+        }
+
+        viewport.lastResizeMs =
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - resizeStart).count();
+        viewport.width = width;
+        viewport.height = height;
+        return true;
+    }
+
+    void RenderViewportContents(
+        EngineState &state,
+        ViewportState &viewport,
+        PlutoEditorViewportFrame frame,
+        PlutoGE::render::RenderTarget &renderTarget,
+        float deltaSeconds)
+    {
+        frame.delta_seconds = std::clamp(deltaSeconds, 0.0f, 0.25f);
+        const auto cameraData = BuildCameraData(frame);
+        viewport.lastCameraData = cameraData;
+        viewport.hasCameraData = true;
+
+        auto &renderer = state.engine->GetRenderer();
+        renderer.BeginFrame(&renderTarget);
+        std::vector<PlutoGE::render::IPostProcessEffect *> postProcessEffects;
+        postProcessEffects.reserve(state.editorCameraPostProcessEffects.size());
+        for (const auto &effect : state.editorCameraPostProcessEffects)
+            postProcessEffects.push_back(effect.get());
+        renderer.RenderFrame(cameraData,
+                             &renderTarget,
+                             state.scene->GetLights(),
+                             &postProcessEffects,
+                             state.scene.get(),
+                             true,
+                             true);
+        renderer.EndFrame(&renderTarget);
+        viewport.gpuFrameMs = renderer.GetTotalGpuPassTimeMs();
+
+        glBindFramebuffer(GL_FRAMEBUFFER, renderTarget.GetFramebufferID());
+        glViewport(0, 0, frame.width, frame.height);
+        DrawOverlay(state, viewport, frame, cameraData);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+        const double frameMs = std::max(0.0, static_cast<double>(frame.delta_seconds) * 1000.0);
+        ++viewport.frameCount;
+        viewport.accumulatedFrameMs += frameMs;
+        viewport.maximumFrameMs = std::max(viewport.maximumFrameMs, frameMs);
+        viewport.targetRefreshHz = frame.target_refresh_hz;
+    }
+
+    bool RenderSharedViewport(
+        EngineState &state,
+        ViewportState &viewport,
+        PlutoEditorViewportFrame frame,
+        float deltaSeconds)
+    {
+        if (!viewport.imguiContext &&
+            !InitializeViewport(viewport, frame.width, frame.height, true))
+        {
+            viewport.workerError = g_lastError.empty()
+                                       ? "Failed to initialize the shared viewport render targets."
+                                       : g_lastError;
+            return false;
+        }
+        if (!ResizeViewportTargets(state, viewport, frame.width, frame.height, true))
+            return false;
+
+        auto &slot = viewport.sharedRenderSlots[viewport.nextSharedRenderSlot];
+        viewport.nextSharedRenderSlot =
+            (viewport.nextSharedRenderSlot + 1) % viewport.sharedRenderSlots.size();
+        WaitForConsumer(slot);
+        WaitForProducer(slot);
+
+        RenderViewportContents(state, viewport, frame, *slot.renderTarget, deltaSeconds);
+        slot.serial = viewport.nextSharedRenderSerial++;
+        slot.producerFence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+        glFlush();
+        return true;
+    }
+
+    int32_t PresentSharedViewport(
+        ViewportState &viewport,
+        const PlutoEditorViewportFrame &frame)
+    {
+        if (!viewport.workerError.empty())
+        {
+            SetError(viewport.workerError);
+            return PLUTO_EDITOR_INTERNAL_ERROR;
+        }
+
+        viewport.latestFrame = frame;
+        viewport.hasLatestFrame = true;
+        viewport.lastFrameSubmission = std::chrono::steady_clock::now();
+
+        SharedRenderSlot *latestSlot = nullptr;
+        for (auto &slot : viewport.sharedRenderSlots)
+        {
+            if (slot.renderTarget && slot.serial != 0 &&
+                (!latestSlot || slot.serial > latestSlot->serial))
+            {
+                latestSlot = &slot;
+            }
+        }
+        if (!latestSlot)
+            return PLUTO_EDITOR_OK;
+
+        const GLuint colorTexture = latestSlot->renderTarget->GetColorTextureID();
+        if (glIsTexture(colorTexture) == GL_FALSE)
+        {
+            SetError("Avalonia's viewport context is not in the worker render context share group.");
+            return PLUTO_EDITOR_CONTEXT_NOT_SHARED;
+        }
+
+        if (latestSlot->producerFence)
+        {
+            glWaitSync(latestSlot->producerFence, 0, GL_TIMEOUT_IGNORED);
+            glDeleteSync(latestSlot->producerFence);
+            latestSlot->producerFence = nullptr;
+        }
+
+        GLuint readFramebuffer = 0;
+        glGenFramebuffers(1, &readFramebuffer);
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, readFramebuffer);
+        glFramebufferTexture2D(
+            GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, colorTexture, 0);
+        if (glCheckFramebufferStatus(GL_READ_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+        {
+            glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(frame.framebuffer));
+            glDeleteFramebuffers(1, &readFramebuffer);
+            SetError("Failed to attach the worker's shared color texture for presentation.");
+            return PLUTO_EDITOR_INTERNAL_ERROR;
+        }
+
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(frame.framebuffer));
+        glBlitFramebuffer(
+            0, 0, latestSlot->renderTarget->GetWidth(), latestSlot->renderTarget->GetHeight(),
+            0, 0, frame.width, frame.height,
+            GL_COLOR_BUFFER_BIT, GL_LINEAR);
+        glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(frame.framebuffer));
+        glViewport(0, 0, frame.width, frame.height);
+        glDeleteFramebuffers(1, &readFramebuffer);
+
+        if (latestSlot->consumerFence)
+            glDeleteSync(latestSlot->consumerFence);
+        latestSlot->consumerFence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+        glFlush();
+        return PLUTO_EDITOR_OK;
+    }
+
+#if defined(_WIN32)
+    void SharedRenderWorker(
+        EngineState &state,
+        PlutoGE::core::EngineConfig engineConfig)
+    {
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+        bool initialized = state.sharedContext && state.sharedContext->MakeCurrent();
+        if (initialized)
+            initialized = InitializeEngineState(state, engineConfig);
+
+        {
+            std::scoped_lock lock(state.mutex);
+            state.workerInitializationSucceeded = initialized;
+            state.workerInitializationComplete = true;
+            state.workerOperational = initialized;
+            if (!initialized)
+            {
+                state.workerError = state.sharedContext
+                                        ? state.sharedContext->GetError()
+                                        : "The shared WGL render context was unavailable.";
+                if (state.workerError.empty())
+                    state.workerError = "PlutoGE failed to initialize on the shared WGL render context.";
+            }
+        }
+        state.renderCondition.notify_all();
+
+        if (!initialized)
+        {
+            if (state.sharedContext)
+                state.sharedContext->ClearCurrent();
+            return;
+        }
+
+        auto previousFrameTime = std::chrono::steady_clock::now();
+        std::unique_lock lock(state.mutex);
+        while (!state.workerStopRequested)
+        {
+            if (state.workerPauseRequested)
+            {
+                state.sharedContext->ClearCurrent();
+                state.workerPaused = true;
+                state.renderCondition.notify_all();
+                state.renderCondition.wait(lock, [&state]
+                {
+                    return state.workerStopRequested || !state.workerPauseRequested;
+                });
+                if (state.workerStopRequested)
+                    break;
+                if (!state.sharedContext->MakeCurrent())
+                {
+                    state.workerError = state.sharedContext->GetError();
+                    state.workerPaused = false;
+                    state.renderCondition.notify_all();
+                    break;
+                }
+                state.workerPaused = false;
+                previousFrameTime = std::chrono::steady_clock::now();
+                state.renderCondition.notify_all();
+                continue;
+            }
+
+            state.renderCondition.wait(lock, [&state]
+            {
+                if (state.workerStopRequested || state.workerPauseRequested)
+                    return true;
+                return std::any_of(
+                    state.viewports.begin(),
+                    state.viewports.end(),
+                    [](const auto &entry)
+                    { return entry.second->hasLatestFrame; });
+            });
+            if (state.workerStopRequested)
+                break;
+            if (state.workerPauseRequested)
+                continue;
+
+            for (auto &viewport : state.retiredViewports)
+                DestroyViewport(state, *viewport);
+            state.retiredViewports.clear();
+            state.retiredPostProcessEffects.clear();
+
+            if (!ApplyPendingComponentEdits(state))
+            {
+                for (auto &[handle, viewport] : state.viewports)
+                    viewport->workerError = "A pending component edit could not be applied.";
+                continue;
+            }
+
+            const auto frameTime = std::chrono::steady_clock::now();
+            for (auto &[handle, viewport] : state.viewports)
+            {
+                if (viewport->hasLatestFrame &&
+                    frameTime - viewport->lastFrameSubmission > std::chrono::milliseconds(250))
+                {
+                    viewport->hasLatestFrame = false;
+                }
+            }
+            const bool hasActiveViewport = std::any_of(
+                state.viewports.begin(),
+                state.viewports.end(),
+                [](const auto &entry)
+                { return entry.second->hasLatestFrame; });
+            if (!hasActiveViewport)
+                continue;
+
+            const float rawDeltaSeconds =
+                std::chrono::duration<float>(frameTime - previousFrameTime).count();
+            const float deltaSeconds = rawDeltaSeconds > 0.1f
+                                           ? 1.0f / 60.0f
+                                           : std::clamp(rawDeltaSeconds, 0.0f, 0.1f);
+            previousFrameTime = frameTime;
+
+            auto &renderer = state.engine->GetRenderer();
+            renderer.BeginProfilingFrame();
+            renderer.ClearRenderCommands();
+            std::vector<PlutoGE::render::CameraData> submissionCameras;
+            submissionCameras.reserve(state.viewports.size());
+            float targetRefreshHz = 0.0f;
+            for (const auto &[handle, viewport] : state.viewports)
+            {
+                if (!viewport->hasLatestFrame)
+                    continue;
+                submissionCameras.push_back(BuildCameraData(viewport->latestFrame));
+                targetRefreshHz =
+                    std::max(targetRefreshHz, viewport->latestFrame.target_refresh_hz);
+            }
+            renderer.SetSubmissionCullingCameras(submissionCameras);
+
+            state.engine->UpdateAsyncMeshImports();
+            state.scene->Update(deltaSeconds);
+            for (auto &[handle, viewport] : state.viewports)
+            {
+                if (!viewport->hasLatestFrame)
+                    continue;
+
+                auto frame = viewport->latestFrame;
+                viewport->latestFrame.mouse_wheel = 0.0f;
+                auto &window = state.engine->GetWindow();
+                window.SetExternalExtents(frame.width, frame.height);
+                if (!RenderSharedViewport(state, *viewport, frame, deltaSeconds))
+                    viewport->hasLatestFrame = false;
+            }
+
+            const bool vSyncEnabled = state.project && state.project->GetManifest().vSyncEnabled;
+            const float refreshHz = targetRefreshHz > 1.0f ? targetRefreshHz : 60.0f;
+            float producerHz = refreshHz;
+            if (!vSyncEnabled)
+            {
+                // The embedded producer remains independent of presentation, but
+                // deliberately leaves CPU/GPU time for Avalonia's compositor.
+                producerHz = std::clamp(refreshHz * 1.5f, 90.0f, 240.0f);
+                float maximumGpuFrameMs = 0.0f;
+                for (const auto &[handle, viewport] : state.viewports)
+                {
+                    if (viewport->hasLatestFrame && viewport->gpuFrameMs > 0.0f)
+                        maximumGpuFrameMs =
+                            std::max(maximumGpuFrameMs, viewport->gpuFrameMs);
+                }
+                if (maximumGpuFrameMs > 0.1f)
+                {
+                    constexpr float kMaximumProducerGpuUtilization = 0.9f;
+                    producerHz = std::min(
+                        producerHz,
+                        1000.0f * kMaximumProducerGpuUtilization / maximumGpuFrameMs);
+                }
+                producerHz = std::max(producerHz, std::min(refreshHz, 90.0f));
+            }
+
+            const auto nextFrameTime =
+                frameTime + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                                std::chrono::duration<float>(1.0f / producerHz));
+            if (vSyncEnabled)
+            {
+                state.renderCondition.wait_until(lock, nextFrameTime, [&state]
+                {
+                    return state.workerStopRequested || state.workerPauseRequested;
+                });
+            }
+            else
+            {
+                state.renderCondition.wait_until(lock, nextFrameTime, [&state]
+                {
+                    return state.workerStopRequested || state.workerPauseRequested;
+                });
+            }
+        }
+
+        DestroyEngineStateResources(state);
+        state.workerOperational = false;
+        state.workerPaused = false;
+        state.renderCondition.notify_all();
+        lock.unlock();
+        state.sharedContext->ClearCurrent();
+    }
+#endif
 }
 
 extern "C"
@@ -901,17 +1561,42 @@ extern "C"
         engineConfig.windowConfig.visible = false;
         engineConfig.windowConfig.externalOpenGLProcAddress = config->get_proc_address;
         engineConfig.windowConfig.externalOpenGLUserData = config->user_data;
-        if (!state->engine->Initialize(engineConfig))
+
+#if defined(_WIN32)
+        state->sharedContext = std::make_unique<SharedWglContext>();
+        if (!state->sharedContext->Create())
+        {
+            SetError("Unable to create PlutoGE's independent shared render context: " +
+                     state->sharedContext->GetError());
+            return PLUTO_EDITOR_OPENGL_UNAVAILABLE;
+        }
+        state->workerEnabled = true;
+        state->renderThread = std::thread(SharedRenderWorker, std::ref(*state), engineConfig);
+        {
+            std::unique_lock initializationLock(state->mutex);
+            state->renderCondition.wait(initializationLock, [&state]
+            {
+                return state->workerInitializationComplete;
+            });
+            if (!state->workerInitializationSucceeded)
+            {
+                const std::string workerError = state->workerError;
+                initializationLock.unlock();
+                if (state->renderThread.joinable())
+                    state->renderThread.join();
+                state->sharedContext->Destroy();
+                SetError(workerError);
+                return PLUTO_EDITOR_OPENGL_UNAVAILABLE;
+            }
+        }
+#else
+        if (!InitializeEngineState(*state, engineConfig))
         {
             SetError("PlutoGE requires a current desktop OpenGL 4.3 context.");
             return PLUTO_EDITOR_OPENGL_UNAVAILABLE;
         }
+#endif
 
-        state->editorCameraPostProcessEffects = PlutoGE::assets::InstantiatePostProcessPreset(
-            PlutoGE::assets::CreateDefaultPostProcessPresetAsset());
-        state->scene = std::make_unique<PlutoGE::scene::Scene>();
-        PopulateInitialScene(*state->engine, *state->scene);
-        state->engine->SetScene(state->scene.get());
         g_state = std::move(state);
         *engineHandle = kEngineHandle;
         g_lastError.clear();
@@ -928,20 +1613,109 @@ extern "C"
             return PLUTO_EDITOR_INVALID_HANDLE;
         }
 
+        if (state->workerEnabled)
+        {
+            {
+                std::scoped_lock engineLock(state->mutex);
+                state->workerStopRequested = true;
+            }
+            state->renderCondition.notify_all();
+            if (state->renderThread.joinable())
+                state->renderThread.join();
+#if defined(_WIN32)
+            if (state->sharedContext)
+                state->sharedContext->Destroy();
+#endif
+        }
+        else
         {
             std::scoped_lock engineLock(state->mutex);
-            for (auto &[handle, viewport] : state->viewports)
-            {
-                DestroyViewport(*state, *viewport);
-            }
-            state->viewports.clear();
-            state->engine->SetScene(nullptr);
-            state->scene.reset();
-            state->retiredPostProcessEffects.clear();
-            state->editorCameraPostProcessEffects.clear();
-            state->engine->Shutdown();
+            DestroyEngineStateResources(*state);
         }
         g_state.reset();
+        g_lastError.clear();
+        return PLUTO_EDITOR_OK;
+    }
+
+    int32_t pluto_editor_engine_acquire_render_context(PlutoEditorHandle engineHandle)
+    {
+        std::scoped_lock stateLock(g_stateMutex);
+        auto *state = ResolveEngine(engineHandle);
+        if (!state)
+            return PLUTO_EDITOR_INVALID_HANDLE;
+        if (!state->workerEnabled)
+            return PLUTO_EDITOR_OK;
+
+#if defined(_WIN32)
+        std::unique_lock engineLock(state->mutex);
+        if (state->workerPauseRequested || state->workerPaused)
+        {
+            SetError("The shared render context is already acquired.");
+            return PLUTO_EDITOR_INVALID_ARGUMENT;
+        }
+
+        state->pausedCallerDc = wglGetCurrentDC();
+        state->pausedCallerContext = wglGetCurrentContext();
+        state->pausedCallerThreadId = GetCurrentThreadId();
+        state->workerPauseRequested = true;
+        state->renderCondition.notify_all();
+        state->renderCondition.wait(engineLock, [state]
+        {
+            return state->workerPaused || !state->workerOperational;
+        });
+        if (!state->workerPaused || !state->sharedContext->MakeCurrent())
+        {
+            state->workerPauseRequested = false;
+            state->renderCondition.notify_all();
+            SetError(state->sharedContext
+                         ? state->sharedContext->GetError()
+                         : "The shared render context is unavailable.");
+            return PLUTO_EDITOR_OPENGL_UNAVAILABLE;
+        }
+#endif
+
+        g_lastError.clear();
+        return PLUTO_EDITOR_OK;
+    }
+
+    int32_t pluto_editor_engine_release_render_context(PlutoEditorHandle engineHandle)
+    {
+        std::scoped_lock stateLock(g_stateMutex);
+        auto *state = ResolveEngine(engineHandle);
+        if (!state)
+            return PLUTO_EDITOR_INVALID_HANDLE;
+        if (!state->workerEnabled)
+            return PLUTO_EDITOR_OK;
+
+#if defined(_WIN32)
+        std::unique_lock engineLock(state->mutex);
+        if (!state->workerPauseRequested || !state->workerPaused ||
+            state->pausedCallerThreadId != GetCurrentThreadId())
+        {
+            SetError("The shared render context must be released by the thread that acquired it.");
+            return PLUTO_EDITOR_INVALID_ARGUMENT;
+        }
+
+        state->sharedContext->ClearCurrent();
+        const bool restored = state->pausedCallerContext
+                                  ? wglMakeCurrent(state->pausedCallerDc, state->pausedCallerContext) == TRUE
+                                  : wglMakeCurrent(nullptr, nullptr) == TRUE;
+        state->pausedCallerDc = nullptr;
+        state->pausedCallerContext = nullptr;
+        state->pausedCallerThreadId = 0;
+        state->workerPauseRequested = false;
+        state->renderCondition.notify_all();
+        state->renderCondition.wait(engineLock, [state]
+        {
+            return !state->workerPaused || !state->workerOperational;
+        });
+        if (!restored)
+        {
+            SetError("Failed to restore Avalonia's WGL context after native editor work.");
+            return PLUTO_EDITOR_OPENGL_UNAVAILABLE;
+        }
+#endif
+
         g_lastError.clear();
         return PLUTO_EDITOR_OK;
     }
@@ -980,8 +1754,12 @@ extern "C"
         {
             return PLUTO_EDITOR_INVALID_HANDLE;
         }
-        DestroyViewport(*state, *iterator->second);
+        if (state->workerEnabled)
+            state->retiredViewports.push_back(std::move(iterator->second));
+        else
+            DestroyViewport(*state, *iterator->second);
         state->viewports.erase(iterator);
+        state->renderCondition.notify_all();
         return PLUTO_EDITOR_OK;
     }
 
@@ -1009,13 +1787,23 @@ extern "C"
         auto &window = state->engine->GetWindow();
         window.SetExternalOpenGLContext(frame->get_proc_address, frame->user_data);
         window.SetExternalExtents(frame->width, frame->height);
+
+        if (state->workerEnabled)
+        {
+            const int32_t result = PresentSharedViewport(*viewport, *frame);
+            state->renderCondition.notify_all();
+            if (result == PLUTO_EDITOR_OK)
+                g_lastError.clear();
+            return result;
+        }
+
         if (!window.EnsureOpenGLContextCurrent(viewport->renderTarget == nullptr))
         {
             SetError("The current viewport context is not desktop OpenGL 4.3 or is not shared with the engine context.");
             return viewport->renderTarget ? PLUTO_EDITOR_CONTEXT_NOT_SHARED : PLUTO_EDITOR_OPENGL_UNAVAILABLE;
         }
 
-        if (!viewport->renderTarget && !InitializeViewport(*viewport, frame->width, frame->height))
+        if (!viewport->renderTarget && !InitializeViewport(*viewport, frame->width, frame->height, false))
         {
             return PLUTO_EDITOR_INTERNAL_ERROR;
         }
@@ -1033,43 +1821,18 @@ extern "C"
         if (!ApplyPendingComponentEdits(*state))
             return PLUTO_EDITOR_INVALID_ARGUMENT;
 
-        if (viewport->width != frame->width || viewport->height != frame->height)
-        {
-            const auto resizeStart = std::chrono::steady_clock::now();
-            if (!viewport->renderTarget->Resize(frame->width, frame->height))
-            {
-                SetError("Failed to resize the viewport render target.");
-                return PLUTO_EDITOR_INTERNAL_ERROR;
-            }
-            viewport->lastResizeMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - resizeStart).count();
-            viewport->width = frame->width;
-            viewport->height = frame->height;
-        }
+        if (!ResizeViewportTargets(*state, *viewport, frame->width, frame->height, false))
+            return PLUTO_EDITOR_INTERNAL_ERROR;
 
         const auto cameraData = BuildCameraData(*frame);
-        viewport->lastCameraData = cameraData;
-        viewport->hasCameraData = true;
-
         auto &renderer = state->engine->GetRenderer();
         renderer.BeginProfilingFrame();
         renderer.ClearRenderCommands();
         renderer.SetSubmissionCullingCameras({cameraData});
         state->engine->UpdateAsyncMeshImports();
         state->scene->Update(std::clamp(frame->delta_seconds, 0.0f, 0.25f));
-        renderer.BeginFrame(viewport->renderTarget.get());
-        std::vector<PlutoGE::render::IPostProcessEffect *> postProcessEffects;
-        postProcessEffects.reserve(state->editorCameraPostProcessEffects.size());
-        for (const auto &effect : state->editorCameraPostProcessEffects)
-            postProcessEffects.push_back(effect.get());
-        renderer.RenderFrame(cameraData,
-                             viewport->renderTarget.get(),
-                             state->scene->GetLights(),
-                             &postProcessEffects,
-                             state->scene.get(),
-                             true,
-                             true);
-        renderer.EndFrame(viewport->renderTarget.get());
-        viewport->gpuFrameMs = renderer.GetTotalGpuPassTimeMs();
+        RenderViewportContents(
+            *state, *viewport, *frame, *viewport->renderTarget, frame->delta_seconds);
 
         glBindFramebuffer(GL_READ_FRAMEBUFFER, viewport->renderTarget->GetFramebufferID());
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(frame->framebuffer));
@@ -1078,14 +1841,6 @@ extern "C"
                           GL_COLOR_BUFFER_BIT, GL_LINEAR);
         glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(frame->framebuffer));
         glViewport(0, 0, frame->width, frame->height);
-
-        DrawOverlay(*state, *viewport, *frame, cameraData);
-
-        const double frameMs = std::max(0.0, static_cast<double>(frame->delta_seconds) * 1000.0);
-        ++viewport->frameCount;
-        viewport->accumulatedFrameMs += frameMs;
-        viewport->maximumFrameMs = std::max(viewport->maximumFrameMs, frameMs);
-        viewport->targetRefreshHz = frame->target_refresh_hz;
         g_lastError.clear();
         return PLUTO_EDITOR_OK;
     }
@@ -1132,8 +1887,7 @@ extern "C"
             return PLUTO_EDITOR_INVALID_HANDLE;
         }
 
-        ImGui::SetCurrentContext(viewport->imguiContext);
-        if (viewport->imguiContext && (ImGui::GetIO().WantCaptureMouse || ImGuizmo::IsOver() || ImGuizmo::IsUsing()))
+        if (viewport->overlayWantsMouse)
         {
             *entityId = viewport->selectedEntityId;
             return PLUTO_EDITOR_OK;
@@ -1472,6 +2226,7 @@ extern "C"
         std::scoped_lock engineLock(state->mutex);
         if (!state->project) return PLUTO_EDITOR_INVALID_ARGUMENT;
         auto &manifest = state->project->GetManifest();
+        const bool vSyncChanged = manifest.vSyncEnabled != (settings->vsync_enabled != 0);
         manifest.name = settings->name;
         manifest.windowTitle = settings->window_title;
         manifest.startupScene = settings->startup_scene;
@@ -1480,6 +2235,16 @@ extern "C"
         manifest.windowHeight = std::max(settings->window_height, 64);
         manifest.vSyncEnabled = settings->vsync_enabled != 0;
         manifest.editorFontSize = std::clamp(settings->editor_font_size, 10.0f, 24.0f);
+        if (vSyncChanged)
+        {
+            for (auto &[handle, viewport] : state->viewports)
+            {
+                viewport->frameCount = 0;
+                viewport->accumulatedFrameMs = 0.0;
+                viewport->maximumFrameMs = 0.0;
+            }
+        }
+        state->renderCondition.notify_all();
         g_lastError.clear();
         return PLUTO_EDITOR_OK;
     }

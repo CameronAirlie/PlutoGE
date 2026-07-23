@@ -35,11 +35,14 @@ internal sealed unsafe class EngineHost : IDisposable
                     GetProcAddress = Marshal.GetFunctionPointerForDelegate(resolver),
                 };
                 PlutoNative.ThrowIfFailed(PlutoNative.EngineCreate(in config, out _engine), "Engine creation");
-                if (!string.IsNullOrWhiteSpace(_loadedProjectPath))
-                    PlutoNative.ThrowIfFailed(PlutoNative.ProjectLoad(_engine, _loadedProjectPath), "Restoring project");
-                if (!string.IsNullOrWhiteSpace(_loadedScenePath))
-                    PlutoNative.ThrowIfFailed(PlutoNative.SceneLoad(_engine, _loadedScenePath), "Restoring scene");
-                Console.Error.WriteLine("PlutoGE native engine initialized in the Avalonia OpenGL context.");
+                ExecuteWithRenderContext(() =>
+                {
+                    if (!string.IsNullOrWhiteSpace(_loadedProjectPath))
+                        PlutoNative.ThrowIfFailed(PlutoNative.ProjectLoad(_engine, _loadedProjectPath), "Restoring project");
+                    if (!string.IsNullOrWhiteSpace(_loadedScenePath))
+                        PlutoNative.ThrowIfFailed(PlutoNative.SceneLoad(_engine, _loadedScenePath), "Restoring scene");
+                });
+                Console.Error.WriteLine("PlutoGE native engine initialized with an Avalonia-shared OpenGL context.");
                 EngineReady?.Invoke(this, EventArgs.Empty);
             }
 
@@ -69,7 +72,13 @@ internal sealed unsafe class EngineHost : IDisposable
         {
             gizmoActive = false;
             if (_engine == 0) return PlutoNative.Result.InvalidHandle;
-            while (_renderActions.TryDequeue(out var action)) action();
+            if (_renderActions.Count > 0)
+            {
+                ExecuteWithRenderContext(() =>
+                {
+                    while (_renderActions.TryDequeue(out var action)) action();
+                });
+            }
             PlutoNative.ViewportSetSelectedEntity(_engine, viewport, selectedEntityId);
             var result = PlutoNative.ViewportRender(_engine, viewport, in frame);
             if (result == PlutoNative.Result.Ok &&
@@ -217,7 +226,8 @@ internal sealed unsafe class EngineHost : IDisposable
         lock (_sync)
         {
             EnsureReady();
-            PlutoNative.ThrowIfFailed(PlutoNative.ProjectRefresh(_engine), "Refreshing project assets");
+            ExecuteWithRenderContext(() =>
+                PlutoNative.ThrowIfFailed(PlutoNative.ProjectRefresh(_engine), "Refreshing project assets"));
             return ReadProjectCore();
         }
     }
@@ -446,7 +456,8 @@ internal sealed unsafe class EngineHost : IDisposable
         lock (_sync)
         {
             EnsureReady();
-            PlutoNative.ThrowIfFailed(PlutoNative.EntityAddComponent(_engine, entityId, typeName), "Adding component");
+            ExecuteWithRenderContext(() =>
+                PlutoNative.ThrowIfFailed(PlutoNative.EntityAddComponent(_engine, entityId, typeName), "Adding component"));
         }
     }
 
@@ -455,7 +466,8 @@ internal sealed unsafe class EngineHost : IDisposable
         lock (_sync)
         {
             EnsureReady();
-            PlutoNative.ThrowIfFailed(PlutoNative.EntityRemoveComponent(_engine, entityId, componentIndex), "Removing component");
+            ExecuteWithRenderContext(() =>
+                PlutoNative.ThrowIfFailed(PlutoNative.EntityRemoveComponent(_engine, entityId, componentIndex), "Removing component"));
         }
     }
 
@@ -537,7 +549,24 @@ internal sealed unsafe class EngineHost : IDisposable
         lock (_sync)
         {
             EnsureReady();
-            PlutoNative.ThrowIfFailed(action(), operation);
+            ExecuteWithRenderContext(() => PlutoNative.ThrowIfFailed(action(), operation));
+        }
+    }
+
+    private void ExecuteWithRenderContext(Action action)
+    {
+        PlutoNative.ThrowIfFailed(
+            PlutoNative.EngineAcquireRenderContext(_engine),
+            "Acquiring the native render context");
+        try
+        {
+            action();
+        }
+        finally
+        {
+            PlutoNative.ThrowIfFailed(
+                PlutoNative.EngineReleaseRenderContext(_engine),
+                "Releasing the native render context");
         }
     }
 

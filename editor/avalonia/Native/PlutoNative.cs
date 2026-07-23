@@ -4,7 +4,7 @@ namespace PlutoGE.Editor.Avalonia.Native;
 
 internal static unsafe partial class PlutoNative
 {
-    internal const uint ApiVersion = 9;
+    internal const uint ApiVersion = 10;
     internal const string Library = "PlutoGE.Editor.Native";
 
     internal enum Result : int
@@ -243,6 +243,12 @@ internal static unsafe partial class PlutoNative
 
     [LibraryImport(Library, EntryPoint = "pluto_editor_engine_destroy")]
     internal static partial Result EngineDestroy(ulong engine);
+
+    [LibraryImport(Library, EntryPoint = "pluto_editor_engine_acquire_render_context")]
+    internal static partial Result EngineAcquireRenderContext(ulong engine);
+
+    [LibraryImport(Library, EntryPoint = "pluto_editor_engine_release_render_context")]
+    internal static partial Result EngineReleaseRenderContext(ulong engine);
 
     [LibraryImport(Library, EntryPoint = "pluto_editor_viewport_create")]
     internal static partial Result ViewportCreate(ulong engine, out ulong viewport);

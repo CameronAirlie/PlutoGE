@@ -63,11 +63,13 @@
           <TextBlock Classes="section-title" Text="HOST · NATIVE ENGINE" />
           <WrapPanel Orientation="Horizontal" ItemWidth="182" ItemHeight="70">
             <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Status" /><TextBlock Classes="metric-value" Text="{Binding HostStatus}" /></StackPanel></Border>
-            <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Current render" /><TextBlock Classes="metric-value" Text="{Binding HostCurrent}" /></StackPanel></Border>
-            <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Average render" /><TextBlock Classes="metric-value" Text="{Binding HostAverage}" /></StackPanel></Border>
-            <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Maximum render" /><TextBlock Classes="metric-value" Text="{Binding HostMaximum}" /></StackPanel></Border>
+            <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Current native callback" /><TextBlock Classes="metric-value" Text="{Binding HostCurrent}" /></StackPanel></Border>
+            <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Average native callback" /><TextBlock Classes="metric-value" Text="{Binding HostAverage}" /></StackPanel></Border>
+            <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Maximum native callback" /><TextBlock Classes="metric-value" Text="{Binding HostMaximum}" /></StackPanel></Border>
             <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Share of callback" /><TextBlock Classes="metric-value" Text="{Binding HostShare}" /></StackPanel></Border>
-            <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Rendered frames" /><TextBlock Classes="metric-value" Text="{Binding HostFrameCount}" /></StackPanel></Border>
+            <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Produced frames" /><TextBlock Classes="metric-value" Text="{Binding HostFrameCount}" /></StackPanel></Border>
+            <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Producer frame interval" /><TextBlock Classes="metric-value" Text="{Binding ProducedFrameInterval}" /></StackPanel></Border>
+            <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Producer frame rate" /><TextBlock Classes="metric-value" Text="{Binding ProducedFrameRate}" /></StackPanel></Border>
             <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Viewport" /><TextBlock Classes="metric-value" Text="{Binding ViewportSize}" /></StackPanel></Border>
             <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="Observed refresh" /><TextBlock Classes="metric-value" Text="{Binding TargetRefreshRate}" /></StackPanel></Border>
             <Border Classes="metric-card"><StackPanel><TextBlock Classes="metric-label" Text="GPU passes" /><TextBlock Classes="metric-value" Text="{Binding GpuFrameTime}" /></StackPanel></Border>

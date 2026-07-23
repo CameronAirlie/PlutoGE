@@ -173,7 +173,11 @@ internal sealed class EngineViewport : OpenGlControlBase
 
     protected override void OnOpenGlLost()
     {
-        ViewModel?.Detach(_viewport);
+        if (_viewport != 0)
+        {
+            Host?.ReleaseViewport(_viewport);
+            ViewModel?.Detach(_viewport);
+        }
         _viewport = 0;
         Host?.ReportStatus("OpenGL context lost; the viewport will be recreated by Avalonia.");
     }

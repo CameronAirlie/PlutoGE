@@ -341,6 +341,27 @@ public sealed class WeaponSettings : ScriptableObject
 
 `ScriptableObject` provides `AssetReference` and `IsValid`. It is data, not a component, and has no lifecycle callbacks.
 
+## Project files and save data
+
+Use `ProjectStorage` instead of constructing paths from the working directory.
+All method paths are relative; rooted paths and `..` paths that escape the
+selected storage directory are rejected.
+
+```csharp
+// Per-user data: genomes, checkpoints, savegames, and settings.
+ProjectStorage.WriteUserDataJson("Evolution/latest-checkpoint.json", checkpoint);
+var loaded = ProjectStorage.ReadUserDataJson<EvolutionCheckpoint>(
+    "Evolution/latest-checkpoint.json");
+
+// Generated project content during development.
+ProjectStorage.WriteAssetText("Generated/best-genome.json", genomeJson);
+```
+
+Writes create missing directories and replace the destination atomically.
+Absolute roots are available as `Application.AssetsPath` and
+`Application.PersistentDataPath`. Prefer user data for runtime-created files;
+Assets may be read-only in installed or exported builds.
+
 ## Logging
 
 ```csharp

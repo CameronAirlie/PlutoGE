@@ -352,6 +352,10 @@ internal static unsafe class ScriptBridge
                     _loadedAssembly = _loadContext.LoadFromAssemblyPath(fullPath);
                 }
 
+                Application.ConfigureForScriptAssembly(
+                    fullPath,
+                    _loadedAssembly.GetName().Name ?? Path.GetFileNameWithoutExtension(fullPath));
+
                 ScriptClasses.Clear();
                 foreach (var scriptClass in DiscoverBuiltinScriptClasses())
                 {

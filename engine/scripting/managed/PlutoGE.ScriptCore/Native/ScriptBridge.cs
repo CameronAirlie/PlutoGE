@@ -320,7 +320,7 @@ internal static unsafe class ScriptBridge
     private static delegate* unmanaged[Cdecl]<int, nint, void> _logMessage;
 
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "LoadScriptAssembly")]
-    public static int LoadScriptAssembly(nint assemblyPathPtr)
+    public static int LoadScriptAssembly(nint assemblyPathPtr, nint sourceAssemblyPathPtr)
     {
         try
         {
@@ -331,11 +331,18 @@ internal static unsafe class ScriptBridge
                 return 0;
             }
 
+            var sourceAssemblyPath = Marshal.PtrToStringUTF8(sourceAssemblyPathPtr);
+            if (string.IsNullOrWhiteSpace(sourceAssemblyPath))
+            {
+                sourceAssemblyPath = assemblyPath;
+            }
+
             lock (Gate)
             {
                 ResetLoadedAssembly();
 
                 var fullPath = Path.GetFullPath(assemblyPath);
+                var fullSourcePath = Path.GetFullPath(sourceAssemblyPath);
                 var builtinAssembly = typeof(ScriptBehaviour).Assembly;
                 var isBuiltinAssembly = string.Equals(
                     Path.GetFullPath(builtinAssembly.Location),
@@ -353,7 +360,7 @@ internal static unsafe class ScriptBridge
                 }
 
                 Application.ConfigureForScriptAssembly(
-                    fullPath,
+                    fullSourcePath,
                     _loadedAssembly.GetName().Name ?? Path.GetFileNameWithoutExtension(fullPath));
 
                 ScriptClasses.Clear();

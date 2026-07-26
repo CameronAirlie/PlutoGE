@@ -2437,7 +2437,7 @@ namespace PlutoGE::ui
         ViewportPanelConfig viewportConfig;
         viewportConfig.name = "Editor Viewport";
         viewportConfig.clearColor = glm::vec4(0.1f, 0.1f, 0.15f, 1.0f);
-        viewportConfig.initialRenderScale = 0.85f;
+        viewportConfig.initialRenderScale = 1.0f;
         viewportConfig.editorViewport = true;
         auto *viewportPanel = new ViewportPanel(viewportConfig);
         viewportPanel->Initialize();
@@ -2498,7 +2498,6 @@ namespace PlutoGE::ui
         auto profilerPanel = new ProfilerPanel(PanelConfig{"Profiler"}, &m_profiler, &m_panelManager, &renderer);
         profilerPanel->Initialize();
         m_panelManager.AddPanel(profilerPanel);
-
 
         auto *renderTarget2 = viewportPanel2->GetRenderTarget();
         auto *windowHandle = static_cast<GLFWwindow *>(window.GetWindow());

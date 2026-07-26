@@ -70,7 +70,7 @@ namespace PlutoGE::scripting
         using hostfxr_close_fn = int(__cdecl *)(hostfxr_handle);
         using load_assembly_and_get_function_pointer_fn = int(__cdecl *)(const char_t *, const char_t *, const char_t *, const char_t *, void *, void **);
 
-        using load_script_assembly_fn = int(__cdecl *)(const char *);
+        using load_script_assembly_fn = int(__cdecl *)(const char *, const char *);
         using unload_script_assembly_fn = int(__cdecl *)();
         using get_marshaled_string_fn = const char *(__cdecl *)();
         using get_field_data_fn = const char *(__cdecl *)(int64_t);
@@ -3601,7 +3601,12 @@ namespace PlutoGE::scripting
         }
 
         const std::string assemblyPathUtf8 = WideToUtf8(shadowAssemblyPath.wstring());
-        if (!m_impl->loadScriptAssembly || m_impl->loadScriptAssembly(assemblyPathUtf8.c_str()) == 0)
+        const std::string sourceAssemblyPathUtf8 =
+            WideToUtf8(std::filesystem::absolute(assemblyPath).wstring());
+        if (!m_impl->loadScriptAssembly ||
+            m_impl->loadScriptAssembly(
+                assemblyPathUtf8.c_str(),
+                sourceAssemblyPathUtf8.c_str()) == 0)
         {
             setManagedBridgeFailure("LoadScriptAssembly");
             return false;

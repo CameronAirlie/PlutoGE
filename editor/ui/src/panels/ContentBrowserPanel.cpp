@@ -322,6 +322,30 @@ void main() {
 
     namespace
     {
+        int ResizeStringInput(ImGuiInputTextCallbackData *data)
+        {
+            if (data->EventFlag != ImGuiInputTextFlags_CallbackResize)
+            {
+                return 0;
+            }
+
+            auto &value = *static_cast<std::string *>(data->UserData);
+            value.resize(static_cast<std::size_t>(data->BufTextLen));
+            data->Buf = value.data();
+            return 0;
+        }
+
+        bool InputTextString(const char *label, std::string &value)
+        {
+            return ImGui::InputText(
+                label,
+                value.data(),
+                value.capacity() + 1,
+                ImGuiInputTextFlags_CallbackResize,
+                ResizeStringInput,
+                &value);
+        }
+
         bool ContainsInsensitive(std::string_view text, std::string_view filter)
         {
             if (filter.empty())
@@ -2633,10 +2657,8 @@ void main() {
                         case scripting::ScriptFieldType::PrefabAsset:
                         case scripting::ScriptFieldType::ScriptableObjectAsset:
                         {
-                            std::array<char, 512> buffer{};
-                            const auto &value = std::get<std::string>(iterator->second);
-                            strncpy_s(buffer.data(), buffer.size(), value.c_str(), _TRUNCATE);
-                            if (ImGui::InputText(field.name.c_str(), buffer.data(), buffer.size())) { iterator->second = std::string(buffer.data()); changed = true; }
+                            auto &value = std::get<std::string>(iterator->second);
+                            if (InputTextString(field.name.c_str(), value)) { changed = true; }
                             break;
                         }
                         default:

@@ -4,8 +4,12 @@ namespace PlutoGE.ScriptCore;
 public static class Application
 {
     private static readonly object Gate = new();
-    private static string _assetsPath = Path.GetFullPath(AppContext.BaseDirectory);
-    private static string _persistentDataPath = BuildPersistentDataPath("Project");
+    // Keep type initialization free of filesystem and environment lookups. The
+    // script bridge configures both paths before exposing any script classes.
+    // If one of those lookups fails, callers now receive the useful underlying
+    // exception instead of a permanently cached TypeInitializationException.
+    private static string _assetsPath = AppContext.BaseDirectory;
+    private static string _persistentDataPath = AppContext.BaseDirectory;
 
     /// <summary>Absolute path to the project's Assets directory.</summary>
     public static string AssetsPath

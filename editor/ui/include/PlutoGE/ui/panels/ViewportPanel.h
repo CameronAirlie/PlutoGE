@@ -57,6 +57,7 @@ namespace PlutoGE::ui
 
     private:
         bool RenderViewportSettingsOverlay(const ImVec2 &viewportMin, const ImVec2 &viewportSize);
+        bool RenderViewSelectionGizmo(const ImVec2 &viewportMin, const ImVec2 &viewportSize);
         void RenderEditorOverlays(const ImVec2 &viewportMin, const ImVec2 &viewportSize, bool viewportClicked, bool controlsHovered);
 
         ViewportPanelConfig m_config;
@@ -90,6 +91,7 @@ namespace PlutoGE::ui
         render::CameraData m_editorCameraData{};
         glm::vec2 m_viewportMin{0.0f};
         glm::vec2 m_viewportSize{0.0f};
+        float m_settingsOverlayBottom = 0.0f;
         uint32_t m_selectedSplineEntityId = 0;
         uint32_t m_selectedOceanEntityId = 0;
         int m_selectedSplinePointIndex = -1;

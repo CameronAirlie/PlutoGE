@@ -54,18 +54,40 @@ namespace PlutoGE::render
                 uniform float uMajorGridStep;
                 uniform float uFadeStart;
                 uniform float uFadeEnd;
+                uniform bool uOrthographic;
+                uniform vec3 uGridPlaneNormal;
+                uniform vec3 uGridAxisU;
+                uniform vec3 uGridAxisV;
+                uniform vec3 uGridAxisUColor;
+                uniform vec3 uGridAxisVColor;
 
                 float Saturate(float value)
                 {
                     return clamp(value, 0.0, 1.0);
                 }
 
-                vec3 ComputeWorldRayDirection(vec2 uv)
+                void ComputeWorldRay(vec2 uv, out vec3 rayOrigin, out vec3 rayDirection)
                 {
                     vec2 clip = uv * 2.0 - 1.0;
-                    vec4 viewDirection = uInverseProjection * vec4(clip, 1.0, 1.0);
-                    vec3 rayDirectionView = normalize(viewDirection.xyz / max(viewDirection.w, 0.0001));
-                    return normalize((uInverseView * vec4(rayDirectionView, 0.0)).xyz);
+                    vec4 endpointA = uInverseView * uInverseProjection * vec4(clip, -1.0, 1.0);
+                    vec4 endpointB = uInverseView * uInverseProjection * vec4(clip, 1.0, 1.0);
+                    vec3 worldA = endpointA.xyz / endpointA.w;
+                    vec3 worldB = endpointB.xyz / endpointB.w;
+                    vec3 cameraForward = -normalize(uInverseView[2].xyz);
+                    if (uOrthographic)
+                    {
+                        rayOrigin = distance(worldA, uCameraPosition) < distance(worldB, uCameraPosition) ? worldA : worldB;
+                        rayDirection = cameraForward;
+                    }
+                    else
+                    {
+                        rayOrigin = uCameraPosition;
+                        rayDirection = normalize(worldB - worldA);
+                        if (dot(rayDirection, cameraForward) < 0.0)
+                        {
+                            rayDirection = -rayDirection;
+                        }
+                    }
                 }
 
                 float ComputeLineFactor(vec2 worldGrid, float stepSize)
@@ -84,19 +106,22 @@ namespace PlutoGE::render
 
                 void main()
                 {
-                    vec3 rayDirection = ComputeWorldRayDirection(vUv);
-                    if (abs(rayDirection.y) <= 0.0001)
+                    vec3 rayOrigin;
+                    vec3 rayDirection;
+                    ComputeWorldRay(vUv, rayOrigin, rayDirection);
+                    float planeDenominator = dot(rayDirection, uGridPlaneNormal);
+                    if (abs(planeDenominator) <= 0.0001)
                     {
                         discard;
                     }
 
-                    float rayDistance = -uCameraPosition.y / rayDirection.y;
+                    float rayDistance = -dot(rayOrigin, uGridPlaneNormal) / planeDenominator;
                     if (rayDistance <= 0.0)
                     {
                         discard;
                     }
 
-                    vec3 worldPosition = uCameraPosition + rayDirection * rayDistance;
+                    vec3 worldPosition = rayOrigin + rayDirection * rayDistance;
                     vec4 clipPosition = uProjection * uView * vec4(worldPosition, 1.0);
                     if (clipPosition.w <= 0.0)
                     {
@@ -117,23 +142,24 @@ namespace PlutoGE::render
                     }
 
                     float distanceToCamera = distance(worldPosition, uCameraPosition);
-                    float fade = 1.0 - Saturate((distanceToCamera - uFadeStart) / max(uFadeEnd - uFadeStart, 0.0001));
+                    float fade = uOrthographic ? 1.0 : 1.0 - Saturate((distanceToCamera - uFadeStart) / max(uFadeEnd - uFadeStart, 0.0001));
                     if (fade <= 0.001)
                     {
                         discard;
                     }
 
-                    float minorGrid = ComputeLineFactor(worldPosition.xz, uGridStep);
-                    float majorGrid = ComputeLineFactor(worldPosition.xz, uMajorGridStep);
+                    vec2 gridPosition = vec2(dot(worldPosition, uGridAxisU), dot(worldPosition, uGridAxisV));
+                    float minorGrid = ComputeLineFactor(gridPosition, uGridStep);
+                    float majorGrid = ComputeLineFactor(gridPosition, uMajorGridStep);
                     float minorContribution = max(minorGrid - majorGrid, 0.0);
-                    float xAxis = ComputeAxisFactor(worldPosition.z);
-                    float zAxis = ComputeAxisFactor(worldPosition.x);
+                    float axisU = ComputeAxisFactor(gridPosition.y);
+                    float axisV = ComputeAxisFactor(gridPosition.x);
 
                     vec3 color = vec3(0.68, 0.70, 0.74) * max(minorContribution, majorGrid);
-                    color = mix(color, vec3(0.85, 0.30, 0.30), xAxis);
-                    color = mix(color, vec3(0.30, 0.50, 0.90), zAxis);
+                    color = mix(color, uGridAxisUColor, axisU);
+                    color = mix(color, uGridAxisVColor, axisV);
 
-                    float alpha = max(max(minorContribution * 0.08, majorGrid * 0.18), max(xAxis, zAxis) * 0.42) * fade;
+                    float alpha = max(max(minorContribution * 0.08, majorGrid * 0.18), max(axisU, axisV) * 0.42) * fade;
                     if (alpha <= 0.001)
                     {
                         discard;
@@ -185,6 +211,39 @@ namespace PlutoGE::render
         m_gridShader->SetUniform("uMajorGridStep", kGridStep * static_cast<float>(kMajorLineInterval));
         m_gridShader->SetUniform("uFadeStart", kGridFadeStart);
         m_gridShader->SetUniform("uFadeEnd", kGridFadeEnd);
+        const bool orthographic = std::abs(ctx.cameraData.projection[3][3] - 1.0f) < 0.0001f;
+        glm::vec3 gridPlaneNormal(0.0f, 1.0f, 0.0f);
+        glm::vec3 gridAxisU(1.0f, 0.0f, 0.0f);
+        glm::vec3 gridAxisV(0.0f, 0.0f, 1.0f);
+        glm::vec3 gridAxisUColor(0.85f, 0.30f, 0.30f);
+        glm::vec3 gridAxisVColor(0.30f, 0.50f, 0.90f);
+        if (orthographic)
+        {
+            const glm::vec3 cameraForward = -glm::normalize(glm::vec3(inverseView[2]));
+            const glm::vec3 absoluteForward = glm::abs(cameraForward);
+            if (absoluteForward.x > absoluteForward.y && absoluteForward.x > absoluteForward.z)
+            {
+                gridPlaneNormal = glm::vec3(1.0f, 0.0f, 0.0f);
+                gridAxisU = glm::vec3(0.0f, 1.0f, 0.0f);
+                gridAxisV = glm::vec3(0.0f, 0.0f, 1.0f);
+                gridAxisUColor = glm::vec3(0.30f, 0.75f, 0.35f);
+                gridAxisVColor = glm::vec3(0.30f, 0.50f, 0.90f);
+            }
+            else if (absoluteForward.z > absoluteForward.y)
+            {
+                gridPlaneNormal = glm::vec3(0.0f, 0.0f, 1.0f);
+                gridAxisU = glm::vec3(1.0f, 0.0f, 0.0f);
+                gridAxisV = glm::vec3(0.0f, 1.0f, 0.0f);
+                gridAxisUColor = glm::vec3(0.85f, 0.30f, 0.30f);
+                gridAxisVColor = glm::vec3(0.30f, 0.75f, 0.35f);
+            }
+        }
+        m_gridShader->SetUniform("uOrthographic", orthographic ? 1 : 0);
+        m_gridShader->SetUniform("uGridPlaneNormal", gridPlaneNormal);
+        m_gridShader->SetUniform("uGridAxisU", gridAxisU);
+        m_gridShader->SetUniform("uGridAxisV", gridAxisV);
+        m_gridShader->SetUniform("uGridAxisUColor", gridAxisUColor);
+        m_gridShader->SetUniform("uGridAxisVColor", gridAxisVColor);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, ctx.temporaryRenderTarget->GetDepthTextureID());
         m_gridShader->SetUniform("uSceneDepthTexture", 0);

@@ -101,6 +101,8 @@ namespace PlutoGE::scene
         void SetRuntimeUIInputOverride(const glm::vec2 &canvasSize, const glm::vec2 &mousePosition, bool pointerInside);
         void ClearRuntimeUIInputOverride();
         [[nodiscard]] bool IsRuntimeStarted() const { return m_runtimeStarted; }
+        void SetTimeScale(float timeScale);
+        [[nodiscard]] float GetTimeScale() const { return m_timeScale; }
         [[nodiscard]] const SceneUpdateTimingStats &GetUpdateTimingStats() const { return m_updateTimingStats; }
 
         Entity *FindEntityByName(const std::string &name) const; // Utility function to find an entity by name (can be useful for scripting and editor)
@@ -197,6 +199,8 @@ namespace PlutoGE::scene
         render::Texture *m_environmentMapTexture = nullptr;
         float m_environmentIntensity = 1.0f;
         bool m_runtimeStarted = false;
+        float m_timeScale = 1.0f;
+        float m_physicsTimeAccumulator = 0.0f;
         SceneUpdateTimingStats m_updateTimingStats;
         BakedProbeVolume m_bakedProbeVolume;
         std::unique_ptr<render::Texture> m_bakedProbeTexture;

@@ -1077,9 +1077,8 @@ namespace PlutoGE::ui
 
             const float clipX = normalizedX * 2.0f - 1.0f;
             const float clipY = 1.0f - normalizedY * 2.0f;
-            glm::vec4 eyeDirection = glm::inverse(cameraData.projection) * glm::vec4(clipX, clipY, -1.0f, 1.0f);
-            eyeDirection = glm::vec4(eyeDirection.x, eyeDirection.y, -1.0f, 0.0f);
             const glm::mat4 inverseView = glm::inverse(cameraData.view);
+            const glm::mat4 inverseViewProjection = inverseView * glm::inverse(cameraData.projection);
             glm::vec4 cameraWorldPosition = inverseView * glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
             if (std::abs(cameraWorldPosition.w) <= kHomogeneousWEpsilon)
             {
@@ -1094,8 +1093,40 @@ namespace PlutoGE::ui
 
             cameraWorldPosition /= cameraWorldPosition.w;
 
-            const glm::vec3 origin = glm::vec3(cameraWorldPosition);
-            const glm::vec3 direction = glm::normalize(glm::vec3(inverseView * eyeDirection));
+            glm::vec4 endpointA = inverseViewProjection * glm::vec4(clipX, clipY, -1.0f, 1.0f);
+            glm::vec4 endpointB = inverseViewProjection * glm::vec4(clipX, clipY, 1.0f, 1.0f);
+            if (std::abs(endpointA.w) <= kHomogeneousWEpsilon || std::abs(endpointB.w) <= kHomogeneousWEpsilon)
+            {
+                if (failureReason)
+                {
+                    *failureReason = "unproject-w";
+                }
+                return std::nullopt;
+            }
+            endpointA /= endpointA.w;
+            endpointB /= endpointB.w;
+
+            const glm::vec3 cameraPosition(cameraWorldPosition);
+            const glm::vec3 cameraForward = -glm::normalize(glm::vec3(inverseView[2]));
+            const bool orthographic = std::abs(cameraData.projection[3][3] - 1.0f) < 0.0001f;
+            glm::vec3 origin = cameraPosition;
+            glm::vec3 direction = cameraForward;
+            if (orthographic)
+            {
+                const glm::vec3 worldA(endpointA);
+                const glm::vec3 worldB(endpointB);
+                const glm::vec3 offsetA = worldA - cameraPosition;
+                const glm::vec3 offsetB = worldB - cameraPosition;
+                origin = glm::dot(offsetA, offsetA) < glm::dot(offsetB, offsetB) ? worldA : worldB;
+            }
+            else
+            {
+                direction = glm::normalize(glm::vec3(endpointA) - cameraPosition);
+                if (glm::dot(direction, cameraForward) < 0.0f)
+                {
+                    direction = -direction;
+                }
+            }
             if (!std::isfinite(direction.x) || !std::isfinite(direction.y) || !std::isfinite(direction.z))
             {
                 if (failureReason)
@@ -1607,6 +1638,87 @@ namespace PlutoGE::ui
             camera.position = selectedEntity->GetWorldPosition() - forward * std::max(radius * 2.5f, 2.0f);
         }
 
+        void FrameSceneOrthographic(EditorShell &editorShell, const ImVec2 &viewportSize)
+        {
+            auto *scene = editorShell.GetEngine().GetScene();
+            auto &camera = editorShell.GetEditorCamera();
+            if (!scene)
+            {
+                camera.orthographic = true;
+                return;
+            }
+
+            if (!camera.orthographic)
+            {
+                camera.perspectivePosition = camera.position;
+                camera.hasPerspectivePosition = true;
+            }
+
+            glm::vec3 boundsMin(std::numeric_limits<float>::max());
+            glm::vec3 boundsMax(-std::numeric_limits<float>::max());
+            bool hasBounds = false;
+            const auto includePoint = [&](const glm::vec3 &point)
+            {
+                boundsMin = glm::min(boundsMin, point);
+                boundsMax = glm::max(boundsMax, point);
+                hasBounds = true;
+            };
+            const auto visitEntity = [&](scene::Entity *entity, const auto &self) -> void
+            {
+                if (!entity || !entity->IsActive())
+                {
+                    return;
+                }
+
+                includePoint(entity->GetWorldPosition());
+                if (auto *meshComponent = entity->GetComponent<scene::MeshComponent>())
+                {
+                    if (auto *mesh = meshComponent->GetMesh())
+                    {
+                        const auto &bounds = mesh->GetBounds();
+                        const glm::mat4 worldTransform = entity->GetWorldTransform();
+                        const glm::vec3 center(worldTransform * glm::vec4(bounds.center, 1.0f));
+                        const glm::vec3 scale = entity->GetWorldScale();
+                        const float radius = bounds.radius * std::max(std::abs(scale.x), std::max(std::abs(scale.y), std::abs(scale.z)));
+                        includePoint(center - glm::vec3(radius));
+                        includePoint(center + glm::vec3(radius));
+                    }
+                }
+                for (auto *child : entity->GetChildren())
+                {
+                    self(child, self);
+                }
+            };
+            for (auto *root : scene->GetRootEntities())
+            {
+                visitEntity(root, visitEntity);
+            }
+
+            if (!hasBounds)
+            {
+                boundsMin = glm::vec3(-10.0f);
+                boundsMax = glm::vec3(10.0f);
+            }
+
+            const glm::vec3 center = (boundsMin + boundsMax) * 0.5f;
+            const glm::vec3 halfExtents = glm::max((boundsMax - boundsMin) * 0.5f, glm::vec3(1.0f));
+            glm::mat4 cameraTransform = glm::rotate(glm::mat4(1.0f), glm::radians(camera.yawDegrees), glm::vec3(0.0f, 1.0f, 0.0f));
+            cameraTransform = glm::rotate(cameraTransform, glm::radians(camera.pitchDegrees), glm::vec3(1.0f, 0.0f, 0.0f));
+            const glm::vec3 right = glm::normalize(glm::vec3(cameraTransform[0]));
+            const glm::vec3 up = glm::normalize(glm::vec3(cameraTransform[1]));
+            const glm::vec3 forward = glm::normalize(-glm::vec3(cameraTransform[2]));
+            const float horizontalExtent = glm::dot(glm::abs(right), halfExtents);
+            const float verticalExtent = glm::dot(glm::abs(up), halfExtents);
+            const float depthExtent = glm::dot(glm::abs(forward), halfExtents);
+            const float aspect = viewportSize.y > 1.0f ? viewportSize.x / viewportSize.y : 1.0f;
+            camera.orthographicSize = std::max(verticalExtent, horizontalExtent / std::max(aspect, 0.01f)) * 1.15f;
+
+            const float cameraDistance = depthExtent + std::max(camera.orthographicSize * 2.0f, 100.0f);
+            camera.position = center - forward * cameraDistance;
+            camera.camera.SetFarPlane(std::max(camera.camera.GetFarPlane(), cameraDistance + depthExtent + 100.0f));
+            camera.orthographic = true;
+        }
+
     }
 
     const char *ViewportPanel::GetDebugViewLabel(render::PostProcessDebugView debugView)
@@ -1737,6 +1849,10 @@ namespace PlutoGE::ui
         if (m_panelControlsEnabled)
         {
             controlsHovered = RenderViewportSettingsOverlay(viewportMin, imageSize);
+            if (m_config.editorViewport)
+            {
+                controlsHovered = RenderViewSelectionGizmo(viewportMin, imageSize) || controlsHovered;
+            }
             m_isViewportHovered = m_isViewportHovered && !controlsHovered;
         }
 
@@ -1970,9 +2086,89 @@ namespace PlutoGE::ui
 
         const bool hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup | ImGuiHoveredFlags_ChildWindows) ||
                              overlayPopupOpen;
+        m_settingsOverlayBottom = ImGui::GetWindowPos().y + ImGui::GetWindowSize().y;
         ImGui::End();
         ImGui::PopStyleVar(3);
 
+        return hovered;
+    }
+
+    bool ViewportPanel::RenderViewSelectionGizmo(const ImVec2 &viewportMin, const ImVec2 &viewportSize)
+    {
+        auto &camera = EditorShell::GetInstance().GetEditorCamera();
+        constexpr float gizmoRadius = 39.0f;
+        constexpr float gizmoToolbarGap = 10.0f;
+        const float defaultCenterY = viewportMin.y + 58.0f;
+        const float toolbarCenterY = m_settingsOverlayBottom + gizmoToolbarGap + gizmoRadius;
+        const float maxCenterY = viewportMin.y + viewportSize.y - gizmoRadius;
+        const ImVec2 center(viewportMin.x + viewportSize.x - 58.0f,
+                            std::min(std::max(defaultCenterY, toolbarCenterY), maxCenterY));
+        constexpr float axisLength = 30.0f;
+        constexpr float endpointRadius = 10.0f;
+
+        glm::mat4 rotation = glm::rotate(glm::mat4(1.0f), glm::radians(camera.yawDegrees), glm::vec3(0.0f, 1.0f, 0.0f));
+        rotation = glm::rotate(rotation, glm::radians(camera.pitchDegrees), glm::vec3(1.0f, 0.0f, 0.0f));
+        const glm::mat3 viewRotation = glm::transpose(glm::mat3(rotation));
+
+        struct AxisEndpoint
+        {
+            glm::vec3 direction;
+            ImU32 color;
+            const char *label;
+        };
+        const AxisEndpoint axes[] = {
+            {{1.0f, 0.0f, 0.0f}, IM_COL32(235, 75, 75, 255), "X"},
+            {{0.0f, 1.0f, 0.0f}, IM_COL32(90, 205, 105, 255), "Y"},
+            {{0.0f, 0.0f, 1.0f}, IM_COL32(75, 135, 235, 255), "Z"},
+            {{-1.0f, 0.0f, 0.0f}, IM_COL32(145, 55, 55, 255), "-X"},
+            {{0.0f, -1.0f, 0.0f}, IM_COL32(55, 125, 65, 255), "-Y"},
+            {{0.0f, 0.0f, -1.0f}, IM_COL32(45, 80, 145, 255), "-Z"},
+        };
+
+        auto *drawList = ImGui::GetWindowDrawList();
+        drawList->AddCircleFilled(center, 39.0f, IM_COL32(25, 27, 34, 205));
+        drawList->AddCircle(center, 39.0f, IM_COL32(110, 115, 130, 180), 0, 1.0f);
+
+        struct ProjectedAxis { const AxisEndpoint *axis; ImVec2 endpoint; float depth; };
+        ProjectedAxis projected[IM_ARRAYSIZE(axes)];
+        for (int index = 0; index < IM_ARRAYSIZE(axes); ++index)
+        {
+            const glm::vec3 viewDirection = viewRotation * axes[index].direction;
+            projected[index] = {&axes[index],
+                                ImVec2(center.x + viewDirection.x * axisLength,
+                                       center.y - viewDirection.y * axisLength),
+                                viewDirection.z};
+        }
+        std::sort(std::begin(projected), std::end(projected),
+                  [](const ProjectedAxis &left, const ProjectedAxis &right) { return left.depth < right.depth; });
+
+        bool hovered = false;
+        const ImVec2 mouse = ImGui::GetIO().MousePos;
+        for (const auto &item : projected)
+        {
+            drawList->AddLine(center, item.endpoint, item.axis->color, 2.5f);
+            const float dx = mouse.x - item.endpoint.x;
+            const float dy = mouse.y - item.endpoint.y;
+            const bool endpointHovered = dx * dx + dy * dy <= endpointRadius * endpointRadius;
+            hovered = hovered || endpointHovered;
+            drawList->AddCircleFilled(item.endpoint, endpointRadius,
+                                      endpointHovered ? IM_COL32(245, 245, 245, 255) : item.axis->color);
+            const ImVec2 textSize = ImGui::CalcTextSize(item.axis->label);
+            drawList->AddText(ImVec2(item.endpoint.x - textSize.x * 0.5f, item.endpoint.y - textSize.y * 0.5f),
+                              endpointHovered ? IM_COL32(30, 30, 35, 255) : IM_COL32(255, 255, 255, 255),
+                              item.axis->label);
+            if (endpointHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+            {
+                const glm::vec3 direction = item.axis->direction;
+                if (direction.x > 0.5f) { camera.yawDegrees = 90.0f; camera.pitchDegrees = 0.0f; }
+                else if (direction.x < -0.5f) { camera.yawDegrees = -90.0f; camera.pitchDegrees = 0.0f; }
+                else if (direction.y > 0.5f) { camera.yawDegrees = 0.0f; camera.pitchDegrees = -90.0f; }
+                else if (direction.y < -0.5f) { camera.yawDegrees = 0.0f; camera.pitchDegrees = 90.0f; }
+                else if (direction.z > 0.5f) { camera.yawDegrees = 0.0f; camera.pitchDegrees = 0.0f; }
+                else { camera.yawDegrees = 180.0f; camera.pitchDegrees = 0.0f; }
+                FrameSceneOrthographic(EditorShell::GetInstance(), viewportSize);
+            }
+        }
         return hovered;
     }
 
@@ -2003,12 +2199,20 @@ namespace PlutoGE::ui
                                        isFiniteMatrix(m_editorCameraData.view) &&
                                        isFiniteMatrix(m_editorCameraData.projection);
         const render::CameraData cameraData = cachedCameraValid ? m_editorCameraData : freshCameraData;
-        const glm::mat4 gizmoProjection = glm::perspective(glm::radians(editorCamera.camera.GetFOV()),
-                                                            viewportSize.x / viewportSize.y,
+        const float viewportAspect = viewportSize.x / viewportSize.y;
+        const glm::mat4 gizmoProjection = editorCamera.orthographic
+                                               ? glm::ortho(-editorCamera.orthographicSize * viewportAspect,
+                                                            editorCamera.orthographicSize * viewportAspect,
+                                                            -editorCamera.orthographicSize,
+                                                            editorCamera.orthographicSize,
                                                             editorCamera.camera.GetNearPlane(),
-                                                            editorCamera.camera.GetFarPlane());
+                                                            editorCamera.camera.GetFarPlane())
+                                               : glm::perspective(glm::radians(editorCamera.camera.GetFOV()),
+                                                                  viewportAspect,
+                                                                  editorCamera.camera.GetNearPlane(),
+                                                                  editorCamera.camera.GetFarPlane());
 
-        ImGuizmo::SetOrthographic(false);
+        ImGuizmo::SetOrthographic(editorCamera.orthographic);
         ImGuizmo::Enable(true);
         ImGuizmo::SetDrawlist();
         ImGuizmo::SetRect(viewportMin.x, viewportMin.y, viewportSize.x, viewportSize.y);
@@ -2334,9 +2538,26 @@ namespace PlutoGE::ui
             glm::mat4 entityTransform = entityWorldTransform;
             glm::mat4 entityGizmoDelta(1.0f);
             bool entityGizmoUsesBoundsCenter = false;
+            const auto constrainOrthographicTranslation = [&](glm::mat4 &transform, const glm::vec3 &originalPosition)
+            {
+                if (!editorCamera.orthographic || m_gizmoOperation != ImGuizmo::TRANSLATE)
+                {
+                    return;
+                }
+
+                const glm::vec3 cameraForward = -glm::normalize(glm::vec3(glm::inverse(cameraData.view)[2]));
+                const glm::vec3 absoluteForward = glm::abs(cameraForward);
+                if (absoluteForward.x >= absoluteForward.y && absoluteForward.x >= absoluteForward.z)
+                    transform[3].x = originalPosition.x;
+                else if (absoluteForward.y >= absoluteForward.z)
+                    transform[3].y = originalPosition.y;
+                else
+                    transform[3].z = originalPosition.z;
+            };
 
             const auto submitEntityGizmo = [&](float *gizmoSnap)
             {
+                const glm::mat4 gizmoInputTransform = entityTransform;
                 auto *drawList = ImGui::GetWindowDrawList();
                 const int vertexCountBefore = drawList->VtxBuffer.Size;
                 ImGuizmo::Manipulate(glm::value_ptr(cameraData.view),
@@ -2346,6 +2567,8 @@ namespace PlutoGE::ui
                                      glm::value_ptr(entityTransform),
                                      glm::value_ptr(entityGizmoDelta),
                                      gizmoSnap);
+                constrainOrthographicTranslation(entityTransform, glm::vec3(gizmoInputTransform[3]));
+                entityGizmoDelta = entityTransform * glm::inverse(gizmoInputTransform);
                 if (drawList->VtxBuffer.Size > vertexCountBefore)
                     return;
 
@@ -2361,6 +2584,7 @@ namespace PlutoGE::ui
 
                 entityTransform = entityWorldTransform;
                 entityTransform[3] = entityWorldTransform * glm::vec4(localCenter, 1.0f);
+                const glm::mat4 boundsInputTransform = entityTransform;
                 entityGizmoDelta = glm::mat4(1.0f);
                 entityGizmoUsesBoundsCenter = true;
                 ImGuizmo::Manipulate(glm::value_ptr(cameraData.view),
@@ -2370,6 +2594,8 @@ namespace PlutoGE::ui
                                      glm::value_ptr(entityTransform),
                                      glm::value_ptr(entityGizmoDelta),
                                      gizmoSnap);
+                constrainOrthographicTranslation(entityTransform, glm::vec3(boundsInputTransform[3]));
+                entityGizmoDelta = entityTransform * glm::inverse(boundsInputTransform);
             };
 
             if (oceanComponent && oceanComponent->IsEnabled())
@@ -2747,6 +2973,7 @@ namespace PlutoGE::ui
                 {
                     glm::mat4 pointTransform = entityWorldTransform;
                     pointTransform[3] = glm::vec4(worldPoints[static_cast<std::size_t>(m_selectedSplinePoint)], 1.0f);
+                    const glm::vec3 originalPointPosition(pointTransform[3]);
                     ImGuizmo::Manipulate(glm::value_ptr(cameraData.view),
                                          glm::value_ptr(gizmoProjection),
                                          ImGuizmo::TRANSLATE,
@@ -2754,6 +2981,7 @@ namespace PlutoGE::ui
                                          glm::value_ptr(pointTransform),
                                          nullptr,
                                          m_enableSnap ? &m_translateSnap.x : nullptr);
+                    constrainOrthographicTranslation(pointTransform, originalPointPosition);
 
                     const bool pointGizmoUsing = ImGuizmo::IsUsing();
                     const bool pointGizmoHovered = ImGuizmo::IsOver();
@@ -2789,6 +3017,7 @@ namespace PlutoGE::ui
                         const glm::vec2 point = oceanComponent->GetAreas()[static_cast<std::size_t>(m_selectedOceanAreaIndex)].points[static_cast<std::size_t>(m_selectedOceanPointIndex)];
                         glm::mat4 pointTransform = entityWorldTransform;
                         pointTransform[3] = glm::vec4(glm::vec3(entityWorldTransform * glm::vec4(point.x, 0.0f, point.y, 1.0f)), 1.0f);
+                        const glm::vec3 originalPointPosition(pointTransform[3]);
                         ImGuizmo::Manipulate(glm::value_ptr(cameraData.view),
                                              glm::value_ptr(gizmoProjection),
                                              ImGuizmo::TRANSLATE,
@@ -2796,6 +3025,7 @@ namespace PlutoGE::ui
                                              glm::value_ptr(pointTransform),
                                              nullptr,
                                              m_enableSnap ? &m_translateSnap.x : nullptr);
+                        constrainOrthographicTranslation(pointTransform, originalPointPosition);
 
                         const bool pointGizmoUsing = ImGuizmo::IsUsing();
                         const bool pointGizmoHovered = ImGuizmo::IsOver();
@@ -2847,6 +3077,7 @@ namespace PlutoGE::ui
                     const glm::vec2 point = oceanComponent->GetAreas()[static_cast<std::size_t>(m_selectedOceanAreaIndex)].points[static_cast<std::size_t>(m_selectedOceanPointIndex)];
                     glm::mat4 pointTransform = entityWorldTransform;
                     pointTransform[3] = glm::vec4(glm::vec3(entityWorldTransform * glm::vec4(point.x, 0.0f, point.y, 1.0f)), 1.0f);
+                    const glm::vec3 originalPointPosition(pointTransform[3]);
                     ImGuizmo::Manipulate(glm::value_ptr(cameraData.view),
                                          glm::value_ptr(gizmoProjection),
                                          ImGuizmo::TRANSLATE,
@@ -2854,6 +3085,7 @@ namespace PlutoGE::ui
                                          glm::value_ptr(pointTransform),
                                          nullptr,
                                          m_enableSnap ? &m_translateSnap.x : nullptr);
+                    constrainOrthographicTranslation(pointTransform, originalPointPosition);
 
                     const bool pointGizmoUsing = ImGuizmo::IsUsing();
                     const bool pointGizmoHovered = ImGuizmo::IsOver();

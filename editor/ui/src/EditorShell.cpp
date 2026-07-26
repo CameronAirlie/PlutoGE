@@ -552,6 +552,10 @@ namespace PlutoGE::ui
                                 double &restoreCursorX,
                                 double &restoreCursorY)
         {
+            static bool isPanActive = false;
+            static double lastPanCursorX = 0.0;
+            static double lastPanCursorY = 0.0;
+
             if (!windowHandle)
             {
                 if (isLookActive)
@@ -559,10 +563,52 @@ namespace PlutoGE::ui
                     window.SetEditorCursorLocked(false);
                     isLookActive = false;
                 }
+                isPanActive = false;
                 return;
             }
 
             const bool isRightMouseDown = glfwGetMouseButton(windowHandle, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
+            const bool isMiddleMouseDown = glfwGetMouseButton(windowHandle, GLFW_MOUSE_BUTTON_MIDDLE) == GLFW_PRESS;
+            const double scrollDeltaY = window.GetInputState().mouseState.scrollDeltaY;
+            if (camera.orthographic && canActivate && scrollDeltaY != 0.0)
+            {
+                camera.orthographicSize = glm::clamp(camera.orthographicSize *
+                                                         std::pow(0.85f, static_cast<float>(scrollDeltaY)),
+                                                     0.05f,
+                                                     100000.0f);
+            }
+            if (isMiddleMouseDown && !isLookActive)
+            {
+                double cursorX = 0.0;
+                double cursorY = 0.0;
+                glfwGetCursorPos(windowHandle, &cursorX, &cursorY);
+                if (!isPanActive)
+                {
+                    if (!canActivate)
+                    {
+                        return;
+                    }
+                    isPanActive = true;
+                    lastPanCursorX = cursorX;
+                    lastPanCursorY = cursorY;
+                }
+
+                const float deltaX = static_cast<float>(cursorX - lastPanCursorX);
+                const float deltaY = static_cast<float>(cursorY - lastPanCursorY);
+                lastPanCursorX = cursorX;
+                lastPanCursorY = cursorY;
+
+                const glm::mat4 transform = GetEditorCameraTransform(camera);
+                const glm::vec3 right = GetTransformRight(transform);
+                const glm::vec3 up = glm::normalize(glm::vec3(transform[1]));
+                const float panScale = camera.orthographic
+                                           ? (2.0f * camera.orthographicSize / 720.0f)
+                                           : (camera.moveSpeed * camera.speedAdjustment / 500.0f);
+                camera.position += (-right * deltaX + up * deltaY) * panScale;
+                return;
+            }
+            isPanActive = false;
+
             if (!isRightMouseDown)
             {
                 if (isLookActive)
@@ -603,6 +649,15 @@ namespace PlutoGE::ui
             camera.pitchDegrees = glm::clamp(camera.pitchDegrees - deltaY * kEditorCameraMouseSensitivity,
                                              -kEditorCameraPitchLimitDegrees,
                                              kEditorCameraPitchLimitDegrees);
+            if (deltaX != 0.0f || deltaY != 0.0f)
+            {
+                if (camera.orthographic && camera.hasPerspectivePosition)
+                {
+                    camera.position = camera.perspectivePosition;
+                    camera.hasPerspectivePosition = false;
+                }
+                camera.orthographic = false;
+            }
 
             const glm::mat4 transform = GetEditorCameraTransform(camera);
 
@@ -641,7 +696,6 @@ namespace PlutoGE::ui
                 return;
             }
 
-            const double scrollDeltaY = window.GetInputState().mouseState.scrollDeltaY;
             if (scrollDeltaY != 0.0)
             {
                 camera.speedAdjustment = glm::clamp(camera.speedAdjustment * std::pow(kEditorCameraScrollStepFactor, static_cast<float>(scrollDeltaY)),
@@ -2622,6 +2676,18 @@ namespace PlutoGE::ui
                 editorCameraData = m_editorCamera.camera.GetCameraDataForTransform(editorCameraTransform,
                                                                                    renderTargetWidth,
                                                                                    renderTargetHeight);
+                if (m_editorCamera.orthographic)
+                {
+                    const int safeRenderTargetHeight = renderTargetHeight > 1 ? renderTargetHeight : 1;
+                    const float aspect = static_cast<float>(renderTargetWidth) / static_cast<float>(safeRenderTargetHeight);
+                    const float halfHeight = m_editorCamera.orthographicSize > 0.01f ? m_editorCamera.orthographicSize : 0.01f;
+                    editorCameraData.projection = glm::ortho(-halfHeight * aspect,
+                                                             halfHeight * aspect,
+                                                             -halfHeight,
+                                                             halfHeight,
+                                                             m_editorCamera.camera.GetFarPlane(),
+                                                             m_editorCamera.camera.GetNearPlane());
+                }
                 hasEditorCameraData = true;
                 viewportPanel->SetEditorCameraData(editorCameraData);
             }
@@ -3115,6 +3181,21 @@ namespace PlutoGE::ui
                         }
                     }
                     ImGui::EndDisabled();
+
+                    if (ImGui::BeginMenu("Simulation Speed", canRunRuntime))
+                    {
+                        constexpr std::array<float, 6> timeScales{0.0f, 0.25f, 0.5f, 1.0f, 2.0f, 4.0f};
+                        constexpr std::array<const char *, 6> timeScaleLabels{"Paused", "0.25x", "0.5x", "1x", "2x", "4x"};
+                        for (std::size_t index = 0; index < timeScales.size(); ++index)
+                        {
+                            const bool selected = std::abs(m_scene->GetTimeScale() - timeScales[index]) < 0.001f;
+                            if (ImGui::MenuItem(timeScaleLabels[index], nullptr, selected))
+                            {
+                                m_scene->SetTimeScale(timeScales[index]);
+                            }
+                        }
+                        ImGui::EndMenu();
+                    }
 
                     ImGui::BeginDisabled(!m_engine.IsRuntimeRunning());
                     if (ImGui::MenuItem("Stop", "Shift+F5"))

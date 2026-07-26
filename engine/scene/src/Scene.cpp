@@ -1237,6 +1237,7 @@ namespace PlutoGE::scene
 
         ResetRuntimePhysicsState();
         m_pendingRigidbodyForces.clear();
+        m_physicsTimeAccumulator = 0.0f;
 
         // Refresh component-owned meshes against the runtime physics/query
         // world before agents begin requesting paths.
@@ -1282,6 +1283,12 @@ namespace PlutoGE::scene
         m_runtimeStarted = false;
         ResetRuntimePhysicsState();
         m_pendingRigidbodyForces.clear();
+        m_physicsTimeAccumulator = 0.0f;
+    }
+
+    void Scene::SetTimeScale(float timeScale)
+    {
+        m_timeScale = std::clamp(timeScale, 0.0f, 16.0f);
     }
 
     void Scene::SetEnvironmentMap(render::Texture *texture, const std::string &filePath)
@@ -1589,6 +1596,9 @@ namespace PlutoGE::scene
     {
         using Clock = std::chrono::high_resolution_clock;
         const auto updateStart = Clock::now();
+        const float simulationDeltaTime = m_runtimeStarted
+                                              ? std::max(deltaTime, 0.0f) * m_timeScale
+                                              : deltaTime;
         ++m_updateSequence;
         ClearIblCaptureVolumes();
         const auto preparationEnd = Clock::now();
@@ -1627,13 +1637,32 @@ namespace PlutoGE::scene
             auto *rootEntity = m_rootEntities[rootIndex];
             if (rootEntity->IsActive())
             {
-                rootEntity->Update(deltaTime);
+                rootEntity->Update(simulationDeltaTime);
             }
         }
         const auto componentsEnd = Clock::now();
 
         FlushPendingDestroyEntities();
-        StepPhysics(deltaTime);
+        if (m_runtimeStarted)
+        {
+            constexpr float fixedPhysicsStep = 1.0f / 120.0f;
+            constexpr int maximumPhysicsSubstepsPerFrame = 32;
+            constexpr float maximumAccumulatedPhysicsTime =
+                fixedPhysicsStep * static_cast<float>(maximumPhysicsSubstepsPerFrame);
+
+            m_physicsTimeAccumulator = std::min(
+                m_physicsTimeAccumulator + simulationDeltaTime,
+                maximumAccumulatedPhysicsTime);
+            const int physicsSubstepCount = std::min(
+                static_cast<int>(m_physicsTimeAccumulator / fixedPhysicsStep),
+                maximumPhysicsSubstepsPerFrame);
+            if (physicsSubstepCount > 0)
+            {
+                const float physicsTime = fixedPhysicsStep * static_cast<float>(physicsSubstepCount);
+                StepPhysics(physicsTime);
+                m_physicsTimeAccumulator -= physicsTime;
+            }
+        }
         FlushPendingDestroyEntities();
         const auto physicsEnd = Clock::now();
 
@@ -1641,7 +1670,7 @@ namespace PlutoGE::scene
         {
             if (scriptComponent && scriptComponent->IsEnabled())
             {
-                scriptComponent->LateUpdate(deltaTime);
+                scriptComponent->LateUpdate(simulationDeltaTime);
             }
         }
         const auto lateScriptsEnd = Clock::now();
@@ -1750,7 +1779,7 @@ namespace PlutoGE::scene
                 }
             }
 
-            engine.GetAudioSystem().Update(listenerState, emitterStates, deltaTime);
+            engine.GetAudioSystem().Update(listenerState, emitterStates, simulationDeltaTime);
 
             for (auto *emitter : emitters)
             {
@@ -2251,7 +2280,12 @@ namespace PlutoGE::scene
             return;
         }
 
-        const float step = std::clamp(deltaTime, 0.0f, 0.1f);
+        constexpr float fixedPhysicsStep = 1.0f / 120.0f;
+        constexpr int maximumPhysicsSubstepsPerFrame = 32;
+        const float step = std::clamp(
+            deltaTime,
+            0.0f,
+            fixedPhysicsStep * static_cast<float>(maximumPhysicsSubstepsPerFrame));
         if (step <= 0.0f)
         {
             return;
@@ -2413,7 +2447,7 @@ namespace PlutoGE::scene
         }
         m_pendingRigidbodyForces.clear();
 
-        runtimeWorld.dynamicsWorld.stepSimulation(step, 8, 1.0f / 120.0f);
+        runtimeWorld.dynamicsWorld.stepSimulation(step, maximumPhysicsSubstepsPerFrame, fixedPhysicsStep);
 
         std::unordered_set<uint64_t> currentCollisionPairs;
         const int manifoldCount = runtimeWorld.dynamicsWorld.getDispatcher()->getNumManifolds();

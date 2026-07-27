@@ -11,16 +11,21 @@ namespace PlutoGE::scene
     {
         int lightmapResolution = 64;
         int lightmapTileSize = 16;
+        int directShadowSampleCount = 8;
         int probeDirectionCount = 8;
         int indirectBounceSampleCount = 6;
+        int indirectBounceCount = 2;
         bool bakeProbeVolume = true;
         bool bakeIndirectBounce = true;
+        bool useGpu = false;
         float probeBounceStrength = 0.65f;
         float lightmapBounceStrength = 0.75f;
 
         static SceneBakeSettings FastPreview();
         static SceneBakeSettings BalancedPreview();
         static SceneBakeSettings Final();
+        static SceneBakeSettings HighQuality();
+        static SceneBakeSettings Ultra();
     };
 
     struct SceneBakeResult

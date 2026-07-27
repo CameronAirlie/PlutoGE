@@ -2570,6 +2570,7 @@ namespace PlutoGE::ui
         bool projectVSyncEnabled = true;
         float projectEditorFontSize = m_panelManager.GetEditorFontSize();
         bool shouldOpenProjectSettingsPopup = false;
+        bool shouldOpenBakeSceneCustomPopup = false;
 
         auto loadProjectSettingsDraft = [&]()
         {
@@ -2909,7 +2910,9 @@ namespace PlutoGE::ui
             {
                 settings.lightmapResolution = (std::max)(settings.lightmapResolution, 4);
                 settings.lightmapTileSize = (std::max)(settings.lightmapTileSize, 1);
+                settings.directShadowSampleCount = std::clamp(settings.directShadowSampleCount, 1, 32);
                 settings.indirectBounceSampleCount = (std::max)(settings.indirectBounceSampleCount, 0);
+                settings.indirectBounceCount = std::clamp(settings.indirectBounceCount, 1, 8);
                 settings.probeDirectionCount = (std::max)(settings.probeDirectionCount, 0);
                 settings.lightmapBounceStrength = (std::max)(settings.lightmapBounceStrength, 0.0f);
                 settings.probeBounceStrength = (std::max)(settings.probeBounceStrength, 0.0f);
@@ -3095,9 +3098,17 @@ namespace PlutoGE::ui
                     {
                         runBake(scene::SceneBakeSettings::Final());
                     }
+                    if (ImGui::MenuItem("Bake Scene High (512px)"))
+                    {
+                        runBake(scene::SceneBakeSettings::HighQuality());
+                    }
+                    if (ImGui::MenuItem("Bake Scene Ultra (1024px)"))
+                    {
+                        runBake(scene::SceneBakeSettings::Ultra());
+                    }
                     if (ImGui::MenuItem("Bake Scene Custom..."))
                     {
-                        ImGui::OpenPopup("Bake Scene Custom");
+                        shouldOpenBakeSceneCustomPopup = true;
                     }
                     ImGui::EndDisabled();
 
@@ -3347,6 +3358,12 @@ namespace PlutoGE::ui
                 }
             }
 
+            if (shouldOpenBakeSceneCustomPopup)
+            {
+                ImGui::OpenPopup("Bake Scene Custom");
+                shouldOpenBakeSceneCustomPopup = false;
+            }
+
             if (ImGui::BeginPopupModal("Bake Scene Custom", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
             {
                 sanitizeBakeSettings(m_customBakeSettings);
@@ -3365,13 +3382,30 @@ namespace PlutoGE::ui
                 {
                     m_customBakeSettings = scene::SceneBakeSettings::Final();
                 }
+                ImGui::SameLine();
+                if (ImGui::Button("High 512"))
+                {
+                    m_customBakeSettings = scene::SceneBakeSettings::HighQuality();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Ultra 1024"))
+                {
+                    m_customBakeSettings = scene::SceneBakeSettings::Ultra();
+                }
 
                 ImGui::Separator();
                 ImGui::InputInt("Lightmap Resolution", &m_customBakeSettings.lightmapResolution);
                 ImGui::InputInt("Lightmap Tile Size", &m_customBakeSettings.lightmapTileSize);
+                ImGui::InputInt("Direct Shadow Samples", &m_customBakeSettings.directShadowSampleCount);
                 ImGui::Checkbox("Bake Indirect Bounce", &m_customBakeSettings.bakeIndirectBounce);
                 ImGui::InputInt("Indirect Samples", &m_customBakeSettings.indirectBounceSampleCount);
+                ImGui::InputInt("GI Bounce Count", &m_customBakeSettings.indirectBounceCount);
                 ImGui::SliderFloat("Lightmap Bounce Strength", &m_customBakeSettings.lightmapBounceStrength, 0.0f, 4.0f, "%.2f");
+                ImGui::Checkbox("Use GPU Bake", &m_customBakeSettings.useGpu);
+                if (m_customBakeSettings.useGpu)
+                {
+                    ImGui::TextDisabled("GPU traces direct light and GI for base-colour scenes; textured GI uses the accurate CPU fallback.");
+                }
                 ImGui::Checkbox("Bake Probe Volume", &m_customBakeSettings.bakeProbeVolume);
                 ImGui::InputInt("Probe Directions", &m_customBakeSettings.probeDirectionCount);
                 ImGui::SliderFloat("Probe Bounce Strength", &m_customBakeSettings.probeBounceStrength, 0.0f, 4.0f, "%.2f");

@@ -2017,7 +2017,19 @@ namespace PlutoGE::assets
             return nullptr;
         }
 
-        auto it = m_materialCache.find(assetReference);
+        // Scene deserialization resolves project asset references to absolute paths,
+        // while editor panels generally retain their project:// references. Both
+        // forms must resolve to the same cached Material so edits remain visible to
+        // every component using the asset.
+        const std::string cacheKey = Project::IsEngineAssetReference(assetReference)
+                                         ? assetReference
+                                         : ResolveAssetPath(assetReference);
+        if (cacheKey.empty())
+        {
+            return nullptr;
+        }
+
+        auto it = m_materialCache.find(cacheKey);
         if (it != m_materialCache.end())
         {
             return it->second;
@@ -2184,7 +2196,7 @@ namespace PlutoGE::assets
 
         if (material)
         {
-            m_materialCache[assetReference] = material;
+            m_materialCache[cacheKey] = material;
         }
         return material;
     }
@@ -2262,7 +2274,8 @@ namespace PlutoGE::assets
                    << variable.value.x << ',' << variable.value.y << ',' << variable.value.z << ',' << variable.value.w << "\n";
         }
 
-        if (auto cachedMaterial = m_materialCache.find(assetReference); cachedMaterial != m_materialCache.end() && cachedMaterial->second)
+        const std::string cacheKey = ResolveAssetPath(assetReference);
+        if (auto cachedMaterial = m_materialCache.find(cacheKey); cachedMaterial != m_materialCache.end() && cachedMaterial->second)
         {
             render::MaterialConfig cachedConfig = config;
             std::unordered_map<std::string, render::Texture *> reloadedTextures;

@@ -30,8 +30,7 @@ namespace PlutoGE::scene
 {
     namespace
     {
-        constexpr float kBaseRayEpsilon = 0.001f;
-        constexpr float kMinRayHitDistance = 0.0001f;
+        constexpr float kMinRayHitDistance = 0.0000001f;
         constexpr int kLightmapDilationIterations = 8;
         constexpr float kLightmapDilationNormalThreshold = 0.5f;
         constexpr std::size_t kMinLightmapTasksPerBakeWorker = 1;
@@ -100,6 +99,7 @@ namespace PlutoGE::scene
             float range = 10.0f;
             glm::vec3 direction{0.0f, -1.0f, 0.0f};
             bool castsShadows = false;
+            float shadowSoftness = 0.0f;
         };
 
         template <typename Callback>
@@ -173,6 +173,9 @@ namespace PlutoGE::scene
                                          ? light->direction / std::sqrt(directionLengthSq)
                                          : glm::vec3(0.0f, -1.0f, 0.0f),
                         .castsShadows = light->castsShadows,
+                        .shadowSoftness = light->type == LightType::Directional
+                                              ? std::max(light->directionalShadowSettings.softness, 0.0f)
+                                              : 0.0f,
                     });
                 }
             }
@@ -349,6 +352,13 @@ namespace PlutoGE::scene
             std::vector<unsigned char> pixels;
         };
 
+        struct GpuBakedLightmap
+        {
+            std::vector<glm::vec3> direct;
+            std::vector<glm::vec3> indirect;
+            bool includesIndirect = false;
+        };
+
         struct PreparedSceneBake
         {
             SceneBakeSettings settings;
@@ -359,6 +369,9 @@ namespace PlutoGE::scene
             BakeAccelerationStructure acceleration;
             std::unordered_map<render::Texture *, CpuTextureData> albedoTextureCache;
             std::vector<glm::vec3> indirectBounceDirections;
+            std::map<std::pair<MeshComponent *, std::size_t>, GpuBakedLightmap> gpuLightmaps;
+            bool gpuBakeActive = false;
+            bool gpuGiActive = false;
             bool shouldStoreProbeVolume = false;
         };
 
@@ -464,7 +477,23 @@ namespace PlutoGE::scene
             const float edgeLength1 = glm::length(triangle.worldPositions[2] - triangle.worldPositions[1]);
             const float edgeLength2 = glm::length(triangle.worldPositions[0] - triangle.worldPositions[2]);
             const float averageEdgeLength = (edgeLength0 + edgeLength1 + edgeLength2) / 3.0f;
-            return std::clamp(averageEdgeLength * 1e-4f, kMinRayHitDistance, kBaseRayEpsilon);
+            float largestWorldCoordinate = 1.0f;
+            for (const auto &position : triangle.worldPositions)
+            {
+                largestWorldCoordinate = std::max(
+                    largestWorldCoordinate,
+                    std::max({std::abs(position.x), std::abs(position.y), std::abs(position.z)}));
+            }
+
+            // Keep the offset proportional to the transformed triangle instead
+            // of clamping it to fixed world units. Fixed limits cause acne on
+            // enlarged meshes and detached shadows on very small meshes. The
+            // coordinate term also keeps enough separation at large locations
+            // where float precision is coarser.
+            const float scaleRelativeEpsilon = averageEdgeLength * 1e-4f;
+            const float coordinatePrecisionEpsilon =
+                largestWorldCoordinate * std::numeric_limits<float>::epsilon() * 8.0f;
+            return std::max({scaleRelativeEpsilon, coordinatePrecisionEpsilon, kMinRayHitDistance});
         }
 
         float ResolveWorldTexelTolerance(const BakeTriangle &triangle, int resolution)
@@ -807,6 +836,497 @@ namespace PlutoGE::scene
             return rasterizedTriangles;
         }
 
+        struct alignas(16) GpuBakeSample
+        {
+            glm::vec4 positionAndEpsilon{0.0f};
+            glm::vec4 shadingNormal{0.0f};
+            glm::vec4 geometricNormal{0.0f};
+        };
+
+        struct alignas(16) GpuBakeTriangle
+        {
+            glm::vec4 position0AndCastsShadow{0.0f};
+            glm::vec4 position1{0.0f};
+            glm::vec4 position2{0.0f};
+            glm::vec4 baseColor{1.0f};
+        };
+
+        struct alignas(16) GpuBakeLight
+        {
+            glm::vec4 positionAndType{0.0f};
+            glm::vec4 colorAndIntensity{0.0f};
+            glm::vec4 directionAndRange{0.0f};
+            glm::vec4 castsShadows{0.0f};
+        };
+
+        struct alignas(16) GpuBakeResult
+        {
+            glm::vec4 direct{0.0f};
+            glm::vec4 indirect{0.0f};
+        };
+
+        GLuint CreateGpuDirectBakeProgram()
+        {
+            static constexpr const char *source = R"(
+                #version 430 core
+                layout(local_size_x = 64) in;
+
+                struct BakeSample { vec4 PositionEpsilon; vec4 ShadingNormal; vec4 GeometricNormal; };
+                struct BakeTriangle { vec4 P0CastsShadow; vec4 P1; vec4 P2; vec4 BaseColor; };
+                struct BakeLight { vec4 PositionType; vec4 ColorIntensity; vec4 DirectionRange; vec4 CastsShadows; };
+                struct BakeResult { vec4 Direct; vec4 Indirect; };
+
+                layout(std430, binding = 0) readonly buffer Samples { BakeSample samples[]; };
+                layout(std430, binding = 1) readonly buffer Triangles { BakeTriangle triangles[]; };
+                layout(std430, binding = 2) readonly buffer Lights { BakeLight lights[]; };
+                layout(std430, binding = 3) writeonly buffer Results { BakeResult results[]; };
+                uniform uint uSampleCount;
+                uniform uint uSampleOffset;
+                uniform uint uTriangleCount;
+                uniform uint uLightCount;
+                uniform int uGiEnabled;
+                uniform int uGiRayCount;
+                uniform int uBounceCount;
+                uniform int uDirectShadowSampleCount;
+                uniform float uBounceStrength;
+
+                bool IntersectsTriangle(vec3 origin, vec3 direction, BakeTriangle triangle, float maxDistance)
+                {
+                    vec3 edgeA = triangle.P1.xyz - triangle.P0CastsShadow.xyz;
+                    vec3 edgeB = triangle.P2.xyz - triangle.P0CastsShadow.xyz;
+                    vec3 p = cross(direction, edgeB);
+                    float determinant = dot(edgeA, p);
+                    if (abs(determinant) < 1e-8) return false;
+                    float inverseDeterminant = 1.0 / determinant;
+                    vec3 s = origin - triangle.P0CastsShadow.xyz;
+                    float u = dot(s, p) * inverseDeterminant;
+                    if (u < 0.0 || u > 1.0) return false;
+                    vec3 q = cross(s, edgeA);
+                    float v = dot(direction, q) * inverseDeterminant;
+                    if (v < 0.0 || u + v > 1.0) return false;
+                    float distanceToHit = dot(edgeB, q) * inverseDeterminant;
+                    return distanceToHit > 0.0000001 && distanceToHit < maxDistance;
+                }
+
+                bool IsShadowed(vec3 origin, vec3 direction, float maxDistance)
+                {
+                    for (uint triangleIndex = 0; triangleIndex < uTriangleCount; ++triangleIndex)
+                    {
+                        if (triangles[triangleIndex].P0CastsShadow.w > 0.5 &&
+                            IntersectsTriangle(origin, direction, triangles[triangleIndex], maxDistance)) return true;
+                    }
+                    return false;
+                }
+
+                float ShadowVisibility(BakeLight light,
+                                       vec3 origin,
+                                       vec3 lightDirection,
+                                       float maxDistance,
+                                       int shadowSampleCount)
+                {
+                    if (light.CastsShadows.x <= 0.5) return 1.0;
+                    int rayCount = light.PositionType.w > 0.5 && light.PositionType.w < 1.5
+                                       ? clamp(shadowSampleCount, 1, 32)
+                                       : 1;
+                    float softness = max(light.CastsShadows.y, 0.0);
+                    if (rayCount == 1 || softness <= 0.001)
+                    {
+                        return IsShadowed(origin, lightDirection, maxDistance) ? 0.0 : 1.0;
+                    }
+
+                    vec3 referenceAxis = abs(lightDirection.y) < 0.999
+                                             ? vec3(0.0, 1.0, 0.0)
+                                             : vec3(1.0, 0.0, 0.0);
+                    vec3 tangent = normalize(cross(referenceAxis, lightDirection));
+                    vec3 bitangent = normalize(cross(lightDirection, tangent));
+                    float visibleRays = 0.0;
+                    float angularRadius = min(0.0015 * softness, 0.012);
+                    for (int rayIndex = 0; rayIndex < rayCount; ++rayIndex)
+                    {
+                        float unitRadius = sqrt((float(rayIndex) + 0.5) / float(rayCount));
+                        float angle = float(rayIndex) * 2.39996322973;
+                        vec3 rayDirection = normalize(
+                            lightDirection +
+                            (tangent * cos(angle) + bitangent * sin(angle)) * (angularRadius * unitRadius));
+                        if (!IsShadowed(origin, rayDirection, maxDistance)) visibleRays += 1.0;
+                    }
+                    return visibleRays / float(rayCount);
+                }
+
+                bool TraceClosest(vec3 origin, vec3 direction, out uint hitTriangleIndex, out vec3 hitBarycentric, out float hitDistance)
+                {
+                    bool foundHit = false;
+                    hitDistance = 1e30;
+                    for (uint triangleIndex = 0; triangleIndex < uTriangleCount; ++triangleIndex)
+                    {
+                        BakeTriangle triangle = triangles[triangleIndex];
+                        vec3 edgeA = triangle.P1.xyz - triangle.P0CastsShadow.xyz;
+                        vec3 edgeB = triangle.P2.xyz - triangle.P0CastsShadow.xyz;
+                        vec3 p = cross(direction, edgeB);
+                        float determinant = dot(edgeA, p);
+                        if (abs(determinant) < 1e-8) continue;
+                        float inverseDeterminant = 1.0 / determinant;
+                        vec3 s = origin - triangle.P0CastsShadow.xyz;
+                        float u = dot(s, p) * inverseDeterminant;
+                        if (u < 0.0 || u > 1.0) continue;
+                        vec3 q = cross(s, edgeA);
+                        float v = dot(direction, q) * inverseDeterminant;
+                        if (v < 0.0 || u + v > 1.0) continue;
+                        float distanceToHit = dot(edgeB, q) * inverseDeterminant;
+                        if (distanceToHit <= 0.0000001 || distanceToHit >= hitDistance) continue;
+                        foundHit = true;
+                        hitDistance = distanceToHit;
+                        hitTriangleIndex = triangleIndex;
+                        hitBarycentric = vec3(1.0 - u - v, u, v);
+                    }
+                    return foundHit;
+                }
+
+                vec3 EvaluateDirect(vec3 position,
+                                    vec3 shadingNormal,
+                                    vec3 geometricNormal,
+                                    float epsilon,
+                                    int shadowSampleCount)
+                {
+                    vec3 irradiance = vec3(0.0);
+                    for (uint lightIndex = 0; lightIndex < uLightCount; ++lightIndex)
+                    {
+                        BakeLight light = lights[lightIndex];
+                        int lightType = int(light.PositionType.w + 0.5);
+                        vec3 lightDirection;
+                        float attenuation = 1.0;
+                        float maxDistance = 1e30;
+                        if (lightType == 1)
+                        {
+                            lightDirection = normalize(-light.DirectionRange.xyz);
+                        }
+                        else
+                        {
+                            vec3 toLight = light.PositionType.xyz - position;
+                            float lightDistance = length(toLight);
+                            float lightRange = light.DirectionRange.w;
+                            if (lightDistance <= 0.0001 || lightRange <= 0.0001 || lightDistance >= lightRange) continue;
+                            lightDirection = toLight / lightDistance;
+                            maxDistance = max(lightDistance - epsilon, epsilon);
+                            float falloff = clamp(1.0 - lightDistance / lightRange, 0.0, 1.0);
+                            attenuation = falloff * falloff;
+                            if (lightType == 2)
+                            {
+                                float coneFactor = dot(-lightDirection, normalize(light.DirectionRange.xyz));
+                                attenuation *= smoothstep(0.9, 0.975, coneFactor);
+                            }
+                        }
+
+                        float ndotl = min(max(dot(geometricNormal, lightDirection), 0.0),
+                                          max(dot(shadingNormal, lightDirection), 0.0));
+                        if (ndotl <= 0.0 || attenuation <= 0.0) continue;
+                        float visibility = ShadowVisibility(
+                            light,
+                            position + geometricNormal * epsilon,
+                            lightDirection,
+                            maxDistance,
+                            shadowSampleCount);
+                        irradiance += light.ColorIntensity.rgb * light.ColorIntensity.w * attenuation * ndotl * visibility;
+                    }
+                    return max(irradiance, vec3(0.0));
+                }
+
+                uint Hash(uint value)
+                {
+                    value ^= value >> 16;
+                    value *= 0x7feb352du;
+                    value ^= value >> 15;
+                    value *= 0x846ca68bu;
+                    value ^= value >> 16;
+                    return value;
+                }
+
+                float Random01(inout uint state)
+                {
+                    state = Hash(state);
+                    return float(state) / 4294967295.0;
+                }
+
+                vec3 CosineHemisphere(vec3 normal, inout uint state)
+                {
+                    float r1 = Random01(state);
+                    float r2 = Random01(state);
+                    float radius = sqrt(r1);
+                    float angle = 6.28318530718 * r2;
+                    vec3 referenceAxis = abs(normal.y) < 0.999 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+                    vec3 tangent = normalize(cross(referenceAxis, normal));
+                    vec3 bitangent = normalize(cross(normal, tangent));
+                    return normalize(tangent * (cos(angle) * radius) +
+                                     bitangent * (sin(angle) * radius) +
+                                     normal * sqrt(max(1.0 - r1, 0.0)));
+                }
+
+                vec3 EvaluateIndirect(uint sampleIndex, BakeSample bakeSample)
+                {
+                    if (uGiEnabled == 0 || uGiRayCount <= 0 || uBounceCount <= 0 || uBounceStrength <= 0.0) return vec3(0.0);
+                    vec3 sourcePosition = bakeSample.PositionEpsilon.xyz;
+                    float sourceEpsilon = bakeSample.PositionEpsilon.w;
+                    vec3 sourceNormal = normalize(bakeSample.ShadingNormal.xyz);
+                    vec3 sourceGeometricNormal = normalize(bakeSample.GeometricNormal.xyz);
+                    vec3 accumulated = vec3(0.0);
+                    float continuationStrength = min(uBounceStrength, 0.95);
+
+                    for (int rayIndex = 0; rayIndex < uGiRayCount; ++rayIndex)
+                    {
+                        uint randomState = Hash(sampleIndex * 9781u + uint(rayIndex) * 6271u + 0x9e3779b9u);
+                        vec3 direction = CosineHemisphere(sourceNormal, randomState);
+                        if (dot(sourceGeometricNormal, direction) <= 0.0) direction = CosineHemisphere(sourceGeometricNormal, randomState);
+                        vec3 origin = sourcePosition + sourceGeometricNormal * sourceEpsilon;
+                        vec3 throughput = vec3(1.0);
+                        float bounceWeight = uBounceStrength;
+
+                        for (int bounceIndex = 0; bounceIndex < uBounceCount; ++bounceIndex)
+                        {
+                            uint triangleIndex = 0u;
+                            vec3 barycentric = vec3(0.0);
+                            float hitDistance = 0.0;
+                            if (!TraceClosest(origin, direction, triangleIndex, barycentric, hitDistance)) break;
+                            BakeTriangle triangle = triangles[triangleIndex];
+                            vec3 geometricNormal = normalize(cross(triangle.P1.xyz - triangle.P0CastsShadow.xyz,
+                                                                   triangle.P2.xyz - triangle.P0CastsShadow.xyz));
+                            if (dot(geometricNormal, -direction) <= 0.0) break;
+                            vec3 hitPosition = origin + direction * hitDistance;
+                            throughput *= clamp(triangle.BaseColor.rgb, vec3(0.0), vec3(1.0));
+                            accumulated += throughput * EvaluateDirect(hitPosition, geometricNormal, geometricNormal, sourceEpsilon, 1) * bounceWeight;
+                            bounceWeight *= continuationStrength;
+                            direction = CosineHemisphere(geometricNormal, randomState);
+                            origin = hitPosition + geometricNormal * sourceEpsilon;
+                        }
+                    }
+                    return accumulated / float(uGiRayCount);
+                }
+
+                void main()
+                {
+                    uint sampleIndex = uSampleOffset + gl_GlobalInvocationID.x;
+                    if (sampleIndex >= uSampleCount) return;
+                    BakeSample bakeSample = samples[sampleIndex];
+                    vec3 direct = EvaluateDirect(bakeSample.PositionEpsilon.xyz,
+                                                 normalize(bakeSample.ShadingNormal.xyz),
+                                                 normalize(bakeSample.GeometricNormal.xyz),
+                                                 bakeSample.PositionEpsilon.w,
+                                                 uDirectShadowSampleCount);
+                    results[sampleIndex].Direct = vec4(direct, 1.0);
+                    results[sampleIndex].Indirect = vec4(EvaluateIndirect(sampleIndex, bakeSample), 1.0);
+                }
+            )";
+
+            const GLuint shader = glCreateShader(GL_COMPUTE_SHADER);
+            glShaderSource(shader, 1, &source, nullptr);
+            glCompileShader(shader);
+            GLint compiled = GL_FALSE;
+            glGetShaderiv(shader, GL_COMPILE_STATUS, &compiled);
+            if (compiled != GL_TRUE)
+            {
+                char log[2048]{};
+                glGetShaderInfoLog(shader, static_cast<GLsizei>(sizeof(log)), nullptr, log);
+                LogBakeMessage(std::string("GPU bake shader compilation failed: ") + log);
+                glDeleteShader(shader);
+                return 0;
+            }
+
+            const GLuint program = glCreateProgram();
+            glAttachShader(program, shader);
+            glLinkProgram(program);
+            glDeleteShader(shader);
+            GLint linked = GL_FALSE;
+            glGetProgramiv(program, GL_LINK_STATUS, &linked);
+            if (linked != GL_TRUE)
+            {
+                char log[2048]{};
+                glGetProgramInfoLog(program, static_cast<GLsizei>(sizeof(log)), nullptr, log);
+                LogBakeMessage(std::string("GPU bake shader linking failed: ") + log);
+                glDeleteProgram(program);
+                return 0;
+            }
+            return program;
+        }
+
+        bool BuildGpuDirectLightmaps(PreparedSceneBake &preparedBake)
+        {
+            GLint majorVersion = 0;
+            GLint minorVersion = 0;
+            glGetIntegerv(GL_MAJOR_VERSION, &majorVersion);
+            glGetIntegerv(GL_MINOR_VERSION, &minorVersion);
+            if (majorVersion < 4 || (majorVersion == 4 && minorVersion < 3))
+            {
+                LogBakeMessage("GPU bake requires OpenGL 4.3; falling back to CPU.");
+                return false;
+            }
+            if (std::any_of(preparedBake.triangles.begin(), preparedBake.triangles.end(),
+                            [](const BakeTriangle &triangle)
+                            { return triangle.castsShadow && triangle.alphaMode == render::AlphaMode::Mask; }))
+            {
+                LogBakeMessage("GPU primary visibility does not approximate alpha cutouts; falling back to CPU for exact masked shadows.");
+                return false;
+            }
+
+            const GLuint program = CreateGpuDirectBakeProgram();
+            if (program == 0)
+            {
+                return false;
+            }
+
+            const bool gpuGiEnabled = preparedBake.settings.bakeIndirectBounce &&
+                                      preparedBake.settings.indirectBounceSampleCount > 0 &&
+                                      preparedBake.settings.indirectBounceCount > 0 &&
+                                      std::none_of(preparedBake.triangles.begin(), preparedBake.triangles.end(),
+                                                   [](const BakeTriangle &triangle)
+                                                   { return triangle.albedoTexture != nullptr; });
+            if (preparedBake.settings.bakeIndirectBounce && !gpuGiEnabled)
+            {
+                LogBakeMessage("GPU GI is using the accurate CPU fallback because the scene contains textured bake surfaces.");
+            }
+
+            std::vector<GpuBakeTriangle> gpuTriangles;
+            gpuTriangles.reserve(preparedBake.triangles.size());
+            for (const auto &triangle : preparedBake.triangles)
+            {
+                gpuTriangles.push_back(GpuBakeTriangle{
+                    .position0AndCastsShadow = glm::vec4(triangle.worldPositions[0], triangle.castsShadow ? 1.0f : 0.0f),
+                    .position1 = glm::vec4(triangle.worldPositions[1], 0.0f),
+                    .position2 = glm::vec4(triangle.worldPositions[2], 0.0f),
+                    .baseColor = glm::vec4(triangle.baseColor, 1.0f),
+                });
+            }
+
+            std::vector<GpuBakeLight> gpuLights;
+            gpuLights.reserve(preparedBake.lights.size());
+            for (const auto &light : preparedBake.lights)
+            {
+                gpuLights.push_back(GpuBakeLight{
+                    .positionAndType = glm::vec4(light.position, static_cast<float>(light.type)),
+                    .colorAndIntensity = glm::vec4(light.color, light.intensity),
+                    .directionAndRange = glm::vec4(light.direction, light.range),
+                    .castsShadows = glm::vec4(light.castsShadows ? 1.0f : 0.0f, light.shadowSoftness, 0.0f, 0.0f),
+                });
+            }
+
+            GLuint buffers[4]{};
+            glGenBuffers(4, buffers);
+            const auto uploadStaticBuffer = [](GLuint buffer, GLuint binding, const void *data, std::size_t byteSize)
+            {
+                glBindBuffer(GL_SHADER_STORAGE_BUFFER, buffer);
+                glBufferData(GL_SHADER_STORAGE_BUFFER, static_cast<GLsizeiptr>(byteSize), data, GL_STATIC_DRAW);
+                glBindBufferBase(GL_SHADER_STORAGE_BUFFER, binding, buffer);
+            };
+            uploadStaticBuffer(buffers[1], 1, gpuTriangles.data(), gpuTriangles.size() * sizeof(GpuBakeTriangle));
+            uploadStaticBuffer(buffers[2], 2, gpuLights.data(), gpuLights.size() * sizeof(GpuBakeLight));
+
+            glUseProgram(program);
+            glUniform1ui(glGetUniformLocation(program, "uTriangleCount"), static_cast<GLuint>(gpuTriangles.size()));
+            glUniform1ui(glGetUniformLocation(program, "uLightCount"), static_cast<GLuint>(gpuLights.size()));
+            glUniform1i(glGetUniformLocation(program, "uGiEnabled"), gpuGiEnabled ? 1 : 0);
+            glUniform1i(glGetUniformLocation(program, "uGiRayCount"), preparedBake.settings.indirectBounceSampleCount);
+            glUniform1i(glGetUniformLocation(program, "uBounceCount"), preparedBake.settings.indirectBounceCount);
+            glUniform1i(glGetUniformLocation(program, "uDirectShadowSampleCount"), preparedBake.settings.directShadowSampleCount);
+            glUniform1f(glGetUniformLocation(program, "uBounceStrength"), preparedBake.settings.lightmapBounceStrength);
+
+            bool bakedAnyTarget = false;
+            for (const auto &[targetKey, target] : preparedBake.targets)
+            {
+                if (!target.uvCoordinatesInRange)
+                {
+                    continue;
+                }
+
+                std::vector<BakeTileTask> unusedTasks;
+                const auto rasterizedTriangles = BuildLightmapTileTasks(target, preparedBake.triangles, target.resolution, unusedTasks);
+                std::vector<GpuBakeSample> samples;
+                std::vector<std::size_t> samplePixelIndices;
+                for (const auto &rasterizedTriangle : rasterizedTriangles)
+                {
+                    const auto &triangle = preparedBake.triangles[rasterizedTriangle.triangleIndex];
+                    for (int y = rasterizedTriangle.minY; y <= rasterizedTriangle.maxY; ++y)
+                    {
+                        for (int x = rasterizedTriangle.minX; x <= rasterizedTriangle.maxX; ++x)
+                        {
+                            glm::vec3 barycentric{0.0f};
+                            if (!TrySampleConservativeTexel(rasterizedTriangle.texel0, rasterizedTriangle.texel1, rasterizedTriangle.texel2, x, y, barycentric))
+                            {
+                                continue;
+                            }
+                            const glm::vec3 position = triangle.worldPositions[0] * barycentric.x +
+                                                       triangle.worldPositions[1] * barycentric.y +
+                                                       triangle.worldPositions[2] * barycentric.z;
+                            samples.push_back(GpuBakeSample{
+                                .positionAndEpsilon = glm::vec4(position, ResolveRayEpsilon(triangle)),
+                                .shadingNormal = glm::vec4(ResolveInterpolatedNormal(triangle, barycentric), 0.0f),
+                                .geometricNormal = glm::vec4(ComputeTriangleNormal(triangle), 0.0f),
+                            });
+                            samplePixelIndices.push_back(static_cast<std::size_t>(x + y * target.resolution));
+                        }
+                    }
+                }
+                if (samples.empty())
+                {
+                    continue;
+                }
+
+                uploadStaticBuffer(buffers[0], 0, samples.data(), samples.size() * sizeof(GpuBakeSample));
+                glBindBuffer(GL_SHADER_STORAGE_BUFFER, buffers[3]);
+                glBufferData(GL_SHADER_STORAGE_BUFFER, static_cast<GLsizeiptr>(samples.size() * sizeof(GpuBakeResult)), nullptr, GL_DYNAMIC_READ);
+                glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, buffers[3]);
+                glUniform1ui(glGetUniformLocation(program, "uSampleCount"), static_cast<GLuint>(samples.size()));
+                constexpr std::size_t kGpuBakeChunkSize = 2048;
+                for (std::size_t sampleOffset = 0; sampleOffset < samples.size(); sampleOffset += kGpuBakeChunkSize)
+                {
+                    const std::size_t chunkSampleCount = std::min(kGpuBakeChunkSize, samples.size() - sampleOffset);
+                    glUniform1ui(glGetUniformLocation(program, "uSampleOffset"), static_cast<GLuint>(sampleOffset));
+                    glDispatchCompute(static_cast<GLuint>((chunkSampleCount + 63) / 64), 1, 1);
+                    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+                    // Keep very high resolution presets below the Windows GPU
+                    // watchdog threshold instead of issuing one monolithic job.
+                    glFinish();
+                }
+                glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
+
+                std::vector<GpuBakeResult> results(samples.size());
+                glBindBuffer(GL_SHADER_STORAGE_BUFFER, buffers[3]);
+                glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, static_cast<GLsizeiptr>(results.size() * sizeof(GpuBakeResult)), results.data());
+                const std::size_t pixelCount = static_cast<std::size_t>(target.resolution * target.resolution);
+                GpuBakedLightmap gpuLightmap;
+                gpuLightmap.direct.assign(pixelCount, glm::vec3(0.0f));
+                gpuLightmap.indirect.assign(pixelCount, glm::vec3(0.0f));
+                gpuLightmap.includesIndirect = gpuGiEnabled;
+                std::vector<float> weights(pixelCount, 0.0f);
+                for (std::size_t sampleIndex = 0; sampleIndex < results.size(); ++sampleIndex)
+                {
+                    gpuLightmap.direct[samplePixelIndices[sampleIndex]] += glm::vec3(results[sampleIndex].direct);
+                    gpuLightmap.indirect[samplePixelIndices[sampleIndex]] += glm::vec3(results[sampleIndex].indirect);
+                    weights[samplePixelIndices[sampleIndex]] += 1.0f;
+                }
+                for (std::size_t pixelIndex = 0; pixelIndex < pixelCount; ++pixelIndex)
+                {
+                    if (weights[pixelIndex] > 0.0f)
+                    {
+                        gpuLightmap.direct[pixelIndex] /= weights[pixelIndex];
+                        gpuLightmap.indirect[pixelIndex] /= weights[pixelIndex];
+                    }
+                }
+                preparedBake.gpuLightmaps[targetKey] = std::move(gpuLightmap);
+                bakedAnyTarget = true;
+            }
+
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+            glUseProgram(0);
+            glDeleteBuffers(4, buffers);
+            glDeleteProgram(program);
+            if (bakedAnyTarget)
+            {
+                preparedBake.gpuGiActive = gpuGiEnabled;
+                LogBakeMessage(gpuGiEnabled
+                                   ? "GPU direct-light and multi-bounce GI path tracing completed."
+                                   : "GPU primary visibility/direct-light stage completed.");
+            }
+            return bakedAnyTarget;
+        }
+
         bool IntersectTriangle(const glm::vec3 &origin,
                                const glm::vec3 &direction,
                                const BakeTriangle &triangle,
@@ -934,7 +1454,8 @@ namespace PlutoGE::scene
                                                 const std::vector<BakeLight> &lights,
                                                 const std::vector<BakeTriangle> &triangles,
                                                 const BakeAccelerationStructure &acceleration,
-                                                const std::unordered_map<render::Texture *, CpuTextureData> &textureCache)
+                                                const std::unordered_map<render::Texture *, CpuTextureData> &textureCache,
+                                                int directShadowSampleCount)
         {
             glm::vec3 irradiance{0.0f};
             const glm::vec3 rayOrigin = position + geometricNormal * rayEpsilon;
@@ -979,12 +1500,45 @@ namespace PlutoGE::scene
                     continue;
                 }
 
-                if (light.castsShadows && TraceScene(rayOrigin, lightDirection, maxDistance, triangles, acceleration, &textureCache, true).has_value())
+                float visibility = 1.0f;
+                if (light.castsShadows)
                 {
-                    continue;
+                    const int shadowRayCount =
+                        light.type == LightType::Directional && light.shadowSoftness > 0.001f
+                            ? std::clamp(directShadowSampleCount, 1, 32)
+                            : 1;
+                    if (shadowRayCount == 1)
+                    {
+                        visibility = TraceScene(rayOrigin, lightDirection, maxDistance, triangles, acceleration, &textureCache, true).has_value()
+                                         ? 0.0f
+                                         : 1.0f;
+                    }
+                    else
+                    {
+                        glm::vec3 tangent{0.0f};
+                        glm::vec3 bitangent{0.0f};
+                        BuildTangentBasis(lightDirection, tangent, bitangent);
+                        const float angularRadius = std::min(0.0015f * light.shadowSoftness, 0.012f);
+                        int visibleRayCount = 0;
+                        for (int rayIndex = 0; rayIndex < shadowRayCount; ++rayIndex)
+                        {
+                            const float unitRadius = std::sqrt((static_cast<float>(rayIndex) + 0.5f) /
+                                                               static_cast<float>(shadowRayCount));
+                            const float angle = static_cast<float>(rayIndex) * 2.39996322973f;
+                            const glm::vec3 shadowDirection = glm::normalize(
+                                lightDirection +
+                                (tangent * std::cos(angle) + bitangent * std::sin(angle)) *
+                                    (angularRadius * unitRadius));
+                            if (!TraceScene(rayOrigin, shadowDirection, maxDistance, triangles, acceleration, &textureCache, true).has_value())
+                            {
+                                ++visibleRayCount;
+                            }
+                        }
+                        visibility = static_cast<float>(visibleRayCount) / static_cast<float>(shadowRayCount);
+                    }
                 }
 
-                irradiance += light.color * (light.intensity * attenuation * ndotl);
+                irradiance += light.color * (light.intensity * attenuation * ndotl * visibility);
             }
 
             return irradiance;
@@ -999,36 +1553,38 @@ namespace PlutoGE::scene
                                                    const std::vector<BakeTriangle> &triangles,
                                                    const BakeAccelerationStructure &acceleration,
                                                    const std::vector<glm::vec3> &localDirections,
+                                                   int bounceCount,
                                                    float bounceStrength,
                                                    const std::unordered_map<render::Texture *, CpuTextureData> &textureCache)
         {
-            if (localDirections.empty() || bounceStrength <= 0.0f)
+            static_cast<void>(sourceTriangle);
+            if (localDirections.empty() || bounceCount <= 0 || bounceStrength <= 0.0f)
             {
                 return glm::vec3(0.0f);
             }
 
-            glm::vec3 tangent{1.0f, 0.0f, 0.0f};
-            glm::vec3 bitangent{0.0f, 0.0f, 1.0f};
-            BuildTangentBasis(shadingNormal, tangent, bitangent);
-
-            const glm::vec3 rayOrigin = position + geometricNormal * rayEpsilon;
             glm::vec3 accumulatedIrradiance{0.0f};
-
-            for (const auto &localDirection : localDirections)
+            for (std::size_t sampleIndex = 0; sampleIndex < localDirections.size(); ++sampleIndex)
             {
-                const glm::vec3 sampleDirection = glm::normalize(
-                    tangent * localDirection.x +
-                    bitangent * localDirection.y +
-                    shadingNormal * localDirection.z);
-                if (glm::dot(shadingNormal, sampleDirection) <= 0.0f || glm::dot(geometricNormal, sampleDirection) <= 0.0f)
+                glm::vec3 currentNormal = shadingNormal;
+                glm::vec3 currentGeometricNormal = geometricNormal;
+                glm::vec3 tangent{1.0f, 0.0f, 0.0f};
+                glm::vec3 bitangent{0.0f, 0.0f, 1.0f};
+                BuildTangentBasis(currentNormal, tangent, bitangent);
+                glm::vec3 sampleDirection = glm::normalize(
+                    tangent * localDirections[sampleIndex].x +
+                    bitangent * localDirections[sampleIndex].y +
+                    currentNormal * localDirections[sampleIndex].z);
+                if (glm::dot(currentGeometricNormal, sampleDirection) <= 0.0f)
                 {
                     continue;
                 }
 
-                std::optional<RayHit> selectedHit;
-                std::optional<RayHit> fallbackSelfHit;
-                glm::vec3 traceOrigin = rayOrigin;
-                for (int traceStep = 0; traceStep < 8; ++traceStep)
+                glm::vec3 traceOrigin = position + currentGeometricNormal * rayEpsilon;
+                glm::vec3 throughput(1.0f);
+                float bounceWeight = bounceStrength;
+                const float continuationStrength = std::min(bounceStrength, 0.95f);
+                for (int bounceIndex = 0; bounceIndex < bounceCount; ++bounceIndex)
                 {
                     const auto hit = TraceScene(traceOrigin, sampleDirection, std::numeric_limits<float>::max(), triangles, acceleration, &textureCache);
                     if (!hit.has_value())
@@ -1036,54 +1592,47 @@ namespace PlutoGE::scene
                         break;
                     }
 
-                    const auto &hitTriangle = triangles[hit->triangleIndex];
-                    const glm::vec3 hitPosition = hitTriangle.worldPositions[0] * hit->barycentric.x + hitTriangle.worldPositions[1] * hit->barycentric.y + hitTriangle.worldPositions[2] * hit->barycentric.z;
-                    if (hitTriangle.meshComponent != sourceTriangle.meshComponent)
+                    const auto &triangle = triangles[hit->triangleIndex];
+                    const glm::vec3 hitPosition = triangle.worldPositions[0] * hit->barycentric.x +
+                                                  triangle.worldPositions[1] * hit->barycentric.y +
+                                                  triangle.worldPositions[2] * hit->barycentric.z;
+                    const glm::vec3 hitGeometricNormal = ComputeTriangleNormal(triangle);
+                    glm::vec3 hitShadingNormal = ResolveInterpolatedNormal(triangle, hit->barycentric);
+                    if (glm::dot(hitGeometricNormal, -sampleDirection) <= 0.0f)
                     {
-                        selectedHit = hit;
                         break;
                     }
 
-                    if (!fallbackSelfHit.has_value())
+                    const glm::vec3 hitAlbedo = glm::clamp(SampleTriangleAlbedo(triangle, hit->barycentric, textureCache), glm::vec3(0.0f), glm::vec3(1.0f));
+                    throughput *= hitAlbedo;
+                    const float hitRayEpsilon = ResolveRayEpsilon(triangle);
+                    const glm::vec3 directIrradiance = EvaluateStaticLightIrradiance(hitPosition, hitShadingNormal, hitGeometricNormal, hitRayEpsilon, lights, triangles, acceleration, textureCache, 1);
+                    accumulatedIrradiance += throughput * directIrradiance * bounceWeight;
+                    bounceWeight *= continuationStrength;
+
+                    const std::size_t directionIndex = (sampleIndex * 17 + static_cast<std::size_t>(bounceIndex + 1) * 13) % localDirections.size();
+                    currentNormal = hitShadingNormal;
+                    currentGeometricNormal = hitGeometricNormal;
+                    BuildTangentBasis(currentNormal, tangent, bitangent);
+                    const glm::vec3 &nextLocalDirection = localDirections[directionIndex];
+                    sampleDirection = glm::normalize(
+                        tangent * nextLocalDirection.x +
+                        bitangent * nextLocalDirection.y +
+                        currentNormal * nextLocalDirection.z);
+                    if (glm::dot(currentGeometricNormal, sampleDirection) <= 0.0f)
                     {
-                        fallbackSelfHit = hit;
+                        currentNormal = currentGeometricNormal;
+                        BuildTangentBasis(currentNormal, tangent, bitangent);
+                        sampleDirection = glm::normalize(
+                            tangent * nextLocalDirection.x +
+                            bitangent * nextLocalDirection.y +
+                            currentNormal * nextLocalDirection.z);
                     }
-
-                    traceOrigin = hitPosition + sampleDirection * std::max(ResolveRayEpsilon(hitTriangle), rayEpsilon);
+                    traceOrigin = hitPosition + currentGeometricNormal * hitRayEpsilon;
                 }
-
-                if (!selectedHit.has_value())
-                {
-                    selectedHit = fallbackSelfHit;
-                }
-                if (!selectedHit.has_value())
-                {
-                    continue;
-                }
-
-                const auto &triangle = triangles[selectedHit->triangleIndex];
-                const glm::vec3 hitPosition = triangle.worldPositions[0] * selectedHit->barycentric.x + triangle.worldPositions[1] * selectedHit->barycentric.y + triangle.worldPositions[2] * selectedHit->barycentric.z;
-                const glm::vec3 hitGeometricNormal = ComputeTriangleNormal(triangle);
-                const glm::vec3 hitShadingNormal = ResolveInterpolatedNormal(triangle, selectedHit->barycentric);
-                const float hitFacing = std::min(
-                    glm::max(glm::dot(hitShadingNormal, -sampleDirection), 0.0f),
-                    glm::max(glm::dot(hitGeometricNormal, -sampleDirection), 0.0f));
-                if (hitFacing <= 0.0f)
-                {
-                    continue;
-                }
-
-                const float hitRayEpsilon = ResolveRayEpsilon(triangle);
-                const glm::vec3 directIrradiance = EvaluateStaticLightIrradiance(hitPosition, hitShadingNormal, hitGeometricNormal, hitRayEpsilon, lights, triangles, acceleration, textureCache);
-                accumulatedIrradiance += directIrradiance * SampleTriangleAlbedo(triangle, selectedHit->barycentric, textureCache);
             }
 
-            if (accumulatedIrradiance == glm::vec3(0.0f))
-            {
-                return glm::vec3(0.0f);
-            }
-
-            return (accumulatedIrradiance / static_cast<float>(localDirections.size())) * bounceStrength;
+            return accumulatedIrradiance / static_cast<float>(localDirections.size());
         }
 
         glm::vec3 SampleProbeVolume(const BakedProbeVolume &probeVolume, const glm::vec3 &worldPosition)
@@ -1474,6 +2023,10 @@ namespace PlutoGE::scene
                                                       const std::vector<BakeTriangle> &triangles,
                                                       const BakeAccelerationStructure &acceleration,
                                                       const std::vector<glm::vec3> &indirectBounceDirections,
+                                                      bool evaluateDirect,
+                                                      bool evaluateIndirect,
+                                                      int directShadowSampleCount,
+                                                      int indirectBounceCount,
                                                       float lightmapBounceStrength,
                                                       const std::unordered_map<render::Texture *, CpuTextureData> &albedoTextureCache)
         {
@@ -1483,8 +2036,14 @@ namespace PlutoGE::scene
             const float rayEpsilon = ResolveRayEpsilon(triangle);
 
             BakedTexelLighting lighting;
-            lighting.direct = EvaluateStaticLightIrradiance(worldPosition, shadingNormal, geometricNormal, rayEpsilon, lights, triangles, acceleration, albedoTextureCache);
-            lighting.indirect = EvaluateIndirectBounceIrradiance(triangle, worldPosition, shadingNormal, geometricNormal, rayEpsilon, lights, triangles, acceleration, indirectBounceDirections, lightmapBounceStrength, albedoTextureCache);
+            if (evaluateDirect)
+            {
+                lighting.direct = EvaluateStaticLightIrradiance(worldPosition, shadingNormal, geometricNormal, rayEpsilon, lights, triangles, acceleration, albedoTextureCache, directShadowSampleCount);
+            }
+            if (evaluateIndirect)
+            {
+                lighting.indirect = EvaluateIndirectBounceIrradiance(triangle, worldPosition, shadingNormal, geometricNormal, rayEpsilon, lights, triangles, acceleration, indirectBounceDirections, indirectBounceCount, lightmapBounceStrength, albedoTextureCache);
+            }
             return lighting;
         }
 
@@ -1515,7 +2074,11 @@ namespace PlutoGE::scene
 
                 const auto &meshData = meshComponent->GetMesh()->GetMeshData();
 
-                const glm::mat4 worldTransform = entity->GetWorldTransform();
+                // Match MeshComponent::SubmitRenderCommands exactly. Mesh
+                // position/rotation offsets are part of the rendered model
+                // transform and are themselves affected by entity/parent scale.
+                const glm::mat4 worldTransform =
+                    entity->GetWorldTransform() * meshComponent->GetMeshOffsetTransform();
                 const glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(worldTransform)));
 
                 for (size_t submeshIndex = 0; submeshIndex < meshComponent->GetMesh()->GetSubmeshCount(); ++submeshIndex)
@@ -1697,7 +2260,7 @@ namespace PlutoGE::scene
                     }
 
                     const float hitRayEpsilon = ResolveRayEpsilon(triangle);
-                    const glm::vec3 directIrradiance = EvaluateStaticLightIrradiance(hitPosition, hitShadingNormal, hitGeometricNormal, hitRayEpsilon, lights, triangles, acceleration, textureCache);
+                    const glm::vec3 directIrradiance = EvaluateStaticLightIrradiance(hitPosition, hitShadingNormal, hitGeometricNormal, hitRayEpsilon, lights, triangles, acceleration, textureCache, 1);
                     accumulatedIrradiance += directIrradiance * SampleTriangleAlbedo(triangle, hit->barycentric, textureCache) * (weight * settings.probeBounceStrength);
                     totalWeight += weight;
                 }
@@ -1714,6 +2277,8 @@ namespace PlutoGE::scene
         {
             PreparedSceneBake preparedBake;
             preparedBake.settings = settings;
+            preparedBake.settings.directShadowSampleCount = std::clamp(preparedBake.settings.directShadowSampleCount, 1, 32);
+            preparedBake.settings.indirectBounceCount = std::clamp(preparedBake.settings.indirectBounceCount, 1, 8);
             preparedBake.bakeStartTime = std::chrono::steady_clock::now();
             preparedBake.lights = SnapshotStaticLights(scene);
 
@@ -1726,7 +2291,7 @@ namespace PlutoGE::scene
             }
 
             LogBakeMessage("Starting scene bake with " + std::to_string(staticLightCount) + " static light(s).");
-            LogBakeMessage("Bake settings: " + std::to_string(settings.lightmapResolution) + "px lightmaps, " + std::to_string(settings.indirectBounceSampleCount) + " indirect bounce sample(s), " + std::to_string(settings.probeDirectionCount) + " probe direction(s).");
+            LogBakeMessage("Bake settings: " + std::to_string(settings.lightmapResolution) + "px lightmaps, " + std::to_string(preparedBake.settings.directShadowSampleCount) + " direct shadow ray(s), " + std::to_string(settings.indirectBounceSampleCount) + " GI ray(s), " + std::to_string(preparedBake.settings.indirectBounceCount) + " bounce(s), " + std::to_string(settings.probeDirectionCount) + " probe direction(s).");
 
             const std::filesystem::path bakeRoot = std::filesystem::current_path() / "baked" / ResolveBakeDirectoryName(scene);
             std::error_code errorCode;
@@ -1754,6 +2319,11 @@ namespace PlutoGE::scene
             preparedBake.indirectBounceDirections = settings.bakeIndirectBounce
                                                         ? GenerateHemisphereDirections(settings.indirectBounceSampleCount)
                                                         : std::vector<glm::vec3>{};
+            if (settings.useGpu)
+            {
+                LogBakeMessage("Preparing GPU bake backend.");
+                preparedBake.gpuBakeActive = BuildGpuDirectLightmaps(preparedBake);
+            }
             preparedBake.shouldStoreProbeVolume = settings.bakeProbeVolume && SceneHasDynamicMeshes(scene);
             if (preparedBake.shouldStoreProbeVolume)
             {
@@ -1794,7 +2364,6 @@ namespace PlutoGE::scene
             int targetIndex = 0;
             for (const auto &[targetKey, target] : preparedBake.targets)
             {
-                static_cast<void>(targetKey);
                 if (IsBakeCancelled(cancelRequested))
                 {
                     output.cancelled = true;
@@ -1811,6 +2380,12 @@ namespace PlutoGE::scene
                 }
 
                 const std::size_t pixelCount = static_cast<std::size_t>(target.resolution * target.resolution);
+                const auto gpuLightmapIt = preparedBake.gpuLightmaps.find(targetKey);
+                const GpuBakedLightmap *gpuLightmap =
+                    gpuLightmapIt != preparedBake.gpuLightmaps.end() &&
+                            gpuLightmapIt->second.direct.size() == pixelCount
+                        ? &gpuLightmapIt->second
+                        : nullptr;
                 std::vector<glm::vec3> bakedPixels(pixelCount, glm::vec3(0.0f));
                 std::vector<glm::vec3> bakedDirectPixels(pixelCount, glm::vec3(0.0f));
                 std::vector<glm::vec3> bakedIndirectPixels(pixelCount, glm::vec3(0.0f));
@@ -1887,7 +2462,15 @@ namespace PlutoGE::scene
                                         continue;
                                     }
                                 }
-                                const BakedTexelLighting lighting = EvaluateBakedTexelLighting(triangle, barycentric, preparedBake.lights, preparedBake.triangles, preparedBake.acceleration, preparedBake.indirectBounceDirections, preparedBake.settings.lightmapBounceStrength, preparedBake.albedoTextureCache);
+                                BakedTexelLighting lighting = EvaluateBakedTexelLighting(triangle, barycentric, preparedBake.lights, preparedBake.triangles, preparedBake.acceleration, preparedBake.indirectBounceDirections, gpuLightmap == nullptr, !gpuLightmap || !gpuLightmap->includesIndirect, preparedBake.settings.directShadowSampleCount, preparedBake.settings.indirectBounceCount, preparedBake.settings.lightmapBounceStrength, preparedBake.albedoTextureCache);
+                                if (gpuLightmap)
+                                {
+                                    lighting.direct = gpuLightmap->direct[pixelIndex];
+                                    if (gpuLightmap->includesIndirect)
+                                    {
+                                        lighting.indirect = gpuLightmap->indirect[pixelIndex];
+                                    }
+                                }
                                 bakedPixels[pixelIndex] += lighting.Total();
                                 bakedDirectPixels[pixelIndex] += lighting.direct;
                                 bakedIndirectPixels[pixelIndex] += lighting.indirect;
@@ -1921,7 +2504,7 @@ namespace PlutoGE::scene
                                     continue;
                                 }
                             }
-                            const BakedTexelLighting lighting = EvaluateBakedTexelLighting(triangle, barycentric, preparedBake.lights, preparedBake.triangles, preparedBake.acceleration, preparedBake.indirectBounceDirections, preparedBake.settings.lightmapBounceStrength, preparedBake.albedoTextureCache);
+                            BakedTexelLighting lighting = EvaluateBakedTexelLighting(triangle, barycentric, preparedBake.lights, preparedBake.triangles, preparedBake.acceleration, preparedBake.indirectBounceDirections, true, true, preparedBake.settings.directShadowSampleCount, preparedBake.settings.indirectBounceCount, preparedBake.settings.lightmapBounceStrength, preparedBake.albedoTextureCache);
 
                             bakedPixels[pixelIndex] += lighting.Total();
                             bakedDirectPixels[pixelIndex] += lighting.direct;
@@ -2049,6 +2632,8 @@ namespace PlutoGE::scene
                                         int failedLightmapLoads,
                                         int failedLightmapWrites,
                                         int invalidLightmapUvCount,
+                                        bool gpuBakeActive,
+                                        bool gpuGiActive,
                                         long long elapsedMs)
         {
             SceneBakeResult result;
@@ -2058,6 +2643,12 @@ namespace PlutoGE::scene
 
             std::ostringstream message;
             message << "Baked " << result.bakedLightmapCount << " lightmap(s)";
+            if (gpuBakeActive)
+            {
+                message << (gpuGiActive
+                                ? " using GPU direct lighting and multi-bounce GI"
+                                : " using GPU primary visibility and CPU multi-bounce GI");
+            }
             if (probeVolume.IsValid())
             {
                 message << " and generated " << result.bakedProbeCount << " probe samples.";
@@ -2141,7 +2732,7 @@ namespace PlutoGE::scene
                 scene.ClearBakedProbeVolume();
             }
 
-            SceneBakeResult result = BuildBakeResult(bakedLightmapCount, output.probeVolume, failedLightmapLoads, output.failedLightmapWrites, output.invalidLightmapUvCount, output.elapsedMs);
+            SceneBakeResult result = BuildBakeResult(bakedLightmapCount, output.probeVolume, failedLightmapLoads, output.failedLightmapWrites, output.invalidLightmapUvCount, preparedBake.gpuBakeActive, preparedBake.gpuGiActive, output.elapsedMs);
             LogBakeMessage(result.message);
             return result;
         }
@@ -2152,8 +2743,10 @@ namespace PlutoGE::scene
         SceneBakeSettings settings;
         settings.lightmapResolution = 32;
         settings.lightmapTileSize = 16;
+        settings.directShadowSampleCount = 1;
         settings.probeDirectionCount = 0;
         settings.indirectBounceSampleCount = 0;
+        settings.indirectBounceCount = 1;
         settings.bakeProbeVolume = false;
         settings.bakeIndirectBounce = false;
         settings.probeBounceStrength = 0.0f;
@@ -2166,8 +2759,10 @@ namespace PlutoGE::scene
         SceneBakeSettings settings;
         settings.lightmapResolution = 96;
         settings.lightmapTileSize = 16;
+        settings.directShadowSampleCount = 4;
         settings.probeDirectionCount = 0;
         settings.indirectBounceSampleCount = 12;
+        settings.indirectBounceCount = 2;
         settings.bakeProbeVolume = false;
         settings.bakeIndirectBounce = true;
         settings.probeBounceStrength = 0.0f;
@@ -2180,12 +2775,38 @@ namespace PlutoGE::scene
         SceneBakeSettings settings;
         settings.lightmapResolution = 192;
         settings.lightmapTileSize = 16;
+        settings.directShadowSampleCount = 8;
         settings.probeDirectionCount = 12;
         settings.indirectBounceSampleCount = 48;
+        settings.indirectBounceCount = 4;
         settings.bakeProbeVolume = true;
         settings.bakeIndirectBounce = true;
         settings.probeBounceStrength = 1.0f;
         settings.lightmapBounceStrength = 1.5f;
+        return settings;
+    }
+
+    SceneBakeSettings SceneBakeSettings::HighQuality()
+    {
+        SceneBakeSettings settings = Final();
+        settings.lightmapResolution = 512;
+        settings.directShadowSampleCount = 16;
+        settings.probeDirectionCount = 24;
+        settings.indirectBounceSampleCount = 96;
+        settings.indirectBounceCount = 5;
+        settings.useGpu = true;
+        return settings;
+    }
+
+    SceneBakeSettings SceneBakeSettings::Ultra()
+    {
+        SceneBakeSettings settings = HighQuality();
+        settings.lightmapResolution = 1024;
+        settings.directShadowSampleCount = 32;
+        settings.probeDirectionCount = 48;
+        settings.indirectBounceSampleCount = 192;
+        settings.indirectBounceCount = 6;
+        settings.useGpu = true;
         return settings;
     }
 

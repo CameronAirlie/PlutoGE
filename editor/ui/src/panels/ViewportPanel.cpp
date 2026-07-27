@@ -1145,9 +1145,16 @@ namespace PlutoGE::ui
                                   const render::CameraData &cameraData,
                                   const ImVec2 &viewportMin,
                                   const ImVec2 &viewportSize,
-                                  PickDebugInfo *debugInfo = nullptr)
+                                  PickDebugInfo *debugInfo = nullptr,
+                                  std::size_t *selectedSubmeshIndex = nullptr)
         {
             constexpr std::size_t kMaxExactPickTrianglesPerSubmesh = 250000;
+            constexpr std::size_t kNoSubmesh = std::numeric_limits<std::size_t>::max();
+
+            if (selectedSubmeshIndex)
+            {
+                *selectedSubmeshIndex = kNoSubmesh;
+            }
 
             if (!scene)
             {
@@ -1230,6 +1237,10 @@ namespace PlutoGE::ui
                         {
                             selectedDistance = worldDistance;
                             selectedEntity = entity;
+                            if (selectedSubmeshIndex)
+                            {
+                                *selectedSubmeshIndex = kNoSubmesh;
+                            }
                             if (debugInfo)
                             {
                                 debugInfo->selectedSource = "terrain";
@@ -1305,6 +1316,10 @@ namespace PlutoGE::ui
                     {
                         selectedDistance = worldBoundsDistance;
                         selectedEntity = entity;
+                        if (selectedSubmeshIndex)
+                        {
+                            *selectedSubmeshIndex = submeshIndex;
+                        }
                         if (debugInfo)
                         {
                             debugInfo->selectedSource = "bounds";
@@ -1320,6 +1335,10 @@ namespace PlutoGE::ui
                         {
                             selectedDistance = approximateDistance;
                             selectedEntity = entity;
+                            if (selectedSubmeshIndex)
+                            {
+                                *selectedSubmeshIndex = submeshIndex;
+                            }
                             if (debugInfo)
                             {
                                 ++debugInfo->approximateHits;
@@ -1371,6 +1390,10 @@ namespace PlutoGE::ui
                         {
                             selectedDistance = worldDistance;
                             selectedEntity = entity;
+                            if (selectedSubmeshIndex)
+                            {
+                                *selectedSubmeshIndex = submeshIndex;
+                            }
                             if (debugInfo)
                             {
                                 debugInfo->selectedSource = "triangle";
@@ -1810,7 +1833,45 @@ namespace PlutoGE::ui
             if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kContentBrowserAssetDragDropPayload))
             {
                 const std::string reference(static_cast<const char *>(payload->Data), payload->DataSize > 0 ? payload->DataSize - 1 : 0);
-                if (assets::Project::GetAssetTypeForReference(reference) == assets::ProjectAssetType::Prefab)
+                const auto assetType = assets::Project::GetAssetTypeForReference(reference);
+                if (assetType == assets::ProjectAssetType::Material)
+                {
+                    auto &editorShell = EditorShell::GetInstance();
+                    auto &engine = editorShell.GetEngine();
+                    auto *material = engine.GetAssetManager().LoadMaterialAsset(reference);
+                    auto &editorCamera = editorShell.GetEditorCamera();
+                    const glm::mat4 cameraTransform =
+                        glm::translate(glm::mat4(1.0f), editorCamera.position) *
+                        glm::rotate(glm::mat4(1.0f), glm::radians(editorCamera.yawDegrees), glm::vec3(0.0f, 1.0f, 0.0f)) *
+                        glm::rotate(glm::mat4(1.0f), glm::radians(editorCamera.pitchDegrees), glm::vec3(1.0f, 0.0f, 0.0f));
+                    const render::CameraData cameraData = editorCamera.camera.GetCameraDataForTransform(
+                        cameraTransform, m_renderTarget->GetWidth(), m_renderTarget->GetHeight());
+
+                    std::size_t submeshIndex = std::numeric_limits<std::size_t>::max();
+                    auto *entity = PickEntity(engine.GetScene(), cameraData, viewportMin, imageSize, nullptr, &submeshIndex);
+                    auto *meshComponent = entity ? entity->GetComponent<scene::MeshComponent>() : nullptr;
+                    if (material && meshComponent &&
+                        meshComponent->GetMesh() &&
+                        submeshIndex < meshComponent->GetMesh()->GetSubmeshCount())
+                    {
+                        editorShell.ExecuteSceneEdit(
+                            "Assign Material",
+                            [entity, meshComponent, submeshIndex, material, reference]()
+                            {
+                                meshComponent->SetMaterialForSubmesh(submeshIndex, material);
+                                meshComponent->SetMaterialAssetForSubmesh(submeshIndex, reference);
+                                entity->AddPrefabOverride(
+                                    "Component:MeshComponent:SubmeshOverrides." +
+                                    std::to_string(submeshIndex) + ".MaterialAsset");
+                            });
+                        editorShell.SetSelectedEntity(entity);
+                    }
+                    else if (!material)
+                    {
+                        editorShell.Log(EditorShell::ConsoleSeverity::Error, "Failed to load material: " + reference);
+                    }
+                }
+                else if (assetType == assets::ProjectAssetType::Prefab)
                 {
                     auto *scene = EditorShell::GetInstance().GetEngine().GetScene();
                     std::string errorMessage;
@@ -1833,11 +1894,11 @@ namespace PlutoGE::ui
                         EditorShell::GetInstance().Log(EditorShell::ConsoleSeverity::Error, errorMessage);
                     }
                 }
-                else if (assets::Project::GetAssetTypeForReference(reference) == assets::ProjectAssetType::Mesh)
+                else if (assetType == assets::ProjectAssetType::Mesh)
                 {
                     InstantiateMeshAssetIntoScene(reference, nullptr);
                 }
-                else if (assets::Project::GetAssetTypeForReference(reference) == assets::ProjectAssetType::Model)
+                else if (assetType == assets::ProjectAssetType::Model)
                 {
                     InstantiateModelAssetIntoScene(reference, nullptr);
                 }

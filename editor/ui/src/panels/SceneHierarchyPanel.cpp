@@ -160,7 +160,8 @@ namespace PlutoGE::ui
         {
             nodeOpen = ImGui::TreeNodeEx("##RenameNode", nodeFlags);
             ImGui::SameLine();
-            ImGui::SetNextItemWidth(220.0f);
+            const float availableWidth = ImGui::GetContentRegionAvail().x;
+            ImGui::SetNextItemWidth(availableWidth > 1.0f ? availableWidth : 1.0f);
             if (m_focusRenameInput)
             {
                 ImGui::SetKeyboardFocusHere();
@@ -168,15 +169,15 @@ namespace PlutoGE::ui
             }
 
             const bool submitted = ImGui::InputText("##RenameInput", m_renameBuffer.data(), m_renameBuffer.size(), ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
-            const bool escapePressed = ImGui::IsItemActive() && ImGui::IsKeyPressed(ImGuiKey_Escape);
-            const bool deactivatedAfterEdit = ImGui::IsItemDeactivatedAfterEdit();
-            if (submitted || deactivatedAfterEdit)
-            {
-                EndRename(true);
-            }
-            else if (escapePressed)
+            const bool escapePressed = ImGui::IsKeyPressed(ImGuiKey_Escape);
+            const bool lostFocus = ImGui::IsItemDeactivated();
+            if (escapePressed)
             {
                 EndRename(false);
+            }
+            else if (submitted || lostFocus)
+            {
+                EndRename(true);
             }
         }
         else

@@ -991,9 +991,13 @@ namespace PlutoGE::scene
                            TriangleVisibleAt(triangle, vec3(1.0 - u - v, u, v));
                 }
 
-                bool IntersectsBounds(BakeBvhNode node, vec3 origin, vec3 direction, float maxDistance)
+                bool IntersectsBounds(BakeBvhNode node,
+                                      vec3 origin,
+                                      vec3 direction,
+                                      float maxDistance,
+                                      out float entryDistance)
                 {
-                    float entryDistance = 0.0;
+                    entryDistance = 0.0;
                     float exitDistance = maxDistance;
                     for (int axis = 0; axis < 3; ++axis)
                     {
@@ -1023,12 +1027,15 @@ namespace PlutoGE::scene
                 bool IsShadowed(vec3 origin, vec3 direction, float maxDistance)
                 {
                     int nodeStack[64];
+                    float entryStack[64];
                     int stackSize = 1;
                     nodeStack[0] = 0;
+                    entryStack[0] = 0.0;
                     while (stackSize > 0)
                     {
-                        BakeBvhNode node = bvhNodes[nodeStack[--stackSize]];
-                        if (!IntersectsBounds(node, origin, direction, maxDistance)) continue;
+                        --stackSize;
+                        BakeBvhNode node = bvhNodes[nodeStack[stackSize]];
+                        if (entryStack[stackSize] > maxDistance) continue;
 
                         uint triangleCount = node.LinksAndRange.w;
                         if (triangleCount > 0u)
@@ -1043,13 +1050,43 @@ namespace PlutoGE::scene
                             continue;
                         }
 
-                        if (node.LinksAndRange.x != 0xffffffffu && stackSize < 64)
+                        uint leftIndex = node.LinksAndRange.x;
+                        uint rightIndex = node.LinksAndRange.y;
+                        float leftEntry = 0.0;
+                        float rightEntry = 0.0;
+                        bool hitLeft = leftIndex != 0xffffffffu &&
+                                       IntersectsBounds(
+                                           bvhNodes[leftIndex],
+                                           origin,
+                                           direction,
+                                           maxDistance,
+                                           leftEntry);
+                        bool hitRight = rightIndex != 0xffffffffu &&
+                                        IntersectsBounds(
+                                            bvhNodes[rightIndex],
+                                            origin,
+                                            direction,
+                                            maxDistance,
+                                            rightEntry);
+                        // LIFO: push the farther child first so an any-hit
+                        // shadow ray reaches likely occluders sooner.
+                        if (hitLeft && hitRight && stackSize <= 62)
                         {
-                            nodeStack[stackSize++] = int(node.LinksAndRange.x);
+                            bool leftIsNear = leftEntry <= rightEntry;
+                            nodeStack[stackSize] = int(leftIsNear ? rightIndex : leftIndex);
+                            entryStack[stackSize++] = leftIsNear ? rightEntry : leftEntry;
+                            nodeStack[stackSize] = int(leftIsNear ? leftIndex : rightIndex);
+                            entryStack[stackSize++] = leftIsNear ? leftEntry : rightEntry;
                         }
-                        if (node.LinksAndRange.y != 0xffffffffu && stackSize < 64)
+                        else if (hitLeft && stackSize < 64)
                         {
-                            nodeStack[stackSize++] = int(node.LinksAndRange.y);
+                            nodeStack[stackSize] = int(leftIndex);
+                            entryStack[stackSize++] = leftEntry;
+                        }
+                        else if (hitRight && stackSize < 64)
+                        {
+                            nodeStack[stackSize] = int(rightIndex);
+                            entryStack[stackSize++] = rightEntry;
                         }
                     }
                     return false;
@@ -1097,12 +1134,15 @@ namespace PlutoGE::scene
                     bool foundHit = false;
                     hitDistance = 1e30;
                     int nodeStack[64];
+                    float entryStack[64];
                     int stackSize = 1;
                     nodeStack[0] = 0;
+                    entryStack[0] = 0.0;
                     while (stackSize > 0)
                     {
-                        BakeBvhNode node = bvhNodes[nodeStack[--stackSize]];
-                        if (!IntersectsBounds(node, origin, direction, hitDistance)) continue;
+                        --stackSize;
+                        BakeBvhNode node = bvhNodes[nodeStack[stackSize]];
+                        if (entryStack[stackSize] > hitDistance) continue;
 
                         uint triangleCount = node.LinksAndRange.w;
                         if (triangleCount > 0u)
@@ -1136,13 +1176,44 @@ namespace PlutoGE::scene
                             continue;
                         }
 
-                        if (node.LinksAndRange.x != 0xffffffffu && stackSize < 64)
+                        uint leftIndex = node.LinksAndRange.x;
+                        uint rightIndex = node.LinksAndRange.y;
+                        float leftEntry = 0.0;
+                        float rightEntry = 0.0;
+                        bool hitLeft = leftIndex != 0xffffffffu &&
+                                       IntersectsBounds(
+                                           bvhNodes[leftIndex],
+                                           origin,
+                                           direction,
+                                           hitDistance,
+                                           leftEntry);
+                        bool hitRight = rightIndex != 0xffffffffu &&
+                                        IntersectsBounds(
+                                            bvhNodes[rightIndex],
+                                            origin,
+                                            direction,
+                                            hitDistance,
+                                            rightEntry);
+                        // LIFO: visit the nearer child first. A close triangle
+                        // hit then prunes farther queued nodes without changing
+                        // the closest-hit result.
+                        if (hitLeft && hitRight && stackSize <= 62)
                         {
-                            nodeStack[stackSize++] = int(node.LinksAndRange.x);
+                            bool leftIsNear = leftEntry <= rightEntry;
+                            nodeStack[stackSize] = int(leftIsNear ? rightIndex : leftIndex);
+                            entryStack[stackSize++] = leftIsNear ? rightEntry : leftEntry;
+                            nodeStack[stackSize] = int(leftIsNear ? leftIndex : rightIndex);
+                            entryStack[stackSize++] = leftIsNear ? leftEntry : rightEntry;
                         }
-                        if (node.LinksAndRange.y != 0xffffffffu && stackSize < 64)
+                        else if (hitLeft && stackSize < 64)
                         {
-                            nodeStack[stackSize++] = int(node.LinksAndRange.y);
+                            nodeStack[stackSize] = int(leftIndex);
+                            entryStack[stackSize++] = leftEntry;
+                        }
+                        else if (hitRight && stackSize < 64)
+                        {
+                            nodeStack[stackSize] = int(rightIndex);
+                            entryStack[stackSize++] = rightEntry;
                         }
                     }
                     return foundHit;
@@ -1612,6 +1683,7 @@ namespace PlutoGE::scene
                 glBufferData(GL_SHADER_STORAGE_BUFFER, static_cast<GLsizeiptr>(samples.size() * sizeof(GpuBakeResult)), nullptr, GL_DYNAMIC_READ);
                 glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, buffers[3]);
                 glUniform1ui(glGetUniformLocation(program, "uSampleCount"), static_cast<GLuint>(samples.size()));
+                const auto gpuTargetBegin = std::chrono::steady_clock::now();
                 // Keep expensive GI commands small enough for the Windows TDR
                 // watchdog while allowing preview and direct-only bakes to use
                 // substantially larger submissions. The budget is calibrated
@@ -1645,6 +1717,15 @@ namespace PlutoGE::scene
                 std::vector<GpuBakeResult> results(samples.size());
                 glBindBuffer(GL_SHADER_STORAGE_BUFFER, buffers[3]);
                 glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, static_cast<GLsizeiptr>(results.size() * sizeof(GpuBakeResult)), results.data());
+                const auto gpuTargetElapsedMs =
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - gpuTargetBegin)
+                        .count();
+                LogBakeMessage(
+                    "GPU target " + std::to_string(gpuTargetIndex) + "/" +
+                    std::to_string(preparedBake.targets.size()) + " completed in " +
+                    std::to_string(gpuTargetElapsedMs) + " ms using " +
+                    std::to_string(gpuBakeChunkSize) + "-sample dispatches.");
                 const std::size_t pixelCount = targetPixelCount;
                 GpuBakedLightmap gpuLightmap;
                 gpuLightmap.direct.assign(pixelCount, glm::vec3(0.0f));

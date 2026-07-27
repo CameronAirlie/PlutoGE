@@ -3430,31 +3430,27 @@ namespace PlutoGE::ui
                 ImGui::EndPopup();
             }
 
-            if (isBakeRunning)
-            {
-                ImGui::BeginDisabled();
-            }
-
-            viewportPanel->SetInteractionEnabled(true);
-            viewportPanel->SetVisualAlpha(1.0f);
-            sceneHierarchyPanel->SetInteractionEnabled(true);
-            sceneHierarchyPanel->SetVisualAlpha(1.0f);
-            inspectorPanel->SetInteractionEnabled(true);
-            inspectorPanel->SetVisualAlpha(1.0f);
+            // Keep the editor responsive while a bake runs. Prepared bake data
+            // retains pointers to scene components until finalization, so block
+            // panels that can mutate the scene without disabling the entire
+            // ImGui interface (which made the application appear frozen).
+            const bool allowSceneInteraction = !isBakeRunning;
+            viewportPanel->SetInteractionEnabled(allowSceneInteraction);
+            viewportPanel->SetVisualAlpha(allowSceneInteraction ? 1.0f : 0.65f);
+            sceneHierarchyPanel->SetInteractionEnabled(allowSceneInteraction);
+            sceneHierarchyPanel->SetVisualAlpha(allowSceneInteraction ? 1.0f : 0.65f);
+            inspectorPanel->SetInteractionEnabled(allowSceneInteraction);
+            inspectorPanel->SetVisualAlpha(allowSceneInteraction ? 1.0f : 0.65f);
             profilerPanel->SetInteractionEnabled(true);
             profilerPanel->SetVisualAlpha(1.0f);
-            viewportPanel2->SetInteractionEnabled(true);
-            viewportPanel2->SetVisualAlpha(1.0f);
+            viewportPanel2->SetInteractionEnabled(allowSceneInteraction);
+            viewportPanel2->SetVisualAlpha(allowSceneInteraction ? 1.0f : 0.65f);
 
             const auto editorChromeEnd = std::chrono::high_resolution_clock::now();
             frameTimingStats.editorChromeMs = std::chrono::duration<float, std::milli>(editorChromeEnd - editorChromeStart).count();
             m_panelManager.UpdatePanels();
 
             window.SetScriptInputEnabled(shouldEnableRuntimeInput());
-            if (isBakeRunning)
-            {
-                ImGui::EndDisabled();
-            }
 
             m_panelManager.EndPanelUpdate();
             const auto editorUiEnd = std::chrono::high_resolution_clock::now();

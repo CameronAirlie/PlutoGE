@@ -39,10 +39,24 @@ namespace PlutoGE::render
         static constexpr std::size_t kDirectionCount = 6;
         static constexpr std::size_t kMaxLocalInjectionLights = 7;
 
+        struct VoxelMaterialSnapshot
+        {
+            glm::vec4 color{1.0f};
+            glm::vec2 uvScale{1.0f};
+            glm::vec3 emission{0.0f};
+            Texture *albedoTexture = nullptr;
+            Texture *metallicTexture = nullptr;
+            MaterialSurfaceType surfaceType = MaterialSurfaceType::Standard;
+            AlphaMode alphaMode = AlphaMode::Opaque;
+            TextureChannel metallicTextureChannel = TextureChannel::Red;
+            float alphaCutoff = 0.5f;
+            float metallic = 0.0f;
+        };
+
         struct VoxelizationJob
         {
             RenderCommand command;
-            Material material;
+            VoxelMaterialSnapshot material;
             std::shared_ptr<const std::vector<glm::mat4>> jointMatrices;
             std::size_t voxelLod = 0;
             std::size_t nextInstance = 0;

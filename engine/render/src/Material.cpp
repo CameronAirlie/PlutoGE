@@ -62,6 +62,7 @@ namespace PlutoGE::render
             activeShader->SetUniform("uAttenuationColor", m_config.attenuationColor);
         }
         setFloat("uAttenuationDistance", m_config.attenuationDistance);
+        setVec4("uLightmapUvTransform", m_config.lightmapUvTransform);
 
         // Set common uniforms (camera and model data)
         // shader->SetUniform("uModel", modelMatrix);

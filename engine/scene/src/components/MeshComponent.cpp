@@ -16,6 +16,7 @@
 #include <iostream>
 #include <map>
 #include <memory>
+#include <sstream>
 #include <string>
 
 namespace PlutoGE::scene
@@ -211,6 +212,7 @@ namespace PlutoGE::scene
             std::optional<float> attenuationDistance;
             std::optional<bool> flipNormalY;
             std::optional<std::string> lightmapPath;
+            std::optional<glm::vec4> lightmapUvTransform;
         };
 
         void SerializeInlineMaterialProperties(std::vector<Property> &properties, const std::string &prefix, const render::MaterialConfig &config)
@@ -232,6 +234,7 @@ namespace PlutoGE::scene
             properties.push_back({prefix + "AttenuationDistance", PropertyType::Float, std::to_string(config.attenuationDistance)});
             properties.push_back({prefix + "FlipNormalY", PropertyType::Bool, config.flipNormalY ? "true" : "false"});
             properties.push_back({prefix + "LightmapPath", PropertyType::String, config.lightmapTexture ? config.lightmapTexture->GetFilePath() : std::string{}});
+            properties.push_back({prefix + "LightmapUvTransform", PropertyType::String, SerializeVec4(config.lightmapUvTransform)});
         }
 
         void DeserializeInlineMaterialField(SerializedMaterialData &serializedMaterial, const std::string &fieldName, const std::string &value)
@@ -311,6 +314,10 @@ namespace PlutoGE::scene
             else if (fieldName == "LightmapPath")
             {
                 serializedMaterial.lightmapPath = value;
+            }
+            else if (fieldName == "LightmapUvTransform")
+            {
+                serializedMaterial.lightmapUvTransform = ParseVec4(value, glm::vec4(1.0f, 1.0f, 0.0f, 0.0f));
             }
         }
 
@@ -394,6 +401,10 @@ namespace PlutoGE::scene
                     material.SetLightmapTexture(lightmapTexture);
                 }
             }
+            if (serializedMaterial.lightmapUvTransform.has_value())
+            {
+                material.SetLightmapUvTransform(*serializedMaterial.lightmapUvTransform);
+            }
         }
     }
 
@@ -405,6 +416,7 @@ namespace PlutoGE::scene
         }
 
         m_mesh = mesh;
+        m_generatedLightmapUvSubmeshes.clear();
         RefreshMeshDerivedState();
         MarkRenderCommandsDirty();
 
@@ -542,6 +554,19 @@ namespace PlutoGE::scene
             {"MeshRotationOffset", PropertyType::Vec3, SerializeVec3(m_meshRotationOffset)},
             {"MaterialSlotCount", PropertyType::Int, std::to_string(m_materials.size())},
         };
+        if (!m_generatedLightmapUvSubmeshes.empty())
+        {
+            std::string generatedSubmeshes;
+            for (const size_t submeshIndex : m_generatedLightmapUvSubmeshes)
+            {
+                if (!generatedSubmeshes.empty())
+                {
+                    generatedSubmeshes += ",";
+                }
+                generatedSubmeshes += std::to_string(submeshIndex);
+            }
+            properties.push_back({"GeneratedLightmapUvSubmeshes", PropertyType::String, generatedSubmeshes});
+        }
 
         for (size_t materialSlotIndex = 0; materialSlotIndex < m_materials.size(); ++materialSlotIndex)
         {
@@ -592,6 +617,7 @@ namespace PlutoGE::scene
         std::string modelAssetId;
         std::uint64_t modelObjectId = 0;
         bool useGeneratedLods = m_useGeneratedLods;
+        std::vector<size_t> generatedLightmapUvSubmeshes;
 
         for (const auto &property : properties)
         {
@@ -622,6 +648,21 @@ namespace PlutoGE::scene
             else if (property.name == "UseGeneratedLods")
             {
                 useGeneratedLods = property.value == "true" || property.value == "1";
+            }
+            else if (property.name == "GeneratedLightmapUvSubmeshes")
+            {
+                std::stringstream stream(property.value);
+                std::string token;
+                while (std::getline(stream, token, ','))
+                {
+                    try
+                    {
+                        generatedLightmapUvSubmeshes.push_back(static_cast<size_t>(std::stoull(token)));
+                    }
+                    catch (...)
+                    {
+                    }
+                }
             }
             else if (property.name == "MeshPositionOffset")
             {
@@ -760,6 +801,36 @@ namespace PlutoGE::scene
 
             ApplySerializedMaterialData(*material, serializedMaterial);
         }
+
+        GenerateLightmapUvAtlasForSubmeshes(generatedLightmapUvSubmeshes);
+    }
+
+    bool MeshComponent::GenerateLightmapUvAtlasForSubmeshes(const std::vector<size_t> &submeshIndices)
+    {
+        if (!m_mesh || submeshIndices.empty())
+        {
+            return false;
+        }
+
+        for (const size_t submeshIndex : submeshIndices)
+        {
+            if (submeshIndex >= m_mesh->GetSubmeshCount() ||
+                std::find(m_generatedLightmapUvSubmeshes.begin(),
+                          m_generatedLightmapUvSubmeshes.end(),
+                          submeshIndex) != m_generatedLightmapUvSubmeshes.end())
+            {
+                continue;
+            }
+            m_generatedLightmapUvSubmeshes.push_back(submeshIndex);
+        }
+        std::sort(m_generatedLightmapUvSubmeshes.begin(), m_generatedLightmapUvSubmeshes.end());
+
+        const bool changed = m_mesh->GenerateLightmapUvAtlasForSubmeshes(m_generatedLightmapUvSubmeshes);
+        if (changed)
+        {
+            MarkRenderCommandsDirty();
+        }
+        return changed;
     }
 
     void MeshComponent::Update(float deltaTime)

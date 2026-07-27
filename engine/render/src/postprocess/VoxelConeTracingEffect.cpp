@@ -792,12 +792,21 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
         {
             if (!command.mesh || !command.material || !IntersectsVoxelVolume(command, volumeOrigin, cascade.size))
                 continue;
-            std::shared_ptr<const std::vector<glm::mat4>> jointSnapshot;
+
+            // Construct directly in reserved storage. Moving a temporary job
+            // through push_back corrupted ownership-bearing members in MSVC
+            // debug builds during scene-load voxelization.
+            cascade.jobs.emplace_back();
+            auto &job = cascade.jobs.back();
             if (command.jointMatrices)
-                jointSnapshot = std::make_shared<const std::vector<glm::mat4>>(*command.jointMatrices);
-            auto snapshot = command;
-            snapshot.material = nullptr;
-            snapshot.jointMatrices = jointSnapshot ? jointSnapshot.get() : nullptr;
+            {
+                job.jointMatrices =
+                    std::make_shared<const std::vector<glm::mat4>>(*command.jointMatrices);
+            }
+            job.command = command;
+            job.command.material = nullptr;
+            job.command.jointMatrices =
+                job.jointMatrices ? job.jointMatrices.get() : nullptr;
             const auto &materialConfig = command.material->GetConfig();
             std::size_t voxelLod = 0;
             // Index-only generated LODs are safe for untextured opaque meshes.
@@ -815,12 +824,19 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
                         lodCount - 1);
                 }
             }
-            VoxelizationJob job;
-            job.command = std::move(snapshot);
-            job.material = Material(materialConfig);
-            job.jointMatrices = std::move(jointSnapshot);
+            job.material = VoxelMaterialSnapshot{
+                .color = materialConfig.color,
+                .uvScale = materialConfig.uvScale,
+                .emission = materialConfig.emission,
+                .albedoTexture = materialConfig.albedoTexture,
+                .metallicTexture = materialConfig.metallicTexture,
+                .surfaceType = materialConfig.surfaceType,
+                .alphaMode = materialConfig.alphaMode,
+                .metallicTextureChannel = materialConfig.metallicTextureChannel,
+                .alphaCutoff = materialConfig.alphaCutoff,
+                .metallic = materialConfig.metallic,
+            };
             job.voxelLod = voxelLod;
-            cascade.jobs.push_back(std::move(job));
         }
         cascade.rebuildInProgress = true;
 
@@ -937,8 +953,32 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
                 continue;
             }
 
-            m_voxelizationShader->SetUniform("uEmission", job.material.GetConfig().emission);
-            job.material.Bind(m_voxelizationShader);
+            m_voxelizationShader->SetUniform("uColor", job.material.color);
+            m_voxelizationShader->SetUniform("uUVScale", job.material.uvScale);
+            m_voxelizationShader->SetUniform("uEmission", glm::max(job.material.emission, glm::vec3(0.0f)));
+            m_voxelizationShader->SetUniform("uSurfaceType", static_cast<int>(job.material.surfaceType));
+            m_voxelizationShader->SetUniform("uAlphaMode", static_cast<int>(job.material.alphaMode));
+            m_voxelizationShader->SetUniform("uAlphaCutoff", job.material.alphaCutoff);
+            m_voxelizationShader->SetUniform("uMetallicFactor", job.material.metallic);
+            m_voxelizationShader->SetUniform(
+                "uMetallicTextureChannel",
+                static_cast<int>(job.material.metallicTextureChannel));
+            m_voxelizationShader->TrySetUniform(
+                "uHasAlbedoTexture",
+                job.material.albedoTexture ? 1.0f : 0.0f);
+            if (job.material.albedoTexture)
+            {
+                m_voxelizationShader->TrySetUniform(
+                    "uAlbedoTexture", job.material.albedoTexture, 0);
+            }
+            m_voxelizationShader->TrySetUniform(
+                "uHasMetallicTexture",
+                job.material.metallicTexture ? 1.0f : 0.0f);
+            if (job.material.metallicTexture)
+            {
+                m_voxelizationShader->TrySetUniform(
+                    "uMetallicTexture", job.material.metallicTexture, 2);
+            }
             const bool skinned = job.jointMatrices && !job.jointMatrices->empty();
             m_voxelizationShader->SetUniform("uUseSkinning", skinned ? 1 : 0);
             if (skinned)

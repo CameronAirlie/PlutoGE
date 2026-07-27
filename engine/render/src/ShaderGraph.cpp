@@ -307,6 +307,8 @@ namespace PlutoGE::render
 
             uniform sampler2D uLightmapTexture;
             uniform float uHasLightmapTexture = 0.0;
+            uniform vec2 uUVScale = vec2(1.0);
+            uniform vec4 uLightmapUvTransform = vec4(1.0, 1.0, 0.0, 0.0);
 
             float ReadTextureChannel(vec4 value, int channel)
             {
@@ -437,7 +439,12 @@ namespace PlutoGE::render
                 if ()" + std::string(allowLightmap) +
                                R"( && InstanceFlags.x > 0.5 && uHasLightmapTexture > 0.5)
                 {
-                    vec2 lightmapUv = clamp(mix(UV2, UV, clamp(InstanceFlags.y, 0.0, 1.0)), vec2(0.0), vec2(1.0));
+                    vec2 safeUvScale = max(abs(uUVScale), vec2(0.0001));
+                    vec2 sourceLightmapUv =
+                        mix(UV2, UV, clamp(InstanceFlags.y, 0.0, 1.0)) / safeUvScale;
+                    vec2 lightmapUv = clamp(
+                        sourceLightmapUv * uLightmapUvTransform.xy + uLightmapUvTransform.zw,
+                        vec2(0.0), vec2(1.0));
                     gBakedLighting = vec4(max(texture(uLightmapTexture, lightmapUv).rgb, vec3(0.0)), 1.0);
                 }
 

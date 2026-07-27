@@ -52,6 +52,7 @@ namespace PlutoGE::scene
         void SetMesh(render::Mesh *mesh);
         render::Mesh *GetMesh() const { return m_mesh; }
         void NotifyMeshDataChanged() { MarkRenderCommandsDirty(); }
+        bool GenerateLightmapUvAtlasForSubmeshes(const std::vector<size_t> &submeshIndices);
         void SetStatic(bool isStatic)
         {
             if (m_isStatic == isStatic)
@@ -253,5 +254,6 @@ namespace PlutoGE::scene
         bool m_visible = true;
         bool m_useGeneratedLods = false;
         bool m_hasAnimatedNodeSubmeshes = false;
+        std::vector<size_t> m_generatedLightmapUvSubmeshes;
     };
 }

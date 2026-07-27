@@ -63,6 +63,7 @@ namespace PlutoGE::render
         float attenuationDistance = 1.0f;                 // Distance at which attenuationColor is reached
 
         Texture *lightmapTexture = nullptr; // Optional baked lighting texture sampled with UV2
+        glm::vec4 lightmapUvTransform{1.0f, 1.0f, 0.0f, 0.0f}; // scale.xy, offset.zw
 
         std::string shaderGraphReference;
         std::vector<ShaderGraphVariable> shaderGraphVariables;
@@ -103,6 +104,7 @@ namespace PlutoGE::render
         void SetAttenuationColor(const glm::vec3 &color) { m_config.attenuationColor = color; }
         void SetAttenuationDistance(float distance) { m_config.attenuationDistance = distance; }
         void SetLightmapTexture(Texture *texture) { m_config.lightmapTexture = texture; }
+        void SetLightmapUvTransform(const glm::vec4 &transform) { m_config.lightmapUvTransform = transform; }
         MaterialConfig &GetConfig() { return m_config; }
         const MaterialConfig &GetConfig() const { return m_config; }
 

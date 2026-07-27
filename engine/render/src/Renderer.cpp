@@ -829,6 +829,22 @@ namespace PlutoGE::render
                 continue;
             }
 
+            // A generated fallback UV2 atlas is built against the source
+            // submesh triangles. Generated geometry LODs have different
+            // topology, so they cannot safely sample that same lightmap.
+            if (command.mesh->HasGeneratedLightmapUvsForSubmesh(command.submeshIndex))
+            {
+                if (command.lodIndex != 0 ||
+                    command.GetLodTransitionIndex() != 0 ||
+                    command.GetLodTransitionFade() != 0.0f)
+                {
+                    command.lodIndex = 0;
+                    command.SetLodTransition(0, 0.0f);
+                    changed = true;
+                }
+                continue;
+            }
+
             if (command.mesh->GetSubmeshLodCount(command.submeshIndex) <= 1)
             {
                 continue;

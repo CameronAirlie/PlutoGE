@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <future>
 #include <limits>
 #include <map>
@@ -883,7 +884,8 @@ namespace PlutoGE::scene
 
         GLuint CreateGpuDirectBakeProgram()
         {
-            static constexpr const char *source = R"(
+            static constexpr const char *sources[] = {
+                R"(
                 #version 430 core
                 layout(local_size_x = 64) in;
 
@@ -1088,6 +1090,8 @@ namespace PlutoGE::scene
                     return visibleRays / float(rayCount);
                 }
 
+                )",
+                R"(
                 bool TraceClosest(vec3 origin, vec3 direction, out uint hitTriangleIndex, out vec3 hitBarycentric, out float hitDistance)
                 {
                     bool foundHit = false;
@@ -1179,8 +1183,12 @@ namespace PlutoGE::scene
                             }
                         }
 
-                        float ndotl = min(max(dot(geometricNormal, lightDirection), 0.0),
-                                          max(dot(shadingNormal, lightDirection), 0.0));
+                        // Use the interpolated vertex normal for the lighting
+                        // response. Clamping it by the per-triangle geometric
+                        // normal makes otherwise smooth surfaces visibly faceted.
+                        // The geometric normal is still used below to offset
+                        // shadow rays safely away from the surface.
+                        float ndotl = max(dot(shadingNormal, lightDirection), 0.0);
                         if (ndotl <= 0.0 || attenuation <= 0.0) continue;
                         float visibility = ShadowVisibility(
                             light,
@@ -1278,10 +1286,10 @@ namespace PlutoGE::scene
                     results[sampleIndex].Direct = vec4(direct, 1.0);
                     results[sampleIndex].Indirect = vec4(EvaluateIndirect(sampleIndex, bakeSample), 1.0);
                 }
-            )";
+            )"};
 
             const GLuint shader = glCreateShader(GL_COMPUTE_SHADER);
-            glShaderSource(shader, 1, &source, nullptr);
+            glShaderSource(shader, 2, sources, nullptr);
             glCompileShader(shader);
             GLint compiled = GL_FALSE;
             glGetShaderiv(shader, GL_COMPILE_STATUS, &compiled);
@@ -1604,20 +1612,34 @@ namespace PlutoGE::scene
                 glBufferData(GL_SHADER_STORAGE_BUFFER, static_cast<GLsizeiptr>(samples.size() * sizeof(GpuBakeResult)), nullptr, GL_DYNAMIC_READ);
                 glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, buffers[3]);
                 glUniform1ui(glGetUniformLocation(program, "uSampleCount"), static_cast<GLuint>(samples.size()));
-                // Keep each command comfortably below the Windows TDR watchdog.
-                // The GPU BVH makes these small submissions efficient while
-                // avoiding a single long-running AMD compute dispatch.
-                constexpr std::size_t kGpuBakeChunkSize = 256;
-                for (std::size_t sampleOffset = 0; sampleOffset < samples.size(); sampleOffset += kGpuBakeChunkSize)
+                // Keep expensive GI commands small enough for the Windows TDR
+                // watchdog while allowing preview and direct-only bakes to use
+                // substantially larger submissions. The budget is calibrated
+                // so Ultra retains the previous 256-sample command size.
+                constexpr std::size_t kMinGpuBakeChunkSize = 256;
+                constexpr std::size_t kMaxGpuBakeChunkSize = 8192;
+                constexpr std::size_t kGpuBakeWorkBudget = 256 * 192 * 6;
+                const std::size_t giWorkPerSample = gpuGiEnabled
+                                                        ? static_cast<std::size_t>(
+                                                              preparedBake.settings.indirectBounceSampleCount) *
+                                                              static_cast<std::size_t>(
+                                                                  preparedBake.settings.indirectBounceCount)
+                                                        : 1;
+                const std::size_t unalignedChunkSize = std::clamp(
+                    kGpuBakeWorkBudget / std::max<std::size_t>(giWorkPerSample, 1),
+                    kMinGpuBakeChunkSize,
+                    kMaxGpuBakeChunkSize);
+                const std::size_t gpuBakeChunkSize =
+                    std::max(kMinGpuBakeChunkSize, unalignedChunkSize - unalignedChunkSize % 64);
+                const GLint sampleOffsetLocation = glGetUniformLocation(program, "uSampleOffset");
+                for (std::size_t sampleOffset = 0; sampleOffset < samples.size(); sampleOffset += gpuBakeChunkSize)
                 {
-                    const std::size_t chunkSampleCount = std::min(kGpuBakeChunkSize, samples.size() - sampleOffset);
-                    glUniform1ui(glGetUniformLocation(program, "uSampleOffset"), static_cast<GLuint>(sampleOffset));
+                    const std::size_t chunkSampleCount = std::min(gpuBakeChunkSize, samples.size() - sampleOffset);
+                    glUniform1ui(sampleOffsetLocation, static_cast<GLuint>(sampleOffset));
                     glDispatchCompute(static_cast<GLuint>((chunkSampleCount + 63) / 64), 1, 1);
-                    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
-                    // Keep very high resolution presets below the Windows GPU
-                    // watchdog threshold instead of issuing one monolithic job.
-                    glFinish();
                 }
+                // Dispatches are ordered and write disjoint result ranges. A
+                // single barrier is sufficient before the blocking readback.
                 glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
 
                 std::vector<GpuBakeResult> results(samples.size());
@@ -1826,9 +1848,12 @@ namespace PlutoGE::scene
                     }
                 }
 
-                const float geometricNdotL = glm::max(glm::dot(geometricNormal, lightDirection), 0.0f);
                 const float shadingNdotL = glm::max(glm::dot(shadingNormal, lightDirection), 0.0f);
-                const float ndotl = std::min(geometricNdotL, shadingNdotL);
+                // Match real-time smooth shading: vertex normals determine the
+                // lighting response, while the geometric normal is reserved for
+                // ray offsets and intersection safety. Taking the minimum of
+                // both normals exposes every triangle on a smooth mesh.
+                const float ndotl = shadingNdotL;
                 if (ndotl <= 0.0f || attenuation <= 0.0f)
                 {
                     continue;
@@ -2461,6 +2486,156 @@ namespace PlutoGE::scene
             pixels = std::move(sourcePixels);
         }
 
+        void StitchGeneratedLightmapSeams(std::vector<glm::vec3> &pixels,
+                                          const std::vector<float> &weights,
+                                          const std::vector<glm::vec3> &surfaceNormals,
+                                          const std::vector<glm::vec3> &worldPositions,
+                                          const std::vector<float> &positionTolerances)
+        {
+            if (pixels.size() != weights.size() ||
+                pixels.size() != surfaceNormals.size() ||
+                pixels.size() != worldPositions.size() ||
+                pixels.size() != positionTolerances.size())
+            {
+                return;
+            }
+
+            struct WorldCell
+            {
+                std::int64_t x = 0;
+                std::int64_t y = 0;
+                std::int64_t z = 0;
+
+                bool operator==(const WorldCell &) const = default;
+            };
+            struct WorldCellHash
+            {
+                std::size_t operator()(const WorldCell &cell) const
+                {
+                    std::size_t seed = std::hash<std::int64_t>{}(cell.x);
+                    seed ^= std::hash<std::int64_t>{}(cell.y) + 0x9e3779b9u + (seed << 6) + (seed >> 2);
+                    seed ^= std::hash<std::int64_t>{}(cell.z) + 0x9e3779b9u + (seed << 6) + (seed >> 2);
+                    return seed;
+                }
+            };
+
+            std::vector<float> validTolerances;
+            validTolerances.reserve(positionTolerances.size());
+            for (std::size_t pixelIndex = 0; pixelIndex < pixels.size(); ++pixelIndex)
+            {
+                if (weights[pixelIndex] > 0.0f &&
+                    std::isfinite(positionTolerances[pixelIndex]) &&
+                    positionTolerances[pixelIndex] > 0.0f)
+                {
+                    validTolerances.push_back(positionTolerances[pixelIndex]);
+                }
+            }
+            if (validTolerances.empty())
+            {
+                return;
+            }
+
+            const auto middle = validTolerances.begin() +
+                                static_cast<std::ptrdiff_t>(validTolerances.size() / 2);
+            std::nth_element(validTolerances.begin(), middle, validTolerances.end());
+            const float cellSize = std::max(*middle, 0.0001f);
+            const auto resolveCell = [cellSize](const glm::vec3 &position)
+            {
+                return WorldCell{
+                    static_cast<std::int64_t>(std::floor(position.x / cellSize)),
+                    static_cast<std::int64_t>(std::floor(position.y / cellSize)),
+                    static_cast<std::int64_t>(std::floor(position.z / cellSize))};
+            };
+
+            std::unordered_map<WorldCell, std::vector<std::size_t>, WorldCellHash> cells;
+            cells.reserve(validTolerances.size());
+            for (std::size_t pixelIndex = 0; pixelIndex < pixels.size(); ++pixelIndex)
+            {
+                if (weights[pixelIndex] > 0.0f)
+                {
+                    cells[resolveCell(worldPositions[pixelIndex])].push_back(pixelIndex);
+                }
+            }
+
+            const std::vector<glm::vec3> sourcePixels = pixels;
+            for (std::size_t pixelIndex = 0; pixelIndex < pixels.size(); ++pixelIndex)
+            {
+                if (weights[pixelIndex] <= 0.0f)
+                {
+                    continue;
+                }
+
+                const float searchRadius = std::max(positionTolerances[pixelIndex], cellSize);
+                const int cellRadius = std::clamp(
+                    static_cast<int>(std::ceil(searchRadius / cellSize)),
+                    1,
+                    3);
+                const WorldCell centerCell = resolveCell(worldPositions[pixelIndex]);
+                glm::vec3 accumulated = sourcePixels[pixelIndex] * 4.0f;
+                float accumulatedWeight = 4.0f;
+                for (int z = -cellRadius; z <= cellRadius; ++z)
+                {
+                    for (int y = -cellRadius; y <= cellRadius; ++y)
+                    {
+                        for (int x = -cellRadius; x <= cellRadius; ++x)
+                        {
+                            const auto cellIt = cells.find(WorldCell{
+                                centerCell.x + x,
+                                centerCell.y + y,
+                                centerCell.z + z});
+                            if (cellIt == cells.end())
+                            {
+                                continue;
+                            }
+
+                            for (const std::size_t sampleIndex : cellIt->second)
+                            {
+                                if (sampleIndex == pixelIndex)
+                                {
+                                    continue;
+                                }
+
+                                const float normalSimilarity =
+                                    glm::dot(surfaceNormals[pixelIndex], surfaceNormals[sampleIndex]);
+                                if (normalSimilarity < 0.85f)
+                                {
+                                    continue;
+                                }
+
+                                const float tolerance = std::max(
+                                    positionTolerances[pixelIndex],
+                                    positionTolerances[sampleIndex]);
+                                const glm::vec3 positionDelta =
+                                    worldPositions[pixelIndex] - worldPositions[sampleIndex];
+                                const float distanceSq = glm::dot(positionDelta, positionDelta);
+                                if (distanceSq > tolerance * tolerance)
+                                {
+                                    continue;
+                                }
+
+                                const float planeSeparation = std::max(
+                                    std::abs(glm::dot(positionDelta, surfaceNormals[pixelIndex])),
+                                    std::abs(glm::dot(positionDelta, surfaceNormals[sampleIndex])));
+                                if (planeSeparation > tolerance * 0.35f)
+                                {
+                                    continue;
+                                }
+
+                                const float distanceWeight =
+                                    1.0f - std::sqrt(distanceSq) / std::max(tolerance, 0.0001f);
+                                const float sampleWeight =
+                                    std::max(distanceWeight, 0.0f) *
+                                    std::pow(std::max(normalSimilarity, 0.0f), 8.0f);
+                                accumulated += sourcePixels[sampleIndex] * sampleWeight;
+                                accumulatedWeight += sampleWeight;
+                            }
+                        }
+                    }
+                }
+                pixels[pixelIndex] = accumulated / std::max(accumulatedWeight, 0.0001f);
+            }
+        }
+
         BakedTexelLighting EvaluateBakedTexelLighting(const BakeTriangle &triangle,
                                                       const glm::vec3 &barycentric,
                                                       const std::vector<BakeLight> &lights,
@@ -2903,9 +3078,7 @@ namespace PlutoGE::scene
                     const glm::vec3 hitPosition = triangle.worldPositions[0] * hit->barycentric.x + triangle.worldPositions[1] * hit->barycentric.y + triangle.worldPositions[2] * hit->barycentric.z;
                     const glm::vec3 hitGeometricNormal = ComputeTriangleNormal(triangle);
                     const glm::vec3 hitShadingNormal = ResolveInterpolatedNormal(triangle, hit->barycentric);
-                    const float weight = std::min(
-                        glm::max(glm::dot(hitShadingNormal, -direction), 0.0f),
-                        glm::max(glm::dot(hitGeometricNormal, -direction), 0.0f));
+                    const float weight = glm::max(glm::dot(hitShadingNormal, -direction), 0.0f);
                     if (weight <= 0.0f)
                     {
                         continue;
@@ -3260,8 +3433,35 @@ namespace PlutoGE::scene
                         target.resolution,
                         1);
                 }
+                if (target.meshComponent &&
+                    target.meshComponent->GetMesh() &&
+                    target.meshComponent->GetMesh()->HasGeneratedLightmapUvsForSubmesh(
+                        target.submeshIndex))
+                {
+                    // The emergency UV generator isolates every triangle in
+                    // the atlas. Reconnect samples in world space so those
+                    // artificial chart boundaries do not reveal the mesh
+                    // triangulation. Normal and plane tests preserve real hard
+                    // edges and prevent bleeding between nearby surfaces.
+                    StitchGeneratedLightmapSeams(
+                        bakedDirectPixels,
+                        bakedWeights,
+                        bakedSurfaceNormals,
+                        bakedWorldPositions,
+                        bakedPositionTolerances);
+                    StitchGeneratedLightmapSeams(
+                        bakedIndirectPixels,
+                        bakedWeights,
+                        bakedSurfaceNormals,
+                        bakedWorldPositions,
+                        bakedPositionTolerances);
+                }
                 if (preparedBake.settings.bakeIndirectBounce ||
-                    preparedBake.settings.directShadowSampleCount > 1)
+                    preparedBake.settings.directShadowSampleCount > 1 ||
+                    (target.meshComponent &&
+                     target.meshComponent->GetMesh() &&
+                     target.meshComponent->GetMesh()->HasGeneratedLightmapUvsForSubmesh(
+                         target.submeshIndex)))
                 {
                     for (std::size_t pixelIndex = 0; pixelIndex < bakedPixels.size(); ++pixelIndex)
                     {

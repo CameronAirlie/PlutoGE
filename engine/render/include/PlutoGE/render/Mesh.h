@@ -219,6 +219,28 @@ namespace PlutoGE::render
                 {{-0.5f, -0.5f, 0.5f}, {0.0f, -1.0f, 0.0f}, {0.0f, 1.0f}, {-1.0f, 0.0f, 0.0f, 1.0f}},
             };
 
+            // The material UVs intentionally fill 0..1 independently on every
+            // face, which is unsuitable for lightmaps. Give the built-in cube a
+            // separate padded 3x2 atlas so each face owns unique bake texels.
+            constexpr float lightmapChartPadding = 0.08f;
+            for (std::size_t faceIndex = 0; faceIndex < 6; ++faceIndex)
+            {
+                const float chartColumn = static_cast<float>(faceIndex % 3);
+                const float chartRow = static_cast<float>(faceIndex / 3);
+                for (std::size_t faceVertexIndex = 0; faceVertexIndex < 4; ++faceVertexIndex)
+                {
+                    auto &vertex = vertices[faceIndex * 4 + faceVertexIndex];
+                    const float chartU = lightmapChartPadding +
+                                         vertex.uv[0] * (1.0f - lightmapChartPadding * 2.0f);
+                    const float chartV = lightmapChartPadding +
+                                         vertex.uv[1] * (1.0f - lightmapChartPadding * 2.0f);
+                    vertex.uv2 = {
+                        (chartColumn + chartU) / 3.0f,
+                        (chartRow + chartV) / 2.0f,
+                    };
+                }
+            }
+
             std::vector<unsigned int> indices = {
                 0, 1, 2, 2, 3, 0,       // Front face
                 4, 6, 5, 4, 7, 6,       // Back face
@@ -234,6 +256,7 @@ namespace PlutoGE::render
 
             MeshConfig config;
             config.data = std::move(meshData);
+            config.hasLightmapUvs = true;
 
             Mesh *mesh = new Mesh(config);
             mesh->Initialize();

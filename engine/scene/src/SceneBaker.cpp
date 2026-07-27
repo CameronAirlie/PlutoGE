@@ -91,6 +91,17 @@ namespace PlutoGE::scene
             return effectiveTileSize;
         }
 
+        struct BakeLight
+        {
+            LightType type = LightType::Point;
+            glm::vec3 position{0.0f};
+            glm::vec3 color{1.0f};
+            float intensity = 1.0f;
+            float range = 10.0f;
+            glm::vec3 direction{0.0f, -1.0f, 0.0f};
+            bool castsShadows = false;
+        };
+
         template <typename Callback>
         void ParallelFor(std::size_t taskCount, std::size_t workerCount, Callback &&callback)
         {
@@ -144,25 +155,36 @@ namespace PlutoGE::scene
             }
         }
 
-        int CountStaticLights(const Scene &scene)
+        std::vector<BakeLight> SnapshotStaticLights(const Scene &scene)
         {
-            int staticLightCount = 0;
+            std::vector<BakeLight> lights;
             for (const auto *light : scene.GetLights())
             {
                 if (light && light->isStatic)
                 {
-                    ++staticLightCount;
+                    const float directionLengthSq = glm::dot(light->direction, light->direction);
+                    lights.push_back(BakeLight{
+                        .type = light->type,
+                        .position = light->position,
+                        .color = glm::max(light->color, glm::vec3(0.0f)),
+                        .intensity = std::max(light->intensity, 0.0f),
+                        .range = std::max(light->range, 0.0f),
+                        .direction = directionLengthSq > 1e-10f
+                                         ? light->direction / std::sqrt(directionLengthSq)
+                                         : glm::vec3(0.0f, -1.0f, 0.0f),
+                        .castsShadows = light->castsShadows,
+                    });
                 }
             }
 
-            return staticLightCount;
+            return lights;
         }
 
         bool SceneHasDynamicMeshes(const Scene &scene)
         {
             auto collectEntitiesRecursive = [](const Entity *entity, auto &self, std::vector<const Entity *> &entities) -> void
             {
-                if (!entity)
+                if (!entity || !entity->IsActive())
                 {
                     return;
                 }
@@ -186,7 +208,7 @@ namespace PlutoGE::scene
             for (const auto *entity : entities)
             {
                 const auto *meshComponent = entity ? entity->GetComponent<MeshComponent>() : nullptr;
-                if (meshComponent && meshComponent->GetMesh() && !meshComponent->IsStatic())
+                if (meshComponent && meshComponent->IsEnabled() && meshComponent->GetMesh() && !meshComponent->IsStatic())
                 {
                     return true;
                 }
@@ -232,9 +254,13 @@ namespace PlutoGE::scene
             glm::vec2 primaryUvs[3]{};
             glm::vec2 lightmapUvs[3]{};
             glm::vec3 baseColor{1.0f};
-            render::Material *material = nullptr;
+            float baseAlpha = 1.0f;
+            render::Texture *albedoTexture = nullptr;
             MeshComponent *meshComponent = nullptr;
             uint32_t materialSlot = 0;
+            bool castsShadow = true;
+            render::AlphaMode alphaMode = render::AlphaMode::Opaque;
+            float alphaCutoff = 0.5f;
         };
 
         struct BakeTarget
@@ -245,6 +271,7 @@ namespace PlutoGE::scene
             std::vector<std::size_t> triangleIndices;
             std::filesystem::path outputPath;
             int resolution = 0;
+            bool uvCoordinatesInRange = true;
         };
 
         struct RasterizedBakeTriangle
@@ -324,9 +351,9 @@ namespace PlutoGE::scene
 
         struct PreparedSceneBake
         {
-            Scene *scene = nullptr;
             SceneBakeSettings settings;
             std::chrono::steady_clock::time_point bakeStartTime;
+            std::vector<BakeLight> lights;
             std::vector<BakeTriangle> triangles;
             std::map<std::pair<MeshComponent *, std::size_t>, BakeTarget> targets;
             BakeAccelerationStructure acceleration;
@@ -346,6 +373,7 @@ namespace PlutoGE::scene
             bool cancelled = false;
             bool shouldStoreProbeVolume = false;
             int failedLightmapWrites = 0;
+            int invalidLightmapUvCount = 0;
             BakedProbeVolume probeVolume;
             std::vector<CompletedBakeLightmap> lightmaps;
             long long elapsedMs = 0;
@@ -356,6 +384,9 @@ namespace PlutoGE::scene
         glm::vec3 SampleTriangleAlbedo(const BakeTriangle &triangle,
                                        const glm::vec3 &barycentric,
                                        const std::unordered_map<render::Texture *, CpuTextureData> &textureCache);
+        float SampleTriangleAlpha(const BakeTriangle &triangle,
+                                  const glm::vec3 &barycentric,
+                                  const std::unordered_map<render::Texture *, CpuTextureData> &textureCache);
         std::unordered_map<render::Texture *, CpuTextureData> BuildAlbedoTextureCache(const std::vector<BakeTriangle> &triangles);
 
         std::string ResolveBakeDirectoryName(const Scene &scene)
@@ -370,7 +401,7 @@ namespace PlutoGE::scene
 
         void CollectEntitiesRecursive(const Entity *entity, std::vector<const Entity *> &entities)
         {
-            if (!entity)
+            if (!entity || !entity->IsActive())
             {
                 return;
             }
@@ -394,6 +425,16 @@ namespace PlutoGE::scene
             }
 
             return glm::normalize(normal);
+        }
+
+        glm::vec3 NormalizeOr(const glm::vec3 &value, const glm::vec3 &fallback)
+        {
+            const float lengthSq = glm::dot(value, value);
+            if (!std::isfinite(lengthSq) || lengthSq <= 1e-10f)
+            {
+                return fallback;
+            }
+            return value / std::sqrt(lengthSq);
         }
 
         glm::vec3 ResolveInterpolatedNormal(const BakeTriangle &triangle, const glm::vec3 &barycentric)
@@ -424,6 +465,23 @@ namespace PlutoGE::scene
             const float edgeLength2 = glm::length(triangle.worldPositions[0] - triangle.worldPositions[2]);
             const float averageEdgeLength = (edgeLength0 + edgeLength1 + edgeLength2) / 3.0f;
             return std::clamp(averageEdgeLength * 1e-4f, kMinRayHitDistance, kBaseRayEpsilon);
+        }
+
+        float ResolveWorldTexelTolerance(const BakeTriangle &triangle, int resolution)
+        {
+            float largestWorldUnitsPerTexel = 0.0f;
+            for (int edgeIndex = 0; edgeIndex < 3; ++edgeIndex)
+            {
+                const int nextIndex = (edgeIndex + 1) % 3;
+                const float worldLength = glm::length(triangle.worldPositions[nextIndex] - triangle.worldPositions[edgeIndex]);
+                const float texelLength = glm::length(triangle.lightmapUvs[nextIndex] - triangle.lightmapUvs[edgeIndex]) *
+                                          static_cast<float>(std::max(resolution, 1));
+                if (texelLength > 1e-4f)
+                {
+                    largestWorldUnitsPerTexel = std::max(largestWorldUnitsPerTexel, worldLength / texelLength);
+                }
+            }
+            return std::max(largestWorldUnitsPerTexel * 2.5f, 0.005f);
         }
 
         void ExpandBounds(BakeAabb &bounds, const glm::vec3 &point)
@@ -561,6 +619,30 @@ namespace PlutoGE::scene
             return directions;
         }
 
+        std::vector<glm::vec3> GenerateSphereDirections(int directionCount)
+        {
+            std::vector<glm::vec3> directions;
+            if (directionCount <= 0)
+            {
+                return directions;
+            }
+
+            directions.resize(static_cast<std::size_t>(directionCount));
+            constexpr float kGoldenAngle = 2.39996322972865332f;
+            for (int index = 0; index < directionCount; ++index)
+            {
+                const float unitOffset = (static_cast<float>(index) + 0.5f) / static_cast<float>(directionCount);
+                const float z = 1.0f - 2.0f * unitOffset;
+                const float radial = std::sqrt(std::max(1.0f - z * z, 0.0f));
+                const float angle = kGoldenAngle * static_cast<float>(index);
+                directions[static_cast<std::size_t>(index)] = glm::vec3(
+                    std::cos(angle) * radial,
+                    std::sin(angle) * radial,
+                    z);
+            }
+            return directions;
+        }
+
         void BuildTangentBasis(const glm::vec3 &normal, glm::vec3 &outTangent, glm::vec3 &outBitangent)
         {
             const glm::vec3 referenceAxis = std::abs(normal.y) < 0.999f
@@ -667,23 +749,26 @@ namespace PlutoGE::scene
             for (const auto triangleIndex : target.triangleIndices)
             {
                 const auto &triangle = triangles[triangleIndex];
-                const glm::vec2 uv0 = glm::clamp(triangle.lightmapUvs[0], glm::vec2(0.0f), glm::vec2(1.0f));
-                const glm::vec2 uv1 = glm::clamp(triangle.lightmapUvs[1], glm::vec2(0.0f), glm::vec2(1.0f));
-                const glm::vec2 uv2 = glm::clamp(triangle.lightmapUvs[2], glm::vec2(0.0f), glm::vec2(1.0f));
+                const glm::vec2 uv0 = triangle.lightmapUvs[0];
+                const glm::vec2 uv1 = triangle.lightmapUvs[1];
+                const glm::vec2 uv2 = triangle.lightmapUvs[2];
 
                 RasterizedBakeTriangle rasterizedTriangle;
                 rasterizedTriangle.triangleIndex = triangleIndex;
-                rasterizedTriangle.texel0 = uv0 * static_cast<float>(target.resolution - 1);
-                rasterizedTriangle.texel1 = uv1 * static_cast<float>(target.resolution - 1);
-                rasterizedTriangle.texel2 = uv2 * static_cast<float>(target.resolution - 1);
+                // Normalized texture coordinates address texel boundaries in
+                // [0, resolution], while texel centers are x + 0.5. Mapping to
+                // resolution - 1 compressed every chart and displaced shadows.
+                rasterizedTriangle.texel0 = uv0 * static_cast<float>(target.resolution);
+                rasterizedTriangle.texel1 = uv1 * static_cast<float>(target.resolution);
+                rasterizedTriangle.texel2 = uv2 * static_cast<float>(target.resolution);
                 rasterizedTriangle.minX = std::clamp(static_cast<int>(std::floor(std::min({rasterizedTriangle.texel0.x, rasterizedTriangle.texel1.x, rasterizedTriangle.texel2.x}))), 0, target.resolution - 1);
                 rasterizedTriangle.maxX = std::clamp(static_cast<int>(std::ceil(std::max({rasterizedTriangle.texel0.x, rasterizedTriangle.texel1.x, rasterizedTriangle.texel2.x}))), 0, target.resolution - 1);
                 rasterizedTriangle.minY = std::clamp(static_cast<int>(std::floor(std::min({rasterizedTriangle.texel0.y, rasterizedTriangle.texel1.y, rasterizedTriangle.texel2.y}))), 0, target.resolution - 1);
                 rasterizedTriangle.maxY = std::clamp(static_cast<int>(std::ceil(std::max({rasterizedTriangle.texel0.y, rasterizedTriangle.texel1.y, rasterizedTriangle.texel2.y}))), 0, target.resolution - 1);
 
                 const glm::vec2 centerUv = glm::clamp((uv0 + uv1 + uv2) / 3.0f, glm::vec2(0.0f), glm::vec2(1.0f));
-                rasterizedTriangle.centerX = std::clamp(static_cast<int>(std::round(centerUv.x * static_cast<float>(target.resolution - 1))), 0, target.resolution - 1);
-                rasterizedTriangle.centerY = std::clamp(static_cast<int>(std::round(centerUv.y * static_cast<float>(target.resolution - 1))), 0, target.resolution - 1);
+                rasterizedTriangle.centerX = std::clamp(static_cast<int>(std::floor(centerUv.x * static_cast<float>(target.resolution))), 0, target.resolution - 1);
+                rasterizedTriangle.centerY = std::clamp(static_cast<int>(std::floor(centerUv.y * static_cast<float>(target.resolution))), 0, target.resolution - 1);
 
                 const std::size_t rasterIndex = rasterizedTriangles.size();
                 rasterizedTriangles.push_back(rasterizedTriangle);
@@ -768,7 +853,9 @@ namespace PlutoGE::scene
                                          const glm::vec3 &direction,
                                          float maxDistance,
                                          const std::vector<BakeTriangle> &triangles,
-                                         const BakeAccelerationStructure &acceleration)
+                                         const BakeAccelerationStructure &acceleration,
+                                         const std::unordered_map<render::Texture *, CpuTextureData> *textureCache = nullptr,
+                                         bool shadowRay = false)
         {
             if (acceleration.nodes.empty())
             {
@@ -800,9 +887,19 @@ namespace PlutoGE::scene
                     for (std::size_t triangleOffset = 0; triangleOffset < node.triangleCount; ++triangleOffset)
                     {
                         const auto triangleIndex = acceleration.triangleIndices[node.startIndex + triangleOffset];
+                        if (shadowRay && !triangles[triangleIndex].castsShadow)
+                        {
+                            continue;
+                        }
                         float hitDistance = 0.0f;
                         glm::vec3 barycentric{0.0f};
                         if (!IntersectTriangle(origin, direction, triangles[triangleIndex], closestDistance, hitDistance, barycentric))
+                        {
+                            continue;
+                        }
+                        if (triangles[triangleIndex].alphaMode == render::AlphaMode::Mask &&
+                            textureCache &&
+                            SampleTriangleAlpha(triangles[triangleIndex], barycentric, *textureCache) < triangles[triangleIndex].alphaCutoff)
                         {
                             continue;
                         }
@@ -834,46 +931,42 @@ namespace PlutoGE::scene
                                                 const glm::vec3 &shadingNormal,
                                                 const glm::vec3 &geometricNormal,
                                                 float rayEpsilon,
-                                                const Scene &scene,
+                                                const std::vector<BakeLight> &lights,
                                                 const std::vector<BakeTriangle> &triangles,
-                                                const BakeAccelerationStructure &acceleration)
+                                                const BakeAccelerationStructure &acceleration,
+                                                const std::unordered_map<render::Texture *, CpuTextureData> &textureCache)
         {
             glm::vec3 irradiance{0.0f};
             const glm::vec3 rayOrigin = position + geometricNormal * rayEpsilon;
 
-            for (const auto *light : scene.GetLights())
+            for (const auto &light : lights)
             {
-                if (!light || !light->isStatic)
-                {
-                    continue;
-                }
-
                 glm::vec3 lightDirection{0.0f};
                 float attenuation = 1.0f;
                 float maxDistance = std::numeric_limits<float>::max();
 
-                if (light->type == LightType::Directional)
+                if (light.type == LightType::Directional)
                 {
-                    lightDirection = glm::normalize(-light->direction);
+                    lightDirection = -light.direction;
                 }
                 else
                 {
-                    const glm::vec3 toLight = light->position - position;
+                    const glm::vec3 toLight = light.position - position;
                     const float lightDistance = glm::length(toLight);
-                    if (lightDistance <= 1e-4f || lightDistance > light->range)
+                    if (lightDistance <= 1e-4f || light.range <= 1e-4f || lightDistance >= light.range)
                     {
                         continue;
                     }
 
                     lightDirection = toLight / lightDistance;
                     maxDistance = std::max(lightDistance - rayEpsilon, rayEpsilon);
-                    const float normalizedDistance = light->range > 0.0f ? lightDistance / light->range : 1.0f;
+                    const float normalizedDistance = lightDistance / light.range;
                     attenuation = std::clamp(1.0f - normalizedDistance, 0.0f, 1.0f);
                     attenuation *= attenuation;
 
-                    if (light->type == LightType::Spot)
+                    if (light.type == LightType::Spot)
                     {
-                        const float coneFactor = glm::dot(-lightDirection, glm::normalize(light->direction));
+                        const float coneFactor = glm::dot(-lightDirection, light.direction);
                         attenuation *= glm::smoothstep(0.9f, 0.975f, coneFactor);
                     }
                 }
@@ -886,12 +979,12 @@ namespace PlutoGE::scene
                     continue;
                 }
 
-                if (light->castsShadows && TraceScene(rayOrigin, lightDirection, maxDistance, triangles, acceleration).has_value())
+                if (light.castsShadows && TraceScene(rayOrigin, lightDirection, maxDistance, triangles, acceleration, &textureCache, true).has_value())
                 {
                     continue;
                 }
 
-                irradiance += light->color * (light->intensity * attenuation * ndotl);
+                irradiance += light.color * (light.intensity * attenuation * ndotl);
             }
 
             return irradiance;
@@ -902,7 +995,7 @@ namespace PlutoGE::scene
                                                    const glm::vec3 &shadingNormal,
                                                    const glm::vec3 &geometricNormal,
                                                    float rayEpsilon,
-                                                   const Scene &scene,
+                                                   const std::vector<BakeLight> &lights,
                                                    const std::vector<BakeTriangle> &triangles,
                                                    const BakeAccelerationStructure &acceleration,
                                                    const std::vector<glm::vec3> &localDirections,
@@ -937,7 +1030,7 @@ namespace PlutoGE::scene
                 glm::vec3 traceOrigin = rayOrigin;
                 for (int traceStep = 0; traceStep < 8; ++traceStep)
                 {
-                    const auto hit = TraceScene(traceOrigin, sampleDirection, std::numeric_limits<float>::max(), triangles, acceleration);
+                    const auto hit = TraceScene(traceOrigin, sampleDirection, std::numeric_limits<float>::max(), triangles, acceleration, &textureCache);
                     if (!hit.has_value())
                     {
                         break;
@@ -981,7 +1074,7 @@ namespace PlutoGE::scene
                 }
 
                 const float hitRayEpsilon = ResolveRayEpsilon(triangle);
-                const glm::vec3 directIrradiance = EvaluateStaticLightIrradiance(hitPosition, hitShadingNormal, hitGeometricNormal, hitRayEpsilon, scene, triangles, acceleration);
+                const glm::vec3 directIrradiance = EvaluateStaticLightIrradiance(hitPosition, hitShadingNormal, hitGeometricNormal, hitRayEpsilon, lights, triangles, acceleration, textureCache);
                 accumulatedIrradiance += directIrradiance * SampleTriangleAlbedo(triangle, selectedHit->barycentric, textureCache);
             }
 
@@ -1144,18 +1237,48 @@ namespace PlutoGE::scene
             return glm::mix(c0, c1, fy);
         }
 
+        float SampleCpuTextureAlpha(const CpuTextureData &textureData, glm::vec2 uv)
+        {
+            if (textureData.channels < 4 || textureData.width <= 0 || textureData.height <= 0 || textureData.pixels.empty())
+            {
+                return 1.0f;
+            }
+
+            uv = glm::fract(uv);
+            if (uv.x < 0.0f)
+            {
+                uv.x += 1.0f;
+            }
+            if (uv.y < 0.0f)
+            {
+                uv.y += 1.0f;
+            }
+
+            const float texelX = uv.x * static_cast<float>(textureData.width - 1);
+            const float texelY = uv.y * static_cast<float>(textureData.height - 1);
+            const int x0 = std::clamp(static_cast<int>(std::floor(texelX)), 0, textureData.width - 1);
+            const int y0 = std::clamp(static_cast<int>(std::floor(texelY)), 0, textureData.height - 1);
+            const int x1 = std::min(x0 + 1, textureData.width - 1);
+            const int y1 = std::min(y0 + 1, textureData.height - 1);
+            const float fx = texelX - static_cast<float>(x0);
+            const float fy = texelY - static_cast<float>(y0);
+            const auto readAlpha = [&textureData](int x, int y)
+            {
+                const std::size_t pixelIndex = static_cast<std::size_t>((x + y * textureData.width) * textureData.channels);
+                return static_cast<float>(textureData.pixels[pixelIndex + 3]) / 255.0f;
+            };
+            return glm::mix(
+                glm::mix(readAlpha(x0, y0), readAlpha(x1, y0), fx),
+                glm::mix(readAlpha(x0, y1), readAlpha(x1, y1), fx),
+                fy);
+        }
+
         glm::vec3 SampleTriangleAlbedo(const BakeTriangle &triangle,
                                        const glm::vec3 &barycentric,
                                        const std::unordered_map<render::Texture *, CpuTextureData> &textureCache)
         {
             glm::vec3 albedo = triangle.baseColor;
-            if (!triangle.material)
-            {
-                return albedo;
-            }
-
-            const auto &materialConfig = triangle.material->GetConfig();
-            const auto *textureData = FindCpuTexture(textureCache, materialConfig.albedoTexture);
+            const auto *textureData = FindCpuTexture(textureCache, triangle.albedoTexture);
             if (!textureData)
             {
                 return albedo;
@@ -1165,18 +1288,28 @@ namespace PlutoGE::scene
             return albedo * SampleCpuTexture(*textureData, uv);
         }
 
+        float SampleTriangleAlpha(const BakeTriangle &triangle,
+                                  const glm::vec3 &barycentric,
+                                  const std::unordered_map<render::Texture *, CpuTextureData> &textureCache)
+        {
+            float alpha = triangle.baseAlpha;
+            const auto *textureData = FindCpuTexture(textureCache, triangle.albedoTexture);
+            if (textureData)
+            {
+                const glm::vec2 uv = triangle.primaryUvs[0] * barycentric.x +
+                                     triangle.primaryUvs[1] * barycentric.y +
+                                     triangle.primaryUvs[2] * barycentric.z;
+                alpha *= SampleCpuTextureAlpha(*textureData, uv);
+            }
+            return alpha;
+        }
+
         std::unordered_map<render::Texture *, CpuTextureData> BuildAlbedoTextureCache(const std::vector<BakeTriangle> &triangles)
         {
             std::unordered_map<render::Texture *, CpuTextureData> textureCache;
             for (const auto &triangle : triangles)
             {
-                const auto *material = triangle.material;
-                if (!material)
-                {
-                    continue;
-                }
-
-                auto *texture = material->GetConfig().albedoTexture;
+                auto *texture = triangle.albedoTexture;
                 if (!texture || texture->GetType() != GL_TEXTURE_2D || textureCache.find(texture) != textureCache.end())
                 {
                     continue;
@@ -1337,7 +1470,7 @@ namespace PlutoGE::scene
 
         BakedTexelLighting EvaluateBakedTexelLighting(const BakeTriangle &triangle,
                                                       const glm::vec3 &barycentric,
-                                                      const Scene &scene,
+                                                      const std::vector<BakeLight> &lights,
                                                       const std::vector<BakeTriangle> &triangles,
                                                       const BakeAccelerationStructure &acceleration,
                                                       const std::vector<glm::vec3> &indirectBounceDirections,
@@ -1350,8 +1483,8 @@ namespace PlutoGE::scene
             const float rayEpsilon = ResolveRayEpsilon(triangle);
 
             BakedTexelLighting lighting;
-            lighting.direct = EvaluateStaticLightIrradiance(worldPosition, shadingNormal, geometricNormal, rayEpsilon, scene, triangles, acceleration);
-            lighting.indirect = EvaluateIndirectBounceIrradiance(triangle, worldPosition, shadingNormal, geometricNormal, rayEpsilon, scene, triangles, acceleration, indirectBounceDirections, lightmapBounceStrength, albedoTextureCache);
+            lighting.direct = EvaluateStaticLightIrradiance(worldPosition, shadingNormal, geometricNormal, rayEpsilon, lights, triangles, acceleration, albedoTextureCache);
+            lighting.indirect = EvaluateIndirectBounceIrradiance(triangle, worldPosition, shadingNormal, geometricNormal, rayEpsilon, lights, triangles, acceleration, indirectBounceDirections, lightmapBounceStrength, albedoTextureCache);
             return lighting;
         }
 
@@ -1375,7 +1508,7 @@ namespace PlutoGE::scene
             for (const auto *entity : entities)
             {
                 auto *meshComponent = const_cast<Entity *>(entity)->GetComponent<MeshComponent>();
-                if (!meshComponent || !meshComponent->IsStatic() || !meshComponent->GetMesh())
+                if (!meshComponent || !meshComponent->IsEnabled() || !meshComponent->IsStatic() || !meshComponent->GetMesh())
                 {
                     continue;
                 }
@@ -1389,7 +1522,7 @@ namespace PlutoGE::scene
                 {
                     const auto &submesh = meshComponent->GetMesh()->GetSubmesh(submeshIndex);
                     auto *material = meshComponent->GetMaterialForSubmesh(submeshIndex);
-                    if (!material || submesh.indexCount < 3)
+                    if (!material || material->GetConfig().alphaMode == render::AlphaMode::Blend || submesh.indexCount < 3)
                     {
                         continue;
                     }
@@ -1416,7 +1549,11 @@ namespace PlutoGE::scene
                         triangle.meshComponent = meshComponent;
                         triangle.materialSlot = submesh.materialIndex;
                         triangle.baseColor = glm::vec3(material->GetConfig().color);
-                        triangle.material = material;
+                        triangle.baseAlpha = glm::clamp(material->GetConfig().color.a, 0.0f, 1.0f);
+                        triangle.albedoTexture = material->GetConfig().albedoTexture;
+                        triangle.castsShadow = material->GetConfig().castsShadow;
+                        triangle.alphaMode = material->GetConfig().alphaMode;
+                        triangle.alphaCutoff = material->GetConfig().alphaCutoff;
 
                         bool validTriangle = true;
                         for (int vertexIndex = 0; vertexIndex < 3; ++vertexIndex)
@@ -1430,14 +1567,30 @@ namespace PlutoGE::scene
 
                             const auto &sourceVertex = meshData.vertices[sourceIndex];
                             triangle.worldPositions[vertexIndex] = glm::vec3(worldTransform * glm::vec4(sourceVertex.position[0], sourceVertex.position[1], sourceVertex.position[2], 1.0f));
-                            triangle.worldNormals[vertexIndex] = glm::normalize(normalMatrix * glm::vec3(sourceVertex.normal[0], sourceVertex.normal[1], sourceVertex.normal[2]));
-                            triangle.primaryUvs[vertexIndex] = glm::vec2(sourceVertex.uv[0], sourceVertex.uv[1]);
-                            triangle.lightmapUvs[vertexIndex] = ResolveBakeUv(sourceVertex, useLightmapUvs);
+                            triangle.worldNormals[vertexIndex] = NormalizeOr(
+                                normalMatrix * glm::vec3(sourceVertex.normal[0], sourceVertex.normal[1], sourceVertex.normal[2]),
+                                glm::vec3(0.0f));
+                            triangle.primaryUvs[vertexIndex] = glm::vec2(sourceVertex.uv[0], sourceVertex.uv[1]) * material->GetConfig().uvScale;
+                            triangle.lightmapUvs[vertexIndex] = useLightmapUvs
+                                                                    ? ResolveBakeUv(sourceVertex, true)
+                                                                    : triangle.primaryUvs[vertexIndex];
+                            if (target &&
+                                (glm::any(glm::lessThan(triangle.lightmapUvs[vertexIndex], glm::vec2(-0.0001f))) ||
+                                 glm::any(glm::greaterThan(triangle.lightmapUvs[vertexIndex], glm::vec2(1.0001f)))))
+                            {
+                                target->uvCoordinatesInRange = false;
+                            }
                         }
 
                         if (!validTriangle)
                         {
                             continue;
+                        }
+
+                        const glm::vec3 geometricNormal = ComputeTriangleNormal(triangle);
+                        for (auto &worldNormal : triangle.worldNormals)
+                        {
+                            worldNormal = NormalizeOr(worldNormal, geometricNormal);
                         }
 
                         if (target)
@@ -1450,7 +1603,7 @@ namespace PlutoGE::scene
             }
         }
 
-        BakedProbeVolume BuildProbeVolume(const Scene &scene,
+        BakedProbeVolume BuildProbeVolume(const std::vector<BakeLight> &lights,
                                           const std::vector<BakeTriangle> &triangles,
                                           const BakeAccelerationStructure &acceleration,
                                           const SceneBakeSettings &settings,
@@ -1482,7 +1635,10 @@ namespace PlutoGE::scene
                 std::clamp(static_cast<int>(std::ceil(extent.y / 4.0f)), 2, 6),
                 std::clamp(static_cast<int>(std::ceil(extent.z / 4.0f)), 2, 10));
 
-            const auto probeDirections = GenerateHemisphereDirections(settings.probeDirectionCount);
+            // Probes have no surface normal, so they must sample the entire
+            // sphere. The old upper-hemisphere sampling made lighting depend on
+            // world orientation and missed walls/ceilings below the probe.
+            const auto probeDirections = GenerateSphereDirections(settings.probeDirectionCount);
             const std::size_t probeCount = static_cast<std::size_t>(probeVolume.resolution.x * probeVolume.resolution.y * probeVolume.resolution.z);
             probeVolume.irradiance.assign(probeCount, glm::vec3(0.0f));
             const std::size_t workerCount = ResolveBakeWorkerCount(probeCount, kMinProbeCellsPerBakeWorker);
@@ -1522,7 +1678,7 @@ namespace PlutoGE::scene
                         return;
                     }
 
-                    const auto hit = TraceScene(probePosition, direction, std::numeric_limits<float>::max(), triangles, acceleration);
+                    const auto hit = TraceScene(probePosition, direction, std::numeric_limits<float>::max(), triangles, acceleration, &textureCache);
                     if (!hit.has_value())
                     {
                         continue;
@@ -1541,7 +1697,7 @@ namespace PlutoGE::scene
                     }
 
                     const float hitRayEpsilon = ResolveRayEpsilon(triangle);
-                    const glm::vec3 directIrradiance = EvaluateStaticLightIrradiance(hitPosition, hitShadingNormal, hitGeometricNormal, hitRayEpsilon, scene, triangles, acceleration);
+                    const glm::vec3 directIrradiance = EvaluateStaticLightIrradiance(hitPosition, hitShadingNormal, hitGeometricNormal, hitRayEpsilon, lights, triangles, acceleration, textureCache);
                     accumulatedIrradiance += directIrradiance * SampleTriangleAlbedo(triangle, hit->barycentric, textureCache) * (weight * settings.probeBounceStrength);
                     totalWeight += weight;
                 }
@@ -1557,11 +1713,11 @@ namespace PlutoGE::scene
         std::optional<PreparedSceneBake> PrepareSceneBake(Scene &scene, const SceneBakeSettings &settings, SceneBakeResult &outImmediateResult)
         {
             PreparedSceneBake preparedBake;
-            preparedBake.scene = &scene;
             preparedBake.settings = settings;
             preparedBake.bakeStartTime = std::chrono::steady_clock::now();
+            preparedBake.lights = SnapshotStaticLights(scene);
 
-            const int staticLightCount = CountStaticLights(scene);
+            const int staticLightCount = static_cast<int>(preparedBake.lights.size());
             if (staticLightCount == 0)
             {
                 outImmediateResult.message = "Bake skipped: no static lights were found. Mark the lights you want baked as Static.";
@@ -1619,7 +1775,7 @@ namespace PlutoGE::scene
 
             if (preparedBake.shouldStoreProbeVolume)
             {
-                output.probeVolume = BuildProbeVolume(*preparedBake.scene,
+                output.probeVolume = BuildProbeVolume(preparedBake.lights,
                                                       preparedBake.triangles,
                                                       preparedBake.acceleration,
                                                       preparedBake.settings,
@@ -1647,12 +1803,20 @@ namespace PlutoGE::scene
 
                 ++targetIndex;
                 LogBakeMessage("Baking lightmap " + std::to_string(targetIndex) + "/" + std::to_string(preparedBake.targets.size()) + " at " + std::to_string(target.resolution) + "x" + std::to_string(target.resolution) + ".");
+                if (!target.uvCoordinatesInRange)
+                {
+                    ++output.invalidLightmapUvCount;
+                    LogBakeMessage("Skipping lightmap " + std::to_string(targetIndex) + ": bake UVs must stay inside the 0..1 atlas.");
+                    continue;
+                }
 
                 const std::size_t pixelCount = static_cast<std::size_t>(target.resolution * target.resolution);
                 std::vector<glm::vec3> bakedPixels(pixelCount, glm::vec3(0.0f));
                 std::vector<glm::vec3> bakedDirectPixels(pixelCount, glm::vec3(0.0f));
                 std::vector<glm::vec3> bakedIndirectPixels(pixelCount, glm::vec3(0.0f));
                 std::vector<glm::vec3> bakedSurfaceNormals(pixelCount, glm::vec3(0.0f));
+                std::vector<glm::vec3> bakedWorldPositions(pixelCount, glm::vec3(0.0f));
+                std::vector<float> bakedPositionTolerances(pixelCount, 0.0f);
                 std::vector<float> bakedWeights(pixelCount, 0.0f);
                 const int tileSize = ResolveEffectiveLightmapTileSize(preparedBake.settings.lightmapTileSize, target.resolution);
                 std::vector<BakeTileTask> tileTasks;
@@ -1661,6 +1825,7 @@ namespace PlutoGE::scene
                 LogBakeMessage("Lightmap " + std::to_string(targetIndex) + "/" + std::to_string(preparedBake.targets.size()) + " using " + std::to_string(workerCount) + " worker(s) across " + std::to_string(tileTasks.size()) + " tile(s) at " + std::to_string(tileSize) + "px.");
 
                 std::atomic<std::size_t> processedTiles{0};
+                std::atomic<bool> foundOverlappingUvCharts{false};
                 std::atomic<std::size_t> nextProgressTileCount{std::max<std::size_t>(tileTasks.size() / 8, 1)};
                 const std::size_t progressBatch = std::max<std::size_t>(tileTasks.size() / 8, 1);
 
@@ -1682,6 +1847,7 @@ namespace PlutoGE::scene
 
                         const auto &rasterizedTriangle = rasterizedTriangles[rasterIndex];
                         const auto &triangle = preparedBake.triangles[rasterizedTriangle.triangleIndex];
+                        const float worldTexelTolerance = ResolveWorldTexelTolerance(triangle, target.resolution);
                         bool wrotePixel = false;
 
                         const int beginX = std::max(rasterizedTriangle.minX, tileTask.minX);
@@ -1705,12 +1871,29 @@ namespace PlutoGE::scene
                                 }
 
                                 const glm::vec3 shadingNormal = ResolveInterpolatedNormal(triangle, barycentric);
-                                const BakedTexelLighting lighting = EvaluateBakedTexelLighting(triangle, barycentric, *preparedBake.scene, preparedBake.triangles, preparedBake.acceleration, preparedBake.indirectBounceDirections, preparedBake.settings.lightmapBounceStrength, preparedBake.albedoTextureCache);
+                                const glm::vec3 worldPosition = triangle.worldPositions[0] * barycentric.x +
+                                                                triangle.worldPositions[1] * barycentric.y +
+                                                                triangle.worldPositions[2] * barycentric.z;
                                 const std::size_t pixelIndex = static_cast<std::size_t>(x + y * target.resolution);
+                                if (bakedWeights[pixelIndex] > 0.0f)
+                                {
+                                    const float positionTolerance = std::max(
+                                        worldTexelTolerance,
+                                        bakedPositionTolerances[pixelIndex] / bakedWeights[pixelIndex]);
+                                    const glm::vec3 positionDelta = bakedWorldPositions[pixelIndex] / bakedWeights[pixelIndex] - worldPosition;
+                                    if (glm::dot(positionDelta, positionDelta) > positionTolerance * positionTolerance)
+                                    {
+                                        foundOverlappingUvCharts.store(true, std::memory_order_relaxed);
+                                        continue;
+                                    }
+                                }
+                                const BakedTexelLighting lighting = EvaluateBakedTexelLighting(triangle, barycentric, preparedBake.lights, preparedBake.triangles, preparedBake.acceleration, preparedBake.indirectBounceDirections, preparedBake.settings.lightmapBounceStrength, preparedBake.albedoTextureCache);
                                 bakedPixels[pixelIndex] += lighting.Total();
                                 bakedDirectPixels[pixelIndex] += lighting.direct;
                                 bakedIndirectPixels[pixelIndex] += lighting.indirect;
                                 bakedSurfaceNormals[pixelIndex] += shadingNormal;
+                                bakedWorldPositions[pixelIndex] += worldPosition;
+                                bakedPositionTolerances[pixelIndex] += worldTexelTolerance;
                                 bakedWeights[pixelIndex] += 1.0f;
                                 wrotePixel = true;
                             }
@@ -1722,13 +1905,30 @@ namespace PlutoGE::scene
                         {
                             const glm::vec3 barycentric(1.0f / 3.0f);
                             const glm::vec3 shadingNormal = ResolveInterpolatedNormal(triangle, barycentric);
-                            const BakedTexelLighting lighting = EvaluateBakedTexelLighting(triangle, barycentric, *preparedBake.scene, preparedBake.triangles, preparedBake.acceleration, preparedBake.indirectBounceDirections, preparedBake.settings.lightmapBounceStrength, preparedBake.albedoTextureCache);
-
+                            const glm::vec3 worldPosition = triangle.worldPositions[0] * barycentric.x +
+                                                            triangle.worldPositions[1] * barycentric.y +
+                                                            triangle.worldPositions[2] * barycentric.z;
                             const std::size_t pixelIndex = static_cast<std::size_t>(rasterizedTriangle.centerX + rasterizedTriangle.centerY * target.resolution);
+                            if (bakedWeights[pixelIndex] > 0.0f)
+                            {
+                                const float positionTolerance = std::max(
+                                    worldTexelTolerance,
+                                    bakedPositionTolerances[pixelIndex] / bakedWeights[pixelIndex]);
+                                const glm::vec3 positionDelta = bakedWorldPositions[pixelIndex] / bakedWeights[pixelIndex] - worldPosition;
+                                if (glm::dot(positionDelta, positionDelta) > positionTolerance * positionTolerance)
+                                {
+                                    foundOverlappingUvCharts.store(true, std::memory_order_relaxed);
+                                    continue;
+                                }
+                            }
+                            const BakedTexelLighting lighting = EvaluateBakedTexelLighting(triangle, barycentric, preparedBake.lights, preparedBake.triangles, preparedBake.acceleration, preparedBake.indirectBounceDirections, preparedBake.settings.lightmapBounceStrength, preparedBake.albedoTextureCache);
+
                             bakedPixels[pixelIndex] += lighting.Total();
                             bakedDirectPixels[pixelIndex] += lighting.direct;
                             bakedIndirectPixels[pixelIndex] += lighting.indirect;
                             bakedSurfaceNormals[pixelIndex] += shadingNormal;
+                            bakedWorldPositions[pixelIndex] += worldPosition;
+                            bakedPositionTolerances[pixelIndex] += worldTexelTolerance;
                             bakedWeights[pixelIndex] += 1.0f;
                         }
                     }
@@ -1748,6 +1948,12 @@ namespace PlutoGE::scene
                 {
                     output.cancelled = true;
                     break;
+                }
+                if (foundOverlappingUvCharts.load(std::memory_order_relaxed))
+                {
+                    ++output.invalidLightmapUvCount;
+                    LogBakeMessage("Skipping lightmap " + std::to_string(targetIndex) + ": overlapping bake UV charts map different surfaces to the same texels. Supply a non-overlapping UV2 atlas.");
+                    continue;
                 }
 
                 for (std::size_t pixelIndex = 0; pixelIndex < bakedPixels.size(); ++pixelIndex)
@@ -1842,6 +2048,7 @@ namespace PlutoGE::scene
                                         const BakedProbeVolume &probeVolume,
                                         int failedLightmapLoads,
                                         int failedLightmapWrites,
+                                        int invalidLightmapUvCount,
                                         long long elapsedMs)
         {
             SceneBakeResult result;
@@ -1868,6 +2075,11 @@ namespace PlutoGE::scene
             if (failedLightmapWrites > 0)
             {
                 message << " " << failedLightmapWrites << " baked lightmap file(s) could not be written to disk.";
+            }
+
+            if (invalidLightmapUvCount > 0)
+            {
+                message << " " << invalidLightmapUvCount << " mesh section(s) were skipped because their bake UVs are outside 0..1 or overlap; generate a unique, padded UV2 atlas.";
             }
 
             if (result.bakedLightmapCount == 0)
@@ -1929,7 +2141,7 @@ namespace PlutoGE::scene
                 scene.ClearBakedProbeVolume();
             }
 
-            SceneBakeResult result = BuildBakeResult(bakedLightmapCount, output.probeVolume, failedLightmapLoads, output.failedLightmapWrites, output.elapsedMs);
+            SceneBakeResult result = BuildBakeResult(bakedLightmapCount, output.probeVolume, failedLightmapLoads, output.failedLightmapWrites, output.invalidLightmapUvCount, output.elapsedMs);
             LogBakeMessage(result.message);
             return result;
         }

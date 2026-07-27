@@ -684,12 +684,6 @@ namespace PlutoGE::render
 
     Texture *TextureManager::LoadLightmapFromMemory(const std::string &cacheKey, const float *pixels, int width, int height, int channels)
     {
-        auto it = m_textureCache.find(cacheKey);
-        if (it != m_textureCache.end())
-        {
-            return it->second;
-        }
-
         if (!pixels || channels < 1 || channels > 4)
         {
             return nullptr;
@@ -706,7 +700,31 @@ namespace PlutoGE::render
         }
 
         const GLenum format = ResolveTextureFormat(channels);
-        const GLenum internalFormat = channels >= 4 ? GL_RGBA16F : (channels == 1 ? GL_R16F : GL_RGB16F);
+        const GLenum internalFormat = ResolveFloatTextureInternalFormat(channels);
+
+        // A scene bake deliberately reuses its stable output path. Returning the
+        // cached object here used to leave the old GPU pixels in place, making
+        // every bake after the first appear to have done nothing. Preserve the
+        // Texture pointer held by materials, but replace its storage in-place.
+        auto it = m_textureCache.find(cacheKey);
+        if (it != m_textureCache.end())
+        {
+            Texture *texture = it->second;
+            if (!texture || texture->m_type != GL_TEXTURE_2D || texture->m_textureID == 0)
+            {
+                return nullptr;
+            }
+
+            glBindTexture(GL_TEXTURE_2D, texture->m_textureID);
+            ConfigureTexture2D(GL_CLAMP_TO_EDGE, true);
+            UploadTexture2D(static_cast<GLint>(internalFormat), width, height, format, GL_FLOAT, pixels);
+            glGenerateMipmap(GL_TEXTURE_2D);
+            texture->m_width = width;
+            texture->m_height = height;
+            texture->m_channels = channels;
+            return texture;
+        }
+
         TextureConfig config;
         config.filePath = cacheKey;
         Texture *texture = new Texture(config);

@@ -1265,7 +1265,12 @@ void main()
         realtimeAmbient += lpvIndirect;
         realtimeAmbient += bakedProbeIndirect;
         realtimeAmbient += environmentDiffuse;
-        vec3 ambient = mix(realtimeAmbient, bakedIrradiance * albedo * (1.0 - metallic), bakedStaticMaterial ? 1.0 : 0.0);
+        // Lightmaps contain diffuse irradiance (not already shaded color).
+        // Convert irradiance to Lambertian reflected radiance with the same
+        // energy convention as EvaluatePbrLighting. Omitting 1 / PI made baked
+        // static lighting roughly 3.14x brighter than the realtime equivalent.
+        vec3 bakedDiffuse = bakedIrradiance * albedo * (vec3(1.0) - f0) * (1.0 - metallic) / PI;
+        vec3 ambient = mix(realtimeAmbient, bakedDiffuse, bakedStaticMaterial ? 1.0 : 0.0);
         ambient += environmentSpecular;
         FragColor = vec4(ambient + emission, 1.0);
         return;

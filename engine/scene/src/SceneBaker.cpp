@@ -43,6 +43,20 @@ namespace PlutoGE::scene
             std::cout << "[SceneBaker] " << message << std::endl;
         }
 
+        long long ElapsedBakeMilliseconds(std::chrono::steady_clock::time_point startTime)
+        {
+            return std::chrono::duration_cast<std::chrono::milliseconds>(
+                       std::chrono::steady_clock::now() - startTime)
+                .count();
+        }
+
+        void LogBakeTiming(const std::string &stage,
+                           std::chrono::steady_clock::time_point startTime)
+        {
+            LogBakeMessage("[Timing] " + stage + ": " +
+                           std::to_string(ElapsedBakeMilliseconds(startTime)) + " ms.");
+        }
+
         bool IsBakeCancelled(const std::shared_ptr<std::atomic<bool>> &cancelRequested)
         {
             return cancelRequested && cancelRequested->load(std::memory_order_relaxed);
@@ -994,6 +1008,7 @@ namespace PlutoGE::scene
                 bool IntersectsBounds(BakeBvhNode node,
                                       vec3 origin,
                                       vec3 direction,
+                                      vec3 inverseDirection,
                                       float maxDistance,
                                       out float entryDistance)
                 {
@@ -1008,9 +1023,8 @@ namespace PlutoGE::scene
                             continue;
                         }
 
-                        float inverseDirection = 1.0 / direction[axis];
-                        float distance0 = (node.MinBounds[axis] - origin[axis]) * inverseDirection;
-                        float distance1 = (node.MaxBounds[axis] - origin[axis]) * inverseDirection;
+                        float distance0 = (node.MinBounds[axis] - origin[axis]) * inverseDirection[axis];
+                        float distance1 = (node.MaxBounds[axis] - origin[axis]) * inverseDirection[axis];
                         if (distance0 > distance1)
                         {
                             float temporaryDistance = distance0;
@@ -1026,6 +1040,9 @@ namespace PlutoGE::scene
 
                 bool IsShadowed(vec3 origin, vec3 direction, float maxDistance)
                 {
+                    // Division is paid once per ray rather than once per axis
+                    // for every BVH node visited by that ray.
+                    vec3 inverseDirection = 1.0 / direction;
                     int nodeStack[64];
                     float entryStack[64];
                     int stackSize = 1;
@@ -1059,6 +1076,7 @@ namespace PlutoGE::scene
                                            bvhNodes[leftIndex],
                                            origin,
                                            direction,
+                                           inverseDirection,
                                            maxDistance,
                                            leftEntry);
                         bool hitRight = rightIndex != 0xffffffffu &&
@@ -1066,6 +1084,7 @@ namespace PlutoGE::scene
                                             bvhNodes[rightIndex],
                                             origin,
                                             direction,
+                                            inverseDirection,
                                             maxDistance,
                                             rightEntry);
                         // LIFO: push the farther child first so an any-hit
@@ -1133,6 +1152,7 @@ namespace PlutoGE::scene
                 {
                     bool foundHit = false;
                     hitDistance = 1e30;
+                    vec3 inverseDirection = 1.0 / direction;
                     int nodeStack[64];
                     float entryStack[64];
                     int stackSize = 1;
@@ -1185,6 +1205,7 @@ namespace PlutoGE::scene
                                            bvhNodes[leftIndex],
                                            origin,
                                            direction,
+                                           inverseDirection,
                                            hitDistance,
                                            leftEntry);
                         bool hitRight = rightIndex != 0xffffffffu &&
@@ -1192,6 +1213,7 @@ namespace PlutoGE::scene
                                             bvhNodes[rightIndex],
                                             origin,
                                             direction,
+                                            inverseDirection,
                                             hitDistance,
                                             rightEntry);
                         // LIFO: visit the nearer child first. A close triangle
@@ -1462,13 +1484,16 @@ namespace PlutoGE::scene
                 return textureRange * triangle.baseAlpha;
             };
 
+            const auto shaderBuildStart = std::chrono::steady_clock::now();
             const GLuint program = CreateGpuDirectBakeProgram();
             if (program == 0)
             {
                 return false;
             }
+            LogBakeTiming("Compile/link GPU bake shader", shaderBuildStart);
             LogBakeMessage("GPU bake shader compiled; uploading scene acceleration data.");
 
+            const auto gpuScenePreparationStart = std::chrono::steady_clock::now();
             const bool gpuGiEnabled = preparedBake.settings.bakeIndirectBounce &&
                                       preparedBake.settings.indirectBounceSampleCount > 0 &&
                                       preparedBake.settings.indirectBounceCount > 0;
@@ -1577,6 +1602,7 @@ namespace PlutoGE::scene
                 6,
                 gpuBvhTriangleIndices.data(),
                 gpuBvhTriangleIndices.size() * sizeof(std::uint32_t));
+            LogBakeTiming("Pack and upload GPU scene data", gpuScenePreparationStart);
             LogBakeMessage(
                 "GPU scene upload completed with " + std::to_string(gpuTriangles.size()) +
                 " triangle(s) and " + std::to_string(gpuBvhNodes.size()) + " BVH node(s).");
@@ -1603,6 +1629,7 @@ namespace PlutoGE::scene
                     continue;
                 }
 
+                const auto gpuSamplePreparationStart = std::chrono::steady_clock::now();
                 std::vector<BakeTileTask> unusedTasks;
                 const auto rasterizedTriangles = BuildLightmapTileTasks(target, preparedBake.triangles, target.resolution, unusedTasks);
                 std::vector<GpuBakeSample> samples;
@@ -1674,6 +1701,10 @@ namespace PlutoGE::scene
                     continue;
                 }
 
+                LogBakeTiming(
+                    "GPU target " + std::to_string(gpuTargetIndex) +
+                        " rasterize covered texels",
+                    gpuSamplePreparationStart);
                 LogBakeMessage(
                     "GPU baking target " + std::to_string(gpuTargetIndex) + "/" +
                     std::to_string(preparedBake.targets.size()) + " with " +
@@ -2567,16 +2598,18 @@ namespace PlutoGE::scene
             pixels = std::move(sourcePixels);
         }
 
-        void StitchGeneratedLightmapSeams(std::vector<glm::vec3> &pixels,
+        void StitchGeneratedLightmapSeams(std::vector<glm::vec3> &directPixels,
+                                          std::vector<glm::vec3> &indirectPixels,
                                           const std::vector<float> &weights,
                                           const std::vector<glm::vec3> &surfaceNormals,
                                           const std::vector<glm::vec3> &worldPositions,
                                           const std::vector<float> &positionTolerances)
         {
-            if (pixels.size() != weights.size() ||
-                pixels.size() != surfaceNormals.size() ||
-                pixels.size() != worldPositions.size() ||
-                pixels.size() != positionTolerances.size())
+            if (directPixels.size() != weights.size() ||
+                indirectPixels.size() != weights.size() ||
+                directPixels.size() != surfaceNormals.size() ||
+                directPixels.size() != worldPositions.size() ||
+                directPixels.size() != positionTolerances.size())
             {
                 return;
             }
@@ -2602,7 +2635,7 @@ namespace PlutoGE::scene
 
             std::vector<float> validTolerances;
             validTolerances.reserve(positionTolerances.size());
-            for (std::size_t pixelIndex = 0; pixelIndex < pixels.size(); ++pixelIndex)
+            for (std::size_t pixelIndex = 0; pixelIndex < directPixels.size(); ++pixelIndex)
             {
                 if (weights[pixelIndex] > 0.0f &&
                     std::isfinite(positionTolerances[pixelIndex]) &&
@@ -2630,7 +2663,7 @@ namespace PlutoGE::scene
 
             std::unordered_map<WorldCell, std::vector<std::size_t>, WorldCellHash> cells;
             cells.reserve(validTolerances.size());
-            for (std::size_t pixelIndex = 0; pixelIndex < pixels.size(); ++pixelIndex)
+            for (std::size_t pixelIndex = 0; pixelIndex < directPixels.size(); ++pixelIndex)
             {
                 if (weights[pixelIndex] > 0.0f)
                 {
@@ -2638,12 +2671,17 @@ namespace PlutoGE::scene
                 }
             }
 
-            const std::vector<glm::vec3> sourcePixels = pixels;
-            for (std::size_t pixelIndex = 0; pixelIndex < pixels.size(); ++pixelIndex)
-            {
+            const std::vector<glm::vec3> sourceDirectPixels = directPixels;
+            const std::vector<glm::vec3> sourceIndirectPixels = indirectPixels;
+            const auto &readOnlyCells = cells;
+            const std::size_t workerCount =
+                ResolveBakeWorkerCount(directPixels.size(), 4096);
+            ParallelFor(directPixels.size(), workerCount, [&](std::size_t pixelIndex, std::size_t workerIndex)
+                        {
+                static_cast<void>(workerIndex);
                 if (weights[pixelIndex] <= 0.0f)
                 {
-                    continue;
+                    return;
                 }
 
                 const float searchRadius = std::max(positionTolerances[pixelIndex], cellSize);
@@ -2652,7 +2690,8 @@ namespace PlutoGE::scene
                     1,
                     3);
                 const WorldCell centerCell = resolveCell(worldPositions[pixelIndex]);
-                glm::vec3 accumulated = sourcePixels[pixelIndex] * 4.0f;
+                glm::vec3 accumulatedDirect = sourceDirectPixels[pixelIndex] * 4.0f;
+                glm::vec3 accumulatedIndirect = sourceIndirectPixels[pixelIndex] * 4.0f;
                 float accumulatedWeight = 4.0f;
                 for (int z = -cellRadius; z <= cellRadius; ++z)
                 {
@@ -2660,11 +2699,11 @@ namespace PlutoGE::scene
                     {
                         for (int x = -cellRadius; x <= cellRadius; ++x)
                         {
-                            const auto cellIt = cells.find(WorldCell{
+                            const auto cellIt = readOnlyCells.find(WorldCell{
                                 centerCell.x + x,
                                 centerCell.y + y,
                                 centerCell.z + z});
-                            if (cellIt == cells.end())
+                            if (cellIt == readOnlyCells.end())
                             {
                                 continue;
                             }
@@ -2707,14 +2746,17 @@ namespace PlutoGE::scene
                                 const float sampleWeight =
                                     std::max(distanceWeight, 0.0f) *
                                     std::pow(std::max(normalSimilarity, 0.0f), 8.0f);
-                                accumulated += sourcePixels[sampleIndex] * sampleWeight;
+                                accumulatedDirect += sourceDirectPixels[sampleIndex] * sampleWeight;
+                                accumulatedIndirect += sourceIndirectPixels[sampleIndex] * sampleWeight;
                                 accumulatedWeight += sampleWeight;
                             }
                         }
                     }
                 }
-                pixels[pixelIndex] = accumulated / std::max(accumulatedWeight, 0.0001f);
-            }
+                directPixels[pixelIndex] =
+                    accumulatedDirect / std::max(accumulatedWeight, 0.0001f);
+                indirectPixels[pixelIndex] =
+                    accumulatedIndirect / std::max(accumulatedWeight, 0.0001f); });
         }
 
         BakedTexelLighting EvaluateBakedTexelLighting(const BakeTriangle &triangle,
@@ -3181,13 +3223,16 @@ namespace PlutoGE::scene
 
         std::optional<PreparedSceneBake> PrepareSceneBake(Scene &scene, const SceneBakeSettings &settings, SceneBakeResult &outImmediateResult)
         {
+            const auto preparationStart = std::chrono::steady_clock::now();
             PreparedSceneBake preparedBake;
             preparedBake.settings = settings;
             preparedBake.settings.directShadowSampleCount = std::clamp(preparedBake.settings.directShadowSampleCount, 1, 32);
             preparedBake.settings.indirectBounceCount = std::clamp(preparedBake.settings.indirectBounceCount, 1, 8);
             preparedBake.settings.indirectDenoisePassCount = std::clamp(preparedBake.settings.indirectDenoisePassCount, 0, 4);
             preparedBake.bakeStartTime = std::chrono::steady_clock::now();
+            const auto lightSnapshotStart = std::chrono::steady_clock::now();
             preparedBake.lights = SnapshotStaticLights(scene);
+            LogBakeTiming("Snapshot static lights", lightSnapshotStart);
 
             const int staticLightCount = static_cast<int>(preparedBake.lights.size());
             if (staticLightCount == 0)
@@ -3209,6 +3254,7 @@ namespace PlutoGE::scene
                 return std::nullopt;
             }
 
+            const auto geometryCollectionStart = std::chrono::steady_clock::now();
             CollectStaticTriangles(scene, preparedBake.triangles, preparedBake.targets, bakeRoot, std::max(settings.lightmapResolution, 4));
             const size_t generatedAtlasCount =
                 GenerateFallbackLightmapUvAtlases(preparedBake.targets, preparedBake.triangles);
@@ -3227,6 +3273,7 @@ namespace PlutoGE::scene
                     bakeRoot,
                     std::max(settings.lightmapResolution, 4));
             }
+            LogBakeTiming("Collect geometry and validate/generate UV atlases", geometryCollectionStart);
             LogBakeMessage("Collected " + std::to_string(preparedBake.targets.size()) + " bake target(s) across " + std::to_string(preparedBake.triangles.size()) + " triangle(s).");
             if (preparedBake.targets.empty())
             {
@@ -3235,9 +3282,13 @@ namespace PlutoGE::scene
                 return std::nullopt;
             }
 
+            const auto bvhBuildStart = std::chrono::steady_clock::now();
             preparedBake.acceleration = BuildAccelerationStructure(preparedBake.triangles);
+            LogBakeTiming("Build CPU/GPU BVH", bvhBuildStart);
             LogBakeMessage("Built bake BVH with " + std::to_string(preparedBake.acceleration.nodes.size()) + " node(s).");
+            const auto textureCaptureStart = std::chrono::steady_clock::now();
             preparedBake.albedoTextureCache = BuildAlbedoTextureCache(preparedBake.triangles);
+            LogBakeTiming("Read back bake textures", textureCaptureStart);
             LogBakeMessage("Captured " + std::to_string(preparedBake.albedoTextureCache.size()) + " albedo texture(s) for bake sampling.");
 
             preparedBake.indirectBounceDirections = settings.bakeIndirectBounce
@@ -3246,7 +3297,9 @@ namespace PlutoGE::scene
             if (settings.useGpu)
             {
                 LogBakeMessage("Preparing GPU bake backend.");
+                const auto gpuBakeStart = std::chrono::steady_clock::now();
                 preparedBake.gpuBakeActive = BuildGpuDirectLightmaps(preparedBake);
+                LogBakeTiming("GPU lighting total", gpuBakeStart);
             }
             preparedBake.shouldStoreProbeVolume = settings.bakeProbeVolume && SceneHasDynamicMeshes(scene);
             if (preparedBake.shouldStoreProbeVolume)
@@ -3258,23 +3311,27 @@ namespace PlutoGE::scene
                 LogBakeMessage("Skipping probe volume because no dynamic mesh components were found.");
             }
 
+            LogBakeTiming("Scene bake preparation total", preparationStart);
             return preparedBake;
         }
 
         BackgroundBakeOutput ExecutePreparedBake(const PreparedSceneBake &preparedBake,
                                                  const std::shared_ptr<std::atomic<bool>> &cancelRequested)
         {
+            const auto backgroundStart = std::chrono::steady_clock::now();
             BackgroundBakeOutput output;
             output.shouldStoreProbeVolume = preparedBake.shouldStoreProbeVolume;
 
             if (preparedBake.shouldStoreProbeVolume)
             {
+                const auto probeBakeStart = std::chrono::steady_clock::now();
                 output.probeVolume = BuildProbeVolume(preparedBake.lights,
                                                       preparedBake.triangles,
                                                       preparedBake.acceleration,
                                                       preparedBake.settings,
                                                       preparedBake.albedoTextureCache,
                                                       cancelRequested);
+                LogBakeTiming("Probe volume", probeBakeStart);
                 if (IsBakeCancelled(cancelRequested))
                 {
                     output.cancelled = true;
@@ -3295,6 +3352,7 @@ namespace PlutoGE::scene
                 }
 
                 ++targetIndex;
+                const auto targetStart = std::chrono::steady_clock::now();
                 LogBakeMessage("Baking lightmap " + std::to_string(targetIndex) + "/" + std::to_string(preparedBake.targets.size()) + " at " + std::to_string(target.resolution) + "x" + std::to_string(target.resolution) + ".");
                 if (!target.uvCoordinatesInRange)
                 {
@@ -3325,7 +3383,11 @@ namespace PlutoGE::scene
                 std::vector<float> bakedWeights(pixelCount, 0.0f);
                 const int tileSize = ResolveEffectiveLightmapTileSize(preparedBake.settings.lightmapTileSize, target.resolution);
                 std::vector<BakeTileTask> tileTasks;
+                const auto rasterSetupStart = std::chrono::steady_clock::now();
                 const auto rasterizedTriangles = BuildLightmapTileTasks(target, preparedBake.triangles, tileSize, tileTasks);
+                LogBakeTiming(
+                    "Lightmap " + std::to_string(targetIndex) + " raster/task setup",
+                    rasterSetupStart);
                 const std::size_t workerCount = ResolveBakeWorkerCount(tileTasks.size(), kMinLightmapTasksPerBakeWorker);
                 LogBakeMessage("Lightmap " + std::to_string(targetIndex) + "/" + std::to_string(preparedBake.targets.size()) + " using " + std::to_string(workerCount) + " worker(s) across " + std::to_string(tileTasks.size()) + " tile(s) at " + std::to_string(tileSize) + "px.");
 
@@ -3334,6 +3396,7 @@ namespace PlutoGE::scene
                 std::atomic<std::size_t> nextProgressTileCount{std::max<std::size_t>(tileTasks.size() / 8, 1)};
                 const std::size_t progressBatch = std::max<std::size_t>(tileTasks.size() / 8, 1);
 
+                const auto texelResolveStart = std::chrono::steady_clock::now();
                 ParallelFor(tileTasks.size(), workerCount, [&](std::size_t taskIndex, std::size_t workerIndex)
                             {
                     static_cast<void>(workerIndex);
@@ -3392,13 +3455,30 @@ namespace PlutoGE::scene
                                         continue;
                                     }
                                 }
-                                BakedTexelLighting lighting = EvaluateBakedTexelLighting(triangle, barycentric, preparedBake.lights, preparedBake.triangles, preparedBake.acceleration, preparedBake.indirectBounceDirections, gpuLightmap == nullptr, !gpuLightmap || !gpuLightmap->includesIndirect, preparedBake.settings.directShadowSampleCount, preparedBake.settings.indirectBounceCount, preparedBake.settings.lightmapBounceStrength, preparedBake.albedoTextureCache);
-                                if (gpuLightmap)
+                                BakedTexelLighting lighting;
+                                if (gpuLightmap && gpuLightmap->includesIndirect)
                                 {
                                     lighting.direct = gpuLightmap->direct[pixelIndex];
-                                    if (gpuLightmap->includesIndirect)
+                                    lighting.indirect = gpuLightmap->indirect[pixelIndex];
+                                }
+                                else
+                                {
+                                    lighting = EvaluateBakedTexelLighting(
+                                        triangle,
+                                        barycentric,
+                                        preparedBake.lights,
+                                        preparedBake.triangles,
+                                        preparedBake.acceleration,
+                                        preparedBake.indirectBounceDirections,
+                                        gpuLightmap == nullptr,
+                                        true,
+                                        preparedBake.settings.directShadowSampleCount,
+                                        preparedBake.settings.indirectBounceCount,
+                                        preparedBake.settings.lightmapBounceStrength,
+                                        preparedBake.albedoTextureCache);
+                                    if (gpuLightmap)
                                     {
-                                        lighting.indirect = gpuLightmap->indirect[pixelIndex];
+                                        lighting.direct = gpuLightmap->direct[pixelIndex];
                                     }
                                 }
                                 bakedPixels[pixelIndex] += lighting.Total();
@@ -3434,7 +3514,32 @@ namespace PlutoGE::scene
                                     continue;
                                 }
                             }
-                            BakedTexelLighting lighting = EvaluateBakedTexelLighting(triangle, barycentric, preparedBake.lights, preparedBake.triangles, preparedBake.acceleration, preparedBake.indirectBounceDirections, true, true, preparedBake.settings.directShadowSampleCount, preparedBake.settings.indirectBounceCount, preparedBake.settings.lightmapBounceStrength, preparedBake.albedoTextureCache);
+                            BakedTexelLighting lighting;
+                            if (gpuLightmap && gpuLightmap->includesIndirect)
+                            {
+                                lighting.direct = gpuLightmap->direct[pixelIndex];
+                                lighting.indirect = gpuLightmap->indirect[pixelIndex];
+                            }
+                            else
+                            {
+                                lighting = EvaluateBakedTexelLighting(
+                                    triangle,
+                                    barycentric,
+                                    preparedBake.lights,
+                                    preparedBake.triangles,
+                                    preparedBake.acceleration,
+                                    preparedBake.indirectBounceDirections,
+                                    gpuLightmap == nullptr,
+                                    true,
+                                    preparedBake.settings.directShadowSampleCount,
+                                    preparedBake.settings.indirectBounceCount,
+                                    preparedBake.settings.lightmapBounceStrength,
+                                    preparedBake.albedoTextureCache);
+                                if (gpuLightmap)
+                                {
+                                    lighting.direct = gpuLightmap->direct[pixelIndex];
+                                }
+                            }
 
                             bakedPixels[pixelIndex] += lighting.Total();
                             bakedDirectPixels[pixelIndex] += lighting.direct;
@@ -3456,6 +3561,9 @@ namespace PlutoGE::scene
                             break;
                         }
                     } });
+                LogBakeTiming(
+                    "Lightmap " + std::to_string(targetIndex) + " texel resolve",
+                    texelResolveStart);
 
                 if (IsBakeCancelled(cancelRequested))
                 {
@@ -3469,6 +3577,7 @@ namespace PlutoGE::scene
                     continue;
                 }
 
+                const auto postProcessStart = std::chrono::steady_clock::now();
                 for (std::size_t pixelIndex = 0; pixelIndex < bakedPixels.size(); ++pixelIndex)
                 {
                     if (bakedWeights[pixelIndex] > 0.0f)
@@ -3490,7 +3599,11 @@ namespace PlutoGE::scene
                         }
                     }
                 }
+                LogBakeTiming(
+                    "Lightmap " + std::to_string(targetIndex) + " normalize buffers",
+                    postProcessStart);
 
+                const auto denoiseStart = std::chrono::steady_clock::now();
                 if (preparedBake.settings.bakeIndirectBounce &&
                     preparedBake.settings.indirectDenoisePassCount > 0)
                 {
@@ -3514,6 +3627,10 @@ namespace PlutoGE::scene
                         target.resolution,
                         1);
                 }
+                LogBakeTiming(
+                    "Lightmap " + std::to_string(targetIndex) + " denoise",
+                    denoiseStart);
+                const auto seamStitchStart = std::chrono::steady_clock::now();
                 if (target.meshComponent &&
                     target.meshComponent->GetMesh() &&
                     target.meshComponent->GetMesh()->HasGeneratedLightmapUvsForSubmesh(
@@ -3526,17 +3643,15 @@ namespace PlutoGE::scene
                     // edges and prevent bleeding between nearby surfaces.
                     StitchGeneratedLightmapSeams(
                         bakedDirectPixels,
-                        bakedWeights,
-                        bakedSurfaceNormals,
-                        bakedWorldPositions,
-                        bakedPositionTolerances);
-                    StitchGeneratedLightmapSeams(
                         bakedIndirectPixels,
                         bakedWeights,
                         bakedSurfaceNormals,
                         bakedWorldPositions,
                         bakedPositionTolerances);
                 }
+                LogBakeTiming(
+                    "Lightmap " + std::to_string(targetIndex) + " seam stitch",
+                    seamStitchStart);
                 if (preparedBake.settings.bakeIndirectBounce ||
                     preparedBake.settings.directShadowSampleCount > 1 ||
                     (target.meshComponent &&
@@ -3554,6 +3669,7 @@ namespace PlutoGE::scene
                     }
                 }
 
+                const auto dilationStart = std::chrono::steady_clock::now();
                 auto bakedFilledWeights = bakedWeights;
                 auto bakedFilledNormals = bakedSurfaceNormals;
                 FillLightmapHoles(bakedPixels, bakedFilledWeights, bakedFilledNormals, target.resolution);
@@ -3563,7 +3679,11 @@ namespace PlutoGE::scene
                 auto bakedIndirectNormals = bakedSurfaceNormals;
                 FillLightmapHoles(bakedDirectPixels, bakedDirectWeights, bakedDirectNormals, target.resolution);
                 FillLightmapHoles(bakedIndirectPixels, bakedIndirectWeights, bakedIndirectNormals, target.resolution);
+                LogBakeTiming(
+                    "Lightmap " + std::to_string(targetIndex) + " dilation",
+                    dilationStart);
 
+                const auto statisticsStart = std::chrono::steady_clock::now();
                 float directAverageLuminance = 0.0f;
                 float directMaxLuminance = 0.0f;
                 float indirectAverageLuminance = 0.0f;
@@ -3591,13 +3711,24 @@ namespace PlutoGE::scene
                     directAverageLuminance /= static_cast<float>(coveredPixelCount);
                     indirectAverageLuminance /= static_cast<float>(coveredPixelCount);
                 }
+                LogBakeTiming(
+                    "Lightmap " + std::to_string(targetIndex) + " luminance statistics",
+                    statisticsStart);
 
                 const std::filesystem::path directOutputPath = target.outputPath.parent_path() / (target.outputPath.stem().string() + "_direct" + target.outputPath.extension().string());
                 const std::filesystem::path indirectOutputPath = target.outputPath.parent_path() / (target.outputPath.stem().string() + "_indirect" + target.outputPath.extension().string());
+                LogBakeTiming(
+                    "Lightmap " + std::to_string(targetIndex) +
+                        " normalize/denoise/seam/dilation/stats",
+                    postProcessStart);
+                const auto fileWriteStart = std::chrono::steady_clock::now();
                 if (!WritePfm(target.outputPath, bakedPixels, target.resolution, target.resolution))
                 {
                     ++output.failedLightmapWrites;
                 }
+                LogBakeTiming(
+                    "Lightmap " + std::to_string(targetIndex) + " write three PFM files",
+                    fileWriteStart);
                 if (!WritePfm(directOutputPath, bakedDirectPixels, target.resolution, target.resolution))
                 {
                     ++output.failedLightmapWrites;
@@ -3615,6 +3746,9 @@ namespace PlutoGE::scene
                     .target = target,
                     .floatPixels = ConvertToFloatPixels(bakedPixels),
                 });
+                LogBakeTiming(
+                    "Lightmap " + std::to_string(targetIndex) + " background total",
+                    targetStart);
             }
 
             const auto bakeEndTime = std::chrono::steady_clock::now();
@@ -3623,6 +3757,7 @@ namespace PlutoGE::scene
                 "Background bake computation finished with " +
                 std::to_string(output.lightmaps.size()) + " lightmap(s) ready and " +
                 std::to_string(output.invalidLightmapUvCount) + " invalid UV target(s) skipped.");
+            LogBakeTiming("Background bake total", backgroundStart);
             return output;
         }
 
@@ -3693,6 +3828,7 @@ namespace PlutoGE::scene
                                              const PreparedSceneBake &preparedBake,
                                              const BackgroundBakeOutput &output)
         {
+            const auto finalizationStart = std::chrono::steady_clock::now();
             if (output.cancelled)
             {
                 LogBakeMessage("Bake cancelled.");
@@ -3705,6 +3841,7 @@ namespace PlutoGE::scene
             for (const auto &lightmap : output.lightmaps)
             {
                 ++lightmapIndex;
+                const auto uploadStart = std::chrono::steady_clock::now();
                 LogBakeMessage(
                     "Uploading baked lightmap " + std::to_string(lightmapIndex) + "/" +
                     std::to_string(output.lightmaps.size()) + " to the GPU.");
@@ -3725,6 +3862,9 @@ namespace PlutoGE::scene
                 material->SetLightmapUvTransform(lightmap.target.lightmapUvTransform);
                 ++bakedLightmapCount;
                 LogBakeMessage("Assigned baked lightmap to submesh " + std::to_string(lightmap.target.submeshIndex) + " (material slot " + std::to_string(lightmap.target.materialSlot) + ").");
+                LogBakeTiming(
+                    "Upload lightmap " + std::to_string(lightmapIndex),
+                    uploadStart);
             }
 
             if (preparedBake.shouldStoreProbeVolume && output.probeVolume.IsValid())
@@ -3738,6 +3878,7 @@ namespace PlutoGE::scene
             }
 
             SceneBakeResult result = BuildBakeResult(bakedLightmapCount, output.probeVolume, failedLightmapLoads, output.failedLightmapWrites, output.invalidLightmapUvCount, preparedBake.gpuBakeActive, preparedBake.gpuGiActive, output.elapsedMs);
+            LogBakeTiming("Finalize and upload", finalizationStart);
             LogBakeMessage(result.message);
             return result;
         }

@@ -31,7 +31,7 @@ namespace PlutoGE::scene
     namespace
     {
         constexpr float kMinRayHitDistance = 0.0000001f;
-        constexpr int kLightmapDilationIterations = 8;
+        constexpr int kLightmapDilationIterations = 16;
         constexpr float kLightmapDilationNormalThreshold = 0.5f;
         constexpr std::size_t kMinLightmapTasksPerBakeWorker = 1;
         constexpr std::size_t kMinProbeCellsPerBakeWorker = 1;
@@ -274,6 +274,9 @@ namespace PlutoGE::scene
             std::vector<std::size_t> triangleIndices;
             std::filesystem::path outputPath;
             int resolution = 0;
+            float localSurfaceArea = 0.0f;
+            float worldSurfaceArea = 0.0f;
+            float maximumLinearScale = 1.0f;
             bool uvCoordinatesInRange = true;
         };
 
@@ -2017,6 +2020,116 @@ namespace PlutoGE::scene
             surfaceNormals = std::move(sourceNormals);
         }
 
+        void DenoiseLightmap(std::vector<glm::vec3> &pixels,
+                             const std::vector<float> &weights,
+                             const std::vector<glm::vec3> &surfaceNormals,
+                             const std::vector<glm::vec3> &worldPositions,
+                             const std::vector<float> &positionTolerances,
+                             int resolution,
+                             int passCount)
+        {
+            if (resolution <= 0 ||
+                passCount <= 0 ||
+                pixels.size() != weights.size() ||
+                pixels.size() != surfaceNormals.size() ||
+                pixels.size() != worldPositions.size() ||
+                pixels.size() != positionTolerances.size())
+            {
+                return;
+            }
+
+            auto flatten = [resolution](int x, int y)
+            {
+                return static_cast<std::size_t>(x + y * resolution);
+            };
+
+            std::vector<glm::vec3> sourcePixels = pixels;
+            std::vector<glm::vec3> destinationPixels = pixels;
+            const int clampedPassCount = std::clamp(passCount, 0, 4);
+            for (int passIndex = 0; passIndex < clampedPassCount; ++passIndex)
+            {
+                const int sampleStep = 1 << passIndex;
+                destinationPixels = sourcePixels;
+                for (int y = 0; y < resolution; ++y)
+                {
+                    for (int x = 0; x < resolution; ++x)
+                    {
+                        const std::size_t pixelIndex = flatten(x, y);
+                        if (weights[pixelIndex] <= 0.0f)
+                        {
+                            continue;
+                        }
+
+                        glm::vec3 accumulated = sourcePixels[pixelIndex] * 4.0f;
+                        float accumulatedWeight = 4.0f;
+                        for (int offsetY = -1; offsetY <= 1; ++offsetY)
+                        {
+                            for (int offsetX = -1; offsetX <= 1; ++offsetX)
+                            {
+                                if (offsetX == 0 && offsetY == 0)
+                                {
+                                    continue;
+                                }
+
+                                const int sampleX = x + offsetX * sampleStep;
+                                const int sampleY = y + offsetY * sampleStep;
+                                if (sampleX < 0 || sampleX >= resolution || sampleY < 0 || sampleY >= resolution)
+                                {
+                                    continue;
+                                }
+
+                                const std::size_t sampleIndex = flatten(sampleX, sampleY);
+                                if (weights[sampleIndex] <= 0.0f)
+                                {
+                                    continue;
+                                }
+
+                                const float normalSimilarity =
+                                    glm::dot(surfaceNormals[pixelIndex], surfaceNormals[sampleIndex]);
+                                if (normalSimilarity < 0.75f)
+                                {
+                                    continue;
+                                }
+
+                                const float basePositionTolerance =
+                                    std::max(positionTolerances[pixelIndex], positionTolerances[sampleIndex]);
+                                const float positionTolerance =
+                                    basePositionTolerance *
+                                    std::max(0.75f * static_cast<float>(sampleStep), 1.0f);
+                                const glm::vec3 positionDelta =
+                                    worldPositions[pixelIndex] - worldPositions[sampleIndex];
+                                if (glm::dot(positionDelta, positionDelta) >
+                                    positionTolerance * positionTolerance)
+                                {
+                                    continue;
+                                }
+                                const float planeSeparation = std::max(
+                                    std::abs(glm::dot(positionDelta, surfaceNormals[pixelIndex])),
+                                    std::abs(glm::dot(positionDelta, surfaceNormals[sampleIndex])));
+                                if (planeSeparation > basePositionTolerance * 0.5f)
+                                {
+                                    continue;
+                                }
+
+                                const float spatialWeight =
+                                    (std::abs(offsetX) + std::abs(offsetY) == 1) ? 2.0f : 1.0f;
+                                const float sampleWeight =
+                                    spatialWeight * std::pow(std::max(normalSimilarity, 0.0f), 8.0f);
+                                accumulated += sourcePixels[sampleIndex] * sampleWeight;
+                                accumulatedWeight += sampleWeight;
+                            }
+                        }
+
+                        destinationPixels[pixelIndex] =
+                            accumulated / std::max(accumulatedWeight, 0.0001f);
+                    }
+                }
+                sourcePixels.swap(destinationPixels);
+            }
+
+            pixels = std::move(sourcePixels);
+        }
+
         BakedTexelLighting EvaluateBakedTexelLighting(const BakeTriangle &triangle,
                                                       const glm::vec3 &barycentric,
                                                       const std::vector<BakeLight> &lights,
@@ -2109,6 +2222,7 @@ namespace PlutoGE::scene
                     for (uint32_t triangleOffset = 0; triangleOffset + 2 < submesh.indexCount; triangleOffset += 3)
                     {
                         BakeTriangle triangle;
+                        glm::vec3 localPositions[3]{};
                         triangle.meshComponent = meshComponent;
                         triangle.materialSlot = submesh.materialIndex;
                         triangle.baseColor = glm::vec3(material->GetConfig().color);
@@ -2129,7 +2243,8 @@ namespace PlutoGE::scene
                             }
 
                             const auto &sourceVertex = meshData.vertices[sourceIndex];
-                            triangle.worldPositions[vertexIndex] = glm::vec3(worldTransform * glm::vec4(sourceVertex.position[0], sourceVertex.position[1], sourceVertex.position[2], 1.0f));
+                            localPositions[vertexIndex] = glm::vec3(sourceVertex.position[0], sourceVertex.position[1], sourceVertex.position[2]);
+                            triangle.worldPositions[vertexIndex] = glm::vec3(worldTransform * glm::vec4(localPositions[vertexIndex], 1.0f));
                             triangle.worldNormals[vertexIndex] = NormalizeOr(
                                 normalMatrix * glm::vec3(sourceVertex.normal[0], sourceVertex.normal[1], sourceVertex.normal[2]),
                                 glm::vec3(0.0f));
@@ -2158,11 +2273,65 @@ namespace PlutoGE::scene
 
                         if (target)
                         {
+                            target->localSurfaceArea +=
+                                glm::length(glm::cross(
+                                    localPositions[1] - localPositions[0],
+                                    localPositions[2] - localPositions[0])) *
+                                0.5f;
+                            target->worldSurfaceArea +=
+                                glm::length(glm::cross(
+                                    triangle.worldPositions[1] - triangle.worldPositions[0],
+                                    triangle.worldPositions[2] - triangle.worldPositions[0])) *
+                                0.5f;
+                            for (int edgeIndex = 0; edgeIndex < 3; ++edgeIndex)
+                            {
+                                const int nextEdgeIndex = (edgeIndex + 1) % 3;
+                                const float localEdgeLength = glm::length(
+                                    localPositions[nextEdgeIndex] - localPositions[edgeIndex]);
+                                if (localEdgeLength > 1e-8f)
+                                {
+                                    const float worldEdgeLength = glm::length(
+                                        triangle.worldPositions[nextEdgeIndex] -
+                                        triangle.worldPositions[edgeIndex]);
+                                    target->maximumLinearScale = std::max(
+                                        target->maximumLinearScale,
+                                        worldEdgeLength / localEdgeLength);
+                                }
+                            }
                             target->triangleIndices.push_back(triangles.size());
                         }
                         triangles.push_back(triangle);
                     }
                 }
+            }
+
+            constexpr int kMaximumAdaptiveLightmapResolution = 2048;
+            for (auto &[targetKey, target] : targets)
+            {
+                static_cast<void>(targetKey);
+                if (target.localSurfaceArea <= 1e-10f || target.worldSurfaceArea <= 1e-10f)
+                {
+                    continue;
+                }
+
+                // Surface area grows with the square of linear scale. Raising
+                // the lightmap dimension by sqrt(area ratio) preserves roughly
+                // constant world-space texel density under uniform and
+                // non-uniform entity/parent scaling.
+                const float linearAreaScale = std::max(
+                    std::sqrt(target.worldSurfaceArea / target.localSurfaceArea),
+                    target.maximumLinearScale);
+                if (linearAreaScale <= 1.0f)
+                {
+                    continue;
+                }
+
+                const int scaledResolution = static_cast<int>(std::ceil(
+                    static_cast<float>(lightmapResolution) * linearAreaScale / 4.0f)) * 4;
+                target.resolution = std::clamp(
+                    scaledResolution,
+                    lightmapResolution,
+                    kMaximumAdaptiveLightmapResolution);
             }
         }
 
@@ -2279,6 +2448,7 @@ namespace PlutoGE::scene
             preparedBake.settings = settings;
             preparedBake.settings.directShadowSampleCount = std::clamp(preparedBake.settings.directShadowSampleCount, 1, 32);
             preparedBake.settings.indirectBounceCount = std::clamp(preparedBake.settings.indirectBounceCount, 1, 8);
+            preparedBake.settings.indirectDenoisePassCount = std::clamp(preparedBake.settings.indirectDenoisePassCount, 0, 4);
             preparedBake.bakeStartTime = std::chrono::steady_clock::now();
             preparedBake.lights = SnapshotStaticLights(scene);
 
@@ -2547,6 +2717,8 @@ namespace PlutoGE::scene
                         bakedDirectPixels[pixelIndex] /= bakedWeights[pixelIndex];
                         bakedIndirectPixels[pixelIndex] /= bakedWeights[pixelIndex];
                         bakedSurfaceNormals[pixelIndex] /= bakedWeights[pixelIndex];
+                        bakedWorldPositions[pixelIndex] /= bakedWeights[pixelIndex];
+                        bakedPositionTolerances[pixelIndex] /= bakedWeights[pixelIndex];
                         const float normalLengthSq = glm::dot(bakedSurfaceNormals[pixelIndex], bakedSurfaceNormals[pixelIndex]);
                         if (normalLengthSq > 1e-8f)
                         {
@@ -2555,6 +2727,42 @@ namespace PlutoGE::scene
                         else
                         {
                             bakedSurfaceNormals[pixelIndex] = glm::vec3(0.0f);
+                        }
+                    }
+                }
+
+                if (preparedBake.settings.bakeIndirectBounce &&
+                    preparedBake.settings.indirectDenoisePassCount > 0)
+                {
+                    DenoiseLightmap(
+                        bakedIndirectPixels,
+                        bakedWeights,
+                        bakedSurfaceNormals,
+                        bakedWorldPositions,
+                        bakedPositionTolerances,
+                        target.resolution,
+                        preparedBake.settings.indirectDenoisePassCount);
+                }
+                if (preparedBake.settings.directShadowSampleCount > 1)
+                {
+                    DenoiseLightmap(
+                        bakedDirectPixels,
+                        bakedWeights,
+                        bakedSurfaceNormals,
+                        bakedWorldPositions,
+                        bakedPositionTolerances,
+                        target.resolution,
+                        1);
+                }
+                if (preparedBake.settings.bakeIndirectBounce ||
+                    preparedBake.settings.directShadowSampleCount > 1)
+                {
+                    for (std::size_t pixelIndex = 0; pixelIndex < bakedPixels.size(); ++pixelIndex)
+                    {
+                        if (bakedWeights[pixelIndex] > 0.0f)
+                        {
+                            bakedPixels[pixelIndex] =
+                                bakedDirectPixels[pixelIndex] + bakedIndirectPixels[pixelIndex];
                         }
                     }
                 }
@@ -2747,6 +2955,7 @@ namespace PlutoGE::scene
         settings.probeDirectionCount = 0;
         settings.indirectBounceSampleCount = 0;
         settings.indirectBounceCount = 1;
+        settings.indirectDenoisePassCount = 0;
         settings.bakeProbeVolume = false;
         settings.bakeIndirectBounce = false;
         settings.probeBounceStrength = 0.0f;
@@ -2763,6 +2972,7 @@ namespace PlutoGE::scene
         settings.probeDirectionCount = 0;
         settings.indirectBounceSampleCount = 12;
         settings.indirectBounceCount = 2;
+        settings.indirectDenoisePassCount = 2;
         settings.bakeProbeVolume = false;
         settings.bakeIndirectBounce = true;
         settings.probeBounceStrength = 0.0f;
@@ -2779,6 +2989,7 @@ namespace PlutoGE::scene
         settings.probeDirectionCount = 12;
         settings.indirectBounceSampleCount = 48;
         settings.indirectBounceCount = 4;
+        settings.indirectDenoisePassCount = 2;
         settings.bakeProbeVolume = true;
         settings.bakeIndirectBounce = true;
         settings.probeBounceStrength = 1.0f;
@@ -2794,6 +3005,7 @@ namespace PlutoGE::scene
         settings.probeDirectionCount = 24;
         settings.indirectBounceSampleCount = 96;
         settings.indirectBounceCount = 5;
+        settings.indirectDenoisePassCount = 3;
         settings.useGpu = true;
         return settings;
     }
@@ -2806,6 +3018,7 @@ namespace PlutoGE::scene
         settings.probeDirectionCount = 48;
         settings.indirectBounceSampleCount = 192;
         settings.indirectBounceCount = 6;
+        settings.indirectDenoisePassCount = 3;
         settings.useGpu = true;
         return settings;
     }

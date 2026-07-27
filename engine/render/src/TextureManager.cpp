@@ -110,6 +110,17 @@ namespace PlutoGE::render
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         }
 
+        void ConfigureLightmapTexture2D()
+        {
+            // Baked atlases are dilated by sixteen texels. Retain enough mips
+            // for stable minification on large floors and grazing surfaces, but
+            // stop before filters can span beyond that gutter into unrelated UV
+            // islands.
+            ConfigureTexture2D(GL_CLAMP_TO_EDGE, true);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 4);
+        }
+
         GLenum ResolveFloatTextureInternalFormat(int channels)
         {
             if (channels >= 4)
@@ -592,13 +603,9 @@ namespace PlutoGE::render
 
             glGenTextures(1, &texture->m_textureID);
             glBindTexture(GL_TEXTURE_2D, texture->m_textureID);
-            // Lightmap UV islands only have a finite dilation gutter. A full
-            // generated mip chain averages unrelated islands (and empty atlas
-            // space) together at lower levels, producing seams and grid-shaped
-            // artifacts that follow the UV layout. Keep baked lighting on the
-            // padded base level and use bilinear filtering there.
-            ConfigureTexture2D(GL_CLAMP_TO_EDGE, false);
+            ConfigureLightmapTexture2D();
             UploadTexture2D(static_cast<GLint>(internalFormat), pfmImage.width, pfmImage.height, format, GL_FLOAT, pfmImage.pixels.data());
+            glGenerateMipmap(GL_TEXTURE_2D);
 
             texture->m_width = pfmImage.width;
             texture->m_height = pfmImage.height;
@@ -629,9 +636,10 @@ namespace PlutoGE::render
 
         glGenTextures(1, &texture->m_textureID);
         glBindTexture(GL_TEXTURE_2D, texture->m_textureID);
-        ConfigureTexture2D(GL_CLAMP_TO_EDGE, false);
+        ConfigureLightmapTexture2D();
         const GLenum format = ResolveTextureFormat(channels);
         UploadTexture2D(ResolveByteTextureInternalFormat(channels), width, height, format, GL_UNSIGNED_BYTE, data);
+        glGenerateMipmap(GL_TEXTURE_2D);
 
         texture->m_width = width;
         texture->m_height = height;
@@ -672,9 +680,10 @@ namespace PlutoGE::render
 
         glGenTextures(1, &texture->m_textureID);
         glBindTexture(GL_TEXTURE_2D, texture->m_textureID);
-        ConfigureTexture2D(GL_CLAMP_TO_EDGE, false);
+        ConfigureLightmapTexture2D();
         const GLenum format = ResolveTextureFormat(channels);
         UploadTexture2D(ResolveByteTextureInternalFormat(channels), width, height, format, GL_UNSIGNED_BYTE, pixels);
+        glGenerateMipmap(GL_TEXTURE_2D);
 
         texture->m_width = width;
         texture->m_height = height;
@@ -718,8 +727,9 @@ namespace PlutoGE::render
             }
 
             glBindTexture(GL_TEXTURE_2D, texture->m_textureID);
-            ConfigureTexture2D(GL_CLAMP_TO_EDGE, false);
+            ConfigureLightmapTexture2D();
             UploadTexture2D(static_cast<GLint>(internalFormat), width, height, format, GL_FLOAT, pixels);
+            glGenerateMipmap(GL_TEXTURE_2D);
             texture->m_width = width;
             texture->m_height = height;
             texture->m_channels = channels;
@@ -732,8 +742,9 @@ namespace PlutoGE::render
 
         glGenTextures(1, &texture->m_textureID);
         glBindTexture(GL_TEXTURE_2D, texture->m_textureID);
-        ConfigureTexture2D(GL_CLAMP_TO_EDGE, false);
+        ConfigureLightmapTexture2D();
         UploadTexture2D(static_cast<GLint>(internalFormat), width, height, format, GL_FLOAT, pixels);
+        glGenerateMipmap(GL_TEXTURE_2D);
 
         texture->m_width = width;
         texture->m_height = height;

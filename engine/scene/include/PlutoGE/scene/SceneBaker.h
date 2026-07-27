@@ -15,6 +15,7 @@ namespace PlutoGE::scene
         int probeDirectionCount = 8;
         int indirectBounceSampleCount = 6;
         int indirectBounceCount = 2;
+        int indirectDenoisePassCount = 2;
         bool bakeProbeVolume = true;
         bool bakeIndirectBounce = true;
         bool useGpu = false;

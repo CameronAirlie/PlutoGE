@@ -2913,6 +2913,7 @@ namespace PlutoGE::ui
                 settings.directShadowSampleCount = std::clamp(settings.directShadowSampleCount, 1, 32);
                 settings.indirectBounceSampleCount = (std::max)(settings.indirectBounceSampleCount, 0);
                 settings.indirectBounceCount = std::clamp(settings.indirectBounceCount, 1, 8);
+                settings.indirectDenoisePassCount = std::clamp(settings.indirectDenoisePassCount, 0, 4);
                 settings.probeDirectionCount = (std::max)(settings.probeDirectionCount, 0);
                 settings.lightmapBounceStrength = (std::max)(settings.lightmapBounceStrength, 0.0f);
                 settings.probeBounceStrength = (std::max)(settings.probeBounceStrength, 0.0f);
@@ -3400,6 +3401,7 @@ namespace PlutoGE::ui
                 ImGui::Checkbox("Bake Indirect Bounce", &m_customBakeSettings.bakeIndirectBounce);
                 ImGui::InputInt("Indirect Samples", &m_customBakeSettings.indirectBounceSampleCount);
                 ImGui::InputInt("GI Bounce Count", &m_customBakeSettings.indirectBounceCount);
+                ImGui::InputInt("GI Denoise Passes", &m_customBakeSettings.indirectDenoisePassCount);
                 ImGui::SliderFloat("Lightmap Bounce Strength", &m_customBakeSettings.lightmapBounceStrength, 0.0f, 4.0f, "%.2f");
                 ImGui::Checkbox("Use GPU Bake", &m_customBakeSettings.useGpu);
                 if (m_customBakeSettings.useGpu)

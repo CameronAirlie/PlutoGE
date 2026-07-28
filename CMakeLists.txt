@@ -19,9 +19,7 @@ add_subdirectory(engine)
 
 # PlutoGE ships a curated runtime layout. Dependency projects must not append
 # their developer headers, libraries, samples, or data to the end-user package.
-set(CMAKE_SKIP_INSTALL_RULES ON)
-add_subdirectory(third_party)
-set(CMAKE_SKIP_INSTALL_RULES OFF)
+add_subdirectory(third_party EXCLUDE_FROM_ALL)
 
 if (PLUTO_BUILD_EDITOR)
     add_subdirectory(editor)

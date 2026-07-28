@@ -2,6 +2,10 @@ add_executable(PlutoGEEditor
     src/main.cpp
 )
 
+if (WIN32)
+    target_sources(PlutoGEEditor PRIVATE resources/PlutoGEEditor.rc)
+endif()
+
 add_subdirectory(ui)
 
 target_include_directories(PlutoGEEditor
@@ -42,6 +46,7 @@ if (EXISTS ${PLUTO_EDITOR_RESOURCES_DIR})
     install(DIRECTORY ${PLUTO_EDITOR_RESOURCES_DIR}/
         DESTINATION resources
         COMPONENT Runtime
+        PATTERN "*.rc" EXCLUDE
     )
 endif()
 

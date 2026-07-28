@@ -1,8 +1,63 @@
 #include "PlutoGE/platform/Window.h"
 #include <iostream>
 
+#ifdef _WIN32
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3native.h>
+#include <windows.h>
+#include "../../../packaging/branding/PlutoGEResource.h"
+#endif
+
 namespace PlutoGE::platform
 {
+    namespace
+    {
+#ifdef _WIN32
+        void ApplyEmbeddedWindowIcon(GLFWwindow *window)
+        {
+            if (!window)
+            {
+                return;
+            }
+
+            const HINSTANCE module = GetModuleHandleW(nullptr);
+            const HWND nativeWindow = glfwGetWin32Window(window);
+            if (!module || !nativeWindow)
+            {
+                return;
+            }
+
+            const int largeWidth = GetSystemMetrics(SM_CXICON);
+            const int largeHeight = GetSystemMetrics(SM_CYICON);
+            const int smallWidth = GetSystemMetrics(SM_CXSMICON);
+            const int smallHeight = GetSystemMetrics(SM_CYSMICON);
+            const auto largeIcon = static_cast<HICON>(LoadImageW(module,
+                                                                 MAKEINTRESOURCEW(IDI_PLUTOGE_ICON),
+                                                                 IMAGE_ICON,
+                                                                 largeWidth,
+                                                                 largeHeight,
+                                                                 LR_DEFAULTCOLOR));
+            const auto smallIcon = static_cast<HICON>(LoadImageW(module,
+                                                                 MAKEINTRESOURCEW(IDI_PLUTOGE_ICON),
+                                                                 IMAGE_ICON,
+                                                                 smallWidth,
+                                                                 smallHeight,
+                                                                 LR_DEFAULTCOLOR));
+
+            if (largeIcon)
+            {
+                SendMessageW(nativeWindow, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(largeIcon));
+                SetClassLongPtrW(nativeWindow, GCLP_HICON, reinterpret_cast<LONG_PTR>(largeIcon));
+            }
+            if (smallIcon)
+            {
+                SendMessageW(nativeWindow, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(smallIcon));
+                SetClassLongPtrW(nativeWindow, GCLP_HICONSM, reinterpret_cast<LONG_PTR>(smallIcon));
+            }
+        }
+#endif
+    }
+
     static void GLFWFramebufferResizeCallback(GLFWwindow *window, int width, int height)
     {
         auto *instance = static_cast<Window *>(glfwGetWindowUserPointer(window));
@@ -46,6 +101,10 @@ namespace PlutoGE::platform
             glfwTerminate();
             return false;
         }
+
+#ifdef _WIN32
+        ApplyEmbeddedWindowIcon(static_cast<GLFWwindow *>(m_window));
+#endif
 
         glfwMakeContextCurrent(m_window);
         glfwSetWindowUserPointer(m_window, this);

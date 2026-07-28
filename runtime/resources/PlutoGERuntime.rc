@@ -1,0 +1,4 @@
+#include <windows.h>
+#include "../../packaging/branding/PlutoGEResource.h"
+
+IDI_PLUTOGE_ICON ICON "../../packaging/branding/PlutoGE.ico"

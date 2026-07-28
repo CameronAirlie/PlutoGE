@@ -2,6 +2,10 @@ add_executable(PlutoGERuntime
     src/main.cpp
 )
 
+if (WIN32)
+    target_sources(PlutoGERuntime PRIVATE resources/PlutoGERuntime.rc)
+endif()
+
 target_include_directories(PlutoGERuntime
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}

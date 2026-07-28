@@ -484,7 +484,7 @@ namespace PlutoGE::scene
     {
         auto *owner = GetOwner();
         auto *scene = owner ? owner->GetScene() : nullptr;
-        if (!owner || !scene || !m_mesh || !m_mesh->HasSkeleton() || m_submeshIndex >= 0)
+        if (!owner || !scene || !m_mesh || !m_mesh->HasSkeleton())
         {
             return false;
         }
@@ -550,6 +550,7 @@ namespace PlutoGE::scene
             {"SubmeshCount", PropertyType::Int, std::to_string(m_submeshCount)},
             {"ModelAssetId", PropertyType::String, m_modelAssetId},
             {"ModelObjectId", PropertyType::String, std::to_string(m_modelObjectId)},
+            {"MeshAssetReference", PropertyType::String, m_sourceMeshPath},
             {"UseGeneratedLods", PropertyType::Bool, m_useGeneratedLods ? "true" : "false"},
             {"MeshPositionOffset", PropertyType::Vec3, SerializeVec3(m_meshPositionOffset)},
             {"MeshRotationOffset", PropertyType::Vec3, SerializeVec3(m_meshRotationOffset)},
@@ -661,6 +662,10 @@ namespace PlutoGE::scene
             {
                 try { modelObjectId = std::stoull(property.value); } catch (...) { modelObjectId = 0; }
             }
+            else if (property.name == "MeshAssetReference" || property.name == "SourceMeshPath")
+            {
+                sourceMeshPath = property.value;
+            }
             else if (property.name == "UseGeneratedLods")
             {
                 useGeneratedLods = property.value == "true" || property.value == "1";
@@ -745,9 +750,13 @@ namespace PlutoGE::scene
         if (!modelAssetId.empty())
         {
             auto &engine = core::Engine::GetInstance();
-            sourceMeshPath = assets::Project::IsEngineAssetReference(modelAssetId)
-                                 ? modelAssetId
-                                 : engine.GetAssetManager().ResolveModelObject(modelAssetId, modelObjectId);
+            const std::string resolvedModelObject = assets::Project::IsEngineAssetReference(modelAssetId)
+                                                        ? modelAssetId
+                                                        : engine.GetAssetManager().ResolveModelObject(modelAssetId, modelObjectId);
+            if (!resolvedModelObject.empty())
+            {
+                sourceMeshPath = resolvedModelObject;
+            }
             if (sourceMeshPath.empty()) return;
             if (auto *builtinMesh = engine.GetAssetManager().LoadMeshAsset(sourceMeshPath))
             {

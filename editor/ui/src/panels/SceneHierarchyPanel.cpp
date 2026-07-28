@@ -56,6 +56,30 @@ namespace PlutoGE::ui
             return false;
         }
 
+        scene::MeshComponent *FindSkeletonMeshComponent(scene::Entity *entity)
+        {
+            if (!entity)
+            {
+                return nullptr;
+            }
+
+            if (auto *meshComponent = entity->GetComponent<scene::MeshComponent>();
+                meshComponent && meshComponent->GetMesh() && meshComponent->GetMesh()->HasSkeleton())
+            {
+                return meshComponent;
+            }
+
+            for (auto *child : entity->GetChildren())
+            {
+                if (auto *meshComponent = FindSkeletonMeshComponent(child))
+                {
+                    return meshComponent;
+                }
+            }
+
+            return nullptr;
+        }
+
         bool SceneHasAnyCamera(scene::Scene *scene)
         {
             if (!scene)
@@ -256,15 +280,14 @@ namespace PlutoGE::ui
                                                                 entity->SetParent(nullptr);
                                                             });
             }
-            if (auto *meshComponent = entity->GetComponent<scene::MeshComponent>();
-                meshComponent && meshComponent->GetMesh() && meshComponent->GetMesh()->HasSkeleton())
+            if (FindSkeletonMeshComponent(entity))
             {
                 if (ImGui::MenuItem("Create Skeleton Attachment Entities"))
                 {
                     EditorShell::GetInstance().ExecuteSceneEdit("Create Skeleton Attachment Entities",
                                                                 [entity]()
                                                                 {
-                                                                    if (auto *meshComponent = entity->GetComponent<scene::MeshComponent>())
+                                                                    if (auto *meshComponent = FindSkeletonMeshComponent(entity))
                                                                     {
                                                                         meshComponent->CreateSkeletonAttachmentEntities();
                                                                     }

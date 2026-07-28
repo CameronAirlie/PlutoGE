@@ -1750,7 +1750,7 @@ namespace PlutoGE::ui
             case AddableComponentType::VolumetricCloud:
                 return !entity.HasComponent<scene::VolumetricCloudComponent>();
             case AddableComponentType::Script:
-                return !entity.HasComponent<scene::ScriptComponent>();
+                return true;
             case AddableComponentType::SoundEmitter:
                 return !entity.HasComponent<scene::SoundEmitterComponent>();
             case AddableComponentType::SoundListener:
@@ -4340,9 +4340,8 @@ namespace PlutoGE::ui
                 scene::Component *componentToRemove = nullptr;
                 for (const auto &component : entity->GetComponentBuckets())
                 {
-                    if (!component.empty())
+                    for (auto *componentPtr : component)
                     {
-                        auto *componentPtr = component.front();
                         ImGui::PushID(componentIndex++);
                         const bool isComponentOpen = ImGui::TreeNodeEx(GetComponentDisplayName(*componentPtr), ImGuiTreeNodeFlags_DefaultOpen);
                         ImGui::SameLine();
@@ -5367,6 +5366,11 @@ namespace PlutoGE::ui
                         {
                             break;
                         }
+                    }
+
+                    if (componentToRemove)
+                    {
+                        break;
                     }
                 }
 

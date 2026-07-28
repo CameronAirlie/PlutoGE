@@ -57,7 +57,7 @@ namespace PlutoGE::ui
             for (const auto &[reference, entry] : m_entries)
             {
                 (void)reference;
-                if (entry.texture != 0) glDeleteTextures(1, &entry.texture);
+                if (entry.ownsTexture && entry.texture != 0) glDeleteTextures(1, &entry.texture);
             }
             if (m_depthBuffer != 0) glDeleteRenderbuffers(1, &m_depthBuffer);
             if (m_framebuffer != 0) glDeleteFramebuffers(1, &m_framebuffer);
@@ -72,14 +72,8 @@ namespace PlutoGE::ui
 
         GLuint Get(const assets::Project &project, core::Engine &engine, const assets::ProjectAssetEntry &asset)
         {
-            if (asset.type == assets::ProjectAssetType::Texture)
-            {
-                const auto path = project.ResolveAssetReference(asset.reference).string();
-                auto *texture = engine.GetAssetManager().LoadTexture(path.c_str());
-                return texture ? texture->GetTextureID() : 0;
-            }
-
-            if (asset.type != assets::ProjectAssetType::Model &&
+            if (asset.type != assets::ProjectAssetType::Texture &&
+                asset.type != assets::ProjectAssetType::Model &&
                 asset.type != assets::ProjectAssetType::Mesh &&
                 asset.type != assets::ProjectAssetType::Material)
             {
@@ -101,6 +95,20 @@ namespace PlutoGE::ui
             }
             if (m_generationBudget <= 0) return 0;
             --m_generationBudget;
+
+            if (asset.type == assets::ProjectAssetType::Texture)
+            {
+                const auto path = project.ResolveAssetReference(asset.reference).string();
+                auto *texture = engine.GetAssetManager().LoadTexture(path.c_str());
+                if (!texture) return 0;
+
+                auto &entry = m_entries[asset.reference];
+                entry.texture = texture->GetTextureID();
+                entry.stamp = stamp;
+                entry.lastValidatedFrame = m_frameSequence;
+                entry.ownsTexture = false;
+                return entry.texture;
+            }
 
             std::string renderReference = asset.reference;
             if (asset.type == assets::ProjectAssetType::Model)
@@ -133,6 +141,7 @@ namespace PlutoGE::ui
 
             auto &entry = m_entries[asset.reference];
             if (entry.texture == 0) entry.texture = CreateTexture();
+            entry.ownsTexture = true;
             if (!Render(entry.texture, *mesh, material)) return 0;
             entry.stamp = stamp;
             entry.lastValidatedFrame = m_frameSequence;
@@ -144,7 +153,7 @@ namespace PlutoGE::ui
             for (const auto &[reference, entry] : m_entries)
             {
                 (void)reference;
-                if (entry.texture != 0) glDeleteTextures(1, &entry.texture);
+                if (entry.ownsTexture && entry.texture != 0) glDeleteTextures(1, &entry.texture);
             }
             m_entries.clear();
         }
@@ -155,6 +164,7 @@ namespace PlutoGE::ui
             GLuint texture = 0;
             std::uint64_t stamp = 0;
             std::uint64_t lastValidatedFrame = 0;
+            bool ownsTexture = false;
         };
 
         static constexpr int kSize = 128;

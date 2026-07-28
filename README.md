@@ -446,4 +446,4 @@ PlutoGE is evolving quickly. Before submitting a change:
 
 ## License
 
-No repository-level license file is currently included. Until one is added, copyright remains with the repository owner and normal open-source reuse rights should not be assumed. Third-party dependencies retain their own licenses.
+PlutoGE is licensed under the [Apache License 2.0](LICENSE). Third-party dependencies retain their own licenses.

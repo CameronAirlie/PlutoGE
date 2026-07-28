@@ -26,3 +26,8 @@ if (TARGET OpenAL)
             $<TARGET_FILE_DIR:PlutoGERuntime>/$<TARGET_FILE_NAME:OpenAL>
     )
 endif()
+
+install(TARGETS PlutoGERuntime
+    RUNTIME DESTINATION .
+    COMPONENT Runtime
+)

@@ -41,9 +41,11 @@ if (EXISTS ${PLUTO_EDITOR_RESOURCES_DIR})
 
     install(DIRECTORY ${PLUTO_EDITOR_RESOURCES_DIR}/
         DESTINATION resources
+        COMPONENT Runtime
     )
 endif()
 
 install(TARGETS PlutoGEEditor
     RUNTIME DESTINATION .
+    COMPONENT Runtime
 )

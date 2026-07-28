@@ -159,11 +159,9 @@ namespace PlutoGE::ui
             const auto buildDirectory = FindCMakeBuildDirectory(runtimeExecutablePath);
             if (buildDirectory.empty())
             {
-                if (errorMessage)
-                {
-                    *errorMessage = "Could not determine the CMake build directory for PlutoGERuntime.";
-                }
-                return false;
+                // Installed distributions ship a prebuilt runtime and intentionally
+                // have no CMake build tree. Rebuild only developer-tree runtimes.
+                return true;
             }
 
             std::string command = "cmake --build " + QuoteShellArgument(buildDirectory) + " --target PlutoGERuntime";
@@ -269,10 +267,16 @@ namespace PlutoGE::ui
             auto candidateRoot = searchRoot.lexically_normal();
             for (int depth = 0; depth < kScriptCoreSearchAncestorLimit && !candidateRoot.empty(); ++depth)
             {
-                const auto candidate = (candidateRoot / "engine" / "scripting" / "managed" / "PlutoGE.ScriptCore" / "PlutoGE.ScriptCore.csproj").lexically_normal();
-                if (std::filesystem::exists(candidate))
+                const std::array<std::filesystem::path, 2> candidates{
+                    candidateRoot / "SDK" / "PlutoGE.ScriptCore" / "PlutoGE.ScriptCore.csproj",
+                    candidateRoot / "engine" / "scripting" / "managed" / "PlutoGE.ScriptCore" / "PlutoGE.ScriptCore.csproj",
+                };
+                for (const auto &candidate : candidates)
                 {
-                    return candidate;
+                    if (std::filesystem::exists(candidate))
+                    {
+                        return candidate.lexically_normal();
+                    }
                 }
 
                 const auto parentRoot = candidateRoot.parent_path();

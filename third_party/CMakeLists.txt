@@ -11,7 +11,7 @@ include(FetchContent)
 FetchContent_Declare(
     glfw
     GIT_REPOSITORY https://github.com/glfw/glfw.git
-    GIT_TAG        master
+    GIT_TAG        463cf73610d911e8eff95ae345143137cf610be4
 )
 FetchContent_MakeAvailable(glfw)
 add_library(PlutoGE_glfw INTERFACE)
@@ -21,7 +21,7 @@ target_link_libraries(PlutoGE_glfw INTERFACE glfw)
 FetchContent_Declare(
     glm
     GIT_REPOSITORY https://github.com/g-truc/glm.git
-    GIT_TAG        master
+    GIT_TAG        6f14f4792a0cde5d0cf2c910506724d61cb95834
 )
 FetchContent_MakeAvailable(glm)
 add_library(PlutoGE_glm INTERFACE)
@@ -33,7 +33,7 @@ target_include_directories(PlutoGE_glm INTERFACE
 FetchContent_Declare(
     stb_image
     GIT_REPOSITORY https://github.com/nothings/stb.git
-    GIT_TAG        master
+    GIT_TAG        31c1ad37456438565541f4919958214b6e762fb4
 )
 FetchContent_MakeAvailable(stb_image)
 add_library(PlutoGE_stb_image INTERFACE)
@@ -45,7 +45,7 @@ target_include_directories(PlutoGE_stb_image INTERFACE
 FetchContent_Declare(
     imgui
     GIT_REPOSITORY https://github.com/ocornut/imgui.git
-    GIT_TAG        docking
+    GIT_TAG        b334d19b667958ed970000073644d911fae17e57
 )
 FetchContent_MakeAvailable(imgui)
 add_library(PlutoGE_imgui STATIC
@@ -69,7 +69,7 @@ target_include_directories(PlutoGE_imgui PUBLIC
 FetchContent_Declare(
     imguizmo
     GIT_REPOSITORY https://github.com/CedricGuillemet/ImGuizmo.git
-    GIT_TAG        master
+    GIT_TAG        dc25afb98bc3ebe00dfc9a23ba7235fead2ccb1d
 )
 FetchContent_MakeAvailable(imguizmo)
 target_include_directories(imguizmo PUBLIC
@@ -80,7 +80,7 @@ add_library(PlutoGE::imguizmo ALIAS imguizmo)
 FetchContent_Declare(
     tinygltf
     GIT_REPOSITORY https://github.com/syoyo/tinygltf.git
-    GIT_TAG        release
+    GIT_TAG        a434ee02066c2d9b62a3504876aed38e6e399fe0
 )
 FetchContent_MakeAvailable(tinygltf)
 add_library(PlutoGE_tinygltf INTERFACE)
@@ -92,6 +92,7 @@ target_include_directories(PlutoGE_tinygltf INTERFACE
 set(ASSIMP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(ASSIMP_BUILD_ASSIMP_TOOLS OFF CACHE BOOL "" FORCE)
 set(ASSIMP_INSTALL OFF CACHE BOOL "" FORCE)
+set(ASSIMP_WARNINGS_AS_ERRORS OFF CACHE BOOL "" FORCE)
 set(ASSIMP_NO_EXPORT ON CACHE BOOL "" FORCE)
 set(ASSIMP_BUILD_ALL_IMPORTERS_BY_DEFAULT OFF CACHE BOOL "" FORCE)
 set(ASSIMP_BUILD_FBX_IMPORTER ON CACHE BOOL "" FORCE)
@@ -108,7 +109,7 @@ target_link_libraries(PlutoGE_assimp INTERFACE assimp)
 FetchContent_Declare(
     meshoptimizer
     GIT_REPOSITORY https://github.com/zeux/meshoptimizer.git
-    GIT_TAG        master
+    GIT_TAG        a6ecc73c094bdd5d09644f9286bbf25134853679
 )
 FetchContent_MakeAvailable(meshoptimizer)
 add_library(PlutoGE_meshoptimizer INTERFACE)
@@ -150,7 +151,7 @@ set(USE_GRAPHICAL_BENCHMARK OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
     bullet3
     GIT_REPOSITORY https://github.com/bulletphysics/bullet3.git
-    GIT_TAG        master
+    GIT_TAG        63c4d67e337017f9d8b298c900e9aabdb69296e7
 )
 FetchContent_GetProperties(bullet3)
 if (NOT bullet3_POPULATED)

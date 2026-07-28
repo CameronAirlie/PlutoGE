@@ -174,26 +174,62 @@ namespace PlutoGE::scene
         std::vector<BakeLight> SnapshotStaticLights(const Scene &scene)
         {
             std::vector<BakeLight> lights;
-            for (const auto *light : scene.GetLights())
+            const auto collectLights = [&lights](const Entity *entity, auto &self) -> void
             {
-                if (light && light->isStatic)
+                if (!entity || !entity->IsActive())
                 {
-                    const float directionLengthSq = glm::dot(light->direction, light->direction);
+                    return;
+                }
+
+                for (const auto *lightComponent : entity->GetComponents<LightComponent>())
+                {
+                    if (!lightComponent || !lightComponent->IsEnabled())
+                    {
+                        continue;
+                    }
+
+                    const auto &light = lightComponent->GetLight();
+                    if (!light.isStatic)
+                    {
+                        continue;
+                    }
+
+                    // Entity transforms are authoritative. LightComponent keeps
+                    // a render-facing position/direction cache that is refreshed
+                    // during Scene::Update, but an editor bake can be started
+                    // before that update after a gizmo/inspector transform edit.
+                    const glm::vec3 rotationRadians = glm::radians(entity->GetWorldRotation());
+                    glm::vec3 direction{
+                        -std::sin(rotationRadians.y) * std::cos(rotationRadians.x),
+                        std::sin(rotationRadians.x),
+                        -std::cos(rotationRadians.y) * std::cos(rotationRadians.x),
+                    };
+                    const float directionLengthSq = glm::dot(direction, direction);
                     lights.push_back(BakeLight{
-                        .type = light->type,
-                        .position = light->position,
-                        .color = glm::max(light->color, glm::vec3(0.0f)),
-                        .intensity = std::max(light->intensity, 0.0f),
-                        .range = std::max(light->range, 0.0f),
+                        .type = light.type,
+                        .position = entity->GetWorldPosition(),
+                        .color = glm::max(light.color, glm::vec3(0.0f)),
+                        .intensity = std::max(light.intensity, 0.0f),
+                        .range = std::max(light.range, 0.0f),
                         .direction = directionLengthSq > 1e-10f
-                                         ? light->direction / std::sqrt(directionLengthSq)
+                                         ? direction / std::sqrt(directionLengthSq)
                                          : glm::vec3(0.0f, -1.0f, 0.0f),
-                        .castsShadows = light->castsShadows,
-                        .shadowSoftness = light->type == LightType::Directional
-                                              ? std::max(light->directionalShadowSettings.softness, 0.0f)
+                        .castsShadows = light.castsShadows,
+                        .shadowSoftness = light.type == LightType::Directional
+                                              ? std::max(light.directionalShadowSettings.softness, 0.0f)
                                               : 0.0f,
                     });
                 }
+
+                for (const auto *child : entity->GetChildren())
+                {
+                    self(child, self);
+                }
+            };
+
+            for (const auto *rootEntity : scene.GetRootEntities())
+            {
+                collectLights(rootEntity, collectLights);
             }
 
             return lights;

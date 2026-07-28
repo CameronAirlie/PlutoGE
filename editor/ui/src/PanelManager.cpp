@@ -3,6 +3,7 @@
 #include "PlutoGE/ui/panels/Panel.h"
 
 #include <imgui.h>
+#include <imgui_internal.h>
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_opengl3.h>
 #include <ImGuizmo.h>
@@ -14,6 +15,7 @@
 #include <cfloat>
 #include <algorithm>
 #include <array>
+#include <cstdlib>
 #include <filesystem>
 
 #ifdef _WIN32
@@ -52,6 +54,46 @@ namespace PlutoGE::ui
             }
 #endif
             return std::filesystem::current_path();
+        }
+
+        std::filesystem::path GetEditorSettingsDirectory()
+        {
+#ifdef _WIN32
+            if (const char *appData = std::getenv("APPDATA"); appData != nullptr && appData[0] != '\0')
+            {
+                return std::filesystem::path(appData) / "PlutoGE";
+            }
+#else
+            if (const char *configHome = std::getenv("XDG_CONFIG_HOME"); configHome != nullptr && configHome[0] != '\0')
+            {
+                return std::filesystem::path(configHome) / "PlutoGE";
+            }
+            if (const char *home = std::getenv("HOME"); home != nullptr && home[0] != '\0')
+            {
+                return std::filesystem::path(home) / ".config" / "PlutoGE";
+            }
+#endif
+            return GetExecutableDirectory();
+        }
+
+        void BuildDefaultEditorLayout(ImGuiID dockspaceId)
+        {
+            ImGui::DockBuilderRemoveNode(dockspaceId);
+            ImGui::DockBuilderAddNode(dockspaceId, ImGuiDockNodeFlags_DockSpace);
+            ImGui::DockBuilderSetNodeSize(dockspaceId, ImGui::GetMainViewport()->WorkSize);
+
+            ImGuiID centerId = dockspaceId;
+            const ImGuiID leftId = ImGui::DockBuilderSplitNode(centerId, ImGuiDir_Left, 0.20f, nullptr, &centerId);
+            const ImGuiID rightId = ImGui::DockBuilderSplitNode(centerId, ImGuiDir_Right, 0.25f, nullptr, &centerId);
+            const ImGuiID bottomId = ImGui::DockBuilderSplitNode(centerId, ImGuiDir_Down, 0.28f, nullptr, &centerId);
+
+            ImGui::DockBuilderDockWindow("Scene Hierarchy", leftId);
+            ImGui::DockBuilderDockWindow("Inspector", rightId);
+            ImGui::DockBuilderDockWindow("Editor Viewport", centerId);
+            ImGui::DockBuilderDockWindow("Game Viewport", centerId);
+            ImGui::DockBuilderDockWindow("Content Browser", bottomId);
+            ImGui::DockBuilderDockWindow("Console", bottomId);
+            ImGui::DockBuilderFinish(dockspaceId);
         }
 
         std::filesystem::path ResolveEditorFontPath()
@@ -190,6 +232,15 @@ namespace PlutoGE::ui
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
         ImGuiIO &io = ImGui::GetIO();
+
+        const std::filesystem::path settingsDirectory = GetEditorSettingsDirectory();
+        std::error_code settingsError;
+        std::filesystem::create_directories(settingsDirectory, settingsError);
+        const std::filesystem::path iniPath = settingsDirectory / "editor-layout.ini";
+        m_applyDefaultLayout = !std::filesystem::exists(iniPath, settingsError);
+        m_imguiIniPath = iniPath.string();
+        io.IniFilename = m_imguiIniPath.c_str();
+
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard; // Enable Keyboard Controls
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;  // Enable Gamepad Controls
         io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;     // Enable Docking
@@ -214,6 +265,20 @@ namespace PlutoGE::ui
         }
 
         return true;
+    }
+
+    void PanelManager::ShutdownImGui()
+    {
+        if (ImGui::GetCurrentContext() == nullptr)
+        {
+            return;
+        }
+
+        ImGui::SaveIniSettingsToDisk(m_imguiIniPath.c_str());
+        ImGui_ImplOpenGL3_Shutdown();
+        ImGui_ImplGlfw_Shutdown();
+        ImGui::DestroyContext();
+        m_window = nullptr;
     }
 
     void PanelManager::SetEditorFontSize(float fontSize)
@@ -289,7 +354,12 @@ namespace PlutoGE::ui
         }
         ImGui::NewFrame();
         ImGuizmo::BeginFrame();
-        ImGui::DockSpaceOverViewport(ImGui::GetMainViewport()->ID);
+        const ImGuiID dockspaceId = ImGui::DockSpaceOverViewport(ImGui::GetMainViewport()->ID);
+        if (m_applyDefaultLayout)
+        {
+            BuildDefaultEditorLayout(dockspaceId);
+            m_applyDefaultLayout = false;
+        }
         m_timingStats.beginPanelUpdateMs = DurationMs(beginPanelUpdateStart, std::chrono::high_resolution_clock::now());
     }
 

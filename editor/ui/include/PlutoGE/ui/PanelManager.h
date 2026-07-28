@@ -40,6 +40,7 @@ namespace PlutoGE::ui
         ~PanelManager() = default;
 
         bool InitializeImGui(platform::Window *window);
+        void ShutdownImGui();
 
         void AddPanel(Panel *panel);
 
@@ -61,5 +62,7 @@ namespace PlutoGE::ui
         platform::Window *m_window = nullptr;
         PanelManagerTimingStats m_timingStats;
         float m_editorFontSize = 12.0f;
+        std::string m_imguiIniPath;
+        bool m_applyDefaultLayout = false;
     };
 }

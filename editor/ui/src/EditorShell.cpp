@@ -3502,6 +3502,7 @@ namespace PlutoGE::ui
         m_engine.GetAssetManager().ClearProjectContext();
         scripting::ClearScriptLogSink();
         m_panelManager.ShutdownPanels();
+        m_panelManager.ShutdownImGui();
         m_engine.Shutdown();
     }
 }

@@ -19,11 +19,13 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <chrono>
 #include <cstring>
 #include <deque>
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <memory>
 #include <set>
 #include <string>
@@ -1303,7 +1305,8 @@ void main() {
 
         bool ConfigureMeshComponentForReference(scene::Entity &entity,
                                                 const std::string &reference,
-                                                std::string *errorMessage)
+                                                std::string *errorMessage,
+                                                bool attachAnimation = true)
         {
             auto &engine = core::Engine::GetInstance();
             auto *meshComponent = entity.CreateComponent<scene::MeshComponent>(scene::MeshComponentConfig{});
@@ -1329,7 +1332,10 @@ void main() {
                 {
                     meshComponent->SetMaterialAssetForMaterialSlot(materialSlotIndex, materialReferences[materialSlotIndex]);
                 }
-                AttachAnimationAsset(entity, FindSiblingAnimationAssetReference(EditorShell::GetInstance().GetProject(), reference));
+                if (attachAnimation)
+                {
+                    AttachAnimationAsset(entity, FindSiblingAnimationAssetReference(EditorShell::GetInstance().GetProject(), reference));
+                }
                 return true;
             }
             if (errorMessage) *errorMessage = "Mesh object is not a valid imported model artifact: " + reference;
@@ -1345,11 +1351,22 @@ void main() {
 
             auto &engine = core::Engine::GetInstance();
             const auto sourcePath = project.ResolveAssetReference(asset.reference);
+            const auto importStart = std::chrono::steady_clock::now();
+            auto logProgress = [&](std::string_view stage)
+            {
+                const double elapsedMs = std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - importStart).count();
+                std::clog << "[Model import] " << stage << " (" << elapsedMs
+                          << " ms): " << asset.reference << std::endl;
+            };
+
+            logProgress("Starting asset database scan");
             assets::AssetDatabase assetDatabase;
             if (!assetDatabase.Scan(project, errorMessage))
             {
                 return false;
             }
+            logProgress("Initial asset database scan finished; parsing source model");
             const auto *sourceRecord = assetDatabase.FindByReference(asset.reference);
             const assetimport::MeshImportOptions importOptions{
                 .generateLods = true,
@@ -1370,6 +1387,7 @@ void main() {
                 return false;
             }
 
+            logProgress("Source model parsed; writing generated artifacts");
             const bool hasMesh = !importedSourceAsset.meshData.vertices.empty() && !importedSourceAsset.meshData.indices.empty();
             const bool hasAnimations = !importedSourceAsset.animations.empty();
             const bool hasTextures = !importedSourceAsset.textures.empty();
@@ -1393,6 +1411,7 @@ void main() {
             std::vector<std::string> textureReferences;
             if (!importedSourceAsset.textures.empty())
             {
+                logProgress("Writing textures");
                 textureReferences.reserve(importedSourceAsset.textures.size());
                 for (std::size_t textureIndex = 0; textureIndex < importedSourceAsset.textures.size(); ++textureIndex)
                 {
@@ -1417,6 +1436,7 @@ void main() {
             std::vector<std::string> materialReferences;
             if (hasMesh ? !importedSourceAsset.materials.empty() : hasAuthoredMaterials)
             {
+                logProgress("Writing materials");
                 materialReferences.reserve(importedSourceAsset.materials.size());
                 std::deque<render::Texture> textureHandles;
                 for (size_t materialIndex = 0; materialIndex < importedSourceAsset.materials.size(); ++materialIndex)
@@ -1445,6 +1465,7 @@ void main() {
 
             if (hasMesh)
             {
+                logProgress("Writing mesh asset");
                 render::MeshConfig meshConfig;
                 meshConfig.data = importedSourceAsset.meshData;
                 meshConfig.submeshes = importedSourceAsset.submeshes;
@@ -1474,6 +1495,7 @@ void main() {
 
             if (hasAnimations)
             {
+                logProgress("Writing animation clips");
                 const std::string animationReference = project.MakeAssetReference(importDirectory / (sourcePath.stem().string() + ".plutoanim"));
                 std::vector<std::string> clipReferences;
                 if (!SaveImportedAnimationClips(project, importDirectory / "Clips", sourcePath, importedSourceAsset.animations, clipReferences, errorMessage))
@@ -1519,8 +1541,11 @@ void main() {
 
             // Register every generated artifact immediately so scene references
             // receive stable IDs on the first drag, not only after an editor restart.
+            logProgress("Artifacts written; performing final asset database scan");
             assets::AssetDatabase generatedAssetDatabase;
-            return generatedAssetDatabase.Scan(project, errorMessage);
+            const bool scanned = generatedAssetDatabase.Scan(project, errorMessage);
+            logProgress(scanned ? "Finished" : "Final asset database scan failed");
+            return scanned;
         }
 
         bool ImportExternalSourceModelIntoAssets(assets::Project &project, std::string *importedReference, std::string *errorMessage)
@@ -1577,18 +1602,65 @@ void main() {
         editorShell.ExecuteSceneEdit("Instantiate Model Mesh Object",
                                      [scene, parent, reference, &createdEntity, &errorMessage]()
                                      {
-                                         auto entity = std::make_unique<scene::Entity>(scene::EntityConfig{
+                                         auto &engine = core::Engine::GetInstance();
+                                         auto *mesh = engine.GetAssetManager().LoadMeshAsset(reference);
+                                         if (!mesh)
+                                         {
+                                             errorMessage = "Mesh object is not a valid imported model artifact: " + reference;
+                                             return;
+                                         }
+
+                                         auto root = std::make_unique<scene::Entity>(scene::EntityConfig{
                                              .name = BuildEntityNameForMeshReference(reference),
                                          });
-                                         createdEntity = scene->AddEntity(std::move(entity), parent);
-                                         if (!createdEntity || !ConfigureMeshComponentForReference(*createdEntity, reference, &errorMessage))
+                                         createdEntity = scene->AddEntity(std::move(root), parent);
+                                         if (!createdEntity)
                                          {
-                                             if (createdEntity)
-                                             {
-                                                 scene->RemoveEntity(createdEntity);
-                                                 createdEntity = nullptr;
-                                             }
                                              return;
+                                         }
+
+                                         if (mesh->GetSubmeshCount() <= 1)
+                                         {
+                                             if (ConfigureMeshComponentForReference(*createdEntity, reference, &errorMessage))
+                                             {
+                                                 return;
+                                             }
+                                         }
+                                         else
+                                         {
+                                             AttachAnimationAsset(
+                                                 *createdEntity,
+                                                 FindSiblingAnimationAssetReference(EditorShell::GetInstance().GetProject(), reference));
+
+                                             bool allChildrenCreated = true;
+                                             for (size_t submeshIndex = 0; submeshIndex < mesh->GetSubmeshCount(); ++submeshIndex)
+                                             {
+                                                 const auto &submesh = mesh->GetSubmesh(submeshIndex);
+                                                 auto child = std::make_unique<scene::Entity>(scene::EntityConfig{
+                                                     .name = submesh.name.empty()
+                                                                 ? "Submesh " + std::to_string(submeshIndex)
+                                                                 : submesh.name,
+                                                 });
+                                                 auto *childEntity = scene->AddEntity(std::move(child), createdEntity);
+                                                 if (!childEntity ||
+                                                     !ConfigureMeshComponentForReference(*childEntity, reference, &errorMessage, false))
+                                                 {
+                                                     allChildrenCreated = false;
+                                                     break;
+                                                 }
+                                                 childEntity->GetComponent<scene::MeshComponent>()->SetSubmeshRange(
+                                                     static_cast<int>(submeshIndex), 1);
+                                             }
+                                             if (allChildrenCreated)
+                                             {
+                                                 return;
+                                             }
+                                         }
+
+                                         if (createdEntity)
+                                         {
+                                             scene->RemoveEntity(createdEntity);
+                                             createdEntity = nullptr;
                                          }
                                      });
 

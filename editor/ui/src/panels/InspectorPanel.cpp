@@ -3473,6 +3473,43 @@ namespace PlutoGE::ui
                     editorShell.MarkSceneDirty();
                 }
 
+                if (meshComponent->GetMesh() &&
+                    meshComponent->GetMesh()->GetSubmeshCount() > 0 &&
+                    ImGui::CollapsingHeader("Submesh Transform Offsets"))
+                {
+                    ImGui::TextWrapped("Offsets are applied only to the selected draw submesh. "
+                                       "Skinned submeshes continue to share this entity's animation.");
+                    for (size_t submeshIndex = 0; submeshIndex < meshComponent->GetMesh()->GetSubmeshCount(); ++submeshIndex)
+                    {
+                        const auto &submesh = meshComponent->GetMesh()->GetSubmesh(submeshIndex);
+                        const std::string label = submesh.name.empty()
+                                                      ? "Submesh " + std::to_string(submeshIndex)
+                                                      : std::to_string(submeshIndex) + " - " + submesh.name;
+                        ImGui::PushID(static_cast<int>(submeshIndex));
+                        if (ImGui::TreeNode(label.c_str()))
+                        {
+                            glm::vec3 position = meshComponent->GetSubmeshPositionOffset(submeshIndex);
+                            glm::vec3 rotation = meshComponent->GetSubmeshRotationOffset(submeshIndex);
+                            bool changed = ImGui::DragFloat3("Position", &position.x, 0.01f);
+                            changed |= ImGui::DragFloat3("Rotation", &rotation.x, 0.1f);
+                            if (changed)
+                            {
+                                meshComponent->SetSubmeshPositionOffset(submeshIndex, position);
+                                meshComponent->SetSubmeshRotationOffset(submeshIndex, rotation);
+                                editorShell.MarkSceneDirty();
+                            }
+                            if (ImGui::Button("Reset"))
+                            {
+                                meshComponent->SetSubmeshPositionOffset(submeshIndex, glm::vec3(0.0f));
+                                meshComponent->SetSubmeshRotationOffset(submeshIndex, glm::vec3(0.0f));
+                                editorShell.MarkSceneDirty();
+                            }
+                            ImGui::TreePop();
+                        }
+                        ImGui::PopID();
+                    }
+                }
+
                 ImGui::BeginDisabled(meshComponent->GetMeshAssetReference().empty());
                 if (ImGui::Button("Reset Materials To Mesh Defaults"))
                 {

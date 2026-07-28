@@ -117,6 +117,11 @@ namespace PlutoGE::scene
         void SetMeshRotationOffset(const glm::vec3 &offset);
         const glm::vec3 &GetMeshRotationOffset() const;
         glm::mat4 GetMeshOffsetTransform() const;
+        void SetSubmeshPositionOffset(size_t submeshIndex, const glm::vec3 &offset);
+        glm::vec3 GetSubmeshPositionOffset(size_t submeshIndex) const;
+        void SetSubmeshRotationOffset(size_t submeshIndex, const glm::vec3 &offset);
+        glm::vec3 GetSubmeshRotationOffset(size_t submeshIndex) const;
+        glm::mat4 GetSubmeshOffsetTransform(size_t submeshIndex) const;
 
         void SetMaterial(render::Material *material)
         {
@@ -249,6 +254,8 @@ namespace PlutoGE::scene
         std::uint64_t m_modelObjectId = 0;
         glm::vec3 m_meshPositionOffset{0.0f};
         glm::vec3 m_meshRotationOffset{0.0f};
+        std::vector<glm::vec3> m_submeshPositionOffsets;
+        std::vector<glm::vec3> m_submeshRotationOffsets;
         int m_submeshIndex = -1;
         int m_submeshCount = 1;
         bool m_visible = true;

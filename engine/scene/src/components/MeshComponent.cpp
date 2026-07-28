@@ -25,6 +25,7 @@ namespace PlutoGE::scene
     {
         constexpr const char *kMaterialSlotPrefix = "MaterialSlots.";
         constexpr const char *kSubmeshOverridePrefix = "SubmeshOverrides.";
+        constexpr const char *kSubmeshTransformPrefix = "SubmeshTransforms.";
 
         render::MeshBounds ComputeWorldBounds(const render::Mesh &mesh, std::size_t submeshIndex, const glm::mat4 &modelMatrix)
         {
@@ -606,6 +607,21 @@ namespace PlutoGE::scene
             SerializeInlineMaterialProperties(properties, prefix, config);
         }
 
+        const size_t submeshTransformCount = std::max(m_submeshPositionOffsets.size(), m_submeshRotationOffsets.size());
+        for (size_t submeshIndex = 0; submeshIndex < submeshTransformCount; ++submeshIndex)
+        {
+            const glm::vec3 position = GetSubmeshPositionOffset(submeshIndex);
+            const glm::vec3 rotation = GetSubmeshRotationOffset(submeshIndex);
+            if (position == glm::vec3(0.0f) && rotation == glm::vec3(0.0f))
+            {
+                continue;
+            }
+
+            const std::string prefix = std::string(kSubmeshTransformPrefix) + std::to_string(submeshIndex) + ".";
+            properties.push_back({prefix + "Position", PropertyType::Vec3, SerializeVec3(position)});
+            properties.push_back({prefix + "Rotation", PropertyType::Vec3, SerializeVec3(rotation)});
+        }
+
         return properties;
     }
 
@@ -671,6 +687,30 @@ namespace PlutoGE::scene
             else if (property.name == "MeshRotationOffset")
             {
                 m_meshRotationOffset = ParseVec3(property.value, glm::vec3(0.0f));
+            }
+            else if (property.name.rfind(kSubmeshTransformPrefix, 0) == 0)
+            {
+                const std::string remainder = property.name.substr(std::char_traits<char>::length(kSubmeshTransformPrefix));
+                const auto separatorIndex = remainder.find('.');
+                if (separatorIndex == std::string::npos)
+                {
+                    continue;
+                }
+
+                const size_t submeshIndex = static_cast<size_t>(std::stoull(remainder.substr(0, separatorIndex)));
+                const std::string fieldName = remainder.substr(separatorIndex + 1);
+                if (fieldName == "Position")
+                {
+                    if (m_submeshPositionOffsets.size() <= submeshIndex)
+                        m_submeshPositionOffsets.resize(submeshIndex + 1, glm::vec3(0.0f));
+                    m_submeshPositionOffsets[submeshIndex] = ParseVec3(property.value, glm::vec3(0.0f));
+                }
+                else if (fieldName == "Rotation")
+                {
+                    if (m_submeshRotationOffsets.size() <= submeshIndex)
+                        m_submeshRotationOffsets.resize(submeshIndex + 1, glm::vec3(0.0f));
+                    m_submeshRotationOffsets[submeshIndex] = ParseVec3(property.value, glm::vec3(0.0f));
+                }
             }
             else if (property.name.rfind(kMaterialSlotPrefix, 0) == 0)
             {
@@ -918,6 +958,47 @@ namespace PlutoGE::scene
         return transform;
     }
 
+    void MeshComponent::SetSubmeshPositionOffset(size_t submeshIndex, const glm::vec3 &offset)
+    {
+        if (m_submeshPositionOffsets.size() <= submeshIndex)
+            m_submeshPositionOffsets.resize(submeshIndex + 1, glm::vec3(0.0f));
+        if (m_submeshPositionOffsets[submeshIndex] == offset)
+            return;
+        m_submeshPositionOffsets[submeshIndex] = offset;
+        MarkRenderCommandsDirty();
+    }
+
+    glm::vec3 MeshComponent::GetSubmeshPositionOffset(size_t submeshIndex) const
+    {
+        return submeshIndex < m_submeshPositionOffsets.size() ? m_submeshPositionOffsets[submeshIndex] : glm::vec3(0.0f);
+    }
+
+    void MeshComponent::SetSubmeshRotationOffset(size_t submeshIndex, const glm::vec3 &offset)
+    {
+        if (m_submeshRotationOffsets.size() <= submeshIndex)
+            m_submeshRotationOffsets.resize(submeshIndex + 1, glm::vec3(0.0f));
+        if (m_submeshRotationOffsets[submeshIndex] == offset)
+            return;
+        m_submeshRotationOffsets[submeshIndex] = offset;
+        MarkRenderCommandsDirty();
+    }
+
+    glm::vec3 MeshComponent::GetSubmeshRotationOffset(size_t submeshIndex) const
+    {
+        return submeshIndex < m_submeshRotationOffsets.size() ? m_submeshRotationOffsets[submeshIndex] : glm::vec3(0.0f);
+    }
+
+    glm::mat4 MeshComponent::GetSubmeshOffsetTransform(size_t submeshIndex) const
+    {
+        glm::mat4 transform(1.0f);
+        transform = glm::translate(transform, GetSubmeshPositionOffset(submeshIndex));
+        const glm::vec3 rotation = GetSubmeshRotationOffset(submeshIndex);
+        transform = glm::rotate(transform, glm::radians(rotation.x), glm::vec3(1.0f, 0.0f, 0.0f));
+        transform = glm::rotate(transform, glm::radians(rotation.y), glm::vec3(0.0f, 1.0f, 0.0f));
+        transform = glm::rotate(transform, glm::radians(rotation.z), glm::vec3(0.0f, 0.0f, 1.0f));
+        return transform;
+    }
+
     void MeshComponent::SubmitRenderCommands()
     {
         if (m_mesh && m_visible)
@@ -977,17 +1058,19 @@ namespace PlutoGE::scene
                 }
 
                 const auto &submesh = submeshIndex < m_mesh->GetSubmeshCount() ? m_mesh->GetSubmesh(submeshIndex) : render::Submesh{};
-                glm::mat4 submeshModelMatrix = modelMatrix;
+                glm::mat4 submeshModelMatrix = modelMatrix * GetSubmeshOffsetTransform(submeshIndex);
                 if (!jointMatrices && submesh.animatedNodeIndex >= 0)
                 {
-                    submeshModelMatrix = modelMatrix * (animationComponent && animationComponent->GetClipCount() > 0
+                    submeshModelMatrix *= (animationComponent && animationComponent->GetClipCount() > 0
                                                             ? animationComponent->GetNodeMatrix(m_mesh->GetAnimationNodes(), submesh.animatedNodeIndex)
                                                             : ComputeAnimationNodeBindMatrix(m_mesh->GetAnimationNodes(), submesh.animatedNodeIndex));
                 }
 
                 render::RenderCommand command;
                 command.model = submeshModelMatrix;
-                command.previousModel = m_hasPreviousModelMatrix ? m_previousModelMatrix : submeshModelMatrix;
+                command.previousModel = m_hasPreviousModelMatrix
+                                            ? m_previousModelMatrix * GetSubmeshOffsetTransform(submeshIndex)
+                                            : submeshModelMatrix;
                 command.material = material;
                 command.mesh = m_mesh;
                 command.shader = material->GetShader();

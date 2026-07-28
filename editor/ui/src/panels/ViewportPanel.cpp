@@ -889,10 +889,13 @@ namespace PlutoGE::ui
 
         glm::mat4 ComputePickSubmeshTransform(scene::Entity &entity,
                                               scene::MeshComponent &meshComponent,
+                                              size_t submeshIndex,
                                               const render::Submesh &submesh,
                                               scene::AnimationComponent *animationComponent)
         {
-            glm::mat4 transform = entity.GetWorldTransform() * meshComponent.GetMeshOffsetTransform();
+            glm::mat4 transform = entity.GetWorldTransform() *
+                                  meshComponent.GetMeshOffsetTransform() *
+                                  meshComponent.GetSubmeshOffsetTransform(submeshIndex);
             if (submesh.animatedNodeIndex >= 0)
             {
                 render::Mesh *mesh = meshComponent.GetMesh();
@@ -942,7 +945,7 @@ namespace PlutoGE::ui
                 if (submesh.indexCount < 3 || submesh.indexOffset + submesh.indexCount > data.indices.size())
                     continue;
 
-                const glm::mat4 world = ComputePickSubmeshTransform(entity, meshComponent, submesh, animation);
+                const glm::mat4 world = ComputePickSubmeshTransform(entity, meshComponent, submeshIndex, submesh, animation);
                 const glm::mat4 inverseWorld = glm::inverse(world);
                 const glm::vec3 localOrigin(inverseWorld * glm::vec4(ray.origin, 1.0f));
                 glm::vec3 localDirection(inverseWorld * glm::vec4(ray.direction, 0.0f));
@@ -1285,7 +1288,7 @@ namespace PlutoGE::ui
                         continue;
                     }
 
-                    const glm::mat4 submeshWorldTransform = ComputePickSubmeshTransform(*entity, *meshComponent, submesh, animationComponent);
+                    const glm::mat4 submeshWorldTransform = ComputePickSubmeshTransform(*entity, *meshComponent, submeshIndex, submesh, animationComponent);
                     const glm::mat4 inverseSubmeshWorldTransform = glm::inverse(submeshWorldTransform);
                     glm::vec3 localOrigin = glm::vec3(inverseSubmeshWorldTransform * glm::vec4(ray->origin, 1.0f));
                     glm::vec3 localDirection = glm::vec3(inverseSubmeshWorldTransform * glm::vec4(ray->direction, 0.0f));

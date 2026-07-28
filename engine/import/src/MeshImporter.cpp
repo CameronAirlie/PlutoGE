@@ -69,6 +69,7 @@ namespace PlutoGE::assetimport
             int animatedNodeIndex = -1;
             std::string name;
             bool usesAnimatedNodeTransform = false;
+            bool reversesWinding = false;
             size_t slot = 0;
         };
 
@@ -175,7 +176,9 @@ namespace PlutoGE::assetimport
         };
 
         constexpr uint32_t kCookedMeshCacheMagic = 0x434d4750; // PGMC
-        constexpr uint32_t kCookedMeshCacheVersion = 28;
+        // Increment whenever imported geometry, skeleton, or animation
+        // semantics change so unchanged source files are recooked.
+        constexpr uint32_t kCookedMeshCacheVersion = 30;
 
         bool ReadBooleanEnvironmentFlag(const char *name, bool defaultValue)
         {
@@ -2040,6 +2043,64 @@ namespace PlutoGE::assetimport
             workItem.usesAnimatedNodeTransform = usesAnimatedNodeTransform;
             workItem.worldTransform = isSkinned ? glm::mat4(1.0f) : worldTransform;
             workItem.normalMatrix = glm::transpose(glm::inverse(glm::mat3(workItem.worldTransform)));
+            bool sourceWindingIsReversed = false;
+            if (workItem.normalView.has_value() && workItem.indexCount >= 3)
+            {
+                // Some exporters emit double-sided primitives whose index
+                // winding disagrees with their outward vertex normals. Since
+                // PlutoGE culls back faces, canonicalize each primitive
+                // independently instead of assuming every primitive in the
+                // asset uses the same winding convention.
+                constexpr size_t kMaximumWindingSamples = 512;
+                const size_t triangleCount = workItem.indexCount / 3;
+                const size_t sampleCount = std::min(triangleCount, kMaximumWindingSamples);
+                size_t forwardFacingSamples = 0;
+                size_t reversedSamples = 0;
+                for (size_t sampleIndex = 0; sampleIndex < sampleCount; ++sampleIndex)
+                {
+                    const size_t triangleIndex = sampleIndex * triangleCount / sampleCount;
+                    std::array<uint32_t, 3> vertexIndices{};
+                    for (size_t corner = 0; corner < vertexIndices.size(); ++corner)
+                    {
+                        vertexIndices[corner] = workItem.indexView.has_value()
+                                                    ? ReadIndex(*workItem.indexView, triangleIndex * 3 + corner)
+                                                    : static_cast<uint32_t>(triangleIndex * 3 + corner);
+                    }
+                    if (vertexIndices[0] >= workItem.vertexCount ||
+                        vertexIndices[1] >= workItem.vertexCount ||
+                        vertexIndices[2] >= workItem.vertexCount)
+                    {
+                        continue;
+                    }
+
+                    const auto position0 = ReadFloatTuple<3>(workItem.positionView, vertexIndices[0]);
+                    const auto position1 = ReadFloatTuple<3>(workItem.positionView, vertexIndices[1]);
+                    const auto position2 = ReadFloatTuple<3>(workItem.positionView, vertexIndices[2]);
+                    const auto normal0 = ReadFloatTuple<3>(*workItem.normalView, vertexIndices[0]);
+                    const glm::vec3 edge01(
+                        position1[0] - position0[0],
+                        position1[1] - position0[1],
+                        position1[2] - position0[2]);
+                    const glm::vec3 edge02(
+                        position2[0] - position0[0],
+                        position2[1] - position0[1],
+                        position2[2] - position0[2]);
+                    const float orientation = glm::dot(
+                        glm::cross(edge01, edge02),
+                        glm::vec3(normal0[0], normal0[1], normal0[2]));
+                    if (orientation > 1e-10f)
+                    {
+                        ++forwardFacingSamples;
+                    }
+                    else if (orientation < -1e-10f)
+                    {
+                        ++reversedSamples;
+                    }
+                }
+                sourceWindingIsReversed = reversedSamples > forwardFacingSamples;
+            }
+            const bool transformReversesWinding = glm::determinant(glm::mat3(workItem.worldTransform)) < 0.0f;
+            workItem.reversesWinding = sourceWindingIsReversed != transformReversesWinding;
             workItem.materialIndex = materialIndex;
             return workItem;
         }
@@ -2219,7 +2280,7 @@ namespace PlutoGE::assetimport
                         transformedTangent.x,
                         transformedTangent.y,
                         transformedTangent.z,
-                        sourceTangent[3],
+                        workItem.reversesWinding ? -sourceTangent[3] : sourceTangent[3],
                     };
                 }
 
@@ -2251,6 +2312,13 @@ namespace PlutoGE::assetimport
                 for (uint32_t index = 0; index < workItem.vertexCount; ++index)
                 {
                     indexDestination[index] = workItem.baseVertex + index;
+                }
+            }
+            if (workItem.reversesWinding)
+            {
+                for (uint32_t index = 0; index + 2 < workItem.indexCount; index += 3)
+                {
+                    std::swap(indexDestination[index + 1], indexDestination[index + 2]);
                 }
             }
             indexAssemblyMs = ElapsedMilliseconds(indexAssemblyStart);
@@ -2368,7 +2436,10 @@ namespace PlutoGE::assetimport
             return model.skins.empty() ? -1 : 0;
         }
 
-        render::Skeleton ParseSkeleton(const tinygltf::Model &model, int skinIndex, const std::vector<glm::mat4> &nodeGlobals, const std::vector<int> &nodeParents)
+        render::Skeleton ParseSkeleton(const tinygltf::Model &model,
+                                       int skinIndex,
+                                       const std::vector<glm::mat4> &nodeGlobals,
+                                       const std::vector<int> &nodeParents)
         {
             render::Skeleton skeleton;
             if (skinIndex < 0 || skinIndex >= static_cast<int>(model.skins.size()))
@@ -2397,9 +2468,12 @@ namespace PlutoGE::assetimport
                 }
             }
 
-            const glm::mat4 inverseRoot = skin.skeleton >= 0 && skin.skeleton < static_cast<int>(nodeGlobals.size())
-                                              ? glm::inverse(nodeGlobals[static_cast<size_t>(skin.skeleton)])
-                                              : glm::mat4(1.0f);
+            // glTF inverse bind matrices already produce the model-space
+            // deformation used by this importer. skin.skeleton is only a
+            // hierarchy hint; treating it as a skinning-space origin leaves
+            // its inverse transform in the bind pose and separates skinned
+            // geometry from rigid sibling meshes.
+            const glm::mat4 inverseRoot(1.0f);
 
             for (size_t jointIndex = 0; jointIndex < skin.joints.size(); ++jointIndex)
             {
@@ -4267,6 +4341,14 @@ namespace PlutoGE::assetimport
 
         ImportedMeshSourceAsset ParseMeshAsset(const std::string &filePath, const MeshCookOptions &cookOptions)
         {
+            const auto importStart = ImportClock::now();
+            auto logProgress = [&](std::string_view stage)
+            {
+                std::clog << "[Mesh import] " << stage << " (" << ElapsedMilliseconds(importStart)
+                          << " ms): " << filePath << std::endl;
+            };
+
+            logProgress("Starting");
             if (!MeshImporter().SupportsFileType(filePath))
             {
                 throw std::runtime_error("Unsupported mesh format. Use glTF 2.0 (.glb or .gltf) or FBX (.fbx).");
@@ -4274,18 +4356,22 @@ namespace PlutoGE::assetimport
 
             if (auto cookedAsset = TryLoadCookedMeshAsset(filePath, cookOptions))
             {
+                logProgress("Loaded cooked cache; finished");
                 return std::move(*cookedAsset);
             }
 
             const auto extension = ToLower(std::filesystem::path(filePath).extension().string());
             if (extension == ".fbx")
             {
+                logProgress("Reading FBX with Assimp");
                 MeshImportProfile profile;
                 profile.enabled = IsMeshImportProfilingEnabled();
                 profile.filePath = filePath;
 
                 auto asset = ParseAssimpMeshAsset(filePath, cookOptions, &profile);
+                logProgress("FBX parsed; writing cooked cache");
                 StoreCookedMeshAsset(filePath, cookOptions, asset);
+                logProgress("Finished");
                 return asset;
             }
 
@@ -4300,6 +4386,7 @@ namespace PlutoGE::assetimport
             std::string errors;
 
             const auto loadStart = ImportClock::now();
+            logProgress("Reading and decoding glTF/GLB");
             const bool loaded = extension == ".glb"
                                     ? loader.LoadBinaryFromFile(&model, &errors, &warnings, filePath)
                                     : loader.LoadASCIIFromFile(&model, &errors, &warnings, filePath);
@@ -4315,6 +4402,7 @@ namespace PlutoGE::assetimport
                 throw std::runtime_error(errors.empty() ? "Failed to load glTF mesh." : errors);
             }
 
+            logProgress("GLB decoded; parsing skeleton and animations");
             std::vector<glm::mat4> nodeGlobals;
             std::vector<int> nodeParents;
             ComputeNodeGlobals(model, nodeGlobals, nodeParents);
@@ -4324,6 +4412,7 @@ namespace PlutoGE::assetimport
             parsedMeshAsset.animationNodes = ParseAnimationNodes(model, nodeParents);
             parsedMeshAsset.animations = ParseAnimations(model, parsedMeshAsset.skeleton, nodeGlobals, nodeParents);
 
+            logProgress("Skeleton and animations parsed; importing textures and materials");
             const auto textureStageStart = ImportClock::now();
             parsedMeshAsset.textures.resize(model.images.size());
             for (size_t imageIndex = 0; imageIndex < model.images.size(); ++imageIndex)
@@ -4351,6 +4440,7 @@ namespace PlutoGE::assetimport
             const uint32_t defaultMaterialIndex = static_cast<uint32_t>(parsedMeshAsset.materials.size());
             parsedMeshAsset.materials.push_back(ImportedMaterialData{});
 
+            logProgress("Textures and materials imported; assembling mesh geometry");
             std::unordered_set<int> visitedNodes;
             const auto animatedNodeIndices = CollectAnimatedNodeIndices(model);
             const auto sceneTraversalStart = ImportClock::now();
@@ -4422,6 +4512,7 @@ namespace PlutoGE::assetimport
 
             profile.submeshMergeMs = 0.0;
 
+            logProgress("Mesh assembled; generating LODs and optimizing");
             const auto optimizeStart = ImportClock::now();
             if (!cookOptions.generateTangents)
             {
@@ -4431,7 +4522,9 @@ namespace PlutoGE::assetimport
             GenerateSubmeshLods(parsedMeshAsset.meshData, parsedMeshAsset.submeshes, cookOptions.generateLods);
             OptimizeGeneratedLodRanges(parsedMeshAsset.meshData, parsedMeshAsset.submeshes, cookOptions.optimizeVertexCache, cookOptions.optimizeOverdraw);
             profile.optimizeMs = ElapsedMilliseconds(optimizeStart);
+            logProgress("Mesh optimized; writing cooked cache");
             StoreCookedMeshAsset(filePath, cookOptions, parsedMeshAsset);
+            logProgress("Finished");
             return parsedMeshAsset;
         }
 

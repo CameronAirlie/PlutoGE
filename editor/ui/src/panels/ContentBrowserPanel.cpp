@@ -724,6 +724,7 @@ void main() {
                 case scripting::ScriptFieldType::String:
                 case scripting::ScriptFieldType::PrefabAsset:
                 case scripting::ScriptFieldType::ScriptableObjectAsset: return text;
+                case scripting::ScriptFieldType::MaterialAsset: return text;
                 case scripting::ScriptFieldType::Vector2:
                 {
                     glm::vec2 value{};
@@ -2738,6 +2739,7 @@ void main() {
                         case scripting::ScriptFieldType::String:
                         case scripting::ScriptFieldType::PrefabAsset:
                         case scripting::ScriptFieldType::ScriptableObjectAsset:
+                        case scripting::ScriptFieldType::MaterialAsset:
                         {
                             auto &value = std::get<std::string>(iterator->second);
                             if (InputTextString(field.name.c_str(), value)) { changed = true; }

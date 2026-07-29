@@ -169,6 +169,7 @@ namespace PlutoGE::render
         RenderTarget *temporaryRenderTarget = nullptr; // Optional temporary render target for intermediate passes
         RenderTarget *postProcessIntermediateRenderTarget = nullptr;
         std::vector<RenderCommand> *renderCommands; // List of render commands for the current frame
+        const std::vector<struct DecalCommand> *decalCommands = nullptr;
         std::vector<scene::Light *> *lights;        // List of lights in the scene for the current frame
         GBuffer *gBuffer;                           // GBuffer for deferred rendering
         LightPropagationVolumePass *lightPropagationVolumePass = nullptr;
@@ -180,6 +181,14 @@ namespace PlutoGE::render
         // against the older RenderContext layout retain valid field offsets.
         RenderTarget *oceanSurfaceDepthRenderTarget = nullptr;
         RenderTarget *oceanSceneColorCopyRenderTarget = nullptr;
+    };
+
+    struct DecalCommand
+    {
+        glm::mat4 model{1.0f};
+        Material *material = nullptr;
+        glm::vec4 tint{1.0f};
+        float normalCutoff = 0.25f;
     };
 
     class IRenderPass;
@@ -199,6 +208,13 @@ namespace PlutoGE::render
         void EndFrame(RenderTarget *renderTarget = nullptr);
         void Shutdown(RenderTarget *renderTarget = nullptr);
         void ClearRenderCommands();
+        void SubmitDecalCommand(const DecalCommand &command)
+        {
+            if (command.material)
+            {
+                m_decalCommands.push_back(command);
+            }
+        }
         void SetSubmissionCullingCameras(const std::vector<CameraData> &cameraDatas);
         void ClearSubmissionCullingCameras();
 
@@ -345,6 +361,7 @@ namespace PlutoGE::render
         PhysicalSkyPass *m_physicalSkyPass = nullptr;
         std::vector<IRenderPass *> m_renderPasses;
         std::vector<RenderCommand> m_renderCommands;
+        std::vector<DecalCommand> m_decalCommands;
         std::vector<RenderCommand> m_visibleRenderCommands;
         std::vector<SubmissionFrustum> m_submissionFrustums;
         std::unordered_map<const RenderTarget *, std::unique_ptr<FrameResources>> m_frameResources;

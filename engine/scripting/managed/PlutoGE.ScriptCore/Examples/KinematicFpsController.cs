@@ -108,6 +108,11 @@ public sealed class KinematicFpsController : ScriptBehaviour
     [SerializedField] private string damageableTag = "Enemy";
     [SerializedField] private string headTag = "Head";
     [SerializedField] private string damageMethod = "TakeDamage";
+    [SerializedField, MaterialAsset] private string bulletHoleMaterial = "";
+    [SerializedField] private Vector2 bulletHoleSize = new(0.12f, 0.12f);
+    [SerializedField] private float bulletHoleDepth = 0.06f;
+    [SerializedField] private float bulletHoleLifetime = 30.0f;
+    [SerializedField] private float bulletHoleFadeDuration = 2.0f;
 
     // View-model motion
     [SerializedField] private Vector3 hipPosition = new(0.28f, -0.24f, -0.48f);
@@ -379,18 +384,31 @@ public sealed class KinematicFpsController : ScriptBehaviour
         var spread = (_aiming ? adsSpreadDegrees : hipSpreadDegrees) + movingSpread;
         var direction = ApplySpread(camera?.GameObject.Forward ?? GameObject.Forward, spread);
         var origin = camera?.GameObject.WorldPosition ?? GameObject.WorldPosition;
-        if (Physics.Raycast(origin, direction, range, GameObject, out var hit) &&
-            (hit.Entity.HasTag(damageableTag) || hit.Entity.HasTag(headTag)))
+        if (Physics.Raycast(origin, direction, range, GameObject, out var hit))
         {
-            var isHeadshot = hit.Entity.HasTag(headTag);
-            var dealtDamage = damage * (isHeadshot ? headshotMultiplier : 1.0f);
-            if (!hit.Entity.TryInvoke(damageMethod, dealtDamage))
+            if (!string.IsNullOrWhiteSpace(bulletHoleMaterial))
             {
-                Debug.LogWarning($"Hit {hit.Entity.Name}, but {damageMethod}(float) was not found.");
+                Decals.Spawn(
+                    hit,
+                    bulletHoleMaterial,
+                    bulletHoleSize,
+                    bulletHoleDepth,
+                    bulletHoleLifetime,
+                    bulletHoleFadeDuration);
             }
-            else
+
+            if (hit.Entity.HasTag(damageableTag) || hit.Entity.HasTag(headTag))
             {
-                HitConfirmed?.Invoke(new FpsHitEvent(hit.Entity, hit.Point, dealtDamage, isHeadshot));
+                var isHeadshot = hit.Entity.HasTag(headTag);
+                var dealtDamage = damage * (isHeadshot ? headshotMultiplier : 1.0f);
+                if (!hit.Entity.TryInvoke(damageMethod, dealtDamage))
+                {
+                    Debug.LogWarning($"Hit {hit.Entity.Name}, but {damageMethod}(float) was not found.");
+                }
+                else
+                {
+                    HitConfirmed?.Invoke(new FpsHitEvent(hit.Entity, hit.Point, dealtDamage, isHeadshot));
+                }
             }
         }
 

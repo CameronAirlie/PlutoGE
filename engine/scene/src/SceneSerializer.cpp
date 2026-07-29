@@ -7,6 +7,7 @@
 #include "PlutoGE/scene/components/AnimationComponent.h"
 #include "PlutoGE/scene/components/ClothComponent.h"
 #include "PlutoGE/scene/components/ColliderComponent.h"
+#include "PlutoGE/scene/components/DecalComponent.h"
 #include "PlutoGE/scene/components/FoliageComponent.h"
 #include "PlutoGE/scene/components/IblCaptureComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
@@ -191,6 +192,8 @@ namespace PlutoGE::scene
             {
                 return "MeshComponent";
             }
+            if (dynamic_cast<const DecalComponent *>(&component))
+                return "DecalComponent";
             if (dynamic_cast<const TerrainComponent *>(&component))
             {
                 return "TerrainComponent";
@@ -297,6 +300,8 @@ namespace PlutoGE::scene
             {
                 return std::make_unique<MeshComponent>(MeshComponentConfig{});
             }
+            if (componentType == "DecalComponent")
+                return std::make_unique<DecalComponent>();
             if (componentType == "TerrainComponent")
             {
                 return std::make_unique<TerrainComponent>(TerrainComponentConfig{});

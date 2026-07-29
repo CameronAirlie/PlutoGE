@@ -37,6 +37,7 @@ namespace PlutoGE::scripting
         SoundEmitterComponent,
         PrefabAsset,
         ScriptableObjectAsset,
+        MaterialAsset,
     };
 
     enum class ScriptClassKind

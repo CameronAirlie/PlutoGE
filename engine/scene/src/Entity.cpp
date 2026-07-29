@@ -4,6 +4,7 @@
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
+#include "PlutoGE/scene/components/DecalComponent.h"
 #include "PlutoGE/scene/components/TerrainComponent.h"
 #include "PlutoGE/scene/components/FoliageComponent.h"
 
@@ -317,6 +318,8 @@ namespace PlutoGE::scene
             {
                 m_scene->RegisterParticleSystemComponent(static_cast<ParticleSystemComponent *>(component));
             }
+            if (auto *decal = dynamic_cast<DecalComponent *>(component))
+                m_scene->RegisterDecalComponent(decal);
         }
 
         return component;
@@ -358,6 +361,8 @@ namespace PlutoGE::scene
             {
                 m_scene->UnregisterParticleSystemComponent(static_cast<ParticleSystemComponent *>(component));
             }
+            if (auto *decal = dynamic_cast<DecalComponent *>(component))
+                m_scene->UnregisterDecalComponent(decal);
         }
 
         DetachComponent(component);
@@ -425,6 +430,8 @@ namespace PlutoGE::scene
                     m_scene->UnregisterParticleSystemComponent(particleSystemComponent);
                 }
             }
+            for (auto *decal : GetComponents<DecalComponent>())
+                m_scene->UnregisterDecalComponent(decal);
         }
 
         m_scene = scene;
@@ -470,6 +477,8 @@ namespace PlutoGE::scene
                     m_scene->RegisterParticleSystemComponent(particleSystemComponent);
                 }
             }
+            for (auto *decal : GetComponents<DecalComponent>())
+                m_scene->RegisterDecalComponent(decal);
         }
 
         for (auto *child : m_children)

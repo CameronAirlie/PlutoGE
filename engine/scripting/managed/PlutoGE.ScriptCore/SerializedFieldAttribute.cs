@@ -6,3 +6,8 @@ namespace PlutoGE.ScriptCore;
 public sealed class SerializedFieldAttribute : Attribute
 {
 }
+
+[AttributeUsage(AttributeTargets.Field | AttributeTargets.Property)]
+public sealed class MaterialAssetAttribute : Attribute
+{
+}

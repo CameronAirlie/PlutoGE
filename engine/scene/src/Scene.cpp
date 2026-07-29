@@ -7,6 +7,7 @@
 #include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/scene/components/NavigationMeshComponent.h"
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
+#include "PlutoGE/scene/components/DecalComponent.h"
 #include "PlutoGE/scene/components/RigidbodyComponent.h"
 #include "PlutoGE/scene/components/ScriptComponent.h"
 #include "PlutoGE/scene/components/SoundEmitterComponent.h"
@@ -36,6 +37,7 @@
 #include <glm/gtx/quaternion.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtx/quaternion.hpp>
 
 namespace PlutoGE::scene
 {
@@ -1922,6 +1924,12 @@ namespace PlutoGE::scene
 
             foliageComponent->SubmitRenderCommands();
         }
+        for (auto *decalComponent : m_decalComponents)
+        {
+            if (decalComponent && decalComponent->IsEnabled() &&
+                decalComponent->GetOwner() && decalComponent->GetOwner()->IsActive())
+                decalComponent->SubmitRenderCommand();
+        }
         const auto submissionEnd = Clock::now();
 
         m_updateTimingStats.meshSubmissionMs = std::chrono::duration<float, std::milli>(terrainStart - meshStart).count();
@@ -1950,6 +1958,17 @@ namespace PlutoGE::scene
         }
 
         m_particleSystemComponents.erase(std::remove(m_particleSystemComponents.begin(), m_particleSystemComponents.end(), particleSystemComponent), m_particleSystemComponents.end());
+    }
+
+    void Scene::RegisterDecalComponent(DecalComponent *decalComponent)
+    {
+        if (decalComponent && std::find(m_decalComponents.begin(), m_decalComponents.end(), decalComponent) == m_decalComponents.end())
+            m_decalComponents.push_back(decalComponent);
+    }
+
+    void Scene::UnregisterDecalComponent(DecalComponent *decalComponent)
+    {
+        m_decalComponents.erase(std::remove(m_decalComponents.begin(), m_decalComponents.end(), decalComponent), m_decalComponents.end());
     }
 
     void Scene::RegisterMeshComponent(MeshComponent *meshComponent)
@@ -2310,6 +2329,32 @@ namespace PlutoGE::scene
             .impulse = impulse,
         });
         return true;
+    }
+
+    Entity *Scene::SpawnDecal(const PhysicsRaycastHit &hit,
+                              const std::string &materialAssetReference,
+                              const glm::vec2 &size,
+                              float depth,
+                              float lifetime,
+                              float fadeDuration)
+    {
+        if (materialAssetReference.empty() || glm::length2(hit.normal) < 0.000001f)
+            return nullptr;
+
+        const glm::vec3 normal = glm::normalize(hit.normal);
+        const float safeDepth = std::max(depth, 0.001f);
+        auto entity = std::make_unique<Entity>(EntityConfig{.name = "Decal"});
+        Entity *decalEntity = entity.get();
+        decalEntity->SetPosition(hit.point + normal * (safeDepth * 0.5f - 0.001f));
+        const glm::quat orientation = glm::rotation(glm::vec3(0.0f, 0.0f, 1.0f), normal);
+        decalEntity->SetRotation(glm::degrees(glm::eulerAngles(orientation)));
+        decalEntity->SetScale(glm::vec3(glm::max(size, glm::vec2(0.001f)), safeDepth));
+        decalEntity->CreateComponent<DecalComponent>(DecalComponentConfig{
+            .materialAssetReference = materialAssetReference,
+            .lifetime = lifetime,
+            .fadeDuration = fadeDuration,
+        });
+        return AddEntity(std::move(entity));
     }
 
     void Scene::StepPhysics(float deltaTime)

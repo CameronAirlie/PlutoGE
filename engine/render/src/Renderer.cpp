@@ -8,6 +8,7 @@
 #include "PlutoGE/render/RenderTarget.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
 #include "PlutoGE/render/passes/GeometryPass.h"
+#include "PlutoGE/render/passes/DecalPass.h"
 #include "PlutoGE/render/passes/GridPass.h"
 #include "PlutoGE/render/passes/LightingPass.h"
 #include "PlutoGE/render/passes/LightPropagationVolumePass.h"
@@ -340,6 +341,10 @@ namespace PlutoGE::render
         auto geometryPass = new GeometryPass();
         geometryPass->Initialize();
         m_renderPasses.push_back(geometryPass);
+
+        auto decalPass = new DecalPass();
+        decalPass->Initialize();
+        m_renderPasses.push_back(decalPass);
 
         auto shadowPass = new ShadowPass();
         shadowPass->Initialize();
@@ -701,6 +706,7 @@ namespace PlutoGE::render
             .temporaryRenderTarget = frameResources->temporaryRenderTarget.get(),
             .postProcessIntermediateRenderTarget = frameResources->postProcessIntermediateRenderTarget.get(),
             .renderCommands = &m_visibleRenderCommands,
+            .decalCommands = &m_decalCommands,
             .lights = &lights,
             .gBuffer = &frameResources->gBuffer,
             .lightPropagationVolumePass = m_lightPropagationVolumePass,
@@ -775,6 +781,7 @@ namespace PlutoGE::render
     void Renderer::ClearRenderCommands()
     {
         m_renderCommands.clear();
+        m_decalCommands.clear();
         m_renderCommandsDirty = false;
         ClearSubmissionCullingCameras();
     }

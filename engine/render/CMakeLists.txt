@@ -29,6 +29,7 @@ add_library(PlutoGERender
     src/postprocess/GammaCorrectionEffect.cpp
     src/postprocess/PostProcessEffectFactory.cpp
     src/passes/GeometryPass.cpp
+    src/passes/DecalPass.cpp
     src/passes/GridPass.cpp
     src/passes/LightPropagationVolumePass.cpp
     src/passes/LightingPass.cpp

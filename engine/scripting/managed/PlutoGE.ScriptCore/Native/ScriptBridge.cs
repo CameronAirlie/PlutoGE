@@ -317,6 +317,7 @@ internal static unsafe class ScriptBridge
     private static delegate* unmanaged[Cdecl]<NativeVector3, NativeVector3, float, uint, NativeRaycastHit*, int> _physicsRaycast;
     private static delegate* unmanaged[Cdecl]<NativeVector3, NativeVector3, float, uint, nint, NativeRaycastHit*, int> _physicsRaycastTagged;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3, float, NativeVector3> _physicsMoveKinematic;
+    private static delegate* unmanaged[Cdecl]<NativeVector3, NativeVector3, nint, NativeVector3, float, float, uint> _spawnDecal;
     private static delegate* unmanaged[Cdecl]<int, nint, void> _logMessage;
 
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "LoadScriptAssembly")]
@@ -1092,9 +1093,10 @@ internal static unsafe class ScriptBridge
     public static int RegisterPhysicsApi(
         delegate* unmanaged[Cdecl]<NativeVector3, NativeVector3, float, uint, NativeRaycastHit*, int> raycast,
         delegate* unmanaged[Cdecl]<NativeVector3, NativeVector3, float, uint, nint, NativeRaycastHit*, int> raycastTagged,
-        delegate* unmanaged[Cdecl]<uint, NativeVector3, float, NativeVector3> moveKinematic)
+        delegate* unmanaged[Cdecl]<uint, NativeVector3, float, NativeVector3> moveKinematic,
+        delegate* unmanaged[Cdecl]<NativeVector3, NativeVector3, nint, NativeVector3, float, float, uint> spawnDecal)
     {
-        if (raycast == null || raycastTagged == null || moveKinematic == null)
+        if (raycast == null || raycastTagged == null || moveKinematic == null || spawnDecal == null)
         {
             SetError("Managed physics API registration received a null function pointer.");
             return 0;
@@ -1103,6 +1105,7 @@ internal static unsafe class ScriptBridge
         _physicsRaycast = raycast;
         _physicsRaycastTagged = raycastTagged;
         _physicsMoveKinematic = moveKinematic;
+        _spawnDecal = spawnDecal;
         _lastError = string.Empty;
         return 1;
     }
@@ -2303,6 +2306,31 @@ internal static unsafe class ScriptBridge
         return _physicsMoveKinematic(entityId, NativeVector3.FromManaged(displacement), skinWidth).ToManaged();
     }
 
+    internal static uint SpawnDecal(Vector3 point, Vector3 normal, string materialAssetReference,
+        Vector2 size, float depth, float lifetime, float fadeDuration)
+    {
+        if (_spawnDecal == null)
+        {
+            return 0;
+        }
+
+        var materialReferencePtr = Marshal.StringToCoTaskMemUTF8(materialAssetReference ?? string.Empty);
+        try
+        {
+            return _spawnDecal(
+                NativeVector3.FromManaged(point),
+                NativeVector3.FromManaged(normal),
+                materialReferencePtr,
+                new NativeVector3 { X = size.X, Y = size.Y, Z = depth },
+                lifetime,
+                fadeDuration);
+        }
+        finally
+        {
+            Marshal.FreeCoTaskMem(materialReferencePtr);
+        }
+    }
+
     internal static void LogMessage(int severity, string? message)
     {
         if (_logMessage == null)
@@ -2362,6 +2390,10 @@ internal static unsafe class ScriptBridge
                 }
 
                 var fieldType = MapFieldType(field.FieldType);
+                if (field.FieldType == typeof(string) && field.GetCustomAttribute<MaterialAssetAttribute>() is not null)
+                {
+                    fieldType = 25;
+                }
                 if (fieldType is null)
                 {
                     continue;
@@ -2378,6 +2410,10 @@ internal static unsafe class ScriptBridge
                 }
 
                 var fieldType = MapFieldType(property.PropertyType);
+                if (property.PropertyType == typeof(string) && property.GetCustomAttribute<MaterialAssetAttribute>() is not null)
+                {
+                    fieldType = 25;
+                }
                 if (fieldType is null)
                 {
                     continue;
@@ -2652,6 +2688,7 @@ internal static unsafe class ScriptBridge
             22 => CreateReferenceValue(memberType, value),
             23 => string.IsNullOrWhiteSpace(value) ? null : new Prefab(value),
             24 => LoadScriptableObject(value, memberType),
+            25 => value,
             _ => null,
         };
     }
@@ -2684,6 +2721,7 @@ internal static unsafe class ScriptBridge
             22 => ExtractEntityId(value).ToString(CultureInfo.InvariantCulture),
             23 => (value as Prefab)?.AssetReference ?? string.Empty,
             24 => (value as ScriptableObject)?.AssetReference ?? string.Empty,
+            25 => value as string ?? string.Empty,
             _ => string.Empty,
         };
     }

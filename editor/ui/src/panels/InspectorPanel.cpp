@@ -21,6 +21,7 @@
 #include "PlutoGE/render/postprocess/PostProcessEffectFactory.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
 #include "PlutoGE/scene/components/ColliderComponent.h"
+#include "PlutoGE/scene/components/DecalComponent.h"
 #include "PlutoGE/scene/components/IblCaptureComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/PhysicalSkyComponent.h"
@@ -114,6 +115,7 @@ namespace PlutoGE::ui
             UIButton = 22,
             NavAgent = 23,
             NavigationMesh = 24,
+            Decal = 25,
         };
 
         struct ScriptAssetOption
@@ -1297,6 +1299,7 @@ namespace PlutoGE::ui
             case scripting::ScriptFieldType::String:
             case scripting::ScriptFieldType::PrefabAsset:
             case scripting::ScriptFieldType::ScriptableObjectAsset:
+            case scripting::ScriptFieldType::MaterialAsset:
                 return EscapeCSharpStringLiteral(std::get<std::string>(value));
             case scripting::ScriptFieldType::Vector2:
             {
@@ -1483,6 +1486,8 @@ namespace PlutoGE::ui
             {
                 return "Mesh Component";
             }
+            if (dynamic_cast<const scene::DecalComponent *>(&component))
+                return "Decal Component";
             if (dynamic_cast<const scene::TerrainComponent *>(&component))
             {
                 return "Terrain Component";
@@ -1587,6 +1592,8 @@ namespace PlutoGE::ui
         {
             if (dynamic_cast<const scene::MeshComponent *>(&component))
                 return "MeshComponent";
+            if (dynamic_cast<const scene::DecalComponent *>(&component))
+                return "DecalComponent";
             if (dynamic_cast<const scene::TerrainComponent *>(&component))
                 return "TerrainComponent";
             if (dynamic_cast<const scene::FoliageComponent *>(&component))
@@ -1717,6 +1724,8 @@ namespace PlutoGE::ui
             {
             case AddableComponentType::Mesh:
                 return !entity.HasComponent<scene::MeshComponent>();
+            case AddableComponentType::Decal:
+                return !entity.HasComponent<scene::DecalComponent>();
             case AddableComponentType::Terrain:
                 return !entity.HasComponent<scene::TerrainComponent>();
             case AddableComponentType::Foliage:
@@ -1784,6 +1793,7 @@ namespace PlutoGE::ui
             if (ImGui::BeginMenu("Rendering"))
             {
                 renderItem("Mesh", AddableComponentType::Mesh);
+                renderItem("Decal", AddableComponentType::Decal);
                 renderItem("Terrain", AddableComponentType::Terrain);
                 renderItem("Spline Track", AddableComponentType::Spline);
                 renderItem("Ocean", AddableComponentType::Ocean);
@@ -1859,6 +1869,9 @@ namespace PlutoGE::ui
                 }
                 break;
             }
+            case AddableComponentType::Decal:
+                entity.CreateComponent<scene::DecalComponent>();
+                break;
             case AddableComponentType::Terrain:
             {
                 auto *terrainComponent = entity.CreateComponent<scene::TerrainComponent>(scene::TerrainComponentConfig{
@@ -2555,6 +2568,41 @@ namespace PlutoGE::ui
                 if (ImGui::InputText(field.name.c_str(), buffer, sizeof(buffer)))
                 {
                     changed |= scriptComponent.SetFieldValue(field.name, std::string(buffer));
+                }
+                break;
+            }
+            case scripting::ScriptFieldType::MaterialAsset:
+            {
+                const auto &options = GetCachedAssetReferenceOptions(
+                    editorShell.GetProject(), assets::ProjectAssetType::Material);
+                const auto &value = std::get<std::string>(*fieldValue);
+                const std::string preview = GetAssetReferencePreview(options, value, "<None>");
+                if (ImGui::BeginCombo(field.name.c_str(), preview.c_str()))
+                {
+                    const bool noneSelected = value.empty();
+                    if (ImGui::Selectable("<None>", noneSelected))
+                    {
+                        changed |= scriptComponent.SetFieldValue(field.name, std::string{});
+                    }
+                    if (noneSelected)
+                        ImGui::SetItemDefaultFocus();
+
+                    for (const auto &option : options)
+                    {
+                        const bool selected = option.reference == value;
+                        if (ImGui::Selectable(option.displayName.c_str(), selected))
+                        {
+                            changed |= scriptComponent.SetFieldValue(field.name, option.reference);
+                        }
+                        if (selected)
+                            ImGui::SetItemDefaultFocus();
+                    }
+                    ImGui::EndCombo();
+                }
+
+                if (auto droppedReference = AcceptDroppedMaterialAssetReference())
+                {
+                    changed |= scriptComponent.SetFieldValue(field.name, *droppedReference);
                 }
                 break;
             }
@@ -4444,6 +4492,43 @@ namespace PlutoGE::ui
                                 editorShell.MarkSceneDirty();
                             }
                             ImGui::SeparatorText("Bake Settings (World Space)");
+                        }
+                        else if (auto *decalComponent = dynamic_cast<scene::DecalComponent *>(componentPtr))
+                        {
+                            properties = decalComponent->Serialize();
+                            std::erase_if(properties, [](const scene::Property &property)
+                                          { return property.name == "MaterialAsset"; });
+                            propertiesProvided = true;
+
+                            const auto &materialOptions = GetCachedAssetReferenceOptions(
+                                editorShell.GetProject(), assets::ProjectAssetType::Material);
+                            const std::string materialPreview = GetAssetReferencePreview(
+                                materialOptions,
+                                decalComponent->GetMaterialAssetReference(),
+                                "None");
+                            if (ImGui::BeginCombo("Material Asset", materialPreview.c_str()))
+                            {
+                                for (const auto &option : materialOptions)
+                                {
+                                    const bool selected = option.reference == decalComponent->GetMaterialAssetReference();
+                                    if (ImGui::Selectable(option.displayName.c_str(), selected))
+                                    {
+                                        decalComponent->SetMaterialAssetReference(option.reference);
+                                        entity->AddPrefabOverride("Component:DecalComponent:MaterialAsset");
+                                        editorShell.MarkSceneDirty();
+                                    }
+                                    if (selected)
+                                        ImGui::SetItemDefaultFocus();
+                                }
+                                ImGui::EndCombo();
+                            }
+
+                            if (auto droppedReference = AcceptDroppedMaterialAssetReference())
+                            {
+                                decalComponent->SetMaterialAssetReference(*droppedReference);
+                                entity->AddPrefabOverride("Component:DecalComponent:MaterialAsset");
+                                editorShell.MarkSceneDirty();
+                            }
                         }
                         else if (auto *terrainComponent = dynamic_cast<scene::TerrainComponent *>(componentPtr))
                         {

@@ -20,6 +20,7 @@ namespace PlutoGE::scene
     class NavigationSystem;
     class Entity;
     class FoliageComponent;
+    class DecalComponent;
     class MeshComponent;
     class ParticleSystemComponent;
     class TerrainComponent;
@@ -129,6 +130,12 @@ namespace PlutoGE::scene
                                const glm::vec3 &value,
                                bool impulse = false,
                                std::optional<glm::vec3> worldPosition = std::nullopt);
+        Entity *SpawnDecal(const PhysicsRaycastHit &hit,
+                           const std::string &materialAssetReference,
+                           const glm::vec2 &size,
+                           float depth = 0.1f,
+                           float lifetime = 0.0f,
+                           float fadeDuration = 0.0f);
 
         std::vector<Light *> GetLights() const; // Get active lights in the scene (for rendering)
         void MarkShadowLightsDirty();
@@ -173,6 +180,8 @@ namespace PlutoGE::scene
         void UnregisterFoliageComponent(FoliageComponent *foliageComponent);
         void RegisterParticleSystemComponent(ParticleSystemComponent *particleSystemComponent);
         void UnregisterParticleSystemComponent(ParticleSystemComponent *particleSystemComponent);
+        void RegisterDecalComponent(DecalComponent *decalComponent);
+        void UnregisterDecalComponent(DecalComponent *decalComponent);
 
     private:
         struct PhysicsQueryCache;
@@ -193,6 +202,7 @@ namespace PlutoGE::scene
         std::vector<TerrainComponent *> m_terrainComponents;
         std::vector<FoliageComponent *> m_foliageComponents;
         std::vector<ParticleSystemComponent *> m_particleSystemComponents;
+        std::vector<DecalComponent *> m_decalComponents;
         std::vector<Light *> m_lights;
         std::string m_filePath;
         std::string m_environmentMapPath;

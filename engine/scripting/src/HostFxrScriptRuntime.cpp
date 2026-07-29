@@ -99,7 +99,7 @@ namespace PlutoGE::scripting
         using register_sound_emitter_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_runtime_ui_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_input_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
-        using register_physics_api_fn = int(__cdecl *)(void *, void *, void *);
+        using register_physics_api_fn = int(__cdecl *)(void *, void *, void *, void *);
         using register_debug_api_fn = int(__cdecl *)(void *);
 
         struct HostFxrLocation
@@ -190,6 +190,7 @@ namespace PlutoGE::scripting
         using physics_raycast_fn = int(__cdecl *)(NativeVector3, NativeVector3, float, uint32_t, NativeRaycastHit *);
         using physics_raycast_tagged_fn = int(__cdecl *)(NativeVector3, NativeVector3, float, uint32_t, const char *, NativeRaycastHit *);
         using physics_move_kinematic_fn = NativeVector3(__cdecl *)(uint32_t, NativeVector3, float);
+        using spawn_decal_fn = uint32_t(__cdecl *)(NativeVector3, NativeVector3, const char *, NativeVector3, float, float);
         using script_log_fn = void(__cdecl *)(int32_t, const char *);
         constexpr std::wstring_view kScriptBridgeType = L"PlutoGE.ScriptCore.Native.ScriptBridge, PlutoGE.ScriptCore";
         constexpr std::wstring_view kScriptCoreAssembly = L"PlutoGE.ScriptCore.dll";
@@ -487,7 +488,7 @@ namespace PlutoGE::scripting
         {
             int fieldTypeValue = 0;
             std::from_chars(token.data(), token.data() + token.size(), fieldTypeValue);
-            if (fieldTypeValue < static_cast<int>(ScriptFieldType::None) || fieldTypeValue > static_cast<int>(ScriptFieldType::ScriptableObjectAsset))
+            if (fieldTypeValue < static_cast<int>(ScriptFieldType::None) || fieldTypeValue > static_cast<int>(ScriptFieldType::MaterialAsset))
             {
                 return ScriptFieldType::None;
             }
@@ -524,6 +525,7 @@ namespace PlutoGE::scripting
             case ScriptFieldType::String:
             case ScriptFieldType::PrefabAsset:
             case ScriptFieldType::ScriptableObjectAsset:
+            case ScriptFieldType::MaterialAsset:
                 return token;
             case ScriptFieldType::Vector2:
             {
@@ -2575,6 +2577,40 @@ namespace PlutoGE::scripting
             return NativeVector3{applied.x, applied.y, applied.z};
         }
 
+        uint32_t SpawnDecal(NativeVector3 point,
+                            NativeVector3 normal,
+                            const char *materialAssetReference,
+                            NativeVector3 sizeAndDepth,
+                            float lifetime,
+                            float fadeDuration)
+        {
+            if (!IsFiniteVector3(point) || !IsFiniteVector3(normal) || !IsFiniteVector3(sizeAndDepth) ||
+                !std::isfinite(lifetime) || !std::isfinite(fadeDuration) ||
+                !materialAssetReference || materialAssetReference[0] == '\0')
+            {
+                return 0;
+            }
+
+            auto *activeScene = core::Engine::GetInstance().GetScene();
+            if (!activeScene)
+            {
+                return 0;
+            }
+
+            scene::PhysicsRaycastHit hit{
+                .point = glm::vec3(point.x, point.y, point.z),
+                .normal = glm::vec3(normal.x, normal.y, normal.z),
+            };
+            auto *decal = activeScene->SpawnDecal(
+                hit,
+                materialAssetReference,
+                glm::vec2(sizeAndDepth.x, sizeAndDepth.y),
+                sizeAndDepth.z,
+                lifetime,
+                fadeDuration);
+            return decal ? decal->GetID() : 0;
+        }
+
         void LogScriptMessage(int32_t severity, const char *message)
         {
             if (!message)
@@ -3586,7 +3622,8 @@ namespace PlutoGE::scripting
             m_impl->registerPhysicsApi(
                 reinterpret_cast<void *>(static_cast<physics_raycast_fn>(&PhysicsRaycast)),
                 reinterpret_cast<void *>(static_cast<physics_raycast_tagged_fn>(&PhysicsRaycastTagged)),
-                reinterpret_cast<void *>(static_cast<physics_move_kinematic_fn>(&PhysicsMoveKinematic))) == 0)
+                reinterpret_cast<void *>(static_cast<physics_move_kinematic_fn>(&PhysicsMoveKinematic)),
+                reinterpret_cast<void *>(static_cast<spawn_decal_fn>(&SpawnDecal))) == 0)
         {
             setManagedBridgeFailure("RegisterPhysicsApi");
             return false;

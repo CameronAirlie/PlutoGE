@@ -334,35 +334,26 @@ namespace PlutoGE::render
                     vec2 texelSize = 1.0 / vec2(textureSize(shadowMap, 0));
                     float receiverDepth = projectedCoords.z - depthBias;
 
-                    // A compact, weighted PCF kernel gives the same useful
-                    // quality/cost trade-off used by production engines: one
-                    // centre tap preserves contact detail and four rotated
-                    // taps soften the stair-stepped texel boundary.  The old
-                    // path only performed the centre comparison, despite the
-                    // PCF name, so ShadowSoftness had no effect for 2D maps.
                     if (softness <= 0.001)
                     {
                         return receiverDepth > texture(shadowMap, projectedCoords.xy).r ? 1.0 : 0.0;
                     }
 
                     float kernelRadius = clamp(softness, 0.5, 3.0);
-                    vec2 diagonal = texelSize * kernelRadius * 0.70710678;
-                    vec2 sampleOffsets[4] = vec2[](
-                        vec2( diagonal.x,  diagonal.y),
-                        vec2(-diagonal.x,  diagonal.y),
-                        vec2( diagonal.x, -diagonal.y),
-                        vec2(-diagonal.x, -diagonal.y)
-                    );
-
-                    // Weight the centre twice. This behaves like a small tent
-                    // filter while requiring only five texture fetches.
-                    float shadow = receiverDepth > texture(shadowMap, projectedCoords.xy).r ? 2.0 : 0.0;
-                    for (int sampleIndex = 0; sampleIndex < 4; ++sampleIndex)
+                    vec2 stepSize = texelSize * kernelRadius;
+                    float shadow = 0.0;
+                    float totalWeight = 0.0;
+                    for (int y = -1; y <= 1; ++y)
                     {
-                        float closestDepth = texture(shadowMap, projectedCoords.xy + sampleOffsets[sampleIndex]).r;
-                        shadow += receiverDepth > closestDepth ? 1.0 : 0.0;
+                        for (int x = -1; x <= 1; ++x)
+                        {
+                            float weight = float((2 - abs(x)) * (2 - abs(y)));
+                            float closestDepth = texture(shadowMap, projectedCoords.xy + vec2(x, y) * stepSize).r;
+                            shadow += (receiverDepth > closestDepth ? 1.0 : 0.0) * weight;
+                            totalWeight += weight;
+                        }
                     }
-                    return shadow / 6.0;
+                    return shadow / totalWeight;
                 }
 
                 float SampleDirectionalCascadeShadow(int cascadeIndex, vec3 projectedCoords, float depthBias, float softness)

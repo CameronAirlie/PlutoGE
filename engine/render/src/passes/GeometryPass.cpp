@@ -333,7 +333,7 @@ namespace PlutoGE::render
         for (std::size_t drawIndex = 0; drawIndex < draws.size();)
         {
             const auto &head = draws[drawIndex];
-            const bool usesIndirect = !head.command->jointMatrices;
+            const bool canUseIndirect = !head.command->jointMatrices;
             const IndirectDrawGroupingKey headKey{
                 .shader = head.command->material ? head.command->material->GetShader() : head.command->shader,
                 .material = head.command->material,
@@ -341,7 +341,7 @@ namespace PlutoGE::render
                 .skinned = head.command->jointMatrices != nullptr,
             };
             std::size_t drawEnd = drawIndex + 1;
-            if (usesIndirect)
+            if (canUseIndirect)
             {
                 while (drawEnd < draws.size())
                 {
@@ -360,6 +360,7 @@ namespace PlutoGE::render
                 }
             }
 
+            const bool usesIndirect = canUseIndirect && drawEnd - drawIndex > 1;
             const std::size_t firstIndirectCommand = indirectCommands.size();
             if (usesIndirect)
             {
@@ -505,8 +506,16 @@ namespace PlutoGE::render
             }
             else
             {
-                UploadJointMatrices(activeShader, command.jointMatrices);
-                skinningEnabled = true;
+                if (command.jointMatrices)
+                {
+                    UploadJointMatrices(activeShader, command.jointMatrices);
+                    skinningEnabled = true;
+                }
+                else if (skinningEnabled)
+                {
+                    activeShader->SetUniform("uUseSkinning", 0);
+                    skinningEnabled = false;
+                }
                 BindGeometryInstanceAttributes(*command.mesh, instanceBuffer, 0);
                 command.mesh->DrawSubmeshInstancedBaseInstanceBound(command.submeshIndex,
                                                                     draw.instanceCount,

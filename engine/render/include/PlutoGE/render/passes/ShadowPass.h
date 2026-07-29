@@ -27,6 +27,7 @@ namespace PlutoGE::render
         unsigned int m_indirectBuffer = 0;
         std::size_t m_indirectCapacity = 0;
         bool m_indirectDrawEnabled = true;
+        bool m_indirectDrawValidated = false;
         std::uint64_t m_shadowCasterFingerprint = 0;
         bool m_hasShadowCasterFingerprint = false;
     };

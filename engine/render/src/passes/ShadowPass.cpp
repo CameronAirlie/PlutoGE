@@ -28,7 +28,6 @@ namespace
     constexpr int kProjectedShadowPassMode = 0;
     constexpr int kPointShadowPassMode = 1;
     constexpr int kMaxIncrementalShadowSurfaceUpdatesPerFrame = 1;
-    constexpr int kMaxMotionDrivenDirectionalCascadeUpdatesPerLight = 1;
     constexpr std::uint8_t kAllPointShadowFacesMask = 0x3fu;
     constexpr float kDirectionalShadowPadding = 2.0f;
     constexpr float kShadowUpdateMatrixEpsilon = 0.0001f;
@@ -396,36 +395,6 @@ namespace
         return sortedShadowCasters;
     }
 
-    void ExpandDirectionalCascadeDepthBounds(
-        const glm::mat4 &lightView,
-        const std::vector<ShadowCasterEntry> &shadowCasters,
-        const glm::vec3 &shadowWorldOrigin,
-        glm::vec3 &minBounds,
-        glm::vec3 &maxBounds)
-    {
-        const glm::vec2 receiverMin(minBounds.x, minBounds.y);
-        const glm::vec2 receiverMax(maxBounds.x, maxBounds.y);
-
-        for (const auto &shadowCaster : shadowCasters)
-        {
-            const PlutoGE::render::MeshBounds &bounds = shadowCaster.bounds;
-            const glm::vec3 relativeCenter = bounds.center - shadowWorldOrigin;
-            const glm::vec3 lightSpaceCenter = glm::vec3(lightView * glm::vec4(relativeCenter, 1.0f));
-            const float radius = glm::max(bounds.radius, 0.001f);
-
-            if (lightSpaceCenter.x + radius < receiverMin.x ||
-                lightSpaceCenter.x - radius > receiverMax.x ||
-                lightSpaceCenter.y + radius < receiverMin.y ||
-                lightSpaceCenter.y - radius > receiverMax.y)
-            {
-                continue;
-            }
-
-            minBounds.z = glm::min(minBounds.z, lightSpaceCenter.z - radius - kDirectionalShadowPadding);
-            maxBounds.z = glm::max(maxBounds.z, lightSpaceCenter.z + radius + kDirectionalShadowPadding);
-        }
-    }
-
     std::array<glm::vec3, 8> BuildCameraRelativeFrustumCorners(const PlutoGE::render::CameraData &cameraData)
     {
         const glm::mat4 inverseProjection = glm::inverse(cameraData.projection);
@@ -508,6 +477,48 @@ namespace
         return splits;
     }
 
+    std::uint8_t BuildMovedCasterCascadeMask(
+        const std::vector<ShadowCasterEntry> &shadowCasters,
+        const PlutoGE::render::CameraData &cameraData,
+        const std::array<float, PlutoGE::scene::kMaxDirectionalShadowCascades> &cascadeSplits,
+        int cascadeCount,
+        float cascadeBlendDistance)
+    {
+        std::uint8_t mask = 0;
+        const float transitionMargin = glm::max(cascadeBlendDistance, 0.0f);
+
+        auto includeBounds = [&](const PlutoGE::render::MeshBounds &bounds)
+        {
+            const float viewDepth = -(cameraData.view * glm::vec4(bounds.center, 1.0f)).z;
+            const float depthRadius = glm::max(bounds.radius, 0.001f) + transitionMargin;
+            for (int cascadeIndex = 0; cascadeIndex < cascadeCount; ++cascadeIndex)
+            {
+                const float cascadeNear = cascadeIndex == 0 ? cameraData.nearPlane : cascadeSplits[cascadeIndex - 1];
+                const float cascadeFar = cascadeSplits[cascadeIndex];
+                if (viewDepth + depthRadius >= cascadeNear &&
+                    viewDepth - depthRadius <= cascadeFar)
+                {
+                    mask |= static_cast<std::uint8_t>(1u << cascadeIndex);
+                }
+            }
+        };
+
+        for (const ShadowCasterEntry &shadowCaster : shadowCasters)
+        {
+            if (!shadowCaster.hasMoved)
+            {
+                continue;
+            }
+
+            // Include both positions so the old shadow is erased immediately
+            // and the new one is drawn in the same frame.
+            includeBounds(shadowCaster.previousBounds);
+            includeBounds(shadowCaster.bounds);
+        }
+
+        return mask;
+    }
+
     void SnapDirectionalProjectionBoundsToTexels(glm::vec3 &minBounds, glm::vec3 &maxBounds, int shadowResolution)
     {
         const float safeResolution = static_cast<float>(std::max(shadowResolution, 1));
@@ -543,7 +554,6 @@ namespace
     DirectionalCascadeProjection BuildDirectionalCascadeProjection(
         const PlutoGE::scene::Light &light,
         const PlutoGE::render::CameraData &cameraData,
-        const std::vector<ShadowCasterEntry> &shadowCasters,
         const glm::vec3 &shadowWorldOrigin,
         float cascadeNear,
         float cascadeFar,
@@ -552,13 +562,24 @@ namespace
         const glm::vec3 lightDirection = glm::normalize(light.direction);
         const auto cameraRelativeCascadeCorners = BuildCameraRelativeCascadeFrustumCorners(cameraData, cascadeNear, cascadeFar);
         const glm::vec3 cameraPosition = glm::vec3(glm::inverse(cameraData.view)[3]);
-        const glm::vec3 cascadeCenter = cameraPosition - shadowWorldOrigin;
+        glm::vec3 cameraRelativeCascadeCenter(0.0f);
+        for (const glm::vec3 &corner : cameraRelativeCascadeCorners)
+        {
+            cameraRelativeCascadeCenter += corner;
+        }
+        cameraRelativeCascadeCenter /= static_cast<float>(cameraRelativeCascadeCorners.size());
+
+        // Fit the stable sphere around this cascade slice rather than around
+        // the camera. Camera-centred cascades waste texels behind each slice.
+        const glm::vec3 cascadeCenter = cameraPosition + cameraRelativeCascadeCenter - shadowWorldOrigin;
         float cascadeRadius = 0.0f;
         for (const glm::vec3 &corner : cameraRelativeCascadeCorners)
         {
-            cascadeRadius = glm::max(cascadeRadius, glm::length(corner));
+            cascadeRadius = glm::max(cascadeRadius, glm::length(corner - cameraRelativeCascadeCenter));
         }
-        cascadeRadius = glm::max(cascadeRadius, cascadeFar);
+        // A quantized radius and texel-snapped centre keep the projection
+        // stable as the camera moves and rotates.
+        cascadeRadius = glm::ceil(glm::max(cascadeRadius, 0.1f) * 16.0f) / 16.0f;
 
         const float cascadeDepth = glm::max(cascadeFar - cascadeNear, 1.0f);
         const float casterExtrusionDistance = cascadeDepth * 2.0f + kDirectionalShadowPadding;
@@ -584,7 +605,6 @@ namespace
             const glm::vec2 xyGuard = texelSize * pcfGuardTexels + glm::vec2(kDirectionalShadowPadding);
             minBounds -= glm::vec3(xyGuard.x, xyGuard.y, kDirectionalShadowPadding);
             maxBounds += glm::vec3(xyGuard.x, xyGuard.y, kDirectionalShadowPadding);
-            ExpandDirectionalCascadeDepthBounds(view, shadowCasters, shadowWorldOrigin, minBounds, maxBounds);
         };
 
         glm::mat4 view = glm::lookAt(eye, eye + lightDirection, upVector);
@@ -828,6 +848,7 @@ namespace
                                             unsigned int &indirectBuffer,
                                             std::size_t &indirectCapacity,
                                             bool &indirectDrawEnabled,
+                                            bool &indirectDrawValidated,
                                             std::vector<TransformInstanceData> &batchInstances)
     {
         struct PreparedShadowDraw
@@ -840,6 +861,8 @@ namespace
 
         ShadowDrawStats stats;
         PlutoGE::render::Material *boundMaterial = nullptr;
+        bool hasBoundMaterialState = false;
+        bool boundMaterialAlphaTested = false;
         PlutoGE::render::Mesh *boundMesh = nullptr;
         batchInstances.clear();
         batchInstances.reserve(sortedShadowCasters.size());
@@ -911,7 +934,7 @@ namespace
         for (std::size_t drawIndex = 0; drawIndex < draws.size();)
         {
             const auto &head = draws[drawIndex];
-            const bool usesIndirect = !head.command->jointMatrices;
+            const bool canUseIndirect = !head.command->jointMatrices;
             const bool headAlphaTested = IsAlphaTestedShadowCaster(*head.command);
             const PlutoGE::render::IndirectDrawGroupingKey headKey{
                 .material = head.command->material,
@@ -920,7 +943,7 @@ namespace
                 .alphaTested = headAlphaTested,
             };
             std::size_t drawEnd = drawIndex + 1;
-            if (usesIndirect)
+            if (canUseIndirect)
             {
                 while (drawEnd < draws.size())
                 {
@@ -940,6 +963,9 @@ namespace
                 }
             }
 
+            // A one-command MDI group still costs one API draw, plus command
+            // buffer construction/upload. Submit it directly instead.
+            const bool usesIndirect = canUseIndirect && drawEnd - drawIndex > 1;
             const std::size_t firstIndirectCommand = indirectCommands.size();
             if (usesIndirect)
             {
@@ -973,17 +999,25 @@ namespace
         {
             const auto &draw = draws[group.firstDraw];
             const auto &command = *draw.command;
-            if (command.material != boundMaterial)
+            const bool alphaTested = IsAlphaTestedShadowCaster(command);
+            if (alphaTested)
             {
-                if (IsAlphaTestedShadowCaster(command))
+                if (!hasBoundMaterialState ||
+                    !boundMaterialAlphaTested ||
+                    command.material != boundMaterial)
                 {
                     BindShadowMaterialState(shader, command.material);
+                    boundMaterial = command.material;
+                    hasBoundMaterialState = true;
+                    boundMaterialAlphaTested = true;
                 }
-                else
-                {
-                    shader->SetUniform("uHasAlbedoTexture", 0.0f);
-                }
+            }
+            else if (!hasBoundMaterialState || boundMaterialAlphaTested)
+            {
+                shader->SetUniform("uHasAlbedoTexture", 0.0f);
                 boundMaterial = command.material;
+                hasBoundMaterialState = true;
+                boundMaterialAlphaTested = false;
             }
 
             if (group.usesIndirect)
@@ -1001,8 +1035,12 @@ namespace
                 bool submittedIndirectly = false;
                 if (indirectDrawEnabled)
                 {
-                    while (glGetError() != GL_NO_ERROR)
+                    const bool validateIndirectDraw = !indirectDrawValidated;
+                    if (validateIndirectDraw)
                     {
+                        while (glGetError() != GL_NO_ERROR)
+                        {
+                        }
                     }
                     glBindBuffer(GL_DRAW_INDIRECT_BUFFER, indirectBuffer);
                     glMultiDrawElementsIndirect(
@@ -1011,13 +1049,24 @@ namespace
                         reinterpret_cast<const void *>(group.firstIndirectCommand * sizeof(PlutoGE::render::DrawElementsIndirectCommand)),
                         static_cast<GLsizei>(group.drawCount),
                         0);
-                    const GLenum indirectError = glGetError();
-                    submittedIndirectly = indirectError == GL_NO_ERROR;
-                    if (!submittedIndirectly)
+                    if (validateIndirectDraw)
                     {
-                        std::cerr << "Shadow multi-draw disabled after OpenGL error " << indirectError
-                                  << "; using direct draws." << std::endl;
-                        indirectDrawEnabled = false;
+                        const GLenum indirectError = glGetError();
+                        submittedIndirectly = indirectError == GL_NO_ERROR;
+                        if (!submittedIndirectly)
+                        {
+                            std::cerr << "Shadow multi-draw disabled after OpenGL error " << indirectError
+                                      << "; using direct draws." << std::endl;
+                            indirectDrawEnabled = false;
+                        }
+                        else
+                        {
+                            indirectDrawValidated = true;
+                        }
+                    }
+                    else
+                    {
+                        submittedIndirectly = true;
                     }
                 }
 
@@ -1043,8 +1092,16 @@ namespace
             }
             else
             {
-                UploadShadowJointMatrices(shader, command.jointMatrices);
-                skinningEnabled = true;
+                if (command.jointMatrices)
+                {
+                    UploadShadowJointMatrices(shader, command.jointMatrices);
+                    skinningEnabled = true;
+                }
+                else if (skinningEnabled)
+                {
+                    shader->SetUniform("uUseSkinning", 0);
+                    skinningEnabled = false;
+                }
                 BindTransformInstanceAttributes(*command.mesh, instanceBuffer, 0);
                 command.mesh->DrawSubmeshInstancedBaseInstanceBound(command.submeshIndex,
                                                                     draw.instanceCount,
@@ -1311,16 +1368,17 @@ namespace PlutoGE::render
                 {
                     const auto faceFrustumPlanes = ExtractFrustumPlanes(shadowMatrices[face]);
                     const std::uint8_t faceBit = static_cast<std::uint8_t>(1u << face);
+                    const bool urgentMovedCasterFace = AnyMovedShadowCasterRelevant(
+                        shadowCasters,
+                        [&](const ShadowCasterEntry &shadowCaster)
+                        {
+                            return IsMovedCommandRelevantForPointLight(shadowCaster, *light) &&
+                                   IsMovedCommandRelevantForProjectedLight(shadowCaster, faceFrustumPlanes);
+                        });
                     bool faceNeedsIncrementalRefresh = (light->pendingPointShadowFaceMask & faceBit) != 0;
                     if (!light->isDirty && !faceNeedsIncrementalRefresh)
                     {
-                        faceNeedsIncrementalRefresh = AnyMovedShadowCasterRelevant(
-                            shadowCasters,
-                            [&](const ShadowCasterEntry &shadowCaster)
-                            {
-                                return IsMovedCommandRelevantForPointLight(shadowCaster, *light) &&
-                                       IsMovedCommandRelevantForProjectedLight(shadowCaster, faceFrustumPlanes);
-                            });
+                        faceNeedsIncrementalRefresh = urgentMovedCasterFace;
                     }
 
                     if (!light->isDirty)
@@ -1330,7 +1388,7 @@ namespace PlutoGE::render
                             continue;
                         }
 
-                        if (!reserveIncrementalShadowSurfaceUpdate())
+                        if (!urgentMovedCasterFace && !reserveIncrementalShadowSurfaceUpdate())
                         {
                             deferredShadowRefresh = true;
                             continue;
@@ -1363,6 +1421,7 @@ namespace PlutoGE::render
                         m_indirectBuffer,
                         m_indirectCapacity,
                         m_indirectDrawEnabled,
+                        m_indirectDrawValidated,
                         shadowBatchInstances);
                     if (ctx.renderer)
                     {
@@ -1393,6 +1452,12 @@ namespace PlutoGE::render
                 const glm::vec3 currentShadowWorldOrigin = glm::vec3(glm::inverse(ctx.cameraData.view)[3]);
                 const int cascadeCount = GetDirectionalCascadeCount(*light);
                 const auto cascadeSplits = BuildDirectionalCascadeSplits(ctx.cameraData, light->directionalShadowSettings, cascadeCount);
+                const std::uint8_t movedCasterCascadeMask = BuildMovedCasterCascadeMask(
+                    shadowCasters,
+                    ctx.cameraData,
+                    cascadeSplits,
+                    cascadeCount,
+                    light->directionalShadowSettings.cascadeBlendDistance);
                 // A camera-relative origin recenter is normal traversal work. Keep
                 // using the old cascade until its queued replacement is rendered;
                 // only initialization or an explicit light/settings change redraws
@@ -1401,9 +1466,18 @@ namespace PlutoGE::render
                 const bool casterOnlyCascadeInvalidation = shadowCastersChanged && !light->isDirty && !cameraDataChanged && !hasPendingIncrementalRefresh;
                 const bool cameraOnlyInvalidation = cameraDataChanged && !light->isDirty && !shadowCastersChanged;
                 const std::uint8_t allCascadeMask = static_cast<std::uint8_t>((1u << cascadeCount) - 1u);
-                if (forceFullCascadeUpdate || cameraDataChanged || shadowCastersChanged)
+                if (forceFullCascadeUpdate || cameraDataChanged)
                 {
                     light->pendingShadowCascadeMask |= allCascadeMask;
+                }
+                else if (shadowCastersChanged)
+                {
+                    // Transform motion only dirties the depth ranges touched
+                    // by that caster. Topology/material changes do not provide
+                    // moved bounds, so conservatively invalidate every cascade.
+                    light->pendingShadowCascadeMask |= movedCasterCascadeMask != 0
+                                                           ? movedCasterCascadeMask
+                                                           : allCascadeMask;
                 }
                 else if (directionalCascadeOriginMismatch)
                 {
@@ -1419,24 +1493,24 @@ namespace PlutoGE::render
                 std::uint8_t scheduledCascadeMask = 0;
                 if (!forceFullCascadeUpdate)
                 {
-                    const int scheduledCascadeCount = motionDrivenDirectionalInvalidation
-                                                          ? std::min(cascadeCount, kMaxMotionDrivenDirectionalCascadeUpdatesPerLight)
-                                                          : 1;
-                    int selectedCascadeCount = 0;
-                    for (std::size_t attempt = 0;
-                         attempt < kDirectionalCascadeRefreshSchedule.size() && selectedCascadeCount < scheduledCascadeCount;
-                         ++attempt)
+                    // Moving casters are latency-sensitive. Refresh every
+                    // cascade containing their previous or current bounds now;
+                    // the round-robin scheduler remains for camera/cache work.
+                    scheduledCascadeMask = light->pendingShadowCascadeMask & movedCasterCascadeMask;
+                    if (scheduledCascadeMask == 0)
                     {
-                        const int scheduleIndex = light->nextShadowCascadeToRefresh % static_cast<int>(kDirectionalCascadeRefreshSchedule.size());
-                        light->nextShadowCascadeToRefresh = (scheduleIndex + 1) % static_cast<int>(kDirectionalCascadeRefreshSchedule.size());
-                        const int candidateCascadeIndex = kDirectionalCascadeRefreshSchedule[static_cast<std::size_t>(scheduleIndex)];
-                        const std::uint8_t candidateCascadeBit = static_cast<std::uint8_t>(1u << candidateCascadeIndex);
-                        if (candidateCascadeIndex < cascadeCount &&
-                            (light->pendingShadowCascadeMask & candidateCascadeBit) != 0 &&
-                            (scheduledCascadeMask & candidateCascadeBit) == 0)
+                        for (std::size_t attempt = 0; attempt < kDirectionalCascadeRefreshSchedule.size(); ++attempt)
                         {
-                            scheduledCascadeMask |= candidateCascadeBit;
-                            ++selectedCascadeCount;
+                            const int scheduleIndex = light->nextShadowCascadeToRefresh % static_cast<int>(kDirectionalCascadeRefreshSchedule.size());
+                            light->nextShadowCascadeToRefresh = (scheduleIndex + 1) % static_cast<int>(kDirectionalCascadeRefreshSchedule.size());
+                            const int candidateCascadeIndex = kDirectionalCascadeRefreshSchedule[static_cast<std::size_t>(scheduleIndex)];
+                            const std::uint8_t candidateCascadeBit = static_cast<std::uint8_t>(1u << candidateCascadeIndex);
+                            if (candidateCascadeIndex < cascadeCount &&
+                                (light->pendingShadowCascadeMask & candidateCascadeBit) != 0)
+                            {
+                                scheduledCascadeMask = candidateCascadeBit;
+                                break;
+                            }
                         }
                     }
                 }
@@ -1486,7 +1560,7 @@ namespace PlutoGE::render
                         continue;
                     }
 
-                    const auto cascadeProjection = BuildDirectionalCascadeProjection(*light, ctx.cameraData, shadowCasters, cascadeShadowWorldOrigin, cascadeNear, cascadeFar, shadowResolution);
+                    const auto cascadeProjection = BuildDirectionalCascadeProjection(*light, ctx.cameraData, cascadeShadowWorldOrigin, cascadeNear, cascadeFar, shadowResolution);
                     const glm::mat4 &cascadeMatrix = cascadeProjection.lightSpaceMatrix;
                     const bool cascadeMatrixChanged = !AreMatricesApproximatelyEqual(cascadeMatrix, light->shadowCascadeMatrices[cascadeIndex]);
                     if (cameraOnlyInvalidation && !cascadeMatrixChanged && !cascadeSplitChanged && !cascadeOriginChanged)
@@ -1515,7 +1589,11 @@ namespace PlutoGE::render
                         continue;
                     }
 
-                    if (!forceFullCascadeUpdate && !reserveIncrementalShadowSurfaceUpdate())
+                    const bool urgentMovedCasterUpdate =
+                        (movedCasterCascadeMask & static_cast<std::uint8_t>(1u << cascadeIndex)) != 0;
+                    if (!forceFullCascadeUpdate &&
+                        !urgentMovedCasterUpdate &&
+                        !reserveIncrementalShadowSurfaceUpdate())
                     {
                         deferredShadowRefresh = true;
                         continue;
@@ -1557,6 +1635,7 @@ namespace PlutoGE::render
                         m_indirectBuffer,
                         m_indirectCapacity,
                         m_indirectDrawEnabled,
+                        m_indirectDrawValidated,
                         shadowBatchInstances);
                     if (ctx.renderer)
                     {
@@ -1596,16 +1675,17 @@ namespace PlutoGE::render
 
             const glm::mat4 shadowMatrix = BuildSpotShadowMatrix(*light);
             const auto shadowFrustumPlanes = ExtractFrustumPlanes(shadowMatrix);
+            const bool urgentMovedCasterProjectedShadow = AnyMovedShadowCasterRelevant(
+                shadowCasters,
+                [&](const ShadowCasterEntry &shadowCaster)
+                {
+                    return light->type != scene::LightType::Spot ||
+                           IsMovedCommandRelevantForProjectedLight(shadowCaster, shadowFrustumPlanes);
+                });
             bool projectedShadowNeedsIncrementalRefresh = hasPendingIncrementalRefresh;
             if (!light->isDirty && !projectedShadowNeedsIncrementalRefresh)
             {
-                projectedShadowNeedsIncrementalRefresh = AnyMovedShadowCasterRelevant(
-                    shadowCasters,
-                    [&](const ShadowCasterEntry &shadowCaster)
-                    {
-                        return light->type != scene::LightType::Spot ||
-                               IsMovedCommandRelevantForProjectedLight(shadowCaster, shadowFrustumPlanes);
-                    });
+                projectedShadowNeedsIncrementalRefresh = urgentMovedCasterProjectedShadow;
             }
 
             if (!light->isDirty)
@@ -1617,7 +1697,7 @@ namespace PlutoGE::render
                     continue;
                 }
 
-                if (!reserveIncrementalShadowSurfaceUpdate())
+                if (!urgentMovedCasterProjectedShadow && !reserveIncrementalShadowSurfaceUpdate())
                 {
                     light->shadowRefreshPending = true;
                     continue;
@@ -1656,6 +1736,7 @@ namespace PlutoGE::render
                 m_indirectBuffer,
                 m_indirectCapacity,
                 m_indirectDrawEnabled,
+                m_indirectDrawValidated,
                 shadowBatchInstances);
             if (ctx.renderer)
             {

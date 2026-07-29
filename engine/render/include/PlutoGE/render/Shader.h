@@ -767,8 +767,27 @@ vec3 EvaluatePbrLighting(vec3 normal, vec3 viewDir, vec3 albedo, float metallic,
 
 float SampleShadowMapPCF(sampler2D shadowMap, vec3 projectedCoords, float depthBias, float softness)
 {
-    float closestDepth = texture(shadowMap, projectedCoords.xy).r;
-    return projectedCoords.z - depthBias > closestDepth ? 1.0 : 0.0;
+    vec2 texelSize = 1.0 / vec2(textureSize(shadowMap, 0));
+    float receiverDepth = projectedCoords.z - depthBias;
+    if (softness <= 0.001)
+    {
+        return receiverDepth > texture(shadowMap, projectedCoords.xy).r ? 1.0 : 0.0;
+    }
+
+    vec2 stepSize = texelSize * clamp(softness, 0.5, 3.0);
+    float shadow = 0.0;
+    float totalWeight = 0.0;
+    for (int y = -1; y <= 1; ++y)
+    {
+        for (int x = -1; x <= 1; ++x)
+        {
+            float weight = float((2 - abs(x)) * (2 - abs(y)));
+            float closestDepth = texture(shadowMap, projectedCoords.xy + vec2(x, y) * stepSize).r;
+            shadow += (receiverDepth > closestDepth ? 1.0 : 0.0) * weight;
+            totalWeight += weight;
+        }
+    }
+    return shadow / totalWeight;
 }
 
 float SampleDirectionalCascadeShadow(int cascadeIndex, vec3 projectedCoords, float depthBias, float softness)

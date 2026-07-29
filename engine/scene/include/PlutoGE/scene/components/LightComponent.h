@@ -25,7 +25,8 @@ namespace PlutoGE::scene
     {
         int cascadeCount = kDefaultDirectionalShadowCascades;
         int resolution = 2048;
-        float cascadeResolutionFalloff = 0.5f;
+        // 0.5 reduces a 2048 base map to 256 pixels by cascade four.
+        float cascadeResolutionFalloff = 0.75f;
         float maxDistance = 150.0f;
         float nearCascadeDistance = 8.0f;
         float splitLambda = 0.9f;

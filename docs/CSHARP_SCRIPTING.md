@@ -61,6 +61,78 @@ public override void OnCollisionExit(GameObject other) {}
 - There is currently no public `OnDestroy`, fixed-update, trigger-enter, or trigger-exit callback.
 - Scripts run only as instances attached through an entity's `ScriptComponent`.
 
+## Multiplayer networking
+
+Import `PlutoGE.ScriptCore.Networking` to use the built-in reliable networking
+module. It provides one server accepting multiple clients and a client that
+connects to one server. Messages are length-framed TCP packets with a `ushort`
+channel and a byte payload. A payload is limited to 1 MiB by default.
+
+Network I/O runs in the background, but all public events are queued. Call
+`Poll()` from `OnUpdate` to invoke events safely on the gameplay thread:
+
+```csharp
+using PlutoGE.ScriptCore.Networking;
+
+private readonly NetworkServer server = new();
+
+public override void OnCreate()
+{
+    server.ClientConnected += peerId => Debug.Log($"Peer {peerId} joined");
+    server.ClientDisconnected += peerId => Debug.Log($"Peer {peerId} left");
+    server.MessageReceived += message =>
+    {
+        Debug.Log(message.GetString());
+        server.Broadcast(message.Channel, message.Payload.Span,
+            exceptPeerId: message.PeerId);
+    };
+    server.Error += exception => Debug.LogError(exception.Message);
+    server.Start(7777);
+}
+
+public override void OnUpdate(float deltaTime) => server.Poll();
+```
+
+Client:
+
+```csharp
+private readonly NetworkClient client = new();
+
+public override void OnCreate()
+{
+    client.Connected += () => client.SendString(1, "hello");
+    client.MessageReceived += message => Debug.Log(message.GetString());
+    client.Error += exception => Debug.LogError(exception.Message);
+    _ = client.ConnectAsync("127.0.0.1", 7777);
+}
+
+public override void OnUpdate(float deltaTime) => client.Poll();
+```
+
+The channel is an application-defined message type. Reserve constants so both
+sides agree, for example `const ushort PlayerMove = 10`. For structured data,
+use `SendJson`, `BroadcastJson`, and `message.GetJson<T>()`. Use raw `Send` for
+compact binary snapshots.
+
+Key API:
+
+```csharp
+server.Start(ushort port, int backlog = 128, string bindAddress = "0.0.0.0");
+server.Send(int peerId, ushort channel, ReadOnlySpan<byte> payload);
+server.Broadcast(ushort channel, ReadOnlySpan<byte> payload, int exceptPeerId = 0);
+await server.StopAsync();
+
+await client.ConnectAsync(string host, ushort port);
+client.Send(ushort channel, ReadOnlySpan<byte> payload);
+await client.DisconnectAsync();
+```
+
+`NetworkServer` and `NetworkClient` implement both `IDisposable` and
+`IAsyncDisposable`. Stop or dispose them when leaving a multiplayer session.
+TCP is ordered and reliable, which suits connection state, chat, and initial
+gameplay replication. High-rate transform snapshots may later use a separate
+unreliable transport without changing channel payload formats.
+
 `ScriptBehaviour` provides:
 
 - `public uint EntityId { get; }` — native entity ID.

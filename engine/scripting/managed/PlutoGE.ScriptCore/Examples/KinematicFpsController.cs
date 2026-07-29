@@ -463,6 +463,18 @@ public sealed class KinematicFpsController : ScriptBehaviour
         UpdateHud();
     }
 
+    /// <summary>Adds ammunition to the reserve, for pickups and scripted rewards.</summary>
+    public void AddAmmo(int amount)
+    {
+        if (amount <= 0)
+        {
+            return;
+        }
+
+        _reserveAmmo = Math.Min(int.MaxValue - amount, _reserveAmmo) + amount;
+        UpdateHud();
+    }
+
     private void UpdateInteraction(float deltaTime)
     {
         if (!Input.CursorLocked)

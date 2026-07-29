@@ -42,6 +42,10 @@ public abstract class ScriptBehaviour
     {
     }
 
+    public virtual void OnDestroy()
+    {
+    }
+
     public virtual void OnCollisionEnter(GameObject other)
     {
     }

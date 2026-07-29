@@ -80,6 +80,7 @@ namespace PlutoGE::scripting
         using invoke_on_create_fn = int(__cdecl *)(int64_t);
         using invoke_on_update_fn = int(__cdecl *)(int64_t, float);
         using invoke_on_late_update_fn = int(__cdecl *)(int64_t, float);
+        using invoke_on_destroy_fn = int(__cdecl *)(int64_t);
         using invoke_on_collision_fn = int(__cdecl *)(int64_t, uint32_t);
         using invoke_on_animation_event_fn = int(__cdecl *)(int64_t, const char *, const char *, float, int32_t);
         using apply_field_data_fn = int(__cdecl *)(int64_t, const char *);
@@ -2758,6 +2759,7 @@ namespace PlutoGE::scripting
         invoke_on_create_fn invokeOnCreate = nullptr;
         invoke_on_update_fn invokeOnUpdate = nullptr;
         invoke_on_late_update_fn invokeOnLateUpdate = nullptr;
+        invoke_on_destroy_fn invokeOnDestroy = nullptr;
         invoke_on_collision_fn invokeOnCollisionEnter = nullptr;
         invoke_on_collision_fn invokeOnCollisionExit = nullptr;
         invoke_on_animation_event_fn invokeOnAnimationEvent = nullptr;
@@ -2857,6 +2859,7 @@ namespace PlutoGE::scripting
             impl.invokeOnCreate = nullptr;
             impl.invokeOnUpdate = nullptr;
             impl.invokeOnLateUpdate = nullptr;
+            impl.invokeOnDestroy = nullptr;
             impl.invokeOnCollisionEnter = nullptr;
             impl.invokeOnCollisionExit = nullptr;
             impl.applyFieldData = nullptr;
@@ -3179,6 +3182,7 @@ namespace PlutoGE::scripting
                 LoadManagedExport(impl, L"InvokeOnCreate", impl.invokeOnCreate) &&
                 LoadManagedExport(impl, L"InvokeOnUpdate", impl.invokeOnUpdate) &&
                 LoadManagedExport(impl, L"InvokeOnLateUpdate", impl.invokeOnLateUpdate) &&
+                LoadManagedExport(impl, L"InvokeOnDestroy", impl.invokeOnDestroy) &&
                 LoadManagedExport(impl, L"InvokeOnCollisionEnter", impl.invokeOnCollisionEnter) &&
                 LoadManagedExport(impl, L"InvokeOnCollisionExit", impl.invokeOnCollisionExit) &&
                 LoadManagedExport(impl, L"InvokeOnAnimationEvent", impl.invokeOnAnimationEvent) &&
@@ -3303,6 +3307,14 @@ namespace PlutoGE::scripting
                 if (m_impl && m_impl->invokeOnLateUpdate)
                 {
                     m_impl->invokeOnLateUpdate(m_instanceHandle, deltaTime);
+                }
+            }
+
+            void OnDestroy() override
+            {
+                if (m_impl && m_impl->invokeOnDestroy)
+                {
+                    m_impl->invokeOnDestroy(m_instanceHandle);
                 }
             }
 

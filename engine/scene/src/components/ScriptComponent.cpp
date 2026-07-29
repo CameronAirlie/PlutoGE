@@ -223,6 +223,10 @@ namespace PlutoGE::scene
             return;
         }
 
+        if (m_instance && m_started)
+        {
+            m_instance->OnDestroy();
+        }
         m_instance.reset();
         m_started = false;
     }

@@ -49,6 +49,7 @@ Override only the callbacks needed by the script:
 public override void OnCreate() {}
 public override void OnUpdate(float deltaTime) {}
 public override void OnLateUpdate(float deltaTime) {}
+public override void OnDestroy() {}
 public override void OnCollisionEnter(GameObject other) {}
 public override void OnCollisionExit(GameObject other) {}
 ```
@@ -57,8 +58,11 @@ public override void OnCollisionExit(GameObject other) {}
 - `OnCreate` runs when Play/runtime starts and the attached script instance is started.
 - `OnUpdate` runs once per runtime frame.
 - `OnLateUpdate` runs after normal script updates.
+- `OnDestroy` runs once after a started script is stopped, including when Play
+  mode ends or its script component is destroyed. Use it to unsubscribe events
+  and dispose resources created by the script.
 - Collision callbacks receive the other entity as a `GameObject`.
-- There is currently no public `OnDestroy`, fixed-update, trigger-enter, or trigger-exit callback.
+- There is currently no public fixed-update, trigger-enter, or trigger-exit callback.
 - Scripts run only as instances attached through an entity's `ScriptComponent`.
 
 ## Multiplayer networking

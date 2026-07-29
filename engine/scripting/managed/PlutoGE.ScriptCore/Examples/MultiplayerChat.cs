@@ -59,6 +59,14 @@ public sealed class MultiplayerChat : ScriptBehaviour
             _client.SendString(1, $"{playerName}: hello!");
     }
 
+    public override void OnDestroy()
+    {
+        _server?.Dispose();
+        _client?.Dispose();
+        _server = null;
+        _client = null;
+    }
+
     private async Task ConnectAsync()
     {
         try

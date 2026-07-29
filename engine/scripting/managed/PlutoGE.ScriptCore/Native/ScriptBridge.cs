@@ -1324,6 +1324,27 @@ internal static unsafe class ScriptBridge
         }
     }
 
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "InvokeOnDestroy")]
+    public static int InvokeOnDestroy(long handle)
+    {
+        try
+        {
+            if (!Instances.TryGetValue(handle, out var instance))
+            {
+                SetError($"Unknown managed script instance handle '{handle}'.");
+                return 0;
+            }
+
+            instance.OnDestroy();
+            return 1;
+        }
+        catch (Exception exception)
+        {
+            SetError(exception.ToString());
+            return 0;
+        }
+    }
+
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "InvokeOnCollisionEnter")]
     public static int InvokeOnCollisionEnter(long handle, uint otherEntityId)
     {

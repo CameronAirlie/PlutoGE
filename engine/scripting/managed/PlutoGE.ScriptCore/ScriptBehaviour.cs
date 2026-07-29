@@ -4,9 +4,25 @@ namespace PlutoGE.ScriptCore;
 
 public abstract class ScriptBehaviour
 {
-    public uint EntityId { get; internal set; }
+    private uint _entityId;
+    private GameObject? _gameObject;
 
-    protected GameObject GameObject => new(EntityId);
+    public uint EntityId
+    {
+        get => _entityId;
+        internal set
+        {
+            if (_entityId == value)
+            {
+                return;
+            }
+
+            _entityId = value;
+            _gameObject = value == 0 ? null : new GameObject(value);
+        }
+    }
+
+    protected GameObject GameObject => _gameObject ??= new GameObject(EntityId);
 
     protected Vector3 Rotation
     {

@@ -108,7 +108,9 @@ internal static unsafe class ScriptBridge
     }
 
     private static readonly ConcurrentDictionary<long, ScriptBehaviour> Instances = new();
+    private static readonly Dictionary<uint, List<ScriptBehaviour>> InstancesByEntity = new();
     private static readonly Dictionary<string, ScriptClassMetadata> ScriptClasses = new(StringComparer.Ordinal);
+    private static readonly Dictionary<(Type Type, string Name, int Arity), MethodInfo[]> InvokableMethods = new();
     private static readonly object Gate = new();
 
     private static ScriptLoadContext? _loadContext;
@@ -1153,6 +1155,7 @@ internal static unsafe class ScriptBridge
                 instance.EntityId = entityId;
                 var handle = Interlocked.Increment(ref _nextInstanceHandle);
                 Instances[handle] = instance;
+                AddInstanceToEntityIndex(instance);
                 return handle;
             }
         }
@@ -1166,7 +1169,13 @@ internal static unsafe class ScriptBridge
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "DestroyScriptInstance")]
     public static void DestroyScriptInstance(long handle)
     {
-        Instances.TryRemove(handle, out _);
+        if (Instances.TryRemove(handle, out var instance))
+        {
+            lock (Gate)
+            {
+                RemoveInstanceFromEntityIndex(instance);
+            }
+        }
     }
 
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "UnloadScriptAssembly")]
@@ -1383,7 +1392,12 @@ internal static unsafe class ScriptBridge
             return 0;
         }
 
-        instance.EntityId = entityId;
+        lock (Gate)
+        {
+            RemoveInstanceFromEntityIndex(instance);
+            instance.EntityId = entityId;
+            AddInstanceToEntityIndex(instance);
+        }
         return 1;
     }
 
@@ -1604,13 +1618,20 @@ internal static unsafe class ScriptBridge
 
         args ??= [];
         var invoked = false;
-        foreach (var instance in Instances.Values)
+        ScriptBehaviour[] entityInstances;
+        lock (Gate)
         {
-            if (instance.EntityId != entityId)
+            if (!InstancesByEntity.TryGetValue(entityId, out var indexedInstances))
             {
-                continue;
+                return false;
             }
 
+            // Invoked script methods may create or destroy script instances.
+            entityInstances = indexedInstances.ToArray();
+        }
+
+        foreach (var instance in entityInstances)
+        {
             if (!TryFindInvokableMethod(instance.GetType(), methodName, args, out var method, out var convertedArgs))
             {
                 continue;
@@ -1637,11 +1658,19 @@ internal static unsafe class ScriptBridge
             return null;
         }
 
-        foreach (var instance in Instances.Values)
+        lock (Gate)
         {
-            if (instance.EntityId == entityId && instance is T script)
+            if (!InstancesByEntity.TryGetValue(entityId, out var entityInstances))
             {
-                return script;
+                return null;
+            }
+
+            foreach (var instance in entityInstances)
+            {
+                if (instance is T script)
+                {
+                    return script;
+                }
             }
         }
 
@@ -1650,20 +1679,22 @@ internal static unsafe class ScriptBridge
 
     private static bool TryFindInvokableMethod(Type instanceType, string methodName, object?[] args, out MethodInfo method, out object?[] convertedArgs)
     {
-        foreach (var candidate in instanceType.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
+        var cacheKey = (instanceType, methodName, args.Length);
+        if (!InvokableMethods.TryGetValue(cacheKey, out var candidates))
         {
-            if (!string.Equals(candidate.Name, methodName, StringComparison.Ordinal) ||
-                candidate.ReturnType != typeof(void))
-            {
-                continue;
-            }
+            candidates = instanceType
+                .GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Where(candidate =>
+                    string.Equals(candidate.Name, methodName, StringComparison.Ordinal) &&
+                    candidate.ReturnType == typeof(void) &&
+                    candidate.GetParameters().Length == args.Length)
+                .ToArray();
+            InvokableMethods[cacheKey] = candidates;
+        }
 
+        foreach (var candidate in candidates)
+        {
             var parameters = candidate.GetParameters();
-            if (parameters.Length != args.Length)
-            {
-                continue;
-            }
-
             var currentArgs = new object?[args.Length];
             var compatible = true;
             for (var index = 0; index < parameters.Length; ++index)
@@ -2352,7 +2383,9 @@ internal static unsafe class ScriptBridge
     private static void ResetLoadedAssembly()
     {
         Instances.Clear();
+        InstancesByEntity.Clear();
         ScriptClasses.Clear();
+        InvokableMethods.Clear();
 
         if (_loadContext is null)
         {
@@ -2366,6 +2399,31 @@ internal static unsafe class ScriptBridge
         GC.Collect();
         GC.WaitForPendingFinalizers();
         GC.Collect();
+    }
+
+    private static void AddInstanceToEntityIndex(ScriptBehaviour instance)
+    {
+        if (!InstancesByEntity.TryGetValue(instance.EntityId, out var instances))
+        {
+            instances = [];
+            InstancesByEntity.Add(instance.EntityId, instances);
+        }
+
+        instances.Add(instance);
+    }
+
+    private static void RemoveInstanceFromEntityIndex(ScriptBehaviour instance)
+    {
+        if (!InstancesByEntity.TryGetValue(instance.EntityId, out var instances))
+        {
+            return;
+        }
+
+        instances.Remove(instance);
+        if (instances.Count == 0)
+        {
+            InstancesByEntity.Remove(instance.EntityId);
+        }
     }
 
     private static IEnumerable<ScriptClassMetadata> DiscoverScriptClasses(Assembly assembly)

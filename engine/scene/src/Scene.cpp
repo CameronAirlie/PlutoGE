@@ -67,9 +67,10 @@ namespace PlutoGE::scene
             }
         }
 
-        std::vector<ScriptComponent *> GatherRuntimeScriptComponents(const std::vector<Entity *> &rootEntities)
+        const std::vector<ScriptComponent *> &GatherRuntimeScriptComponents(const std::vector<Entity *> &rootEntities)
         {
-            std::vector<ScriptComponent *> scriptComponents;
+            thread_local std::vector<ScriptComponent *> scriptComponents;
+            scriptComponents.clear();
             for (auto *rootEntity : rootEntities)
             {
                 CollectRuntimeScriptComponents(rootEntity, scriptComponents);
@@ -1856,6 +1857,7 @@ namespace PlutoGE::scene
         m_updateTimingStats.runtimeUiMs = std::chrono::duration<float, std::milli>(runtimeUiEnd - preparationEnd).count();
         m_updateTimingStats.componentsMs = std::chrono::duration<float, std::milli>(componentsEnd - runtimeUiEnd).count();
         m_updateTimingStats.physicsMs = std::chrono::duration<float, std::milli>(physicsEnd - componentsEnd).count();
+        m_updateTimingStats.lateScriptsMs = std::chrono::duration<float, std::milli>(lateScriptsEnd - physicsEnd).count();
         m_updateTimingStats.renderSubmissionMs = std::chrono::duration<float, std::milli>(submissionEnd - lateScriptsEnd).count();
     }
 

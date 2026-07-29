@@ -3,6 +3,12 @@ using PlutoGE.ScriptCore.Native;
 
 namespace PlutoGE.ScriptCore;
 
+public enum UIImageType
+{
+    Simple, Sliced, FilledHorizontal, FilledVertical, FilledRadial,
+    ProceduralCrosshair, ProceduralCircle, ProceduralArc, ProceduralRoundedRect
+}
+
 public sealed class UIImageComponent : ComponentReference
 {
     internal UIImageComponent(uint entityId) : base(entityId) {}
@@ -37,5 +43,17 @@ public sealed class UIImageComponent : ComponentReference
     {
         get => ScriptBridge.GetUIImageFillAmount(EntityId);
         set => ScriptBridge.SetUIImageFillAmount(EntityId, value);
+    }
+
+    public UIImageType ImageType
+    {
+        get => (UIImageType)ScriptBridge.GetUIImageType(EntityId);
+        set => ScriptBridge.SetUIImageType(EntityId, (int)value);
+    }
+
+    public float Thickness
+    {
+        get => ScriptBridge.GetUIImageThickness(EntityId);
+        set => ScriptBridge.SetUIImageThickness(EntityId, value);
     }
 }

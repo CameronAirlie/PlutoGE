@@ -107,6 +107,7 @@ namespace PlutoGE::scene
         void SetTimeScale(float timeScale);
         [[nodiscard]] float GetTimeScale() const { return m_timeScale; }
         [[nodiscard]] const SceneUpdateTimingStats &GetUpdateTimingStats() const { return m_updateTimingStats; }
+        [[nodiscard]] uint64_t GetUpdateSequence() const { return m_updateSequence; }
         UISystem &GetUISystem();
         const UISystem &GetUISystem() const;
 

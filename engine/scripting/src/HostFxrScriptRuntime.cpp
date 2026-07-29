@@ -98,6 +98,7 @@ namespace PlutoGE::scripting
         using register_particle_system_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_sound_emitter_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_runtime_ui_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
+        using register_advanced_ui_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_input_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_physics_api_fn = int(__cdecl *)(void *, void *, void *, void *);
         using register_debug_api_fn = int(__cdecl *)(void *);
@@ -369,8 +370,8 @@ namespace PlutoGE::scripting
             {
                 while (!root.empty())
                 {
-                    candidates.push_back(root / "engine" / "scripting" / "managed" / "PlutoGE.ScriptCore" / "bin" / "Debug" / "net8.0");
                     candidates.push_back(root / "engine" / "scripting" / "managed" / "PlutoGE.ScriptCore" / "bin" / "Release" / "net8.0");
+                    candidates.push_back(root / "engine" / "scripting" / "managed" / "PlutoGE.ScriptCore" / "bin" / "Debug" / "net8.0");
 
                     if (root == root.root_path())
                     {
@@ -2577,6 +2578,104 @@ namespace PlutoGE::scripting
             return NativeVector3{applied.x, applied.y, applied.z};
         }
 
+        int32_t GetCanvasScaleMode(uint32_t entityId)
+        {
+            auto *component = FindCanvas(entityId);
+            return component ? static_cast<int32_t>(component->GetScaleMode()) : 0;
+        }
+        void SetCanvasScaleMode(uint32_t entityId, int32_t value)
+        {
+            if (auto *component = FindCanvas(entityId))
+                component->SetScaleMode(static_cast<scene::CanvasScaleMode>(std::clamp(value, 0, 2)));
+        }
+        NativeVector3 GetCanvasReferenceResolution(uint32_t entityId)
+        {
+            auto *component = FindCanvas(entityId);
+            const glm::vec2 value = component ? component->GetReferenceResolution() : glm::vec2(1920.0f, 1080.0f);
+            return {value.x, value.y, 0.0f};
+        }
+        void SetCanvasReferenceResolution(uint32_t entityId, NativeVector3 value)
+        {
+            if (auto *component = FindCanvas(entityId); component && std::isfinite(value.x) && std::isfinite(value.y))
+                component->SetReferenceResolution({value.x, value.y});
+        }
+        float GetRectRotation(uint32_t entityId)
+        {
+            auto *component = FindRectTransform(entityId);
+            return component ? component->GetRotation() : 0.0f;
+        }
+        void SetRectRotation(uint32_t entityId, float value)
+        {
+            if (auto *component = FindRectTransform(entityId); component && std::isfinite(value))
+                component->SetRotation(value);
+        }
+        float GetRectOpacity(uint32_t entityId)
+        {
+            auto *component = FindRectTransform(entityId);
+            return component ? component->GetOpacity() : 1.0f;
+        }
+        void SetRectOpacity(uint32_t entityId, float value)
+        {
+            if (auto *component = FindRectTransform(entityId); component && std::isfinite(value))
+                component->SetOpacity(value);
+        }
+        NativeVector3 GetRectLocalScale(uint32_t entityId)
+        {
+            auto *component = FindRectTransform(entityId);
+            const glm::vec2 value = component ? component->GetLocalScale() : glm::vec2(1.0f);
+            return {value.x, value.y, 0.0f};
+        }
+        void SetRectLocalScale(uint32_t entityId, NativeVector3 value)
+        {
+            if (auto *component = FindRectTransform(entityId); component && std::isfinite(value.x) && std::isfinite(value.y))
+                component->SetLocalScale({value.x, value.y});
+        }
+        int32_t GetRectLayoutMode(uint32_t entityId)
+        {
+            auto *component = FindRectTransform(entityId);
+            return component ? static_cast<int32_t>(component->GetLayoutMode()) : 0;
+        }
+        void SetRectLayoutMode(uint32_t entityId, int32_t value)
+        {
+            if (auto *component = FindRectTransform(entityId))
+                component->SetLayoutMode(static_cast<scene::UILayoutMode>(std::clamp(value, 0, 3)));
+        }
+        int32_t GetUIImageType(uint32_t entityId)
+        {
+            auto *component = FindUIImage(entityId);
+            return component ? static_cast<int32_t>(component->GetImageType()) : 0;
+        }
+        void SetUIImageType(uint32_t entityId, int32_t value)
+        {
+            if (auto *component = FindUIImage(entityId))
+                component->SetImageType(static_cast<scene::UIImageType>(std::clamp(value, 0, 8)));
+        }
+        float GetUIImageThickness(uint32_t entityId)
+        {
+            auto *component = FindUIImage(entityId);
+            return component ? component->GetThickness() : 2.0f;
+        }
+        void SetUIImageThickness(uint32_t entityId, float value)
+        {
+            if (auto *component = FindUIImage(entityId); component && std::isfinite(value))
+                component->SetThickness(value);
+        }
+        int32_t GetUITextAlignment(uint32_t entityId)
+        {
+            auto *component = FindUIText(entityId);
+            return component ? static_cast<int32_t>(component->GetAlignment()) : 4;
+        }
+        void SetUITextAlignment(uint32_t entityId, int32_t value)
+        {
+            if (auto *component = FindUIText(entityId))
+                component->SetAlignment(static_cast<scene::UITextAlignment>(std::clamp(value, 0, 8)));
+        }
+        uint64_t GetUIUpdateSequence()
+        {
+            auto *scene = core::Engine::GetInstance().GetScene();
+            return scene ? scene->GetUpdateSequence() : 0;
+        }
+
         uint32_t SpawnDecal(NativeVector3 point,
                             NativeVector3 normal,
                             const char *materialAssetReference,
@@ -2678,6 +2777,7 @@ namespace PlutoGE::scripting
         register_particle_system_component_api_fn registerParticleSystemComponentApi = nullptr;
         register_sound_emitter_component_api_fn registerSoundEmitterComponentApi = nullptr;
         register_runtime_ui_api_fn registerRuntimeUIApi = nullptr;
+        register_advanced_ui_api_fn registerAdvancedUIApi = nullptr;
         register_input_api_fn registerInputApi = nullptr;
         register_physics_api_fn registerPhysicsApi = nullptr;
         register_debug_api_fn registerDebugApi = nullptr;
@@ -2775,6 +2875,7 @@ namespace PlutoGE::scripting
             impl.registerParticleSystemComponentApi = nullptr;
             impl.registerSoundEmitterComponentApi = nullptr;
             impl.registerRuntimeUIApi = nullptr;
+            impl.registerAdvancedUIApi = nullptr;
             impl.registerInputApi = nullptr;
             impl.registerPhysicsApi = nullptr;
             impl.registerDebugApi = nullptr;
@@ -3097,6 +3198,7 @@ namespace PlutoGE::scripting
                 LoadManagedExport(impl, L"RegisterParticleSystemComponentApi", impl.registerParticleSystemComponentApi) &&
                 LoadManagedExport(impl, L"RegisterSoundEmitterComponentApi", impl.registerSoundEmitterComponentApi) &&
                 LoadManagedExport(impl, L"RegisterRuntimeUIApi", impl.registerRuntimeUIApi) &&
+                LoadManagedExport(impl, L"RegisterAdvancedUIApi", impl.registerAdvancedUIApi) &&
                 LoadManagedExport(impl, L"RegisterInputApi", impl.registerInputApi) &&
                 LoadManagedExport(impl, L"RegisterPhysicsApi", impl.registerPhysicsApi) &&
                 LoadManagedExport(impl, L"RegisterDebugApi", impl.registerDebugApi);
@@ -3596,6 +3698,32 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(static_cast<get_component_bool_fn>(&GetUIButtonClicked))) == 0)
         {
             setManagedBridgeFailure("RegisterRuntimeUIApi");
+            return false;
+        }
+
+        if (!m_impl->registerAdvancedUIApi ||
+            m_impl->registerAdvancedUIApi(
+                reinterpret_cast<void *>(static_cast<get_component_int_fn>(&GetCanvasScaleMode)),
+                reinterpret_cast<void *>(static_cast<set_component_int_fn>(&SetCanvasScaleMode)),
+                reinterpret_cast<void *>(static_cast<get_component_vector3_fn>(&GetCanvasReferenceResolution)),
+                reinterpret_cast<void *>(static_cast<set_component_vector3_fn>(&SetCanvasReferenceResolution)),
+                reinterpret_cast<void *>(static_cast<get_component_float_fn>(&GetRectRotation)),
+                reinterpret_cast<void *>(static_cast<set_component_float_fn>(&SetRectRotation)),
+                reinterpret_cast<void *>(static_cast<get_component_float_fn>(&GetRectOpacity)),
+                reinterpret_cast<void *>(static_cast<set_component_float_fn>(&SetRectOpacity)),
+                reinterpret_cast<void *>(static_cast<get_component_vector3_fn>(&GetRectLocalScale)),
+                reinterpret_cast<void *>(static_cast<set_component_vector3_fn>(&SetRectLocalScale)),
+                reinterpret_cast<void *>(static_cast<get_component_int_fn>(&GetRectLayoutMode)),
+                reinterpret_cast<void *>(static_cast<set_component_int_fn>(&SetRectLayoutMode)),
+                reinterpret_cast<void *>(static_cast<get_component_int_fn>(&GetUIImageType)),
+                reinterpret_cast<void *>(static_cast<set_component_int_fn>(&SetUIImageType)),
+                reinterpret_cast<void *>(static_cast<get_component_float_fn>(&GetUIImageThickness)),
+                reinterpret_cast<void *>(static_cast<set_component_float_fn>(&SetUIImageThickness)),
+                reinterpret_cast<void *>(static_cast<get_component_int_fn>(&GetUITextAlignment)),
+                reinterpret_cast<void *>(static_cast<set_component_int_fn>(&SetUITextAlignment)),
+                reinterpret_cast<void *>(&GetUIUpdateSequence)) == 0)
+        {
+            setManagedBridgeFailure("RegisterAdvancedUIApi");
             return false;
         }
 

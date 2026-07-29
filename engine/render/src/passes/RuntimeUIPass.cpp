@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -62,6 +63,16 @@ namespace PlutoGE::render
             float rotation = 0.0f;
             glm::vec2 localScale{1.0f};
             bool clipped = false;
+        };
+
+        struct UIQuadInstance
+        {
+            glm::vec4 rect;
+            glm::vec4 uv;
+            glm::vec4 color;
+            glm::vec4 shape;
+            glm::vec4 transform;
+            glm::vec2 depth;
         };
 
         struct UITextRun
@@ -128,18 +139,29 @@ namespace PlutoGE::render
             ShaderSource source;
             source.vertexSource = R"(
                 #version 330 core
+                layout(location = 0) in vec4 aRect;
+                layout(location = 1) in vec4 aUv;
+                layout(location = 2) in vec4 aColor;
+                layout(location = 3) in vec4 aShape;
+                layout(location = 4) in vec4 aTransform;
+                layout(location = 5) in vec2 aDepth;
                 uniform vec2 uViewportSize;
-                uniform vec2 uRectMin;
-                uniform vec2 uRectMax;
-                uniform vec2 uUvMin;
-                uniform vec2 uUvMax;
-                uniform float uRotation;
-                uniform vec2 uLocalScale;
                 out vec2 vUv;
                 out vec2 vLocal;
+                out vec4 vColor;
+                flat out int vImageType;
+                flat out float vFillAmount;
+                flat out float vThickness;
+                flat out float vCornerRadius;
+                flat out float vStartAngle;
+                flat out float vElementDepth;
 
                 void main()
                 {
+                    vec2 uRectMin = aRect.xy;
+                    vec2 uRectMax = aRect.zw;
+                    vec2 uUvMin = aUv.xy;
+                    vec2 uUvMax = aUv.zw;
                     vec2 positions[6] = vec2[6](
                         vec2(uRectMin.x, uRectMin.y),
                         vec2(uRectMax.x, uRectMin.y),
@@ -159,34 +181,41 @@ namespace PlutoGE::render
 
                     vec2 center = (uRectMin + uRectMax) * 0.5;
                     vec2 local = positions[gl_VertexID] - center;
-                    local *= uLocalScale;
-                    float angle = radians(uRotation);
+                    local *= aTransform.zw;
+                    float angle = radians(aTransform.y);
                     mat2 rotation = mat2(cos(angle), sin(angle), -sin(angle), cos(angle));
                     positions[gl_VertexID] = center + rotation * local;
                     vec2 ndc = (positions[gl_VertexID] / max(uViewportSize, vec2(1.0))) * 2.0 - 1.0;
                     gl_Position = vec4(ndc, 0.0, 1.0);
                     vUv = uvs[gl_VertexID];
                     vLocal = uvs[gl_VertexID] * 2.0 - 1.0;
+                    vColor = aColor;
+                    vImageType = int(aShape.x + 0.5);
+                    vFillAmount = aShape.y;
+                    vThickness = aShape.z;
+                    vCornerRadius = aShape.w;
+                    vStartAngle = aTransform.x;
+                    vElementDepth = aDepth.x;
                 }
             )";
 
             source.fragmentSource = R"(
                 #version 330 core
                 out vec4 FragColor;
-                uniform vec4 uColor;
                 uniform sampler2D uImageTexture;
                 uniform int uHasTexture;
                 uniform sampler2D uSceneDepthTexture;
                 uniform vec2 uViewportSize;
-                uniform float uElementDepth;
                 uniform int uDepthTest;
-                uniform int uImageType;
-                uniform float uFillAmount;
-                uniform float uThickness;
-                uniform float uCornerRadius;
-                uniform float uStartAngle;
                 in vec2 vUv;
                 in vec2 vLocal;
+                in vec4 vColor;
+                flat in int vImageType;
+                flat in float vFillAmount;
+                flat in float vThickness;
+                flat in float vCornerRadius;
+                flat in float vStartAngle;
+                flat in float vElementDepth;
 
                 float sdRoundedBox(vec2 p, vec2 b, float r)
                 {
@@ -199,43 +228,43 @@ namespace PlutoGE::render
                     if (uDepthTest != 0)
                     {
                         float sceneDepth = texture(uSceneDepthTexture, gl_FragCoord.xy / max(uViewportSize, vec2(1.0))).r;
-                        if (uElementDepth > sceneDepth + 0.00005)
+                        if (vElementDepth > sceneDepth + 0.00005)
                         {
                             discard;
                         }
                     }
 
-                    if (uImageType == 3 && vUv.y > uFillAmount)
+                    if (vImageType == 3 && vUv.y > vFillAmount)
                         discard;
-                    if (uImageType == 4 || uImageType == 6)
+                    if (vImageType == 4 || vImageType == 6 || vImageType == 7)
                     {
-                        float angle = mod(atan(vLocal.y, vLocal.x) + 6.2831853 - radians(uStartAngle), 6.2831853);
-                        if (uImageType == 4 && angle > uFillAmount * 6.2831853)
+                        float angle = mod(atan(vLocal.y, vLocal.x) + 6.2831853 - radians(vStartAngle), 6.2831853);
+                        if ((vImageType == 4 || vImageType == 7) && angle > vFillAmount * 6.2831853)
                             discard;
                         float radius = length(vLocal);
-                        float width = max(uThickness * 0.01, 0.002);
+                        float width = max(vThickness * 0.01, 0.002);
                         if (radius > 1.0 || radius < 1.0 - width)
                             discard;
                     }
-                    else if (uImageType == 5)
+                    else if (vImageType == 5)
                     {
-                        float width = max(uThickness * 0.01, 0.002);
-                        float gap = clamp(uFillAmount, 0.0, 0.95);
+                        float width = max(vThickness * 0.01, 0.002);
+                        float gap = clamp(vFillAmount, 0.0, 0.95);
                         bool horizontal = abs(vLocal.y) <= width && abs(vLocal.x) >= gap;
                         bool vertical = abs(vLocal.x) <= width && abs(vLocal.y) >= gap;
                         if (!horizontal && !vertical)
                             discard;
                     }
-                    else if (uImageType == 7)
+                    else if (vImageType == 8)
                     {
-                        float radius = clamp(uCornerRadius * 0.01, 0.0, 1.0);
+                        float radius = clamp(vCornerRadius * 0.01, 0.0, 1.0);
                         float distance = sdRoundedBox(vLocal, vec2(1.0), radius);
-                        float width = max(uThickness * 0.01, 0.002);
-                        if (distance > 0.0 || (uThickness > 0.0 && distance < -width))
+                        float width = max(vThickness * 0.01, 0.002);
+                        if (distance > 0.0 || (vThickness > 0.0 && distance < -width))
                             discard;
                     }
                     vec4 imageColor = uHasTexture != 0 ? texture(uImageTexture, vUv) : vec4(1.0);
-                    FragColor = imageColor * uColor;
+                    FragColor = imageColor * vColor;
                 }
             )";
 
@@ -830,7 +859,8 @@ namespace PlutoGE::render
                             const glm::mat4 &view,
                             const glm::mat4 &projection,
                             std::vector<UIQuad> &quads,
-                            std::vector<UITextRun> &textRuns)
+                            std::vector<UITextRun> &textRuns,
+                            std::optional<scene::RectTransformLayout> layoutOverride = std::nullopt)
         {
             if (!entity || !entity->IsActive())
             {
@@ -872,9 +902,27 @@ namespace PlutoGE::render
                     const float uniformWorldScale = std::max(worldScale.x, worldScale.y);
                     pixelScale = projectedPoint.pixelsPerWorldUnit * uniformWorldScale * scaleFactor / kUIUnitsPerWorldUnit;
                 }
-                const auto logicalLayout = activeCanvas.parentRect
-                                               ? scene::ResolveRectTransformLayout(*rectTransform, *activeCanvas.parentRect)
+                auto logicalLayout = activeCanvas.parentRect
+                                               ? (layoutOverride ? *layoutOverride : scene::ResolveRectTransformLayout(*rectTransform, *activeCanvas.parentRect))
                                                : scene::RectTransformLayout{};
+                std::vector<const scene::RectTransformComponent *> layoutChildren;
+                for (const auto *childEntity : entity->GetChildren())
+                    if (const auto *childRect = childEntity->GetComponent<scene::RectTransformComponent>(); childRect && childRect->IsEnabled())
+                        layoutChildren.push_back(childRect);
+                if (!layoutChildren.empty() &&
+                    (rectTransform->GetHorizontalContentSize() != scene::UIContentSizeMode::Unconstrained ||
+                     rectTransform->GetVerticalContentSize() != scene::UIContentSizeMode::Unconstrained))
+                {
+                    const glm::vec2 preferred = scene::ResolvePreferredLayoutSize(*rectTransform, layoutChildren);
+                    glm::vec2 size = logicalLayout.max - logicalLayout.min;
+                    if (rectTransform->GetHorizontalContentSize() == scene::UIContentSizeMode::Preferred) size.x = preferred.x;
+                    else if (rectTransform->GetHorizontalContentSize() == scene::UIContentSizeMode::Minimum) size.x = rectTransform->GetMinimumSize().x;
+                    if (rectTransform->GetVerticalContentSize() == scene::UIContentSizeMode::Preferred) size.y = preferred.y;
+                    else if (rectTransform->GetVerticalContentSize() == scene::UIContentSizeMode::Minimum) size.y = rectTransform->GetMinimumSize().y;
+                    const glm::vec2 pivotPoint = glm::mix(logicalLayout.min, logicalLayout.max, rectTransform->GetPivot());
+                    logicalLayout = {.min = pivotPoint - size * rectTransform->GetPivot(),
+                                     .max = pivotPoint + size * (glm::vec2(1.0f) - rectTransform->GetPivot())};
+                }
                 auto rect = worldSpaceOverlay
                                 ? ResolveWorldOverlayRect(*rectTransform, projectedPoint.screenPosition, pixelScale)
                                 : UIRect{.min = logicalLayout.min, .max = logicalLayout.max};
@@ -1026,9 +1074,30 @@ namespace PlutoGE::render
                 }
             }
 
+            std::vector<const scene::RectTransformComponent *> layoutChildren;
+            std::vector<scene::Entity *> layoutEntities;
             for (auto *child : entity->GetChildren())
             {
-                CollectUIQuads(child, activeCanvas, viewportSize, view, projection, quads, textRuns);
+                if (const auto *childRect = child->GetComponent<scene::RectTransformComponent>(); childRect && childRect->IsEnabled())
+                {
+                    layoutChildren.push_back(childRect);
+                    layoutEntities.push_back(child);
+                }
+            }
+            for (auto *child : entity->GetChildren())
+            {
+                std::optional<scene::RectTransformLayout> childOverride;
+                if (rectTransform && activeCanvas.parentRect && rectTransform->GetLayoutMode() != scene::UILayoutMode::None)
+                {
+                    const auto found = std::find(layoutEntities.begin(), layoutEntities.end(), child);
+                    if (found != layoutEntities.end())
+                        childOverride = scene::ResolveAutomaticChildLayout(
+                            *rectTransform,
+                            *activeCanvas.parentRect,
+                            layoutChildren,
+                            static_cast<std::size_t>(found - layoutEntities.begin()));
+                }
+                CollectUIQuads(child, activeCanvas, viewportSize, view, projection, quads, textRuns, childOverride);
             }
         }
     }
@@ -1038,6 +1107,23 @@ namespace PlutoGE::render
         m_shader = CreateRuntimeUIShader();
         m_textShader = CreateRuntimeUITextShader();
         glGenVertexArrays(1, &m_vao);
+        glGenBuffers(1, &m_instanceVbo);
+        glBindVertexArray(m_vao);
+        glBindBuffer(GL_ARRAY_BUFFER, m_instanceVbo);
+        const GLsizei stride = static_cast<GLsizei>(sizeof(UIQuadInstance));
+        const std::size_t offsets[] = {
+            offsetof(UIQuadInstance, rect), offsetof(UIQuadInstance, uv), offsetof(UIQuadInstance, color),
+            offsetof(UIQuadInstance, shape), offsetof(UIQuadInstance, transform), offsetof(UIQuadInstance, depth)};
+        const GLint sizes[] = {4, 4, 4, 4, 4, 2};
+        for (GLuint attribute = 0; attribute < 6; ++attribute)
+        {
+            glEnableVertexAttribArray(attribute);
+            glVertexAttribPointer(attribute, sizes[attribute], GL_FLOAT, GL_FALSE, stride,
+                                  reinterpret_cast<const void *>(offsets[attribute]));
+            glVertexAttribDivisor(attribute, 1);
+        }
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+        glBindVertexArray(0);
     }
 
     void RuntimeUIPass::Execute(const RenderContext &ctx)
@@ -1117,34 +1203,57 @@ namespace PlutoGE::render
         glBindTexture(GL_TEXTURE_2D, sceneDepthTexture);
 
         glBindVertexArray(m_vao);
-        for (const auto &quad : quads)
+        for (std::size_t quadIndex = 0; quadIndex < quads.size();)
         {
+            const auto &quad = quads[quadIndex];
             if (quad.clipped)
+            {
+                ++quadIndex;
                 continue;
+            }
+            const bool depthTest = quad.depthTest && sceneDepthTexture != 0;
+            const auto compatible = [&](const UIQuad &candidate)
+            {
+                return !candidate.clipped && candidate.textureId == quad.textureId &&
+                       candidate.depthTest == quad.depthTest &&
+                       candidate.clipRect.min == quad.clipRect.min &&
+                       candidate.clipRect.max == quad.clipRect.max;
+            };
+            std::size_t groupEnd = quadIndex + 1;
+            while (groupEnd < quads.size() && compatible(quads[groupEnd]))
+                ++groupEnd;
+            std::vector<UIQuadInstance> instances;
+            instances.reserve(groupEnd - quadIndex);
+            for (std::size_t instanceIndex = quadIndex; instanceIndex < groupEnd; ++instanceIndex)
+            {
+                const auto &item = quads[instanceIndex];
+                instances.push_back({
+                    .rect = {item.rect.min.x, item.rect.min.y, item.rect.max.x, item.rect.max.y},
+                    .uv = {item.uvMin.x, item.uvMin.y, item.uvMax.x, item.uvMax.y},
+                    .color = item.color,
+                    .shape = {static_cast<float>(item.imageType), item.fillAmount, item.thickness, item.cornerRadius},
+                    .transform = {item.startAngle, item.rotation, item.localScale.x, item.localScale.y},
+                    .depth = {item.depth, 0.0f},
+                });
+            }
             const glm::vec2 clipSize = glm::max(quad.clipRect.max - quad.clipRect.min, glm::vec2(0.0f));
             glScissor(static_cast<GLint>(std::floor(quad.clipRect.min.x)),
                       static_cast<GLint>(std::floor(quad.clipRect.min.y)),
                       static_cast<GLsizei>(std::ceil(clipSize.x)),
                       static_cast<GLsizei>(std::ceil(clipSize.y)));
-            m_shader->SetUniform("uRectMin", quad.rect.min);
-            m_shader->SetUniform("uRectMax", quad.rect.max);
-            m_shader->SetUniform("uUvMin", quad.uvMin);
-            m_shader->SetUniform("uUvMax", quad.uvMax);
-            m_shader->SetUniform("uColor", quad.color);
             m_shader->SetUniform("uHasTexture", quad.textureId != 0 ? 1 : 0);
-            m_shader->SetUniform("uElementDepth", quad.depth);
-            m_shader->SetUniform("uDepthTest", quad.depthTest && sceneDepthTexture != 0 ? 1 : 0);
-            m_shader->SetUniform("uImageType", static_cast<int>(quad.imageType));
-            m_shader->SetUniform("uFillAmount", quad.fillAmount);
-            m_shader->SetUniform("uThickness", quad.thickness);
-            m_shader->SetUniform("uCornerRadius", quad.cornerRadius);
-            m_shader->SetUniform("uStartAngle", quad.startAngle);
-            m_shader->SetUniform("uRotation", quad.rotation);
-            m_shader->SetUniform("uLocalScale", quad.localScale);
+            m_shader->SetUniform("uDepthTest", depthTest ? 1 : 0);
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, quad.textureId);
-            glDrawArrays(GL_TRIANGLES, 0, 6);
+            glBindBuffer(GL_ARRAY_BUFFER, m_instanceVbo);
+            glBufferData(GL_ARRAY_BUFFER,
+                         static_cast<GLsizeiptr>(instances.size() * sizeof(UIQuadInstance)),
+                         instances.data(),
+                         GL_STREAM_DRAW);
+            glDrawArraysInstanced(GL_TRIANGLES, 0, 6, static_cast<GLsizei>(instances.size()));
+            quadIndex = groupEnd;
         }
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
 
         std::stable_sort(textRuns.begin(), textRuns.end(),
                          [](const UITextRun &a, const UITextRun &b)

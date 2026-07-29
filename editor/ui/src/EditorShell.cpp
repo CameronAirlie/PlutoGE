@@ -302,8 +302,8 @@ namespace PlutoGE::ui
 
             const auto scriptCoreDirectory = scriptCoreProjectPath.parent_path();
             const std::array<std::filesystem::path, 2> candidates{
-                scriptCoreDirectory / "bin" / "Debug" / "net8.0" / "PlutoGE.ScriptCore.dll",
                 scriptCoreDirectory / "bin" / "Release" / "net8.0" / "PlutoGE.ScriptCore.dll",
+                scriptCoreDirectory / "bin" / "Debug" / "net8.0" / "PlutoGE.ScriptCore.dll",
             };
 
             for (const auto &candidate : candidates)

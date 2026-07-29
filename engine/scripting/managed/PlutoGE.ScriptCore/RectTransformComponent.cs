@@ -17,6 +17,8 @@ public enum UIAnchorPreset
     Stretch = 9,
 }
 
+public enum UILayoutMode { None, Horizontal, Vertical, Grid }
+
 public sealed class RectTransformComponent : ComponentReference
 {
     internal RectTransformComponent(uint entityId) : base(entityId) {}
@@ -39,5 +41,29 @@ public sealed class RectTransformComponent : ComponentReference
     {
         get => (UIAnchorPreset)ScriptBridge.GetRectAnchorPreset(EntityId);
         set => ScriptBridge.SetRectAnchorPreset(EntityId, (int)value);
+    }
+
+    public float Rotation
+    {
+        get => ScriptBridge.GetRectRotation(EntityId);
+        set => ScriptBridge.SetRectRotation(EntityId, value);
+    }
+
+    public float Opacity
+    {
+        get => ScriptBridge.GetRectOpacity(EntityId);
+        set => ScriptBridge.SetRectOpacity(EntityId, value);
+    }
+
+    public Vector2 LocalScale
+    {
+        get => ScriptBridge.GetRectLocalScale(EntityId);
+        set => ScriptBridge.SetRectLocalScale(EntityId, value);
+    }
+
+    public UILayoutMode LayoutMode
+    {
+        get => (UILayoutMode)ScriptBridge.GetRectLayoutMode(EntityId);
+        set => ScriptBridge.SetRectLayoutMode(EntityId, (int)value);
     }
 }

@@ -55,6 +55,127 @@ namespace PlutoGE::scene
                 .max = outerMin + size - glm::vec2(margin.z, margin.w)};
     }
 
+    glm::vec2 ResolvePreferredLayoutSize(const RectTransformComponent &layoutGroup,
+                                         const std::vector<const RectTransformComponent *> &children)
+    {
+        const glm::vec4 padding = layoutGroup.GetLayoutPadding();
+        const glm::vec2 spacing = layoutGroup.GetLayoutSpacing();
+        glm::vec2 result(padding.x + padding.z, padding.y + padding.w);
+        if (children.empty())
+            return result;
+
+        if (layoutGroup.GetLayoutMode() == UILayoutMode::Horizontal)
+        {
+            for (const auto *child : children)
+            {
+                if (!child) continue;
+                const glm::vec2 size = glm::clamp(child->GetSizeDelta(), child->GetMinimumSize(), child->GetMaximumSize());
+                result.x += size.x;
+                result.y = std::max(result.y, padding.y + padding.w + size.y);
+            }
+            result.x += spacing.x * static_cast<float>(children.size() - 1);
+        }
+        else if (layoutGroup.GetLayoutMode() == UILayoutMode::Vertical)
+        {
+            for (const auto *child : children)
+            {
+                if (!child) continue;
+                const glm::vec2 size = glm::clamp(child->GetSizeDelta(), child->GetMinimumSize(), child->GetMaximumSize());
+                result.y += size.y;
+                result.x = std::max(result.x, padding.x + padding.z + size.x);
+            }
+            result.y += spacing.y * static_cast<float>(children.size() - 1);
+        }
+        else if (layoutGroup.GetLayoutMode() == UILayoutMode::Grid)
+        {
+            glm::vec2 cell(0.0f);
+            for (const auto *child : children)
+                if (child)
+                    cell = glm::max(cell, glm::clamp(child->GetSizeDelta(), child->GetMinimumSize(), child->GetMaximumSize()));
+            const int columns = std::max(layoutGroup.GetGridColumns(), 1);
+            const int rows = static_cast<int>((children.size() + static_cast<std::size_t>(columns) - 1) /
+                                              static_cast<std::size_t>(columns));
+            result += glm::vec2(cell.x * columns + spacing.x * std::max(columns - 1, 0),
+                                cell.y * rows + spacing.y * std::max(rows - 1, 0));
+        }
+        return result;
+    }
+
+    RectTransformLayout ResolveAutomaticChildLayout(
+        const RectTransformComponent &layoutGroup,
+        const RectTransformLayout &groupRect,
+        const std::vector<const RectTransformComponent *> &children,
+        std::size_t childIndex)
+    {
+        if (layoutGroup.GetLayoutMode() == UILayoutMode::None || childIndex >= children.size() || !children[childIndex])
+            return groupRect;
+
+        const glm::vec4 padding = layoutGroup.GetLayoutPadding();
+        const glm::vec2 spacing = layoutGroup.GetLayoutSpacing();
+        const glm::vec2 innerMin = groupRect.min + glm::vec2(padding.x, padding.y);
+        const glm::vec2 innerMax = groupRect.max - glm::vec2(padding.z, padding.w);
+        const glm::vec2 innerSize = glm::max(innerMax - innerMin, glm::vec2(0.0f));
+        const auto *child = children[childIndex];
+        glm::vec2 childSize = glm::clamp(child->GetSizeDelta(), child->GetMinimumSize(), child->GetMaximumSize());
+
+        if (layoutGroup.GetLayoutMode() == UILayoutMode::Horizontal)
+        {
+            float preferredTotal = 0.0f;
+            for (const auto *item : children)
+                if (item) preferredTotal += glm::clamp(item->GetSizeDelta(), item->GetMinimumSize(), item->GetMaximumSize()).x;
+            const float spacingTotal = spacing.x * static_cast<float>(children.size() > 0 ? children.size() - 1 : 0);
+            const float extra = layoutGroup.GetExpandChildWidth()
+                                    ? std::max(innerSize.x - preferredTotal - spacingTotal, 0.0f) / children.size()
+                                    : 0.0f;
+            float x = innerMin.x;
+            for (std::size_t index = 0; index < childIndex; ++index)
+            {
+                const auto *item = children[index];
+                x += (item ? glm::clamp(item->GetSizeDelta(), item->GetMinimumSize(), item->GetMaximumSize()).x : 0.0f) +
+                     extra + spacing.x;
+            }
+            if (layoutGroup.GetControlChildWidth()) childSize.x += extra;
+            if (layoutGroup.GetControlChildHeight()) childSize.y = innerSize.y;
+            return {.min = {x, innerMin.y + (innerSize.y - childSize.y) * 0.5f},
+                    .max = {x + childSize.x, innerMin.y + (innerSize.y + childSize.y) * 0.5f}};
+        }
+        if (layoutGroup.GetLayoutMode() == UILayoutMode::Vertical)
+        {
+            float preferredTotal = 0.0f;
+            for (const auto *item : children)
+                if (item) preferredTotal += glm::clamp(item->GetSizeDelta(), item->GetMinimumSize(), item->GetMaximumSize()).y;
+            const float spacingTotal = spacing.y * static_cast<float>(children.size() > 0 ? children.size() - 1 : 0);
+            const float extra = layoutGroup.GetExpandChildHeight()
+                                    ? std::max(innerSize.y - preferredTotal - spacingTotal, 0.0f) / children.size()
+                                    : 0.0f;
+            float top = innerMax.y;
+            for (std::size_t index = 0; index < childIndex; ++index)
+            {
+                const auto *item = children[index];
+                top -= (item ? glm::clamp(item->GetSizeDelta(), item->GetMinimumSize(), item->GetMaximumSize()).y : 0.0f) +
+                       extra + spacing.y;
+            }
+            if (layoutGroup.GetControlChildWidth()) childSize.x = innerSize.x;
+            if (layoutGroup.GetControlChildHeight()) childSize.y += extra;
+            return {.min = {innerMin.x + (innerSize.x - childSize.x) * 0.5f, top - childSize.y},
+                    .max = {innerMin.x + (innerSize.x + childSize.x) * 0.5f, top}};
+        }
+
+        const int columns = std::max(layoutGroup.GetGridColumns(), 1);
+        const int rows = std::max(static_cast<int>((children.size() + columns - 1) / columns), 1);
+        const glm::vec2 cellSize(
+            std::max((innerSize.x - spacing.x * std::max(columns - 1, 0)) / columns, 0.0f),
+            std::max((innerSize.y - spacing.y * std::max(rows - 1, 0)) / rows, 0.0f));
+        const int column = static_cast<int>(childIndex % columns);
+        const int row = static_cast<int>(childIndex / columns);
+        if (layoutGroup.GetControlChildWidth()) childSize.x = cellSize.x;
+        if (layoutGroup.GetControlChildHeight()) childSize.y = cellSize.y;
+        const glm::vec2 cellMin(innerMin.x + column * (cellSize.x + spacing.x),
+                                innerMax.y - (row + 1) * cellSize.y - row * spacing.y);
+        return {.min = cellMin + (cellSize - childSize) * 0.5f,
+                .max = cellMin + (cellSize + childSize) * 0.5f};
+    }
+
     namespace
     {
         std::string SerializeVec2(const glm::vec2 &value)
@@ -220,6 +341,16 @@ namespace PlutoGE::scene
             {"Opacity", PropertyType::Float, std::to_string(m_opacity)},
             {"ClipChildren", PropertyType::Bool, m_clipChildren ? "true" : "false"},
             {"RaycastTarget", PropertyType::Bool, m_raycastTarget ? "true" : "false"},
+            {"LayoutMode", PropertyType::Enum, std::to_string(static_cast<int>(m_layoutMode)), {"None", "Horizontal", "Vertical", "Grid"}},
+            {"LayoutPadding", PropertyType::Color, SerializeColor(m_layoutPadding)},
+            {"LayoutSpacing", PropertyType::Vec2, SerializeVec2(m_layoutSpacing)},
+            {"GridColumns", PropertyType::Int, std::to_string(m_gridColumns)},
+            {"ControlChildWidth", PropertyType::Bool, m_controlChildWidth ? "true" : "false"},
+            {"ControlChildHeight", PropertyType::Bool, m_controlChildHeight ? "true" : "false"},
+            {"ExpandChildWidth", PropertyType::Bool, m_expandChildWidth ? "true" : "false"},
+            {"ExpandChildHeight", PropertyType::Bool, m_expandChildHeight ? "true" : "false"},
+            {"HorizontalContentSize", PropertyType::Enum, std::to_string(static_cast<int>(m_horizontalContentSize)), {"Unconstrained", "Minimum", "Preferred"}},
+            {"VerticalContentSize", PropertyType::Enum, std::to_string(static_cast<int>(m_verticalContentSize)), {"Unconstrained", "Minimum", "Preferred"}},
         };
     }
 
@@ -257,6 +388,26 @@ namespace PlutoGE::scene
                 m_clipChildren = property.value == "true" || property.value == "1";
             else if (property.name == "RaycastTarget")
                 m_raycastTarget = property.value == "true" || property.value == "1";
+            else if (property.name == "LayoutMode")
+                m_layoutMode = static_cast<UILayoutMode>(std::clamp(std::stoi(property.value), 0, 3));
+            else if (property.name == "LayoutPadding")
+                SetLayoutPadding(ParseColor(property.value, m_layoutPadding));
+            else if (property.name == "LayoutSpacing")
+                SetLayoutSpacing(ParseVec2(property.value, m_layoutSpacing));
+            else if (property.name == "GridColumns")
+                SetGridColumns(std::stoi(property.value));
+            else if (property.name == "ControlChildWidth")
+                m_controlChildWidth = property.value == "true" || property.value == "1";
+            else if (property.name == "ControlChildHeight")
+                m_controlChildHeight = property.value == "true" || property.value == "1";
+            else if (property.name == "ExpandChildWidth")
+                m_expandChildWidth = property.value == "true" || property.value == "1";
+            else if (property.name == "ExpandChildHeight")
+                m_expandChildHeight = property.value == "true" || property.value == "1";
+            else if (property.name == "HorizontalContentSize")
+                m_horizontalContentSize = static_cast<UIContentSizeMode>(std::clamp(std::stoi(property.value), 0, 2));
+            else if (property.name == "VerticalContentSize")
+                m_verticalContentSize = static_cast<UIContentSizeMode>(std::clamp(std::stoi(property.value), 0, 2));
         }
     }
 

@@ -4,7 +4,14 @@ namespace PlutoGE.ScriptCore;
 
 public sealed class UIButtonComponent : ComponentReference
 {
-    internal UIButtonComponent(uint entityId) : base(entityId) {}
+    private static readonly List<WeakReference<UIButtonComponent>> RegisteredButtons = [];
+    private static ulong _lastDispatchSequence;
+
+    internal UIButtonComponent(uint entityId) : base(entityId)
+    {
+        lock (RegisteredButtons)
+            RegisteredButtons.Add(new WeakReference<UIButtonComponent>(this));
+    }
 
     internal override ScriptBridge.NativeComponentType ComponentType => ScriptBridge.NativeComponentType.UIButton;
 
@@ -40,5 +47,22 @@ public sealed class UIButtonComponent : ComponentReference
         if (WasReleased) Released?.Invoke();
         if (WasClicked) Clicked?.Invoke();
         _wasHovered = hovered;
+    }
+
+    internal static void DispatchRegisteredEvents(ulong updateSequence)
+    {
+        if (updateSequence == 0 || updateSequence == _lastDispatchSequence)
+            return;
+        _lastDispatchSequence = updateSequence;
+        lock (RegisteredButtons)
+        {
+            for (var index = RegisteredButtons.Count - 1; index >= 0; --index)
+            {
+                if (!RegisteredButtons[index].TryGetTarget(out var button))
+                    RegisteredButtons.RemoveAt(index);
+                else
+                    button.DispatchEvents();
+            }
+        }
     }
 }

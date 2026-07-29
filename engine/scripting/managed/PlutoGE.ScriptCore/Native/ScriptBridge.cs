@@ -304,6 +304,25 @@ internal static unsafe class ScriptBridge
     private static delegate* unmanaged[Cdecl]<uint, int> _getUIButtonPressed;
     private static delegate* unmanaged[Cdecl]<uint, int> _getUIButtonReleased;
     private static delegate* unmanaged[Cdecl]<uint, int> _getUIButtonClicked;
+    private static delegate* unmanaged[Cdecl]<uint, int> _getCanvasScaleMode;
+    private static delegate* unmanaged[Cdecl]<uint, int, void> _setCanvasScaleMode;
+    private static delegate* unmanaged[Cdecl]<uint, NativeVector3> _getCanvasReferenceResolution;
+    private static delegate* unmanaged[Cdecl]<uint, NativeVector3, void> _setCanvasReferenceResolution;
+    private static delegate* unmanaged[Cdecl]<uint, float> _getRectRotation;
+    private static delegate* unmanaged[Cdecl]<uint, float, void> _setRectRotation;
+    private static delegate* unmanaged[Cdecl]<uint, float> _getRectOpacity;
+    private static delegate* unmanaged[Cdecl]<uint, float, void> _setRectOpacity;
+    private static delegate* unmanaged[Cdecl]<uint, NativeVector3> _getRectLocalScale;
+    private static delegate* unmanaged[Cdecl]<uint, NativeVector3, void> _setRectLocalScale;
+    private static delegate* unmanaged[Cdecl]<uint, int> _getRectLayoutMode;
+    private static delegate* unmanaged[Cdecl]<uint, int, void> _setRectLayoutMode;
+    private static delegate* unmanaged[Cdecl]<uint, int> _getUIImageType;
+    private static delegate* unmanaged[Cdecl]<uint, int, void> _setUIImageType;
+    private static delegate* unmanaged[Cdecl]<uint, float> _getUIImageThickness;
+    private static delegate* unmanaged[Cdecl]<uint, float, void> _setUIImageThickness;
+    private static delegate* unmanaged[Cdecl]<uint, int> _getUITextAlignment;
+    private static delegate* unmanaged[Cdecl]<uint, int, void> _setUITextAlignment;
+    private static delegate* unmanaged[Cdecl]<ulong> _getUIUpdateSequence;
     private static delegate* unmanaged[Cdecl]<int, int> _getKeyDown;
     private static delegate* unmanaged[Cdecl]<int, int> _getKeyPressed;
     private static delegate* unmanaged[Cdecl]<int, int> _getKeyReleased;
@@ -1043,6 +1062,50 @@ internal static unsafe class ScriptBridge
         return 1;
     }
 
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterAdvancedUIApi")]
+    public static int RegisterAdvancedUIApi(
+        delegate* unmanaged[Cdecl]<uint, int> getCanvasScaleMode,
+        delegate* unmanaged[Cdecl]<uint, int, void> setCanvasScaleMode,
+        delegate* unmanaged[Cdecl]<uint, NativeVector3> getCanvasReferenceResolution,
+        delegate* unmanaged[Cdecl]<uint, NativeVector3, void> setCanvasReferenceResolution,
+        delegate* unmanaged[Cdecl]<uint, float> getRectRotation,
+        delegate* unmanaged[Cdecl]<uint, float, void> setRectRotation,
+        delegate* unmanaged[Cdecl]<uint, float> getRectOpacity,
+        delegate* unmanaged[Cdecl]<uint, float, void> setRectOpacity,
+        delegate* unmanaged[Cdecl]<uint, NativeVector3> getRectLocalScale,
+        delegate* unmanaged[Cdecl]<uint, NativeVector3, void> setRectLocalScale,
+        delegate* unmanaged[Cdecl]<uint, int> getRectLayoutMode,
+        delegate* unmanaged[Cdecl]<uint, int, void> setRectLayoutMode,
+        delegate* unmanaged[Cdecl]<uint, int> getUIImageType,
+        delegate* unmanaged[Cdecl]<uint, int, void> setUIImageType,
+        delegate* unmanaged[Cdecl]<uint, float> getUIImageThickness,
+        delegate* unmanaged[Cdecl]<uint, float, void> setUIImageThickness,
+        delegate* unmanaged[Cdecl]<uint, int> getUITextAlignment,
+        delegate* unmanaged[Cdecl]<uint, int, void> setUITextAlignment,
+        delegate* unmanaged[Cdecl]<ulong> getUIUpdateSequence)
+    {
+        _getCanvasScaleMode = getCanvasScaleMode;
+        _setCanvasScaleMode = setCanvasScaleMode;
+        _getCanvasReferenceResolution = getCanvasReferenceResolution;
+        _setCanvasReferenceResolution = setCanvasReferenceResolution;
+        _getRectRotation = getRectRotation;
+        _setRectRotation = setRectRotation;
+        _getRectOpacity = getRectOpacity;
+        _setRectOpacity = setRectOpacity;
+        _getRectLocalScale = getRectLocalScale;
+        _setRectLocalScale = setRectLocalScale;
+        _getRectLayoutMode = getRectLayoutMode;
+        _setRectLayoutMode = setRectLayoutMode;
+        _getUIImageType = getUIImageType;
+        _setUIImageType = setUIImageType;
+        _getUIImageThickness = getUIImageThickness;
+        _setUIImageThickness = setUIImageThickness;
+        _getUITextAlignment = getUITextAlignment;
+        _setUITextAlignment = setUITextAlignment;
+        _getUIUpdateSequence = getUIUpdateSequence;
+        return 1;
+    }
+
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterInputApi")]
     public static int RegisterInputApi(
         delegate* unmanaged[Cdecl]<int, int> getKeyDown,
@@ -1229,6 +1292,7 @@ internal static unsafe class ScriptBridge
                 return 0;
             }
 
+            UIButtonComponent.DispatchRegisteredEvents(GetUIUpdateSequence());
             instance.OnUpdate(deltaTime);
             return 1;
         }
@@ -2149,6 +2213,39 @@ internal static unsafe class ScriptBridge
 
     internal static int GetRectAnchorPreset(uint entityId) => _getRectAnchorPreset == null ? 4 : _getRectAnchorPreset(entityId);
     internal static void SetRectAnchorPreset(uint entityId, int value) { if (_setRectAnchorPreset != null) _setRectAnchorPreset(entityId, value); }
+    internal static int GetCanvasScaleMode(uint entityId) => _getCanvasScaleMode == null ? 0 : _getCanvasScaleMode(entityId);
+    internal static void SetCanvasScaleMode(uint entityId, int value) { if (_setCanvasScaleMode != null) _setCanvasScaleMode(entityId, value); }
+    internal static Vector2 GetCanvasReferenceResolution(uint entityId)
+    {
+        var value = _getCanvasReferenceResolution == null ? new NativeVector3(1920.0f, 1080.0f, 0.0f) : _getCanvasReferenceResolution(entityId);
+        return new Vector2(value.X, value.Y);
+    }
+    internal static void SetCanvasReferenceResolution(uint entityId, Vector2 value)
+    {
+        if (_setCanvasReferenceResolution != null) _setCanvasReferenceResolution(entityId, new NativeVector3(value.X, value.Y, 0.0f));
+    }
+    internal static float GetRectRotation(uint entityId) => _getRectRotation == null ? 0.0f : _getRectRotation(entityId);
+    internal static void SetRectRotation(uint entityId, float value) { if (_setRectRotation != null) _setRectRotation(entityId, value); }
+    internal static float GetRectOpacity(uint entityId) => _getRectOpacity == null ? 1.0f : _getRectOpacity(entityId);
+    internal static void SetRectOpacity(uint entityId, float value) { if (_setRectOpacity != null) _setRectOpacity(entityId, value); }
+    internal static Vector2 GetRectLocalScale(uint entityId)
+    {
+        var value = _getRectLocalScale == null ? new NativeVector3(1.0f, 1.0f, 0.0f) : _getRectLocalScale(entityId);
+        return new Vector2(value.X, value.Y);
+    }
+    internal static void SetRectLocalScale(uint entityId, Vector2 value)
+    {
+        if (_setRectLocalScale != null) _setRectLocalScale(entityId, new NativeVector3(value.X, value.Y, 0.0f));
+    }
+    internal static int GetRectLayoutMode(uint entityId) => _getRectLayoutMode == null ? 0 : _getRectLayoutMode(entityId);
+    internal static void SetRectLayoutMode(uint entityId, int value) { if (_setRectLayoutMode != null) _setRectLayoutMode(entityId, value); }
+    internal static int GetUIImageType(uint entityId) => _getUIImageType == null ? 0 : _getUIImageType(entityId);
+    internal static void SetUIImageType(uint entityId, int value) { if (_setUIImageType != null) _setUIImageType(entityId, value); }
+    internal static float GetUIImageThickness(uint entityId) => _getUIImageThickness == null ? 2.0f : _getUIImageThickness(entityId);
+    internal static void SetUIImageThickness(uint entityId, float value) { if (_setUIImageThickness != null) _setUIImageThickness(entityId, value); }
+    internal static int GetUITextAlignment(uint entityId) => _getUITextAlignment == null ? 4 : _getUITextAlignment(entityId);
+    internal static void SetUITextAlignment(uint entityId, int value) { if (_setUITextAlignment != null) _setUITextAlignment(entityId, value); }
+    internal static ulong GetUIUpdateSequence() => _getUIUpdateSequence == null ? 0UL : _getUIUpdateSequence();
 
     internal static Vector3 GetUIImageColor(uint entityId) => _getUIImageColor == null ? Vector3.One : _getUIImageColor(entityId).ToManaged();
     internal static void SetUIImageColor(uint entityId, Vector3 value) { if (_setUIImageColor != null) _setUIImageColor(entityId, NativeVector3.FromManaged(value)); }

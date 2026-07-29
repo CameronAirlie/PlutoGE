@@ -3,6 +3,12 @@ using PlutoGE.ScriptCore.Native;
 
 namespace PlutoGE.ScriptCore;
 
+public enum UITextAlignment
+{
+    TopLeft, TopCenter, TopRight, MiddleLeft, MiddleCenter,
+    MiddleRight, BottomLeft, BottomCenter, BottomRight
+}
+
 public sealed class UITextComponent : ComponentReference
 {
     internal UITextComponent(uint entityId) : base(entityId) {}
@@ -25,5 +31,11 @@ public sealed class UITextComponent : ComponentReference
     {
         get => ScriptBridge.GetUITextFontSize(EntityId);
         set => ScriptBridge.SetUITextFontSize(EntityId, value);
+    }
+
+    public UITextAlignment Alignment
+    {
+        get => (UITextAlignment)ScriptBridge.GetUITextAlignment(EntityId);
+        set => ScriptBridge.SetUITextAlignment(EntityId, (int)value);
     }
 }

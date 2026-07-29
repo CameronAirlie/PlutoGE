@@ -59,7 +59,8 @@ namespace PlutoGE::scene
                      std::optional<RectTransformLayout> clipRect,
                      float inheritedOpacity,
                      const glm::vec2 &viewportSize,
-                     std::uint64_t &paintOrder);
+                     std::uint64_t &paintOrder,
+                     std::optional<RectTransformLayout> layoutOverride = std::nullopt);
         UIResolvedElement *HitTest(const glm::vec2 &position);
         void ResetButtonStates(Scene &scene);
 

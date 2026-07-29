@@ -9,6 +9,7 @@
 #include <imgui.h>
 
 #include <algorithm>
+#include <cfloat>
 #include <cmath>
 #include <string>
 
@@ -295,7 +296,36 @@ namespace PlutoGE::ui
             drawList->AddRectFilled(ToIm(min), ToIm(max), fill);
             drawList->AddRect(ToIm(min), ToIm(max), IM_COL32(85, 115, 145, 110));
             if (auto *text = element.entity->GetComponent<scene::UITextComponent>(); text && !text->GetText().empty())
-                drawList->AddText(ToIm(min + glm::vec2(3.0f)), IM_COL32(225, 230, 238, 210), text->GetText().c_str());
+            {
+                const float canvasScale = scene::ResolveCanvasScaleFactor(*canvas, m_referenceResolution);
+                const float previewFontSize = std::max(text->GetFontSize() * canvasScale * m_zoom, 1.0f);
+                ImFont *font = ImGui::GetFont();
+                const float wrapWidth = text->GetWrap() ? std::max(max.x - min.x, 1.0f) : 0.0f;
+                const ImVec2 measured = font->CalcTextSizeA(previewFontSize, FLT_MAX, wrapWidth,
+                                                            text->GetText().c_str());
+                const int alignment = static_cast<int>(text->GetAlignment());
+                const int column = alignment % 3;
+                const int row = alignment / 3;
+                glm::vec2 textPosition = min;
+                if (column == 1)
+                    textPosition.x += ((max.x - min.x) - measured.x) * 0.5f;
+                else if (column == 2)
+                    textPosition.x += (max.x - min.x) - measured.x;
+                if (row == 1)
+                    textPosition.y += ((max.y - min.y) - measured.y) * 0.5f;
+                else if (row == 2)
+                    textPosition.y += (max.y - min.y) - measured.y;
+
+                const auto color = text->GetColor();
+                const ImU32 textColor = IM_COL32(static_cast<int>(glm::clamp(color.r, 0.0f, 1.0f) * 255.0f),
+                                                 static_cast<int>(glm::clamp(color.g, 0.0f, 1.0f) * 255.0f),
+                                                 static_cast<int>(glm::clamp(color.b, 0.0f, 1.0f) * 255.0f),
+                                                 static_cast<int>(glm::clamp(color.a * element.opacity, 0.0f, 1.0f) * 255.0f));
+                drawList->PushClipRect(ToIm(min), ToIm(max), true);
+                drawList->AddText(font, previewFontSize, ToIm(textPosition), textColor,
+                                  text->GetText().c_str(), nullptr, wrapWidth);
+                drawList->PopClipRect();
+            }
         }
 
         const glm::vec2 mouseScreen = ToGlm(ImGui::GetIO().MousePos);
@@ -305,7 +335,7 @@ namespace PlutoGE::ui
             scene::Entity *hit = nullptr;
             for (auto it = elements.rbegin(); it != elements.rend(); ++it)
             {
-                if (it->entity && Contains(*it, mouseCanvas))
+                if (it->entity && it->entity != canvasRoot && Contains(*it, mouseCanvas))
                 {
                     hit = it->entity;
                     break;
@@ -313,7 +343,7 @@ namespace PlutoGE::ui
             }
             if (hit)
                 shell.SetSelectedEntity(hit);
-            else
+            else if (!shell.GetSelectedEntity() || FindCanvasRoot(shell.GetSelectedEntity()) != canvasRoot)
                 shell.SetSelectedEntity(canvasRoot);
             selectedEntity = shell.GetSelectedEntity();
         }

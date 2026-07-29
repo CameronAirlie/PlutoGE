@@ -52,7 +52,8 @@ namespace PlutoGE::scene
                            std::optional<RectTransformLayout> clipRect,
                            float inheritedOpacity,
                            const glm::vec2 &viewportSize,
-                           std::uint64_t &paintOrder)
+                           std::uint64_t &paintOrder,
+                           std::optional<RectTransformLayout> layoutOverride)
     {
         if (!entity || !entity->IsActive())
             return;
@@ -70,40 +71,73 @@ namespace PlutoGE::scene
         if (canvas && parentRect && rectTransform && rectTransform->IsEnabled() &&
             canvas->GetRenderMode() == CanvasRenderMode::ScreenSpaceOverlay)
         {
-            logicalRect = ResolveRectTransformLayout(*rectTransform, *parentRect);
+            logicalRect = layoutOverride ? *layoutOverride : ResolveRectTransformLayout(*rectTransform, *parentRect);
+            std::vector<const RectTransformComponent *> layoutChildren;
+            layoutChildren.reserve(entity->GetChildren().size());
+            for (const auto *childEntity : entity->GetChildren())
+                if (const auto *childRect = childEntity->GetComponent<RectTransformComponent>(); childRect && childRect->IsEnabled())
+                    layoutChildren.push_back(childRect);
+            if (!layoutChildren.empty() &&
+                (rectTransform->GetHorizontalContentSize() != UIContentSizeMode::Unconstrained ||
+                 rectTransform->GetVerticalContentSize() != UIContentSizeMode::Unconstrained))
+            {
+                const glm::vec2 preferred = ResolvePreferredLayoutSize(*rectTransform, layoutChildren);
+                glm::vec2 size = logicalRect->max - logicalRect->min;
+                if (rectTransform->GetHorizontalContentSize() == UIContentSizeMode::Preferred) size.x = preferred.x;
+                else if (rectTransform->GetHorizontalContentSize() == UIContentSizeMode::Minimum) size.x = rectTransform->GetMinimumSize().x;
+                if (rectTransform->GetVerticalContentSize() == UIContentSizeMode::Preferred) size.y = preferred.y;
+                else if (rectTransform->GetVerticalContentSize() == UIContentSizeMode::Minimum) size.y = rectTransform->GetMinimumSize().y;
+                const glm::vec2 pivotPoint = glm::mix(logicalRect->min, logicalRect->max, rectTransform->GetPivot());
+                logicalRect = RectTransformLayout{.min = pivotPoint - size * rectTransform->GetPivot(),
+                                                  .max = pivotPoint + size * (glm::vec2(1.0f) - rectTransform->GetPivot())};
+            }
             const float scaleFactor = ResolveCanvasScaleFactor(*canvas, viewportSize);
             RectTransformLayout screenRect{.min = logicalRect->min * scaleFactor,
                                            .max = logicalRect->max * scaleFactor};
             const float opacity = inheritedOpacity * rectTransform->GetOpacity();
             const RectTransformLayout effectiveClip = clipRect ? Intersect(*clipRect, screenRect) : screenRect;
-            const bool hasVisual = entity->GetComponent<UIImageComponent>() ||
-                                   entity->GetComponent<UITextComponent>() ||
-                                   entity->GetComponent<UIButtonComponent>();
-            if (hasVisual)
-            {
-                UIResolvedElement resolved{
-                    .entity = entity,
-                    .rect = screenRect,
-                    .clipRect = clipRect.value_or(screenRect),
-                    .opacity = opacity,
-                    .rotation = rectTransform->GetRotation(),
-                    .scale = rectTransform->GetLocalScale(),
-                    .sortingOrder = canvas->GetSortingOrder(),
-                    .paintOrder = paintOrder++,
-                    .raycastTarget = rectTransform->GetRaycastTarget(),
-                    .clipped = effectiveClip.max.x <= effectiveClip.min.x || effectiveClip.max.y <= effectiveClip.min.y,
-                };
-                m_elementByEntity[entity->GetID()] = m_elements.size();
-                m_elements.push_back(resolved);
-            }
+            UIResolvedElement resolved{
+                .entity = entity,
+                .rect = screenRect,
+                .clipRect = clipRect.value_or(screenRect),
+                .opacity = opacity,
+                .rotation = rectTransform->GetRotation(),
+                .scale = rectTransform->GetLocalScale(),
+                .sortingOrder = canvas->GetSortingOrder(),
+                .paintOrder = paintOrder++,
+                .raycastTarget = rectTransform->GetRaycastTarget(),
+                .clipped = effectiveClip.max.x <= effectiveClip.min.x || effectiveClip.max.y <= effectiveClip.min.y,
+            };
+            m_elementByEntity[entity->GetID()] = m_elements.size();
+            m_elements.push_back(resolved);
             inheritedOpacity = opacity;
             if (rectTransform->GetClipChildren())
                 clipRect = effectiveClip;
         }
 
+        std::vector<const RectTransformComponent *> layoutChildren;
+        std::vector<Entity *> layoutEntities;
         for (auto *child : entity->GetChildren())
+        {
+            if (const auto *childRect = child->GetComponent<RectTransformComponent>(); childRect && childRect->IsEnabled())
+            {
+                layoutChildren.push_back(childRect);
+                layoutEntities.push_back(child);
+            }
+        }
+        for (auto *child : entity->GetChildren())
+        {
+            std::optional<RectTransformLayout> childOverride;
+            if (rectTransform && logicalRect && rectTransform->GetLayoutMode() != UILayoutMode::None)
+            {
+                const auto found = std::find(layoutEntities.begin(), layoutEntities.end(), child);
+                if (found != layoutEntities.end())
+                    childOverride = ResolveAutomaticChildLayout(*rectTransform, *logicalRect, layoutChildren,
+                                                               static_cast<std::size_t>(found - layoutEntities.begin()));
+            }
             Collect(child, canvas, logicalRect ? logicalRect : parentRect, clipRect,
-                    inheritedOpacity, viewportSize, paintOrder);
+                    inheritedOpacity, viewportSize, paintOrder, childOverride);
+        }
     }
 
     void UISystem::RebuildLayout(Scene &scene, const glm::vec2 &viewportSize)

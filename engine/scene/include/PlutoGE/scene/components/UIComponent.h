@@ -67,6 +67,21 @@ namespace PlutoGE::scene
         DistanceScaled,
     };
 
+    enum class UILayoutMode
+    {
+        None = 0,
+        Horizontal,
+        Vertical,
+        Grid,
+    };
+
+    enum class UIContentSizeMode
+    {
+        Unconstrained = 0,
+        Minimum,
+        Preferred,
+    };
+
     enum class UIAnchorPreset
     {
         TopLeft = 0,
@@ -162,6 +177,26 @@ namespace PlutoGE::scene
         void SetClipChildren(bool value) { m_clipChildren = value; }
         bool GetRaycastTarget() const { return m_raycastTarget; }
         void SetRaycastTarget(bool value) { m_raycastTarget = value; }
+        UILayoutMode GetLayoutMode() const { return m_layoutMode; }
+        void SetLayoutMode(UILayoutMode value) { m_layoutMode = value; }
+        glm::vec4 GetLayoutPadding() const { return m_layoutPadding; }
+        void SetLayoutPadding(glm::vec4 value) { m_layoutPadding = glm::max(value, glm::vec4(0.0f)); }
+        glm::vec2 GetLayoutSpacing() const { return m_layoutSpacing; }
+        void SetLayoutSpacing(glm::vec2 value) { m_layoutSpacing = glm::max(value, glm::vec2(0.0f)); }
+        int GetGridColumns() const { return m_gridColumns; }
+        void SetGridColumns(int value) { m_gridColumns = std::max(value, 1); }
+        bool GetControlChildWidth() const { return m_controlChildWidth; }
+        void SetControlChildWidth(bool value) { m_controlChildWidth = value; }
+        bool GetControlChildHeight() const { return m_controlChildHeight; }
+        void SetControlChildHeight(bool value) { m_controlChildHeight = value; }
+        bool GetExpandChildWidth() const { return m_expandChildWidth; }
+        void SetExpandChildWidth(bool value) { m_expandChildWidth = value; }
+        bool GetExpandChildHeight() const { return m_expandChildHeight; }
+        void SetExpandChildHeight(bool value) { m_expandChildHeight = value; }
+        UIContentSizeMode GetHorizontalContentSize() const { return m_horizontalContentSize; }
+        void SetHorizontalContentSize(UIContentSizeMode value) { m_horizontalContentSize = value; }
+        UIContentSizeMode GetVerticalContentSize() const { return m_verticalContentSize; }
+        void SetVerticalContentSize(UIContentSizeMode value) { m_verticalContentSize = value; }
 
     private:
         glm::vec2 m_anchoredPosition{0.0f};
@@ -178,6 +213,16 @@ namespace PlutoGE::scene
         float m_opacity = 1.0f;
         bool m_clipChildren = false;
         bool m_raycastTarget = true;
+        UILayoutMode m_layoutMode = UILayoutMode::None;
+        glm::vec4 m_layoutPadding{0.0f};
+        glm::vec2 m_layoutSpacing{0.0f};
+        int m_gridColumns = 1;
+        bool m_controlChildWidth = true;
+        bool m_controlChildHeight = true;
+        bool m_expandChildWidth = false;
+        bool m_expandChildHeight = false;
+        UIContentSizeMode m_horizontalContentSize = UIContentSizeMode::Unconstrained;
+        UIContentSizeMode m_verticalContentSize = UIContentSizeMode::Unconstrained;
     };
 
     class UIImageComponent : public TypedComponent<UIImageComponent>
@@ -314,5 +359,12 @@ namespace PlutoGE::scene
 
     RectTransformLayout ResolveRectTransformLayout(const RectTransformComponent &rectTransform,
                                                    const RectTransformLayout &parentRect);
+    RectTransformLayout ResolveAutomaticChildLayout(
+        const RectTransformComponent &layoutGroup,
+        const RectTransformLayout &groupRect,
+        const std::vector<const RectTransformComponent *> &children,
+        std::size_t childIndex);
+    glm::vec2 ResolvePreferredLayoutSize(const RectTransformComponent &layoutGroup,
+                                         const std::vector<const RectTransformComponent *> &children);
     float ResolveCanvasScaleFactor(const CanvasComponent &canvas, const glm::vec2 &viewportSize);
 }

@@ -19,5 +19,6 @@ namespace PlutoGE::render
         Shader *m_shader = nullptr;
         Shader *m_textShader = nullptr;
         GLuint m_vao = 0;
+        GLuint m_instanceVbo = 0;
     };
 }

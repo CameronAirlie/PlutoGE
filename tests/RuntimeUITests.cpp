@@ -57,5 +57,38 @@ int main()
         return 1;
     }
 
+    RectTransformComponent horizontalGroup;
+    horizontalGroup.SetLayoutMode(UILayoutMode::Horizontal);
+    horizontalGroup.SetLayoutPadding({10.0f, 5.0f, 10.0f, 5.0f});
+    horizontalGroup.SetLayoutSpacing({8.0f, 0.0f});
+    horizontalGroup.SetExpandChildWidth(true);
+    RectTransformComponent firstChild;
+    RectTransformComponent secondChild;
+    firstChild.SetSizeDelta({40.0f, 20.0f});
+    secondChild.SetSizeDelta({60.0f, 30.0f});
+    const std::vector<const RectTransformComponent *> layoutChildren{&firstChild, &secondChild};
+    const RectTransformLayout groupRect{.min = {0.0f, 0.0f}, .max = {228.0f, 60.0f}};
+    const auto firstLayout = ResolveAutomaticChildLayout(horizontalGroup, groupRect, layoutChildren, 0);
+    const auto secondLayout = ResolveAutomaticChildLayout(horizontalGroup, groupRect, layoutChildren, 1);
+    if (!Near(firstLayout.min.x, 10.0f) || !Near(firstLayout.max.x, 100.0f) ||
+        !Near(secondLayout.min.x, 108.0f) || !Near(secondLayout.max.x, 218.0f) ||
+        !Near(firstLayout.min.y, 5.0f) || !Near(firstLayout.max.y, 55.0f))
+    {
+        std::cerr << "Horizontal automatic layout failed.\n";
+        return 1;
+    }
+
+    RectTransformComponent gridGroup;
+    gridGroup.SetLayoutMode(UILayoutMode::Grid);
+    gridGroup.SetGridColumns(2);
+    gridGroup.SetLayoutSpacing({4.0f, 6.0f});
+    const auto gridLayout = ResolveAutomaticChildLayout(
+        gridGroup, {.min = {0.0f, 0.0f}, .max = {204.0f, 106.0f}}, layoutChildren, 1);
+    if (!Near(gridLayout.min.x, 104.0f) || !Near(gridLayout.max.x, 204.0f))
+    {
+        std::cerr << "Grid automatic layout failed.\n";
+        return 1;
+    }
+
     return 0;
 }

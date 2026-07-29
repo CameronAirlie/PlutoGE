@@ -340,6 +340,41 @@ namespace PlutoGE::scene
         void RemapScriptEntityReferences(Entity &entity,
                                          const std::unordered_map<EntityID, EntityID> &entityIdRemap)
         {
+            for (const auto &bucket : entity.GetComponentBuckets())
+            {
+                for (auto *component : bucket)
+                {
+                    auto *navAgent = dynamic_cast<NavAgentComponent *>(component);
+                    if (!navAgent)
+                    {
+                        continue;
+                    }
+
+                    auto properties = navAgent->Serialize();
+                    for (auto &property : properties)
+                    {
+                        if (property.name != "Target Entity")
+                        {
+                            continue;
+                        }
+
+                        try
+                        {
+                            const auto sourceId = static_cast<EntityID>(std::stoul(property.value));
+                            if (const auto remapped = entityIdRemap.find(sourceId);
+                                remapped != entityIdRemap.end())
+                            {
+                                property.value = std::to_string(remapped->second);
+                            }
+                        }
+                        catch (...)
+                        {
+                        }
+                    }
+                    navAgent->Deserialize(properties);
+                }
+            }
+
             for (auto *scriptComponent : entity.GetComponents<ScriptComponent>())
             {
                 if (scriptComponent)

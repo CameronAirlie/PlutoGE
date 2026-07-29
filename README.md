@@ -59,6 +59,7 @@ Some advanced rendering paths are experimental and may depend on scene setup, co
 - Runtime canvas, image, text, and button components
 - Prefabs, tags, scene transitions, animation graphs/events, and scriptable data assets
 - .NET 8 C# behaviours with editor-serialized fields and native component wrappers
+- Multi-client networking with reliable messaging, targeted sends, broadcasts, and JSON/binary payloads
 
 ## Technology
 
@@ -71,6 +72,7 @@ Some advanced rendering paths are experimental and may depend on scene setup, co
 | Editor UI | Dear ImGui docking branch and ImGuizmo |
 | Physics | Bullet |
 | Audio | OpenAL Soft; XAudio2 on Windows |
+| Networking | Managed .NET 8 TCP transport with main-thread event dispatch |
 | Models | Assimp, tinygltf, meshoptimizer |
 | Images | stb |
 | Scripting host | `hostfxr` loading `PlutoGE.ScriptCore` |
@@ -209,6 +211,11 @@ public sealed class Rotator : ScriptBehaviour
     {
         GameObject.Rotation += Vector3.UnitY * degreesPerSecond * deltaTime;
     }
+
+    public override void OnDestroy()
+    {
+        Debug.Log($"Stopped {GameObject.Name}");
+    }
 }
 ```
 
@@ -220,9 +227,40 @@ Attachable classes derive from `ScriptBehaviour` and expose editor-editable valu
 - Raycasts, tagged raycasts, impulses/forces, and kinematic movement
 - Prefab instantiation and deferred scene loading
 - Scriptable objects and safe project/user-data storage
-- Lifecycle, collision, and animation-event callbacks
+- `OnCreate`, `OnUpdate`, `OnLateUpdate`, `OnDestroy`, collision, and animation-event callbacks
+- Reliable multi-client networking with raw binary, string, and JSON messages
+
+Networking is available through `PlutoGE.ScriptCore.Networking`. Socket I/O runs
+in the background while callbacks are dispatched by `Poll()` on the gameplay
+thread:
+
+```csharp
+using PlutoGE.ScriptCore.Networking;
+
+private readonly NetworkServer server = new();
+
+public override void OnCreate()
+{
+    server.MessageReceived += message =>
+        server.Broadcast(message.Channel, message.Payload.Span,
+            exceptPeerId: message.PeerId);
+    server.Start(7777);
+}
+
+public override void OnUpdate(float deltaTime)
+{
+    server.Poll();
+}
+
+public override void OnDestroy()
+{
+    server.Dispose();
+}
+```
 
 See the full [C# scripting specification](docs/CSHARP_SCRIPTING.md) before authoring gameplay code. It documents supported serialized types and APIs; PlutoGE does not expose Unity APIs such as `MonoBehaviour`, `Transform`, coroutines, or `FixedUpdate`.
+See [PlutoGE networking](docs/NETWORKING.md) for the transport design, usage
+model, wire format, and planned replication layers.
 
 ## Projects and assets
 
@@ -431,6 +469,7 @@ Open **Project Settings**, verify the startup scene, save the project, and ensur
 ## Further documentation
 
 - [C# scripting specification](docs/CSHARP_SCRIPTING.md)
+- [Networking architecture and roadmap](docs/NETWORKING.md)
 - [Scripting subsystem overview](engine/scripting/README.md)
 - [Exporting a game](EXPORTING.md)
 - [Development task list](TODO.md)

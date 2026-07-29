@@ -1454,6 +1454,11 @@ namespace PlutoGE::scene
             return nullptr;
         }
 
+        // A query world may already have been built earlier in this frame.
+        // Ensure newly added colliders participate in subsequent same-frame
+        // raycasts instead of waiting for the next update sequence.
+        InvalidatePhysicsQueryCache();
+
         auto *entityPtr = entity.get();
         m_entityStorage.push_back(std::move(entity));
         m_entitiesById[entityPtr->GetID()] = entityPtr;
@@ -1491,6 +1496,11 @@ namespace PlutoGE::scene
         {
             return;
         }
+
+        // Bullet query objects store pointers to their source entities. Tear
+        // down the complete query world before any entity storage is released;
+        // audio occlusion and scripts can raycast again later in this frame.
+        InvalidatePhysicsQueryCache();
 
         // Check if the entity is a root entity
         auto it = std::find(m_rootEntities.begin(), m_rootEntities.end(), entity);
@@ -1546,6 +1556,9 @@ namespace PlutoGE::scene
         }
 
         entity->SetActive(false);
+        // Exclude the inactive entity immediately and prevent the cached
+        // Bullet world from retaining its address until the deferred flush.
+        InvalidatePhysicsQueryCache();
         m_pendingDestroyEntityIds.insert(entityId);
         m_pendingDestroyEntities.push_back(entityId);
         return true;

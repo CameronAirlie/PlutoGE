@@ -58,6 +58,7 @@ public sealed class KinematicFpsController : ScriptBehaviour
     [SerializedField] private SoundEmitterComponent? shotAudio = null;
     [SerializedField] private SoundEmitterComponent? reloadAudio = null;
     [SerializedField] private SoundEmitterComponent? emptyAudio = null;
+    [SerializedField] private SoundEmitterComponent? hitmarkerAudio = null;
     [SerializedField] private UITextComponent? ammoText = null;
     [SerializedField] private UITextComponent? promptText = null;
 
@@ -407,6 +408,7 @@ public sealed class KinematicFpsController : ScriptBehaviour
                 }
                 else
                 {
+                    hitmarkerAudio?.PlayOneShot();
                     HitConfirmed?.Invoke(new FpsHitEvent(hit.Entity, hit.Point, dealtDamage, isHeadshot));
                 }
             }

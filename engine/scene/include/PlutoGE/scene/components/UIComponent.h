@@ -4,6 +4,8 @@
 
 #include <glm/glm.hpp>
 
+#include <algorithm>
+#include <cmath>
 #include <string>
 #include <utility>
 #include <vector>
@@ -14,6 +16,55 @@ namespace PlutoGE::scene
     {
         ScreenSpaceOverlay = 0,
         WorldSpaceOverlay,
+        ScreenSpaceCamera,
+        WorldSpace,
+    };
+
+    enum class CanvasScaleMode
+    {
+        ConstantPixels = 0,
+        ScaleWithScreenSize,
+        ConstantPhysicalSize,
+    };
+
+    enum class UIScreenMatchMode
+    {
+        MatchWidthOrHeight = 0,
+        Expand,
+        Shrink,
+    };
+
+    enum class UIImageType
+    {
+        Simple = 0,
+        Sliced,
+        FilledHorizontal,
+        FilledVertical,
+        FilledRadial,
+        ProceduralCrosshair,
+        ProceduralCircle,
+        ProceduralArc,
+        ProceduralRoundedRect,
+    };
+
+    enum class UITextAlignment
+    {
+        TopLeft = 0,
+        TopCenter,
+        TopRight,
+        MiddleLeft,
+        MiddleCenter,
+        MiddleRight,
+        BottomLeft,
+        BottomCenter,
+        BottomRight,
+    };
+
+    enum class UIWorldSizeMode
+    {
+        WorldUnits = 0,
+        ConstantScreenSize,
+        DistanceScaled,
     };
 
     enum class UIAnchorPreset
@@ -50,11 +101,29 @@ namespace PlutoGE::scene
         void SetScaleFactor(float scaleFactor) { m_scaleFactor = scaleFactor; }
         int GetSortingOrder() const { return m_sortingOrder; }
         void SetSortingOrder(int sortingOrder) { m_sortingOrder = sortingOrder; }
+        CanvasScaleMode GetScaleMode() const { return m_scaleMode; }
+        void SetScaleMode(CanvasScaleMode mode) { m_scaleMode = mode; }
+        glm::vec2 GetReferenceResolution() const { return m_referenceResolution; }
+        void SetReferenceResolution(glm::vec2 value) { m_referenceResolution = glm::max(value, glm::vec2(1.0f)); }
+        float GetMatchWidthOrHeight() const { return m_matchWidthOrHeight; }
+        void SetMatchWidthOrHeight(float value) { m_matchWidthOrHeight = glm::clamp(value, 0.0f, 1.0f); }
+        UIScreenMatchMode GetScreenMatchMode() const { return m_screenMatchMode; }
+        void SetScreenMatchMode(UIScreenMatchMode mode) { m_screenMatchMode = mode; }
+        UIWorldSizeMode GetWorldSizeMode() const { return m_worldSizeMode; }
+        void SetWorldSizeMode(UIWorldSizeMode mode) { m_worldSizeMode = mode; }
+        bool GetFaceCamera() const { return m_faceCamera; }
+        void SetFaceCamera(bool value) { m_faceCamera = value; }
 
     private:
         CanvasRenderMode m_renderMode = CanvasRenderMode::ScreenSpaceOverlay;
+        CanvasScaleMode m_scaleMode = CanvasScaleMode::ScaleWithScreenSize;
+        UIScreenMatchMode m_screenMatchMode = UIScreenMatchMode::MatchWidthOrHeight;
+        UIWorldSizeMode m_worldSizeMode = UIWorldSizeMode::WorldUnits;
         float m_scaleFactor = 1.0f;
+        glm::vec2 m_referenceResolution{1920.0f, 1080.0f};
+        float m_matchWidthOrHeight = 0.5f;
         int m_sortingOrder = 0;
+        bool m_faceCamera = true;
     };
 
     class RectTransformComponent : public TypedComponent<RectTransformComponent>
@@ -77,6 +146,22 @@ namespace PlutoGE::scene
         void SetAnchorMax(const glm::vec2 &anchorMax) { m_anchorMax = anchorMax; }
         UIAnchorPreset GetAnchorPreset() const { return m_anchorPreset; }
         void SetAnchorPreset(UIAnchorPreset preset);
+        glm::vec4 GetMargin() const { return m_margin; }
+        void SetMargin(glm::vec4 value) { m_margin = value; }
+        glm::vec2 GetMinimumSize() const { return m_minimumSize; }
+        void SetMinimumSize(glm::vec2 value) { m_minimumSize = glm::max(value, glm::vec2(0.0f)); }
+        glm::vec2 GetMaximumSize() const { return m_maximumSize; }
+        void SetMaximumSize(glm::vec2 value) { m_maximumSize = glm::max(value, m_minimumSize); }
+        float GetRotation() const { return m_rotation; }
+        void SetRotation(float value) { m_rotation = value; }
+        glm::vec2 GetLocalScale() const { return m_localScale; }
+        void SetLocalScale(glm::vec2 value) { m_localScale = value; }
+        float GetOpacity() const { return m_opacity; }
+        void SetOpacity(float value) { m_opacity = glm::clamp(value, 0.0f, 1.0f); }
+        bool GetClipChildren() const { return m_clipChildren; }
+        void SetClipChildren(bool value) { m_clipChildren = value; }
+        bool GetRaycastTarget() const { return m_raycastTarget; }
+        void SetRaycastTarget(bool value) { m_raycastTarget = value; }
 
     private:
         glm::vec2 m_anchoredPosition{0.0f};
@@ -85,6 +170,14 @@ namespace PlutoGE::scene
         glm::vec2 m_anchorMin{0.5f, 0.5f};
         glm::vec2 m_anchorMax{0.5f, 0.5f};
         UIAnchorPreset m_anchorPreset = UIAnchorPreset::MiddleCenter;
+        glm::vec4 m_margin{0.0f};
+        glm::vec2 m_minimumSize{0.0f};
+        glm::vec2 m_maximumSize{100000.0f};
+        float m_rotation = 0.0f;
+        glm::vec2 m_localScale{1.0f};
+        float m_opacity = 1.0f;
+        bool m_clipChildren = false;
+        bool m_raycastTarget = true;
     };
 
     class UIImageComponent : public TypedComponent<UIImageComponent>
@@ -103,12 +196,27 @@ namespace PlutoGE::scene
         void SetPreserveAspect(bool preserveAspect) { m_preserveAspect = preserveAspect; }
         float GetFillAmount() const { return m_fillAmount; }
         void SetFillAmount(float fillAmount) { m_fillAmount = glm::clamp(fillAmount, 0.0f, 1.0f); }
+        UIImageType GetImageType() const { return m_imageType; }
+        void SetImageType(UIImageType value) { m_imageType = value; }
+        glm::vec4 GetBorder() const { return m_border; }
+        void SetBorder(glm::vec4 value) { m_border = glm::max(value, glm::vec4(0.0f)); }
+        float GetThickness() const { return m_thickness; }
+        void SetThickness(float value) { m_thickness = std::max(value, 0.0f); }
+        float GetCornerRadius() const { return m_cornerRadius; }
+        void SetCornerRadius(float value) { m_cornerRadius = std::max(value, 0.0f); }
+        float GetStartAngle() const { return m_startAngle; }
+        void SetStartAngle(float value) { m_startAngle = value; }
 
     private:
         glm::vec4 m_color{1.0f};
         std::string m_texturePath;
         bool m_preserveAspect = false;
         float m_fillAmount = 1.0f;
+        UIImageType m_imageType = UIImageType::Simple;
+        glm::vec4 m_border{0.0f};
+        float m_thickness = 2.0f;
+        float m_cornerRadius = 0.0f;
+        float m_startAngle = 0.0f;
     };
 
     class UITextComponent : public TypedComponent<UITextComponent>
@@ -129,6 +237,16 @@ namespace PlutoGE::scene
         void SetFontPath(std::string fontPath) { m_fontPath = std::move(fontPath); }
         bool IsRichText() const { return m_richText; }
         void SetRichText(bool richText) { m_richText = richText; }
+        UITextAlignment GetAlignment() const { return m_alignment; }
+        void SetAlignment(UITextAlignment value) { m_alignment = value; }
+        bool GetWrap() const { return m_wrap; }
+        void SetWrap(bool value) { m_wrap = value; }
+        float GetLineSpacing() const { return m_lineSpacing; }
+        void SetLineSpacing(float value) { m_lineSpacing = std::max(value, 0.1f); }
+        glm::vec4 GetOutlineColor() const { return m_outlineColor; }
+        void SetOutlineColor(glm::vec4 value) { m_outlineColor = glm::clamp(value, glm::vec4(0.0f), glm::vec4(1.0f)); }
+        float GetOutlineWidth() const { return m_outlineWidth; }
+        void SetOutlineWidth(float value) { m_outlineWidth = glm::clamp(value, 0.0f, 8.0f); }
 
     private:
         std::string m_text;
@@ -136,12 +254,27 @@ namespace PlutoGE::scene
         float m_fontSize = 18.0f;
         std::string m_fontPath;
         bool m_richText = true;
+        UITextAlignment m_alignment = UITextAlignment::MiddleCenter;
+        bool m_wrap = true;
+        float m_lineSpacing = 1.0f;
+        glm::vec4 m_outlineColor{0.0f, 0.0f, 0.0f, 0.8f};
+        float m_outlineWidth = 0.0f;
     };
 
     class UIButtonComponent : public TypedComponent<UIButtonComponent>
     {
     public:
-        void Update(float deltaTime) override {}
+        void Update(float deltaTime) override
+        {
+            const glm::vec4 target = !m_interactable ? m_disabledTint
+                                     : m_pressed    ? m_pressedTint
+                                     : m_hovered    ? m_hoveredTint
+                                                    : m_normalTint;
+            const float blend = m_transitionDuration <= 0.0001f
+                                    ? 1.0f
+                                    : 1.0f - std::exp(-std::max(deltaTime, 0.0f) * 4.6f / m_transitionDuration);
+            m_currentTint = glm::mix(m_currentTint, target, glm::clamp(blend, 0.0f, 1.0f));
+        }
 
         std::vector<Property> Serialize() const override;
         void Deserialize(const std::vector<Property> &properties) override;
@@ -153,6 +286,17 @@ namespace PlutoGE::scene
         bool WasReleased() const { return m_released; }
         bool WasClicked() const { return m_clicked; }
         void SetRuntimeState(bool hovered, bool pressed, bool released, bool clicked);
+        glm::vec4 GetCurrentTint() const { return m_currentTint; }
+        glm::vec4 GetNormalTint() const { return m_normalTint; }
+        void SetNormalTint(glm::vec4 value) { m_normalTint = value; }
+        glm::vec4 GetHoveredTint() const { return m_hoveredTint; }
+        void SetHoveredTint(glm::vec4 value) { m_hoveredTint = value; }
+        glm::vec4 GetPressedTint() const { return m_pressedTint; }
+        void SetPressedTint(glm::vec4 value) { m_pressedTint = value; }
+        glm::vec4 GetDisabledTint() const { return m_disabledTint; }
+        void SetDisabledTint(glm::vec4 value) { m_disabledTint = value; }
+        float GetTransitionDuration() const { return m_transitionDuration; }
+        void SetTransitionDuration(float value) { m_transitionDuration = std::max(value, 0.0f); }
 
     private:
         bool m_interactable = true;
@@ -160,8 +304,15 @@ namespace PlutoGE::scene
         bool m_pressed = false;
         bool m_released = false;
         bool m_clicked = false;
+        glm::vec4 m_normalTint{1.0f};
+        glm::vec4 m_hoveredTint{1.12f, 1.12f, 1.12f, 1.0f};
+        glm::vec4 m_pressedTint{0.78f, 0.78f, 0.78f, 1.0f};
+        glm::vec4 m_disabledTint{0.45f, 0.45f, 0.45f, 0.75f};
+        glm::vec4 m_currentTint{1.0f};
+        float m_transitionDuration = 0.08f;
     };
 
     RectTransformLayout ResolveRectTransformLayout(const RectTransformComponent &rectTransform,
                                                    const RectTransformLayout &parentRect);
+    float ResolveCanvasScaleFactor(const CanvasComponent &canvas, const glm::vec2 &viewportSize);
 }

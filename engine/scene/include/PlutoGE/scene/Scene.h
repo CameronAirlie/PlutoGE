@@ -17,6 +17,7 @@ namespace PlutoGE::render
 
 namespace PlutoGE::scene
 {
+    class UISystem;
     class NavigationSystem;
     class Entity;
     class FoliageComponent;
@@ -106,6 +107,8 @@ namespace PlutoGE::scene
         void SetTimeScale(float timeScale);
         [[nodiscard]] float GetTimeScale() const { return m_timeScale; }
         [[nodiscard]] const SceneUpdateTimingStats &GetUpdateTimingStats() const { return m_updateTimingStats; }
+        UISystem &GetUISystem();
+        const UISystem &GetUISystem() const;
 
         Entity *FindEntityByName(const std::string &name) const; // Utility function to find an entity by name (can be useful for scripting and editor)
         Entity *FindEntityByID(EntityID id) const;               // Utility function to find an entity by its unique ID (useful for serialization and referencing)
@@ -230,6 +233,7 @@ namespace PlutoGE::scene
             bool pointerInside = false;
         };
         std::optional<RuntimeUIInputOverride> m_runtimeUIInputOverride;
+        std::unique_ptr<UISystem> m_uiSystem;
         void CollectEntitySubtree(Entity *entity, std::vector<Entity *> &entities) const;
         bool RemoveEntityRecursive(Entity *current, Entity *target);
         void FlushPendingDestroyEntities();

@@ -1,10 +1,45 @@
 #include "PlutoGE/scene/components/UIComponent.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 
 namespace PlutoGE::scene
 {
+    float ResolveCanvasScaleFactor(const CanvasComponent &canvas, const glm::vec2 &viewportSize)
+    {
+        const float userScale = std::max(canvas.GetScaleFactor(), 0.0001f);
+        if (canvas.GetScaleMode() == CanvasScaleMode::ConstantPixels)
+        {
+            return userScale;
+        }
+        if (canvas.GetScaleMode() == CanvasScaleMode::ConstantPhysicalSize)
+        {
+            // Until platform DPI reporting is available, 96 DPI is the stable
+            // cross-platform baseline and userScale acts as the physical multiplier.
+            return userScale;
+        }
+
+        const glm::vec2 reference = glm::max(canvas.GetReferenceResolution(), glm::vec2(1.0f));
+        const glm::vec2 ratios = glm::max(viewportSize / reference, glm::vec2(0.0001f));
+        float resolutionScale = 1.0f;
+        switch (canvas.GetScreenMatchMode())
+        {
+        case UIScreenMatchMode::Expand:
+            resolutionScale = std::min(ratios.x, ratios.y);
+            break;
+        case UIScreenMatchMode::Shrink:
+            resolutionScale = std::max(ratios.x, ratios.y);
+            break;
+        case UIScreenMatchMode::MatchWidthOrHeight:
+        default:
+            resolutionScale = std::exp2(glm::mix(std::log2(ratios.x), std::log2(ratios.y),
+                                                 canvas.GetMatchWidthOrHeight()));
+            break;
+        }
+        return userScale * resolutionScale;
+    }
+
     RectTransformLayout ResolveRectTransformLayout(const RectTransformComponent &rectTransform,
                                                    const RectTransformLayout &parentRect)
     {
@@ -12,9 +47,12 @@ namespace PlutoGE::scene
         const glm::vec2 anchorMinPosition = parentRect.min + parentSize * rectTransform.GetAnchorMin();
         const glm::vec2 anchorMaxPosition = parentRect.min + parentSize * rectTransform.GetAnchorMax();
         const glm::vec2 anchorReference = glm::mix(anchorMinPosition, anchorMaxPosition, rectTransform.GetPivot());
-        const glm::vec2 size = glm::max((anchorMaxPosition - anchorMinPosition) + rectTransform.GetSizeDelta(), glm::vec2(0.0f));
-        const glm::vec2 min = anchorReference + rectTransform.GetAnchoredPosition() - size * rectTransform.GetPivot();
-        return {.min = min, .max = min + size};
+        const glm::vec2 unclampedSize = glm::max((anchorMaxPosition - anchorMinPosition) + rectTransform.GetSizeDelta(), glm::vec2(0.0f));
+        const glm::vec2 size = glm::clamp(unclampedSize, rectTransform.GetMinimumSize(), rectTransform.GetMaximumSize());
+        const glm::vec4 margin = rectTransform.GetMargin();
+        const glm::vec2 outerMin = anchorReference + rectTransform.GetAnchoredPosition() - size * rectTransform.GetPivot();
+        return {.min = outerMin + glm::vec2(margin.x, margin.y),
+                .max = outerMin + size - glm::vec2(margin.z, margin.w)};
     }
 
     namespace
@@ -70,9 +108,15 @@ namespace PlutoGE::scene
     {
         return {
             {"Enabled", PropertyType::Bool, IsEnabled() ? "true" : "false"},
-            {"RenderMode", PropertyType::Enum, std::to_string(static_cast<int>(m_renderMode)), {"ScreenSpaceOverlay", "WorldSpaceOverlay"}},
+            {"RenderMode", PropertyType::Enum, std::to_string(static_cast<int>(m_renderMode)), {"ScreenSpaceOverlay", "WorldSpaceOverlay", "ScreenSpaceCamera", "WorldSpace"}},
+            {"ScaleMode", PropertyType::Enum, std::to_string(static_cast<int>(m_scaleMode)), {"ConstantPixels", "ScaleWithScreenSize", "ConstantPhysicalSize"}},
             {"ScaleFactor", PropertyType::Float, std::to_string(m_scaleFactor)},
+            {"ReferenceResolution", PropertyType::Vec2, SerializeVec2(m_referenceResolution)},
+            {"MatchWidthOrHeight", PropertyType::Float, std::to_string(m_matchWidthOrHeight)},
+            {"ScreenMatchMode", PropertyType::Enum, std::to_string(static_cast<int>(m_screenMatchMode)), {"MatchWidthOrHeight", "Expand", "Shrink"}},
             {"SortingOrder", PropertyType::Int, std::to_string(m_sortingOrder)},
+            {"WorldSizeMode", PropertyType::Enum, std::to_string(static_cast<int>(m_worldSizeMode)), {"WorldUnits", "ConstantScreenSize", "DistanceScaled"}},
+            {"FaceCamera", PropertyType::Bool, m_faceCamera ? "true" : "false"},
         };
     }
 
@@ -86,13 +130,25 @@ namespace PlutoGE::scene
             {
                 const int renderMode = std::clamp(std::stoi(property.value),
                                                   static_cast<int>(CanvasRenderMode::ScreenSpaceOverlay),
-                                                  static_cast<int>(CanvasRenderMode::WorldSpaceOverlay));
+                                                  static_cast<int>(CanvasRenderMode::WorldSpace));
                 m_renderMode = static_cast<CanvasRenderMode>(renderMode);
             }
+            else if (property.name == "ScaleMode")
+                m_scaleMode = static_cast<CanvasScaleMode>(std::clamp(std::stoi(property.value), 0, 2));
             else if (property.name == "ScaleFactor")
                 m_scaleFactor = std::stof(property.value);
+            else if (property.name == "ReferenceResolution")
+                SetReferenceResolution(ParseVec2(property.value, m_referenceResolution));
+            else if (property.name == "MatchWidthOrHeight")
+                SetMatchWidthOrHeight(std::stof(property.value));
+            else if (property.name == "ScreenMatchMode")
+                m_screenMatchMode = static_cast<UIScreenMatchMode>(std::clamp(std::stoi(property.value), 0, 2));
             else if (property.name == "SortingOrder")
                 m_sortingOrder = std::stoi(property.value);
+            else if (property.name == "WorldSizeMode")
+                m_worldSizeMode = static_cast<UIWorldSizeMode>(std::clamp(std::stoi(property.value), 0, 2));
+            else if (property.name == "FaceCamera")
+                m_faceCamera = property.value == "true" || property.value == "1";
         }
     }
 
@@ -156,6 +212,14 @@ namespace PlutoGE::scene
             {"Pivot", PropertyType::Vec2, SerializeVec2(m_pivot)},
             {"AnchorMin", PropertyType::Vec2, SerializeVec2(m_anchorMin)},
             {"AnchorMax", PropertyType::Vec2, SerializeVec2(m_anchorMax)},
+            {"Margin", PropertyType::Color, SerializeColor(m_margin)},
+            {"MinimumSize", PropertyType::Vec2, SerializeVec2(m_minimumSize)},
+            {"MaximumSize", PropertyType::Vec2, SerializeVec2(m_maximumSize)},
+            {"Rotation", PropertyType::Float, std::to_string(m_rotation)},
+            {"LocalScale", PropertyType::Vec2, SerializeVec2(m_localScale)},
+            {"Opacity", PropertyType::Float, std::to_string(m_opacity)},
+            {"ClipChildren", PropertyType::Bool, m_clipChildren ? "true" : "false"},
+            {"RaycastTarget", PropertyType::Bool, m_raycastTarget ? "true" : "false"},
         };
     }
 
@@ -177,6 +241,22 @@ namespace PlutoGE::scene
                 m_anchorMin = ParseVec2(property.value, m_anchorMin);
             else if (property.name == "AnchorMax")
                 m_anchorMax = ParseVec2(property.value, m_anchorMax);
+            else if (property.name == "Margin")
+                m_margin = ParseColor(property.value, m_margin);
+            else if (property.name == "MinimumSize")
+                SetMinimumSize(ParseVec2(property.value, m_minimumSize));
+            else if (property.name == "MaximumSize")
+                SetMaximumSize(ParseVec2(property.value, m_maximumSize));
+            else if (property.name == "Rotation")
+                m_rotation = std::stof(property.value);
+            else if (property.name == "LocalScale")
+                m_localScale = ParseVec2(property.value, m_localScale);
+            else if (property.name == "Opacity")
+                SetOpacity(std::stof(property.value));
+            else if (property.name == "ClipChildren")
+                m_clipChildren = property.value == "true" || property.value == "1";
+            else if (property.name == "RaycastTarget")
+                m_raycastTarget = property.value == "true" || property.value == "1";
         }
     }
 
@@ -188,6 +268,11 @@ namespace PlutoGE::scene
             {"TexturePath", PropertyType::String, m_texturePath},
             {"PreserveAspect", PropertyType::Bool, m_preserveAspect ? "true" : "false"},
             {"FillAmount", PropertyType::Float, std::to_string(m_fillAmount)},
+            {"ImageType", PropertyType::Enum, std::to_string(static_cast<int>(m_imageType)), {"Simple", "Sliced", "FilledHorizontal", "FilledVertical", "FilledRadial", "ProceduralCrosshair", "ProceduralCircle", "ProceduralArc", "ProceduralRoundedRect"}},
+            {"Border", PropertyType::Color, SerializeColor(m_border)},
+            {"Thickness", PropertyType::Float, std::to_string(m_thickness)},
+            {"CornerRadius", PropertyType::Float, std::to_string(m_cornerRadius)},
+            {"StartAngle", PropertyType::Float, std::to_string(m_startAngle)},
         };
     }
 
@@ -205,6 +290,16 @@ namespace PlutoGE::scene
                 m_preserveAspect = property.value == "true" || property.value == "1";
             else if (property.name == "FillAmount")
                 SetFillAmount(std::stof(property.value));
+            else if (property.name == "ImageType")
+                m_imageType = static_cast<UIImageType>(std::clamp(std::stoi(property.value), 0, 8));
+            else if (property.name == "Border")
+                SetBorder(ParseColor(property.value, m_border));
+            else if (property.name == "Thickness")
+                SetThickness(std::stof(property.value));
+            else if (property.name == "CornerRadius")
+                SetCornerRadius(std::stof(property.value));
+            else if (property.name == "StartAngle")
+                m_startAngle = std::stof(property.value);
         }
     }
 
@@ -217,6 +312,11 @@ namespace PlutoGE::scene
             {"FontSize", PropertyType::Float, std::to_string(m_fontSize)},
             {"FontPath", PropertyType::String, m_fontPath},
             {"RichText", PropertyType::Bool, m_richText ? "true" : "false"},
+            {"Alignment", PropertyType::Enum, std::to_string(static_cast<int>(m_alignment)), {"TopLeft", "TopCenter", "TopRight", "MiddleLeft", "MiddleCenter", "MiddleRight", "BottomLeft", "BottomCenter", "BottomRight"}},
+            {"Wrap", PropertyType::Bool, m_wrap ? "true" : "false"},
+            {"LineSpacing", PropertyType::Float, std::to_string(m_lineSpacing)},
+            {"OutlineColor", PropertyType::Color, SerializeColor(m_outlineColor)},
+            {"OutlineWidth", PropertyType::Float, std::to_string(m_outlineWidth)},
         };
     }
 
@@ -236,6 +336,16 @@ namespace PlutoGE::scene
                 m_fontPath = property.value;
             else if (property.name == "RichText")
                 m_richText = property.value == "true" || property.value == "1";
+            else if (property.name == "Alignment")
+                m_alignment = static_cast<UITextAlignment>(std::clamp(std::stoi(property.value), 0, 8));
+            else if (property.name == "Wrap")
+                m_wrap = property.value == "true" || property.value == "1";
+            else if (property.name == "LineSpacing")
+                SetLineSpacing(std::stof(property.value));
+            else if (property.name == "OutlineColor")
+                SetOutlineColor(ParseColor(property.value, m_outlineColor));
+            else if (property.name == "OutlineWidth")
+                SetOutlineWidth(std::stof(property.value));
         }
     }
 
@@ -252,6 +362,11 @@ namespace PlutoGE::scene
         return {
             {"Enabled", PropertyType::Bool, IsEnabled() ? "true" : "false"},
             {"Interactable", PropertyType::Bool, m_interactable ? "true" : "false"},
+            {"NormalTint", PropertyType::Color, SerializeColor(m_normalTint)},
+            {"HoveredTint", PropertyType::Color, SerializeColor(m_hoveredTint)},
+            {"PressedTint", PropertyType::Color, SerializeColor(m_pressedTint)},
+            {"DisabledTint", PropertyType::Color, SerializeColor(m_disabledTint)},
+            {"TransitionDuration", PropertyType::Float, std::to_string(m_transitionDuration)},
         };
     }
 
@@ -263,6 +378,16 @@ namespace PlutoGE::scene
                 SetEnabled(property.value == "true" || property.value == "1");
             else if (property.name == "Interactable")
                 m_interactable = property.value == "true" || property.value == "1";
+            else if (property.name == "NormalTint")
+                m_normalTint = ParseColor(property.value, m_normalTint);
+            else if (property.name == "HoveredTint")
+                m_hoveredTint = ParseColor(property.value, m_hoveredTint);
+            else if (property.name == "PressedTint")
+                m_pressedTint = ParseColor(property.value, m_pressedTint);
+            else if (property.name == "DisabledTint")
+                m_disabledTint = ParseColor(property.value, m_disabledTint);
+            else if (property.name == "TransitionDuration")
+                SetTransitionDuration(std::stof(property.value));
         }
     }
 }

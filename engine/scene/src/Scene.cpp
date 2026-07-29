@@ -1,6 +1,7 @@
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/scene/Entity.h"
+#include "PlutoGE/scene/UISystem.h"
 #include "PlutoGE/scene/components/ColliderComponent.h"
 #include "PlutoGE/scene/components/FoliageComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
@@ -268,7 +269,7 @@ namespace PlutoGE::scene
             if (auto *canvas = entity->GetComponent<CanvasComponent>(); canvas && canvas->IsEnabled())
             {
                 activeCanvas = canvas;
-                const float scaleFactor = std::max(activeCanvas->GetScaleFactor(), 0.0001f);
+                const float scaleFactor = ResolveCanvasScaleFactor(*activeCanvas, viewportSize);
                 parentRect = UIRect{.min = glm::vec2(0.0f), .max = viewportSize / scaleFactor};
             }
 
@@ -286,7 +287,7 @@ namespace PlutoGE::scene
                 if (activeCanvas && activeCanvas->GetRenderMode() == CanvasRenderMode::ScreenSpaceOverlay &&
                     resolvedRect && button->IsEnabled() && button->IsInteractable())
                 {
-                    const float scaleFactor = std::max(activeCanvas->GetScaleFactor(), 0.0001f);
+                    const float scaleFactor = ResolveCanvasScaleFactor(*activeCanvas, viewportSize);
                     auto rect = *resolvedRect;
                     rect.min *= scaleFactor;
                     rect.max *= scaleFactor;
@@ -1059,8 +1060,21 @@ namespace PlutoGE::scene
         std::unique_ptr<BulletRuntimeWorld> world;
     };
 
-    Scene::Scene() = default;
+    Scene::Scene()
+        : m_uiSystem(std::make_unique<UISystem>())
+    {
+    }
     Scene::~Scene() = default;
+
+    UISystem &Scene::GetUISystem()
+    {
+        return *m_uiSystem;
+    }
+
+    const UISystem &Scene::GetUISystem() const
+    {
+        return *m_uiSystem;
+    }
 
     Scene::PhysicsQueryCache &Scene::GetPhysicsQueryCache() const
     {
@@ -1677,14 +1691,18 @@ namespace PlutoGE::scene
                                                     ? m_runtimeUIInputOverride->mousePosition
                                                     : glm::vec2(static_cast<float>(input.mouseState.x),
                                                                 canvasSize.y - static_cast<float>(input.mouseState.y));
-                const bool mousePressed = pointerInside && input.IsMouseButtonPressed(0);
-                const bool mouseReleased = pointerInside && input.IsMouseButtonReleased(0);
-                for (auto *rootEntity : m_rootEntities)
-                {
-                    UpdateRuntimeUIButtonStates(rootEntity, nullptr, canvasSize,
-                                                pointerInside ? mousePosition : glm::vec2(-1.0f),
-                                                mousePressed, mouseReleased);
-                }
+                m_uiSystem->Update(*this,
+                                   UIInputContext{
+                                       .viewportSize = canvasSize,
+                                       .pointerPosition = pointerInside ? mousePosition : glm::vec2(-1.0f),
+                                       .pointerDelta = glm::vec2(static_cast<float>(input.mouseState.deltaX),
+                                                                static_cast<float>(-input.mouseState.deltaY)),
+                                       .pointerInside = pointerInside,
+                                       .pointerDown = pointerInside && input.IsMouseButtonDown(0),
+                                       .pointerPressed = pointerInside && input.IsMouseButtonPressed(0),
+                                       .pointerReleased = input.IsMouseButtonReleased(0),
+                                   },
+                                   simulationDeltaTime);
             }
         }
         const auto runtimeUiEnd = Clock::now();

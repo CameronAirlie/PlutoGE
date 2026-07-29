@@ -10,6 +10,7 @@
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Prefab.h"
 #include "PlutoGE/scene/Scene.h"
+#include "PlutoGE/scene/UISystem.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/scene/components/IblCaptureComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
@@ -24,6 +25,7 @@
 #include "PlutoGE/scene/components/OceanComponent.h"
 #include "PlutoGE/scene/components/SplineComponent.h"
 #include "PlutoGE/scene/components/TerrainComponent.h"
+#include "PlutoGE/scene/components/UIComponent.h"
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/ui/panels/ContentBrowserPanel.h"
 #include <ImGuizmo.h>
@@ -2290,6 +2292,42 @@ namespace PlutoGE::ui
         }
 
         auto *activeScene = editorShell.GetEngine().GetScene();
+        if (activeScene)
+        {
+            auto *selected = editorShell.GetSelectedEntity();
+            if (selected && selected->GetComponent<scene::RectTransformComponent>())
+            {
+                activeScene->GetUISystem().RebuildLayout(*activeScene, glm::vec2(viewportSize.x, viewportSize.y));
+                if (const auto *uiElement = activeScene->GetUISystem().FindElement(selected->GetID()))
+                {
+                    auto *drawList = ImGui::GetWindowDrawList();
+                    const ImVec2 rectMin(viewportMin.x + uiElement->rect.min.x,
+                                         viewportMin.y + viewportSize.y - uiElement->rect.max.y);
+                    const ImVec2 rectMax(viewportMin.x + uiElement->rect.max.x,
+                                         viewportMin.y + viewportSize.y - uiElement->rect.min.y);
+                    drawList->PushClipRect(viewportMin,
+                                           ImVec2(viewportMin.x + viewportSize.x, viewportMin.y + viewportSize.y),
+                                           true);
+                    drawList->AddRectFilled(rectMin, rectMax, IM_COL32(50, 145, 255, 22));
+                    drawList->AddRect(rectMin, rectMax, IM_COL32(70, 175, 255, 245), 0.0f, 0, 1.5f);
+                    constexpr float handleRadius = 4.0f;
+                    drawList->AddCircleFilled(rectMin, handleRadius, IM_COL32(230, 245, 255, 255));
+                    drawList->AddCircleFilled(rectMax, handleRadius, IM_COL32(230, 245, 255, 255));
+                    drawList->AddCircleFilled(ImVec2(rectMax.x, rectMin.y), handleRadius, IM_COL32(230, 245, 255, 255));
+                    drawList->AddCircleFilled(ImVec2(rectMin.x, rectMax.y), handleRadius, IM_COL32(230, 245, 255, 255));
+
+                    const auto *rectTransform = selected->GetComponent<scene::RectTransformComponent>();
+                    const ImVec2 pivot(rectMin.x + (rectMax.x - rectMin.x) * rectTransform->GetPivot().x,
+                                       rectMax.y - (rectMax.y - rectMin.y) * rectTransform->GetPivot().y);
+                    drawList->AddCircle(pivot, 6.0f, IM_COL32(255, 210, 70, 255), 0, 1.5f);
+                    drawList->AddLine(ImVec2(pivot.x - 8.0f, pivot.y), ImVec2(pivot.x + 8.0f, pivot.y),
+                                      IM_COL32(255, 210, 70, 255), 1.0f);
+                    drawList->AddLine(ImVec2(pivot.x, pivot.y - 8.0f), ImVec2(pivot.x, pivot.y + 8.0f),
+                                      IM_COL32(255, 210, 70, 255), 1.0f);
+                    drawList->PopClipRect();
+                }
+            }
+        }
         if (activeScene && (m_showNavigation || m_showAgentPaths))
         {
             auto *drawList = ImGui::GetWindowDrawList();

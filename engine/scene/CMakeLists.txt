@@ -4,6 +4,7 @@ add_library(PlutoGEScene
     src/Scene.cpp
     src/SceneBaker.cpp
     src/SceneSerializer.cpp
+    src/UISystem.cpp
     src/NavigationSystem.cpp
     src/components/AnimationComponent.cpp
     src/components/ClothComponent.cpp

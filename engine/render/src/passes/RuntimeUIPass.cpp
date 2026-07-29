@@ -37,9 +37,15 @@ namespace PlutoGE::render
             glm::vec2 max{0.0f};
         };
 
+        UIRect IntersectRects(const UIRect &a, const UIRect &b)
+        {
+            return {.min = glm::max(a.min, b.min), .max = glm::min(a.max, b.max)};
+        }
+
         struct UIQuad
         {
             UIRect rect;
+            UIRect clipRect;
             glm::vec2 uvMin{0.0f};
             glm::vec2 uvMax{1.0f};
             glm::vec4 color{1.0f};
@@ -48,11 +54,20 @@ namespace PlutoGE::render
             bool depthTest = false;
             int sortingOrder = 0;
             std::uint32_t entityId = 0;
+            scene::UIImageType imageType = scene::UIImageType::Simple;
+            float fillAmount = 1.0f;
+            float thickness = 2.0f;
+            float cornerRadius = 0.0f;
+            float startAngle = 0.0f;
+            float rotation = 0.0f;
+            glm::vec2 localScale{1.0f};
+            bool clipped = false;
         };
 
         struct UITextRun
         {
             UIRect rect;
+            UIRect clipRect;
             std::string text;
             std::string fontPath;
             glm::vec4 color{1.0f};
@@ -63,6 +78,12 @@ namespace PlutoGE::render
             bool richText = true;
             int sortingOrder = 0;
             std::uint32_t entityId = 0;
+            scene::UITextAlignment alignment = scene::UITextAlignment::MiddleCenter;
+            bool wrap = true;
+            float lineSpacing = 1.0f;
+            glm::vec4 outlineColor{0.0f};
+            float outlineWidth = 0.0f;
+            bool clipped = false;
         };
 
         struct FontAtlas
@@ -83,12 +104,16 @@ namespace PlutoGE::render
             glm::vec4 color{1.0f};
             float italicOffset = 0.0f;
             float boldOffset = 0.0f;
+            glm::vec4 outlineColor{0.0f};
+            float outlineWidth = 0.0f;
         };
 
         struct ActiveCanvas
         {
             const scene::CanvasComponent *component = nullptr;
             std::optional<scene::RectTransformLayout> parentRect;
+            std::optional<UIRect> clipRect;
+            float opacity = 1.0f;
         };
 
         struct ProjectedWorldPoint
@@ -108,7 +133,10 @@ namespace PlutoGE::render
                 uniform vec2 uRectMax;
                 uniform vec2 uUvMin;
                 uniform vec2 uUvMax;
+                uniform float uRotation;
+                uniform vec2 uLocalScale;
                 out vec2 vUv;
+                out vec2 vLocal;
 
                 void main()
                 {
@@ -129,9 +157,16 @@ namespace PlutoGE::render
                         vec2(uUvMin.x, uUvMax.y)
                     );
 
+                    vec2 center = (uRectMin + uRectMax) * 0.5;
+                    vec2 local = positions[gl_VertexID] - center;
+                    local *= uLocalScale;
+                    float angle = radians(uRotation);
+                    mat2 rotation = mat2(cos(angle), sin(angle), -sin(angle), cos(angle));
+                    positions[gl_VertexID] = center + rotation * local;
                     vec2 ndc = (positions[gl_VertexID] / max(uViewportSize, vec2(1.0))) * 2.0 - 1.0;
                     gl_Position = vec4(ndc, 0.0, 1.0);
                     vUv = uvs[gl_VertexID];
+                    vLocal = uvs[gl_VertexID] * 2.0 - 1.0;
                 }
             )";
 
@@ -145,7 +180,19 @@ namespace PlutoGE::render
                 uniform vec2 uViewportSize;
                 uniform float uElementDepth;
                 uniform int uDepthTest;
+                uniform int uImageType;
+                uniform float uFillAmount;
+                uniform float uThickness;
+                uniform float uCornerRadius;
+                uniform float uStartAngle;
                 in vec2 vUv;
+                in vec2 vLocal;
+
+                float sdRoundedBox(vec2 p, vec2 b, float r)
+                {
+                    vec2 q = abs(p) - b + r;
+                    return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r;
+                }
 
                 void main()
                 {
@@ -158,6 +205,35 @@ namespace PlutoGE::render
                         }
                     }
 
+                    if (uImageType == 3 && vUv.y > uFillAmount)
+                        discard;
+                    if (uImageType == 4 || uImageType == 6)
+                    {
+                        float angle = mod(atan(vLocal.y, vLocal.x) + 6.2831853 - radians(uStartAngle), 6.2831853);
+                        if (uImageType == 4 && angle > uFillAmount * 6.2831853)
+                            discard;
+                        float radius = length(vLocal);
+                        float width = max(uThickness * 0.01, 0.002);
+                        if (radius > 1.0 || radius < 1.0 - width)
+                            discard;
+                    }
+                    else if (uImageType == 5)
+                    {
+                        float width = max(uThickness * 0.01, 0.002);
+                        float gap = clamp(uFillAmount, 0.0, 0.95);
+                        bool horizontal = abs(vLocal.y) <= width && abs(vLocal.x) >= gap;
+                        bool vertical = abs(vLocal.x) <= width && abs(vLocal.y) >= gap;
+                        if (!horizontal && !vertical)
+                            discard;
+                    }
+                    else if (uImageType == 7)
+                    {
+                        float radius = clamp(uCornerRadius * 0.01, 0.0, 1.0);
+                        float distance = sdRoundedBox(vLocal, vec2(1.0), radius);
+                        float width = max(uThickness * 0.01, 0.002);
+                        if (distance > 0.0 || (uThickness > 0.0 && distance < -width))
+                            discard;
+                    }
                     vec4 imageColor = uHasTexture != 0 ? texture(uImageTexture, vUv) : vec4(1.0);
                     FragColor = imageColor * uColor;
                 }
@@ -290,21 +366,7 @@ namespace PlutoGE::render
             {
                 return color;
             }
-
-            if (!button->IsInteractable())
-            {
-                color = glm::vec4(glm::vec3(color) * 0.45f, color.a * 0.75f);
-            }
-            else if (button->WasPressed())
-            {
-                color = glm::vec4(glm::vec3(color) * 0.72f, color.a);
-            }
-            else if (button->IsHovered())
-            {
-                color = glm::vec4(glm::min(glm::vec3(color) * 1.18f, glm::vec3(1.0f)), color.a);
-            }
-
-            return color;
+            return color * button->GetCurrentTint();
         }
 
         std::vector<unsigned char> ReadBinaryFile(const std::filesystem::path &filePath)
@@ -665,13 +727,14 @@ namespace PlutoGE::render
             float lineTop = 0.0f;
             std::size_t lineIndex = 0;
             const float rectHeight = std::max(textRun.rect.max.y - textRun.rect.min.y, 0.0f) / textRun.pixelScale;
+            const float rectWidth = std::max(textRun.rect.max.x - textRun.rect.min.x, 0.0f) / textRun.pixelScale;
 
             for (const auto &token : tokens)
             {
                 if (token.lineBreak)
                 {
                     penX = 0.0f;
-                    lineTop += lineHeights[lineIndex] * 1.25f;
+                    lineTop += lineHeights[lineIndex] * 1.25f * textRun.lineSpacing;
                     ++lineIndex;
                     continue;
                 }
@@ -699,6 +762,17 @@ namespace PlutoGE::render
                                    &bakedQuad,
                                    1);
 
+                if (textRun.wrap && penX > 0.0f && nextPenX > rectWidth)
+                {
+                    penX = 0.0f;
+                    lineTop += lineHeights[lineIndex] * 1.25f * textRun.lineSpacing;
+                    nextPenX = penX;
+                    nextPenY = lineTop + lineHeights[lineIndex];
+                    stbtt_GetBakedQuad(atlas->glyphs, atlas->width, atlas->height,
+                                       static_cast<int>(token.codepoint) - kFirstBakedCodepoint,
+                                       &nextPenX, &nextPenY, &bakedQuad, 1);
+                }
+
                 const glm::vec2 min(textRun.rect.min.x + bakedQuad.x0 * textRun.pixelScale,
                                     textRun.rect.max.y - bakedQuad.y1 * textRun.pixelScale);
                 const glm::vec2 max(textRun.rect.min.x + bakedQuad.x1 * textRun.pixelScale,
@@ -714,10 +788,37 @@ namespace PlutoGE::render
                         .color = token.style.color,
                         .italicOffset = token.style.italic ? token.style.fontSize * textRun.pixelScale * 0.18f : 0.0f,
                         .boldOffset = token.style.bold ? std::max(textRun.pixelScale * 0.75f, 0.35f) : 0.0f,
+                        .outlineColor = textRun.outlineColor,
+                        .outlineWidth = textRun.outlineWidth,
                     });
                 }
 
                 penX = nextPenX;
+            }
+
+            if (!glyphQuads.empty())
+            {
+                glm::vec2 boundsMin = glyphQuads.front().rect.min;
+                glm::vec2 boundsMax = glyphQuads.front().rect.max;
+                for (const auto &glyph : glyphQuads)
+                {
+                    boundsMin = glm::min(boundsMin, glyph.rect.min);
+                    boundsMax = glm::max(boundsMax, glyph.rect.max);
+                }
+                glm::vec2 offset(0.0f);
+                const int alignment = static_cast<int>(textRun.alignment);
+                const int column = alignment % 3;
+                const int row = alignment / 3;
+                if (column == 1) offset.x = ((textRun.rect.min.x + textRun.rect.max.x) - (boundsMin.x + boundsMax.x)) * 0.5f;
+                else if (column == 2) offset.x = textRun.rect.max.x - boundsMax.x;
+                if (row == 1) offset.y = ((textRun.rect.min.y + textRun.rect.max.y) - (boundsMin.y + boundsMax.y)) * 0.5f;
+                else if (row == 0) offset.y = textRun.rect.max.y - boundsMax.y;
+                else offset.y = textRun.rect.min.y - boundsMin.y;
+                for (auto &glyph : glyphQuads)
+                {
+                    glyph.rect.min += offset;
+                    glyph.rect.max += offset;
+                }
             }
 
             return glyphQuads;
@@ -739,11 +840,13 @@ namespace PlutoGE::render
             if (auto *canvas = entity->GetComponent<scene::CanvasComponent>(); canvas && canvas->IsEnabled())
             {
                 activeCanvas.component = canvas;
-                const float scaleFactor = std::max(canvas->GetScaleFactor(), 0.0001f);
+                const float scaleFactor = scene::ResolveCanvasScaleFactor(*canvas, viewportSize);
                 activeCanvas.parentRect = scene::RectTransformLayout{
                     .min = glm::vec2(0.0f),
                     .max = viewportSize / scaleFactor,
                 };
+                activeCanvas.clipRect = UIRect{.min = glm::vec2(0.0f), .max = viewportSize};
+                activeCanvas.opacity = 1.0f;
             }
 
             auto *rectTransform = entity->GetComponent<scene::RectTransformComponent>();
@@ -752,8 +855,10 @@ namespace PlutoGE::render
             auto *text = entity->GetComponent<scene::UITextComponent>();
             if (activeCanvas.component && rectTransform && rectTransform->IsEnabled())
             {
-                const float scaleFactor = std::max(activeCanvas.component->GetScaleFactor(), 0.0001f);
-                const bool worldSpaceOverlay = activeCanvas.component->GetRenderMode() == scene::CanvasRenderMode::WorldSpaceOverlay;
+                const float scaleFactor = scene::ResolveCanvasScaleFactor(*activeCanvas.component, viewportSize);
+                const bool worldSpaceOverlay =
+                    activeCanvas.component->GetRenderMode() == scene::CanvasRenderMode::WorldSpaceOverlay ||
+                    activeCanvas.component->GetRenderMode() == scene::CanvasRenderMode::WorldSpace;
                 ProjectedWorldPoint projectedPoint;
                 const bool visible = !worldSpaceOverlay || ProjectWorldPosition(entity->GetWorldPosition(),
                                                                                  view,
@@ -778,10 +883,17 @@ namespace PlutoGE::render
                     rect.min *= scaleFactor;
                     rect.max *= scaleFactor;
                 }
+                const float elementOpacity = activeCanvas.opacity * rectTransform->GetOpacity();
+                const UIRect effectiveClip = activeCanvas.clipRect
+                                                 ? IntersectRects(*activeCanvas.clipRect, rect)
+                                                 : rect;
+                const bool clipped = effectiveClip.max.x <= effectiveClip.min.x ||
+                                     effectiveClip.max.y <= effectiveClip.min.y;
 
                 if (visible && ((image && image->IsEnabled()) || (button && button->IsEnabled())))
                 {
                     glm::vec4 color = image && image->IsEnabled() ? image->GetColor() : glm::vec4(0.16f, 0.18f, 0.22f, 0.92f);
+                    color.a *= elementOpacity;
                     render::Texture *texture = nullptr;
                     float fillAmount = 1.0f;
                     if (image && image->IsEnabled())
@@ -824,9 +936,12 @@ namespace PlutoGE::render
                     {
                         color.a = 0.0f;
                     }
-                    rect.max.x = glm::mix(rect.min.x, rect.max.x, fillAmount);
-                    quads.push_back(UIQuad{
+                    const auto imageType = image ? image->GetImageType() : scene::UIImageType::Simple;
+                    if (imageType == scene::UIImageType::FilledHorizontal)
+                        rect.max.x = glm::mix(rect.min.x, rect.max.x, fillAmount);
+                    UIQuad baseQuad{
                         .rect = rect,
+                        .clipRect = activeCanvas.clipRect.value_or(rect),
                         .uvMax = glm::vec2(fillAmount, 1.0f),
                         .color = ResolveButtonColor(button, color),
                         .textureId = texture ? texture->GetTextureID() : 0,
@@ -834,16 +949,58 @@ namespace PlutoGE::render
                         .depthTest = worldSpaceOverlay,
                         .sortingOrder = activeCanvas.component->GetSortingOrder(),
                         .entityId = entity->GetID(),
-                    });
+                        .imageType = imageType,
+                        .fillAmount = fillAmount,
+                        .thickness = image ? image->GetThickness() : 2.0f,
+                        .cornerRadius = image ? image->GetCornerRadius() : 0.0f,
+                        .startAngle = image ? image->GetStartAngle() : 0.0f,
+                        .rotation = rectTransform->GetRotation(),
+                        .localScale = rectTransform->GetLocalScale(),
+                        .clipped = clipped,
+                    };
+                    if (imageType == scene::UIImageType::Sliced && image && texture &&
+                        texture->GetWidth() > 0 && texture->GetHeight() > 0)
+                    {
+                        const glm::vec4 border = image->GetBorder();
+                        const glm::vec2 rectSize = glm::max(rect.max - rect.min, glm::vec2(0.0f));
+                        const float left = std::min(border.x, rectSize.x * 0.5f);
+                        const float bottom = std::min(border.y, rectSize.y * 0.5f);
+                        const float right = std::min(border.z, rectSize.x * 0.5f);
+                        const float top = std::min(border.w, rectSize.y * 0.5f);
+                        const float xs[4] = {rect.min.x, rect.min.x + left, rect.max.x - right, rect.max.x};
+                        const float ys[4] = {rect.min.y, rect.min.y + bottom, rect.max.y - top, rect.max.y};
+                        const float us[4] = {0.0f, border.x / texture->GetWidth(),
+                                             1.0f - border.z / texture->GetWidth(), 1.0f};
+                        const float vs[4] = {0.0f, border.y / texture->GetHeight(),
+                                             1.0f - border.w / texture->GetHeight(), 1.0f};
+                        for (int y = 0; y < 3; ++y)
+                        {
+                            for (int x = 0; x < 3; ++x)
+                            {
+                                auto slice = baseQuad;
+                                slice.rect = UIRect{.min = glm::vec2(xs[x], ys[y]),
+                                                    .max = glm::vec2(xs[x + 1], ys[y + 1])};
+                                slice.uvMin = glm::vec2(us[x], vs[y]);
+                                slice.uvMax = glm::vec2(us[x + 1], vs[y + 1]);
+                                slice.imageType = scene::UIImageType::Simple;
+                                quads.push_back(slice);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        quads.push_back(baseQuad);
+                    }
                 }
 
                 if (visible && text && text->IsEnabled() && !text->GetText().empty())
                 {
                     textRuns.push_back(UITextRun{
                         .rect = rect,
+                        .clipRect = activeCanvas.clipRect.value_or(rect),
                         .text = text->GetText(),
                         .fontPath = text->GetFontPath(),
-                        .color = text->GetColor(),
+                        .color = glm::vec4(glm::vec3(text->GetColor()), text->GetColor().a * elementOpacity),
                         .fontSize = worldSpaceOverlay ? text->GetFontSize() : text->GetFontSize() * scaleFactor,
                         .pixelScale = worldSpaceOverlay ? pixelScale : 1.0f,
                         .depth = projectedPoint.depth,
@@ -851,12 +1008,21 @@ namespace PlutoGE::render
                         .richText = text->IsRichText(),
                         .sortingOrder = activeCanvas.component->GetSortingOrder(),
                         .entityId = entity->GetID(),
+                        .alignment = text->GetAlignment(),
+                        .wrap = text->GetWrap(),
+                        .lineSpacing = text->GetLineSpacing(),
+                        .outlineColor = text->GetOutlineColor(),
+                        .outlineWidth = text->GetOutlineWidth(),
+                        .clipped = clipped,
                     });
                 }
 
                 if (!worldSpaceOverlay)
                 {
                     activeCanvas.parentRect = logicalLayout;
+                    activeCanvas.opacity = elementOpacity;
+                    if (rectTransform->GetClipChildren())
+                        activeCanvas.clipRect = effectiveClip;
                 }
             }
 
@@ -936,6 +1102,7 @@ namespace PlutoGE::render
         glDepthMask(GL_FALSE);
         glDisable(GL_CULL_FACE);
         glEnable(GL_BLEND);
+        glEnable(GL_SCISSOR_TEST);
         glBlendEquation(GL_FUNC_ADD);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
@@ -952,6 +1119,13 @@ namespace PlutoGE::render
         glBindVertexArray(m_vao);
         for (const auto &quad : quads)
         {
+            if (quad.clipped)
+                continue;
+            const glm::vec2 clipSize = glm::max(quad.clipRect.max - quad.clipRect.min, glm::vec2(0.0f));
+            glScissor(static_cast<GLint>(std::floor(quad.clipRect.min.x)),
+                      static_cast<GLint>(std::floor(quad.clipRect.min.y)),
+                      static_cast<GLsizei>(std::ceil(clipSize.x)),
+                      static_cast<GLsizei>(std::ceil(clipSize.y)));
             m_shader->SetUniform("uRectMin", quad.rect.min);
             m_shader->SetUniform("uRectMax", quad.rect.max);
             m_shader->SetUniform("uUvMin", quad.uvMin);
@@ -960,6 +1134,13 @@ namespace PlutoGE::render
             m_shader->SetUniform("uHasTexture", quad.textureId != 0 ? 1 : 0);
             m_shader->SetUniform("uElementDepth", quad.depth);
             m_shader->SetUniform("uDepthTest", quad.depthTest && sceneDepthTexture != 0 ? 1 : 0);
+            m_shader->SetUniform("uImageType", static_cast<int>(quad.imageType));
+            m_shader->SetUniform("uFillAmount", quad.fillAmount);
+            m_shader->SetUniform("uThickness", quad.thickness);
+            m_shader->SetUniform("uCornerRadius", quad.cornerRadius);
+            m_shader->SetUniform("uStartAngle", quad.startAngle);
+            m_shader->SetUniform("uRotation", quad.rotation);
+            m_shader->SetUniform("uLocalScale", quad.localScale);
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, quad.textureId);
             glDrawArrays(GL_TRIANGLES, 0, 6);
@@ -976,6 +1157,7 @@ namespace PlutoGE::render
                              return a.entityId < b.entityId;
                          });
 
+        glEnable(GL_SCISSOR_TEST);
         m_textShader->Bind();
         m_textShader->SetUniform("uViewportSize", viewportSize);
         m_textShader->SetUniform("uFontAtlas", 0);
@@ -986,6 +1168,13 @@ namespace PlutoGE::render
         glActiveTexture(GL_TEXTURE0);
         for (const auto &textRun : textRuns)
         {
+            if (textRun.clipped)
+                continue;
+            const glm::vec2 clipSize = glm::max(textRun.clipRect.max - textRun.clipRect.min, glm::vec2(0.0f));
+            glScissor(static_cast<GLint>(std::floor(textRun.clipRect.min.x)),
+                      static_cast<GLint>(std::floor(textRun.clipRect.min.y)),
+                      static_cast<GLsizei>(std::ceil(clipSize.x)),
+                      static_cast<GLsizei>(std::ceil(clipSize.y)));
             m_textShader->SetUniform("uElementDepth", textRun.depth);
             m_textShader->SetUniform("uDepthTest", textRun.depthTest && sceneDepthTexture != 0 ? 1 : 0);
 
@@ -998,6 +1187,23 @@ namespace PlutoGE::render
                 }
 
                 glBindTexture(GL_TEXTURE_2D, glyphQuad.fontAtlas->textureId);
+                if (glyphQuad.outlineWidth > 0.0f && glyphQuad.outlineColor.a > 0.0f)
+                {
+                    m_textShader->SetUniform("uColor", glyphQuad.outlineColor);
+                    constexpr glm::vec2 directions[] = {
+                        {-1.0f, 0.0f}, {1.0f, 0.0f}, {0.0f, -1.0f}, {0.0f, 1.0f},
+                        {-0.707f, -0.707f}, {0.707f, -0.707f}, {-0.707f, 0.707f}, {0.707f, 0.707f}};
+                    for (const auto &direction : directions)
+                    {
+                        const glm::vec2 offset = direction * glyphQuad.outlineWidth;
+                        m_textShader->SetUniform("uRectMin", glyphQuad.rect.min + offset);
+                        m_textShader->SetUniform("uRectMax", glyphQuad.rect.max + offset);
+                        m_textShader->SetUniform("uUvMin", glyphQuad.uvMin);
+                        m_textShader->SetUniform("uUvMax", glyphQuad.uvMax);
+                        m_textShader->SetUniform("uItalicOffset", glyphQuad.italicOffset);
+                        glDrawArrays(GL_TRIANGLES, 0, 6);
+                    }
+                }
                 m_textShader->SetUniform("uColor", glyphQuad.color);
                 m_textShader->SetUniform("uRectMin", glyphQuad.rect.min);
                 m_textShader->SetUniform("uRectMax", glyphQuad.rect.max);
@@ -1022,6 +1228,7 @@ namespace PlutoGE::render
         glBindVertexArray(0);
 
         glDepthMask(GL_TRUE);
+        glDisable(GL_SCISSOR_TEST);
         glDisable(GL_BLEND);
     }
 }

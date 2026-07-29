@@ -37,6 +37,16 @@ target_link_libraries(PlutoGEPostProcessInitializationTests PRIVATE
 
 add_test(NAME PlutoGEPostProcessInitializationTests COMMAND PlutoGEPostProcessInitializationTests)
 
+add_executable(PlutoGERuntimeUITests
+    RuntimeUITests.cpp
+)
+
+target_link_libraries(PlutoGERuntimeUITests PRIVATE
+    PlutoGE::Scene
+)
+
+add_test(NAME PlutoGERuntimeUITests COMMAND PlutoGERuntimeUITests)
+
 if (TARGET OpenAL)
     add_custom_command(TARGET PlutoGEPostProcessInitializationTests POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different

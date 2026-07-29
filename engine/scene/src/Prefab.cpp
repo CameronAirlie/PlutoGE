@@ -369,6 +369,46 @@ namespace PlutoGE::scene
             return SceneSerializer::Load(ResolvePrefabPath(prefabReference), errorMessage);
         }
 
+        Scene *LoadCachedPrefabScene(std::string_view prefabReference, std::string *errorMessage)
+        {
+            struct CachedPrefab
+            {
+                std::filesystem::file_time_type lastWriteTime{};
+                bool hasLastWriteTime = false;
+                std::unique_ptr<Scene> scene;
+            };
+
+            static std::unordered_map<std::string, CachedPrefab> cache;
+
+            const std::string resolvedPath = ResolvePrefabPath(prefabReference);
+            std::error_code timestampError;
+            const auto lastWriteTime = std::filesystem::last_write_time(resolvedPath, timestampError);
+            const bool hasLastWriteTime = !timestampError;
+
+            auto cached = cache.find(resolvedPath);
+            if (cached != cache.end() &&
+                cached->second.hasLastWriteTime == hasLastWriteTime &&
+                (!hasLastWriteTime || cached->second.lastWriteTime == lastWriteTime))
+            {
+                return cached->second.scene.get();
+            }
+
+            auto loadedScene = SceneSerializer::Load(resolvedPath, errorMessage);
+            if (!loadedScene)
+            {
+                return nullptr;
+            }
+
+            CachedPrefab entry{
+                .lastWriteTime = lastWriteTime,
+                .hasLastWriteTime = hasLastWriteTime,
+                .scene = std::move(loadedScene),
+            };
+            auto [iterator, inserted] = cache.insert_or_assign(resolvedPath, std::move(entry));
+            (void)inserted;
+            return iterator->second.scene.get();
+        }
+
         Entity *FindPrefabEntity(Scene &prefabScene, EntityID prefabEntityId)
         {
             if (prefabEntityId != 0)
@@ -673,7 +713,7 @@ namespace PlutoGE::scene
                                 Entity *parent,
                                 std::string *errorMessage)
     {
-        auto prefabScene = LoadPrefabScene(prefabReference, errorMessage);
+        auto *prefabScene = LoadCachedPrefabScene(prefabReference, errorMessage);
         if (!prefabScene)
         {
             return nullptr;

@@ -9,10 +9,81 @@
 #include <glad/glad.h>
 #include <glm/gtc/matrix_inverse.hpp>
 
+#include <algorithm>
+#include <array>
+#include <cmath>
+
 namespace PlutoGE::render
 {
     namespace
     {
+        struct ScreenBounds
+        {
+            int x = 0;
+            int y = 0;
+            int width = 0;
+            int height = 0;
+        };
+
+        bool CalculateDecalScreenBounds(const glm::mat4 &model,
+                                        const CameraData &camera,
+                                        int viewportWidth,
+                                        int viewportHeight,
+                                        ScreenBounds &bounds)
+        {
+            const glm::mat4 viewProjection = camera.projection * camera.view;
+            glm::vec2 minimum(1.0f);
+            glm::vec2 maximum(-1.0f);
+            bool hasPointInFront = false;
+            bool hasPointBehindCamera = false;
+
+            for (int corner = 0; corner < 8; ++corner)
+            {
+                const glm::vec3 localPosition(
+                    (corner & 1) != 0 ? 0.5f : -0.5f,
+                    (corner & 2) != 0 ? 0.5f : -0.5f,
+                    (corner & 4) != 0 ? 0.5f : -0.5f);
+                const glm::vec4 clipPosition = viewProjection * model * glm::vec4(localPosition, 1.0f);
+                if (clipPosition.w <= 0.0001f)
+                {
+                    hasPointBehindCamera = true;
+                    continue;
+                }
+
+                hasPointInFront = true;
+                const glm::vec2 ndc = glm::vec2(clipPosition) / clipPosition.w;
+                minimum = glm::min(minimum, ndc);
+                maximum = glm::max(maximum, ndc);
+            }
+
+            if (!hasPointInFront)
+                return false;
+
+            // A projector crossing the camera plane cannot be bounded reliably
+            // from its visible corners. Keep the conservative full-screen path.
+            if (hasPointBehindCamera)
+            {
+                bounds = {0, 0, viewportWidth, viewportHeight};
+                return true;
+            }
+
+            minimum = glm::clamp(minimum, glm::vec2(-1.0f), glm::vec2(1.0f));
+            maximum = glm::clamp(maximum, glm::vec2(-1.0f), glm::vec2(1.0f));
+            if (minimum.x >= maximum.x || minimum.y >= maximum.y)
+                return false;
+
+            const int left = std::clamp(
+                static_cast<int>(std::floor((minimum.x * 0.5f + 0.5f) * viewportWidth)), 0, viewportWidth);
+            const int bottom = std::clamp(
+                static_cast<int>(std::floor((minimum.y * 0.5f + 0.5f) * viewportHeight)), 0, viewportHeight);
+            const int right = std::clamp(
+                static_cast<int>(std::ceil((maximum.x * 0.5f + 0.5f) * viewportWidth)), 0, viewportWidth);
+            const int top = std::clamp(
+                static_cast<int>(std::ceil((maximum.y * 0.5f + 0.5f) * viewportHeight)), 0, viewportHeight);
+            bounds = {left, bottom, right - left, top - bottom};
+            return bounds.width > 0 && bounds.height > 0;
+        }
+
         Shader *CreateDecalShader()
         {
             return Shader::Create(ShaderSource{
@@ -102,6 +173,7 @@ void main()
         glEnable(GL_BLEND);
         glBlendEquation(GL_FUNC_ADD);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        glEnable(GL_SCISSOR_TEST);
 
         m_shader->Bind();
         glActiveTexture(GL_TEXTURE0);
@@ -116,6 +188,13 @@ void main()
         {
             if (!decal.material || decal.tint.a <= 0.0f)
                 continue;
+
+            ScreenBounds screenBounds;
+            if (!CalculateDecalScreenBounds(
+                    decal.model, ctx.cameraData, ctx.gBuffer->GetWidth(), ctx.gBuffer->GetHeight(), screenBounds))
+                continue;
+            glScissor(screenBounds.x, screenBounds.y, screenBounds.width, screenBounds.height);
+
             const auto &material = decal.material->GetConfig();
             m_shader->SetUniform("uInverseModel", glm::inverse(decal.model));
             m_shader->SetUniform("uProjectorNormal", glm::normalize(glm::vec3(decal.model[2])));
@@ -134,6 +213,7 @@ void main()
 
         glBindVertexArray(0);
         m_shader->Unbind();
+        glDisable(GL_SCISSOR_TEST);
         glDisable(GL_BLEND);
         glEnable(GL_DEPTH_TEST);
         glEnable(GL_CULL_FACE);

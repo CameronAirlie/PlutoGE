@@ -63,6 +63,18 @@ namespace PlutoGE::scene
         void SetLowPassStrength(float lowPassStrength);
         [[nodiscard]] bool IsPlaying() const { return m_playing; }
         [[nodiscard]] bool IsPaused() const { return m_paused; }
+        [[nodiscard]] bool ShouldRefreshAudioOcclusion() const { return m_audioOcclusionRefreshTime <= 0.0f; }
+        [[nodiscard]] float GetCachedAudioOcclusion() const { return m_cachedAudioOcclusion; }
+        void CacheAudioOcclusion(float occlusion)
+        {
+            m_cachedAudioOcclusion = occlusion;
+            m_audioOcclusionRefreshTime = 0.1f;
+        }
+        void ClearCachedAudioOcclusion()
+        {
+            m_cachedAudioOcclusion = 0.0f;
+            m_audioOcclusionRefreshTime = 0.0f;
+        }
         bool ConsumeRestartRequested();
 
     private:
@@ -82,6 +94,8 @@ namespace PlutoGE::scene
         bool m_paused = false;
         bool m_restartRequested = false;
         bool m_runtimeArmed = false;
+        float m_cachedAudioOcclusion = 0.0f;
+        float m_audioOcclusionRefreshTime = 0.0f;
         std::vector<OneShotPlayback> m_oneShotPlaybacks;
         std::uint64_t m_nextOneShotSerial = 1ull;
     };

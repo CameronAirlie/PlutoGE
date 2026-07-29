@@ -1728,19 +1728,41 @@ namespace PlutoGE::scene
                 emitterState.airAbsorptionStrength = emitter->GetAirAbsorptionStrength();
                 emitterState.lowPassStrength = emitter->GetLowPassStrength();
 
-                if (listenerState.active && emitterState.spatialized)
+                bool hasAudiblePlayback = emitterState.playing && !emitterState.paused;
+                if (!hasAudiblePlayback)
                 {
-                    const EntityID listenerEntityId = listenerComponent && listenerComponent->GetOwner()
-                                                          ? listenerComponent->GetOwner()->GetID()
-                                                          : 0;
-                    const float rawOcclusion = ComputeAudioOcclusion(*this,
-                                                                     listenerState,
-                                                                     emitterState.position,
-                                                                     owner->GetID(),
-                                                                     listenerEntityId);
-                    emitterState.occlusion = std::clamp(rawOcclusion * emitter->GetOcclusionStrength() * listenerState.occlusionStrength,
+                    for (const auto &oneShotPlayback : emitter->GetOneShotPlaybacks())
+                    {
+                        if (oneShotPlayback.pending || engine.GetAudioSystem().IsEmitterActive(oneShotPlayback.key))
+                        {
+                            hasAudiblePlayback = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (listenerState.active && emitterState.spatialized && hasAudiblePlayback)
+                {
+                    if (emitter->ShouldRefreshAudioOcclusion())
+                    {
+                        const EntityID listenerEntityId = listenerComponent && listenerComponent->GetOwner()
+                                                              ? listenerComponent->GetOwner()->GetID()
+                                                              : 0;
+                        emitter->CacheAudioOcclusion(ComputeAudioOcclusion(*this,
+                                                                           listenerState,
+                                                                           emitterState.position,
+                                                                           owner->GetID(),
+                                                                           listenerEntityId));
+                    }
+                    emitterState.occlusion = std::clamp(emitter->GetCachedAudioOcclusion() *
+                                                            emitter->GetOcclusionStrength() *
+                                                            listenerState.occlusionStrength,
                                                         0.0f,
                                                         1.0f);
+                }
+                else
+                {
+                    emitter->ClearCachedAudioOcclusion();
                 }
 
                 emitterStates.push_back(std::move(emitterState));
@@ -2165,8 +2187,25 @@ namespace PlutoGE::scene
         }
 
         auto &queryCache = GetPhysicsQueryCache();
-        auto shapeData = CreateBulletShapeForEntity(entity, *collider);
-        auto *convexShape = dynamic_cast<btConvexShape *>(shapeData.shape.get());
+        // Reuse the collision shape already owned by the query world. The old
+        // path allocated and destroyed a Bullet shape for every kinematic
+        // sweep (the FPS controller performs one every frame).
+        btConvexShape *convexShape = nullptr;
+        for (auto &body : queryCache.world->bodies)
+        {
+            if (body.entity == &entity)
+            {
+                convexShape = dynamic_cast<btConvexShape *>(body.shape.get());
+                break;
+            }
+        }
+
+        BulletShapeData fallbackShapeData;
+        if (!convexShape)
+        {
+            fallbackShapeData = CreateBulletShapeForEntity(entity, *collider);
+            convexShape = dynamic_cast<btConvexShape *>(fallbackShapeData.shape.get());
+        }
         if (!convexShape)
         {
             SetEntityWorldPosition(entity, entity.GetWorldPosition() + displacement);

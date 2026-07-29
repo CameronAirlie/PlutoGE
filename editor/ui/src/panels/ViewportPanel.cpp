@@ -3223,9 +3223,18 @@ namespace PlutoGE::ui
                     }
                     else
                     {
+                        const glm::vec3 previousPosition = selectedEntity->GetPosition();
+                        const glm::vec3 previousRotation = selectedEntity->GetRotation();
+                        const glm::vec3 previousScale = selectedEntity->GetScale();
                         if (entityGizmoUsesBoundsCenter)
                             entityTransform = entityGizmoDelta * entityWorldTransform;
                         ApplyWorldTransformToEntity(*selectedEntity, entityTransform);
+                        if (selectedEntity->GetPosition() != previousPosition)
+                            selectedEntity->AddPrefabOverride("Transform.Position");
+                        if (selectedEntity->GetRotation() != previousRotation)
+                            selectedEntity->AddPrefabOverride("Transform.Rotation");
+                        if (selectedEntity->GetScale() != previousScale)
+                            selectedEntity->AddPrefabOverride("Transform.Scale");
                     }
                     editorShell.MarkSceneDirty();
                 }

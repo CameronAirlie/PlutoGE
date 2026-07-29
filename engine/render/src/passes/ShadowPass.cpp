@@ -995,6 +995,7 @@ namespace
         PlutoGE::render::UploadIndirectDrawCommands(indirectBuffer, indirectCapacity, indirectCommands);
 
         bool skinningEnabled = false;
+        const std::vector<glm::mat4> *boundJointMatrices = nullptr;
         for (const auto &group : groups)
         {
             const auto &draw = draws[group.firstDraw];
@@ -1026,6 +1027,7 @@ namespace
                 {
                     shader->SetUniform("uUseSkinning", 0);
                     skinningEnabled = false;
+                    boundJointMatrices = nullptr;
                 }
                 if (command.mesh != boundMesh)
                 {
@@ -1094,13 +1096,18 @@ namespace
             {
                 if (command.jointMatrices)
                 {
-                    UploadShadowJointMatrices(shader, command.jointMatrices);
+                    if (command.jointMatrices != boundJointMatrices)
+                    {
+                        UploadShadowJointMatrices(shader, command.jointMatrices);
+                        boundJointMatrices = command.jointMatrices;
+                    }
                     skinningEnabled = true;
                 }
                 else if (skinningEnabled)
                 {
                     shader->SetUniform("uUseSkinning", 0);
                     skinningEnabled = false;
+                    boundJointMatrices = nullptr;
                 }
                 BindTransformInstanceAttributes(*command.mesh, instanceBuffer, 0);
                 command.mesh->DrawSubmeshInstancedBaseInstanceBound(command.submeshIndex,

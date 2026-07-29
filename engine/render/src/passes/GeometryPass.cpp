@@ -392,6 +392,7 @@ namespace PlutoGE::render
         Material *boundMaterial = nullptr;
         Mesh *boundMesh = nullptr;
         bool skinningEnabled = false;
+        const std::vector<glm::mat4> *boundJointMatrices = nullptr;
         bool bakedLightingWriteEnabled = true;
         bool emissionWriteEnabled = true;
         int apiDrawCalls = 0;
@@ -431,6 +432,7 @@ namespace PlutoGE::render
                 if (activeShader != previousShader)
                 {
                     skinningEnabled = false;
+                    boundJointMatrices = nullptr;
                 }
             }
 
@@ -440,6 +442,7 @@ namespace PlutoGE::render
                 {
                     activeShader->SetUniform("uUseSkinning", 0);
                     skinningEnabled = false;
+                    boundJointMatrices = nullptr;
                 }
                 if (command.mesh != boundMesh)
                 {
@@ -508,13 +511,18 @@ namespace PlutoGE::render
             {
                 if (command.jointMatrices)
                 {
-                    UploadJointMatrices(activeShader, command.jointMatrices);
+                    if (command.jointMatrices != boundJointMatrices)
+                    {
+                        UploadJointMatrices(activeShader, command.jointMatrices);
+                        boundJointMatrices = command.jointMatrices;
+                    }
                     skinningEnabled = true;
                 }
                 else if (skinningEnabled)
                 {
                     activeShader->SetUniform("uUseSkinning", 0);
                     skinningEnabled = false;
+                    boundJointMatrices = nullptr;
                 }
                 BindGeometryInstanceAttributes(*command.mesh, instanceBuffer, 0);
                 command.mesh->DrawSubmeshInstancedBaseInstanceBound(command.submeshIndex,

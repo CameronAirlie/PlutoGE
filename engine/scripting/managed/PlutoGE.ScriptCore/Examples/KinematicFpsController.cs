@@ -150,6 +150,8 @@ public sealed class KinematicFpsController : ScriptBehaviour
     private FpsAmmoState _publishedAmmoState;
     private FpsMovementState _publishedMovementState;
     private uint _interactionTargetId;
+    private GameObject? _interactionTarget;
+    private float _interactionProbeCooldown;
 
     public override void OnCreate()
     {
@@ -203,7 +205,7 @@ public sealed class KinematicFpsController : ScriptBehaviour
         UpdateMovement(deltaTime);
         UpdateCamera(deltaTime);
         UpdateWeapon(deltaTime);
-        UpdateInteraction();
+        UpdateInteraction(deltaTime);
         PublishStateChanges();
     }
 
@@ -293,9 +295,9 @@ public sealed class KinematicFpsController : ScriptBehaviour
         }
         _verticalVelocity += gravity * deltaTime;
 
-        Physics.MoveKinematic(GameObject, _horizontalVelocity * deltaTime, skinWidth);
         var vertical = new Vector3(0.0f, _verticalVelocity * deltaTime, 0.0f);
-        var applied = Physics.MoveKinematic(GameObject, vertical, skinWidth);
+        var requestedMovement = _horizontalVelocity * deltaTime + vertical;
+        var applied = Physics.MoveKinematic(GameObject, requestedMovement, skinWidth);
         if (vertical.Y < 0.0f && MathF.Abs(applied.Y) < MathF.Abs(vertical.Y) * 0.5f)
         {
             _verticalVelocity = -2.0f;
@@ -441,14 +443,25 @@ public sealed class KinematicFpsController : ScriptBehaviour
         UpdateHud();
     }
 
-    private void UpdateInteraction()
+    private void UpdateInteraction(float deltaTime)
     {
-        if (promptText is not null) promptText.Text = string.Empty;
         if (!Input.CursorLocked)
         {
             SetInteractionTarget(null);
             return;
         }
+
+        if (Input.IsKeyPressed(KeyCode.E) && _interactionTarget is not null)
+        {
+            _interactionTarget.TryInvoke(interactMethod, GameObject);
+        }
+
+        _interactionProbeCooldown -= deltaTime;
+        if (_interactionProbeCooldown > 0.0f)
+        {
+            return;
+        }
+        _interactionProbeCooldown = 0.1f;
 
         var origin = camera?.GameObject.WorldPosition ?? GameObject.WorldPosition;
         var direction = camera?.GameObject.Forward ?? GameObject.Forward;
@@ -459,11 +472,6 @@ public sealed class KinematicFpsController : ScriptBehaviour
         }
 
         SetInteractionTarget(hit.Entity);
-        if (promptText is not null) promptText.Text = $"[E] {hit.Entity.Name}";
-        if (Input.IsKeyPressed(KeyCode.E))
-        {
-            hit.Entity.TryInvoke(interactMethod, GameObject);
-        }
     }
 
     private bool CheckGrounded()
@@ -517,6 +525,11 @@ public sealed class KinematicFpsController : ScriptBehaviour
         }
 
         _interactionTargetId = targetId;
+        _interactionTarget = target;
+        if (promptText is not null)
+        {
+            promptText.Text = target is null ? string.Empty : $"[E] {target.Name}";
+        }
         InteractionTargetChanged?.Invoke(target);
     }
 

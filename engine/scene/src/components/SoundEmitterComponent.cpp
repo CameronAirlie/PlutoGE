@@ -10,7 +10,7 @@ namespace PlutoGE::scene
 {
     void SoundEmitterComponent::Update(float deltaTime)
     {
-        (void)deltaTime;
+        m_audioOcclusionRefreshTime = std::max(0.0f, m_audioOcclusionRefreshTime - std::max(deltaTime, 0.0f));
 
         auto &engine = core::Engine::GetInstance();
         if (!engine.IsRuntimeRunning())
@@ -20,6 +20,7 @@ namespace PlutoGE::scene
             m_paused = false;
             m_restartRequested = false;
             m_oneShotPlaybacks.clear();
+            ClearCachedAudioOcclusion();
             return;
         }
 

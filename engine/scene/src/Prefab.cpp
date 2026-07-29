@@ -17,6 +17,8 @@
 #include "PlutoGE/scene/components/NavigationMeshComponent.h"
 #include "PlutoGE/scene/components/ScriptComponent.h"
 #include "PlutoGE/scene/components/SkeletonAttachmentComponent.h"
+#include "PlutoGE/scene/components/SoundEmitterComponent.h"
+#include "PlutoGE/scene/components/SoundListenerComponent.h"
 #include "PlutoGE/scene/components/TerrainComponent.h"
 #include "PlutoGE/scene/components/UIComponent.h"
 #include "PlutoGE/render/Camera.h"
@@ -78,6 +80,10 @@ namespace PlutoGE::scene
                 return "IblCaptureComponent";
             if (dynamic_cast<const ScriptComponent *>(&component))
                 return "ScriptComponent";
+            if (dynamic_cast<const SoundEmitterComponent *>(&component))
+                return "SoundEmitterComponent";
+            if (dynamic_cast<const SoundListenerComponent *>(&component))
+                return "SoundListenerComponent";
             if (dynamic_cast<const CanvasComponent *>(&component))
                 return "CanvasComponent";
             if (dynamic_cast<const RectTransformComponent *>(&component))
@@ -123,6 +129,10 @@ namespace PlutoGE::scene
                 return std::make_unique<IblCaptureComponent>();
             if (componentType == "ScriptComponent")
                 return std::make_unique<ScriptComponent>(ScriptComponentConfig{});
+            if (componentType == "SoundEmitterComponent")
+                return std::make_unique<SoundEmitterComponent>();
+            if (componentType == "SoundListenerComponent")
+                return std::make_unique<SoundListenerComponent>();
             if (componentType == "CanvasComponent")
                 return std::make_unique<CanvasComponent>();
             if (componentType == "RectTransformComponent")

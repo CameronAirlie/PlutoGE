@@ -9,6 +9,7 @@
 #include "PlutoGE/ui/panels/MeshEditorPanel.h"
 #include "PlutoGE/ui/panels/ShaderGraphEditorPanel.h"
 #include "PlutoGE/ui/panels/ViewportPanel.h"
+#include "PlutoGE/ui/panels/CanvasEditorPanel.h"
 #include "PlutoGE/ui/panels/SceneHierarchyPanel.h"
 #include "PlutoGE/ui/panels/InspectorPanel.h"
 #include "PlutoGE/assets/Project.h"
@@ -2520,6 +2521,10 @@ namespace PlutoGE::ui
         auto inspectorPanel = new InspectorPanel(PanelConfig{"Inspector"});
         inspectorPanel->Initialize();
         m_panelManager.AddPanel(inspectorPanel);
+
+        auto canvasEditorPanel = new CanvasEditorPanel(PanelConfig{"Canvas Editor", true});
+        canvasEditorPanel->Initialize();
+        m_panelManager.AddPanel(canvasEditorPanel);
 
         auto contentBrowserPanel = new ContentBrowserPanel(PanelConfig{"Content Browser"});
         contentBrowserPanel->Initialize();

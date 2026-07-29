@@ -139,7 +139,7 @@ namespace PlutoGE::scene
         glm::vec2 GetSizeDelta() const { return m_sizeDelta; }
         void SetSizeDelta(const glm::vec2 &sizeDelta) { m_sizeDelta = sizeDelta; }
         glm::vec2 GetPivot() const { return m_pivot; }
-        void SetPivot(const glm::vec2 &pivot) { m_pivot = pivot; }
+        void SetPivot(const glm::vec2 &pivot) { m_pivot = glm::clamp(pivot, glm::vec2(0.0f), glm::vec2(1.0f)); }
         glm::vec2 GetAnchorMin() const { return m_anchorMin; }
         void SetAnchorMin(const glm::vec2 &anchorMin) { m_anchorMin = anchorMin; }
         glm::vec2 GetAnchorMax() const { return m_anchorMax; }

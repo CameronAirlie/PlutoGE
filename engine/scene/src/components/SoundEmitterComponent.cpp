@@ -113,6 +113,12 @@ namespace PlutoGE::scene
         m_playing = !m_clipReference.empty();
         m_paused = false;
         m_restartRequested = m_playing && (restart || wasActivelyPlaying);
+        if (m_playing && !wasActivelyPlaying && m_audioOcclusionRefreshTime <= 0.0f)
+        {
+            // Avoid making every newly spawned emitter issue its occlusion
+            // raycasts on the same frame.
+            m_audioOcclusionRefreshTime = static_cast<float>(GetRuntimeKey() % 10ull) * 0.01f;
+        }
     }
 
     void SoundEmitterComponent::PlayOneShot()
@@ -128,6 +134,17 @@ namespace PlutoGE::scene
         }
 
         const std::uint64_t baseKey = GetRuntimeKey();
+        constexpr std::size_t maximumConcurrentOneShots = 4;
+        if (m_oneShotPlaybacks.size() >= maximumConcurrentOneShots)
+        {
+            // Steal the oldest overlapping instance. Rapid automatic fire can
+            // otherwise grow voices without bound until the entire clip ends.
+            m_oneShotPlaybacks.erase(m_oneShotPlaybacks.begin());
+        }
+        if (m_audioOcclusionRefreshTime <= 0.0f)
+        {
+            m_audioOcclusionRefreshTime = static_cast<float>(baseKey % 10ull) * 0.01f;
+        }
         const std::uint64_t serial = m_nextOneShotSerial++;
         const std::uint64_t oneShotKey = baseKey ^ (serial + 0x517cc1b727220a95ull + (baseKey << 6u) + (baseKey >> 2u));
         m_oneShotPlaybacks.push_back(OneShotPlayback{

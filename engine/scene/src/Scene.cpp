@@ -93,6 +93,21 @@ namespace PlutoGE::scene
             }
         }
 
+        bool EntitySubtreeContainsPhysicsCollider(const Entity *entity)
+        {
+            if (!entity)
+                return false;
+            if (const auto *collider = entity->GetComponent<ColliderComponent>();
+                collider && collider->IsEnabled())
+                return true;
+            for (const auto *child : entity->GetChildren())
+            {
+                if (EntitySubtreeContainsPhysicsCollider(child))
+                    return true;
+            }
+            return false;
+        }
+
         void CollectActiveAudioComponents(Entity *entity,
                                           std::vector<SoundEmitterComponent *> &emitters,
                                           std::vector<SoundListenerComponent *> &listeners)
@@ -152,7 +167,8 @@ namespace PlutoGE::scene
                                     const audio::ListenerState &listenerState,
                                     const glm::vec3 &emitterPosition,
                                     EntityID emitterEntityId,
-                                    EntityID listenerEntityId)
+                                    EntityID listenerEntityId,
+                                    std::size_t sampleCount)
         {
             const glm::vec3 emitterOffset = emitterPosition - listenerState.position;
             const float distance = glm::length(emitterOffset);
@@ -175,7 +191,8 @@ namespace PlutoGE::scene
 
             float blockedWeight = 0.0f;
             float totalWeight = 0.0f;
-            for (std::size_t index = 0; index < listenerOffsets.size(); ++index)
+            sampleCount = std::clamp<std::size_t>(sampleCount, 1, listenerOffsets.size());
+            for (std::size_t index = 0; index < sampleCount; ++index)
             {
                 const float sampleWeight = index == 0 ? 1.5f : 1.0f;
                 totalWeight += sampleWeight;
@@ -1264,7 +1281,26 @@ namespace PlutoGE::scene
             scriptComponent->Start();
         }
 
-        core::Engine::GetInstance().GetAudioSystem().ClearEmitters();
+        auto &engine = core::Engine::GetInstance();
+        auto &audioSystem = engine.GetAudioSystem();
+        audioSystem.ClearEmitters();
+        audioSystem.PrewarmVoicePool(16);
+
+        // Decode and upload scene clips before gameplay begins. Without this,
+        // the first shot and hit confirmation can prepare two clips in one frame.
+        std::vector<SoundEmitterComponent *> audioEmitters;
+        std::vector<SoundListenerComponent *> audioListeners;
+        for (auto *rootEntity : m_rootEntities)
+            CollectActiveAudioComponents(rootEntity, audioEmitters, audioListeners);
+        std::unordered_set<std::string> preloadedClipPaths;
+        for (const auto *emitter : audioEmitters)
+        {
+            if (!emitter || emitter->GetClipReference().empty())
+                continue;
+            const std::string clipPath = engine.GetAssetManager().ResolveAssetPath(emitter->GetClipReference());
+            if (!clipPath.empty() && preloadedClipPaths.insert(clipPath).second)
+                (void)audioSystem.PreloadClip(clipPath);
+        }
 
         m_runtimeStarted = true;
     }
@@ -1455,10 +1491,11 @@ namespace PlutoGE::scene
             return nullptr;
         }
 
-        // A query world may already have been built earlier in this frame.
-        // Ensure newly added colliders participate in subsequent same-frame
-        // raycasts instead of waiting for the next update sequence.
-        InvalidatePhysicsQueryCache();
+        // Non-physical entities (decals, UI, audio helpers) do not change the
+        // query world. In particular, invalidating here after a hit raycast
+        // forced audio occlusion to rebuild the entire collision world.
+        if (EntitySubtreeContainsPhysicsCollider(entity.get()))
+            InvalidatePhysicsQueryCache();
 
         auto *entityPtr = entity.get();
         m_entityStorage.push_back(std::move(entity));
@@ -1498,10 +1535,12 @@ namespace PlutoGE::scene
             return;
         }
 
-        // Bullet query objects store pointers to their source entities. Tear
-        // down the complete query world before any entity storage is released;
-        // audio occlusion and scripts can raycast again later in this frame.
-        InvalidatePhysicsQueryCache();
+        const bool affectsPhysics = EntitySubtreeContainsPhysicsCollider(entity);
+        if (affectsPhysics)
+        {
+            // Bullet query objects store pointers to collider entities.
+            InvalidatePhysicsQueryCache();
+        }
 
         // Check if the entity is a root entity
         auto it = std::find(m_rootEntities.begin(), m_rootEntities.end(), entity);
@@ -1540,7 +1579,8 @@ namespace PlutoGE::scene
                 }),
             m_entityStorage.end());
 
-        ResetRuntimePhysicsState();
+        if (affectsPhysics)
+            ResetRuntimePhysicsState();
     }
 
     bool Scene::DestroyEntity(EntityID entityId)
@@ -1556,10 +1596,14 @@ namespace PlutoGE::scene
             return false;
         }
 
+        const bool affectsPhysics = EntitySubtreeContainsPhysicsCollider(entity);
         entity->SetActive(false);
-        // Exclude the inactive entity immediately and prevent the cached
-        // Bullet world from retaining its address until the deferred flush.
-        InvalidatePhysicsQueryCache();
+        if (affectsPhysics)
+        {
+            // Exclude inactive colliders immediately and prevent the cached
+            // Bullet world from retaining their addresses until deferred flush.
+            InvalidatePhysicsQueryCache();
+        }
         m_pendingDestroyEntityIds.insert(entityId);
         m_pendingDestroyEntities.push_back(entityId);
         return true;
@@ -1719,6 +1763,10 @@ namespace PlutoGE::scene
             std::vector<audio::EmitterState> emitterStates;
             emitterStates.reserve(emitters.size());
             auto &engine = core::Engine::GetInstance();
+            const std::size_t maximumOcclusionRefreshesPerFrame =
+                emitters.size() > 48 ? 1 : (emitters.size() > 16 ? 2 : 8);
+            const std::size_t occlusionSampleCount = emitters.size() > 16 ? 1 : 5;
+            std::size_t occlusionRefreshCount = 0;
             for (auto *emitter : emitters)
             {
                 const auto *owner = emitter ? emitter->GetOwner() : nullptr;
@@ -1759,7 +1807,8 @@ namespace PlutoGE::scene
 
                 if (listenerState.active && emitterState.spatialized && hasAudiblePlayback)
                 {
-                    if (emitter->ShouldRefreshAudioOcclusion())
+                    if (emitter->ShouldRefreshAudioOcclusion() &&
+                        occlusionRefreshCount < maximumOcclusionRefreshesPerFrame)
                     {
                         const EntityID listenerEntityId = listenerComponent && listenerComponent->GetOwner()
                                                               ? listenerComponent->GetOwner()->GetID()
@@ -1768,7 +1817,9 @@ namespace PlutoGE::scene
                                                                            listenerState,
                                                                            emitterState.position,
                                                                            owner->GetID(),
-                                                                           listenerEntityId));
+                                                                           listenerEntityId,
+                                                                           occlusionSampleCount));
+                        ++occlusionRefreshCount;
                     }
                     emitterState.occlusion = std::clamp(emitter->GetCachedAudioOcclusion() *
                                                             emitter->GetOcclusionStrength() *

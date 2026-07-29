@@ -9,6 +9,7 @@
 #include <iterator>
 #include <limits>
 #include <string_view>
+#include <unordered_set>
 
 #if defined(PLUTOGE_USE_OPENAL_SOFT)
 #define AL_ALEXT_PROTOTYPES
@@ -422,6 +423,21 @@ namespace PlutoGE::audio
         ClearEmitters();
 
 #if defined(PLUTOGE_USE_OPENAL_SOFT)
+        if (!m_availableOpenAlSources.empty())
+        {
+            alDeleteSources(
+                static_cast<ALsizei>(m_availableOpenAlSources.size()),
+                reinterpret_cast<const ALuint *>(m_availableOpenAlSources.data()));
+            m_availableOpenAlSources.clear();
+        }
+        if (!m_availableOpenAlFilters.empty())
+        {
+            alDeleteFilters(
+                static_cast<ALsizei>(m_availableOpenAlFilters.size()),
+                reinterpret_cast<const ALuint *>(m_availableOpenAlFilters.data()));
+            m_availableOpenAlFilters.clear();
+        }
+
         for (auto &[_, clip] : m_clipCache)
         {
             const ALuint backendBuffer = static_cast<ALuint>(clip.backendBuffer);
@@ -570,6 +586,53 @@ namespace PlutoGE::audio
 #endif
     }
 
+    bool AudioSystem::PreloadClip(const std::string &clipPath)
+    {
+        if (clipPath.empty())
+            return false;
+        const AudioClip *clip = nullptr;
+        return EnsureClipLoaded(clipPath, clip);
+    }
+
+    void AudioSystem::PrewarmVoicePool(std::size_t voiceCount)
+    {
+#if defined(PLUTOGE_USE_OPENAL_SOFT)
+        if (!m_usingOpenAl)
+            return;
+
+        while (m_availableOpenAlSources.size() < voiceCount)
+        {
+            ALuint source = 0;
+            alGenSources(1, &source);
+            if (source == 0)
+                break;
+            m_availableOpenAlSources.push_back(source);
+        }
+
+        if (m_openAlEfxAvailable)
+        {
+            while (m_availableOpenAlFilters.size() < voiceCount)
+            {
+                ALuint filter = 0;
+                alGetError();
+                alGenFilters(1, &filter);
+                if (filter == 0 || alGetError() != AL_NO_ERROR)
+                {
+                    if (filter != 0)
+                        alDeleteFilters(1, &filter);
+                    break;
+                }
+                alFilteri(filter, AL_FILTER_TYPE, AL_FILTER_LOWPASS);
+                alFilterf(filter, AL_LOWPASS_GAIN, 1.0f);
+                alFilterf(filter, AL_LOWPASS_GAINHF, 1.0f);
+                m_availableOpenAlFilters.push_back(filter);
+            }
+        }
+#else
+        (void)voiceCount;
+#endif
+    }
+
     void AudioSystem::DestroyVoice(std::uint64_t key)
     {
         const auto it = m_activeVoices.find(key);
@@ -585,13 +648,13 @@ namespace PlutoGE::audio
             alSourceStop(source);
             alSourcei(source, AL_DIRECT_FILTER, 0);
             alSourcei(source, AL_BUFFER, 0);
-            alDeleteSources(1, &source);
+            m_availableOpenAlSources.push_back(source);
         }
 
         if (it->second.backendFilter != 0)
         {
             const ALuint filter = static_cast<ALuint>(it->second.backendFilter);
-            alDeleteFilters(1, &filter);
+            m_availableOpenAlFilters.push_back(filter);
         }
 
 #else
@@ -669,6 +732,15 @@ namespace PlutoGE::audio
 
     void AudioSystem::UpdateVoice(ActiveVoice &voice, const ListenerState &listener, const EmitterState &emitter, float deltaTime)
     {
+        constexpr float parameterUpdateInterval = 1.0f / 30.0f;
+        voice.parameterUpdateAccumulator += std::max(deltaTime, 0.0f);
+        if (voice.parameterUpdateAccumulator < parameterUpdateInterval)
+        {
+            return;
+        }
+        const float parameterDeltaTime = voice.parameterUpdateAccumulator;
+        voice.parameterUpdateAccumulator = std::fmod(voice.parameterUpdateAccumulator, parameterUpdateInterval);
+
 #if defined(PLUTOGE_USE_OPENAL_SOFT)
         if (m_usingOpenAl)
         {
@@ -686,7 +758,7 @@ namespace PlutoGE::audio
             float filterDamping = userLowPass;
             if (emitter.spatialized && listener.active)
             {
-                const float safeDeltaTime = std::max(deltaTime, 0.0001f);
+                const float safeDeltaTime = std::max(parameterDeltaTime, 0.0001f);
                 const glm::vec3 emitterVelocity = voice.hasPreviousSpatialState
                                                       ? (emitter.position - voice.previousEmitterPosition) / safeDeltaTime
                                                       : glm::vec3(0.0f);
@@ -779,11 +851,14 @@ namespace PlutoGE::audio
             gain *= 1.0f - 0.65f * voice.smoothedOcclusion;
             gain *= std::max(listener.masterVolume, 0.0f);
 
-            std::vector<float> matrix(static_cast<std::size_t>(voice.channels) * static_cast<std::size_t>(m_outputChannels), 0.0f);
+            const std::size_t matrixSize =
+                static_cast<std::size_t>(voice.channels) * static_cast<std::size_t>(m_outputChannels);
+            voice.dspMatrix.assign(matrixSize, 0.0f);
+            auto &matrix = voice.dspMatrix;
             float x3dLowPassDamping = 0.0f;
             if (m_spatialAudioInitialized && voice.channels == 1)
             {
-                const float safeDeltaTime = std::max(deltaTime, 0.0001f);
+                const float safeDeltaTime = std::max(parameterDeltaTime, 0.0001f);
                 const glm::vec3 listenerVelocity = voice.hasPreviousSpatialState
                                                        ? (listener.position - voice.previousListenerPosition) / safeDeltaTime
                                                        : glm::vec3(0.0f);
@@ -864,7 +939,10 @@ namespace PlutoGE::audio
         gain *= listener.active ? std::max(listener.masterVolume, 0.0f) : 1.0f;
         sourceVoice->SetVolume(gain);
 
-        std::vector<float> identityMatrix(static_cast<std::size_t>(voice.channels) * static_cast<std::size_t>(m_outputChannels), 0.0f);
+        const std::size_t matrixSize =
+            static_cast<std::size_t>(voice.channels) * static_cast<std::size_t>(m_outputChannels);
+        voice.dspMatrix.assign(matrixSize, 0.0f);
+        auto &identityMatrix = voice.dspMatrix;
         for (int sourceChannel = 0; sourceChannel < voice.channels; ++sourceChannel)
         {
             const unsigned int targetChannel = std::min(static_cast<unsigned int>(sourceChannel), m_outputChannels - 1);
@@ -888,11 +966,12 @@ namespace PlutoGE::audio
 
     void AudioSystem::StopInactiveEmitters(const std::vector<std::uint64_t> &activeKeys)
     {
+        const std::unordered_set<std::uint64_t> activeKeySet(activeKeys.begin(), activeKeys.end());
         std::vector<std::uint64_t> staleKeys;
         staleKeys.reserve(m_activeVoices.size());
         for (const auto &[key, _] : m_activeVoices)
         {
-            if (std::find(activeKeys.begin(), activeKeys.end(), key) == activeKeys.end())
+            if (!activeKeySet.contains(key))
             {
                 staleKeys.push_back(key);
             }
@@ -919,6 +998,49 @@ namespace PlutoGE::audio
             return;
         }
 #endif
+
+        // Keep backend mixing cost bounded. Sounds which cannot currently make
+        // an audible contribution are the first candidates for voice stealing.
+        constexpr std::size_t maximumMixedVoiceCount = 64;
+        std::unordered_set<std::uint64_t> mixedKeys;
+        mixedKeys.reserve(std::min(emitters.size(), maximumMixedVoiceCount));
+        if (emitters.size() <= maximumMixedVoiceCount)
+        {
+            for (const auto &emitter : emitters)
+                mixedKeys.insert(emitter.key);
+        }
+        else
+        {
+            std::vector<std::pair<float, std::uint64_t>> priorities;
+            priorities.reserve(emitters.size());
+            for (const auto &emitter : emitters)
+            {
+                float priority = std::max(emitter.volume, 0.0f);
+                if (!emitter.spatialized || !listener.active)
+                {
+                    priority += 1000.0f;
+                }
+                else
+                {
+                    const float distance = glm::distance(listener.position, emitter.position);
+                    const float range = std::max(emitter.maxDistance, 0.001f);
+                    priority *= std::clamp(1.0f - distance / range, 0.0f, 1.0f);
+                }
+                if (emitter.looping)
+                    priority += 0.001f;
+                priorities.emplace_back(priority, emitter.key);
+            }
+            std::partial_sort(
+                priorities.begin(),
+                priorities.begin() + static_cast<std::ptrdiff_t>(maximumMixedVoiceCount),
+                priorities.end(),
+                [](const auto &left, const auto &right)
+                {
+                    return left.first > right.first;
+                });
+            for (std::size_t index = 0; index < maximumMixedVoiceCount; ++index)
+                mixedKeys.insert(priorities[index].second);
+        }
 
 #if defined(PLUTOGE_USE_OPENAL_SOFT)
         if (m_usingOpenAl)
@@ -957,6 +1079,12 @@ namespace PlutoGE::audio
             {
                 activeKeys.push_back(emitter.key);
 
+                if (!mixedKeys.contains(emitter.key))
+                {
+                    DestroyVoice(emitter.key);
+                    continue;
+                }
+
                 if (!emitter.playing || emitter.clipPath.empty())
                 {
                     DestroyVoice(emitter.key);
@@ -984,7 +1112,15 @@ namespace PlutoGE::audio
                     DestroyVoice(emitter.key);
 
                     ALuint source = 0;
-                    alGenSources(1, &source);
+                    if (!m_availableOpenAlSources.empty())
+                    {
+                        source = static_cast<ALuint>(m_availableOpenAlSources.back());
+                        m_availableOpenAlSources.pop_back();
+                    }
+                    else
+                    {
+                        alGenSources(1, &source);
+                    }
                     if (source == 0)
                     {
                         continue;
@@ -1012,9 +1148,19 @@ namespace PlutoGE::audio
                     if (m_openAlEfxAvailable)
                     {
                         ALuint filter = 0;
-                        alGetError();
-                        alGenFilters(1, &filter);
-                        const bool filterCreated = filter != 0 && alGetError() == AL_NO_ERROR;
+                        bool filterCreated = false;
+                        if (!m_availableOpenAlFilters.empty())
+                        {
+                            filter = static_cast<ALuint>(m_availableOpenAlFilters.back());
+                            m_availableOpenAlFilters.pop_back();
+                            filterCreated = true;
+                        }
+                        else
+                        {
+                            alGetError();
+                            alGenFilters(1, &filter);
+                            filterCreated = filter != 0 && alGetError() == AL_NO_ERROR;
+                        }
                         if (filterCreated)
                         {
                             alFilteri(filter, AL_FILTER_TYPE, AL_FILTER_LOWPASS);
@@ -1092,6 +1238,12 @@ namespace PlutoGE::audio
         for (const auto &emitter : emitters)
         {
             activeKeys.push_back(emitter.key);
+
+            if (!mixedKeys.contains(emitter.key))
+            {
+                DestroyVoice(emitter.key);
+                continue;
+            }
 
             if (!emitter.playing || emitter.clipPath.empty())
             {

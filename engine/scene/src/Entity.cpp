@@ -1,5 +1,6 @@
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/components/Component.h"
+#include "PlutoGE/scene/components/ColliderComponent.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
@@ -291,6 +292,11 @@ namespace PlutoGE::scene
 
         if (m_scene)
         {
+            if (dynamic_cast<ColliderComponent *>(component))
+            {
+                m_scene->InvalidatePhysicsQueryCache();
+            }
+
             if (auto *lightComponent = dynamic_cast<LightComponent *>(component))
             {
                 m_scene->AddLight(&lightComponent->GetLight());
@@ -334,6 +340,11 @@ namespace PlutoGE::scene
 
         if (m_scene)
         {
+            if (dynamic_cast<ColliderComponent *>(component))
+            {
+                m_scene->InvalidatePhysicsQueryCache();
+            }
+
             if (auto *lightComponent = dynamic_cast<LightComponent *>(component))
             {
                 m_scene->RemoveLight(&lightComponent->GetLight());

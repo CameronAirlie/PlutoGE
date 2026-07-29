@@ -72,6 +72,8 @@ namespace PlutoGE::audio
             glm::vec3 previousEmitterPosition{0.0f};
             float smoothedOcclusion = 0.0f;
             float smoothedAirAbsorption = 0.0f;
+            float parameterUpdateAccumulator = 1.0f / 30.0f;
+            std::vector<float> dspMatrix;
         };
 
         AudioSystem() = default;
@@ -80,6 +82,8 @@ namespace PlutoGE::audio
         bool Initialize();
         void Shutdown();
         void Update(const ListenerState &listener, const std::vector<EmitterState> &emitters, float deltaTime);
+        bool PreloadClip(const std::string &clipPath);
+        void PrewarmVoicePool(std::size_t voiceCount);
         void ClearEmitters();
         bool IsEmitterActive(std::uint64_t key) const;
         bool IsAvailable() const { return m_initialized; }
@@ -107,5 +111,7 @@ namespace PlutoGE::audio
         std::array<std::uint8_t, 20> m_spatialAudioHandle{};
         std::unordered_map<std::string, AudioClip> m_clipCache;
         std::unordered_map<std::uint64_t, ActiveVoice> m_activeVoices;
+        std::vector<unsigned int> m_availableOpenAlSources;
+        std::vector<unsigned int> m_availableOpenAlFilters;
     };
 }

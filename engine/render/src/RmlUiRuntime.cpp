@@ -54,6 +54,20 @@ namespace PlutoGE::render
             return assets.ResolveAssetPath(reference);
         }
 
+        std::filesystem::path NormalizeDocumentPath(assets::AssetManager &assets,
+                                                    const std::string &reference)
+        {
+            const std::string resolved = ResolveDocumentPath(assets, reference);
+            if (resolved.empty())
+                return {};
+
+            std::error_code error;
+            auto normalized = std::filesystem::weakly_canonical(resolved, error);
+            if (error)
+                normalized = std::filesystem::path(resolved).lexically_normal();
+            return normalized;
+        }
+
         std::string EventKey(const std::string &document, const std::string &id, const std::string &event)
         {
             return document + kEventSeparator + id + kEventSeparator + event;
@@ -178,11 +192,10 @@ namespace PlutoGE::render
         if (!m_context && !m_renderer && !m_system)
             return;
 
+        DetachEventSubscriptions();
         m_documents.clear();
         m_documentWriteTimes.clear();
-        m_eventListeners.clear();
         m_eventSubscriptions.clear();
-        m_attachedEvents.clear();
         m_reportedLoadFailures.clear();
         m_loadedFontFaces.clear();
         m_fontData.clear();
@@ -207,10 +220,16 @@ namespace PlutoGE::render
         for (auto *root : scene.GetRootEntities())
             CollectDocuments(root, requestedPaths);
 
+        bool detachedForDocumentChange = false;
         for (auto it = m_documents.begin(); it != m_documents.end();)
         {
             if (!requestedPaths.contains(it->first))
             {
+                if (!detachedForDocumentChange)
+                {
+                    DetachEventSubscriptions();
+                    detachedForDocumentChange = true;
+                }
                 if (it->second)
                     it->second->Close();
                 m_documentWriteTimes.erase(it->first);
@@ -392,7 +411,24 @@ namespace PlutoGE::render
     Rml::ElementDocument *RmlUiRuntime::FindDocument(const std::string &document) const
     {
         const auto found = m_documents.find(document);
-        return found == m_documents.end() ? nullptr : found->second;
+        if (found != m_documents.end())
+            return found->second;
+
+        // Canvas paths and serialized script fields may spell the same asset
+        // differently (for example a project asset URI versus a path relative
+        // to the Assets directory). Resolve both forms before giving up so the
+        // managed RmlDocument API addresses the document selected by Canvas.
+        auto &assets = core::Engine::GetInstance().GetAssetManager();
+        const auto requestedPath = NormalizeDocumentPath(assets, document);
+        if (requestedPath.empty())
+            return nullptr;
+
+        for (const auto &[reference, loaded] : m_documents)
+        {
+            if (NormalizeDocumentPath(assets, reference) == requestedPath)
+                return loaded;
+        }
+        return nullptr;
     }
 
     bool RmlUiRuntime::ShowDocument(const std::string &document, bool visible)
@@ -416,6 +452,7 @@ namespace PlutoGE::render
         LoadDocumentFonts(path);
         if (auto found = m_documents.find(document); found != m_documents.end())
         {
+            DetachEventSubscriptions();
             if (found->second) found->second->Close();
             m_documents.erase(found);
         }
@@ -426,8 +463,6 @@ namespace PlutoGE::render
         Rml::Factory::ClearStyleSheetCache();
         Rml::Factory::ClearTemplateCache();
 
-        m_eventListeners.clear();
-        m_attachedEvents.clear();
         auto *loaded = m_context->LoadDocument(path);
         if (!loaded)
             return false;
@@ -535,9 +570,30 @@ namespace PlutoGE::render
                 continue;
             auto listener = std::make_unique<RuntimeEventListener>(*this, key);
             element->AddEventListener(event, listener.get());
-            m_eventListeners.push_back(std::move(listener));
+            m_eventListeners.emplace(key, std::move(listener));
             m_attachedEvents.insert(key);
         }
+    }
+
+    void RmlUiRuntime::DetachEventSubscriptions()
+    {
+        for (const auto &[key, listener] : m_eventListeners)
+        {
+            const auto first = key.find(kEventSeparator);
+            const auto second = key.find(kEventSeparator, first + 1);
+            if (first == std::string::npos || second == std::string::npos)
+                continue;
+
+            const std::string document = key.substr(0, first);
+            const std::string id = key.substr(first + 1, second - first - 1);
+            const std::string event = key.substr(second + 1);
+            auto *doc = FindDocument(document);
+            auto *element = doc ? doc->GetElementById(id) : nullptr;
+            if (element)
+                element->RemoveEventListener(event, listener.get());
+        }
+        m_eventListeners.clear();
+        m_attachedEvents.clear();
     }
 
     bool RmlUiRuntime::IsInputCaptured() const

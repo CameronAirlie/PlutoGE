@@ -24,7 +24,13 @@ public sealed class RmlPauseMenuController : ScriptBehaviour
 
     public override void OnCreate()
     {
+        Debug.Log($"Loading RmlDocument at path '{documentPath}'");
         _document = new RmlDocument(documentPath);
+        if (_document is null)
+        {
+            Debug.LogError($"Failed to load RmlDocument at path '{documentPath}'");
+            return;
+        }
         _resumeClicked = _document.Element("resume").Subscribe("click");
         _restartClicked = _document.Element("restart").Subscribe("click");
         _mainMenuClicked = _document.Element("main-menu").Subscribe("click");
@@ -39,11 +45,17 @@ public sealed class RmlPauseMenuController : ScriptBehaviour
             _domReady = _paused ? _document.Show() : _document.Hide();
 
         if (Input.IsKeyPressed(KeyCode.Escape))
+        {
             SetPaused(!_paused);
+            Debug.Log(_paused ? "Pausing game" : "Resuming game");
+        }
 
         if (!_paused) return;
         if (_resumeClicked?.Consume() == true)
+        {
             SetPaused(false);
+            Debug.Log("Resuming game");
+        }
         else if (_restartClicked?.Consume() == true && !string.IsNullOrWhiteSpace(restartScene))
         {
             SetPaused(false);

@@ -1,0 +1,70 @@
+@font-face {
+    font-family: Martian;
+    src: url("../../editor/resources/fonts/MartianMono-StdRg.ttf");
+}
+
+body {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    color: #f4f8ff;
+    font-family: Martian;
+}
+
+#backdrop {
+    width: 100%;
+    height: 100%;
+    background-color: #05080dcc;
+}
+
+#menu {
+    position: absolute;
+    left: 8%;
+    top: 15%;
+    width: 390px;
+    padding: 34px;
+    background-color: #101722f2;
+    border-left: 4px #58c8ff;
+}
+
+.eyebrow {
+    color: #58c8ff;
+    font-size: 13px;
+    letter-spacing: 3px;
+}
+
+h1 {
+    margin: 8px 0 28px 0;
+    font-size: 38px;
+}
+
+button {
+    display: block;
+    width: 100%;
+    height: 48px;
+    margin-bottom: 10px;
+    padding-left: 16px;
+    color: #dce8f5;
+    background-color: #1a2634;
+    border: 1px #33495f;
+    text-align: left;
+    font-family: Martian;
+    font-size: 16px;
+}
+
+button:hover, button:focus {
+    color: #ffffff;
+    background-color: #25445d;
+    border-color: #58c8ff;
+}
+
+button:active {
+    background-color: #58c8ff;
+    color: #071019;
+}
+
+.hint {
+    margin-top: 24px;
+    color: #8292a3;
+    font-size: 12px;
+}

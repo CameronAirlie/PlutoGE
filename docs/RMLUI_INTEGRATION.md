@@ -4,6 +4,9 @@ PlutoGE supports an incremental migration from its native runtime UI to
 document-driven RmlUi interfaces. Native and RmlUi canvases can coexist in the
 same scene while HUDs and menus are moved over individually.
 
+For a minimal setup walkthrough and copyable example, see the
+[RmlUi project quick start](RMLUI_QUICKSTART.md).
+
 ## Current integration
 
 - RmlUi 6.1 and FreeType 2.13.3 are pinned and built from source.
@@ -28,8 +31,10 @@ same scene while HUDs and menus are moved over individually.
 
 ## Try the sample
 
-1. Copy `samples/rmlui/hud.rml`, `hud.rcss`, and the referenced font into a
-   project's asset directory. Keep their relative URLs consistent.
+1. Copy `samples/rmlui/hud.rml` and `hud.rcss` into a project's `Assets/UI`
+   directory. Copy `editor/resources/fonts/MartianMono-StdRg.ttf` to
+   `Assets/UI/Fonts`, then change the RCSS font URL to
+   `Fonts/MartianMono-StdRg.ttf`.
 2. Add a `CanvasComponent` to an entity.
 3. Set `Backend` to `RmlUi`.
 4. Set `DocumentPath` to the project-relative `.rml` file.
@@ -38,6 +43,19 @@ same scene while HUDs and menus are moved over individually.
 The sample uses ordinary RML/RCSS and includes a CSS-based crosshair. Crosshair
 spread can later be driven by changing the four arm offsets through the RmlUi
 DOM or a data model.
+
+## Pause menu sample
+
+`samples/rmlui/pause-menu.rml` and `pause-menu.rcss` pair with
+`Examples/RmlPauseMenuController.cs`. Copy the two assets into the project's
+`Assets/UI` directory, add an RmlUi canvas referencing
+`UI/pause-menu.rml`, and attach the controller to an always-active entity.
+Configure its restart and main-menu scene references in the Inspector.
+
+The controller pauses scene time, manages cursor capture, toggles with Escape,
+and handles Resume, Restart, and Main Menu through native DOM click events.
+Bundled gameplay controllers respect `GamePause.IsPaused`, preventing their
+own Escape cursor handling from conflicting with the menu.
 
 ## Migration plan
 

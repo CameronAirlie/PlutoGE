@@ -333,6 +333,8 @@ internal static unsafe class ScriptBridge
     private static delegate* unmanaged[Cdecl]<nint, nint, nint, nint, int> _rmlSetStyle;
     private static delegate* unmanaged[Cdecl]<nint, nint, nint, int> _rmlSubscribeEvent;
     private static delegate* unmanaged[Cdecl]<nint, nint, nint, int> _rmlConsumeEvent;
+    private static delegate* unmanaged[Cdecl]<float> _getSceneTimeScale;
+    private static delegate* unmanaged[Cdecl]<float, void> _setSceneTimeScale;
     private static delegate* unmanaged[Cdecl]<int, int> _getKeyDown;
     private static delegate* unmanaged[Cdecl]<int, int> _getKeyPressed;
     private static delegate* unmanaged[Cdecl]<int, int> _getKeyReleased;
@@ -1127,7 +1129,9 @@ internal static unsafe class ScriptBridge
         delegate* unmanaged[Cdecl]<nint, nint, nint, int, int> setClass,
         delegate* unmanaged[Cdecl]<nint, nint, nint, nint, int> setStyle,
         delegate* unmanaged[Cdecl]<nint, nint, nint, int> subscribeEvent,
-        delegate* unmanaged[Cdecl]<nint, nint, nint, int> consumeEvent)
+        delegate* unmanaged[Cdecl]<nint, nint, nint, int> consumeEvent,
+        delegate* unmanaged[Cdecl]<float> getSceneTimeScale,
+        delegate* unmanaged[Cdecl]<float, void> setSceneTimeScale)
     {
         _rmlShowDocument = showDocument;
         _rmlReloadDocument = reloadDocument;
@@ -1139,6 +1143,8 @@ internal static unsafe class ScriptBridge
         _rmlSetStyle = setStyle;
         _rmlSubscribeEvent = subscribeEvent;
         _rmlConsumeEvent = consumeEvent;
+        _getSceneTimeScale = getSceneTimeScale;
+        _setSceneTimeScale = setSceneTimeScale;
         return 1;
     }
 
@@ -2374,6 +2380,8 @@ internal static unsafe class ScriptBridge
         fixed (byte* pa = a) fixed (byte* pb = b) fixed (byte* pc = c)
             return _rmlConsumeEvent((nint)pa, (nint)pb, (nint)pc) != 0;
     }
+    internal static float GetSceneTimeScale() => _getSceneTimeScale == null ? 1.0f : _getSceneTimeScale();
+    internal static void SetSceneTimeScale(float value) { if (_setSceneTimeScale != null) _setSceneTimeScale(value); }
 
     internal static Vector3 GetUIImageColor(uint entityId) => _getUIImageColor == null ? Vector3.One : _getUIImageColor(entityId).ToManaged();
     internal static void SetUIImageColor(uint entityId, Vector3 value) { if (_setUIImageColor != null) _setUIImageColor(entityId, NativeVector3.FromManaged(value)); }

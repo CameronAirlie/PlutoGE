@@ -65,6 +65,7 @@ namespace PlutoGE::render
         void ProcessInput(platform::Window &window);
         Rml::ElementDocument *FindDocument(const std::string &document) const;
         void AttachEventSubscriptions();
+        void LoadDocumentFonts(const std::filesystem::path &documentPath);
 
         std::unique_ptr<RenderInterface_GL3> m_renderer;
         std::unique_ptr<SystemInterface_GLFW> m_system;
@@ -75,6 +76,9 @@ namespace PlutoGE::render
         std::unordered_map<std::string, int> m_pendingEvents;
         std::unordered_set<std::string> m_eventSubscriptions;
         std::unordered_set<std::string> m_attachedEvents;
+        std::unordered_set<std::string> m_reportedLoadFailures;
+        std::unordered_set<std::string> m_loadedFontFaces;
+        std::vector<std::vector<unsigned char>> m_fontData;
         std::vector<std::unique_ptr<Rml::EventListener>> m_eventListeners;
         int m_width = 0;
         int m_height = 0;

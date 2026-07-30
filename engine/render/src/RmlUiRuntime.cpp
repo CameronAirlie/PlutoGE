@@ -1,5 +1,6 @@
 #include "PlutoGE/render/RmlUiRuntime.h"
 
+#include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/platform/InputState.h"
 #include "PlutoGE/platform/Window.h"
@@ -10,12 +11,17 @@
 #include <RmlUi/Core.h>
 #include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/EventListener.h>
+#include <RmlUi/Core/Factory.h>
 #include <RmlUi_Platform_GLFW.h>
 #include <RmlUi_Renderer_GL3.h>
 
 #include <GLFW/glfw3.h>
 
 #include <algorithm>
+#include <fstream>
+#include <iostream>
+#include <regex>
+#include <sstream>
 #include <unordered_set>
 
 namespace PlutoGE::render
@@ -23,6 +29,28 @@ namespace PlutoGE::render
     namespace
     {
         constexpr char kEventSeparator = '\x1f';
+
+        std::string ResolveDocumentPath(assets::AssetManager &assets, const std::string &reference)
+        {
+            if (reference.empty())
+                return {};
+
+            // Canvas document paths are authored relative to the project's asset
+            // directory. AssetManager intentionally leaves ordinary relative
+            // paths relative to the process working directory, so qualify them
+            // here. Explicit schemes and absolute paths retain their normal
+            // AssetManager behaviour.
+            const std::filesystem::path referencePath(reference);
+            if (!referencePath.is_absolute() && reference.find("://") == std::string::npos &&
+                !assets.GetProjectRootDirectory().empty())
+            {
+                return (std::filesystem::path(assets.GetProjectRootDirectory()) /
+                        assets.GetProjectAssetDirectory() / referencePath)
+                    .lexically_normal().string();
+            }
+
+            return assets.ResolveAssetPath(reference);
+        }
 
         std::string EventKey(const std::string &document, const std::string &id, const std::string &event)
         {
@@ -153,6 +181,9 @@ namespace PlutoGE::render
         m_eventListeners.clear();
         m_eventSubscriptions.clear();
         m_attachedEvents.clear();
+        m_reportedLoadFailures.clear();
+        m_loadedFontFaces.clear();
+        m_fontData.clear();
         m_pendingEvents.clear();
         if (m_context)
         {
@@ -194,7 +225,7 @@ namespace PlutoGE::render
         {
             if (m_documents.contains(reference))
             {
-                const std::string resolved = assets.ResolveAssetPath(reference);
+                const std::string resolved = ResolveDocumentPath(assets, reference);
                 std::error_code error;
                 const auto writeTime = DocumentSourceWriteTime(resolved, error);
                 const auto known = m_documentWriteTimes.find(reference);
@@ -203,20 +234,157 @@ namespace PlutoGE::render
                 continue;
             }
 
-            const std::string path = assets.ResolveAssetPath(reference);
+            const std::string path = ResolveDocumentPath(assets, reference);
             if (path.empty())
+            {
+                if (m_reportedLoadFailures.insert(reference).second)
+                    std::cerr << "[RmlUi] Could not resolve Canvas document '" << reference << "'.\n";
                 continue;
+            }
+
+            std::error_code existsError;
+            if (!std::filesystem::is_regular_file(path, existsError))
+            {
+                if (m_reportedLoadFailures.insert(reference).second)
+                    std::cerr << "[RmlUi] Canvas document '" << reference
+                              << "' was not found at '" << path << "'.\n";
+                continue;
+            }
+
+            LoadDocumentFonts(path);
             if (auto *document = m_context->LoadDocument(path))
             {
                 document->Show();
                 m_documents.emplace(reference, document);
+                m_reportedLoadFailures.erase(reference);
+                std::clog << "[RmlUi] Loaded Canvas document '" << reference
+                          << "' from '" << path << "'.\n";
                 std::error_code error;
                 const auto writeTime = DocumentSourceWriteTime(path, error);
                 if (!error)
                     m_documentWriteTimes[reference] = writeTime;
             }
+            else if (m_reportedLoadFailures.insert(reference).second)
+            {
+                std::cerr << "[RmlUi] Failed to parse or load Canvas document '" << reference
+                          << "' from '" << path << "'. Check the preceding RmlUi messages for markup errors.\n";
+            }
         }
         AttachEventSubscriptions();
+    }
+
+    void RmlUiRuntime::LoadDocumentFonts(const std::filesystem::path &documentPath)
+    {
+        // RmlUi requires fonts to be registered through LoadFontFace; RCSS
+        // @font-face rules are a PlutoGE authoring convenience parsed here.
+        // Keep the byte buffers alive until Rml::Shutdown as required by RmlUi.
+        std::ifstream documentStream(documentPath, std::ios::binary);
+        if (!documentStream)
+            return;
+        const std::string documentSource(
+            (std::istreambuf_iterator<char>(documentStream)),
+            std::istreambuf_iterator<char>());
+
+        // Only inspect stylesheets linked by this document. Scanning every
+        // sibling RCSS produced misleading missing-font warnings from
+        // unrelated documents stored in the same UI directory.
+        static const std::regex styleLinkRule(
+            R"rml(<link\b[^>]*\bhref\s*=\s*(?:"([^"]+\.rcss)"|'([^']+\.rcss)')[^>]*>)rml",
+            std::regex::icase);
+        std::vector<std::filesystem::path> styleSheets;
+        for (std::sregex_iterator link(documentSource.begin(), documentSource.end(), styleLinkRule), end;
+             link != end; ++link)
+        {
+            const std::string relativePath =
+                (*link)[1].matched ? (*link)[1].str() : (*link)[2].str();
+            styleSheets.push_back(
+                (documentPath.parent_path() / relativePath).lexically_normal());
+        }
+
+        for (const auto &styleSheetPath : styleSheets)
+        {
+            std::ifstream stream(styleSheetPath, std::ios::binary);
+            if (!stream)
+                continue;
+            const std::string source((std::istreambuf_iterator<char>(stream)),
+                                     std::istreambuf_iterator<char>());
+
+            static const std::regex faceRule(R"(@font-face\s*\{([^}]*)\})",
+                                             std::regex::icase);
+            static const std::regex familyRule(
+                R"rml(font-family\s*:\s*(?:"([^"]+)"|'([^']+)'|([^;]+))\s*;)rml",
+                std::regex::icase);
+            static const std::regex sourceRule(
+                R"rml(src\s*:\s*url\(\s*(?:"([^"]+)"|'([^']+)'|([^)]+))\s*\)\s*;)rml",
+                std::regex::icase);
+
+            for (std::sregex_iterator face(source.begin(), source.end(), faceRule), endFace;
+                 face != endFace; ++face)
+            {
+                const std::string body = (*face)[1].str();
+                std::smatch familyMatch;
+                std::smatch sourceMatch;
+                if (!std::regex_search(body, familyMatch, familyRule) ||
+                    !std::regex_search(body, sourceMatch, sourceRule))
+                    continue;
+
+                const auto matchedValue = [](const std::smatch &match) {
+                    for (std::size_t i = 1; i < match.size(); ++i)
+                    {
+                        if (!match[i].matched) continue;
+                        std::string value = match[i].str();
+                        const auto first = value.find_first_not_of(" \t\r\n");
+                        const auto last = value.find_last_not_of(" \t\r\n");
+                        return first == std::string::npos
+                            ? std::string{}
+                            : value.substr(first, last - first + 1);
+                    }
+                    return std::string{};
+                };
+                const std::string family = matchedValue(familyMatch);
+                const std::string relativeSource = matchedValue(sourceMatch);
+                const auto fontPath = (styleSheetPath.parent_path() / relativeSource)
+                                          .lexically_normal();
+                const std::string key = fontPath.generic_string() + "\x1f" + family;
+                if (m_loadedFontFaces.contains(key))
+                    continue;
+
+                std::ifstream fontStream(fontPath, std::ios::binary);
+                if (!fontStream)
+                {
+                    std::cerr << "[RmlUi] Font '" << family << "' was not found at '"
+                              << fontPath.string() << "' (declared in '"
+                              << styleSheetPath.string() << "').\n";
+                    m_loadedFontFaces.insert(key);
+                    continue;
+                }
+
+                std::vector<unsigned char> bytes(
+                    (std::istreambuf_iterator<char>(fontStream)),
+                    std::istreambuf_iterator<char>());
+                if (bytes.empty())
+                    continue;
+
+                m_fontData.push_back(std::move(bytes));
+                const auto &stored = m_fontData.back();
+                if (Rml::LoadFontFace(
+                        {stored.data(), stored.size()}, family,
+                        Rml::Style::FontStyle::Normal,
+                        Rml::Style::FontWeight::Auto))
+                {
+                    std::clog << "[RmlUi] Loaded font face '" << family << "' from '"
+                              << fontPath.string() << "'.\n";
+                    m_loadedFontFaces.insert(key);
+                }
+                else
+                {
+                    std::cerr << "[RmlUi] Failed to load font face '" << family
+                              << "' from '" << fontPath.string() << "'.\n";
+                    m_fontData.pop_back();
+                    m_loadedFontFaces.insert(key);
+                }
+            }
+        }
     }
 
     Rml::ElementDocument *RmlUiRuntime::FindDocument(const std::string &document) const
@@ -240,14 +408,22 @@ namespace PlutoGE::render
         if (!m_context)
             return false;
         auto &assets = core::Engine::GetInstance().GetAssetManager();
-        const std::string path = assets.ResolveAssetPath(document);
+        const std::string path = ResolveDocumentPath(assets, document);
         if (path.empty())
             return false;
+        LoadDocumentFonts(path);
         if (auto found = m_documents.find(document); found != m_documents.end())
         {
             if (found->second) found->second->Close();
             m_documents.erase(found);
         }
+
+        // LoadDocument caches parsed style sheets and templates globally.
+        // Closing and reopening the RML alone would otherwise reuse the stale
+        // RCSS object after the file watcher detects a change.
+        Rml::Factory::ClearStyleSheetCache();
+        Rml::Factory::ClearTemplateCache();
+
         m_eventListeners.clear();
         m_attachedEvents.clear();
         auto *loaded = m_context->LoadDocument(path);
@@ -258,6 +434,7 @@ namespace PlutoGE::render
         std::error_code error;
         const auto writeTime = DocumentSourceWriteTime(path, error);
         if (!error) m_documentWriteTimes[document] = writeTime;
+        std::clog << "[RmlUi] Hot reloaded document and styles for '" << document << "'.\n";
         AttachEventSubscriptions();
         return true;
     }

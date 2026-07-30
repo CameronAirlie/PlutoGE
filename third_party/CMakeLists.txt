@@ -104,13 +104,17 @@ endif()
 add_library(PlutoGE_rmlui STATIC
     "${rmlui_SOURCE_DIR}/Backends/RmlUi_Renderer_GL3.cpp"
     "${rmlui_SOURCE_DIR}/Backends/RmlUi_Platform_GLFW.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/rmlui/PlutoGE_RmlUi_Target.cpp"
 )
 add_library(PlutoGE::rmlui ALIAS PlutoGE_rmlui)
 target_compile_definitions(PlutoGE_rmlui PRIVATE
-    RMLUI_GL3_CUSTOM_LOADER="glad/glad.h"
+    RMLUI_GL3_CUSTOM_LOADER="PlutoGE_RmlUi_GL3.h"
 )
 target_link_libraries(PlutoGE_rmlui PUBLIC RmlUi::Core PlutoGE::glfw PlutoGE::glad)
-target_include_directories(PlutoGE_rmlui PUBLIC "${rmlui_SOURCE_DIR}/Backends")
+target_include_directories(PlutoGE_rmlui PUBLIC
+    "${rmlui_SOURCE_DIR}/Backends"
+    "${CMAKE_CURRENT_SOURCE_DIR}/rmlui"
+)
 
 FetchContent_Declare(
     imguizmo

@@ -469,6 +469,8 @@ Open **Project Settings**, verify the startup scene, save the project, and ensur
 ## Further documentation
 
 - [C# scripting specification](docs/CSHARP_SCRIPTING.md)
+- [RmlUi project quick start](docs/RMLUI_QUICKSTART.md)
+- [RmlUi integration notes](docs/RMLUI_INTEGRATION.md)
 - [Networking architecture and roadmap](docs/NETWORKING.md)
 - [Scripting subsystem overview](engine/scripting/README.md)
 - [Exporting a game](EXPORTING.md)

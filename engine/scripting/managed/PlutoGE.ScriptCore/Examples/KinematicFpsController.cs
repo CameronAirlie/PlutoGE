@@ -200,7 +200,7 @@ public sealed class KinematicFpsController : ScriptBehaviour
             return;
         }
 
-        if (Input.IsKeyPressed(KeyCode.Escape))
+        if (!GamePause.IsPaused && Input.IsKeyPressed(KeyCode.Escape))
         {
             Input.CursorLocked = !Input.CursorLocked;
         }

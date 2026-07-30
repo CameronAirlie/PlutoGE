@@ -101,7 +101,7 @@ namespace PlutoGE::scripting
         using register_sound_emitter_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_runtime_ui_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_advanced_ui_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
-        using register_rml_ui_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
+        using register_rml_ui_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_input_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_physics_api_fn = int(__cdecl *)(void *, void *, void *, void *);
         using register_debug_api_fn = int(__cdecl *)(void *);
@@ -2368,7 +2368,9 @@ namespace PlutoGE::scripting
 
         int32_t GetKeyDown(int32_t keyCode)
         {
-            if (!IsScriptInputEnabled() || render::RmlUiRuntime::Get().IsInputCaptured())
+            if (!IsScriptInputEnabled() ||
+                (keyCode != static_cast<int32_t>(platform::KeyCode::Escape) &&
+                 render::RmlUiRuntime::Get().IsInputCaptured()))
             {
                 return 0;
             }
@@ -2379,7 +2381,9 @@ namespace PlutoGE::scripting
 
         int32_t GetKeyPressed(int32_t keyCode)
         {
-            if (!IsScriptInputEnabled() || render::RmlUiRuntime::Get().IsInputCaptured())
+            if (!IsScriptInputEnabled() ||
+                (keyCode != static_cast<int32_t>(platform::KeyCode::Escape) &&
+                 render::RmlUiRuntime::Get().IsInputCaptured()))
             {
                 return 0;
             }
@@ -2393,7 +2397,9 @@ namespace PlutoGE::scripting
 
         int32_t GetKeyReleased(int32_t keyCode)
         {
-            if (!IsScriptInputEnabled() || render::RmlUiRuntime::Get().IsInputCaptured())
+            if (!IsScriptInputEnabled() ||
+                (keyCode != static_cast<int32_t>(platform::KeyCode::Escape) &&
+                 render::RmlUiRuntime::Get().IsInputCaptured()))
             {
                 return 0;
             }
@@ -2727,6 +2733,16 @@ namespace PlutoGE::scripting
         int32_t RmlConsumeEvent(const char *document, const char *id, const char *event)
         {
             return document && id && event && render::RmlUiRuntime::Get().ConsumeEvent(document, id, event);
+        }
+        float GetSceneTimeScale()
+        {
+            auto *scene = core::Engine::GetInstance().GetScene();
+            return scene ? scene->GetTimeScale() : 1.0f;
+        }
+        void SetSceneTimeScale(float value)
+        {
+            if (auto *scene = core::Engine::GetInstance().GetScene(); scene && std::isfinite(value))
+                scene->SetTimeScale(value < 0.0f ? 0.0f : value);
         }
 
         uint32_t SpawnDecal(NativeVector3 point,
@@ -3805,7 +3821,9 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(&RmlSetClass),
                 reinterpret_cast<void *>(&RmlSetStyle),
                 reinterpret_cast<void *>(&RmlSubscribeEvent),
-                reinterpret_cast<void *>(&RmlConsumeEvent)) == 0)
+                reinterpret_cast<void *>(&RmlConsumeEvent),
+                reinterpret_cast<void *>(&GetSceneTimeScale),
+                reinterpret_cast<void *>(&SetSceneTimeScale)) == 0)
         {
             setManagedBridgeFailure("RegisterRmlUiApi");
             return false;

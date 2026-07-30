@@ -1,0 +1,18 @@
+<rml>
+<head>
+    <title>Pause Menu</title>
+    <link type="text/rcss" href="pause-menu.rcss"/>
+</head>
+<body>
+    <div id="backdrop">
+        <div id="menu">
+            <div class="eyebrow">GAME PAUSED</div>
+            <h1>Pause Menu</h1>
+            <button id="resume">Resume</button>
+            <button id="restart">Restart Checkpoint</button>
+            <button id="main-menu">Return to Main Menu</button>
+            <div class="hint">ESC  Resume</div>
+        </div>
+    </div>
+</body>
+</rml>

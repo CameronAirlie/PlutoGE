@@ -28,6 +28,7 @@ namespace PlutoGE::assets
         Texture,
         Assembly,
         ScriptableObject,
+        RmlDocument,
     };
 
     struct ProjectAssetEntry

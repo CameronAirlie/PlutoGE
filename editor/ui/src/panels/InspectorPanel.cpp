@@ -116,6 +116,7 @@ namespace PlutoGE::ui
             NavAgent = 23,
             NavigationMesh = 24,
             Decal = 25,
+            RmlWidget = 26,
         };
 
         struct ScriptAssetOption
@@ -698,7 +699,7 @@ namespace PlutoGE::ui
                                                                                 assets::ProjectAssetType type)
         {
             static std::array<AssetReferenceOptionsCacheEntry,
-                              static_cast<std::size_t>(assets::ProjectAssetType::ScriptableObject) + 1>
+                              static_cast<std::size_t>(assets::ProjectAssetType::RmlDocument) + 1>
                 cacheEntries;
 
             auto &cacheEntry = cacheEntries[static_cast<std::size_t>(type)];
@@ -1568,6 +1569,8 @@ namespace PlutoGE::ui
             {
                 return "Canvas Component";
             }
+            if (dynamic_cast<const scene::RmlWidgetComponent *>(&component))
+                return "RML Widget Component";
             if (dynamic_cast<const scene::RectTransformComponent *>(&component))
             {
                 return "Rect Transform Component";
@@ -1632,6 +1635,8 @@ namespace PlutoGE::ui
                 return "SoundListenerComponent";
             if (dynamic_cast<const scene::CanvasComponent *>(&component))
                 return "CanvasComponent";
+            if (dynamic_cast<const scene::RmlWidgetComponent *>(&component))
+                return "RmlWidgetComponent";
             if (dynamic_cast<const scene::RectTransformComponent *>(&component))
                 return "RectTransformComponent";
             if (dynamic_cast<const scene::UIImageComponent *>(&component))
@@ -1766,6 +1771,8 @@ namespace PlutoGE::ui
                 return !entity.HasComponent<scene::SoundListenerComponent>();
             case AddableComponentType::Canvas:
                 return !entity.HasComponent<scene::CanvasComponent>();
+            case AddableComponentType::RmlWidget:
+                return !entity.HasComponent<scene::RmlWidgetComponent>();
             case AddableComponentType::RectTransform:
                 return !entity.HasComponent<scene::RectTransformComponent>();
             case AddableComponentType::UIImage:
@@ -1842,6 +1849,7 @@ namespace PlutoGE::ui
             if (ImGui::BeginMenu("UI"))
             {
                 renderItem("Canvas", AddableComponentType::Canvas);
+                renderItem("RML Widget", AddableComponentType::RmlWidget);
                 renderItem("Rect Transform", AddableComponentType::RectTransform);
                 renderItem("Image", AddableComponentType::UIImage);
                 renderItem("Text", AddableComponentType::UIText);
@@ -1970,6 +1978,9 @@ namespace PlutoGE::ui
                 break;
             case AddableComponentType::Canvas:
                 entity.CreateComponent<scene::CanvasComponent>();
+                break;
+            case AddableComponentType::RmlWidget:
+                entity.CreateComponent<scene::RmlWidgetComponent>();
                 break;
             case AddableComponentType::RectTransform:
                 entity.CreateComponent<scene::RectTransformComponent>();
@@ -4492,6 +4503,40 @@ namespace PlutoGE::ui
                                 editorShell.MarkSceneDirty();
                             }
                             ImGui::SeparatorText("Bake Settings (World Space)");
+                        }
+                        else if (auto *rmlWidget = dynamic_cast<scene::RmlWidgetComponent *>(componentPtr))
+                        {
+                            properties = rmlWidget->Serialize();
+                            std::erase_if(properties, [](const scene::Property &property)
+                                          { return property.name == "Source"; });
+                            propertiesProvided = true;
+
+                            const auto &sourceOptions = GetCachedAssetReferenceOptions(
+                                editorShell.GetProject(), assets::ProjectAssetType::RmlDocument);
+                            const std::string sourcePreview = GetAssetReferencePreview(
+                                sourceOptions, rmlWidget->GetSource(), "None");
+                            if (ImGui::BeginCombo("Source", sourcePreview.c_str()))
+                            {
+                                if (ImGui::Selectable("None", rmlWidget->GetSource().empty()))
+                                {
+                                    rmlWidget->SetSource({});
+                                    entity->AddPrefabOverride("Component:RmlWidgetComponent:Source");
+                                    editorShell.MarkSceneDirty();
+                                }
+                                for (const auto &option : sourceOptions)
+                                {
+                                    const bool selected = option.reference == rmlWidget->GetSource();
+                                    if (ImGui::Selectable(option.displayName.c_str(), selected))
+                                    {
+                                        rmlWidget->SetSource(option.reference);
+                                        entity->AddPrefabOverride("Component:RmlWidgetComponent:Source");
+                                        editorShell.MarkSceneDirty();
+                                    }
+                                    if (selected)
+                                        ImGui::SetItemDefaultFocus();
+                                }
+                                ImGui::EndCombo();
+                            }
                         }
                         else if (auto *decalComponent = dynamic_cast<scene::DecalComponent *>(componentPtr))
                         {

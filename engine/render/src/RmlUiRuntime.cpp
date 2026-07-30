@@ -24,6 +24,7 @@
 #include <iostream>
 #include <regex>
 #include <sstream>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace PlutoGE::render
@@ -106,7 +107,7 @@ namespace PlutoGE::render
             std::string m_key;
         };
 
-        void CollectDocuments(scene::Entity *entity, std::unordered_set<std::string> &paths)
+        void CollectDocuments(scene::Entity *entity, std::unordered_map<std::string, bool> &documents)
         {
             if (!entity || !entity->IsActive())
                 return;
@@ -116,13 +117,21 @@ namespace PlutoGE::render
                 canvas->GetBackend() == scene::UIRenderBackend::RmlUi &&
                 !canvas->GetDocumentPath().empty())
             {
-                paths.insert(canvas->GetDocumentPath());
+                documents[canvas->GetDocumentPath()] = true;
                 // A document canvas owns its subtree. Nested native canvases are
                 // still discovered through their own roots during migration.
             }
 
+            if (const auto *widget = entity->GetComponent<scene::RmlWidgetComponent>();
+                widget && widget->IsEnabled() && !widget->GetSource().empty())
+            {
+                auto [entry, inserted] = documents.try_emplace(widget->GetSource(), widget->IsVisible());
+                if (!inserted)
+                    entry->second = entry->second || widget->IsVisible();
+            }
+
             for (auto *child : entity->GetChildren())
-                CollectDocuments(child, paths);
+                CollectDocuments(child, documents);
         }
 
         int CurrentModifiers(GLFWwindow *window)
@@ -220,14 +229,14 @@ namespace PlutoGE::render
 
     void RmlUiRuntime::SynchronizeDocuments(const scene::Scene &scene)
     {
-        std::unordered_set<std::string> requestedPaths;
+        std::unordered_map<std::string, bool> requestedDocuments;
         for (auto *root : scene.GetRootEntities())
-            CollectDocuments(root, requestedPaths);
+            CollectDocuments(root, requestedDocuments);
 
         bool detachedForDocumentChange = false;
         for (auto it = m_documents.begin(); it != m_documents.end();)
         {
-            if (!requestedPaths.contains(it->first))
+            if (!requestedDocuments.contains(it->first))
             {
                 if (!detachedForDocumentChange)
                 {
@@ -246,7 +255,7 @@ namespace PlutoGE::render
         }
 
         auto &assets = core::Engine::GetInstance().GetAssetManager();
-        for (const auto &reference : requestedPaths)
+        for (const auto &[reference, visible] : requestedDocuments)
         {
             if (m_documents.contains(reference))
             {
@@ -256,6 +265,18 @@ namespace PlutoGE::render
                 const auto known = m_documentWriteTimes.find(reference);
                 if (!error && known != m_documentWriteTimes.end() && writeTime != known->second)
                     ReloadDocument(reference);
+                if (auto *document = m_documents.at(reference))
+                {
+                    if (visible)
+                    {
+                        document->Show();
+                    }
+                    else
+                    {
+                        m_context->UnfocusDocument(document);
+                        document->Hide();
+                    }
+                }
                 continue;
             }
 
@@ -279,7 +300,7 @@ namespace PlutoGE::render
             LoadDocumentFonts(path);
             if (auto *document = m_context->LoadDocument(path))
             {
-                document->Show();
+                visible ? document->Show() : document->Hide();
                 m_documents.emplace(reference, document);
                 m_reportedLoadFailures.erase(reference);
                 std::clog << "[RmlUi] Loaded Canvas document '" << reference
@@ -440,8 +461,15 @@ namespace PlutoGE::render
         auto *target = FindDocument(document);
         if (!target)
             return false;
-        if (visible) target->Show();
-        else target->Hide();
+        if (visible)
+        {
+            target->Show();
+        }
+        else
+        {
+            m_context->UnfocusDocument(target);
+            target->Hide();
+        }
         return true;
     }
 
@@ -617,9 +645,18 @@ namespace PlutoGE::render
         m_attachedEvents.clear();
     }
 
-    bool RmlUiRuntime::IsInputCaptured() const
+    bool RmlUiRuntime::IsPointerInputCaptured() const
     {
-        return m_context && (m_context->IsMouseInteracting() || m_context->GetFocusElement() != nullptr);
+        return m_context && m_context->IsMouseInteracting();
+    }
+
+    bool RmlUiRuntime::IsKeyboardInputCaptured() const
+    {
+        if (!m_context)
+            return false;
+
+        const auto *focusedElement = m_context->GetFocusElement();
+        return focusedElement && focusedElement->IsVisible(true);
     }
 
     void RmlUiRuntime::ProcessInput(platform::Window &window, const scene::Scene &scene)

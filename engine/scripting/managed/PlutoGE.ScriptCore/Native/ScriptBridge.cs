@@ -76,6 +76,7 @@ internal static unsafe class ScriptBridge
         UIButton = 11,
         ParticleSystem = 12,
         SoundEmitter = 13,
+        RmlWidget = 14,
     }
 
     private sealed class ScriptLoadContext : AssemblyLoadContext
@@ -142,6 +143,7 @@ internal static unsafe class ScriptBridge
     private static delegate* unmanaged[Cdecl]<byte*, int, uint> _getEntityByTag;
     private static delegate* unmanaged[Cdecl]<byte*, uint> _instantiatePrefab;
     private static delegate* unmanaged[Cdecl]<byte*, int> _loadScene;
+    private static delegate* unmanaged[Cdecl]<nint> _getActiveScenePath;
     private static delegate* unmanaged[Cdecl]<void> _quitApplication;
     private static delegate* unmanaged[Cdecl]<byte*, nint> _loadScriptableObjectAsset;
     private static delegate* unmanaged[Cdecl]<uint, int, int> _hasComponent;
@@ -336,6 +338,10 @@ internal static unsafe class ScriptBridge
     private static delegate* unmanaged[Cdecl]<nint, nint, nint, int> _rmlConsumeEvent;
     private static delegate* unmanaged[Cdecl]<float> _getSceneTimeScale;
     private static delegate* unmanaged[Cdecl]<float, void> _setSceneTimeScale;
+    private static delegate* unmanaged[Cdecl]<uint, nint> _getRmlWidgetSource;
+    private static delegate* unmanaged[Cdecl]<uint, nint, void> _setRmlWidgetSource;
+    private static delegate* unmanaged[Cdecl]<uint, int> _getRmlWidgetVisible;
+    private static delegate* unmanaged[Cdecl]<uint, int, void> _setRmlWidgetVisible;
     private static delegate* unmanaged[Cdecl]<int, int> _getKeyDown;
     private static delegate* unmanaged[Cdecl]<int, int> _getKeyPressed;
     private static delegate* unmanaged[Cdecl]<int, int> _getKeyReleased;
@@ -560,15 +566,17 @@ internal static unsafe class ScriptBridge
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterSceneApi")]
     public static int RegisterSceneApi(
         delegate* unmanaged[Cdecl]<byte*, int> loadScene,
+        delegate* unmanaged[Cdecl]<nint> getActiveScenePath,
         delegate* unmanaged[Cdecl]<void> quitApplication)
     {
-        if (loadScene == null || quitApplication == null)
+        if (loadScene == null || getActiveScenePath == null || quitApplication == null)
         {
             SetError("Managed scene API registration received a null function pointer.");
             return 0;
         }
 
         _loadScene = loadScene;
+        _getActiveScenePath = getActiveScenePath;
         _quitApplication = quitApplication;
         _lastError = string.Empty;
         return 1;
@@ -1135,7 +1143,11 @@ internal static unsafe class ScriptBridge
         delegate* unmanaged[Cdecl]<nint, nint, nint, int> subscribeEvent,
         delegate* unmanaged[Cdecl]<nint, nint, nint, int> consumeEvent,
         delegate* unmanaged[Cdecl]<float> getSceneTimeScale,
-        delegate* unmanaged[Cdecl]<float, void> setSceneTimeScale)
+        delegate* unmanaged[Cdecl]<float, void> setSceneTimeScale,
+        delegate* unmanaged[Cdecl]<uint, nint> getRmlWidgetSource,
+        delegate* unmanaged[Cdecl]<uint, nint, void> setRmlWidgetSource,
+        delegate* unmanaged[Cdecl]<uint, int> getRmlWidgetVisible,
+        delegate* unmanaged[Cdecl]<uint, int, void> setRmlWidgetVisible)
     {
         _rmlShowDocument = showDocument;
         _rmlReloadDocument = reloadDocument;
@@ -1149,6 +1161,10 @@ internal static unsafe class ScriptBridge
         _rmlConsumeEvent = consumeEvent;
         _getSceneTimeScale = getSceneTimeScale;
         _setSceneTimeScale = setSceneTimeScale;
+        _getRmlWidgetSource = getRmlWidgetSource;
+        _setRmlWidgetSource = setRmlWidgetSource;
+        _getRmlWidgetVisible = getRmlWidgetVisible;
+        _setRmlWidgetVisible = setRmlWidgetVisible;
         return 1;
     }
 
@@ -1338,7 +1354,9 @@ internal static unsafe class ScriptBridge
                 return 0;
             }
 
-            UIButtonComponent.DispatchRegisteredEvents(GetUIUpdateSequence());
+            var uiUpdateSequence = GetUIUpdateSequence();
+            UIButtonComponent.DispatchRegisteredEvents(uiUpdateSequence);
+            RmlEvent.DispatchRegisteredEvents(uiUpdateSequence);
             instance.OnUpdate(deltaTime);
             return 1;
         }
@@ -2329,6 +2347,31 @@ internal static unsafe class ScriptBridge
         if (_rmlShowDocument == null) return false;
         var a = Utf8(document);
         fixed (byte* p = a) return _rmlShowDocument((nint)p, visible ? 1 : 0) != 0;
+    }
+
+    internal static string GetActiveScenePath()
+    {
+        if (_getActiveScenePath == null)
+        {
+            return string.Empty;
+        }
+
+        return Marshal.PtrToStringUTF8(_getActiveScenePath()) ?? string.Empty;
+    }
+    internal static string GetRmlWidgetSource(uint entityId) =>
+        _getRmlWidgetSource == null ? string.Empty :
+        Marshal.PtrToStringUTF8(_getRmlWidgetSource(entityId)) ?? string.Empty;
+    internal static void SetRmlWidgetSource(uint entityId, string value)
+    {
+        if (_setRmlWidgetSource == null) return;
+        var bytes = Utf8(value);
+        fixed (byte* pointer = bytes) _setRmlWidgetSource(entityId, (nint)pointer);
+    }
+    internal static bool GetRmlWidgetVisible(uint entityId) =>
+        _getRmlWidgetVisible != null && _getRmlWidgetVisible(entityId) != 0;
+    internal static void SetRmlWidgetVisible(uint entityId, bool value)
+    {
+        if (_setRmlWidgetVisible != null) _setRmlWidgetVisible(entityId, value ? 1 : 0);
     }
     internal static bool RmlReloadDocument(string document)
     {

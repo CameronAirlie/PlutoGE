@@ -1029,7 +1029,7 @@ namespace PlutoGE::ui
         scriptProjectContent += "    <TargetFramework>net8.0</TargetFramework>\n";
         scriptProjectContent += "    <ImplicitUsings>enable</ImplicitUsings>\n";
         scriptProjectContent += "    <Nullable>enable</Nullable>\n";
-        scriptProjectContent += "    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>\n";
+        scriptProjectContent += "    <EnableDefaultItems>false</EnableDefaultItems>\n";
         scriptProjectContent += "    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>\n";
         scriptProjectContent += "    <AssemblyName>" + rootNamespace + ".Scripts</AssemblyName>\n";
         scriptProjectContent += "    <RootNamespace>" + rootNamespace + ".Scripts</RootNamespace>\n";
@@ -2373,7 +2373,7 @@ namespace PlutoGE::ui
         scriptProjectContent += "    <TargetFramework>net8.0</TargetFramework>\n";
         scriptProjectContent += "    <ImplicitUsings>enable</ImplicitUsings>\n";
         scriptProjectContent += "    <Nullable>enable</Nullable>\n";
-        scriptProjectContent += "    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>\n";
+        scriptProjectContent += "    <EnableDefaultItems>false</EnableDefaultItems>\n";
         scriptProjectContent += "    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>\n";
         scriptProjectContent += "    <AssemblyName>" + rootNamespace + ".Scripts</AssemblyName>\n";
         scriptProjectContent += "    <RootNamespace>" + rootNamespace + ".Scripts</RootNamespace>\n";

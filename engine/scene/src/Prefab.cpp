@@ -86,6 +86,8 @@ namespace PlutoGE::scene
                 return "SoundListenerComponent";
             if (dynamic_cast<const CanvasComponent *>(&component))
                 return "CanvasComponent";
+            if (dynamic_cast<const RmlWidgetComponent *>(&component))
+                return "RmlWidgetComponent";
             if (dynamic_cast<const RectTransformComponent *>(&component))
                 return "RectTransformComponent";
             if (dynamic_cast<const UIImageComponent *>(&component))
@@ -135,6 +137,8 @@ namespace PlutoGE::scene
                 return std::make_unique<SoundListenerComponent>();
             if (componentType == "CanvasComponent")
                 return std::make_unique<CanvasComponent>();
+            if (componentType == "RmlWidgetComponent")
+                return std::make_unique<RmlWidgetComponent>();
             if (componentType == "RectTransformComponent")
                 return std::make_unique<RectTransformComponent>();
             if (componentType == "UIImageComponent")

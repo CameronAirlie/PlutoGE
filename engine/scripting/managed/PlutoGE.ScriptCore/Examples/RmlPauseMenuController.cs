@@ -15,10 +15,6 @@ public sealed class RmlPauseMenuController : ScriptBehaviour
     [SerializedField] private bool pauseSimulation = true;
 
     private RmlDocument? _document;
-    private RmlEvent? _resumeClicked;
-    private RmlEvent? _restartClicked;
-    private RmlEvent? _mainMenuClicked;
-    private RmlEvent? _quitClicked;
     private bool _paused;
     private float _previousTimeScale = 1.0f;
     private bool _domReady;
@@ -32,10 +28,10 @@ public sealed class RmlPauseMenuController : ScriptBehaviour
             Debug.LogError($"Failed to load RmlDocument at path '{documentPath}'");
             return;
         }
-        _resumeClicked = _document.Element("resume").Subscribe("click");
-        _restartClicked = _document.Element("restart").Subscribe("click");
-        _mainMenuClicked = _document.Element("main-menu").Subscribe("click");
-        _quitClicked = _document.Element("quit").Subscribe("click");
+        _document.OnClick("resume", Resume);
+        _document.OnClick("restart", Restart);
+        _document.OnClick("main-menu", OpenMainMenu);
+        _document.OnClick("quit", Quit);
 
         if (startHidden) SetPaused(false, true);
         else SetPaused(true, true);
@@ -52,27 +48,6 @@ public sealed class RmlPauseMenuController : ScriptBehaviour
             Debug.Log(_paused ? "Pausing game" : "Resuming game");
         }
 
-        if (!_paused) return;
-        if (_resumeClicked?.Consume() == true)
-        {
-            SetPaused(false);
-            Debug.Log("Resuming game");
-        }
-        else if (_restartClicked?.Consume() == true && !string.IsNullOrWhiteSpace(restartScene))
-        {
-            SetPaused(false);
-            SceneManager.LoadScene(restartScene);
-        }
-        else if (_mainMenuClicked?.Consume() == true && !string.IsNullOrWhiteSpace(mainMenuScene))
-        {
-            SetPaused(false);
-            SceneManager.LoadScene(mainMenuScene);
-        }
-        else if (_quitClicked?.Consume() == true)
-        {
-            Debug.Log("Quitting game");
-            Application.Quit();
-        }
     }
 
     public override void OnDestroy()
@@ -82,6 +57,35 @@ public sealed class RmlPauseMenuController : ScriptBehaviour
             if (pauseSimulation) GamePause.TimeScale = _previousTimeScale;
             GamePause.IsPaused = false;
         }
+        _document?.Dispose();
+    }
+
+    private void Resume()
+    {
+        if (!_paused) return;
+        SetPaused(false);
+        Debug.Log("Resuming game");
+    }
+
+    private void Restart()
+    {
+        if (!_paused || string.IsNullOrWhiteSpace(restartScene)) return;
+        SetPaused(false);
+        SceneManager.LoadScene(restartScene);
+    }
+
+    private void OpenMainMenu()
+    {
+        if (!_paused || string.IsNullOrWhiteSpace(mainMenuScene)) return;
+        SetPaused(false);
+        SceneManager.LoadScene(mainMenuScene);
+    }
+
+    private void Quit()
+    {
+        if (!_paused) return;
+        Debug.Log("Quitting game");
+        Application.Quit();
     }
 
     private void SetPaused(bool paused, bool force = false)

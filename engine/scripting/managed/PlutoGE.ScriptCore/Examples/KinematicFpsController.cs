@@ -200,10 +200,10 @@ public sealed class KinematicFpsController : ScriptBehaviour
             return;
         }
 
-        if (!GamePause.IsPaused && Input.IsKeyPressed(KeyCode.Escape))
-        {
-            Input.CursorLocked = !Input.CursorLocked;
-        }
+        // if (!GamePause.IsPaused && Input.IsKeyPressed(KeyCode.Escape))
+        // {
+        //     Input.CursorLocked = !Input.CursorLocked;
+        // }
 
         _shotCooldown = MathF.Max(0.0f, _shotCooldown - deltaTime);
         UpdateReload(deltaTime);

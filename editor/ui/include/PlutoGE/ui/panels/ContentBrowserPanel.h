@@ -57,6 +57,7 @@ namespace PlutoGE::ui
         std::array<char, 96> m_newAnimationGraphNameBuffer{};
         std::array<char, 96> m_newScriptableObjectNameBuffer{};
         std::array<char, 96> m_newRmlDocumentNameBuffer{};
+        std::string m_rmlDocumentCreateError;
         int m_newScriptableObjectClassIndex = 0;
         int m_selectedAssetIndex = -1;
         std::string m_selectedFolder;

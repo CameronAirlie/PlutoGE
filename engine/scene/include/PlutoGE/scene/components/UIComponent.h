@@ -153,6 +153,23 @@ namespace PlutoGE::scene
         std::string m_documentPath;
     };
 
+    class RmlWidgetComponent : public TypedComponent<RmlWidgetComponent>
+    {
+    public:
+        void Update(float deltaTime) override {}
+        std::vector<Property> Serialize() const override;
+        void Deserialize(const std::vector<Property> &properties) override;
+
+        const std::string &GetSource() const { return m_source; }
+        void SetSource(std::string value) { m_source = std::move(value); }
+        bool IsVisible() const { return m_visible; }
+        void SetVisible(bool value) { m_visible = value; }
+
+    private:
+        std::string m_source;
+        bool m_visible = true;
+    };
+
     class RectTransformComponent : public TypedComponent<RectTransformComponent>
     {
     public:

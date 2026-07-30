@@ -266,6 +266,8 @@ namespace PlutoGE::scene
             {
                 return "CanvasComponent";
             }
+            if (dynamic_cast<const RmlWidgetComponent *>(&component))
+                return "RmlWidgetComponent";
             if (dynamic_cast<const RectTransformComponent *>(&component))
             {
                 return "RectTransformComponent";
@@ -374,6 +376,8 @@ namespace PlutoGE::scene
             {
                 return std::make_unique<CanvasComponent>();
             }
+            if (componentType == "RmlWidgetComponent")
+                return std::make_unique<RmlWidgetComponent>();
             if (componentType == "RectTransformComponent")
             {
                 return std::make_unique<RectTransformComponent>();

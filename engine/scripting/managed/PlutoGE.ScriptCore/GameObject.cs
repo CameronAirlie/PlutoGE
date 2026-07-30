@@ -129,6 +129,7 @@ public sealed class GameObject
             var type when type == typeof(UIButtonComponent) => ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.UIButton),
             var type when type == typeof(ParticleSystemComponent) => ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.ParticleSystem),
             var type when type == typeof(SoundEmitterComponent) => ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.SoundEmitter),
+            var type when type == typeof(RmlWidgetComponent) => ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.RmlWidget),
             _ => ScriptBridge.GetScript<T>(EntityId) is not null,
         };
     }
@@ -168,6 +169,10 @@ public sealed class GameObject
         if (typeof(T) == typeof(CanvasComponent) && ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.Canvas))
         {
             return new CanvasComponent(EntityId) as T;
+        }
+        if (typeof(T) == typeof(RmlWidgetComponent) && ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.RmlWidget))
+        {
+            return new RmlWidgetComponent(EntityId) as T;
         }
 
         if (typeof(T) == typeof(RectTransformComponent) && ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.RectTransform))

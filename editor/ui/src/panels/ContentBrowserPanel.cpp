@@ -1763,6 +1763,7 @@ void main() {
             if (ImGui::MenuItem("RmlUi Document"))
             {
                 m_newRmlDocumentNameBuffer.fill('\0');
+                m_rmlDocumentCreateError.clear();
                 m_pendingMenuAction = PendingMenuAction::CreateRmlDocument;
             }
             if (ImGui::BeginMenu("Import"))
@@ -1898,37 +1899,75 @@ void main() {
             const std::string sanitizedName = SanitizeAssetFileName(m_newRmlDocumentNameBuffer.data());
             const auto createDirectory = GetCreateDirectory(*project, m_selectedFolder, "UI");
             ImGui::TextDisabled("Creates an .rml document and matching .rcss stylesheet.");
+            if (!sanitizedName.empty())
+            {
+                ImGui::TextDisabled(
+                    "Creates %s and %s",
+                    DisplayCreatePath(*project, createDirectory, sanitizedName + ".rml").c_str(),
+                    DisplayCreatePath(*project, createDirectory, sanitizedName + ".rcss").c_str());
+            }
+            if (!m_rmlDocumentCreateError.empty())
+                ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f), "%s", m_rmlDocumentCreateError.c_str());
             ImGui::BeginDisabled(sanitizedName.empty());
             if (ImGui::Button("Create"))
             {
-                std::error_code error;
-                std::filesystem::create_directories(createDirectory, error);
+                m_rmlDocumentCreateError.clear();
+                std::error_code errorCode;
+                std::filesystem::create_directories(createDirectory, errorCode);
                 const auto rmlPath = createDirectory / (sanitizedName + ".rml");
                 const auto rcssPath = createDirectory / (sanitizedName + ".rcss");
-                if (!error && !std::filesystem::exists(rmlPath) && !std::filesystem::exists(rcssPath))
+
+                if (errorCode)
                 {
-                    std::ofstream rml(rmlPath);
-                    std::ofstream rcss(rcssPath);
-                    rml << "<rml>\n<head>\n  <title>" << sanitizedName
-                        << "</title>\n  <link type=\"text/rcss\" href=\"" << sanitizedName
-                        << ".rcss\"/>\n</head>\n<body>\n  <div id=\"root\">"
-                        << sanitizedName << "</div>\n</body>\n</rml>\n";
-                    rcss << "body { width: 100%; height: 100%; margin: 0; color: #ffffff; }\n"
-                            "#root { padding: 24px; }\n";
-                    if (rml && rcss)
-                    {
-                        project->RefreshAssetRegistry();
-                        m_assetCacheDirty = true;
-                        editorShell.MarkProjectDirty();
-                        editorShell.Log(EditorShell::ConsoleSeverity::Info,
-                                        "Created RmlUi document: " + project->MakeAssetReference(rmlPath));
-                        ImGui::CloseCurrentPopup();
-                    }
-                    else
-                        editorShell.Log(EditorShell::ConsoleSeverity::Error, "Failed to write RmlUi assets.");
+                    m_rmlDocumentCreateError = "Could not create the destination folder: " + errorCode.message();
                 }
                 else
-                    editorShell.Log(EditorShell::ConsoleSeverity::Error, "RmlUi asset already exists or its folder could not be created.");
+                {
+                    const bool rmlExists = std::filesystem::exists(rmlPath, errorCode);
+                    const bool rcssExists = !errorCode && std::filesystem::exists(rcssPath, errorCode);
+                    if (errorCode)
+                    {
+                        m_rmlDocumentCreateError = "Could not inspect the destination: " + errorCode.message();
+                    }
+                    else if (rmlExists || rcssExists)
+                        m_rmlDocumentCreateError = "An RML or RCSS asset with that name already exists.";
+                    else
+                    {
+                        {
+                            std::ofstream rml(rmlPath, std::ios::out | std::ios::trunc);
+                            rml << "<rml>\n<head>\n  <title>" << sanitizedName
+                                << "</title>\n  <link type=\"text/rcss\" href=\"" << sanitizedName
+                                << ".rcss\"/>\n</head>\n<body>\n  <div id=\"root\">"
+                                << sanitizedName << "</div>\n</body>\n</rml>\n";
+                            rml.flush();
+                            if (!rml)
+                                m_rmlDocumentCreateError = "Failed to write " + rmlPath.filename().string() + ".";
+                        }
+
+                        if (m_rmlDocumentCreateError.empty())
+                        {
+                            std::ofstream rcss(rcssPath, std::ios::out | std::ios::trunc);
+                            rcss << "body { width: 100%; height: 100%; margin: 0; color: #ffffff; }\n"
+                                    "#root { padding: 24px; }\n";
+                            rcss.flush();
+                            if (!rcss)
+                                m_rmlDocumentCreateError = "Failed to write " + rcssPath.filename().string() + ".";
+                        }
+
+                        if (m_rmlDocumentCreateError.empty())
+                        {
+                            project->RefreshAssetRegistry();
+                            m_assetCacheDirty = true;
+                            editorShell.MarkProjectDirty();
+                            editorShell.Log(EditorShell::ConsoleSeverity::Info,
+                                            "Created RmlUi document: " + project->MakeAssetReference(rmlPath));
+                            ImGui::CloseCurrentPopup();
+                        }
+                    }
+                }
+
+                if (!m_rmlDocumentCreateError.empty())
+                    editorShell.Log(EditorShell::ConsoleSeverity::Error, m_rmlDocumentCreateError);
             }
             ImGui::EndDisabled();
             ImGui::SameLine();

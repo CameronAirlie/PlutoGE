@@ -57,7 +57,8 @@ namespace PlutoGE::render
                              const std::string &name, const std::string &value);
         bool SubscribeEvent(const std::string &document, const std::string &id, const std::string &event);
         bool ConsumeEvent(const std::string &document, const std::string &id, const std::string &event);
-        [[nodiscard]] bool IsInputCaptured() const;
+        [[nodiscard]] bool IsPointerInputCaptured() const;
+        [[nodiscard]] bool IsKeyboardInputCaptured() const;
         void NotifyEvent(const std::string &key);
         void NotifyEventListenerDetached(const std::string &key, Rml::Element *element);
 

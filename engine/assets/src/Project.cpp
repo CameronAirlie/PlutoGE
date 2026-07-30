@@ -948,6 +948,8 @@ namespace PlutoGE::assets
         {
             return ProjectAssetType::Assembly;
         }
+        if (EndsWithInsensitive(reference, ".rml"))
+            return ProjectAssetType::RmlDocument;
         if (EndsWithInsensitive(reference, ".plutomaterial") || EndsWithInsensitive(reference, ".mat"))
         {
             return ProjectAssetType::Material;
@@ -1034,6 +1036,8 @@ namespace PlutoGE::assets
             return "Assembly";
         case ProjectAssetType::ScriptableObject:
             return "Scriptable Object";
+        case ProjectAssetType::RmlDocument:
+            return "RML Document";
         case ProjectAssetType::Unknown:
         default:
             return "Unknown";
@@ -1074,6 +1078,8 @@ namespace PlutoGE::assets
             return ProjectAssetType::Assembly;
         if (typeName == "Scriptable Object" || typeName == "ScriptableObject")
             return ProjectAssetType::ScriptableObject;
+        if (typeName == "RML Document" || typeName == "RmlDocument")
+            return ProjectAssetType::RmlDocument;
         return ProjectAssetType::Unknown;
     }
 

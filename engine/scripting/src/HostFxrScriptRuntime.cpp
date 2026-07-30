@@ -88,7 +88,7 @@ namespace PlutoGE::scripting
         using set_entity_id_fn = int(__cdecl *)(int64_t, uint32_t);
         using register_game_object_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_prefab_api_fn = int(__cdecl *)(void *);
-        using register_scene_api_fn = int(__cdecl *)(void *, void *);
+        using register_scene_api_fn = int(__cdecl *)(void *, void *, void *);
         using register_scriptable_object_api_fn = int(__cdecl *)(void *);
         using register_component_api_fn = int(__cdecl *)(void *, void *, void *);
         using register_camera_component_api_fn = int(__cdecl *)(void *, void *, void *, void *);
@@ -101,7 +101,7 @@ namespace PlutoGE::scripting
         using register_sound_emitter_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_runtime_ui_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_advanced_ui_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
-        using register_rml_ui_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
+        using register_rml_ui_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_input_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_physics_api_fn = int(__cdecl *)(void *, void *, void *, void *);
         using register_debug_api_fn = int(__cdecl *)(void *);
@@ -222,6 +222,7 @@ namespace PlutoGE::scripting
             UIButton = 11,
             ParticleSystem = 12,
             SoundEmitter = 13,
+            RmlWidget = 14,
         };
 
         std::wstring Utf8ToWide(std::string_view text)
@@ -849,6 +850,8 @@ namespace PlutoGE::scripting
                 return entity->GetComponent<scene::ParticleSystemComponent>();
             case ManagedComponentKind::SoundEmitter:
                 return entity->GetComponent<scene::SoundEmitterComponent>();
+            case ManagedComponentKind::RmlWidget:
+                return entity->GetComponent<scene::RmlWidgetComponent>();
             default:
                 return nullptr;
             }
@@ -1147,6 +1150,12 @@ namespace PlutoGE::scripting
                 return 0;
             }
             return core::Engine::GetInstance().RequestSceneLoad(sceneAssetReference) ? 1 : 0;
+        }
+
+        const char *GetActiveScenePath()
+        {
+            const auto *activeScene = core::Engine::GetInstance().GetScene();
+            return activeScene ? activeScene->GetFilePath().c_str() : "";
         }
 
         void QuitApplication()
@@ -2376,7 +2385,7 @@ namespace PlutoGE::scripting
         {
             if (!IsScriptInputEnabled() ||
                 (keyCode != static_cast<int32_t>(platform::KeyCode::Escape) &&
-                 render::RmlUiRuntime::Get().IsInputCaptured()))
+                 render::RmlUiRuntime::Get().IsKeyboardInputCaptured()))
             {
                 return 0;
             }
@@ -2389,7 +2398,7 @@ namespace PlutoGE::scripting
         {
             if (!IsScriptInputEnabled() ||
                 (keyCode != static_cast<int32_t>(platform::KeyCode::Escape) &&
-                 render::RmlUiRuntime::Get().IsInputCaptured()))
+                 render::RmlUiRuntime::Get().IsKeyboardInputCaptured()))
             {
                 return 0;
             }
@@ -2405,7 +2414,7 @@ namespace PlutoGE::scripting
         {
             if (!IsScriptInputEnabled() ||
                 (keyCode != static_cast<int32_t>(platform::KeyCode::Escape) &&
-                 render::RmlUiRuntime::Get().IsInputCaptured()))
+                 render::RmlUiRuntime::Get().IsKeyboardInputCaptured()))
             {
                 return 0;
             }
@@ -2419,7 +2428,7 @@ namespace PlutoGE::scripting
 
         int32_t GetMouseButtonDown(int32_t button)
         {
-            if (!IsScriptInputEnabled() || render::RmlUiRuntime::Get().IsInputCaptured())
+            if (!IsScriptInputEnabled() || render::RmlUiRuntime::Get().IsPointerInputCaptured())
             {
                 return 0;
             }
@@ -2430,7 +2439,7 @@ namespace PlutoGE::scripting
 
         int32_t GetMouseButtonPressed(int32_t button)
         {
-            if (!IsScriptInputEnabled() || render::RmlUiRuntime::Get().IsInputCaptured())
+            if (!IsScriptInputEnabled() || render::RmlUiRuntime::Get().IsPointerInputCaptured())
             {
                 return 0;
             }
@@ -2441,7 +2450,7 @@ namespace PlutoGE::scripting
 
         int32_t GetMouseButtonReleased(int32_t button)
         {
-            if (!IsScriptInputEnabled() || render::RmlUiRuntime::Get().IsInputCaptured())
+            if (!IsScriptInputEnabled() || render::RmlUiRuntime::Get().IsPointerInputCaptured())
             {
                 return 0;
             }
@@ -2452,7 +2461,7 @@ namespace PlutoGE::scripting
 
         NativeVector3 GetMousePosition()
         {
-            if (!IsScriptInputEnabled() || render::RmlUiRuntime::Get().IsInputCaptured())
+            if (!IsScriptInputEnabled() || render::RmlUiRuntime::Get().IsPointerInputCaptured())
             {
                 return {};
             }
@@ -2463,7 +2472,7 @@ namespace PlutoGE::scripting
 
         NativeVector3 GetMouseDelta()
         {
-            if (!IsScriptInputEnabled() || render::RmlUiRuntime::Get().IsInputCaptured())
+            if (!IsScriptInputEnabled() || render::RmlUiRuntime::Get().IsPointerInputCaptured())
             {
                 return {};
             }
@@ -2474,7 +2483,7 @@ namespace PlutoGE::scripting
 
         NativeVector3 GetMouseScrollDelta()
         {
-            if (!IsScriptInputEnabled() || render::RmlUiRuntime::Get().IsInputCaptured())
+            if (!IsScriptInputEnabled() || render::RmlUiRuntime::Get().IsPointerInputCaptured())
             {
                 return {};
             }
@@ -2694,6 +2703,32 @@ namespace PlutoGE::scripting
         int32_t RmlShowDocument(const char *document, int32_t visible)
         {
             return document && render::RmlUiRuntime::Get().ShowDocument(document, visible != 0);
+        }
+        const char *GetRmlWidgetSource(uint32_t entityId)
+        {
+            thread_local std::string value;
+            auto *entity = FindEntity(entityId);
+            auto *widget = entity ? entity->GetComponent<scene::RmlWidgetComponent>() : nullptr;
+            value = widget ? widget->GetSource() : std::string{};
+            return value.c_str();
+        }
+        void SetRmlWidgetSource(uint32_t entityId, const char *source)
+        {
+            if (auto *entity = FindEntity(entityId))
+                if (auto *widget = entity->GetComponent<scene::RmlWidgetComponent>())
+                    widget->SetSource(source ? source : "");
+        }
+        int32_t GetRmlWidgetVisible(uint32_t entityId)
+        {
+            auto *entity = FindEntity(entityId);
+            auto *widget = entity ? entity->GetComponent<scene::RmlWidgetComponent>() : nullptr;
+            return widget && widget->IsVisible();
+        }
+        void SetRmlWidgetVisible(uint32_t entityId, int32_t visible)
+        {
+            if (auto *entity = FindEntity(entityId))
+                if (auto *widget = entity->GetComponent<scene::RmlWidgetComponent>())
+                    widget->SetVisible(visible != 0);
         }
         int32_t RmlReloadDocument(const char *document)
         {
@@ -3546,6 +3581,7 @@ namespace PlutoGE::scripting
         if (!m_impl->registerSceneApi ||
             m_impl->registerSceneApi(
                 reinterpret_cast<void *>(static_cast<load_scene_fn>(&LoadScene)),
+                reinterpret_cast<void *>(static_cast<get_marshaled_string_fn>(&GetActiveScenePath)),
                 reinterpret_cast<void *>(static_cast<quit_application_fn>(&QuitApplication))) == 0)
         {
             setManagedBridgeFailure("RegisterSceneApi");
@@ -3830,7 +3866,11 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(&RmlSubscribeEvent),
                 reinterpret_cast<void *>(&RmlConsumeEvent),
                 reinterpret_cast<void *>(&GetSceneTimeScale),
-                reinterpret_cast<void *>(&SetSceneTimeScale)) == 0)
+                reinterpret_cast<void *>(&SetSceneTimeScale),
+                reinterpret_cast<void *>(&GetRmlWidgetSource),
+                reinterpret_cast<void *>(&SetRmlWidgetSource),
+                reinterpret_cast<void *>(&GetRmlWidgetVisible),
+                reinterpret_cast<void *>(&SetRmlWidgetVisible)) == 0)
         {
             setManagedBridgeFailure("RegisterRmlUiApi");
             return false;

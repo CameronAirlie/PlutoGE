@@ -68,7 +68,8 @@ namespace PlutoGE::scene
         {
             for (const auto *child : children)
             {
-                if (!child) continue;
+                if (!child)
+                    continue;
                 const glm::vec2 size = glm::clamp(child->GetSizeDelta(), child->GetMinimumSize(), child->GetMaximumSize());
                 result.x += size.x;
                 result.y = std::max(result.y, padding.y + padding.w + size.y);
@@ -79,7 +80,8 @@ namespace PlutoGE::scene
         {
             for (const auto *child : children)
             {
-                if (!child) continue;
+                if (!child)
+                    continue;
                 const glm::vec2 size = glm::clamp(child->GetSizeDelta(), child->GetMinimumSize(), child->GetMaximumSize());
                 result.y += size.y;
                 result.x = std::max(result.x, padding.x + padding.z + size.x);
@@ -122,7 +124,8 @@ namespace PlutoGE::scene
         {
             float preferredTotal = 0.0f;
             for (const auto *item : children)
-                if (item) preferredTotal += glm::clamp(item->GetSizeDelta(), item->GetMinimumSize(), item->GetMaximumSize()).x;
+                if (item)
+                    preferredTotal += glm::clamp(item->GetSizeDelta(), item->GetMinimumSize(), item->GetMaximumSize()).x;
             const float spacingTotal = spacing.x * static_cast<float>(children.size() > 0 ? children.size() - 1 : 0);
             const float extra = layoutGroup.GetExpandChildWidth()
                                     ? std::max(innerSize.x - preferredTotal - spacingTotal, 0.0f) / children.size()
@@ -134,8 +137,10 @@ namespace PlutoGE::scene
                 x += (item ? glm::clamp(item->GetSizeDelta(), item->GetMinimumSize(), item->GetMaximumSize()).x : 0.0f) +
                      extra + spacing.x;
             }
-            if (layoutGroup.GetControlChildWidth()) childSize.x += extra;
-            if (layoutGroup.GetControlChildHeight()) childSize.y = innerSize.y;
+            if (layoutGroup.GetControlChildWidth())
+                childSize.x += extra;
+            if (layoutGroup.GetControlChildHeight())
+                childSize.y = innerSize.y;
             return {.min = {x, innerMin.y + (innerSize.y - childSize.y) * 0.5f},
                     .max = {x + childSize.x, innerMin.y + (innerSize.y + childSize.y) * 0.5f}};
         }
@@ -143,7 +148,8 @@ namespace PlutoGE::scene
         {
             float preferredTotal = 0.0f;
             for (const auto *item : children)
-                if (item) preferredTotal += glm::clamp(item->GetSizeDelta(), item->GetMinimumSize(), item->GetMaximumSize()).y;
+                if (item)
+                    preferredTotal += glm::clamp(item->GetSizeDelta(), item->GetMinimumSize(), item->GetMaximumSize()).y;
             const float spacingTotal = spacing.y * static_cast<float>(children.size() > 0 ? children.size() - 1 : 0);
             const float extra = layoutGroup.GetExpandChildHeight()
                                     ? std::max(innerSize.y - preferredTotal - spacingTotal, 0.0f) / children.size()
@@ -155,8 +161,10 @@ namespace PlutoGE::scene
                 top -= (item ? glm::clamp(item->GetSizeDelta(), item->GetMinimumSize(), item->GetMaximumSize()).y : 0.0f) +
                        extra + spacing.y;
             }
-            if (layoutGroup.GetControlChildWidth()) childSize.x = innerSize.x;
-            if (layoutGroup.GetControlChildHeight()) childSize.y += extra;
+            if (layoutGroup.GetControlChildWidth())
+                childSize.x = innerSize.x;
+            if (layoutGroup.GetControlChildHeight())
+                childSize.y += extra;
             return {.min = {innerMin.x + (innerSize.x - childSize.x) * 0.5f, top - childSize.y},
                     .max = {innerMin.x + (innerSize.x + childSize.x) * 0.5f, top}};
         }
@@ -168,8 +176,10 @@ namespace PlutoGE::scene
             std::max((innerSize.y - spacing.y * std::max(rows - 1, 0)) / rows, 0.0f));
         const int column = static_cast<int>(childIndex % columns);
         const int row = static_cast<int>(childIndex / columns);
-        if (layoutGroup.GetControlChildWidth()) childSize.x = cellSize.x;
-        if (layoutGroup.GetControlChildHeight()) childSize.y = cellSize.y;
+        if (layoutGroup.GetControlChildWidth())
+            childSize.x = cellSize.x;
+        if (layoutGroup.GetControlChildHeight())
+            childSize.y = cellSize.y;
         const glm::vec2 cellMin(innerMin.x + column * (cellSize.x + spacing.x),
                                 innerMax.y - (row + 1) * cellSize.y - row * spacing.y);
         return {.min = cellMin + (cellSize - childSize) * 0.5f,
@@ -276,6 +286,28 @@ namespace PlutoGE::scene
                 m_backend = static_cast<UIRenderBackend>(std::clamp(std::stoi(property.value), 0, 1));
             else if (property.name == "DocumentPath")
                 m_documentPath = property.value;
+        }
+    }
+
+    std::vector<Property> RmlWidgetComponent::Serialize() const
+    {
+        return {
+            {"Enabled", PropertyType::Bool, IsEnabled() ? "true" : "false"},
+            {"Source", PropertyType::String, m_source},
+            {"Visible", PropertyType::Bool, m_visible ? "true" : "false"},
+        };
+    }
+
+    void RmlWidgetComponent::Deserialize(const std::vector<Property> &properties)
+    {
+        for (const auto &property : properties)
+        {
+            if (property.name == "Enabled")
+                SetEnabled(property.value == "true" || property.value == "1");
+            else if (property.name == "Source")
+                m_source = property.value;
+            else if (property.name == "Visible")
+                m_visible = property.value == "true" || property.value == "1";
         }
     }
 

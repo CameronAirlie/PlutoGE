@@ -7,6 +7,7 @@
 #include "PlutoGE/scene/components/MeshComponent.h"
 
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -225,7 +226,7 @@ namespace PlutoGE
     }
 }
 
-int main(int argc, char **argv)
+int RunRuntime(int argc, char **argv)
 {
     if (argc > 1 && std::string_view(argv[1]) == "--export")
     {
@@ -437,7 +438,18 @@ int main(int argc, char **argv)
     PlutoGE::g_runtimeDiagnostics.currentPhase = "load startup scene";
 #endif
 
-    auto scene = PlutoGE::scene::SceneSerializer::Load(startupScenePath, &errorMessage);
+    auto scene = PlutoGE::scene::SceneSerializer::Load(
+        startupScenePath,
+        &errorMessage,
+#ifdef _WIN32
+        [](std::string_view message)
+        {
+            PlutoGE::g_runtimeDiagnostics.Log(std::string(message));
+        }
+#else
+        {}
+#endif
+    );
     if (!scene)
     {
 #ifdef _WIN32
@@ -559,3 +571,15 @@ int main(int argc, char **argv)
 #endif
     return 0;
 }
+
+#if defined(_WIN32) && defined(PLUTO_RUNTIME_WINDOWED)
+int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
+{
+    return RunRuntime(__argc, __argv);
+}
+#else
+int main(int argc, char **argv)
+{
+    return RunRuntime(argc, argv);
+}
+#endif

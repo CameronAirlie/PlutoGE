@@ -14,6 +14,8 @@ endif()
 option(PLUTO_BUILD_EDITOR "Build the PlutoGE Editor" ON)
 option(PLUTO_BUILD_RUNTIME "Build the PlutoGE Runtime" ON)
 option(PLUTO_BUILD_SAMPLES "Build sample applications" ON)
+option(PLUTO_EDITOR_WINDOWED "Build the Windows editor without a console window" OFF)
+option(PLUTO_RUNTIME_WINDOWED "Build the Windows runtime without a console window" OFF)
 
 add_subdirectory(engine)
 

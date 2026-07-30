@@ -39,6 +39,7 @@
             "cacheVariables": {
                 "PLUTO_BUILD_EDITOR": "OFF",
                 "PLUTO_BUILD_RUNTIME": "ON",
+                "PLUTO_RUNTIME_WINDOWED": "ON",
                 "PLUTO_BUILD_SAMPLES": "OFF",
                 "BUILD_TESTING": "OFF",
                 "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}"

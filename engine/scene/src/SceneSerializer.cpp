@@ -616,8 +616,19 @@ namespace PlutoGE::scene
 
     namespace
     {
-        std::unique_ptr<Scene> LoadSceneFromStream(std::istream &input, const std::string &filePath, std::string *errorMessage)
+        std::unique_ptr<Scene> LoadSceneFromStream(std::istream &input,
+                                                   const std::string &filePath,
+                                                   std::string *errorMessage,
+                                                   const SceneSerializer::LoadTraceCallback &trace)
         {
+            const auto reportTrace = [&trace](std::string message)
+            {
+                if (trace)
+                {
+                    trace(message);
+                }
+            };
+
             if (!input.good())
             {
                 if (errorMessage)
@@ -656,8 +667,10 @@ namespace PlutoGE::scene
             std::vector<IblCaptureVolume> iblCaptureVolumes;
 
             std::string line;
+            std::size_t lineNumber = 0;
             while (std::getline(input, line))
             {
+                ++lineNumber;
                 const auto tokens = SplitEscaped(line, '\t');
                 if (tokens.empty())
                 {
@@ -709,6 +722,9 @@ namespace PlutoGE::scene
                     const EntityID parentId = static_cast<EntityID>(std::stoul(tokens[2]));
                     const bool isActive = tokens[3] == "1";
 
+                    reportTrace("Scene load line " + std::to_string(lineNumber) +
+                                ": create entity " + std::to_string(serializedId) +
+                                " ('" + tokens[4] + "')");
                     auto entity = std::make_unique<Entity>(serializedId, EntityConfig{.name = tokens[4]});
                     entity->SetPosition(ParseVec3(tokens[5]));
                     entity->SetRotation(ParseVec3(tokens[6]));
@@ -718,6 +734,8 @@ namespace PlutoGE::scene
                     auto *entityPtr = scene->AddEntity(std::move(entity));
                     entityMap.emplace(serializedId, entityPtr);
                     pendingParents.push_back(PendingEntityParent{.id = serializedId, .parentId = parentId});
+                    reportTrace("Scene load line " + std::to_string(lineNumber) +
+                                ": created entity " + std::to_string(serializedId));
                     continue;
                 }
 
@@ -727,6 +745,9 @@ namespace PlutoGE::scene
                         .entityId = static_cast<EntityID>(std::stoul(tokens[1])),
                         .typeName = tokens[2],
                     };
+                    reportTrace("Scene load line " + std::to_string(lineNumber) +
+                                ": begin component " + activeComponent->typeName +
+                                " on entity " + std::to_string(activeComponent->entityId));
                     continue;
                 }
 
@@ -794,11 +815,27 @@ namespace PlutoGE::scene
                     const auto entityIt = entityMap.find(activeComponent->entityId);
                     if (entityIt != entityMap.end())
                     {
+                        const std::string componentContext =
+                            activeComponent->typeName + " on entity " + std::to_string(activeComponent->entityId);
+                        reportTrace("Scene load line " + std::to_string(lineNumber) +
+                                    ": construct " + componentContext);
                         auto component = CreateComponentForType(activeComponent->typeName);
                         if (component)
                         {
+                            reportTrace("Scene load line " + std::to_string(lineNumber) +
+                                        ": attach " + componentContext);
                             auto *componentPtr = entityIt->second->AddComponent(component.release());
+                            reportTrace("Scene load line " + std::to_string(lineNumber) +
+                                        ": deserialize " + componentContext +
+                                        " (" + std::to_string(activeComponent->properties.size()) + " properties)");
                             componentPtr->Deserialize(activeComponent->properties);
+                            reportTrace("Scene load line " + std::to_string(lineNumber) +
+                                        ": loaded " + componentContext);
+                        }
+                        else
+                        {
+                            reportTrace("Scene load line " + std::to_string(lineNumber) +
+                                        ": skipped unknown " + componentContext);
                         }
                     }
                     activeComponent.reset();
@@ -819,7 +856,10 @@ namespace PlutoGE::scene
                     continue;
                 }
 
+                reportTrace("Scene hierarchy: attach entity " + std::to_string(pendingParent.id) +
+                            " to parent " + std::to_string(pendingParent.parentId));
                 parentIt->second->AddChild(entityIt->second);
+                reportTrace("Scene hierarchy: attached entity " + std::to_string(pendingParent.id));
             }
 
             if (bakedProbeVolume.IsValid())
@@ -846,11 +886,19 @@ namespace PlutoGE::scene
             }
 
             scene->MarkShadowLightsDirty();
+            reportTrace("Scene load completed");
             return scene;
         }
     }
 
     std::unique_ptr<Scene> SceneSerializer::Load(const std::string &filePath, std::string *errorMessage)
+    {
+        return Load(filePath, errorMessage, {});
+    }
+
+    std::unique_ptr<Scene> SceneSerializer::Load(const std::string &filePath,
+                                                 std::string *errorMessage,
+                                                 const LoadTraceCallback &trace)
     {
         std::ifstream input(filePath);
         if (!input.is_open())
@@ -862,12 +910,77 @@ namespace PlutoGE::scene
             return nullptr;
         }
 
-        return LoadSceneFromStream(input, filePath, errorMessage);
+        try
+        {
+            return LoadSceneFromStream(input, filePath, errorMessage, trace);
+        }
+        catch (const std::exception &exception)
+        {
+            const std::string detail = std::string("Scene deserialization threw an exception: ") + exception.what();
+            if (trace)
+            {
+                trace(detail);
+            }
+            if (errorMessage)
+            {
+                *errorMessage = detail;
+            }
+            return nullptr;
+        }
+        catch (...)
+        {
+            constexpr std::string_view detail = "Scene deserialization threw an unknown exception.";
+            if (trace)
+            {
+                trace(detail);
+            }
+            if (errorMessage)
+            {
+                *errorMessage = detail;
+            }
+            return nullptr;
+        }
     }
 
     std::unique_ptr<Scene> SceneSerializer::LoadFromString(const std::string &text, std::string *errorMessage)
     {
+        return LoadFromString(text, errorMessage, {});
+    }
+
+    std::unique_ptr<Scene> SceneSerializer::LoadFromString(const std::string &text,
+                                                           std::string *errorMessage,
+                                                           const LoadTraceCallback &trace)
+    {
         std::istringstream input(text);
-        return LoadSceneFromStream(input, {}, errorMessage);
+        try
+        {
+            return LoadSceneFromStream(input, {}, errorMessage, trace);
+        }
+        catch (const std::exception &exception)
+        {
+            const std::string detail = std::string("Scene deserialization threw an exception: ") + exception.what();
+            if (trace)
+            {
+                trace(detail);
+            }
+            if (errorMessage)
+            {
+                *errorMessage = detail;
+            }
+            return nullptr;
+        }
+        catch (...)
+        {
+            constexpr std::string_view detail = "Scene deserialization threw an unknown exception.";
+            if (trace)
+            {
+                trace(detail);
+            }
+            if (errorMessage)
+            {
+                *errorMessage = detail;
+            }
+            return nullptr;
+        }
     }
 }

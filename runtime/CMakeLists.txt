@@ -4,6 +4,11 @@ add_executable(PlutoGERuntime
 
 if (WIN32)
     target_sources(PlutoGERuntime PRIVATE resources/PlutoGERuntime.rc)
+
+    if (PLUTO_RUNTIME_WINDOWED)
+        set_target_properties(PlutoGERuntime PROPERTIES WIN32_EXECUTABLE TRUE)
+        target_compile_definitions(PlutoGERuntime PRIVATE PLUTO_RUNTIME_WINDOWED=1)
+    endif()
 endif()
 
 target_include_directories(PlutoGERuntime

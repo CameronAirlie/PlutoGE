@@ -12,9 +12,9 @@ namespace PlutoGE::render
     {
     public:
         AutoExposureEffect(
-            float keyValue = 0.18f,
-            float minExposure = 0.35f,
-            float maxExposure = 4.0f,
+            float keyValue = 0.2f,
+            float minExposure = 0.1f,
+            float maxExposure = 1.5f,
             float adaptationSpeedUp = 0.18f,
             float adaptationSpeedDown = 0.06f)
             : m_keyValue(keyValue),

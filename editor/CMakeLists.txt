@@ -4,6 +4,11 @@ add_executable(PlutoGEEditor
 
 if (WIN32)
     target_sources(PlutoGEEditor PRIVATE resources/PlutoGEEditor.rc)
+
+    if (PLUTO_EDITOR_WINDOWED)
+        set_target_properties(PlutoGEEditor PROPERTIES WIN32_EXECUTABLE TRUE)
+        target_compile_definitions(PlutoGEEditor PRIVATE PLUTO_EDITOR_WINDOWED=1)
+    endif()
 endif()
 
 add_subdirectory(ui)

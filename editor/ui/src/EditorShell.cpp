@@ -827,27 +827,10 @@ namespace PlutoGE::ui
     void EditorShell::InitializeEditorCamera()
     {
         m_editorCamera = EditorViewportCamera{};
-        m_editorCamera.AddPostProcessEffectByType("RSM");
-        m_editorCamera.AddPostProcessEffectByType("VolumetricFog");
-        m_editorCamera.AddPostProcessEffectByType("LSAO");
-        m_editorCamera.AddPostProcessEffectByType("SSR");
-        m_editorCamera.AddPostProcessEffectByType("TAA");
-        if (m_editorCamera.AddPostProcessEffectByType("MotionBlur"))
-        {
-            m_editorCamera.GetPostProcessEffect(m_editorCamera.GetPostProcessEffects().size() - 1)->SetEnabled(false);
-        }
-        if (m_editorCamera.AddPostProcessEffectByType("DepthOfField"))
-        {
-            m_editorCamera.GetPostProcessEffect(m_editorCamera.GetPostProcessEffects().size() - 1)->SetEnabled(false);
-        }
-        if (m_editorCamera.AddPostProcessEffectByType("LensFlare"))
-        {
-            m_editorCamera.GetPostProcessEffect(m_editorCamera.GetPostProcessEffects().size() - 1)->SetEnabled(false);
-        }
+        m_editorCamera.AddPostProcessEffectByType("AutoExposure");
         m_editorCamera.AddPostProcessEffectByType("ToneMapping");
         m_editorCamera.AddPostProcessEffectByType("ColorGrading");
         m_editorCamera.AddPostProcessEffectByType("SceneComposite");
-        // m_editorCamera.AddPostProcessEffectByType("GammaCorrection");
     }
 
     void EditorShell::ApplyProjectContext()

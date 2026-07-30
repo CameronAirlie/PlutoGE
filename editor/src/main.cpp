@@ -1,12 +1,17 @@
 #include "PlutoGE/ui/EditorShell.h"
 
+#include <cstdlib>
 #include <iostream>
 #include <vector>
 #include <string>
 #include <memory>
 #include <chrono>
 
-int main(int argc, char **argv)
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
+int RunEditor(int argc, char **argv)
 {
     auto &editor = PlutoGE::ui::EditorShell::GetInstance();
 
@@ -21,3 +26,15 @@ int main(int argc, char **argv)
 
     return 0;
 }
+
+#if defined(_WIN32) && defined(PLUTO_EDITOR_WINDOWED)
+int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
+{
+    return RunEditor(__argc, __argv);
+}
+#else
+int main(int argc, char **argv)
+{
+    return RunEditor(argc, argv);
+}
+#endif

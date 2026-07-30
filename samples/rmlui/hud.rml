@@ -11,15 +11,16 @@
         </div>
 
         <div id="crosshair">
-            <div class="arm top"></div>
-            <div class="arm right"></div>
-            <div class="arm bottom"></div>
-            <div class="arm left"></div>
+            <div id="crosshair-top" class="arm top"></div>
+            <div id="crosshair-right" class="arm right"></div>
+            <div id="crosshair-bottom" class="arm bottom"></div>
+            <div id="crosshair-left" class="arm left"></div>
             <div class="dot"></div>
         </div>
+        <div id="interaction"></div>
 
         <div id="weapon" class="panel">
-            <div class="ammo"><span id="ammo">30</span><span class="reserve"> / 120</span></div>
+            <div class="ammo"><span id="ammo">30</span><span id="reserve" class="reserve"> / 120</span></div>
             <progress id="health" value="82" max="100"></progress>
         </div>
     </div>

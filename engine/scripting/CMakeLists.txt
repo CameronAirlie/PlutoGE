@@ -13,4 +13,5 @@ target_link_libraries(PlutoGEScripting PUBLIC
     PlutoGE::glm
     PlutoGE::Core
     PlutoGE::Scene
+    PlutoGE::Render
 )

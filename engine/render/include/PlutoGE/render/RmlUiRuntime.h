@@ -4,11 +4,15 @@
 #include <cstdint>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
+#include <filesystem>
+#include <vector>
 
 namespace Rml
 {
     class Context;
     class ElementDocument;
+    class EventListener;
 }
 
 class RenderInterface_GL3;
@@ -38,17 +42,40 @@ namespace PlutoGE::render
         void Render(const scene::Scene &scene, int width, int height, std::uint64_t frameSequence);
         [[nodiscard]] bool IsInitialized() const { return m_context != nullptr; }
         [[nodiscard]] Rml::Context *GetContext() const { return m_context; }
+        bool ShowDocument(const std::string &document, bool visible);
+        bool ReloadDocument(const std::string &document);
+        bool SetElementText(const std::string &document, const std::string &id, const std::string &text);
+        std::string GetElementText(const std::string &document, const std::string &id) const;
+        bool SetElementAttribute(const std::string &document, const std::string &id,
+                                 const std::string &name, const std::string &value);
+        std::string GetElementAttribute(const std::string &document, const std::string &id,
+                                        const std::string &name) const;
+        bool SetElementClass(const std::string &document, const std::string &id,
+                             const std::string &name, bool enabled);
+        bool SetElementStyle(const std::string &document, const std::string &id,
+                             const std::string &name, const std::string &value);
+        bool SubscribeEvent(const std::string &document, const std::string &id, const std::string &event);
+        bool ConsumeEvent(const std::string &document, const std::string &id, const std::string &event);
+        [[nodiscard]] bool IsInputCaptured() const;
+        void NotifyEvent(const std::string &key);
 
     private:
         RmlUiRuntime() = default;
         void SynchronizeDocuments(const scene::Scene &scene);
         void ProcessInput(platform::Window &window);
+        Rml::ElementDocument *FindDocument(const std::string &document) const;
+        void AttachEventSubscriptions();
 
         std::unique_ptr<RenderInterface_GL3> m_renderer;
         std::unique_ptr<SystemInterface_GLFW> m_system;
         Rml::Context *m_context = nullptr;
         platform::Window *m_window = nullptr;
         std::unordered_map<std::string, Rml::ElementDocument *> m_documents;
+        std::unordered_map<std::string, std::filesystem::file_time_type> m_documentWriteTimes;
+        std::unordered_map<std::string, int> m_pendingEvents;
+        std::unordered_set<std::string> m_eventSubscriptions;
+        std::unordered_set<std::string> m_attachedEvents;
+        std::vector<std::unique_ptr<Rml::EventListener>> m_eventListeners;
         int m_width = 0;
         int m_height = 0;
         std::uint64_t m_lastInputFrame = 0;

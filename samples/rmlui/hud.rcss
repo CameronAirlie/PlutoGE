@@ -70,6 +70,19 @@ body {
     height: 2px;
 }
 
+#crosshair.hidden { visibility: hidden; }
+#crosshair.headshot .arm { background-color: #ffb020; }
+.arm.hit { background-color: #ff3048; }
+
+#interaction {
+    position: absolute;
+    left: 40%;
+    right: 40%;
+    bottom: 18%;
+    text-align: center;
+    font-size: 16px;
+}
+
 .arm, .dot {
     position: absolute;
     background-color: #ffffff;

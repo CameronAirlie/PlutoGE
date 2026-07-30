@@ -323,6 +323,16 @@ internal static unsafe class ScriptBridge
     private static delegate* unmanaged[Cdecl]<uint, int> _getUITextAlignment;
     private static delegate* unmanaged[Cdecl]<uint, int, void> _setUITextAlignment;
     private static delegate* unmanaged[Cdecl]<ulong> _getUIUpdateSequence;
+    private static delegate* unmanaged[Cdecl]<nint, int, int> _rmlShowDocument;
+    private static delegate* unmanaged[Cdecl]<nint, int> _rmlReloadDocument;
+    private static delegate* unmanaged[Cdecl]<nint, nint, nint, int> _rmlSetText;
+    private static delegate* unmanaged[Cdecl]<nint, nint, nint> _rmlGetText;
+    private static delegate* unmanaged[Cdecl]<nint, nint, nint, nint, int> _rmlSetAttribute;
+    private static delegate* unmanaged[Cdecl]<nint, nint, nint, nint> _rmlGetAttribute;
+    private static delegate* unmanaged[Cdecl]<nint, nint, nint, int, int> _rmlSetClass;
+    private static delegate* unmanaged[Cdecl]<nint, nint, nint, nint, int> _rmlSetStyle;
+    private static delegate* unmanaged[Cdecl]<nint, nint, nint, int> _rmlSubscribeEvent;
+    private static delegate* unmanaged[Cdecl]<nint, nint, nint, int> _rmlConsumeEvent;
     private static delegate* unmanaged[Cdecl]<int, int> _getKeyDown;
     private static delegate* unmanaged[Cdecl]<int, int> _getKeyPressed;
     private static delegate* unmanaged[Cdecl]<int, int> _getKeyReleased;
@@ -1103,6 +1113,32 @@ internal static unsafe class ScriptBridge
         _getUITextAlignment = getUITextAlignment;
         _setUITextAlignment = setUITextAlignment;
         _getUIUpdateSequence = getUIUpdateSequence;
+        return 1;
+    }
+
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterRmlUiApi")]
+    public static int RegisterRmlUiApi(
+        delegate* unmanaged[Cdecl]<nint, int, int> showDocument,
+        delegate* unmanaged[Cdecl]<nint, int> reloadDocument,
+        delegate* unmanaged[Cdecl]<nint, nint, nint, int> setText,
+        delegate* unmanaged[Cdecl]<nint, nint, nint> getText,
+        delegate* unmanaged[Cdecl]<nint, nint, nint, nint, int> setAttribute,
+        delegate* unmanaged[Cdecl]<nint, nint, nint, nint> getAttribute,
+        delegate* unmanaged[Cdecl]<nint, nint, nint, int, int> setClass,
+        delegate* unmanaged[Cdecl]<nint, nint, nint, nint, int> setStyle,
+        delegate* unmanaged[Cdecl]<nint, nint, nint, int> subscribeEvent,
+        delegate* unmanaged[Cdecl]<nint, nint, nint, int> consumeEvent)
+    {
+        _rmlShowDocument = showDocument;
+        _rmlReloadDocument = reloadDocument;
+        _rmlSetText = setText;
+        _rmlGetText = getText;
+        _rmlSetAttribute = setAttribute;
+        _rmlGetAttribute = getAttribute;
+        _rmlSetClass = setClass;
+        _rmlSetStyle = setStyle;
+        _rmlSubscribeEvent = subscribeEvent;
+        _rmlConsumeEvent = consumeEvent;
         return 1;
     }
 
@@ -2267,6 +2303,77 @@ internal static unsafe class ScriptBridge
     internal static int GetUITextAlignment(uint entityId) => _getUITextAlignment == null ? 4 : _getUITextAlignment(entityId);
     internal static void SetUITextAlignment(uint entityId, int value) { if (_setUITextAlignment != null) _setUITextAlignment(entityId, value); }
     internal static ulong GetUIUpdateSequence() => _getUIUpdateSequence == null ? 0UL : _getUIUpdateSequence();
+
+    private static byte[] Utf8(string? value) => Encoding.UTF8.GetBytes((value ?? string.Empty) + '\0');
+
+    internal static bool RmlShowDocument(string document, bool visible)
+    {
+        if (_rmlShowDocument == null) return false;
+        var a = Utf8(document);
+        fixed (byte* p = a) return _rmlShowDocument((nint)p, visible ? 1 : 0) != 0;
+    }
+    internal static bool RmlReloadDocument(string document)
+    {
+        if (_rmlReloadDocument == null) return false;
+        var a = Utf8(document);
+        fixed (byte* p = a) return _rmlReloadDocument((nint)p) != 0;
+    }
+    internal static bool RmlSetText(string document, string id, string value)
+    {
+        if (_rmlSetText == null) return false;
+        var a = Utf8(document); var b = Utf8(id); var c = Utf8(value);
+        fixed (byte* pa = a) fixed (byte* pb = b) fixed (byte* pc = c)
+            return _rmlSetText((nint)pa, (nint)pb, (nint)pc) != 0;
+    }
+    internal static string RmlGetText(string document, string id)
+    {
+        if (_rmlGetText == null) return string.Empty;
+        var a = Utf8(document); var b = Utf8(id);
+        fixed (byte* pa = a) fixed (byte* pb = b)
+            return Marshal.PtrToStringUTF8(_rmlGetText((nint)pa, (nint)pb)) ?? string.Empty;
+    }
+    internal static bool RmlSetAttribute(string document, string id, string name, string value)
+    {
+        if (_rmlSetAttribute == null) return false;
+        var a = Utf8(document); var b = Utf8(id); var c = Utf8(name); var d = Utf8(value);
+        fixed (byte* pa = a) fixed (byte* pb = b) fixed (byte* pc = c) fixed (byte* pd = d)
+            return _rmlSetAttribute((nint)pa, (nint)pb, (nint)pc, (nint)pd) != 0;
+    }
+    internal static string RmlGetAttribute(string document, string id, string name)
+    {
+        if (_rmlGetAttribute == null) return string.Empty;
+        var a = Utf8(document); var b = Utf8(id); var c = Utf8(name);
+        fixed (byte* pa = a) fixed (byte* pb = b) fixed (byte* pc = c)
+            return Marshal.PtrToStringUTF8(_rmlGetAttribute((nint)pa, (nint)pb, (nint)pc)) ?? string.Empty;
+    }
+    internal static bool RmlSetClass(string document, string id, string name, bool enabled)
+    {
+        if (_rmlSetClass == null) return false;
+        var a = Utf8(document); var b = Utf8(id); var c = Utf8(name);
+        fixed (byte* pa = a) fixed (byte* pb = b) fixed (byte* pc = c)
+            return _rmlSetClass((nint)pa, (nint)pb, (nint)pc, enabled ? 1 : 0) != 0;
+    }
+    internal static bool RmlSetStyle(string document, string id, string name, string value)
+    {
+        if (_rmlSetStyle == null) return false;
+        var a = Utf8(document); var b = Utf8(id); var c = Utf8(name); var d = Utf8(value);
+        fixed (byte* pa = a) fixed (byte* pb = b) fixed (byte* pc = c) fixed (byte* pd = d)
+            return _rmlSetStyle((nint)pa, (nint)pb, (nint)pc, (nint)pd) != 0;
+    }
+    internal static bool RmlSubscribeEvent(string document, string id, string eventName)
+    {
+        if (_rmlSubscribeEvent == null) return false;
+        var a = Utf8(document); var b = Utf8(id); var c = Utf8(eventName);
+        fixed (byte* pa = a) fixed (byte* pb = b) fixed (byte* pc = c)
+            return _rmlSubscribeEvent((nint)pa, (nint)pb, (nint)pc) != 0;
+    }
+    internal static bool RmlConsumeEvent(string document, string id, string eventName)
+    {
+        if (_rmlConsumeEvent == null) return false;
+        var a = Utf8(document); var b = Utf8(id); var c = Utf8(eventName);
+        fixed (byte* pa = a) fixed (byte* pb = b) fixed (byte* pc = c)
+            return _rmlConsumeEvent((nint)pa, (nint)pb, (nint)pc) != 0;
+    }
 
     internal static Vector3 GetUIImageColor(uint entityId) => _getUIImageColor == null ? Vector3.One : _getUIImageColor(entityId).ToManaged();
     internal static void SetUIImageColor(uint entityId, Vector3 value) { if (_setUIImageColor != null) _setUIImageColor(entityId, NativeVector3.FromManaged(value)); }

@@ -25,6 +25,17 @@ int main()
         return 1;
     }
 
+    canvas.SetBackend(UIRenderBackend::RmlUi);
+    canvas.SetDocumentPath("UI/Hud.rml");
+    CanvasComponent restoredCanvas;
+    restoredCanvas.Deserialize(canvas.Serialize());
+    if (restoredCanvas.GetBackend() != UIRenderBackend::RmlUi ||
+        restoredCanvas.GetDocumentPath() != "UI/Hud.rml")
+    {
+        std::cerr << "RmlUi canvas serialization failed.\n";
+        return 1;
+    }
+
     RectTransformComponent centered;
     centered.SetAnchorPreset(UIAnchorPreset::MiddleCenter);
     centered.SetSizeDelta({200.0f, 100.0f});

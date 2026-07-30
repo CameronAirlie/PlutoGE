@@ -8,6 +8,8 @@
 #include "PlutoGE/scene/components/UIComponent.h"
 
 #include <RmlUi/Core.h>
+#include <RmlUi/Core/Event.h>
+#include <RmlUi/Core/EventListener.h>
 #include <RmlUi_Platform_GLFW.h>
 #include <RmlUi_Renderer_GL3.h>
 
@@ -20,6 +22,42 @@ namespace PlutoGE::render
 {
     namespace
     {
+        constexpr char kEventSeparator = '\x1f';
+
+        std::string EventKey(const std::string &document, const std::string &id, const std::string &event)
+        {
+            return document + kEventSeparator + id + kEventSeparator + event;
+        }
+
+        std::filesystem::file_time_type DocumentSourceWriteTime(const std::filesystem::path &document,
+                                                                std::error_code &error)
+        {
+            auto newest = std::filesystem::last_write_time(document, error);
+            if (error) return {};
+            for (std::filesystem::directory_iterator it(document.parent_path(), error), end; !error && it != end; it.increment(error))
+            {
+                if (it->is_regular_file() && it->path().extension() == ".rcss")
+                {
+                    std::error_code timeError;
+                    newest = std::max(newest, std::filesystem::last_write_time(it->path(), timeError));
+                }
+            }
+            return newest;
+        }
+
+        class RuntimeEventListener final : public Rml::EventListener
+        {
+        public:
+            RuntimeEventListener(RmlUiRuntime &owner, std::string key)
+                : m_owner(owner), m_key(std::move(key)) {}
+
+            void ProcessEvent(Rml::Event &) override { m_owner.NotifyEvent(m_key); }
+
+        private:
+            RmlUiRuntime &m_owner;
+            std::string m_key;
+        };
+
         void CollectDocuments(scene::Entity *entity, std::unordered_set<std::string> &paths)
         {
             if (!entity || !entity->IsActive())
@@ -111,6 +149,11 @@ namespace PlutoGE::render
             return;
 
         m_documents.clear();
+        m_documentWriteTimes.clear();
+        m_eventListeners.clear();
+        m_eventSubscriptions.clear();
+        m_attachedEvents.clear();
+        m_pendingEvents.clear();
         if (m_context)
         {
             Rml::RemoveContext(m_context->GetName());
@@ -137,6 +180,7 @@ namespace PlutoGE::render
             {
                 if (it->second)
                     it->second->Close();
+                m_documentWriteTimes.erase(it->first);
                 it = m_documents.erase(it);
             }
             else
@@ -149,7 +193,15 @@ namespace PlutoGE::render
         for (const auto &reference : requestedPaths)
         {
             if (m_documents.contains(reference))
+            {
+                const std::string resolved = assets.ResolveAssetPath(reference);
+                std::error_code error;
+                const auto writeTime = DocumentSourceWriteTime(resolved, error);
+                const auto known = m_documentWriteTimes.find(reference);
+                if (!error && known != m_documentWriteTimes.end() && writeTime != known->second)
+                    ReloadDocument(reference);
                 continue;
+            }
 
             const std::string path = assets.ResolveAssetPath(reference);
             if (path.empty())
@@ -158,8 +210,160 @@ namespace PlutoGE::render
             {
                 document->Show();
                 m_documents.emplace(reference, document);
+                std::error_code error;
+                const auto writeTime = DocumentSourceWriteTime(path, error);
+                if (!error)
+                    m_documentWriteTimes[reference] = writeTime;
             }
         }
+        AttachEventSubscriptions();
+    }
+
+    Rml::ElementDocument *RmlUiRuntime::FindDocument(const std::string &document) const
+    {
+        const auto found = m_documents.find(document);
+        return found == m_documents.end() ? nullptr : found->second;
+    }
+
+    bool RmlUiRuntime::ShowDocument(const std::string &document, bool visible)
+    {
+        auto *target = FindDocument(document);
+        if (!target)
+            return false;
+        if (visible) target->Show();
+        else target->Hide();
+        return true;
+    }
+
+    bool RmlUiRuntime::ReloadDocument(const std::string &document)
+    {
+        if (!m_context)
+            return false;
+        auto &assets = core::Engine::GetInstance().GetAssetManager();
+        const std::string path = assets.ResolveAssetPath(document);
+        if (path.empty())
+            return false;
+        if (auto found = m_documents.find(document); found != m_documents.end())
+        {
+            if (found->second) found->second->Close();
+            m_documents.erase(found);
+        }
+        m_eventListeners.clear();
+        m_attachedEvents.clear();
+        auto *loaded = m_context->LoadDocument(path);
+        if (!loaded)
+            return false;
+        loaded->Show();
+        m_documents[document] = loaded;
+        std::error_code error;
+        const auto writeTime = DocumentSourceWriteTime(path, error);
+        if (!error) m_documentWriteTimes[document] = writeTime;
+        AttachEventSubscriptions();
+        return true;
+    }
+
+    bool RmlUiRuntime::SetElementText(const std::string &document, const std::string &id, const std::string &text)
+    {
+        auto *doc = FindDocument(document);
+        auto *element = doc ? doc->GetElementById(id) : nullptr;
+        if (!element) return false;
+        element->SetInnerRML(text);
+        return true;
+    }
+
+    std::string RmlUiRuntime::GetElementText(const std::string &document, const std::string &id) const
+    {
+        auto *doc = FindDocument(document);
+        auto *element = doc ? doc->GetElementById(id) : nullptr;
+        return element ? element->GetInnerRML() : std::string{};
+    }
+
+    bool RmlUiRuntime::SetElementAttribute(const std::string &document, const std::string &id,
+                                           const std::string &name, const std::string &value)
+    {
+        auto *doc = FindDocument(document);
+        auto *element = doc ? doc->GetElementById(id) : nullptr;
+        if (!element) return false;
+        element->SetAttribute(name, value);
+        return true;
+    }
+
+    std::string RmlUiRuntime::GetElementAttribute(const std::string &document, const std::string &id,
+                                                  const std::string &name) const
+    {
+        auto *doc = FindDocument(document);
+        auto *element = doc ? doc->GetElementById(id) : nullptr;
+        return element ? element->GetAttribute<Rml::String>(name, {}) : std::string{};
+    }
+
+    bool RmlUiRuntime::SetElementClass(const std::string &document, const std::string &id,
+                                       const std::string &name, bool enabled)
+    {
+        auto *doc = FindDocument(document);
+        auto *element = doc ? doc->GetElementById(id) : nullptr;
+        if (!element) return false;
+        element->SetClass(name, enabled);
+        return true;
+    }
+
+    bool RmlUiRuntime::SetElementStyle(const std::string &document, const std::string &id,
+                                       const std::string &name, const std::string &value)
+    {
+        auto *doc = FindDocument(document);
+        auto *element = doc ? doc->GetElementById(id) : nullptr;
+        return element && element->SetProperty(name, value);
+    }
+
+    bool RmlUiRuntime::SubscribeEvent(const std::string &document, const std::string &id, const std::string &event)
+    {
+        const std::string key = EventKey(document, id, event);
+        m_eventSubscriptions.insert(key);
+        AttachEventSubscriptions();
+        return m_attachedEvents.contains(key);
+    }
+
+    bool RmlUiRuntime::ConsumeEvent(const std::string &document, const std::string &id, const std::string &event)
+    {
+        const std::string key = EventKey(document, id, event);
+        auto found = m_pendingEvents.find(key);
+        if (found == m_pendingEvents.end() || found->second <= 0)
+            return false;
+        --found->second;
+        return true;
+    }
+
+    void RmlUiRuntime::NotifyEvent(const std::string &key)
+    {
+        ++m_pendingEvents[key];
+    }
+
+    void RmlUiRuntime::AttachEventSubscriptions()
+    {
+        for (const auto &key : m_eventSubscriptions)
+        {
+            if (m_attachedEvents.contains(key))
+                continue;
+            const auto first = key.find(kEventSeparator);
+            const auto second = key.find(kEventSeparator, first + 1);
+            if (first == std::string::npos || second == std::string::npos)
+                continue;
+            const std::string document = key.substr(0, first);
+            const std::string id = key.substr(first + 1, second - first - 1);
+            const std::string event = key.substr(second + 1);
+            auto *doc = FindDocument(document);
+            auto *element = doc ? doc->GetElementById(id) : nullptr;
+            if (!element)
+                continue;
+            auto listener = std::make_unique<RuntimeEventListener>(*this, key);
+            element->AddEventListener(event, listener.get());
+            m_eventListeners.push_back(std::move(listener));
+            m_attachedEvents.insert(key);
+        }
+    }
+
+    bool RmlUiRuntime::IsInputCaptured() const
+    {
+        return m_context && (m_context->IsMouseInteracting() || m_context->GetFocusElement() != nullptr);
     }
 
     void RmlUiRuntime::ProcessInput(platform::Window &window)

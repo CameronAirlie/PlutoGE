@@ -981,7 +981,9 @@ namespace PlutoGE::ui
             return false;
         }
 
-        const auto scriptCoreReference = MakeRelativeOrAbsoluteGenericPath(scriptCoreProjectPath,
+        const auto scriptCoreAssemblyPath = FindScriptCoreAssemblyPath(GetProcessDirectory());
+        const auto scriptCoreReferencePath = scriptCoreAssemblyPath.empty() ? scriptCoreProjectPath : scriptCoreAssemblyPath;
+        const auto scriptCoreReference = MakeRelativeOrAbsoluteGenericPath(scriptCoreReferencePath,
                                                                            scriptProjectPath.parent_path());
         if (scriptCoreReference.empty())
         {
@@ -992,7 +994,9 @@ namespace PlutoGE::ui
             return false;
         }
 
-        const auto scriptCoreDirectory = MakeRelativeOrAbsoluteGenericPath(scriptCoreProjectPath.parent_path(),
+        const auto scriptCoreRuntimeDirectoryPath =
+            scriptCoreAssemblyPath.empty() ? scriptCoreProjectPath.parent_path() : scriptCoreAssemblyPath.parent_path();
+        const auto scriptCoreDirectory = MakeRelativeOrAbsoluteGenericPath(scriptCoreRuntimeDirectoryPath,
                                                                            scriptProjectPath.parent_path());
         if (scriptCoreDirectory.empty())
         {
@@ -1036,12 +1040,33 @@ namespace PlutoGE::ui
         scriptProjectContent += "    <Compile Include=\"" + sourcePattern + "\" />\n";
         scriptProjectContent += "  </ItemGroup>\n";
         scriptProjectContent += "  <ItemGroup>\n";
-        scriptProjectContent += "    <ProjectReference Include=\"" + scriptCoreReference + "\" />\n";
+        if (scriptCoreAssemblyPath.empty())
+        {
+            scriptProjectContent += "    <ProjectReference Include=\"" + scriptCoreReference + "\" />\n";
+        }
+        else
+        {
+            // Installed editor SDKs normally live under Program Files and are not
+            // writable by the current user. Referencing the packaged assembly keeps
+            // MSBuild from trying to create bin/obj folders inside the installation.
+            scriptProjectContent += "    <Reference Include=\"PlutoGE.ScriptCore\">\n";
+            scriptProjectContent += "      <HintPath>" + scriptCoreReference + "</HintPath>\n";
+            scriptProjectContent += "      <Private>true</Private>\n";
+            scriptProjectContent += "    </Reference>\n";
+        }
         scriptProjectContent += "  </ItemGroup>\n";
         scriptProjectContent += "  <Target Name=\"CopyScriptCoreRuntimeFiles\" AfterTargets=\"Build\">\n";
         scriptProjectContent += "    <ItemGroup>\n";
-        scriptProjectContent += "      <ScriptCoreRuntimeFiles Include=\"" + scriptCoreDirectory + "/bin/$(Configuration)/$(TargetFramework)/PlutoGE.ScriptCore.runtimeconfig.json\" />\n";
-        scriptProjectContent += "      <ScriptCoreRuntimeFiles Include=\"" + scriptCoreDirectory + "/bin/$(Configuration)/$(TargetFramework)/PlutoGE.ScriptCore.deps.json\" Condition=\"Exists('" + scriptCoreDirectory + "/bin/$(Configuration)/$(TargetFramework)/PlutoGE.ScriptCore.deps.json')\" />\n";
+        if (scriptCoreAssemblyPath.empty())
+        {
+            scriptProjectContent += "      <ScriptCoreRuntimeFiles Include=\"" + scriptCoreDirectory + "/bin/$(Configuration)/$(TargetFramework)/PlutoGE.ScriptCore.runtimeconfig.json\" />\n";
+            scriptProjectContent += "      <ScriptCoreRuntimeFiles Include=\"" + scriptCoreDirectory + "/bin/$(Configuration)/$(TargetFramework)/PlutoGE.ScriptCore.deps.json\" Condition=\"Exists('" + scriptCoreDirectory + "/bin/$(Configuration)/$(TargetFramework)/PlutoGE.ScriptCore.deps.json')\" />\n";
+        }
+        else
+        {
+            scriptProjectContent += "      <ScriptCoreRuntimeFiles Include=\"" + scriptCoreDirectory + "/PlutoGE.ScriptCore.runtimeconfig.json\" />\n";
+            scriptProjectContent += "      <ScriptCoreRuntimeFiles Include=\"" + scriptCoreDirectory + "/PlutoGE.ScriptCore.deps.json\" Condition=\"Exists('" + scriptCoreDirectory + "/PlutoGE.ScriptCore.deps.json')\" />\n";
+        }
         scriptProjectContent += "    </ItemGroup>\n";
         scriptProjectContent += "    <Copy SourceFiles=\"@(ScriptCoreRuntimeFiles)\" DestinationFolder=\"$(OutputPath)\" SkipUnchangedFiles=\"true\" Condition=\"@(ScriptCoreRuntimeFiles) != ''\" />\n";
         scriptProjectContent += "  </Target>\n";

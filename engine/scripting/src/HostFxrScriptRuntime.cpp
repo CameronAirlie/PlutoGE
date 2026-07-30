@@ -1151,7 +1151,7 @@ namespace PlutoGE::scripting
 
         void QuitApplication()
         {
-            core::Engine::GetInstance().GetWindow().RequestClose();
+            core::Engine::GetInstance().RequestApplicationQuit();
         }
 
         const char *LoadScriptableObjectAsset(const char *assetReference)

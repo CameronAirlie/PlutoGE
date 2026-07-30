@@ -545,6 +545,25 @@ namespace PlutoGE::core
         return request;
     }
 
+    void Engine::RequestApplicationQuit()
+    {
+        if (m_config.isEditorHost)
+        {
+            m_pendingApplicationQuitRequest = true;
+        }
+        else
+        {
+            m_window.RequestClose();
+        }
+    }
+
+    bool Engine::ConsumeApplicationQuitRequest()
+    {
+        const bool requested = m_pendingApplicationQuitRequest;
+        m_pendingApplicationQuitRequest = false;
+        return requested;
+    }
+
     void Engine::StartRuntime()
     {
         if (m_isRuntimeRunning)
@@ -573,6 +592,7 @@ namespace PlutoGE::core
 
         m_isRuntimeRunning = false;
         m_pendingSceneLoadRequest.reset();
+        m_pendingApplicationQuitRequest = false;
     }
 
     void Engine::Shutdown()

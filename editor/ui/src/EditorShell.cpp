@@ -2441,6 +2441,7 @@ namespace PlutoGE::ui
                 .visible = true,
                 .fullscreen = false,
             }};
+        config.isEditorHost = true;
         if (!m_engine.Initialize(config))
         {
             std::cerr << "Failed to initialize Engine in EditorShell" << std::endl;
@@ -2808,7 +2809,14 @@ namespace PlutoGE::ui
                 }
                 if (isRuntimeRunning)
                 {
-                    HandleRuntimeSceneLoadRequest();
+                    if (m_engine.ConsumeApplicationQuitRequest())
+                    {
+                        StopEditorRuntime();
+                    }
+                    else
+                    {
+                        HandleRuntimeSceneLoadRequest();
+                    }
                 }
             }
             const auto sceneUpdateEnd = std::chrono::high_resolution_clock::now();

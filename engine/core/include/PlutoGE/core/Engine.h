@@ -41,8 +41,8 @@ namespace PlutoGE::core
 
     struct EngineConfig
     {
-        // Future configuration options can be added here
         platform::WindowConfig windowConfig; // Configuration for the window, set during initialization
+        bool isEditorHost = false;
     };
 
     struct MeshImportStatus
@@ -89,6 +89,8 @@ namespace PlutoGE::core
         void SetScene(scene::Scene *scene);
         bool RequestSceneLoad(std::string sceneAssetReference);
         std::optional<std::string> ConsumeSceneLoadRequest();
+        void RequestApplicationQuit();
+        [[nodiscard]] bool ConsumeApplicationQuitRequest();
 
     private:
         struct PendingMeshImportJob
@@ -124,5 +126,6 @@ namespace PlutoGE::core
         bool m_isInitialized = false;
         bool m_isRuntimeRunning = false;
         std::optional<std::string> m_pendingSceneLoadRequest;
+        bool m_pendingApplicationQuitRequest = false;
     };
 }

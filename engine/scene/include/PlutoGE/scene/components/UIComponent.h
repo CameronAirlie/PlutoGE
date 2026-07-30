@@ -27,6 +27,12 @@ namespace PlutoGE::scene
         ConstantPhysicalSize,
     };
 
+    enum class UIRenderBackend
+    {
+        Native = 0,
+        RmlUi,
+    };
+
     enum class UIScreenMatchMode
     {
         MatchWidthOrHeight = 0,
@@ -128,6 +134,10 @@ namespace PlutoGE::scene
         void SetWorldSizeMode(UIWorldSizeMode mode) { m_worldSizeMode = mode; }
         bool GetFaceCamera() const { return m_faceCamera; }
         void SetFaceCamera(bool value) { m_faceCamera = value; }
+        UIRenderBackend GetBackend() const { return m_backend; }
+        void SetBackend(UIRenderBackend value) { m_backend = value; }
+        const std::string &GetDocumentPath() const { return m_documentPath; }
+        void SetDocumentPath(std::string value) { m_documentPath = std::move(value); }
 
     private:
         CanvasRenderMode m_renderMode = CanvasRenderMode::ScreenSpaceOverlay;
@@ -139,6 +149,8 @@ namespace PlutoGE::scene
         float m_matchWidthOrHeight = 0.5f;
         int m_sortingOrder = 0;
         bool m_faceCamera = true;
+        UIRenderBackend m_backend = UIRenderBackend::Native;
+        std::string m_documentPath;
     };
 
     class RectTransformComponent : public TypedComponent<RectTransformComponent>

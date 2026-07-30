@@ -1,0 +1,27 @@
+<rml>
+<head>
+    <title>PlutoGE RmlUi HUD</title>
+    <link type="text/rcss" href="hud.rcss"/>
+</head>
+<body>
+    <div id="hud">
+        <div id="objective" class="panel">
+            <div class="eyebrow">OBJECTIVE</div>
+            <div id="objective-title">Reach the extraction point</div>
+        </div>
+
+        <div id="crosshair">
+            <div class="arm top"></div>
+            <div class="arm right"></div>
+            <div class="arm bottom"></div>
+            <div class="arm left"></div>
+            <div class="dot"></div>
+        </div>
+
+        <div id="weapon" class="panel">
+            <div class="ammo"><span id="ammo">30</span><span class="reserve"> / 120</span></div>
+            <progress id="health" value="82" max="100"></progress>
+        </div>
+    </div>
+</body>
+</rml>

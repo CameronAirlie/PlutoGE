@@ -869,6 +869,8 @@ namespace PlutoGE::render
 
             if (auto *canvas = entity->GetComponent<scene::CanvasComponent>(); canvas && canvas->IsEnabled())
             {
+                if (canvas->GetBackend() == scene::UIRenderBackend::RmlUi)
+                    return;
                 activeCanvas.component = canvas;
                 const float scaleFactor = scene::ResolveCanvasScaleFactor(*canvas, viewportSize);
                 activeCanvas.parentRect = scene::RectTransformLayout{

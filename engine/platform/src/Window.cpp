@@ -150,6 +150,12 @@ namespace PlutoGE::platform
                 }
             } });
 
+        glfwSetCharCallback(static_cast<GLFWwindow *>(m_window), [](GLFWwindow *window, unsigned int codepoint)
+                            {
+            auto *instance = static_cast<Window *>(glfwGetWindowUserPointer(window));
+            if (instance)
+                instance->m_inputState.textInput.push_back(codepoint); });
+
         glfwSetMouseButtonCallback(static_cast<GLFWwindow *>(m_window), [](GLFWwindow *window, int button, int action, int mods)
                                    {
             auto *instance = static_cast<Window *>(glfwGetWindowUserPointer(window));

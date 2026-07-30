@@ -17,6 +17,8 @@
 #include "PlutoGE/render/passes/ParticlePass.h"
 #include "PlutoGE/render/passes/PhysicalSkyPass.h"
 #include "PlutoGE/render/passes/RuntimeUIPass.h"
+#include "PlutoGE/render/passes/RmlUiPass.h"
+#include "PlutoGE/render/RmlUiRuntime.h"
 #include "PlutoGE/render/passes/ShadowPass.h"
 #include "PlutoGE/render/passes/TransparentPass.h"
 #include "PlutoGE/render/passes/VolumetricCloudPass.h"
@@ -391,6 +393,10 @@ namespace PlutoGE::render
         auto runtimeUIPass = new RuntimeUIPass();
         runtimeUIPass->Initialize();
         m_renderPasses.push_back(runtimeUIPass);
+
+        auto rmlUiPass = new RmlUiPass();
+        rmlUiPass->Initialize();
+        m_renderPasses.push_back(rmlUiPass);
 
         InitializeGpuTimers();
 
@@ -977,6 +983,7 @@ namespace PlutoGE::render
     void Renderer::Shutdown(RenderTarget *renderTarget)
     {
         // Clean up rendering resources here
+        RmlUiRuntime::Get().Shutdown();
         m_isInitialized = false;
         CleanupResources(renderTarget);
         CleanupFrameResources();

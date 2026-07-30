@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <array>
+#include <vector>
 
 namespace PlutoGE::platform
 {
@@ -81,6 +82,7 @@ namespace PlutoGE::platform
         MouseState mouseState;
         std::array<bool, 512> keys = {false};
         std::array<bool, 512> previousKeys = {false};
+        std::vector<std::uint32_t> textInput;
 
         [[nodiscard]] bool IsKeyDown(KeyCode key) const
         {
@@ -133,6 +135,7 @@ namespace PlutoGE::platform
             mouseState.scrollDeltaY = 0.0;
             escapePressed = false;
             quitRequested = false;
+            textInput.clear();
         }
 
         void ClearKeyStates()
@@ -151,6 +154,7 @@ namespace PlutoGE::platform
             mouseState.deltaY = 0.0;
             mouseState.scrollDeltaX = 0.0;
             mouseState.scrollDeltaY = 0.0;
+            textInput.clear();
         }
     };
 } // namespace PlutoGE::platform

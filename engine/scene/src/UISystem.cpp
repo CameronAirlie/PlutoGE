@@ -60,6 +60,8 @@ namespace PlutoGE::scene
 
         if (auto *ownCanvas = entity->GetComponent<CanvasComponent>(); ownCanvas && ownCanvas->IsEnabled())
         {
+            if (ownCanvas->GetBackend() == UIRenderBackend::RmlUi)
+                return;
             canvas = ownCanvas;
             const float scale = ResolveCanvasScaleFactor(*canvas, viewportSize);
             parentRect = RectTransformLayout{.min = glm::vec2(0.0f), .max = viewportSize / scale};

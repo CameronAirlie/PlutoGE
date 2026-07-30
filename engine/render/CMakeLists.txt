@@ -41,6 +41,8 @@ add_library(PlutoGERender
     src/passes/PostProcessPass.cpp
     src/passes/PhysicalSkyPass.cpp
     src/passes/RuntimeUIPass.cpp
+    src/RmlUiRuntime.cpp
+    src/passes/RmlUiPass.cpp
 )
 
 add_library(PlutoGE::Render ALIAS PlutoGERender)
@@ -57,4 +59,5 @@ target_link_libraries(PlutoGERender PUBLIC
     PlutoGE::glad
     PlutoGE::Scene
     PlutoGE::stb_image
+    PlutoGE::rmlui
 )

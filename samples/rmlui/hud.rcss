@@ -1,0 +1,94 @@
+@font-face {
+    font-family: Martian;
+    src: url("../../editor/resources/fonts/MartianMono-StdRg.ttf");
+}
+
+body {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    color: #f3f7ff;
+    font-family: Martian;
+    pointer-events: none;
+}
+
+#hud {
+    width: 100%;
+    height: 100%;
+}
+
+.panel {
+    position: absolute;
+    padding: 14px 18px;
+    background-color: #101720d9;
+    border: 1px #80d8ff66;
+}
+
+#objective {
+    top: 32px;
+    left: 32px;
+}
+
+.eyebrow {
+    color: #80d8ff;
+    font-size: 12px;
+    letter-spacing: 2px;
+}
+
+#objective-title {
+    margin-top: 6px;
+    font-size: 18px;
+}
+
+#weapon {
+    right: 32px;
+    bottom: 32px;
+    width: 260px;
+}
+
+.ammo {
+    text-align: right;
+    font-size: 36px;
+}
+
+.reserve {
+    color: #a8b3c2;
+    font-size: 18px;
+}
+
+#health {
+    width: 100%;
+    height: 8px;
+    margin-top: 10px;
+}
+
+#crosshair {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 2px;
+    height: 2px;
+}
+
+.arm, .dot {
+    position: absolute;
+    background-color: #ffffff;
+}
+
+.top, .bottom {
+    width: 2px;
+    height: 9px;
+    left: 0;
+}
+
+.left, .right {
+    width: 9px;
+    height: 2px;
+    top: 0;
+}
+
+.top { top: -18px; }
+.right { left: 10px; }
+.bottom { top: 10px; }
+.left { left: -18px; }
+.dot { width: 2px; height: 2px; }

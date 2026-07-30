@@ -224,6 +224,14 @@ namespace PlutoGE::platform
         glfwTerminate();
     }
 
+    void Window::RequestClose()
+    {
+        if (m_window)
+        {
+            glfwSetWindowShouldClose(m_window, GLFW_TRUE);
+        }
+    }
+
     void Window::SetTitle(const std::string &title)
     {
         m_config.title = title;

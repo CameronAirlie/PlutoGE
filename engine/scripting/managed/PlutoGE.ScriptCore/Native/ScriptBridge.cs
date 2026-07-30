@@ -142,6 +142,7 @@ internal static unsafe class ScriptBridge
     private static delegate* unmanaged[Cdecl]<byte*, int, uint> _getEntityByTag;
     private static delegate* unmanaged[Cdecl]<byte*, uint> _instantiatePrefab;
     private static delegate* unmanaged[Cdecl]<byte*, int> _loadScene;
+    private static delegate* unmanaged[Cdecl]<void> _quitApplication;
     private static delegate* unmanaged[Cdecl]<byte*, nint> _loadScriptableObjectAsset;
     private static delegate* unmanaged[Cdecl]<uint, int, int> _hasComponent;
     private static delegate* unmanaged[Cdecl]<uint, int, int> _getComponentEnabled;
@@ -557,15 +558,18 @@ internal static unsafe class ScriptBridge
     }
 
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterSceneApi")]
-    public static int RegisterSceneApi(delegate* unmanaged[Cdecl]<byte*, int> loadScene)
+    public static int RegisterSceneApi(
+        delegate* unmanaged[Cdecl]<byte*, int> loadScene,
+        delegate* unmanaged[Cdecl]<void> quitApplication)
     {
-        if (loadScene == null)
+        if (loadScene == null || quitApplication == null)
         {
             SetError("Managed scene API registration received a null function pointer.");
             return 0;
         }
 
         _loadScene = loadScene;
+        _quitApplication = quitApplication;
         _lastError = string.Empty;
         return 1;
     }
@@ -1733,6 +1737,14 @@ internal static unsafe class ScriptBridge
         fixed (byte* referencePtr = referenceBytes)
         {
             return _loadScene(referencePtr) != 0;
+        }
+    }
+
+    internal static void QuitApplication()
+    {
+        if (_quitApplication != null)
+        {
+            _quitApplication();
         }
     }
 

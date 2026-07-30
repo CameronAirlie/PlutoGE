@@ -88,7 +88,7 @@ namespace PlutoGE::scripting
         using set_entity_id_fn = int(__cdecl *)(int64_t, uint32_t);
         using register_game_object_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_prefab_api_fn = int(__cdecl *)(void *);
-        using register_scene_api_fn = int(__cdecl *)(void *);
+        using register_scene_api_fn = int(__cdecl *)(void *, void *);
         using register_scriptable_object_api_fn = int(__cdecl *)(void *);
         using register_component_api_fn = int(__cdecl *)(void *, void *, void *);
         using register_camera_component_api_fn = int(__cdecl *)(void *, void *, void *, void *);
@@ -150,6 +150,7 @@ namespace PlutoGE::scripting
         using get_entity_by_tag_fn = uint32_t(__cdecl *)(const char *, int32_t);
         using instantiate_prefab_fn = uint32_t(__cdecl *)(const char *);
         using load_scene_fn = int(__cdecl *)(const char *);
+        using quit_application_fn = void(__cdecl *)();
         using load_scriptable_object_asset_fn = const char *(__cdecl *)(const char *);
         using has_entity_component_fn = int(__cdecl *)(uint32_t, int32_t);
         using get_component_enabled_fn = int(__cdecl *)(uint32_t, int32_t);
@@ -1146,6 +1147,11 @@ namespace PlutoGE::scripting
                 return 0;
             }
             return core::Engine::GetInstance().RequestSceneLoad(sceneAssetReference) ? 1 : 0;
+        }
+
+        void QuitApplication()
+        {
+            core::Engine::GetInstance().GetWindow().RequestClose();
         }
 
         const char *LoadScriptableObjectAsset(const char *assetReference)
@@ -3539,7 +3545,8 @@ namespace PlutoGE::scripting
 
         if (!m_impl->registerSceneApi ||
             m_impl->registerSceneApi(
-                reinterpret_cast<void *>(static_cast<load_scene_fn>(&LoadScene))) == 0)
+                reinterpret_cast<void *>(static_cast<load_scene_fn>(&LoadScene)),
+                reinterpret_cast<void *>(static_cast<quit_application_fn>(&QuitApplication))) == 0)
         {
             setManagedBridgeFailure("RegisterSceneApi");
             return false;

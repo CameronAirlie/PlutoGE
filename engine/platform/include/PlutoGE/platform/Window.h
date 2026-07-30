@@ -32,6 +32,7 @@ namespace PlutoGE::platform
         bool Create(const WindowConfig &config);
         void PollEvents();
         void Close();
+        void RequestClose();
         void SetTitle(const std::string &title);
 
         [[nodiscard]] bool IsOpen() const;

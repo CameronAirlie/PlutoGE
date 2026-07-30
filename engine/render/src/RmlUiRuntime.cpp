@@ -96,6 +96,10 @@ namespace PlutoGE::render
                 : m_owner(owner), m_key(std::move(key)) {}
 
             void ProcessEvent(Rml::Event &) override { m_owner.NotifyEvent(m_key); }
+            void OnDetach(Rml::Element *element) override
+            {
+                m_owner.NotifyEventListenerDetached(m_key, element);
+            }
 
         private:
             RmlUiRuntime &m_owner;
@@ -551,6 +555,16 @@ namespace PlutoGE::render
         ++m_pendingEvents[key];
     }
 
+    void RmlUiRuntime::NotifyEventListenerDetached(const std::string &key, Rml::Element *element)
+    {
+        const auto found = m_eventListenerElements.find(key);
+        if (found != m_eventListenerElements.end() && found->second == element)
+        {
+            found->second = nullptr;
+            m_attachedEvents.erase(key);
+        }
+    }
+
     void RmlUiRuntime::AttachEventSubscriptions()
     {
         for (const auto &key : m_eventSubscriptions)
@@ -568,9 +582,15 @@ namespace PlutoGE::render
             auto *element = doc ? doc->GetElementById(id) : nullptr;
             if (!element)
                 continue;
-            auto listener = std::make_unique<RuntimeEventListener>(*this, key);
-            element->AddEventListener(event, listener.get());
-            m_eventListeners.emplace(key, std::move(listener));
+
+            auto listener = m_eventListeners.find(key);
+            if (listener == m_eventListeners.end())
+            {
+                listener = m_eventListeners.emplace(
+                    key, std::make_unique<RuntimeEventListener>(*this, key)).first;
+            }
+            m_eventListenerElements[key] = element;
+            element->AddEventListener(event, listener->second.get());
             m_attachedEvents.insert(key);
         }
     }
@@ -584,15 +604,16 @@ namespace PlutoGE::render
             if (first == std::string::npos || second == std::string::npos)
                 continue;
 
-            const std::string document = key.substr(0, first);
-            const std::string id = key.substr(first + 1, second - first - 1);
             const std::string event = key.substr(second + 1);
-            auto *doc = FindDocument(document);
-            auto *element = doc ? doc->GetElementById(id) : nullptr;
+            const auto attachedElement = m_eventListenerElements.find(key);
+            auto *element = attachedElement == m_eventListenerElements.end()
+                                ? nullptr
+                                : attachedElement->second;
             if (element)
                 element->RemoveEventListener(event, listener.get());
         }
         m_eventListeners.clear();
+        m_eventListenerElements.clear();
         m_attachedEvents.clear();
     }
 

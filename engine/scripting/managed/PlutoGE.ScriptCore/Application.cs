@@ -23,6 +23,12 @@ public static class Application
         get { lock (Gate) return _persistentDataPath; }
     }
 
+    /// <summary>Requests that the application close after the current frame.</summary>
+    public static void Quit()
+    {
+        Native.ScriptBridge.QuitApplication();
+    }
+
     internal static void ConfigureForScriptAssembly(string assemblyPath, string projectName)
     {
         var assemblyDirectory = Path.GetDirectoryName(Path.GetFullPath(assemblyPath))

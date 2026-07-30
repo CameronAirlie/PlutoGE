@@ -18,6 +18,7 @@ public sealed class RmlPauseMenuController : ScriptBehaviour
     private RmlEvent? _resumeClicked;
     private RmlEvent? _restartClicked;
     private RmlEvent? _mainMenuClicked;
+    private RmlEvent? _quitClicked;
     private bool _paused;
     private float _previousTimeScale = 1.0f;
     private bool _domReady;
@@ -34,6 +35,7 @@ public sealed class RmlPauseMenuController : ScriptBehaviour
         _resumeClicked = _document.Element("resume").Subscribe("click");
         _restartClicked = _document.Element("restart").Subscribe("click");
         _mainMenuClicked = _document.Element("main-menu").Subscribe("click");
+        _quitClicked = _document.Element("quit").Subscribe("click");
 
         if (startHidden) SetPaused(false, true);
         else SetPaused(true, true);
@@ -65,6 +67,11 @@ public sealed class RmlPauseMenuController : ScriptBehaviour
         {
             SetPaused(false);
             SceneManager.LoadScene(mainMenuScene);
+        }
+        else if (_quitClicked?.Consume() == true)
+        {
+            Debug.Log("Quitting game");
+            Application.Quit();
         }
     }
 

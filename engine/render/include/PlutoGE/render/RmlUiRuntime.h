@@ -11,6 +11,7 @@
 namespace Rml
 {
     class Context;
+    class Element;
     class ElementDocument;
     class EventListener;
 }
@@ -58,6 +59,7 @@ namespace PlutoGE::render
         bool ConsumeEvent(const std::string &document, const std::string &id, const std::string &event);
         [[nodiscard]] bool IsInputCaptured() const;
         void NotifyEvent(const std::string &key);
+        void NotifyEventListenerDetached(const std::string &key, Rml::Element *element);
 
     private:
         RmlUiRuntime() = default;
@@ -81,6 +83,7 @@ namespace PlutoGE::render
         std::unordered_set<std::string> m_loadedFontFaces;
         std::vector<std::vector<unsigned char>> m_fontData;
         std::unordered_map<std::string, std::unique_ptr<Rml::EventListener>> m_eventListeners;
+        std::unordered_map<std::string, Rml::Element *> m_eventListenerElements;
         int m_width = 0;
         int m_height = 0;
         std::uint64_t m_lastInputFrame = 0;

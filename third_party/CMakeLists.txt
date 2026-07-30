@@ -109,6 +109,7 @@ add_library(PlutoGE_rmlui STATIC
 add_library(PlutoGE::rmlui ALIAS PlutoGE_rmlui)
 target_compile_definitions(PlutoGE_rmlui PRIVATE
     RMLUI_GL3_CUSTOM_LOADER="PlutoGE_RmlUi_GL3.h"
+    RMLUI_NUM_MSAA_SAMPLES=0
 )
 target_link_libraries(PlutoGE_rmlui PUBLIC RmlUi::Core PlutoGE::glfw PlutoGE::glad)
 target_include_directories(PlutoGE_rmlui PUBLIC

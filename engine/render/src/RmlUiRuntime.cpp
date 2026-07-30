@@ -14,10 +14,12 @@
 #include <RmlUi/Core/Factory.h>
 #include <RmlUi_Platform_GLFW.h>
 #include <RmlUi_Renderer_GL3.h>
+#include <PlutoGE_RmlUi_Target.h>
 
 #include <GLFW/glfw3.h>
 
 #include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <iostream>
 #include <regex>
@@ -543,7 +545,7 @@ namespace PlutoGE::render
         return m_context && (m_context->IsMouseInteracting() || m_context->GetFocusElement() != nullptr);
     }
 
-    void RmlUiRuntime::ProcessInput(platform::Window &window)
+    void RmlUiRuntime::ProcessInput(platform::Window &window, const scene::Scene &scene)
     {
         auto *glfwWindow = static_cast<GLFWwindow *>(window.GetWindow());
         if (!glfwWindow || !window.IsScriptInputEnabled())
@@ -551,10 +553,30 @@ namespace PlutoGE::render
 
         const auto &input = window.GetInputState();
         const int modifiers = CurrentModifiers(glfwWindow);
-        m_context->ProcessMouseMove(
-            static_cast<int>(input.mouseState.x),
-            static_cast<int>(input.mouseState.y),
-            modifiers);
+
+        int mouseX = static_cast<int>(input.mouseState.x);
+        int mouseY = static_cast<int>(input.mouseState.y);
+        glm::vec2 overrideCanvasSize{};
+        glm::vec2 overrideMousePosition{};
+        bool pointerInside = true;
+        if (scene.GetRuntimeUIInputOverride(
+                overrideCanvasSize, overrideMousePosition, pointerInside))
+        {
+            if (pointerInside)
+            {
+                mouseX = static_cast<int>(std::lround(overrideMousePosition.x));
+                // Native runtime UI uses a bottom-left origin. RmlUi uses the
+                // window/HTML convention with its origin at the top-left.
+                mouseY = static_cast<int>(std::lround(
+                    overrideCanvasSize.y - overrideMousePosition.y));
+            }
+            else
+            {
+                mouseX = -1;
+                mouseY = -1;
+            }
+        }
+        m_context->ProcessMouseMove(mouseX, mouseY, modifiers);
 
         for (int button = 0; button < 8; ++button)
         {
@@ -605,13 +627,14 @@ namespace PlutoGE::render
 
         if (frameSequence != m_lastInputFrame)
         {
-            ProcessInput(window);
+            ProcessInput(window, scene);
             m_context->Update();
             m_lastInputFrame = frameSequence;
         }
 
         m_renderer->SetViewport(width, height);
         m_renderer->BeginFrame();
+        PlutoGE_CopyRmlUiBackdrop(width, height);
         m_context->Render();
         m_renderer->EndFrame();
     }

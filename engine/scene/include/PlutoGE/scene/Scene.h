@@ -103,6 +103,9 @@ namespace PlutoGE::scene
         void Update(float deltaTime);
         void SetRuntimeUIInputOverride(const glm::vec2 &canvasSize, const glm::vec2 &mousePosition, bool pointerInside);
         void ClearRuntimeUIInputOverride();
+        [[nodiscard]] bool GetRuntimeUIInputOverride(glm::vec2 &canvasSize,
+                                                     glm::vec2 &mousePosition,
+                                                     bool &pointerInside) const;
         [[nodiscard]] bool IsRuntimeStarted() const { return m_runtimeStarted; }
         void SetTimeScale(float timeScale);
         [[nodiscard]] float GetTimeScale() const { return m_timeScale; }

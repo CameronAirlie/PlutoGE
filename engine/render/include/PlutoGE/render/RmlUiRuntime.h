@@ -62,7 +62,7 @@ namespace PlutoGE::render
     private:
         RmlUiRuntime() = default;
         void SynchronizeDocuments(const scene::Scene &scene);
-        void ProcessInput(platform::Window &window);
+        void ProcessInput(platform::Window &window, const scene::Scene &scene);
         Rml::ElementDocument *FindDocument(const std::string &document) const;
         void AttachEventSubscriptions();
         void LoadDocumentFonts(const std::filesystem::path &documentPath);

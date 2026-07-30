@@ -7,3 +7,4 @@
 // notion of the backbuffer must be redirected for the duration of its pass.
 void PlutoGE_SetRmlUiFramebuffer(GLuint framebuffer);
 void PlutoGE_RmlUiBindFramebuffer(GLenum target, GLuint framebuffer);
+void PlutoGE_CopyRmlUiBackdrop(int width, int height);

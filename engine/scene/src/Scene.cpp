@@ -1944,6 +1944,18 @@ namespace PlutoGE::scene
         m_runtimeUIInputOverride.reset();
     }
 
+    bool Scene::GetRuntimeUIInputOverride(glm::vec2 &canvasSize,
+                                          glm::vec2 &mousePosition,
+                                          bool &pointerInside) const
+    {
+        if (!m_runtimeUIInputOverride)
+            return false;
+        canvasSize = m_runtimeUIInputOverride->canvasSize;
+        mousePosition = m_runtimeUIInputOverride->mousePosition;
+        pointerInside = m_runtimeUIInputOverride->pointerInside;
+        return true;
+    }
+
     bool Scene::ContainsEntity(const Entity *entity) const
     {
         if (!entity)

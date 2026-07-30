@@ -110,6 +110,23 @@ screen-space overlays and do not need child Text, Image, or Button components.
 RML and sibling RCSS files hot reload while the document is active, so most
 visual edits should appear after saving the file.
 
+### Blurred backdrops
+
+RmlUi's `backdrop-filter` operates on the rendered game scene behind an
+element. Combine it with a translucent background so the blur remains visible:
+
+```css
+#backdrop {
+    width: 100%;
+    height: 100%;
+    background-color: #05080d99;
+    backdrop-filter: blur(8px);
+}
+```
+
+Large blur radii and full-screen filtered elements cost more GPU time than
+small local panels, so use the lowest radius that suits the design.
+
 ## 3. Add behaviour with C# (optional)
 
 Elements should have stable `id` attributes when scripts need to access them.

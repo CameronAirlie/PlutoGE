@@ -111,6 +111,11 @@ target_compile_definitions(PlutoGE_rmlui PRIVATE
     RMLUI_GL3_CUSTOM_LOADER="PlutoGE_RmlUi_GL3.h"
     RMLUI_NUM_MSAA_SAMPLES=0
 )
+if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    # RmlUi 6.1's bundled robin_hood header relies on fixed-width integer
+    # types being transitively included, which GCC 16 no longer guarantees.
+    target_compile_options(PlutoGE_rmlui PRIVATE -include cstdint)
+endif()
 target_link_libraries(PlutoGE_rmlui PUBLIC RmlUi::Core PlutoGE::glfw PlutoGE::glad)
 target_include_directories(PlutoGE_rmlui PUBLIC
     "${rmlui_SOURCE_DIR}/Backends"
@@ -131,7 +136,7 @@ add_library(PlutoGE::imguizmo ALIAS imguizmo)
 FetchContent_Declare(
     tinygltf
     GIT_REPOSITORY https://github.com/syoyo/tinygltf.git
-    GIT_TAG        a434ee02066c2d9b62a3504876aed38e6e399fe0
+    GIT_TAG        v2.9.6
 )
 FetchContent_MakeAvailable(tinygltf)
 add_library(PlutoGE_tinygltf INTERFACE)
@@ -144,6 +149,11 @@ set(ASSIMP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(ASSIMP_BUILD_ASSIMP_TOOLS OFF CACHE BOOL "" FORCE)
 set(ASSIMP_INSTALL OFF CACHE BOOL "" FORCE)
 set(ASSIMP_WARNINGS_AS_ERRORS OFF CACHE BOOL "" FORCE)
+set(ASSIMP_BUILD_ZLIB ON CACHE BOOL "" FORCE)
+# Avoid Arch's system minizip pkg-config layout (`minizip/unzip.h`), which is
+# incompatible with Assimp's expected flat include. Use Assimp's pinned copy.
+set(ZLIB_FOUND OFF CACHE BOOL "" FORCE)
+set(UNZIP_FOUND OFF CACHE BOOL "" FORCE)
 set(ASSIMP_NO_EXPORT ON CACHE BOOL "" FORCE)
 set(ASSIMP_BUILD_ALL_IMPORTERS_BY_DEFAULT OFF CACHE BOOL "" FORCE)
 set(ASSIMP_BUILD_FBX_IMPORTER ON CACHE BOOL "" FORCE)

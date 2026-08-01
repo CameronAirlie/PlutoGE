@@ -23,6 +23,12 @@ target_include_directories(PlutoGEEditorUI PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
+if (NOT WIN32)
+    target_compile_options(PlutoGEEditorUI PRIVATE
+        -include PlutoGE/ui/CrtCompatibility.h
+    )
+endif()
+
 target_link_libraries(PlutoGEEditorUI PUBLIC
     PlutoGE::Core
     PlutoGE::Scene

@@ -15,14 +15,14 @@ namespace PlutoGE::scene
         glm::vec2 ParseVec2(const std::string &value, const glm::vec2 &fallback)
         {
             glm::vec2 result = fallback;
-            sscanf_s(value.c_str(), "%f,%f", &result.x, &result.y);
+            std::sscanf(value.c_str(), "%f,%f", &result.x, &result.y);
             return result;
         }
 
         glm::vec3 ParseVec3(const std::string &value, const glm::vec3 &fallback)
         {
             glm::vec3 result = fallback;
-            sscanf_s(value.c_str(), "%f,%f,%f", &result.x, &result.y, &result.z);
+            std::sscanf(value.c_str(), "%f,%f,%f", &result.x, &result.y, &result.z);
             return result;
         }
 

@@ -19,6 +19,17 @@
 #include <AL/efx.h>
 #endif
 
+        glm::vec3 SafeNormalize(const glm::vec3 &value, const glm::vec3 &fallback)
+        {
+            const float lengthSquared = glm::dot(value, value);
+            if (!std::isfinite(lengthSquared) || lengthSquared <= 0.000001f)
+            {
+                return fallback;
+            }
+
+            return value / std::sqrt(lengthSquared);
+        }
+
 #ifdef _WIN32
 #include <Windows.h>
 #include <mmreg.h>
@@ -304,17 +315,6 @@ namespace PlutoGE::audio
         X3DAUDIO_VECTOR ToX3DAudioVector(const glm::vec3 &value)
         {
             return X3DAUDIO_VECTOR{value.x, value.y, value.z};
-        }
-
-        glm::vec3 SafeNormalize(const glm::vec3 &value, const glm::vec3 &fallback)
-        {
-            const float lengthSquared = glm::dot(value, value);
-            if (!std::isfinite(lengthSquared) || lengthSquared <= 0.000001f)
-            {
-                return fallback;
-            }
-
-            return value / std::sqrt(lengthSquared);
         }
 
         float OnePoleCoefficient(float cutoffHz, int sampleRate)

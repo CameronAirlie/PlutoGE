@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <array>
 #include <charconv>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -39,14 +40,26 @@
 
 #ifdef _WIN32
 #include <Windows.h>
+#define PLUTO_HOST_CALL __cdecl
+#else
+#include <dlfcn.h>
+#include <limits.h>
+#include <unistd.h>
+#define PLUTO_HOST_CALL
 #endif
 
 namespace PlutoGE::scripting
 {
     namespace
     {
+#if defined(_WIN32) || defined(__linux__)
 #ifdef _WIN32
         using char_t = wchar_t;
+#define HOST_TEXT(value) L##value
+#else
+        using char_t = char;
+#define HOST_TEXT(value) value
+#endif
         using hostfxr_handle = void *;
 
         struct hostfxr_initialize_parameters
@@ -66,45 +79,45 @@ namespace PlutoGE::scripting
             hdt_load_assembly_and_get_function_pointer = 5,
         };
 
-        using hostfxr_initialize_for_runtime_config_fn = int(__cdecl *)(const char_t *, const hostfxr_initialize_parameters *, hostfxr_handle *);
-        using hostfxr_get_runtime_delegate_fn = int(__cdecl *)(hostfxr_handle, hostfxr_delegate_type, void **);
-        using hostfxr_close_fn = int(__cdecl *)(hostfxr_handle);
-        using load_assembly_and_get_function_pointer_fn = int(__cdecl *)(const char_t *, const char_t *, const char_t *, const char_t *, void *, void **);
+        using hostfxr_initialize_for_runtime_config_fn = int(PLUTO_HOST_CALL *)(const char_t *, const hostfxr_initialize_parameters *, hostfxr_handle *);
+        using hostfxr_get_runtime_delegate_fn = int(PLUTO_HOST_CALL *)(hostfxr_handle, hostfxr_delegate_type, void **);
+        using hostfxr_close_fn = int(PLUTO_HOST_CALL *)(hostfxr_handle);
+        using load_assembly_and_get_function_pointer_fn = int(PLUTO_HOST_CALL *)(const char_t *, const char_t *, const char_t *, const char_t *, void *, void **);
 
-        using load_script_assembly_fn = int(__cdecl *)(const char *, const char *);
-        using unload_script_assembly_fn = int(__cdecl *)();
-        using get_marshaled_string_fn = const char *(__cdecl *)();
-        using get_field_data_fn = const char *(__cdecl *)(int64_t);
-        using free_marshaled_string_fn = void(__cdecl *)(const char *);
-        using create_script_instance_fn = int64_t(__cdecl *)(const char *, uint32_t);
-        using destroy_script_instance_fn = void(__cdecl *)(int64_t);
-        using invoke_on_create_fn = int(__cdecl *)(int64_t);
-        using invoke_on_update_fn = int(__cdecl *)(int64_t, float);
-        using invoke_on_late_update_fn = int(__cdecl *)(int64_t, float);
-        using invoke_on_destroy_fn = int(__cdecl *)(int64_t);
-        using invoke_on_collision_fn = int(__cdecl *)(int64_t, uint32_t);
-        using invoke_on_animation_event_fn = int(__cdecl *)(int64_t, const char *, const char *, float, int32_t);
-        using apply_field_data_fn = int(__cdecl *)(int64_t, const char *);
-        using set_entity_id_fn = int(__cdecl *)(int64_t, uint32_t);
-        using register_game_object_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
-        using register_prefab_api_fn = int(__cdecl *)(void *);
-        using register_scene_api_fn = int(__cdecl *)(void *, void *, void *);
-        using register_scriptable_object_api_fn = int(__cdecl *)(void *);
-        using register_component_api_fn = int(__cdecl *)(void *, void *, void *);
-        using register_camera_component_api_fn = int(__cdecl *)(void *, void *, void *, void *);
-        using register_light_component_api_fn = int(__cdecl *)(void *, void *, void *, void *);
-        using register_mesh_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *);
-        using register_animation_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
-        using register_rigidbody_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
-        using register_collider_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
-        using register_particle_system_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
-        using register_sound_emitter_component_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
-        using register_runtime_ui_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
-        using register_advanced_ui_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
-        using register_rml_ui_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
-        using register_input_api_fn = int(__cdecl *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
-        using register_physics_api_fn = int(__cdecl *)(void *, void *, void *, void *);
-        using register_debug_api_fn = int(__cdecl *)(void *);
+        using load_script_assembly_fn = int(PLUTO_HOST_CALL *)(const char *, const char *);
+        using unload_script_assembly_fn = int(PLUTO_HOST_CALL *)();
+        using get_marshaled_string_fn = const char *(PLUTO_HOST_CALL *)();
+        using get_field_data_fn = const char *(PLUTO_HOST_CALL *)(int64_t);
+        using free_marshaled_string_fn = void(PLUTO_HOST_CALL *)(const char *);
+        using create_script_instance_fn = int64_t(PLUTO_HOST_CALL *)(const char *, uint32_t);
+        using destroy_script_instance_fn = void(PLUTO_HOST_CALL *)(int64_t);
+        using invoke_on_create_fn = int(PLUTO_HOST_CALL *)(int64_t);
+        using invoke_on_update_fn = int(PLUTO_HOST_CALL *)(int64_t, float);
+        using invoke_on_late_update_fn = int(PLUTO_HOST_CALL *)(int64_t, float);
+        using invoke_on_destroy_fn = int(PLUTO_HOST_CALL *)(int64_t);
+        using invoke_on_collision_fn = int(PLUTO_HOST_CALL *)(int64_t, uint32_t);
+        using invoke_on_animation_event_fn = int(PLUTO_HOST_CALL *)(int64_t, const char *, const char *, float, int32_t);
+        using apply_field_data_fn = int(PLUTO_HOST_CALL *)(int64_t, const char *);
+        using set_entity_id_fn = int(PLUTO_HOST_CALL *)(int64_t, uint32_t);
+        using register_game_object_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
+        using register_prefab_api_fn = int(PLUTO_HOST_CALL *)(void *);
+        using register_scene_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *);
+        using register_scriptable_object_api_fn = int(PLUTO_HOST_CALL *)(void *);
+        using register_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *);
+        using register_camera_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *);
+        using register_light_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *);
+        using register_mesh_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *);
+        using register_animation_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
+        using register_rigidbody_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
+        using register_collider_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
+        using register_particle_system_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
+        using register_sound_emitter_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
+        using register_runtime_ui_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
+        using register_advanced_ui_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
+        using register_rml_ui_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
+        using register_input_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
+        using register_physics_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *);
+        using register_debug_api_fn = int(PLUTO_HOST_CALL *)(void *);
 
         struct HostFxrLocation
         {
@@ -135,75 +148,75 @@ namespace PlutoGE::scripting
             float distance = 0.0f;
         };
 
-        using get_entity_vector3_fn = NativeVector3(__cdecl *)(uint32_t);
-        using set_entity_vector3_fn = void(__cdecl *)(uint32_t, NativeVector3);
-        using get_entity_quaternion_fn = NativeQuaternion(__cdecl *)(uint32_t);
-        using set_entity_quaternion_fn = void(__cdecl *)(uint32_t, NativeQuaternion);
-        using get_entity_active_fn = int(__cdecl *)(uint32_t);
-        using set_entity_active_fn = void(__cdecl *)(uint32_t, int32_t);
-        using get_entity_tag_count_fn = int(__cdecl *)(uint32_t);
-        using get_entity_tag_fn = const char *(__cdecl *)(uint32_t, int32_t);
-        using destroy_entity_fn = int(__cdecl *)(uint32_t);
-        using get_entity_name_fn = const char *(__cdecl *)(uint32_t);
-        using find_entity_by_name_fn = uint32_t(__cdecl *)(const char *);
-        using get_entity_count_by_tag_fn = int32_t(__cdecl *)(const char *);
-        using get_entity_by_tag_fn = uint32_t(__cdecl *)(const char *, int32_t);
-        using instantiate_prefab_fn = uint32_t(__cdecl *)(const char *);
-        using load_scene_fn = int(__cdecl *)(const char *);
-        using quit_application_fn = void(__cdecl *)();
-        using load_scriptable_object_asset_fn = const char *(__cdecl *)(const char *);
-        using has_entity_component_fn = int(__cdecl *)(uint32_t, int32_t);
-        using get_component_enabled_fn = int(__cdecl *)(uint32_t, int32_t);
-        using set_component_enabled_fn = void(__cdecl *)(uint32_t, int32_t, int32_t);
-        using get_camera_main_fn = int(__cdecl *)(uint32_t);
-        using set_camera_main_fn = void(__cdecl *)(uint32_t, int32_t);
-        using get_camera_fov_fn = float(__cdecl *)(uint32_t);
-        using set_camera_fov_fn = void(__cdecl *)(uint32_t, float);
-        using get_light_intensity_fn = float(__cdecl *)(uint32_t);
-        using set_light_intensity_fn = void(__cdecl *)(uint32_t, float);
-        using get_light_color_fn = NativeVector3(__cdecl *)(uint32_t);
-        using set_light_color_fn = void(__cdecl *)(uint32_t, NativeVector3);
-        using get_mesh_static_fn = int(__cdecl *)(uint32_t);
-        using set_mesh_static_fn = void(__cdecl *)(uint32_t, int32_t);
-        using get_mesh_color_fn = NativeVector3(__cdecl *)(uint32_t);
-        using set_mesh_color_fn = void(__cdecl *)(uint32_t, NativeVector3);
-        using get_component_float_fn = float(__cdecl *)(uint32_t);
-        using set_component_float_fn = void(__cdecl *)(uint32_t, float);
-        using get_component_bool_fn = int(__cdecl *)(uint32_t);
-        using set_component_bool_fn = void(__cdecl *)(uint32_t, int32_t);
-        using get_component_int_fn = int(__cdecl *)(uint32_t);
-        using set_component_int_fn = void(__cdecl *)(uint32_t, int32_t);
-        using get_component_string_by_index_fn = const char *(__cdecl *)(uint32_t, int32_t);
-        using get_component_string_fn = const char *(__cdecl *)(uint32_t);
-        using get_component_float_by_index_fn = float(__cdecl *)(uint32_t, int32_t);
-        using component_action_fn = void(__cdecl *)(uint32_t);
-        using component_action_with_two_floats_fn = void(__cdecl *)(uint32_t, float, float);
-        using get_component_vector3_fn = NativeVector3(__cdecl *)(uint32_t);
-        using set_component_vector3_fn = void(__cdecl *)(uint32_t, NativeVector3);
-        using rigidbody_force_at_position_fn = void(__cdecl *)(uint32_t, NativeVector3, NativeVector3);
-        using set_component_string_fn = void(__cdecl *)(uint32_t, const char *);
-        using particle_emit_at_fn = void(__cdecl *)(uint32_t, NativeVector3, int32_t);
-        using set_animation_bool_parameter_fn = void(__cdecl *)(uint32_t, const char *, int32_t);
-        using set_animation_float_parameter_fn = void(__cdecl *)(uint32_t, const char *, float);
-        using set_animation_int_parameter_fn = void(__cdecl *)(uint32_t, const char *, int32_t);
-        using get_input_key_fn = int(__cdecl *)(int32_t);
-        using get_input_mouse_button_fn = int(__cdecl *)(int32_t);
-        using get_input_mouse_vector2_fn = NativeVector3(__cdecl *)();
-        using get_input_quit_requested_fn = int(__cdecl *)();
-        using get_input_cursor_locked_fn = int(__cdecl *)();
-        using set_input_cursor_locked_fn = void(__cdecl *)(int32_t);
-        using physics_raycast_fn = int(__cdecl *)(NativeVector3, NativeVector3, float, uint32_t, NativeRaycastHit *);
-        using physics_raycast_tagged_fn = int(__cdecl *)(NativeVector3, NativeVector3, float, uint32_t, const char *, NativeRaycastHit *);
-        using physics_move_kinematic_fn = NativeVector3(__cdecl *)(uint32_t, NativeVector3, float);
-        using spawn_decal_fn = uint32_t(__cdecl *)(NativeVector3, NativeVector3, const char *, NativeVector3, float, float);
-        using script_log_fn = void(__cdecl *)(int32_t, const char *);
-        constexpr std::wstring_view kScriptBridgeType = L"PlutoGE.ScriptCore.Native.ScriptBridge, PlutoGE.ScriptCore";
-        constexpr std::wstring_view kScriptCoreAssembly = L"PlutoGE.ScriptCore.dll";
-        constexpr std::wstring_view kScriptCoreRuntimeConfig = L"PlutoGE.ScriptCore.runtimeconfig.json";
+        using get_entity_vector3_fn = NativeVector3(PLUTO_HOST_CALL *)(uint32_t);
+        using set_entity_vector3_fn = void(PLUTO_HOST_CALL *)(uint32_t, NativeVector3);
+        using get_entity_quaternion_fn = NativeQuaternion(PLUTO_HOST_CALL *)(uint32_t);
+        using set_entity_quaternion_fn = void(PLUTO_HOST_CALL *)(uint32_t, NativeQuaternion);
+        using get_entity_active_fn = int(PLUTO_HOST_CALL *)(uint32_t);
+        using set_entity_active_fn = void(PLUTO_HOST_CALL *)(uint32_t, int32_t);
+        using get_entity_tag_count_fn = int(PLUTO_HOST_CALL *)(uint32_t);
+        using get_entity_tag_fn = const char *(PLUTO_HOST_CALL *)(uint32_t, int32_t);
+        using destroy_entity_fn = int(PLUTO_HOST_CALL *)(uint32_t);
+        using get_entity_name_fn = const char *(PLUTO_HOST_CALL *)(uint32_t);
+        using find_entity_by_name_fn = uint32_t(PLUTO_HOST_CALL *)(const char *);
+        using get_entity_count_by_tag_fn = int32_t(PLUTO_HOST_CALL *)(const char *);
+        using get_entity_by_tag_fn = uint32_t(PLUTO_HOST_CALL *)(const char *, int32_t);
+        using instantiate_prefab_fn = uint32_t(PLUTO_HOST_CALL *)(const char *);
+        using load_scene_fn = int(PLUTO_HOST_CALL *)(const char *);
+        using quit_application_fn = void(PLUTO_HOST_CALL *)();
+        using load_scriptable_object_asset_fn = const char *(PLUTO_HOST_CALL *)(const char *);
+        using has_entity_component_fn = int(PLUTO_HOST_CALL *)(uint32_t, int32_t);
+        using get_component_enabled_fn = int(PLUTO_HOST_CALL *)(uint32_t, int32_t);
+        using set_component_enabled_fn = void(PLUTO_HOST_CALL *)(uint32_t, int32_t, int32_t);
+        using get_camera_main_fn = int(PLUTO_HOST_CALL *)(uint32_t);
+        using set_camera_main_fn = void(PLUTO_HOST_CALL *)(uint32_t, int32_t);
+        using get_camera_fov_fn = float(PLUTO_HOST_CALL *)(uint32_t);
+        using set_camera_fov_fn = void(PLUTO_HOST_CALL *)(uint32_t, float);
+        using get_light_intensity_fn = float(PLUTO_HOST_CALL *)(uint32_t);
+        using set_light_intensity_fn = void(PLUTO_HOST_CALL *)(uint32_t, float);
+        using get_light_color_fn = NativeVector3(PLUTO_HOST_CALL *)(uint32_t);
+        using set_light_color_fn = void(PLUTO_HOST_CALL *)(uint32_t, NativeVector3);
+        using get_mesh_static_fn = int(PLUTO_HOST_CALL *)(uint32_t);
+        using set_mesh_static_fn = void(PLUTO_HOST_CALL *)(uint32_t, int32_t);
+        using get_mesh_color_fn = NativeVector3(PLUTO_HOST_CALL *)(uint32_t);
+        using set_mesh_color_fn = void(PLUTO_HOST_CALL *)(uint32_t, NativeVector3);
+        using get_component_float_fn = float(PLUTO_HOST_CALL *)(uint32_t);
+        using set_component_float_fn = void(PLUTO_HOST_CALL *)(uint32_t, float);
+        using get_component_bool_fn = int(PLUTO_HOST_CALL *)(uint32_t);
+        using set_component_bool_fn = void(PLUTO_HOST_CALL *)(uint32_t, int32_t);
+        using get_component_int_fn = int(PLUTO_HOST_CALL *)(uint32_t);
+        using set_component_int_fn = void(PLUTO_HOST_CALL *)(uint32_t, int32_t);
+        using get_component_string_by_index_fn = const char *(PLUTO_HOST_CALL *)(uint32_t, int32_t);
+        using get_component_string_fn = const char *(PLUTO_HOST_CALL *)(uint32_t);
+        using get_component_float_by_index_fn = float(PLUTO_HOST_CALL *)(uint32_t, int32_t);
+        using component_action_fn = void(PLUTO_HOST_CALL *)(uint32_t);
+        using component_action_with_two_floats_fn = void(PLUTO_HOST_CALL *)(uint32_t, float, float);
+        using get_component_vector3_fn = NativeVector3(PLUTO_HOST_CALL *)(uint32_t);
+        using set_component_vector3_fn = void(PLUTO_HOST_CALL *)(uint32_t, NativeVector3);
+        using rigidbody_force_at_position_fn = void(PLUTO_HOST_CALL *)(uint32_t, NativeVector3, NativeVector3);
+        using set_component_string_fn = void(PLUTO_HOST_CALL *)(uint32_t, const char *);
+        using particle_emit_at_fn = void(PLUTO_HOST_CALL *)(uint32_t, NativeVector3, int32_t);
+        using set_animation_bool_parameter_fn = void(PLUTO_HOST_CALL *)(uint32_t, const char *, int32_t);
+        using set_animation_float_parameter_fn = void(PLUTO_HOST_CALL *)(uint32_t, const char *, float);
+        using set_animation_int_parameter_fn = void(PLUTO_HOST_CALL *)(uint32_t, const char *, int32_t);
+        using get_input_key_fn = int(PLUTO_HOST_CALL *)(int32_t);
+        using get_input_mouse_button_fn = int(PLUTO_HOST_CALL *)(int32_t);
+        using get_input_mouse_vector2_fn = NativeVector3(PLUTO_HOST_CALL *)();
+        using get_input_quit_requested_fn = int(PLUTO_HOST_CALL *)();
+        using get_input_cursor_locked_fn = int(PLUTO_HOST_CALL *)();
+        using set_input_cursor_locked_fn = void(PLUTO_HOST_CALL *)(int32_t);
+        using physics_raycast_fn = int(PLUTO_HOST_CALL *)(NativeVector3, NativeVector3, float, uint32_t, NativeRaycastHit *);
+        using physics_raycast_tagged_fn = int(PLUTO_HOST_CALL *)(NativeVector3, NativeVector3, float, uint32_t, const char *, NativeRaycastHit *);
+        using physics_move_kinematic_fn = NativeVector3(PLUTO_HOST_CALL *)(uint32_t, NativeVector3, float);
+        using spawn_decal_fn = uint32_t(PLUTO_HOST_CALL *)(NativeVector3, NativeVector3, const char *, NativeVector3, float, float);
+        using script_log_fn = void(PLUTO_HOST_CALL *)(int32_t, const char *);
+        constexpr std::basic_string_view<char_t> kScriptBridgeType = HOST_TEXT("PlutoGE.ScriptCore.Native.ScriptBridge, PlutoGE.ScriptCore");
+        constexpr std::string_view kScriptCoreAssembly = "PlutoGE.ScriptCore.dll";
+        constexpr std::string_view kScriptCoreRuntimeConfig = "PlutoGE.ScriptCore.runtimeconfig.json";
 
-        const wchar_t *GetUnmanagedCallersOnlyMethodMarker()
+        const char_t *GetUnmanagedCallersOnlyMethodMarker()
         {
-            return reinterpret_cast<const wchar_t *>(static_cast<std::intptr_t>(-1));
+            return reinterpret_cast<const char_t *>(static_cast<std::intptr_t>(-1));
         }
 
         enum class ManagedComponentKind : int32_t
@@ -225,8 +238,9 @@ namespace PlutoGE::scripting
             RmlWidget = 14,
         };
 
-        std::wstring Utf8ToWide(std::string_view text)
+        std::basic_string<char_t> Utf8ToHostString(std::string_view text)
         {
+#ifdef _WIN32
             if (text.empty())
             {
                 return {};
@@ -241,10 +255,14 @@ namespace PlutoGE::scripting
             std::wstring wide(static_cast<size_t>(wideSize), L'\0');
             MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), wide.data(), wideSize);
             return wide;
+#else
+            return std::string(text);
+#endif
         }
 
-        std::string WideToUtf8(std::wstring_view text)
+        std::string HostStringToUtf8(std::basic_string_view<char_t> text)
         {
+#ifdef _WIN32
             if (text.empty())
             {
                 return {};
@@ -259,10 +277,14 @@ namespace PlutoGE::scripting
             std::string utf8(static_cast<size_t>(utf8Size), '\0');
             WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), utf8.data(), utf8Size, nullptr, nullptr);
             return utf8;
+#else
+            return std::string(text);
+#endif
         }
 
-        std::optional<std::wstring> GetEnvironmentVariableText(const wchar_t *name)
+        std::optional<std::basic_string<char_t>> GetEnvironmentVariableText(const char_t *name)
         {
+#ifdef _WIN32
             const DWORD requiredSize = GetEnvironmentVariableW(name, nullptr, 0);
             if (requiredSize == 0)
             {
@@ -277,10 +299,19 @@ namespace PlutoGE::scripting
             }
 
             return value;
+#else
+            const char *value = std::getenv(name);
+            if (!value || *value == '\0')
+            {
+                return std::nullopt;
+            }
+            return std::string(value);
+#endif
         }
 
         std::filesystem::path GetExecutableDirectory()
         {
+#ifdef _WIN32
             std::array<wchar_t, MAX_PATH> modulePath{};
             const DWORD modulePathLength = GetModuleFileNameW(nullptr, modulePath.data(), static_cast<DWORD>(modulePath.size()));
             if (modulePathLength == 0 || modulePathLength >= modulePath.size())
@@ -289,6 +320,34 @@ namespace PlutoGE::scripting
             }
 
             return std::filesystem::path(modulePath.data()).parent_path().lexically_normal();
+#else
+            std::array<char, PATH_MAX> modulePath{};
+            const ssize_t modulePathLength = readlink("/proc/self/exe", modulePath.data(), modulePath.size() - 1);
+            if (modulePathLength <= 0 || static_cast<size_t>(modulePathLength) >= modulePath.size())
+            {
+                return {};
+            }
+            modulePath[static_cast<size_t>(modulePathLength)] = '\0';
+            return std::filesystem::path(modulePath.data()).parent_path().lexically_normal();
+#endif
+        }
+
+        uint64_t GetProcessIdValue()
+        {
+#ifdef _WIN32
+            return static_cast<uint64_t>(GetCurrentProcessId());
+#else
+            return static_cast<uint64_t>(getpid());
+#endif
+        }
+
+        uint64_t GetMonotonicTimestamp()
+        {
+#ifdef _WIN32
+            return static_cast<uint64_t>(GetTickCount64());
+#else
+            return static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count());
+#endif
         }
 
         std::optional<std::filesystem::path> FindHostFxrInDotnetRoot(const std::filesystem::path &dotnetRoot)
@@ -311,7 +370,11 @@ namespace PlutoGE::scripting
             std::sort(versions.begin(), versions.end());
             for (auto iterator = versions.rbegin(); iterator != versions.rend(); ++iterator)
             {
+#ifdef _WIN32
                 const auto candidate = *iterator / "hostfxr.dll";
+#else
+                const auto candidate = *iterator / "libhostfxr.so";
+#endif
                 if (std::filesystem::exists(candidate))
                 {
                     return candidate;
@@ -329,15 +392,20 @@ namespace PlutoGE::scripting
                 dotnetRoots.emplace_back(executableDirectory / "DotnetRuntime");
             }
 
-            if (const auto dotnetRoot = GetEnvironmentVariableText(L"DOTNET_ROOT"))
+            if (const auto dotnetRoot = GetEnvironmentVariableText(HOST_TEXT("DOTNET_ROOT")))
             {
                 dotnetRoots.emplace_back(*dotnetRoot);
             }
 
-            if (const auto programFiles = GetEnvironmentVariableText(L"ProgramFiles"))
+#ifdef _WIN32
+            if (const auto programFiles = GetEnvironmentVariableText(HOST_TEXT("ProgramFiles")))
             {
                 dotnetRoots.emplace_back(std::filesystem::path(*programFiles) / "dotnet");
             }
+#else
+            dotnetRoots.emplace_back("/usr/share/dotnet");
+            dotnetRoots.emplace_back("/usr/lib/dotnet");
+#endif
 
             for (const auto &dotnetRoot : dotnetRoots)
             {
@@ -354,18 +422,17 @@ namespace PlutoGE::scripting
         {
             std::vector<std::filesystem::path> candidates;
 
-            if (const auto envOverride = GetEnvironmentVariableText(L"PLUTOGE_SCRIPTCORE_DIR"))
+            if (const auto envOverride = GetEnvironmentVariableText(HOST_TEXT("PLUTOGE_SCRIPTCORE_DIR")))
             {
                 candidates.emplace_back(*envOverride);
             }
 
-            std::array<wchar_t, MAX_PATH> modulePath{};
-            const DWORD modulePathLength = GetModuleFileNameW(nullptr, modulePath.data(), static_cast<DWORD>(modulePath.size()));
             auto current = std::filesystem::current_path();
             std::vector<std::filesystem::path> searchRoots;
-            if (modulePathLength > 0 && modulePathLength < modulePath.size())
+            const auto executableDirectory = GetExecutableDirectory();
+            if (!executableDirectory.empty())
             {
-                current = std::filesystem::path(modulePath.data()).parent_path().lexically_normal();
+                current = executableDirectory;
                 searchRoots.push_back(current);
             }
 
@@ -387,9 +454,9 @@ namespace PlutoGE::scripting
                 }
             }
 
-            if (modulePathLength > 0 && modulePathLength < modulePath.size())
+            if (!executableDirectory.empty())
             {
-                candidates.push_back(std::filesystem::path(modulePath.data()).parent_path().lexically_normal());
+                candidates.push_back(executableDirectory);
             }
 
             candidates.push_back(std::filesystem::current_path());
@@ -2849,8 +2916,12 @@ namespace PlutoGE::scripting
 
     struct HostFxrScriptRuntime::Impl
     {
+#if defined(_WIN32) || defined(__linux__)
 #ifdef _WIN32
         HMODULE hostfxrLibrary = nullptr;
+#else
+        void *hostfxrLibrary = nullptr;
+#endif
         std::filesystem::path dotnetRoot;
         hostfxr_initialize_for_runtime_config_fn initializeForRuntimeConfig = nullptr;
         hostfxr_get_runtime_delegate_fn getRuntimeDelegate = nullptr;
@@ -2910,7 +2981,7 @@ namespace PlutoGE::scripting
 
     namespace
     {
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__linux__)
         std::string TakeManagedString(HostFxrScriptRuntime::Impl &impl, get_marshaled_string_fn getter)
         {
             if (!getter || !impl.freeMarshaledString)
@@ -3013,7 +3084,7 @@ namespace PlutoGE::scripting
             }
 
             const auto sourceDirectory = assemblyPath.parent_path();
-            const auto uniqueDirectoryName = assemblyPath.stem().string() + "-" + std::to_string(GetCurrentProcessId()) + "-" + std::to_string(GetTickCount64());
+            const auto uniqueDirectoryName = assemblyPath.stem().string() + "-" + std::to_string(GetProcessIdValue()) + "-" + std::to_string(GetMonotonicTimestamp());
             const auto shadowDirectory = (tempRoot / "PlutoGE" / "ManagedShadow" / uniqueDirectoryName).lexically_normal();
 
             std::filesystem::create_directories(shadowDirectory, errorCode);
@@ -3092,7 +3163,7 @@ namespace PlutoGE::scripting
             }
 
             const auto sourceDirectory = assemblyPath.parent_path();
-            const auto uniqueDirectoryName = assemblyPath.stem().string() + "-bridge-" + std::to_string(GetCurrentProcessId()) + "-" + std::to_string(GetTickCount64());
+            const auto uniqueDirectoryName = assemblyPath.stem().string() + "-bridge-" + std::to_string(GetProcessIdValue()) + "-" + std::to_string(GetMonotonicTimestamp());
             const auto shadowDirectory = (tempRoot / "PlutoGE" / "ManagedShadow" / uniqueDirectoryName).lexically_normal();
 
             std::filesystem::create_directories(shadowDirectory, errorCode);
@@ -3164,7 +3235,7 @@ namespace PlutoGE::scripting
         }
 
         template <typename DelegateType>
-        bool LoadManagedExport(HostFxrScriptRuntime::Impl &impl, const wchar_t *methodName, DelegateType &delegate)
+        bool LoadManagedExport(HostFxrScriptRuntime::Impl &impl, const char_t *methodName, DelegateType &delegate)
         {
             void *functionPointer = nullptr;
             const int result = impl.loadAssemblyAndGetFunctionPointer(
@@ -3177,8 +3248,8 @@ namespace PlutoGE::scripting
 
             if (result != 0 || !functionPointer)
             {
-                impl.lastError = "Failed to load managed bridge export '" + WideToUtf8(methodName) +
-                                 "' from " + WideToUtf8(impl.bridgeAssemblyPath.wstring()) +
+                impl.lastError = "Failed to load managed bridge export '" + HostStringToUtf8(methodName) +
+                                 "' from " + impl.bridgeAssemblyPath.string() +
                                  " (hostfxr result " + std::to_string(result) + ")";
                 return false;
             }
@@ -3197,21 +3268,37 @@ namespace PlutoGE::scripting
             const auto hostFxrLocation = FindHostFxrLibrary();
             if (!hostFxrLocation)
             {
-                impl.lastError = "Failed to locate hostfxr.dll";
+                impl.lastError = "Failed to locate the .NET hostfxr library";
                 return false;
             }
 
             impl.dotnetRoot = hostFxrLocation->dotnetRoot;
+#ifdef _WIN32
             impl.hostfxrLibrary = LoadLibraryW(hostFxrLocation->libraryPath.c_str());
+#else
+            impl.hostfxrLibrary = dlopen(hostFxrLocation->libraryPath.c_str(), RTLD_LAZY | RTLD_LOCAL);
+#endif
             if (!impl.hostfxrLibrary)
             {
-                impl.lastError = "Failed to load hostfxr.dll";
+                impl.lastError = "Failed to load hostfxr library";
+#ifndef _WIN32
+                if (const char *loaderError = dlerror())
+                {
+                    impl.lastError += ": " + std::string(loaderError);
+                }
+#endif
                 return false;
             }
 
+#ifdef _WIN32
             impl.initializeForRuntimeConfig = reinterpret_cast<hostfxr_initialize_for_runtime_config_fn>(GetProcAddress(impl.hostfxrLibrary, "hostfxr_initialize_for_runtime_config"));
             impl.getRuntimeDelegate = reinterpret_cast<hostfxr_get_runtime_delegate_fn>(GetProcAddress(impl.hostfxrLibrary, "hostfxr_get_runtime_delegate"));
             impl.closeHostContext = reinterpret_cast<hostfxr_close_fn>(GetProcAddress(impl.hostfxrLibrary, "hostfxr_close"));
+#else
+            impl.initializeForRuntimeConfig = reinterpret_cast<hostfxr_initialize_for_runtime_config_fn>(dlsym(impl.hostfxrLibrary, "hostfxr_initialize_for_runtime_config"));
+            impl.getRuntimeDelegate = reinterpret_cast<hostfxr_get_runtime_delegate_fn>(dlsym(impl.hostfxrLibrary, "hostfxr_get_runtime_delegate"));
+            impl.closeHostContext = reinterpret_cast<hostfxr_close_fn>(dlsym(impl.hostfxrLibrary, "hostfxr_close"));
+#endif
 
             if (!impl.initializeForRuntimeConfig || !impl.getRuntimeDelegate || !impl.closeHostContext)
             {
@@ -3283,41 +3370,41 @@ namespace PlutoGE::scripting
             impl.loadAssemblyAndGetFunctionPointer = reinterpret_cast<load_assembly_and_get_function_pointer_fn>(loadAssemblyDelegate);
 
             const bool requiredExportsLoaded =
-                LoadManagedExport(impl, L"LoadScriptAssembly", impl.loadScriptAssembly) &&
-                LoadManagedExport(impl, L"GetScriptMetadata", impl.getScriptMetadata) &&
-                LoadManagedExport(impl, L"GetFieldData", impl.getFieldData) &&
-                LoadManagedExport(impl, L"FreeNativeString", impl.freeMarshaledString) &&
-                LoadManagedExport(impl, L"GetLastError", impl.getLastError) &&
-                LoadManagedExport(impl, L"CreateScriptInstance", impl.createScriptInstance) &&
-                LoadManagedExport(impl, L"DestroyScriptInstance", impl.destroyScriptInstance) &&
-                LoadManagedExport(impl, L"InvokeOnCreate", impl.invokeOnCreate) &&
-                LoadManagedExport(impl, L"InvokeOnUpdate", impl.invokeOnUpdate) &&
-                LoadManagedExport(impl, L"InvokeOnLateUpdate", impl.invokeOnLateUpdate) &&
-                LoadManagedExport(impl, L"InvokeOnDestroy", impl.invokeOnDestroy) &&
-                LoadManagedExport(impl, L"InvokeOnCollisionEnter", impl.invokeOnCollisionEnter) &&
-                LoadManagedExport(impl, L"InvokeOnCollisionExit", impl.invokeOnCollisionExit) &&
-                LoadManagedExport(impl, L"InvokeOnAnimationEvent", impl.invokeOnAnimationEvent) &&
-                LoadManagedExport(impl, L"ApplyFieldData", impl.applyFieldData) &&
-                LoadManagedExport(impl, L"SetEntityId", impl.setEntityId) &&
-                LoadManagedExport(impl, L"RegisterGameObjectApi", impl.registerGameObjectApi) &&
-                LoadManagedExport(impl, L"RegisterPrefabApi", impl.registerPrefabApi) &&
-                LoadManagedExport(impl, L"RegisterSceneApi", impl.registerSceneApi) &&
-                LoadManagedExport(impl, L"RegisterScriptableObjectApi", impl.registerScriptableObjectApi) &&
-                LoadManagedExport(impl, L"RegisterComponentApi", impl.registerComponentApi) &&
-                LoadManagedExport(impl, L"RegisterCameraComponentApi", impl.registerCameraComponentApi) &&
-                LoadManagedExport(impl, L"RegisterLightComponentApi", impl.registerLightComponentApi) &&
-                LoadManagedExport(impl, L"RegisterMeshComponentApi", impl.registerMeshComponentApi) &&
-                LoadManagedExport(impl, L"RegisterAnimationComponentApi", impl.registerAnimationComponentApi) &&
-                LoadManagedExport(impl, L"RegisterRigidbodyComponentApi", impl.registerRigidbodyComponentApi) &&
-                LoadManagedExport(impl, L"RegisterColliderComponentApi", impl.registerColliderComponentApi) &&
-                LoadManagedExport(impl, L"RegisterParticleSystemComponentApi", impl.registerParticleSystemComponentApi) &&
-                LoadManagedExport(impl, L"RegisterSoundEmitterComponentApi", impl.registerSoundEmitterComponentApi) &&
-                LoadManagedExport(impl, L"RegisterRuntimeUIApi", impl.registerRuntimeUIApi) &&
-                LoadManagedExport(impl, L"RegisterAdvancedUIApi", impl.registerAdvancedUIApi) &&
-                LoadManagedExport(impl, L"RegisterRmlUiApi", impl.registerRmlUiApi) &&
-                LoadManagedExport(impl, L"RegisterInputApi", impl.registerInputApi) &&
-                LoadManagedExport(impl, L"RegisterPhysicsApi", impl.registerPhysicsApi) &&
-                LoadManagedExport(impl, L"RegisterDebugApi", impl.registerDebugApi);
+                LoadManagedExport(impl, HOST_TEXT("LoadScriptAssembly"), impl.loadScriptAssembly) &&
+                LoadManagedExport(impl, HOST_TEXT("GetScriptMetadata"), impl.getScriptMetadata) &&
+                LoadManagedExport(impl, HOST_TEXT("GetFieldData"), impl.getFieldData) &&
+                LoadManagedExport(impl, HOST_TEXT("FreeNativeString"), impl.freeMarshaledString) &&
+                LoadManagedExport(impl, HOST_TEXT("GetLastError"), impl.getLastError) &&
+                LoadManagedExport(impl, HOST_TEXT("CreateScriptInstance"), impl.createScriptInstance) &&
+                LoadManagedExport(impl, HOST_TEXT("DestroyScriptInstance"), impl.destroyScriptInstance) &&
+                LoadManagedExport(impl, HOST_TEXT("InvokeOnCreate"), impl.invokeOnCreate) &&
+                LoadManagedExport(impl, HOST_TEXT("InvokeOnUpdate"), impl.invokeOnUpdate) &&
+                LoadManagedExport(impl, HOST_TEXT("InvokeOnLateUpdate"), impl.invokeOnLateUpdate) &&
+                LoadManagedExport(impl, HOST_TEXT("InvokeOnDestroy"), impl.invokeOnDestroy) &&
+                LoadManagedExport(impl, HOST_TEXT("InvokeOnCollisionEnter"), impl.invokeOnCollisionEnter) &&
+                LoadManagedExport(impl, HOST_TEXT("InvokeOnCollisionExit"), impl.invokeOnCollisionExit) &&
+                LoadManagedExport(impl, HOST_TEXT("InvokeOnAnimationEvent"), impl.invokeOnAnimationEvent) &&
+                LoadManagedExport(impl, HOST_TEXT("ApplyFieldData"), impl.applyFieldData) &&
+                LoadManagedExport(impl, HOST_TEXT("SetEntityId"), impl.setEntityId) &&
+                LoadManagedExport(impl, HOST_TEXT("RegisterGameObjectApi"), impl.registerGameObjectApi) &&
+                LoadManagedExport(impl, HOST_TEXT("RegisterPrefabApi"), impl.registerPrefabApi) &&
+                LoadManagedExport(impl, HOST_TEXT("RegisterSceneApi"), impl.registerSceneApi) &&
+                LoadManagedExport(impl, HOST_TEXT("RegisterScriptableObjectApi"), impl.registerScriptableObjectApi) &&
+                LoadManagedExport(impl, HOST_TEXT("RegisterComponentApi"), impl.registerComponentApi) &&
+                LoadManagedExport(impl, HOST_TEXT("RegisterCameraComponentApi"), impl.registerCameraComponentApi) &&
+                LoadManagedExport(impl, HOST_TEXT("RegisterLightComponentApi"), impl.registerLightComponentApi) &&
+                LoadManagedExport(impl, HOST_TEXT("RegisterMeshComponentApi"), impl.registerMeshComponentApi) &&
+                LoadManagedExport(impl, HOST_TEXT("RegisterAnimationComponentApi"), impl.registerAnimationComponentApi) &&
+                LoadManagedExport(impl, HOST_TEXT("RegisterRigidbodyComponentApi"), impl.registerRigidbodyComponentApi) &&
+                LoadManagedExport(impl, HOST_TEXT("RegisterColliderComponentApi"), impl.registerColliderComponentApi) &&
+                LoadManagedExport(impl, HOST_TEXT("RegisterParticleSystemComponentApi"), impl.registerParticleSystemComponentApi) &&
+                LoadManagedExport(impl, HOST_TEXT("RegisterSoundEmitterComponentApi"), impl.registerSoundEmitterComponentApi) &&
+                LoadManagedExport(impl, HOST_TEXT("RegisterRuntimeUIApi"), impl.registerRuntimeUIApi) &&
+                LoadManagedExport(impl, HOST_TEXT("RegisterAdvancedUIApi"), impl.registerAdvancedUIApi) &&
+                LoadManagedExport(impl, HOST_TEXT("RegisterRmlUiApi"), impl.registerRmlUiApi) &&
+                LoadManagedExport(impl, HOST_TEXT("RegisterInputApi"), impl.registerInputApi) &&
+                LoadManagedExport(impl, HOST_TEXT("RegisterPhysicsApi"), impl.registerPhysicsApi) &&
+                LoadManagedExport(impl, HOST_TEXT("RegisterDebugApi"), impl.registerDebugApi);
 
             if (!requiredExportsLoaded)
             {
@@ -3327,7 +3414,7 @@ namespace PlutoGE::scripting
                 return false;
             }
 
-            if (!LoadManagedExport(impl, L"UnloadScriptAssembly", impl.unloadScriptAssembly))
+            if (!LoadManagedExport(impl, HOST_TEXT("UnloadScriptAssembly"), impl.unloadScriptAssembly))
             {
                 impl.unloadScriptAssembly = nullptr;
                 impl.lastError.clear();
@@ -3497,7 +3584,7 @@ namespace PlutoGE::scripting
 
     HostFxrScriptRuntime::~HostFxrScriptRuntime()
     {
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__linux__)
         if (m_impl && m_impl->unloadScriptAssembly && m_impl->loaded)
         {
             m_impl->unloadScriptAssembly();
@@ -3513,7 +3600,7 @@ namespace PlutoGE::scripting
 
     bool HostFxrScriptRuntime::LoadAssembly(const std::filesystem::path &assemblyPath)
     {
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__linux__)
         m_impl->scriptClasses.clear();
         m_impl->loaded = false;
         m_impl->lastError.clear();
@@ -3914,9 +4001,8 @@ namespace PlutoGE::scripting
             return false;
         }
 
-        const std::string assemblyPathUtf8 = WideToUtf8(shadowAssemblyPath.wstring());
-        const std::string sourceAssemblyPathUtf8 =
-            WideToUtf8(std::filesystem::absolute(assemblyPath).wstring());
+        const std::string assemblyPathUtf8 = shadowAssemblyPath.string();
+        const std::string sourceAssemblyPathUtf8 = std::filesystem::absolute(assemblyPath).string();
         if (!m_impl->loadScriptAssembly ||
             m_impl->loadScriptAssembly(
                 assemblyPathUtf8.c_str(),
@@ -3953,7 +4039,7 @@ namespace PlutoGE::scripting
 
     std::unique_ptr<ScriptInstance> HostFxrScriptRuntime::CreateInstance(const ScriptClassDefinition &scriptClass) const
     {
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__linux__)
         if (!m_impl->loaded || !m_impl->createScriptInstance)
         {
             return nullptr;

@@ -16,3 +16,8 @@ target_link_libraries(PlutoGEImport PUBLIC
     PlutoGE::assimp
     PlutoGE::meshoptimizer
 )
+
+if (UNIX AND NOT APPLE)
+    find_package(TBB REQUIRED)
+    target_link_libraries(PlutoGEImport PUBLIC TBB::tbb)
+endif()

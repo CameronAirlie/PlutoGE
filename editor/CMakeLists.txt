@@ -20,11 +20,7 @@ target_include_directories(PlutoGEEditor
 
 target_link_libraries(PlutoGEEditor
     PRIVATE 
-        PlutoGE::Platform
-        PlutoGE::Render
-        PlutoGE::Assets
-        PlutoGE::Core
-        PlutoGE::Scene
+        "$<LINK_GROUP:RESCAN,PlutoGE::Platform,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Scene,PlutoGE::Import,PlutoGE::Scripting>"
         PlutoGE::glm
         PlutoGE::imgui
         PlutoGE::EditorUI

@@ -3,8 +3,7 @@ add_executable(PlutoGELargeMeshOptimizationTests
 )
 
 target_link_libraries(PlutoGELargeMeshOptimizationTests PRIVATE
-    PlutoGE::Import
-    PlutoGE::Render
+    "$<LINK_GROUP:RESCAN,PlutoGE::Import,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Scene,PlutoGE::Scripting>"
 )
 
 add_test(NAME PlutoGELargeMeshOptimizationTests COMMAND PlutoGELargeMeshOptimizationTests)
@@ -32,7 +31,7 @@ add_executable(PlutoGEPostProcessInitializationTests
 )
 
 target_link_libraries(PlutoGEPostProcessInitializationTests PRIVATE
-    PlutoGE::Render
+    "$<LINK_GROUP:RESCAN,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Scene,PlutoGE::Import,PlutoGE::Scripting>"
 )
 
 add_test(NAME PlutoGEPostProcessInitializationTests COMMAND PlutoGEPostProcessInitializationTests)
@@ -42,7 +41,7 @@ add_executable(PlutoGERuntimeUITests
 )
 
 target_link_libraries(PlutoGERuntimeUITests PRIVATE
-    PlutoGE::Scene
+    "$<LINK_GROUP:RESCAN,PlutoGE::Scene,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Import,PlutoGE::Scripting>"
 )
 
 add_test(NAME PlutoGERuntimeUITests COMMAND PlutoGERuntimeUITests)

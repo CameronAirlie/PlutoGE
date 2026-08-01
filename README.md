@@ -2,7 +2,7 @@
 
 PlutoGE is a work-in-progress 3D game engine, editor, and standalone runtime written in C++20. It combines an OpenGL renderer, entity/component scene system, asset pipeline, physics, audio, runtime UI, and hosted .NET 8 C# scripting in one CMake-based repository.
 
-The project currently has a Windows-first development and export workflow. It is under active development, so file formats and public engine APIs may change.
+The editor and runtime support Windows and Linux (including Arch Linux). It is under active development, so file formats and public engine APIs may change.
 
 ## Contents
 
@@ -81,7 +81,21 @@ Most third-party projects are acquired by CMake through `FetchContent`, so the f
 
 ## Requirements
 
-The supported workflow in this repository is Windows with:
+### Arch Linux
+
+Install the native build and runtime dependencies:
+
+```bash
+sudo pacman -S --needed base-devel cmake git tbb zenity \
+  libx11 libxrandr libxinerama libxcursor libxi wayland \
+  wayland-protocols libxkbcommon mesa
+```
+
+You need a GPU driver supporting OpenGL 4.3 and the .NET 8 SDK for C# authoring and gameplay scripting. PlutoGE loads `libhostfxr.so` from `DOTNET_ROOT`, `/usr/share/dotnet`, `/usr/lib/dotnet`, or an exported game's bundled `DotnetRuntime` directory. `zenity` provides the editor's Linux file dialogs.
+
+### Windows
+
+The Windows workflow requires:
 
 - A 64-bit Windows installation
 - A GPU and driver supporting OpenGL 4.3
@@ -94,6 +108,25 @@ The supported workflow in this repository is Windows with:
 The repository also contains a `gcc` preset aimed at `C:\w64devkit`, but it is machine-specific. The MSVC presets are the portable starting point for a normal Windows checkout.
 
 ## Build and run
+
+### Arch Linux
+
+```bash
+git clone https://github.com/CameronAirlie/PlutoGE.git
+cd PlutoGE
+cmake --preset linux
+cmake --build --preset linux -j"$(nproc)"
+./out/build/linux/editor/PlutoGEEditor
+```
+
+The runtime is at `out/build/linux/runtime/PlutoGERuntime`. To install into `out/install/linux` or create a portable `.tar.gz` package:
+
+```bash
+cmake --install out/build/linux
+cpack --config out/build/linux/CPackConfig.cmake
+```
+
+### Windows
 
 Clone and configure the MSVC build:
 
@@ -188,7 +221,7 @@ Useful shortcuts:
 | `Ctrl+C`, `Ctrl+V`, `Ctrl+D` | Copy, paste, and duplicate the selected entity |
 | `Delete` | Delete the selected entity |
 
-Editor camera navigation uses `W/A/S/D` for planar movement, `Q/E` for vertical movement, Shift to move faster, and mouse controls in the viewport for looking, panning, and orbiting.
+Editor camera navigation uses `W/A/S/D` for planar movement, `Q/E` for vertical movement, and Shift to move faster. Drag with the right mouse button to look and the middle mouse button to pan. On a trackpad, use `Alt` + left-drag to look and `Alt` + `Shift` + left-drag to pan. Two-finger scrolling adjusts movement speed (or zooms an orthographic view).
 
 ## C# scripting
 
@@ -450,9 +483,9 @@ Update the graphics driver and verify the GPU supports an OpenGL 4.3 core contex
 - Give it a parameterless constructor.
 - Use **Runtime → Build Scripts** and fix errors shown in the console.
 
-### `hostfxr.dll` cannot be found
+### The `hostfxr` library cannot be found
 
-Install a .NET runtime/SDK or set `DOTNET_ROOT` to the .NET installation. Exported games bundle a runtime in `DotnetRuntime`, while development builds also search `DOTNET_ROOT` and the standard Program Files installation.
+Install a .NET runtime/SDK or set `DOTNET_ROOT` to the .NET installation. Exported games bundle a runtime in `DotnetRuntime`; development builds also search the standard Program Files installation on Windows and `/usr/share/dotnet` or `/usr/lib/dotnet` on Linux.
 
 ### Export cannot find `PlutoGERuntime`
 

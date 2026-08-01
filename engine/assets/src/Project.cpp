@@ -382,7 +382,11 @@ namespace PlutoGE::assets
                 }
 
                 const auto extension = sourcePath.extension().string();
+#ifdef _WIN32
                 if (extension != ".dll" && extension != ".DLL")
+#else
+                if (sourcePath.filename().string().find(".so") == std::string::npos)
+#endif
                 {
                     continue;
                 }
@@ -440,6 +444,9 @@ namespace PlutoGE::assets
             {
                 candidates.emplace_back(programFiles / "dotnet");
             }
+#else
+            candidates.emplace_back("/usr/share/dotnet");
+            candidates.emplace_back("/usr/lib/dotnet");
 #endif
 
             return candidates;
@@ -447,7 +454,6 @@ namespace PlutoGE::assets
 
         bool IsDotnetRuntimeRoot(const std::filesystem::path &dotnetRoot)
         {
-#ifdef _WIN32
             const auto fxrDirectory = dotnetRoot / "host" / "fxr";
             const auto sharedRuntimeDirectory = dotnetRoot / "shared" / "Microsoft.NETCore.App";
             if (!std::filesystem::exists(fxrDirectory) || !std::filesystem::exists(sharedRuntimeDirectory))
@@ -466,13 +472,17 @@ namespace PlutoGE::assets
                     continue;
                 }
 
-                if (iterator->is_directory() && std::filesystem::exists(iterator->path() / "hostfxr.dll"))
+                if (iterator->is_directory() &&
+#ifdef _WIN32
+                    std::filesystem::exists(iterator->path() / "hostfxr.dll")
+#else
+                    std::filesystem::exists(iterator->path() / "libhostfxr.so")
+#endif
+                )
                 {
                     return true;
                 }
             }
-#endif
-
             return false;
         }
 
@@ -749,6 +759,24 @@ namespace PlutoGE::assets
             if (tokens[0] == "SCRIPT_ASSEMBLY" && tokens.size() >= 2)
             {
                 manifest.scriptAssembly = tokens[1];
+                // Older Linux editor builds passed project:// references through
+                // std::filesystem::path. POSIX path normalization collapsed the
+                // scheme and could also prepend the editor working directory,
+                // producing values such as /path/to/PlutoGE/project:/Managed/...
+                if (!IsProjectAssetReference(manifest.scriptAssembly))
+                {
+                    constexpr std::string_view collapsedScheme = "project:/";
+                    const auto collapsedPosition = manifest.scriptAssembly.find(collapsedScheme);
+                    if (collapsedPosition != std::string::npos)
+                    {
+                        auto relativeReference = manifest.scriptAssembly.substr(collapsedPosition + collapsedScheme.size());
+                        while (!relativeReference.empty() && (relativeReference.front() == '/' || relativeReference.front() == '\\'))
+                        {
+                            relativeReference.erase(relativeReference.begin());
+                        }
+                        manifest.scriptAssembly = std::string(kProjectAssetScheme) + relativeReference;
+                    }
+                }
                 continue;
             }
 
@@ -1415,7 +1443,8 @@ namespace PlutoGE::assets
             return false;
         }
 
-        if (!CopyBundledDotnetRuntime(normalizedDestinationExecutablePath.parent_path(), errorMessage))
+        if (!manifest.scriptAssembly.empty() &&
+            !CopyBundledDotnetRuntime(normalizedDestinationExecutablePath.parent_path(), errorMessage))
         {
             return false;
         }

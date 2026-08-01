@@ -2,6 +2,21 @@
     "version": 8,
     "configurePresets": [
         {
+            "name": "linux",
+            "displayName": "Linux (Debug)",
+            "description": "Native Linux build for GCC or Clang",
+            "generator": "Unix Makefiles",
+            "binaryDir": "${sourceDir}/out/build/${presetName}",
+            "cacheVariables": {
+                "PLUTO_BUILD_EDITOR": "ON",
+                "PLUTO_BUILD_RUNTIME": "ON",
+                "PLUTO_BUILD_SAMPLES": "OFF",
+                "BUILD_TESTING": "ON",
+                "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}",
+                "CMAKE_BUILD_TYPE": "Debug"
+            }
+        },
+        {
             "name": "gcc",
             "displayName": "GCC 14.2.0 x86_64-w64-mingw32",
             "description": "Using compilers: C = C:\\w64devkit\\bin\\gcc.exe, CXX = C:\\w64devkit\\bin\\g++.exe",
@@ -47,6 +62,11 @@
         }
     ],
     "buildPresets": [
+        {
+            "name": "linux",
+            "displayName": "Build Linux Debug",
+            "configurePreset": "linux"
+        },
         {
             "name": "gcc",
             "description": "",

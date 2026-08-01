@@ -265,7 +265,7 @@ namespace PlutoGE::scene
         {
             if (property.name == "Color")
             {
-                sscanf_s(property.value.c_str(), "%f,%f,%f", &m_config.color.x, &m_config.color.y, &m_config.color.z);
+                std::sscanf(property.value.c_str(), "%f,%f,%f", &m_config.color.x, &m_config.color.y, &m_config.color.z);
             }
             else if (property.name == "Intensity")
             {
@@ -281,12 +281,12 @@ namespace PlutoGE::scene
             }
             else if (property.name == "Direction")
             {
-                sscanf_s(property.value.c_str(), "%f,%f,%f", &m_config.direction.x, &m_config.direction.y, &m_config.direction.z);
+                std::sscanf(property.value.c_str(), "%f,%f,%f", &m_config.direction.x, &m_config.direction.y, &m_config.direction.z);
             }
             else if (property.name == "LightType")
             {
                 int type;
-                sscanf_s(property.value.c_str(), "%d", &type);
+                std::sscanf(property.value.c_str(), "%d", &type);
                 m_config.type = static_cast<LightType>(type);
             }
             else if (property.name == "Static")

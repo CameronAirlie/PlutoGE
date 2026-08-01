@@ -18,11 +18,7 @@ target_include_directories(PlutoGERuntime
 
 target_link_libraries(PlutoGERuntime
     PRIVATE
-        PlutoGE::Platform
-        PlutoGE::Render
-        PlutoGE::Assets
-        PlutoGE::Core
-        PlutoGE::Scene
+        "$<LINK_GROUP:RESCAN,PlutoGE::Platform,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Scene,PlutoGE::Import,PlutoGE::Scripting>"
         PlutoGE::glm
 )
 

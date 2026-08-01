@@ -42,6 +42,11 @@
 #include <fstream>
 #include <memory>
 #include <array>
+#ifndef _WIN32
+#include <cstdio>
+#include <sys/types.h>
+#include <unistd.h>
+#endif
 
 #include <glm/gtc/constants.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -106,7 +111,17 @@ namespace PlutoGE::ui
         constexpr float kEditorCameraPitchLimitDegrees = 89.0f;
         constexpr const char *kSceneFileFilter = "PlutoGE Scene\0*.plutoscene\0All Files\0*.*\0";
         constexpr const char *kProjectFileFilter = "PlutoGE Project\0*.plutoproject\0All Files\0*.*\0";
+#ifdef _WIN32
         constexpr const char *kExecutableFileFilter = "Executable\0*.exe\0All Files\0*.*\0";
+#else
+        constexpr const char *kExecutableFileFilter = "Executable\0*\0All Files\0*\0";
+#endif
+        constexpr const char *kRuntimeExecutableName =
+#ifdef _WIN32
+            "PlutoGERuntime.exe";
+#else
+            "PlutoGERuntime";
+#endif
         constexpr const char *kDefaultProjectFileName = "UntitledProject.plutoproject";
         constexpr const char *kDefaultProjectSceneRelativePath = "Scenes/Main.plutoscene";
         constexpr std::string_view kDefaultProjectScriptDirectory = "Scripts";
@@ -204,8 +219,8 @@ namespace PlutoGE::ui
 
             return true;
 #else
-            const std::string command = QuoteShellArgument(executablePath);
-            if (std::system(command.c_str()) != 0)
+            const pid_t child = fork();
+            if (child < 0)
             {
                 if (errorMessage)
                 {
@@ -213,7 +228,17 @@ namespace PlutoGE::ui
                 }
                 return false;
             }
-
+            if (child == 0)
+            {
+                const auto workingDirectory = executablePath.parent_path().string();
+                if (!workingDirectory.empty())
+                {
+                    (void)chdir(workingDirectory.c_str());
+                }
+                const auto executable = executablePath.string();
+                execl(executable.c_str(), executable.c_str(), static_cast<char *>(nullptr));
+                _exit(127);
+            }
             return true;
 #endif
         }
@@ -227,8 +252,15 @@ namespace PlutoGE::ui
             {
                 return std::filesystem::path(modulePath.data()).parent_path().lexically_normal();
             }
+#else
+            std::array<char, 4096> modulePath{};
+            const auto modulePathLength = readlink("/proc/self/exe", modulePath.data(), modulePath.size() - 1);
+            if (modulePathLength > 0)
+            {
+                modulePath[static_cast<std::size_t>(modulePathLength)] = '\0';
+                return std::filesystem::path(modulePath.data()).parent_path().lexically_normal();
+            }
 #endif
-
             return std::filesystem::current_path();
         }
 
@@ -574,6 +606,15 @@ namespace PlutoGE::ui
 
             const bool isRightMouseDown = glfwGetMouseButton(windowHandle, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
             const bool isMiddleMouseDown = glfwGetMouseButton(windowHandle, GLFW_MOUSE_BUTTON_MIDDLE) == GLFW_PRESS;
+            const bool isLeftMouseDown = glfwGetMouseButton(windowHandle, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
+            const bool isAltDown = glfwGetKey(windowHandle, GLFW_KEY_LEFT_ALT) == GLFW_PRESS ||
+                                   glfwGetKey(windowHandle, GLFW_KEY_RIGHT_ALT) == GLFW_PRESS;
+            const bool isShiftDown = glfwGetKey(windowHandle, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
+                                     glfwGetKey(windowHandle, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
+            const bool isTrackpadPanDown = isLeftMouseDown && isAltDown && isShiftDown;
+            const bool isTrackpadLookDown = isLeftMouseDown && isAltDown && !isShiftDown;
+            const bool isPanDown = isMiddleMouseDown || isTrackpadPanDown;
+            const bool isLookDown = isRightMouseDown || isTrackpadLookDown;
             const double scrollDeltaY = window.GetInputState().mouseState.scrollDeltaY;
             if (camera.orthographic && canActivate && scrollDeltaY != 0.0)
             {
@@ -582,8 +623,15 @@ namespace PlutoGE::ui
                                                      0.05f,
                                                      100000.0f);
             }
-            if (isMiddleMouseDown && !isLookActive)
+            if (isPanDown)
             {
+                if (isLookActive)
+                {
+                    window.SetEditorCursorLocked(false);
+                    glfwSetCursorPos(windowHandle, restoreCursorX, restoreCursorY);
+                    isLookActive = false;
+                }
+
                 double cursorX = 0.0;
                 double cursorY = 0.0;
                 glfwGetCursorPos(windowHandle, &cursorX, &cursorY);
@@ -614,7 +662,7 @@ namespace PlutoGE::ui
             }
             isPanActive = false;
 
-            if (!isRightMouseDown)
+            if (!isLookDown)
             {
                 if (isLookActive)
                 {
@@ -810,14 +858,43 @@ namespace PlutoGE::ui
             return std::filesystem::path(fileName).lexically_normal().string();
         }
 #else
-        std::string ShowOpenFileDialog(const char *)
+        std::string RunZenityFileDialog(const std::string &arguments)
         {
-            return {};
+            std::array<char, 4096> output{};
+            std::string result;
+            FILE *pipe = popen(("zenity --file-selection " + arguments + " 2>/dev/null").c_str(), "r");
+            if (!pipe)
+            {
+                return {};
+            }
+            while (fgets(output.data(), static_cast<int>(output.size()), pipe))
+            {
+                result += output.data();
+            }
+            if (pclose(pipe) != 0)
+            {
+                return {};
+            }
+            while (!result.empty() && (result.back() == '\n' || result.back() == '\r'))
+            {
+                result.pop_back();
+            }
+            return result;
         }
 
-        std::string ShowSaveFileDialog(const char *, const std::string &, const char *)
+        std::string ShowOpenFileDialog(const char *)
         {
-            return {};
+            return RunZenityFileDialog("");
+        }
+
+        std::string ShowSaveFileDialog(const char *, const std::string &initialPath, const char *)
+        {
+            std::string arguments = "--save --confirm-overwrite";
+            if (!initialPath.empty() && initialPath.find('\'') == std::string::npos)
+            {
+                arguments += " --filename='" + initialPath + "'";
+            }
+            return RunZenityFileDialog(arguments);
         }
 #endif
     }
@@ -895,7 +972,14 @@ namespace PlutoGE::ui
         const auto &manifest = m_project->GetManifest();
         if (!manifest.scriptAssembly.empty() && !assets::Project::IsEngineAssetReference(manifest.scriptAssembly))
         {
-            return m_project->ResolveAssetReference(manifest.scriptAssembly).lexically_normal();
+            const auto configuredPath = m_project->ResolveAssetReference(manifest.scriptAssembly).lexically_normal();
+            const bool hasCollapsedProjectScheme =
+                manifest.scriptAssembly.find("project:/") != std::string::npos &&
+                !assets::Project::IsProjectAssetReference(manifest.scriptAssembly);
+            if (!hasCollapsedProjectScheme && configuredPath.extension() == ".dll")
+            {
+                return configuredPath;
+            }
         }
 
         std::string baseName = SanitizeIdentifier(manifest.name);
@@ -915,7 +999,11 @@ namespace PlutoGE::ui
         }
 
         auto runtimeExecutablePath = m_project->GetManifestPath();
+#ifdef _WIN32
         runtimeExecutablePath.replace_extension(".exe");
+#else
+        runtimeExecutablePath.replace_extension();
+#endif
         return std::filesystem::exists(runtimeExecutablePath);
     }
 
@@ -1078,10 +1166,10 @@ namespace PlutoGE::ui
         }
 
         auto &manifest = m_project->GetManifest();
-        if (manifest.scriptAssembly.empty() || assets::Project::IsEngineAssetReference(manifest.scriptAssembly))
-        {
-            manifest.scriptAssembly = m_project->MakeAssetReference(GetProjectScriptAssemblyOutputPath());
-        }
+        // Always canonicalize this value. In particular, passing a project://
+        // reference through std::filesystem::path on POSIX collapses it to
+        // project:/ and turns it into an invalid relative filesystem path.
+        manifest.scriptAssembly = m_project->MakeAssetReference(GetProjectScriptAssemblyOutputPath());
 
         return true;
     }
@@ -3042,9 +3130,15 @@ namespace PlutoGE::ui
                     if (ImGui::MenuItem("Build Project...", nullptr, false, m_project != nullptr))
                     {
                         const std::string suggestedPath = GetDefaultExportExecutablePath().empty()
-                                                              ? std::string("PlutoGERuntime.exe")
+                                                              ? std::string(kRuntimeExecutableName)
                                                               : GetDefaultExportExecutablePath().string();
-                        const std::string exportPath = ShowSaveFileDialog(kExecutableFileFilter, suggestedPath, "exe");
+                        const std::string exportPath = ShowSaveFileDialog(kExecutableFileFilter, suggestedPath,
+#ifdef _WIN32
+                                                                          "exe"
+#else
+                                                                          nullptr
+#endif
+                        );
                         if (!exportPath.empty())
                         {
                             BuildProjectToPath(exportPath);
@@ -3053,9 +3147,15 @@ namespace PlutoGE::ui
                     if (ImGui::MenuItem("Build and Run Project...", nullptr, false, m_project != nullptr))
                     {
                         const std::string suggestedPath = GetDefaultExportExecutablePath().empty()
-                                                              ? std::string("PlutoGERuntime.exe")
+                                                              ? std::string(kRuntimeExecutableName)
                                                               : GetDefaultExportExecutablePath().string();
-                        const std::string exportPath = ShowSaveFileDialog(kExecutableFileFilter, suggestedPath, "exe");
+                        const std::string exportPath = ShowSaveFileDialog(kExecutableFileFilter, suggestedPath,
+#ifdef _WIN32
+                                                                          "exe"
+#else
+                                                                          nullptr
+#endif
+                        );
                         if (!exportPath.empty())
                         {
                             BuildAndRunProjectToPath(exportPath);
@@ -3354,9 +3454,13 @@ namespace PlutoGE::ui
                         manifest.windowHeight = (std::max)(projectWindowHeight, 64);
                         manifest.vSyncEnabled = projectVSyncEnabled;
                         manifest.editorFontSize = std::clamp(projectEditorFontSize, 10.0f, 24.0f);
-                        manifest.scriptAssembly = projectScriptAssemblyBuffer[0] == '\0'
+                        const std::string configuredScriptAssembly = projectScriptAssemblyBuffer.data();
+                        manifest.scriptAssembly = configuredScriptAssembly.empty()
                                                       ? std::string{}
-                                                      : m_project->MakeAssetReference(projectScriptAssemblyBuffer.data());
+                                                      : (assets::Project::IsProjectAssetReference(configuredScriptAssembly) ||
+                                                                 assets::Project::IsEngineAssetReference(configuredScriptAssembly)
+                                                             ? configuredScriptAssembly
+                                                             : m_project->MakeAssetReference(configuredScriptAssembly));
 
                         if (SaveProjectToDisk())
                         {

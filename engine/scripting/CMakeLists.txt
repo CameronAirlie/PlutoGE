@@ -14,4 +14,5 @@ target_link_libraries(PlutoGEScripting PUBLIC
     PlutoGE::Core
     PlutoGE::Scene
     PlutoGE::Render
+    ${CMAKE_DL_LIBS}
 )

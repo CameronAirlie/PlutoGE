@@ -603,7 +603,7 @@ namespace PlutoGE::scene
             if (path == "Transform.Position" || path == "Transform.Rotation" || path == "Transform.Scale")
             {
                 glm::vec3 parsed{0.0f};
-                sscanf_s(std::string(value).c_str(), "%f,%f,%f", &parsed.x, &parsed.y, &parsed.z);
+                std::sscanf(std::string(value).c_str(), "%f,%f,%f", &parsed.x, &parsed.y, &parsed.z);
                 if (path == "Transform.Position")
                     entity.SetPosition(parsed);
                 else if (path == "Transform.Rotation")

@@ -1830,7 +1830,10 @@ namespace PlutoGE::ui
         m_isViewportHovered = mouseInsideViewport &&
                               ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem |
                                                      ImGuiHoveredFlags_RootAndChildWindows);
-        const bool viewportClicked = mouseInsideViewport && ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+        // Alt + left-drag is reserved for trackpad camera navigation. Do not
+        // turn the start of that gesture into a scene selection/edit click.
+        const bool viewportClicked = mouseInsideViewport && !ImGui::GetIO().KeyAlt &&
+                                     ImGui::IsMouseClicked(ImGuiMouseButton_Left);
         m_isViewportFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
 
         if (m_config.editorViewport && ImGui::BeginDragDropTarget())
@@ -2475,7 +2478,7 @@ namespace PlutoGE::ui
             {
                 const bool brushActive = m_isViewportHovered && !controlsHovered &&
                                          !ImGuizmo::IsOver() && !ImGuizmo::IsUsing() &&
-                                         ImGui::IsMouseDown(ImGuiMouseButton_Left);
+                                         !ImGui::GetIO().KeyAlt && ImGui::IsMouseDown(ImGuiMouseButton_Left);
                 // Exact UV raycasts are deliberately skipped while idle; on large
                 // meshes this removes an otherwise needless triangle walk per frame.
                 if (brushActive)
@@ -2572,7 +2575,7 @@ namespace PlutoGE::ui
                             const bool brushActive = m_isViewportHovered &&
                                                      !ImGuizmo::IsOver() &&
                                                      !ImGuizmo::IsUsing() &&
-                                                     ImGui::IsMouseDown(ImGuiMouseButton_Left);
+                                                     !ImGui::GetIO().KeyAlt && ImGui::IsMouseDown(ImGuiMouseButton_Left);
                             terrainPaintActive = canTerrainPaint && brushActive && !canFoliagePaint;
                             foliagePaintActive = canFoliagePaint && brushActive;
                             if (terrainPaintActive && !s_terrainStrokeActive)

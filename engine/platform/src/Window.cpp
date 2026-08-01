@@ -58,7 +58,7 @@ namespace PlutoGE::platform
 #endif
     }
 
-    static void GLFWFramebufferResizeCallback(GLFWwindow *window, int width, int height)
+    void GLFWFramebufferResizeCallback(GLFWwindow *window, int width, int height)
     {
         auto *instance = static_cast<Window *>(glfwGetWindowUserPointer(window));
         if (!instance)

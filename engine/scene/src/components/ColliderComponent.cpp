@@ -17,7 +17,7 @@ namespace PlutoGE::scene
         glm::vec3 ParseVec3(const std::string &value, const glm::vec3 &fallback = glm::vec3(0.0f))
         {
             glm::vec3 parsedValue = fallback;
-            sscanf_s(value.c_str(), "%f,%f,%f", &parsedValue.x, &parsedValue.y, &parsedValue.z);
+            std::sscanf(value.c_str(), "%f,%f,%f", &parsedValue.x, &parsedValue.y, &parsedValue.z);
             return parsedValue;
         }
 

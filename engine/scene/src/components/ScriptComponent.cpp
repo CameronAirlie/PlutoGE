@@ -148,7 +148,7 @@ namespace PlutoGE::scene
         {
             glm::vec2 parsedValue{0.0f};
 #ifdef _WIN32
-            sscanf_s(value.c_str(), "%f,%f", &parsedValue.x, &parsedValue.y);
+            std::sscanf(value.c_str(), "%f,%f", &parsedValue.x, &parsedValue.y);
 #else
             std::sscanf(value.c_str(), "%f,%f", &parsedValue.x, &parsedValue.y);
 #endif
@@ -159,7 +159,7 @@ namespace PlutoGE::scene
         {
             glm::vec3 parsedValue{0.0f};
 #ifdef _WIN32
-            sscanf_s(value.c_str(), "%f,%f,%f", &parsedValue.x, &parsedValue.y, &parsedValue.z);
+            std::sscanf(value.c_str(), "%f,%f,%f", &parsedValue.x, &parsedValue.y, &parsedValue.z);
 #else
             std::sscanf(value.c_str(), "%f,%f,%f", &parsedValue.x, &parsedValue.y, &parsedValue.z);
 #endif

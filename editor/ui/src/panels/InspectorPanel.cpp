@@ -1458,7 +1458,7 @@ namespace PlutoGE::ui
         glm::vec3 ParseVec3Property(const std::string &value)
         {
             glm::vec3 parsedValue{0.0f};
-            sscanf_s(value.c_str(), "%f,%f,%f", &parsedValue.x, &parsedValue.y, &parsedValue.z);
+            std::sscanf(value.c_str(), "%f,%f,%f", &parsedValue.x, &parsedValue.y, &parsedValue.z);
             return parsedValue;
         }
 
@@ -2123,7 +2123,7 @@ namespace PlutoGE::ui
         case scene::PropertyType::Vec2:
         {
             glm::vec2 value{0.0f, 0.0f};
-            sscanf_s(property.value.c_str(), "%f,%f", &value.x, &value.y);
+            std::sscanf(property.value.c_str(), "%f,%f", &value.x, &value.y);
             if (ImGui::DragFloat2(property.name.c_str(), &value.x))
             {
                 property.value = std::to_string(value.x) + "," + std::to_string(value.y);
@@ -2154,7 +2154,7 @@ namespace PlutoGE::ui
         case scene::PropertyType::Color:
         {
             glm::vec4 value{1.0f};
-            sscanf_s(property.value.c_str(), "%f,%f,%f,%f", &value.r, &value.g, &value.b, &value.a);
+            std::sscanf(property.value.c_str(), "%f,%f,%f,%f", &value.r, &value.g, &value.b, &value.a);
             if (ImGui::ColorEdit4(property.name.c_str(), &value.r))
             {
                 property.value = std::to_string(value.r) + "," + std::to_string(value.g) + "," +

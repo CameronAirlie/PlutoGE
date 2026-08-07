@@ -172,6 +172,7 @@ namespace PlutoGE::ui
                                std::string *errorMessage = nullptr);
         bool BuildProjectScripts();
         void SetStatusMessage(std::string message) { m_statusMessage = std::move(message); }
+        bool LoadProjectFromPath(const std::filesystem::path &manifestPath);
         bool OpenSceneFromPath(const std::filesystem::path &scenePath);
         void OpenMaterialAsset(std::string materialAssetReference);
         void OpenMeshAsset(std::string meshAssetReference);
@@ -269,7 +270,6 @@ namespace PlutoGE::ui
         std::filesystem::path GetDefaultExportExecutablePath() const;
         bool SaveSceneToPath(const std::filesystem::path &scenePath);
         bool SaveActiveSceneIntoProject();
-        bool LoadProjectFromPath(const std::filesystem::path &manifestPath);
         bool CreateProjectAtPath(const std::filesystem::path &manifestPath);
         bool SaveProjectToDisk();
         bool BuildProjectToPath(const std::filesystem::path &destinationExecutablePath);

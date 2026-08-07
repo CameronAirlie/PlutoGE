@@ -20,6 +20,13 @@ int RunEditor(int argc, char **argv)
         return 1;
     }
 
+    if (argc > 1 && !editor.LoadProjectFromPath(argv[1]))
+    {
+        std::cerr << "Failed to load project: " << argv[1] << std::endl;
+        editor.Shutdown();
+        return 1;
+    }
+
     editor.Render();
 
     editor.Shutdown();

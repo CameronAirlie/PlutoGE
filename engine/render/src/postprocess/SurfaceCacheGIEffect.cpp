@@ -44,13 +44,16 @@ namespace PlutoGE::render
             {"Capture Budget", PostProcessParameterType::Int, std::to_string(m_captureBudget)},
             {"Maximum Capture Lights", PostProcessParameterType::Int, std::to_string(m_maxCaptureLights)},
             {"Visibility Cascade Count", PostProcessParameterType::Int, std::to_string(m_visibilityCascadeCount)},
+            {"Screen Ray Count", PostProcessParameterType::Int, std::to_string(m_screenRayCount)},
+            {"Screen Trace Steps", PostProcessParameterType::Int, std::to_string(m_screenTraceSteps)},
+            {"Screen Trace Distance", PostProcessParameterType::Float, std::to_string(m_screenTraceDistance)},
             {"Radiance Intensity", PostProcessParameterType::Float, std::to_string(m_radianceIntensity)},
             {"Environment Intensity", PostProcessParameterType::Float, std::to_string(m_environmentIntensity)},
             {"Radiance Clamp", PostProcessParameterType::Float, std::to_string(m_radianceClamp)},
             {"Radiance History Blend", PostProcessParameterType::Float, std::to_string(m_radianceHistoryBlend)},
             {"Directional Shadows", PostProcessParameterType::Bool, m_directionalShadows ? "true" : "false"},
             {"Static Geometry Only", PostProcessParameterType::Bool, m_staticGeometryOnly ? "true" : "false"},
-            {"Debug View", PostProcessParameterType::Enum, std::to_string(m_debugView), {"Scene", "Albedo / Metallic", "Normal / Roughness", "Emission", "Card Depth", "Direct Radiance", "Accumulated Radiance", "Visibility Cascades", "Card Candidates", "Selected Card", "Atlas UV", "Gather Inputs"}},
+            {"Debug View", PostProcessParameterType::Enum, std::to_string(m_debugView), {"Scene", "Albedo / Metallic", "Normal / Roughness", "Emission", "Card Depth", "Direct Radiance", "Accumulated Radiance", "Visibility Cascades", "Card Candidates", "Selected Card", "Atlas UV", "Gather Inputs", "Screen Trace"}},
         };
     }
 
@@ -73,13 +76,16 @@ namespace PlutoGE::render
                 const int value = std::clamp(std::stoi(parameter.value), 1, 3);
                 m_visibilityCascadeCount = value;
             }
+            else if (parameter.name == "Screen Ray Count") m_screenRayCount = std::clamp(std::stoi(parameter.value), 1, 8);
+            else if (parameter.name == "Screen Trace Steps") m_screenTraceSteps = std::clamp(std::stoi(parameter.value), 4, 32);
+            else if (parameter.name == "Screen Trace Distance") m_screenTraceDistance = std::clamp(std::stof(parameter.value), 0.25f, 32.0f);
             else if (parameter.name == "Radiance Intensity") m_radianceIntensity = std::clamp(std::stof(parameter.value), 0.0f, 8.0f);
             else if (parameter.name == "Environment Intensity") m_environmentIntensity = std::clamp(std::stof(parameter.value), 0.0f, 8.0f);
             else if (parameter.name == "Radiance Clamp") m_radianceClamp = std::clamp(std::stof(parameter.value), 1.0f, 256.0f);
             else if (parameter.name == "Radiance History Blend") m_radianceHistoryBlend = std::clamp(std::stof(parameter.value), 0.0f, 0.98f);
             else if (parameter.name == "Directional Shadows") m_directionalShadows = ParseBool(parameter.value);
             else if (parameter.name == "Static Geometry Only") { const bool value = ParseBool(parameter.value); if (value != m_staticGeometryOnly) { m_staticGeometryOnly = value; m_cacheLayoutDirty = true; } }
-            else if (parameter.name == "Debug View") m_debugView = std::clamp(std::stoi(parameter.value), 0, 11);
+            else if (parameter.name == "Debug View") m_debugView = std::clamp(std::stoi(parameter.value), 0, 12);
         }
         m_maxCardResolution = std::max(m_maxCardResolution, m_minCardResolution);
         m_cacheLayoutDirty = m_cacheLayoutDirty || previousAtlasSize != m_atlasSize ||
@@ -180,6 +186,7 @@ namespace PlutoGE::render
             void main(){
                 if(uDebugView==0){FragColor=texture(uSceneTexture,UV);return;}
                 if(uDebugView==11){FragColor=vec4(texture(uGatherTexture,UV).rgb,1.0);return;}
+                if(uDebugView==12){float confidence=texture(uGatherTexture,UV).a;FragColor=vec4(mix(vec3(0.015,0.03,0.12),vec3(1.0,0.28,0.02),confidence),1.0);return;}
                 if(uDebugView==7){
                     if(uVisibilityStatus==0){vec2 t=floor(UV*16.0);float c=mod(t.x+t.y,2.0);FragColor=vec4(mix(vec3(0.12,0.0,0.18),vec3(0.55,0.0,0.7),c),1);return;}
                     if(uVisibilityStatus==1){vec2 t=floor(UV*16.0);float c=mod(t.x+t.y,2.0);FragColor=vec4(mix(vec3(0.18,0.035,0.0),vec3(0.75,0.24,0.0),c),1);return;}
@@ -246,6 +253,19 @@ namespace PlutoGE::render
         gather.fragmentSource = R"(#version 330 core
             in vec2 UV; out vec4 FragColor;
             uniform sampler2D uScenePositionTexture; uniform sampler2D uSceneNormalTexture;
+            uniform mat4 uViewProjection; uniform int uRayCount; uniform int uTraceSteps; uniform float uTraceDistance;
+            const float PI=3.14159265359;
+            float hash12(vec2 p){vec3 p3=fract(vec3(p.xyx)*0.1031);p3+=dot(p3,p3.yzx+33.33);return fract((p3.x+p3.y)*p3.z);}
+            vec3 hemisphereDirection(vec3 normal,int index,float rotation){
+                float count=float(max(uRayCount,1));float u=(float(index)+0.5)/count;float phi=2.0*PI*(fract(float(index)*0.61803398875+rotation));
+                float radius=sqrt(u);vec3 local=vec3(radius*cos(phi),radius*sin(phi),sqrt(max(1.0-u,0.0)));
+                vec3 helper=abs(normal.z)<0.999?vec3(0,0,1):vec3(1,0,0);vec3 tangent=normalize(cross(helper,normal));vec3 bitangent=cross(normal,tangent);
+                return normalize(tangent*local.x+bitangent*local.y+normal*local.z);
+            }
+            bool traceScreen(vec3 origin,vec3 direction){
+                float stepLength=uTraceDistance/float(max(uTraceSteps,1));
+                for(int stepIndex=1;stepIndex<=32;stepIndex++){if(stepIndex>uTraceSteps)break;float travel=stepLength*float(stepIndex);vec3 rayPoint=origin+direction*travel;vec4 clip=uViewProjection*vec4(rayPoint,1.0);if(clip.w<=0.0001)continue;vec2 sampleUv=clip.xy/clip.w*0.5+0.5;if(any(lessThan(sampleUv,vec2(0.0)))||any(greaterThan(sampleUv,vec2(1.0))))break;vec3 scenePoint=texture(uScenePositionTexture,sampleUv).xyz;vec3 delta=scenePoint-origin;float alongRay=dot(delta,direction);float radialDistance=length(delta-direction*alongRay);float thickness=max(0.06,travel*0.025);if(alongRay>0.06&&alongRay<=travel+stepLength&&radialDistance<thickness)return true;}return false;
+            }
             void main(){
                 vec3 position=texture(uScenePositionTexture,UV).xyz;
                 vec3 rawNormal=texture(uSceneNormalTexture,UV).xyz;
@@ -253,7 +273,10 @@ namespace PlutoGE::render
                 if(normalLength<0.01){FragColor=vec4(0.0);return;}
                 vec3 normal=rawNormal/normalLength;
                 float positionValidity=all(lessThan(abs(position),vec3(1e19)))?1.0:0.0;
-                FragColor=vec4((normal*0.5+0.5)*positionValidity,positionValidity);
+                float hits=0.0;float rotation=hash12(floor(gl_FragCoord.xy));vec3 origin=position+normal*0.04;
+                for(int rayIndex=0;rayIndex<8;rayIndex++){if(rayIndex>=uRayCount)break;hits+=traceScreen(origin,hemisphereDirection(normal,rayIndex,rotation))?1.0:0.0;}
+                float hitConfidence=hits/float(max(uRayCount,1));
+                FragColor=vec4((normal*0.5+0.5)*positionValidity,hitConfidence*positionValidity);
             })";
         m_gatherShader = Shader::Create(gather);
     }
@@ -281,6 +304,10 @@ namespace PlutoGE::render
         m_gatherShader->SetUniform("uScenePositionTexture", 0);
         glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, context.renderContext.gBuffer->GetNormalTextureID());
         m_gatherShader->SetUniform("uSceneNormalTexture", 1);
+        m_gatherShader->SetUniform("uViewProjection", context.renderContext.cameraData.projection * context.renderContext.cameraData.view);
+        m_gatherShader->SetUniform("uRayCount", m_screenRayCount);
+        m_gatherShader->SetUniform("uTraceSteps", m_screenTraceSteps);
+        m_gatherShader->SetUniform("uTraceDistance", m_screenTraceDistance);
         DrawFullscreenTriangle();
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
     }

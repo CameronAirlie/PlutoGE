@@ -71,6 +71,9 @@ namespace PlutoGE::render
         int m_debugView = 0;
         int m_maxCaptureLights = 8;
         int m_visibilityCascadeCount = 3;
+        int m_screenRayCount = 4;
+        int m_screenTraceSteps = 16;
+        float m_screenTraceDistance = 4.0f;
         float m_radianceIntensity = 1.0f;
         float m_environmentIntensity = 1.0f;
         float m_radianceClamp = 32.0f;

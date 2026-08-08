@@ -95,7 +95,11 @@ Validation recorded on 2026-08-08:
     - [x] Allocate and resize the gather target independently of the output target.
     - [x] Downsample receiver position/normal inputs and expose a `Gather Inputs` diagnostic.
     - [ ] Visually validate receiver coverage and half-resolution resizing.
-  - [ ] 4.2 Generate stable hemisphere directions and trace screen-space visibility first.
+  - [~] 4.2 Generate stable hemisphere directions and trace screen-space visibility first.
+    - [x] Add configurable deterministic cosine-weighted hemisphere rays.
+    - [x] March projected rays against the world-position buffer at half resolution.
+    - [x] Store per-receiver screen-hit confidence and expose a `Screen Trace` diagnostic.
+    - [ ] Visually validate contact coverage, stability, and useful miss regions for voxel continuation.
   - [ ] 4.3 Continue screen misses through the shared voxel visibility cascades.
   - [ ] 4.4 Project ray hits into candidate cards and sample accumulated radiance.
   - [ ] 4.5 Accumulate confidence-weighted diffuse indirect radiance into the gather target.

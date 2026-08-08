@@ -17,6 +17,7 @@ add_library(PlutoGERender
     src/postprocess/ToneMappingEffect.cpp
     src/postprocess/SSAOEffect.cpp
     src/postprocess/SSGIEffect.cpp
+    src/postprocess/SurfaceCacheGIEffect.cpp
     src/postprocess/SSREffect.cpp
     src/postprocess/RSMEffect.cpp
     src/postprocess/VoxelConeTracingEffect.cpp
@@ -28,6 +29,8 @@ add_library(PlutoGERender
     src/postprocess/FXAAEffect.cpp
     src/postprocess/GammaCorrectionEffect.cpp
     src/postprocess/PostProcessEffectFactory.cpp
+    src/surfacecache/SurfaceCache.cpp
+    src/surfacecache/SurfaceCacheAtlas.cpp
     src/passes/GeometryPass.cpp
     src/passes/DecalPass.cpp
     src/passes/GridPass.cpp

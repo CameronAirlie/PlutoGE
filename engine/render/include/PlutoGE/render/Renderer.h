@@ -152,6 +152,11 @@ namespace PlutoGE::render
         int geometryApiDrawCallCount = 0;
         int geometrySubmittedTriangleCount = 0;
         std::array<int, 4> geometrySubmittedTrianglesByLod{};
+        int surfaceCacheCardCount = 0;
+        int surfaceCacheResidentCardCount = 0;
+        int surfaceCacheCapturedCardCount = 0;
+        int surfaceCacheAtlasUsedPixels = 0;
+        int surfaceCacheAtlasTotalPixels = 0;
     };
 
     struct RenderContext
@@ -245,6 +250,7 @@ namespace PlutoGE::render
         void RecordShadowMapUpdate(int surfacePixels, int submittedInstances, int submittedBatches, int submittedTriangles, int materialGroups, int apiDrawCalls, bool directionalCascade);
         void RecordGeometryBatch(int submittedInstances, int submittedTriangles, std::size_t lodIndex);
         void RecordGeometryDriverSubmission(int materialGroups, int apiDrawCalls);
+        void RecordSurfaceCacheStats(int cards, int residentCards, int capturedCards, int usedPixels, int totalPixels);
 
         bool PreparePhysicalSkyEnvironment(const RenderContext &ctx);
         GLuint GetPhysicalSkyEnvironmentTextureID() const;

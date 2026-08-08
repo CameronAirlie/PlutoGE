@@ -3,6 +3,7 @@
 #include "PlutoGE/render/TextureManager.h"
 #include "PlutoGE/render/postprocess/LSAOEffect.h"
 #include "PlutoGE/render/postprocess/SSGIEffect.h"
+#include "PlutoGE/render/postprocess/SurfaceCacheGIEffect.h"
 
 #include <glad/glad.h>
 
@@ -105,6 +106,25 @@ int main()
         if (error != GL_NO_ERROR)
         {
             std::cerr << "SSGI initialization produced OpenGL error 0x" << std::hex << error << ".\n";
+            window.Close();
+            return 1;
+        }
+    }
+
+    {
+        PlutoGE::render::SurfaceCacheGIEffect effect;
+        effect.EnsureInitialized();
+        if (!effect.IsInitialized())
+        {
+            std::cerr << "Surface cache GI did not initialize.\n";
+            window.Close();
+            return 1;
+        }
+
+        const GLenum error = glGetError();
+        if (error != GL_NO_ERROR)
+        {
+            std::cerr << "Surface cache GI initialization produced OpenGL error 0x" << std::hex << error << ".\n";
             window.Close();
             return 1;
         }

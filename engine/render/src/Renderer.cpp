@@ -1588,6 +1588,15 @@ namespace PlutoGE::render
         UpdatePostProcessGpuTimingTotal();
     }
 
+    void Renderer::RecordSurfaceCacheStats(int cards, int residentCards, int capturedCards, int usedPixels, int totalPixels)
+    {
+        m_cpuFrameStats.surfaceCacheCardCount = std::max(cards, 0);
+        m_cpuFrameStats.surfaceCacheResidentCardCount = std::max(residentCards, 0);
+        m_cpuFrameStats.surfaceCacheCapturedCardCount = std::max(capturedCards, 0);
+        m_cpuFrameStats.surfaceCacheAtlasUsedPixels = std::max(usedPixels, 0);
+        m_cpuFrameStats.surfaceCacheAtlasTotalPixels = std::max(totalPixels, 0);
+    }
+
     void Renderer::UpdatePostProcessGpuTimingTotal()
     {
         float totalPostProcessTimeMs = 0.0f;

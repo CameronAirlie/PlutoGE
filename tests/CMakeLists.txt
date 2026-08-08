@@ -50,6 +50,12 @@ endif()
 
 add_test(NAME PlutoGEPostProcessInitializationTests COMMAND PlutoGEPostProcessInitializationTests)
 
+add_executable(PlutoGESurfaceCacheTests
+    SurfaceCacheTests.cpp
+)
+target_link_libraries(PlutoGESurfaceCacheTests PRIVATE PlutoGE::Render)
+add_test(NAME PlutoGESurfaceCacheTests COMMAND PlutoGESurfaceCacheTests)
+
 add_executable(PlutoGERuntimeUITests
     RuntimeUITests.cpp
 )

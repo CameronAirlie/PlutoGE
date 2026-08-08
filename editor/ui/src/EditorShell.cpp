@@ -1743,7 +1743,7 @@ namespace PlutoGE::ui
                              createdEntity = scene::Prefab::DuplicateEntity(*m_scene, *sourceRoot, parent, true);
                              if (createdEntity)
                              {
-                                 createdEntity->SetPosition(createdEntity->GetPosition() + glm::vec3(0.25f, 0.0f, 0.25f));
+                                 createdEntity->SetPosition(createdEntity->GetPosition() + glm::vec3(0.0f, 0.0f, 0.0f));
                              }
                          });
 

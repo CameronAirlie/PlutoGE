@@ -161,6 +161,21 @@ namespace PlutoGE::ui
         ImGui::Text("Shadow updates: %d surfaces (%d directional cascades)", cpuFrameStats.shadowUpdatedSurfaceCount, cpuFrameStats.shadowUpdatedDirectionalCascadeCount);
         ImGui::Text("Shadow workload: %d px, %d logical batches, %d instances, %d triangles", cpuFrameStats.shadowUpdatedPixelCount, cpuFrameStats.shadowSubmittedBatchCount, cpuFrameStats.shadowSubmittedInstanceCount, cpuFrameStats.shadowSubmittedTriangleCount);
         ImGui::Text("Shadow driver submission: %d material groups, %d API draw calls", cpuFrameStats.shadowMaterialGroupCount, cpuFrameStats.shadowApiDrawCallCount);
+        if (cpuFrameStats.surfaceCacheCardCount > 0)
+        {
+            const float atlasUsage = cpuFrameStats.surfaceCacheAtlasTotalPixels > 0
+                                         ? static_cast<float>(cpuFrameStats.surfaceCacheAtlasUsedPixels) * 100.0f /
+                                               static_cast<float>(cpuFrameStats.surfaceCacheAtlasTotalPixels)
+                                         : 0.0f;
+            ImGui::Text("Surface cache: %d cards, %d resident, %d captured",
+                        cpuFrameStats.surfaceCacheCardCount,
+                        cpuFrameStats.surfaceCacheResidentCardCount,
+                        cpuFrameStats.surfaceCacheCapturedCardCount);
+            ImGui::Text("Surface cache atlas: %d / %d px (%.1f%%)",
+                        cpuFrameStats.surfaceCacheAtlasUsedPixels,
+                        cpuFrameStats.surfaceCacheAtlasTotalPixels,
+                        atlasUsage);
+        }
 
         ImGui::Separator();
         ImGui::Text("GPU passes total: %.2f ms", totalGpuPassTimeMs);

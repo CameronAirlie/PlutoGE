@@ -11,6 +11,7 @@
 #include <RmlUi/Core.h>
 #include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/EventListener.h>
+#include <RmlUi/Core/Elements/ElementFormControlInput.h>
 #include <RmlUi/Core/Factory.h>
 #include <RmlUi_Platform_GLFW.h>
 #include <RmlUi_Renderer_GL3.h>
@@ -107,17 +108,32 @@ namespace PlutoGE::render
             std::string m_key;
         };
 
-        void CollectDocuments(scene::Entity *entity, std::unordered_map<std::string, bool> &documents)
+        struct DocumentRequest
+        {
+            bool visible = false;
+            float scale = 1.0f;
+        };
+
+        void CollectDocuments(scene::Entity *entity,
+                              const glm::vec2 &viewportSize,
+                              std::unordered_map<std::string, DocumentRequest> &documents,
+                              float inheritedScale = 1.0f)
         {
             if (!entity || !entity->IsActive())
                 return;
 
             if (const auto *canvas = entity->GetComponent<scene::CanvasComponent>();
-                canvas && canvas->IsEnabled() &&
-                canvas->GetBackend() == scene::UIRenderBackend::RmlUi &&
-                !canvas->GetDocumentPath().empty())
+                canvas && canvas->IsEnabled())
             {
-                documents[canvas->GetDocumentPath()] = true;
+                inheritedScale = scene::ResolveCanvasScaleFactor(*canvas, viewportSize);
+                if (canvas->GetBackend() == scene::UIRenderBackend::RmlUi &&
+                    !canvas->GetDocumentPath().empty())
+                {
+                    documents[canvas->GetDocumentPath()] = {
+                        .visible = true,
+                        .scale = inheritedScale,
+                    };
+                }
                 // A document canvas owns its subtree. Nested native canvases are
                 // still discovered through their own roots during migration.
             }
@@ -125,13 +141,17 @@ namespace PlutoGE::render
             if (const auto *widget = entity->GetComponent<scene::RmlWidgetComponent>();
                 widget && widget->IsEnabled() && !widget->GetSource().empty())
             {
-                auto [entry, inserted] = documents.try_emplace(widget->GetSource(), widget->IsVisible());
+                auto [entry, inserted] = documents.try_emplace(
+                    widget->GetSource(), DocumentRequest{
+                                             .visible = widget->IsVisible(),
+                                             .scale = inheritedScale,
+                                         });
                 if (!inserted)
-                    entry->second = entry->second || widget->IsVisible();
+                    entry->second.visible = entry->second.visible || widget->IsVisible();
             }
 
             for (auto *child : entity->GetChildren())
-                CollectDocuments(child, documents);
+                CollectDocuments(child, viewportSize, documents, inheritedScale);
         }
 
         int CurrentModifiers(GLFWwindow *window)
@@ -229,9 +249,9 @@ namespace PlutoGE::render
 
     void RmlUiRuntime::SynchronizeDocuments(const scene::Scene &scene)
     {
-        std::unordered_map<std::string, bool> requestedDocuments;
+        std::unordered_map<std::string, DocumentRequest> requestedDocuments;
         for (auto *root : scene.GetRootEntities())
-            CollectDocuments(root, requestedDocuments);
+            CollectDocuments(root, {static_cast<float>(m_width), static_cast<float>(m_height)}, requestedDocuments);
 
         bool detachedForDocumentChange = false;
         for (auto it = m_documents.begin(); it != m_documents.end();)
@@ -255,7 +275,7 @@ namespace PlutoGE::render
         }
 
         auto &assets = core::Engine::GetInstance().GetAssetManager();
-        for (const auto &[reference, visible] : requestedDocuments)
+        for (const auto &[reference, request] : requestedDocuments)
         {
             if (m_documents.contains(reference))
             {
@@ -267,11 +287,17 @@ namespace PlutoGE::render
                     ReloadDocument(reference);
                 if (auto *document = m_documents.at(reference))
                 {
-                    if (visible)
+                    const float scale = std::max(request.scale, 0.0001f);
+                    document->SetProperty("transform-origin", "0px 0px");
+                    document->SetProperty("transform", "scale(" + std::to_string(scale) + ")");
+                    document->SetProperty("width", std::to_string(static_cast<float>(m_width) / scale) + "px");
+                    document->SetProperty("height", std::to_string(static_cast<float>(m_height) / scale) + "px");
+                    if (request.visible)
                     {
-                        document->Show();
+                        if (!document->IsVisible())
+                            document->Show(Rml::ModalFlag::Keep, Rml::FocusFlag::Auto);
                     }
-                    else
+                    else if (document->IsVisible())
                     {
                         m_context->UnfocusDocument(document);
                         document->Hide();
@@ -300,7 +326,12 @@ namespace PlutoGE::render
             LoadDocumentFonts(path);
             if (auto *document = m_context->LoadDocument(path))
             {
-                visible ? document->Show() : document->Hide();
+                const float scale = std::max(request.scale, 0.0001f);
+                document->SetProperty("transform-origin", "0px 0px");
+                document->SetProperty("transform", "scale(" + std::to_string(scale) + ")");
+                document->SetProperty("width", std::to_string(static_cast<float>(m_width) / scale) + "px");
+                document->SetProperty("height", std::to_string(static_cast<float>(m_height) / scale) + "px");
+                request.visible ? document->Show() : document->Hide();
                 m_documents.emplace(reference, document);
                 m_reportedLoadFailures.erase(reference);
                 std::clog << "[RmlUi] Loaded Canvas document '" << reference
@@ -463,9 +494,10 @@ namespace PlutoGE::render
             return false;
         if (visible)
         {
-            target->Show();
+            if (!target->IsVisible())
+                target->Show(Rml::ModalFlag::Keep, Rml::FocusFlag::Auto);
         }
-        else
+        else if (target->IsVisible())
         {
             m_context->UnfocusDocument(target);
             target->Hide();
@@ -713,9 +745,31 @@ namespace PlutoGE::render
             if (identifier == Rml::Input::KI_UNKNOWN)
                 continue;
             if (input.keys[key] && !input.previousKeys[key])
-                m_context->ProcessKeyDown(identifier, modifiers);
+            {
+                if (identifier == Rml::Input::KI_TAB)
+                {
+                    Rml::Element *previous = m_context->GetFocusElement();
+                    m_context->ProcessKeyDown(identifier, modifiers);
+                    Rml::Element *current = m_context->GetFocusElement();
+                    if (current != previous)
+                    {
+                        if (auto *textInput = rmlui_dynamic_cast<Rml::ElementFormControlInput *>(current))
+                            textInput->Select();
+                    }
+                }
+                else
+                {
+                    m_context->ProcessKeyDown(identifier, modifiers);
+                }
+            }
             if (!input.keys[key] && input.previousKeys[key])
                 m_context->ProcessKeyUp(identifier, modifiers);
+        }
+        for (const int key : input.repeatedKeys)
+        {
+            const auto identifier = RmlGLFW::ConvertKey(key);
+            if (identifier != Rml::Input::KI_UNKNOWN)
+                m_context->ProcessKeyDown(identifier, modifiers);
         }
         for (const auto codepoint : input.textInput)
             m_context->ProcessTextInput(static_cast<Rml::Character>(codepoint));

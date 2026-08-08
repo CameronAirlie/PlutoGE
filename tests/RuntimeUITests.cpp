@@ -1,4 +1,5 @@
 #include "PlutoGE/scene/components/UIComponent.h"
+#include "PlutoGE/platform/InputState.h"
 
 #include <cmath>
 #include <iostream>
@@ -14,6 +15,22 @@ namespace
 int main()
 {
     using namespace PlutoGE::scene;
+
+    PlutoGE::platform::InputState input;
+    input.repeatedKeys = {259, 261};
+    input.BeginFrame();
+    if (!input.repeatedKeys.empty())
+    {
+        std::cerr << "Repeated keys were not cleared at frame start.\n";
+        return 1;
+    }
+    input.repeatedKeys = {262};
+    input.ClearKeyStates();
+    if (!input.repeatedKeys.empty())
+    {
+        std::cerr << "Repeated keys were not cleared with key state.\n";
+        return 1;
+    }
 
     CanvasComponent canvas;
     canvas.SetScaleMode(CanvasScaleMode::ScaleWithScreenSize);

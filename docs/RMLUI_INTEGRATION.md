@@ -21,6 +21,9 @@ For a minimal setup walkthrough and copyable example, see the
   subtree.
 - Documents are opened and closed automatically as active RmlUi canvases enter
   and leave the rendered scene.
+- Documents honor their Canvas scale factor, reference resolution, and
+  screen-match settings. `ScaleWithScreenSize` keeps the UI at a consistent
+  proportion of the viewport across resolutions.
 - RML and sibling RCSS changes hot reload while the document is active.
 - Managed scripts can use `RmlDocument`, `RmlElement`, `RmlEvent`, and
   `RmlBindings` for DOM state, CSS classes/styles, native DOM events, and

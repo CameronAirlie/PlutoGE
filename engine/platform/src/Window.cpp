@@ -143,6 +143,10 @@ namespace PlutoGE::platform
                             instance->m_inputState.escapePressed = true;
                         }
                     }
+                    else if (action == GLFW_REPEAT)
+                    {
+                        instance->m_inputState.repeatedKeys.push_back(key);
+                    }
                     else if (action == GLFW_RELEASE)
                     {
                         instance->m_inputState.keys[key] = false;

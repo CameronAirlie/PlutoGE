@@ -111,6 +111,12 @@ screen-space overlays and do not need child Text, Image, or Button components.
 RML and sibling RCSS files hot reload while the document is active, so most
 visual edits should appear after saving the file.
 
+To scale the whole document with the viewport, set the Canvas **Scale Mode** to
+**Scale With Screen Size** and choose a reference resolution (for example,
+1920 x 1080). Pixel dimensions and text in the RML document then scale with the
+Canvas, while its screen-match controls determine how aspect-ratio differences
+are handled.
+
 ### Blurred backdrops
 
 RmlUi's `backdrop-filter` operates on the rendered game scene behind an

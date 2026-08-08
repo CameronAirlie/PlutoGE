@@ -82,6 +82,7 @@ namespace PlutoGE::platform
         MouseState mouseState;
         std::array<bool, 512> keys = {false};
         std::array<bool, 512> previousKeys = {false};
+        std::vector<int> repeatedKeys;
         std::vector<std::uint32_t> textInput;
 
         [[nodiscard]] bool IsKeyDown(KeyCode key) const
@@ -135,6 +136,7 @@ namespace PlutoGE::platform
             mouseState.scrollDeltaY = 0.0;
             escapePressed = false;
             quitRequested = false;
+            repeatedKeys.clear();
             textInput.clear();
         }
 
@@ -154,6 +156,7 @@ namespace PlutoGE::platform
             mouseState.deltaY = 0.0;
             mouseState.scrollDeltaX = 0.0;
             mouseState.scrollDeltaY = 0.0;
+            repeatedKeys.clear();
             textInput.clear();
         }
     };

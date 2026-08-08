@@ -43,16 +43,19 @@ namespace PlutoGE::render
         void UpdateVisibility(const PostProcessContext &context);
         void EnsureGatherTarget(int width, int height);
         void RenderGatherInputs(const PostProcessContext &context);
+        void RenderIndirectGather(const PostProcessContext &context);
         std::size_t ComputeSceneSignature(const PostProcessContext &context) const;
         std::size_t ComputeLightingSignature(const PostProcessContext &context) const;
 
         std::unique_ptr<SurfaceCacheAtlas> m_atlas;
         std::unique_ptr<RenderTarget> m_gatherTarget;
+        std::unique_ptr<RenderTarget> m_indirectGatherTarget;
         Shader *m_captureShader = nullptr;
         Shader *m_debugShader = nullptr;
         Shader *m_radianceResolveShader = nullptr;
         Shader *m_cardLookupDebugShader = nullptr;
         Shader *m_gatherShader = nullptr;
+        Shader *m_indirectGatherShader = nullptr;
         std::vector<ResidentCard> m_cards;
         SurfaceCardSpatialIndex m_cardSpatialIndex;
         SurfaceCardGpuIndex m_cardGpuIndex;

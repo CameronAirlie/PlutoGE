@@ -106,7 +106,13 @@ Validation recorded on 2026-08-08:
     - [x] Pack receiver normal, screen confidence, and voxel confidence into one half-resolution target.
     - [x] Add a `Hybrid Trace` diagnostic: red screen hits, green voxel hits, blue unresolved rays.
     - [ ] Visually validate voxel continuation and cascade transitions.
-  - [ ] 4.4 Project ray hits into candidate cards and sample accumulated radiance.
+  - [~] 4.4 Project ray hits into candidate cards and sample accumulated radiance.
+    - [x] Add a separate half-resolution HDR indirect-radiance target.
+    - [x] Recover screen-space ray-hit position and normal.
+    - [x] Resolve screen hits through spatial card candidates and sample accumulated atlas radiance.
+    - [x] Add a tone-mapped `Ray Hit Radiance` diagnostic with purple lookup-miss background.
+    - [ ] Refine occupied voxel hits to surfaces before card projection.
+    - [ ] Accumulate all configured rays instead of the initial deterministic validation ray.
   - [ ] 4.5 Accumulate confidence-weighted diffuse indirect radiance into the gather target.
 - [ ] 5. Add motion-vector temporal accumulation, rejection, and history reset rules.
 - [ ] 6. Add spatial filtering, depth-aware upsampling, and lighting-pass composition.

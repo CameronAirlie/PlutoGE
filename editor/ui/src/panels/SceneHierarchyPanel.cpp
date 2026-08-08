@@ -282,16 +282,44 @@ namespace PlutoGE::ui
             }
             if (FindSkeletonMeshComponent(entity))
             {
-                if (ImGui::MenuItem("Create Skeleton Attachment Entities"))
+                if (ImGui::BeginMenu("Create Skeleton Attachment"))
                 {
-                    EditorShell::GetInstance().ExecuteSceneEdit("Create Skeleton Attachment Entities",
-                                                                [entity]()
-                                                                {
-                                                                    if (auto *meshComponent = FindSkeletonMeshComponent(entity))
-                                                                    {
-                                                                        meshComponent->CreateSkeletonAttachmentEntities();
-                                                                    }
-                                                                });
+                    if (auto *meshComponent = FindSkeletonMeshComponent(entity))
+                    {
+                        const auto &joints = meshComponent->GetMesh()->GetSkeleton().joints;
+                        for (std::size_t jointIndex = 0; jointIndex < joints.size(); ++jointIndex)
+                        {
+                            const auto &joint = joints[jointIndex];
+                            const std::string label = joint.name.empty()
+                                                          ? "Joint " + std::to_string(jointIndex)
+                                                          : joint.name;
+                            if (ImGui::MenuItem(label.c_str()))
+                            {
+                                EditorShell::GetInstance().ExecuteSceneEdit(
+                                    "Create Skeleton Attachment",
+                                    [meshComponent, jointIndex]()
+                                    {
+                                        if (auto *created = meshComponent->CreateSkeletonAttachmentEntity(jointIndex))
+                                        {
+                                            EditorShell::GetInstance().SetSelectedEntity(created);
+                                        }
+                                    });
+                            }
+                        }
+                    }
+                    ImGui::EndMenu();
+                }
+                if (ImGui::MenuItem("Compact Legacy Skeleton Attachments"))
+                {
+                    EditorShell::GetInstance().ExecuteSceneEdit(
+                        "Compact Legacy Skeleton Attachments",
+                        [entity]()
+                        {
+                            if (auto *meshComponent = FindSkeletonMeshComponent(entity))
+                            {
+                                meshComponent->CompactSkeletonAttachmentEntities();
+                            }
+                        });
                 }
             }
             if (ImGui::MenuItem("Save As Prefab"))

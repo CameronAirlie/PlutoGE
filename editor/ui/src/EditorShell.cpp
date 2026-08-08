@@ -2889,6 +2889,11 @@ namespace PlutoGE::ui
                     frameTimingStats.scenePreparationMs = sceneTimingStats.preparationMs;
                     frameTimingStats.sceneRuntimeUiMs = sceneTimingStats.runtimeUiMs;
                     frameTimingStats.sceneComponentsMs = sceneTimingStats.componentsMs;
+                    frameTimingStats.sceneLateScriptsMs = sceneTimingStats.lateScriptsMs;
+                    frameTimingStats.componentTimings = sceneTimingStats.componentTimings;
+                    frameTimingStats.animationTimings = sceneTimingStats.animationTimings;
+                    frameTimingStats.scriptUpdateTimings = sceneTimingStats.scriptUpdateTimings;
+                    frameTimingStats.scriptLateUpdateTimings = sceneTimingStats.scriptLateUpdateTimings;
                     frameTimingStats.sceneRenderSubmissionMs = sceneTimingStats.renderSubmissionMs;
                     frameTimingStats.sceneMeshSubmissionMs = sceneTimingStats.meshSubmissionMs;
                     frameTimingStats.sceneTerrainSubmissionMs = sceneTimingStats.terrainSubmissionMs;

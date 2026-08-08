@@ -89,12 +89,18 @@ namespace PlutoGE::render
 
             std::string state = effect->GetTypeName();
             state += effect->IsEnabled() ? "\nenabled" : "\ndisabled";
-            for (const auto &parameter : effect->GetParameters())
+            // Disabled effects cannot affect this frame. Their parameters are
+            // folded into the state when they are enabled, at which point the
+            // enabled-state change also invalidates temporal history.
+            if (effect->IsEnabled())
             {
-                state += '\n';
-                state += parameter.name;
-                state += '=';
-                state += parameter.value;
+                for (const auto &parameter : effect->GetParameters())
+                {
+                    state += '\n';
+                    state += parameter.name;
+                    state += '=';
+                    state += parameter.value;
+                }
             }
             effectStates.push_back(std::move(state));
         }

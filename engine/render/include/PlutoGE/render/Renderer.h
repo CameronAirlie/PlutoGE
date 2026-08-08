@@ -353,6 +353,7 @@ namespace PlutoGE::render
         void ResolveAllLightingGpuTimings(std::size_t stageIndex);
         void ResolveAllPostProcessGpuTimings();
         void ResolveAllPostProcessGpuTimings(std::size_t timingIndex);
+        void UpdatePostProcessGpuTimingTotal();
         std::size_t EnsurePostProcessGpuTiming(std::string_view effectName);
         void ResolveGpuTiming(std::size_t timingIndex, std::size_t queryIndex);
         void ResolveGpuTiming(GpuTimerQueryState &queryState, float &gpuTimeMs, bool &hasResult, std::size_t queryIndex);
@@ -371,6 +372,7 @@ namespace PlutoGE::render
         std::array<GpuTimerQueryState, 3> m_lightingGpuTimerQueries;
         std::vector<GpuPassTiming> m_postProcessGpuTimings;
         std::vector<GpuTimerQueryState> m_postProcessGpuTimerQueries;
+        std::vector<bool> m_postProcessGpuTimingHasCachedResult;
         std::unordered_map<std::string, std::size_t> m_postProcessGpuTimingIndices;
         LightingGpuTiming m_lightingGpuTiming;
         RendererCpuFrameStats m_cpuFrameStats;

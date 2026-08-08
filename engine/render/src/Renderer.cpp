@@ -446,6 +446,16 @@ namespace PlutoGE::render
         ResolveAllGpuTimings();
         ResolveAllLightingGpuTimings();
         ResolveAllPostProcessGpuTimings();
+
+        // Effect query objects persist so their asynchronous results can be
+        // reused, but visibility in the profiler is frame-local. An effect
+        // that is not submitted again this frame must not retain a stale
+        // timing (or contribute it to the Post Process total).
+        for (auto &postProcessGpuTiming : m_postProcessGpuTimings)
+        {
+            postProcessGpuTiming.hasResult = false;
+        }
+        UpdatePostProcessGpuTimingTotal();
         m_gpuTimingsResolvedThisFrame = true;
 
         m_cpuFrameStats = {};
@@ -611,7 +621,7 @@ namespace PlutoGE::render
             const bool hasUninitializedEffect = std::any_of(postProcessEffects->begin(), postProcessEffects->end(),
                                                             [](const IPostProcessEffect *effect)
                                                             {
-                                                                return effect && !effect->IsInitialized();
+                                                                return effect && effect->IsEnabled() && !effect->IsInitialized();
                                                             });
             if (hasUninitializedEffect && !m_config.window->EnsureOpenGLContextCurrent(true))
             {
@@ -620,7 +630,7 @@ namespace PlutoGE::render
 
             for (auto *effect : *postProcessEffects)
             {
-                if (effect)
+                if (effect && effect->IsEnabled())
                 {
                     effect->EnsureInitialized();
                 }
@@ -1098,6 +1108,9 @@ namespace PlutoGE::render
         }
 
         const std::size_t timingIndex = EnsurePostProcessGpuTiming(effectName);
+        m_postProcessGpuTimings[timingIndex].hasResult =
+            m_postProcessGpuTimingHasCachedResult[timingIndex];
+        UpdatePostProcessGpuTimingTotal();
         if (!m_gpuTimingsResolvedThisFrame)
         {
             ResolveAllPostProcessGpuTimings(timingIndex);
@@ -1316,6 +1329,7 @@ namespace PlutoGE::render
         m_gpuTimerQueries.clear();
         m_postProcessGpuTimerQueries.clear();
         m_postProcessGpuTimings.clear();
+        m_postProcessGpuTimingHasCachedResult.clear();
         m_postProcessGpuTimingIndices.clear();
         m_gpuProfilingSupported = GLAD_GL_VERSION_3_3;
         if (!m_gpuProfilingSupported)
@@ -1391,6 +1405,7 @@ namespace PlutoGE::render
         m_gpuPassTimings.clear();
         m_postProcessGpuTimerQueries.clear();
         m_postProcessGpuTimings.clear();
+        m_postProcessGpuTimingHasCachedResult.clear();
         m_postProcessGpuTimingIndices.clear();
         m_lightingGpuTiming = {};
         m_cpuFrameStats = {};
@@ -1570,14 +1585,17 @@ namespace PlutoGE::render
             ResolveAllPostProcessGpuTimings(timingIndex);
         }
 
+        UpdatePostProcessGpuTimingTotal();
+    }
+
+    void Renderer::UpdatePostProcessGpuTimingTotal()
+    {
         float totalPostProcessTimeMs = 0.0f;
         bool hasPostProcessResult = false;
         for (const auto &postProcessGpuTiming : m_postProcessGpuTimings)
         {
             if (!postProcessGpuTiming.hasResult)
-            {
                 continue;
-            }
 
             totalPostProcessTimeMs += postProcessGpuTiming.gpuTimeMs;
             hasPostProcessResult = true;
@@ -1603,14 +1621,17 @@ namespace PlutoGE::render
             return;
         }
 
+        bool resolvedResult = false;
         for (std::size_t queryIndex = 0; queryIndex < m_postProcessGpuTimerQueries[timingIndex].queryIds.size(); ++queryIndex)
         {
             ResolveGpuTiming(
                 m_postProcessGpuTimerQueries[timingIndex],
                 m_postProcessGpuTimings[timingIndex].gpuTimeMs,
-                m_postProcessGpuTimings[timingIndex].hasResult,
+                resolvedResult,
                 queryIndex);
         }
+        if (resolvedResult)
+            m_postProcessGpuTimingHasCachedResult[timingIndex] = true;
     }
 
     std::size_t Renderer::EnsurePostProcessGpuTiming(std::string_view effectName)
@@ -1625,6 +1646,7 @@ namespace PlutoGE::render
         const std::size_t timingIndex = m_postProcessGpuTimings.size();
         m_postProcessGpuTimingIndices.emplace(timingName, timingIndex);
         m_postProcessGpuTimings.push_back(GpuPassTiming{timingName});
+        m_postProcessGpuTimingHasCachedResult.push_back(false);
         auto &queryState = m_postProcessGpuTimerQueries.emplace_back();
         glGenQueries(static_cast<GLsizei>(queryState.queryIds.size()), queryState.queryIds.data());
         return timingIndex;

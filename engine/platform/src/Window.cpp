@@ -340,7 +340,15 @@ namespace PlutoGE::platform
         m_isCursorLocked = (scriptLockActive || m_requestedEditorCursorLocked) && !m_forceCursorVisible;
         if (m_window)
         {
-            glfwSetInputMode(static_cast<GLFWwindow *>(m_window), GLFW_CURSOR, m_isCursorLocked ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+            auto *window = static_cast<GLFWwindow *>(m_window);
+            glfwSetInputMode(window, GLFW_CURSOR, m_isCursorLocked ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
+
+            // Bypass OS cursor acceleration while locked so mouse deltas represent
+            // unmodified device motion, as expected by first-person camera controls.
+            if (glfwRawMouseMotionSupported())
+            {
+                glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, m_isCursorLocked ? GLFW_TRUE : GLFW_FALSE);
+            }
         }
     }
 

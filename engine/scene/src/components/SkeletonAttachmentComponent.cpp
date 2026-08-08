@@ -1,6 +1,7 @@
 #include "PlutoGE/scene/components/SkeletonAttachmentComponent.h"
 
 #include "PlutoGE/scene/Entity.h"
+#include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/AnimationComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
 
@@ -63,7 +64,7 @@ namespace PlutoGE::scene
             return result;
         }
 
-        AnimationComponent *FindAnimationComponent(Entity *entity)
+        AnimationComponent *FindAnimationComponentInAncestors(Entity *entity)
         {
             for (auto *current = entity; current != nullptr; current = current->GetParent())
             {
@@ -126,12 +127,11 @@ namespace PlutoGE::scene
         glm::mat4 ComputeJointMeshMatrix(render::Mesh &mesh,
                                          AnimationComponent *animationComponent,
                                          int nodeIndex,
-                                         const std::string &jointName)
+                                         int jointIndex,
+                                         const glm::mat4 *bindMatrix)
         {
             const auto &nodes = mesh.GetAnimationNodes();
             const auto &skeleton = mesh.GetSkeleton();
-            const int jointIndex = FindJointIndex(skeleton, nodeIndex, jointName);
-
             if (jointIndex >= 0)
             {
                 const auto &joint = skeleton.joints[static_cast<size_t>(jointIndex)];
@@ -144,7 +144,8 @@ namespace PlutoGE::scene
                     const auto &jointMatrices = animationComponent->GetJointMatrices(skeleton, nodes);
                     if (jointIndex < static_cast<int>(jointMatrices.size()))
                     {
-                        return jointMatrices[static_cast<size_t>(jointIndex)] * glm::inverse(joint.inverseBindMatrix);
+                        return jointMatrices[static_cast<size_t>(jointIndex)] *
+                               (bindMatrix ? *bindMatrix : glm::inverse(joint.inverseBindMatrix));
                     }
                 }
 
@@ -169,6 +170,10 @@ namespace PlutoGE::scene
 
     MeshComponent *SkeletonAttachmentComponent::FindSourceMeshComponent() const
     {
+        if (m_cachedSourceMeshComponent)
+        {
+            return m_cachedSourceMeshComponent;
+        }
         const auto *owner = GetOwner();
         for (auto *current = owner ? owner->GetParent() : nullptr; current != nullptr; current = current->GetParent())
         {
@@ -182,6 +187,29 @@ namespace PlutoGE::scene
         }
 
         return nullptr;
+    }
+
+    AnimationComponent *SkeletonAttachmentComponent::FindAnimationComponent() const
+    {
+        if (m_cachedAnimationComponent)
+        {
+            return m_cachedAnimationComponent;
+        }
+        auto *source = FindSourceMeshComponent();
+        return FindAnimationComponentInAncestors(source ? source->GetOwner() : nullptr);
+    }
+
+    void SkeletonAttachmentComponent::BindSource(MeshComponent *source, int jointIndex)
+    {
+        m_cachedSourceMeshComponent = source;
+        m_cachedAnimationComponent = source ? FindAnimationComponentInAncestors(source->GetOwner()) : nullptr;
+        m_cachedMesh = source ? source->GetMesh() : nullptr;
+        m_cachedJointIndex = jointIndex;
+        if (const auto *mesh = source ? source->GetMesh() : nullptr;
+            mesh && jointIndex >= 0 && jointIndex < static_cast<int>(mesh->GetSkeleton().joints.size()))
+        {
+            m_cachedBindMatrix = glm::inverse(mesh->GetSkeleton().joints[static_cast<size_t>(jointIndex)].inverseBindMatrix);
+        }
     }
 
     void SkeletonAttachmentComponent::Update(float)
@@ -201,24 +229,41 @@ namespace PlutoGE::scene
             return;
         }
 
-        auto *animationComponent = FindAnimationComponent(sourceMeshEntity);
-        const glm::mat4 jointMeshMatrix = ComputeJointMeshMatrix(*mesh, animationComponent, m_targetNodeIndex, m_jointName);
+        // Serialized attachments are not explicitly bound. Resolve their shared
+        // source once; generated attachments are bound when they are created.
+        if (!m_cachedSourceMeshComponent)
+        {
+            m_cachedSourceMeshComponent = sourceMeshComponent;
+            m_cachedAnimationComponent = FindAnimationComponentInAncestors(sourceMeshEntity);
+        }
+        if (m_cachedMesh != mesh)
+        {
+            m_cachedMesh = mesh;
+            m_cachedJointIndex = FindJointIndex(mesh->GetSkeleton(), m_targetNodeIndex, m_jointName);
+            m_cachedBindMatrix = m_cachedJointIndex >= 0
+                                     ? glm::inverse(mesh->GetSkeleton().joints[static_cast<size_t>(m_cachedJointIndex)].inverseBindMatrix)
+                                     : glm::mat4(1.0f);
+        }
+
+        auto *animationComponent = FindAnimationComponent();
+        const glm::mat4 jointMeshMatrix = ComputeJointMeshMatrix(
+            *mesh, animationComponent, m_targetNodeIndex, m_cachedJointIndex,
+            m_cachedJointIndex >= 0 ? &m_cachedBindMatrix : nullptr);
+        const uint64_t updateSequence = owner->GetScene() ? owner->GetScene()->GetUpdateSequence() : 0;
+        m_cachedJointMeshMatrix = jointMeshMatrix;
+        m_cachedUpdateSequence = updateSequence;
 
         glm::mat4 localTransform(1.0f);
         auto *parent = owner->GetParent();
         auto *parentAttachment = parent ? parent->GetComponent<SkeletonAttachmentComponent>() : nullptr;
-        if (parentAttachment && parentAttachment->FindSourceMeshComponent() == sourceMeshComponent)
+        if (parentAttachment && parentAttachment->m_cachedSourceMeshComponent == sourceMeshComponent &&
+            parentAttachment->m_cachedUpdateSequence == updateSequence)
         {
             // Derive the local pose directly from both bone transforms. This
             // is independent of entity update order and avoids a one-frame
             // rotation/translation feedback through the parent's old world
             // transform.
-            const glm::mat4 parentJointMeshMatrix = ComputeJointMeshMatrix(
-                *mesh,
-                animationComponent,
-                parentAttachment->GetTargetNodeIndex(),
-                parentAttachment->GetJointName());
-            localTransform = glm::inverse(parentJointMeshMatrix) * jointMeshMatrix;
+            localTransform = glm::inverse(parentAttachment->m_cachedJointMeshMatrix) * jointMeshMatrix;
         }
         else
         {
@@ -230,9 +275,13 @@ namespace PlutoGE::scene
         }
 
         const auto decomposed = DecomposeTransform(localTransform);
-        owner->SetPosition(decomposed.position);
-        owner->SetRotation(decomposed.rotation);
-        owner->SetScale(decomposed.scale);
+        constexpr float transformEpsilon = 0.00001f;
+        if (glm::any(glm::greaterThan(glm::abs(owner->GetPosition() - decomposed.position), glm::vec3(transformEpsilon))))
+            owner->SetPosition(decomposed.position);
+        if (glm::any(glm::greaterThan(glm::abs(owner->GetRotation() - decomposed.rotation), glm::vec3(transformEpsilon))))
+            owner->SetRotation(decomposed.rotation);
+        if (glm::any(glm::greaterThan(glm::abs(owner->GetScale() - decomposed.scale), glm::vec3(transformEpsilon))))
+            owner->SetScale(decomposed.scale);
     }
 
     std::vector<Property> SkeletonAttachmentComponent::Serialize() const

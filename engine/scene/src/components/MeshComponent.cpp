@@ -18,6 +18,7 @@
 #include <memory>
 #include <sstream>
 #include <string>
+#include <unordered_set>
 
 namespace PlutoGE::scene
 {
@@ -480,65 +481,113 @@ namespace PlutoGE::scene
         return uniqueMaterial;
     }
 
-    bool MeshComponent::CreateSkeletonAttachmentEntities()
+    Entity *MeshComponent::CreateSkeletonAttachmentEntity(std::size_t jointIndex)
     {
         auto *owner = GetOwner();
         auto *scene = owner ? owner->GetScene() : nullptr;
         if (!owner || !scene || !m_mesh || !m_mesh->HasSkeleton())
         {
-            return false;
+            return nullptr;
         }
 
         const auto &skeleton = m_mesh->GetSkeleton();
-        if (skeleton.joints.empty())
+        if (jointIndex >= skeleton.joints.size())
         {
-            return false;
+            return nullptr;
         }
 
-        bool hasExistingAttachmentChildren = false;
         for (auto *child : owner->GetChildren())
         {
-            if (child && child->GetComponent<SkeletonAttachmentComponent>())
+            const auto *attachment = child ? child->GetComponent<SkeletonAttachmentComponent>() : nullptr;
+            if (attachment && attachment->GetTargetNodeIndex() == skeleton.joints[jointIndex].nodeIndex)
             {
-                hasExistingAttachmentChildren = true;
-                break;
+                return child;
             }
         }
-        if (hasExistingAttachmentChildren)
+
+        const auto &joint = skeleton.joints[jointIndex];
+        auto child = std::make_unique<Entity>(EntityConfig{
+            .name = BuildSkeletonAttachmentEntityName(joint, jointIndex),
+            .tags = {"SkeletonAttachment"},
+        });
+        auto *attachment = child->CreateComponent<SkeletonAttachmentComponent>(joint.nodeIndex, joint.name);
+        attachment->BindSource(this, static_cast<int>(jointIndex));
+        return scene->AddEntity(std::move(child), owner);
+    }
+
+    std::size_t MeshComponent::CompactSkeletonAttachmentEntities()
+    {
+        auto *owner = GetOwner();
+        auto *scene = owner ? owner->GetScene() : nullptr;
+        if (!owner || !scene)
         {
-            return false;
+            return 0;
         }
 
-        std::vector<Entity *> jointEntities(skeleton.joints.size(), nullptr);
-        for (size_t jointIndex = 0; jointIndex < skeleton.joints.size(); ++jointIndex)
+        std::vector<Entity *> attachments;
+        const auto collectAttachments = [&](Entity *entity, const auto &self) -> void
         {
-            const auto &joint = skeleton.joints[jointIndex];
-            auto child = std::make_unique<Entity>(EntityConfig{
-                .name = BuildSkeletonAttachmentEntityName(joint, jointIndex),
-                .tags = {"SkeletonAttachment"},
-            });
-            auto *childPtr = child.get();
-            childPtr->CreateComponent<SkeletonAttachmentComponent>(joint.nodeIndex, joint.name);
-            jointEntities[jointIndex] = scene->AddEntity(std::move(child), owner);
+            if (!entity || !entity->GetComponent<SkeletonAttachmentComponent>())
+            {
+                return;
+            }
+            attachments.push_back(entity);
+            const auto children = entity->GetChildren();
+            for (auto *child : children)
+            {
+                if (child && child->GetComponent<SkeletonAttachmentComponent>())
+                {
+                    self(child, self);
+                }
+            }
+        };
+        const auto ownerChildren = owner->GetChildren();
+        for (auto *child : ownerChildren)
+        {
+            collectAttachments(child, collectAttachments);
         }
 
-        for (size_t jointIndex = 0; jointIndex < skeleton.joints.size(); ++jointIndex)
+        std::vector<Entity *> retained;
+        for (auto *attachmentEntity : attachments)
         {
-            const auto &joint = skeleton.joints[jointIndex];
-            if (joint.parentJointIndex < 0 || joint.parentJointIndex >= static_cast<int>(jointEntities.size()))
+            const bool hasGameplayChild = std::any_of(
+                attachmentEntity->GetChildren().begin(), attachmentEntity->GetChildren().end(),
+                [](const Entity *child)
+                {
+                    return child && !child->GetComponent<SkeletonAttachmentComponent>();
+                });
+            if (hasGameplayChild)
+            {
+                retained.push_back(attachmentEntity);
+            }
+        }
+
+        // A retained attachment evaluates its full mesh-space joint transform,
+        // so it does not need the materialized chain of ancestor bone entities.
+        for (auto *attachmentEntity : retained)
+        {
+            attachmentEntity->SetParent(owner);
+        }
+
+        const std::unordered_set<Entity *> retainedSet(retained.begin(), retained.end());
+        std::vector<Entity *> removableRoots;
+        for (auto *attachmentEntity : attachments)
+        {
+            if (retainedSet.contains(attachmentEntity))
             {
                 continue;
             }
-
-            auto *jointEntity = jointEntities[jointIndex];
-            auto *parentJointEntity = jointEntities[static_cast<size_t>(joint.parentJointIndex)];
-            if (jointEntity && parentJointEntity)
+            auto *parent = attachmentEntity->GetParent();
+            if (!parent || !parent->GetComponent<SkeletonAttachmentComponent>() || retainedSet.contains(parent))
             {
-                jointEntity->SetParent(parentJointEntity);
+                removableRoots.push_back(attachmentEntity);
             }
         }
-
-        return true;
+        for (auto *root : removableRoots)
+        {
+            scene->RemoveEntity(root);
+        }
+        return attachments.size() - retained.size();
     }
 
     std::vector<Property> MeshComponent::Serialize() const

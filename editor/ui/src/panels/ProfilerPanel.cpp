@@ -4,6 +4,29 @@
 #include "PlutoGE/ui/PanelManager.h"
 
 #include <imgui.h>
+#include <algorithm>
+
+namespace
+{
+    void RenderTimingBreakdown(const char *label,
+                               const std::vector<PlutoGE::scene::SceneUpdateTimingStats::ComponentTiming> &source)
+    {
+        if (!ImGui::TreeNode(label))
+            return;
+        auto timings = source;
+        std::sort(timings.begin(), timings.end(), [](const auto &a, const auto &b) { return a.totalMs > b.totalMs; });
+        if (timings.empty())
+            ImGui::TextUnformatted("No calls this frame.");
+        for (const auto &timing : timings)
+        {
+            ImGui::Text("%s: %.3f ms (%u calls, max %.3f ms on %s [%u])",
+                        timing.name.c_str(), timing.totalMs, timing.callCount, timing.maxInstanceMs,
+                        timing.slowestEntityName.empty() ? "unnamed" : timing.slowestEntityName.c_str(),
+                        timing.slowestEntityId);
+        }
+        ImGui::TreePop();
+    }
+}
 
 namespace PlutoGE::ui
 {
@@ -73,6 +96,11 @@ namespace PlutoGE::ui
             ImGui::Text("Preparation: %.2f ms", frameTimingStats.scenePreparationMs);
             ImGui::Text("Runtime UI: %.2f ms", frameTimingStats.sceneRuntimeUiMs);
             ImGui::Text("Components: %.2f ms", frameTimingStats.sceneComponentsMs);
+            ImGui::Text("Late scripts: %.2f ms", frameTimingStats.sceneLateScriptsMs);
+            RenderTimingBreakdown("Component types", frameTimingStats.componentTimings);
+            RenderTimingBreakdown("Animation phases", frameTimingStats.animationTimings);
+            RenderTimingBreakdown("Script OnUpdate", frameTimingStats.scriptUpdateTimings);
+            RenderTimingBreakdown("Script OnLateUpdate", frameTimingStats.scriptLateUpdateTimings);
             ImGui::Text("Render submission: %.2f ms", frameTimingStats.sceneRenderSubmissionMs);
             ImGui::Text("Mesh submission: %.2f ms", frameTimingStats.sceneMeshSubmissionMs);
             ImGui::Text("Terrain submission: %.2f ms", frameTimingStats.sceneTerrainSubmissionMs);

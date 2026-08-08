@@ -8,6 +8,8 @@
 #include "PlutoGE/scene/components/DecalComponent.h"
 #include "PlutoGE/scene/components/TerrainComponent.h"
 #include "PlutoGE/scene/components/FoliageComponent.h"
+#include "PlutoGE/scripting/ScriptRuntime.h"
+#include "PlutoGE/scene/components/ScriptComponent.h"
 
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/euler_angles.hpp>
@@ -16,6 +18,8 @@
 #include <algorithm>
 #include <iostream>
 #include <limits>
+#include <chrono>
+#include <typeinfo>
 
 namespace PlutoGE::scene
 {
@@ -507,7 +511,18 @@ namespace PlutoGE::scene
         {
             if (component->IsEnabled())
             {
+                const auto start = std::chrono::high_resolution_clock::now();
                 component->Update(deltaTime);
+                if (m_scene)
+                {
+                    const float elapsedMs = std::chrono::duration<float, std::milli>(
+                        std::chrono::high_resolution_clock::now() - start).count();
+                    m_scene->RecordComponentTiming(typeid(*component).name(), elapsedMs, *this);
+                    if (const auto *script = dynamic_cast<const ScriptComponent *>(component.get()))
+                    {
+                        m_scene->RecordScriptTiming(script->GetScriptClass(), elapsedMs, *this, false);
+                    }
+                }
             }
         }
 

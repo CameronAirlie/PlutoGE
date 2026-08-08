@@ -16,11 +16,18 @@ target_include_directories(PlutoGERuntime
         ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-target_link_libraries(PlutoGERuntime
-    PRIVATE
+if (CMAKE_CXX_LINK_GROUP_USING_RESCAN_SUPPORTED)
+    target_link_libraries(PlutoGERuntime PRIVATE
         "$<LINK_GROUP:RESCAN,PlutoGE::Platform,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Scene,PlutoGE::Import,PlutoGE::Scripting>"
-        PlutoGE::glm
-)
+    )
+else()
+    target_link_libraries(PlutoGERuntime PRIVATE
+        PlutoGE::Platform PlutoGE::Render PlutoGE::Assets PlutoGE::Core
+        PlutoGE::Scene PlutoGE::Import PlutoGE::Scripting
+    )
+endif()
+
+target_link_libraries(PlutoGERuntime PRIVATE PlutoGE::glm)
 
 add_dependencies(PlutoGERuntime PlutoGE::Platform PlutoGE::Render PlutoGE::Assets PlutoGE::Core PlutoGE::Scene)
 

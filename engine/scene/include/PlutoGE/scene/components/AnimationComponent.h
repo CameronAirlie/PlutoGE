@@ -242,9 +242,10 @@ namespace PlutoGE::scene
 
         void EvaluateJointMatrices(const render::Skeleton &skeleton);
         void EvaluateNodeMatrices(const std::vector<render::AnimationNode> &nodes);
+        void EnsureNodeBindingCache(const std::vector<render::AnimationNode> &nodes);
         void EnsureRetargetBindingCache(const render::Skeleton &skeleton);
         std::vector<float> ResolveJointMask(int maskId, const render::Skeleton &skeleton) const;
-        std::vector<float> ResolveNodeMask(int maskId, const std::vector<render::AnimationNode> &nodes) const;
+        const std::vector<float> &ResolveNodeMask(int maskId, const std::vector<render::AnimationNode> &nodes);
 
         std::vector<render::AnimationClip> m_clips;
         std::vector<glm::mat4> m_jointMatrices;
@@ -264,6 +265,13 @@ namespace PlutoGE::scene
         std::vector<glm::vec3> m_targetBindScales;
         std::vector<glm::mat4> m_targetGlobalBindTransforms;
         std::vector<glm::vec4> m_targetGlobalBindRotations;
+        const std::vector<render::AnimationNode> *m_nodeBindingNodes = nullptr;
+        std::vector<std::vector<int>> m_nodeChannelBindings;
+        std::vector<glm::vec3> m_nodeBindTranslations;
+        std::vector<glm::vec4> m_nodeBindRotations;
+        std::vector<glm::vec3> m_nodeBindScales;
+        const std::vector<render::AnimationNode> *m_nodeMaskNodes = nullptr;
+        std::unordered_map<int, std::vector<float>> m_resolvedNodeMasks;
         std::string m_animationGraphAssetReference;
         TransitionPlayback m_transition;
         int m_currentClipIndex = 0;

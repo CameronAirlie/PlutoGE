@@ -228,7 +228,8 @@ namespace PlutoGE::scene
         }
         render::Material *CreateUniqueMaterialForMaterialSlot(size_t materialSlotIndex);
         render::Material *CreateUniqueMaterialForSubmesh(size_t submeshIndex);
-        bool CreateSkeletonAttachmentEntities();
+        Entity *CreateSkeletonAttachmentEntity(std::size_t jointIndex);
+        std::size_t CompactSkeletonAttachmentEntities();
 
     private:
         void MarkRenderCommandsDirty();

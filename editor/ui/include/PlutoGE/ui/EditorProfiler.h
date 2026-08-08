@@ -2,6 +2,7 @@
 
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/ui/PanelManager.h"
+#include "PlutoGE/scene/Scene.h"
 
 #include <array>
 #include <cstddef>
@@ -17,6 +18,7 @@ namespace PlutoGE::ui
         float scenePreparationMs = 0.0f;
         float sceneRuntimeUiMs = 0.0f;
         float sceneComponentsMs = 0.0f;
+        float sceneLateScriptsMs = 0.0f;
         float sceneRenderSubmissionMs = 0.0f;
         float sceneMeshSubmissionMs = 0.0f;
         float sceneTerrainSubmissionMs = 0.0f;
@@ -30,6 +32,10 @@ namespace PlutoGE::ui
         float eventPollingMs = 0.0f;
         bool vSyncEnabled = false;
         int renderedViewportCount = 0;
+        std::vector<scene::SceneUpdateTimingStats::ComponentTiming> componentTimings;
+        std::vector<scene::SceneUpdateTimingStats::ComponentTiming> animationTimings;
+        std::vector<scene::SceneUpdateTimingStats::ComponentTiming> scriptUpdateTimings;
+        std::vector<scene::SceneUpdateTimingStats::ComponentTiming> scriptLateUpdateTimings;
     };
 
     class EditorProfiler

@@ -129,6 +129,24 @@ namespace PlutoGE::ui
         report << "Scene / Preparation: " << frameTimingStats.scenePreparationMs << " ms\n";
         report << "Scene / Runtime UI: " << frameTimingStats.sceneRuntimeUiMs << " ms\n";
         report << "Scene / Components: " << frameTimingStats.sceneComponentsMs << " ms\n";
+        report << "Scene / Late scripts: " << frameTimingStats.sceneLateScriptsMs << " ms\n";
+        const auto appendTimings = [&report](std::string_view heading, const auto &source)
+        {
+            auto timings = source;
+            std::sort(timings.begin(), timings.end(), [](const auto &a, const auto &b) { return a.totalMs > b.totalMs; });
+            report << heading << "\n";
+            for (const auto &timing : timings)
+            {
+                report << "  " << timing.name << ": " << timing.totalMs << " ms (" << timing.callCount
+                       << " calls, max " << timing.maxInstanceMs << " ms on "
+                       << (timing.slowestEntityName.empty() ? "unnamed" : timing.slowestEntityName)
+                       << " [" << timing.slowestEntityId << "])\n";
+            }
+        };
+        appendTimings("Scene / Component type breakdown", frameTimingStats.componentTimings);
+        appendTimings("Scene / Animation phase breakdown", frameTimingStats.animationTimings);
+        appendTimings("Scene / Script OnUpdate breakdown", frameTimingStats.scriptUpdateTimings);
+        appendTimings("Scene / Script OnLateUpdate breakdown", frameTimingStats.scriptLateUpdateTimings);
         report << "Scene / Render submission: " << frameTimingStats.sceneRenderSubmissionMs << " ms\n";
         report << "Scene / Mesh submission: " << frameTimingStats.sceneMeshSubmissionMs << " ms\n";
         report << "Scene / Terrain submission: " << frameTimingStats.sceneTerrainSubmissionMs << " ms\n";

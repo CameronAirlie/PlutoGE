@@ -76,6 +76,16 @@ namespace PlutoGE::scene
 
     struct SceneUpdateTimingStats
     {
+        struct ComponentTiming
+        {
+            std::string name;
+            float totalMs = 0.0f;
+            float maxInstanceMs = 0.0f;
+            uint32_t callCount = 0;
+            EntityID slowestEntityId = 0;
+            std::string slowestEntityName;
+        };
+
         float preparationMs = 0.0f;
         float runtimeUiMs = 0.0f;
         float componentsMs = 0.0f;
@@ -85,6 +95,10 @@ namespace PlutoGE::scene
         float terrainSubmissionMs = 0.0f;
         float foliageSubmissionMs = 0.0f;
         float physicsMs = 0.0f;
+        std::vector<ComponentTiming> componentTimings;
+        std::vector<ComponentTiming> animationTimings;
+        std::vector<ComponentTiming> scriptUpdateTimings;
+        std::vector<ComponentTiming> scriptLateUpdateTimings;
     };
 
     class Scene
@@ -110,6 +124,9 @@ namespace PlutoGE::scene
         void SetTimeScale(float timeScale);
         [[nodiscard]] float GetTimeScale() const { return m_timeScale; }
         [[nodiscard]] const SceneUpdateTimingStats &GetUpdateTimingStats() const { return m_updateTimingStats; }
+        void RecordComponentTiming(const char *name, float elapsedMs, const Entity &entity);
+        void RecordAnimationTiming(const char *phase, float elapsedMs, const Entity &entity);
+        void RecordScriptTiming(const std::string &scriptClass, float elapsedMs, const Entity &entity, bool lateUpdate);
         [[nodiscard]] uint64_t GetUpdateSequence() const { return m_updateSequence; }
         UISystem &GetUISystem();
         const UISystem &GetUISystem() const;

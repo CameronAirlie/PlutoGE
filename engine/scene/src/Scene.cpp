@@ -1273,6 +1273,27 @@ namespace PlutoGE::scene
         m_pendingRigidbodyForces.clear();
         m_physicsTimeAccumulator = 0.0f;
 
+        // Legacy scenes may contain one entity per skeleton joint. Rendering
+        // already consumes AnimationComponent's matrix palette directly; only
+        // joints with gameplay children need scene entities at runtime.
+        std::vector<MeshComponent *> skinnedMeshes;
+        const auto collectSkinnedMeshes = [&](Entity *entity, const auto &self) -> void
+        {
+            if (!entity)
+                return;
+            if (auto *mesh = entity->GetComponent<MeshComponent>();
+                mesh && mesh->GetMesh() && mesh->GetMesh()->HasSkeleton())
+                skinnedMeshes.push_back(mesh);
+            const auto children = entity->GetChildren();
+            for (auto *child : children)
+                self(child, self);
+        };
+        const auto roots = m_rootEntities;
+        for (auto *rootEntity : roots)
+            collectSkinnedMeshes(rootEntity, collectSkinnedMeshes);
+        for (auto *mesh : skinnedMeshes)
+            mesh->CompactSkeletonAttachmentEntities();
+
         // Refresh component-owned meshes against the runtime physics/query
         // world before agents begin requesting paths.
         const auto bakeNavigationMeshes = [&](Entity *entity, const auto &self) -> void
@@ -1670,6 +1691,10 @@ namespace PlutoGE::scene
     {
         using Clock = std::chrono::high_resolution_clock;
         const auto updateStart = Clock::now();
+        m_updateTimingStats.componentTimings.clear();
+        m_updateTimingStats.animationTimings.clear();
+        m_updateTimingStats.scriptUpdateTimings.clear();
+        m_updateTimingStats.scriptLateUpdateTimings.clear();
         const float simulationDeltaTime = m_runtimeStarted
                                               ? std::max(deltaTime, 0.0f) * m_timeScale
                                               : deltaTime;
@@ -1748,7 +1773,13 @@ namespace PlutoGE::scene
         {
             if (scriptComponent && scriptComponent->IsEnabled())
             {
+                const auto scriptStart = Clock::now();
                 scriptComponent->LateUpdate(simulationDeltaTime);
+                if (const auto *owner = scriptComponent->GetOwner())
+                {
+                    const float elapsedMs = std::chrono::duration<float, std::milli>(Clock::now() - scriptStart).count();
+                    RecordScriptTiming(scriptComponent->GetScriptClass(), elapsedMs, *owner, true);
+                }
             }
         }
         const auto lateScriptsEnd = Clock::now();
@@ -1928,6 +1959,44 @@ namespace PlutoGE::scene
         m_updateTimingStats.physicsMs = std::chrono::duration<float, std::milli>(physicsEnd - componentsEnd).count();
         m_updateTimingStats.lateScriptsMs = std::chrono::duration<float, std::milli>(lateScriptsEnd - physicsEnd).count();
         m_updateTimingStats.renderSubmissionMs = std::chrono::duration<float, std::milli>(submissionEnd - lateScriptsEnd).count();
+    }
+
+    namespace
+    {
+        void AccumulateTiming(std::vector<SceneUpdateTimingStats::ComponentTiming> &timings,
+                              std::string name, float elapsedMs, const Entity &entity)
+        {
+            auto it = std::find_if(timings.begin(), timings.end(), [&](const auto &timing) { return timing.name == name; });
+            if (it == timings.end())
+            {
+                timings.push_back({.name = std::move(name)});
+                it = std::prev(timings.end());
+            }
+            it->totalMs += elapsedMs;
+            ++it->callCount;
+            if (elapsedMs > it->maxInstanceMs)
+            {
+                it->maxInstanceMs = elapsedMs;
+                it->slowestEntityId = entity.GetID();
+                it->slowestEntityName = entity.GetName();
+            }
+        }
+    }
+
+    void Scene::RecordComponentTiming(const char *name, float elapsedMs, const Entity &entity)
+    {
+        AccumulateTiming(m_updateTimingStats.componentTimings, name ? name : "Unknown", elapsedMs, entity);
+    }
+
+    void Scene::RecordAnimationTiming(const char *phase, float elapsedMs, const Entity &entity)
+    {
+        AccumulateTiming(m_updateTimingStats.animationTimings, phase ? phase : "Unknown", elapsedMs, entity);
+    }
+
+    void Scene::RecordScriptTiming(const std::string &scriptClass, float elapsedMs, const Entity &entity, bool lateUpdate)
+    {
+        AccumulateTiming(lateUpdate ? m_updateTimingStats.scriptLateUpdateTimings : m_updateTimingStats.scriptUpdateTimings,
+                         scriptClass.empty() ? "<unassigned>" : scriptClass, elapsedMs, entity);
     }
 
     void Scene::SetRuntimeUIInputOverride(const glm::vec2 &canvasSize, const glm::vec2 &mousePosition, bool pointerInside)

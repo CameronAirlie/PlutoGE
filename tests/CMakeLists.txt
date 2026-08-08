@@ -2,9 +2,16 @@ add_executable(PlutoGELargeMeshOptimizationTests
     LargeMeshOptimizationTests.cpp
 )
 
-target_link_libraries(PlutoGELargeMeshOptimizationTests PRIVATE
-    "$<LINK_GROUP:RESCAN,PlutoGE::Import,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Scene,PlutoGE::Scripting>"
-)
+if (CMAKE_CXX_LINK_GROUP_USING_RESCAN_SUPPORTED)
+    target_link_libraries(PlutoGELargeMeshOptimizationTests PRIVATE
+        "$<LINK_GROUP:RESCAN,PlutoGE::Import,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Scene,PlutoGE::Scripting>"
+    )
+else()
+    target_link_libraries(PlutoGELargeMeshOptimizationTests PRIVATE
+        PlutoGE::Import PlutoGE::Render PlutoGE::Assets PlutoGE::Core
+        PlutoGE::Scene PlutoGE::Scripting
+    )
+endif()
 
 add_test(NAME PlutoGELargeMeshOptimizationTests COMMAND PlutoGELargeMeshOptimizationTests)
 
@@ -30,9 +37,16 @@ add_executable(PlutoGEPostProcessInitializationTests
     PostProcessInitializationTests.cpp
 )
 
-target_link_libraries(PlutoGEPostProcessInitializationTests PRIVATE
-    "$<LINK_GROUP:RESCAN,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Scene,PlutoGE::Import,PlutoGE::Scripting>"
-)
+if (CMAKE_CXX_LINK_GROUP_USING_RESCAN_SUPPORTED)
+    target_link_libraries(PlutoGEPostProcessInitializationTests PRIVATE
+        "$<LINK_GROUP:RESCAN,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Scene,PlutoGE::Import,PlutoGE::Scripting>"
+    )
+else()
+    target_link_libraries(PlutoGEPostProcessInitializationTests PRIVATE
+        PlutoGE::Render PlutoGE::Assets PlutoGE::Core PlutoGE::Scene
+        PlutoGE::Import PlutoGE::Scripting
+    )
+endif()
 
 add_test(NAME PlutoGEPostProcessInitializationTests COMMAND PlutoGEPostProcessInitializationTests)
 
@@ -40,11 +54,35 @@ add_executable(PlutoGERuntimeUITests
     RuntimeUITests.cpp
 )
 
-target_link_libraries(PlutoGERuntimeUITests PRIVATE
-    "$<LINK_GROUP:RESCAN,PlutoGE::Scene,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Import,PlutoGE::Scripting>"
-)
+if (CMAKE_CXX_LINK_GROUP_USING_RESCAN_SUPPORTED)
+    target_link_libraries(PlutoGERuntimeUITests PRIVATE
+        "$<LINK_GROUP:RESCAN,PlutoGE::Scene,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Import,PlutoGE::Scripting>"
+    )
+else()
+    target_link_libraries(PlutoGERuntimeUITests PRIVATE
+        PlutoGE::Scene PlutoGE::Render PlutoGE::Assets PlutoGE::Core
+        PlutoGE::Import PlutoGE::Scripting
+    )
+endif()
 
 add_test(NAME PlutoGERuntimeUITests COMMAND PlutoGERuntimeUITests)
+
+add_executable(PlutoGESkeletonAttachmentTests
+    SkeletonAttachmentTests.cpp
+)
+
+if (CMAKE_CXX_LINK_GROUP_USING_RESCAN_SUPPORTED)
+    target_link_libraries(PlutoGESkeletonAttachmentTests PRIVATE
+        "$<LINK_GROUP:RESCAN,PlutoGE::Scene,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Import,PlutoGE::Scripting>"
+    )
+else()
+    target_link_libraries(PlutoGESkeletonAttachmentTests PRIVATE
+        PlutoGE::Scene PlutoGE::Render PlutoGE::Assets PlutoGE::Core
+        PlutoGE::Import PlutoGE::Scripting
+    )
+endif()
+
+add_test(NAME PlutoGESkeletonAttachmentTests COMMAND PlutoGESkeletonAttachmentTests)
 
 if (TARGET OpenAL)
     add_custom_command(TARGET PlutoGEPostProcessInitializationTests POST_BUILD

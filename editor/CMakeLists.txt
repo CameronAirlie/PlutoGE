@@ -18,12 +18,21 @@ target_include_directories(PlutoGEEditor
         ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-target_link_libraries(PlutoGEEditor
-    PRIVATE 
+if (CMAKE_CXX_LINK_GROUP_USING_RESCAN_SUPPORTED)
+    target_link_libraries(PlutoGEEditor PRIVATE
         "$<LINK_GROUP:RESCAN,PlutoGE::Platform,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Scene,PlutoGE::Import,PlutoGE::Scripting>"
-        PlutoGE::glm
-        PlutoGE::imgui
-        PlutoGE::EditorUI
+    )
+else()
+    target_link_libraries(PlutoGEEditor PRIVATE
+        PlutoGE::Platform PlutoGE::Render PlutoGE::Assets PlutoGE::Core
+        PlutoGE::Scene PlutoGE::Import PlutoGE::Scripting
+    )
+endif()
+
+target_link_libraries(PlutoGEEditor PRIVATE
+    PlutoGE::glm
+    PlutoGE::imgui
+    PlutoGE::EditorUI
 )
 
 add_dependencies(PlutoGEEditor PlutoGE::Platform PlutoGE::Render PlutoGE::Assets PlutoGE::Core)

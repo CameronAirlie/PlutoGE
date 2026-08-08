@@ -20,6 +20,8 @@ namespace
 int main()
 {
     using namespace PlutoGE::render;
+    static_assert(sizeof(SurfaceCardGpuBounds) == sizeof(float) * 32,
+                  "Surface-card GPU bounds must match the std430 shader record.");
     auto effect = CreatePostProcessEffect("SurfaceCacheGI");
     if (!effect || effect->GetTypeName() != "SurfaceCacheGI")
     {
@@ -28,7 +30,7 @@ int main()
     }
     const auto parameters = effect->GetParameters();
     const auto radianceDebug = std::find_if(parameters.begin(), parameters.end(), [](const PostProcessParameter &parameter) {
-        return parameter.name == "Debug View" && parameter.enumOptions.size() == 9 && parameter.enumOptions.back() == "Card Candidates";
+        return parameter.name == "Debug View" && parameter.enumOptions.size() == 11 && parameter.enumOptions.back() == "Atlas UV";
     });
     if (radianceDebug == parameters.end())
     {
@@ -37,8 +39,10 @@ int main()
     }
     SurfaceCacheAtlasAllocator allocator(128, 128, 2);
     SurfaceCardSpatialIndex spatialIndex(2.0f);
+    glm::mat4 cardProjection(1.0f);
+    cardProjection[3][0] = 0.25f;
     spatialIndex.Rebuild({
-        {1, {-1.0f, -1.0f, -1.0f}, {1.0f, 1.0f, 1.0f}},
+        {1, {-1.0f, -1.0f, -1.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 0.0f, 1.0f}, cardProjection, {0.25f, 0.5f, 0.1f, 0.2f}},
         {2, {0.5f, -0.5f, -0.5f}, {3.0f, 0.5f, 0.5f}},
     });
     const auto overlappingCards = spatialIndex.Query({0.75f, 0.0f, 0.0f});
@@ -49,7 +53,8 @@ int main()
     }
     const auto gpuTables = spatialIndex.BuildGpuTables();
     if (gpuTables.cells.empty() || gpuTables.cards.size() != 2 || gpuTables.candidates.size() < 2 ||
-        gpuTables.cards[0].minimumAndId.w != 1.0f || gpuTables.cards[1].minimumAndId.w != 2.0f)
+        gpuTables.cards[0].minimumAndId.w != 1.0f || gpuTables.cards[1].minimumAndId.w != 2.0f ||
+        gpuTables.cards[0].worldToCardClip[3][0] != 0.25f || gpuTables.cards[0].atlasScaleBias != glm::vec4(0.25f, 0.5f, 0.1f, 0.2f))
     {
         std::cerr << "Surface-card GPU lookup tables are incomplete or non-deterministic.\n";
         return 11;

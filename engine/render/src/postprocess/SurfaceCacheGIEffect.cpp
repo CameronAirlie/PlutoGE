@@ -50,7 +50,7 @@ namespace PlutoGE::render
             {"Radiance History Blend", PostProcessParameterType::Float, std::to_string(m_radianceHistoryBlend)},
             {"Directional Shadows", PostProcessParameterType::Bool, m_directionalShadows ? "true" : "false"},
             {"Static Geometry Only", PostProcessParameterType::Bool, m_staticGeometryOnly ? "true" : "false"},
-            {"Debug View", PostProcessParameterType::Enum, std::to_string(m_debugView), {"Scene", "Albedo / Metallic", "Normal / Roughness", "Emission", "Card Depth", "Direct Radiance", "Accumulated Radiance", "Visibility Cascades", "Card Candidates"}},
+            {"Debug View", PostProcessParameterType::Enum, std::to_string(m_debugView), {"Scene", "Albedo / Metallic", "Normal / Roughness", "Emission", "Card Depth", "Direct Radiance", "Accumulated Radiance", "Visibility Cascades", "Card Candidates", "Selected Card", "Atlas UV"}},
         };
     }
 
@@ -79,7 +79,7 @@ namespace PlutoGE::render
             else if (parameter.name == "Radiance History Blend") m_radianceHistoryBlend = std::clamp(std::stof(parameter.value), 0.0f, 0.98f);
             else if (parameter.name == "Directional Shadows") m_directionalShadows = ParseBool(parameter.value);
             else if (parameter.name == "Static Geometry Only") { const bool value = ParseBool(parameter.value); if (value != m_staticGeometryOnly) { m_staticGeometryOnly = value; m_cacheLayoutDirty = true; } }
-            else if (parameter.name == "Debug View") m_debugView = std::clamp(std::stoi(parameter.value), 0, 8);
+            else if (parameter.name == "Debug View") m_debugView = std::clamp(std::stoi(parameter.value), 0, 10);
         }
         m_maxCardResolution = std::max(m_maxCardResolution, m_minCardResolution);
         m_cacheLayoutDirty = m_cacheLayoutDirty || previousAtlasSize != m_atlasSize ||
@@ -219,19 +219,24 @@ namespace PlutoGE::render
         ShaderSource lookupDebug;
         lookupDebug.vertexSource = debug.vertexSource;
         lookupDebug.fragmentSource = R"(#version 430 core
-            in vec2 UV; out vec4 FragColor; uniform sampler2D uScenePositionTexture; uniform sampler2D uSceneNormalTexture;
-            uniform float uCellSize; uniform int uCellCount; uniform int uCardCount;
+            in vec2 UV; out vec4 FragColor; uniform sampler2D uScenePositionTexture; uniform sampler2D uSceneNormalTexture; uniform sampler2D uCardDepthAtlas;
+            uniform float uCellSize; uniform int uCellCount; uniform int uCardCount; uniform int uLookupDebugMode;
             struct Cell { ivec4 coordinateAndOffset; uvec4 countAndPadding; };
-            struct CardBounds { vec4 minimumAndId; vec4 maximumBounds; vec4 cardNormal; };
+            struct CardBounds { vec4 minimumAndId; vec4 maximumBounds; vec4 cardNormal; mat4 worldToCardClip; vec4 atlasScaleBias; };
             layout(std430,binding=0) readonly buffer Cells { Cell cells[]; };
             layout(std430,binding=1) readonly buffer Candidates { uint candidates[]; };
             layout(std430,binding=2) readonly buffer Cards { CardBounds cards[]; };
             int compareCell(ivec3 a,ivec3 b){if(a.x!=b.x)return a.x<b.x?-1:1;if(a.y!=b.y)return a.y<b.y?-1:1;if(a.z!=b.z)return a.z<b.z?-1:1;return 0;}
             int findCell(ivec3 key){int low=0,high=uCellCount-1;while(low<=high){int middle=(low+high)/2;int order=compareCell(cells[middle].coordinateAndOffset.xyz,key);if(order==0)return middle;if(order<0)low=middle+1;else high=middle-1;}return -1;}
+            vec3 idColor(uint id){return 0.35+0.65*fract(vec3(float(id))*vec3(0.1031,0.11369,0.13787));}
             void main(){
-                vec3 worldPosition=texture(uScenePositionTexture,UV).xyz;vec3 surfaceNormal=normalize(texture(uSceneNormalTexture,UV).xyz);ivec3 key=ivec3(floor(worldPosition/max(uCellSize,0.001)));int cellIndex=findCell(key);int count=0;
-                if(cellIndex>=0&&dot(surfaceNormal,surfaceNormal)>0.01){int offset=cells[cellIndex].coordinateAndOffset.w;uint candidateCount=cells[cellIndex].countAndPadding.x;for(uint i=0u;i<candidateCount;i++){uint id=candidates[offset+int(i)];if(id==0u||id>uint(uCardCount))continue;CardBounds card=cards[id-1u];bool inside=all(greaterThanEqual(worldPosition,card.minimumAndId.xyz))&&all(lessThanEqual(worldPosition,card.maximumBounds.xyz));float facing=dot(surfaceNormal,normalize(card.cardNormal.xyz));if(inside&&facing>0.35)count++;}}
-                float level=clamp(float(count)/6.0,0.0,1.0);vec3 color=count==0?vec3(0.025,0.0,0.04):mix(vec3(0.0,0.25,0.9),vec3(1.0,0.15,0.02),level);FragColor=vec4(color,1.0);
+                vec3 worldPosition=texture(uScenePositionTexture,UV).xyz;vec3 rawNormal=texture(uSceneNormalTexture,UV).xyz;float normalLength=length(rawNormal);vec3 surfaceNormal=normalLength>0.01?rawNormal/normalLength:vec3(0.0);ivec3 key=ivec3(floor(worldPosition/max(uCellSize,0.001)));int cellIndex=findCell(key);int count=0;uint selectedId=0u;vec2 selectedUv=vec2(0.0);float bestScore=1e10;uint fallbackId=0u;vec2 fallbackUv=vec2(0.0);float bestFallbackScore=1e10;
+                if(cellIndex>=0&&normalLength>0.01){int offset=cells[cellIndex].coordinateAndOffset.w;uint candidateCount=cells[cellIndex].countAndPadding.x;ivec2 atlasSize=textureSize(uCardDepthAtlas,0);for(uint i=0u;i<candidateCount;i++){uint id=candidates[offset+int(i)];if(id==0u||id>uint(uCardCount))continue;CardBounds card=cards[id-1u];bool inside=all(greaterThanEqual(worldPosition,card.minimumAndId.xyz))&&all(lessThanEqual(worldPosition,card.maximumBounds.xyz));float facing=dot(surfaceNormal,normalize(card.cardNormal.xyz));if(!inside||facing<=0.35)continue;count++;vec4 clip=card.worldToCardClip*vec4(worldPosition,1.0);if(abs(clip.w)<=0.00001)continue;vec3 ndc=clip.xyz/clip.w;vec2 projectedUv=ndc.xy*0.5+0.5;float projectedDepth=ndc.z*0.5+0.5;const float projectionTolerance=0.025;bool inCard=all(greaterThanEqual(projectedUv,vec2(-projectionTolerance)))&&all(lessThanEqual(projectedUv,vec2(1.0+projectionTolerance)))&&projectedDepth>=-projectionTolerance&&projectedDepth<=1.0+projectionTolerance;if(!inCard)continue;vec2 cardUv=clamp(projectedUv,vec2(0.0),vec2(1.0));projectedDepth=clamp(projectedDepth,0.0,1.0);float fallbackScore=1.0-facing;if(fallbackScore<bestFallbackScore){bestFallbackScore=fallbackScore;fallbackId=id;fallbackUv=cardUv;}vec2 atlasUv=cardUv*card.atlasScaleBias.xy+card.atlasScaleBias.zw;ivec2 cardMinimum=ivec2(card.atlasScaleBias.zw*vec2(atlasSize));ivec2 cardMaximum=cardMinimum+max(ivec2(card.atlasScaleBias.xy*vec2(atlasSize))-1,ivec2(0));ivec2 center=clamp(ivec2(atlasUv*vec2(atlasSize)),cardMinimum,cardMaximum);float depthError=1e10;bool hasDepth=false;for(int y=-1;y<=1;y++)for(int x=-1;x<=1;x++){float cachedDepth=texelFetch(uCardDepthAtlas,clamp(center+ivec2(x,y),cardMinimum,cardMaximum),0).r;if(cachedDepth<0.9999){hasDepth=true;depthError=min(depthError,abs(cachedDepth-projectedDepth));}}if(!hasDepth||depthError>0.035)continue;float score=depthError+(1.0-facing)*0.01;if(score<bestScore){bestScore=score;selectedId=id;selectedUv=cardUv;}}}
+                if(selectedId==0u){selectedId=fallbackId;selectedUv=fallbackUv;}
+                if(uLookupDebugMode==0){float level=clamp(float(count)/6.0,0.0,1.0);vec3 color=count==0?vec3(0.025,0.0,0.04):mix(vec3(0.0,0.25,0.9),vec3(1.0,0.15,0.02),level);FragColor=vec4(color,1.0);return;}
+                if(selectedId==0u){FragColor=vec4(0.12,0.0,0.16,1.0);return;}
+                if(uLookupDebugMode==1){FragColor=vec4(idColor(selectedId),1.0);return;}
+                vec2 grid=step(vec2(0.96),fract(selectedUv*8.0));float line=max(grid.x,grid.y);FragColor=vec4(mix(vec3(selectedUv,0.15),vec3(1.0),line),1.0);
             })";
         m_cardLookupDebugShader = Shader::Create(lookupDebug);
     }
@@ -344,8 +349,16 @@ namespace PlutoGE::render
                                 maximum = glm::max(maximum, worldCorner);
                             }
                     const glm::vec3 worldCardNormal = glm::normalize(glm::transpose(glm::inverse(glm::mat3(command.model))) * card.localNormal);
+                    const glm::mat4 worldToCardClip = card.localViewProjection * glm::inverse(command.model);
+                    const float inverseAtlasSize = 1.0f / static_cast<float>(m_atlasSize);
+                    const glm::vec4 atlasScaleBias(
+                        static_cast<float>(card.allocation.width) * inverseAtlasSize,
+                        static_cast<float>(card.allocation.height) * inverseAtlasSize,
+                        static_cast<float>(card.allocation.x) * inverseAtlasSize,
+                        static_cast<float>(card.allocation.y) * inverseAtlasSize);
                     constexpr float boundsTolerance = 0.025f;
-                    worldBounds.push_back({card.id, minimum - glm::vec3(boundsTolerance), maximum + glm::vec3(boundsTolerance), worldCardNormal});
+                    worldBounds.push_back({card.id, minimum - glm::vec3(boundsTolerance), maximum + glm::vec3(boundsTolerance),
+                                           worldCardNormal, worldToCardClip, atlasScaleBias});
                 }
             }
         }
@@ -517,7 +530,7 @@ namespace PlutoGE::render
                 m_stats.atlasUsedPixels, m_stats.atlasTotalPixels);
 
         BeginApply(context);
-        if (m_debugView == 8 && m_cardLookupDebugShader)
+        if (m_debugView >= 8 && m_debugView <= 10 && m_cardLookupDebugShader)
         {
             m_cardLookupDebugShader->Bind();
             glActiveTexture(GL_TEXTURE0);
@@ -526,9 +539,13 @@ namespace PlutoGE::render
             glActiveTexture(GL_TEXTURE1);
             glBindTexture(GL_TEXTURE_2D, context.renderContext.gBuffer ? context.renderContext.gBuffer->GetNormalTextureID() : 0);
             m_cardLookupDebugShader->SetUniform("uSceneNormalTexture", 1);
+            glActiveTexture(GL_TEXTURE2);
+            glBindTexture(GL_TEXTURE_2D, m_atlas->GetTexture(SurfaceCacheAtlas::Layer::Depth));
+            m_cardLookupDebugShader->SetUniform("uCardDepthAtlas", 2);
             m_cardLookupDebugShader->SetUniform("uCellSize", m_cardSpatialIndex.GetCellSize());
             m_cardLookupDebugShader->SetUniform("uCellCount", m_cardGpuIndex.GetCellCount());
             m_cardLookupDebugShader->SetUniform("uCardCount", m_cardGpuIndex.GetCardCount());
+            m_cardLookupDebugShader->SetUniform("uLookupDebugMode", m_debugView - 8);
             m_cardGpuIndex.Bind(0);
             DrawFullscreenTriangle();
             EndApply();

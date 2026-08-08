@@ -87,6 +87,8 @@ namespace PlutoGE::render
                 glm::vec4(card.minimum, static_cast<float>(card.cardId)),
                 glm::vec4(card.maximum, 0.0f),
                 glm::vec4(glm::normalize(card.worldNormal), 0.0f),
+                card.worldToCardClip,
+                card.atlasScaleBias,
             });
         return result;
     }

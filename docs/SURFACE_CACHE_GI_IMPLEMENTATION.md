@@ -10,7 +10,7 @@ Last updated: 2026-08-08
 
 ## Milestone 1 — surface cache visualization
 
-Current step: **3.4 — GPU card lookup validation**
+Current step: **3.5 — selected-card and atlas-UV visual validation**
 
 - [x] 1.1 Define module boundaries and ownership.
 - [x] 1.2 Define surface-card, atlas-rectangle, statistics, and stable card-ID types.
@@ -85,7 +85,9 @@ Validation recorded on 2026-08-08:
     - [x] Distinguish missing-provider, warming-up, valid-cascade, and outside-coverage states.
     - [x] Add a GPU `Card Candidates` view that validates exact bounds after cell lookup.
     - [x] Filter candidate diagnostics by G-buffer normal/card-facing compatibility and tolerate small bounds precision errors.
-    - [ ] Add selected-card and atlas-UV views with the ray-hit selector.
+    - [x] Add best-card selection using world-to-card projection, neighborhood depth validation, and a geometric warm-up fallback.
+    - [x] Add selected-card and atlas-UV debug views.
+    - [x] Make projected-card containment conservative while clamping sampling to each card's content rectangle.
 - [ ] 4. Add half-resolution hybrid screen/voxel gather and surface-card lookup.
 - [ ] 5. Add motion-vector temporal accumulation, rejection, and history reset rules.
 - [ ] 6. Add spatial filtering, depth-aware upsampling, and lighting-pass composition.

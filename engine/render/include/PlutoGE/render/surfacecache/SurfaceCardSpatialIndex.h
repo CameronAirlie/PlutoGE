@@ -15,6 +15,8 @@ namespace PlutoGE::render
         glm::vec3 minimum{0.0f};
         glm::vec3 maximum{0.0f};
         glm::vec3 worldNormal{0.0f, 0.0f, 1.0f};
+        glm::mat4 worldToCardClip{1.0f};
+        glm::vec4 atlasScaleBias{1.0f, 1.0f, 0.0f, 0.0f};
     };
 
     struct SurfaceCardGpuCell
@@ -28,6 +30,8 @@ namespace PlutoGE::render
         glm::vec4 minimumAndId{0.0f};
         glm::vec4 maximum{0.0f};
         glm::vec4 normal{0.0f, 0.0f, 1.0f, 0.0f};
+        glm::mat4 worldToCardClip{1.0f};
+        glm::vec4 atlasScaleBias{1.0f, 1.0f, 0.0f, 0.0f};
     };
 
     struct SurfaceCardGpuTables

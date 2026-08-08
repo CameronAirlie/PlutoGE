@@ -1,15 +1,26 @@
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
+#include "PlutoGE/assets/Project.h"
 #include "PlutoGE/scene/components/AnimationComponent.h"
 #include "PlutoGE/scene/components/SkeletonAttachmentComponent.h"
 
+#include <cassert>
 #include <iostream>
 #include <memory>
 
 int main()
 {
     using namespace PlutoGE::scene;
+
+    {
+        MeshComponent reloadedMesh(MeshComponentConfig{});
+        reloadedMesh.Deserialize({
+            {"MeshAssetReference", PropertyType::String, std::string(PlutoGE::assets::Project::kBuiltinCubeMeshReference)},
+        });
+        assert(reloadedMesh.GetMesh() != nullptr);
+        assert(reloadedMesh.GetMeshAssetReference() == PlutoGE::assets::Project::kBuiltinCubeMeshReference);
+    }
 
     Scene scene;
     auto ownerStorage = std::make_unique<Entity>(EntityConfig{.name = "Skinned mesh"});

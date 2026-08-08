@@ -796,15 +796,18 @@ namespace PlutoGE::scene
             }
         }
 
-        if (!modelAssetId.empty())
+        if (!sourceMeshPath.empty() || !modelAssetId.empty())
         {
             auto &engine = core::Engine::GetInstance();
-            const std::string resolvedModelObject = assets::Project::IsEngineAssetReference(modelAssetId)
-                                                        ? modelAssetId
-                                                        : engine.GetAssetManager().ResolveModelObject(modelAssetId, modelObjectId);
-            if (!resolvedModelObject.empty())
+            if (!modelAssetId.empty())
             {
-                sourceMeshPath = resolvedModelObject;
+                const std::string resolvedModelObject = assets::Project::IsEngineAssetReference(modelAssetId)
+                                                            ? modelAssetId
+                                                            : engine.GetAssetManager().ResolveModelObject(modelAssetId, modelObjectId);
+                if (!resolvedModelObject.empty())
+                {
+                    sourceMeshPath = resolvedModelObject;
+                }
             }
             if (sourceMeshPath.empty()) return;
             if (auto *builtinMesh = engine.GetAssetManager().LoadMeshAsset(sourceMeshPath))

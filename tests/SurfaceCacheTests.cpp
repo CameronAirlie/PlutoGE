@@ -30,7 +30,7 @@ int main()
     }
     const auto parameters = effect->GetParameters();
     const auto radianceDebug = std::find_if(parameters.begin(), parameters.end(), [](const PostProcessParameter &parameter) {
-        return parameter.name == "Debug View" && parameter.enumOptions.size() == 11 && parameter.enumOptions.back() == "Atlas UV";
+        return parameter.name == "Debug View" && parameter.enumOptions.size() == 12 && parameter.enumOptions.back() == "Gather Inputs";
     });
     if (radianceDebug == parameters.end())
     {

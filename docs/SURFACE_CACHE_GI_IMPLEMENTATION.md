@@ -90,7 +90,15 @@ Validation recorded on 2026-08-08:
     - [x] Add best-card selection using world-to-card projection, neighborhood depth validation, and a geometric warm-up fallback.
     - [x] Add selected-card and atlas-UV debug views.
     - [x] Make projected-card containment conservative while clamping sampling to each card's content rectangle.
-- [ ] 4. Add half-resolution hybrid screen/voxel gather and surface-card lookup.
+- [~] 4. Add half-resolution hybrid screen/voxel gather and surface-card lookup.
+  - [~] 4.1 Add an owned half-resolution HDR gather target and explicit gather-pass boundary.
+    - [x] Allocate and resize the gather target independently of the output target.
+    - [x] Downsample receiver position/normal inputs and expose a `Gather Inputs` diagnostic.
+    - [ ] Visually validate receiver coverage and half-resolution resizing.
+  - [ ] 4.2 Generate stable hemisphere directions and trace screen-space visibility first.
+  - [ ] 4.3 Continue screen misses through the shared voxel visibility cascades.
+  - [ ] 4.4 Project ray hits into candidate cards and sample accumulated radiance.
+  - [ ] 4.5 Accumulate confidence-weighted diffuse indirect radiance into the gather target.
 - [ ] 5. Add motion-vector temporal accumulation, rejection, and history reset rules.
 - [ ] 6. Add spatial filtering, depth-aware upsampling, and lighting-pass composition.
 - [ ] 7. Add revision-driven invalidation, residency, eviction, and texel-based update budgets.

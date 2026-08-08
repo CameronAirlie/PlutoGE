@@ -8,6 +8,7 @@
 #include "PlutoGE/render/visibility/IWorldVisibilityProvider.h"
 
 #include <memory>
+#include <array>
 #include <vector>
 
 namespace PlutoGE::render
@@ -44,18 +45,24 @@ namespace PlutoGE::render
         void EnsureGatherTarget(int width, int height);
         void RenderGatherInputs(const PostProcessContext &context);
         void RenderIndirectGather(const PostProcessContext &context);
+        void ResetGatherHistory();
+        void ResolveGatherHistory(const PostProcessContext &context);
         std::size_t ComputeSceneSignature(const PostProcessContext &context) const;
         std::size_t ComputeLightingSignature(const PostProcessContext &context) const;
 
         std::unique_ptr<SurfaceCacheAtlas> m_atlas;
         std::unique_ptr<RenderTarget> m_gatherTarget;
         std::unique_ptr<RenderTarget> m_indirectGatherTarget;
+        std::array<std::unique_ptr<RenderTarget>, 2> m_gatherHistoryTargets;
+        std::array<std::unique_ptr<RenderTarget>, 2> m_gatherHistoryMetadataTargets;
         Shader *m_captureShader = nullptr;
         Shader *m_debugShader = nullptr;
         Shader *m_radianceResolveShader = nullptr;
         Shader *m_cardLookupDebugShader = nullptr;
         Shader *m_gatherShader = nullptr;
         Shader *m_indirectGatherShader = nullptr;
+        Shader *m_gatherTemporalShader = nullptr;
+        Shader *m_gatherMetadataShader = nullptr;
         std::vector<ResidentCard> m_cards;
         SurfaceCardSpatialIndex m_cardSpatialIndex;
         SurfaceCardGpuIndex m_cardGpuIndex;
@@ -77,6 +84,7 @@ namespace PlutoGE::render
         int m_screenRayCount = 4;
         int m_screenTraceSteps = 16;
         float m_screenTraceDistance = 4.0f;
+        float m_gatherTemporalBlend = 0.88f;
         float m_radianceIntensity = 1.0f;
         float m_environmentIntensity = 1.0f;
         float m_radianceClamp = 32.0f;
@@ -86,5 +94,10 @@ namespace PlutoGE::render
         bool m_cacheLayoutDirty = true;
         bool m_hasRadianceHistory = false;
         std::uint8_t m_radianceHistoryIndex = 0;
+        std::uint8_t m_gatherHistoryIndex = 0;
+        bool m_hasGatherHistory = false;
+        glm::mat4 m_previousGatherView{1.0f};
+        glm::vec3 m_previousGatherCameraPosition{0.0f};
+        bool m_hasPreviousGatherCamera = false;
     };
 }

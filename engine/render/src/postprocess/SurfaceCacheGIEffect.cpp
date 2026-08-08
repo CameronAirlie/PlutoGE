@@ -33,6 +33,8 @@ namespace PlutoGE::render
     {
         if (m_gatherTarget) m_gatherTarget->Cleanup();
         if (m_indirectGatherTarget) m_indirectGatherTarget->Cleanup();
+        for (auto &target : m_gatherHistoryTargets) if (target) target->Cleanup();
+        for (auto &target : m_gatherHistoryMetadataTargets) if (target) target->Cleanup();
     }
 
     std::vector<PostProcessParameter> SurfaceCacheGIEffect::GetParameters() const
@@ -48,13 +50,14 @@ namespace PlutoGE::render
             {"Screen Ray Count", PostProcessParameterType::Int, std::to_string(m_screenRayCount)},
             {"Screen Trace Steps", PostProcessParameterType::Int, std::to_string(m_screenTraceSteps)},
             {"Screen Trace Distance", PostProcessParameterType::Float, std::to_string(m_screenTraceDistance)},
+            {"Gather Temporal Blend", PostProcessParameterType::Float, std::to_string(m_gatherTemporalBlend)},
             {"Radiance Intensity", PostProcessParameterType::Float, std::to_string(m_radianceIntensity)},
             {"Environment Intensity", PostProcessParameterType::Float, std::to_string(m_environmentIntensity)},
             {"Radiance Clamp", PostProcessParameterType::Float, std::to_string(m_radianceClamp)},
             {"Radiance History Blend", PostProcessParameterType::Float, std::to_string(m_radianceHistoryBlend)},
             {"Directional Shadows", PostProcessParameterType::Bool, m_directionalShadows ? "true" : "false"},
             {"Static Geometry Only", PostProcessParameterType::Bool, m_staticGeometryOnly ? "true" : "false"},
-            {"Debug View", PostProcessParameterType::Enum, std::to_string(m_debugView), {"Scene", "Albedo / Metallic", "Normal / Roughness", "Emission", "Card Depth", "Direct Radiance", "Accumulated Radiance", "Visibility Cascades", "Card Candidates", "Selected Card", "Atlas UV", "Gather Inputs", "Screen Trace", "Hybrid Trace", "Ray Hit Radiance"}},
+            {"Debug View", PostProcessParameterType::Enum, std::to_string(m_debugView), {"Scene", "Albedo / Metallic", "Normal / Roughness", "Emission", "Card Depth", "Direct Radiance", "Accumulated Radiance", "Visibility Cascades", "Card Candidates", "Selected Card", "Atlas UV", "Gather Inputs", "Screen Trace", "Hybrid Trace", "Ray Hit Radiance", "Temporal Radiance"}},
         };
     }
 
@@ -80,13 +83,14 @@ namespace PlutoGE::render
             else if (parameter.name == "Screen Ray Count") m_screenRayCount = std::clamp(std::stoi(parameter.value), 1, 8);
             else if (parameter.name == "Screen Trace Steps") m_screenTraceSteps = std::clamp(std::stoi(parameter.value), 4, 32);
             else if (parameter.name == "Screen Trace Distance") m_screenTraceDistance = std::clamp(std::stof(parameter.value), 0.25f, 32.0f);
+            else if (parameter.name == "Gather Temporal Blend") m_gatherTemporalBlend = std::clamp(std::stof(parameter.value), 0.0f, 0.98f);
             else if (parameter.name == "Radiance Intensity") m_radianceIntensity = std::clamp(std::stof(parameter.value), 0.0f, 8.0f);
             else if (parameter.name == "Environment Intensity") m_environmentIntensity = std::clamp(std::stof(parameter.value), 0.0f, 8.0f);
             else if (parameter.name == "Radiance Clamp") m_radianceClamp = std::clamp(std::stof(parameter.value), 1.0f, 256.0f);
             else if (parameter.name == "Radiance History Blend") m_radianceHistoryBlend = std::clamp(std::stof(parameter.value), 0.0f, 0.98f);
             else if (parameter.name == "Directional Shadows") m_directionalShadows = ParseBool(parameter.value);
             else if (parameter.name == "Static Geometry Only") { const bool value = ParseBool(parameter.value); if (value != m_staticGeometryOnly) { m_staticGeometryOnly = value; m_cacheLayoutDirty = true; } }
-            else if (parameter.name == "Debug View") m_debugView = std::clamp(std::stoi(parameter.value), 0, 14);
+            else if (parameter.name == "Debug View") m_debugView = std::clamp(std::stoi(parameter.value), 0, 15);
         }
         m_maxCardResolution = std::max(m_maxCardResolution, m_minCardResolution);
         m_cacheLayoutDirty = m_cacheLayoutDirty || previousAtlasSize != m_atlasSize ||
@@ -96,6 +100,7 @@ namespace PlutoGE::render
         if (previousAtlasSize != m_atlasSize)
         {
             m_atlas.reset();
+            ResetGatherHistory();
         }
     }
 
@@ -189,7 +194,8 @@ namespace PlutoGE::render
                 if(uDebugView==11){vec2 f=texture(uGatherTexture,UV).rg*2.0-1.0;vec3 n=vec3(f,1.0-abs(f.x)-abs(f.y));float t=clamp(-n.z,0.0,1.0);n.xy+=vec2(n.x>=0.0?-t:t,n.y>=0.0?-t:t);FragColor=vec4(normalize(n)*0.5+0.5,1.0);return;}
                 if(uDebugView==12){float confidence=texture(uGatherTexture,UV).b;FragColor=vec4(mix(vec3(0.015,0.03,0.12),vec3(1.0,0.28,0.02),confidence),1.0);return;}
                 if(uDebugView==13){vec2 confidence=texture(uGatherTexture,UV).ba;float unresolved=max(1.0-confidence.x-confidence.y,0.0);FragColor=vec4(confidence.x,confidence.y,unresolved,1.0);return;}
-                if(uDebugView==14){vec4 indirect=texture(uIndirectGatherTexture,UV);vec3 mapped=indirect.rgb/(vec3(1.0)+indirect.rgb);FragColor=vec4(mix(vec3(0.04,0.0,0.06),mapped,indirect.a),1.0);return;}
+                if(uDebugView==14){vec4 indirect=texture(uIndirectGatherTexture,UV);vec3 mapped=indirect.rgb/(vec3(1.0)+indirect.rgb);FragColor=vec4(indirect.a>0.001?mapped:vec3(0.04,0.0,0.06),1.0);return;}
+                if(uDebugView==15){vec4 indirect=texture(uIndirectGatherTexture,UV);vec3 mapped=indirect.rgb/(vec3(1.0)+indirect.rgb);FragColor=vec4(indirect.a>0.001?mapped:vec3(0.04,0.0,0.06),1.0);return;}
                 if(uDebugView==7){
                     if(uVisibilityStatus==0){vec2 t=floor(UV*16.0);float c=mod(t.x+t.y,2.0);FragColor=vec4(mix(vec3(0.12,0.0,0.18),vec3(0.55,0.0,0.7),c),1);return;}
                     if(uVisibilityStatus==1){vec2 t=floor(UV*16.0);float c=mod(t.x+t.y,2.0);FragColor=vec4(mix(vec3(0.18,0.035,0.0),vec3(0.75,0.24,0.0),c),1);return;}
@@ -294,26 +300,51 @@ namespace PlutoGE::render
         indirectGather.vertexSource = debug.vertexSource;
         indirectGather.fragmentSource = R"(#version 430 core
             in vec2 UV;out vec4 FragColor;
-            uniform sampler2D uScenePositionTexture,uSceneNormalTexture,uAccumulatedRadianceAtlas;
-            uniform mat4 uViewProjection;uniform float uCellSize,uTraceDistance;uniform int uTraceSteps,uCellCount,uCardCount;
+            uniform sampler2D uScenePositionTexture,uSceneNormalTexture,uAccumulatedRadianceAtlas,uCardDepthAtlas;
+            uniform mat4 uViewProjection;uniform float uCellSize,uTraceDistance;uniform int uTraceSteps,uRayCount,uCellCount,uCardCount;
+            uniform sampler3D uVoxel0,uVoxel1,uVoxel2,uVoxel3,uVoxel4,uVoxel5;uniform vec3 uCascadeOrigins[3];uniform float uCascadeSizes[3];uniform int uCascadeCount,uAtlasCascadeCount,uCascadeResolution;
             struct Cell{ivec4 coordinateAndOffset;uvec4 countAndPadding;};
             struct CardBounds{vec4 minimumAndId;vec4 maximumBounds;vec4 cardNormal;mat4 worldToCardClip;vec4 atlasScaleBias;};
             layout(std430,binding=0)readonly buffer Cells{Cell cells[];};layout(std430,binding=1)readonly buffer Candidates{uint candidates[];};layout(std430,binding=2)readonly buffer Cards{CardBounds cards[];};
             int compareCell(ivec3 a,ivec3 b){if(a.x!=b.x)return a.x<b.x?-1:1;if(a.y!=b.y)return a.y<b.y?-1:1;if(a.z!=b.z)return a.z<b.z?-1:1;return 0;}
             int findCell(ivec3 key){int low=0,high=uCellCount-1;while(low<=high){int middle=(low+high)/2;int order=compareCell(cells[middle].coordinateAndOffset.xyz,key);if(order==0)return middle;if(order<0)low=middle+1;else high=middle-1;}return -1;}
             float hash12(vec2 p){vec3 p3=fract(vec3(p.xyx)*.1031);p3+=dot(p3,p3.yzx+33.33);return fract((p3.x+p3.y)*p3.z);}
-            vec3 rayDirection(vec3 n){float phi=6.2831853*hash12(floor(gl_FragCoord.xy));float radius=.7071068;vec3 local=vec3(radius*cos(phi),radius*sin(phi),.7071068);vec3 helper=abs(n.z)<.999?vec3(0,0,1):vec3(1,0,0);vec3 t=normalize(cross(helper,n)),b=cross(n,t);return normalize(t*local.x+b*local.y+n*local.z);}
+            vec3 rayDirection(vec3 n,int index){float u=(float(index)+.5)/float(max(uRayCount,1));float phi=6.2831853*fract(float(index)*.61803398875+hash12(floor(gl_FragCoord.xy)));float radius=sqrt(u);vec3 local=vec3(radius*cos(phi),radius*sin(phi),sqrt(max(1.0-u,0.0)));vec3 helper=abs(n.z)<.999?vec3(0,0,1):vec3(1,0,0);vec3 t=normalize(cross(helper,n)),b=cross(n,t);return normalize(t*local.x+b*local.y+n*local.z);}
             bool traceScreen(vec3 origin,vec3 direction,out vec3 hitPosition,out vec3 hitNormal){float stepLength=uTraceDistance/float(max(uTraceSteps,1));for(int i=1;i<=32;i++){if(i>uTraceSteps)break;float travel=stepLength*float(i);vec4 clip=uViewProjection*vec4(origin+direction*travel,1);if(clip.w<=.0001)continue;vec2 suv=clip.xy/clip.w*.5+.5;if(any(lessThan(suv,vec2(0)))||any(greaterThan(suv,vec2(1))))break;vec3 p=texture(uScenePositionTexture,suv).xyz,delta=p-origin;float alongRay=dot(delta,direction),radial=length(delta-direction*alongRay);if(alongRay>.06&&alongRay<=travel+stepLength&&radial<max(.06,travel*.025)){vec3 raw=texture(uSceneNormalTexture,suv).xyz;if(length(raw)<.01)return false;hitPosition=p;hitNormal=normalize(raw);return true;}}return false;}
-            bool sampleCard(vec3 p,vec3 n,out vec3 radiance){int cellIndex=findCell(ivec3(floor(p/max(uCellSize,.001))));if(cellIndex<0)return false;int offset=cells[cellIndex].coordinateAndOffset.w;uint count=cells[cellIndex].countAndPadding.x;float best=1e10;vec2 bestAtlasUv=vec2(0);for(uint i=0u;i<count;i++){uint id=candidates[offset+int(i)];if(id==0u||id>uint(uCardCount))continue;CardBounds card=cards[id-1u];if(any(lessThan(p,card.minimumAndId.xyz))||any(greaterThan(p,card.maximumBounds.xyz)))continue;float facing=dot(n,normalize(card.cardNormal.xyz));if(facing<=.2)continue;vec4 clip=card.worldToCardClip*vec4(p,1);if(abs(clip.w)<.00001)continue;vec3 ndc=clip.xyz/clip.w;vec2 cardUv=ndc.xy*.5+.5;if(any(lessThan(cardUv,vec2(-.025)))||any(greaterThan(cardUv,vec2(1.025))))continue;float score=1.0-facing;if(score<best){best=score;bestAtlasUv=clamp(cardUv,vec2(0),vec2(1))*card.atlasScaleBias.xy+card.atlasScaleBias.zw;}}if(best>=1e9)return false;radiance=max(texture(uAccumulatedRadianceAtlas,bestAtlasUv).rgb,vec3(0));return true;}
-            void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,raw=texture(uSceneNormalTexture,UV).xyz;if(length(raw)<.01){FragColor=vec4(0);return;}vec3 n=normalize(raw),hitP,hitN,radiance;if(!traceScreen(p+n*.04,rayDirection(n),hitP,hitN)||!sampleCard(hitP,hitN,radiance)){FragColor=vec4(0);return;}FragColor=vec4(radiance,1);}
+            int findCascade(vec3 p,out vec3 tc){for(int c=0;c<3;c++){if(c>=uCascadeCount)break;tc=(p-uCascadeOrigins[c])/max(uCascadeSizes[c],.0001);if(all(greaterThanEqual(tc,vec3(0)))&&all(lessThan(tc,vec3(1))))return c;}tc=vec3(0);return -1;}
+            vec4 sampleVolume(int i,vec3 tc){if(i==0)return textureLod(uVoxel0,tc,0);if(i==1)return textureLod(uVoxel1,tc,0);if(i==2)return textureLod(uVoxel2,tc,0);if(i==3)return textureLod(uVoxel3,tc,0);if(i==4)return textureLod(uVoxel4,tc,0);return textureLod(uVoxel5,tc,0);}
+            float voxelOpacity(int c,vec3 tc,vec3 d){vec3 atc=vec3(clamp(tc.xy,vec2(0),vec2(1)),(float(c)+clamp(tc.z,0.0,1.0))/float(max(uAtlasCascadeCount,1)));vec3 w=abs(d);w/=max(w.x+w.y+w.z,.0001);return sampleVolume(d.x>=0?0:1,atc).a*w.x+sampleVolume(d.y>=0?2:3,atc).a*w.y+sampleVolume(d.z>=0?4:5,atc).a*w.z;}
+            bool traceVoxel(vec3 origin,vec3 direction,out vec3 hitPosition,out vec3 hitNormal){if(uCascadeCount<=0||uCascadeResolution<=0)return false;float distanceAlong=.08,previousDistance=distanceAlong;for(int i=0;i<32;i++){if(distanceAlong>uTraceDistance)break;vec3 p=origin+direction*distanceAlong,tc;int c=findCascade(p,tc);if(c<0){previousDistance=distanceAlong;distanceAlong+=.2;continue;}float voxelSize=uCascadeSizes[c]/float(uCascadeResolution);float localOpacity=voxelOpacity(c,tc,direction);if(localOpacity>.08){float low=previousDistance,high=distanceAlong;for(int refinement=0;refinement<4;refinement++){float middle=(low+high)*.5;vec3 middleTc;int middleCascade=findCascade(origin+direction*middle,middleTc);float middleOpacity=middleCascade>=0?voxelOpacity(middleCascade,middleTc,direction):0.0;if(middleOpacity>.08)high=middle;else low=middle;}hitPosition=origin+direction*high;hitNormal=-direction;return true;}previousDistance=distanceAlong;distanceAlong+=max(voxelSize,.04);}return false;}
+            bool sampleCard(vec3 p,vec3 n,bool allowFallback,out vec3 radiance){int cellIndex=findCell(ivec3(floor(p/max(uCellSize,.001))));if(cellIndex<0)return false;int offset=cells[cellIndex].coordinateAndOffset.w;uint count=cells[cellIndex].countAndPadding.x;ivec2 atlasSize=textureSize(uCardDepthAtlas,0);float best=1e10,fallbackBest=1e10;ivec2 bestTexel=ivec2(0),fallbackTexel=ivec2(0);for(uint i=0u;i<count;i++){uint id=candidates[offset+int(i)];if(id==0u||id>uint(uCardCount))continue;CardBounds card=cards[id-1u];if(any(lessThan(p,card.minimumAndId.xyz))||any(greaterThan(p,card.maximumBounds.xyz)))continue;float facing=dot(n,normalize(card.cardNormal.xyz));if(facing<=.2)continue;vec4 clip=card.worldToCardClip*vec4(p,1);if(abs(clip.w)<.00001)continue;vec3 ndc=clip.xyz/clip.w;vec2 cardUv=ndc.xy*.5+.5;float projectedDepth=ndc.z*.5+.5;if(any(lessThan(cardUv,vec2(-.025)))||any(greaterThan(cardUv,vec2(1.025)))||projectedDepth<-.025||projectedDepth>1.025)continue;cardUv=clamp(cardUv,vec2(0),vec2(1));projectedDepth=clamp(projectedDepth,0.0,1.0);ivec2 cardMin=ivec2(card.atlasScaleBias.zw*vec2(atlasSize));ivec2 cardSize=max(ivec2(card.atlasScaleBias.xy*vec2(atlasSize)),ivec2(1));ivec2 cardMax=cardMin+cardSize-1;vec2 atlasUv=cardUv*card.atlasScaleBias.xy+card.atlasScaleBias.zw;ivec2 center=clamp(ivec2(atlasUv*vec2(atlasSize)),cardMin,cardMax);float facingScore=1.0-facing;if(facingScore<fallbackBest){fallbackBest=facingScore;fallbackTexel=center;}float depthError=1e10;bool hasDepth=false;for(int y=-1;y<=1;y++)for(int x=-1;x<=1;x++){ivec2 texel=clamp(center+ivec2(x,y),cardMin,cardMax);float cachedDepth=texelFetch(uCardDepthAtlas,texel,0).r;if(cachedDepth<.9999){hasDepth=true;depthError=min(depthError,abs(cachedDepth-projectedDepth));}}if(!hasDepth||depthError>.05)continue;float score=depthError+facingScore*.01;if(score<best){best=score;bestTexel=center;}}ivec2 selectedTexel=best<1e9?bestTexel:fallbackTexel;if(best>=1e9&&(!allowFallback||fallbackBest>=1e9))return false;radiance=max(texelFetch(uAccumulatedRadianceAtlas,selectedTexel,0).rgb,vec3(0));if(any(isnan(radiance))||any(isinf(radiance)))return false;float luminance=dot(radiance,vec3(.2126,.7152,.0722));if(luminance>8.0)return false;radiance=min(radiance,vec3(8.0));return true;}
+            void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,raw=texture(uSceneNormalTexture,UV).xyz;if(length(raw)<.01){FragColor=vec4(0);return;}vec3 n=normalize(raw),origin=p+n*.04,total=vec3(0);float resolved=0;for(int rayIndex=0;rayIndex<8;rayIndex++){if(rayIndex>=uRayCount)break;vec3 direction=rayDirection(n,rayIndex),hitP,hitN,radiance;bool screenHit=traceScreen(origin,direction,hitP,hitN);bool hit=screenHit;if(!hit)hit=traceVoxel(origin,direction,hitP,hitN);if(hit&&sampleCard(hitP,hitN,screenHit,radiance)){total+=radiance;resolved+=1.0;}}float rayCount=float(max(uRayCount,1));FragColor=vec4(resolved>0.0?total/resolved:vec3(0),resolved/rayCount);}
         )";
         m_indirectGatherShader = Shader::Create(indirectGather);
+
+        ShaderSource temporal;
+        temporal.vertexSource = debug.vertexSource;
+        temporal.fragmentSource = R"(#version 330 core
+            in vec2 UV;out vec4 FragColor;uniform sampler2D uCurrent,uHistory,uHistoryMetadata,uMotion,uPosition,uNormal;
+            uniform mat4 uView,uPreviousView;uniform int uHasHistory;uniform float uTemporalBlend;
+            vec3 decodeNormal(vec2 e){vec2 f=e*2.0-1.0;vec3 n=vec3(f,1.0-abs(f.x)-abs(f.y));float t=clamp(-n.z,0.0,1.0);n.xy+=vec2(n.x>=0.0?-t:t,n.y>=0.0?-t:t);return normalize(n);}
+            void main(){vec4 current=texture(uCurrent,UV);vec3 p=texture(uPosition,UV).xyz,raw=texture(uNormal,UV).xyz;if(length(raw)<.01){FragColor=vec4(0);return;}vec3 n=normalize(raw);float currentDepth=max(-(uView*vec4(p,1)).z,0.0);vec3 neighborhoodMin=current.rgb,neighborhoodMax=current.rgb;float compatibleSamples=current.a>0.0?1.0:0.0;vec2 texel=1.0/vec2(textureSize(uCurrent,0));for(int y=-1;y<=1;y++)for(int x=-1;x<=1;x++){if(x==0&&y==0)continue;vec2 sampleUv=clamp(UV+vec2(x,y)*texel,vec2(0),vec2(1));vec3 sampleRaw=texture(uNormal,sampleUv).xyz;if(length(sampleRaw)<.01||dot(normalize(sampleRaw),n)<.72)continue;vec3 sampleP=texture(uPosition,sampleUv).xyz;float sampleDepth=max(-(uView*vec4(sampleP,1)).z,0.0);if(abs(sampleDepth-currentDepth)>max(.06,currentDepth*.02))continue;vec4 sampleValue=texture(uCurrent,sampleUv);if(sampleValue.a<=0.0)continue;neighborhoodMin=min(neighborhoodMin,sampleValue.rgb);neighborhoodMax=max(neighborhoodMax,sampleValue.rgb);compatibleSamples+=1.0;}vec3 resolved=current.rgb;float confidence=current.a;if(uHasHistory!=0){vec2 historyUv=UV-texture(uMotion,UV).xy;if(all(greaterThanEqual(historyUv,vec2(0)))&&all(lessThanEqual(historyUv,vec2(1)))){ivec2 size=textureSize(uHistoryMetadata,0);ivec2 coord=clamp(ivec2(historyUv*vec2(size)),ivec2(0),size-1);vec4 metadata=texelFetch(uHistoryMetadata,coord,0);float previousDepth=max(-(uPreviousView*vec4(p,1)).z,0.0);float depthTolerance=max(.04,previousDepth*.015);bool compatible=metadata.w>.5&&abs(metadata.z-previousDepth)<=depthTolerance&&dot(decodeNormal(metadata.xy),n)>.8;if(compatible){vec4 history=texelFetch(uHistory,coord,0);vec3 padding=max((neighborhoodMax-neighborhoodMin)*.35,vec3(.03));vec3 clampedHistory=compatibleSamples>1.0?clamp(history.rgb,neighborhoodMin-padding,neighborhoodMax+padding):history.rgb;float motionRejection=clamp(length(texture(uMotion,UV).xy)*32.0,0.0,1.0);float historyWeight=uTemporalBlend*(1.0-clamp(current.a,0.0,1.0)*.35)*(1.0-motionRejection);resolved=mix(current.rgb,clampedHistory,historyWeight);confidence=max(current.a,history.a*.96);}}}FragColor=vec4(max(resolved,vec3(0)),confidence);}
+        )";
+        m_gatherTemporalShader = Shader::Create(temporal);
+
+        ShaderSource metadata;
+        metadata.vertexSource = debug.vertexSource;
+        metadata.fragmentSource = R"(#version 330 core
+            in vec2 UV;out vec4 FragColor;uniform sampler2D uPosition,uNormal;uniform mat4 uView;
+            vec2 encodeNormal(vec3 n){n/=max(abs(n.x)+abs(n.y)+abs(n.z),.0001);if(n.z<0.0)n.xy=(1.0-abs(n.yx))*vec2(n.x>=0.0?1.0:-1.0,n.y>=0.0?1.0:-1.0);return n.xy*.5+.5;}
+            void main(){vec3 p=texture(uPosition,UV).xyz,raw=texture(uNormal,UV).xyz;if(length(raw)<.01){FragColor=vec4(0);return;}FragColor=vec4(encodeNormal(normalize(raw)),max(-(uView*vec4(p,1)).z,0.0),1.0);}
+        )";
+        m_gatherMetadataShader = Shader::Create(metadata);
     }
 
     void SurfaceCacheGIEffect::EnsureGatherTarget(int width, int height)
     {
         const int gatherWidth = std::max(width / 2, 1);
         const int gatherHeight = std::max(height / 2, 1);
+        const bool resolutionChanged = !m_gatherTarget || m_gatherTarget->GetWidth() != gatherWidth || m_gatherTarget->GetHeight() != gatherHeight;
         if (!m_gatherTarget)
             m_gatherTarget = std::make_unique<RenderTarget>(RenderTargetConfig{
                 .width = gatherWidth, .height = gatherHeight, .clearColor = glm::vec4(0.0f)});
@@ -324,6 +355,36 @@ namespace PlutoGE::render
                 .width = gatherWidth, .height = gatherHeight, .clearColor = glm::vec4(0.0f)});
         else if (m_indirectGatherTarget->GetWidth() != gatherWidth || m_indirectGatherTarget->GetHeight() != gatherHeight)
             m_indirectGatherTarget->Resize(gatherWidth, gatherHeight);
+        for (auto &target : m_gatherHistoryTargets)
+        {
+            if (!target) target = std::make_unique<RenderTarget>(RenderTargetConfig{
+                .width = gatherWidth, .height = gatherHeight, .clearColor = glm::vec4(0.0f)});
+            else if (target->GetWidth() != gatherWidth || target->GetHeight() != gatherHeight) target->Resize(gatherWidth, gatherHeight);
+        }
+        for (auto &target : m_gatherHistoryMetadataTargets)
+        {
+            if (!target) target = std::make_unique<RenderTarget>(RenderTargetConfig{
+                .width = gatherWidth, .height = gatherHeight, .clearColor = glm::vec4(0.0f)});
+            else if (target->GetWidth() != gatherWidth || target->GetHeight() != gatherHeight) target->Resize(gatherWidth, gatherHeight);
+        }
+        if (resolutionChanged) ResetGatherHistory();
+    }
+
+    void SurfaceCacheGIEffect::ResetGatherHistory()
+    {
+        m_gatherHistoryIndex = 0;
+        m_hasGatherHistory = false;
+        m_hasPreviousGatherCamera = false;
+    }
+
+    void SurfaceCacheGIEffect::ResolveGatherHistory(const PostProcessContext &context)
+    {
+        if (!m_gatherTemporalShader || !m_gatherMetadataShader || !context.renderContext.gBuffer) return;
+        const glm::mat4 inverseView=glm::inverse(context.renderContext.cameraData.view);const glm::vec3 cameraPosition=glm::vec3(inverseView[3]);const glm::vec3 cameraForward=-glm::normalize(glm::vec3(inverseView[2]));if(m_hasPreviousGatherCamera){const glm::mat4 previousInverse=glm::inverse(m_previousGatherView);const glm::vec3 previousForward=-glm::normalize(glm::vec3(previousInverse[2]));if(glm::length(cameraPosition-m_previousGatherCameraPosition)>std::max(m_screenTraceDistance*.5f,1.0f)||glm::dot(cameraForward,previousForward)<.75f)ResetGatherHistory();}
+        const std::uint8_t next=static_cast<std::uint8_t>((m_gatherHistoryIndex+1u)%2u);auto *output=m_gatherHistoryTargets[next].get();
+        Graphics::BindRenderTarget(output);glViewport(0,0,output->GetWidth(),output->GetHeight());glDisable(GL_DEPTH_TEST);glDisable(GL_BLEND);glClearColor(0,0,0,0);glClear(GL_COLOR_BUFFER_BIT);m_gatherTemporalShader->Bind();
+        const GLuint textures[]={m_indirectGatherTarget->GetColorTextureID(),m_gatherHistoryTargets[m_gatherHistoryIndex]->GetColorTextureID(),m_gatherHistoryMetadataTargets[m_gatherHistoryIndex]->GetColorTextureID(),context.renderContext.gBuffer->GetMotionTextureID(),context.renderContext.gBuffer->GetPositionTextureID(),context.renderContext.gBuffer->GetNormalTextureID()};const char *names[]={"uCurrent","uHistory","uHistoryMetadata","uMotion","uPosition","uNormal"};for(int i=0;i<6;i++){glActiveTexture(GL_TEXTURE0+i);glBindTexture(GL_TEXTURE_2D,textures[i]);m_gatherTemporalShader->SetUniform(names[i],i);}m_gatherTemporalShader->SetUniform("uView",context.renderContext.cameraData.view);m_gatherTemporalShader->SetUniform("uPreviousView",m_previousGatherView);m_gatherTemporalShader->SetUniform("uHasHistory",m_hasGatherHistory?1:0);m_gatherTemporalShader->SetUniform("uTemporalBlend",m_gatherTemporalBlend);DrawFullscreenTriangle();
+        auto *metadata=m_gatherHistoryMetadataTargets[next].get();Graphics::BindRenderTarget(metadata);glViewport(0,0,metadata->GetWidth(),metadata->GetHeight());glClear(GL_COLOR_BUFFER_BIT);m_gatherMetadataShader->Bind();glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,context.renderContext.gBuffer->GetPositionTextureID());m_gatherMetadataShader->SetUniform("uPosition",0);glActiveTexture(GL_TEXTURE1);glBindTexture(GL_TEXTURE_2D,context.renderContext.gBuffer->GetNormalTextureID());m_gatherMetadataShader->SetUniform("uNormal",1);m_gatherMetadataShader->SetUniform("uView",context.renderContext.cameraData.view);DrawFullscreenTriangle();glBindFramebuffer(GL_FRAMEBUFFER,0);m_gatherHistoryIndex=next;m_previousGatherView=context.renderContext.cameraData.view;m_previousGatherCameraPosition=cameraPosition;m_hasPreviousGatherCamera=true;m_hasGatherHistory=true;
     }
 
     void SurfaceCacheGIEffect::RenderIndirectGather(const PostProcessContext &context)
@@ -334,7 +395,9 @@ namespace PlutoGE::render
         glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,context.renderContext.gBuffer->GetPositionTextureID());m_indirectGatherShader->SetUniform("uScenePositionTexture",0);
         glActiveTexture(GL_TEXTURE1);glBindTexture(GL_TEXTURE_2D,context.renderContext.gBuffer->GetNormalTextureID());m_indirectGatherShader->SetUniform("uSceneNormalTexture",1);
         glActiveTexture(GL_TEXTURE2);glBindTexture(GL_TEXTURE_2D,m_atlas->GetTexture(m_radianceHistoryIndex==0?SurfaceCacheAtlas::Layer::AccumulatedRadianceA:SurfaceCacheAtlas::Layer::AccumulatedRadianceB));m_indirectGatherShader->SetUniform("uAccumulatedRadianceAtlas",2);
-        m_indirectGatherShader->SetUniform("uViewProjection",context.renderContext.cameraData.projection*context.renderContext.cameraData.view);m_indirectGatherShader->SetUniform("uCellSize",m_cardSpatialIndex.GetCellSize());m_indirectGatherShader->SetUniform("uTraceDistance",m_screenTraceDistance);m_indirectGatherShader->SetUniform("uTraceSteps",m_screenTraceSteps);m_indirectGatherShader->SetUniform("uCellCount",m_cardGpuIndex.GetCellCount());m_indirectGatherShader->SetUniform("uCardCount",m_cardGpuIndex.GetCardCount());m_cardGpuIndex.Bind(0);DrawFullscreenTriangle();glBindFramebuffer(GL_FRAMEBUFFER,0);
+        glActiveTexture(GL_TEXTURE3);glBindTexture(GL_TEXTURE_2D,m_atlas->GetTexture(SurfaceCacheAtlas::Layer::Depth));m_indirectGatherShader->SetUniform("uCardDepthAtlas",3);
+        m_indirectGatherShader->SetUniform("uViewProjection",context.renderContext.cameraData.projection*context.renderContext.cameraData.view);m_indirectGatherShader->SetUniform("uCellSize",m_cardSpatialIndex.GetCellSize());m_indirectGatherShader->SetUniform("uTraceDistance",m_screenTraceDistance);m_indirectGatherShader->SetUniform("uTraceSteps",m_screenTraceSteps);m_indirectGatherShader->SetUniform("uRayCount",m_screenRayCount);m_indirectGatherShader->SetUniform("uCellCount",m_cardGpuIndex.GetCellCount());m_indirectGatherShader->SetUniform("uCardCount",m_cardGpuIndex.GetCardCount());
+        for(int direction=0;direction<6;++direction){glActiveTexture(GL_TEXTURE4+direction);glBindTexture(GL_TEXTURE_3D,m_visibilitySnapshot.directionalVolumeTextures[static_cast<std::size_t>(direction)]);m_indirectGatherShader->SetUniform("uVoxel"+std::to_string(direction),4+direction);}m_indirectGatherShader->SetUniform("uCascadeCount",m_visibilitySnapshot.IsValid()?m_visibilitySnapshot.cascadeCount:0);m_indirectGatherShader->SetUniform("uAtlasCascadeCount",std::max(m_visibilitySnapshot.cascadeCount,1));m_indirectGatherShader->SetUniform("uCascadeResolution",m_visibilitySnapshot.cascadeResolution);for(int cascade=0;cascade<3;++cascade){const std::string suffix="["+std::to_string(cascade)+"]";m_indirectGatherShader->SetUniform("uCascadeOrigins"+suffix,m_visibilitySnapshot.cascades[static_cast<std::size_t>(cascade)].origin);m_indirectGatherShader->SetUniform("uCascadeSizes"+suffix,m_visibilitySnapshot.cascades[static_cast<std::size_t>(cascade)].size);}m_cardGpuIndex.Bind(0);DrawFullscreenTriangle();glBindFramebuffer(GL_FRAMEBUFFER,0);
     }
 
     void SurfaceCacheGIEffect::RenderGatherInputs(const PostProcessContext &context)
@@ -440,6 +503,7 @@ namespace PlutoGE::render
         m_nextCapture = 0;
         m_hasRadianceHistory = false;
         m_radianceHistoryIndex = 0;
+        ResetGatherHistory();
         SurfaceCacheAtlasAllocator allocator(m_atlasSize, m_atlasSize, 2);
         SurfaceCardId nextId = 1;
         int occupiedWidth = 1;
@@ -650,6 +714,7 @@ namespace PlutoGE::render
         EnsureGatherTarget(context.sourceRenderTarget->GetWidth(), context.sourceRenderTarget->GetHeight());
         RenderGatherInputs(context);
         RenderIndirectGather(context);
+        ResolveGatherHistory(context);
         if (context.renderContext.renderer)
             context.renderContext.renderer->RecordSurfaceCacheStats(
                 m_stats.cardCount, m_stats.residentCardCount, m_stats.capturedCardCount,
@@ -701,7 +766,7 @@ namespace PlutoGE::render
         glBindTexture(GL_TEXTURE_2D, m_gatherTarget ? m_gatherTarget->GetColorTextureID() : 0);
         m_debugShader->SetUniform("uGatherTexture", 3);
         glActiveTexture(GL_TEXTURE4);
-        glBindTexture(GL_TEXTURE_2D, m_indirectGatherTarget ? m_indirectGatherTarget->GetColorTextureID() : 0);
+        glBindTexture(GL_TEXTURE_2D, m_debugView == 15 && m_hasGatherHistory ? m_gatherHistoryTargets[m_gatherHistoryIndex]->GetColorTextureID() : (m_indirectGatherTarget ? m_indirectGatherTarget->GetColorTextureID() : 0));
         m_debugShader->SetUniform("uIndirectGatherTexture", 4);
         m_debugShader->SetUniform("uVisibilityCascadeCount", m_visibilitySnapshot.cascadeCount);
         m_debugShader->SetUniform("uVisibilityStatus", m_visibilityStatus);

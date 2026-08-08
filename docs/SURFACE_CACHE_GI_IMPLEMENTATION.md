@@ -10,7 +10,7 @@ Last updated: 2026-08-08
 
 ## Milestone 1 — surface cache visualization
 
-Current step: **4.1 — half-resolution gather target and pass boundary**
+Current step: **5.2 — motion-vector reprojection and receiver rejection**
 
 - [x] 1.1 Define module boundaries and ownership.
 - [x] 1.2 Define surface-card, atlas-rectangle, statistics, and stable card-ID types.
@@ -106,15 +106,30 @@ Validation recorded on 2026-08-08:
     - [x] Pack receiver normal, screen confidence, and voxel confidence into one half-resolution target.
     - [x] Add a `Hybrid Trace` diagnostic: red screen hits, green voxel hits, blue unresolved rays.
     - [ ] Visually validate voxel continuation and cascade transitions.
-  - [~] 4.4 Project ray hits into candidate cards and sample accumulated radiance.
+  - [x] 4.4 Project ray hits into candidate cards and sample accumulated radiance.
     - [x] Add a separate half-resolution HDR indirect-radiance target.
     - [x] Recover screen-space ray-hit position and normal.
     - [x] Resolve screen hits through spatial card candidates and sample accumulated atlas radiance.
     - [x] Add a tone-mapped `Ray Hit Radiance` diagnostic with purple lookup-miss background.
-    - [ ] Refine occupied voxel hits to surfaces before card projection.
-    - [ ] Accumulate all configured rays instead of the initial deterministic validation ray.
-  - [ ] 4.5 Accumulate confidence-weighted diffuse indirect radiance into the gather target.
-- [ ] 5. Add motion-vector temporal accumulation, rejection, and history reset rules.
+    - [x] Refine occupied voxel hits to a first-opacity-crossing position and conservative opposing normal.
+    - [x] Accumulate all configured screen/voxel rays with unresolved rays contributing zero energy.
+    - [x] Reject overlapping-card light leaks with cached-depth validation and card-local texel clamping.
+    - [x] Permit bounded geometric fallback only for exact screen hits; require depth confirmation for voxel hits.
+    - [x] Refine voxel opacity crossings and reject isolated excessive-radiance samples.
+    - [x] Visually validate multi-ray radiance coverage and voxel-hit card recovery.
+  - [x] 4.5 Accumulate confidence-weighted diffuse indirect radiance into the gather target.
+    - [x] Keep the successful-sample radiance estimate independent from lookup confidence to avoid double attenuation.
+- [~] 5. Add motion-vector temporal accumulation, rejection, and history reset rules.
+  - [x] 5.1 Allocate ping-pong HDR radiance and receiver-metadata histories at gather resolution.
+    - [x] Reset history on gather resize, atlas resize, and cache-layout rebuild.
+  - [~] 5.2 Reproject history with motion vectors and validate receiver depth/normal metadata.
+    - [x] Reproject with G-buffer motion vectors and fetch exact history texels.
+    - [x] Reject out-of-bounds, invalid, depth-incompatible, and normal-incompatible history.
+    - [x] Add confidence-aware temporal blending and a `Temporal Radiance` diagnostic.
+    - [ ] Visually validate stationary convergence and moving-camera rejection.
+  - [x] 5.3 Clamp history to the current compatible neighborhood and weight it by confidence.
+  - [x] 5.4 Detect camera cuts and reject stale history after discontinuities.
+  - [ ] 5.5 Add temporal result and rejection-reason diagnostics.
 - [ ] 6. Add spatial filtering, depth-aware upsampling, and lighting-pass composition.
 - [ ] 7. Add revision-driven invalidation, residency, eviction, and texel-based update budgets.
 - [ ] 8. Complete editor controls, serialization coverage, debug tooling, profiling, and regression scenes.

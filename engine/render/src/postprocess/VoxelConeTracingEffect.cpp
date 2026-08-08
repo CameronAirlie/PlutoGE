@@ -19,6 +19,24 @@
 
 namespace PlutoGE::render
 {
+    WorldVisibilitySnapshot VoxelConeTracingEffect::GetWorldVisibilitySnapshot() const
+    {
+        WorldVisibilitySnapshot snapshot;
+        snapshot.directionalVolumeTextures = m_radianceAtlases;
+        snapshot.cascadeResolution = m_allocatedResolution;
+        snapshot.cascadeCount = static_cast<int>(std::min(m_activeCascadeCount, kWorldVisibilityMaxCascades));
+        for (int index = 0; index < snapshot.cascadeCount; ++index)
+        {
+            const auto &cascade = m_cascades[static_cast<std::size_t>(index)];
+            snapshot.cascades[static_cast<std::size_t>(index)] = WorldVisibilityCascade{
+                .origin = cascade.origin,
+                .size = cascade.size,
+                .valid = cascade.hasVolume,
+            };
+        }
+        return snapshot;
+    }
+
     namespace
     {
         // Voxelization uses a geometry shader and image atomics, so a single

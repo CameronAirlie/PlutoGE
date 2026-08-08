@@ -31,6 +31,8 @@ add_library(PlutoGERender
     src/postprocess/PostProcessEffectFactory.cpp
     src/surfacecache/SurfaceCache.cpp
     src/surfacecache/SurfaceCacheAtlas.cpp
+    src/surfacecache/SurfaceCardSpatialIndex.cpp
+    src/surfacecache/SurfaceCardGpuIndex.cpp
     src/passes/GeometryPass.cpp
     src/passes/DecalPass.cpp
     src/passes/GridPass.cpp

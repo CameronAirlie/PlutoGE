@@ -1,4 +1,5 @@
 #include "PlutoGE/render/postprocess/SurfaceCacheGIEffect.h"
+#include "PlutoGE/render/postprocess/VoxelConeTracingEffect.h"
 
 #include "PlutoGE/render/Graphics.h"
 #include "PlutoGE/render/Material.h"
@@ -7,11 +8,14 @@
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/Shader.h"
 #include "PlutoGE/render/Texture.h"
+#include "PlutoGE/render/GBuffer.h"
+#include "PlutoGE/render/visibility/IWorldVisibilityProvider.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 
 #include <algorithm>
 #include <functional>
+#include <limits>
 
 namespace PlutoGE::render
 {
@@ -23,6 +27,8 @@ namespace PlutoGE::render
             seed ^= value + 0x9e3779b9u + (seed << 6u) + (seed >> 2u);
         }
     }
+
+    SurfaceCacheGIEffect::SurfaceCacheGIEffect() = default;
 
     SurfaceCacheGIEffect::~SurfaceCacheGIEffect()
     {
@@ -37,12 +43,14 @@ namespace PlutoGE::render
             {"Maximum Card Resolution", PostProcessParameterType::Int, std::to_string(m_maxCardResolution)},
             {"Capture Budget", PostProcessParameterType::Int, std::to_string(m_captureBudget)},
             {"Maximum Capture Lights", PostProcessParameterType::Int, std::to_string(m_maxCaptureLights)},
+            {"Visibility Cascade Count", PostProcessParameterType::Int, std::to_string(m_visibilityCascadeCount)},
             {"Radiance Intensity", PostProcessParameterType::Float, std::to_string(m_radianceIntensity)},
             {"Environment Intensity", PostProcessParameterType::Float, std::to_string(m_environmentIntensity)},
             {"Radiance Clamp", PostProcessParameterType::Float, std::to_string(m_radianceClamp)},
+            {"Radiance History Blend", PostProcessParameterType::Float, std::to_string(m_radianceHistoryBlend)},
             {"Directional Shadows", PostProcessParameterType::Bool, m_directionalShadows ? "true" : "false"},
             {"Static Geometry Only", PostProcessParameterType::Bool, m_staticGeometryOnly ? "true" : "false"},
-            {"Debug View", PostProcessParameterType::Enum, std::to_string(m_debugView), {"Scene", "Albedo / Metallic", "Normal / Roughness", "Emission", "Card Depth", "Direct Radiance"}},
+            {"Debug View", PostProcessParameterType::Enum, std::to_string(m_debugView), {"Scene", "Albedo / Metallic", "Normal / Roughness", "Emission", "Card Depth", "Direct Radiance", "Accumulated Radiance", "Visibility Cascades", "Card Candidates"}},
         };
     }
 
@@ -60,12 +68,18 @@ namespace PlutoGE::render
             else if (parameter.name == "Maximum Card Resolution") m_maxCardResolution = std::clamp(std::stoi(parameter.value), 32, 1024);
             else if (parameter.name == "Capture Budget") m_captureBudget = std::clamp(std::stoi(parameter.value), 1, 256);
             else if (parameter.name == "Maximum Capture Lights") m_maxCaptureLights = std::clamp(std::stoi(parameter.value), 1, 8);
+            else if (parameter.name == "Visibility Cascade Count")
+            {
+                const int value = std::clamp(std::stoi(parameter.value), 1, 3);
+                if (value != m_visibilityCascadeCount) { m_visibilityCascadeCount = value; m_fallbackVisibility.reset(); }
+            }
             else if (parameter.name == "Radiance Intensity") m_radianceIntensity = std::clamp(std::stof(parameter.value), 0.0f, 8.0f);
             else if (parameter.name == "Environment Intensity") m_environmentIntensity = std::clamp(std::stof(parameter.value), 0.0f, 8.0f);
             else if (parameter.name == "Radiance Clamp") m_radianceClamp = std::clamp(std::stof(parameter.value), 1.0f, 256.0f);
+            else if (parameter.name == "Radiance History Blend") m_radianceHistoryBlend = std::clamp(std::stof(parameter.value), 0.0f, 0.98f);
             else if (parameter.name == "Directional Shadows") m_directionalShadows = ParseBool(parameter.value);
             else if (parameter.name == "Static Geometry Only") { const bool value = ParseBool(parameter.value); if (value != m_staticGeometryOnly) { m_staticGeometryOnly = value; m_cacheLayoutDirty = true; } }
-            else if (parameter.name == "Debug View") m_debugView = std::clamp(std::stoi(parameter.value), 0, 5);
+            else if (parameter.name == "Debug View") m_debugView = std::clamp(std::stoi(parameter.value), 0, 8);
         }
         m_maxCardResolution = std::max(m_maxCardResolution, m_minCardResolution);
         m_cacheLayoutDirty = m_cacheLayoutDirty || previousAtlasSize != m_atlasSize ||
@@ -159,9 +173,19 @@ namespace PlutoGE::render
         debug.fragmentSource = R"(#version 330 core
             in vec2 UV; out vec4 FragColor; uniform sampler2D uSceneTexture; uniform sampler2D uAtlasTexture;
             uniform int uDebugView; uniform int uResidentCardCount; uniform vec2 uAtlasExtent; uniform float uViewportAspect;
+            uniform sampler2D uScenePositionTexture; uniform int uVisibilityCascadeCount;
+            uniform int uVisibilityStatus;
+            uniform vec3 uVisibilityOrigins[3]; uniform float uVisibilitySizes[3]; uniform int uVisibilityValid[3];
             vec3 background(vec2 uv){ vec2 tile=floor(uv*24.0); float checker=mod(tile.x+tile.y,2.0); return mix(vec3(0.015),vec3(0.035),checker); }
             void main(){
                 if(uDebugView==0){FragColor=texture(uSceneTexture,UV);return;}
+                if(uDebugView==7){
+                    if(uVisibilityStatus==0){vec2 t=floor(UV*16.0);float c=mod(t.x+t.y,2.0);FragColor=vec4(mix(vec3(0.12,0.0,0.18),vec3(0.55,0.0,0.7),c),1);return;}
+                    if(uVisibilityStatus==1){vec2 t=floor(UV*16.0);float c=mod(t.x+t.y,2.0);FragColor=vec4(mix(vec3(0.18,0.035,0.0),vec3(0.75,0.24,0.0),c),1);return;}
+                    vec3 p=texture(uScenePositionTexture,UV).xyz; int selected=-1;
+                    for(int i=0;i<3;i++){if(i>=uVisibilityCascadeCount)break; vec3 tc=(p-uVisibilityOrigins[i])/max(uVisibilitySizes[i],0.0001); if(uVisibilityValid[i]!=0&&all(greaterThanEqual(tc,vec3(0)))&&all(lessThanEqual(tc,vec3(1)))){selected=i;break;}}
+                    if(selected==0)FragColor=vec4(0.12,0.55,1.0,1); else if(selected==1)FragColor=vec4(0.2,0.9,0.35,1); else if(selected==2)FragColor=vec4(1.0,0.72,0.15,1); else FragColor=vec4(0.02,0.0,0.04,1); return;
+                }
                 if(uResidentCardCount==0){
                     vec2 tile=floor(UV*16.0); float checker=mod(tile.x+tile.y,2.0);
                     FragColor=vec4(mix(vec3(0.08,0.0,0.0),vec3(0.22,0.01,0.04),checker),1.0); return;
@@ -178,6 +202,38 @@ namespace PlutoGE::render
                 FragColor=value;
             })";
         m_debugShader = Shader::Create(debug);
+
+        ShaderSource resolve;
+        resolve.vertexSource = debug.vertexSource;
+        resolve.fragmentSource = R"(#version 330 core
+            in vec2 UV; out vec3 FragColor;
+            uniform sampler2D uDirectRadiance; uniform sampler2D uPreviousRadiance;
+            uniform float uHistoryBlend; uniform int uHasHistory;
+            void main(){
+                vec3 direct=max(texture(uDirectRadiance,UV).rgb,vec3(0.0));
+                vec3 previous=max(texture(uPreviousRadiance,UV).rgb,vec3(0.0));
+                FragColor=uHasHistory!=0?mix(direct,previous,uHistoryBlend):direct;
+            })";
+        m_radianceResolveShader = Shader::Create(resolve);
+
+        ShaderSource lookupDebug;
+        lookupDebug.vertexSource = debug.vertexSource;
+        lookupDebug.fragmentSource = R"(#version 430 core
+            in vec2 UV; out vec4 FragColor; uniform sampler2D uScenePositionTexture; uniform sampler2D uSceneNormalTexture;
+            uniform float uCellSize; uniform int uCellCount; uniform int uCardCount;
+            struct Cell { ivec4 coordinateAndOffset; uvec4 countAndPadding; };
+            struct CardBounds { vec4 minimumAndId; vec4 maximumBounds; vec4 cardNormal; };
+            layout(std430,binding=0) readonly buffer Cells { Cell cells[]; };
+            layout(std430,binding=1) readonly buffer Candidates { uint candidates[]; };
+            layout(std430,binding=2) readonly buffer Cards { CardBounds cards[]; };
+            int compareCell(ivec3 a,ivec3 b){if(a.x!=b.x)return a.x<b.x?-1:1;if(a.y!=b.y)return a.y<b.y?-1:1;if(a.z!=b.z)return a.z<b.z?-1:1;return 0;}
+            int findCell(ivec3 key){int low=0,high=uCellCount-1;while(low<=high){int middle=(low+high)/2;int order=compareCell(cells[middle].coordinateAndOffset.xyz,key);if(order==0)return middle;if(order<0)low=middle+1;else high=middle-1;}return -1;}
+            void main(){
+                vec3 worldPosition=texture(uScenePositionTexture,UV).xyz;vec3 surfaceNormal=normalize(texture(uSceneNormalTexture,UV).xyz);ivec3 key=ivec3(floor(worldPosition/max(uCellSize,0.001)));int cellIndex=findCell(key);int count=0;
+                if(cellIndex>=0&&dot(surfaceNormal,surfaceNormal)>0.01){int offset=cells[cellIndex].coordinateAndOffset.w;uint candidateCount=cells[cellIndex].countAndPadding.x;for(uint i=0u;i<candidateCount;i++){uint id=candidates[offset+int(i)];if(id==0u||id>uint(uCardCount))continue;CardBounds card=cards[id-1u];bool inside=all(greaterThanEqual(worldPosition,card.minimumAndId.xyz))&&all(lessThanEqual(worldPosition,card.maximumBounds.xyz));float facing=dot(surfaceNormal,normalize(card.cardNormal.xyz));if(inside&&facing>0.35)count++;}}
+                float level=clamp(float(count)/6.0,0.0,1.0);vec3 color=count==0?vec3(0.025,0.0,0.04):mix(vec3(0.0,0.25,0.9),vec3(1.0,0.15,0.02),level);FragColor=vec4(color,1.0);
+            })";
+        m_cardLookupDebugShader = Shader::Create(lookupDebug);
     }
 
     std::size_t SurfaceCacheGIEffect::ComputeSceneSignature(const PostProcessContext &context) const
@@ -246,10 +302,13 @@ namespace PlutoGE::render
     {
         m_cards.clear();
         m_nextCapture = 0;
+        m_hasRadianceHistory = false;
+        m_radianceHistoryIndex = 0;
         SurfaceCacheAtlasAllocator allocator(m_atlasSize, m_atlasSize, 2);
         SurfaceCardId nextId = 1;
         int occupiedWidth = 1;
         int occupiedHeight = 1;
+        std::vector<SurfaceCardWorldBounds> worldBounds;
         if (context.renderContext.renderCommands)
         {
             for (const auto &command : *context.renderContext.renderCommands)
@@ -268,6 +327,25 @@ namespace PlutoGE::render
                     occupiedWidth = std::max(occupiedWidth, card.allocation.x + card.allocation.width + allocator.GetPadding());
                     occupiedHeight = std::max(occupiedHeight, card.allocation.y + card.allocation.height + allocator.GetPadding());
                     m_cards.push_back({card, command.mesh, command.material, command.model});
+                    const glm::vec3 localRight = glm::normalize(glm::cross(card.localUp, card.localNormal));
+                    const glm::vec3 localCenter = card.localCenter - card.localNormal * card.halfDepth;
+                    glm::vec3 minimum(std::numeric_limits<float>::max());
+                    glm::vec3 maximum(std::numeric_limits<float>::lowest());
+                    for (int depthSign : {-1, 1})
+                        for (int verticalSign : {-1, 1})
+                            for (int horizontalSign : {-1, 1})
+                            {
+                                const glm::vec3 localCorner = localCenter +
+                                    localRight * card.halfExtent.x * static_cast<float>(horizontalSign) +
+                                    card.localUp * card.halfExtent.y * static_cast<float>(verticalSign) +
+                                    card.localNormal * card.halfDepth * static_cast<float>(depthSign);
+                                const glm::vec3 worldCorner = glm::vec3(command.model * glm::vec4(localCorner, 1.0f));
+                                minimum = glm::min(minimum, worldCorner);
+                                maximum = glm::max(maximum, worldCorner);
+                            }
+                    const glm::vec3 worldCardNormal = glm::normalize(glm::transpose(glm::inverse(glm::mat3(command.model))) * card.localNormal);
+                    constexpr float boundsTolerance = 0.025f;
+                    worldBounds.push_back({card.id, minimum - glm::vec3(boundsTolerance), maximum + glm::vec3(boundsTolerance), worldCardNormal});
                 }
             }
         }
@@ -278,6 +356,8 @@ namespace PlutoGE::render
         m_stats.atlasTotalPixels = m_atlasSize * m_atlasSize;
         m_debugAtlasExtent = glm::vec2(static_cast<float>(occupiedWidth), static_cast<float>(occupiedHeight)) /
                              static_cast<float>(m_atlasSize);
+        m_cardSpatialIndex.Rebuild(worldBounds);
+        m_cardGpuIndex.Upload(m_cardSpatialIndex.BuildGpuTables());
         if (m_atlas) m_atlas->Clear();
     }
 
@@ -349,6 +429,66 @@ namespace PlutoGE::render
         glDisable(GL_SCISSOR_TEST); glBindFramebuffer(GL_FRAMEBUFFER, 0);
     }
 
+    void SurfaceCacheGIEffect::ResolveAccumulatedRadiance()
+    {
+        if (!m_atlas || !m_radianceResolveShader) return;
+        const std::uint8_t previousIndex = m_radianceHistoryIndex;
+        const std::uint8_t nextIndex = static_cast<std::uint8_t>((previousIndex + 1u) % 2u);
+        const auto historyLayer = [](std::uint8_t index) {
+            return index == 0 ? SurfaceCacheAtlas::Layer::AccumulatedRadianceA : SurfaceCacheAtlas::Layer::AccumulatedRadianceB;
+        };
+        m_atlas->BindLayerForWrite(historyLayer(nextIndex));
+        glViewport(0, 0, m_atlas->GetSize(), m_atlas->GetSize());
+        glDisable(GL_DEPTH_TEST); glDisable(GL_CULL_FACE); glDisable(GL_BLEND); glDisable(GL_SCISSOR_TEST);
+        m_radianceResolveShader->Bind();
+        glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, m_atlas->GetTexture(SurfaceCacheAtlas::Layer::DirectRadiance));
+        m_radianceResolveShader->SetUniform("uDirectRadiance", 0);
+        glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, m_atlas->GetTexture(historyLayer(previousIndex)));
+        m_radianceResolveShader->SetUniform("uPreviousRadiance", 1);
+        m_radianceResolveShader->SetUniform("uHistoryBlend", m_radianceHistoryBlend);
+        m_radianceResolveShader->SetUniform("uHasHistory", m_hasRadianceHistory ? 1 : 0);
+        DrawFullscreenTriangle();
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        m_radianceHistoryIndex = nextIndex;
+        m_hasRadianceHistory = true;
+    }
+
+    void SurfaceCacheGIEffect::UpdateVisibility(const PostProcessContext &context)
+    {
+        const auto snapshotReady = [](const WorldVisibilitySnapshot &snapshot) {
+            return snapshot.IsValid() && std::any_of(snapshot.cascades.begin(), snapshot.cascades.end(),
+                [](const WorldVisibilityCascade &cascade) { return cascade.valid; });
+        };
+        m_visibilitySnapshot = {};
+        m_visibilityStatus = 0;
+        if (context.renderContext.postProcessEffects)
+            for (auto *effect : *context.renderContext.postProcessEffects)
+                if (effect && effect != this && effect->IsEnabled())
+                    if (auto *provider = dynamic_cast<IWorldVisibilityProvider *>(effect))
+                    {
+                        m_visibilitySnapshot = provider->GetWorldVisibilitySnapshot();
+                        m_visibilityStatus = snapshotReady(m_visibilitySnapshot) ? 2 : 1;
+                        if (snapshotReady(m_visibilitySnapshot)) return;
+                    }
+
+        if (!m_fallbackVisibility)
+        {
+            m_fallbackVisibility = std::make_unique<VoxelConeTracingEffect>();
+            m_fallbackVisibility->EnsureInitialized();
+            m_fallbackVisibility->SetParameters({PostProcessParameter{
+                .name = "Cascade Count",
+                .type = PostProcessParameterType::Int,
+                .value = std::to_string(m_visibilityCascadeCount),
+            }});
+        }
+        // Until voxel update ownership is fully extracted, run the fallback at
+        // 1x1. Voxel construction remains full quality; only the unused VCT
+        // screen resolve is minimized.
+        m_fallbackVisibility->GenerateResolvedIndirectLighting(context, 1, 1);
+        m_visibilitySnapshot = m_fallbackVisibility->GetWorldVisibilitySnapshot();
+        m_visibilityStatus = snapshotReady(m_visibilitySnapshot) ? 2 : 1;
+    }
+
     void SurfaceCacheGIEffect::Apply(const PostProcessContext &context)
     {
         if (!context.sourceRenderTarget || !context.destinationRenderTarget || !m_captureShader || !m_debugShader) return;
@@ -369,12 +509,31 @@ namespace PlutoGE::render
             m_stats.capturedCardCount = 0;
         }
         CapturePendingCards(context);
+        ResolveAccumulatedRadiance();
+        UpdateVisibility(context);
         if (context.renderContext.renderer)
             context.renderContext.renderer->RecordSurfaceCacheStats(
                 m_stats.cardCount, m_stats.residentCardCount, m_stats.capturedCardCount,
                 m_stats.atlasUsedPixels, m_stats.atlasTotalPixels);
 
         BeginApply(context);
+        if (m_debugView == 8 && m_cardLookupDebugShader)
+        {
+            m_cardLookupDebugShader->Bind();
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, context.renderContext.gBuffer ? context.renderContext.gBuffer->GetPositionTextureID() : 0);
+            m_cardLookupDebugShader->SetUniform("uScenePositionTexture", 0);
+            glActiveTexture(GL_TEXTURE1);
+            glBindTexture(GL_TEXTURE_2D, context.renderContext.gBuffer ? context.renderContext.gBuffer->GetNormalTextureID() : 0);
+            m_cardLookupDebugShader->SetUniform("uSceneNormalTexture", 1);
+            m_cardLookupDebugShader->SetUniform("uCellSize", m_cardSpatialIndex.GetCellSize());
+            m_cardLookupDebugShader->SetUniform("uCellCount", m_cardGpuIndex.GetCellCount());
+            m_cardLookupDebugShader->SetUniform("uCardCount", m_cardGpuIndex.GetCardCount());
+            m_cardGpuIndex.Bind(0);
+            DrawFullscreenTriangle();
+            EndApply();
+            return;
+        }
         m_debugShader->Bind();
         glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, context.sourceRenderTarget->GetColorTextureID());
         m_debugShader->SetUniform("uSceneTexture", 0);
@@ -383,12 +542,27 @@ namespace PlutoGE::render
         else if (m_debugView == 3) layer = SurfaceCacheAtlas::Layer::Emission;
         else if (m_debugView == 4) layer = SurfaceCacheAtlas::Layer::Depth;
         else if (m_debugView == 5) layer = SurfaceCacheAtlas::Layer::DirectRadiance;
+        else if (m_debugView == 6) layer = m_radianceHistoryIndex == 0
+                                                 ? SurfaceCacheAtlas::Layer::AccumulatedRadianceA
+                                                 : SurfaceCacheAtlas::Layer::AccumulatedRadianceB;
         glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, m_atlas->GetTexture(layer));
         m_debugShader->SetUniform("uAtlasTexture", 1); m_debugShader->SetUniform("uDebugView", m_debugView);
         m_debugShader->SetUniform("uResidentCardCount", m_stats.residentCardCount);
         m_debugShader->SetUniform("uAtlasExtent", m_debugAtlasExtent);
         m_debugShader->SetUniform("uViewportAspect", static_cast<float>(context.destinationRenderTarget->GetWidth()) /
                                                        static_cast<float>(std::max(context.destinationRenderTarget->GetHeight(), 1)));
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D, context.renderContext.gBuffer ? context.renderContext.gBuffer->GetPositionTextureID() : 0);
+        m_debugShader->SetUniform("uScenePositionTexture", 2);
+        m_debugShader->SetUniform("uVisibilityCascadeCount", m_visibilitySnapshot.cascadeCount);
+        m_debugShader->SetUniform("uVisibilityStatus", m_visibilityStatus);
+        for (int index = 0; index < 3; ++index)
+        {
+            const std::string suffix = "[" + std::to_string(index) + "]";
+            m_debugShader->SetUniform("uVisibilityOrigins" + suffix, m_visibilitySnapshot.cascades[index].origin);
+            m_debugShader->SetUniform("uVisibilitySizes" + suffix, m_visibilitySnapshot.cascades[index].size);
+            m_debugShader->SetUniform("uVisibilityValid" + suffix, m_visibilitySnapshot.cascades[index].valid ? 1 : 0);
+        }
         DrawFullscreenTriangle(); EndApply();
     }
 }

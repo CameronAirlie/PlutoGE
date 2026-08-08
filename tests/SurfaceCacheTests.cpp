@@ -1,5 +1,6 @@
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/render/surfacecache/SurfaceCache.h"
+#include "PlutoGE/render/surfacecache/SurfaceCardSpatialIndex.h"
 #include "PlutoGE/render/postprocess/PostProcessEffectFactory.h"
 #include "PlutoGE/render/postprocess/IPostProcessEffect.h"
 
@@ -27,7 +28,7 @@ int main()
     }
     const auto parameters = effect->GetParameters();
     const auto radianceDebug = std::find_if(parameters.begin(), parameters.end(), [](const PostProcessParameter &parameter) {
-        return parameter.name == "Debug View" && parameter.enumOptions.size() == 6 && parameter.enumOptions.back() == "Direct Radiance";
+        return parameter.name == "Debug View" && parameter.enumOptions.size() == 9 && parameter.enumOptions.back() == "Card Candidates";
     });
     if (radianceDebug == parameters.end())
     {
@@ -35,6 +36,24 @@ int main()
         return 9;
     }
     SurfaceCacheAtlasAllocator allocator(128, 128, 2);
+    SurfaceCardSpatialIndex spatialIndex(2.0f);
+    spatialIndex.Rebuild({
+        {1, {-1.0f, -1.0f, -1.0f}, {1.0f, 1.0f, 1.0f}},
+        {2, {0.5f, -0.5f, -0.5f}, {3.0f, 0.5f, 0.5f}},
+    });
+    const auto overlappingCards = spatialIndex.Query({0.75f, 0.0f, 0.0f});
+    if (overlappingCards != std::vector<SurfaceCardId>({1, 2}) || !spatialIndex.Query({10.0f, 0.0f, 0.0f}).empty())
+    {
+        std::cerr << "Surface-card spatial lookup returned incorrect candidates.\n";
+        return 10;
+    }
+    const auto gpuTables = spatialIndex.BuildGpuTables();
+    if (gpuTables.cells.empty() || gpuTables.cards.size() != 2 || gpuTables.candidates.size() < 2 ||
+        gpuTables.cards[0].minimumAndId.w != 1.0f || gpuTables.cards[1].minimumAndId.w != 2.0f)
+    {
+        std::cerr << "Surface-card GPU lookup tables are incomplete or non-deterministic.\n";
+        return 11;
+    }
     std::vector<SurfaceCacheRect> allocations;
     for (int index = 0; index < 12; ++index)
     {

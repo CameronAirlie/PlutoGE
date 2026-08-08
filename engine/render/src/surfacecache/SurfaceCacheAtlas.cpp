@@ -17,9 +17,9 @@ namespace PlutoGE::render
         glGenFramebuffers(1, &m_framebuffer);
         glBindFramebuffer(GL_FRAMEBUFFER, m_framebuffer);
         glGenTextures(static_cast<GLsizei>(m_textures.size()), m_textures.data());
-        constexpr std::array<GLint, 5> internalFormats{GL_RGBA8, GL_RGBA8_SNORM, GL_RGB16F, GL_R32F, GL_RGB16F};
-        constexpr std::array<GLenum, 5> formats{GL_RGBA, GL_RGBA, GL_RGB, GL_RED, GL_RGB};
-        constexpr std::array<GLenum, 5> types{GL_UNSIGNED_BYTE, GL_BYTE, GL_FLOAT, GL_FLOAT, GL_FLOAT};
+        constexpr std::array<GLint, 7> internalFormats{GL_RGBA8, GL_RGBA8_SNORM, GL_RGB16F, GL_R32F, GL_RGB16F, GL_RGB16F, GL_RGB16F};
+        constexpr std::array<GLenum, 7> formats{GL_RGBA, GL_RGBA, GL_RGB, GL_RED, GL_RGB, GL_RGB, GL_RGB};
+        constexpr std::array<GLenum, 7> types{GL_UNSIGNED_BYTE, GL_BYTE, GL_FLOAT, GL_FLOAT, GL_FLOAT, GL_FLOAT, GL_FLOAT};
         for (std::size_t index = 0; index < m_textures.size(); ++index)
         {
             glBindTexture(GL_TEXTURE_2D, m_textures[index]);
@@ -62,6 +62,12 @@ namespace PlutoGE::render
         glDrawBuffers(static_cast<GLsizei>(attachments.size()), attachments.data());
     }
 
+    void SurfaceCacheAtlas::BindLayerForWrite(Layer layer) const
+    {
+        glBindFramebuffer(GL_FRAMEBUFFER, m_framebuffer);
+        glDrawBuffer(GL_COLOR_ATTACHMENT0 + static_cast<GLenum>(layer));
+    }
+
     void SurfaceCacheAtlas::Clear() const
     {
         BindForCapture();
@@ -73,6 +79,10 @@ namespace PlutoGE::render
         glClearBufferfv(GL_COLOR, 3, farDepth);
         glClearBufferfv(GL_COLOR, 4, zero);
         glClear(GL_DEPTH_BUFFER_BIT);
+        BindLayerForWrite(Layer::AccumulatedRadianceA);
+        glClearBufferfv(GL_COLOR, 0, zero);
+        BindLayerForWrite(Layer::AccumulatedRadianceB);
+        glClearBufferfv(GL_COLOR, 0, zero);
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
     }
 }

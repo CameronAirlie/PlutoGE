@@ -4,6 +4,7 @@
 #include "PlutoGE/render/RenderTarget.h"
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/postprocess/ShaderPostProcessEffect.h"
+#include "PlutoGE/render/visibility/IWorldVisibilityProvider.h"
 
 #include <array>
 #include <cstdint>
@@ -16,7 +17,7 @@ namespace PlutoGE::render
 {
     class Shader;
 
-    class VoxelConeTracingEffect : public ShaderPostProcessEffect
+    class VoxelConeTracingEffect : public ShaderPostProcessEffect, public IWorldVisibilityProvider
     {
     public:
         ~VoxelConeTracingEffect() override;
@@ -31,6 +32,7 @@ namespace PlutoGE::render
         bool OutputsIndirectOnly() const { return m_indirectOnly; }
         int GetDebugView() const { return m_debugView; }
         int GetTraceResolutionDivisor() const { return m_traceResolutionDivisor; }
+        WorldVisibilitySnapshot GetWorldVisibilitySnapshot() const override;
 
     private:
         // Cascades share six directional 3D atlases. This keeps the trace shader

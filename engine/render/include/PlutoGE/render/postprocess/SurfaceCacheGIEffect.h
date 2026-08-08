@@ -3,6 +3,9 @@
 #include "PlutoGE/render/postprocess/ShaderPostProcessEffect.h"
 #include "PlutoGE/render/surfacecache/SurfaceCache.h"
 #include "PlutoGE/render/surfacecache/SurfaceCacheAtlas.h"
+#include "PlutoGE/render/surfacecache/SurfaceCardSpatialIndex.h"
+#include "PlutoGE/render/surfacecache/SurfaceCardGpuIndex.h"
+#include "PlutoGE/render/visibility/IWorldVisibilityProvider.h"
 
 #include <memory>
 #include <vector>
@@ -12,10 +15,12 @@ namespace PlutoGE::render
     class Shader;
     class Mesh;
     class Material;
+    class VoxelConeTracingEffect;
 
     class SurfaceCacheGIEffect final : public ShaderPostProcessEffect
     {
     public:
+        SurfaceCacheGIEffect();
         ~SurfaceCacheGIEffect() override;
         void Initialize() override;
         void Apply(const PostProcessContext &context) override;
@@ -35,14 +40,23 @@ namespace PlutoGE::render
         };
         void RebuildCards(const PostProcessContext &context);
         void CapturePendingCards(const PostProcessContext &context);
+        void ResolveAccumulatedRadiance();
+        void UpdateVisibility(const PostProcessContext &context);
         std::size_t ComputeSceneSignature(const PostProcessContext &context) const;
         std::size_t ComputeLightingSignature(const PostProcessContext &context) const;
 
         std::unique_ptr<SurfaceCacheAtlas> m_atlas;
+        std::unique_ptr<VoxelConeTracingEffect> m_fallbackVisibility;
         Shader *m_captureShader = nullptr;
         Shader *m_debugShader = nullptr;
+        Shader *m_radianceResolveShader = nullptr;
+        Shader *m_cardLookupDebugShader = nullptr;
         std::vector<ResidentCard> m_cards;
+        SurfaceCardSpatialIndex m_cardSpatialIndex;
+        SurfaceCardGpuIndex m_cardGpuIndex;
         SurfaceCacheStats m_stats;
+        WorldVisibilitySnapshot m_visibilitySnapshot;
+        int m_visibilityStatus = 0;
         glm::vec2 m_debugAtlasExtent{1.0f};
         std::size_t m_sceneSignature = 0;
         std::size_t m_lightingSignature = 0;
@@ -54,11 +68,15 @@ namespace PlutoGE::render
         int m_captureBudget = 12;
         int m_debugView = 0;
         int m_maxCaptureLights = 8;
+        int m_visibilityCascadeCount = 3;
         float m_radianceIntensity = 1.0f;
         float m_environmentIntensity = 1.0f;
         float m_radianceClamp = 32.0f;
+        float m_radianceHistoryBlend = 0.85f;
         bool m_directionalShadows = true;
         bool m_staticGeometryOnly = true;
         bool m_cacheLayoutDirty = true;
+        bool m_hasRadianceHistory = false;
+        std::uint8_t m_radianceHistoryIndex = 0;
     };
 }

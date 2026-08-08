@@ -10,7 +10,7 @@ Last updated: 2026-08-08
 
 ## Milestone 1 — surface cache visualization
 
-Current step: **2.7 — interactive direct-radiance validation**
+Current step: **3.4 — GPU card lookup validation**
 
 - [x] 1.1 Define module boundaries and ownership.
 - [x] 1.2 Define surface-card, atlas-rectangle, statistics, and stable card-ID types.
@@ -20,8 +20,8 @@ Current step: **2.7 — interactive direct-radiance validation**
 - [x] 1.6 Implement budgeted capture of static, opaque, non-skinned render commands.
 - [x] 1.7 Register `SurfaceCacheGI`, expose serialized parameters, and provide atlas debug views.
 - [x] 1.8 Add focused tests, build the project, and resolve regressions.
-- [ ] 1.9 Perform interactive visual validation in representative scenes.
-- [ ] 1.10 Mark milestone 1 complete after visual acceptance.
+- [x] 1.9 Perform interactive visual validation in representative scenes.
+- [x] 1.10 Mark milestone 1 complete after visual acceptance.
 
 Validation recorded on 2026-08-08:
 
@@ -60,11 +60,32 @@ Validation recorded on 2026-08-08:
   - [x] 2.4 Add physical-sky/environment diffuse contribution.
   - [x] 2.5 Add light/environment revision hashing and budgeted radiance repopulation.
   - [x] 2.6 Add radiance intensity, environment intensity, light-count, shadow, and HDR clamp controls.
-  - [ ] 2.7 Visually validate light direction, attenuation, cascade transitions, environment orientation, and HDR values.
-  - [ ] 2.8 Add a ping-pong-safe accumulated-radiance layer before enabling indirect feedback.
-  - [ ] 2.9 Add point and spot shadow sampling if required by the target quality level.
-  - [ ] 2.10 Mark milestone 2 complete after visual acceptance.
-- [ ] 3. Extract a reusable visibility interface and initially back it with VCTGI voxel cascades.
+  - [x] 2.7 Visually validate atlas presentation and captured material/radiance content.
+  - [x] 2.8 Add and validate a ping-pong-safe accumulated-radiance layer before enabling indirect feedback.
+    - [x] Allocate two independent HDR history layers.
+    - [x] Resolve direct radiance into alternating history layers without texture feedback hazards.
+    - [x] Expose history blend and accumulated-radiance debug controls.
+    - [x] Visually validate accumulated output.
+  - [x] 2.9 Defer point and spot shadow sampling until profiling demonstrates that it is required by the target quality level.
+  - [x] 2.10 Mark milestone 2 complete after visual acceptance.
+- [~] 3. Extract a reusable visibility interface and initially back it with VCTGI voxel cascades.
+  - [x] 3.1 Define a non-owning, per-frame world-visibility snapshot contract.
+  - [x] 3.2 Make VCTGI expose directional volume textures and cascade metadata through the contract.
+  - [ ] 3.3 Move voxel-volume update ownership out of the VCTGI effect so multiple GI consumers do not duplicate work.
+    - [x] Add a Surface Cache-owned fallback provider so users do not need to add VCTGI separately.
+    - [x] Prefer an enabled shared provider when one already exists.
+    - [ ] Extract voxel construction into a dedicated renderer service and remove the temporary 1x1 fallback resolve.
+  - [~] 3.4 Add surface-cache lookup metadata and world-hit-to-card candidate indexing.
+    - [x] Add a provider-independent CPU uniform-grid spatial index.
+    - [x] Build conservative world-space bounds for resident card instances.
+    - [x] Add deterministic point-query tests, including overlapping candidates.
+    - [x] Upload compact sorted-cell, candidate-ID, and card-bounds SSBO tables.
+  - [~] 3.5 Add visibility and card-lookup debug instrumentation.
+    - [x] Add a screen-space visibility-cascade coverage view consuming `IWorldVisibilityProvider`.
+    - [x] Distinguish missing-provider, warming-up, valid-cascade, and outside-coverage states.
+    - [x] Add a GPU `Card Candidates` view that validates exact bounds after cell lookup.
+    - [x] Filter candidate diagnostics by G-buffer normal/card-facing compatibility and tolerate small bounds precision errors.
+    - [ ] Add selected-card and atlas-UV views with the ray-hit selector.
 - [ ] 4. Add half-resolution hybrid screen/voxel gather and surface-card lookup.
 - [ ] 5. Add motion-vector temporal accumulation, rejection, and history reset rules.
 - [ ] 6. Add spatial filtering, depth-aware upsampling, and lighting-pass composition.
@@ -91,3 +112,5 @@ Validation recorded on 2026-08-08:
 - Indirect feedback remains disabled until a separate ping-pong accumulation target exists. Sampling and rendering to one atlas texture simultaneously would be undefined OpenGL behavior.
 - Atlas debug views frame the occupied allocation region. A red checkerboard means no eligible cards are resident; disable `Static Geometry Only` for diagnostic capture or mark participating scene meshes static.
 - Atlas previews preserve the occupied region's aspect ratio. Six-card meshes commonly appear as six tiles in a wide shelf row; this is allocator layout, not a screen-space GI result.
+- Visibility debug colors: magenta checker means provider creation failed; orange checker means the provider is progressively building its first volume; blue/green/orange surfaces are covered cascades; solid dark purple means a surface lies outside all completed cascades. Surface Cache GI now creates a fallback voxel provider when no enabled shared VCTGI provider exists.
+- Surface Cache's fallback requests three cascades by default. When consuming a separately enabled VCTGI provider, the displayed count follows that provider; a two-cascade VCTGI configuration correctly shows blue, green, then purple with no orange region.

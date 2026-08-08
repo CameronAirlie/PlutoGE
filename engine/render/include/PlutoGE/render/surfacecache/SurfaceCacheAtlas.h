@@ -9,12 +9,23 @@ namespace PlutoGE::render
     class SurfaceCacheAtlas
     {
     public:
-        enum class Layer : unsigned int { AlbedoMetallic, NormalRoughness, Emission, Depth, DirectRadiance, Count };
+        enum class Layer : unsigned int
+        {
+            AlbedoMetallic,
+            NormalRoughness,
+            Emission,
+            Depth,
+            DirectRadiance,
+            AccumulatedRadianceA,
+            AccumulatedRadianceB,
+            Count
+        };
 
         ~SurfaceCacheAtlas();
         bool Initialize(int size);
         void Cleanup();
         void BindForCapture() const;
+        void BindLayerForWrite(Layer layer) const;
         void Clear() const;
         GLuint GetTexture(Layer layer) const { return m_textures[static_cast<std::size_t>(layer)]; }
         GLuint GetFramebuffer() const { return m_framebuffer; }

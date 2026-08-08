@@ -169,29 +169,27 @@ namespace PlutoGE::scene
         if (!m_runtimeInitialized)
         {
             m_runtimeInitialized = true;
-            // Navigation owns horizontal motion. A dynamic Bullet body would
-            // integrate and write its transform back after this component,
-            // producing visible diagonal jitter.
-            if (auto *rigidbody = owner->GetComponent<RigidbodyComponent>())
-            {
-                rigidbody->SetKinematic(true);
-                rigidbody->SetUseGravity(false);
-                rigidbody->SetVelocity({});
-                rigidbody->SetAngularVelocity({});
-            }
+            // A nav agent only supplies locomotion. It must not change the
+            // body's simulation mode or gravity policy: those belong to the
+            // rigidbody and may also be controlled by gameplay code.
             if (m_config.navigateOnStart)
                 RefreshPath(ResolveDestination());
         }
         if (deltaTime <= 0.0f || !m_config.navigateOnStart)
             return;
 
-        // Kinematic bodies are not integrated by Bullet. Apply gravity through
-        // the same swept movement used by navigation so an agent remains
-        // collision-safe while falling from ledges or descending to lower
-        // surfaces. Horizontal sweeps still project motion up walkable ramps.
-        if (m_config.useGravity)
+        auto *rigidbody = owner->GetComponent<RigidbodyComponent>();
+        const bool dynamicBody = rigidbody && rigidbody->IsEnabled() && !rigidbody->IsKinematic();
+
+        // Bullet owns all motion (including gravity) for dynamic bodies. For a
+        // kinematic body the nav locomotor performs an equivalent swept gravity
+        // move, but the rigidbody remains the single source of truth for whether
+        // gravity is enabled. Transform-only agents do not implicitly gain a
+        // second gravity model.
+        if (rigidbody && rigidbody->IsEnabled() && rigidbody->IsKinematic() && rigidbody->UsesGravity())
         {
-            m_verticalVelocity = std::max(m_verticalVelocity - std::max(0.0f, m_config.gravity) * deltaTime, -50.0f);
+            constexpr float worldGravity = 9.81f;
+            m_verticalVelocity = std::max(m_verticalVelocity - worldGravity * deltaTime, -50.0f);
             const float requestedFall = m_verticalVelocity * deltaTime;
             const glm::vec3 actualFall = scene->MoveKinematic(*owner, {0.0f, requestedFall, 0.0f});
             if (requestedFall < 0.0f && actualFall.y > requestedFall + 0.0001f)
@@ -215,6 +213,13 @@ namespace PlutoGE::scene
         if (!HasPath())
         {
             m_velocity = {};
+            if (dynamicBody)
+            {
+                auto velocity = rigidbody->GetVelocity();
+                velocity.x = 0.0f;
+                velocity.z = 0.0f;
+                rigidbody->SetVelocity(velocity);
+            }
             return;
         }
 
@@ -275,7 +280,19 @@ namespace PlutoGE::scene
         }
         const glm::vec3 desiredVelocity = m_steeringDirection * std::max(0.0f, m_config.speed);
         m_velocity = glm::mix(m_velocity, desiredVelocity, std::clamp(m_config.acceleration * deltaTime, 0.0f, 1.0f));
-        scene->MoveKinematic(*owner, m_velocity * deltaTime);
+        if (dynamicBody)
+        {
+            // Preserve Bullet's vertical velocity so navigation cannot cancel
+            // gravity or contact response.
+            auto velocity = rigidbody->GetVelocity();
+            velocity.x = m_velocity.x;
+            velocity.z = m_velocity.z;
+            rigidbody->SetVelocity(velocity);
+        }
+        else
+        {
+            scene->MoveKinematic(*owner, m_velocity * deltaTime);
+        }
         m_previousPosition = position;
         m_hasPreviousPosition = true;
 
@@ -314,8 +331,6 @@ namespace PlutoGE::scene
             {"Turn Speed", PropertyType::Float, std::to_string(m_config.turnSpeedDegrees)},
             {"Agent Radius", PropertyType::Float, std::to_string(m_config.agentRadius)},
             {"Agent Height", PropertyType::Float, std::to_string(m_config.agentHeight)},
-            {"Use Gravity", PropertyType::Bool, m_config.useGravity ? "true" : "false"},
-            {"Gravity", PropertyType::Float, std::to_string(m_config.gravity)},
             {"Rotate To Velocity", PropertyType::Bool, m_config.rotateToVelocity ? "true" : "false"},
             {"Navigate On Start", PropertyType::Bool, m_config.navigateOnStart ? "true" : "false"},
             {"Destination", PropertyType::Vec3, std::to_string(m_config.destination.x) + "," + std::to_string(m_config.destination.y) + "," + std::to_string(m_config.destination.z)},
@@ -336,8 +351,9 @@ namespace PlutoGE::scene
             else if (property.name == "Turn Speed") m_config.turnSpeedDegrees = std::stof(property.value);
             else if (property.name == "Agent Radius") m_config.agentRadius = std::stof(property.value);
             else if (property.name == "Agent Height") m_config.agentHeight = std::stof(property.value);
-            else if (property.name == "Use Gravity") m_config.useGravity = ParseBool(property.value);
-            else if (property.name == "Gravity") m_config.gravity = std::stof(property.value);
+            // "Use Gravity" and "Gravity" were serialized by older scenes.
+            // They are intentionally ignored: gravity policy now belongs to
+            // RigidbodyComponent and the old values remain load-compatible.
             else if (property.name == "Rotate To Velocity") m_config.rotateToVelocity = ParseBool(property.value);
             else if (property.name == "Navigate On Start") m_config.navigateOnStart = ParseBool(property.value);
             else if (property.name == "Destination") std::sscanf(property.value.c_str(), "%f,%f,%f", &m_config.destination.x, &m_config.destination.y, &m_config.destination.z);

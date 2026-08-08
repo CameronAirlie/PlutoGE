@@ -17,8 +17,6 @@ namespace PlutoGE::scene
         float turnSpeedDegrees = 360.0f;
         float agentRadius = 0.5f;
         float agentHeight = 1.8f;
-        float gravity = 9.81f;
-        bool useGravity = true;
         bool rotateToVelocity = true;
         bool navigateOnStart = false;
         glm::vec3 destination{0.0f};

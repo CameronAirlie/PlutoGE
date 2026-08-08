@@ -53,7 +53,7 @@ namespace PlutoGE::render
             {"Radiance History Blend", PostProcessParameterType::Float, std::to_string(m_radianceHistoryBlend)},
             {"Directional Shadows", PostProcessParameterType::Bool, m_directionalShadows ? "true" : "false"},
             {"Static Geometry Only", PostProcessParameterType::Bool, m_staticGeometryOnly ? "true" : "false"},
-            {"Debug View", PostProcessParameterType::Enum, std::to_string(m_debugView), {"Scene", "Albedo / Metallic", "Normal / Roughness", "Emission", "Card Depth", "Direct Radiance", "Accumulated Radiance", "Visibility Cascades", "Card Candidates", "Selected Card", "Atlas UV", "Gather Inputs", "Screen Trace"}},
+            {"Debug View", PostProcessParameterType::Enum, std::to_string(m_debugView), {"Scene", "Albedo / Metallic", "Normal / Roughness", "Emission", "Card Depth", "Direct Radiance", "Accumulated Radiance", "Visibility Cascades", "Card Candidates", "Selected Card", "Atlas UV", "Gather Inputs", "Screen Trace", "Hybrid Trace"}},
         };
     }
 
@@ -85,7 +85,7 @@ namespace PlutoGE::render
             else if (parameter.name == "Radiance History Blend") m_radianceHistoryBlend = std::clamp(std::stof(parameter.value), 0.0f, 0.98f);
             else if (parameter.name == "Directional Shadows") m_directionalShadows = ParseBool(parameter.value);
             else if (parameter.name == "Static Geometry Only") { const bool value = ParseBool(parameter.value); if (value != m_staticGeometryOnly) { m_staticGeometryOnly = value; m_cacheLayoutDirty = true; } }
-            else if (parameter.name == "Debug View") m_debugView = std::clamp(std::stoi(parameter.value), 0, 12);
+            else if (parameter.name == "Debug View") m_debugView = std::clamp(std::stoi(parameter.value), 0, 13);
         }
         m_maxCardResolution = std::max(m_maxCardResolution, m_minCardResolution);
         m_cacheLayoutDirty = m_cacheLayoutDirty || previousAtlasSize != m_atlasSize ||
@@ -185,8 +185,9 @@ namespace PlutoGE::render
             vec3 background(vec2 uv){ vec2 tile=floor(uv*24.0); float checker=mod(tile.x+tile.y,2.0); return mix(vec3(0.015),vec3(0.035),checker); }
             void main(){
                 if(uDebugView==0){FragColor=texture(uSceneTexture,UV);return;}
-                if(uDebugView==11){FragColor=vec4(texture(uGatherTexture,UV).rgb,1.0);return;}
-                if(uDebugView==12){float confidence=texture(uGatherTexture,UV).a;FragColor=vec4(mix(vec3(0.015,0.03,0.12),vec3(1.0,0.28,0.02),confidence),1.0);return;}
+                if(uDebugView==11){vec2 f=texture(uGatherTexture,UV).rg*2.0-1.0;vec3 n=vec3(f,1.0-abs(f.x)-abs(f.y));float t=clamp(-n.z,0.0,1.0);n.xy+=vec2(n.x>=0.0?-t:t,n.y>=0.0?-t:t);FragColor=vec4(normalize(n)*0.5+0.5,1.0);return;}
+                if(uDebugView==12){float confidence=texture(uGatherTexture,UV).b;FragColor=vec4(mix(vec3(0.015,0.03,0.12),vec3(1.0,0.28,0.02),confidence),1.0);return;}
+                if(uDebugView==13){vec2 confidence=texture(uGatherTexture,UV).ba;float unresolved=max(1.0-confidence.x-confidence.y,0.0);FragColor=vec4(confidence.x,confidence.y,unresolved,1.0);return;}
                 if(uDebugView==7){
                     if(uVisibilityStatus==0){vec2 t=floor(UV*16.0);float c=mod(t.x+t.y,2.0);FragColor=vec4(mix(vec3(0.12,0.0,0.18),vec3(0.55,0.0,0.7),c),1);return;}
                     if(uVisibilityStatus==1){vec2 t=floor(UV*16.0);float c=mod(t.x+t.y,2.0);FragColor=vec4(mix(vec3(0.18,0.035,0.0),vec3(0.75,0.24,0.0),c),1);return;}
@@ -254,8 +255,11 @@ namespace PlutoGE::render
             in vec2 UV; out vec4 FragColor;
             uniform sampler2D uScenePositionTexture; uniform sampler2D uSceneNormalTexture;
             uniform mat4 uViewProjection; uniform int uRayCount; uniform int uTraceSteps; uniform float uTraceDistance;
+            uniform sampler3D uVoxel0;uniform sampler3D uVoxel1;uniform sampler3D uVoxel2;uniform sampler3D uVoxel3;uniform sampler3D uVoxel4;uniform sampler3D uVoxel5;
+            uniform vec3 uCascadeOrigins[3];uniform float uCascadeSizes[3];uniform int uCascadeCount;uniform int uAtlasCascadeCount;uniform int uCascadeResolution;
             const float PI=3.14159265359;
             float hash12(vec2 p){vec3 p3=fract(vec3(p.xyx)*0.1031);p3+=dot(p3,p3.yzx+33.33);return fract((p3.x+p3.y)*p3.z);}
+            vec2 encodeNormal(vec3 n){n/=max(abs(n.x)+abs(n.y)+abs(n.z),0.0001);if(n.z<0.0)n.xy=(1.0-abs(n.yx))*vec2(n.x>=0.0?1.0:-1.0,n.y>=0.0?1.0:-1.0);return n.xy*0.5+0.5;}
             vec3 hemisphereDirection(vec3 normal,int index,float rotation){
                 float count=float(max(uRayCount,1));float u=(float(index)+0.5)/count;float phi=2.0*PI*(fract(float(index)*0.61803398875+rotation));
                 float radius=sqrt(u);vec3 local=vec3(radius*cos(phi),radius*sin(phi),sqrt(max(1.0-u,0.0)));
@@ -266,6 +270,10 @@ namespace PlutoGE::render
                 float stepLength=uTraceDistance/float(max(uTraceSteps,1));
                 for(int stepIndex=1;stepIndex<=32;stepIndex++){if(stepIndex>uTraceSteps)break;float travel=stepLength*float(stepIndex);vec3 rayPoint=origin+direction*travel;vec4 clip=uViewProjection*vec4(rayPoint,1.0);if(clip.w<=0.0001)continue;vec2 sampleUv=clip.xy/clip.w*0.5+0.5;if(any(lessThan(sampleUv,vec2(0.0)))||any(greaterThan(sampleUv,vec2(1.0))))break;vec3 scenePoint=texture(uScenePositionTexture,sampleUv).xyz;vec3 delta=scenePoint-origin;float alongRay=dot(delta,direction);float radialDistance=length(delta-direction*alongRay);float thickness=max(0.06,travel*0.025);if(alongRay>0.06&&alongRay<=travel+stepLength&&radialDistance<thickness)return true;}return false;
             }
+            int findCascade(vec3 p,out vec3 tc){for(int cascade=0;cascade<3;cascade++){if(cascade>=uCascadeCount)break;tc=(p-uCascadeOrigins[cascade])/max(uCascadeSizes[cascade],0.0001);if(all(greaterThanEqual(tc,vec3(0.0)))&&all(lessThan(tc,vec3(1.0))))return cascade;}tc=vec3(0.0);return -1;}
+            vec4 sampleVolume(int index,vec3 tc){if(index==0)return textureLod(uVoxel0,tc,0.0);if(index==1)return textureLod(uVoxel1,tc,0.0);if(index==2)return textureLod(uVoxel2,tc,0.0);if(index==3)return textureLod(uVoxel3,tc,0.0);if(index==4)return textureLod(uVoxel4,tc,0.0);return textureLod(uVoxel5,tc,0.0);}
+            float sampleVoxelOpacity(int cascade,vec3 tc,vec3 direction){vec3 atlasTc=vec3(clamp(tc.xy,vec2(0.0),vec2(1.0)),(float(cascade)+clamp(tc.z,0.0,1.0))/float(max(uAtlasCascadeCount,1)));vec3 weight=abs(direction);weight/=max(weight.x+weight.y+weight.z,0.0001);return sampleVolume(direction.x>=0.0?0:1,atlasTc).a*weight.x+sampleVolume(direction.y>=0.0?2:3,atlasTc).a*weight.y+sampleVolume(direction.z>=0.0?4:5,atlasTc).a*weight.z;}
+            bool traceVoxel(vec3 origin,vec3 direction){if(uCascadeCount<=0||uCascadeResolution<=0)return false;float distanceAlong=0.08;float accumulatedOpacity=0.0;for(int stepIndex=0;stepIndex<32;stepIndex++){if(distanceAlong>uTraceDistance)break;vec3 tc;int cascade=findCascade(origin+direction*distanceAlong,tc);if(cascade<0){distanceAlong+=0.2;continue;}float voxelSize=uCascadeSizes[cascade]/float(uCascadeResolution);accumulatedOpacity+=(1.0-accumulatedOpacity)*sampleVoxelOpacity(cascade,tc,direction);if(accumulatedOpacity>0.15)return true;distanceAlong+=max(voxelSize,0.04);}return false;}
             void main(){
                 vec3 position=texture(uScenePositionTexture,UV).xyz;
                 vec3 rawNormal=texture(uSceneNormalTexture,UV).xyz;
@@ -273,10 +281,10 @@ namespace PlutoGE::render
                 if(normalLength<0.01){FragColor=vec4(0.0);return;}
                 vec3 normal=rawNormal/normalLength;
                 float positionValidity=all(lessThan(abs(position),vec3(1e19)))?1.0:0.0;
-                float hits=0.0;float rotation=hash12(floor(gl_FragCoord.xy));vec3 origin=position+normal*0.04;
-                for(int rayIndex=0;rayIndex<8;rayIndex++){if(rayIndex>=uRayCount)break;hits+=traceScreen(origin,hemisphereDirection(normal,rayIndex,rotation))?1.0:0.0;}
-                float hitConfidence=hits/float(max(uRayCount,1));
-                FragColor=vec4((normal*0.5+0.5)*positionValidity,hitConfidence*positionValidity);
+                float screenHits=0.0;float voxelHits=0.0;float rotation=hash12(floor(gl_FragCoord.xy));vec3 origin=position+normal*0.04;
+                for(int rayIndex=0;rayIndex<8;rayIndex++){if(rayIndex>=uRayCount)break;vec3 direction=hemisphereDirection(normal,rayIndex,rotation);if(traceScreen(origin,direction))screenHits+=1.0;else if(traceVoxel(origin,direction))voxelHits+=1.0;}
+                float inverseRayCount=1.0/float(max(uRayCount,1));
+                FragColor=vec4(encodeNormal(normal),screenHits*inverseRayCount,voxelHits*inverseRayCount)*positionValidity;
             })";
         m_gatherShader = Shader::Create(gather);
     }
@@ -308,6 +316,21 @@ namespace PlutoGE::render
         m_gatherShader->SetUniform("uRayCount", m_screenRayCount);
         m_gatherShader->SetUniform("uTraceSteps", m_screenTraceSteps);
         m_gatherShader->SetUniform("uTraceDistance", m_screenTraceDistance);
+        for (int direction = 0; direction < 6; ++direction)
+        {
+            glActiveTexture(GL_TEXTURE2 + direction);
+            glBindTexture(GL_TEXTURE_3D, m_visibilitySnapshot.directionalVolumeTextures[static_cast<std::size_t>(direction)]);
+            m_gatherShader->SetUniform("uVoxel" + std::to_string(direction), 2 + direction);
+        }
+        m_gatherShader->SetUniform("uCascadeCount", m_visibilitySnapshot.IsValid() ? m_visibilitySnapshot.cascadeCount : 0);
+        m_gatherShader->SetUniform("uAtlasCascadeCount", std::max(m_visibilitySnapshot.cascadeCount, 1));
+        m_gatherShader->SetUniform("uCascadeResolution", m_visibilitySnapshot.cascadeResolution);
+        for (int cascade = 0; cascade < 3; ++cascade)
+        {
+            const std::string suffix = "[" + std::to_string(cascade) + "]";
+            m_gatherShader->SetUniform("uCascadeOrigins" + suffix, m_visibilitySnapshot.cascades[static_cast<std::size_t>(cascade)].origin);
+            m_gatherShader->SetUniform("uCascadeSizes" + suffix, m_visibilitySnapshot.cascades[static_cast<std::size_t>(cascade)].size);
+        }
         DrawFullscreenTriangle();
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
     }

@@ -30,7 +30,7 @@ int main()
     }
     const auto parameters = effect->GetParameters();
     const auto radianceDebug = std::find_if(parameters.begin(), parameters.end(), [](const PostProcessParameter &parameter) {
-        return parameter.name == "Debug View" && parameter.enumOptions.size() == 13 && parameter.enumOptions.back() == "Screen Trace";
+        return parameter.name == "Debug View" && parameter.enumOptions.size() == 14 && parameter.enumOptions.back() == "Hybrid Trace";
     });
     if (radianceDebug == parameters.end())
     {

@@ -94,13 +94,18 @@ Validation recorded on 2026-08-08:
   - [~] 4.1 Add an owned half-resolution HDR gather target and explicit gather-pass boundary.
     - [x] Allocate and resize the gather target independently of the output target.
     - [x] Downsample receiver position/normal inputs and expose a `Gather Inputs` diagnostic.
-    - [ ] Visually validate receiver coverage and half-resolution resizing.
-  - [~] 4.2 Generate stable hemisphere directions and trace screen-space visibility first.
+    - [x] Visually validate receiver coverage and half-resolution resizing.
+  - [x] 4.2 Generate stable hemisphere directions and trace screen-space visibility first.
     - [x] Add configurable deterministic cosine-weighted hemisphere rays.
     - [x] March projected rays against the world-position buffer at half resolution.
     - [x] Store per-receiver screen-hit confidence and expose a `Screen Trace` diagnostic.
-    - [ ] Visually validate contact coverage, stability, and useful miss regions for voxel continuation.
-  - [ ] 4.3 Continue screen misses through the shared voxel visibility cascades.
+    - [x] Visually validate contact coverage, stability, and useful miss regions for voxel continuation.
+  - [~] 4.3 Continue screen misses through the shared voxel visibility cascades.
+    - [x] Bind provider-owned directional voxel atlases and cascade metadata without taking ownership.
+    - [x] Trace screen misses through cascade-aware directional opacity.
+    - [x] Pack receiver normal, screen confidence, and voxel confidence into one half-resolution target.
+    - [x] Add a `Hybrid Trace` diagnostic: red screen hits, green voxel hits, blue unresolved rays.
+    - [ ] Visually validate voxel continuation and cascade transitions.
   - [ ] 4.4 Project ray hits into candidate cards and sample accumulated radiance.
   - [ ] 4.5 Accumulate confidence-weighted diffuse indirect radiance into the gather target.
 - [ ] 5. Add motion-vector temporal accumulation, rejection, and history reset rules.

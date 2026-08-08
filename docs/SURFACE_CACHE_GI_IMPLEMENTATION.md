@@ -100,6 +100,7 @@ Validation recorded on 2026-08-08:
     - [x] March projected rays against the world-position buffer at half resolution.
     - [x] Store per-receiver screen-hit confidence and expose a `Screen Trace` diagnostic.
     - [x] Visually validate contact coverage, stability, and useful miss regions for voxel continuation.
+    - [x] Improve thin-surface continuity with conservative segment testing, front-face rejection, and local candidate refinement.
   - [~] 4.3 Continue screen misses through the shared voxel visibility cascades.
     - [x] Bind provider-owned directional voxel atlases and cascade metadata without taking ownership.
     - [x] Trace screen misses through cascade-aware directional opacity.
@@ -110,7 +111,7 @@ Validation recorded on 2026-08-08:
     - [x] Add a separate half-resolution HDR indirect-radiance target.
     - [x] Recover screen-space ray-hit position and normal.
     - [x] Resolve screen hits through spatial card candidates and sample accumulated atlas radiance.
-    - [x] Add a tone-mapped `Ray Hit Radiance` diagnostic with purple lookup-miss background.
+    - [x] Add a tone-mapped `Ray Hit Radiance` diagnostic with a neutral-black lookup-miss background.
     - [x] Refine occupied voxel hits to a first-opacity-crossing position and conservative opposing normal.
     - [x] Accumulate all configured screen/voxel rays with unresolved rays contributing zero energy.
     - [x] Reject overlapping-card light leaks with cached-depth validation and card-local texel clamping.
@@ -129,8 +130,21 @@ Validation recorded on 2026-08-08:
     - [ ] Visually validate stationary convergence and moving-camera rejection.
   - [x] 5.3 Clamp history to the current compatible neighborhood and weight it by confidence.
   - [x] 5.4 Detect camera cuts and reject stale history after discontinuities.
+    - [x] Rotate the deterministic hemisphere sequence per frame so stationary views converge.
+    - [x] Preserve validated history during ordinary motion and reject only large screen displacement.
+    - [x] Search the four nearest half-resolution history texels and select the closest depth/normal-compatible receiver during translation.
   - [ ] 5.5 Add temporal result and rejection-reason diagnostics.
-- [ ] 6. Add spatial filtering, depth-aware upsampling, and lighting-pass composition.
+- [~] 6. Add spatial filtering, depth-aware upsampling, and lighting-pass composition.
+  - [x] Add confidence-, normal-, depth-, and distance-aware gather filtering.
+  - [x] Add bilateral full-resolution reconstruction from the half-resolution result.
+  - [x] Apply receiver diffuse albedo and metallic suppression.
+  - [x] Composite indirect diffuse into the HDR scene path with enable and intensity controls.
+  - [x] Add a `Filtered Radiance` diagnostic.
+  - [ ] Visually validate composed GI, edge preservation, energy scale, and disable parity.
+  - [x] Build and hash surface cards from the stable full-scene command list rather than camera-visible commands.
+  - [x] Use directional voxel radiance as a confidence-reduced fallback when a confirmed voxel hit cannot be refined to a card.
+  - [x] Preserve valid temporal radiance when the current shadow neighborhood is too sparse to define a reliable clamp range.
+  - [x] Sample radiance from the exact neighboring card texel that passed depth validation and cap isolated gather fireflies before temporal accumulation.
 - [ ] 7. Add revision-driven invalidation, residency, eviction, and texel-based update budgets.
 - [ ] 8. Complete editor controls, serialization coverage, debug tooling, profiling, and regression scenes.
 - [ ] 9. Optionally add screen probes and energy-limited multi-bounce feedback.

@@ -47,6 +47,7 @@ namespace PlutoGE::render
         void RenderIndirectGather(const PostProcessContext &context);
         void ResetGatherHistory();
         void ResolveGatherHistory(const PostProcessContext &context);
+        void FilterGather(const PostProcessContext &context);
         std::size_t ComputeSceneSignature(const PostProcessContext &context) const;
         std::size_t ComputeLightingSignature(const PostProcessContext &context) const;
 
@@ -55,6 +56,7 @@ namespace PlutoGE::render
         std::unique_ptr<RenderTarget> m_indirectGatherTarget;
         std::array<std::unique_ptr<RenderTarget>, 2> m_gatherHistoryTargets;
         std::array<std::unique_ptr<RenderTarget>, 2> m_gatherHistoryMetadataTargets;
+        std::unique_ptr<RenderTarget> m_filteredGatherTarget;
         Shader *m_captureShader = nullptr;
         Shader *m_debugShader = nullptr;
         Shader *m_radianceResolveShader = nullptr;
@@ -63,6 +65,8 @@ namespace PlutoGE::render
         Shader *m_indirectGatherShader = nullptr;
         Shader *m_gatherTemporalShader = nullptr;
         Shader *m_gatherMetadataShader = nullptr;
+        Shader *m_gatherFilterShader = nullptr;
+        Shader *m_compositeShader = nullptr;
         std::vector<ResidentCard> m_cards;
         SurfaceCardSpatialIndex m_cardSpatialIndex;
         SurfaceCardGpuIndex m_cardGpuIndex;
@@ -81,10 +85,12 @@ namespace PlutoGE::render
         int m_debugView = 0;
         int m_maxCaptureLights = 8;
         int m_visibilityCascadeCount = 3;
-        int m_screenRayCount = 4;
-        int m_screenTraceSteps = 16;
+        int m_screenRayCount = 6;
+        int m_screenTraceSteps = 20;
         float m_screenTraceDistance = 4.0f;
         float m_gatherTemporalBlend = 0.88f;
+        float m_indirectIntensity = 1.0f;
+        bool m_composeIndirect = true;
         float m_radianceIntensity = 1.0f;
         float m_environmentIntensity = 1.0f;
         float m_radianceClamp = 32.0f;

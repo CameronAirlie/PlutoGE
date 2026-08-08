@@ -30,7 +30,7 @@ int main()
     }
     const auto parameters = effect->GetParameters();
     const auto radianceDebug = std::find_if(parameters.begin(), parameters.end(), [](const PostProcessParameter &parameter) {
-        return parameter.name == "Debug View" && parameter.enumOptions.size() == 16 && parameter.enumOptions.back() == "Temporal Radiance";
+        return parameter.name == "Debug View" && parameter.enumOptions.size() == 17 && parameter.enumOptions.back() == "Filtered Radiance";
     });
     if (radianceDebug == parameters.end())
     {

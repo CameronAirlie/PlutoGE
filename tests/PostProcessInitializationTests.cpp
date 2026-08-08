@@ -4,6 +4,7 @@
 #include "PlutoGE/render/postprocess/LSAOEffect.h"
 #include "PlutoGE/render/postprocess/SSGIEffect.h"
 #include "PlutoGE/render/postprocess/SurfaceCacheGIEffect.h"
+#include "PlutoGE/render/surfacecache/SurfaceCacheAtlas.h"
 
 #include <glad/glad.h>
 
@@ -125,6 +126,23 @@ int main()
         if (error != GL_NO_ERROR)
         {
             std::cerr << "Surface cache GI initialization produced OpenGL error 0x" << std::hex << error << ".\n";
+            window.Close();
+            return 1;
+        }
+    }
+
+    {
+        PlutoGE::render::SurfaceCacheAtlas atlas;
+        if (!atlas.Initialize(64) || atlas.GetTexture(PlutoGE::render::SurfaceCacheAtlas::Layer::DirectRadiance) == 0)
+        {
+            std::cerr << "Surface cache radiance atlas failed to initialize.\n";
+            window.Close();
+            return 1;
+        }
+        const GLenum error = glGetError();
+        if (error != GL_NO_ERROR)
+        {
+            std::cerr << "Surface cache radiance atlas produced OpenGL error 0x" << std::hex << error << ".\n";
             window.Close();
             return 1;
         }

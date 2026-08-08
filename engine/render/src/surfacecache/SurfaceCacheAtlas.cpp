@@ -17,9 +17,9 @@ namespace PlutoGE::render
         glGenFramebuffers(1, &m_framebuffer);
         glBindFramebuffer(GL_FRAMEBUFFER, m_framebuffer);
         glGenTextures(static_cast<GLsizei>(m_textures.size()), m_textures.data());
-        constexpr std::array<GLint, 4> internalFormats{GL_RGBA8, GL_RGBA8_SNORM, GL_RGB16F, GL_R32F};
-        constexpr std::array<GLenum, 4> formats{GL_RGBA, GL_RGBA, GL_RGB, GL_RED};
-        constexpr std::array<GLenum, 4> types{GL_UNSIGNED_BYTE, GL_BYTE, GL_FLOAT, GL_FLOAT};
+        constexpr std::array<GLint, 5> internalFormats{GL_RGBA8, GL_RGBA8_SNORM, GL_RGB16F, GL_R32F, GL_RGB16F};
+        constexpr std::array<GLenum, 5> formats{GL_RGBA, GL_RGBA, GL_RGB, GL_RED, GL_RGB};
+        constexpr std::array<GLenum, 5> types{GL_UNSIGNED_BYTE, GL_BYTE, GL_FLOAT, GL_FLOAT, GL_FLOAT};
         for (std::size_t index = 0; index < m_textures.size(); ++index)
         {
             glBindTexture(GL_TEXTURE_2D, m_textures[index]);
@@ -34,7 +34,7 @@ namespace PlutoGE::render
         glBindRenderbuffer(GL_RENDERBUFFER, m_depthBuffer);
         glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, size, size);
         glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, m_depthBuffer);
-        constexpr std::array<GLenum, 4> attachments{GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3};
+        constexpr std::array<GLenum, 5> attachments{GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3, GL_COLOR_ATTACHMENT4};
         glDrawBuffers(static_cast<GLsizei>(attachments.size()), attachments.data());
         const bool complete = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -58,7 +58,7 @@ namespace PlutoGE::render
     void SurfaceCacheAtlas::BindForCapture() const
     {
         glBindFramebuffer(GL_FRAMEBUFFER, m_framebuffer);
-        constexpr std::array<GLenum, 4> attachments{GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3};
+        constexpr std::array<GLenum, 5> attachments{GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3, GL_COLOR_ATTACHMENT4};
         glDrawBuffers(static_cast<GLsizei>(attachments.size()), attachments.data());
     }
 
@@ -71,6 +71,7 @@ namespace PlutoGE::render
         glClearBufferfv(GL_COLOR, 1, zero);
         glClearBufferfv(GL_COLOR, 2, zero);
         glClearBufferfv(GL_COLOR, 3, farDepth);
+        glClearBufferfv(GL_COLOR, 4, zero);
         glClear(GL_DEPTH_BUFFER_BIT);
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
     }

@@ -9,7 +9,7 @@ namespace PlutoGE::render
     class SurfaceCacheAtlas
     {
     public:
-        enum class Layer : unsigned int { AlbedoMetallic, NormalRoughness, Emission, Depth, Count };
+        enum class Layer : unsigned int { AlbedoMetallic, NormalRoughness, Emission, Depth, DirectRadiance, Count };
 
         ~SurfaceCacheAtlas();
         bool Initialize(int size);

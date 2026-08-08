@@ -1,6 +1,9 @@
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/render/surfacecache/SurfaceCache.h"
+#include "PlutoGE/render/postprocess/PostProcessEffectFactory.h"
+#include "PlutoGE/render/postprocess/IPostProcessEffect.h"
 
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <vector>
@@ -16,6 +19,21 @@ namespace
 int main()
 {
     using namespace PlutoGE::render;
+    auto effect = CreatePostProcessEffect("SurfaceCacheGI");
+    if (!effect || effect->GetTypeName() != "SurfaceCacheGI")
+    {
+        std::cerr << "Surface cache GI is not registered with the effect factory.\n";
+        return 8;
+    }
+    const auto parameters = effect->GetParameters();
+    const auto radianceDebug = std::find_if(parameters.begin(), parameters.end(), [](const PostProcessParameter &parameter) {
+        return parameter.name == "Debug View" && parameter.enumOptions.size() == 6 && parameter.enumOptions.back() == "Direct Radiance";
+    });
+    if (radianceDebug == parameters.end())
+    {
+        std::cerr << "Surface cache GI does not expose the direct-radiance debug view.\n";
+        return 9;
+    }
     SurfaceCacheAtlasAllocator allocator(128, 128, 2);
     std::vector<SurfaceCacheRect> allocations;
     for (int index = 0; index < 12; ++index)

@@ -25,6 +25,7 @@
 #include "PlutoGE/render/postprocess/IPostProcessEffect.h"
 #include "PlutoGE/render/postprocess/SSAOEffect.h"
 #include "PlutoGE/render/postprocess/TAAEffect.h"
+#include "PlutoGE/render/postprocess/VoxelConeTracingEffect.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/VolumetricCloudComponent.h"
 #include "PlutoGE/scene/Entity.h"
@@ -995,6 +996,9 @@ namespace PlutoGE::render
         // Clean up rendering resources here
         RmlUiRuntime::Get().Shutdown();
         m_isInitialized = false;
+        m_worldVisibilityService.reset();
+        m_worldVisibilityUpdateFrame = ~std::uint64_t{0};
+        m_worldVisibilityCascadeCount = 0;
         CleanupResources(renderTarget);
         CleanupFrameResources();
         if (m_shadowPass)
@@ -1031,6 +1035,33 @@ namespace PlutoGE::render
     float Renderer::GetPhysicalSkyDirectionalLightVisibility(const scene::Light *light) const
     {
         return m_physicalSkyPass ? m_physicalSkyPass->GetDirectionalLightVisibility(light) : 1.0f;
+    }
+
+    IWorldVisibilityProvider *Renderer::UpdateWorldVisibility(const PostProcessContext &context, int cascadeCount)
+    {
+        const int requestedCascadeCount = std::clamp(cascadeCount, 1, 3);
+        if (!m_worldVisibilityService)
+        {
+            m_worldVisibilityService = std::make_unique<VoxelConeTracingEffect>();
+            static_cast<VoxelConeTracingEffect *>(m_worldVisibilityService.get())->EnsureInitialized();
+        }
+        auto *service = static_cast<VoxelConeTracingEffect *>(m_worldVisibilityService.get());
+        if (requestedCascadeCount != m_worldVisibilityCascadeCount)
+        {
+            m_worldVisibilityCascadeCount = requestedCascadeCount;
+            service->SetParameters({PostProcessParameter{
+                .name = "Cascade Count",
+                .type = PostProcessParameterType::Int,
+                .value = std::to_string(requestedCascadeCount),
+            }});
+            m_worldVisibilityUpdateFrame = ~std::uint64_t{0};
+        }
+        if (m_worldVisibilityUpdateFrame != context.renderContext.frameSequence)
+        {
+            service->UpdateWorldVisibility(context);
+            m_worldVisibilityUpdateFrame = context.renderContext.frameSequence;
+        }
+        return m_worldVisibilityService.get();
     }
 
     void Renderer::BeginLightingStageTiming(std::size_t stageIndex)

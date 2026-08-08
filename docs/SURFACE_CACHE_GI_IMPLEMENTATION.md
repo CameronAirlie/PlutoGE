@@ -10,7 +10,7 @@ Last updated: 2026-08-08
 
 ## Milestone 1 — surface cache visualization
 
-Current step: **3.5 — selected-card and atlas-UV visual validation**
+Current step: **4.1 — half-resolution gather target and pass boundary**
 
 - [x] 1.1 Define module boundaries and ownership.
 - [x] 1.2 Define surface-card, atlas-rectangle, statistics, and stable card-ID types.
@@ -68,20 +68,21 @@ Validation recorded on 2026-08-08:
     - [x] Visually validate accumulated output.
   - [x] 2.9 Defer point and spot shadow sampling until profiling demonstrates that it is required by the target quality level.
   - [x] 2.10 Mark milestone 2 complete after visual acceptance.
-- [~] 3. Extract a reusable visibility interface and initially back it with VCTGI voxel cascades.
+- [x] 3. Extract a reusable visibility interface and initially back it with VCTGI voxel cascades.
   - [x] 3.1 Define a non-owning, per-frame world-visibility snapshot contract.
   - [x] 3.2 Make VCTGI expose directional volume textures and cascade metadata through the contract.
-  - [ ] 3.3 Move voxel-volume update ownership out of the VCTGI effect so multiple GI consumers do not duplicate work.
+  - [x] 3.3 Move fallback voxel-volume ownership into the renderer so multiple GI consumers do not duplicate work.
     - [x] Add a Surface Cache-owned fallback provider so users do not need to add VCTGI separately.
     - [x] Prefer an enabled shared provider when one already exists.
     - [x] Add a world-visibility-only update entry point and remove the temporary 1x1 cone-trace resolve.
-    - [ ] Extract voxel construction and ownership into a dedicated renderer service.
-  - [~] 3.4 Add surface-cache lookup metadata and world-hit-to-card candidate indexing.
+    - [x] Add a renderer-owned, frame-deduplicated world-visibility service shared by fallback consumers.
+    - [x] Remove concrete VCT ownership from `SurfaceCacheGIEffect`.
+  - [x] 3.4 Add surface-cache lookup metadata and world-hit-to-card candidate indexing.
     - [x] Add a provider-independent CPU uniform-grid spatial index.
     - [x] Build conservative world-space bounds for resident card instances.
     - [x] Add deterministic point-query tests, including overlapping candidates.
     - [x] Upload compact sorted-cell, candidate-ID, and card-bounds SSBO tables.
-  - [~] 3.5 Add visibility and card-lookup debug instrumentation.
+  - [x] 3.5 Add visibility and card-lookup debug instrumentation.
     - [x] Add a screen-space visibility-cascade coverage view consuming `IWorldVisibilityProvider`.
     - [x] Distinguish missing-provider, warming-up, valid-cascade, and outside-coverage states.
     - [x] Add a GPU `Card Candidates` view that validates exact bounds after cell lookup.

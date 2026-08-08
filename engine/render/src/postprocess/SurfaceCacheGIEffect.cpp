@@ -1,5 +1,4 @@
 #include "PlutoGE/render/postprocess/SurfaceCacheGIEffect.h"
-#include "PlutoGE/render/postprocess/VoxelConeTracingEffect.h"
 
 #include "PlutoGE/render/Graphics.h"
 #include "PlutoGE/render/Material.h"
@@ -71,7 +70,7 @@ namespace PlutoGE::render
             else if (parameter.name == "Visibility Cascade Count")
             {
                 const int value = std::clamp(std::stoi(parameter.value), 1, 3);
-                if (value != m_visibilityCascadeCount) { m_visibilityCascadeCount = value; m_fallbackVisibility.reset(); }
+                m_visibilityCascadeCount = value;
             }
             else if (parameter.name == "Radiance Intensity") m_radianceIntensity = std::clamp(std::stof(parameter.value), 0.0f, 8.0f);
             else if (parameter.name == "Environment Intensity") m_environmentIntensity = std::clamp(std::stof(parameter.value), 0.0f, 8.0f);
@@ -484,19 +483,14 @@ namespace PlutoGE::render
                         if (snapshotReady(m_visibilitySnapshot)) return;
                     }
 
-        if (!m_fallbackVisibility)
+        if (context.renderContext.renderer)
         {
-            m_fallbackVisibility = std::make_unique<VoxelConeTracingEffect>();
-            m_fallbackVisibility->EnsureInitialized();
-            m_fallbackVisibility->SetParameters({PostProcessParameter{
-                .name = "Cascade Count",
-                .type = PostProcessParameterType::Int,
-                .value = std::to_string(m_visibilityCascadeCount),
-            }});
+            if (auto *provider = context.renderContext.renderer->UpdateWorldVisibility(context, m_visibilityCascadeCount))
+            {
+                m_visibilitySnapshot = provider->GetWorldVisibilitySnapshot();
+                m_visibilityStatus = snapshotReady(m_visibilitySnapshot) ? 2 : 1;
+            }
         }
-        m_fallbackVisibility->UpdateWorldVisibility(context);
-        m_visibilitySnapshot = m_fallbackVisibility->GetWorldVisibilitySnapshot();
-        m_visibilityStatus = snapshotReady(m_visibilitySnapshot) ? 2 : 1;
     }
 
     void SurfaceCacheGIEffect::Apply(const PostProcessContext &context)

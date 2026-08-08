@@ -15,7 +15,6 @@ namespace PlutoGE::render
     class Shader;
     class Mesh;
     class Material;
-    class VoxelConeTracingEffect;
 
     class SurfaceCacheGIEffect final : public ShaderPostProcessEffect
     {
@@ -46,7 +45,6 @@ namespace PlutoGE::render
         std::size_t ComputeLightingSignature(const PostProcessContext &context) const;
 
         std::unique_ptr<SurfaceCacheAtlas> m_atlas;
-        std::unique_ptr<VoxelConeTracingEffect> m_fallbackVisibility;
         Shader *m_captureShader = nullptr;
         Shader *m_debugShader = nullptr;
         Shader *m_radianceResolveShader = nullptr;

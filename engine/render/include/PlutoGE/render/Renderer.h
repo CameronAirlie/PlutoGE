@@ -5,6 +5,7 @@
 #include "PlutoGE/render/GBuffer.h"
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/render/RenderTarget.h"
+#include "PlutoGE/render/visibility/IWorldVisibilityProvider.h"
 #include <array>
 #include <glm/glm.hpp>
 #include <iostream>
@@ -38,6 +39,8 @@ namespace PlutoGE::render
     class Texture;
     class LightPropagationVolumePass;
     class PhysicalSkyPass;
+    class VoxelConeTracingEffect;
+    struct PostProcessContext;
 
     enum class PostProcessDebugView
     {
@@ -257,6 +260,7 @@ namespace PlutoGE::render
         int GetPhysicalSkyEnvironmentWidth() const;
         int GetPhysicalSkyEnvironmentHeight() const;
         float GetPhysicalSkyDirectionalLightVisibility(const scene::Light *light) const;
+        IWorldVisibilityProvider *UpdateWorldVisibility(const PostProcessContext &context, int cascadeCount);
 
         void SubmitRenderCommand(const RenderCommand &command)
         {
@@ -366,6 +370,9 @@ namespace PlutoGE::render
         IRenderPass *m_shadowPass = nullptr;
         LightPropagationVolumePass *m_lightPropagationVolumePass = nullptr;
         PhysicalSkyPass *m_physicalSkyPass = nullptr;
+        std::unique_ptr<IWorldVisibilityProvider> m_worldVisibilityService;
+        std::uint64_t m_worldVisibilityUpdateFrame = ~std::uint64_t{0};
+        int m_worldVisibilityCascadeCount = 0;
         std::vector<IRenderPass *> m_renderPasses;
         std::vector<RenderCommand> m_renderCommands;
         std::vector<DecalCommand> m_decalCommands;

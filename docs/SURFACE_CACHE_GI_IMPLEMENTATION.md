@@ -74,7 +74,8 @@ Validation recorded on 2026-08-08:
   - [ ] 3.3 Move voxel-volume update ownership out of the VCTGI effect so multiple GI consumers do not duplicate work.
     - [x] Add a Surface Cache-owned fallback provider so users do not need to add VCTGI separately.
     - [x] Prefer an enabled shared provider when one already exists.
-    - [ ] Extract voxel construction into a dedicated renderer service and remove the temporary 1x1 fallback resolve.
+    - [x] Add a world-visibility-only update entry point and remove the temporary 1x1 cone-trace resolve.
+    - [ ] Extract voxel construction and ownership into a dedicated renderer service.
   - [~] 3.4 Add surface-cache lookup metadata and world-hit-to-card candidate indexing.
     - [x] Add a provider-independent CPU uniform-grid spatial index.
     - [x] Build conservative world-space bounds for resident card instances.

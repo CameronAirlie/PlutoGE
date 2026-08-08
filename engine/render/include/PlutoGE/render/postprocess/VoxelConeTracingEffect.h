@@ -28,6 +28,7 @@ namespace PlutoGE::render
         std::string GetDisplayName() const override { return "Voxel Cone Traced GI"; }
         std::vector<PostProcessParameter> GetParameters() const override;
         void SetParameters(const std::vector<PostProcessParameter> &parameters) override;
+        void UpdateWorldVisibility(const PostProcessContext &context);
         RenderTarget *GenerateResolvedIndirectLighting(const PostProcessContext &context, int width, int height);
         bool OutputsIndirectOnly() const { return m_indirectOnly; }
         int GetDebugView() const { return m_debugView; }

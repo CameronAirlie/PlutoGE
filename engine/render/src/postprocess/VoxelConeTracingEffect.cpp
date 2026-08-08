@@ -1107,7 +1107,8 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
     {
         if (!m_coneTraceShader || !m_temporalResolveShader || !m_historyMetadataShader || !context.renderContext.gBuffer || !context.renderContext.hasCameraData)
             return nullptr;
-        EnsureResources(width, height);
+        const bool updateOnly = width <= 0 || height <= 0;
+        EnsureResources(std::max(width, 1), std::max(height, 1));
         if (!m_indirectTarget)
             return nullptr;
         const auto &renderContext = context.renderContext;
@@ -1226,6 +1227,8 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
         while (availableCascadeCount < static_cast<int>(m_activeCascadeCount) && m_cascades[availableCascadeCount].hasVolume)
             ++availableCascadeCount;
         if (availableCascadeCount == 0)
+            return nullptr;
+        if (updateOnly)
             return nullptr;
         // Motion vectors and depth/normal rejection handle normal movement, but a
         // multi-voxel displacement can reproject unrelated surfaces onto one
@@ -1389,6 +1392,13 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
         m_hasPreviousCameraPosition = true;
         m_hasHistory = true;
         return outputTarget;
+    }
+
+    void VoxelConeTracingEffect::UpdateWorldVisibility(const PostProcessContext &context)
+    {
+        // A zero-sized request executes resource maintenance and progressive
+        // voxel construction, then exits before cone tracing or temporal work.
+        GenerateResolvedIndirectLighting(context, 0, 0);
     }
 
     void VoxelConeTracingEffect::Apply(const PostProcessContext &context)

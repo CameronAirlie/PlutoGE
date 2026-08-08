@@ -494,10 +494,7 @@ namespace PlutoGE::render
                 .value = std::to_string(m_visibilityCascadeCount),
             }});
         }
-        // Until voxel update ownership is fully extracted, run the fallback at
-        // 1x1. Voxel construction remains full quality; only the unused VCT
-        // screen resolve is minimized.
-        m_fallbackVisibility->GenerateResolvedIndirectLighting(context, 1, 1);
+        m_fallbackVisibility->UpdateWorldVisibility(context);
         m_visibilitySnapshot = m_fallbackVisibility->GetWorldVisibilitySnapshot();
         m_visibilityStatus = snapshotReady(m_visibilitySnapshot) ? 2 : 1;
     }

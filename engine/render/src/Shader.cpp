@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cstring>
 #include <iostream>
 #include <vector>
 
@@ -302,10 +303,31 @@ namespace PlutoGE::render
         return ResolveUniformLocation(name, false) != -1;
     }
 
+    bool Shader::CacheUniformValue(GLint location, std::uint8_t type, const void *data, std::size_t size) const
+    {
+        if (location < 0 || !data || size == 0 || size > CachedUniformValue{}.bytes.size())
+        {
+            return true;
+        }
+        if (m_uniformValueCache.size() <= static_cast<std::size_t>(location))
+        {
+            m_uniformValueCache.resize(static_cast<std::size_t>(location) + 1);
+        }
+        auto &cached = m_uniformValueCache[static_cast<std::size_t>(location)];
+        if (cached.type == type && cached.size == size && std::memcmp(cached.bytes.data(), data, size) == 0)
+        {
+            return false;
+        }
+        std::memcpy(cached.bytes.data(), data, size);
+        cached.type = type;
+        cached.size = static_cast<std::uint8_t>(size);
+        return true;
+    }
+
     void Shader::SetUniform(std::string_view name, const glm::mat4 &value) const
     {
         GLint location = GetUniformLocation(name);
-        if (location != -1)
+        if (location != -1 && CacheUniformValue(location, 1, &value[0][0], sizeof(float) * 16))
         {
             glUniformMatrix4fv(location, 1, GL_FALSE, &value[0][0]);
         }
@@ -314,7 +336,7 @@ namespace PlutoGE::render
     void Shader::SetUniform(std::string_view name, const glm::vec4 &value) const
     {
         GLint location = GetUniformLocation(name);
-        if (location != -1)
+        if (location != -1 && CacheUniformValue(location, 2, &value[0], sizeof(float) * 4))
         {
             glUniform4f(location, value.x, value.y, value.z, value.w);
         }
@@ -323,7 +345,7 @@ namespace PlutoGE::render
     void Shader::SetUniform(std::string_view name, const glm::vec3 &value) const
     {
         GLint location = GetUniformLocation(name);
-        if (location != -1)
+        if (location != -1 && CacheUniformValue(location, 3, &value[0], sizeof(float) * 3))
         {
             glUniform3f(location, value.x, value.y, value.z);
         }
@@ -332,7 +354,7 @@ namespace PlutoGE::render
     void Shader::SetUniform(std::string_view name, const glm::vec2 &value) const
     {
         GLint location = GetUniformLocation(name);
-        if (location != -1)
+        if (location != -1 && CacheUniformValue(location, 4, &value[0], sizeof(float) * 2))
         {
             glUniform2f(location, value.x, value.y);
         }
@@ -341,7 +363,7 @@ namespace PlutoGE::render
     void Shader::SetUniform(std::string_view name, float value) const
     {
         GLint location = GetUniformLocation(name);
-        if (location != -1)
+        if (location != -1 && CacheUniformValue(location, 5, &value, sizeof(value)))
         {
             glUniform1f(location, value);
         }
@@ -350,7 +372,7 @@ namespace PlutoGE::render
     void Shader::SetUniform(std::string_view name, int value) const
     {
         GLint location = GetUniformLocation(name);
-        if (location != -1)
+        if (location != -1 && CacheUniformValue(location, 6, &value, sizeof(value)))
         {
             glUniform1i(location, value);
         }
@@ -368,7 +390,10 @@ namespace PlutoGE::render
         if (location != -1)
         {
             BindTextureUnit(texture->GetType(), texture->GetTextureID(), slot);
-            glUniform1i(location, slot);
+            if (CacheUniformValue(location, 6, &slot, sizeof(slot)))
+            {
+                glUniform1i(location, slot);
+            }
         }
     }
 
@@ -380,7 +405,8 @@ namespace PlutoGE::render
             return false;
         }
 
-        glUniform4f(location, value.x, value.y, value.z, value.w);
+        if (CacheUniformValue(location, 2, &value[0], sizeof(float) * 4))
+            glUniform4f(location, value.x, value.y, value.z, value.w);
         return true;
     }
 
@@ -392,7 +418,8 @@ namespace PlutoGE::render
             return false;
         }
 
-        glUniform3f(location, value.x, value.y, value.z);
+        if (CacheUniformValue(location, 3, &value[0], sizeof(float) * 3))
+            glUniform3f(location, value.x, value.y, value.z);
         return true;
     }
 
@@ -404,7 +431,8 @@ namespace PlutoGE::render
             return false;
         }
 
-        glUniform1f(location, value);
+        if (CacheUniformValue(location, 5, &value, sizeof(value)))
+            glUniform1f(location, value);
         return true;
     }
 
@@ -416,7 +444,8 @@ namespace PlutoGE::render
             return false;
         }
 
-        glUniform1i(location, value);
+        if (CacheUniformValue(location, 6, &value, sizeof(value)))
+            glUniform1i(location, value);
         return true;
     }
 
@@ -434,7 +463,8 @@ namespace PlutoGE::render
         }
 
         BindTextureUnit(texture->GetType(), texture->GetTextureID(), slot);
-        glUniform1i(location, slot);
+        if (CacheUniformValue(location, 6, &slot, sizeof(slot)))
+            glUniform1i(location, slot);
         return true;
     }
 
@@ -446,7 +476,8 @@ namespace PlutoGE::render
             return false;
         }
 
-        glUniform2f(location, value.x, value.y);
+        if (CacheUniformValue(location, 4, &value[0], sizeof(float) * 2))
+            glUniform2f(location, value.x, value.y);
         return true;
     }
 }

@@ -1,6 +1,9 @@
 #pragma once
 
 #include <glad/glad.h>
+#include <array>
+#include <cstddef>
+#include <cstdint>
 #include <string>
 #include <string_view>
 #include <iostream>
@@ -2228,10 +2231,19 @@ void main()
         };
 
         GLint ResolveUniformLocation(std::string_view name, bool warnIfMissing) const;
+        bool CacheUniformValue(GLint location, std::uint8_t type, const void *data, std::size_t size) const;
+
+        struct CachedUniformValue
+        {
+            std::array<std::byte, sizeof(float) * 16> bytes{};
+            std::uint8_t type = 0;
+            std::uint8_t size = 0;
+        };
 
         ShaderConfig m_config;
         GLuint m_programID = 0; // OpenGL shader program ID
         mutable std::unordered_map<std::string, GLint, TransparentStringHash, std::equal_to<>> m_uniformLocationCache;
+        mutable std::vector<CachedUniformValue> m_uniformValueCache;
         GLuint GetUniformLocation(std::string_view name) const;
     };
 }

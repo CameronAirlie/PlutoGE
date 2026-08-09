@@ -15,6 +15,9 @@ namespace PlutoGE::assets
     class Project;
 }
 
+namespace PlutoGE::core { class Engine; }
+namespace PlutoGE::render { struct MaterialConfig; }
+
 namespace PlutoGE::scene
 {
     class Entity;
@@ -22,6 +25,12 @@ namespace PlutoGE::scene
 
 namespace PlutoGE::ui
 {
+    // Renders (and caches) the same lit material sphere used by content-browser thumbnails.
+    // `revision` must change whenever any preview input changes.
+    unsigned int GetCachedMaterialPreview(core::Engine &engine,
+                                          const std::string &cacheKey,
+                                          const render::MaterialConfig &config,
+                                          std::uint64_t revision);
     class AssetThumbnailCache;
     inline constexpr const char *kContentBrowserAssetDragDropPayload = "PLUTOGE_CONTENT_BROWSER_ASSET";
     bool InstantiateMeshAssetIntoScene(std::string reference, scene::Entity *parent = nullptr);

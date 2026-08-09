@@ -87,7 +87,26 @@ namespace PlutoGE::ui
                 return found->second.texture;
             }
 
-            const auto stamp = GetStamp(project, asset.reference);
+            auto stamp = GetStamp(project, asset.reference);
+            render::Material *preloadedMaterial = nullptr;
+            if (asset.type == assets::ProjectAssetType::Material)
+            {
+                preloadedMaterial = engine.GetAssetManager().LoadMaterialAsset(asset.reference);
+                if (preloadedMaterial)
+                {
+                    const auto &config = preloadedMaterial->GetConfig();
+                    for (const render::Texture *texture : {config.albedoTexture, config.normalTexture,
+                                                          config.metallicTexture, config.roughnessTexture})
+                    {
+                        if (!texture) continue;
+                        std::error_code error;
+                        const auto time = std::filesystem::last_write_time(texture->GetFilePath(), error);
+                        if (!error)
+                            stamp ^= static_cast<std::uint64_t>(time.time_since_epoch().count()) +
+                                     0x9e3779b97f4a7c15ull + (stamp << 6u) + (stamp >> 2u);
+                    }
+                }
+            }
             if (found != m_entries.end() && found->second.stamp == stamp)
             {
                 found->second.lastValidatedFrame = m_frameSequence;
@@ -128,7 +147,7 @@ namespace PlutoGE::ui
             render::Material *material = nullptr;
             if (asset.type == assets::ProjectAssetType::Material)
             {
-                material = engine.GetAssetManager().LoadMaterialAsset(asset.reference);
+                material = preloadedMaterial;
                 mesh = engine.GetAssetManager().LoadMeshAsset(std::string(assets::Project::kBuiltinSphereMeshReference));
             }
             else
@@ -145,6 +164,23 @@ namespace PlutoGE::ui
             if (!Render(entry.texture, *mesh, material)) return 0;
             entry.stamp = stamp;
             entry.lastValidatedFrame = m_frameSequence;
+            return entry.texture;
+        }
+
+        GLuint GetMaterial(core::Engine &engine, const std::string &key,
+                           const render::MaterialConfig &config, std::uint64_t revision)
+        {
+            const auto found = m_entries.find(key);
+            if (found != m_entries.end() && found->second.stamp == revision)
+                return found->second.texture;
+            auto *mesh = engine.GetAssetManager().LoadMeshAsset(std::string(assets::Project::kBuiltinSphereMeshReference));
+            if (!mesh) return 0;
+            auto &entry = m_entries[key];
+            if (entry.texture == 0) entry.texture = CreateTexture();
+            entry.ownsTexture = true;
+            render::Material material(config);
+            if (!Render(entry.texture, *mesh, &material)) return 0;
+            entry.stamp = revision;
             return entry.texture;
         }
 
@@ -209,25 +245,85 @@ uniform mat4 mvp;
 uniform mat4 model;
 out vec3 worldNormal;
 out vec2 texCoord;
+out vec3 worldPosition;
 void main() {
     gl_Position = mvp * vec4(position, 1.0);
     worldNormal = mat3(transpose(inverse(model))) * normal;
     texCoord = uv;
+    worldPosition = (model * vec4(position, 1.0)).xyz;
 })GLSL";
             constexpr const char *fragmentSource = R"GLSL(#version 450 core
 in vec3 worldNormal;
 in vec2 texCoord;
+in vec3 worldPosition;
 layout(location=0) out vec4 colorOut;
 uniform vec4 baseColor;
 uniform sampler2D albedo;
 uniform bool useAlbedo;
+uniform sampler2D normalMap;
+uniform bool useNormal;
+uniform bool flipNormalY;
+uniform sampler2D metallicMap;
+uniform bool useMetallic;
+uniform int metallicChannel;
+uniform sampler2D roughnessMap;
+uniform bool useRoughness;
+uniform int roughnessChannel;
+uniform vec2 uvScale;
+uniform float metallicFactor;
+uniform float roughnessFactor;
+uniform vec3 emission;
+uniform float transmission;
+uniform float ior;
+uniform vec3 attenuationColor;
+uniform vec3 cameraPosition;
+float channelValue(vec4 v, int c) { return c == 1 ? v.g : c == 2 ? v.b : c == 3 ? v.a : v.r; }
+vec3 sky(vec3 d) {
+    float h = clamp(d.y * 0.5 + 0.5, 0.0, 1.0);
+    vec3 horizon = vec3(0.72, 0.78, 0.86);
+    vec3 zenith = vec3(0.08, 0.20, 0.42);
+    vec3 ground = vec3(0.055, 0.045, 0.04);
+    vec3 result = d.y >= 0.0 ? mix(horizon, zenith, pow(h, 0.65)) : mix(ground, horizon * 0.35, exp(d.y * 8.0));
+    vec3 sunDir = normalize(vec3(0.55, 0.72, 0.42));
+    return result + vec3(1.0, 0.72, 0.38) * pow(max(dot(d, sunDir), 0.0), 180.0) * 7.0;
+}
 void main() {
     vec3 n = normalize(worldNormal);
-    vec3 lightDirection = normalize(vec3(0.5, 0.8, 0.7));
-    float diffuse = max(dot(n, lightDirection), 0.0);
-    float rim = pow(1.0 - max(n.z, 0.0), 3.0) * 0.18;
-    vec4 surface = baseColor * (useAlbedo ? texture(albedo, texCoord) : vec4(1.0));
-    colorOut = vec4(surface.rgb * (0.28 + diffuse * 0.72) + rim, surface.a);
+    vec2 scaledUv = texCoord * uvScale;
+    if (useNormal) {
+        vec3 mapN = texture(normalMap, scaledUv).xyz * 2.0 - 1.0;
+        if (flipNormalY) mapN.y = -mapN.y;
+        vec3 dp1 = dFdx(worldPosition), dp2 = dFdy(worldPosition);
+        vec2 duv1 = dFdx(scaledUv), duv2 = dFdy(scaledUv);
+        vec3 t = normalize(dp1 * duv2.y - dp2 * duv1.y);
+        vec3 b = normalize(-dp1 * duv2.x + dp2 * duv1.x);
+        n = normalize(mat3(t, b, n) * mapN);
+    }
+    vec4 surface = baseColor * (useAlbedo ? texture(albedo, scaledUv) : vec4(1.0));
+    float metallic = clamp(metallicFactor * (useMetallic ? channelValue(texture(metallicMap, scaledUv), metallicChannel) : 1.0), 0.0, 1.0);
+    float roughness = clamp(roughnessFactor * (useRoughness ? channelValue(texture(roughnessMap, scaledUv), roughnessChannel) : 1.0), 0.04, 1.0);
+    vec3 v = normalize(cameraPosition - worldPosition);
+    vec3 l = normalize(vec3(0.55, 0.72, 0.42));
+    vec3 h = normalize(v + l);
+    float ndotl = max(dot(n, l), 0.0), ndotv = max(dot(n, v), 0.001), ndoth = max(dot(n, h), 0.0), vdoth = max(dot(v, h), 0.0);
+    vec3 f0 = mix(vec3(0.04), surface.rgb, metallic);
+    vec3 f = f0 + (1.0 - f0) * pow(1.0 - vdoth, 5.0);
+    float a = roughness * roughness, a2 = a * a;
+    float denom = ndoth * ndoth * (a2 - 1.0) + 1.0;
+    float d = a2 / max(3.14159265 * denom * denom, 0.0001);
+    float k = (roughness + 1.0); k = k * k * 0.125;
+    float g = (ndotv / (ndotv * (1.0 - k) + k)) * (ndotl / (ndotl * (1.0 - k) + k));
+    vec3 direct = ((1.0 - f) * (1.0 - metallic) * surface.rgb / 3.14159265 + d * g * f / max(4.0 * ndotv * ndotl, 0.001)) * ndotl * 3.2;
+    vec3 reflected = sky(reflect(-v, n));
+    vec3 ambient = surface.rgb * (1.0 - metallic) * sky(n) * 0.22 + reflected * f0 * mix(1.0, 0.18, roughness);
+    vec3 hdr = direct + ambient + emission;
+    if (transmission > 0.0) {
+        vec3 refractedDirection = refract(-v, n, 1.0 / max(ior, 1.0));
+        vec3 transmitted = sky(length(refractedDirection) > 0.001 ? refractedDirection : -v) * attenuationColor;
+        hdr = mix(hdr, transmitted + reflected * f, clamp(transmission, 0.0, 1.0));
+    }
+    vec3 mapped = hdr / (hdr + vec3(1.0));
+    colorOut = vec4(pow(mapped, vec3(1.0 / 2.2)), surface.a);
 })GLSL";
             const GLuint vertex = Compile(GL_VERTEX_SHADER, vertexSource);
             const GLuint fragment = Compile(GL_FRAGMENT_SHADER, fragmentSource);
@@ -267,15 +363,19 @@ void main() {
         {
             if (!Initialize()) return false;
             GLint previousFramebuffer = 0, previousProgram = 0, previousVao = 0;
-            GLint previousActiveTexture = 0, previousTexture = 0, previousCullMode = 0;
+            GLint previousActiveTexture = 0, previousCullMode = 0;
+            GLint previousTextures[4]{};
             GLint previousViewport[4]{};
             GLfloat previousClearColor[4]{};
             glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &previousFramebuffer);
             glGetIntegerv(GL_CURRENT_PROGRAM, &previousProgram);
             glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &previousVao);
             glGetIntegerv(GL_ACTIVE_TEXTURE, &previousActiveTexture);
-            glActiveTexture(GL_TEXTURE0);
-            glGetIntegerv(GL_TEXTURE_BINDING_2D, &previousTexture);
+            for (int unit = 0; unit < 4; ++unit)
+            {
+                glActiveTexture(GL_TEXTURE0 + unit);
+                glGetIntegerv(GL_TEXTURE_BINDING_2D, &previousTextures[unit]);
+            }
             glGetIntegerv(GL_CULL_FACE_MODE, &previousCullMode);
             glGetIntegerv(GL_VIEWPORT, previousViewport);
             glGetFloatv(GL_COLOR_CLEAR_VALUE, previousClearColor);
@@ -297,7 +397,9 @@ void main() {
             glm::mat4 model(1.0f);
             model = glm::rotate(model, glm::radians(-18.0f), glm::vec3(1, 0, 0));
             model = glm::rotate(model, glm::radians(32.0f), glm::vec3(0, 1, 0));
-            model = glm::scale(model, glm::vec3(0.78f / radius));
+            // Leave enough framing margin for the rotated sphere/mesh so highlights and
+            // silhouettes are not clipped by the square thumbnail edges.
+            model = glm::scale(model, glm::vec3(0.66f / radius));
             model = glm::translate(model, -bounds.center);
             const glm::mat4 view = glm::lookAt(glm::vec3(0, 0, 2.4f), glm::vec3(0), glm::vec3(0, 1, 0));
             const glm::mat4 projection = glm::perspective(glm::radians(32.0f), 1.0f, 0.01f, 10.0f);
@@ -311,14 +413,39 @@ void main() {
             const bool useAlbedo = config.albedoTexture && config.albedoTexture->GetTextureID() != 0;
             glUniform1i(glGetUniformLocation(m_program, "useAlbedo"), useAlbedo ? 1 : 0);
             glUniform1i(glGetUniformLocation(m_program, "albedo"), 0);
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, useAlbedo ? config.albedoTexture->GetTextureID() : 0);
+            const auto bindTexture = [&](int unit, const char *sampler, const char *enabled, render::Texture *texture) {
+                const bool use = texture && texture->GetTextureID() != 0;
+                glUniform1i(glGetUniformLocation(m_program, sampler), unit);
+                glUniform1i(glGetUniformLocation(m_program, enabled), use ? 1 : 0);
+                glActiveTexture(GL_TEXTURE0 + unit);
+                glBindTexture(GL_TEXTURE_2D, use ? texture->GetTextureID() : 0);
+            };
+            bindTexture(0, "albedo", "useAlbedo", config.albedoTexture);
+            bindTexture(1, "normalMap", "useNormal", config.normalTexture);
+            bindTexture(2, "metallicMap", "useMetallic", config.metallicTexture);
+            bindTexture(3, "roughnessMap", "useRoughness", config.roughnessTexture);
+            glUniform1i(glGetUniformLocation(m_program, "flipNormalY"), config.flipNormalY ? 1 : 0);
+            glUniform1i(glGetUniformLocation(m_program, "metallicChannel"), static_cast<int>(config.metallicTextureChannel));
+            glUniform1i(glGetUniformLocation(m_program, "roughnessChannel"), static_cast<int>(config.roughnessTextureChannel));
+            glUniform1f(glGetUniformLocation(m_program, "metallicFactor"), config.metallic);
+            glUniform1f(glGetUniformLocation(m_program, "roughnessFactor"), config.roughness);
+            glUniform2fv(glGetUniformLocation(m_program, "uvScale"), 1, glm::value_ptr(config.uvScale));
+            glUniform3fv(glGetUniformLocation(m_program, "emission"), 1, glm::value_ptr(config.emission));
+            glUniform1f(glGetUniformLocation(m_program, "transmission"), config.transmission);
+            glUniform1f(glGetUniformLocation(m_program, "ior"), config.ior);
+            glUniform3fv(glGetUniformLocation(m_program, "attenuationColor"), 1, glm::value_ptr(config.attenuationColor));
+            const glm::vec3 cameraPosition(0, 0, 2.4f);
+            glUniform3fv(glGetUniformLocation(m_program, "cameraPosition"), 1, glm::value_ptr(cameraPosition));
             mesh.Draw();
 
             glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previousFramebuffer));
             glUseProgram(static_cast<GLuint>(previousProgram));
             glBindVertexArray(static_cast<GLuint>(previousVao));
-            glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(previousTexture));
+            for (int unit = 0; unit < 4; ++unit)
+            {
+                glActiveTexture(GL_TEXTURE0 + unit);
+                glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(previousTextures[unit]));
+            }
             glActiveTexture(static_cast<GLenum>(previousActiveTexture));
             glCullFace(static_cast<GLenum>(previousCullMode));
             glClearColor(previousClearColor[0], previousClearColor[1], previousClearColor[2], previousClearColor[3]);
@@ -328,6 +455,15 @@ void main() {
             return true;
         }
     };
+
+    unsigned int GetCachedMaterialPreview(core::Engine &engine, const std::string &cacheKey,
+                                          const render::MaterialConfig &config, std::uint64_t revision)
+    {
+        // The GL cache deliberately follows the process lifetime: static destruction can run
+        // after the editor has destroyed its OpenGL context.
+        static auto *previewCache = new AssetThumbnailCache();
+        return previewCache->GetMaterial(engine, cacheKey, config, revision);
+    }
 
     ContentBrowserPanel::ContentBrowserPanel(const PanelConfig &config) : Panel(config) {}
     ContentBrowserPanel::~ContentBrowserPanel() = default;

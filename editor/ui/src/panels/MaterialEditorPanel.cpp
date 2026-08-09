@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <functional>
 #include <optional>
 #include <unordered_map>
 #include <utility>
@@ -319,6 +320,17 @@ namespace PlutoGE::ui
             const std::string resolvedPath = core::Engine::GetInstance().GetAssetManager().ResolveAssetPath(path);
             return resolvedPath.empty() ? nullptr : render::Texture::LoadFromFile(resolvedPath.c_str());
         }
+
+        void HashCombine(std::size_t &seed, std::size_t value)
+        {
+            seed ^= value + 0x9e3779b9u + (seed << 6u) + (seed >> 2u);
+        }
+
+        template <typename T>
+        void HashPreviewValue(std::size_t &seed, const T &value)
+        {
+            HashCombine(seed, std::hash<T>{}(value));
+        }
     }
 
     bool RenderVector2Control(const char *label, glm::vec2 &value, float resetValue = 0.0f, float columnWidth = 100.0f)
@@ -472,14 +484,53 @@ namespace PlutoGE::ui
         }
 
         ImGui::SeparatorText("Preview");
-        const ImVec2 previewSize((std::min)(ImGui::GetContentRegionAvail().x, 280.0f), 96.0f);
-        const ImVec2 previewMin = ImGui::GetCursorScreenPos();
-        const ImVec2 previewMax(previewMin.x + previewSize.x, previewMin.y + previewSize.y);
-        const ImU32 previewColor = ImGui::ColorConvertFloat4ToU32(ImVec4(m_color.r, m_color.g, m_color.b, m_color.a));
-        ImDrawList *drawList = ImGui::GetWindowDrawList();
-        drawList->AddRectFilled(previewMin, previewMax, previewColor, 6.0f);
-        drawList->AddRect(previewMin, previewMax, ImGui::GetColorU32(ImGuiCol_Border), 6.0f);
-        ImGui::Dummy(previewSize);
+        render::MaterialConfig previewConfig;
+        previewConfig.color = m_color;
+        previewConfig.surfaceType = m_surfaceType;
+        previewConfig.alphaMode = m_alphaMode;
+        previewConfig.albedoTexture = LoadMaterialEditorTexture(m_albedoTexturePath);
+        previewConfig.normalTexture = LoadMaterialEditorTexture(m_normalTexturePath);
+        previewConfig.metallic = m_metallic;
+        previewConfig.metallicTexture = LoadMaterialEditorTexture(m_metallicTexturePath);
+        previewConfig.metallicTextureChannel = m_metallicTextureChannel;
+        previewConfig.roughness = m_roughness;
+        previewConfig.roughnessTexture = LoadMaterialEditorTexture(m_roughnessTexturePath);
+        previewConfig.roughnessTextureChannel = m_roughnessTextureChannel;
+        previewConfig.emission = m_emission;
+        previewConfig.transmission = m_transmission;
+        previewConfig.ior = m_ior;
+        previewConfig.attenuationColor = m_attenuationColor;
+        previewConfig.uvScale = m_uvScale;
+        previewConfig.flipNormalY = m_flipNormalY;
+        std::size_t previewRevision = 0;
+        for (const float value : {m_color.r, m_color.g, m_color.b, m_color.a, m_metallic, m_roughness,
+                                  m_emission.r, m_emission.g, m_emission.b, m_uvScale.x, m_uvScale.y,
+                                  m_transmission, m_ior, m_attenuationColor.r, m_attenuationColor.g, m_attenuationColor.b})
+            HashPreviewValue(previewRevision, value);
+        HashPreviewValue(previewRevision, m_albedoTexturePath);
+        HashPreviewValue(previewRevision, m_normalTexturePath);
+        HashPreviewValue(previewRevision, m_metallicTexturePath);
+        HashPreviewValue(previewRevision, m_roughnessTexturePath);
+        HashPreviewValue(previewRevision, static_cast<int>(m_metallicTextureChannel));
+        HashPreviewValue(previewRevision, static_cast<int>(m_roughnessTextureChannel));
+        HashPreviewValue(previewRevision, m_flipNormalY);
+
+        const float previewExtent = (std::min)(ImGui::GetContentRegionAvail().x, 280.0f);
+        const ImVec2 previewSize(previewExtent, previewExtent);
+        const unsigned int previewTexture = GetCachedMaterialPreview(editorShell.GetEngine(),
+                                                                      "material-editor:" + reference,
+                                                                      previewConfig,
+                                                                      static_cast<std::uint64_t>(previewRevision));
+        if (previewTexture != 0)
+            ImGui::Image(static_cast<ImTextureID>(previewTexture), previewSize, ImVec2(0, 1), ImVec2(1, 0));
+        else
+        {
+            const ImVec2 previewMin = ImGui::GetCursorScreenPos();
+            ImGui::GetWindowDrawList()->AddRectFilled(previewMin,
+                                                       ImVec2(previewMin.x + previewSize.x, previewMin.y + previewSize.y),
+                                                       ImGui::GetColorU32(ImGuiCol_FrameBg), 6.0f);
+            ImGui::Dummy(previewSize);
+        }
         ImGui::TextDisabled("%s | %s | Metallic %.2f | Roughness %.2f",
                             m_surfaceType == render::MaterialSurfaceType::Glass ? "Glass" : "Standard",
                             m_alphaMode == render::AlphaMode::Blend ? "Blend" : m_alphaMode == render::AlphaMode::Mask ? "Mask"

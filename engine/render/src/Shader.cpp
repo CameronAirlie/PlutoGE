@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <iostream>
 #include <vector>
 
@@ -268,36 +269,40 @@ namespace PlutoGE::render
         auto &cache = GetRenderStateCache();
         cache.boundProgram = 0;
         cache.activeTextureSlot = -1;
-        cache.textureUnits.clear();
+        // Keep the queried texture-unit count across frames. Clearing the
+        // vector forced a synchronous GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS
+        // query on the first material bind of every viewport render.
+        std::fill(cache.textureUnits.begin(), cache.textureUnits.end(), TextureUnitState{});
     }
 
-    GLint Shader::ResolveUniformLocation(const std::string &name, bool warnIfMissing) const
+    GLint Shader::ResolveUniformLocation(std::string_view name, bool warnIfMissing) const
     {
-        if (m_uniformLocationCache.find(name) != m_uniformLocationCache.end())
+        if (const auto cached = m_uniformLocationCache.find(name); cached != m_uniformLocationCache.end())
         {
-            return m_uniformLocationCache[name];
+            return cached->second;
         }
 
-        GLint location = glGetUniformLocation(m_programID, name.c_str());
+        std::string ownedName(name);
+        GLint location = glGetUniformLocation(m_programID, ownedName.c_str());
         if (location == -1 && warnIfMissing)
         {
             std::cerr << "Warning: Uniform '" << name << "' not found in shader program." << std::endl;
         }
-        m_uniformLocationCache[name] = location;
+        m_uniformLocationCache.emplace(std::move(ownedName), location);
         return location;
     }
 
-    GLuint Shader::GetUniformLocation(const std::string &name) const
+    GLuint Shader::GetUniformLocation(std::string_view name) const
     {
         return ResolveUniformLocation(name, true);
     }
 
-    bool Shader::HasUniform(const std::string &name) const
+    bool Shader::HasUniform(std::string_view name) const
     {
         return ResolveUniformLocation(name, false) != -1;
     }
 
-    void Shader::SetUniform(const std::string &name, const glm::mat4 &value) const
+    void Shader::SetUniform(std::string_view name, const glm::mat4 &value) const
     {
         GLint location = GetUniformLocation(name);
         if (location != -1)
@@ -306,7 +311,7 @@ namespace PlutoGE::render
         }
     }
 
-    void Shader::SetUniform(const std::string &name, const glm::vec4 &value) const
+    void Shader::SetUniform(std::string_view name, const glm::vec4 &value) const
     {
         GLint location = GetUniformLocation(name);
         if (location != -1)
@@ -315,7 +320,7 @@ namespace PlutoGE::render
         }
     }
 
-    void Shader::SetUniform(const std::string &name, const glm::vec3 &value) const
+    void Shader::SetUniform(std::string_view name, const glm::vec3 &value) const
     {
         GLint location = GetUniformLocation(name);
         if (location != -1)
@@ -324,7 +329,7 @@ namespace PlutoGE::render
         }
     }
 
-    void Shader::SetUniform(const std::string &name, const glm::vec2 &value) const
+    void Shader::SetUniform(std::string_view name, const glm::vec2 &value) const
     {
         GLint location = GetUniformLocation(name);
         if (location != -1)
@@ -333,7 +338,7 @@ namespace PlutoGE::render
         }
     }
 
-    void Shader::SetUniform(const std::string &name, float value) const
+    void Shader::SetUniform(std::string_view name, float value) const
     {
         GLint location = GetUniformLocation(name);
         if (location != -1)
@@ -342,7 +347,7 @@ namespace PlutoGE::render
         }
     }
 
-    void Shader::SetUniform(const std::string &name, int value) const
+    void Shader::SetUniform(std::string_view name, int value) const
     {
         GLint location = GetUniformLocation(name);
         if (location != -1)
@@ -351,7 +356,7 @@ namespace PlutoGE::render
         }
     }
 
-    void Shader::SetUniform(const std::string &name, const Texture *texture, int slot) const
+    void Shader::SetUniform(std::string_view name, const Texture *texture, int slot) const
     {
         if (!texture)
         {
@@ -367,7 +372,7 @@ namespace PlutoGE::render
         }
     }
 
-    bool Shader::TrySetUniform(const std::string &name, const glm::vec4 &value) const
+    bool Shader::TrySetUniform(std::string_view name, const glm::vec4 &value) const
     {
         const GLint location = ResolveUniformLocation(name, false);
         if (location == -1)
@@ -379,7 +384,7 @@ namespace PlutoGE::render
         return true;
     }
 
-    bool Shader::TrySetUniform(const std::string &name, const glm::vec3 &value) const
+    bool Shader::TrySetUniform(std::string_view name, const glm::vec3 &value) const
     {
         const GLint location = ResolveUniformLocation(name, false);
         if (location == -1)
@@ -391,7 +396,7 @@ namespace PlutoGE::render
         return true;
     }
 
-    bool Shader::TrySetUniform(const std::string &name, float value) const
+    bool Shader::TrySetUniform(std::string_view name, float value) const
     {
         const GLint location = ResolveUniformLocation(name, false);
         if (location == -1)
@@ -403,7 +408,7 @@ namespace PlutoGE::render
         return true;
     }
 
-    bool Shader::TrySetUniform(const std::string &name, int value) const
+    bool Shader::TrySetUniform(std::string_view name, int value) const
     {
         const GLint location = ResolveUniformLocation(name, false);
         if (location == -1)
@@ -415,7 +420,7 @@ namespace PlutoGE::render
         return true;
     }
 
-    bool Shader::TrySetUniform(const std::string &name, const Texture *texture, int slot) const
+    bool Shader::TrySetUniform(std::string_view name, const Texture *texture, int slot) const
     {
         if (!texture)
         {
@@ -433,7 +438,7 @@ namespace PlutoGE::render
         return true;
     }
 
-    bool Shader::TrySetUniform(const std::string &name, const glm::vec2 &value) const
+    bool Shader::TrySetUniform(std::string_view name, const glm::vec2 &value) const
     {
         const GLint location = ResolveUniformLocation(name, false);
         if (location == -1)

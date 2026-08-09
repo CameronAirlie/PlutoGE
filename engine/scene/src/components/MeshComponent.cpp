@@ -1184,6 +1184,12 @@ namespace PlutoGE::scene
     glm::mat4 MeshComponent::GetMeshOffsetTransform() const
     {
         const auto *source = FindMeshOffsetSource();
+        if (source->m_meshPositionOffset == glm::vec3(0.0f) &&
+            source->m_meshRotationOffset == glm::vec3(0.0f))
+        {
+            return glm::mat4(1.0f);
+        }
+
         glm::mat4 transform(1.0f);
         transform = glm::translate(transform, source->m_meshPositionOffset);
         transform = glm::rotate(transform, glm::radians(source->m_meshRotationOffset.x), glm::vec3(1.0f, 0.0f, 0.0f));
@@ -1224,9 +1230,21 @@ namespace PlutoGE::scene
 
     glm::mat4 MeshComponent::GetSubmeshOffsetTransform(size_t submeshIndex) const
     {
-        glm::mat4 transform(1.0f);
-        transform = glm::translate(transform, GetSubmeshPositionOffset(submeshIndex));
+        if (submeshIndex >= m_submeshPositionOffsets.size() &&
+            submeshIndex >= m_submeshRotationOffsets.size())
+        {
+            return glm::mat4(1.0f);
+        }
+
+        const glm::vec3 position = GetSubmeshPositionOffset(submeshIndex);
         const glm::vec3 rotation = GetSubmeshRotationOffset(submeshIndex);
+        if (position == glm::vec3(0.0f) && rotation == glm::vec3(0.0f))
+        {
+            return glm::mat4(1.0f);
+        }
+
+        glm::mat4 transform(1.0f);
+        transform = glm::translate(transform, position);
         transform = glm::rotate(transform, glm::radians(rotation.x), glm::vec3(1.0f, 0.0f, 0.0f));
         transform = glm::rotate(transform, glm::radians(rotation.y), glm::vec3(0.0f, 1.0f, 0.0f));
         transform = glm::rotate(transform, glm::radians(rotation.z), glm::vec3(0.0f, 0.0f, 1.0f));

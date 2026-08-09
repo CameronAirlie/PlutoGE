@@ -2,6 +2,7 @@
 
 #include <glad/glad.h>
 #include <string>
+#include <string_view>
 #include <iostream>
 #include <unordered_map>
 #include <vector>
@@ -2196,20 +2197,20 @@ void main()
 
         static void ResetStateCache();
 
-        bool HasUniform(const std::string &name) const;
-        void SetUniform(const std::string &name, const glm::mat4 &value) const;
-        void SetUniform(const std::string &name, const glm::vec4 &value) const;
-        void SetUniform(const std::string &name, const glm::vec3 &value) const;
-        void SetUniform(const std::string &name, const glm::vec2 &value) const;
-        void SetUniform(const std::string &name, float value) const;
-        void SetUniform(const std::string &name, int value) const;
-        void SetUniform(const std::string &name, const Texture *texture, int slot) const;
-        bool TrySetUniform(const std::string &name, const glm::vec4 &value) const;
-        bool TrySetUniform(const std::string &name, const glm::vec3 &value) const;
-        bool TrySetUniform(const std::string &name, float value) const;
-        bool TrySetUniform(const std::string &name, int value) const;
-        bool TrySetUniform(const std::string &name, const Texture *texture, int slot) const;
-        bool TrySetUniform(const std::string &name, const glm::vec2 &value) const;
+        bool HasUniform(std::string_view name) const;
+        void SetUniform(std::string_view name, const glm::mat4 &value) const;
+        void SetUniform(std::string_view name, const glm::vec4 &value) const;
+        void SetUniform(std::string_view name, const glm::vec3 &value) const;
+        void SetUniform(std::string_view name, const glm::vec2 &value) const;
+        void SetUniform(std::string_view name, float value) const;
+        void SetUniform(std::string_view name, int value) const;
+        void SetUniform(std::string_view name, const Texture *texture, int slot) const;
+        bool TrySetUniform(std::string_view name, const glm::vec4 &value) const;
+        bool TrySetUniform(std::string_view name, const glm::vec3 &value) const;
+        bool TrySetUniform(std::string_view name, float value) const;
+        bool TrySetUniform(std::string_view name, int value) const;
+        bool TrySetUniform(std::string_view name, const Texture *texture, int slot) const;
+        bool TrySetUniform(std::string_view name, const glm::vec2 &value) const;
 
     protected:
         friend class Graphics;
@@ -2217,11 +2218,20 @@ void main()
 
     private:
         static Shader *CreateShaderFromSource(const ShaderSource &source);
-        GLint ResolveUniformLocation(const std::string &name, bool warnIfMissing) const;
+        struct TransparentStringHash
+        {
+            using is_transparent = void;
+            std::size_t operator()(std::string_view value) const noexcept
+            {
+                return std::hash<std::string_view>{}(value);
+            }
+        };
+
+        GLint ResolveUniformLocation(std::string_view name, bool warnIfMissing) const;
 
         ShaderConfig m_config;
         GLuint m_programID = 0; // OpenGL shader program ID
-        mutable std::unordered_map<std::string, GLint> m_uniformLocationCache;
-        GLuint GetUniformLocation(const std::string &name) const;
+        mutable std::unordered_map<std::string, GLint, TransparentStringHash, std::equal_to<>> m_uniformLocationCache;
+        GLuint GetUniformLocation(std::string_view name) const;
     };
 }

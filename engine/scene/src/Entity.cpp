@@ -509,7 +509,12 @@ namespace PlutoGE::scene
     {
         for (const auto &component : m_componentStorage)
         {
-            if (component->IsEnabled())
+            // Mesh components are passive render data. Calling and profiling
+            // their empty Update once per instance dominated large static
+            // scenes, while rendering already visits them through Scene's
+            // dedicated mesh registry.
+            if (component->IsEnabled() &&
+                component->GetTypeID() != GetComponentTypeID<MeshComponent>())
             {
                 const auto start = std::chrono::high_resolution_clock::now();
                 component->Update(deltaTime);

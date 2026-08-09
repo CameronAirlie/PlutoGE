@@ -360,6 +360,10 @@ namespace PlutoGE::assets
                 MeshAssetMetadata metadata;
                 if (ReadGeneratedMeshAsset(input, ignoredConfig, ignoredMaterialReferences, metadata))
                 {
+                    // Preserve the decoded material table as well as metadata. This
+                    // keeps later scene serialization from seeing an empty default
+                    // table when metadata happened to be queried first.
+                    m_meshMaterialReferenceCache[assetReference] = std::move(ignoredMaterialReferences);
                     m_meshMetadataCache[assetReference] = std::move(metadata);
                 }
             }

@@ -1586,14 +1586,34 @@ namespace PlutoGE::ui
             return;
         }
 
-        m_undoStack.push_back(SceneHistoryEntry{.label = std::move(label), .beforeState = std::move(beforeState), .afterState = std::move(afterState)});
-        constexpr std::size_t kMaxUndoEntries = 80;
-        if (m_undoStack.size() > kMaxUndoEntries)
-        {
-            m_undoStack.erase(m_undoStack.begin());
-        }
+        PushSceneHistoryEntry(SceneHistoryEntry{.label = std::move(label), .beforeState = std::move(beforeState), .afterState = std::move(afterState)});
         m_redoStack.clear();
         MarkSceneDirty();
+    }
+
+    void EditorShell::PushSceneHistoryEntry(SceneHistoryEntry entry)
+    {
+        m_undoStack.push_back(std::move(entry));
+
+        constexpr std::size_t kMaxUndoEntries = 80;
+        constexpr std::size_t kMaxUndoBytes = 256ull * 1024ull * 1024ull;
+        std::size_t retainedBytes = 0;
+        for (const auto &historyEntry : m_undoStack)
+        {
+            retainedBytes += historyEntry.label.size();
+            retainedBytes += historyEntry.beforeState.size();
+            retainedBytes += historyEntry.afterState.size();
+        }
+
+        while (m_undoStack.size() > 1 &&
+               (m_undoStack.size() > kMaxUndoEntries || retainedBytes > kMaxUndoBytes))
+        {
+            const auto &oldest = m_undoStack.front();
+            retainedBytes -= oldest.label.size();
+            retainedBytes -= oldest.beforeState.size();
+            retainedBytes -= oldest.afterState.size();
+            m_undoStack.erase(m_undoStack.begin());
+        }
     }
 
     bool EditorShell::BeginSceneEdit(std::string label)
@@ -1642,12 +1662,7 @@ namespace PlutoGE::ui
             return false;
         }
 
-        m_undoStack.push_back(SceneHistoryEntry{.label = label.empty() ? "Scene Edit" : label, .beforeState = beforeState, .afterState = std::move(afterState)});
-        constexpr std::size_t kMaxUndoEntries = 80;
-        if (m_undoStack.size() > kMaxUndoEntries)
-        {
-            m_undoStack.erase(m_undoStack.begin());
-        }
+        PushSceneHistoryEntry(SceneHistoryEntry{.label = label.empty() ? "Scene Edit" : label, .beforeState = beforeState, .afterState = std::move(afterState)});
         m_redoStack.clear();
         MarkSceneDirty();
         return true;

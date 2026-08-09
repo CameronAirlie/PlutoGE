@@ -353,9 +353,18 @@ void main(){mat4 skin=mat4(1);if(uUseSkinning!=0){float w=aWeights.x+aWeights.y+
         voxel.geometrySource = R"(#version 430 core
 layout(triangles) in; layout(triangle_strip,max_vertices=3) out;
 in VS { vec3 p; vec3 n; vec2 uv; } vin[]; out GS { vec3 p; vec3 n; vec2 uv; } g;
-uniform vec3 uVolumeOrigin;uniform float uVolumeSize;
-void main(){ vec3 n=abs(cross(vin[1].p-vin[0].p,vin[2].p-vin[0].p)); int axis=n.y>n.x?(n.z>n.y?2:1):(n.z>n.x?2:0);
- for(int i=0;i<3;i++){vec3 q=(vin[i].p-uVolumeOrigin)/uVolumeSize*2.0-1.0;g.p=vin[i].p;g.n=vin[i].n;g.uv=vin[i].uv;gl_Position=axis==0?vec4(q.zy,0,1):axis==1?vec4(q.xz,0,1):vec4(q.xy,0,1);EmitVertex();}EndPrimitive();})";
+uniform vec3 uVolumeOrigin,uEmission;uniform float uVolumeSize;uniform int uVoxelResolution;
+vec2 projected(vec3 q,int axis){return axis==0?q.zy:axis==1?q.xz:q.xy;}
+void main(){ vec3 faceNormal=abs(cross(vin[1].p-vin[0].p,vin[2].p-vin[0].p)); int axis=faceNormal.y>faceNormal.x?(faceNormal.z>faceNormal.y?2:1):(faceNormal.z>faceNormal.x?2:0);
+ vec2 projectedPosition[3];for(int i=0;i<3;i++){vec3 q=(vin[i].p-uVolumeOrigin)/uVolumeSize*2.0-1.0;projectedPosition[i]=projected(q,axis);}
+ // Ordinary rasterization can completely miss sub-voxel emissive triangles.
+ // Expand only their raster footprint by half a voxel. The interpolated world
+ // position remains on the original triangle, so this improves coverage without
+ // moving the radiance source or thickening non-emissive occluders.
+ if(any(greaterThan(uEmission,vec3(0)))&&uVoxelResolution>0){float area=(projectedPosition[1].x-projectedPosition[0].x)*(projectedPosition[2].y-projectedPosition[0].y)-(projectedPosition[1].y-projectedPosition[0].y)*(projectedPosition[2].x-projectedPosition[0].x);float orientation=area>=0?1.0:-1.0;float margin=1.41421356/float(uVoxelResolution);
+  for(int i=0;i<3;i++){int previous=(i+2)%3,next=(i+1)%3;vec2 incoming=projectedPosition[i]-projectedPosition[previous],outgoing=projectedPosition[next]-projectedPosition[i];vec2 n0=orientation*vec2(incoming.y,-incoming.x)/max(length(incoming),1e-7);vec2 n1=orientation*vec2(outgoing.y,-outgoing.x)/max(length(outgoing),1e-7);vec2 miter=n0+n1;float miterLength=length(miter);if(miterLength>1e-6){miter/=miterLength;projectedPosition[i]+=miter*(margin/max(dot(miter,n1),.25));}}
+ }
+ for(int i=0;i<3;i++){g.p=vin[i].p;g.n=vin[i].n;g.uv=vin[i].uv;gl_Position=vec4(projectedPosition[i],0,1);EmitVertex();}EndPrimitive();})";
         voxel.fragmentSource = R"(#version 430 core
 layout(r32ui,binding=0) uniform uimage3D uAccumulationR;layout(r32ui,binding=1) uniform uimage3D uAccumulationG;layout(r32ui,binding=2) uniform uimage3D uAccumulationB;layout(r32ui,binding=3) uniform uimage3D uAccumulationCount;layout(r32ui,binding=4) uniform uimage3D uAccumulationOpacity;in GS { vec3 p; vec3 n; vec2 uv; } g;
 uniform vec3 uVolumeOrigin,uEmission,uLightDirection,uLightColor;uniform float uVolumeSize,uLightIntensity;uniform int uHasInjectionLight,uInjectionLightHasShadow;
@@ -914,6 +923,7 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
         m_voxelizationShader->Bind();
         m_voxelizationShader->SetUniform("uVolumeOrigin", cascade.pendingOrigin);
         m_voxelizationShader->SetUniform("uVolumeSize", cascade.size);
+        m_voxelizationShader->SetUniform("uVoxelResolution", m_resolution);
         m_voxelizationShader->SetUniform("uHasInjectionLight", cascade.pendingHasInjectionLight ? 1 : 0);
         m_voxelizationShader->SetUniform("uLightDirection", cascade.pendingLightDirection);
         m_voxelizationShader->SetUniform("uLightColor", cascade.pendingLightColor);

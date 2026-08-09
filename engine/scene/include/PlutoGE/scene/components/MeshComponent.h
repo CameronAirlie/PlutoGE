@@ -179,11 +179,7 @@ namespace PlutoGE::scene
 
             m_materialAssetReferences[materialSlotIndex] = materialAssetReference;
         }
-        const std::string &GetMaterialAssetForMaterialSlot(size_t materialSlotIndex) const
-        {
-            static const std::string empty;
-            return materialSlotIndex < m_materialAssetReferences.size() ? m_materialAssetReferences[materialSlotIndex] : empty;
-        }
+        const std::string &GetMaterialAssetForMaterialSlot(size_t materialSlotIndex) const;
         render::Material *GetMaterialForSubmesh(size_t submeshIndex) const
         {
             if (submeshIndex < m_submeshMaterials.size() && m_submeshMaterials[submeshIndex])

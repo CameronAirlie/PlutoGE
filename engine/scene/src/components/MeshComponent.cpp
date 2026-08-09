@@ -473,6 +473,27 @@ namespace PlutoGE::scene
         return uniqueMaterial;
     }
 
+    const std::string &MeshComponent::GetMaterialAssetForMaterialSlot(size_t materialSlotIndex) const
+    {
+        if (materialSlotIndex < m_materialAssetReferences.size() &&
+            !m_materialAssetReferences[materialSlotIndex].empty())
+        {
+            return m_materialAssetReferences[materialSlotIndex];
+        }
+
+        if (m_submeshIndex >= 0 && !m_sourceMeshPath.empty())
+        {
+            const auto &defaults = core::Engine::GetInstance().GetAssetManager().GetMeshAssetMaterialReferences(m_sourceMeshPath);
+            if (materialSlotIndex < defaults.size())
+            {
+                return defaults[materialSlotIndex];
+            }
+        }
+
+        static const std::string empty;
+        return empty;
+    }
+
     render::Material *MeshComponent::CreateUniqueMaterialForSubmesh(size_t submeshIndex)
     {
         auto *sourceMaterial = GetMaterialForSubmesh(submeshIndex);
@@ -603,7 +624,6 @@ namespace PlutoGE::scene
             {"UseGeneratedLods", PropertyType::Bool, m_useGeneratedLods ? "true" : "false"},
             {"MeshPositionOffset", PropertyType::Vec3, SerializeVec3(m_meshPositionOffset)},
             {"MeshRotationOffset", PropertyType::Vec3, SerializeVec3(m_meshRotationOffset)},
-            {"MaterialSlotCount", PropertyType::Int, std::to_string(m_materials.size())},
         };
         if (!m_generatedLightmapUvSubmeshes.empty())
         {
@@ -619,7 +639,14 @@ namespace PlutoGE::scene
             properties.push_back({"GeneratedLightmapUvSubmeshes", PropertyType::String, generatedSubmeshes});
         }
 
-        for (size_t materialSlotIndex = 0; materialSlotIndex < m_materials.size(); ++materialSlotIndex)
+        const auto *assetMaterialReferences = m_sourceMeshPath.empty()
+                                                  ? nullptr
+                                                  : &core::Engine::GetInstance().GetAssetManager().GetMeshAssetMaterialReferences(m_sourceMeshPath);
+        // An isolated submesh entity inherits the model asset's material table.
+        // Its editable per-part material belongs in SubmeshOverrides, not in a
+        // private copy of every model material slot.
+        const size_t materialSlotCountToSerialize = m_submeshIndex >= 0 ? 0 : m_materials.size();
+        for (size_t materialSlotIndex = 0; materialSlotIndex < materialSlotCountToSerialize; ++materialSlotIndex)
         {
             auto *material = GetMaterialForMaterialSlot(materialSlotIndex);
             if (!material)
@@ -632,6 +659,14 @@ namespace PlutoGE::scene
             const auto &materialAssetReference = GetMaterialAssetForMaterialSlot(materialSlotIndex);
             if (!materialAssetReference.empty())
             {
+                // Mesh assets already own their default material table. Repeating that
+                // table on every submesh entity made large imported hierarchies grow
+                // quadratically. Only persist an actual per-component override.
+                if (assetMaterialReferences && materialSlotIndex < assetMaterialReferences->size() &&
+                    materialAssetReference == (*assetMaterialReferences)[materialSlotIndex])
+                {
+                    continue;
+                }
                 properties.push_back({prefix + "MaterialAsset", PropertyType::String, materialAssetReference});
                 continue;
             }
@@ -684,6 +719,8 @@ namespace PlutoGE::scene
         std::uint64_t modelObjectId = 0;
         bool useGeneratedLods = m_useGeneratedLods;
         std::vector<size_t> generatedLightmapUvSubmeshes;
+        std::vector<std::string> assetMaterialReferences;
+        const std::vector<std::string> *serializedAssetMaterialReferences = nullptr;
 
         for (const auto &property : properties)
         {
@@ -714,6 +751,9 @@ namespace PlutoGE::scene
             else if (property.name == "MeshAssetReference" || property.name == "SourceMeshPath")
             {
                 sourceMeshPath = property.value;
+                serializedAssetMaterialReferences = sourceMeshPath.empty()
+                                                        ? nullptr
+                                                        : &core::Engine::GetInstance().GetAssetManager().GetMeshAssetMaterialReferences(sourceMeshPath);
             }
             else if (property.name == "UseGeneratedLods")
             {
@@ -768,6 +808,13 @@ namespace PlutoGE::scene
             }
             else if (property.name.rfind(kMaterialSlotPrefix, 0) == 0)
             {
+                if (m_submeshIndex >= 0)
+                {
+                    // Legacy imported hierarchies duplicated the full model table
+                    // into every isolated child. The asset reload below restores
+                    // the shared defaults; real child edits use SubmeshOverrides.
+                    continue;
+                }
                 const std::string remainder = property.name.substr(std::char_traits<char>::length(kMaterialSlotPrefix));
                 const auto separatorIndex = remainder.find('.');
                 if (separatorIndex == std::string::npos)
@@ -777,6 +824,16 @@ namespace PlutoGE::scene
 
                 const size_t materialSlotIndex = static_cast<size_t>(std::stoul(remainder.substr(0, separatorIndex)));
                 const std::string fieldName = remainder.substr(separatorIndex + 1);
+                if (fieldName == "MaterialAsset" && serializedAssetMaterialReferences)
+                {
+                    const auto &defaults = *serializedAssetMaterialReferences;
+                    if (materialSlotIndex < defaults.size() && property.value == defaults[materialSlotIndex])
+                    {
+                        // Fast-path legacy expanded scenes: do not build thousands of
+                        // map/string override records for inherited asset defaults.
+                        continue;
+                    }
+                }
                 auto &serializedMaterial = serializedMaterials[materialSlotIndex];
                 DeserializeInlineMaterialField(serializedMaterial, fieldName, property.value);
             }
@@ -811,20 +868,33 @@ namespace PlutoGE::scene
             {
                 SetMesh(builtinMesh);
                 const auto &materialReferences = engine.GetAssetManager().GetMeshAssetMaterialReferences(sourceMeshPath);
+                assetMaterialReferences = materialReferences;
                 std::vector<render::Material *> loadedMaterials;
-                loadedMaterials.reserve((std::max<std::size_t>)(materialReferences.size(), 1));
-                for (const auto &materialReference : materialReferences)
+                if (m_submeshIndex >= 0 && static_cast<std::size_t>(m_submeshIndex) < builtinMesh->GetSubmeshCount())
                 {
-                    loadedMaterials.push_back(engine.GetAssetManager().LoadMaterialAsset(materialReference));
+                    const std::size_t materialSlot = builtinMesh->GetSubmesh(static_cast<std::size_t>(m_submeshIndex)).materialIndex;
+                    if (materialSlot < materialReferences.size())
+                    {
+                        loadedMaterials.push_back(engine.GetAssetManager().LoadMaterialAsset(materialReferences[materialSlot]));
+                    }
+                }
+                else
+                {
+                    loadedMaterials.reserve((std::max<std::size_t>)(materialReferences.size(), 1));
+                    for (const auto &materialReference : materialReferences)
+                    {
+                        loadedMaterials.push_back(engine.GetAssetManager().LoadMaterialAsset(materialReference));
+                    }
                 }
                 if (loadedMaterials.empty())
-                {
                     loadedMaterials.push_back(engine.GetAssetManager().LoadMaterialAsset(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference)));
-                }
                 SetMaterials(loadedMaterials);
-                for (size_t materialSlotIndex = 0; materialSlotIndex < materialReferences.size(); ++materialSlotIndex)
+                if (m_submeshIndex < 0)
                 {
-                    SetMaterialAssetForMaterialSlot(materialSlotIndex, materialReferences[materialSlotIndex]);
+                    for (size_t materialSlotIndex = 0; materialSlotIndex < materialReferences.size(); ++materialSlotIndex)
+                    {
+                        SetMaterialAssetForMaterialSlot(materialSlotIndex, materialReferences[materialSlotIndex]);
+                    }
                 }
                 m_sourceMeshPath = sourceMeshPath;
                 m_modelAssetId = modelAssetId;
@@ -860,6 +930,16 @@ namespace PlutoGE::scene
 
         for (const auto &[materialSlotIndex, serializedMaterial] : serializedMaterials)
         {
+            // Older scene files stored the complete asset material table on every
+            // MeshComponent. Treat matching entries as inherited defaults so the
+            // first subsequent save automatically migrates them to the compact form.
+            if (serializedMaterial.materialAsset.has_value() &&
+                materialSlotIndex < assetMaterialReferences.size() &&
+                *serializedMaterial.materialAsset == assetMaterialReferences[materialSlotIndex])
+            {
+                continue;
+            }
+
             auto *material = CreateUniqueMaterialForMaterialSlot(materialSlotIndex);
             if (!material)
             {

@@ -1004,8 +1004,17 @@ namespace PlutoGE::ui
                 return false;
             }
 
-            meshComponent.SetMaterialForMaterialSlot(materialSlotIndex, materialAsset);
-            meshComponent.SetMaterialAssetForMaterialSlot(materialSlotIndex, materialAssetReference);
+            if (meshComponent.GetSubmeshIndex() >= 0)
+            {
+                const auto submeshIndex = static_cast<std::size_t>(meshComponent.GetSubmeshIndex());
+                meshComponent.SetMaterialForSubmesh(submeshIndex, materialAsset);
+                meshComponent.SetMaterialAssetForSubmesh(submeshIndex, materialAssetReference);
+            }
+            else
+            {
+                meshComponent.SetMaterialForMaterialSlot(materialSlotIndex, materialAsset);
+                meshComponent.SetMaterialAssetForMaterialSlot(materialSlotIndex, materialAssetReference);
+            }
             return true;
         }
 
@@ -3621,7 +3630,10 @@ namespace PlutoGE::ui
                         ImGui::Text("Slot %zu", materialSlotIndex);
                         ImGui::SameLine();
                         ImGui::TextDisabled("(drop a material asset here)");
-                        const std::string &slotUsageSummary = materialSlotUsageSummaries[materialSlotIndex];
+                        static const std::string emptyUsageSummary;
+                        const std::string &slotUsageSummary = materialSlotIndex < materialSlotUsageSummaries.size()
+                                                                  ? materialSlotUsageSummaries[materialSlotIndex]
+                                                                  : emptyUsageSummary;
                         if (!slotUsageSummary.empty())
                         {
                             ImGui::TextDisabled("%s", slotUsageSummary.c_str());

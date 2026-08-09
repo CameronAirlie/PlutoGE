@@ -1317,28 +1317,15 @@ namespace PlutoGE::ui
                     const glm::vec3 localBoundsHitPoint = localOrigin + localDirection * *boundsDistance;
                     const glm::vec3 worldBoundsHitPoint = glm::vec3(submeshWorldTransform * glm::vec4(localBoundsHitPoint, 1.0f));
                     const float worldBoundsDistance = glm::length(worldBoundsHitPoint - ray->origin);
-                    if (worldBoundsDistance < selectedDistance)
-                    {
-                        selectedDistance = worldBoundsDistance;
-                        selectedEntity = entity;
-                        if (selectedSubmeshIndex)
-                        {
-                            *selectedSubmeshIndex = submeshIndex;
-                        }
-                        if (debugInfo)
-                        {
-                            debugInfo->selectedSource = "bounds";
-                        }
-                    }
-
                     const std::size_t triangleCount = submesh.indexCount / 3;
                     if (useApproximateSubmeshPick || triangleCount > kMaxExactPickTrianglesPerSubmesh)
                     {
-                        const glm::vec3 worldCenter = glm::vec3(submeshWorldTransform * glm::vec4(submesh.bounds.center, 1.0f));
-                        const float approximateDistance = glm::length(worldCenter - ray->origin);
-                        if (approximateDistance < selectedDistance)
+                        // Bounds are only a broad-phase test for exact meshes. They
+                        // become the final hit solely when exact triangle picking is
+                        // intentionally disabled for animated or enormous submeshes.
+                        if (worldBoundsDistance < selectedDistance)
                         {
-                            selectedDistance = approximateDistance;
+                            selectedDistance = worldBoundsDistance;
                             selectedEntity = entity;
                             if (selectedSubmeshIndex)
                             {

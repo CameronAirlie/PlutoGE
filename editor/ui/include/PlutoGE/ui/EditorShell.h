@@ -276,6 +276,7 @@ namespace PlutoGE::ui
         bool BuildAndRunProjectToPath(const std::filesystem::path &destinationExecutablePath);
         bool ExportScriptAuthoringSdk(const std::filesystem::path &destinationExecutablePath, std::string *errorMessage = nullptr) const;
         bool CaptureSceneState(std::string &state, std::string *errorMessage = nullptr) const;
+        void PushSceneHistoryEntry(SceneHistoryEntry entry);
         bool RestoreSceneState(const std::string &state, std::string *errorMessage = nullptr, bool markDirty = true);
         bool StartEditorRuntime();
         bool StopEditorRuntime();

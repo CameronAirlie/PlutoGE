@@ -4,6 +4,7 @@
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/Texture.h"
+#include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/ui/EditorShell.h"
 #include "PlutoGE/ui/panels/ContentBrowserPanel.h"
 
@@ -663,6 +664,11 @@ namespace PlutoGE::ui
             std::string errorMessage;
             if (core::Engine::GetInstance().GetAssetManager().SaveMaterialAsset(reference, config, &errorMessage))
             {
+                auto &engine = core::Engine::GetInstance();
+                if (auto *scene = engine.GetScene())
+                {
+                    scene->RefreshMaterialAsset(reference, engine.GetAssetManager().LoadMaterialAsset(reference));
+                }
                 m_dirty = false;
                 editorShell.MarkSceneDirty();
                 editorShell.Log(EditorShell::ConsoleSeverity::Info, "Saved material: " + reference);

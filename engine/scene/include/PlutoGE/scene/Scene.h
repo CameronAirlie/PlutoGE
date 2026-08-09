@@ -12,6 +12,7 @@
 
 namespace PlutoGE::render
 {
+    class Material;
     class Texture;
 }
 
@@ -110,6 +111,10 @@ namespace PlutoGE::scene
         Entity *AddEntity(std::unique_ptr<Entity> entity, Entity *parent = nullptr);
         void RemoveEntity(Entity *entity);
         bool DestroyEntity(EntityID entityId);
+        std::size_t RefreshMaterialAsset(const std::string &materialAssetReference, render::Material *material);
+        std::size_t RemapMaterialAsset(const std::string &oldMaterialAssetReference,
+                                       const std::string &newMaterialAssetReference,
+                                       render::Material *material);
         const std::vector<Entity *> &GetRootEntities() const { return m_rootEntities; }
 
         void StartRuntime();

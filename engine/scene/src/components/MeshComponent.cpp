@@ -502,6 +502,102 @@ namespace PlutoGE::scene
         return uniqueMaterial;
     }
 
+    bool MeshComponent::RefreshMaterialAsset(const std::string &materialAssetReference, render::Material *material)
+    {
+        if (materialAssetReference.empty() || !material)
+        {
+            return false;
+        }
+
+        bool changed = false;
+        for (std::size_t slotIndex = 0; slotIndex < m_materialAssetReferences.size(); ++slotIndex)
+        {
+            if (m_materialAssetReferences[slotIndex] == materialAssetReference)
+            {
+                if (slotIndex >= m_materials.size())
+                    m_materials.resize(slotIndex + 1, nullptr);
+                m_materials[slotIndex] = material;
+                if (slotIndex == 0 || !m_material)
+                    m_material = material;
+                changed = true;
+            }
+        }
+
+        for (std::size_t submeshIndex = 0; submeshIndex < m_submeshMaterialAssetReferences.size(); ++submeshIndex)
+        {
+            if (m_submeshMaterialAssetReferences[submeshIndex] == materialAssetReference)
+            {
+                if (submeshIndex >= m_submeshMaterials.size())
+                    m_submeshMaterials.resize(submeshIndex + 1, nullptr);
+                m_submeshMaterials[submeshIndex] = material;
+                changed = true;
+            }
+        }
+
+        // Compact imported children do not retain a private copy of the model's
+        // material-reference table. Resolve their one inherited slot on demand.
+        if (m_submeshIndex >= 0 && m_mesh && static_cast<std::size_t>(m_submeshIndex) < m_mesh->GetSubmeshCount())
+        {
+            const std::size_t slotIndex = m_mesh->GetSubmesh(static_cast<std::size_t>(m_submeshIndex)).materialIndex;
+            if (GetMaterialAssetForMaterialSlot(slotIndex) == materialAssetReference)
+            {
+                if (m_materials.empty())
+                    m_materials.push_back(material);
+                else
+                    m_materials[0] = material;
+                m_material = material;
+                changed = true;
+            }
+        }
+
+        if (changed)
+        {
+            MarkRenderCommandsDirty();
+        }
+        return changed;
+    }
+
+    bool MeshComponent::RemapMaterialAsset(const std::string &oldMaterialAssetReference,
+                                           const std::string &newMaterialAssetReference,
+                                           render::Material *material)
+    {
+        bool changed = false;
+        for (std::size_t slotIndex = 0; slotIndex < m_materialAssetReferences.size(); ++slotIndex)
+        {
+            if (m_materialAssetReferences[slotIndex] == oldMaterialAssetReference)
+            {
+                m_materialAssetReferences[slotIndex] = newMaterialAssetReference;
+                if (material)
+                {
+                    if (slotIndex >= m_materials.size()) m_materials.resize(slotIndex + 1, nullptr);
+                    m_materials[slotIndex] = material;
+                    if (slotIndex == 0 || !m_material) m_material = material;
+                }
+                changed = true;
+            }
+        }
+        for (std::size_t submeshIndex = 0; submeshIndex < m_submeshMaterialAssetReferences.size(); ++submeshIndex)
+        {
+            if (m_submeshMaterialAssetReferences[submeshIndex] == oldMaterialAssetReference)
+            {
+                m_submeshMaterialAssetReferences[submeshIndex] = newMaterialAssetReference;
+                if (material)
+                {
+                    if (submeshIndex >= m_submeshMaterials.size()) m_submeshMaterials.resize(submeshIndex + 1, nullptr);
+                    m_submeshMaterials[submeshIndex] = material;
+                }
+                changed = true;
+            }
+        }
+
+        // The generated mesh binding has already been updated by the extractor,
+        // so this also catches compact isolated children without local slot arrays.
+        if (RefreshMaterialAsset(newMaterialAssetReference, material))
+            changed = true;
+        if (changed) MarkRenderCommandsDirty();
+        return changed;
+    }
+
     Entity *MeshComponent::CreateSkeletonAttachmentEntity(std::size_t jointIndex)
     {
         auto *owner = GetOwner();

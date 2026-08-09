@@ -3661,6 +3661,13 @@ namespace PlutoGE::ui
                             }
                             ImGui::EndCombo();
                         }
+                        ImGui::BeginDisabled(materialAssetReference.empty() ||
+                                             assets::Project::IsEngineAssetReference(materialAssetReference));
+                        if (ImGui::Button("Open Material Editor"))
+                        {
+                            editorShell.OpenMaterialAsset(materialAssetReference);
+                        }
+                        ImGui::EndDisabled();
 
                         if (auto droppedMaterialReference = AcceptDroppedMaterialAssetReference())
                         {
@@ -3788,6 +3795,13 @@ namespace PlutoGE::ui
                                         }
                                         ImGui::EndCombo();
                                     }
+                                    ImGui::BeginDisabled(activeMaterialAssetReference.empty() ||
+                                                         assets::Project::IsEngineAssetReference(activeMaterialAssetReference));
+                                    if (ImGui::Button("Open Material Editor"))
+                                    {
+                                        editorShell.OpenMaterialAsset(activeMaterialAssetReference);
+                                    }
+                                    ImGui::EndDisabled();
 
                                     if (auto droppedMaterialReference = AcceptDroppedMaterialAssetReference())
                                     {

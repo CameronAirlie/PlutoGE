@@ -309,6 +309,17 @@ namespace PlutoGE::assets
                     MeshAssetMetadata metadata;
                     if (ReadGeneratedMeshAsset(input, config, materialReferences, metadata))
                     {
+                        const std::filesystem::path overridePath = std::filesystem::path(meshPath).concat(".materials");
+                        std::ifstream overrideInput(overridePath);
+                        if (overrideInput.is_open())
+                        {
+                            std::vector<std::string> overrides;
+                            std::string reference;
+                            while (std::getline(overrideInput, reference))
+                                overrides.push_back(std::move(reference));
+                            if (overrides.size() == materialReferences.size())
+                                materialReferences = std::move(overrides);
+                        }
                         mesh = render::Mesh::FromConfig(std::move(config));
                         m_meshMaterialReferenceCache[assetReference] = std::move(materialReferences);
                         m_meshMetadataCache[assetReference] = std::move(metadata);
@@ -341,6 +352,43 @@ namespace PlutoGE::assets
         return found == m_meshMaterialReferenceCache.end() ? empty : found->second;
     }
 
+    bool AssetManager::ReplaceMeshAssetMaterialReference(const std::string &meshAssetReference,
+                                                         const std::string &oldMaterialReference,
+                                                         const std::string &newMaterialReference,
+                                                         std::string *errorMessage)
+    {
+        auto materialReferences = GetMeshAssetMaterialReferences(meshAssetReference);
+        bool changed = false;
+        for (auto &reference : materialReferences)
+        {
+            if (reference == oldMaterialReference)
+            {
+                reference = newMaterialReference;
+                changed = true;
+            }
+        }
+        if (!changed)
+            return true;
+
+        const std::string meshPath = ResolveAssetPath(meshAssetReference);
+        const std::filesystem::path overridePath = std::filesystem::path(meshPath).concat(".materials");
+        std::ofstream output(overridePath, std::ios::out | std::ios::trunc);
+        if (!output.is_open())
+        {
+            if (errorMessage) *errorMessage = "Failed to write extracted material bindings: " + overridePath.string();
+            return false;
+        }
+        for (const auto &reference : materialReferences)
+            output << reference << '\n';
+        if (!output.good())
+        {
+            if (errorMessage) *errorMessage = "Failed to save extracted material bindings.";
+            return false;
+        }
+        m_meshMaterialReferenceCache[meshAssetReference] = std::move(materialReferences);
+        return true;
+    }
+
     const MeshAssetMetadata &AssetManager::GetMeshAssetMetadata(const std::string &assetReference)
     {
         static const MeshAssetMetadata empty;
@@ -360,6 +408,17 @@ namespace PlutoGE::assets
                 MeshAssetMetadata metadata;
                 if (ReadGeneratedMeshAsset(input, ignoredConfig, ignoredMaterialReferences, metadata))
                 {
+                    const std::filesystem::path overridePath = std::filesystem::path(meshPath).concat(".materials");
+                    std::ifstream overrideInput(overridePath);
+                    if (overrideInput.is_open())
+                    {
+                        std::vector<std::string> overrides;
+                        std::string reference;
+                        while (std::getline(overrideInput, reference))
+                            overrides.push_back(std::move(reference));
+                        if (overrides.size() == ignoredMaterialReferences.size())
+                            ignoredMaterialReferences = std::move(overrides);
+                    }
                     // Preserve the decoded material table as well as metadata. This
                     // keeps later scene serialization from seeing an empty default
                     // table when metadata happened to be queried first.

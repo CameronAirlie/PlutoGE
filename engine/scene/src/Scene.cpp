@@ -1644,6 +1644,32 @@ namespace PlutoGE::scene
         return true;
     }
 
+    std::size_t Scene::RefreshMaterialAsset(const std::string &materialAssetReference, render::Material *material)
+    {
+        std::size_t refreshedCount = 0;
+        for (auto *meshComponent : m_meshComponents)
+        {
+            if (meshComponent && meshComponent->RefreshMaterialAsset(materialAssetReference, material))
+            {
+                ++refreshedCount;
+            }
+        }
+        return refreshedCount;
+    }
+
+    std::size_t Scene::RemapMaterialAsset(const std::string &oldMaterialAssetReference,
+                                          const std::string &newMaterialAssetReference,
+                                          render::Material *material)
+    {
+        std::size_t remappedCount = 0;
+        for (auto *meshComponent : m_meshComponents)
+        {
+            if (meshComponent && meshComponent->RemapMaterialAsset(oldMaterialAssetReference, newMaterialAssetReference, material))
+                ++remappedCount;
+        }
+        return remappedCount;
+    }
+
     void Scene::FlushPendingDestroyEntities()
     {
         if (m_pendingDestroyEntities.empty())

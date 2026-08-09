@@ -555,6 +555,7 @@ void main() {
 
         bool ExtractModelSubAsset(const assets::Project &project,
                                   const assets::ModelSubAsset &object,
+                                  const std::vector<assets::ModelSubAsset> &modelObjects,
                                   std::string_view selectedFolder,
                                   std::string *extractedReference,
                                   std::string *errorMessage)
@@ -582,7 +583,24 @@ void main() {
                 if (errorMessage) *errorMessage = "Failed to extract '" + object.name + "': " + error.message();
                 return false;
             }
-            if (extractedReference) *extractedReference = project.MakeAssetReference(destinationPath);
+            const std::string destinationReference = project.MakeAssetReference(destinationPath);
+            if (object.type == assets::ProjectAssetType::Material)
+            {
+                auto &engine = core::Engine::GetInstance();
+                for (const auto &modelObject : modelObjects)
+                {
+                    if (modelObject.type != assets::ProjectAssetType::Mesh)
+                        continue;
+                    if (!engine.GetAssetManager().ReplaceMeshAssetMaterialReference(
+                            modelObject.reference, object.reference, destinationReference, errorMessage))
+                        return false;
+                }
+
+                auto *material = engine.GetAssetManager().LoadMaterialAsset(destinationReference);
+                if (auto *scene = engine.GetScene())
+                    scene->RemapMaterialAsset(object.reference, destinationReference, material);
+            }
+            if (extractedReference) *extractedReference = destinationReference;
             return true;
         }
 
@@ -2669,10 +2687,11 @@ void main() {
             }
             if (ImGui::BeginPopupContextItem("ModelObjectContext"))
             {
-                if (ImGui::MenuItem("Extract"))
+                const char *extractLabel = object.type == assets::ProjectAssetType::Material ? "Extract and Use" : "Extract";
+                if (ImGui::MenuItem(extractLabel))
                 {
                     std::string extractedReference, extractionError;
-                    if (ExtractModelSubAsset(*project, object, m_selectedFolder, &extractedReference, &extractionError))
+                    if (ExtractModelSubAsset(*project, object, m_openModelObjects, m_selectedFolder, &extractedReference, &extractionError))
                     {
                         project->RefreshAssetRegistry();
                         m_assetCacheDirty = true;
@@ -2922,7 +2941,7 @@ void main() {
                         {
                             std::string extractedReference;
                             std::string extractionError;
-                            if (ExtractModelSubAsset(*project, object, m_selectedFolder, &extractedReference, &extractionError))
+                            if (ExtractModelSubAsset(*project, object, model.objects, m_selectedFolder, &extractedReference, &extractionError))
                             {
                                 ++extractedCount;
                             }
@@ -2957,11 +2976,12 @@ void main() {
                             const std::string objectType(assets::Project::GetAssetTypeName(object.type));
                             ImGui::TextUnformatted(objectType.c_str());
                             ImGui::TableSetColumnIndex(2);
-                            if (ImGui::SmallButton("Extract"))
+                            const char *extractLabel = object.type == assets::ProjectAssetType::Material ? "Extract & Use" : "Extract";
+                            if (ImGui::SmallButton(extractLabel))
                             {
                                 std::string extractedReference;
                                 std::string extractionError;
-                                if (ExtractModelSubAsset(*project, object, m_selectedFolder, &extractedReference, &extractionError))
+                                if (ExtractModelSubAsset(*project, object, model.objects, m_selectedFolder, &extractedReference, &extractionError))
                                 {
                                     project->RefreshAssetRegistry();
                                     m_assetCacheDirty = true;

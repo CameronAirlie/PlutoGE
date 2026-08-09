@@ -53,6 +53,10 @@ namespace PlutoGE::assets
         render::Texture *LoadTexture(const char *filePath);
         render::Mesh *LoadMeshAsset(const std::string &assetReference);
         const std::vector<std::string> &GetMeshAssetMaterialReferences(const std::string &assetReference);
+        bool ReplaceMeshAssetMaterialReference(const std::string &meshAssetReference,
+                                               const std::string &oldMaterialReference,
+                                               const std::string &newMaterialReference,
+                                               std::string *errorMessage = nullptr);
         const MeshAssetMetadata &GetMeshAssetMetadata(const std::string &assetReference);
         bool SaveMeshAsset(const std::string &assetReference,
                            const render::MeshConfig &config,

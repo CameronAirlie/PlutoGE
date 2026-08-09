@@ -224,6 +224,10 @@ namespace PlutoGE::scene
         }
         render::Material *CreateUniqueMaterialForMaterialSlot(size_t materialSlotIndex);
         render::Material *CreateUniqueMaterialForSubmesh(size_t submeshIndex);
+        bool RefreshMaterialAsset(const std::string &materialAssetReference, render::Material *material);
+        bool RemapMaterialAsset(const std::string &oldMaterialAssetReference,
+                                const std::string &newMaterialAssetReference,
+                                render::Material *material);
         Entity *CreateSkeletonAttachmentEntity(std::size_t jointIndex);
         std::size_t CompactSkeletonAttachmentEntities();
 

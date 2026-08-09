@@ -595,6 +595,8 @@ namespace PlutoGE::render
     bool RmlUiRuntime::SubscribeEvent(const std::string &document, const std::string &id, const std::string &event)
     {
         const std::string key = EventKey(document, id, event);
+        if (m_attachedEvents.contains(key))
+            return true;
         m_eventSubscriptions.insert(key);
         AttachEventSubscriptions();
         return m_attachedEvents.contains(key);

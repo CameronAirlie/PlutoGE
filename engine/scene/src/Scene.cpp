@@ -1655,10 +1655,19 @@ namespace PlutoGE::scene
 
     bool Scene::HasRmlRuntimeUI() const
     {
-        return std::any_of(m_canvasComponents.begin(), m_canvasComponents.end(), [](const auto *canvas)
+        const bool hasRmlCanvas = std::any_of(m_canvasComponents.begin(), m_canvasComponents.end(), [](const auto *canvas)
         {
             return canvas && canvas->IsEnabled() && canvas->GetBackend() == UIRenderBackend::RmlUi &&
                    canvas->GetOwner() && canvas->GetOwner()->IsActive();
+        });
+        if (hasRmlCanvas)
+            return true;
+
+        return std::any_of(m_entitiesById.begin(), m_entitiesById.end(), [](const auto &entry)
+        {
+            const auto *entity = entry.second;
+            const auto *widget = entity ? entity->GetComponent<RmlWidgetComponent>() : nullptr;
+            return entity && entity->IsActive() && widget && widget->IsEnabled() && !widget->GetSource().empty();
         });
     }
 

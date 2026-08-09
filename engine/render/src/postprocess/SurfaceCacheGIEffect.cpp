@@ -35,6 +35,7 @@ namespace PlutoGE::render
         if (m_indirectGatherTarget) m_indirectGatherTarget->Cleanup();
         for (auto &target : m_gatherHistoryTargets) if (target) target->Cleanup();
         for (auto &target : m_gatherHistoryMetadataTargets) if (target) target->Cleanup();
+        if (m_filterScratchTarget) m_filterScratchTarget->Cleanup();
         if (m_filteredGatherTarget) m_filteredGatherTarget->Cleanup();
     }
 
@@ -420,8 +421,8 @@ namespace PlutoGE::render
         ShaderSource filter;
         filter.vertexSource=debug.vertexSource;
         filter.fragmentSource=R"(#version 330 core
-            in vec2 UV;out vec4 FragColor;uniform sampler2D uIndirect,uPosition,uNormal;
-            void main(){vec3 centerP=texture(uPosition,UV).xyz,centerRaw=texture(uNormal,UV).xyz;if(length(centerRaw)<.01){FragColor=vec4(0);return;}vec3 centerN=normalize(centerRaw),sum=vec3(0);float weightSum=0,confidenceSum=0;vec2 texel=1.0/vec2(textureSize(uIndirect,0));for(int y=-2;y<=2;y++)for(int x=-2;x<=2;x++){vec2 suv=clamp(UV+vec2(x,y)*texel,vec2(0),vec2(1));vec4 value=texture(uIndirect,suv);if(value.a<=.001)continue;vec3 sampleRaw=texture(uNormal,suv).xyz;if(length(sampleRaw)<.01)continue;vec3 sampleP=texture(uPosition,suv).xyz;float normalWeight=pow(max(dot(centerN,normalize(sampleRaw)),0.0),16.0);float distanceWeight=exp(-length(sampleP-centerP)*3.0);float spatialWeight=exp(-float(x*x+y*y)*.22);float weight=normalWeight*distanceWeight*spatialWeight*mix(.25,1.0,value.a);sum+=value.rgb*weight;weightSum+=weight;confidenceSum+=value.a*weight;}FragColor=weightSum>0.0?vec4(sum/weightSum,clamp(confidenceSum/weightSum,0.0,1.0)):vec4(0);}
+            in vec2 UV;out vec4 FragColor;uniform sampler2D uIndirect,uPosition,uNormal;uniform int uStepWidth;
+            void main(){vec3 centerP=texture(uPosition,UV).xyz,centerRaw=texture(uNormal,UV).xyz;if(length(centerRaw)<.01){FragColor=vec4(0);return;}vec3 centerN=normalize(centerRaw),sum=vec3(0);float weightSum=0,confidenceSum=0;vec2 texel=float(uStepWidth)/vec2(textureSize(uIndirect,0));for(int y=-1;y<=1;y++)for(int x=-1;x<=1;x++){vec2 suv=clamp(UV+vec2(x,y)*texel,vec2(0),vec2(1));vec4 value=texture(uIndirect,suv);if(value.a<=.001)continue;vec3 sampleRaw=texture(uNormal,suv).xyz;if(length(sampleRaw)<.01)continue;vec3 sampleP=texture(uPosition,suv).xyz;float normalAgreement=max(dot(centerN,normalize(sampleRaw)),0.0);float normalWeight=pow(normalAgreement,24.0);float planeDistance=abs(dot(sampleP-centerP,centerN));float tangentDistance=length((sampleP-centerP)-centerN*dot(sampleP-centerP,centerN));float geometryWeight=exp(-planeDistance*18.0-tangentDistance*1.5);float kernel=(x==0&&y==0)?4.0:((x==0||y==0)?2.0:1.0);float weight=kernel*normalWeight*geometryWeight*mix(.2,1.0,value.a);sum+=value.rgb*weight;weightSum+=weight;confidenceSum+=value.a*weight;}FragColor=weightSum>0.0?vec4(sum/weightSum,clamp(confidenceSum/weightSum,0.0,1.0)):vec4(0);}
         )";m_gatherFilterShader=Shader::Create(filter);
 
         ShaderSource composite;
@@ -459,13 +460,18 @@ namespace PlutoGE::render
                 .width = gatherWidth, .height = gatherHeight, .clearColor = glm::vec4(0.0f)});
             else if (target->GetWidth() != gatherWidth || target->GetHeight() != gatherHeight) target->Resize(gatherWidth, gatherHeight);
         }
+        if(!m_filterScratchTarget)m_filterScratchTarget=std::make_unique<RenderTarget>(RenderTargetConfig{.width=gatherWidth,.height=gatherHeight,.clearColor=glm::vec4(0.0f)});else if(m_filterScratchTarget->GetWidth()!=gatherWidth||m_filterScratchTarget->GetHeight()!=gatherHeight)m_filterScratchTarget->Resize(gatherWidth,gatherHeight);
         if(!m_filteredGatherTarget)m_filteredGatherTarget=std::make_unique<RenderTarget>(RenderTargetConfig{.width=gatherWidth,.height=gatherHeight,.clearColor=glm::vec4(0.0f)});else if(m_filteredGatherTarget->GetWidth()!=gatherWidth||m_filteredGatherTarget->GetHeight()!=gatherHeight)m_filteredGatherTarget->Resize(gatherWidth,gatherHeight);
         if (resolutionChanged) ResetGatherHistory();
     }
 
     void SurfaceCacheGIEffect::FilterGather(const PostProcessContext &context)
     {
-        if(!m_filteredGatherTarget||!m_gatherFilterShader||!context.renderContext.gBuffer||!m_hasGatherHistory)return;Graphics::BindRenderTarget(m_filteredGatherTarget.get());glViewport(0,0,m_filteredGatherTarget->GetWidth(),m_filteredGatherTarget->GetHeight());glDisable(GL_DEPTH_TEST);glDisable(GL_BLEND);glClearColor(0,0,0,0);glClear(GL_COLOR_BUFFER_BIT);m_gatherFilterShader->Bind();const GLuint textures[]={m_gatherHistoryTargets[m_gatherHistoryIndex]->GetColorTextureID(),context.renderContext.gBuffer->GetPositionTextureID(),context.renderContext.gBuffer->GetNormalTextureID()};const char* names[]={"uIndirect","uPosition","uNormal"};for(int i=0;i<3;i++){glActiveTexture(GL_TEXTURE0+i);glBindTexture(GL_TEXTURE_2D,textures[i]);m_gatherFilterShader->SetUniform(names[i],i);}DrawFullscreenTriangle();glBindFramebuffer(GL_FRAMEBUFFER,0);
+        if(!m_filterScratchTarget||!m_filteredGatherTarget||!m_gatherFilterShader||!context.renderContext.gBuffer||!m_hasGatherHistory)return;
+        glDisable(GL_DEPTH_TEST);glDisable(GL_BLEND);m_gatherFilterShader->Bind();
+        const GLuint geometryTextures[]={context.renderContext.gBuffer->GetPositionTextureID(),context.renderContext.gBuffer->GetNormalTextureID()};
+        for(int pass=0;pass<2;++pass){RenderTarget *output=pass==0?m_filterScratchTarget.get():m_filteredGatherTarget.get();const GLuint input=pass==0?m_gatherHistoryTargets[m_gatherHistoryIndex]->GetColorTextureID():m_filterScratchTarget->GetColorTextureID();Graphics::BindRenderTarget(output);glViewport(0,0,output->GetWidth(),output->GetHeight());glClearColor(0,0,0,0);glClear(GL_COLOR_BUFFER_BIT);glActiveTexture(GL_TEXTURE0);glBindTexture(GL_TEXTURE_2D,input);m_gatherFilterShader->SetUniform("uIndirect",0);for(int index=0;index<2;++index){glActiveTexture(GL_TEXTURE1+index);glBindTexture(GL_TEXTURE_2D,geometryTextures[index]);}m_gatherFilterShader->SetUniform("uPosition",1);m_gatherFilterShader->SetUniform("uNormal",2);m_gatherFilterShader->SetUniform("uStepWidth",pass+1);DrawFullscreenTriangle();}
+        glBindFramebuffer(GL_FRAMEBUFFER,0);
     }
 
     void SurfaceCacheGIEffect::ResetGatherHistory()

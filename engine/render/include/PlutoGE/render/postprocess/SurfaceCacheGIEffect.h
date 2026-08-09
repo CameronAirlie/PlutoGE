@@ -56,6 +56,7 @@ namespace PlutoGE::render
         std::unique_ptr<RenderTarget> m_indirectGatherTarget;
         std::array<std::unique_ptr<RenderTarget>, 2> m_gatherHistoryTargets;
         std::array<std::unique_ptr<RenderTarget>, 2> m_gatherHistoryMetadataTargets;
+        std::unique_ptr<RenderTarget> m_filterScratchTarget;
         std::unique_ptr<RenderTarget> m_filteredGatherTarget;
         Shader *m_captureShader = nullptr;
         Shader *m_debugShader = nullptr;

@@ -139,6 +139,7 @@ Validation recorded on 2026-08-08:
   - [ ] 5.5 Add temporal result and rejection-reason diagnostics.
 - [~] 6. Add spatial filtering, depth-aware upsampling, and lighting-pass composition.
   - [x] Add confidence-, normal-, depth-, and distance-aware gather filtering.
+  - [x] Replace the single wide blur with two immutable-input à-trous passes using normal and receiver-plane geometry weights.
   - [x] Add bilateral full-resolution reconstruction from the half-resolution result.
   - [x] Apply receiver diffuse albedo and metallic suppression.
   - [x] Composite indirect diffuse into the HDR scene path with enable and intensity controls.

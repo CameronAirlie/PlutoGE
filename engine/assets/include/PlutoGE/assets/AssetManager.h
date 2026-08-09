@@ -114,5 +114,7 @@ namespace PlutoGE::assets
         std::unordered_map<std::string, std::pair<std::uint64_t, render::Shader *>> m_shaderGraphShaderCache;
 
         void RefreshCachedMaterialsForShaderGraph(const std::string &shaderGraphReference);
+        std::string ResolveMaterialTexturePath(const std::string &texturePath) const;
+        std::string PersistMaterialTexturePath(const std::string &texturePath) const;
     };
 }

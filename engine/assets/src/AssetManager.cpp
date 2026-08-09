@@ -2191,17 +2191,17 @@ namespace PlutoGE::assets
                     }
                     else if (key == "AlbedoTexture")
                     {
-                        const std::string texturePath = ResolveAssetPath(value);
+                        const std::string texturePath = ResolveMaterialTexturePath(value);
                         config.albedoTexture = texturePath.empty() ? nullptr : render::Texture::LoadFromFile(texturePath.c_str());
                     }
                     else if (key == "NormalTexture")
                     {
-                        const std::string texturePath = ResolveAssetPath(value);
+                        const std::string texturePath = ResolveMaterialTexturePath(value);
                         config.normalTexture = texturePath.empty() ? nullptr : render::Texture::LoadFromFile(texturePath.c_str());
                     }
                     else if (key == "MetallicTexture")
                     {
-                        const std::string texturePath = ResolveAssetPath(value);
+                        const std::string texturePath = ResolveMaterialTexturePath(value);
                         config.metallicTexture = texturePath.empty() ? nullptr : render::Texture::LoadFromFile(texturePath.c_str());
                     }
                     else if (key == "MetallicTextureChannel")
@@ -2217,7 +2217,7 @@ namespace PlutoGE::assets
                     }
                     else if (key == "RoughnessTexture")
                     {
-                        const std::string texturePath = ResolveAssetPath(value);
+                        const std::string texturePath = ResolveMaterialTexturePath(value);
                         config.roughnessTexture = texturePath.empty() ? nullptr : render::Texture::LoadFromFile(texturePath.c_str());
                     }
                     else if (key == "RoughnessTextureChannel")
@@ -2323,11 +2323,11 @@ namespace PlutoGE::assets
         output << "AttenuationColor=" << config.attenuationColor.r << "," << config.attenuationColor.g << "," << config.attenuationColor.b << "\n";
         output << "AttenuationDistance=" << config.attenuationDistance << "\n";
         output << "FlipNormalY=" << (config.flipNormalY ? "true" : "false") << "\n";
-        output << "AlbedoTexture=" << (config.albedoTexture ? PersistAssetPath(config.albedoTexture->GetFilePath()) : std::string{}) << "\n";
-        output << "NormalTexture=" << (config.normalTexture ? PersistAssetPath(config.normalTexture->GetFilePath()) : std::string{}) << "\n";
-        output << "MetallicTexture=" << (config.metallicTexture ? PersistAssetPath(config.metallicTexture->GetFilePath()) : std::string{}) << "\n";
+        output << "AlbedoTexture=" << (config.albedoTexture ? PersistMaterialTexturePath(config.albedoTexture->GetFilePath()) : std::string{}) << "\n";
+        output << "NormalTexture=" << (config.normalTexture ? PersistMaterialTexturePath(config.normalTexture->GetFilePath()) : std::string{}) << "\n";
+        output << "MetallicTexture=" << (config.metallicTexture ? PersistMaterialTexturePath(config.metallicTexture->GetFilePath()) : std::string{}) << "\n";
         output << "MetallicTextureChannel=" << static_cast<int>(config.metallicTextureChannel) << "\n";
-        output << "RoughnessTexture=" << (config.roughnessTexture ? PersistAssetPath(config.roughnessTexture->GetFilePath()) : std::string{}) << "\n";
+        output << "RoughnessTexture=" << (config.roughnessTexture ? PersistMaterialTexturePath(config.roughnessTexture->GetFilePath()) : std::string{}) << "\n";
         output << "RoughnessTextureChannel=" << static_cast<int>(config.roughnessTextureChannel) << "\n";
         output << "ShaderGraph=" << (config.shaderGraphReference.empty() ? std::string(Project::kBuiltinDefaultShaderGraphReference) : config.shaderGraphReference) << "\n";
         for (const auto &variable : config.shaderGraphVariables)
@@ -2349,8 +2349,8 @@ namespace PlutoGE::assets
                     return nullptr;
                 }
 
-                const std::string persistedPath = PersistAssetPath(texture->GetFilePath());
-                const std::string resolvedPath = ResolveAssetPath(persistedPath);
+                const std::string persistedPath = PersistMaterialTexturePath(texture->GetFilePath());
+                const std::string resolvedPath = ResolveMaterialTexturePath(persistedPath);
                 if (resolvedPath.empty())
                 {
                     return nullptr;
@@ -2862,6 +2862,43 @@ namespace PlutoGE::assets
         }
 
         return normalizedPath.string();
+    }
+
+    std::string AssetManager::ResolveMaterialTexturePath(const std::string &texturePath) const
+    {
+        if (texturePath.empty() || Project::IsEngineAssetReference(texturePath) ||
+            Project::IsProjectAssetReference(texturePath) || std::filesystem::path(texturePath).is_absolute())
+        {
+            return ResolveAssetPath(texturePath);
+        }
+
+        if (m_projectRootDirectory.empty())
+            return NormalizePath(texturePath);
+        return NormalizePath(((std::filesystem::path(m_projectRootDirectory) / m_projectAssetDirectory) /
+                              std::filesystem::path(texturePath)).string());
+    }
+
+    std::string AssetManager::PersistMaterialTexturePath(const std::string &texturePath) const
+    {
+        if (texturePath.empty() || Project::IsEngineAssetReference(texturePath))
+            return texturePath;
+
+        if (Project::IsProjectAssetReference(texturePath))
+            return std::filesystem::path(std::string(texturePath.substr(Project::kProjectAssetScheme.size()))).generic_string();
+
+        if (m_projectRootDirectory.empty())
+            return std::filesystem::path(texturePath).generic_string();
+
+        const auto assetDirectory = (std::filesystem::path(m_projectRootDirectory) / m_projectAssetDirectory).lexically_normal();
+        const auto path = std::filesystem::path(texturePath);
+        const auto normalizedPath = path.is_absolute() ? path.lexically_normal() : (assetDirectory / path).lexically_normal();
+        std::filesystem::path relativePath;
+        if (TryMakeRelativePath(normalizedPath, assetDirectory, relativePath))
+            return relativePath.generic_string();
+
+        // External textures remain absolute because no valid asset-relative
+        // reference exists. Importing them into Assets will make subsequent saves relative.
+        return normalizedPath.generic_string();
     }
 
     void AssetManager::SetProjectContext(const std::string &projectRootDirectory, const std::string &projectAssetDirectory)

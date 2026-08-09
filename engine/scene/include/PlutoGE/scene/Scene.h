@@ -24,6 +24,7 @@ namespace PlutoGE::scene
     class FoliageComponent;
     class DecalComponent;
     class MeshComponent;
+    class CanvasComponent;
     class ParticleSystemComponent;
     class TerrainComponent;
     struct Light;
@@ -135,6 +136,8 @@ namespace PlutoGE::scene
         [[nodiscard]] uint64_t GetUpdateSequence() const { return m_updateSequence; }
         UISystem &GetUISystem();
         const UISystem &GetUISystem() const;
+        [[nodiscard]] bool HasNativeRuntimeUI() const;
+        [[nodiscard]] bool HasRmlRuntimeUI() const;
 
         Entity *FindEntityByName(const std::string &name) const; // Utility function to find an entity by name (can be useful for scripting and editor)
         Entity *FindEntityByID(EntityID id) const;               // Utility function to find an entity by its unique ID (useful for serialization and referencing)
@@ -212,6 +215,8 @@ namespace PlutoGE::scene
         void UnregisterParticleSystemComponent(ParticleSystemComponent *particleSystemComponent);
         void RegisterDecalComponent(DecalComponent *decalComponent);
         void UnregisterDecalComponent(DecalComponent *decalComponent);
+        void RegisterCanvasComponent(CanvasComponent *canvasComponent);
+        void UnregisterCanvasComponent(CanvasComponent *canvasComponent);
 
     private:
         struct PhysicsQueryCache;
@@ -233,6 +238,7 @@ namespace PlutoGE::scene
         std::vector<FoliageComponent *> m_foliageComponents;
         std::vector<ParticleSystemComponent *> m_particleSystemComponents;
         std::vector<DecalComponent *> m_decalComponents;
+        std::vector<CanvasComponent *> m_canvasComponents;
         std::vector<Light *> m_lights;
         std::string m_filePath;
         std::string m_environmentMapPath;

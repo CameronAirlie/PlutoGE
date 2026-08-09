@@ -362,6 +362,8 @@ namespace PlutoGE::render
         PhysicalSkyPass *m_physicalSkyPass = nullptr;
         std::vector<IRenderPass *> m_renderPasses;
         std::vector<RenderCommand> m_renderCommands;
+        std::vector<std::uint64_t> m_cachedSubmissionSortIdentities;
+        std::vector<std::size_t> m_cachedSubmissionSortPermutation;
         std::vector<DecalCommand> m_decalCommands;
         std::vector<RenderCommand> m_visibleRenderCommands;
         std::vector<SubmissionFrustum> m_submissionFrustums;

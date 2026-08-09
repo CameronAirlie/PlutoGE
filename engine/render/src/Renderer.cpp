@@ -174,13 +174,25 @@ namespace PlutoGE::render
             return false;
         }
 
-        void SortRenderCommands(std::vector<RenderCommand> &renderCommands)
+        std::uint64_t RenderCommandSortIdentity(const RenderCommand &command)
         {
-            std::sort(renderCommands.begin(), renderCommands.end(),
-                      [](const RenderCommand &a, const RenderCommand &b)
-                      {
-                          return CompareRenderCommandKeysImpl(a, b);
-                      });
+            std::uint64_t identity = 1469598103934665603ull;
+            const auto combine = [&identity](std::uint64_t value)
+            {
+                identity ^= value + 0x9e3779b97f4a7c15ull + (identity << 6u) + (identity >> 2u);
+            };
+            combine(reinterpret_cast<std::uintptr_t>(GetRenderCommandShaderKey(command)));
+            combine(reinterpret_cast<std::uintptr_t>(command.material));
+            combine(reinterpret_cast<std::uintptr_t>(command.mesh));
+            combine(command.submeshIndex);
+            combine(command.lodIndex);
+            if (command.mesh)
+            {
+                const auto range = command.mesh->GetSubmeshLodRange(command.submeshIndex, command.lodIndex);
+                combine(range.indexOffset);
+                combine(range.indexCount);
+            }
+            return identity;
         }
 
         glm::vec4 ToSubmissionPlane(const FrustumPlane &plane)
@@ -736,6 +748,19 @@ namespace PlutoGE::render
 
         if (m_shadowPass)
         {
+            auto *shadowPass = static_cast<ShadowPass *>(m_shadowPass);
+            RenderContext shadowCtx = ctx;
+            shadowCtx.cameraData = cameraData;
+            shadowCtx.previousCameraData = frameResources->previousShadowCameraData;
+            shadowCtx.hasPreviousCameraData = frameResources->hasPreviousShadowCameraData;
+            shadowCtx.renderCommands = &m_renderCommands;
+
+            if (shadowPass->CanSkipStaticFrame(shadowCtx))
+            {
+                ExecutePassWithGpuTiming(*m_shadowPass, shadowCtx, 0);
+            }
+            else
+            {
             std::vector<RenderCommand> shadowRenderCommands;
             shadowRenderCommands.reserve(m_renderCommands.size());
             for (const auto &command : m_renderCommands)
@@ -746,12 +771,9 @@ namespace PlutoGE::render
                 }
             }
 
-            RenderContext shadowCtx = ctx;
-            shadowCtx.cameraData = cameraData;
-            shadowCtx.previousCameraData = frameResources->previousShadowCameraData;
-            shadowCtx.hasPreviousCameraData = frameResources->hasPreviousShadowCameraData;
             shadowCtx.renderCommands = &shadowRenderCommands;
             ExecutePassWithGpuTiming(*m_shadowPass, shadowCtx, 0);
+            }
         }
 
         for (std::size_t index = 0; index < m_renderPasses.size(); ++index)
@@ -831,8 +853,44 @@ namespace PlutoGE::render
             return;
         }
 
-        SortRenderCommands(m_renderCommands);
-        ++m_cpuFrameStats.renderCommandSortCount;
+        std::vector<std::uint64_t> identities;
+        identities.reserve(m_renderCommands.size());
+        for (const auto &command : m_renderCommands)
+        {
+            identities.push_back(RenderCommandSortIdentity(command));
+        }
+
+        if (identities == m_cachedSubmissionSortIdentities &&
+            m_cachedSubmissionSortPermutation.size() == m_renderCommands.size())
+        {
+            std::vector<RenderCommand> reordered;
+            reordered.reserve(m_renderCommands.size());
+            for (const std::size_t sourceIndex : m_cachedSubmissionSortPermutation)
+            {
+                reordered.push_back(std::move(m_renderCommands[sourceIndex]));
+            }
+            m_renderCommands.swap(reordered);
+        }
+        else
+        {
+            std::vector<std::size_t> permutation(m_renderCommands.size());
+            std::iota(permutation.begin(), permutation.end(), std::size_t{0});
+            std::sort(permutation.begin(), permutation.end(), [&](std::size_t a, std::size_t b)
+            {
+                return CompareRenderCommandKeysImpl(m_renderCommands[a], m_renderCommands[b]);
+            });
+
+            std::vector<RenderCommand> reordered;
+            reordered.reserve(m_renderCommands.size());
+            for (const std::size_t sourceIndex : permutation)
+            {
+                reordered.push_back(std::move(m_renderCommands[sourceIndex]));
+            }
+            m_renderCommands.swap(reordered);
+            m_cachedSubmissionSortIdentities = std::move(identities);
+            m_cachedSubmissionSortPermutation = std::move(permutation);
+            ++m_cpuFrameStats.renderCommandSortCount;
+        }
         m_renderCommandsDirty = false;
     }
 

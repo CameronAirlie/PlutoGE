@@ -1130,7 +1130,7 @@ namespace PlutoGE::render
 
     void RuntimeUIPass::Execute(const RenderContext &ctx)
     {
-        if (!ctx.scene || !m_shader || !m_textShader || m_vao == 0)
+        if (!ctx.scene || !ctx.scene->HasNativeRuntimeUI() || !m_shader || !m_textShader || m_vao == 0)
         {
             return;
         }

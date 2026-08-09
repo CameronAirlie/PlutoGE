@@ -4,6 +4,7 @@
 #include "PlutoGE/render/RenderTarget.h"
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/RmlUiRuntime.h"
+#include "PlutoGE/scene/Scene.h"
 
 #include <PlutoGE_RmlUi_Target.h>
 
@@ -15,7 +16,7 @@ namespace PlutoGE::render
 
     void RmlUiPass::Execute(const RenderContext &ctx)
     {
-        if (!ctx.scene || !ctx.renderer)
+        if (!ctx.scene || !ctx.renderer || !ctx.scene->HasRmlRuntimeUI())
             return;
 
         int width = 0;

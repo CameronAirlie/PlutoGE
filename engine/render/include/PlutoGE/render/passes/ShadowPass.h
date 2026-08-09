@@ -17,6 +17,7 @@ namespace PlutoGE::render
 
         void Initialize() override;
         void Execute(const RenderContext &ctx) override;
+        [[nodiscard]] bool CanSkipStaticFrame(const RenderContext &ctx) const;
         const char *GetName() const override { return "Shadow"; }
 
     private:
@@ -30,5 +31,6 @@ namespace PlutoGE::render
         bool m_indirectDrawValidated = false;
         std::uint64_t m_shadowCasterFingerprint = 0;
         bool m_hasShadowCasterFingerprint = false;
+        bool m_allCachedShadowCastersStatic = false;
     };
 }

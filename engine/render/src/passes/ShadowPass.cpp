@@ -330,6 +330,7 @@ namespace
         std::uint64_t fingerprint = 1469598103934665603ull;
         std::size_t casterCount = 0;
         bool hasMovedCaster = false;
+        bool allCastersStatic = true;
     };
 
     ShadowCasterFrameState InspectShadowCasters(const std::vector<PlutoGE::render::RenderCommand> &renderCommands)
@@ -343,6 +344,7 @@ namespace
             }
 
             ++state.casterCount;
+            state.allCastersStatic = state.allCastersStatic && command.isStatic && command.jointMatrices == nullptr;
             state.hasMovedCaster = state.hasMovedCaster ||
                                    command.skinningPoseChanged ||
                                    !AreMatricesApproximatelyEqual(command.model, command.previousModel);
@@ -1155,6 +1157,60 @@ namespace PlutoGE::render
         }
     }
 
+    bool ShadowPass::CanSkipStaticFrame(const RenderContext &ctx) const
+    {
+        if (!m_hasShadowCasterFingerprint || !m_allCachedShadowCastersStatic ||
+            !ctx.lights || !ctx.hasCameraData)
+        {
+            return false;
+        }
+
+        const bool cameraDataChanged = !ctx.hasPreviousCameraData ||
+                                       HasDirectionalCameraOrientationOrProjectionChanged(ctx.cameraData, ctx.previousCameraData);
+        bool hasShadowLight = false;
+        for (const auto *light : *ctx.lights)
+        {
+            if (!light || !light->castsShadows)
+            {
+                continue;
+            }
+            hasShadowLight = true;
+            if (light->isDirty || light->shadowRefreshPending ||
+                light->pendingShadowCascadeMask != 0 || light->pendingPointShadowFaceMask != 0)
+            {
+                return false;
+            }
+            if (light->type != scene::LightType::Directional)
+            {
+                continue;
+            }
+            if (cameraDataChanged)
+            {
+                return false;
+            }
+
+            const glm::vec3 currentOrigin = glm::vec3(glm::inverse(ctx.cameraData.view)[3]);
+            const int cascadeCount = GetDirectionalCascadeCount(*light);
+            const auto splits = BuildDirectionalCascadeSplits(ctx.cameraData, light->directionalShadowSettings, cascadeCount);
+            for (int cascadeIndex = 0; cascadeIndex < cascadeCount; ++cascadeIndex)
+            {
+                const bool hasStoredOrigin =
+                    !AreMatricesApproximatelyEqual(light->shadowCascadeMatrices[cascadeIndex], glm::mat4(1.0f)) ||
+                    glm::length(light->shadowCascadeWorldOrigins[cascadeIndex]) > kShadowUpdateMatrixEpsilon;
+                const float cascadeNear = cascadeIndex == 0 ? ctx.cameraData.nearPlane : splits[cascadeIndex - 1];
+                if (!hasStoredOrigin ||
+                    ShouldRefreshCameraRelativeCascade(currentOrigin,
+                                                       light->shadowCascadeWorldOrigins[cascadeIndex],
+                                                       cascadeNear,
+                                                       splits[cascadeIndex]))
+                {
+                    return false;
+                }
+            }
+        }
+        return hasShadowLight;
+    }
+
     void ShadowPass::Execute(const RenderContext &ctx)
     {
         if (!m_shadowPassShader || !ctx.lights || !ctx.renderCommands || m_shadowFramebuffer == 0)
@@ -1176,7 +1232,13 @@ namespace PlutoGE::render
             return;
         }
 
+        if (CanSkipStaticFrame(ctx))
+        {
+            return;
+        }
+
         const ShadowCasterFrameState casterFrameState = InspectShadowCasters(*ctx.renderCommands);
+        m_allCachedShadowCastersStatic = casterFrameState.allCastersStatic;
         bool shadowCastersChanged =
             casterFrameState.hasMovedCaster ||
             !m_hasShadowCasterFingerprint ||

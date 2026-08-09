@@ -1644,6 +1644,24 @@ namespace PlutoGE::scene
         return true;
     }
 
+    bool Scene::HasNativeRuntimeUI() const
+    {
+        return std::any_of(m_canvasComponents.begin(), m_canvasComponents.end(), [](const auto *canvas)
+        {
+            return canvas && canvas->IsEnabled() && canvas->GetBackend() == UIRenderBackend::Native &&
+                   canvas->GetOwner() && canvas->GetOwner()->IsActive();
+        });
+    }
+
+    bool Scene::HasRmlRuntimeUI() const
+    {
+        return std::any_of(m_canvasComponents.begin(), m_canvasComponents.end(), [](const auto *canvas)
+        {
+            return canvas && canvas->IsEnabled() && canvas->GetBackend() == UIRenderBackend::RmlUi &&
+                   canvas->GetOwner() && canvas->GetOwner()->IsActive();
+        });
+    }
+
     std::size_t Scene::RefreshMaterialAsset(const std::string &materialAssetReference, render::Material *material)
     {
         std::size_t refreshedCount = 0;
@@ -2160,6 +2178,22 @@ namespace PlutoGE::scene
     void Scene::UnregisterDecalComponent(DecalComponent *decalComponent)
     {
         m_decalComponents.erase(std::remove(m_decalComponents.begin(), m_decalComponents.end(), decalComponent), m_decalComponents.end());
+    }
+
+    void Scene::RegisterCanvasComponent(CanvasComponent *canvasComponent)
+    {
+        if (canvasComponent &&
+            std::find(m_canvasComponents.begin(), m_canvasComponents.end(), canvasComponent) == m_canvasComponents.end())
+        {
+            m_canvasComponents.push_back(canvasComponent);
+        }
+    }
+
+    void Scene::UnregisterCanvasComponent(CanvasComponent *canvasComponent)
+    {
+        m_canvasComponents.erase(
+            std::remove(m_canvasComponents.begin(), m_canvasComponents.end(), canvasComponent),
+            m_canvasComponents.end());
     }
 
     void Scene::RegisterMeshComponent(MeshComponent *meshComponent)

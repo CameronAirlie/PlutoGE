@@ -8,6 +8,7 @@
 #include "PlutoGE/scene/components/DecalComponent.h"
 #include "PlutoGE/scene/components/TerrainComponent.h"
 #include "PlutoGE/scene/components/FoliageComponent.h"
+#include "PlutoGE/scene/components/UIComponent.h"
 #include "PlutoGE/scripting/ScriptRuntime.h"
 #include "PlutoGE/scene/components/ScriptComponent.h"
 
@@ -330,6 +331,8 @@ namespace PlutoGE::scene
             }
             if (auto *decal = dynamic_cast<DecalComponent *>(component))
                 m_scene->RegisterDecalComponent(decal);
+            if (auto *canvas = dynamic_cast<CanvasComponent *>(component))
+                m_scene->RegisterCanvasComponent(canvas);
         }
 
         return component;
@@ -378,6 +381,8 @@ namespace PlutoGE::scene
             }
             if (auto *decal = dynamic_cast<DecalComponent *>(component))
                 m_scene->UnregisterDecalComponent(decal);
+            if (auto *canvas = dynamic_cast<CanvasComponent *>(component))
+                m_scene->UnregisterCanvasComponent(canvas);
         }
 
         DetachComponent(component);
@@ -447,6 +452,8 @@ namespace PlutoGE::scene
             }
             for (auto *decal : GetComponents<DecalComponent>())
                 m_scene->UnregisterDecalComponent(decal);
+            for (auto *canvas : GetComponents<CanvasComponent>())
+                m_scene->UnregisterCanvasComponent(canvas);
         }
 
         m_scene = scene;
@@ -494,6 +501,8 @@ namespace PlutoGE::scene
             }
             for (auto *decal : GetComponents<DecalComponent>())
                 m_scene->RegisterDecalComponent(decal);
+            for (auto *canvas : GetComponents<CanvasComponent>())
+                m_scene->RegisterCanvasComponent(canvas);
         }
 
         for (auto *child : m_children)

@@ -88,7 +88,7 @@ namespace PlutoGE::render
         int m_screenRayCount = 6;
         int m_screenTraceSteps = 20;
         float m_screenTraceDistance = 4.0f;
-        float m_gatherTemporalBlend = 0.88f;
+        float m_gatherTemporalBlend = 0.94f;
         float m_indirectIntensity = 1.0f;
         bool m_composeIndirect = true;
         float m_radianceIntensity = 1.0f;
@@ -103,6 +103,7 @@ namespace PlutoGE::render
         std::uint8_t m_gatherHistoryIndex = 0;
         bool m_hasGatherHistory = false;
         glm::mat4 m_previousGatherView{1.0f};
+        glm::mat4 m_previousGatherViewProjection{1.0f};
         glm::vec3 m_previousGatherCameraPosition{0.0f};
         bool m_hasPreviousGatherCamera = false;
     };

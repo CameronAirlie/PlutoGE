@@ -101,6 +101,8 @@ Validation recorded on 2026-08-08:
     - [x] Store per-receiver screen-hit confidence and expose a `Screen Trace` diagnostic.
     - [x] Visually validate contact coverage, stability, and useful miss regions for voxel continuation.
     - [x] Improve thin-surface continuity with conservative segment testing, front-face rejection, and local candidate refinement.
+    - [x] Anchor ray-sequence scrambling in quantized world space so receiver sampling remains coherent while moving across the screen.
+    - [x] Reduce visible world-space correlation by shrinking sampling cells from 12.5 cm to 3.125 cm.
   - [~] 4.3 Continue screen misses through the shared voxel visibility cascades.
     - [x] Bind provider-owned directional voxel atlases and cascade metadata without taking ownership.
     - [x] Trace screen misses through cascade-aware directional opacity.
@@ -119,7 +121,7 @@ Validation recorded on 2026-08-08:
     - [x] Refine voxel opacity crossings and reject isolated excessive-radiance samples.
     - [x] Visually validate multi-ray radiance coverage and voxel-hit card recovery.
   - [x] 4.5 Accumulate confidence-weighted diffuse indirect radiance into the gather target.
-    - [x] Keep the successful-sample radiance estimate independent from lookup confidence to avoid double attenuation.
+    - [x] Use the fixed configured ray count as the Monte Carlo denominator so hit-count changes affect confidence without causing brightness jumps.
 - [~] 5. Add motion-vector temporal accumulation, rejection, and history reset rules.
   - [x] 5.1 Allocate ping-pong HDR radiance and receiver-metadata histories at gather resolution.
     - [x] Reset history on gather resize, atlas resize, and cache-layout rebuild.
@@ -133,6 +135,7 @@ Validation recorded on 2026-08-08:
     - [x] Rotate the deterministic hemisphere sequence per frame so stationary views converge.
     - [x] Preserve validated history during ordinary motion and reject only large screen displacement.
     - [x] Search the four nearest half-resolution history texels and select the closest depth/normal-compatible receiver during translation.
+    - [x] Reproject static receivers directly with the previous view-projection matrix, using motion vectors only as a fallback.
   - [ ] 5.5 Add temporal result and rejection-reason diagnostics.
 - [~] 6. Add spatial filtering, depth-aware upsampling, and lighting-pass composition.
   - [x] Add confidence-, normal-, depth-, and distance-aware gather filtering.
@@ -145,6 +148,8 @@ Validation recorded on 2026-08-08:
   - [x] Use directional voxel radiance as a confidence-reduced fallback when a confirmed voxel hit cannot be refined to a card.
   - [x] Preserve valid temporal radiance when the current shadow neighborhood is too sparse to define a reliable clamp range.
   - [x] Sample radiance from the exact neighboring card texel that passed depth validation and cap isolated gather fireflies before temporal accumulation.
+  - [x] Reduce single-ray authority over validated temporal history so individual ray hits do not flash during convergence.
+  - [x] Exclude camera-relative shadow cascade matrices and splits from lighting identity so camera motion cannot restart progressive card capture every frame.
 - [ ] 7. Add revision-driven invalidation, residency, eviction, and texel-based update budgets.
 - [ ] 8. Complete editor controls, serialization coverage, debug tooling, profiling, and regression scenes.
 - [ ] 9. Optionally add screen probes and energy-limited multi-bounce feedback.

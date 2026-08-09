@@ -386,7 +386,8 @@ namespace PlutoGE::scene
             BindTransformFn bindTransform,
             const std::vector<glm::vec3> *cachedBindTranslations = nullptr,
             const std::vector<glm::vec4> *cachedBindRotations = nullptr,
-            const std::vector<glm::vec3> *cachedBindScales = nullptr)
+            const std::vector<glm::vec3> *cachedBindScales = nullptr,
+            const std::vector<float> *sampleMask = nullptr)
         {
             std::vector<glm::mat4> localTransforms(transformCount, glm::mat4(1.0f));
             for (size_t index = 0; index < transformCount; ++index)
@@ -413,6 +414,11 @@ namespace PlutoGE::scene
             {
                 const int resolvedIndex = resolveIndex(channel);
                 if (resolvedIndex < 0 || resolvedIndex >= static_cast<int>(transformCount))
+                {
+                    continue;
+                }
+                if (sampleMask && (static_cast<size_t>(resolvedIndex) >= sampleMask->size() ||
+                                   (*sampleMask)[static_cast<size_t>(resolvedIndex)] <= 0.00001f))
                 {
                     continue;
                 }
@@ -889,19 +895,26 @@ namespace PlutoGE::scene
             assets::AnimationGraphLayerBlendMode mode)
         {
             std::vector<glm::mat4> result = base;
-            const size_t count = std::min({base.size(), layer.size(), reference.size(), mask.size()});
+            const size_t count = mode == assets::AnimationGraphLayerBlendMode::Override
+                                     ? std::min({base.size(), layer.size(), mask.size()})
+                                     : std::min({base.size(), layer.size(), reference.size(), mask.size()});
             for (size_t index = 0; index < count; ++index)
             {
                 const float weight = std::clamp(mask[index] * layerWeight, 0.0f, 1.0f);
                 if (weight <= 0.00001f)
                     continue;
 
-                glm::vec3 baseTranslation, layerTranslation, referenceTranslation;
-                glm::vec4 baseRotation, layerRotation, referenceRotation;
-                glm::vec3 baseScale, layerScale, referenceScale;
+                if (mode == assets::AnimationGraphLayerBlendMode::Override && weight >= 0.99999f)
+                {
+                    result[index] = layer[index];
+                    continue;
+                }
+
+                glm::vec3 baseTranslation, layerTranslation;
+                glm::vec4 baseRotation, layerRotation;
+                glm::vec3 baseScale, layerScale;
                 DecomposeTransform(base[index], baseTranslation, baseRotation, baseScale);
                 DecomposeTransform(layer[index], layerTranslation, layerRotation, layerScale);
-                DecomposeTransform(reference[index], referenceTranslation, referenceRotation, referenceScale);
 
                 const glm::quat baseQuat(baseRotation.w, baseRotation.x, baseRotation.y, baseRotation.z);
                 const glm::quat layerQuat(layerRotation.w, layerRotation.x, layerRotation.y, layerRotation.z);
@@ -915,6 +928,9 @@ namespace PlutoGE::scene
                     continue;
                 }
 
+                glm::vec3 referenceTranslation, referenceScale;
+                glm::vec4 referenceRotation;
+                DecomposeTransform(reference[index], referenceTranslation, referenceRotation, referenceScale);
                 const glm::quat referenceQuat(referenceRotation.w, referenceRotation.x, referenceRotation.y, referenceRotation.z);
                 const glm::quat deltaRotation = glm::normalize(glm::inverse(referenceQuat) * layerQuat);
                 const glm::quat weightedDelta = glm::normalize(glm::slerp(glm::quat(1.0f, 0.0f, 0.0f, 0.0f), deltaRotation, weight));
@@ -2953,6 +2969,7 @@ namespace PlutoGE::scene
         const auto bindingEnd = Clock::now();
         recordPhase("Node pose / Binding cache validation", evaluationStart, bindingEnd);
 
+        const std::vector<float> *activeSampleMask = nullptr;
         auto sampleClip = [&](int clipIndex, float time)
         {
             const auto *channels = clipIndex >= 0 && clipIndex < static_cast<int>(m_clips.size())
@@ -2973,7 +2990,8 @@ namespace PlutoGE::scene
                     return ResolveChannelNodeIndex(channel, nodes);
                 },
                 [&nodes](size_t nodeIndex) { return nodes[nodeIndex].localBindTransform; },
-                &m_nodeBindTranslations, &m_nodeBindRotations, &m_nodeBindScales);
+                &m_nodeBindTranslations, &m_nodeBindRotations, &m_nodeBindScales,
+                activeSampleMask);
         };
         auto sampleState = [&](const AnimationState &state, float time)
         {
@@ -3008,9 +3026,12 @@ namespace PlutoGE::scene
 
         static thread_local std::vector<glm::mat4> bindTransforms;
         bindTransforms.clear();
-        const bool hasActiveLayer = std::any_of(m_layers.begin(), m_layers.end(), [](const AnimationLayer &layer)
-                                                { return layer.enabled && layer.currentWeight > 0.00001f; });
-        if (hasActiveLayer)
+        const bool hasActiveAdditiveLayer = std::any_of(m_layers.begin(), m_layers.end(), [](const AnimationLayer &layer)
+        {
+            return layer.enabled && layer.currentWeight > 0.00001f &&
+                   layer.blendMode == assets::AnimationGraphLayerBlendMode::Additive;
+        });
+        if (hasActiveAdditiveLayer)
         {
             bindTransforms.reserve(nodes.size());
             for (const auto &node : nodes)
@@ -3020,6 +3041,8 @@ namespace PlutoGE::scene
         {
             if (!layer.enabled || layer.currentWeight <= 0.00001f)
                 continue;
+            const auto &layerMask = ResolveNodeMask(layer.maskId, nodes);
+            activeSampleMask = &layerMask;
             std::vector<glm::mat4> layerTransforms;
             if (!layer.graphReference.empty() && !layer.graphStates.empty())
             {
@@ -3044,9 +3067,10 @@ namespace PlutoGE::scene
             {
                 layerTransforms = sampleClip(layer.clipIndex, layer.time);
             }
+            activeSampleMask = nullptr;
             localTransforms = BlendMaskedLocalTransforms(
                 localTransforms, layerTransforms, bindTransforms,
-                ResolveNodeMask(layer.maskId, nodes), layer.currentWeight, layer.blendMode);
+                layerMask, layer.currentWeight, layer.blendMode);
         }
         const auto layersEnd = Clock::now();
         recordPhase("Node pose / Animation layers", basePoseEnd, layersEnd);
@@ -3407,9 +3431,17 @@ namespace PlutoGE::scene
         recordPhase("Pose / Base sampling and retargeting", cacheEnd, basePoseEnd);
 
         std::vector<glm::mat4> bindTransforms;
-        bindTransforms.reserve(skeleton.joints.size());
-        for (const auto &joint : skeleton.joints)
-            bindTransforms.push_back(joint.localBindTransform);
+        const bool hasActiveAdditiveLayer = std::any_of(m_layers.begin(), m_layers.end(), [](const AnimationLayer &layer)
+        {
+            return layer.enabled && layer.currentWeight > 0.00001f &&
+                   layer.blendMode == assets::AnimationGraphLayerBlendMode::Additive;
+        });
+        if (hasActiveAdditiveLayer)
+        {
+            bindTransforms.reserve(skeleton.joints.size());
+            for (const auto &joint : skeleton.joints)
+                bindTransforms.push_back(joint.localBindTransform);
+        }
         for (const auto &layer : m_layers)
         {
             if (!layer.enabled || layer.currentWeight <= 0.00001f)

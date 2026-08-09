@@ -77,6 +77,7 @@ namespace PlutoGE::render
         platform::Window *m_window = nullptr;
         std::unordered_map<std::string, Rml::ElementDocument *> m_documents;
         std::unordered_map<std::string, std::filesystem::file_time_type> m_documentWriteTimes;
+        std::unordered_map<std::string, float> m_documentScales;
         std::unordered_map<std::string, int> m_pendingEvents;
         std::unordered_set<std::string> m_eventSubscriptions;
         std::unordered_set<std::string> m_attachedEvents;
@@ -88,5 +89,6 @@ namespace PlutoGE::render
         int m_width = 0;
         int m_height = 0;
         std::uint64_t m_lastInputFrame = 0;
+        std::uint32_t m_hotReloadCheckCountdown = 0;
     };
 }

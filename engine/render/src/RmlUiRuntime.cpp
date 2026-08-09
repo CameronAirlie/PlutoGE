@@ -11,6 +11,7 @@
 #include <RmlUi/Core.h>
 #include <RmlUi/Core/Event.h>
 #include <RmlUi/Core/EventListener.h>
+#include <RmlUi/Core/Elements/ElementFormControl.h>
 #include <RmlUi/Core/Elements/ElementFormControlInput.h>
 #include <RmlUi/Core/Factory.h>
 #include <RmlUi_Platform_GLFW.h>
@@ -228,6 +229,7 @@ namespace PlutoGE::render
         DetachEventSubscriptions();
         m_documents.clear();
         m_documentWriteTimes.clear();
+        m_documentScales.clear();
         m_eventSubscriptions.clear();
         m_reportedLoadFailures.clear();
         m_loadedFontFaces.clear();
@@ -245,10 +247,17 @@ namespace PlutoGE::render
         m_width = 0;
         m_height = 0;
         m_lastInputFrame = 0;
+        m_hotReloadCheckCountdown = 0;
     }
 
     void RmlUiRuntime::SynchronizeDocuments(const scene::Scene &scene)
     {
+        constexpr std::uint32_t hotReloadCheckIntervalFrames = 30;
+        const bool checkForHotReload = m_hotReloadCheckCountdown == 0;
+        m_hotReloadCheckCountdown = checkForHotReload
+                                        ? hotReloadCheckIntervalFrames - 1
+                                        : m_hotReloadCheckCountdown - 1;
+
         std::unordered_map<std::string, DocumentRequest> requestedDocuments;
         for (auto *root : scene.GetRootEntities())
             CollectDocuments(root, {static_cast<float>(m_width), static_cast<float>(m_height)}, requestedDocuments);
@@ -266,6 +275,7 @@ namespace PlutoGE::render
                 if (it->second)
                     it->second->Close();
                 m_documentWriteTimes.erase(it->first);
+                m_documentScales.erase(it->first);
                 it = m_documents.erase(it);
             }
             else
@@ -279,19 +289,27 @@ namespace PlutoGE::render
         {
             if (m_documents.contains(reference))
             {
-                const std::string resolved = ResolveDocumentPath(assets, reference);
-                std::error_code error;
-                const auto writeTime = DocumentSourceWriteTime(resolved, error);
-                const auto known = m_documentWriteTimes.find(reference);
-                if (!error && known != m_documentWriteTimes.end() && writeTime != known->second)
-                    ReloadDocument(reference);
+                if (checkForHotReload)
+                {
+                    const std::string resolved = ResolveDocumentPath(assets, reference);
+                    std::error_code error;
+                    const auto writeTime = DocumentSourceWriteTime(resolved, error);
+                    const auto known = m_documentWriteTimes.find(reference);
+                    if (!error && known != m_documentWriteTimes.end() && writeTime != known->second)
+                        ReloadDocument(reference);
+                }
                 if (auto *document = m_documents.at(reference))
                 {
                     const float scale = std::max(request.scale, 0.0001f);
-                    document->SetProperty("transform-origin", "0px 0px");
-                    document->SetProperty("transform", "scale(" + std::to_string(scale) + ")");
-                    document->SetProperty("width", std::to_string(static_cast<float>(m_width) / scale) + "px");
-                    document->SetProperty("height", std::to_string(static_cast<float>(m_height) / scale) + "px");
+                    const auto knownScale = m_documentScales.find(reference);
+                    if (knownScale == m_documentScales.end() || knownScale->second != scale)
+                    {
+                        document->SetProperty("transform-origin", "0px 0px");
+                        document->SetProperty("transform", "scale(" + std::to_string(scale) + ")");
+                        document->SetProperty("width", std::to_string(static_cast<float>(m_width) / scale) + "px");
+                        document->SetProperty("height", std::to_string(static_cast<float>(m_height) / scale) + "px");
+                        m_documentScales[reference] = scale;
+                    }
                     if (request.visible)
                     {
                         if (!document->IsVisible())
@@ -333,6 +351,7 @@ namespace PlutoGE::render
                 document->SetProperty("height", std::to_string(static_cast<float>(m_height) / scale) + "px");
                 request.visible ? document->Show() : document->Hide();
                 m_documents.emplace(reference, document);
+                m_documentScales[reference] = scale;
                 m_reportedLoadFailures.erase(reference);
                 std::clog << "[RmlUi] Loaded Canvas document '" << reference
                           << "' from '" << path << "'.\n";
@@ -519,6 +538,7 @@ namespace PlutoGE::render
             DetachEventSubscriptions();
             if (found->second) found->second->Close();
             m_documents.erase(found);
+            m_documentScales.erase(document);
         }
 
         // LoadDocument caches parsed style sheets and templates globally.
@@ -690,7 +710,8 @@ namespace PlutoGE::render
             return false;
 
         const auto *focusedElement = m_context->GetFocusElement();
-        return focusedElement && focusedElement->IsVisible(true);
+        return focusedElement && focusedElement->IsVisible(true) &&
+               rmlui_dynamic_cast<const Rml::ElementFormControl *>(focusedElement);
     }
 
     void RmlUiRuntime::ProcessInput(platform::Window &window, const scene::Scene &scene)
@@ -789,6 +810,7 @@ namespace PlutoGE::render
             m_height = height;
             m_context->SetDimensions({width, height});
             m_renderer->SetViewport(width, height);
+            m_documentScales.clear();
         }
 
         SynchronizeDocuments(scene);

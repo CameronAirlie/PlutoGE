@@ -211,7 +211,6 @@ public sealed class RmlEvent
                 }
                 if (@event.Triggered is null)
                     continue;
-                @event.EnsureSubscribed();
                 while (@event.Consume())
                 {
                     if (@event.Enabled && @event.Element.Document.CanDispatchEvents)

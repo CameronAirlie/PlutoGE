@@ -1801,8 +1801,8 @@ namespace PlutoGE::scene
         FlushPendingDestroyEntities();
         if (m_runtimeStarted)
         {
-            constexpr float fixedPhysicsStep = 1.0f / 120.0f;
-            constexpr int maximumPhysicsSubstepsPerFrame = 32;
+            constexpr float fixedPhysicsStep = 1.0f / 60.0f;
+            constexpr int maximumPhysicsSubstepsPerFrame = 8;
             constexpr float maximumAccumulatedPhysicsTime =
                 fixedPhysicsStep * static_cast<float>(maximumPhysicsSubstepsPerFrame);
 
@@ -2598,8 +2598,8 @@ namespace PlutoGE::scene
             return;
         }
 
-        constexpr float fixedPhysicsStep = 1.0f / 120.0f;
-        constexpr int maximumPhysicsSubstepsPerFrame = 32;
+        constexpr float fixedPhysicsStep = 1.0f / 60.0f;
+        constexpr int maximumPhysicsSubstepsPerFrame = 8;
         const float step = std::clamp(
             deltaTime,
             0.0f,
@@ -2699,6 +2699,21 @@ namespace PlutoGE::scene
             transform.setIdentity();
             transform.setOrigin(ToBullet(stepBody.entity->GetWorldPosition()));
             transform.setRotation(ToBulletRotation(stepBody.entity->GetWorldTransform()));
+            const bool transformChanged = !(stepBody.body->getWorldTransform() == transform);
+            if (!transformChanged)
+            {
+                // Static and stationary kinematic bodies are already present in
+                // Bullet's broadphase. Updating their transform and AABB again
+                // creates avoidable broadphase work every fixed step.
+                if (stepBody.rigidbody && stepBody.rigidbody->IsKinematic())
+                {
+                    stepBody.body->setLinearVelocity(ToBullet(stepBody.rigidbody->GetVelocity()));
+                    stepBody.body->setAngularVelocity(stepBody.rigidbody->HasFreezeRotation()
+                                                          ? btVector3(0.0f, 0.0f, 0.0f)
+                                                          : ToBullet(stepBody.rigidbody->GetAngularVelocity()));
+                }
+                continue;
+            }
             stepBody.body->setWorldTransform(transform);
             if (stepBody.motionState)
             {

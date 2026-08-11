@@ -11,6 +11,7 @@
 #include "PlutoGE/scene/components/DecalComponent.h"
 #include "PlutoGE/scene/components/RigidbodyComponent.h"
 #include "PlutoGE/scene/components/AnimationComponent.h"
+#include "PlutoGE/scene/components/ActiveRagdollComponent.h"
 #include "PlutoGE/scene/components/ScriptComponent.h"
 #include "PlutoGE/scene/components/SoundEmitterComponent.h"
 #include "PlutoGE/scene/components/SoundListenerComponent.h"
@@ -726,6 +727,7 @@ namespace PlutoGE::scene
             const render::Skeleton *skeleton = nullptr;
             std::vector<BulletRagdollPart> parts;
             std::vector<std::unique_ptr<btTypedConstraint>> constraints;
+            std::vector<size_t> constraintJointIndices;
             uint64_t revision = 0;
         };
 
@@ -1468,6 +1470,7 @@ namespace PlutoGE::scene
                 constraint->setDbgDrawSize(0.15f);
                 runtimeWorld->dynamicsWorld.addConstraint(constraint.get(), true);
                 ragdoll.constraints.push_back(std::move(constraint));
+                ragdoll.constraintJointIndices.push_back(jointIndex);
             }
 
             // Imported skeletons frequently produce capsules that touch or
@@ -3067,6 +3070,91 @@ namespace PlutoGE::scene
         {
             if (!ragdoll.animation)
                 continue;
+
+            auto *controller = ragdoll.animation->GetOwner()->GetComponent<ActiveRagdollComponent>();
+            const bool activelyDriven = controller && controller->IsEnabled() && ragdoll.meshComponent &&
+                                        ragdoll.meshComponent->GetMesh() && ragdoll.skeleton;
+            if (activelyDriven)
+            {
+                auto *mesh = ragdoll.meshComponent->GetMesh();
+                const auto animatedSkin = ragdoll.animation->GetAnimatedJointMatrices(
+                    *ragdoll.skeleton, mesh->GetAnimationNodes());
+                if (animatedSkin.size() == ragdoll.parts.size())
+                {
+                    std::vector<btTransform> targetBodies(ragdoll.parts.size());
+                    const glm::mat4 ownerWorld = ragdoll.animation->GetOwner()->GetWorldTransform();
+                    for (size_t jointIndex = 0; jointIndex < ragdoll.parts.size(); ++jointIndex)
+                    {
+                        const auto &joint = ragdoll.skeleton->joints[jointIndex];
+                        const glm::mat4 jointGlobal = glm::inverse(joint.inverseRootMatrix) * animatedSkin[jointIndex] *
+                                                      glm::inverse(joint.inverseBindMatrix);
+                        const glm::mat4 targetBody = ownerWorld * jointGlobal * glm::inverse(ragdoll.parts[jointIndex].jointFromBody);
+                        targetBodies[jointIndex].setIdentity();
+                        targetBodies[jointIndex].setOrigin(ToBullet(glm::vec3(targetBody[3])));
+                        targetBodies[jointIndex].setRotation(ToBulletRotation(targetBody));
+                    }
+
+                    if (!ragdoll.parts.empty())
+                    {
+                        auto *root = ragdoll.parts.front().body.get();
+                        const btScalar mass = root->getInvMass() > 0.0f ? 1.0f / root->getInvMass() : 0.0f;
+                        btVector3 force = (targetBodies.front().getOrigin() - root->getCenterOfMassPosition()) *
+                                              (controller->GetPositionStrength() * mass) -
+                                          root->getLinearVelocity() * (controller->GetDamping() * mass);
+                        const btScalar forceLength = force.length();
+                        if (forceLength > controller->GetMaxForce() && forceLength > SIMD_EPSILON)
+                            force *= controller->GetMaxForce() / forceLength;
+                        root->applyCentralForce(force);
+
+                        btQuaternion rotationError = targetBodies.front().getRotation() * root->getOrientation().inverse();
+                        rotationError.normalize();
+                        if (rotationError.w() < 0.0f)
+                            rotationError = btQuaternion(-rotationError.x(), -rotationError.y(), -rotationError.z(), -rotationError.w());
+                        const btScalar angle = rotationError.getAngle();
+                        const btVector3 axis = angle > SIMD_EPSILON ? rotationError.getAxis() : btVector3(0, 0, 0);
+                        btVector3 torque = axis * (angle * controller->GetRotationStrength()) -
+                                           root->getAngularVelocity() * controller->GetDamping();
+                        const btScalar torqueLength = torque.length();
+                        if (torqueLength > controller->GetMaxTorque() && torqueLength > SIMD_EPSILON)
+                            torque *= controller->GetMaxTorque() / torqueLength;
+                        root->applyTorque(torque);
+                    }
+
+                    for (size_t constraintIndex = 0; constraintIndex < ragdoll.constraints.size(); ++constraintIndex)
+                    {
+                        auto *constraint = static_cast<btGeneric6DofSpring2Constraint *>(ragdoll.constraints[constraintIndex].get());
+                        const size_t child = ragdoll.constraintJointIndices[constraintIndex];
+                        const int parent = ragdoll.skeleton->joints[child].parentJointIndex;
+                        if (parent < 0)
+                            continue;
+                        const btTransform frameA = targetBodies[static_cast<size_t>(parent)] * constraint->getFrameOffsetA();
+                        const btTransform frameB = targetBodies[child] * constraint->getFrameOffsetB();
+                        btVector3 targetAngles(0, 0, 0);
+                        btGeneric6DofSpring2Constraint::matrixToEulerXYZ(
+                            (frameA.inverse() * frameB).getBasis(), targetAngles);
+                        for (int axis = 3; axis < 6; ++axis)
+                        {
+                            constraint->enableMotor(axis, true);
+                            constraint->setServo(axis, true);
+                            constraint->setServoTarget(axis, targetAngles[axis - 3]);
+                            constraint->setMaxMotorForce(axis, controller->GetMaxTorque());
+                        }
+                    }
+                }
+            }
+            else
+            {
+                for (auto &constraintBase : ragdoll.constraints)
+                {
+                    auto *constraint = static_cast<btGeneric6DofSpring2Constraint *>(constraintBase.get());
+                    for (int axis = 3; axis < 6; ++axis)
+                    {
+                        constraint->setServo(axis, false);
+                        constraint->setTargetVelocity(axis, 0.0f);
+                        constraint->setMaxMotorForce(axis, kDefaultRagdollJointTuning.angularFrictionForce);
+                    }
+                }
+            }
             const glm::vec3 impulse = ragdoll.animation->ConsumeRagdollImpulse();
             if (glm::dot(impulse, impulse) <= 0.0f)
                 continue;

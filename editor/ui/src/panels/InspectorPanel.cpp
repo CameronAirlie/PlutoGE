@@ -4,6 +4,7 @@
 #include "PlutoGE/ui/panels/ContentBrowserPanel.h"
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/scene/components/AnimationComponent.h"
+#include "PlutoGE/scene/components/ActiveRagdollComponent.h"
 #include "PlutoGE/scene/components/ClothComponent.h"
 #include "PlutoGE/scene/components/Component.h"
 #include "PlutoGE/scene/components/FoliageComponent.h"
@@ -118,6 +119,7 @@ namespace PlutoGE::ui
             Decal = 25,
             RmlWidget = 26,
             LegacyCanvas = 27,
+            ActiveRagdoll = 28,
         };
 
         struct ScriptAssetOption
@@ -1527,6 +1529,10 @@ namespace PlutoGE::ui
             {
                 return "Animation Component";
             }
+            if (dynamic_cast<const scene::ActiveRagdollComponent *>(&component))
+            {
+                return "Active Ragdoll Component";
+            }
             if (dynamic_cast<const scene::SkeletonAttachmentComponent *>(&component))
             {
                 return "Skeleton Attachment Component";
@@ -1619,6 +1625,8 @@ namespace PlutoGE::ui
                 return "ParticleSystemComponent";
             if (dynamic_cast<const scene::AnimationComponent *>(&component))
                 return "AnimationComponent";
+            if (dynamic_cast<const scene::ActiveRagdollComponent *>(&component))
+                return "ActiveRagdollComponent";
             if (dynamic_cast<const scene::SkeletonAttachmentComponent *>(&component))
                 return "SkeletonAttachmentComponent";
             if (dynamic_cast<const scene::CameraComponent *>(&component))
@@ -1757,6 +1765,9 @@ namespace PlutoGE::ui
                 return !entity.HasComponent<scene::OceanComponent>();
             case AddableComponentType::Animation:
                 return !entity.HasComponent<scene::AnimationComponent>();
+            case AddableComponentType::ActiveRagdoll:
+                return entity.HasComponent<scene::AnimationComponent>() &&
+                       !entity.HasComponent<scene::ActiveRagdollComponent>();
             case AddableComponentType::Camera:
                 return !entity.HasComponent<scene::CameraComponent>();
             case AddableComponentType::Light:
@@ -1827,6 +1838,7 @@ namespace PlutoGE::ui
             if (ImGui::BeginMenu("Animation"))
             {
                 renderItem("Animation", AddableComponentType::Animation);
+                renderItem("Active Ragdoll", AddableComponentType::ActiveRagdoll);
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Physics"))
@@ -1954,6 +1966,9 @@ namespace PlutoGE::ui
             }
             case AddableComponentType::Animation:
                 entity.CreateComponent<scene::AnimationComponent>();
+                break;
+            case AddableComponentType::ActiveRagdoll:
+                entity.CreateComponent<scene::ActiveRagdollComponent>();
                 break;
             case AddableComponentType::Light:
                 entity.CreateComponent<scene::LightComponent>();

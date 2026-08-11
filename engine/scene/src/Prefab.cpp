@@ -4,6 +4,7 @@
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/SceneSerializer.h"
 #include "PlutoGE/scene/components/AnimationComponent.h"
+#include "PlutoGE/scene/components/ActiveRagdollComponent.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
 #include "PlutoGE/scene/components/ClothComponent.h"
 #include "PlutoGE/scene/components/ColliderComponent.h"
@@ -62,6 +63,8 @@ namespace PlutoGE::scene
                 return "ParticleSystemComponent";
             if (dynamic_cast<const AnimationComponent *>(&component))
                 return "AnimationComponent";
+            if (dynamic_cast<const ActiveRagdollComponent *>(&component))
+                return "ActiveRagdollComponent";
             if (dynamic_cast<const SkeletonAttachmentComponent *>(&component))
                 return "SkeletonAttachmentComponent";
             if (dynamic_cast<const CameraComponent *>(&component))
@@ -113,6 +116,8 @@ namespace PlutoGE::scene
                 return std::make_unique<ParticleSystemComponent>();
             if (componentType == "AnimationComponent")
                 return std::make_unique<AnimationComponent>();
+            if (componentType == "ActiveRagdollComponent")
+                return std::make_unique<ActiveRagdollComponent>();
             if (componentType == "SkeletonAttachmentComponent")
                 return std::make_unique<SkeletonAttachmentComponent>();
             if (componentType == "CameraComponent")

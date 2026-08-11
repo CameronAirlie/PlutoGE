@@ -505,6 +505,7 @@ Open **Project Settings**, verify the startup scene, save the project, and ensur
 - [RmlUi project quick start](docs/RMLUI_QUICKSTART.md)
 - [RmlUi integration notes](docs/RMLUI_INTEGRATION.md)
 - [Networking architecture and roadmap](docs/NETWORKING.md)
+- [Skeletal and active ragdolls](docs/RAGDOLLS.md)
 - [Scripting subsystem overview](engine/scripting/README.md)
 - [Exporting a game](EXPORTING.md)
 - [Development task list](TODO.md)

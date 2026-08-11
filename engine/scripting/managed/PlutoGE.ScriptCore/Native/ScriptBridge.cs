@@ -77,6 +77,7 @@ internal static unsafe class ScriptBridge
         ParticleSystem = 12,
         SoundEmitter = 13,
         RmlWidget = 14,
+        ActiveRagdoll = 15,
     }
 
     private sealed class ScriptLoadContext : AssemblyLoadContext
@@ -193,6 +194,12 @@ internal static unsafe class ScriptBridge
     private static delegate* unmanaged[Cdecl]<uint, float, void> _setRagdollWeight;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3, void> _addRagdollImpulse;
     private static delegate* unmanaged[Cdecl]<uint, void> _resetRagdoll;
+    private static delegate* unmanaged[Cdecl]<uint, float> _getActiveRagdollPositionStrength;
+    private static delegate* unmanaged[Cdecl]<uint, float, void> _setActiveRagdollPositionStrength;
+    private static delegate* unmanaged[Cdecl]<uint, float> _getActiveRagdollRotationStrength;
+    private static delegate* unmanaged[Cdecl]<uint, float, void> _setActiveRagdollRotationStrength;
+    private static delegate* unmanaged[Cdecl]<uint, float> _getActiveRagdollDamping;
+    private static delegate* unmanaged[Cdecl]<uint, float, void> _setActiveRagdollDamping;
     private static delegate* unmanaged[Cdecl]<uint, float> _getRigidbodyMass;
     private static delegate* unmanaged[Cdecl]<uint, float, void> _setRigidbodyMass;
     private static delegate* unmanaged[Cdecl]<uint, float> _getRigidbodyLinearDrag;
@@ -722,7 +729,13 @@ internal static unsafe class ScriptBridge
         delegate* unmanaged[Cdecl]<uint, float> getRagdollWeight,
         delegate* unmanaged[Cdecl]<uint, float, void> setRagdollWeight,
         delegate* unmanaged[Cdecl]<uint, NativeVector3, void> addRagdollImpulse,
-        delegate* unmanaged[Cdecl]<uint, void> resetRagdoll)
+        delegate* unmanaged[Cdecl]<uint, void> resetRagdoll,
+        delegate* unmanaged[Cdecl]<uint, float> getActivePositionStrength,
+        delegate* unmanaged[Cdecl]<uint, float, void> setActivePositionStrength,
+        delegate* unmanaged[Cdecl]<uint, float> getActiveRotationStrength,
+        delegate* unmanaged[Cdecl]<uint, float, void> setActiveRotationStrength,
+        delegate* unmanaged[Cdecl]<uint, float> getActiveDamping,
+        delegate* unmanaged[Cdecl]<uint, float, void> setActiveDamping)
     {
         if (getClipCount == null || getClipIndex == null || setClipIndex == null || getClipName == null || getClipDuration == null ||
             getPlaying == null || setPlaying == null || getLooping == null || setLooping == null || getAutoplay == null ||
@@ -730,7 +743,9 @@ internal static unsafe class ScriptBridge
             play == null || pause == null || stop == null || setBoolParameter == null || setFloatParameter == null ||
             setIntParameter == null || setTriggerParameter == null || resetTriggerParameter == null || playState == null ||
             getRagdollEnabled == null || setRagdollEnabled == null || getRagdollWeight == null || setRagdollWeight == null ||
-            addRagdollImpulse == null || resetRagdoll == null)
+            addRagdollImpulse == null || resetRagdoll == null || getActivePositionStrength == null ||
+            setActivePositionStrength == null || getActiveRotationStrength == null || setActiveRotationStrength == null ||
+            getActiveDamping == null || setActiveDamping == null)
         {
             SetError("Managed animation component API registration received a null function pointer.");
             return 0;
@@ -766,6 +781,12 @@ internal static unsafe class ScriptBridge
         _setRagdollWeight = setRagdollWeight;
         _addRagdollImpulse = addRagdollImpulse;
         _resetRagdoll = resetRagdoll;
+        _getActiveRagdollPositionStrength = getActivePositionStrength;
+        _setActiveRagdollPositionStrength = setActivePositionStrength;
+        _getActiveRagdollRotationStrength = getActiveRotationStrength;
+        _setActiveRagdollRotationStrength = setActiveRotationStrength;
+        _getActiveRagdollDamping = getActiveDamping;
+        _setActiveRagdollDamping = setActiveDamping;
         _lastError = string.Empty;
         return 1;
     }
@@ -2116,6 +2137,12 @@ internal static unsafe class ScriptBridge
     internal static void SetRagdollWeight(uint entityId, float value) { if (_setRagdollWeight != null) _setRagdollWeight(entityId, value); }
     internal static void AddRagdollImpulse(uint entityId, Vector3 impulse) { if (_addRagdollImpulse != null) _addRagdollImpulse(entityId, NativeVector3.FromManaged(impulse)); }
     internal static void ResetRagdoll(uint entityId) { if (_resetRagdoll != null) _resetRagdoll(entityId); }
+    internal static float GetActiveRagdollPositionStrength(uint entityId) => _getActiveRagdollPositionStrength == null ? 0.0f : _getActiveRagdollPositionStrength(entityId);
+    internal static void SetActiveRagdollPositionStrength(uint entityId, float value) { if (_setActiveRagdollPositionStrength != null) _setActiveRagdollPositionStrength(entityId, value); }
+    internal static float GetActiveRagdollRotationStrength(uint entityId) => _getActiveRagdollRotationStrength == null ? 0.0f : _getActiveRagdollRotationStrength(entityId);
+    internal static void SetActiveRagdollRotationStrength(uint entityId, float value) { if (_setActiveRagdollRotationStrength != null) _setActiveRagdollRotationStrength(entityId, value); }
+    internal static float GetActiveRagdollDamping(uint entityId) => _getActiveRagdollDamping == null ? 0.0f : _getActiveRagdollDamping(entityId);
+    internal static void SetActiveRagdollDamping(uint entityId, float value) { if (_setActiveRagdollDamping != null) _setActiveRagdollDamping(entityId, value); }
     internal static void SetAnimationBoolParameter(uint entityId, string name, bool value)
     {
         if (_setAnimationBoolParameter == null)

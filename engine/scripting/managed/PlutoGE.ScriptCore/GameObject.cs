@@ -122,6 +122,7 @@ public sealed class GameObject
             var type when type == typeof(RigidbodyComponent) => ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.Rigidbody),
             var type when type == typeof(ColliderComponent) => ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.Collider),
             var type when type == typeof(AnimationComponent) => ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.Animation),
+            var type when type == typeof(ActiveRagdollComponent) => ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.ActiveRagdoll),
             var type when type == typeof(CanvasComponent) => ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.Canvas),
             var type when type == typeof(RectTransformComponent) => ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.RectTransform),
             var type when type == typeof(UIImageComponent) => ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.UIImage),
@@ -169,6 +170,11 @@ public sealed class GameObject
         if (typeof(T) == typeof(CanvasComponent) && ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.Canvas))
         {
             return new CanvasComponent(EntityId) as T;
+        }
+
+        if (typeof(T) == typeof(ActiveRagdollComponent) && ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.ActiveRagdoll))
+        {
+            return new ActiveRagdollComponent(EntityId) as T;
         }
         if (typeof(T) == typeof(RmlWidgetComponent) && ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.RmlWidget))
         {

@@ -10,6 +10,7 @@
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/NavigationSystem.h"
 #include "PlutoGE/scene/components/AnimationComponent.h"
+#include "PlutoGE/scene/components/ActiveRagdollComponent.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
 #include "PlutoGE/scene/components/ColliderComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
@@ -109,7 +110,7 @@ namespace PlutoGE::scripting
         using register_camera_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *);
         using register_light_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *);
         using register_mesh_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *);
-        using register_animation_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
+        using register_animation_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_rigidbody_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_collider_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_particle_system_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
@@ -241,6 +242,7 @@ namespace PlutoGE::scripting
             ParticleSystem = 12,
             SoundEmitter = 13,
             RmlWidget = 14,
+            ActiveRagdoll = 15,
         };
 
         std::basic_string<char_t> Utf8ToHostString(std::string_view text)
@@ -924,6 +926,8 @@ namespace PlutoGE::scripting
                 return entity->GetComponent<scene::SoundEmitterComponent>();
             case ManagedComponentKind::RmlWidget:
                 return entity->GetComponent<scene::RmlWidgetComponent>();
+            case ManagedComponentKind::ActiveRagdoll:
+                return entity->GetComponent<scene::ActiveRagdollComponent>();
             default:
                 return nullptr;
             }
@@ -1645,6 +1649,18 @@ namespace PlutoGE::scripting
         {
             if (auto *component = FindAnimation(entityId)) component->ResetRagdoll();
         }
+
+        scene::ActiveRagdollComponent *FindActiveRagdoll(uint32_t entityId)
+        {
+            auto *entity = FindEntity(entityId);
+            return entity ? entity->GetComponent<scene::ActiveRagdollComponent>() : nullptr;
+        }
+        float GetActiveRagdollPositionStrength(uint32_t entityId) { auto *c = FindActiveRagdoll(entityId); return c ? c->GetPositionStrength() : 0.0f; }
+        void SetActiveRagdollPositionStrength(uint32_t entityId, float value) { if (auto *c = FindActiveRagdoll(entityId)) c->SetPositionStrength(value); }
+        float GetActiveRagdollRotationStrength(uint32_t entityId) { auto *c = FindActiveRagdoll(entityId); return c ? c->GetRotationStrength() : 0.0f; }
+        void SetActiveRagdollRotationStrength(uint32_t entityId, float value) { if (auto *c = FindActiveRagdoll(entityId)) c->SetRotationStrength(value); }
+        float GetActiveRagdollDamping(uint32_t entityId) { auto *c = FindActiveRagdoll(entityId); return c ? c->GetDamping() : 0.0f; }
+        void SetActiveRagdollDamping(uint32_t entityId, float value) { if (auto *c = FindActiveRagdoll(entityId)) c->SetDamping(value); }
 
         scene::RigidbodyComponent *FindRigidbody(uint32_t entityId)
         {
@@ -3841,7 +3857,13 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(static_cast<get_component_float_fn>(&GetRagdollWeight)),
                 reinterpret_cast<void *>(static_cast<set_component_float_fn>(&SetRagdollWeight)),
                 reinterpret_cast<void *>(static_cast<set_component_vector3_fn>(&AddRagdollImpulse)),
-                reinterpret_cast<void *>(static_cast<component_action_fn>(&ResetRagdoll))) == 0)
+                reinterpret_cast<void *>(static_cast<component_action_fn>(&ResetRagdoll)),
+                reinterpret_cast<void *>(static_cast<get_component_float_fn>(&GetActiveRagdollPositionStrength)),
+                reinterpret_cast<void *>(static_cast<set_component_float_fn>(&SetActiveRagdollPositionStrength)),
+                reinterpret_cast<void *>(static_cast<get_component_float_fn>(&GetActiveRagdollRotationStrength)),
+                reinterpret_cast<void *>(static_cast<set_component_float_fn>(&SetActiveRagdollRotationStrength)),
+                reinterpret_cast<void *>(static_cast<get_component_float_fn>(&GetActiveRagdollDamping)),
+                reinterpret_cast<void *>(static_cast<set_component_float_fn>(&SetActiveRagdollDamping))) == 0)
         {
             setManagedBridgeFailure("RegisterAnimationComponentApi");
             return false;

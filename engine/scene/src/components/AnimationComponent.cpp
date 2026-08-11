@@ -2947,6 +2947,17 @@ namespace PlutoGE::scene
         return m_jointMatrices;
     }
 
+    std::vector<glm::mat4> AnimationComponent::GetAnimatedJointMatrices(
+        const render::Skeleton &skeleton, const std::vector<render::AnimationNode> &nodes)
+    {
+        m_suppressRagdollPose = true;
+        m_jointMatricesDirty = true;
+        const auto pose = GetJointMatrices(skeleton, nodes);
+        m_suppressRagdollPose = false;
+        m_jointMatricesDirty = true;
+        return pose;
+    }
+
     glm::mat4 AnimationComponent::GetNodeMatrix(const std::vector<render::AnimationNode> &nodes, int nodeIndex)
     {
         if (nodeIndex < 0 || nodeIndex >= static_cast<int>(nodes.size()))
@@ -3590,6 +3601,8 @@ namespace PlutoGE::scene
 
     void AnimationComponent::ApplyRagdoll(const render::Skeleton &skeleton)
     {
+        if (m_suppressRagdollPose)
+            return;
         if (!m_ragdollEnabled || m_ragdollWeight <= 0.0f || skeleton.joints.empty() ||
             m_jointMatrices.size() != skeleton.joints.size())
             return;

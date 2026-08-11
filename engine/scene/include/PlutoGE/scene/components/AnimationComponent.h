@@ -147,6 +147,8 @@ namespace PlutoGE::scene
         bool IsJointPoseDirty() const { return m_jointMatricesDirty; }
         const std::vector<glm::mat4> &GetJointMatrices(const render::Skeleton &skeleton);
         const std::vector<glm::mat4> &GetJointMatrices(const render::Skeleton &skeleton, const std::vector<render::AnimationNode> &nodes);
+        std::vector<glm::mat4> GetAnimatedJointMatrices(const render::Skeleton &skeleton,
+                                                        const std::vector<render::AnimationNode> &nodes);
         glm::mat4 GetNodeMatrix(const std::vector<render::AnimationNode> &nodes, int nodeIndex);
         int GetClipCount() const { return static_cast<int>(m_clips.size()); }
         int GetCurrentClipIndex() const { return m_currentClipIndex; }
@@ -308,5 +310,6 @@ namespace PlutoGE::scene
         const render::Skeleton *m_ragdollPhysicsSkeleton = nullptr;
         std::vector<glm::mat4> m_ragdollPhysicsPose;
         uint64_t m_ragdollRevision = 0;
+        bool m_suppressRagdollPose = false;
     };
 }

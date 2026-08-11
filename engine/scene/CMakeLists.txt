@@ -7,6 +7,7 @@ add_library(PlutoGEScene
     src/UISystem.cpp
     src/NavigationSystem.cpp
     src/components/AnimationComponent.cpp
+    src/components/ActiveRagdollComponent.cpp
     src/components/ClothComponent.cpp
     src/components/MeshComponent.cpp
     src/components/NavAgentComponent.cpp

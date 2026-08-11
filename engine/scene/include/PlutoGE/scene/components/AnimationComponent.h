@@ -311,5 +311,6 @@ namespace PlutoGE::scene
         std::vector<glm::mat4> m_ragdollPhysicsPose;
         uint64_t m_ragdollRevision = 0;
         bool m_suppressRagdollPose = false;
+        bool m_loggedRagdollApply = false;
     };
 }

@@ -35,14 +35,18 @@ animation.
 
 ## Generated physics representation
 
-Ragdolls are generated at runtime from the imported skeleton. Every joint gets
-a capsule aligned with its first child, or with an estimated continuation for
-leaf joints. Parent and child bodies are connected by six-degree-of-freedom
-constraints with locked translation and bounded swing and twist.
+Ragdolls are generated only while `RagdollEnabled` is true. Recognized humanoid
+rigs create capsules for their mapped major bones; fingers, facial bones, twist
+bones, IK helpers, and attachment joints remain animation-driven beneath their
+nearest physical parent. Unknown rigs fall back to a complete representation so
+they remain functional. Parent and child physical bodies are connected by
+six-degree-of-freedom constraints with locked translation and bounded swing and
+twist.
 
 The implementation also provides:
 
 - constrained angular friction for passive limbs;
+- sleeping for passive bodies that have come to rest;
 - continuous collision detection on the generated capsules;
 - increased solver iterations and split-impulse penetration correction;
 - filtered collisions for capsule pairs that overlap in the activation pose;
@@ -53,6 +57,12 @@ The implementation also provides:
 The generated shape and mass values are currently automatic. Skeleton scale,
 joint hierarchy, and bind-pose quality therefore have a direct effect on the
 result.
+
+Dormant Active Ragdoll components do not create bodies, constraints, collision
+pairs, or per-joint target poses. Keep `RagdollEnabled` false on living
+characters and set it once when transitioning into ragdoll simulation. Avoid
+calling `ResetRagdoll()` every frame because each reset deliberately rebuilds
+the articulated body.
 
 ## Active controller properties
 

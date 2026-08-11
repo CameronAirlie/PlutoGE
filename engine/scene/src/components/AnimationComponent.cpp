@@ -4,6 +4,7 @@
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/scene/components/ScriptComponent.h"
+#include "PlutoGE/scripting/ScriptLogging.h"
 
 #include <algorithm>
 #include <cmath>
@@ -3553,6 +3554,11 @@ namespace PlutoGE::scene
             return;
         m_ragdollEnabled = enabled;
         ++m_ragdollRevision;
+        m_loggedRagdollApply = false;
+        if (const auto *owner = GetOwner())
+            std::fprintf(stderr, "[Ragdoll] entity=%u name='%s' enabled=%d revision=%llu\n",
+                         owner->GetID(), owner->GetName().c_str(), enabled ? 1 : 0,
+                         static_cast<unsigned long long>(m_ragdollRevision));
         if (!enabled)
             ClearRagdollPhysicsPose();
         m_pendingRagdollImpulse = glm::vec3(0.0f);
@@ -3587,8 +3593,12 @@ namespace PlutoGE::scene
 
     void AnimationComponent::SetRagdollPhysicsPose(const render::Skeleton &skeleton, std::vector<glm::mat4> jointMatrices)
     {
+        const bool poseLayoutChanged = m_ragdollPhysicsSkeleton != &skeleton ||
+                                       m_ragdollPhysicsPose.size() != jointMatrices.size();
         m_ragdollPhysicsSkeleton = &skeleton;
         m_ragdollPhysicsPose = std::move(jointMatrices);
+        if (poseLayoutChanged)
+            m_loggedRagdollApply = false;
         m_jointMatricesDirty = true;
     }
 
@@ -3605,12 +3615,52 @@ namespace PlutoGE::scene
             return;
         if (!m_ragdollEnabled || m_ragdollWeight <= 0.0f || skeleton.joints.empty() ||
             m_jointMatrices.size() != skeleton.joints.size())
+        {
+            if (m_ragdollEnabled && !m_loggedRagdollApply)
+            {
+                scripting::DispatchScriptLog(scripting::ScriptLogSeverity::Info,
+                    "[Ragdoll] ApplyRagdoll rejected: disabled weight, empty skeleton, or animation matrix-count mismatch");
+                m_loggedRagdollApply = true;
+            }
             return;
+        }
 
         // Bullet owns simulation. AnimationComponent only blends the resulting
         // skinning palette, keeping physics types out of the public scene API.
-        if (m_ragdollPhysicsSkeleton != &skeleton || m_ragdollPhysicsPose.size() != m_jointMatrices.size())
+        bool compatibleSkeleton = m_ragdollPhysicsSkeleton != nullptr &&
+                                  m_ragdollPhysicsSkeleton->joints.size() == skeleton.joints.size();
+        if (compatibleSkeleton && m_ragdollPhysicsSkeleton != &skeleton)
+        {
+            for (size_t jointIndex = 0; jointIndex < skeleton.joints.size(); ++jointIndex)
+            {
+                const auto &physicsJoint = m_ragdollPhysicsSkeleton->joints[jointIndex];
+                const auto &renderJoint = skeleton.joints[jointIndex];
+                if (physicsJoint.name != renderJoint.name ||
+                    physicsJoint.parentJointIndex != renderJoint.parentJointIndex)
+                {
+                    compatibleSkeleton = false;
+                    break;
+                }
+            }
+        }
+        if (!compatibleSkeleton || m_ragdollPhysicsPose.size() != m_jointMatrices.size())
+        {
+            if (!m_loggedRagdollApply)
+            {
+                scripting::DispatchScriptLog(scripting::ScriptLogSeverity::Info,
+                    !compatibleSkeleton
+                        ? "[Ragdoll] ApplyRagdoll rejected: rendering uses an incompatible skeleton"
+                        : "[Ragdoll] ApplyRagdoll rejected: physics/animation matrix-count mismatch");
+                m_loggedRagdollApply = true;
+            }
             return;
+        }
+        if (!m_loggedRagdollApply)
+        {
+            scripting::DispatchScriptLog(scripting::ScriptLogSeverity::Info,
+                "[Ragdoll] ApplyRagdoll accepted physics pose");
+            m_loggedRagdollApply = true;
+        }
         for (size_t i = 0; i < m_jointMatrices.size(); ++i)
             m_jointMatrices[i] = m_jointMatrices[i] * (1.0f - m_ragdollWeight) +
                                  m_ragdollPhysicsPose[i] * m_ragdollWeight;

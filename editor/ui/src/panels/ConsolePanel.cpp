@@ -84,6 +84,7 @@ namespace PlutoGE::ui
 
         ImGui::BeginChild("ConsoleMessages", ImVec2(0.0f, 0.0f), false, ImGuiWindowFlags_HorizontalScrollbar);
         const auto messages = editorShell.GetConsoleMessages();
+        std::string selectableText;
         for (const auto &message : messages)
         {
             if ((message.severity == EditorShell::ConsoleSeverity::Info && !m_showInfo) ||
@@ -94,8 +95,17 @@ namespace PlutoGE::ui
                 continue;
             }
 
-            ImGui::TextColored(SeverityColor(message.severity), "[%s] %s", SeverityLabel(message.severity), message.text.c_str());
+            selectableText += '[';
+            selectableText += SeverityLabel(message.severity);
+            selectableText += "] ";
+            selectableText += message.text;
+            selectableText += '\n';
         }
+
+        if (!selectableText.empty())
+            ImGui::InputTextMultiline("##SelectableConsoleText", selectableText.data(), selectableText.size() + 1,
+                                      ImVec2(-1.0f, -1.0f),
+                                      ImGuiInputTextFlags_ReadOnly | ImGuiInputTextFlags_NoHorizontalScroll);
 
         if (m_autoScroll && ImGui::GetScrollY() >= ImGui::GetScrollMaxY())
         {

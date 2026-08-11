@@ -19,6 +19,7 @@
 #include "PlutoGE/scene/components/TerrainComponent.h"
 #include "PlutoGE/scene/components/UIComponent.h"
 #include "PlutoGE/render/Texture.h"
+#include "PlutoGE/scripting/ScriptLogging.h"
 
 #include <btBulletDynamicsCommon.h>
 #include <BulletDynamics/ConstraintSolver/btGeneric6DofSpring2Constraint.h>
@@ -31,9 +32,12 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <functional>
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <numeric>
+#include <sstream>
 #include <unordered_set>
 
 #define GLM_ENABLE_EXPERIMENTAL
@@ -718,6 +722,7 @@ namespace PlutoGE::scene
             std::unique_ptr<btDefaultMotionState> motionState;
             std::unique_ptr<btRigidBody> body;
             glm::mat4 jointFromBody{1.0f};
+            size_t jointIndex = 0;
         };
 
         struct BulletRagdoll
@@ -726,9 +731,14 @@ namespace PlutoGE::scene
             MeshComponent *meshComponent = nullptr;
             const render::Skeleton *skeleton = nullptr;
             std::vector<BulletRagdollPart> parts;
+            std::vector<int> jointToPart;
             std::vector<std::unique_ptr<btTypedConstraint>> constraints;
-            std::vector<size_t> constraintJointIndices;
+            std::vector<size_t> constraintParentParts;
+            std::vector<size_t> constraintChildParts;
             uint64_t revision = 0;
+            bool loggedPosePublication = false;
+            btVector3 initialRootPosition{0.0f, 0.0f, 0.0f};
+            uint32_t simulatedStepCount = 0;
         };
 
         struct RagdollJointTuning
@@ -738,7 +748,7 @@ namespace PlutoGE::scene
             float limitErrorReduction = 0.35f;
             float angularDamping = 0.65f;
             float angularFrictionForce = 1.5f;
-            int solverIterations = 24;
+            int solverIterations = 12;
         };
 
         constexpr RagdollJointTuning kDefaultRagdollJointTuning{};
@@ -808,6 +818,39 @@ namespace PlutoGE::scene
                 if (auto *mesh = FindRagdollMesh(child, animation))
                     return mesh;
             return nullptr;
+        }
+
+        void LogRagdollDiagnostic(const std::string &message)
+        {
+            scripting::DispatchScriptLog(scripting::ScriptLogSeverity::Info, message);
+        }
+
+        std::vector<size_t> SelectPhysicalRagdollJoints(const render::Skeleton &skeleton)
+        {
+            std::vector<uint8_t> selected(skeleton.joints.size(), 0);
+            for (const auto &mapping : skeleton.humanoidBoneMappings)
+                if (mapping.targetJointIndex >= 0 &&
+                    mapping.targetJointIndex < static_cast<int>(selected.size()))
+                    selected[static_cast<size_t>(mapping.targetJointIndex)] = 1;
+            for (size_t jointIndex = 0; jointIndex < skeleton.joints.size(); ++jointIndex)
+                if (render::GuessHumanoidBone(skeleton.joints[jointIndex].name).has_value())
+                    selected[jointIndex] = 1;
+
+            std::vector<size_t> result;
+            for (size_t jointIndex = 0; jointIndex < selected.size(); ++jointIndex)
+                if (selected[jointIndex])
+                    result.push_back(jointIndex);
+
+            // Unknown/non-humanoid rigs retain the old complete representation
+            // rather than silently producing a broken articulation. Recognized
+            // humanoids normally resolve to 15-22 bodies instead of every
+            // finger, face, twist, IK, and attachment joint.
+            if (result.size() < 6)
+            {
+                result.resize(skeleton.joints.size());
+                std::iota(result.begin(), result.end(), size_t{0});
+            }
+            return result;
         }
 
         AnimationComponent *FindActiveRagdollOwner(Entity *entity)
@@ -1025,6 +1068,19 @@ namespace PlutoGE::scene
             HashCombine(seed, value.z);
         }
 
+        void HashScale(std::size_t &seed, const glm::vec3 &value)
+        {
+            // World scale is decomposed from a floating-point transform. Pure
+            // rotation changes can therefore introduce insignificant noise in
+            // the extracted values. Exact hashing treated that noise as a
+            // collider reconfiguration and rebuilt the complete Bullet world
+            // every frame.
+            constexpr double precision = 10000.0;
+            HashCombine(seed, std::llround(static_cast<double>(value.x) * precision));
+            HashCombine(seed, std::llround(static_cast<double>(value.y) * precision));
+            HashCombine(seed, std::llround(static_cast<double>(value.z) * precision));
+        }
+
         BulletShapeData CreateSplineSegmentBulletShape(const SplineComponent &spline, const glm::vec3 &worldScale)
         {
             BulletShapeData shapeData;
@@ -1094,7 +1150,7 @@ namespace PlutoGE::scene
             HashVec3(signature, collider.GetSize());
             HashCombine(signature, collider.GetRadius());
             HashCombine(signature, collider.GetHeight());
-            HashVec3(signature, entity.GetWorldScale());
+            HashScale(signature, entity.GetWorldScale());
 
             if (const auto *terrain = entity.GetComponent<TerrainComponent>())
             {
@@ -1273,6 +1329,21 @@ namespace PlutoGE::scene
             auto shapeData = CreateBulletShapeForEntity(*entity, *collider);
             if (!shapeData.shape)
             {
+                // Keep discovery and runtime-state indexing identical even
+                // when an enabled collider cannot currently produce a Bullet
+                // shape. Omitting it makes the body counts differ forever and
+                // causes the entire world (including ragdolls) to rebuild on
+                // every physics step.
+                const bool rigidbodyEnabled = rigidbody && rigidbody->IsEnabled();
+                runtimeWorld->bodies.push_back(BulletStepBody{
+                    .entity = entity,
+                    .entityId = entity->GetID(),
+                    .collider = collider,
+                    .rigidbody = rigidbodyEnabled ? rigidbody : nullptr,
+                    .configurationSignature = ComputeRuntimePhysicsBodySignature(
+                        *entity, *collider, rigidbodyEnabled ? rigidbody : nullptr),
+                    .dynamic = false,
+                });
                 continue;
             }
 
@@ -1348,22 +1419,45 @@ namespace PlutoGE::scene
             auto *meshComponent = FindRagdollMesh(entity, animation);
             auto *mesh = meshComponent ? meshComponent->GetMesh() : nullptr;
             if (!mesh || !mesh->HasSkeleton())
+            {
+                std::ostringstream message;
+                message << "[Ragdoll] construct failed entity=" << entity->GetID()
+                        << " name='" << entity->GetName() << "': no descendant skeletal mesh";
+                LogRagdollDiagnostic(message.str());
                 continue;
+            }
 
             const auto &skeleton = mesh->GetSkeleton();
             animation->ClearRagdollPhysicsPose();
             const auto &skinMatrices = animation->GetJointMatrices(skeleton, mesh->GetAnimationNodes());
             if (skinMatrices.size() != skeleton.joints.size())
+            {
+                std::ostringstream message;
+                message << "[Ragdoll] construct failed entity=" << entity->GetID()
+                        << ": initial pose has " << skinMatrices.size() << " matrices for "
+                        << skeleton.joints.size() << " joints";
+                LogRagdollDiagnostic(message.str());
                 continue;
+            }
 
             BulletRagdoll ragdoll;
             ragdoll.animation = animation;
             ragdoll.meshComponent = meshComponent;
             ragdoll.skeleton = &skeleton;
             ragdoll.revision = animation->GetRagdollRevision();
-            ragdoll.parts.reserve(skeleton.joints.size());
+            const auto physicalJoints = SelectPhysicalRagdollJoints(skeleton);
+            ragdoll.parts.reserve(physicalJoints.size());
+            ragdoll.jointToPart.assign(skeleton.joints.size(), -1);
+            std::vector<uint8_t> physicalJointMask(skeleton.joints.size(), 0);
+            for (const size_t physicalJoint : physicalJoints)
+                physicalJointMask[physicalJoint] = 1;
             std::vector<glm::mat4> jointWorldTransforms(skeleton.joints.size());
-            const glm::mat4 ownerWorld = entity->GetWorldTransform();
+            // Skinning matrices are local to the rendered mesh model, which
+            // may live on a transformed descendant and have an authored mesh
+            // offset. Using the AnimationComponent owner's transform places
+            // the physics articulation in a different space from the pixels.
+            const glm::mat4 ownerWorld = meshComponent->GetOwner()->GetWorldTransform() *
+                                         meshComponent->GetMeshOffsetTransform();
             for (size_t jointIndex = 0; jointIndex < skeleton.joints.size(); ++jointIndex)
             {
                 const auto &joint = skeleton.joints[jointIndex];
@@ -1372,25 +1466,35 @@ namespace PlutoGE::scene
                 jointWorldTransforms[jointIndex] = ownerWorld * jointGlobal;
             }
 
-            for (size_t jointIndex = 0; jointIndex < skeleton.joints.size(); ++jointIndex)
+            for (const size_t jointIndex : physicalJoints)
             {
                 const glm::vec3 jointPosition(jointWorldTransforms[jointIndex][3]);
                 int childIndex = -1;
-                for (size_t candidate = 0; candidate < skeleton.joints.size(); ++candidate)
-                    if (skeleton.joints[candidate].parentJointIndex == static_cast<int>(jointIndex))
+                for (const size_t candidate : physicalJoints)
+                {
+                    int ancestor = skeleton.joints[candidate].parentJointIndex;
+                    while (ancestor >= 0 && !physicalJointMask[static_cast<size_t>(ancestor)])
+                        ancestor = skeleton.joints[static_cast<size_t>(ancestor)].parentJointIndex;
+                    if (ancestor == static_cast<int>(jointIndex))
                     {
                         childIndex = static_cast<int>(candidate);
                         break;
                     }
+                }
 
                 glm::vec3 endPosition = jointPosition;
                 if (childIndex >= 0)
                     endPosition = glm::vec3(jointWorldTransforms[static_cast<size_t>(childIndex)][3]);
-                else if (const int parent = skeleton.joints[jointIndex].parentJointIndex;
-                         parent >= 0 && parent < static_cast<int>(jointWorldTransforms.size()))
-                    endPosition += (jointPosition - glm::vec3(jointWorldTransforms[static_cast<size_t>(parent)][3])) * 0.45f;
                 else
-                    endPosition += glm::vec3(0.0f, 0.2f, 0.0f);
+                {
+                    int parent = skeleton.joints[jointIndex].parentJointIndex;
+                    while (parent >= 0 && ragdoll.jointToPart[static_cast<size_t>(parent)] < 0)
+                        parent = skeleton.joints[static_cast<size_t>(parent)].parentJointIndex;
+                    if (parent >= 0)
+                        endPosition += (jointPosition - glm::vec3(jointWorldTransforms[static_cast<size_t>(parent)][3])) * 0.45f;
+                    else
+                        endPosition += glm::vec3(0.0f, 0.2f, 0.0f);
+                }
 
                 glm::vec3 direction = endPosition - jointPosition;
                 const float length = std::max(glm::length(direction), 0.08f);
@@ -1421,30 +1525,36 @@ namespace PlutoGE::scene
                 body->setUserPointer(entity);
                 body->setCcdMotionThreshold(radius * 0.5f);
                 body->setCcdSweptSphereRadius(radius * 0.8f);
-                body->setActivationState(DISABLE_DEACTIVATION);
+                body->setSleepingThresholds(0.08f, 0.12f);
                 runtimeWorld->dynamicsWorld.addRigidBody(body.get());
+                ragdoll.jointToPart[jointIndex] = static_cast<int>(ragdoll.parts.size());
                 ragdoll.parts.push_back(BulletRagdollPart{
                     .shape = std::move(shape),
                     .motionState = std::move(motionState),
                     .body = std::move(body),
                     .jointFromBody = glm::inverse(bodyWorld) * jointWorldTransforms[jointIndex],
+                    .jointIndex = jointIndex,
                 });
             }
 
-            for (size_t jointIndex = 0; jointIndex < skeleton.joints.size(); ++jointIndex)
+            for (size_t childPartIndex = 0; childPartIndex < ragdoll.parts.size(); ++childPartIndex)
             {
-                const int parentIndex = skeleton.joints[jointIndex].parentJointIndex;
-                if (parentIndex < 0 || parentIndex >= static_cast<int>(ragdoll.parts.size()))
+                const size_t jointIndex = ragdoll.parts[childPartIndex].jointIndex;
+                int parentJointIndex = skeleton.joints[jointIndex].parentJointIndex;
+                while (parentJointIndex >= 0 && ragdoll.jointToPart[static_cast<size_t>(parentJointIndex)] < 0)
+                    parentJointIndex = skeleton.joints[static_cast<size_t>(parentJointIndex)].parentJointIndex;
+                if (parentJointIndex < 0)
                     continue;
+                const size_t parentPartIndex = static_cast<size_t>(ragdoll.jointToPart[static_cast<size_t>(parentJointIndex)]);
                 btTransform jointFrame;
                 jointFrame.setIdentity();
                 jointFrame.setOrigin(ToBullet(glm::vec3(jointWorldTransforms[jointIndex][3])));
                 jointFrame.setRotation(ToBulletRotation(jointWorldTransforms[jointIndex]));
-                const btTransform parentFrame = ragdoll.parts[static_cast<size_t>(parentIndex)].body->getWorldTransform().inverse() * jointFrame;
-                const btTransform childFrame = ragdoll.parts[jointIndex].body->getWorldTransform().inverse() * jointFrame;
+                const btTransform parentFrame = ragdoll.parts[parentPartIndex].body->getWorldTransform().inverse() * jointFrame;
+                const btTransform childFrame = ragdoll.parts[childPartIndex].body->getWorldTransform().inverse() * jointFrame;
                 auto constraint = std::make_unique<btGeneric6DofSpring2Constraint>(
-                    *ragdoll.parts[static_cast<size_t>(parentIndex)].body,
-                    *ragdoll.parts[jointIndex].body, parentFrame, childFrame, RO_XYZ);
+                    *ragdoll.parts[parentPartIndex].body,
+                    *ragdoll.parts[childPartIndex].body, parentFrame, childFrame, RO_XYZ);
                 const auto &tuning = kDefaultRagdollJointTuning;
                 constraint->setLinearLowerLimit(btVector3(0, 0, 0));
                 constraint->setLinearUpperLimit(btVector3(0, 0, 0));
@@ -1470,7 +1580,8 @@ namespace PlutoGE::scene
                 constraint->setDbgDrawSize(0.15f);
                 runtimeWorld->dynamicsWorld.addConstraint(constraint.get(), true);
                 ragdoll.constraints.push_back(std::move(constraint));
-                ragdoll.constraintJointIndices.push_back(jointIndex);
+                ragdoll.constraintParentParts.push_back(parentPartIndex);
+                ragdoll.constraintChildParts.push_back(childPartIndex);
             }
 
             // Imported skeletons frequently produce capsules that touch or
@@ -1491,6 +1602,16 @@ namespace PlutoGE::scene
                     }
                 }
             runtimeWorld->ragdolls.push_back(std::move(ragdoll));
+            const auto &built = runtimeWorld->ragdolls.back();
+            if (!built.parts.empty())
+                runtimeWorld->ragdolls.back().initialRootPosition =
+                    built.parts.front().body->getCenterOfMassPosition();
+            std::ostringstream message;
+            message << "[Ragdoll] constructed entity=" << entity->GetID()
+                    << " bodies=" << built.parts.size()
+                    << " constraints=" << built.constraints.size()
+                    << " skeletonJoints=" << skeleton.joints.size();
+            LogRagdollDiagnostic(message.str());
         }
 
         m_runtimePhysicsState->world = std::move(runtimeWorld);
@@ -2948,6 +3069,10 @@ namespace PlutoGE::scene
             const auto &existingBodies = m_runtimePhysicsState->world->bodies;
             if (existingBodies.size() != physicsEntities.size())
             {
+                std::ostringstream message;
+                message << "[Ragdoll] rebuilding: physics body count stored=" << existingBodies.size()
+                        << " discovered=" << physicsEntities.size();
+                LogRagdollDiagnostic(message.str());
                 rebuildRuntimePhysics = true;
             }
             else
@@ -2961,6 +3086,14 @@ namespace PlutoGE::scene
                     if (existingBodies[index].entity != entity ||
                         existingBodies[index].configurationSignature != ComputeRuntimePhysicsBodySignature(*entity, *collider, rigidbodyEnabled ? rigidbody : nullptr))
                     {
+                        std::ostringstream message;
+                        message << "[Ragdoll] rebuilding: physics body changed index=" << index
+                                << " entity=" << entity->GetID()
+                                << " identityChanged=" << (existingBodies[index].entity != entity)
+                                << " signatureChanged="
+                                << (existingBodies[index].configurationSignature != ComputeRuntimePhysicsBodySignature(
+                                        *entity, *collider, rigidbodyEnabled ? rigidbody : nullptr));
+                        LogRagdollDiagnostic(message.str());
                         rebuildRuntimePhysics = true;
                         break;
                     }
@@ -2970,7 +3103,13 @@ namespace PlutoGE::scene
             {
                 const auto &existingRagdolls = m_runtimePhysicsState->world->ragdolls;
                 if (existingRagdolls.size() != activeRagdolls.size())
+                {
+                    std::ostringstream message;
+                    message << "[Ragdoll] rebuilding: ragdoll count stored=" << existingRagdolls.size()
+                            << " discovered=" << activeRagdolls.size();
+                    LogRagdollDiagnostic(message.str());
                     rebuildRuntimePhysics = true;
+                }
                 for (size_t index = 0; !rebuildRuntimePhysics && index < activeRagdolls.size(); ++index)
                 {
                     auto *currentMeshComponent = FindRagdollMesh(activeRagdolls[index]->GetOwner(), activeRagdolls[index]);
@@ -2978,7 +3117,19 @@ namespace PlutoGE::scene
                     if (existingRagdolls[index].animation != activeRagdolls[index] ||
                         existingRagdolls[index].revision != activeRagdolls[index]->GetRagdollRevision() ||
                         !currentMesh || existingRagdolls[index].skeleton != &currentMesh->GetSkeleton())
+                    {
+                        std::ostringstream message;
+                        message << "[Ragdoll] rebuilding: ragdoll changed index=" << index
+                                << " entity=" << activeRagdolls[index]->GetOwner()->GetID()
+                                << " animationChanged=" << (existingRagdolls[index].animation != activeRagdolls[index])
+                                << " revisionChanged="
+                                << (existingRagdolls[index].revision != activeRagdolls[index]->GetRagdollRevision())
+                                << " meshMissing=" << (!currentMesh)
+                                << " skeletonChanged="
+                                << (currentMesh && existingRagdolls[index].skeleton != &currentMesh->GetSkeleton());
+                        LogRagdollDiagnostic(message.str());
                         rebuildRuntimePhysics = true;
+                    }
                 }
             }
         }
@@ -3076,22 +3227,26 @@ namespace PlutoGE::scene
                                         ragdoll.meshComponent->GetMesh() && ragdoll.skeleton;
             if (activelyDriven)
             {
+                for (auto &part : ragdoll.parts)
+                    part.body->activate(true);
                 auto *mesh = ragdoll.meshComponent->GetMesh();
                 const auto animatedSkin = ragdoll.animation->GetAnimatedJointMatrices(
                     *ragdoll.skeleton, mesh->GetAnimationNodes());
-                if (animatedSkin.size() == ragdoll.parts.size())
+                if (animatedSkin.size() == ragdoll.skeleton->joints.size())
                 {
                     std::vector<btTransform> targetBodies(ragdoll.parts.size());
-                    const glm::mat4 ownerWorld = ragdoll.animation->GetOwner()->GetWorldTransform();
-                    for (size_t jointIndex = 0; jointIndex < ragdoll.parts.size(); ++jointIndex)
+                    const glm::mat4 ownerWorld = ragdoll.meshComponent->GetOwner()->GetWorldTransform() *
+                                                 ragdoll.meshComponent->GetMeshOffsetTransform();
+                    for (size_t partIndex = 0; partIndex < ragdoll.parts.size(); ++partIndex)
                     {
+                        const size_t jointIndex = ragdoll.parts[partIndex].jointIndex;
                         const auto &joint = ragdoll.skeleton->joints[jointIndex];
                         const glm::mat4 jointGlobal = glm::inverse(joint.inverseRootMatrix) * animatedSkin[jointIndex] *
                                                       glm::inverse(joint.inverseBindMatrix);
-                        const glm::mat4 targetBody = ownerWorld * jointGlobal * glm::inverse(ragdoll.parts[jointIndex].jointFromBody);
-                        targetBodies[jointIndex].setIdentity();
-                        targetBodies[jointIndex].setOrigin(ToBullet(glm::vec3(targetBody[3])));
-                        targetBodies[jointIndex].setRotation(ToBulletRotation(targetBody));
+                        const glm::mat4 targetBody = ownerWorld * jointGlobal * glm::inverse(ragdoll.parts[partIndex].jointFromBody);
+                        targetBodies[partIndex].setIdentity();
+                        targetBodies[partIndex].setOrigin(ToBullet(glm::vec3(targetBody[3])));
+                        targetBodies[partIndex].setRotation(ToBulletRotation(targetBody));
                     }
 
                     if (!ragdoll.parts.empty())
@@ -3123,12 +3278,10 @@ namespace PlutoGE::scene
                     for (size_t constraintIndex = 0; constraintIndex < ragdoll.constraints.size(); ++constraintIndex)
                     {
                         auto *constraint = static_cast<btGeneric6DofSpring2Constraint *>(ragdoll.constraints[constraintIndex].get());
-                        const size_t child = ragdoll.constraintJointIndices[constraintIndex];
-                        const int parent = ragdoll.skeleton->joints[child].parentJointIndex;
-                        if (parent < 0)
-                            continue;
-                        const btTransform frameA = targetBodies[static_cast<size_t>(parent)] * constraint->getFrameOffsetA();
-                        const btTransform frameB = targetBodies[child] * constraint->getFrameOffsetB();
+                        const size_t parentPart = ragdoll.constraintParentParts[constraintIndex];
+                        const size_t childPart = ragdoll.constraintChildParts[constraintIndex];
+                        const btTransform frameA = targetBodies[parentPart] * constraint->getFrameOffsetA();
+                        const btTransform frameB = targetBodies[childPart] * constraint->getFrameOffsetB();
                         btVector3 targetAngles(0, 0, 0);
                         btGeneric6DofSpring2Constraint::matrixToEulerXYZ(
                             (frameA.inverse() * frameB).getBasis(), targetAngles);
@@ -3218,20 +3371,90 @@ namespace PlutoGE::scene
 
         for (auto &ragdoll : runtimeWorld.ragdolls)
         {
-            if (!ragdoll.animation || !ragdoll.skeleton ||
-                ragdoll.parts.size() != ragdoll.skeleton->joints.size())
+            if (!ragdoll.animation || !ragdoll.meshComponent || !ragdoll.meshComponent->GetMesh() ||
+                !ragdoll.skeleton || ragdoll.jointToPart.size() != ragdoll.skeleton->joints.size())
                 continue;
-            std::vector<glm::mat4> skinMatrices(ragdoll.parts.size(), glm::mat4(1.0f));
-            const glm::mat4 inverseOwnerWorld = glm::inverse(ragdoll.animation->GetOwner()->GetWorldTransform());
-            for (size_t jointIndex = 0; jointIndex < ragdoll.parts.size(); ++jointIndex)
+            const auto animatedSkin = ragdoll.animation->GetAnimatedJointMatrices(
+                *ragdoll.skeleton, ragdoll.meshComponent->GetMesh()->GetAnimationNodes());
+            if (animatedSkin.size() != ragdoll.skeleton->joints.size())
             {
-                const glm::mat4 jointWorld = FromBulletTransform(ragdoll.parts[jointIndex].body->getWorldTransform()) *
-                                             ragdoll.parts[jointIndex].jointFromBody;
-                const glm::mat4 jointGlobal = inverseOwnerWorld * jointWorld;
+                std::ostringstream message;
+                message << "[Ragdoll] pose extraction skipped entity="
+                        << ragdoll.animation->GetOwner()->GetID() << ": animated pose has "
+                        << animatedSkin.size() << " matrices for "
+                        << ragdoll.skeleton->joints.size() << " joints";
+                LogRagdollDiagnostic(message.str());
+                continue;
+            }
+
+            const glm::mat4 inverseOwnerWorld = glm::inverse(
+                ragdoll.meshComponent->GetOwner()->GetWorldTransform() *
+                ragdoll.meshComponent->GetMeshOffsetTransform());
+            std::vector<glm::mat4> animatedGlobals(animatedSkin.size(), glm::mat4(1.0f));
+            std::vector<glm::mat4> physicsGlobals(animatedSkin.size(), glm::mat4(1.0f));
+            std::vector<uint8_t> evaluated(animatedSkin.size(), 0);
+            for (size_t jointIndex = 0; jointIndex < animatedSkin.size(); ++jointIndex)
+            {
                 const auto &joint = ragdoll.skeleton->joints[jointIndex];
-                skinMatrices[jointIndex] = joint.inverseRootMatrix * jointGlobal * joint.inverseBindMatrix;
+                animatedGlobals[jointIndex] = glm::inverse(joint.inverseRootMatrix) * animatedSkin[jointIndex] *
+                                              glm::inverse(joint.inverseBindMatrix);
+            }
+
+            std::function<glm::mat4(size_t)> evaluatePhysicsGlobal = [&](size_t jointIndex) -> glm::mat4
+            {
+                if (evaluated[jointIndex])
+                    return physicsGlobals[jointIndex];
+                evaluated[jointIndex] = 1;
+                const int partIndex = ragdoll.jointToPart[jointIndex];
+                if (partIndex >= 0)
+                {
+                    const auto &part = ragdoll.parts[static_cast<size_t>(partIndex)];
+                    const glm::mat4 jointWorld = FromBulletTransform(part.body->getWorldTransform()) * part.jointFromBody;
+                    physicsGlobals[jointIndex] = inverseOwnerWorld * jointWorld;
+                    return physicsGlobals[jointIndex];
+                }
+
+                const int parent = ragdoll.skeleton->joints[jointIndex].parentJointIndex;
+                if (parent < 0)
+                {
+                    physicsGlobals[jointIndex] = animatedGlobals[jointIndex];
+                    return physicsGlobals[jointIndex];
+                }
+                const glm::mat4 animatedLocal = glm::inverse(animatedGlobals[static_cast<size_t>(parent)]) *
+                                                animatedGlobals[jointIndex];
+                physicsGlobals[jointIndex] = evaluatePhysicsGlobal(static_cast<size_t>(parent)) * animatedLocal;
+                return physicsGlobals[jointIndex];
+            };
+
+            std::vector<glm::mat4> skinMatrices(animatedSkin.size(), glm::mat4(1.0f));
+            for (size_t jointIndex = 0; jointIndex < skinMatrices.size(); ++jointIndex)
+            {
+                const auto &joint = ragdoll.skeleton->joints[jointIndex];
+                skinMatrices[jointIndex] = joint.inverseRootMatrix * evaluatePhysicsGlobal(jointIndex) *
+                                           joint.inverseBindMatrix;
             }
             ragdoll.animation->SetRagdollPhysicsPose(*ragdoll.skeleton, std::move(skinMatrices));
+            ++ragdoll.simulatedStepCount;
+            if (ragdoll.simulatedStepCount == 10 && !ragdoll.parts.empty())
+            {
+                const btVector3 displacement = ragdoll.parts.front().body->getCenterOfMassPosition() -
+                                               ragdoll.initialRootPosition;
+                std::ostringstream message;
+                message << "[Ragdoll] after 10 steps entity=" << ragdoll.animation->GetOwner()->GetID()
+                        << " rootDelta=(" << displacement.x() << ',' << displacement.y() << ','
+                        << displacement.z() << ") active="
+                        << ragdoll.parts.front().body->isActive();
+                LogRagdollDiagnostic(message.str());
+            }
+            if (!ragdoll.loggedPosePublication)
+            {
+                std::ostringstream message;
+                message << "[Ragdoll] published physics pose entity="
+                        << ragdoll.animation->GetOwner()->GetID() << " matrices="
+                        << ragdoll.skeleton->joints.size();
+                LogRagdollDiagnostic(message.str());
+                ragdoll.loggedPosePublication = true;
+            }
         }
 
         std::unordered_set<uint64_t> currentCollisionPairs;

@@ -20,6 +20,7 @@
 #include "PlutoGE/render/Texture.h"
 
 #include <btBulletDynamicsCommon.h>
+#include <BulletDynamics/ConstraintSolver/btGeneric6DofSpring2Constraint.h>
 #include <BulletCollision/CollisionShapes/btHeightfieldTerrainShape.h>
 #include <BulletCollision/CollisionShapes/btBvhTriangleMeshShape.h>
 #include <BulletCollision/CollisionShapes/btTriangleMesh.h>
@@ -728,6 +729,18 @@ namespace PlutoGE::scene
             uint64_t revision = 0;
         };
 
+        struct RagdollJointTuning
+        {
+            float swingLimitDegrees = 42.0f;
+            float twistLimitDegrees = 25.0f;
+            float limitErrorReduction = 0.35f;
+            float angularDamping = 0.65f;
+            float angularFrictionForce = 1.5f;
+            int solverIterations = 24;
+        };
+
+        constexpr RagdollJointTuning kDefaultRagdollJointTuning{};
+
         struct BulletRuntimeWorld
         {
             btDefaultCollisionConfiguration collisionConfiguration;
@@ -741,6 +754,10 @@ namespace PlutoGE::scene
             BulletRuntimeWorld()
             {
                 dynamicsWorld.setGravity(btVector3(0.0f, -9.81f, 0.0f));
+                auto &solverInfo = dynamicsWorld.getSolverInfo();
+                solverInfo.m_numIterations = 20;
+                solverInfo.m_splitImpulse = true;
+                solverInfo.m_splitImpulsePenetrationThreshold = -0.02f;
             }
 
             ~BulletRuntimeWorld()
@@ -762,6 +779,20 @@ namespace PlutoGE::scene
             }
         };
 
+        class AnyPenetratingContact final : public btCollisionWorld::ContactResultCallback
+        {
+        public:
+            btScalar addSingleResult(btManifoldPoint &point,
+                                     const btCollisionObjectWrapper *, int, int,
+                                     const btCollisionObjectWrapper *, int, int) override
+            {
+                penetrating = penetrating || point.getDistance() <= 0.001f;
+                return 0.0f;
+            }
+
+            bool penetrating = false;
+        };
+
         MeshComponent *FindRagdollMesh(Entity *entity, const AnimationComponent *animation)
         {
             if (!entity)
@@ -774,6 +805,17 @@ namespace PlutoGE::scene
             for (auto *child : entity->GetChildren())
                 if (auto *mesh = FindRagdollMesh(child, animation))
                     return mesh;
+            return nullptr;
+        }
+
+        AnimationComponent *FindActiveRagdollOwner(Entity *entity)
+        {
+            for (auto *current = entity; current; current = current->GetParent())
+            {
+                auto *animation = current->GetComponent<AnimationComponent>();
+                if (animation && animation->IsEnabled() && animation->IsRagdollEnabled())
+                    return animation;
+            }
             return nullptr;
         }
 
@@ -1362,13 +1404,15 @@ namespace PlutoGE::scene
                 bulletTransform.setOrigin(ToBullet(bodyPosition));
                 bulletTransform.setRotation(btQuaternion(bodyRotation.x, bodyRotation.y, bodyRotation.z, bodyRotation.w));
 
-                const float mass = std::max(0.25f, length * 4.0f);
+                // Keeping neighbouring bodies within a modest mass ratio is
+                // essential for stable articulated constraint solving.
+                const float mass = std::clamp(length * 3.0f, 0.5f, 3.0f);
                 btVector3 inertia;
                 shape->calculateLocalInertia(mass, inertia);
                 auto motionState = std::make_unique<btDefaultMotionState>(bulletTransform);
                 btRigidBody::btRigidBodyConstructionInfo info(mass, motionState.get(), shape.get(), inertia);
                 info.m_linearDamping = 0.05f;
-                info.m_angularDamping = 0.2f;
+                info.m_angularDamping = kDefaultRagdollJointTuning.angularDamping;
                 auto body = std::make_unique<btRigidBody>(info);
                 body->setFriction(0.8f);
                 body->setRestitution(0.0f);
@@ -1396,14 +1440,53 @@ namespace PlutoGE::scene
                 jointFrame.setRotation(ToBulletRotation(jointWorldTransforms[jointIndex]));
                 const btTransform parentFrame = ragdoll.parts[static_cast<size_t>(parentIndex)].body->getWorldTransform().inverse() * jointFrame;
                 const btTransform childFrame = ragdoll.parts[jointIndex].body->getWorldTransform().inverse() * jointFrame;
-                auto constraint = std::make_unique<btConeTwistConstraint>(
+                auto constraint = std::make_unique<btGeneric6DofSpring2Constraint>(
                     *ragdoll.parts[static_cast<size_t>(parentIndex)].body,
-                    *ragdoll.parts[jointIndex].body, parentFrame, childFrame);
-                constraint->setLimit(glm::radians(50.0f), glm::radians(50.0f), glm::radians(35.0f), 0.9f, 0.3f, 1.0f);
+                    *ragdoll.parts[jointIndex].body, parentFrame, childFrame, RO_XYZ);
+                const auto &tuning = kDefaultRagdollJointTuning;
+                constraint->setLinearLowerLimit(btVector3(0, 0, 0));
+                constraint->setLinearUpperLimit(btVector3(0, 0, 0));
+                const btVector3 angularLimits(
+                    glm::radians(tuning.twistLimitDegrees),
+                    glm::radians(tuning.swingLimitDegrees),
+                    glm::radians(tuning.swingLimitDegrees));
+                constraint->setAngularLowerLimit(-angularLimits);
+                constraint->setAngularUpperLimit(angularLimits);
+                for (int axis = 3; axis < 6; ++axis)
+                {
+                    // A zero-velocity motor acts as bounded joint friction. It
+                    // dissipates motion but, unlike a positional spring, cannot
+                    // add energy by pulling the ragdoll toward a rest pose.
+                    constraint->enableMotor(axis, true);
+                    constraint->setTargetVelocity(axis, 0.0f);
+                    constraint->setMaxMotorForce(axis, tuning.angularFrictionForce);
+                    constraint->setBounce(axis, 0.0f);
+                    constraint->setParam(BT_CONSTRAINT_STOP_ERP, tuning.limitErrorReduction, axis);
+                    constraint->setParam(BT_CONSTRAINT_STOP_CFM, 0.0f, axis);
+                }
+                constraint->setOverrideNumSolverIterations(tuning.solverIterations);
                 constraint->setDbgDrawSize(0.15f);
                 runtimeWorld->dynamicsWorld.addConstraint(constraint.get(), true);
                 ragdoll.constraints.push_back(std::move(constraint));
             }
+
+            // Imported skeletons frequently produce capsules that touch or
+            // overlap in their activation pose (hips/spine, clavicles/chest,
+            // etc.). Letting those contacts fight the joint solver is the main
+            // source of ragdoll jitter. Preserve self-collision for separated
+            // limbs, but filter every pair that starts in penetration.
+            for (size_t first = 0; first < ragdoll.parts.size(); ++first)
+                for (size_t second = first + 1; second < ragdoll.parts.size(); ++second)
+                {
+                    AnyPenetratingContact contact;
+                    runtimeWorld->dynamicsWorld.contactPairTest(
+                        ragdoll.parts[first].body.get(), ragdoll.parts[second].body.get(), contact);
+                    if (contact.penetrating)
+                    {
+                        ragdoll.parts[first].body->setIgnoreCollisionCheck(ragdoll.parts[second].body.get(), true);
+                        ragdoll.parts[second].body->setIgnoreCollisionCheck(ragdoll.parts[first].body.get(), true);
+                    }
+                }
             runtimeWorld->ragdolls.push_back(std::move(ragdoll));
         }
 
@@ -2838,7 +2921,11 @@ namespace PlutoGE::scene
         for (auto *entity : entities)
         {
             auto *collider = entity ? entity->GetComponent<ColliderComponent>() : nullptr;
-            if (entity && collider && collider->IsEnabled() && !collider->IsTrigger())
+            // A ragdoll replaces the owner's ordinary rigid body hierarchy.
+            // Keeping both representations active makes the character collide
+            // with itself and creates large artificial translation impulses.
+            if (entity && collider && collider->IsEnabled() && !collider->IsTrigger() &&
+                !FindActiveRagdollOwner(entity))
             {
                 physicsEntities.push_back(entity);
             }

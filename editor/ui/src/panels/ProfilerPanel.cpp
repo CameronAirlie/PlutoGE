@@ -1,10 +1,13 @@
 #include "PlutoGE/ui/panels/ProfilerPanel.h"
 
 #include "PlutoGE/render/Renderer.h"
+#include "PlutoGE/render/RmlUiRuntime.h"
 #include "PlutoGE/ui/PanelManager.h"
 
 #include <imgui.h>
 #include <algorithm>
+#include <iomanip>
+#include <sstream>
 
 namespace
 {
@@ -49,6 +52,7 @@ namespace PlutoGE::ui
         const auto &postProcessGpuTimings = m_renderer->GetPostProcessGpuTimings();
         const auto &lightingGpuTiming = m_renderer->GetLightingGpuTiming();
         const auto &frameTimingStats = m_profiler->GetLatestFrameTimingStats();
+        const auto &rmlTiming = render::RmlUiRuntime::Get().GetCpuTiming();
         float lightingTotalMs = 0.0f;
         if (lightingGpuTiming.hasSetupResult)
         {
@@ -155,6 +159,21 @@ namespace PlutoGE::ui
         for (const auto &cpuPassTiming : cpuPassTimings)
         {
             ImGui::Text("%s CPU: %.2f ms", cpuPassTiming.name.c_str(), cpuPassTiming.cpuTimeMs);
+        }
+        ImGui::Text("RmlUi measured total: %.2f ms (%d/%d documents visible)",
+                    rmlTiming.TotalMs(), rmlTiming.visibleDocumentCount, rmlTiming.documentCount);
+        if (ImGui::TreeNode("RmlUi CPU breakdown"))
+        {
+            ImGui::Text("Initialize: %.3f ms", rmlTiming.initializeMs);
+            ImGui::Text("Viewport resize: %.3f ms", rmlTiming.resizeMs);
+            ImGui::Text("Document synchronization: %.3f ms", rmlTiming.synchronizeMs);
+            ImGui::Text("Input + layout update: %.3f ms", rmlTiming.inputUpdateMs);
+            ImGui::Text("Backend begin frame: %.3f ms", rmlTiming.beginFrameMs);
+            ImGui::Text("Backdrop copy: %.3f ms (%s)", rmlTiming.backdropMs,
+                        rmlTiming.copiedBackdrop ? "performed" : "skipped");
+            ImGui::Text("Rml render submission: %.3f ms", rmlTiming.renderMs);
+            ImGui::Text("Backend end frame: %.3f ms", rmlTiming.endFrameMs);
+            ImGui::TreePop();
         }
         ImGui::Text("Intermediate target resize: %.2f ms (%d)", cpuFrameStats.intermediateTargetResizeMs, cpuFrameStats.intermediateTargetResizeCount);
         ImGui::Text("GBuffer resize: %.2f ms (%d)", cpuFrameStats.gBufferResizeMs, cpuFrameStats.gBufferResizeCount);
@@ -265,6 +284,21 @@ namespace PlutoGE::ui
                 m_renderer->GetTotalCpuPassTimeMs(),
                 m_renderer->GetTotalGpuPassTimeMs(),
                 lightingGpuTiming);
+            std::ostringstream rmlReport;
+            rmlReport << std::fixed << std::setprecision(3)
+                      << "\nRmlUi CPU measured total: " << rmlTiming.TotalMs() << " ms\n"
+                      << "RmlUi documents: " << rmlTiming.visibleDocumentCount << "/"
+                      << rmlTiming.documentCount << " visible\n"
+                      << "RmlUi initialize: " << rmlTiming.initializeMs << " ms\n"
+                      << "RmlUi viewport resize: " << rmlTiming.resizeMs << " ms\n"
+                      << "RmlUi document synchronization: " << rmlTiming.synchronizeMs << " ms\n"
+                      << "RmlUi input + layout update: " << rmlTiming.inputUpdateMs << " ms\n"
+                      << "RmlUi backend begin frame: " << rmlTiming.beginFrameMs << " ms\n"
+                      << "RmlUi backdrop copy: " << rmlTiming.backdropMs << " ms ("
+                      << (rmlTiming.copiedBackdrop ? "performed" : "skipped") << ")\n"
+                      << "RmlUi render submission: " << rmlTiming.renderMs << " ms\n"
+                      << "RmlUi backend end frame: " << rmlTiming.endFrameMs << " ms\n";
+            m_lastCopiedMetrics += rmlReport.str();
             ImGui::SetClipboardText(m_lastCopiedMetrics.c_str());
         }
 

@@ -382,6 +382,50 @@ Vector3 Physics.MoveKinematic(
 
 `MoveKinematic` performs collision-aware movement and returns the displacement actually applied. There is also a `uint entityId` overload.
 
+## Navigation
+
+Navigation queries use an entity containing a `NavigationMeshComponent`. Passing the navigation mesh explicitly supports scenes containing more than one navigation mesh.
+
+```csharp
+bool Navigation.ProjectPoint(
+    GameObject navigationMesh, Vector3 point, out Vector3 projected,
+    float agentRadius = 0.0f, float agentHeight = 0.0f)
+
+NavigationPath Navigation.FindPath(
+    GameObject navigationMesh, Vector3 start, Vector3 end,
+    float agentRadius = 0.0f, float agentHeight = 0.0f)
+```
+
+`ProjectPoint` finds the nearest walkable point that accommodates the requested agent dimensions. It returns `false` when the object is invalid, does not contain a navigation mesh, the mesh is unavailable, or no suitable point exists.
+
+`FindPath` returns a `NavigationPath` with read-only `Points` and `Complete` properties. `Points` contains world-space waypoints, including the requested start and end positions when a route is found. `Complete` is `false` and `Points` is empty when no route can be found or the navigation mesh is unavailable. Negative agent radius and height values are clamped to zero.
+
+```csharp
+[SerializedField] private GameObject? navigationMesh;
+[SerializedField] private GameObject? target;
+[SerializedField] private float agentRadius = 0.4f;
+[SerializedField] private float agentHeight = 1.8f;
+
+public override void OnUpdate(float deltaTime)
+{
+    if (navigationMesh is null || target is null)
+        return;
+
+    var path = Navigation.FindPath(
+        navigationMesh,
+        GameObject.WorldPosition,
+        target.WorldPosition,
+        agentRadius,
+        agentHeight);
+
+    if (path.Complete && path.Points.Count > 1)
+    {
+        Vector3 nextWaypoint = path.Points[1];
+        // Move toward nextWaypoint.
+    }
+}
+```
+
 ## Prefabs, scenes, and data assets
 
 Prefab use:
@@ -515,7 +559,8 @@ When generating a PlutoGE script:
 7. Use `System.Numerics` vectors/quaternions, not Unity types.
 8. Use `GameObject.Position` for local space and `WorldPosition` for world space deliberately.
 9. Avoid modifying a dynamic rigidbody's transform every frame; use forces/impulses, or make it kinematic and use `Physics.MoveKinematic`.
-10. Build scripts through the editor after changes and fix all C# build errors before expecting the class in the Script Component picker.
+10. Pass the intended navigation-mesh entity to `Navigation.ProjectPoint` and `Navigation.FindPath`; do not assume a global navigation mesh.
+11. Build scripts through the editor after changes and fix all C# build errors before expecting the class in the Script Component picker.
 
 ## Implementation references
 

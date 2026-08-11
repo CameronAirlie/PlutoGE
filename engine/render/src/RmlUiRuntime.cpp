@@ -21,6 +21,7 @@
 #include <GLFW/glfw3.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <fstream>
 #include <iostream>
@@ -92,6 +93,36 @@ namespace PlutoGE::render
             return newest;
         }
 
+        bool SourceUsesBackdropFilter(const std::filesystem::path &documentPath)
+        {
+            const auto readText = [](const std::filesystem::path &path)
+            {
+                std::ifstream input(path, std::ios::binary);
+                return input ? std::string(std::istreambuf_iterator<char>(input),
+                                           std::istreambuf_iterator<char>())
+                             : std::string{};
+            };
+
+            const std::string documentSource = readText(documentPath);
+            if (documentSource.find("backdrop-filter") != std::string::npos)
+                return true;
+
+            // Only inspect stylesheets linked by this document. Scanning every
+            // RCSS sibling would make an unrelated hidden pause menu force a
+            // full-frame backdrop copy for the gameplay HUD.
+            const std::regex stylesheetPattern(
+                R"(<link[^>]*href\s*=\s*[\"']([^\"']+\.rcss)[\"'][^>]*>)",
+                std::regex::icase);
+            for (std::sregex_iterator it(documentSource.begin(), documentSource.end(), stylesheetPattern), end;
+                 it != end; ++it)
+            {
+                const auto stylesheet = (documentPath.parent_path() / (*it)[1].str()).lexically_normal();
+                if (readText(stylesheet).find("backdrop-filter") != std::string::npos)
+                    return true;
+            }
+            return false;
+        }
+
         class RuntimeEventListener final : public Rml::EventListener
         {
         public:
@@ -138,12 +169,16 @@ namespace PlutoGE::render
         }
 
         void ConfigureDocument(Rml::ElementDocument &document, const DocumentRequest &request,
-                               int viewportWidth, int viewportHeight)
+                               int viewportWidth, int viewportHeight,
+                               bool updateTransform, bool updateDimensions)
         {
             const float scale = std::max(request.scale, 0.0001f);
-            document.SetProperty("position", "absolute");
-            document.SetProperty("transform-origin", "0px 0px");
-            document.SetProperty("transform", "scale(" + std::to_string(scale) + ")");
+            if (updateTransform)
+            {
+                document.SetProperty("position", "absolute");
+                document.SetProperty("transform-origin", "0px 0px");
+                document.SetProperty("transform", "scale(" + std::to_string(scale) + ")");
+            }
             if (request.projected)
             {
                 // CSS transforms operate in the element's local coordinate
@@ -153,10 +188,13 @@ namespace PlutoGE::render
                 // toward zero and the document shoots down and right.
                 document.SetProperty("left", std::to_string(request.position.x - request.size.x * request.pivot.x * scale) + "px");
                 document.SetProperty("top", std::to_string(request.position.y - request.size.y * request.pivot.y * scale) + "px");
-                document.SetProperty("width", std::to_string(request.size.x) + "px");
-                document.SetProperty("height", std::to_string(request.size.y) + "px");
+                if (updateDimensions)
+                {
+                    document.SetProperty("width", std::to_string(request.size.x) + "px");
+                    document.SetProperty("height", std::to_string(request.size.y) + "px");
+                }
             }
-            else
+            else if (updateDimensions)
             {
                 document.SetProperty("left", "0px");
                 document.SetProperty("top", "0px");
@@ -173,7 +211,10 @@ namespace PlutoGE::render
                               float inheritedScale = 1.0f,
                               bool insideDocumentCanvas = false)
         {
-            if (!entity || !entity->IsActive())
+            // The caller only descends through active parents, so checking the
+            // local flag is sufficient. Entity::IsActive() walks every ancestor
+            // and made this full-scene collection quadratic on deep skeletons.
+            if (!entity || !entity->IsSelfActive())
                 return;
 
             if (const auto *canvas = entity->GetComponent<scene::CanvasComponent>();
@@ -209,6 +250,17 @@ namespace PlutoGE::render
                                                   canvas->GetWorldSizeMode() == scene::UIWorldSizeMode::ConstantScreenSize;
                         request.scale = inheritedScale * uniformScale *
                                         (constantSize ? 1.0f : perspectiveScale / 100.0f);
+                        if (request.inFrontOfCamera)
+                        {
+                            const glm::vec2 scaledSize = request.size * request.scale;
+                            const glm::vec2 min = request.position - scaledSize * request.pivot;
+                            const glm::vec2 max = min + scaledSize;
+                            // Avoid layout and draw work for projected widgets
+                            // that cannot contribute to the current viewport.
+                            request.inFrontOfCamera = scaledSize.x >= 1.0f && scaledSize.y >= 1.0f &&
+                                                      max.x >= 0.0f && max.y >= 0.0f &&
+                                                      min.x <= viewportSize.x && min.y <= viewportSize.y;
+                        }
                     }
                 }
                 // A document canvas owns its subtree. Nested native canvases are
@@ -308,6 +360,7 @@ namespace PlutoGE::render
         m_documentReferences.clear();
         m_documentWriteTimes.clear();
         m_documentScales.clear();
+        m_documentUsesBackdrop.clear();
         m_eventSubscriptions.clear();
         m_reportedLoadFailures.clear();
         m_loadedFontFaces.clear();
@@ -338,9 +391,41 @@ namespace PlutoGE::render
                                         : m_hotReloadCheckCountdown - 1;
 
         std::unordered_map<std::string, DocumentRequest> requestedDocuments;
-        for (auto *root : scene.GetRootEntities())
-            CollectDocuments(root, {static_cast<float>(m_width), static_cast<float>(m_height)}, requestedDocuments,
-                             view, projection);
+        const glm::vec2 viewportSize{static_cast<float>(m_width), static_cast<float>(m_height)};
+        const auto &canvases = scene.GetCanvasComponents();
+        if (!canvases.empty())
+        {
+            // Canvas components are registered by Scene as entities/components
+            // are attached and removed. Restrict collection to those small UI
+            // subtrees instead of walking every mesh and every skeleton joint
+            // in the scene for each rendered viewport.
+            std::unordered_set<const scene::Entity *> collectedRoots;
+            for (const auto *canvas : canvases)
+            {
+                auto *owner = canvas ? canvas->GetOwner() : nullptr;
+                if (!owner || !owner->IsActive())
+                    continue;
+
+                // A nested canvas is already covered by its nearest canvas
+                // ancestor. Start a separate traversal only for top-level UI
+                // roots to avoid collecting the same subtree more than once.
+                auto *collectionRoot = owner;
+                for (auto *parent = owner->GetParent(); parent; parent = parent->GetParent())
+                {
+                    if (parent->GetComponent<scene::CanvasComponent>())
+                        collectionRoot = parent;
+                }
+                if (collectedRoots.insert(collectionRoot).second)
+                    CollectDocuments(collectionRoot, viewportSize, requestedDocuments, view, projection);
+            }
+        }
+        else
+        {
+            // Compatibility for old scenes containing a standalone deprecated
+            // RmlWidget without a Canvas. New authoring always creates a Canvas.
+            for (auto *root : scene.GetRootEntities())
+                CollectDocuments(root, viewportSize, requestedDocuments, view, projection);
+        }
 
         bool detachedForDocumentChange = false;
         for (auto it = m_documents.begin(); it != m_documents.end();)
@@ -356,6 +441,7 @@ namespace PlutoGE::render
                     it->second->Close();
                 m_documentWriteTimes.erase(it->first);
                 m_documentScales.erase(it->first);
+                m_documentUsesBackdrop.erase(it->first);
                 m_documentReferences.erase(it->first);
                 it = m_documents.erase(it);
             }
@@ -386,12 +472,22 @@ namespace PlutoGE::render
                 {
                     const float scale = std::max(request.scale, 0.0001f);
                     const auto knownScale = m_documentScales.find(key);
-                    if (knownScale == m_documentScales.end() || knownScale->second != scale)
+                    const bool firstConfiguration = knownScale == m_documentScales.end();
+                    const bool scaleChanged = firstConfiguration || knownScale->second != scale;
+                    if (scaleChanged)
                     {
                         m_documentScales[key] = scale;
                     }
-                    // Projected documents move every frame even when their scale is unchanged.
-                    ConfigureDocument(*document, request, m_width, m_height);
+                    // Screen documents retain their layout until scale or
+                    // viewport changes. Projected documents only update their
+                    // screen-space coordinates every frame.
+                    // Culled projected documents remain hidden and do not need
+                    // CSS mutations. Updating left/top/scale on them invalidates
+                    // RmlUi style and layout work despite producing no pixels.
+                    if ((scaleChanged || request.projected) &&
+                        (!request.projected || request.inFrontOfCamera))
+                        ConfigureDocument(*document, request, m_width, m_height,
+                                          scaleChanged, firstConfiguration || (!request.projected && scaleChanged));
                     if (request.visible && request.inFrontOfCamera)
                     {
                         if (!document->IsVisible())
@@ -427,11 +523,12 @@ namespace PlutoGE::render
             if (auto *document = m_context->LoadDocument(path))
             {
                 const float scale = std::max(request.scale, 0.0001f);
-                ConfigureDocument(*document, request, m_width, m_height);
+                ConfigureDocument(*document, request, m_width, m_height, true, true);
                 (request.visible && request.inFrontOfCamera) ? document->Show() : document->Hide();
                 m_documents.emplace(key, document);
                 m_documentReferences[key] = reference;
                 m_documentScales[key] = scale;
+                m_documentUsesBackdrop[key] = SourceUsesBackdropFilter(path);
                 m_reportedLoadFailures.erase(reference);
                 std::clog << "[RmlUi] Loaded Canvas document '" << reference
                           << "' from '" << path << "'.\n";
@@ -623,6 +720,7 @@ namespace PlutoGE::render
             if (found->second) found->second->Close();
             m_documents.erase(found);
             m_documentScales.erase(document);
+            m_documentUsesBackdrop.erase(document);
             m_documentReferences.erase(document);
         }
 
@@ -638,6 +736,7 @@ namespace PlutoGE::render
         loaded->Show();
         m_documents[document] = loaded;
         m_documentReferences[document] = reference;
+        m_documentUsesBackdrop[document] = SourceUsesBackdropFilter(path);
         std::error_code error;
         const auto writeTime = DocumentSourceWriteTime(path, error);
         if (!error) m_documentWriteTimes[document] = writeTime;
@@ -887,10 +986,23 @@ namespace PlutoGE::render
     void RmlUiRuntime::Render(const scene::Scene &scene, int width, int height, std::uint64_t frameSequence,
                               const glm::mat4 &view, const glm::mat4 &projection)
     {
-        auto &window = core::Engine::GetInstance().GetWindow();
-        if (!Initialize(window))
-            return;
+        using Clock = std::chrono::steady_clock;
+        const auto elapsedMs = [](const auto begin, const auto end)
+        {
+            return std::chrono::duration<float, std::milli>(end - begin).count();
+        };
+        m_cpuTiming = {};
 
+        auto &window = core::Engine::GetInstance().GetWindow();
+        const auto initializeBegin = Clock::now();
+        if (!Initialize(window))
+        {
+            m_cpuTiming.initializeMs = elapsedMs(initializeBegin, Clock::now());
+            return;
+        }
+        m_cpuTiming.initializeMs = elapsedMs(initializeBegin, Clock::now());
+
+        const auto resizeBegin = Clock::now();
         if (width != m_width || height != m_height)
         {
             m_width = width;
@@ -899,22 +1011,51 @@ namespace PlutoGE::render
             m_renderer->SetViewport(width, height);
             m_documentScales.clear();
         }
+        m_cpuTiming.resizeMs = elapsedMs(resizeBegin, Clock::now());
 
+        const auto synchronizeBegin = Clock::now();
         SynchronizeDocuments(scene, view, projection);
+        m_cpuTiming.synchronizeMs = elapsedMs(synchronizeBegin, Clock::now());
+        m_cpuTiming.documentCount = static_cast<int>(m_documents.size());
+        m_cpuTiming.visibleDocumentCount = static_cast<int>(std::count_if(
+            m_documents.begin(), m_documents.end(), [](const auto &entry)
+            {
+                return entry.second && entry.second->IsVisible();
+            }));
         if (m_documents.empty())
             return;
 
+        const auto inputBegin = Clock::now();
         if (frameSequence != m_lastInputFrame)
         {
             ProcessInput(window, scene);
             m_context->Update();
             m_lastInputFrame = frameSequence;
         }
+        m_cpuTiming.inputUpdateMs = elapsedMs(inputBegin, Clock::now());
 
         m_renderer->SetViewport(width, height);
+        const auto beginFrameBegin = Clock::now();
         m_renderer->BeginFrame();
-        PlutoGE_CopyRmlUiBackdrop(width, height);
+        m_cpuTiming.beginFrameMs = elapsedMs(beginFrameBegin, Clock::now());
+        const bool needsBackdrop = std::any_of(m_documents.begin(), m_documents.end(), [this](const auto &entry)
+        {
+            const auto usage = m_documentUsesBackdrop.find(entry.first);
+            return entry.second && entry.second->IsVisible() &&
+                   usage != m_documentUsesBackdrop.end() && usage->second;
+        });
+        const auto backdropBegin = Clock::now();
+        if (needsBackdrop)
+            PlutoGE_CopyRmlUiBackdrop(width, height);
+        m_cpuTiming.backdropMs = elapsedMs(backdropBegin, Clock::now());
+        m_cpuTiming.copiedBackdrop = needsBackdrop;
+
+        const auto renderBegin = Clock::now();
         m_context->Render();
+        m_cpuTiming.renderMs = elapsedMs(renderBegin, Clock::now());
+
+        const auto endFrameBegin = Clock::now();
         m_renderer->EndFrame();
+        m_cpuTiming.endFrameMs = elapsedMs(endFrameBegin, Clock::now());
     }
 }

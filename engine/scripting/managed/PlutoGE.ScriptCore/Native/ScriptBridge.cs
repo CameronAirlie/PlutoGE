@@ -358,6 +358,8 @@ internal static unsafe class ScriptBridge
     private static delegate* unmanaged[Cdecl]<NativeVector3, NativeVector3, float, uint, nint, NativeRaycastHit*, int> _physicsRaycastTagged;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3, float, NativeVector3> _physicsMoveKinematic;
     private static delegate* unmanaged[Cdecl]<NativeVector3, NativeVector3, nint, NativeVector3, float, float, uint> _spawnDecal;
+    private static delegate* unmanaged[Cdecl]<uint, NativeVector3, float, float, NativeVector3*, int> _navigationProjectPoint;
+    private static delegate* unmanaged[Cdecl]<uint, NativeVector3, NativeVector3, float, float, NativeVector3*, int, int*, int> _navigationFindPath;
     private static delegate* unmanaged[Cdecl]<int, nint, void> _logMessage;
 
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "LoadScriptAssembly")]
@@ -1233,6 +1235,22 @@ internal static unsafe class ScriptBridge
         _physicsRaycastTagged = raycastTagged;
         _physicsMoveKinematic = moveKinematic;
         _spawnDecal = spawnDecal;
+        _lastError = string.Empty;
+        return 1;
+    }
+
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterNavigationApi")]
+    public static int RegisterNavigationApi(
+        delegate* unmanaged[Cdecl]<uint, NativeVector3, float, float, NativeVector3*, int> projectPoint,
+        delegate* unmanaged[Cdecl]<uint, NativeVector3, NativeVector3, float, float, NativeVector3*, int, int*, int> findPath)
+    {
+        if (projectPoint == null || findPath == null)
+        {
+            SetError("Managed navigation API registration received a null function pointer.");
+            return 0;
+        }
+        _navigationProjectPoint = projectPoint;
+        _navigationFindPath = findPath;
         _lastError = string.Empty;
         return 1;
     }
@@ -2585,6 +2603,45 @@ internal static unsafe class ScriptBridge
                 ignoredEntityId,
                 hitPtr) != 0;
         }
+    }
+
+    internal static bool NavigationProjectPoint(uint navigationMeshEntityId, Vector3 point,
+        float agentRadius, float agentHeight, out Vector3 projected)
+    {
+        projected = default;
+        if (_navigationProjectPoint == null)
+            return false;
+        NativeVector3 nativeProjected;
+        if (_navigationProjectPoint(navigationMeshEntityId, NativeVector3.FromManaged(point), agentRadius,
+                agentHeight, &nativeProjected) == 0)
+            return false;
+        projected = nativeProjected.ToManaged();
+        return true;
+    }
+
+    internal static Vector3[] NavigationFindPath(uint navigationMeshEntityId, Vector3 start, Vector3 end,
+        float agentRadius, float agentHeight, out bool complete)
+    {
+        complete = false;
+        if (_navigationFindPath == null)
+            return [];
+        int nativeComplete = 0;
+        var count = _navigationFindPath(navigationMeshEntityId, NativeVector3.FromManaged(start),
+            NativeVector3.FromManaged(end), agentRadius, agentHeight, null, 0, &nativeComplete);
+        if (count <= 0)
+            return [];
+        var nativePoints = new NativeVector3[count];
+        fixed (NativeVector3* points = nativePoints)
+        {
+            count = _navigationFindPath(navigationMeshEntityId, NativeVector3.FromManaged(start),
+                NativeVector3.FromManaged(end), agentRadius, agentHeight, points, count, &nativeComplete);
+        }
+        count = Math.Min(Math.Max(0, count), nativePoints.Length);
+        var result = new Vector3[Math.Max(0, count)];
+        for (var index = 0; index < result.Length; ++index)
+            result[index] = nativePoints[index].ToManaged();
+        complete = nativeComplete != 0;
+        return result;
     }
 
     internal static bool PhysicsRaycastTagged(Vector3 origin, Vector3 direction, float maxDistance, uint ignoredEntityId, string tag, out NativeRaycastHit hit)

@@ -8,11 +8,13 @@
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Prefab.h"
 #include "PlutoGE/scene/Scene.h"
+#include "PlutoGE/scene/NavigationSystem.h"
 #include "PlutoGE/scene/components/AnimationComponent.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
 #include "PlutoGE/scene/components/ColliderComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
+#include "PlutoGE/scene/components/NavigationMeshComponent.h"
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
 #include "PlutoGE/scene/components/RigidbodyComponent.h"
 #include "PlutoGE/scene/components/ScriptComponent.h"
@@ -117,6 +119,7 @@ namespace PlutoGE::scripting
         using register_rml_ui_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_input_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_physics_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *);
+        using register_navigation_api_fn = int(PLUTO_HOST_CALL *)(void *, void *);
         using register_debug_api_fn = int(PLUTO_HOST_CALL *)(void *);
 
         struct HostFxrLocation
@@ -209,6 +212,8 @@ namespace PlutoGE::scripting
         using physics_raycast_tagged_fn = int(PLUTO_HOST_CALL *)(NativeVector3, NativeVector3, float, uint32_t, const char *, NativeRaycastHit *);
         using physics_move_kinematic_fn = NativeVector3(PLUTO_HOST_CALL *)(uint32_t, NativeVector3, float);
         using spawn_decal_fn = uint32_t(PLUTO_HOST_CALL *)(NativeVector3, NativeVector3, const char *, NativeVector3, float, float);
+        using navigation_project_point_fn = int(PLUTO_HOST_CALL *)(uint32_t, NativeVector3, float, float, NativeVector3 *);
+        using navigation_find_path_fn = int32_t(PLUTO_HOST_CALL *)(uint32_t, NativeVector3, NativeVector3, float, float, NativeVector3 *, int32_t, int32_t *);
         using script_log_fn = void(PLUTO_HOST_CALL *)(int32_t, const char *);
         constexpr std::basic_string_view<char_t> kScriptBridgeType = HOST_TEXT("PlutoGE.ScriptCore.Native.ScriptBridge, PlutoGE.ScriptCore");
         constexpr std::string_view kScriptCoreAssembly = "PlutoGE.ScriptCore.dll";
@@ -2612,6 +2617,52 @@ namespace PlutoGE::scripting
             return 1;
         }
 
+        scene::NavigationSystem *GetNavigationSystem(uint32_t entityId)
+        {
+            auto *activeScene = core::Engine::GetInstance().GetScene();
+            auto *entity = activeScene ? activeScene->FindEntityByID(entityId) : nullptr;
+            auto *mesh = entity ? entity->GetComponent<scene::NavigationMeshComponent>() : nullptr;
+            if (!mesh)
+                return nullptr;
+            if (!mesh->GetNavigation().IsBaked() && mesh->ShouldHaveBake())
+                mesh->Bake();
+            return mesh->GetNavigation().IsBaked() ? &mesh->GetNavigation() : nullptr;
+        }
+
+        int32_t NavigationProjectPoint(uint32_t entityId, NativeVector3 point, float agentRadius,
+                                       float agentHeight, NativeVector3 *projected)
+        {
+            auto *navigation = GetNavigationSystem(entityId);
+            if (!navigation || !projected)
+                return 0;
+            glm::vec3 result{};
+            if (!navigation->ProjectPoint({point.x, point.y, point.z}, result, agentRadius, agentHeight))
+                return 0;
+            *projected = {result.x, result.y, result.z};
+            return 1;
+        }
+
+        int32_t NavigationFindPath(uint32_t entityId, NativeVector3 start, NativeVector3 end,
+                                   float agentRadius, float agentHeight, NativeVector3 *points,
+                                   int32_t capacity, int32_t *complete)
+        {
+            auto *navigation = GetNavigationSystem(entityId);
+            if (!navigation)
+                return 0;
+            const auto path = navigation->FindPath({start.x, start.y, start.z}, {end.x, end.y, end.z},
+                                                   agentRadius, agentHeight);
+            if (complete)
+                *complete = path.complete ? 1 : 0;
+            const auto count = static_cast<int32_t>(path.points.size());
+            if (points && capacity > 0)
+            {
+                const auto copyCount = (std::min)(count, capacity);
+                for (int32_t index = 0; index < copyCount; ++index)
+                    points[index] = {path.points[index].x, path.points[index].y, path.points[index].z};
+            }
+            return count;
+        }
+
         int32_t PhysicsRaycastTagged(NativeVector3 origin,
                                      NativeVector3 direction,
                                      float maxDistance,
@@ -2963,6 +3014,7 @@ namespace PlutoGE::scripting
         register_rml_ui_api_fn registerRmlUiApi = nullptr;
         register_input_api_fn registerInputApi = nullptr;
         register_physics_api_fn registerPhysicsApi = nullptr;
+        register_navigation_api_fn registerNavigationApi = nullptr;
         register_debug_api_fn registerDebugApi = nullptr;
         std::filesystem::path bridgeSourceAssemblyPath;
         std::filesystem::path bridgeSourceRuntimeConfigPath;
@@ -3063,6 +3115,7 @@ namespace PlutoGE::scripting
             impl.registerRmlUiApi = nullptr;
             impl.registerInputApi = nullptr;
             impl.registerPhysicsApi = nullptr;
+            impl.registerNavigationApi = nullptr;
             impl.registerDebugApi = nullptr;
             impl.bridgeSourceAssemblyPath.clear();
             impl.bridgeSourceRuntimeConfigPath.clear();
@@ -3404,6 +3457,7 @@ namespace PlutoGE::scripting
                 LoadManagedExport(impl, HOST_TEXT("RegisterRmlUiApi"), impl.registerRmlUiApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterInputApi"), impl.registerInputApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterPhysicsApi"), impl.registerPhysicsApi) &&
+                LoadManagedExport(impl, HOST_TEXT("RegisterNavigationApi"), impl.registerNavigationApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterDebugApi"), impl.registerDebugApi);
 
             if (!requiredExportsLoaded)
@@ -3990,6 +4044,15 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(static_cast<spawn_decal_fn>(&SpawnDecal))) == 0)
         {
             setManagedBridgeFailure("RegisterPhysicsApi");
+            return false;
+        }
+
+        if (!m_impl->registerNavigationApi ||
+            m_impl->registerNavigationApi(
+                reinterpret_cast<void *>(static_cast<navigation_project_point_fn>(&NavigationProjectPoint)),
+                reinterpret_cast<void *>(static_cast<navigation_find_path_fn>(&NavigationFindPath))) == 0)
+        {
+            setManagedBridgeFailure("RegisterNavigationApi");
             return false;
         }
 

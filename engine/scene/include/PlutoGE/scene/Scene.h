@@ -189,6 +189,7 @@ namespace PlutoGE::scene
         void ClearBakedProbeVolume();
         const std::vector<IblCaptureVolume> &GetIblCaptureVolumes() const { return m_iblCaptureVolumes; }
         const std::vector<ParticleSystemComponent *> &GetParticleSystemComponents() const { return m_particleSystemComponents; }
+        const std::vector<CanvasComponent *> &GetCanvasComponents() const { return m_canvasComponents; }
         int AddIblCaptureVolume(IblCaptureVolume captureVolume);
         void SetIblCaptureVolume(std::size_t index, IblCaptureVolume captureVolume);
         void RemoveIblCaptureVolume(std::size_t index);

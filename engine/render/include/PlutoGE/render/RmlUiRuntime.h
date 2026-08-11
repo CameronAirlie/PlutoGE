@@ -32,6 +32,27 @@ namespace PlutoGE::scene
 
 namespace PlutoGE::render
 {
+    struct RmlUiCpuTiming
+    {
+        float initializeMs = 0.0f;
+        float resizeMs = 0.0f;
+        float synchronizeMs = 0.0f;
+        float inputUpdateMs = 0.0f;
+        float beginFrameMs = 0.0f;
+        float backdropMs = 0.0f;
+        float renderMs = 0.0f;
+        float endFrameMs = 0.0f;
+        int documentCount = 0;
+        int visibleDocumentCount = 0;
+        bool copiedBackdrop = false;
+
+        [[nodiscard]] float TotalMs() const
+        {
+            return initializeMs + resizeMs + synchronizeMs + inputUpdateMs + beginFrameMs +
+                   backdropMs + renderMs + endFrameMs;
+        }
+    };
+
     // Owns the single screen-space RmlUi context used by runtime canvases.
     // CanvasComponent remains the scene-facing authoring and migration point.
     class RmlUiRuntime
@@ -45,6 +66,7 @@ namespace PlutoGE::render
                     const glm::mat4 &view, const glm::mat4 &projection);
         [[nodiscard]] bool IsInitialized() const { return m_context != nullptr; }
         [[nodiscard]] Rml::Context *GetContext() const { return m_context; }
+        [[nodiscard]] const RmlUiCpuTiming &GetCpuTiming() const { return m_cpuTiming; }
         bool ShowDocument(const std::string &document, bool visible);
         bool ReloadDocument(const std::string &document);
         bool SetElementText(const std::string &document, const std::string &id, const std::string &text);
@@ -82,6 +104,7 @@ namespace PlutoGE::render
         std::unordered_map<std::string, std::string> m_documentReferences;
         std::unordered_map<std::string, std::filesystem::file_time_type> m_documentWriteTimes;
         std::unordered_map<std::string, float> m_documentScales;
+        std::unordered_map<std::string, bool> m_documentUsesBackdrop;
         std::unordered_map<std::string, int> m_pendingEvents;
         std::unordered_set<std::string> m_eventSubscriptions;
         std::unordered_set<std::string> m_attachedEvents;
@@ -94,5 +117,6 @@ namespace PlutoGE::render
         int m_height = 0;
         std::uint64_t m_lastInputFrame = 0;
         std::uint32_t m_hotReloadCheckCountdown = 0;
+        RmlUiCpuTiming m_cpuTiming;
     };
 }

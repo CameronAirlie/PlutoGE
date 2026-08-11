@@ -200,6 +200,20 @@ namespace PlutoGE::scene
         float GetLayerWeight(std::string_view layerName) const;
         const std::vector<AnimationLayer> &GetLayers() const { return m_layers; }
 
+        // Enables a lightweight, constraint-based skeletal ragdoll. The current
+        // animated pose is used as the initial pose, so entering ragdoll does
+        // not pop. A weight below one blends physics with animation.
+        void SetRagdollEnabled(bool enabled);
+        bool IsRagdollEnabled() const { return m_ragdollEnabled; }
+        void SetRagdollWeight(float weight);
+        float GetRagdollWeight() const { return m_ragdollWeight; }
+        void AddRagdollImpulse(const glm::vec3 &impulse);
+        void ResetRagdoll();
+        glm::vec3 ConsumeRagdollImpulse();
+        uint64_t GetRagdollRevision() const { return m_ragdollRevision; }
+        void SetRagdollPhysicsPose(const render::Skeleton &skeleton, std::vector<glm::mat4> jointMatrices);
+        void ClearRagdollPhysicsPose();
+
     private:
         struct TransitionPlayback
         {
@@ -241,6 +255,7 @@ namespace PlutoGE::scene
         void DispatchClipEvents(int clipIndex, float previousTime, float currentTime, bool looping, float speed);
 
         void EvaluateJointMatrices(const render::Skeleton &skeleton);
+        void ApplyRagdoll(const render::Skeleton &skeleton);
         void EvaluateNodeMatrices(const std::vector<render::AnimationNode> &nodes);
         void EnsureNodeBindingCache(const std::vector<render::AnimationNode> &nodes);
         void EnsureRetargetBindingCache(const render::Skeleton &skeleton);
@@ -287,5 +302,11 @@ namespace PlutoGE::scene
         bool m_graphStarted = false;
         bool m_jointMatricesDirty = true;
         bool m_nodeMatricesDirty = true;
+        glm::vec3 m_pendingRagdollImpulse{0.0f};
+        float m_ragdollWeight = 1.0f;
+        bool m_ragdollEnabled = false;
+        const render::Skeleton *m_ragdollPhysicsSkeleton = nullptr;
+        std::vector<glm::mat4> m_ragdollPhysicsPose;
+        uint64_t m_ragdollRevision = 0;
     };
 }

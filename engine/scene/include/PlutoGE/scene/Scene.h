@@ -275,7 +275,8 @@ namespace PlutoGE::scene
         void RefreshPhysicsQueryCache() const;
         void InvalidatePhysicsQueryCache() const;
         void ResetRuntimePhysicsState();
-        void RebuildRuntimePhysicsState(const std::vector<Entity *> &entities);
+        void RebuildRuntimePhysicsState(const std::vector<Entity *> &physicsEntities,
+                                        const std::vector<Entity *> &activeEntities);
         void SyncPhysicsQueryTransform(const Entity &entity) const;
         void StepPhysics(float deltaTime);
         void DispatchCollisionEvents(std::unordered_set<uint64_t> currentCollisionPairs);

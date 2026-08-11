@@ -49,6 +49,22 @@ public sealed class AnimationComponent : ComponentReference
         set => ScriptBridge.SetAnimationTime(EntityId, value);
     }
 
+    public bool RagdollEnabled
+    {
+        get => ScriptBridge.GetRagdollEnabled(EntityId);
+        set => ScriptBridge.SetRagdollEnabled(EntityId, value);
+    }
+
+    public float RagdollWeight
+    {
+        get => ScriptBridge.GetRagdollWeight(EntityId);
+        set => ScriptBridge.SetRagdollWeight(EntityId, Math.Clamp(value, 0.0f, 1.0f));
+    }
+
+    public void AddRagdollImpulse(System.Numerics.Vector3 impulse) => ScriptBridge.AddRagdollImpulse(EntityId, impulse);
+
+    public void ResetRagdoll() => ScriptBridge.ResetRagdoll(EntityId);
+
     public string GetClipName(int clipIndex)
     {
         return ScriptBridge.GetAnimationClipName(EntityId, clipIndex);

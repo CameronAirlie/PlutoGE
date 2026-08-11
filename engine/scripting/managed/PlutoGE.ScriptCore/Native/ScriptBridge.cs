@@ -187,6 +187,12 @@ internal static unsafe class ScriptBridge
     private static delegate* unmanaged[Cdecl]<uint, byte*, void> _setAnimationTriggerParameter;
     private static delegate* unmanaged[Cdecl]<uint, byte*, void> _resetAnimationTriggerParameter;
     private static delegate* unmanaged[Cdecl]<uint, byte*, void> _animationPlayState;
+    private static delegate* unmanaged[Cdecl]<uint, int> _getRagdollEnabled;
+    private static delegate* unmanaged[Cdecl]<uint, int, void> _setRagdollEnabled;
+    private static delegate* unmanaged[Cdecl]<uint, float> _getRagdollWeight;
+    private static delegate* unmanaged[Cdecl]<uint, float, void> _setRagdollWeight;
+    private static delegate* unmanaged[Cdecl]<uint, NativeVector3, void> _addRagdollImpulse;
+    private static delegate* unmanaged[Cdecl]<uint, void> _resetRagdoll;
     private static delegate* unmanaged[Cdecl]<uint, float> _getRigidbodyMass;
     private static delegate* unmanaged[Cdecl]<uint, float, void> _setRigidbodyMass;
     private static delegate* unmanaged[Cdecl]<uint, float> _getRigidbodyLinearDrag;
@@ -710,13 +716,21 @@ internal static unsafe class ScriptBridge
         delegate* unmanaged[Cdecl]<uint, byte*, int, void> setIntParameter,
         delegate* unmanaged[Cdecl]<uint, byte*, void> setTriggerParameter,
         delegate* unmanaged[Cdecl]<uint, byte*, void> resetTriggerParameter,
-        delegate* unmanaged[Cdecl]<uint, byte*, void> playState)
+        delegate* unmanaged[Cdecl]<uint, byte*, void> playState,
+        delegate* unmanaged[Cdecl]<uint, int> getRagdollEnabled,
+        delegate* unmanaged[Cdecl]<uint, int, void> setRagdollEnabled,
+        delegate* unmanaged[Cdecl]<uint, float> getRagdollWeight,
+        delegate* unmanaged[Cdecl]<uint, float, void> setRagdollWeight,
+        delegate* unmanaged[Cdecl]<uint, NativeVector3, void> addRagdollImpulse,
+        delegate* unmanaged[Cdecl]<uint, void> resetRagdoll)
     {
         if (getClipCount == null || getClipIndex == null || setClipIndex == null || getClipName == null || getClipDuration == null ||
             getPlaying == null || setPlaying == null || getLooping == null || setLooping == null || getAutoplay == null ||
             setAutoplay == null || getSpeed == null || setSpeed == null || getTime == null || setTime == null ||
             play == null || pause == null || stop == null || setBoolParameter == null || setFloatParameter == null ||
-            setIntParameter == null || setTriggerParameter == null || resetTriggerParameter == null || playState == null)
+            setIntParameter == null || setTriggerParameter == null || resetTriggerParameter == null || playState == null ||
+            getRagdollEnabled == null || setRagdollEnabled == null || getRagdollWeight == null || setRagdollWeight == null ||
+            addRagdollImpulse == null || resetRagdoll == null)
         {
             SetError("Managed animation component API registration received a null function pointer.");
             return 0;
@@ -746,6 +760,12 @@ internal static unsafe class ScriptBridge
         _setAnimationTriggerParameter = setTriggerParameter;
         _resetAnimationTriggerParameter = resetTriggerParameter;
         _animationPlayState = playState;
+        _getRagdollEnabled = getRagdollEnabled;
+        _setRagdollEnabled = setRagdollEnabled;
+        _getRagdollWeight = getRagdollWeight;
+        _setRagdollWeight = setRagdollWeight;
+        _addRagdollImpulse = addRagdollImpulse;
+        _resetRagdoll = resetRagdoll;
         _lastError = string.Empty;
         return 1;
     }
@@ -2090,6 +2110,12 @@ internal static unsafe class ScriptBridge
     internal static void AnimationPlay(uint entityId) { if (_animationPlay != null) _animationPlay(entityId); }
     internal static void AnimationPause(uint entityId) { if (_animationPause != null) _animationPause(entityId); }
     internal static void AnimationStop(uint entityId) { if (_animationStop != null) _animationStop(entityId); }
+    internal static bool GetRagdollEnabled(uint entityId) => _getRagdollEnabled != null && _getRagdollEnabled(entityId) != 0;
+    internal static void SetRagdollEnabled(uint entityId, bool value) { if (_setRagdollEnabled != null) _setRagdollEnabled(entityId, value ? 1 : 0); }
+    internal static float GetRagdollWeight(uint entityId) => _getRagdollWeight == null ? 0.0f : _getRagdollWeight(entityId);
+    internal static void SetRagdollWeight(uint entityId, float value) { if (_setRagdollWeight != null) _setRagdollWeight(entityId, value); }
+    internal static void AddRagdollImpulse(uint entityId, Vector3 impulse) { if (_addRagdollImpulse != null) _addRagdollImpulse(entityId, NativeVector3.FromManaged(impulse)); }
+    internal static void ResetRagdoll(uint entityId) { if (_resetRagdoll != null) _resetRagdoll(entityId); }
     internal static void SetAnimationBoolParameter(uint entityId, string name, bool value)
     {
         if (_setAnimationBoolParameter == null)

@@ -1000,6 +1000,10 @@ namespace PlutoGE::scene
 
     void AnimationComponent::Update(float deltaTime)
     {
+        if (m_ragdollEnabled)
+        {
+            m_jointMatricesDirty = true;
+        }
         using Clock = std::chrono::high_resolution_clock;
         const auto playbackStart = Clock::now();
         const auto recordPlaybackTiming = [&]()
@@ -1104,6 +1108,8 @@ namespace PlutoGE::scene
             {"Playing", PropertyType::Bool, m_playing ? "true" : "false"},
             {"Looping", PropertyType::Bool, m_looping ? "true" : "false"},
             {"Autoplay", PropertyType::Bool, m_autoplay ? "true" : "false"},
+            {"RagdollEnabled", PropertyType::Bool, m_ragdollEnabled ? "true" : "false"},
+            {"RagdollWeight", PropertyType::Float, std::to_string(m_ragdollWeight)},
             {"ClipCount", PropertyType::Int, std::to_string(m_clips.size())},
         };
 
@@ -1234,6 +1240,14 @@ namespace PlutoGE::scene
             else if (property.name == "Autoplay")
             {
                 m_autoplay = ParseBool(property.value);
+            }
+            else if (property.name == "RagdollEnabled")
+            {
+                m_ragdollEnabled = ParseBool(property.value);
+            }
+            else if (property.name == "RagdollWeight")
+            {
+                m_ragdollWeight = std::clamp(ParseFloatSafe(property.value), 0.0f, 1.0f);
             }
             else if (property.name == "Graph.DefaultStateIndex")
             {
@@ -2873,6 +2887,7 @@ namespace PlutoGE::scene
         if (m_jointMatricesDirty || m_jointMatrices.size() != skeleton.joints.size())
         {
             EvaluateJointMatrices(skeleton);
+            ApplyRagdoll(skeleton);
         }
 
         return m_jointMatrices;
@@ -2920,10 +2935,12 @@ namespace PlutoGE::scene
             if (!usedNodeHierarchy)
             {
                 EvaluateJointMatrices(skeleton);
+                ApplyRagdoll(skeleton);
             }
             else
             {
                 m_jointMatricesDirty = false;
+                ApplyRagdoll(skeleton);
             }
         }
 
@@ -3517,5 +3534,72 @@ namespace PlutoGE::scene
         recordPhase("Pose / Hierarchy and skin matrices", layersEnd, skinningEnd);
 
         m_jointMatricesDirty = false;
+    }
+
+    void AnimationComponent::SetRagdollEnabled(bool enabled)
+    {
+        if (m_ragdollEnabled == enabled)
+            return;
+        m_ragdollEnabled = enabled;
+        ++m_ragdollRevision;
+        if (!enabled)
+            ClearRagdollPhysicsPose();
+        m_pendingRagdollImpulse = glm::vec3(0.0f);
+        m_jointMatricesDirty = true;
+    }
+
+    void AnimationComponent::SetRagdollWeight(float weight)
+    {
+        m_ragdollWeight = std::clamp(weight, 0.0f, 1.0f);
+        m_jointMatricesDirty = true;
+    }
+
+    void AnimationComponent::AddRagdollImpulse(const glm::vec3 &impulse)
+    {
+        if (m_ragdollEnabled)
+            m_pendingRagdollImpulse += impulse;
+    }
+
+    void AnimationComponent::ResetRagdoll()
+    {
+        m_pendingRagdollImpulse = glm::vec3(0.0f);
+        m_jointMatricesDirty = true;
+        ++m_ragdollRevision;
+    }
+
+    glm::vec3 AnimationComponent::ConsumeRagdollImpulse()
+    {
+        const glm::vec3 impulse = m_pendingRagdollImpulse;
+        m_pendingRagdollImpulse = glm::vec3(0.0f);
+        return impulse;
+    }
+
+    void AnimationComponent::SetRagdollPhysicsPose(const render::Skeleton &skeleton, std::vector<glm::mat4> jointMatrices)
+    {
+        m_ragdollPhysicsSkeleton = &skeleton;
+        m_ragdollPhysicsPose = std::move(jointMatrices);
+        m_jointMatricesDirty = true;
+    }
+
+    void AnimationComponent::ClearRagdollPhysicsPose()
+    {
+        m_ragdollPhysicsSkeleton = nullptr;
+        m_ragdollPhysicsPose.clear();
+        m_jointMatricesDirty = true;
+    }
+
+    void AnimationComponent::ApplyRagdoll(const render::Skeleton &skeleton)
+    {
+        if (!m_ragdollEnabled || m_ragdollWeight <= 0.0f || skeleton.joints.empty() ||
+            m_jointMatrices.size() != skeleton.joints.size())
+            return;
+
+        // Bullet owns simulation. AnimationComponent only blends the resulting
+        // skinning palette, keeping physics types out of the public scene API.
+        if (m_ragdollPhysicsSkeleton != &skeleton || m_ragdollPhysicsPose.size() != m_jointMatrices.size())
+            return;
+        for (size_t i = 0; i < m_jointMatrices.size(); ++i)
+            m_jointMatrices[i] = m_jointMatrices[i] * (1.0f - m_ragdollWeight) +
+                                 m_ragdollPhysicsPose[i] * m_ragdollWeight;
     }
 }

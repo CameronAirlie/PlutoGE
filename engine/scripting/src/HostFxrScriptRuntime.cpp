@@ -109,7 +109,7 @@ namespace PlutoGE::scripting
         using register_camera_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *);
         using register_light_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *);
         using register_mesh_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *);
-        using register_animation_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
+        using register_animation_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_rigidbody_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_collider_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_particle_system_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
@@ -1616,6 +1616,34 @@ namespace PlutoGE::scripting
             {
                 component->PlayState(name);
             }
+        }
+
+        int32_t GetRagdollEnabled(uint32_t entityId)
+        {
+            auto *component = FindAnimation(entityId);
+            return component && component->IsRagdollEnabled() ? 1 : 0;
+        }
+        void SetRagdollEnabled(uint32_t entityId, int32_t enabled)
+        {
+            if (auto *component = FindAnimation(entityId)) component->SetRagdollEnabled(enabled != 0);
+        }
+        float GetRagdollWeight(uint32_t entityId)
+        {
+            auto *component = FindAnimation(entityId);
+            return component ? component->GetRagdollWeight() : 0.0f;
+        }
+        void SetRagdollWeight(uint32_t entityId, float weight)
+        {
+            if (auto *component = FindAnimation(entityId)) component->SetRagdollWeight(weight);
+        }
+        void AddRagdollImpulse(uint32_t entityId, NativeVector3 impulse)
+        {
+            if (auto *component = FindAnimation(entityId))
+                component->AddRagdollImpulse(glm::vec3(impulse.x, impulse.y, impulse.z));
+        }
+        void ResetRagdoll(uint32_t entityId)
+        {
+            if (auto *component = FindAnimation(entityId)) component->ResetRagdoll();
         }
 
         scene::RigidbodyComponent *FindRigidbody(uint32_t entityId)
@@ -3807,7 +3835,13 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(static_cast<set_animation_int_parameter_fn>(&SetAnimationIntParameter)),
                 reinterpret_cast<void *>(static_cast<set_component_string_fn>(&SetAnimationTriggerParameter)),
                 reinterpret_cast<void *>(static_cast<set_component_string_fn>(&ResetAnimationTriggerParameter)),
-                reinterpret_cast<void *>(static_cast<set_component_string_fn>(&AnimationPlayState))) == 0)
+                reinterpret_cast<void *>(static_cast<set_component_string_fn>(&AnimationPlayState)),
+                reinterpret_cast<void *>(static_cast<get_component_bool_fn>(&GetRagdollEnabled)),
+                reinterpret_cast<void *>(static_cast<set_component_bool_fn>(&SetRagdollEnabled)),
+                reinterpret_cast<void *>(static_cast<get_component_float_fn>(&GetRagdollWeight)),
+                reinterpret_cast<void *>(static_cast<set_component_float_fn>(&SetRagdollWeight)),
+                reinterpret_cast<void *>(static_cast<set_component_vector3_fn>(&AddRagdollImpulse)),
+                reinterpret_cast<void *>(static_cast<component_action_fn>(&ResetRagdoll))) == 0)
         {
             setManagedBridgeFailure("RegisterAnimationComponentApi");
             return false;

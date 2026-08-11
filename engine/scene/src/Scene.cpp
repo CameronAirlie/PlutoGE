@@ -2444,11 +2444,43 @@ namespace PlutoGE::scene
         // path allocated and destroyed a Bullet shape for every kinematic
         // sweep (the FPS controller performs one every frame).
         btConvexShape *convexShape = nullptr;
+        btTransform colliderOffset;
+        colliderOffset.setIdentity();
+        bool compoundShapeUnsupported = false;
+
+        const auto resolveSweepShape = [&](btCollisionShape *shape)
+        {
+            convexShape = dynamic_cast<btConvexShape *>(shape);
+            colliderOffset.setIdentity();
+            compoundShapeUnsupported = false;
+            if (convexShape)
+            {
+                return;
+            }
+
+            auto *compoundShape = dynamic_cast<btCompoundShape *>(shape);
+            if (!compoundShape)
+            {
+                return;
+            }
+
+            compoundShapeUnsupported = true;
+            if (compoundShape->getNumChildShapes() == 1)
+            {
+                convexShape = dynamic_cast<btConvexShape *>(compoundShape->getChildShape(0));
+                if (convexShape)
+                {
+                    colliderOffset = compoundShape->getChildTransform(0);
+                    compoundShapeUnsupported = false;
+                }
+            }
+        };
+
         for (auto &body : queryCache.world->bodies)
         {
             if (body.entity == &entity)
             {
-                convexShape = dynamic_cast<btConvexShape *>(body.shape.get());
+                resolveSweepShape(body.shape.get());
                 break;
             }
         }
@@ -2457,10 +2489,17 @@ namespace PlutoGE::scene
         if (!convexShape)
         {
             fallbackShapeData = CreateBulletShapeForEntity(entity, *collider);
-            convexShape = dynamic_cast<btConvexShape *>(fallbackShapeData.shape.get());
+            resolveSweepShape(fallbackShapeData.shape.get());
         }
         if (!convexShape)
         {
+            // Compound colliders cannot safely use the unchecked movement path:
+            // doing so bypasses collision detection entirely. Multi-child or
+            // non-convex compound shapes need a dedicated sweep implementation.
+            if (compoundShapeUnsupported)
+            {
+                return glm::vec3(0.0f);
+            }
             SetEntityWorldPosition(entity, entity.GetWorldPosition() + displacement);
             return displacement;
         }
@@ -2479,15 +2518,21 @@ namespace PlutoGE::scene
                 break;
             }
 
-            btTransform from;
-            from.setIdentity();
-            from.setOrigin(ToBullet(currentPosition));
-            from.setRotation(rotation);
+            btTransform entityFrom;
+            entityFrom.setIdentity();
+            entityFrom.setOrigin(ToBullet(currentPosition));
+            entityFrom.setRotation(rotation);
 
-            btTransform to;
-            to.setIdentity();
-            to.setOrigin(ToBullet(currentPosition + remaining));
-            to.setRotation(rotation);
+            btTransform entityTo;
+            entityTo.setIdentity();
+            entityTo.setOrigin(ToBullet(currentPosition + remaining));
+            entityTo.setRotation(rotation);
+
+            // Offset colliders are represented by a one-child compound shape.
+            // Sweep the child in collider space, while retaining currentPosition
+            // as the entity origin so the result is converted back implicitly.
+            const btTransform from = entityFrom * colliderOffset;
+            const btTransform to = entityTo * colliderOffset;
 
             IgnoringConvexResultCallback callback(from.getOrigin(), to.getOrigin(), entity.GetID());
             queryCache.world->collisionWorld.convexSweepTest(convexShape, from, to, callback);

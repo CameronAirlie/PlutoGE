@@ -37,6 +37,7 @@ namespace PlutoGE::render
         }
 
         if (width > 0 && height > 0)
-            RmlUiRuntime::Get().Render(*ctx.scene, width, height, ctx.frameSequence);
+            RmlUiRuntime::Get().Render(*ctx.scene, width, height, ctx.frameSequence,
+                                      ctx.cameraData.view, ctx.cameraData.projection);
     }
 }

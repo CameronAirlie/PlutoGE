@@ -231,11 +231,29 @@ namespace PlutoGE::ui
         }
         if (!canvasRoot)
         {
-            ImGui::TextDisabled("Add a Canvas component to an entity to begin editing UI.");
+            ImGui::TextDisabled("Add an RmlUi Canvas for document UI, or a Legacy Native Canvas to edit widget rectangles.");
             return;
         }
 
         auto *canvas = canvasRoot->GetComponent<scene::CanvasComponent>();
+        if (canvas->GetBackend() == scene::UIRenderBackend::RmlUi)
+        {
+            ImGui::TextUnformatted("RmlUi Canvas");
+            ImGui::Separator();
+            ImGui::TextWrapped("This canvas is authored in its RML and RCSS files. Select the canvas and assign the Document in the Inspector; edit native rectangles here only for legacy canvases.");
+            ImGui::Spacing();
+            ImGui::Text("Document: %s", canvas->GetDocumentPath().empty() ? "None" : canvas->GetDocumentPath().c_str());
+            const auto mode = canvas->GetRenderMode();
+            const char *modeName = mode == scene::CanvasRenderMode::WorldSpaceOverlay ? "World Screen Space" :
+                                   mode == scene::CanvasRenderMode::WorldSpace ? "World Space" :
+                                   mode == scene::CanvasRenderMode::ScreenSpaceCamera ? "Screen Space Camera" : "Screen Space";
+            ImGui::Text("Mode: %s", modeName);
+            if (mode == scene::CanvasRenderMode::WorldSpaceOverlay || mode == scene::CanvasRenderMode::WorldSpace)
+                ImGui::TextDisabled("The canvas entity's Rect Transform controls document size and pivot.");
+            else
+                ImGui::TextDisabled("RML/RCSS controls element layout within the viewport.");
+            return;
+        }
         m_referenceResolution = canvas->GetReferenceResolution();
         if (m_showHierarchy)
         {

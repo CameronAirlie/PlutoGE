@@ -149,6 +149,9 @@ namespace PlutoGE::scene
         float m_matchWidthOrHeight = 0.5f;
         int m_sortingOrder = 0;
         bool m_faceCamera = true;
+        // Keep the construction fallback native so old scenes which predate
+        // the Backend property deserialize unchanged. Editor-created canvases
+        // explicitly select RmlUi.
         UIRenderBackend m_backend = UIRenderBackend::Native;
         std::string m_documentPath;
     };

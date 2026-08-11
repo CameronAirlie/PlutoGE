@@ -117,6 +117,7 @@ namespace PlutoGE::ui
             NavigationMesh = 24,
             Decal = 25,
             RmlWidget = 26,
+            LegacyCanvas = 27,
         };
 
         struct ScriptAssetOption
@@ -1574,12 +1575,14 @@ namespace PlutoGE::ui
             {
                 return "Sound Listener Component";
             }
-            if (dynamic_cast<const scene::CanvasComponent *>(&component))
+            if (const auto *canvas = dynamic_cast<const scene::CanvasComponent *>(&component))
             {
-                return "Canvas Component";
+                return canvas->GetBackend() == scene::UIRenderBackend::RmlUi
+                           ? "RmlUi Canvas Component"
+                           : "Legacy Native Canvas Component";
             }
             if (dynamic_cast<const scene::RmlWidgetComponent *>(&component))
-                return "RML Widget Component";
+                return "RML Widget Component (Deprecated)";
             if (dynamic_cast<const scene::RectTransformComponent *>(&component))
             {
                 return "Rect Transform Component";
@@ -1779,6 +1782,7 @@ namespace PlutoGE::ui
             case AddableComponentType::SoundListener:
                 return !entity.HasComponent<scene::SoundListenerComponent>();
             case AddableComponentType::Canvas:
+            case AddableComponentType::LegacyCanvas:
                 return !entity.HasComponent<scene::CanvasComponent>();
             case AddableComponentType::RmlWidget:
                 return !entity.HasComponent<scene::RmlWidgetComponent>();
@@ -1857,12 +1861,16 @@ namespace PlutoGE::ui
             }
             if (ImGui::BeginMenu("UI"))
             {
-                renderItem("Canvas", AddableComponentType::Canvas);
-                renderItem("RML Widget", AddableComponentType::RmlWidget);
-                renderItem("Rect Transform", AddableComponentType::RectTransform);
-                renderItem("Image", AddableComponentType::UIImage);
-                renderItem("Text", AddableComponentType::UIText);
-                renderItem("Button", AddableComponentType::UIButton);
+                renderItem("RmlUi Canvas", AddableComponentType::Canvas);
+                if (ImGui::BeginMenu("Legacy Native UI"))
+                {
+                    renderItem("Native Canvas", AddableComponentType::LegacyCanvas);
+                    renderItem("Rect Transform", AddableComponentType::RectTransform);
+                    renderItem("Image", AddableComponentType::UIImage);
+                    renderItem("Text", AddableComponentType::UIText);
+                    renderItem("Button", AddableComponentType::UIButton);
+                    ImGui::EndMenu();
+                }
                 ImGui::EndMenu();
             }
 
@@ -1986,7 +1994,12 @@ namespace PlutoGE::ui
                 entity.CreateComponent<scene::SoundListenerComponent>();
                 break;
             case AddableComponentType::Canvas:
-                entity.CreateComponent<scene::CanvasComponent>();
+                if (auto *canvas = entity.CreateComponent<scene::CanvasComponent>())
+                    canvas->SetBackend(scene::UIRenderBackend::RmlUi);
+                break;
+            case AddableComponentType::LegacyCanvas:
+                if (auto *canvas = entity.CreateComponent<scene::CanvasComponent>())
+                    canvas->SetBackend(scene::UIRenderBackend::Native);
                 break;
             case AddableComponentType::RmlWidget:
                 entity.CreateComponent<scene::RmlWidgetComponent>();
@@ -4530,8 +4543,71 @@ namespace PlutoGE::ui
                             }
                             ImGui::SeparatorText("Bake Settings (World Space)");
                         }
+                        else if (auto *canvas = dynamic_cast<scene::CanvasComponent *>(componentPtr))
+                        {
+                            properties = canvas->Serialize();
+                            std::erase_if(properties, [canvas](const scene::Property &property)
+                            {
+                                if (property.name == "DocumentPath") return true;
+                                const bool worldMode = canvas->GetRenderMode() == scene::CanvasRenderMode::WorldSpaceOverlay ||
+                                                       canvas->GetRenderMode() == scene::CanvasRenderMode::WorldSpace;
+                                if (!worldMode && (property.name == "WorldSizeMode" || property.name == "FaceCamera"))
+                                    return true;
+                                return false;
+                            });
+                            propertiesProvided = true;
+
+                            if (canvas->GetBackend() == scene::UIRenderBackend::RmlUi)
+                            {
+                                ImGui::TextWrapped("RmlUi document canvas. Layout and controls are authored in the RML/RCSS asset.");
+                                const auto &documentOptions = GetCachedAssetReferenceOptions(
+                                    editorShell.GetProject(), assets::ProjectAssetType::RmlDocument);
+                                const std::string documentPreview = GetAssetReferencePreview(
+                                    documentOptions, canvas->GetDocumentPath(), "None");
+                                if (ImGui::BeginCombo("Document", documentPreview.c_str()))
+                                {
+                                    if (ImGui::Selectable("None", canvas->GetDocumentPath().empty()))
+                                    {
+                                        canvas->SetDocumentPath({});
+                                        entity->AddPrefabOverride("Component:CanvasComponent:DocumentPath");
+                                        editorShell.MarkSceneDirty();
+                                    }
+                                    for (const auto &option : documentOptions)
+                                    {
+                                        const bool selected = option.reference == canvas->GetDocumentPath();
+                                        if (ImGui::Selectable(option.displayName.c_str(), selected))
+                                        {
+                                            canvas->SetDocumentPath(option.reference);
+                                            entity->AddPrefabOverride("Component:CanvasComponent:DocumentPath");
+                                            editorShell.MarkSceneDirty();
+                                        }
+                                        if (selected) ImGui::SetItemDefaultFocus();
+                                    }
+                                    ImGui::EndCombo();
+                                }
+                                if (canvas->GetRenderMode() == scene::CanvasRenderMode::WorldSpaceOverlay ||
+                                    canvas->GetRenderMode() == scene::CanvasRenderMode::WorldSpace)
+                                {
+                                    ImGui::TextDisabled("World canvases use this entity's Rect Transform size and pivot.");
+                                    if (canvas->GetRenderMode() == scene::CanvasRenderMode::WorldSpace &&
+                                        canvas->GetWorldSizeMode() == scene::UIWorldSizeMode::ConstantScreenSize)
+                                        ImGui::TextColored(ImVec4(1.0f, 0.72f, 0.25f, 1.0f),
+                                                           "Constant Screen Size disables distance scaling.");
+                                }
+                            }
+                            else
+                            {
+                                ImGui::TextWrapped("Legacy native UI canvas. Kept for existing scenes; use an RmlUi Canvas for new UI.");
+                            }
+                        }
                         else if (auto *rmlWidget = dynamic_cast<scene::RmlWidgetComponent *>(componentPtr))
                         {
+                            const auto *ownCanvas = entity->GetComponent<scene::CanvasComponent>();
+                            if (ownCanvas && ownCanvas->GetBackend() == scene::UIRenderBackend::RmlUi &&
+                                !ownCanvas->GetDocumentPath().empty())
+                                ImGui::TextWrapped("Ignored: this RmlUi Canvas owns a Document directly. Remove this deprecated RML Widget after confirming the migration.");
+                            else
+                                ImGui::TextWrapped("Deprecated: assign the document directly to an RmlUi Canvas. This component remains for existing scenes.");
                             properties = rmlWidget->Serialize();
                             std::erase_if(properties, [](const scene::Property &property)
                                           { return property.name == "Source"; });

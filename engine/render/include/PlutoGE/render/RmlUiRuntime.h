@@ -7,6 +7,7 @@
 #include <unordered_set>
 #include <filesystem>
 #include <vector>
+#include <glm/mat4x4.hpp>
 
 namespace Rml
 {
@@ -40,7 +41,8 @@ namespace PlutoGE::render
 
         bool Initialize(platform::Window &window);
         void Shutdown();
-        void Render(const scene::Scene &scene, int width, int height, std::uint64_t frameSequence);
+        void Render(const scene::Scene &scene, int width, int height, std::uint64_t frameSequence,
+                    const glm::mat4 &view, const glm::mat4 &projection);
         [[nodiscard]] bool IsInitialized() const { return m_context != nullptr; }
         [[nodiscard]] Rml::Context *GetContext() const { return m_context; }
         bool ShowDocument(const std::string &document, bool visible);
@@ -64,7 +66,7 @@ namespace PlutoGE::render
 
     private:
         RmlUiRuntime() = default;
-        void SynchronizeDocuments(const scene::Scene &scene);
+        void SynchronizeDocuments(const scene::Scene &scene, const glm::mat4 &view, const glm::mat4 &projection);
         void ProcessInput(platform::Window &window, const scene::Scene &scene);
         Rml::ElementDocument *FindDocument(const std::string &document) const;
         void AttachEventSubscriptions();
@@ -76,6 +78,8 @@ namespace PlutoGE::render
         Rml::Context *m_context = nullptr;
         platform::Window *m_window = nullptr;
         std::unordered_map<std::string, Rml::ElementDocument *> m_documents;
+        // Instance key -> asset reference. Projected canvases are instanced per entity.
+        std::unordered_map<std::string, std::string> m_documentReferences;
         std::unordered_map<std::string, std::filesystem::file_time_type> m_documentWriteTimes;
         std::unordered_map<std::string, float> m_documentScales;
         std::unordered_map<std::string, int> m_pendingEvents;

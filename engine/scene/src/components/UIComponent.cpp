@@ -239,7 +239,7 @@ namespace PlutoGE::scene
     {
         return {
             {"Enabled", PropertyType::Bool, IsEnabled() ? "true" : "false"},
-            {"RenderMode", PropertyType::Enum, std::to_string(static_cast<int>(m_renderMode)), {"ScreenSpaceOverlay", "WorldSpaceOverlay", "ScreenSpaceCamera", "WorldSpace"}},
+            {"RenderMode", PropertyType::Enum, std::to_string(static_cast<int>(m_renderMode)), {"Screen Space", "World Screen Space", "Screen Space Camera", "World Space"}},
             {"ScaleMode", PropertyType::Enum, std::to_string(static_cast<int>(m_scaleMode)), {"ConstantPixels", "ScaleWithScreenSize", "ConstantPhysicalSize"}},
             {"ScaleFactor", PropertyType::Float, std::to_string(m_scaleFactor)},
             {"ReferenceResolution", PropertyType::Vec2, SerializeVec2(m_referenceResolution)},
@@ -248,7 +248,7 @@ namespace PlutoGE::scene
             {"SortingOrder", PropertyType::Int, std::to_string(m_sortingOrder)},
             {"WorldSizeMode", PropertyType::Enum, std::to_string(static_cast<int>(m_worldSizeMode)), {"WorldUnits", "ConstantScreenSize", "DistanceScaled"}},
             {"FaceCamera", PropertyType::Bool, m_faceCamera ? "true" : "false"},
-            {"Backend", PropertyType::Enum, std::to_string(static_cast<int>(m_backend)), {"Native", "RmlUi"}},
+            {"Backend", PropertyType::Enum, std::to_string(static_cast<int>(m_backend)), {"Legacy Native", "RmlUi"}},
             {"DocumentPath", PropertyType::String, m_documentPath},
         };
     }

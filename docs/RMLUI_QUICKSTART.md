@@ -97,16 +97,15 @@ font and stylesheet paths consistent if the files are moved.
 In the scene:
 
 1. Create an entity, for example `Game UI`.
-2. Add a **Canvas** component.
-3. Add an **RML Widget** component to an entity.
-4. Choose `hello.rml` from the component's **Source** dropdown.
-5. Make sure the entity and Canvas are enabled.
-6. Enter Play mode.
+2. Add an **RmlUi Canvas** component.
+3. Choose `hello.rml` from the Canvas **Document** dropdown.
+4. Make sure the entity and Canvas are enabled.
+5. Enter Play mode.
 
-The widget stores a project asset reference selected by the editor. An ordinary
+The Canvas stores a project asset reference selected by the editor. An ordinary
 path such as `UI/hello.rml` remains supported and is relative to the project's
-`Assets` directory. `project://UI/hello.rml` is also accepted. RmlUi widgets are
-screen-space overlays and do not need child Text, Image, or Button components.
+`Assets` directory. `project://UI/hello.rml` is also accepted. RmlUi canvases do
+not need child Text, Image, Button, or RML Widget components.
 
 RML and sibling RCSS files hot reload while the document is active, so most
 visual edits should appear after saving the file.
@@ -144,15 +143,14 @@ using PlutoGE.ScriptCore;
 
 public sealed class HelloUiController : ScriptBehaviour
 {
-    private RmlWidgetComponent? _widget;
+    private RmlDocument? _document;
     private RmlElement? _title;
 
     public override void OnCreate()
     {
-        _widget = GetComponent<RmlWidgetComponent>();
-        if (_widget is null) return;
-        _title = _widget.Element("title");
-        _widget.OnClick("continue-button", Continue);
+        _document = new RmlDocument("project://UI/hello.rml");
+        _title = _document.Element("title");
+        _document.OnClick("continue-button", Continue);
     }
 
     private void Continue()
@@ -189,17 +187,11 @@ properties can also be bound to controller state. The older
 `Subscribe("click").Consume()` polling API remains available when explicit
 event polling is preferable.
 
-For entity-owned UI, prefer `RmlWidgetComponent`. Its `Source`, `Visible`, and
-inherited `Enabled` properties can be changed by scripts:
-
-```csharp
-var widget = GetComponent<RmlWidgetComponent>();
-if (widget is not null)
-{
-    widget.Visible = false;
-    widget.Enabled = true;
-}
-```
+`RmlWidgetComponent` is retained only for scenes authored with the older
+two-component Canvas + RML Widget workflow. New UI should assign the document
+directly to the RmlUi Canvas and use `RmlDocument` from scripts. When a Canvas
+has a Document, deprecated RML Widget components on that entity or below it are
+ignored so they cannot render a second, unprojected copy.
 
 ## Troubleshooting
 
@@ -214,8 +206,11 @@ parse/load failures separately.
 
 If nothing appears:
 
-- Confirm the entity has an enabled RML Widget with a Source selected.
-- Confirm the Canvas, its entity, and its parent entities are active.
+- Confirm the RmlUi Canvas has a Document selected.
+- Confirm the Canvas entity and its parent entities are active.
+- For distance scaling, choose **World Space**, not **World Screen Space**, and
+  leave **World Size Mode** set to **World Units**. World Screen Space and
+  Constant Screen Size intentionally remain the same pixel size at any distance.
 - Confirm the path is beneath `Assets` and uses the correct capitalization.
 - Confirm the RML has a `<body>` and the RCSS gives visible elements dimensions,
   colors, or backgrounds.
@@ -228,3 +223,20 @@ If nothing appears:
 For a complete interactive example, see `samples/rmlui/pause-menu.rml`,
 `samples/rmlui/pause-menu.rcss`, and
 `PlutoGE.ScriptCore.Examples.RmlPauseMenuController`.
+
+## World-anchored UI
+
+RmlUi canvases can also follow scene entities. Add a RectTransform to the same
+entity as the Canvas; its Size Delta is the document size and its Pivot selects
+the point placed on the entity's world position.
+
+- Use **WorldSpaceOverlay** for enemy health bars, names, and markers that must
+  stay the same size on screen.
+- Use **WorldSpace** for a camera-facing document whose size diminishes with
+  distance. The conversion is 100 UI units per world unit.
+- A projected document is hidden while its anchor is behind the camera or
+  outside the camera's near/far clip range.
+
+The same RML document may be assigned to multiple projected Canvas entities;
+each entity receives its own document instance. Projected RmlUi is composited
+over the scene and does not test against scene depth.

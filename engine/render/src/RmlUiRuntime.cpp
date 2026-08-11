@@ -113,12 +113,65 @@ namespace PlutoGE::render
         {
             bool visible = false;
             float scale = 1.0f;
+            bool projected = false;
+            bool inFrontOfCamera = true;
+            glm::vec2 position{0.0f};
+            glm::vec2 size{0.0f};
+            glm::vec2 pivot{0.5f};
         };
+
+        bool ProjectWorldPosition(const glm::vec3 &position, const glm::mat4 &view,
+                                  const glm::mat4 &projection, const glm::vec2 &viewport,
+                                  glm::vec2 &screen, float &pixelsPerWorldUnit)
+        {
+            const glm::vec4 viewPosition = view * glm::vec4(position, 1.0f);
+            const glm::vec4 clip = projection * viewPosition;
+            if (clip.w <= 0.0001f) return false;
+            const glm::vec3 ndc = glm::vec3(clip) / clip.w;
+            if (ndc.z < -1.0f || ndc.z > 1.0f) return false;
+            screen = {(ndc.x * 0.5f + 0.5f) * viewport.x,
+                      (0.5f - ndc.y * 0.5f) * viewport.y};
+            pixelsPerWorldUnit = std::abs(projection[1][1]) * viewport.y * 0.5f;
+            if (std::abs(projection[3][3]) < 0.5f)
+                pixelsPerWorldUnit /= std::max(-viewPosition.z, 0.0001f);
+            return true;
+        }
+
+        void ConfigureDocument(Rml::ElementDocument &document, const DocumentRequest &request,
+                               int viewportWidth, int viewportHeight)
+        {
+            const float scale = std::max(request.scale, 0.0001f);
+            document.SetProperty("position", "absolute");
+            document.SetProperty("transform-origin", "0px 0px");
+            document.SetProperty("transform", "scale(" + std::to_string(scale) + ")");
+            if (request.projected)
+            {
+                // CSS transforms operate in the element's local coordinate
+                // system; they do not scale its absolute layout position.
+                // Keep the projected anchor in screen pixels and only scale
+                // the pivot offset, otherwise left/top diverge as scale tends
+                // toward zero and the document shoots down and right.
+                document.SetProperty("left", std::to_string(request.position.x - request.size.x * request.pivot.x * scale) + "px");
+                document.SetProperty("top", std::to_string(request.position.y - request.size.y * request.pivot.y * scale) + "px");
+                document.SetProperty("width", std::to_string(request.size.x) + "px");
+                document.SetProperty("height", std::to_string(request.size.y) + "px");
+            }
+            else
+            {
+                document.SetProperty("left", "0px");
+                document.SetProperty("top", "0px");
+                document.SetProperty("width", std::to_string(static_cast<float>(viewportWidth) / scale) + "px");
+                document.SetProperty("height", std::to_string(static_cast<float>(viewportHeight) / scale) + "px");
+            }
+        }
 
         void CollectDocuments(scene::Entity *entity,
                               const glm::vec2 &viewportSize,
                               std::unordered_map<std::string, DocumentRequest> &documents,
-                              float inheritedScale = 1.0f)
+                              const glm::mat4 &view,
+                              const glm::mat4 &projection,
+                              float inheritedScale = 1.0f,
+                              bool insideDocumentCanvas = false)
         {
             if (!entity || !entity->IsActive())
                 return;
@@ -130,17 +183,40 @@ namespace PlutoGE::render
                 if (canvas->GetBackend() == scene::UIRenderBackend::RmlUi &&
                     !canvas->GetDocumentPath().empty())
                 {
-                    documents[canvas->GetDocumentPath()] = {
+                    insideDocumentCanvas = true;
+                    const bool projected = canvas->GetRenderMode() == scene::CanvasRenderMode::WorldSpaceOverlay ||
+                                           canvas->GetRenderMode() == scene::CanvasRenderMode::WorldSpace;
+                    const std::string documentKey = projected
+                                                        ? canvas->GetDocumentPath() + "#entity:" + std::to_string(entity->GetID())
+                                                        : canvas->GetDocumentPath();
+                    auto &request = documents[documentKey];
+                    request = {
                         .visible = true,
                         .scale = inheritedScale,
                     };
+                    request.projected = projected;
+                    if (request.projected)
+                    {
+                        float perspectiveScale = 1.0f;
+                        request.inFrontOfCamera = ProjectWorldPosition(entity->GetWorldPosition(), view, projection,
+                                                                       viewportSize, request.position, perspectiveScale);
+                        const auto *rect = entity->GetComponent<scene::RectTransformComponent>();
+                        request.size = rect ? glm::max(rect->GetSizeDelta(), glm::vec2(1.0f)) : glm::vec2(200.0f, 50.0f);
+                        request.pivot = rect ? rect->GetPivot() : glm::vec2(0.5f);
+                        const glm::vec3 worldScale = glm::abs(entity->GetWorldScale());
+                        const float uniformScale = std::max(worldScale.x, worldScale.y);
+                        const bool constantSize = canvas->GetRenderMode() == scene::CanvasRenderMode::WorldSpaceOverlay ||
+                                                  canvas->GetWorldSizeMode() == scene::UIWorldSizeMode::ConstantScreenSize;
+                        request.scale = inheritedScale * uniformScale *
+                                        (constantSize ? 1.0f : perspectiveScale / 100.0f);
+                    }
                 }
                 // A document canvas owns its subtree. Nested native canvases are
                 // still discovered through their own roots during migration.
             }
 
             if (const auto *widget = entity->GetComponent<scene::RmlWidgetComponent>();
-                widget && widget->IsEnabled() && !widget->GetSource().empty())
+                !insideDocumentCanvas && widget && widget->IsEnabled() && !widget->GetSource().empty())
             {
                 auto [entry, inserted] = documents.try_emplace(
                     widget->GetSource(), DocumentRequest{
@@ -152,7 +228,8 @@ namespace PlutoGE::render
             }
 
             for (auto *child : entity->GetChildren())
-                CollectDocuments(child, viewportSize, documents, inheritedScale);
+                CollectDocuments(child, viewportSize, documents, view, projection, inheritedScale,
+                                 insideDocumentCanvas);
         }
 
         int CurrentModifiers(GLFWwindow *window)
@@ -228,6 +305,7 @@ namespace PlutoGE::render
 
         DetachEventSubscriptions();
         m_documents.clear();
+        m_documentReferences.clear();
         m_documentWriteTimes.clear();
         m_documentScales.clear();
         m_eventSubscriptions.clear();
@@ -250,7 +328,8 @@ namespace PlutoGE::render
         m_hotReloadCheckCountdown = 0;
     }
 
-    void RmlUiRuntime::SynchronizeDocuments(const scene::Scene &scene)
+    void RmlUiRuntime::SynchronizeDocuments(const scene::Scene &scene, const glm::mat4 &view,
+                                            const glm::mat4 &projection)
     {
         constexpr std::uint32_t hotReloadCheckIntervalFrames = 30;
         const bool checkForHotReload = m_hotReloadCheckCountdown == 0;
@@ -260,7 +339,8 @@ namespace PlutoGE::render
 
         std::unordered_map<std::string, DocumentRequest> requestedDocuments;
         for (auto *root : scene.GetRootEntities())
-            CollectDocuments(root, {static_cast<float>(m_width), static_cast<float>(m_height)}, requestedDocuments);
+            CollectDocuments(root, {static_cast<float>(m_width), static_cast<float>(m_height)}, requestedDocuments,
+                             view, projection);
 
         bool detachedForDocumentChange = false;
         for (auto it = m_documents.begin(); it != m_documents.end();)
@@ -276,6 +356,7 @@ namespace PlutoGE::render
                     it->second->Close();
                 m_documentWriteTimes.erase(it->first);
                 m_documentScales.erase(it->first);
+                m_documentReferences.erase(it->first);
                 it = m_documents.erase(it);
             }
             else
@@ -285,32 +366,33 @@ namespace PlutoGE::render
         }
 
         auto &assets = core::Engine::GetInstance().GetAssetManager();
-        for (const auto &[reference, request] : requestedDocuments)
+        for (const auto &[key, request] : requestedDocuments)
         {
-            if (m_documents.contains(reference))
+            const std::string reference = request.projected
+                                              ? key.substr(0, key.rfind("#entity:"))
+                                              : key;
+            if (m_documents.contains(key))
             {
                 if (checkForHotReload)
                 {
                     const std::string resolved = ResolveDocumentPath(assets, reference);
                     std::error_code error;
                     const auto writeTime = DocumentSourceWriteTime(resolved, error);
-                    const auto known = m_documentWriteTimes.find(reference);
+                    const auto known = m_documentWriteTimes.find(key);
                     if (!error && known != m_documentWriteTimes.end() && writeTime != known->second)
-                        ReloadDocument(reference);
+                        ReloadDocument(key);
                 }
-                if (auto *document = m_documents.at(reference))
+                if (auto *document = m_documents.at(key))
                 {
                     const float scale = std::max(request.scale, 0.0001f);
-                    const auto knownScale = m_documentScales.find(reference);
+                    const auto knownScale = m_documentScales.find(key);
                     if (knownScale == m_documentScales.end() || knownScale->second != scale)
                     {
-                        document->SetProperty("transform-origin", "0px 0px");
-                        document->SetProperty("transform", "scale(" + std::to_string(scale) + ")");
-                        document->SetProperty("width", std::to_string(static_cast<float>(m_width) / scale) + "px");
-                        document->SetProperty("height", std::to_string(static_cast<float>(m_height) / scale) + "px");
-                        m_documentScales[reference] = scale;
+                        m_documentScales[key] = scale;
                     }
-                    if (request.visible)
+                    // Projected documents move every frame even when their scale is unchanged.
+                    ConfigureDocument(*document, request, m_width, m_height);
+                    if (request.visible && request.inFrontOfCamera)
                     {
                         if (!document->IsVisible())
                             document->Show(Rml::ModalFlag::Keep, Rml::FocusFlag::Auto);
@@ -345,20 +427,18 @@ namespace PlutoGE::render
             if (auto *document = m_context->LoadDocument(path))
             {
                 const float scale = std::max(request.scale, 0.0001f);
-                document->SetProperty("transform-origin", "0px 0px");
-                document->SetProperty("transform", "scale(" + std::to_string(scale) + ")");
-                document->SetProperty("width", std::to_string(static_cast<float>(m_width) / scale) + "px");
-                document->SetProperty("height", std::to_string(static_cast<float>(m_height) / scale) + "px");
-                request.visible ? document->Show() : document->Hide();
-                m_documents.emplace(reference, document);
-                m_documentScales[reference] = scale;
+                ConfigureDocument(*document, request, m_width, m_height);
+                (request.visible && request.inFrontOfCamera) ? document->Show() : document->Hide();
+                m_documents.emplace(key, document);
+                m_documentReferences[key] = reference;
+                m_documentScales[key] = scale;
                 m_reportedLoadFailures.erase(reference);
                 std::clog << "[RmlUi] Loaded Canvas document '" << reference
                           << "' from '" << path << "'.\n";
                 std::error_code error;
                 const auto writeTime = DocumentSourceWriteTime(path, error);
                 if (!error)
-                    m_documentWriteTimes[reference] = writeTime;
+                    m_documentWriteTimes[key] = writeTime;
             }
             else if (m_reportedLoadFailures.insert(reference).second)
             {
@@ -498,8 +578,10 @@ namespace PlutoGE::render
         if (requestedPath.empty())
             return nullptr;
 
-        for (const auto &[reference, loaded] : m_documents)
+        for (const auto &[key, loaded] : m_documents)
         {
+            const auto mapped = m_documentReferences.find(key);
+            const std::string &reference = mapped != m_documentReferences.end() ? mapped->second : key;
             if (NormalizeDocumentPath(assets, reference) == requestedPath)
                 return loaded;
         }
@@ -529,7 +611,9 @@ namespace PlutoGE::render
         if (!m_context)
             return false;
         auto &assets = core::Engine::GetInstance().GetAssetManager();
-        const std::string path = ResolveDocumentPath(assets, document);
+        const auto mappedReference = m_documentReferences.find(document);
+        const std::string reference = mappedReference != m_documentReferences.end() ? mappedReference->second : document;
+        const std::string path = ResolveDocumentPath(assets, reference);
         if (path.empty())
             return false;
         LoadDocumentFonts(path);
@@ -539,6 +623,7 @@ namespace PlutoGE::render
             if (found->second) found->second->Close();
             m_documents.erase(found);
             m_documentScales.erase(document);
+            m_documentReferences.erase(document);
         }
 
         // LoadDocument caches parsed style sheets and templates globally.
@@ -552,6 +637,7 @@ namespace PlutoGE::render
             return false;
         loaded->Show();
         m_documents[document] = loaded;
+        m_documentReferences[document] = reference;
         std::error_code error;
         const auto writeTime = DocumentSourceWriteTime(path, error);
         if (!error) m_documentWriteTimes[document] = writeTime;
@@ -798,7 +884,8 @@ namespace PlutoGE::render
             m_context->ProcessTextInput(static_cast<Rml::Character>(codepoint));
     }
 
-    void RmlUiRuntime::Render(const scene::Scene &scene, int width, int height, std::uint64_t frameSequence)
+    void RmlUiRuntime::Render(const scene::Scene &scene, int width, int height, std::uint64_t frameSequence,
+                              const glm::mat4 &view, const glm::mat4 &projection)
     {
         auto &window = core::Engine::GetInstance().GetWindow();
         if (!Initialize(window))
@@ -813,7 +900,7 @@ namespace PlutoGE::render
             m_documentScales.clear();
         }
 
-        SynchronizeDocuments(scene);
+        SynchronizeDocuments(scene, view, projection);
         if (m_documents.empty())
             return;
 

@@ -1,8 +1,8 @@
 # RmlUi runtime integration
 
-PlutoGE supports an incremental migration from its native runtime UI to
-document-driven RmlUi interfaces. Native and RmlUi canvases can coexist in the
-same scene while HUDs and menus are moved over individually.
+PlutoGE uses document-driven RmlUi for new runtime UI. Legacy native canvases
+remain loadable and editable so existing scenes can be migrated incrementally;
+both systems can coexist during that migration.
 
 For a minimal setup walkthrough and copyable example, see the
 [RmlUi project quick start](RMLUI_QUICKSTART.md).
@@ -16,9 +16,9 @@ For a minimal setup walkthrough and copyable example, see the
 - Mouse buttons, pointer movement, two-axis wheel input, keyboard transitions,
   Unicode character input, clipboard, cursor styles, and resize events are
   connected.
-- A `CanvasComponent` selects either `Native` or `RmlUi`. RmlUi canvases set a
-  project-relative `DocumentPath`; native layout and rendering skip that
-  subtree.
+- A `CanvasComponent` selects either `RmlUi` or `Legacy Native`. New canvases
+  default to RmlUi and own their project-relative document path directly.
+  Legacy native canvases own RectTransform/Image/Text/Button trees.
 - Documents are opened and closed automatically as active RmlUi canvases enter
   and leave the rendered scene.
 - Documents honor their Canvas scale factor, reference resolution, and
@@ -38,10 +38,9 @@ For a minimal setup walkthrough and copyable example, see the
    directory. Copy `editor/resources/fonts/MartianMono-StdRg.ttf` to
    `Assets/UI/Fonts`, then change the RCSS font URL to
    `Fonts/MartianMono-StdRg.ttf`.
-2. Add a `CanvasComponent` to an entity.
-3. Set `Backend` to `RmlUi`.
-4. Set `DocumentPath` to the project-relative `.rml` file.
-5. Start the scene runtime.
+2. Add an **RmlUi Canvas** to an entity.
+3. Choose the project-relative `.rml` file from its **Document** dropdown.
+4. Start the scene runtime.
 
 The sample uses ordinary RML/RCSS and includes a CSS-based crosshair. Crosshair
 spread can later be driven by changing the four arm offsets through the RmlUi
@@ -95,8 +94,16 @@ deserializer would corrupt those scenes. New screen-space UI should use RmlUi.
 
 ## Intentional limitations of this slice
 
-- RmlUi canvases are screen-space overlays; world-space documents need a
-  render-to-texture path.
+- RmlUi canvases support `WorldSpaceOverlay` and `WorldSpace`. Both anchor the
+  document at the Canvas entity's world position and use its RectTransform
+  size and pivot. `WorldSpaceOverlay` remains a constant-size camera-facing
+  overlay, which is suited to enemy names and health bars. `WorldSpace` uses
+  perspective distance scaling (100 UI units equal one world unit). Set World
+  Size Mode to `ConstantScreenSize` when a `WorldSpace` canvas should retain a
+  fixed pixel size. Projected canvases are instanced per entity, so a shared RML
+  asset can be used by many actors. They are composited in the UI pass and are
+  not scene-depth occluded; depth-tested planar RmlUi still requires a
+  render-to-texture surface path.
 - RmlUi data models are exposed through lightweight observable DOM bindings;
   direct reflection-based RmlUi C++ data-model registration is not required.
 - The official GL3 backend supports RmlUi's advanced rendering features, but

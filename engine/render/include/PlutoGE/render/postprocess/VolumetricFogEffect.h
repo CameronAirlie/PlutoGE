@@ -15,7 +15,7 @@ namespace PlutoGE::render
     {
     public:
         VolumetricFogEffect() = default;
-        ~VolumetricFogEffect() override = default;
+        ~VolumetricFogEffect() override;
 
         void Initialize() override;
         void Apply(const PostProcessContext &context) override;
@@ -29,6 +29,7 @@ namespace PlutoGE::render
 
         Shader *m_shader = nullptr;
         Shader *m_compositeShader = nullptr;
+        unsigned int m_shadowCompareSampler = 0;
         std::unique_ptr<RenderTarget> m_fogRenderTarget;
         glm::vec3 m_fogColor{1.0f, 1.0f, 1.0f};
         float m_density = 0.035f;

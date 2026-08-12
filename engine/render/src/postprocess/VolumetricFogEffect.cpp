@@ -108,6 +108,12 @@ namespace PlutoGE::render
         }
     }
 
+    VolumetricFogEffect::~VolumetricFogEffect()
+    {
+        if (m_shadowCompareSampler)
+            glDeleteSamplers(1, &m_shadowCompareSampler);
+    }
+
     std::vector<PostProcessParameter> VolumetricFogEffect::GetParameters() const
     {
         return {
@@ -282,10 +288,10 @@ namespace PlutoGE::render
 
             uniform sampler2D uSceneDepthTexture;
             uniform sampler2D uOceanStateTexture;
-            uniform sampler2D uShadowCascadeMap0;
-            uniform sampler2D uShadowCascadeMap1;
-            uniform sampler2D uShadowCascadeMap2;
-            uniform sampler2D uShadowCascadeMap3;
+            uniform sampler2DShadow uShadowCascadeMap0;
+            uniform sampler2DShadow uShadowCascadeMap1;
+            uniform sampler2DShadow uShadowCascadeMap2;
+            uniform sampler2DShadow uShadowCascadeMap3;
             uniform mat4 uViewMatrix;
             uniform mat4 uInverseViewMatrix;
             uniform mat4 uInverseProjectionMatrix;
@@ -358,32 +364,13 @@ namespace PlutoGE::render
                 return uFogColor;
             }
 
-            float SampleShadowMapPCF(sampler2D shadowMap, vec3 projectedCoords)
+            float SampleShadowMapPCF(sampler2DShadow shadowMap, vec3 projectedCoords)
             {
                 float receiverDepth = projectedCoords.z - 0.00045;
-                // Compare exact depth texels before filtering. Sampling the
-                // linearly filtered depth and comparing afterwards creates
-                // false depth contours, while averaging displaced PCF taps
-                // exposes each tap as a separate shaft border.
-                ivec2 mapSize = textureSize(shadowMap, 0);
-                vec2 texelPosition = projectedCoords.xy * vec2(mapSize) - vec2(0.5);
-                ivec2 baseTexel = ivec2(floor(texelPosition));
-                vec2 blend = fract(texelPosition);
-                ivec2 maxTexel = mapSize - ivec2(1);
-
-                ivec2 texel00 = clamp(baseTexel, ivec2(0), maxTexel);
-                ivec2 texel10 = clamp(baseTexel + ivec2(1, 0), ivec2(0), maxTexel);
-                ivec2 texel01 = clamp(baseTexel + ivec2(0, 1), ivec2(0), maxTexel);
-                ivec2 texel11 = clamp(baseTexel + ivec2(1, 1), ivec2(0), maxTexel);
-
-                float shadow00 = receiverDepth > texelFetch(shadowMap, texel00, 0).r ? 1.0 : 0.0;
-                float shadow10 = receiverDepth > texelFetch(shadowMap, texel10, 0).r ? 1.0 : 0.0;
-                float shadow01 = receiverDepth > texelFetch(shadowMap, texel01, 0).r ? 1.0 : 0.0;
-                float shadow11 = receiverDepth > texelFetch(shadowMap, texel11, 0).r ? 1.0 : 0.0;
-
-                float shadowBottom = mix(shadow00, shadow10, blend.x);
-                float shadowTop = mix(shadow01, shadow11, blend.x);
-                return mix(shadowBottom, shadowTop, blend.y);
+                // A linear comparison sampler performs the same four depth
+                // comparisons and bilinear PCF blend in dedicated texture
+                // hardware instead of issuing four explicit shader fetches.
+                return 1.0 - texture(shadowMap, vec3(projectedCoords.xy, receiverDepth));
             }
 
             float SampleDirectionalCascadeShadow(int cascadeIndex, vec3 projectedCoords)
@@ -581,6 +568,16 @@ namespace PlutoGE::render
 
         m_shader = Shader::Create(source);
 
+        glGenSamplers(1, &m_shadowCompareSampler);
+        glSamplerParameteri(m_shadowCompareSampler, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glSamplerParameteri(m_shadowCompareSampler, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glSamplerParameteri(m_shadowCompareSampler, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+        glSamplerParameteri(m_shadowCompareSampler, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+        glSamplerParameteri(m_shadowCompareSampler, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
+        glSamplerParameteri(m_shadowCompareSampler, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
+        const float shadowBorder[] = {1.0f, 1.0f, 1.0f, 1.0f};
+        glSamplerParameterfv(m_shadowCompareSampler, GL_TEXTURE_BORDER_COLOR, shadowBorder);
+
         ShaderSource compositeSource;
         compositeSource.vertexSource = source.vertexSource;
         compositeSource.fragmentSource = R"(
@@ -693,6 +690,8 @@ namespace PlutoGE::render
             m_shader->SetUniform("uOceanStateTexture", kOceanStateTextureSlot);
         }
         BindDirectionalShadowInputs(m_shader, primaryDirectionalLight);
+        for (int cascadeIndex = 0; cascadeIndex < scene::kMaxDirectionalShadowCascades; ++cascadeIndex)
+            glBindSampler(kDirectionalShadowCascadeTextureStartSlot + cascadeIndex, m_shadowCompareSampler);
         m_shader->SetUniform("uViewMatrix", context.renderContext.cameraData.view);
         m_shader->SetUniform("uInverseViewMatrix", inverseView);
         m_shader->SetUniform("uInverseProjectionMatrix", inverseProjection);
@@ -713,6 +712,9 @@ namespace PlutoGE::render
         m_shader->SetUniform("uStepCount", std::clamp(m_stepCount, kMinStepCount, kMaxStepCount));
         m_shader->SetUniform("uHasDirectionalLight", hasDirectionalLight);
         DrawFullscreenTriangle();
+
+        for (int cascadeIndex = 0; cascadeIndex < scene::kMaxDirectionalShadowCascades; ++cascadeIndex)
+            glBindSampler(kDirectionalShadowCascadeTextureStartSlot + cascadeIndex, 0);
 
         BeginApply(context);
         glViewport(0, 0, context.destinationRenderTarget->GetWidth(), context.destinationRenderTarget->GetHeight());

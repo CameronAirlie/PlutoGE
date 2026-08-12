@@ -212,8 +212,10 @@ namespace PlutoGE::render
 
             vec3 KernelRotation(vec2 fragmentPosition)
             {
-                vec2 tilePosition = mod(floor(fragmentPosition), 4.0);
-                float angle = fract(sin(dot(tilePosition, vec2(12.9898, 78.233))) * 43758.5453) * 6.2831853;
+                // Hash the complete pixel coordinate. Repeating a tiny rotation tile
+                // makes low-sample AO read as an obvious stipple pattern.
+                vec2 pixelPosition = floor(fragmentPosition);
+                float angle = fract(52.9829189 * fract(dot(pixelPosition, vec2(0.06711056, 0.00583715)))) * 6.2831853;
                 return vec3(cos(angle), sin(angle), 0.0);
             }
 
@@ -283,7 +285,13 @@ namespace PlutoGE::render
                     }
 
                     float horizonWeight = max(dot(normalize(sceneDelta), normal), 0.0);
-                    float sampleOccluded = sceneSampleViewPos.z >= sampleViewPos.z + uBias ? 1.0 : 0.0;
+                    // A narrow transition avoids turning every sample into a hard
+                    // black/white dot while preserving contact shadow definition.
+                    float visibilityWidth = max(uBias, uRadius * 0.015);
+                    float sampleOccluded = smoothstep(
+                        sampleViewPos.z + uBias - visibilityWidth,
+                        sampleViewPos.z + uBias + visibilityWidth,
+                        sceneSampleViewPos.z);
                     occlusion += sampleOccluded * rangeWeight * horizonWeight;
                 }
 
@@ -364,6 +372,13 @@ namespace PlutoGE::render
                     for (int offsetX = -4; offsetX <= 4; ++offsetX)
                     {
                         if (abs(offsetX) > uBlurRadius)
+                        {
+                            continue;
+                        }
+
+                        // A diamond footprint keeps a radius-two resolve to 13 taps
+                        // instead of the 25 taps used by a full square kernel.
+                        if (abs(offsetX) + abs(offsetY) > uBlurRadius)
                         {
                             continue;
                         }

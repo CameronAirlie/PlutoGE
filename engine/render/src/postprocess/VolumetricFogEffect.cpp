@@ -16,6 +16,8 @@ namespace PlutoGE::render
         constexpr int kOceanStateTextureSlot = 9;
         constexpr int kMinStepCount = 16;
         constexpr int kMaxStepCount = 64;
+        constexpr int kMinShadowStepStride = 1;
+        constexpr int kMaxShadowStepStride = 4;
 
         bool ParseBool(const std::string &value)
         {
@@ -168,6 +170,11 @@ namespace PlutoGE::render
                 .value = std::to_string(m_stepCount),
             },
             PostProcessParameter{
+                .name = "Shadow Step Stride",
+                .type = PostProcessParameterType::Int,
+                .value = std::to_string(m_shadowStepStride),
+            },
+            PostProcessParameter{
                 .name = "Half Resolution",
                 .type = PostProcessParameterType::Bool,
                 .value = m_halfResolution ? "true" : "false",
@@ -233,6 +240,10 @@ namespace PlutoGE::render
             else if (parameter.name == "Step Count")
             {
                 m_stepCount = std::clamp(std::stoi(parameter.value), kMinStepCount, kMaxStepCount);
+            }
+            else if (parameter.name == "Shadow Step Stride")
+            {
+                m_shadowStepStride = std::clamp(std::stoi(parameter.value), kMinShadowStepStride, kMaxShadowStepStride);
             }
             else if (parameter.name == "Half Resolution")
             {
@@ -312,6 +323,7 @@ namespace PlutoGE::render
             uniform float uShadowSoftness;
             uniform float uCascadeBlendDistance;
             uniform int uStepCount;
+            uniform int uShadowStepStride;
             uniform int uCascadeCount;
             uniform int uHasDirectionalLight;
             uniform vec3 uCascadeWorldOrigins[4];
@@ -504,6 +516,7 @@ namespace PlutoGE::render
                 float directionalInscattering = uHasDirectionalLight != 0
                     ? ComputeDirectionalInscattering(dot(rayDirection, normalize(uLightDirection)))
                     : 0.0;
+                float lightVisibility = 1.0;
 
                 for (int stepIndex = 0; stepIndex < uStepCount; ++stepIndex)
                 {
@@ -513,13 +526,15 @@ namespace PlutoGE::render
                     float extinction = max(density * stepLength, 0.0);
                     float segmentTransmittance = exp(-extinction);
                     float segmentFog = 1.0 - segmentTransmittance;
-                    // Reusing a shadow result for adjacent march segments
-                    // creates discrete, camera-relative copies of occluder
-                    // silhouettes in the fog. Sample each segment so shaft
-                    // boundaries remain anchored to their world-space caster.
-                    float lightVisibility = uHasDirectionalLight != 0
-                        ? 1.0 - ComputeDirectionalLightShadow(samplePosition, sampleViewDepth)
-                        : 1.0;
+                    // Shadow lookups dominate this ray march. Adjacent samples
+                    // cover a very small world-space interval at the default
+                    // step count, so reuse visibility for a configurable number
+                    // of integration steps. A stride of one retains the former
+                    // maximum-quality path.
+                    if (uHasDirectionalLight != 0 && (stepIndex % uShadowStepStride) == 0)
+                    {
+                        lightVisibility = 1.0 - ComputeDirectionalLightShadow(samplePosition, sampleViewDepth);
+                    }
                     // exp(-extinction * 6) is the sixth power of the
                     // transmittance already computed above. Multiplication is
                     // substantially cheaper than a second exponential per step.
@@ -708,6 +723,7 @@ namespace PlutoGE::render
         m_shader->SetUniform("uDirectionalContribution", m_directionalContribution);
         m_shader->SetUniform("uMaxOpacity", m_maxOpacity);
         m_shader->SetUniform("uStepCount", std::clamp(m_stepCount, kMinStepCount, kMaxStepCount));
+        m_shader->SetUniform("uShadowStepStride", std::clamp(m_shadowStepStride, kMinShadowStepStride, kMaxShadowStepStride));
         m_shader->SetUniform("uHasDirectionalLight", hasDirectionalLight);
         DrawFullscreenTriangle();
 

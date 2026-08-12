@@ -400,11 +400,18 @@ namespace PlutoGE::render
                             continue;
                         }
 
-                        float spatialWeight = exp(-dot(offset, offset) * 0.35);
-                        float positionWeight = 1.0 / (1.0 + length(sampleViewPos - centerViewPos) * 16.0);
-                        float depthWeight = exp(-depthDelta * 24.0);
-                        float normalWeight = pow(max(dot(centerNormal, sampleNormal), 0.0), 16.0);
-                        float weight = spatialWeight * positionWeight * depthWeight * normalWeight;
+                        // Keep the resolve edge-aware without transcendental
+                        // operations in every tap. Spatial and depth proximity
+                        // already bound the full position delta, while repeated
+                        // squaring exactly evaluates the integer normal power.
+                        float spatialWeight = 1.0 / (1.0 + dot(offset, offset) * 0.7);
+                        float depthWeight = 1.0 / (1.0 + depthDelta * 24.0);
+                        float normalWeight = max(dot(centerNormal, sampleNormal), 0.0);
+                        normalWeight *= normalWeight;
+                        normalWeight *= normalWeight;
+                        normalWeight *= normalWeight;
+                        normalWeight *= normalWeight;
+                        float weight = spatialWeight * depthWeight * normalWeight;
 
                         aoSum += sampleAo * weight;
                         weightSum += weight;

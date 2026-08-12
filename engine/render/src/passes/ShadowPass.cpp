@@ -868,7 +868,11 @@ namespace
         PlutoGE::render::Mesh *boundMesh = nullptr;
         batchInstances.clear();
         batchInstances.reserve(sortedShadowCasters.size());
-        std::vector<PreparedShadowDraw> draws;
+        // Shadow surfaces are rebuilt repeatedly with similarly sized command
+        // sets. Retain CPU scratch capacity across cascades and frames instead
+        // of reallocating three command arrays for every updated surface.
+        static thread_local std::vector<PreparedShadowDraw> draws;
+        draws.clear();
         draws.reserve(sortedShadowCasters.size());
 
         const auto appendInstances = [](const PlutoGE::render::RenderCommand &command, std::vector<TransformInstanceData> &instances)
@@ -929,9 +933,11 @@ namespace
             bool usesIndirect = false;
         };
 
-        std::vector<PlutoGE::render::DrawElementsIndirectCommand> indirectCommands;
+        static thread_local std::vector<PlutoGE::render::DrawElementsIndirectCommand> indirectCommands;
+        indirectCommands.clear();
         indirectCommands.reserve(draws.size());
-        std::vector<PreparedShadowGroup> groups;
+        static thread_local std::vector<PreparedShadowGroup> groups;
+        groups.clear();
         groups.reserve(draws.size());
         for (std::size_t drawIndex = 0; drawIndex < draws.size();)
         {
@@ -1327,12 +1333,14 @@ namespace PlutoGE::render
 
         m_shadowPassShader->Bind();
         m_shadowPassShader->SetUniform("uShadowWorldOrigin", glm::vec3(0.0f));
-        std::vector<ShadowCasterEntry> shadowCasters;
+        static thread_local std::vector<ShadowCasterEntry> shadowCasters;
+        shadowCasters.clear();
+        shadowCasters.reserve(ctx.renderCommands->size());
         bool movedShadowCaster = false;
         BuildShadowCasterEntries(*ctx.renderCommands, shadowCasters, movedShadowCaster);
         shadowCastersChanged = shadowCastersChanged || movedShadowCaster;
         const auto sortedShadowCasters = BuildSortedShadowCasters(shadowCasters);
-        std::vector<TransformInstanceData> shadowBatchInstances;
+        static thread_local std::vector<TransformInstanceData> shadowBatchInstances;
         int incrementalShadowSurfaceUpdates = 0;
         auto reserveIncrementalShadowSurfaceUpdate = [&]()
         {

@@ -93,6 +93,23 @@ namespace PlutoGE::render
             return newest;
         }
 
+        std::filesystem::file_time_type StylesheetDirectoryWriteTime(
+            const std::filesystem::path &directory, std::error_code &error)
+        {
+            std::filesystem::file_time_type newest{};
+            for (std::filesystem::directory_iterator it(directory, error), end;
+                 !error && it != end; it.increment(error))
+            {
+                if (!it->is_regular_file() || it->path().extension() != ".rcss")
+                    continue;
+                std::error_code timeError;
+                const auto writeTime = std::filesystem::last_write_time(it->path(), timeError);
+                if (!timeError)
+                    newest = std::max(newest, writeTime);
+            }
+            return newest;
+        }
+
         bool SourceUsesBackdropFilter(const std::filesystem::path &documentPath)
         {
             const auto readText = [](const std::filesystem::path &path)
@@ -452,6 +469,17 @@ namespace PlutoGE::render
         }
 
         auto &assets = core::Engine::GetInstance().GetAssetManager();
+        struct HotReloadSource
+        {
+            std::string path;
+            std::filesystem::file_time_type writeTime{};
+            bool valid = false;
+        };
+        // Projected canvases create one RmlUi document per entity, but all
+        // instances of an asset share the same source files. Resolve and scan
+        // each source only once per hot-reload poll.
+        std::unordered_map<std::string, HotReloadSource> hotReloadSources;
+        std::unordered_map<std::string, std::filesystem::file_time_type> stylesheetDirectoryWriteTimes;
         for (const auto &[key, request] : requestedDocuments)
         {
             const std::string reference = request.projected
@@ -461,11 +489,35 @@ namespace PlutoGE::render
             {
                 if (checkForHotReload)
                 {
-                    const std::string resolved = ResolveDocumentPath(assets, reference);
-                    std::error_code error;
-                    const auto writeTime = DocumentSourceWriteTime(resolved, error);
+                    auto [sourceIt, inserted] = hotReloadSources.try_emplace(reference);
+                    if (inserted)
+                    {
+                        sourceIt->second.path = ResolveDocumentPath(assets, reference);
+                        std::error_code error;
+                        const std::filesystem::path sourcePath(sourceIt->second.path);
+                        sourceIt->second.writeTime = std::filesystem::last_write_time(sourcePath, error);
+                        if (!error)
+                        {
+                            const std::string directoryKey = sourcePath.parent_path().lexically_normal().string();
+                            auto [directoryIt, directoryInserted] =
+                                stylesheetDirectoryWriteTimes.try_emplace(directoryKey);
+                            if (directoryInserted)
+                            {
+                                std::error_code directoryError;
+                                directoryIt->second = StylesheetDirectoryWriteTime(
+                                    sourcePath.parent_path(), directoryError);
+                                if (directoryError)
+                                    error = directoryError;
+                            }
+                            if (!error)
+                                sourceIt->second.writeTime = std::max(
+                                    sourceIt->second.writeTime, directoryIt->second);
+                        }
+                        sourceIt->second.valid = !error;
+                    }
                     const auto known = m_documentWriteTimes.find(key);
-                    if (!error && known != m_documentWriteTimes.end() && writeTime != known->second)
+                    if (sourceIt->second.valid && known != m_documentWriteTimes.end() &&
+                        sourceIt->second.writeTime != known->second)
                         ReloadDocument(key);
                 }
                 if (auto *document = m_documents.at(key))
@@ -750,6 +802,8 @@ namespace PlutoGE::render
         auto *doc = FindDocument(document);
         auto *element = doc ? doc->GetElementById(id) : nullptr;
         if (!element) return false;
+        if (element->GetInnerRML() == text)
+            return true;
         element->SetInnerRML(text);
         return true;
     }
@@ -767,6 +821,8 @@ namespace PlutoGE::render
         auto *doc = FindDocument(document);
         auto *element = doc ? doc->GetElementById(id) : nullptr;
         if (!element) return false;
+        if (element->GetAttribute<Rml::String>(name, {}) == value)
+            return true;
         element->SetAttribute(name, value);
         return true;
     }

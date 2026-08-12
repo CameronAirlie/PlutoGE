@@ -15,6 +15,7 @@
 #include <glm/gtc/quaternion.hpp>
 #include <limits>
 #include <string_view>
+#include <utility>
 
 namespace PlutoGE::scene
 {
@@ -836,13 +837,21 @@ namespace PlutoGE::scene
             return localTransforms;
         }
 
-        std::vector<glm::mat4> BlendLocalTransforms(
-            const std::vector<glm::mat4> &source,
+        void BlendLocalTransformsInPlace(
+            std::vector<glm::mat4> &source,
             const std::vector<glm::mat4> &destination,
             float blend)
         {
-            std::vector<glm::mat4> blended(source.size(), glm::mat4(1.0f));
-            for (size_t index = 0; index < source.size(); ++index)
+            if (blend <= 0.00001f)
+                return;
+            if (blend >= 0.99999f)
+            {
+                source = destination;
+                return;
+            }
+
+            const size_t count = std::min(source.size(), destination.size());
+            for (size_t index = 0; index < count; ++index)
             {
                 glm::vec3 sourceTranslation;
                 glm::vec4 sourceRotation;
@@ -856,13 +865,20 @@ namespace PlutoGE::scene
                 const glm::quat sourceQuat(sourceRotation.w, sourceRotation.x, sourceRotation.y, sourceRotation.z);
                 const glm::quat destinationQuat(destinationRotation.w, destinationRotation.x, destinationRotation.y, destinationRotation.z);
                 const glm::quat rotation = glm::normalize(glm::slerp(sourceQuat, destinationQuat, blend));
-                blended[index] = ComposeTransform(
+                source[index] = ComposeTransform(
                     glm::mix(sourceTranslation, destinationTranslation, blend),
                     glm::vec4(rotation.x, rotation.y, rotation.z, rotation.w),
                     glm::mix(sourceScale, destinationScale, blend));
             }
+        }
 
-            return blended;
+        std::vector<glm::mat4> BlendLocalTransforms(
+            std::vector<glm::mat4> source,
+            const std::vector<glm::mat4> &destination,
+            float blend)
+        {
+            BlendLocalTransformsInPlace(source, destination, blend);
+            return source;
         }
 
         std::vector<glm::mat4> BlendWeightedLocalTransforms(
@@ -881,21 +897,20 @@ namespace PlutoGE::scene
                     continue;
                 }
                 const float nextWeight = accumulatedWeight + weight;
-                result = BlendLocalTransforms(result, transforms, weight / nextWeight);
+                BlendLocalTransformsInPlace(result, transforms, weight / nextWeight);
                 accumulatedWeight = nextWeight;
             }
             return result;
         }
 
-        std::vector<glm::mat4> BlendMaskedLocalTransforms(
-            const std::vector<glm::mat4> &base,
+        void BlendMaskedLocalTransformsInPlace(
+            std::vector<glm::mat4> &base,
             const std::vector<glm::mat4> &layer,
             const std::vector<glm::mat4> &reference,
             const std::vector<float> &mask,
             float layerWeight,
             assets::AnimationGraphLayerBlendMode mode)
         {
-            std::vector<glm::mat4> result = base;
             const size_t count = mode == assets::AnimationGraphLayerBlendMode::Override
                                      ? std::min({base.size(), layer.size(), mask.size()})
                                      : std::min({base.size(), layer.size(), reference.size(), mask.size()});
@@ -907,7 +922,7 @@ namespace PlutoGE::scene
 
                 if (mode == assets::AnimationGraphLayerBlendMode::Override && weight >= 0.99999f)
                 {
-                    result[index] = layer[index];
+                    base[index] = layer[index];
                     continue;
                 }
 
@@ -922,7 +937,7 @@ namespace PlutoGE::scene
                 if (mode == assets::AnimationGraphLayerBlendMode::Override)
                 {
                     const glm::quat rotation = glm::normalize(glm::slerp(baseQuat, layerQuat, weight));
-                    result[index] = ComposeTransform(
+                    base[index] = ComposeTransform(
                         glm::mix(baseTranslation, layerTranslation, weight),
                         glm::vec4(rotation.x, rotation.y, rotation.z, rotation.w),
                         glm::mix(baseScale, layerScale, weight));
@@ -939,13 +954,12 @@ namespace PlutoGE::scene
                     std::abs(referenceScale.x) > 0.000001f ? referenceScale.x : 1.0f,
                     std::abs(referenceScale.y) > 0.000001f ? referenceScale.y : 1.0f,
                     std::abs(referenceScale.z) > 0.000001f ? referenceScale.z : 1.0f);
-                result[index] = ComposeTransform(
+                base[index] = ComposeTransform(
                     baseTranslation + (layerTranslation - referenceTranslation) * weight,
                     glm::vec4((baseQuat * weightedDelta).x, (baseQuat * weightedDelta).y,
                               (baseQuat * weightedDelta).z, (baseQuat * weightedDelta).w),
                     baseScale * glm::mix(glm::vec3(1.0f), layerScale / safeReferenceScale, weight));
             }
-            return result;
         }
 
         bool IsDescendantOf(int candidate, int ancestor, const std::function<int(int)> &parentOf, int count)
@@ -3039,10 +3053,10 @@ namespace PlutoGE::scene
         {
             const auto &source = m_states[static_cast<size_t>(m_transition.sourceStateIndex)];
             const auto &destination = m_states[static_cast<size_t>(m_transition.destinationStateIndex)];
-            const auto sourceTransforms = sampleState(source, m_transition.sourceTime);
+            auto sourceTransforms = sampleState(source, m_transition.sourceTime);
             const auto destinationTransforms = sampleState(destination, m_transition.destinationTime);
             const float blend = m_transition.duration > 0.0f ? std::clamp(m_transition.elapsed / m_transition.duration, 0.0f, 1.0f) : 1.0f;
-            localTransforms = BlendLocalTransforms(sourceTransforms, destinationTransforms, blend);
+            localTransforms = BlendLocalTransforms(std::move(sourceTransforms), destinationTransforms, blend);
         }
         else
         {
@@ -3097,7 +3111,7 @@ namespace PlutoGE::scene
                 layerTransforms = sampleClip(layer.clipIndex, layer.time);
             }
             activeSampleMask = nullptr;
-            localTransforms = BlendMaskedLocalTransforms(
+            BlendMaskedLocalTransformsInPlace(
                 localTransforms, layerTransforms, bindTransforms,
                 layerMask, layer.currentWeight, layer.blendMode);
         }
@@ -3445,10 +3459,10 @@ namespace PlutoGE::scene
         {
             const auto &source = m_states[static_cast<size_t>(m_transition.sourceStateIndex)];
             const auto &destination = m_states[static_cast<size_t>(m_transition.destinationStateIndex)];
-            const auto sourceTransforms = sampleState(source, m_transition.sourceTime);
+            auto sourceTransforms = sampleState(source, m_transition.sourceTime);
             const auto destinationTransforms = sampleState(destination, m_transition.destinationTime);
             const float blend = m_transition.duration > 0.0f ? std::clamp(m_transition.elapsed / m_transition.duration, 0.0f, 1.0f) : 1.0f;
-            localTransforms = BlendLocalTransforms(sourceTransforms, destinationTransforms, blend);
+            localTransforms = BlendLocalTransforms(std::move(sourceTransforms), destinationTransforms, blend);
         }
         else
         {
@@ -3499,7 +3513,7 @@ namespace PlutoGE::scene
             {
                 layerTransforms = sampleClip(layer.clipIndex, layer.time);
             }
-            localTransforms = BlendMaskedLocalTransforms(
+            BlendMaskedLocalTransformsInPlace(
                 localTransforms, layerTransforms, bindTransforms,
                 ResolveJointMask(layer.maskId, skeleton), layer.currentWeight, layer.blendMode);
         }

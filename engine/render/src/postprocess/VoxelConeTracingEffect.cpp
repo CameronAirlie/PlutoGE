@@ -567,8 +567,11 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
                 cascade.accumulationR, cascade.accumulationG, cascade.accumulationB,
                 cascade.accumulationCount, cascade.accumulationOpacity};
             glDeleteTextures(static_cast<GLsizei>(std::size(transientTextures)), transientTextures);
+            // pendingShadowMaps are persistent staging textures reused by
+            // progressive voxel rebuilds.
             glDeleteTextures(static_cast<GLsizei>(cascade.pendingShadowMaps.size()), cascade.pendingShadowMaps.data());
             cascade.pendingShadowMaps.fill(0);
+            cascade.pendingShadowSourceMaps.fill(0);
             cascade.accumulationR = 0;
             cascade.accumulationG = 0;
             cascade.accumulationB = 0;
@@ -756,8 +759,8 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
         cascade.pendingShadowCascadeCount = directionalLight && directionalLight->castsShadows
                                                 ? std::clamp(directionalLight->activeShadowCascadeCount, 0, scene::kMaxDirectionalShadowCascades)
                                                 : 0;
-        glDeleteTextures(static_cast<GLsizei>(cascade.pendingShadowMaps.size()), cascade.pendingShadowMaps.data());
-        cascade.pendingShadowMaps.fill(0);
+        cascade.pendingShadowSourceMaps.fill(0);
+        cascade.pendingShadowCopyIndex = 0;
         for (int shadowCascade = 0; shadowCascade < scene::kMaxDirectionalShadowCascades; ++shadowCascade)
         {
             cascade.pendingShadowMatrices[shadowCascade] =
@@ -781,21 +784,26 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
                 cascade.pendingShadowCascadeCount = shadowCascade;
                 continue;
             }
-            glGenTextures(1, &cascade.pendingShadowMaps[shadowCascade]);
-            glBindTexture(GL_TEXTURE_2D, cascade.pendingShadowMaps[shadowCascade]);
-            glTexStorage2D(GL_TEXTURE_2D, 1, GL_DEPTH_COMPONENT24, shadowWidth, shadowHeight);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
-            const float borderColor[] = {1.0f, 1.0f, 1.0f, 1.0f};
-            glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, borderColor);
-            glCopyImageSubData(
-                sourceMap->GetTextureID(), GL_TEXTURE_2D, 0, 0, 0, 0,
-                cascade.pendingShadowMaps[shadowCascade], GL_TEXTURE_2D, 0, 0, 0, 0,
-                shadowWidth, shadowHeight, 1);
+            if (!cascade.pendingShadowMaps[shadowCascade] ||
+                cascade.pendingShadowWidths[shadowCascade] != shadowWidth ||
+                cascade.pendingShadowHeights[shadowCascade] != shadowHeight)
+            {
+                if (cascade.pendingShadowMaps[shadowCascade])
+                    glDeleteTextures(1, &cascade.pendingShadowMaps[shadowCascade]);
+                glGenTextures(1, &cascade.pendingShadowMaps[shadowCascade]);
+                glBindTexture(GL_TEXTURE_2D, cascade.pendingShadowMaps[shadowCascade]);
+                glTexStorage2D(GL_TEXTURE_2D, 1, GL_DEPTH_COMPONENT24, shadowWidth, shadowHeight);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+                const float borderColor[] = {1.0f, 1.0f, 1.0f, 1.0f};
+                glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, borderColor);
+                cascade.pendingShadowWidths[shadowCascade] = shadowWidth;
+                cascade.pendingShadowHeights[shadowCascade] = shadowHeight;
+            }
+            cascade.pendingShadowSourceMaps[shadowCascade] = sourceMap->GetTextureID();
         }
-        glMemoryBarrier(GL_TEXTURE_UPDATE_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
         cascade.jobIndex = 0;
         cascade.jobs.clear();
         cascade.jobs.reserve(commands.size());
@@ -906,6 +914,23 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
         auto &cascade = m_cascades[cascadeIndex];
         if (!m_voxelizationShader || !m_voxelResolveShader)
             return false;
+        // Shadow cascades are several million pixels in this project. Copy at
+        // most one per frame so beginning a rebuild cannot create a large,
+        // unbudgeted GPU transfer spike before voxel draw budgeting starts.
+        while (cascade.pendingShadowCopyIndex < cascade.pendingShadowCascadeCount &&
+               !cascade.pendingShadowSourceMaps[cascade.pendingShadowCopyIndex])
+            ++cascade.pendingShadowCopyIndex;
+        if (cascade.pendingShadowCopyIndex < cascade.pendingShadowCascadeCount)
+        {
+            const int shadowCascade = cascade.pendingShadowCopyIndex++;
+            glCopyImageSubData(
+                cascade.pendingShadowSourceMaps[shadowCascade], GL_TEXTURE_2D, 0, 0, 0, 0,
+                cascade.pendingShadowMaps[shadowCascade], GL_TEXTURE_2D, 0, 0, 0, 0,
+                cascade.pendingShadowWidths[shadowCascade],
+                cascade.pendingShadowHeights[shadowCascade], 1);
+            glMemoryBarrier(GL_TEXTURE_UPDATE_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
+            return false;
+        }
         // Progressive rebuilds continue on a later frame. Shader-image writes
         // from the previous chunk must be visible before issuing more atomics.
         glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
@@ -992,10 +1017,8 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
             if (skinned)
             {
                 const std::size_t jointCount = std::min<std::size_t>(job.jointMatrices->size(), 128);
-                for (std::size_t jointIndex = 0; jointIndex < jointCount; ++jointIndex)
-                    m_voxelizationShader->SetUniform(
-                        "uJointMatrices[" + std::to_string(jointIndex) + "]",
-                        (*job.jointMatrices)[jointIndex]);
+                m_voxelizationShader->SetUniformMatrixArray(
+                    "uJointMatrices[0]", job.jointMatrices->data(), jointCount);
             }
 
             if (c.instanceModels && !c.instanceModels->empty())
@@ -1088,8 +1111,7 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
         cascade.rebuildInProgress = false;
         cascade.hasVolume = true;
         cascade.jobs.clear();
-        glDeleteTextures(static_cast<GLsizei>(cascade.pendingShadowMaps.size()), cascade.pendingShadowMaps.data());
-        cascade.pendingShadowMaps.fill(0);
+        cascade.pendingShadowSourceMaps.fill(0);
         return true;
     }
 

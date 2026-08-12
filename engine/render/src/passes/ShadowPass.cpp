@@ -17,6 +17,7 @@
 #include <iostream>
 #include <limits>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include <glm/ext/matrix_clip_space.hpp>
@@ -278,11 +279,18 @@ namespace
         return static_cast<std::uint64_t>(static_cast<std::int64_t>(std::round(value * 1000.0f)));
     }
 
-    bool ValidateShadowFramebuffer(const char *label)
+    bool ValidateShadowFramebuffer(const char *label, unsigned int attachmentTexture)
     {
+        // Shadow targets persist across frames. glCheckFramebufferStatus can
+        // synchronize with the driver, so validate each newly created texture
+        // once rather than once per dynamic cascade redraw.
+        static std::unordered_set<unsigned int> validatedAttachments;
+        if (validatedAttachments.contains(attachmentTexture))
+            return true;
         const GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
         if (status == GL_FRAMEBUFFER_COMPLETE)
         {
+            validatedAttachments.insert(attachmentTexture);
             return true;
         }
 
@@ -828,16 +836,16 @@ namespace
         constexpr size_t kMaxShaderJoints = 128;
         if (!shader || !jointMatrices || jointMatrices->empty())
         {
-            shader->SetUniform("uUseSkinning", 0);
+            if (shader)
+                shader->SetUniform("uUseSkinning", 0);
             return;
         }
 
         shader->SetUniform("uUseSkinning", 1);
         const size_t jointCount = std::min(jointMatrices->size(), kMaxShaderJoints);
-        for (size_t jointIndex = 0; jointIndex < jointCount; ++jointIndex)
-        {
-            shader->SetUniform(std::string("uJointMatrices[") + std::to_string(jointIndex) + "]", (*jointMatrices)[jointIndex]);
-        }
+        // Array uniforms occupy contiguous locations. Upload the complete pose
+        // in one driver call instead of up to 128 calls per bot per cascade.
+        shader->SetUniformMatrixArray("uJointMatrices[0]", jointMatrices->data(), jointCount);
     }
 
     template <typename Predicate, typename LodSelector>
@@ -1473,7 +1481,7 @@ namespace PlutoGE::render
                     }
 
                     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, shadowMap->GetTextureID(), 0);
-                    if (!ValidateShadowFramebuffer("point shadow"))
+                    if (!ValidateShadowFramebuffer("point shadow", shadowMap->GetTextureID()))
                     {
                         light->pendingPointShadowFaceMask |= faceBit;
                         deferredShadowRefresh = true;
@@ -1682,7 +1690,8 @@ namespace PlutoGE::render
                     glViewport(0, 0, shadowResolution, shadowResolution);
                     m_shadowPassShader->SetUniform("uShadowWorldOrigin", light->shadowCascadeWorldOrigins[cascadeIndex]);
                     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, cascadeMap->GetTextureID(), 0);
-                    if (!ValidateShadowFramebuffer("directional cascade shadow"))
+                    if (!ValidateShadowFramebuffer(
+                            "directional cascade shadow", cascadeMap->GetTextureID()))
                     {
                         continue;
                     }
@@ -1789,7 +1798,7 @@ namespace PlutoGE::render
             glPolygonOffset(1.0f, 2.0f);
             glCullFace(GL_FRONT);
             glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, shadowMap->GetTextureID(), 0);
-            if (!ValidateShadowFramebuffer("projected shadow"))
+            if (!ValidateShadowFramebuffer("projected shadow", shadowMap->GetTextureID()))
             {
                 continue;
             }

@@ -333,6 +333,19 @@ namespace PlutoGE::render
         }
     }
 
+    void Shader::SetUniformMatrixArray(std::string_view name, const glm::mat4 *values, std::size_t count) const
+    {
+        if (!values || count == 0)
+            return;
+        const GLint location = GetUniformLocation(name);
+        if (location != -1)
+        {
+            glUniformMatrix4fv(
+                location, static_cast<GLsizei>(count), GL_FALSE,
+                &values[0][0][0]);
+        }
+    }
+
     void Shader::SetUniform(std::string_view name, const glm::vec4 &value) const
     {
         GLint location = GetUniformLocation(name);

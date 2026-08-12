@@ -2,6 +2,7 @@
 
 #include "PlutoGE/scene/components/Component.h"
 
+#include <algorithm>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -170,6 +171,8 @@ namespace PlutoGE::scene
         float GetTime() const { return m_time; }
         void SetTime(float time);
         float GetCurrentClipDuration() const;
+        float GetPoseUpdateRate() const { return m_poseUpdateRate; }
+        void SetPoseUpdateRate(float updatesPerSecond) { m_poseUpdateRate = std::max(0.0f, updatesPerSecond); }
 
         const std::vector<AnimationState> &GetGraphStates() const { return m_states; }
         std::vector<AnimationState> &GetGraphStates() { return m_states; }
@@ -297,6 +300,10 @@ namespace PlutoGE::scene
         float m_time = 0.0f;
         float m_graphStateTime = 0.0f;
         float m_speed = 1.0f;
+        // Zero evaluates every frame. Character crowds can use a lower fixed
+        // pose rate while playback consumes accumulated real time.
+        float m_poseUpdateRate = 0.0f;
+        float m_poseUpdateAccumulator = 0.0f;
         bool m_playing = false;
         bool m_looping = true;
         bool m_autoplay = true;

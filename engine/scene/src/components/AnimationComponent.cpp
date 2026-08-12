@@ -1031,6 +1031,40 @@ namespace PlutoGE::scene
             }
         };
 
+        // Pose sampling dominates character animation cost. At a configured
+        // fixed rate, retain the previous matrices between samples and advance
+        // graph/layer playback by all accumulated time on the next sample.
+        // Ragdolls remain unthrottled because their physics pose changes every
+        // frame, and a component without a cached pose must evaluate once.
+        if (m_poseUpdateRate > 0.0f && !m_ragdollEnabled && !m_jointMatrices.empty())
+        {
+            m_poseUpdateAccumulator += std::max(0.0f, deltaTime);
+            const float interval = 1.0f / m_poseUpdateRate;
+            if (m_poseUpdateAccumulator < interval)
+            {
+                recordPlaybackTiming();
+                return;
+            }
+            if (m_poseUpdateAccumulator >= interval * 2.0f)
+            {
+                // A hitch or frame rate below the requested pose rate must not
+                // leave playback permanently behind real time.
+                deltaTime = m_poseUpdateAccumulator;
+                m_poseUpdateAccumulator = 0.0f;
+            }
+            else
+            {
+                // Retain the fractional remainder so a 30 Hz request averages
+                // 30 samples instead of snapping down to a frame-rate divisor.
+                deltaTime = interval;
+                m_poseUpdateAccumulator -= interval;
+            }
+        }
+        else
+        {
+            m_poseUpdateAccumulator = 0.0f;
+        }
+
         EnsureDefaultGraph();
         if (!HasCurrentClip())
         {
@@ -1123,6 +1157,7 @@ namespace PlutoGE::scene
             {"Playing", PropertyType::Bool, m_playing ? "true" : "false"},
             {"Looping", PropertyType::Bool, m_looping ? "true" : "false"},
             {"Autoplay", PropertyType::Bool, m_autoplay ? "true" : "false"},
+            {"PoseUpdateRate", PropertyType::Float, std::to_string(m_poseUpdateRate)},
             {"RagdollEnabled", PropertyType::Bool, m_ragdollEnabled ? "true" : "false"},
             {"RagdollWeight", PropertyType::Float, std::to_string(m_ragdollWeight)},
             {"ClipCount", PropertyType::Int, std::to_string(m_clips.size())},
@@ -1255,6 +1290,10 @@ namespace PlutoGE::scene
             else if (property.name == "Autoplay")
             {
                 m_autoplay = ParseBool(property.value);
+            }
+            else if (property.name == "PoseUpdateRate")
+            {
+                m_poseUpdateRate = std::clamp(ParseFloatSafe(property.value), 0.0f, 240.0f);
             }
             else if (property.name == "RagdollEnabled")
             {

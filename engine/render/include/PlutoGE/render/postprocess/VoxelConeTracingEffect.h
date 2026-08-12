@@ -71,6 +71,10 @@ namespace PlutoGE::render
             unsigned int accumulationOpacity = 0;
             unsigned int framebuffer = 0;
             std::array<unsigned int, 4> pendingShadowMaps{};
+            std::array<unsigned int, 4> pendingShadowSourceMaps{};
+            std::array<int, 4> pendingShadowWidths{};
+            std::array<int, 4> pendingShadowHeights{};
+            int pendingShadowCopyIndex = 0;
             std::array<glm::mat4, 4> pendingShadowMatrices{
                 glm::mat4(1.0f), glm::mat4(1.0f), glm::mat4(1.0f), glm::mat4(1.0f)};
             std::array<glm::vec3, 4> pendingShadowOrigins{

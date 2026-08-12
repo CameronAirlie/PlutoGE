@@ -2202,6 +2202,7 @@ void main()
 
         bool HasUniform(std::string_view name) const;
         void SetUniform(std::string_view name, const glm::mat4 &value) const;
+        void SetUniformMatrixArray(std::string_view name, const glm::mat4 *values, std::size_t count) const;
         void SetUniform(std::string_view name, const glm::vec4 &value) const;
         void SetUniform(std::string_view name, const glm::vec3 &value) const;
         void SetUniform(std::string_view name, const glm::vec2 &value) const;

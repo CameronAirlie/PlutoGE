@@ -94,16 +94,14 @@ namespace PlutoGE::render
             constexpr size_t kMaxShaderJoints = 128;
             if (!shader || !jointMatrices || jointMatrices->empty())
             {
-                shader->SetUniform("uUseSkinning", 0);
+                if (shader)
+                    shader->SetUniform("uUseSkinning", 0);
                 return;
             }
 
             shader->SetUniform("uUseSkinning", 1);
             const size_t jointCount = std::min(jointMatrices->size(), kMaxShaderJoints);
-            for (size_t jointIndex = 0; jointIndex < jointCount; ++jointIndex)
-            {
-                shader->SetUniform(std::string("uJointMatrices[") + std::to_string(jointIndex) + "]", (*jointMatrices)[jointIndex]);
-            }
+            shader->SetUniformMatrixArray("uJointMatrices[0]", jointMatrices->data(), jointCount);
         }
 
         void ConfigureMatrixAttributes(unsigned int baseLocation, std::size_t offset, std::size_t stride)

@@ -34,6 +34,12 @@ public sealed class Prefab
         return entityId == 0 ? null : new GameObject(entityId);
     }
 
+    /// <summary>Parses and caches immutable prefab data before time-critical spawning.</summary>
+    public static bool Preload(string prefabReference) => ScriptBridge.PreloadPrefab(prefabReference);
+
+    /// <summary>Returns true when the cached prefab data is current and ready to clone.</summary>
+    public static bool IsReady(string prefabReference) => ScriptBridge.IsPrefabReady(prefabReference);
+
     public static GameObject? Instantiate(string prefabReference, Vector3 position)
     {
         var instance = Instantiate(prefabReference);

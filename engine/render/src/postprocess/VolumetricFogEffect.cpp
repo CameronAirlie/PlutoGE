@@ -406,12 +406,6 @@ namespace PlutoGE::render
                 return max(uCascadeCount - 1, 0);
             }
 
-            float ComputeViewDepth(vec3 worldPosition)
-            {
-                vec3 cameraForward = -normalize(vec3(uViewMatrix[0][2], uViewMatrix[1][2], uViewMatrix[2][2]));
-                return max(dot(worldPosition - uCameraPosition, cameraForward), 0.0);
-            }
-
             float ComputeDirectionalCascadeShadow(vec3 worldPosition, int cascadeIndex, out bool hasCoverage)
             {
                 vec4 lightSpacePosition = uCascadeLightSpaceMatrices[cascadeIndex] * vec4(worldPosition - uCascadeWorldOrigins[cascadeIndex], 1.0);
@@ -429,14 +423,13 @@ namespace PlutoGE::render
                 return SampleDirectionalCascadeShadow(cascadeIndex, projectedCoords);
             }
 
-            float ComputeDirectionalLightShadow(vec3 worldPosition)
+            float ComputeDirectionalLightShadow(vec3 worldPosition, float viewDepth)
             {
                 if (uHasDirectionalLight == 0 || uCascadeCount <= 0)
                 {
                     return 0.0;
                 }
 
-                float viewDepth = ComputeViewDepth(worldPosition);
                 if (viewDepth > uCascadeSplits[uCascadeCount - 1])
                 {
                     return 0.0;
@@ -501,6 +494,11 @@ namespace PlutoGE::render
 
                 float stepLength = hitDistance / float(uStepCount);
                 float sampleDistance = 0.5 * stepLength;
+                vec3 sampleStep = rayDirection * stepLength;
+                vec3 samplePosition = uCameraPosition + rayDirection * sampleDistance;
+                vec3 cameraForward = -normalize(vec3(uViewMatrix[0][2], uViewMatrix[1][2], uViewMatrix[2][2]));
+                float viewDepthStep = max(dot(rayDirection, cameraForward), 0.0) * stepLength;
+                float sampleViewDepth = 0.5 * viewDepthStep;
                 vec3 accumulatedLight = vec3(0.0);
                 float transmittance = 1.0;
                 float directionalInscattering = uHasDirectionalLight != 0
@@ -511,7 +509,6 @@ namespace PlutoGE::render
                 {
                     // Deterministic midpoint integration prevents both persistent
                     // screen-space patterns and temporal sparkle in smooth fog.
-                    vec3 samplePosition = uCameraPosition + rayDirection * sampleDistance;
                     float density = ComputeDensity(samplePosition);
                     float extinction = max(density * stepLength, 0.0);
                     float segmentTransmittance = exp(-extinction);
@@ -521,7 +518,7 @@ namespace PlutoGE::render
                     // silhouettes in the fog. Sample each segment so shaft
                     // boundaries remain anchored to their world-space caster.
                     float lightVisibility = uHasDirectionalLight != 0
-                        ? 1.0 - ComputeDirectionalLightShadow(samplePosition)
+                        ? 1.0 - ComputeDirectionalLightShadow(samplePosition, sampleViewDepth)
                         : 1.0;
                     // exp(-extinction * 6) is the sixth power of the
                     // transmittance already computed above. Multiplication is
@@ -546,7 +543,8 @@ namespace PlutoGE::render
                         break;
                     }
 
-                    sampleDistance += stepLength;
+                    samplePosition += sampleStep;
+                    sampleViewDepth += viewDepthStep;
                 }
 
                 float totalFog = Saturate(1.0 - transmittance);

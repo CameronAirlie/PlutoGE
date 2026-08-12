@@ -143,6 +143,8 @@ internal static unsafe class ScriptBridge
     private static delegate* unmanaged[Cdecl]<byte*, int> _getEntityCountByTag;
     private static delegate* unmanaged[Cdecl]<byte*, int, uint> _getEntityByTag;
     private static delegate* unmanaged[Cdecl]<byte*, uint> _instantiatePrefab;
+    private static delegate* unmanaged[Cdecl]<byte*, int> _preloadPrefab;
+    private static delegate* unmanaged[Cdecl]<byte*, int> _isPrefabReady;
     private static delegate* unmanaged[Cdecl]<byte*, int> _loadScene;
     private static delegate* unmanaged[Cdecl]<nint> _getActiveScenePath;
     private static delegate* unmanaged[Cdecl]<void> _quitApplication;
@@ -565,15 +567,20 @@ internal static unsafe class ScriptBridge
     }
 
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterPrefabApi")]
-    public static int RegisterPrefabApi(delegate* unmanaged[Cdecl]<byte*, uint> instantiatePrefab)
+    public static int RegisterPrefabApi(
+        delegate* unmanaged[Cdecl]<byte*, uint> instantiatePrefab,
+        delegate* unmanaged[Cdecl]<byte*, int> preloadPrefab,
+        delegate* unmanaged[Cdecl]<byte*, int> isPrefabReady)
     {
-        if (instantiatePrefab == null)
+        if (instantiatePrefab == null || preloadPrefab == null || isPrefabReady == null)
         {
             SetError("Managed prefab API registration received a null function pointer.");
             return 0;
         }
 
         _instantiatePrefab = instantiatePrefab;
+        _preloadPrefab = preloadPrefab;
+        _isPrefabReady = isPrefabReady;
         _lastError = string.Empty;
         return 1;
     }
@@ -1801,6 +1808,20 @@ internal static unsafe class ScriptBridge
         {
             return _instantiatePrefab(referencePtr);
         }
+    }
+
+    internal static bool PreloadPrefab(string prefabReference)
+    {
+        if (_preloadPrefab == null || string.IsNullOrWhiteSpace(prefabReference)) return false;
+        var bytes = Encoding.UTF8.GetBytes(prefabReference.Trim() + '\0');
+        fixed (byte* pointer = bytes) return _preloadPrefab(pointer) != 0;
+    }
+
+    internal static bool IsPrefabReady(string prefabReference)
+    {
+        if (_isPrefabReady == null || string.IsNullOrWhiteSpace(prefabReference)) return false;
+        var bytes = Encoding.UTF8.GetBytes(prefabReference.Trim() + '\0');
+        fixed (byte* pointer = bytes) return _isPrefabReady(pointer) != 0;
     }
 
     internal static bool LoadScene(string sceneAssetReference)

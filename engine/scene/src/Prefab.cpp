@@ -25,9 +25,11 @@
 #include "PlutoGE/render/Camera.h"
 
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <sstream>
 #include <unordered_map>
@@ -37,6 +39,35 @@ namespace PlutoGE::scene
 {
     namespace
     {
+        using ProfileClock = std::chrono::steady_clock;
+        double ElapsedMs(ProfileClock::time_point start)
+        {
+            return std::chrono::duration<double, std::milli>(ProfileClock::now() - start).count();
+        }
+
+        struct CachedPrefab
+        {
+            std::filesystem::file_time_type lastWriteTime{};
+            bool hasLastWriteTime = false;
+            std::unique_ptr<Scene> scene;
+        };
+
+        std::unordered_map<std::string, CachedPrefab> &PrefabCache()
+        {
+            static std::unordered_map<std::string, CachedPrefab> cache;
+            return cache;
+        }
+
+        std::mutex &PrefabStateMutex()
+        {
+            static std::mutex mutex;
+            return mutex;
+        }
+
+        PrefabInstantiationProfile g_latestProfile;
+        PrefabInstantiationProfile g_maximumProfile;
+        thread_local PrefabInstantiationProfile *g_activeProfile = nullptr;
+
         std::string ResolvePrefabPath(std::string_view reference)
         {
             auto &assetManager = core::Engine::GetInstance().GetAssetManager();
@@ -196,14 +227,30 @@ namespace PlutoGE::scene
                     }
 
                     auto typeName = ResolveComponentTypeName(*sourceComponent);
+                    const auto constructionStart = ProfileClock::now();
                     auto component = CreateComponentForType(typeName);
+                    const double constructionMs = ElapsedMs(constructionStart);
+                    if (g_activeProfile)
+                        g_activeProfile->componentConstructionMs += constructionMs;
                     if (!component)
                     {
                         continue;
                     }
 
                     auto *destinationComponent = destination.AddComponent(component.release());
+                    const auto deserializeStart = ProfileClock::now();
                     CopyComponent(*destinationComponent, *sourceComponent);
+                    const double componentMs = constructionMs + ElapsedMs(deserializeStart);
+                    if (g_activeProfile)
+                    {
+                        g_activeProfile->componentDeserializationMs += componentMs - constructionMs;
+                        g_activeProfile->componentTypeTotalsMs[typeName] += componentMs;
+                        if (componentMs > g_activeProfile->slowestComponentMs)
+                        {
+                            g_activeProfile->slowestComponentMs = componentMs;
+                            g_activeProfile->slowestComponentType = typeName;
+                        }
+                    }
                 }
             }
         }
@@ -413,31 +460,34 @@ namespace PlutoGE::scene
             return SceneSerializer::Load(ResolvePrefabPath(prefabReference), errorMessage);
         }
 
-        Scene *LoadCachedPrefabScene(std::string_view prefabReference, std::string *errorMessage)
+        Scene *LoadCachedPrefabScene(std::string_view prefabReference, std::string *errorMessage,
+                                     bool *cacheHit = nullptr, double *resolutionMs = nullptr,
+                                     double *parsingMs = nullptr, std::string *resolvedPathOut = nullptr)
         {
-            struct CachedPrefab
-            {
-                std::filesystem::file_time_type lastWriteTime{};
-                bool hasLastWriteTime = false;
-                std::unique_ptr<Scene> scene;
-            };
-
-            static std::unordered_map<std::string, CachedPrefab> cache;
-
+            const auto resolutionStart = ProfileClock::now();
             const std::string resolvedPath = ResolvePrefabPath(prefabReference);
+            if (resolutionMs) *resolutionMs = ElapsedMs(resolutionStart);
+            if (resolvedPathOut) *resolvedPathOut = resolvedPath;
             std::error_code timestampError;
             const auto lastWriteTime = std::filesystem::last_write_time(resolvedPath, timestampError);
             const bool hasLastWriteTime = !timestampError;
 
+            std::scoped_lock lock(PrefabStateMutex());
+            auto &cache = PrefabCache();
             auto cached = cache.find(resolvedPath);
             if (cached != cache.end() &&
                 cached->second.hasLastWriteTime == hasLastWriteTime &&
                 (!hasLastWriteTime || cached->second.lastWriteTime == lastWriteTime))
             {
+                if (cacheHit) *cacheHit = true;
+                if (parsingMs) *parsingMs = 0.0;
                 return cached->second.scene.get();
             }
 
+            if (cacheHit) *cacheHit = false;
+            const auto parsingStart = ProfileClock::now();
             auto loadedScene = SceneSerializer::Load(resolvedPath, errorMessage);
+            if (parsingMs) *parsingMs = ElapsedMs(parsingStart);
             if (!loadedScene)
             {
                 return nullptr;
@@ -745,6 +795,48 @@ namespace PlutoGE::scene
         }
     }
 
+    PrefabPreloadResult Prefab::Preload(std::string_view prefabReference)
+    {
+        PrefabPreloadResult result;
+        const auto start = ProfileClock::now();
+        result.ready = LoadCachedPrefabScene(prefabReference, &result.error, &result.cacheHit,
+                                             nullptr, nullptr, &result.resolvedPath) != nullptr;
+        result.durationMs = ElapsedMs(start);
+        return result;
+    }
+
+    bool Prefab::IsReady(std::string_view prefabReference)
+    {
+        const std::string resolvedPath = ResolvePrefabPath(prefabReference);
+        std::error_code timestampError;
+        const auto lastWriteTime = std::filesystem::last_write_time(resolvedPath, timestampError);
+        const bool hasLastWriteTime = !timestampError;
+        std::scoped_lock lock(PrefabStateMutex());
+        const auto cached = PrefabCache().find(resolvedPath);
+        return cached != PrefabCache().end() && cached->second.scene &&
+               cached->second.hasLastWriteTime == hasLastWriteTime &&
+               (!hasLastWriteTime || cached->second.lastWriteTime == lastWriteTime);
+    }
+
+    PrefabInstantiationProfile Prefab::GetLatestInstantiationProfile()
+    {
+        std::scoped_lock lock(PrefabStateMutex());
+        return g_latestProfile;
+    }
+
+    PrefabInstantiationProfile Prefab::GetMaximumInstantiationProfile()
+    {
+        std::scoped_lock lock(PrefabStateMutex());
+        return g_maximumProfile;
+    }
+
+    void Prefab::ResetInstantiationProfiles()
+    {
+        std::scoped_lock lock(PrefabStateMutex());
+        g_latestProfile = {};
+        g_maximumProfile = {};
+    }
+
     bool Prefab::SaveFromEntity(const Entity &entity,
                                 const std::filesystem::path &filePath,
                                 std::string *errorMessage)
@@ -757,7 +849,14 @@ namespace PlutoGE::scene
                                 Entity *parent,
                                 std::string *errorMessage)
     {
-        auto *prefabScene = LoadCachedPrefabScene(prefabReference, errorMessage);
+        PrefabInstantiationProfile profile;
+        const auto totalStart = ProfileClock::now();
+        bool cacheHit = false;
+        auto *prefabScene = LoadCachedPrefabScene(prefabReference, errorMessage, &cacheHit,
+                                                  &profile.fileResolutionMs, &profile.parsingMs,
+                                                  &profile.prefabPath);
+        profile.parsedPrefabCacheMiss = !cacheHit;
+        profile.synchronousLoadCount = cacheHit ? 0u : 1u;
         if (!prefabScene)
         {
             return nullptr;
@@ -773,10 +872,27 @@ namespace PlutoGE::scene
             return nullptr;
         }
 
+        g_activeProfile = &profile;
+        const auto hierarchyStart = ProfileClock::now();
         auto *instanceRoot = CloneEntityTreeIntoScene(scene, *roots.front(), prefabReference, parent, true);
+        profile.hierarchyAllocationMs = std::max(0.0, ElapsedMs(hierarchyStart) -
+                                                       profile.componentConstructionMs -
+                                                       profile.componentDeserializationMs);
         if (instanceRoot)
         {
+            const auto remapStart = ProfileClock::now();
             RemapClonedScriptEntityReferences(*roots.front(), *instanceRoot);
+            profile.referenceRemappingMs = ElapsedMs(remapStart);
+            profile.rootEntityName = instanceRoot->GetName();
+            profile.rootEntityId = instanceRoot->GetID();
+        }
+        g_activeProfile = nullptr;
+        profile.totalMs = ElapsedMs(totalStart);
+        {
+            std::scoped_lock lock(PrefabStateMutex());
+            g_latestProfile = profile;
+            if (profile.totalMs >= g_maximumProfile.totalMs)
+                g_maximumProfile = profile;
         }
         return instanceRoot;
     }

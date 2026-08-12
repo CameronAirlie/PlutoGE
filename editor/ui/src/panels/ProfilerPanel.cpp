@@ -2,6 +2,7 @@
 
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/RmlUiRuntime.h"
+#include "PlutoGE/scene/Prefab.h"
 #include "PlutoGE/ui/PanelManager.h"
 
 #include <imgui.h>
@@ -91,6 +92,30 @@ namespace PlutoGE::ui
             ImGui::TextUnformatted("Collecting frame samples...");
         }
 
+        ImGui::Separator();
+        if (ImGui::TreeNode("Prefab instantiation"))
+        {
+            const auto latest = scene::Prefab::GetLatestInstantiationProfile();
+            const auto maximum = scene::Prefab::GetMaximumInstantiationProfile();
+            ImGui::Text("Latest / sample max: %.3f / %.3f ms", latest.totalMs, maximum.totalMs);
+            ImGui::TextWrapped("Asset: %s", latest.prefabPath.empty() ? "No prefab instantiated" : latest.prefabPath.c_str());
+            ImGui::Text("Root: %s [%u]", latest.rootEntityName.empty() ? "-" : latest.rootEntityName.c_str(), latest.rootEntityId);
+            ImGui::Text("Resolve / parse: %.3f / %.3f ms (%s)", latest.fileResolutionMs, latest.parsingMs,
+                        latest.parsedPrefabCacheMiss ? "cache miss" : "cache hit");
+            ImGui::Text("Hierarchy allocation: %.3f ms", latest.hierarchyAllocationMs);
+            ImGui::Text("Components construct / deserialize: %.3f / %.3f ms",
+                        latest.componentConstructionMs, latest.componentDeserializationMs);
+            ImGui::Text("Reference remapping: %.3f ms", latest.referenceRemappingMs);
+            ImGui::Text("Slowest component: %s (%.3f ms)",
+                        latest.slowestComponentType.empty() ? "-" : latest.slowestComponentType.c_str(),
+                        latest.slowestComponentMs);
+            ImGui::Text("Synchronous loads / deferred work: %u / %u",
+                        latest.synchronousLoadCount, latest.deferredWorkCount);
+            for (const auto &[type, duration] : latest.componentTypeTotalsMs)
+                ImGui::Text("%s: %.3f ms", type.c_str(), duration);
+            if (ImGui::Button("Reset prefab maxima")) scene::Prefab::ResetInstantiationProfiles();
+            ImGui::TreePop();
+        }
         ImGui::Separator();
         ImGui::Text("Profiling begin: %.2f ms", frameTimingStats.profilingBeginMs);
         ImGui::Text("Editor setup: %.2f ms", frameTimingStats.editorSetupMs);

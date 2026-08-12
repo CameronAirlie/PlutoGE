@@ -103,7 +103,7 @@ namespace PlutoGE::scripting
         using apply_field_data_fn = int(PLUTO_HOST_CALL *)(int64_t, const char *);
         using set_entity_id_fn = int(PLUTO_HOST_CALL *)(int64_t, uint32_t);
         using register_game_object_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
-        using register_prefab_api_fn = int(PLUTO_HOST_CALL *)(void *);
+        using register_prefab_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *);
         using register_scene_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *);
         using register_scriptable_object_api_fn = int(PLUTO_HOST_CALL *)(void *);
         using register_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *);
@@ -166,6 +166,8 @@ namespace PlutoGE::scripting
         using get_entity_count_by_tag_fn = int32_t(PLUTO_HOST_CALL *)(const char *);
         using get_entity_by_tag_fn = uint32_t(PLUTO_HOST_CALL *)(const char *, int32_t);
         using instantiate_prefab_fn = uint32_t(PLUTO_HOST_CALL *)(const char *);
+        using preload_prefab_fn = int32_t(PLUTO_HOST_CALL *)(const char *);
+        using is_prefab_ready_fn = int32_t(PLUTO_HOST_CALL *)(const char *);
         using load_scene_fn = int(PLUTO_HOST_CALL *)(const char *);
         using quit_application_fn = void(PLUTO_HOST_CALL *)();
         using load_scriptable_object_asset_fn = const char *(PLUTO_HOST_CALL *)(const char *);
@@ -1217,6 +1219,16 @@ namespace PlutoGE::scripting
             }
 
             return instance->GetID();
+        }
+
+        int32_t PreloadPrefab(const char *prefabReference)
+        {
+            return prefabReference && prefabReference[0] != '\0' && scene::Prefab::Preload(prefabReference).ready ? 1 : 0;
+        }
+
+        int32_t IsPrefabReady(const char *prefabReference)
+        {
+            return prefabReference && prefabReference[0] != '\0' && scene::Prefab::IsReady(prefabReference) ? 1 : 0;
         }
 
         int LoadScene(const char *sceneAssetReference)
@@ -3757,7 +3769,9 @@ namespace PlutoGE::scripting
 
         if (!m_impl->registerPrefabApi ||
             m_impl->registerPrefabApi(
-                reinterpret_cast<void *>(static_cast<instantiate_prefab_fn>(&InstantiatePrefab))) == 0)
+                reinterpret_cast<void *>(static_cast<instantiate_prefab_fn>(&InstantiatePrefab)),
+                reinterpret_cast<void *>(static_cast<preload_prefab_fn>(&PreloadPrefab)),
+                reinterpret_cast<void *>(static_cast<is_prefab_ready_fn>(&IsPrefabReady))) == 0)
         {
             setManagedBridgeFailure("RegisterPrefabApi");
             return false;

@@ -39,6 +39,10 @@ public sealed class NetworkServer : IAsyncDisposable, IDisposable
 
         _cancellation = new CancellationTokenSource();
         _listener = new TcpListener(address, port);
+        _listener.Server.SetSocketOption(
+            SocketOptionLevel.Socket,
+            SocketOptionName.ReuseAddress,
+            true);
         _listener.Start(backlog);
         _ = AcceptLoopAsync(_listener, _cancellation.Token);
     }

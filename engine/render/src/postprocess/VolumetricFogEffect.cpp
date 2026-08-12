@@ -513,7 +513,7 @@ namespace PlutoGE::render
                 }
 
                 float stepLength = hitDistance / float(uStepCount);
-                float currentDistance = 0.0;
+                float sampleDistance = 0.5 * stepLength;
                 vec3 accumulatedLight = vec3(0.0);
                 float transmittance = 1.0;
                 float directionalInscattering = uHasDirectionalLight != 0
@@ -522,17 +522,11 @@ namespace PlutoGE::render
 
                 for (int stepIndex = 0; stepIndex < uStepCount; ++stepIndex)
                 {
-                    if (currentDistance >= hitDistance)
-                    {
-                        break;
-                    }
-
-                    float segmentLength = min(stepLength, hitDistance - currentDistance);
                     // Deterministic midpoint integration prevents both persistent
                     // screen-space patterns and temporal sparkle in smooth fog.
-                    vec3 samplePosition = uCameraPosition + rayDirection * (currentDistance + 0.5 * segmentLength);
+                    vec3 samplePosition = uCameraPosition + rayDirection * sampleDistance;
                     float density = ComputeDensity(samplePosition);
-                    float extinction = max(density * segmentLength, 0.0);
+                    float extinction = max(density * stepLength, 0.0);
                     float segmentTransmittance = exp(-extinction);
                     float segmentFog = 1.0 - segmentTransmittance;
                     // Reusing a shadow result for adjacent march segments
@@ -542,7 +536,11 @@ namespace PlutoGE::render
                     float lightVisibility = uHasDirectionalLight != 0
                         ? 1.0 - ComputeDirectionalLightShadow(samplePosition)
                         : 1.0;
-                    float multipleScattering = 1.0 - exp(-density * segmentLength * 6.0);
+                    // exp(-extinction * 6) is the sixth power of the
+                    // transmittance already computed above. Multiplication is
+                    // substantially cheaper than a second exponential per step.
+                    float transmittanceSquared = segmentTransmittance * segmentTransmittance;
+                    float multipleScattering = 1.0 - transmittanceSquared * transmittanceSquared * transmittanceSquared;
                     vec3 ambientScatter = ambientFogColor * uAmbientContribution * (0.55 + 0.45 * multipleScattering);
                     vec3 directionalScatter = uHasDirectionalLight != 0
                         ? (uLightColor * uLightIntensity * directionalInscattering * uScattering * uDirectionalContribution * lightVisibility)
@@ -561,7 +559,7 @@ namespace PlutoGE::render
                         break;
                     }
 
-                    currentDistance += stepLength;
+                    sampleDistance += stepLength;
                 }
 
                 float totalFog = Saturate(1.0 - transmittance);

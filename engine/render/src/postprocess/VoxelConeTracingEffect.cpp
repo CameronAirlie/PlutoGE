@@ -57,11 +57,21 @@ namespace PlutoGE::render
             // order-independent signature which describes world content instead,
             // otherwise moving the camera can invalidate the voxel cache even when
             // no object has changed.
-            std::size_t hash = HashValue(commands.size(), 1469598103934665603ull);
+            std::size_t hash = 1469598103934665603ull;
             std::size_t sum = 0;
             std::size_t mixed = 0;
+            std::size_t staticCommandCount = 0;
             for (const auto &command : commands)
             {
+                // The voxel field is a cached representation of static scene
+                // lighting. Skinned meshes change their joint matrices every
+                // frame and would otherwise continuously invalidate every
+                // cascade. They still receive VCTGI through the G-buffer, but
+                // do not contribute stale, intermittently rebuilt occlusion.
+                if (command.jointMatrices && !command.jointMatrices->empty())
+                    continue;
+
+                ++staticCommandCount;
                 std::size_t commandHash = HashValue(command.mesh, 1469598103934665603ull);
                 commandHash = HashValue(command.material, commandHash);
                 commandHash = HashValue(command.submeshIndex, commandHash);
@@ -74,15 +84,6 @@ namespace PlutoGE::render
                     // matrices every frame; rebuilding the cluster replaces the
                     // shared snapshot and therefore changes this pointer.
                     commandHash = HashValue(command.instanceModels.get(), commandHash);
-                }
-                if (command.jointMatrices)
-                {
-                    // Animated geometry must invalidate the volume when its pose
-                    // changes. This is intentionally the only per-command
-                    // variable-length data still hashed every frame.
-                    commandHash = HashValue(command.jointMatrices->size(), commandHash);
-                    for (const auto &joint : *command.jointMatrices)
-                        commandHash = HashBytes(glm::value_ptr(joint), sizeof(glm::mat4), commandHash);
                 }
                 if (command.material)
                 {
@@ -101,6 +102,7 @@ namespace PlutoGE::render
                 sum += commandHash;
                 mixed ^= commandHash + 0x9e3779b97f4a7c15ull + (commandHash << 6u) + (commandHash >> 2u);
             }
+            hash = HashValue(staticCommandCount, hash);
             hash = HashValue(sum, hash);
             return HashValue(mixed, hash);
         }
@@ -799,7 +801,9 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
         cascade.jobs.reserve(commands.size());
         for (const auto &command : commands)
         {
-            if (!command.mesh || !command.material || !IntersectsVoxelVolume(command, volumeOrigin, cascade.size))
+            if (!command.mesh || !command.material ||
+                (command.jointMatrices && !command.jointMatrices->empty()) ||
+                !IntersectsVoxelVolume(command, volumeOrigin, cascade.size))
                 continue;
 
             // Construct directly in reserved storage. Moving a temporary job
@@ -807,15 +811,9 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
             // debug builds during scene-load voxelization.
             cascade.jobs.emplace_back();
             auto &job = cascade.jobs.back();
-            if (command.jointMatrices)
-            {
-                job.jointMatrices =
-                    std::make_shared<const std::vector<glm::mat4>>(*command.jointMatrices);
-            }
             job.command = command;
             job.command.material = nullptr;
-            job.command.jointMatrices =
-                job.jointMatrices ? job.jointMatrices.get() : nullptr;
+            job.command.jointMatrices = nullptr;
             const auto &materialConfig = command.material->GetConfig();
             std::size_t voxelLod = 0;
             // Index-only generated LODs are safe for untextured opaque meshes.

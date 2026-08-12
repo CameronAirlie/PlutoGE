@@ -114,6 +114,18 @@ namespace PlutoGE::render
                 vec3 viewDirection = normalize(viewPosition);
                 vec3 rayDirection = normalize(reflect(viewDirection, viewNormal));
 
+                // The final confidence is exactly zero at this roughness, so
+                // avoid the ray march (and its depth reconstruction samples)
+                // for surfaces that cannot contribute a reflection. Rays
+                // travelling back towards the camera cannot intersect a
+                // front-facing scene surface either.
+                float roughness = clamp(normalRoughness.a, 0.04, 1.0);
+                if (roughness >= 0.8 || uIntensity <= 0.0 || rayDirection.z >= -0.001)
+                {
+                    FragColor = vec4(sceneColor, 1.0);
+                    return;
+                }
+
                 vec3 rayOrigin = viewPosition + viewNormal * uStartOffset;
                 float previousTravel = uStartOffset;
                 float previousDepthDelta = -1.0;
@@ -187,7 +199,6 @@ namespace PlutoGE::render
                 float facingConfidence = smoothstep(0.01, 0.2, dot(rayDirection, viewNormal));
                 float fresnel = pow(1.0 - clamp(dot(-viewDirection, viewNormal), 0.0, 1.0), uFresnelPower);
                 float metallic = clamp(texture(uSceneAlbedoTexture, UV).a, 0.0, 1.0);
-                float roughness = clamp(normalRoughness.a, 0.04, 1.0);
                 float reflectivity = mix(0.04 + fresnel * 0.96, 1.0, metallic * uMetallicBoost);
                 // SSR traces a single sharp ray and cannot represent the wide
                 // reflection lobe of a rough surface. Fade it out as that lobe

@@ -39,6 +39,7 @@ namespace PlutoGE::render
         float resizeMs = 0.0f;
         float synchronizeMs = 0.0f;
         float inputUpdateMs = 0.0f;
+        float worldSurfaceMs = 0.0f;
         float beginFrameMs = 0.0f;
         float backdropMs = 0.0f;
         float renderMs = 0.0f;
@@ -49,8 +50,8 @@ namespace PlutoGE::render
 
         [[nodiscard]] float TotalMs() const
         {
-            return initializeMs + resizeMs + synchronizeMs + inputUpdateMs + beginFrameMs +
-                   backdropMs + renderMs + endFrameMs;
+            return initializeMs + resizeMs + synchronizeMs + inputUpdateMs + worldSurfaceMs +
+                   beginFrameMs + backdropMs + renderMs + endFrameMs;
         }
     };
 
@@ -103,6 +104,9 @@ namespace PlutoGE::render
         void AttachEventSubscriptions();
         void DetachEventSubscriptions();
         void LoadDocumentFonts(const std::filesystem::path &documentPath);
+        void MarkWorldSurfaceDirty(Rml::ElementDocument *document);
+        bool ConsumeAssetFileChange();
+        void CloseAssetFileWatcher();
         void RenderWorldSurfaces();
         void DestroyWorldSurfaceTargets();
 
@@ -113,6 +117,7 @@ namespace PlutoGE::render
             int width = 0;
             int height = 0;
             glm::mat4 model{1.0f};
+            bool dirty = true;
         };
 
         std::unique_ptr<RenderInterface_GL3> m_renderer;
@@ -126,6 +131,9 @@ namespace PlutoGE::render
         std::unordered_map<std::string, float> m_documentScales;
         std::unordered_map<std::string, bool> m_documentUsesBackdrop;
         std::unordered_map<std::string, std::string> m_generatedDocumentSources;
+        std::unordered_map<std::string, std::string> m_resolvedGeneratedFonts;
+        std::unordered_map<std::string, glm::vec4> m_documentProjectionState;
+        std::unordered_map<std::string, glm::vec2> m_documentSizes;
         std::unordered_map<std::string, WorldSurfaceTarget> m_worldSurfaceTargets;
         std::vector<RmlUiWorldSurface> m_worldSurfaceDraws;
         std::unordered_map<std::string, int> m_pendingEvents;
@@ -139,7 +147,8 @@ namespace PlutoGE::render
         int m_width = 0;
         int m_height = 0;
         std::uint64_t m_lastInputFrame = 0;
-        std::uint32_t m_hotReloadCheckCountdown = 0;
+        void *m_assetFileChangeHandle = nullptr;
+        std::filesystem::path m_watchedAssetDirectory;
         RmlUiCpuTiming m_cpuTiming;
     };
 }

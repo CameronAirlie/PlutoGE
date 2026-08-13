@@ -2027,8 +2027,13 @@ namespace PlutoGE::scene
     {
         return std::any_of(m_canvasComponents.begin(), m_canvasComponents.end(), [](const auto *canvas)
         {
-            return canvas && canvas->IsEnabled() && canvas->GetBackend() == UIRenderBackend::Native &&
-                   canvas->GetOwner() && canvas->GetOwner()->IsActive();
+            if (!canvas || !canvas->IsEnabled() || !canvas->GetOwner() || !canvas->GetOwner()->IsActive())
+                return false;
+            if (canvas->GetBackend() == UIRenderBackend::Native)
+                return true;
+            return canvas->GetBackend() == UIRenderBackend::RmlUi &&
+                   canvas->GetContentSource() == RmlUiContentSource::Text &&
+                   canvas->GetRenderMode() != CanvasRenderMode::WorldSpace;
         });
     }
 

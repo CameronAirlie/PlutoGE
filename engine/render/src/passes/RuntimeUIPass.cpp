@@ -869,10 +869,13 @@ namespace PlutoGE::render
 
             if (auto *canvas = entity->GetComponent<scene::CanvasComponent>(); canvas && canvas->IsEnabled())
             {
-                if (canvas->GetBackend() == scene::UIRenderBackend::RmlUi)
+                const bool simpleRmlText = canvas->GetBackend() == scene::UIRenderBackend::RmlUi &&
+                                           canvas->GetContentSource() == scene::RmlUiContentSource::Text &&
+                                           canvas->GetRenderMode() != scene::CanvasRenderMode::WorldSpace;
+                if (canvas->GetBackend() == scene::UIRenderBackend::RmlUi && !simpleRmlText)
                     return;
                 activeCanvas.component = canvas;
-                const float scaleFactor = scene::ResolveCanvasScaleFactor(*canvas, viewportSize);
+                const float scaleFactor = simpleRmlText ? 1.0f : scene::ResolveCanvasScaleFactor(*canvas, viewportSize);
                 activeCanvas.parentRect = scene::RectTransformLayout{
                     .min = glm::vec2(0.0f),
                     .max = viewportSize / scaleFactor,
@@ -887,7 +890,9 @@ namespace PlutoGE::render
             auto *text = entity->GetComponent<scene::UITextComponent>();
             if (activeCanvas.component && rectTransform && rectTransform->IsEnabled())
             {
-                const float scaleFactor = scene::ResolveCanvasScaleFactor(*activeCanvas.component, viewportSize);
+                const bool simpleRmlText = activeCanvas.component->GetBackend() == scene::UIRenderBackend::RmlUi &&
+                                           activeCanvas.component->GetContentSource() == scene::RmlUiContentSource::Text;
+                const float scaleFactor = simpleRmlText ? 1.0f : scene::ResolveCanvasScaleFactor(*activeCanvas.component, viewportSize);
                 const bool worldSpaceOverlay =
                     activeCanvas.component->GetRenderMode() == scene::CanvasRenderMode::WorldSpaceOverlay ||
                     activeCanvas.component->GetRenderMode() == scene::CanvasRenderMode::WorldSpace;
@@ -902,7 +907,8 @@ namespace PlutoGE::render
                 {
                     const glm::vec3 worldScale = glm::abs(entity->GetWorldScale());
                     const float uniformWorldScale = std::max(worldScale.x, worldScale.y);
-                    pixelScale = projectedPoint.pixelsPerWorldUnit * uniformWorldScale * scaleFactor / kUIUnitsPerWorldUnit;
+                    pixelScale = simpleRmlText ? uniformWorldScale
+                                               : projectedPoint.pixelsPerWorldUnit * uniformWorldScale * scaleFactor / kUIUnitsPerWorldUnit;
                 }
                 auto logicalLayout = activeCanvas.parentRect
                                                ? (layoutOverride ? *layoutOverride : scene::ResolveRectTransformLayout(*rectTransform, *activeCanvas.parentRect))
@@ -996,7 +1002,7 @@ namespace PlutoGE::render
                         .color = ResolveButtonColor(button, color),
                         .textureId = texture ? texture->GetTextureID() : 0,
                         .depth = projectedPoint.depth,
-                        .depthTest = worldSpaceOverlay,
+                        .depthTest = worldSpaceOverlay && !simpleRmlText,
                         .sortingOrder = activeCanvas.component->GetSortingOrder(),
                         .entityId = entity->GetID(),
                         .imageType = imageType,

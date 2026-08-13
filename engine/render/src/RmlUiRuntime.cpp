@@ -18,6 +18,13 @@
 #include <RmlUi_Renderer_GL3.h>
 #include <PlutoGE_RmlUi_Target.h>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <Windows.h>
+#endif
+
 #include <GLFW/glfw3.h>
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -278,7 +285,15 @@ namespace PlutoGE::render
             {
                 document.SetProperty("position", "absolute");
                 document.SetProperty("transform-origin", "0px 0px");
-                document.SetProperty("transform", "scale(" + std::to_string(scale) + ")");
+                if (request.projected)
+                {
+                    const glm::vec2 origin = request.position - request.size * request.pivot * scale;
+                    document.SetProperty("transform", "translate(" + std::to_string(origin.x) + "px," +
+                                                          std::to_string(origin.y) + "px) scale(" +
+                                                          std::to_string(scale) + ")");
+                }
+                else
+                    document.SetProperty("transform", "scale(" + std::to_string(scale) + ")");
             }
             if (request.worldSurface)
             {
@@ -289,15 +304,10 @@ namespace PlutoGE::render
             }
             else if (request.projected)
             {
-                // CSS transforms operate in the element's local coordinate
-                // system; they do not scale its absolute layout position.
-                // Keep the projected anchor in screen pixels and only scale
-                // the pivot offset, otherwise left/top diverge as scale tends
-                // toward zero and the document shoots down and right.
-                document.SetProperty("left", std::to_string(request.position.x - request.size.x * request.pivot.x * scale) + "px");
-                document.SetProperty("top", std::to_string(request.position.y - request.size.y * request.pivot.y * scale) + "px");
                 if (updateDimensions)
                 {
+                    document.SetProperty("left", "0px");
+                    document.SetProperty("top", "0px");
                     document.SetProperty("width", std::to_string(request.size.x) + "px");
                     document.SetProperty("height", std::to_string(request.size.y) + "px");
                 }
@@ -317,7 +327,8 @@ namespace PlutoGE::render
                               const glm::mat4 &view,
                               const glm::mat4 &projection,
                               float inheritedScale = 1.0f,
-                              bool insideDocumentCanvas = false)
+                              bool insideDocumentCanvas = false,
+                              bool descend = true)
         {
             // The caller only descends through active parents, so checking the
             // local flag is sufficient. Entity::IsActive() walks every ancestor
@@ -331,8 +342,11 @@ namespace PlutoGE::render
                 inheritedScale = scene::ResolveCanvasScaleFactor(*canvas, viewportSize);
                 const auto *text = entity->GetComponent<scene::UITextComponent>();
                 const bool textSource = canvas->GetContentSource() == scene::RmlUiContentSource::Text;
+                const bool textUsesRmlSurface = textSource &&
+                                                canvas->GetRenderMode() == scene::CanvasRenderMode::WorldSpace;
                 if (canvas->GetBackend() == scene::UIRenderBackend::RmlUi &&
-                    ((textSource && text && text->IsEnabled()) || (!textSource && !canvas->GetDocumentPath().empty())))
+                    ((textUsesRmlSurface && text && text->IsEnabled()) ||
+                     (!textSource && !canvas->GetDocumentPath().empty())))
                 {
                     insideDocumentCanvas = true;
                     const bool projected = canvas->GetRenderMode() == scene::CanvasRenderMode::WorldSpaceOverlay;
@@ -450,9 +464,12 @@ namespace PlutoGE::render
                     entry->second.visible = entry->second.visible || widget->IsVisible();
             }
 
-            for (auto *child : entity->GetChildren())
-                CollectDocuments(child, viewportSize, documents, view, projection, inheritedScale,
-                                 insideDocumentCanvas);
+            if (descend)
+            {
+                for (auto *child : entity->GetChildren())
+                    CollectDocuments(child, viewportSize, documents, view, projection, inheritedScale,
+                                     insideDocumentCanvas, true);
+            }
         }
 
         int CurrentModifiers(GLFWwindow *window)
@@ -533,6 +550,9 @@ namespace PlutoGE::render
         m_documentScales.clear();
         m_documentUsesBackdrop.clear();
         m_generatedDocumentSources.clear();
+        m_resolvedGeneratedFonts.clear();
+        m_documentProjectionState.clear();
+        m_documentSizes.clear();
         DestroyWorldSurfaceTargets();
         m_eventSubscriptions.clear();
         m_reportedLoadFailures.clear();
@@ -551,45 +571,80 @@ namespace PlutoGE::render
         m_width = 0;
         m_height = 0;
         m_lastInputFrame = 0;
-        m_hotReloadCheckCountdown = 0;
+        CloseAssetFileWatcher();
+    }
+
+    bool RmlUiRuntime::ConsumeAssetFileChange()
+    {
+#ifdef _WIN32
+        auto &assets = core::Engine::GetInstance().GetAssetManager();
+        std::filesystem::path assetDirectory = assets.GetProjectRootDirectory();
+        assetDirectory /= assets.GetProjectAssetDirectory();
+        assetDirectory = assetDirectory.lexically_normal();
+        if (assetDirectory != m_watchedAssetDirectory)
+        {
+            CloseAssetFileWatcher();
+            std::error_code error;
+            if (!std::filesystem::is_directory(assetDirectory, error))
+                return false;
+            const HANDLE handle = FindFirstChangeNotificationW(
+                assetDirectory.c_str(), TRUE,
+                FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_SIZE);
+            if (handle == INVALID_HANDLE_VALUE)
+                return false;
+            m_assetFileChangeHandle = handle;
+            m_watchedAssetDirectory = assetDirectory;
+            return false;
+        }
+        if (!m_assetFileChangeHandle)
+            return false;
+        const HANDLE handle = static_cast<HANDLE>(m_assetFileChangeHandle);
+        if (WaitForSingleObject(handle, 0) != WAIT_OBJECT_0)
+            return false;
+        if (!FindNextChangeNotification(handle))
+            CloseAssetFileWatcher();
+        return true;
+#else
+        return false;
+#endif
+    }
+
+    void RmlUiRuntime::CloseAssetFileWatcher()
+    {
+#ifdef _WIN32
+        if (m_assetFileChangeHandle)
+            FindCloseChangeNotification(static_cast<HANDLE>(m_assetFileChangeHandle));
+#endif
+        m_assetFileChangeHandle = nullptr;
+        m_watchedAssetDirectory.clear();
     }
 
     void RmlUiRuntime::SynchronizeDocuments(const scene::Scene &scene, const glm::mat4 &view,
                                             const glm::mat4 &projection)
     {
-        constexpr std::uint32_t hotReloadCheckIntervalFrames = 30;
-        const bool checkForHotReload = m_hotReloadCheckCountdown == 0;
-        m_hotReloadCheckCountdown = checkForHotReload
-                                        ? hotReloadCheckIntervalFrames - 1
-                                        : m_hotReloadCheckCountdown - 1;
+        // The OS watcher is a non-blocking event check. Filesystem metadata is
+        // inspected only after the project Assets directory actually changes.
+        const bool checkForHotReload = ConsumeAssetFileChange();
 
         std::unordered_map<std::string, DocumentRequest> requestedDocuments;
         const glm::vec2 viewportSize{static_cast<float>(m_width), static_cast<float>(m_height)};
         const auto &canvases = scene.GetCanvasComponents();
+        requestedDocuments.reserve(std::max<std::size_t>(canvases.size(), 4));
         if (!canvases.empty())
         {
-            // Canvas components are registered by Scene as entities/components
-            // are attached and removed. Restrict collection to those small UI
-            // subtrees instead of walking every mesh and every skeleton joint
-            // in the scene for each rendered viewport.
-            std::unordered_set<const scene::Entity *> collectedRoots;
             for (const auto *canvas : canvases)
             {
                 auto *owner = canvas ? canvas->GetOwner() : nullptr;
                 if (!owner || !owner->IsActive())
                     continue;
-
-                // A nested canvas is already covered by its nearest canvas
-                // ancestor. Start a separate traversal only for top-level UI
-                // roots to avoid collecting the same subtree more than once.
-                auto *collectionRoot = owner;
-                for (auto *parent = owner->GetParent(); parent; parent = parent->GetParent())
-                {
-                    if (parent->GetComponent<scene::CanvasComponent>())
-                        collectionRoot = parent;
-                }
-                if (collectedRoots.insert(collectionRoot).second)
-                    CollectDocuments(collectionRoot, viewportSize, requestedDocuments, view, projection);
+                // Modern canvases own their source directly. Sampling only the
+                // registered owner avoids recursively walking potentially large
+                // gameplay hierarchies just to rediscover the same canvases.
+                const bool legacyWidgetSubtree = canvas->GetBackend() == scene::UIRenderBackend::RmlUi &&
+                                                 canvas->GetContentSource() == scene::RmlUiContentSource::Document &&
+                                                 canvas->GetDocumentPath().empty();
+                CollectDocuments(owner, viewportSize, requestedDocuments, view, projection,
+                                 1.0f, false, legacyWidgetSubtree);
             }
         }
         else
@@ -629,6 +684,8 @@ namespace PlutoGE::render
                 m_documentScales.erase(it->first);
                 m_documentUsesBackdrop.erase(it->first);
                 m_generatedDocumentSources.erase(it->first);
+                m_documentProjectionState.erase(it->first);
+                m_documentSizes.erase(it->first);
                 m_documentReferences.erase(it->first);
                 it = m_documents.erase(it);
             }
@@ -669,8 +726,13 @@ namespace PlutoGE::render
                     }
                     m_documentScales.erase(key);
                     m_generatedDocumentSources.erase(knownSource);
+                    if (auto target = m_worldSurfaceTargets.find(key); target != m_worldSurfaceTargets.end())
+                        target->second.dirty = true;
                 }
-                const std::string resolvedFont = ResolveGeneratedFontPath(assets, request.fontPath);
+                auto [resolvedFontIt, insertedFont] = m_resolvedGeneratedFonts.try_emplace(request.fontPath);
+                if (insertedFont)
+                    resolvedFontIt->second = ResolveGeneratedFontPath(assets, request.fontPath);
+                const std::string &resolvedFont = resolvedFontIt->second;
                 if (!resolvedFont.empty())
                 {
                     const std::string fontFamily = GeneratedFontFamily(request.fontPath);
@@ -722,11 +784,12 @@ namespace PlutoGE::render
                     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, target.texture, 0);
                     target.width = surfaceWidth;
                     target.height = surfaceHeight;
+                    target.dirty = true;
                 }
             }
             if (m_documents.contains(key))
             {
-                if (checkForHotReload)
+                if (checkForHotReload && !request.generated)
                 {
                     auto [sourceIt, inserted] = hotReloadSources.try_emplace(reference);
                     if (inserted)
@@ -775,10 +838,20 @@ namespace PlutoGE::render
                     // Culled projected documents remain hidden and do not need
                     // CSS mutations. Updating left/top/scale on them invalidates
                     // RmlUi style and layout work despite producing no pixels.
-                    if ((scaleChanged || request.projected || request.worldSurface) &&
+                    const glm::vec4 projectionState(request.position, request.pivot);
+                    const auto knownProjection = m_documentProjectionState.find(key);
+                    const bool projectionChanged = knownProjection == m_documentProjectionState.end() ||
+                                                   knownProjection->second != projectionState;
+                    const auto knownSize = m_documentSizes.find(key);
+                    const bool sizeChanged = knownSize == m_documentSizes.end() || knownSize->second != request.size;
+                    if (projectionChanged) m_documentProjectionState[key] = projectionState;
+                    if (sizeChanged) m_documentSizes[key] = request.size;
+                    if ((scaleChanged || (request.projected && projectionChanged) ||
+                         (request.worldSurface && sizeChanged)) &&
                         (!request.projected || request.inFrontOfCamera))
                         ConfigureDocument(*document, request, m_width, m_height,
-                                          scaleChanged, firstConfiguration || request.worldSurface ||
+                                          scaleChanged || (request.projected && projectionChanged),
+                                          firstConfiguration || sizeChanged ||
                                                             (!request.projected && scaleChanged));
                     if (request.visible && request.inFrontOfCamera && !request.worldSurface)
                     {
@@ -806,6 +879,8 @@ namespace PlutoGE::render
                     m_documentScales[key] = std::max(request.scale, 0.0001f);
                     m_documentUsesBackdrop[key] = false;
                     m_generatedDocumentSources[key] = request.generatedSource;
+                    m_documentProjectionState[key] = glm::vec4(request.position, request.pivot);
+                    m_documentSizes[key] = request.size;
                 }
                 else if (m_reportedLoadFailures.insert(reference).second)
                     std::cerr << "[RmlUi] Failed to create generated text document for '" << reference << "'.\n";
@@ -985,6 +1060,15 @@ namespace PlutoGE::render
         if (!m_context || !m_renderer || m_worldSurfaceTargets.empty())
             return;
 
+        bool needsRender = false;
+        for (auto &[key, target] : m_worldSurfaceTargets)
+        {
+            m_worldSurfaceDraws.push_back({target.texture, target.model});
+            needsRender = needsRender || target.dirty;
+        }
+        if (!needsRender)
+            return;
+
         GLint previousFramebuffer = 0;
         glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &previousFramebuffer);
         std::vector<Rml::ElementDocument *> previouslyVisible;
@@ -998,6 +1082,8 @@ namespace PlutoGE::render
         }
         for (auto &[key, target] : m_worldSurfaceTargets)
         {
+            if (!target.dirty)
+                continue;
             const auto documentIt = m_documents.find(key);
             if (documentIt == m_documents.end() || !documentIt->second || !target.framebuffer || !target.texture)
                 continue;
@@ -1017,7 +1103,7 @@ namespace PlutoGE::render
             m_context->Render();
             m_renderer->EndFrame();
             document->Hide();
-            m_worldSurfaceDraws.push_back({target.texture, target.model});
+            target.dirty = false;
         }
 
         for (auto *document : previouslyVisible)
@@ -1112,7 +1198,23 @@ namespace PlutoGE::render
         if (!error) m_documentWriteTimes[document] = writeTime;
         std::clog << "[RmlUi] Hot reloaded document and styles for '" << document << "'.\n";
         AttachEventSubscriptions();
+        if (auto target = m_worldSurfaceTargets.find(document); target != m_worldSurfaceTargets.end())
+            target->second.dirty = true;
         return true;
+    }
+
+    void RmlUiRuntime::MarkWorldSurfaceDirty(Rml::ElementDocument *document)
+    {
+        if (!document)
+            return;
+        for (const auto &[key, loaded] : m_documents)
+        {
+            if (loaded != document)
+                continue;
+            if (auto target = m_worldSurfaceTargets.find(key); target != m_worldSurfaceTargets.end())
+                target->second.dirty = true;
+            return;
+        }
     }
 
     bool RmlUiRuntime::SetElementText(const std::string &document, const std::string &id, const std::string &text)
@@ -1123,6 +1225,7 @@ namespace PlutoGE::render
         if (element->GetInnerRML() == text)
             return true;
         element->SetInnerRML(text);
+        MarkWorldSurfaceDirty(doc);
         return true;
     }
 
@@ -1142,6 +1245,7 @@ namespace PlutoGE::render
         if (element->GetAttribute<Rml::String>(name, {}) == value)
             return true;
         element->SetAttribute(name, value);
+        MarkWorldSurfaceDirty(doc);
         return true;
     }
 
@@ -1160,6 +1264,7 @@ namespace PlutoGE::render
         auto *element = doc ? doc->GetElementById(id) : nullptr;
         if (!element) return false;
         element->SetClass(name, enabled);
+        MarkWorldSurfaceDirty(doc);
         return true;
     }
 
@@ -1168,7 +1273,10 @@ namespace PlutoGE::render
     {
         auto *doc = FindDocument(document);
         auto *element = doc ? doc->GetElementById(id) : nullptr;
-        return element && element->SetProperty(name, value);
+        if (!element || !element->SetProperty(name, value))
+            return false;
+        MarkWorldSurfaceDirty(doc);
+        return true;
     }
 
     bool RmlUiRuntime::SubscribeEvent(const std::string &document, const std::string &id, const std::string &event)
@@ -1409,7 +1517,9 @@ namespace PlutoGE::render
         }
         m_cpuTiming.inputUpdateMs = elapsedMs(inputBegin, Clock::now());
 
+        const auto worldSurfaceBegin = Clock::now();
         RenderWorldSurfaces();
+        m_cpuTiming.worldSurfaceMs = elapsedMs(worldSurfaceBegin, Clock::now());
         if (drawWorldSurfaces && !m_worldSurfaceDraws.empty())
             drawWorldSurfaces();
 

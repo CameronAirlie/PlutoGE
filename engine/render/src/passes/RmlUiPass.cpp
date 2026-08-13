@@ -113,5 +113,25 @@ namespace PlutoGE::render
             RmlUiRuntime::Get().Render(*ctx.scene, width, height, ctx.frameSequence,
                                       ctx.cameraData.view, ctx.cameraData.projection,
                                       [this, &ctx]() { DrawWorldSurfaces(ctx); });
+
+        // RmlUi is the final scene pass. Establish a cheap, deterministic
+        // baseline instead of querying driver state (glGet* can serialize the
+        // CPU and GPU). Geometry and subsequent passes also establish their
+        // own required state at the start of the next frame.
+        glDisable(GL_BLEND);
+        glDisable(GL_SCISSOR_TEST);
+        glDisable(GL_STENCIL_TEST);
+        glEnable(GL_DEPTH_TEST);
+        glEnable(GL_CULL_FACE);
+        glDepthMask(GL_TRUE);
+        glDepthFunc(GL_GEQUAL);
+        glCullFace(GL_BACK);
+        glBlendEquation(GL_FUNC_ADD);
+        glBlendFunc(GL_ONE, GL_ZERO);
+        glUseProgram(0);
+        glBindVertexArray(0);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        glViewport(0, 0, width, height);
     }
 }

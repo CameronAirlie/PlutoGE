@@ -193,6 +193,7 @@ namespace PlutoGE::ui
             ImGui::Text("Viewport resize: %.3f ms", rmlTiming.resizeMs);
             ImGui::Text("Document synchronization: %.3f ms", rmlTiming.synchronizeMs);
             ImGui::Text("Input + layout update: %.3f ms", rmlTiming.inputUpdateMs);
+            ImGui::Text("World-surface update: %.3f ms", rmlTiming.worldSurfaceMs);
             ImGui::Text("Backend begin frame: %.3f ms", rmlTiming.beginFrameMs);
             ImGui::Text("Backdrop copy: %.3f ms (%s)", rmlTiming.backdropMs,
                         rmlTiming.copiedBackdrop ? "performed" : "skipped");
@@ -318,6 +319,7 @@ namespace PlutoGE::ui
                       << "RmlUi viewport resize: " << rmlTiming.resizeMs << " ms\n"
                       << "RmlUi document synchronization: " << rmlTiming.synchronizeMs << " ms\n"
                       << "RmlUi input + layout update: " << rmlTiming.inputUpdateMs << " ms\n"
+                      << "RmlUi world-surface update: " << rmlTiming.worldSurfaceMs << " ms\n"
                       << "RmlUi backend begin frame: " << rmlTiming.beginFrameMs << " ms\n"
                       << "RmlUi backdrop copy: " << rmlTiming.backdropMs << " ms ("
                       << (rmlTiming.copiedBackdrop ? "performed" : "skipped") << ")\n"

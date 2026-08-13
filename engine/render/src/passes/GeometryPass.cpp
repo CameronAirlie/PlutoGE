@@ -220,7 +220,13 @@ namespace PlutoGE::render
         }
 
         ctx.gBuffer->Bind();
+        // Opaque geometry must establish its own blend state. Late-frame UI
+        // and transparent passes intentionally enable blending and may be the
+        // final pass executed in the previous frame.
+        glDisable(GL_BLEND);
         glEnable(GL_DEPTH_TEST);
+        glDepthMask(GL_TRUE);
+        glDepthFunc(GL_GEQUAL);
         glEnable(GL_CULL_FACE);
         glCullFace(GL_BACK);
         glViewport(0, 0, ctx.gBuffer->GetWidth(), ctx.gBuffer->GetHeight());

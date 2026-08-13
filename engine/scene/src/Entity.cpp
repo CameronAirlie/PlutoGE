@@ -333,6 +333,8 @@ namespace PlutoGE::scene
                 m_scene->RegisterDecalComponent(decal);
             if (auto *canvas = dynamic_cast<CanvasComponent *>(component))
                 m_scene->RegisterCanvasComponent(canvas);
+            if (auto *widget = dynamic_cast<RmlWidgetComponent *>(component))
+                m_scene->RegisterRmlWidgetComponent(widget);
         }
 
         return component;
@@ -383,6 +385,8 @@ namespace PlutoGE::scene
                 m_scene->UnregisterDecalComponent(decal);
             if (auto *canvas = dynamic_cast<CanvasComponent *>(component))
                 m_scene->UnregisterCanvasComponent(canvas);
+            if (auto *widget = dynamic_cast<RmlWidgetComponent *>(component))
+                m_scene->UnregisterRmlWidgetComponent(widget);
         }
 
         DetachComponent(component);
@@ -454,6 +458,8 @@ namespace PlutoGE::scene
                 m_scene->UnregisterDecalComponent(decal);
             for (auto *canvas : GetComponents<CanvasComponent>())
                 m_scene->UnregisterCanvasComponent(canvas);
+            for (auto *widget : GetComponents<RmlWidgetComponent>())
+                m_scene->UnregisterRmlWidgetComponent(widget);
         }
 
         m_scene = scene;
@@ -503,6 +509,8 @@ namespace PlutoGE::scene
                 m_scene->RegisterDecalComponent(decal);
             for (auto *canvas : GetComponents<CanvasComponent>())
                 m_scene->RegisterCanvasComponent(canvas);
+            for (auto *widget : GetComponents<RmlWidgetComponent>())
+                m_scene->RegisterRmlWidgetComponent(widget);
         }
 
         for (auto *child : m_children)

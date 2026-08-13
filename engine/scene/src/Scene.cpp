@@ -1304,10 +1304,40 @@ namespace PlutoGE::scene
     void Scene::RebuildRuntimePhysicsState(const std::vector<Entity *> &entities,
                                            const std::vector<Entity *> &activeEntities)
     {
+        struct PreservedRagdollPart
+        {
+            btTransform transform;
+            btVector3 linearVelocity;
+            btVector3 angularVelocity;
+            glm::mat4 jointFromBody{1.0f};
+            int activationState = ACTIVE_TAG;
+        };
+        std::unordered_map<AnimationComponent *, std::unordered_map<size_t, PreservedRagdollPart>>
+            preservedRagdolls;
         if (m_runtimePhysicsState && m_runtimePhysicsState->world)
+        {
             for (auto &ragdoll : m_runtimePhysicsState->world->ragdolls)
+            {
                 if (ragdoll.animation)
+                {
+                    auto &preservedParts = preservedRagdolls[ragdoll.animation];
+                    preservedParts.reserve(ragdoll.parts.size());
+                    for (const auto &part : ragdoll.parts)
+                    {
+                        if (!part.body)
+                            continue;
+                        preservedParts.emplace(part.jointIndex, PreservedRagdollPart{
+                            .transform = part.body->getWorldTransform(),
+                            .linearVelocity = part.body->getLinearVelocity(),
+                            .angularVelocity = part.body->getAngularVelocity(),
+                            .jointFromBody = part.jointFromBody,
+                            .activationState = part.body->getActivationState(),
+                        });
+                    }
                     ragdoll.animation->ClearRagdollPhysicsPose();
+                }
+            }
+        }
         if (!m_runtimePhysicsState)
         {
             m_runtimePhysicsState = std::make_unique<RuntimePhysicsState>();
@@ -1465,6 +1495,16 @@ namespace PlutoGE::scene
                                               glm::inverse(joint.inverseBindMatrix);
                 jointWorldTransforms[jointIndex] = ownerWorld * jointGlobal;
             }
+            const auto preservedRagdoll = preservedRagdolls.find(animation);
+            if (preservedRagdoll != preservedRagdolls.end())
+            {
+                for (const auto &[jointIndex, part] : preservedRagdoll->second)
+                {
+                    if (jointIndex < jointWorldTransforms.size())
+                        jointWorldTransforms[jointIndex] =
+                            FromBulletTransform(part.transform) * part.jointFromBody;
+                }
+            }
 
             for (const size_t jointIndex : physicalJoints)
             {
@@ -1526,13 +1566,29 @@ namespace PlutoGE::scene
                 body->setCcdMotionThreshold(radius * 0.5f);
                 body->setCcdSweptSphereRadius(radius * 0.8f);
                 body->setSleepingThresholds(0.08f, 0.12f);
+                glm::mat4 jointFromBody = glm::inverse(bodyWorld) * jointWorldTransforms[jointIndex];
+                if (preservedRagdoll != preservedRagdolls.end())
+                {
+                    const auto preservedPart = preservedRagdoll->second.find(jointIndex);
+                    if (preservedPart != preservedRagdoll->second.end())
+                    {
+                        const auto &state = preservedPart->second;
+                        body->setWorldTransform(state.transform);
+                        motionState->setWorldTransform(state.transform);
+                        body->setInterpolationWorldTransform(state.transform);
+                        body->setLinearVelocity(state.linearVelocity);
+                        body->setAngularVelocity(state.angularVelocity);
+                        body->setActivationState(state.activationState);
+                        jointFromBody = state.jointFromBody;
+                    }
+                }
                 runtimeWorld->dynamicsWorld.addRigidBody(body.get());
                 ragdoll.jointToPart[jointIndex] = static_cast<int>(ragdoll.parts.size());
                 ragdoll.parts.push_back(BulletRagdollPart{
                     .shape = std::move(shape),
                     .motionState = std::move(motionState),
                     .body = std::move(body),
-                    .jointFromBody = glm::inverse(bodyWorld) * jointWorldTransforms[jointIndex],
+                    .jointFromBody = jointFromBody,
                     .jointIndex = jointIndex,
                 });
             }
@@ -2047,11 +2103,10 @@ namespace PlutoGE::scene
         if (hasRmlCanvas)
             return true;
 
-        return std::any_of(m_entitiesById.begin(), m_entitiesById.end(), [](const auto &entry)
+        return std::any_of(m_rmlWidgetComponents.begin(), m_rmlWidgetComponents.end(), [](const auto *widget)
         {
-            const auto *entity = entry.second;
-            const auto *widget = entity ? entity->GetComponent<RmlWidgetComponent>() : nullptr;
-            return entity && entity->IsActive() && widget && widget->IsEnabled() && !widget->GetSource().empty();
+            const auto *entity = widget ? widget->GetOwner() : nullptr;
+            return entity && entity->IsActive() && widget->IsEnabled() && !widget->GetSource().empty();
         });
     }
 
@@ -2587,6 +2642,21 @@ namespace PlutoGE::scene
         m_canvasComponents.erase(
             std::remove(m_canvasComponents.begin(), m_canvasComponents.end(), canvasComponent),
             m_canvasComponents.end());
+    }
+
+    void Scene::RegisterRmlWidgetComponent(RmlWidgetComponent *widgetComponent)
+    {
+        if (widgetComponent &&
+            std::find(m_rmlWidgetComponents.begin(), m_rmlWidgetComponents.end(), widgetComponent) ==
+                m_rmlWidgetComponents.end())
+            m_rmlWidgetComponents.push_back(widgetComponent);
+    }
+
+    void Scene::UnregisterRmlWidgetComponent(RmlWidgetComponent *widgetComponent)
+    {
+        m_rmlWidgetComponents.erase(
+            std::remove(m_rmlWidgetComponents.begin(), m_rmlWidgetComponents.end(), widgetComponent),
+            m_rmlWidgetComponents.end());
     }
 
     void Scene::RegisterMeshComponent(MeshComponent *meshComponent)

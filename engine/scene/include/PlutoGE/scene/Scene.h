@@ -25,6 +25,7 @@ namespace PlutoGE::scene
     class DecalComponent;
     class MeshComponent;
     class CanvasComponent;
+    class RmlWidgetComponent;
     class ParticleSystemComponent;
     class TerrainComponent;
     struct Light;
@@ -190,6 +191,7 @@ namespace PlutoGE::scene
         const std::vector<IblCaptureVolume> &GetIblCaptureVolumes() const { return m_iblCaptureVolumes; }
         const std::vector<ParticleSystemComponent *> &GetParticleSystemComponents() const { return m_particleSystemComponents; }
         const std::vector<CanvasComponent *> &GetCanvasComponents() const { return m_canvasComponents; }
+        const std::vector<RmlWidgetComponent *> &GetRmlWidgetComponents() const { return m_rmlWidgetComponents; }
         int AddIblCaptureVolume(IblCaptureVolume captureVolume);
         void SetIblCaptureVolume(std::size_t index, IblCaptureVolume captureVolume);
         void RemoveIblCaptureVolume(std::size_t index);
@@ -218,6 +220,8 @@ namespace PlutoGE::scene
         void UnregisterDecalComponent(DecalComponent *decalComponent);
         void RegisterCanvasComponent(CanvasComponent *canvasComponent);
         void UnregisterCanvasComponent(CanvasComponent *canvasComponent);
+        void RegisterRmlWidgetComponent(RmlWidgetComponent *widgetComponent);
+        void UnregisterRmlWidgetComponent(RmlWidgetComponent *widgetComponent);
 
     private:
         struct PhysicsQueryCache;
@@ -240,6 +244,7 @@ namespace PlutoGE::scene
         std::vector<ParticleSystemComponent *> m_particleSystemComponents;
         std::vector<DecalComponent *> m_decalComponents;
         std::vector<CanvasComponent *> m_canvasComponents;
+        std::vector<RmlWidgetComponent *> m_rmlWidgetComponents;
         std::vector<Light *> m_lights;
         std::string m_filePath;
         std::string m_environmentMapPath;

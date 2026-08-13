@@ -630,29 +630,37 @@ namespace PlutoGE::render
         const glm::vec2 viewportSize{static_cast<float>(m_width), static_cast<float>(m_height)};
         const auto &canvases = scene.GetCanvasComponents();
         requestedDocuments.reserve(std::max<std::size_t>(canvases.size(), 4));
-        if (!canvases.empty())
+        for (const auto *canvas : canvases)
         {
-            for (const auto *canvas : canvases)
-            {
-                auto *owner = canvas ? canvas->GetOwner() : nullptr;
-                if (!owner || !owner->IsActive())
-                    continue;
-                // Modern canvases own their source directly. Sampling only the
-                // registered owner avoids recursively walking potentially large
-                // gameplay hierarchies just to rediscover the same canvases.
-                const bool legacyWidgetSubtree = canvas->GetBackend() == scene::UIRenderBackend::RmlUi &&
-                                                 canvas->GetContentSource() == scene::RmlUiContentSource::Document &&
-                                                 canvas->GetDocumentPath().empty();
+            auto *owner = canvas ? canvas->GetOwner() : nullptr;
+            if (owner && owner->IsActive())
                 CollectDocuments(owner, viewportSize, requestedDocuments, view, projection,
-                                 1.0f, false, legacyWidgetSubtree);
-            }
+                                 1.0f, false, false);
         }
-        else
+
+        // Widgets are registered by Scene, so document discovery is O(number
+        // of UI documents) instead of recursively walking every canvas child.
+        for (const auto *widget : scene.GetRmlWidgetComponents())
         {
-            // Compatibility for old scenes containing a standalone deprecated
-            // RmlWidget without a Canvas. New authoring always creates a Canvas.
-            for (auto *root : scene.GetRootEntities())
-                CollectDocuments(root, viewportSize, requestedDocuments, view, projection);
+            auto *owner = widget ? widget->GetOwner() : nullptr;
+            if (!owner || !owner->IsActive())
+                continue;
+
+            float inheritedScale = 1.0f;
+            bool insideDocumentCanvas = false;
+            for (auto *ancestor = owner; ancestor; ancestor = ancestor->GetParent())
+            {
+                const auto *canvas = ancestor->GetComponent<scene::CanvasComponent>();
+                if (!canvas || !canvas->IsEnabled())
+                    continue;
+                inheritedScale = scene::ResolveCanvasScaleFactor(*canvas, viewportSize);
+                insideDocumentCanvas = canvas->GetBackend() == scene::UIRenderBackend::RmlUi &&
+                                       canvas->GetContentSource() == scene::RmlUiContentSource::Document &&
+                                       !canvas->GetDocumentPath().empty();
+                break;
+            }
+            CollectDocuments(owner, viewportSize, requestedDocuments, view, projection,
+                             inheritedScale, insideDocumentCanvas, false);
         }
 
         for (auto it = m_worldSurfaceTargets.begin(); it != m_worldSurfaceTargets.end();)

@@ -6,6 +6,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <filesystem>
+#include <functional>
 #include <vector>
 #include <glm/mat4x4.hpp>
 
@@ -53,6 +54,12 @@ namespace PlutoGE::render
         }
     };
 
+    struct RmlUiWorldSurface
+    {
+        unsigned int texture = 0;
+        glm::mat4 model{1.0f};
+    };
+
     // Owns the single screen-space RmlUi context used by runtime canvases.
     // CanvasComponent remains the scene-facing authoring and migration point.
     class RmlUiRuntime
@@ -63,10 +70,12 @@ namespace PlutoGE::render
         bool Initialize(platform::Window &window);
         void Shutdown();
         void Render(const scene::Scene &scene, int width, int height, std::uint64_t frameSequence,
-                    const glm::mat4 &view, const glm::mat4 &projection);
+                    const glm::mat4 &view, const glm::mat4 &projection,
+                    const std::function<void()> &drawWorldSurfaces = {});
         [[nodiscard]] bool IsInitialized() const { return m_context != nullptr; }
         [[nodiscard]] Rml::Context *GetContext() const { return m_context; }
         [[nodiscard]] const RmlUiCpuTiming &GetCpuTiming() const { return m_cpuTiming; }
+        [[nodiscard]] const std::vector<RmlUiWorldSurface> &GetWorldSurfaces() const { return m_worldSurfaceDraws; }
         bool ShowDocument(const std::string &document, bool visible);
         bool ReloadDocument(const std::string &document);
         bool SetElementText(const std::string &document, const std::string &id, const std::string &text);
@@ -94,6 +103,17 @@ namespace PlutoGE::render
         void AttachEventSubscriptions();
         void DetachEventSubscriptions();
         void LoadDocumentFonts(const std::filesystem::path &documentPath);
+        void RenderWorldSurfaces();
+        void DestroyWorldSurfaceTargets();
+
+        struct WorldSurfaceTarget
+        {
+            unsigned int framebuffer = 0;
+            unsigned int texture = 0;
+            int width = 0;
+            int height = 0;
+            glm::mat4 model{1.0f};
+        };
 
         std::unique_ptr<RenderInterface_GL3> m_renderer;
         std::unique_ptr<SystemInterface_GLFW> m_system;
@@ -105,6 +125,9 @@ namespace PlutoGE::render
         std::unordered_map<std::string, std::filesystem::file_time_type> m_documentWriteTimes;
         std::unordered_map<std::string, float> m_documentScales;
         std::unordered_map<std::string, bool> m_documentUsesBackdrop;
+        std::unordered_map<std::string, std::string> m_generatedDocumentSources;
+        std::unordered_map<std::string, WorldSurfaceTarget> m_worldSurfaceTargets;
+        std::vector<RmlUiWorldSurface> m_worldSurfaceDraws;
         std::unordered_map<std::string, int> m_pendingEvents;
         std::unordered_set<std::string> m_eventSubscriptions;
         std::unordered_set<std::string> m_attachedEvents;

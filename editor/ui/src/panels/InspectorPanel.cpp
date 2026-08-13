@@ -4564,6 +4564,17 @@ namespace PlutoGE::ui
                             std::erase_if(properties, [canvas](const scene::Property &property)
                             {
                                 if (property.name == "DocumentPath") return true;
+                                if (canvas->GetBackend() != scene::UIRenderBackend::RmlUi && property.name == "ContentSource")
+                                    return true;
+                                const bool simpleText = canvas->GetBackend() == scene::UIRenderBackend::RmlUi &&
+                                                        canvas->GetContentSource() == scene::RmlUiContentSource::Text;
+                                if (simpleText &&
+                                    (property.name == "RenderMode" || property.name == "ScaleMode" ||
+                                     property.name == "ScaleFactor" || property.name == "ReferenceResolution" ||
+                                     property.name == "MatchWidthOrHeight" || property.name == "ScreenMatchMode" ||
+                                     property.name == "WorldSizeMode" || property.name == "FaceCamera" ||
+                                     property.name == "SortingOrder"))
+                                    return true;
                                 const bool worldMode = canvas->GetRenderMode() == scene::CanvasRenderMode::WorldSpaceOverlay ||
                                                        canvas->GetRenderMode() == scene::CanvasRenderMode::WorldSpace;
                                 if (!worldMode && (property.name == "WorldSizeMode" || property.name == "FaceCamera"))
@@ -4574,40 +4585,88 @@ namespace PlutoGE::ui
 
                             if (canvas->GetBackend() == scene::UIRenderBackend::RmlUi)
                             {
-                                ImGui::TextWrapped("RmlUi document canvas. Layout and controls are authored in the RML/RCSS asset.");
-                                const auto &documentOptions = GetCachedAssetReferenceOptions(
-                                    editorShell.GetProject(), assets::ProjectAssetType::RmlDocument);
-                                const std::string documentPreview = GetAssetReferencePreview(
-                                    documentOptions, canvas->GetDocumentPath(), "None");
-                                if (ImGui::BeginCombo("Document", documentPreview.c_str()))
+                                ImGui::TextWrapped(canvas->GetContentSource() == scene::RmlUiContentSource::Text
+                                                       ? "RmlUi text canvas. Text styling comes from UI Text; World Space size comes from entity X/Y scale."
+                                                       : "RmlUi document canvas. Layout and controls are authored in the RML/RCSS asset.");
+                                if (canvas->GetContentSource() == scene::RmlUiContentSource::Text)
                                 {
-                                    if (ImGui::Selectable("None", canvas->GetDocumentPath().empty()))
+                                    const auto currentMode = canvas->GetRenderMode();
+                                    const char *preview = currentMode == scene::CanvasRenderMode::WorldSpace ? "World Space" :
+                                                          currentMode == scene::CanvasRenderMode::WorldSpaceOverlay ? "World Screen Space" :
+                                                          "Screen Space";
+                                    if (ImGui::BeginCombo("Display Space", preview))
                                     {
-                                        canvas->SetDocumentPath({});
-                                        entity->AddPrefabOverride("Component:CanvasComponent:DocumentPath");
-                                        editorShell.MarkSceneDirty();
-                                    }
-                                    for (const auto &option : documentOptions)
-                                    {
-                                        const bool selected = option.reference == canvas->GetDocumentPath();
-                                        if (ImGui::Selectable(option.displayName.c_str(), selected))
+                                        struct DisplayMode { const char *name; scene::CanvasRenderMode mode; };
+                                        constexpr DisplayMode modes[] = {
+                                            {"Screen Space", scene::CanvasRenderMode::ScreenSpaceOverlay},
+                                            {"World Space", scene::CanvasRenderMode::WorldSpace},
+                                            {"World Screen Space", scene::CanvasRenderMode::WorldSpaceOverlay},
+                                        };
+                                        for (const auto &option : modes)
                                         {
-                                            canvas->SetDocumentPath(option.reference);
+                                            const bool selected = currentMode == option.mode;
+                                            if (ImGui::Selectable(option.name, selected))
+                                            {
+                                                canvas->SetRenderMode(option.mode);
+                                                entity->AddPrefabOverride("Component:CanvasComponent:RenderMode");
+                                                editorShell.MarkSceneDirty();
+                                            }
+                                            if (selected) ImGui::SetItemDefaultFocus();
+                                        }
+                                        ImGui::EndCombo();
+                                    }
+                                }
+                                if (canvas->GetContentSource() == scene::RmlUiContentSource::Document)
+                                {
+                                    const auto &documentOptions = GetCachedAssetReferenceOptions(
+                                        editorShell.GetProject(), assets::ProjectAssetType::RmlDocument);
+                                    const std::string documentPreview = GetAssetReferencePreview(
+                                        documentOptions, canvas->GetDocumentPath(), "None");
+                                    if (ImGui::BeginCombo("Document", documentPreview.c_str()))
+                                    {
+                                        if (ImGui::Selectable("None", canvas->GetDocumentPath().empty()))
+                                        {
+                                            canvas->SetDocumentPath({});
                                             entity->AddPrefabOverride("Component:CanvasComponent:DocumentPath");
                                             editorShell.MarkSceneDirty();
                                         }
-                                        if (selected) ImGui::SetItemDefaultFocus();
+                                        for (const auto &option : documentOptions)
+                                        {
+                                            const bool selected = option.reference == canvas->GetDocumentPath();
+                                            if (ImGui::Selectable(option.displayName.c_str(), selected))
+                                            {
+                                                canvas->SetDocumentPath(option.reference);
+                                                entity->AddPrefabOverride("Component:CanvasComponent:DocumentPath");
+                                                editorShell.MarkSceneDirty();
+                                            }
+                                            if (selected) ImGui::SetItemDefaultFocus();
+                                        }
+                                        ImGui::EndCombo();
                                     }
-                                    ImGui::EndCombo();
                                 }
-                                if (canvas->GetRenderMode() == scene::CanvasRenderMode::WorldSpaceOverlay ||
-                                    canvas->GetRenderMode() == scene::CanvasRenderMode::WorldSpace)
+                                else if (auto *text = entity->GetComponent<scene::UITextComponent>())
+                                {
+                                    ImGui::TextWrapped("Generated from this entity's UI Text component. Edit its text and styling below.");
+                                    if (text->GetFontPath().empty())
+                                        ImGui::TextDisabled("No Font Path: using the engine fallback font.");
+                                }
+                                else
+                                {
+                                    ImGui::TextColored(ImVec4(1.0f, 0.72f, 0.25f, 1.0f),
+                                                       "Text source requires a UI Text component.");
+                                    if (ImGui::Button("Add UI Text"))
+                                    {
+                                        entity->CreateComponent<scene::UITextComponent>();
+                                        editorShell.MarkSceneDirty();
+                                    }
+                                }
+                                if (canvas->GetContentSource() == scene::RmlUiContentSource::Document &&
+                                    (canvas->GetRenderMode() == scene::CanvasRenderMode::WorldSpaceOverlay ||
+                                     canvas->GetRenderMode() == scene::CanvasRenderMode::WorldSpace))
                                 {
                                     ImGui::TextDisabled("World canvases use this entity's Rect Transform size and pivot.");
-                                    if (canvas->GetRenderMode() == scene::CanvasRenderMode::WorldSpace &&
-                                        canvas->GetWorldSizeMode() == scene::UIWorldSizeMode::ConstantScreenSize)
-                                        ImGui::TextColored(ImVec4(1.0f, 0.72f, 0.25f, 1.0f),
-                                                           "Constant Screen Size disables distance scaling.");
+                                    if (canvas->GetRenderMode() == scene::CanvasRenderMode::WorldSpace)
+                                        ImGui::TextDisabled("World Units: 100 UI units = 1 world unit. Face Camera off uses entity rotation.");
                                 }
                             }
                             else

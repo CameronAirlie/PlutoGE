@@ -94,18 +94,19 @@ deserializer would corrupt those scenes. New screen-space UI should use RmlUi.
 
 ## Intentional limitations of this slice
 
-- RmlUi canvases support `WorldSpaceOverlay` and `WorldSpace`. Both anchor the
-  document at the Canvas entity's world position and use its RectTransform
-  size and pivot. `WorldSpaceOverlay` remains a constant-size camera-facing
-  overlay, which is suited to enemy names and health bars. `WorldSpace` uses
-  perspective distance scaling (100 UI units equal one world unit). Set World
-  Size Mode to `ConstantScreenSize` when a `WorldSpace` canvas should retain a
-  fixed pixel size. Projected canvases are instanced per entity, so a shared RML
-  asset can be used by many actors. They are composited in the UI pass and are
-  not scene-depth occluded; depth-tested planar RmlUi still requires a
-  render-to-texture surface path.
+- RmlUi canvases support `WorldSpaceOverlay` and `WorldSpace`. Both use the
+  entity's RectTransform size and pivot. `WorldSpaceOverlay` is a constant-size,
+  camera-facing overlay suited to enemy names and health bars. `WorldSpace`
+  renders each document to a transparent texture and draws it on a plane using
+  the entity's full transform (100 UI units equal one world unit). The plane is
+  depth tested and can be placed on walls or used as an in-world display.
+  Canvases are instanced per entity, so a shared RML asset can be used by many
+  actors.
 - RmlUi data models are exposed through lightweight observable DOM bindings;
   direct reflection-based RmlUi C++ data-model registration is not required.
+- Canvas Content Source can be `RML Document` or `Text`. Text mode generates an
+  in-memory document from the UI Text component on the Canvas entity and uses
+  the same screen-space or render-to-texture WorldSpace pipeline.
 - The official GL3 backend supports RmlUi's advanced rendering features, but
   visual regression coverage still needs to be added.
 - Input consumption is not yet fed back into PlutoGE gameplay controls.

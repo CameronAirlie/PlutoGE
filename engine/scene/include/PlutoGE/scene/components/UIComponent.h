@@ -33,6 +33,12 @@ namespace PlutoGE::scene
         RmlUi,
     };
 
+    enum class RmlUiContentSource
+    {
+        Document = 0,
+        Text,
+    };
+
     enum class UIScreenMatchMode
     {
         MatchWidthOrHeight = 0,
@@ -138,6 +144,8 @@ namespace PlutoGE::scene
         void SetBackend(UIRenderBackend value) { m_backend = value; }
         const std::string &GetDocumentPath() const { return m_documentPath; }
         void SetDocumentPath(std::string value) { m_documentPath = std::move(value); }
+        RmlUiContentSource GetContentSource() const { return m_contentSource; }
+        void SetContentSource(RmlUiContentSource value) { m_contentSource = value; }
 
     private:
         CanvasRenderMode m_renderMode = CanvasRenderMode::ScreenSpaceOverlay;
@@ -153,6 +161,7 @@ namespace PlutoGE::scene
         // the Backend property deserialize unchanged. Editor-created canvases
         // explicitly select RmlUi.
         UIRenderBackend m_backend = UIRenderBackend::Native;
+        RmlUiContentSource m_contentSource = RmlUiContentSource::Document;
         std::string m_documentPath;
     };
 

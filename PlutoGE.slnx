@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/engine/" />
+  <Folder Name="/engine/scripting/" />
+  <Folder Name="/engine/scripting/managed/">
+    <Project Path="engine/scripting/managed/PlutoGE.ScriptCore/PlutoGE.ScriptCore.csproj" />
+  </Folder>
+</Solution>

@@ -226,17 +226,36 @@ For a complete interactive example, see `samples/rmlui/pause-menu.rml`,
 
 ## World-anchored UI
 
+An RmlUi Canvas can use either **RML Document** or **Text** as its Content
+Source. Text mode generates a lightweight RmlUi document at runtime from a
+UI Text component on the same entity. Add UI Text, set its Text and Font Path,
+then choose either a screen-space mode or WorldSpace exactly as for an RML
+document. Changing the content source does not require replacing the Canvas or
+RectTransform.
+
+Text mode intentionally exposes only three display spaces: **Screen Space**,
+**World Space** (a physical entity-oriented plane), and **World Screen Space**
+(a camera-facing overlay). Canvas scaling, world-size, and Face Camera options
+are fixed by that selection and hidden for text canvases. In World Space, the
+entity's X/Y scale sets the plane's physical width and height; RectTransform
+size sets only the generated texture resolution and text-layout area.
+
 RmlUi canvases can also follow scene entities. Add a RectTransform to the same
 entity as the Canvas; its Size Delta is the document size and its Pivot selects
 the point placed on the entity's world position.
 
 - Use **WorldSpaceOverlay** for enemy health bars, names, and markers that must
   stay the same size on screen.
-- Use **WorldSpace** for a camera-facing document whose size diminishes with
-  distance. The conversion is 100 UI units per world unit.
+- Use **WorldSpace** for a transparent, depth-tested plane that follows the
+  entity's full world transform. This is suitable for signs, screens, and text
+  placed directly on walls. The conversion is 100 UI units per world unit.
+  Disable **Face Camera** to use the entity's rotation, or enable it for a
+  billboard. **Constant Screen Size** retains the RectTransform's pixel size;
+  **Distance Scaled** grows the physical plane with camera distance.
 - A projected document is hidden while its anchor is behind the camera or
   outside the camera's near/far clip range.
 
-The same RML document may be assigned to multiple projected Canvas entities;
-each entity receives its own document instance. Projected RmlUi is composited
-over the scene and does not test against scene depth.
+The same RML document may be assigned to multiple world Canvas entities; each
+entity receives its own document instance. WorldSpaceOverlay RmlUi is composited
+over the scene without depth testing. WorldSpace planes use scene depth and can
+be occluded.

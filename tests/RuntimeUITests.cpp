@@ -43,10 +43,12 @@ int main()
     }
 
     canvas.SetBackend(UIRenderBackend::RmlUi);
+    canvas.SetContentSource(RmlUiContentSource::Text);
     canvas.SetDocumentPath("UI/Hud.rml");
     CanvasComponent restoredCanvas;
     restoredCanvas.Deserialize(canvas.Serialize());
     if (restoredCanvas.GetBackend() != UIRenderBackend::RmlUi ||
+        restoredCanvas.GetContentSource() != RmlUiContentSource::Text ||
         restoredCanvas.GetDocumentPath() != "UI/Hud.rml")
     {
         std::cerr << "RmlUi canvas serialization failed.\n";

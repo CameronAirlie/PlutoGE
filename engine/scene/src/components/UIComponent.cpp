@@ -249,6 +249,7 @@ namespace PlutoGE::scene
             {"WorldSizeMode", PropertyType::Enum, std::to_string(static_cast<int>(m_worldSizeMode)), {"WorldUnits", "ConstantScreenSize", "DistanceScaled"}},
             {"FaceCamera", PropertyType::Bool, m_faceCamera ? "true" : "false"},
             {"Backend", PropertyType::Enum, std::to_string(static_cast<int>(m_backend)), {"Legacy Native", "RmlUi"}},
+            {"ContentSource", PropertyType::Enum, std::to_string(static_cast<int>(m_contentSource)), {"RML Document", "Text"}},
             {"DocumentPath", PropertyType::String, m_documentPath},
         };
     }
@@ -284,6 +285,8 @@ namespace PlutoGE::scene
                 m_faceCamera = property.value == "true" || property.value == "1";
             else if (property.name == "Backend")
                 m_backend = static_cast<UIRenderBackend>(std::clamp(std::stoi(property.value), 0, 1));
+            else if (property.name == "ContentSource")
+                m_contentSource = static_cast<RmlUiContentSource>(std::clamp(std::stoi(property.value), 0, 1));
             else if (property.name == "DocumentPath")
                 m_documentPath = property.value;
         }

@@ -36,7 +36,8 @@ namespace PlutoGE::scene
                 {
                     output << ';';
                 }
-                output << instance.position.x << ',' << instance.position.y << ',' << instance.position.z << ','
+                output << instance.id << ','
+                       << instance.position.x << ',' << instance.position.y << ',' << instance.position.z << ','
                        << instance.rotationDegrees.x << ',' << instance.rotationDegrees.y << ',' << instance.rotationDegrees.z << ','
                        << instance.scale.x << ',' << instance.scale.y << ',' << instance.scale.z;
             }
@@ -54,6 +55,12 @@ namespace PlutoGE::scene
                 std::stringstream stream(record);
                 std::string token;
                 float values[9]{};
+                std::uint64_t instanceId = 0;
+                const auto commaCount = static_cast<int>(std::count(record.begin(), record.end(), ','));
+                if (commaCount == 9 && std::getline(stream, token, ','))
+                {
+                    try { instanceId = std::stoull(token); } catch (...) { instanceId = 0; }
+                }
                 int valueIndex = 0;
                 while (valueIndex < 9 && std::getline(stream, token, ','))
                 {
@@ -70,6 +77,7 @@ namespace PlutoGE::scene
                 if (valueIndex == 9)
                 {
                     instances.push_back(FoliageInstance{
+                        .id = instanceId,
                         .position = {values[0], values[1], values[2]},
                         .rotationDegrees = {values[3], values[4], values[5]},
                         .scale = {values[6], values[7], values[8]},
@@ -487,6 +495,13 @@ namespace PlutoGE::scene
         }
     }
 
+    std::size_t FoliageCellCoordinateHash::operator()(const FoliageCellCoordinate &coordinate) const noexcept
+    {
+        const std::size_t hx = std::hash<int>{}(coordinate.x);
+        const std::size_t hz = std::hash<int>{}(coordinate.z);
+        return hx ^ (hz + 0x9e3779b97f4a7c15ull + (hx << 6) + (hx >> 2));
+    }
+
     void FoliageComponent::Update(float deltaTime)
     {
         (void)deltaTime;
@@ -518,7 +533,6 @@ namespace PlutoGE::scene
 
     void FoliageComponent::RebuildRenderCommandCache(const glm::mat4 &ownerTransform)
     {
-        constexpr float kFoliageClusterSize = 32.0f;
         m_cachedRenderCommands.clear();
         for (const auto &type : m_types)
         {
@@ -541,8 +555,8 @@ namespace PlutoGE::scene
             {
                 const glm::mat4 model = ComposeInstanceTransform(ownerTransform, instance, localOriginOffset);
                 const FoliageClusterKey key{
-                    .x = static_cast<int>(std::floor(instance.position.x / kFoliageClusterSize)),
-                    .z = static_cast<int>(std::floor(instance.position.z / kFoliageClusterSize)),
+                    .x = GetCellCoordinate(type, instance.position).x,
+                    .z = GetCellCoordinate(type, instance.position).z,
                 };
                 clusters[key].models->push_back(model);
             }
@@ -621,6 +635,15 @@ namespace PlutoGE::scene
             properties.push_back({prefix + "SubmeshIndex", PropertyType::Int, std::to_string(type.submeshIndex)});
             properties.push_back({prefix + "SubmeshIndices", PropertyType::String, SerializeSubmeshIndices(type.submeshIndices)});
             properties.push_back({prefix + "UseGeneratedLods", PropertyType::Bool, type.useGeneratedLods ? "true" : "false"});
+            properties.push_back({prefix + "AssetReference", PropertyType::String, type.asset.assetReference});
+            properties.push_back({prefix + "CellSize", PropertyType::Float, std::to_string(type.asset.cellSize)});
+            properties.push_back({prefix + "CollisionEnabled", PropertyType::Bool, type.asset.collisionEnabled ? "true" : "false"});
+            properties.push_back({prefix + "CollisionCenter", PropertyType::Vec3,
+                                  std::to_string(type.asset.collisionCenter.x) + "," +
+                                  std::to_string(type.asset.collisionCenter.y) + "," +
+                                  std::to_string(type.asset.collisionCenter.z)});
+            properties.push_back({prefix + "CollisionRadius", PropertyType::Float, std::to_string(type.asset.collisionRadius)});
+            properties.push_back({prefix + "CollisionHeight", PropertyType::Float, std::to_string(type.asset.collisionHeight)});
             properties.push_back({prefix + "Instances", PropertyType::String, SerializeInstances(type.instances)});
         }
 
@@ -697,6 +720,24 @@ namespace PlutoGE::scene
                     type.submeshIndices = DeserializeSubmeshIndices(property.value);
                 else if (fieldName == "UseGeneratedLods")
                     type.useGeneratedLods = property.value == "true" || property.value == "1";
+                else if (fieldName == "AssetReference")
+                    type.asset.assetReference = property.value;
+                else if (fieldName == "CellSize")
+                    type.asset.cellSize = (std::max)(1.0f, std::stof(property.value));
+                else if (fieldName == "CollisionEnabled")
+                    type.asset.collisionEnabled = property.value == "true" || property.value == "1";
+                else if (fieldName == "CollisionCenter")
+                {
+                    std::stringstream centerStream(property.value);
+                    char separator = 0;
+                    centerStream >> type.asset.collisionCenter.x >> separator
+                                 >> type.asset.collisionCenter.y >> separator
+                                 >> type.asset.collisionCenter.z;
+                }
+                else if (fieldName == "CollisionRadius")
+                    type.asset.collisionRadius = (std::max)(0.01f, std::stof(property.value));
+                else if (fieldName == "CollisionHeight")
+                    type.asset.collisionHeight = (std::max)(type.asset.collisionRadius * 2.0f, std::stof(property.value));
                 else if (fieldName == "Instances")
                     type.instances = DeserializeInstances(property.value);
             }
@@ -742,9 +783,16 @@ namespace PlutoGE::scene
         m_selectedTypeIndex = std::clamp(m_selectedTypeIndex, 0, static_cast<int>(m_types.size()) - 1);
         for (auto &type : m_types)
         {
+            if (!type.asset.assetReference.empty())
+            {
+                const std::string reference = type.asset.assetReference;
+                LoadFoliageTypeAsset(core::Engine::GetInstance().GetAssetManager().ResolveAssetPath(reference), type.asset);
+                type.asset.assetReference = reference;
+            }
             RebuildTypeMeshFromReference(type);
             RebuildTypeMaterialFromReference(type);
         }
+        EnsureStableInstanceIds();
         MarkRenderCommandsDirty();
     }
 
@@ -886,6 +934,7 @@ namespace PlutoGE::scene
             const float scale = scaleDistribution(rng);
             const glm::vec3 normal = glm::normalize(terrainNormal);
             type.instances.push_back(FoliageInstance{
+                .id = m_nextInstanceId++,
                 .position = localPosition,
                 .rotationDegrees = {glm::degrees(std::atan2(normal.z, normal.y)), yawDistribution(rng), -glm::degrees(std::atan2(normal.x, normal.y))},
                 .scale = {scale, scale, scale},
@@ -894,7 +943,7 @@ namespace PlutoGE::scene
         const bool changed = type.instances.size() != startCount;
         if (changed)
         {
-            MarkRenderCommandsDirty();
+            MarkInstancesDirty();
         }
         return changed;
     }
@@ -922,7 +971,7 @@ namespace PlutoGE::scene
         const bool changed = type.instances.size() != startCount;
         if (changed)
         {
-            MarkRenderCommandsDirty();
+            MarkInstancesDirty();
         }
         return changed;
     }
@@ -933,13 +982,13 @@ namespace PlutoGE::scene
         {
             type.instances.clear();
         }
-        MarkRenderCommandsDirty();
+        MarkInstancesDirty();
     }
 
     void FoliageComponent::ClearSelectedTypeInstances()
     {
         EnsureSelectedType().instances.clear();
-        MarkRenderCommandsDirty();
+        MarkInstancesDirty();
     }
 
     const std::vector<FoliageInstance> &FoliageComponent::GetInstances() const
@@ -986,7 +1035,7 @@ namespace PlutoGE::scene
         instance->position = position;
         instance->rotationDegrees = rotationDegrees;
         instance->scale = sanitizedScale;
-        MarkRenderCommandsDirty();
+        MarkInstancesDirty();
         return true;
     }
 
@@ -999,7 +1048,7 @@ namespace PlutoGE::scene
         }
 
         type->instances.erase(type->instances.begin() + static_cast<std::ptrdiff_t>(instanceIndex));
-        MarkRenderCommandsDirty();
+        MarkInstancesDirty();
         return true;
     }
 
@@ -1017,6 +1066,61 @@ namespace PlutoGE::scene
     {
         const auto *type = GetSelectedType();
         return type ? type->instances.size() : 0;
+    }
+
+    const std::vector<FoliageCollisionCell> &FoliageComponent::BuildCollisionCells() const
+    {
+        const auto *owner = GetOwner();
+        if (!owner)
+        {
+            m_cachedCollisionCells.clear();
+            return m_cachedCollisionCells;
+        }
+
+        const glm::mat4 ownerTransform = owner->GetWorldTransform();
+        if (m_collisionCacheRevision == m_revision && AreMatricesApproximatelyEqual(m_collisionCacheOwnerTransform, ownerTransform))
+        {
+            return m_cachedCollisionCells;
+        }
+
+        std::unordered_map<FoliageCellCoordinate, FoliageCollisionCell, FoliageCellCoordinateHash> cells;
+        for (const auto &type : m_types)
+        {
+            if (!type.asset.collisionEnabled)
+            {
+                continue;
+            }
+            for (const auto &instance : type.instances)
+            {
+                const auto coordinate = GetCellCoordinate(type, instance.position);
+                auto &cell = cells[coordinate];
+                cell.coordinate = coordinate;
+                glm::mat4 transform = ownerTransform;
+                transform = glm::translate(transform, instance.position);
+                transform = glm::rotate(transform, glm::radians(instance.rotationDegrees.y), glm::vec3(0, 1, 0));
+                transform = glm::rotate(transform, glm::radians(instance.rotationDegrees.x), glm::vec3(1, 0, 0));
+                transform = glm::rotate(transform, glm::radians(instance.rotationDegrees.z), glm::vec3(0, 0, 1));
+                transform = glm::scale(transform, instance.scale);
+                cell.instances.push_back(FoliageCollisionInstance{
+                    .instanceId = instance.id,
+                    .worldTransform = transform,
+                    .center = type.asset.collisionCenter,
+                    .radius = type.asset.collisionRadius,
+                    .height = type.asset.collisionHeight,
+                });
+            }
+        }
+
+        m_cachedCollisionCells.clear();
+        m_cachedCollisionCells.reserve(cells.size());
+        for (auto &[coordinate, cell] : cells)
+        {
+            (void)coordinate;
+            m_cachedCollisionCells.push_back(std::move(cell));
+        }
+        m_collisionCacheRevision = m_revision;
+        m_collisionCacheOwnerTransform = ownerTransform;
+        return m_cachedCollisionCells;
     }
 
     void FoliageComponent::SetSelectedTypeIndex(int index)
@@ -1182,6 +1286,54 @@ namespace PlutoGE::scene
         }
     }
 
+    bool FoliageComponent::SetTypeAssetReference(std::size_t index, const std::string &assetReference)
+    {
+        auto *type = GetType(index);
+        if (!type) return false;
+        if (assetReference.empty())
+        {
+            type->asset.assetReference.clear();
+            MarkInstancesDirty();
+            return true;
+        }
+        FoliageTypeAsset loaded;
+        loaded.assetReference = assetReference;
+        if (!LoadFoliageTypeAsset(core::Engine::GetInstance().GetAssetManager().ResolveAssetPath(assetReference), loaded))
+            return false;
+        type->asset = std::move(loaded);
+        MarkInstancesDirty();
+        return true;
+    }
+
+    void FoliageComponent::SetTypeCollisionEnabled(std::size_t index, bool enabled)
+    {
+        if (auto *type = GetType(index); type && type->asset.collisionEnabled != enabled)
+        {
+            type->asset.collisionEnabled = enabled;
+            MarkInstancesDirty();
+        }
+    }
+
+    void FoliageComponent::SetTypeCollisionCapsule(std::size_t index, const glm::vec3 &center, float radius, float height)
+    {
+        if (auto *type = GetType(index))
+        {
+            type->asset.collisionCenter = center;
+            type->asset.collisionRadius = (std::max)(radius, 0.01f);
+            type->asset.collisionHeight = (std::max)(height, type->asset.collisionRadius * 2.0f);
+            MarkInstancesDirty();
+        }
+    }
+
+    void FoliageComponent::SetTypeCellSize(std::size_t index, float cellSize)
+    {
+        if (auto *type = GetType(index))
+        {
+            type->asset.cellSize = (std::max)(cellSize, 1.0f);
+            MarkInstancesDirty();
+        }
+    }
+
     void FoliageComponent::SetTypeMeshAndMaterials(std::size_t index,
                                                    render::Mesh *mesh,
                                                    const std::vector<render::Material *> &materials,
@@ -1234,6 +1386,47 @@ namespace PlutoGE::scene
                 scene->MarkShadowLightsDirty();
             }
         }
+    }
+
+    void FoliageComponent::MarkInstancesDirty()
+    {
+        ++m_revision;
+        MarkRenderCommandsDirty();
+        if (auto *owner = GetOwner())
+        {
+            if (auto *scene = owner->GetScene())
+            {
+                scene->InvalidateFoliagePhysics();
+            }
+        }
+    }
+
+    void FoliageComponent::EnsureStableInstanceIds()
+    {
+        std::unordered_set<std::uint64_t> ids;
+        m_nextInstanceId = 1;
+        for (auto &type : m_types)
+        {
+            for (auto &instance : type.instances)
+            {
+                if (instance.id == 0 || !ids.insert(instance.id).second)
+                {
+                    while (ids.contains(m_nextInstanceId)) ++m_nextInstanceId;
+                    instance.id = m_nextInstanceId++;
+                    ids.insert(instance.id);
+                }
+                m_nextInstanceId = (std::max)(m_nextInstanceId, instance.id + 1);
+            }
+        }
+    }
+
+    FoliageCellCoordinate FoliageComponent::GetCellCoordinate(const FoliageType &type, const glm::vec3 &position) const
+    {
+        const float cellSize = (std::max)(type.asset.cellSize, 1.0f);
+        return {
+            static_cast<int>(std::floor(position.x / cellSize)),
+            static_cast<int>(std::floor(position.z / cellSize)),
+        };
     }
 
     render::Material *FoliageComponent::GetMaterialForTypeSubmesh(const FoliageType &type, std::size_t submeshIndex) const

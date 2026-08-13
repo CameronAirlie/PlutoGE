@@ -704,6 +704,9 @@ namespace PlutoGE::scene
         {
             Entity *entity = nullptr;
             EntityID entityId = 0;
+            FoliageComponent *foliage = nullptr;
+            uint64_t foliageRevision = 0;
+            glm::mat4 foliageOwnerTransform{1.0f};
             ColliderComponent *collider = nullptr;
             RigidbodyComponent *rigidbody = nullptr;
             std::vector<std::unique_ptr<btTriangleMesh>> triangleMeshes;
@@ -874,6 +877,10 @@ namespace PlutoGE::scene
         struct BulletQueryBody
         {
             Entity *entity = nullptr;
+            FoliageComponent *foliage = nullptr;
+            uint64_t foliageRevision = 0;
+            glm::mat4 foliageOwnerTransform{1.0f};
+            std::vector<std::uint64_t> foliageInstanceIds;
             std::vector<std::unique_ptr<btTriangleMesh>> triangleMeshes;
             std::unique_ptr<btCollisionShape> shape;
             std::vector<std::unique_ptr<btCollisionShape>> childShapes;
@@ -906,7 +913,32 @@ namespace PlutoGE::scene
                                                     const ColliderComponent &collider,
                                                     const RigidbodyComponent *rigidbody);
 
-        std::unique_ptr<BulletQueryWorld> BuildBulletQueryWorld(const std::vector<Entity *> &entities)
+        BulletShapeData CreateFoliageCellBulletShape(const FoliageCollisionCell &cell)
+        {
+            BulletShapeData data;
+            auto compound = std::make_unique<btCompoundShape>(true, static_cast<int>(cell.instances.size()));
+            data.ownedChildShapes.reserve(cell.instances.size());
+            for (const auto &instance : cell.instances)
+            {
+                const float scaleX = glm::length(glm::vec3(instance.worldTransform[0]));
+                const float scaleY = glm::length(glm::vec3(instance.worldTransform[1]));
+                const float scaleZ = glm::length(glm::vec3(instance.worldTransform[2]));
+                const float radius = (std::max)(instance.radius * (std::max)(scaleX, scaleZ), 0.01f);
+                const float height = (std::max)(instance.height * scaleY, radius * 2.0f);
+                auto capsule = std::make_unique<btCapsuleShape>(radius, height - radius * 2.0f);
+                btTransform childTransform;
+                childTransform.setIdentity();
+                childTransform.setOrigin(ToBullet(glm::vec3(instance.worldTransform * glm::vec4(instance.center, 1.0f))));
+                childTransform.setRotation(ToBulletRotation(instance.worldTransform));
+                compound->addChildShape(childTransform, capsule.get());
+                data.ownedChildShapes.push_back(std::move(capsule));
+            }
+            data.shape = std::move(compound);
+            return data;
+        }
+
+        std::unique_ptr<BulletQueryWorld> BuildBulletQueryWorld(const std::vector<Entity *> &entities,
+                                                                const std::vector<FoliageComponent *> &foliageComponents)
         {
             auto queryWorld = std::make_unique<BulletQueryWorld>();
             queryWorld->bodies.reserve(entities.size());
@@ -948,6 +980,35 @@ namespace PlutoGE::scene
                 });
             }
 
+            for (auto *foliage : foliageComponents)
+            {
+                auto *owner = foliage ? foliage->GetOwner() : nullptr;
+                if (!foliage || !foliage->IsEnabled() || !owner || !owner->IsActive()) continue;
+                for (const auto &cell : foliage->BuildCollisionCells())
+                {
+                    auto shapeData = CreateFoliageCellBulletShape(cell);
+                    if (!shapeData.shape || cell.instances.empty()) continue;
+                    auto object = std::make_unique<btCollisionObject>();
+                    object->setCollisionShape(shapeData.shape.get());
+                    object->setWorldTransform(btTransform::getIdentity());
+                    object->setUserPointer(owner);
+                    queryWorld->collisionWorld.addCollisionObject(object.get());
+                    std::vector<std::uint64_t> instanceIds;
+                    instanceIds.reserve(cell.instances.size());
+                    for (const auto &instance : cell.instances) instanceIds.push_back(instance.instanceId);
+                    queryWorld->bodies.push_back(BulletQueryBody{
+                        .entity = owner,
+                        .foliage = foliage,
+                        .foliageRevision = foliage->GetRevision(),
+                        .foliageOwnerTransform = owner->GetWorldTransform(),
+                        .foliageInstanceIds = std::move(instanceIds),
+                        .shape = std::move(shapeData.shape),
+                        .childShapes = std::move(shapeData.ownedChildShapes),
+                        .object = std::move(object),
+                    });
+                }
+            }
+
             return queryWorld;
         }
 
@@ -970,6 +1031,15 @@ namespace PlutoGE::scene
                 const auto *entity = object ? static_cast<const Entity *>(object->getUserPointer()) : nullptr;
                 return !IsEntityOrDescendantOf(entity, m_ignoredEntityId);
             }
+
+            btScalar addSingleResult(btCollisionWorld::LocalRayResult &rayResult, bool normalInWorldSpace) override
+            {
+                if (rayResult.m_hitFraction <= m_closestHitFraction)
+                    m_hitChildIndex = rayResult.m_localShapeInfo ? rayResult.m_localShapeInfo->m_triangleIndex : -1;
+                return btCollisionWorld::ClosestRayResultCallback::addSingleResult(rayResult, normalInWorldSpace);
+            }
+
+            int m_hitChildIndex = -1;
 
         private:
             EntityID m_ignoredEntityId = 0;
@@ -1251,7 +1321,9 @@ namespace PlutoGE::scene
         if (!rebuild)
         {
             const auto &bodies = m_physicsQueryCache->world->bodies;
-            rebuild = bodies.size() != queryEntities.size();
+            size_t entityBodyCount = 0;
+            for (const auto &body : bodies) entityBodyCount += body.foliage == nullptr ? 1u : 0u;
+            rebuild = entityBodyCount != queryEntities.size();
             for (size_t index = 0; !rebuild && index < queryEntities.size(); ++index)
             {
                 auto *entity = queryEntities[index];
@@ -1261,12 +1333,24 @@ namespace PlutoGE::scene
                     bodies[index].configurationSignature != ComputeRuntimePhysicsBodySignature(*entity, *collider, rigidbody))
                     rebuild = true;
             }
+            for (const auto &body : bodies)
+                if (!rebuild && body.foliage &&
+                    (body.foliageRevision != body.foliage->GetRevision() ||
+                     body.foliageOwnerTransform != body.entity->GetWorldTransform()))
+                    rebuild = true;
+            for (auto *foliage : m_foliageComponents)
+                if (!rebuild && foliage && foliage->IsEnabled())
+                {
+                    const bool represented = std::any_of(bodies.begin(), bodies.end(),
+                        [foliage](const BulletQueryBody &body) { return body.foliage == foliage; });
+                    if (!represented && !foliage->BuildCollisionCells().empty()) rebuild = true;
+                }
         }
 
         if (rebuild)
         {
             m_physicsQueryCache = std::make_unique<PhysicsQueryCache>();
-            m_physicsQueryCache->world = BuildBulletQueryWorld(entities);
+            m_physicsQueryCache->world = BuildBulletQueryWorld(entities, m_foliageComponents);
         }
 
         if (m_physicsQueryCache->world)
@@ -1274,6 +1358,8 @@ namespace PlutoGE::scene
             for (auto &body : m_physicsQueryCache->world->bodies)
             {
                 if (!body.entity || !body.object)
+                    continue;
+                if (body.foliage)
                     continue;
                 btTransform transform;
                 transform.setIdentity();
@@ -1436,6 +1522,35 @@ namespace PlutoGE::scene
                 .configurationSignature = ComputeRuntimePhysicsBodySignature(*entity, *collider, rigidbodyEnabled ? rigidbody : nullptr),
                 .dynamic = dynamic,
             });
+        }
+
+        for (auto *foliage : m_foliageComponents)
+        {
+            auto *owner = foliage ? foliage->GetOwner() : nullptr;
+            if (!foliage || !foliage->IsEnabled() || !owner || !owner->IsActive()) continue;
+            for (const auto &cell : foliage->BuildCollisionCells())
+            {
+                auto shapeData = CreateFoliageCellBulletShape(cell);
+                if (!shapeData.shape || cell.instances.empty()) continue;
+                btTransform identity;
+                identity.setIdentity();
+                auto motionState = std::make_unique<btDefaultMotionState>(identity);
+                btRigidBody::btRigidBodyConstructionInfo info(0.0f, motionState.get(), shapeData.shape.get());
+                auto body = std::make_unique<btRigidBody>(info);
+                body->setUserPointer(owner);
+                runtimeWorld->dynamicsWorld.addRigidBody(body.get());
+                runtimeWorld->bodies.push_back(BulletStepBody{
+                    .entity = owner,
+                    .entityId = owner->GetID(),
+                    .foliage = foliage,
+                    .foliageRevision = foliage->GetRevision(),
+                    .foliageOwnerTransform = owner->GetWorldTransform(),
+                    .shape = std::move(shapeData.shape),
+                    .childShapes = std::move(shapeData.ownedChildShapes),
+                    .motionState = std::move(motionState),
+                    .body = std::move(body),
+                });
+            }
         }
 
         // Ragdolls share this dynamics world with ordinary scene bodies. Each
@@ -2644,6 +2759,12 @@ namespace PlutoGE::scene
             m_canvasComponents.end());
     }
 
+    void Scene::InvalidateFoliagePhysics()
+    {
+        InvalidatePhysicsQueryCache();
+        ResetRuntimePhysicsState();
+    }
+
     void Scene::RegisterRmlWidgetComponent(RmlWidgetComponent *widgetComponent)
     {
         if (widgetComponent &&
@@ -2762,6 +2883,14 @@ namespace PlutoGE::scene
         hit.point = FromBullet(callback.m_hitPointWorld);
         hit.normal = NormalizeRaycastNormal(callback.m_hitNormalWorld);
         hit.distance = glm::length(hit.point - origin);
+        if (callback.m_hitChildIndex >= 0)
+            for (const auto &body : queryCache.world->bodies)
+                if (body.object.get() == callback.m_collisionObject)
+                {
+                    const auto childIndex = static_cast<std::size_t>(callback.m_hitChildIndex);
+                    if (childIndex < body.foliageInstanceIds.size()) hit.foliageInstanceId = body.foliageInstanceIds[childIndex];
+                    break;
+                }
         return true;
     }
 
@@ -2808,6 +2937,14 @@ namespace PlutoGE::scene
             hit.point = FromBullet(callback.m_hitPointWorld);
             hit.normal = NormalizeRaycastNormal(callback.m_hitNormalWorld);
             hit.distance = glm::length(hit.point - request.origin);
+            if (callback.m_hitChildIndex >= 0)
+                for (const auto &body : queryCache.world->bodies)
+                    if (body.object.get() == callback.m_collisionObject)
+                    {
+                        const auto childIndex = static_cast<std::size_t>(callback.m_hitChildIndex);
+                        if (childIndex < body.foliageInstanceIds.size()) hit.foliageInstanceId = body.foliageInstanceIds[childIndex];
+                        break;
+                    }
             hitResults[index] = 1;
         }
     }
@@ -3142,10 +3279,12 @@ namespace PlutoGE::scene
         if (!rebuildRuntimePhysics)
         {
             const auto &existingBodies = m_runtimePhysicsState->world->bodies;
-            if (existingBodies.size() != physicsEntities.size())
+            size_t entityBodyCount = 0;
+            for (const auto &body : existingBodies) entityBodyCount += body.foliage == nullptr ? 1u : 0u;
+            if (entityBodyCount != physicsEntities.size())
             {
                 std::ostringstream message;
-                message << "[Ragdoll] rebuilding: physics body count stored=" << existingBodies.size()
+                message << "[Ragdoll] rebuilding: physics body count stored=" << entityBodyCount
                         << " discovered=" << physicsEntities.size();
                 LogRagdollDiagnostic(message.str());
                 rebuildRuntimePhysics = true;
@@ -3173,6 +3312,11 @@ namespace PlutoGE::scene
                         break;
                     }
                 }
+                for (const auto &body : existingBodies)
+                    if (!rebuildRuntimePhysics && body.foliage &&
+                        (body.foliageRevision != body.foliage->GetRevision() ||
+                         body.foliageOwnerTransform != body.entity->GetWorldTransform()))
+                        rebuildRuntimePhysics = true;
             }
             if (!rebuildRuntimePhysics)
             {
@@ -3223,6 +3367,10 @@ namespace PlutoGE::scene
         for (auto &stepBody : runtimeWorld.bodies)
         {
             if (!stepBody.body || !stepBody.entity)
+            {
+                continue;
+            }
+            if (stepBody.foliage)
             {
                 continue;
             }

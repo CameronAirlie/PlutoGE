@@ -501,6 +501,7 @@ Open **Project Settings**, verify the startup scene, save the project, and ensur
 
 ## Further documentation
 
+- [Foliage, spatial cells, and tree collision](docs/FOLIAGE.md)
 - [C# scripting specification](docs/CSHARP_SCRIPTING.md)
 - [RmlUi project quick start](docs/RMLUI_QUICKSTART.md)
 - [RmlUi integration notes](docs/RMLUI_INTEGRATION.md)

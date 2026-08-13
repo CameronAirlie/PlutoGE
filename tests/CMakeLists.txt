@@ -84,6 +84,40 @@ endif()
 
 add_test(NAME PlutoGESkeletonAttachmentTests COMMAND PlutoGESkeletonAttachmentTests)
 
+add_executable(PlutoGEFoliageCollisionTests
+    FoliageCollisionTests.cpp
+)
+
+if (CMAKE_CXX_LINK_GROUP_USING_RESCAN_SUPPORTED)
+    target_link_libraries(PlutoGEFoliageCollisionTests PRIVATE
+        "$<LINK_GROUP:RESCAN,PlutoGE::Scene,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Import,PlutoGE::Scripting>"
+    )
+else()
+    target_link_libraries(PlutoGEFoliageCollisionTests PRIVATE
+        PlutoGE::Scene PlutoGE::Render PlutoGE::Assets PlutoGE::Core
+        PlutoGE::Import PlutoGE::Scripting
+    )
+endif()
+
+add_test(NAME PlutoGEFoliageCollisionTests COMMAND PlutoGEFoliageCollisionTests)
+
+add_executable(PlutoGEPrefabMeshExporterTests
+    PrefabMeshExporterTests.cpp
+)
+
+if (CMAKE_CXX_LINK_GROUP_USING_RESCAN_SUPPORTED)
+    target_link_libraries(PlutoGEPrefabMeshExporterTests PRIVATE
+        "$<LINK_GROUP:RESCAN,PlutoGE::Scene,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Import,PlutoGE::Scripting>"
+    )
+else()
+    target_link_libraries(PlutoGEPrefabMeshExporterTests PRIVATE
+        PlutoGE::Scene PlutoGE::Render PlutoGE::Assets PlutoGE::Core
+        PlutoGE::Import PlutoGE::Scripting
+    )
+endif()
+
+add_test(NAME PlutoGEPrefabMeshExporterTests COMMAND PlutoGEPrefabMeshExporterTests)
+
 if (TARGET OpenAL)
     add_custom_command(TARGET PlutoGEPostProcessInitializationTests POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different

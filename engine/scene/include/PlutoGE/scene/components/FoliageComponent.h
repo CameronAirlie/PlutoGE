@@ -2,12 +2,16 @@
 
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/render/Renderer.h"
+#include "PlutoGE/scene/FoliageTypeAsset.h"
 #include "PlutoGE/scene/components/Component.h"
 
 #include <glm/glm.hpp>
 #include <functional>
+#include <cstdint>
 #include <memory>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace PlutoGE::render
@@ -19,9 +23,37 @@ namespace PlutoGE::scene
 {
     struct FoliageInstance
     {
+        std::uint64_t id = 0;
         glm::vec3 position{0.0f};
         glm::vec3 rotationDegrees{0.0f};
         glm::vec3 scale{1.0f};
+    };
+
+    struct FoliageCellCoordinate
+    {
+        int x = 0;
+        int z = 0;
+        bool operator==(const FoliageCellCoordinate &) const = default;
+    };
+
+    struct FoliageCellCoordinateHash
+    {
+        std::size_t operator()(const FoliageCellCoordinate &coordinate) const noexcept;
+    };
+
+    struct FoliageCollisionInstance
+    {
+        std::uint64_t instanceId = 0;
+        glm::mat4 worldTransform{1.0f};
+        glm::vec3 center{0.0f};
+        float radius = 0.35f;
+        float height = 2.0f;
+    };
+
+    struct FoliageCollisionCell
+    {
+        FoliageCellCoordinate coordinate;
+        std::vector<FoliageCollisionInstance> instances;
     };
 
     struct FoliageType
@@ -37,6 +69,7 @@ namespace PlutoGE::scene
         int submeshIndex = -1;
         std::vector<int> submeshIndices;
         bool useGeneratedLods = false;
+        FoliageTypeAsset asset;
     };
 
     enum class FoliageBrushMode
@@ -106,6 +139,8 @@ namespace PlutoGE::scene
         bool RemoveSelectedTypeInstance(std::size_t instanceIndex);
         std::size_t GetTotalInstanceCount() const;
         std::size_t GetSelectedTypeInstanceCount() const;
+        const std::vector<FoliageCollisionCell> &BuildCollisionCells() const;
+        std::uint64_t GetRevision() const { return m_revision; }
 
         std::size_t GetTypeCount() const { return m_types.size(); }
         int GetSelectedTypeIndex() const { return m_selectedTypeIndex; }
@@ -123,6 +158,10 @@ namespace PlutoGE::scene
         void SetTypeSourceMeshPath(std::size_t index, const std::string &sourceMeshPath);
         void SetTypeMaterialAssetReference(std::size_t index, const std::string &materialAssetReference);
         void ClearTypeMaterialAssetReference(std::size_t index);
+        bool SetTypeAssetReference(std::size_t index, const std::string &assetReference);
+        void SetTypeCollisionEnabled(std::size_t index, bool enabled);
+        void SetTypeCollisionCapsule(std::size_t index, const glm::vec3 &center, float radius, float height);
+        void SetTypeCellSize(std::size_t index, float cellSize);
         void SetTypeMeshAndMaterials(std::size_t index,
                                      render::Mesh *mesh,
                                      const std::vector<render::Material *> &materials,
@@ -133,6 +172,9 @@ namespace PlutoGE::scene
         void EnsureTypeStorage();
         render::Material *GetMaterialForTypeSubmesh(const FoliageType &type, std::size_t submeshIndex) const;
         void MarkRenderCommandsDirty();
+        void MarkInstancesDirty();
+        void EnsureStableInstanceIds();
+        FoliageCellCoordinate GetCellCoordinate(const FoliageType &type, const glm::vec3 &position) const;
         void RebuildRenderCommandCache(const glm::mat4 &ownerTransform);
         void RebuildTypeMaterialFromReference(FoliageType &type);
         void RebuildTypeMeshFromReference(FoliageType &type);
@@ -150,6 +192,11 @@ namespace PlutoGE::scene
         glm::mat4 m_cachedRenderCommandModel = glm::mat4(1.0f);
         bool m_renderCommandCacheDirty = true;
         bool m_hasCachedRenderCommandModel = false;
+        std::uint64_t m_nextInstanceId = 1;
+        std::uint64_t m_revision = 1;
+        mutable std::uint64_t m_collisionCacheRevision = 0;
+        mutable glm::mat4 m_collisionCacheOwnerTransform{0.0f};
+        mutable std::vector<FoliageCollisionCell> m_cachedCollisionCells;
 
         bool m_paintEnabled = false;
         FoliageBrushMode m_brushMode = FoliageBrushMode::Add;

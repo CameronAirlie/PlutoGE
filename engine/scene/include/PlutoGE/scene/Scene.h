@@ -68,6 +68,7 @@ namespace PlutoGE::scene
         glm::vec3 point{0.0f};
         glm::vec3 normal{0.0f, 1.0f, 0.0f};
         float distance = 0.0f;
+        std::uint64_t foliageInstanceId = 0;
     };
 
     struct PhysicsRaycastRequest
@@ -173,6 +174,7 @@ namespace PlutoGE::scene
 
         std::vector<Light *> GetLights() const; // Get active lights in the scene (for rendering)
         void MarkShadowLightsDirty();
+        void InvalidateFoliagePhysics();
         void SubmitRenderCommands();
         const std::string &GetFilePath() const { return m_filePath; }
         void SetFilePath(const std::string &filePath) { m_filePath = filePath; }

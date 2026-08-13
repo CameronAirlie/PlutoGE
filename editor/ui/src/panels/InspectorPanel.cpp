@@ -5328,6 +5328,44 @@ namespace PlutoGE::ui
                             }
                             ImGui::EndDisabled();
 
+                            selectedType = foliageComponent->GetSelectedType();
+                            if (selectedType && ImGui::TreeNode("Spatial Cells & Collision"))
+                            {
+                                float cellSize = selectedType->asset.cellSize;
+                                if (ImGui::DragFloat("Cell Size", &cellSize, 1.0f, 1.0f, 256.0f, "%.1f"))
+                                {
+                                    foliageComponent->SetTypeCellSize(selectedTypeIndex, cellSize);
+                                    entity->AddPrefabOverride("Component:FoliageComponent:Type." + std::to_string(selectedTypeIndex) + ".CellSize");
+                                    editorShell.MarkSceneDirty();
+                                }
+
+                                bool collisionEnabled = selectedType->asset.collisionEnabled;
+                                if (ImGui::Checkbox("Enable Capsule Collision", &collisionEnabled))
+                                {
+                                    foliageComponent->SetTypeCollisionEnabled(selectedTypeIndex, collisionEnabled);
+                                    entity->AddPrefabOverride("Component:FoliageComponent:Type." + std::to_string(selectedTypeIndex) + ".CollisionEnabled");
+                                    editorShell.MarkSceneDirty();
+                                }
+
+                                ImGui::BeginDisabled(!collisionEnabled);
+                                glm::vec3 center = selectedType->asset.collisionCenter;
+                                float radius = selectedType->asset.collisionRadius;
+                                float height = selectedType->asset.collisionHeight;
+                                bool collisionChanged = ImGui::DragFloat3("Collider Center", &center.x, 0.05f);
+                                collisionChanged |= ImGui::DragFloat("Collider Radius", &radius, 0.02f, 0.01f, 100.0f);
+                                collisionChanged |= ImGui::DragFloat("Collider Height", &height, 0.05f, 0.02f, 500.0f);
+                                if (collisionChanged)
+                                {
+                                    foliageComponent->SetTypeCollisionCapsule(selectedTypeIndex, center, radius, height);
+                                    entity->AddPrefabOverride("Component:FoliageComponent:Type." + std::to_string(selectedTypeIndex) + ".CollisionCenter");
+                                    entity->AddPrefabOverride("Component:FoliageComponent:Type." + std::to_string(selectedTypeIndex) + ".CollisionRadius");
+                                    entity->AddPrefabOverride("Component:FoliageComponent:Type." + std::to_string(selectedTypeIndex) + ".CollisionHeight");
+                                    editorShell.MarkSceneDirty();
+                                }
+                                ImGui::EndDisabled();
+                                ImGui::TreePop();
+                            }
+
                             ImGui::BeginDisabled(foliageComponent->GetSelectedTypeInstanceCount() == 0);
                             if (ImGui::Button("Clear Selected Type"))
                             {

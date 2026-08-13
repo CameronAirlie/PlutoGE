@@ -11,6 +11,7 @@
 #include "PlutoGE/render/Texture.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
+#include "PlutoGE/scene/PrefabMeshExporter.h"
 #include "PlutoGE/scene/components/AnimationComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/scripting/ScriptEngine.h"
@@ -687,6 +688,36 @@ void main() {
                 candidate = directory / (fileName + "_" + std::to_string(suffix) + extension.string());
             }
             return candidate;
+        }
+
+        bool ExportPrefabMesh(const assets::Project &project,
+                              const assets::ProjectAssetEntry &prefab,
+                              std::string_view selectedFolder,
+                              std::string *outputReference,
+                              std::string *errorMessage)
+        {
+            const auto directory = GetCreateDirectory(project, selectedFolder, {});
+            std::error_code directoryError;
+            std::filesystem::create_directories(directory, directoryError);
+            if (directoryError)
+            {
+                if (errorMessage) *errorMessage = "Failed to create mesh export directory: " + directoryError.message();
+                return false;
+            }
+            const auto prefabPath = project.ResolveAssetReference(prefab.reference);
+            const auto meshPath = MakeUniqueAssetPath(
+                directory,
+                std::filesystem::path(prefabPath.stem().string() + ".plutomesh"),
+                prefabPath.stem().string() + "_Static");
+            const std::string meshReference = project.MakeAssetReference(meshPath);
+            if (!scene::ExportPrefabToStaticMeshAsset(
+                    prefab.reference,
+                    meshReference,
+                    core::Engine::GetInstance().GetAssetManager(),
+                    errorMessage))
+                return false;
+            if (outputReference) *outputReference = meshReference;
+            return true;
         }
 
         bool ExtractModelSubAsset(const assets::Project &project,
@@ -2777,6 +2808,22 @@ void main() {
                 ImGui::TextUnformatted(fileName.c_str());
                 ImGui::EndDragDropSource();
             }
+            if (ImGui::BeginPopupContextItem("AssetContext"))
+            {
+                if (asset.type == assets::ProjectAssetType::Prefab && ImGui::MenuItem("Export as Static Mesh"))
+                {
+                    std::string outputReference, exportError;
+                    if (ExportPrefabMesh(*project, asset, m_selectedFolder, &outputReference, &exportError))
+                    {
+                        project->RefreshAssetRegistry();
+                        m_assetCacheDirty = true;
+                        editorShell.MarkProjectDirty();
+                        editorShell.Log(EditorShell::ConsoleSeverity::Info, "Exported prefab mesh: " + outputReference);
+                    }
+                    else editorShell.Log(EditorShell::ConsoleSeverity::Error, exportError);
+                }
+                ImGui::EndPopup();
+            }
             if (hovered) ImGui::SetTooltip("%s\n%s", fileName.c_str(), asset.reference.c_str());
             ImGui::PopID();
         };
@@ -2922,7 +2969,23 @@ void main() {
                 ImGui::TextWrapped("Path: %s", resolvedPath.string().c_str());
             }
 
-            if (asset.type == assets::ProjectAssetType::ScriptableObject)
+            if (asset.type == assets::ProjectAssetType::Prefab)
+            {
+                if (ImGui::Button("Export as Static Mesh"))
+                {
+                    std::string outputReference, exportError;
+                    if (ExportPrefabMesh(*project, asset, m_selectedFolder, &outputReference, &exportError))
+                    {
+                        project->RefreshAssetRegistry();
+                        m_assetCacheDirty = true;
+                        editorShell.MarkProjectDirty();
+                        editorShell.Log(EditorShell::ConsoleSeverity::Info, "Exported prefab mesh: " + outputReference);
+                    }
+                    else editorShell.Log(EditorShell::ConsoleSeverity::Error, exportError);
+                }
+                ImGui::TextDisabled("Bakes enabled static mesh components and child transforms into one mesh asset.");
+            }
+            else if (asset.type == assets::ProjectAssetType::ScriptableObject)
             {
                 std::string className;
                 std::unordered_map<std::string, scripting::ScriptFieldValue> values;

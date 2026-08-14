@@ -2103,17 +2103,69 @@ namespace PlutoGE::render
                         staticCascadeMap = light->staticShadowCascadeMaps[cascadeIndex].get();
                     }
 
-                    // Restore the immutable static depth, erasing last frame's
-                    // dynamic casters without clearing or redrawing foliage.
-                    glCopyImageSubData(staticCascadeMap->GetTextureID(), GL_TEXTURE_2D, 0, 0, 0, 0,
-                                       cascadeMap->GetTextureID(), GL_TEXTURE_2D, 0, 0, 0, 0,
-                                       shadowResolution, shadowResolution, 1);
+                    // When the stabilized cascade has not scrolled, only the
+                    // pixels touched by the previous or current bounds of a
+                    // moving caster can contain stale dynamic depth. Restore
+                    // that conservative rectangle from the immutable static
+                    // cache instead of copying the complete cascade. Any
+                    // unmoved dynamic caster intersecting the rectangle is
+                    // included by drawRegion below, so overlapping shadows are
+                    // reconstructed exactly.
+                    const auto movedCasterDirtyRegion = BuildMovedCasterDirtyRegion(
+                        shadowCasters,
+                        cascadeProjection,
+                        cascadeShadowWorldOrigin,
+                        shadowResolution,
+                        glm::max(light->directionalShadowSettings.softness, 0.0f));
+                    const std::int64_t cascadePixelCount =
+                        static_cast<std::int64_t>(shadowResolution) * shadowResolution;
+                    const std::int64_t dirtyPixelCount = movedCasterDirtyRegion.valid
+                                                             ? static_cast<std::int64_t>(movedCasterDirtyRegion.pixelWidth) *
+                                                                   movedCasterDirtyRegion.pixelHeight
+                                                             : cascadePixelCount;
+                    constexpr float kMaximumPartialDynamicUpdateCoverage = 0.6f;
+                    const bool canPartiallyRestoreDynamicDepth =
+                        !staticNeedsFullRefresh &&
+                        !requiresScrollCopy &&
+                        cascadeScroll.valid && cascadeScroll.x == 0 && cascadeScroll.y == 0 &&
+                        movedCasterDirtyRegion.valid &&
+                        static_cast<double>(dirtyPixelCount) <=
+                            static_cast<double>(cascadePixelCount) * kMaximumPartialDynamicUpdateCoverage;
+
+                    if (canPartiallyRestoreDynamicDepth)
+                    {
+                        glCopyImageSubData(
+                            staticCascadeMap->GetTextureID(), GL_TEXTURE_2D, 0,
+                            movedCasterDirtyRegion.pixelX, movedCasterDirtyRegion.pixelY, 0,
+                            cascadeMap->GetTextureID(), GL_TEXTURE_2D, 0,
+                            movedCasterDirtyRegion.pixelX, movedCasterDirtyRegion.pixelY, 0,
+                            movedCasterDirtyRegion.pixelWidth, movedCasterDirtyRegion.pixelHeight, 1);
+                    }
+                    else
+                    {
+                        glCopyImageSubData(staticCascadeMap->GetTextureID(), GL_TEXTURE_2D, 0, 0, 0, 0,
+                                           cascadeMap->GetTextureID(), GL_TEXTURE_2D, 0, 0, 0, 0,
+                                           shadowResolution, shadowResolution, 1);
+                    }
                     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, cascadeMap->GetTextureID(), 0);
                     if (!ValidateShadowFramebuffer("combined directional cascade shadow", cascadeMap->GetTextureID()))
                     {
                         continue;
                     }
-                    drawRegion(0, 0, shadowResolution, shadowResolution, nullptr, false, false);
+                    if (canPartiallyRestoreDynamicDepth)
+                    {
+                        drawRegion(movedCasterDirtyRegion.pixelX,
+                                   movedCasterDirtyRegion.pixelY,
+                                   movedCasterDirtyRegion.pixelWidth,
+                                   movedCasterDirtyRegion.pixelHeight,
+                                   &movedCasterDirtyRegion,
+                                   false,
+                                   false);
+                    }
+                    else
+                    {
+                        drawRegion(0, 0, shadowResolution, shadowResolution, nullptr, false, false);
+                    }
                     if (ctx.renderer)
                     {
                         ctx.renderer->RecordShadowMapUpdate(

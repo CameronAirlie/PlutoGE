@@ -2836,6 +2836,7 @@ namespace PlutoGE::scene
         if (std::find(m_foliageComponents.begin(), m_foliageComponents.end(), foliageComponent) == m_foliageComponents.end())
         {
             m_foliageComponents.push_back(foliageComponent);
+            InvalidateFoliagePhysics();
         }
     }
 
@@ -2846,7 +2847,12 @@ namespace PlutoGE::scene
             return;
         }
 
+        const auto oldSize = m_foliageComponents.size();
         m_foliageComponents.erase(std::remove(m_foliageComponents.begin(), m_foliageComponents.end(), foliageComponent), m_foliageComponents.end());
+        if (m_foliageComponents.size() != oldSize)
+        {
+            InvalidateFoliagePhysics();
+        }
     }
 
     bool Scene::Raycast(const glm::vec3 &origin,
@@ -3215,7 +3221,12 @@ namespace PlutoGE::scene
         const float safeDepth = std::max(depth, 0.001f);
         auto entity = std::make_unique<Entity>(EntityConfig{.name = "Decal"});
         Entity *decalEntity = entity.get();
-        decalEntity->SetPosition(hit.point + normal * (safeDepth * 0.5f - 0.001f));
+        // The projector's +Z axis points away from the receiving surface. Put
+        // almost all of its depth behind the collision point, leaving only a
+        // small bias in front to cover numerical differences between collision
+        // and render geometry (notably terrain heightfields and foliage
+        // collision proxies).
+        decalEntity->SetPosition(hit.point - normal * (safeDepth * 0.5f - 0.001f));
         const glm::quat orientation = glm::rotation(glm::vec3(0.0f, 0.0f, 1.0f), normal);
         decalEntity->SetRotation(glm::degrees(glm::eulerAngles(orientation)));
         decalEntity->SetScale(glm::vec3(glm::max(size, glm::vec2(0.001f)), safeDepth));
@@ -3317,6 +3328,14 @@ namespace PlutoGE::scene
                         (body.foliageRevision != body.foliage->GetRevision() ||
                          body.foliageOwnerTransform != body.entity->GetWorldTransform()))
                         rebuildRuntimePhysics = true;
+                for (auto *foliage : m_foliageComponents)
+                    if (!rebuildRuntimePhysics && foliage && foliage->IsEnabled())
+                    {
+                        const bool represented = std::any_of(existingBodies.begin(), existingBodies.end(),
+                            [foliage](const BulletStepBody &body) { return body.foliage == foliage; });
+                        if (!represented && !foliage->BuildCollisionCells().empty())
+                            rebuildRuntimePhysics = true;
+                    }
             }
             if (!rebuildRuntimePhysics)
             {

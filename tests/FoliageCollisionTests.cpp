@@ -47,5 +47,23 @@ int main()
         std::cerr << "Foliage collision cache did not follow its owner transform.\n";
         return 1;
     }
+
+    owner->SetScale({10, 5, 10});
+    type.instances.front().position = {1, 0, 0};
+    type.instances.front().scale = {2, 2, 2};
+    foliage->SetSelectedTypeInstanceTransform(0, {1, 0, 0}, {0, 0, 0}, {2, 2, 2});
+    const auto &scaledOwnerCells = foliage->BuildCollisionCells();
+    if (scaledOwnerCells.empty() || scaledOwnerCells.front().instances.empty())
+    {
+        std::cerr << "Foliage collision was not rebuilt after scaling its owner.\n";
+        return 1;
+    }
+    const glm::mat4 &instanceTransform = scaledOwnerCells.front().instances.front().worldTransform;
+    if (glm::distance(glm::vec3(instanceTransform[3]), glm::vec3(20, 0, 0)) > 0.001f ||
+        std::abs(glm::length(glm::vec3(instanceTransform[0])) - 1.0f) > 0.001f)
+    {
+        std::cerr << "Foliage collision inherited render or owner scale.\n";
+        return 1;
+    }
     return 0;
 }

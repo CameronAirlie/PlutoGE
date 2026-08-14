@@ -124,14 +124,34 @@ namespace PlutoGE::scene
             return indices;
         }
 
-        glm::mat4 ComposeInstanceTransform(const glm::mat4 &ownerTransform, const FoliageInstance &instance, const glm::vec3 &localOriginOffset)
+        glm::vec3 SafeNormalizedAxis(const glm::vec3 &axis, const glm::vec3 &fallback)
         {
-            glm::mat4 model = ownerTransform;
-            model = glm::translate(model, instance.position);
+            const float lengthSquared = glm::length2(axis);
+            return lengthSquared > 1e-8f ? axis / std::sqrt(lengthSquared) : fallback;
+        }
+
+        glm::mat4 ComposeInstanceTransform(const glm::mat4 &ownerTransform,
+                                           const FoliageInstance &instance,
+                                           const glm::vec3 &localOriginOffset = glm::vec3(0.0f),
+                                           bool applyInstanceScale = true)
+        {
+            // Foliage positions are stored in the owner's local space, but instance
+            // scale is intended to describe the foliage mesh itself. Inheriting a
+            // scaled terrain transform here makes a scale of 1 produce enormous
+            // foliage (and distorted collision shapes).
+            const glm::vec3 worldPosition = glm::vec3(ownerTransform * glm::vec4(instance.position, 1.0f));
+            glm::mat4 model(1.0f);
+            model[0] = glm::vec4(SafeNormalizedAxis(glm::vec3(ownerTransform[0]), glm::vec3(1.0f, 0.0f, 0.0f)), 0.0f);
+            model[1] = glm::vec4(SafeNormalizedAxis(glm::vec3(ownerTransform[1]), glm::vec3(0.0f, 1.0f, 0.0f)), 0.0f);
+            model[2] = glm::vec4(SafeNormalizedAxis(glm::vec3(ownerTransform[2]), glm::vec3(0.0f, 0.0f, 1.0f)), 0.0f);
+            model[3] = glm::vec4(worldPosition, 1.0f);
             model = glm::rotate(model, glm::radians(instance.rotationDegrees.y), glm::vec3(0.0f, 1.0f, 0.0f));
             model = glm::rotate(model, glm::radians(instance.rotationDegrees.x), glm::vec3(1.0f, 0.0f, 0.0f));
             model = glm::rotate(model, glm::radians(instance.rotationDegrees.z), glm::vec3(0.0f, 0.0f, 1.0f));
-            model = glm::scale(model, instance.scale);
+            if (applyInstanceScale)
+            {
+                model = glm::scale(model, instance.scale);
+            }
             model = glm::translate(model, -localOriginOffset);
             return model;
         }
@@ -793,7 +813,10 @@ namespace PlutoGE::scene
             RebuildTypeMaterialFromReference(type);
         }
         EnsureStableInstanceIds();
-        MarkRenderCommandsDirty();
+        // Deserialization is also used when restoring editor state. Advance the
+        // instance revision so an existing Bullet cache cannot keep the old (or
+        // empty) collider set for the newly restored placements.
+        MarkInstancesDirty();
     }
 
     void FoliageComponent::SetMesh(render::Mesh *mesh)
@@ -1095,12 +1118,12 @@ namespace PlutoGE::scene
                 const auto coordinate = GetCellCoordinate(type, instance.position);
                 auto &cell = cells[coordinate];
                 cell.coordinate = coordinate;
-                glm::mat4 transform = ownerTransform;
-                transform = glm::translate(transform, instance.position);
-                transform = glm::rotate(transform, glm::radians(instance.rotationDegrees.y), glm::vec3(0, 1, 0));
-                transform = glm::rotate(transform, glm::radians(instance.rotationDegrees.x), glm::vec3(1, 0, 0));
-                transform = glm::rotate(transform, glm::radians(instance.rotationDegrees.z), glm::vec3(0, 0, 1));
-                transform = glm::scale(transform, instance.scale);
+                // Capsule settings are authored in world units. The paint scale
+                // often serves as a mesh import unit conversion (for example
+                // 0.01 for centimetre-authored vegetation), so applying it to
+                // the capsule makes otherwise correctly sized colliders tiny.
+                const glm::mat4 transform = ComposeInstanceTransform(
+                    ownerTransform, instance, glm::vec3(0.0f), false);
                 cell.instances.push_back(FoliageCollisionInstance{
                     .instanceId = instance.id,
                     .worldTransform = transform,

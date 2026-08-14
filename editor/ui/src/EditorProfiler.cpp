@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iomanip>
 #include <numeric>
 #include <sstream>
 
@@ -207,6 +208,13 @@ namespace PlutoGE::ui
         report << "GBuffer resizes: " << cpuFrameStats.gBufferResizeCount << "\n";
         report << "Shadow updated surfaces: " << cpuFrameStats.shadowUpdatedSurfaceCount << "\n";
         report << "Shadow updated directional cascades: " << cpuFrameStats.shadowUpdatedDirectionalCascadeCount << "\n";
+        report << "Shadow scroll candidates: " << cpuFrameStats.shadowCascadeScrollCandidateCount << "\n";
+        report << "Shadow scroll successes: " << cpuFrameStats.shadowCascadeScrollSuccessCount << "\n";
+        report << "Shadow scroll topology rejections: " << cpuFrameStats.shadowCascadeScrollTopologyRejectedCount << "\n";
+        report << std::scientific << std::setprecision(6);
+        report << "Shadow scroll max matrix delta: " << cpuFrameStats.shadowCascadeScrollMaxMatrixDelta << "\n";
+        report << "Shadow scroll max fractional texel error: " << cpuFrameStats.shadowCascadeScrollMaxFractionalTexelError << "\n";
+        report << std::fixed << std::setprecision(2);
         report << "Shadow updated pixels: " << cpuFrameStats.shadowUpdatedPixelCount << "\n";
         report << "Shadow submitted instances: " << cpuFrameStats.shadowSubmittedInstanceCount << "\n";
         report << "Shadow logical batches: " << cpuFrameStats.shadowSubmittedBatchCount << "\n";

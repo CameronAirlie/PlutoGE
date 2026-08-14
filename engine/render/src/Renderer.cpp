@@ -1350,6 +1350,18 @@ namespace PlutoGE::render
         m_cpuFrameStats.shadowSubmittedTriangleCount += std::max(submittedTriangles, 0);
     }
 
+    void Renderer::RecordDirectionalShadowScroll(bool candidate, bool succeeded, bool topologyRejected,
+                                                  float maxMatrixDelta, float fractionalTexelError)
+    {
+        if (candidate) ++m_cpuFrameStats.shadowCascadeScrollCandidateCount;
+        if (succeeded) ++m_cpuFrameStats.shadowCascadeScrollSuccessCount;
+        if (topologyRejected) ++m_cpuFrameStats.shadowCascadeScrollTopologyRejectedCount;
+        m_cpuFrameStats.shadowCascadeScrollMaxMatrixDelta =
+            std::max(m_cpuFrameStats.shadowCascadeScrollMaxMatrixDelta, std::max(maxMatrixDelta, 0.0f));
+        m_cpuFrameStats.shadowCascadeScrollMaxFractionalTexelError =
+            std::max(m_cpuFrameStats.shadowCascadeScrollMaxFractionalTexelError, std::max(fractionalTexelError, 0.0f));
+    }
+
     void Renderer::RecordGeometryBatch(int submittedInstances, int submittedTriangles, std::size_t lodIndex)
     {
         m_cpuFrameStats.geometrySubmittedInstanceCount += std::max(submittedInstances, 0);

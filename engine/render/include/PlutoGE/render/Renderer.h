@@ -133,6 +133,11 @@ namespace PlutoGE::render
         int gBufferResizeCount = 0;
         int shadowUpdatedSurfaceCount = 0;
         int shadowUpdatedDirectionalCascadeCount = 0;
+        int shadowCascadeScrollCandidateCount = 0;
+        int shadowCascadeScrollSuccessCount = 0;
+        int shadowCascadeScrollTopologyRejectedCount = 0;
+        float shadowCascadeScrollMaxMatrixDelta = 0.0f;
+        float shadowCascadeScrollMaxFractionalTexelError = 0.0f;
         int shadowSubmittedInstanceCount = 0;
         int shadowSubmittedBatchCount = 0;
         int shadowMaterialGroupCount = 0;
@@ -243,6 +248,8 @@ namespace PlutoGE::render
         void SetLightingPassCounters(int lightCount, int shadowedLightCount);
         void RecordGBufferResize(float resizeMs);
         void RecordShadowMapUpdate(int surfacePixels, int submittedInstances, int submittedBatches, int submittedTriangles, int materialGroups, int apiDrawCalls, bool directionalCascade);
+        void RecordDirectionalShadowScroll(bool candidate, bool succeeded, bool topologyRejected,
+                                           float maxMatrixDelta, float fractionalTexelError);
         void RecordGeometryBatch(int submittedInstances, int submittedTriangles, std::size_t lodIndex);
         void RecordGeometryDriverSubmission(int materialGroups, int apiDrawCalls);
 

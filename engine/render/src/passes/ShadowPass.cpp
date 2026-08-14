@@ -88,6 +88,16 @@ namespace
         bool valid = false;
     };
 
+    struct DirectionalShadowScroll
+    {
+        int x = 0;
+        int y = 0;
+        float maxMatrixDelta = 0.0f;
+        float fractionalTexelError = 0.0f;
+        glm::mat4 resolvedRelativeMatrix{1.0f};
+        bool valid = false;
+    };
+
     struct ShadowDrawStats
     {
         int submittedInstances = 0;
@@ -285,11 +295,6 @@ namespace
         seed ^= value + 0x9e3779b97f4a7c15ull + (seed << 6) + (seed >> 2);
     }
 
-    std::uint64_t QuantizeFloatForHash(float value)
-    {
-        return static_cast<std::uint64_t>(static_cast<std::int64_t>(std::round(value * 1000.0f)));
-    }
-
     bool ValidateShadowFramebuffer(const char *label, unsigned int attachmentTexture)
     {
         // Shadow targets persist across frames. glCheckFramebufferStatus can
@@ -371,10 +376,11 @@ namespace
             HashCombine(state.fingerprint, reinterpret_cast<std::uintptr_t>(command.material));
             HashCombine(state.fingerprint, static_cast<std::uint64_t>(command.submeshIndex));
             HashCombine(state.fingerprint, static_cast<std::uint64_t>(command.lodIndex));
-            HashCombine(state.fingerprint, QuantizeFloatForHash(command.worldBounds.center.x));
-            HashCombine(state.fingerprint, QuantizeFloatForHash(command.worldBounds.center.y));
-            HashCombine(state.fingerprint, QuantizeFloatForHash(command.worldBounds.center.z));
-            HashCombine(state.fingerprint, QuantizeFloatForHash(command.worldBounds.radius));
+            // Bounds are transform state, not topology. Including them here made
+            // every moving caster look like a structural scene change and forced
+            // complete cascade redraws, bypassing both scrolling and dirty-region
+            // updates. Motion is tracked separately through previous transforms
+            // and skinningPoseChanged above.
         }
 
         HashCombine(state.fingerprint, static_cast<std::uint64_t>(state.casterCount));
@@ -562,8 +568,12 @@ namespace
     {
         const float safeResolution = static_cast<float>(std::max(shadowResolution, 1));
         const glm::mat4 lightSpaceMatrix = projection * view;
-        (void)shadowWorldOrigin;
-        const glm::vec4 stableWorldAnchor = lightSpaceMatrix * glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+        // The matrix consumes camera-relative positions. Absolute world zero is
+        // therefore -shadowWorldOrigin in that coordinate system. Snapping the
+        // relative origin instead changes the absolute texel-grid phase whenever
+        // the camera origin recenters, making cached cascades impossible to scroll.
+        const glm::vec4 stableWorldAnchor = lightSpaceMatrix *
+                                            glm::vec4(-shadowWorldOrigin, 1.0f);
         const glm::vec2 shadowTexelOrigin = glm::vec2(stableWorldAnchor) * (safeResolution * 0.5f);
         const glm::vec2 roundedTexelOrigin = glm::round(shadowTexelOrigin);
         const glm::vec2 shadowTexelOffset = (roundedTexelOrigin - shadowTexelOrigin) * (2.0f / safeResolution);
@@ -788,6 +798,101 @@ namespace
         return true;
     }
 
+    DirectionalShadowScroll ResolveDirectionalShadowScroll(const glm::mat4 &previousRelative,
+                                                            const glm::vec3 &previousWorldOrigin,
+                                                            const glm::mat4 &currentRelative,
+                                                            const glm::vec3 &currentWorldOrigin,
+                                                            int resolution)
+    {
+        DirectionalShadowScroll result;
+        result.resolvedRelativeMatrix = currentRelative;
+        if (resolution <= 0 || AreMatricesApproximatelyEqual(previousRelative, glm::mat4(1.0f)))
+        {
+            return result;
+        }
+
+        // Cascade matrices consume positions relative to a camera-local world
+        // origin. Compose that origin back into each transform before comparing
+        // cached mappings; otherwise a harmless origin recenter appears as an
+        // unrelated XY/Z matrix change and rejects scrolling every time.
+        const glm::mat4 previous = previousRelative * glm::translate(glm::mat4(1.0f), -previousWorldOrigin);
+        glm::mat4 current = currentRelative * glm::translate(glm::mat4(1.0f), -currentWorldOrigin);
+
+        // Cached depth can be translated only when the world-to-depth mapping
+        // is otherwise identical. Any rotation, scale, or depth-range change
+        // falls back to a complete cascade refresh.
+        for (int column = 0; column < 4; ++column)
+        {
+            for (int row = 0; row < 4; ++row)
+            {
+                if (column == 3 && (row == 0 || row == 1 || row == 2))
+                {
+                    continue;
+                }
+                result.maxMatrixDelta = glm::max(
+                    result.maxMatrixDelta,
+                    std::abs(previous[column][row] - current[column][row]));
+            }
+        }
+
+        if (result.maxMatrixDelta > kShadowUpdateMatrixEpsilon) return result;
+
+        // Fitted cascades move slightly along the light's depth axis as the FPS
+        // camera moves or rotates. Cached depth remains exact if rendering and
+        // sampling retain the previous absolute Z mapping. Bound the retained
+        // range so a periodic full refresh recentres depth coverage safely.
+        constexpr float kMaximumRetainedDepthTranslation = 0.02f;
+        const float depthTranslationDelta = std::abs(previous[3][2] - current[3][2]);
+        result.maxMatrixDelta = glm::max(result.maxMatrixDelta, depthTranslationDelta);
+        if (depthTranslationDelta > kMaximumRetainedDepthTranslation) return result;
+        current[3][2] = previous[3][2];
+        result.resolvedRelativeMatrix = current *
+                                        glm::translate(glm::mat4(1.0f), currentWorldOrigin);
+
+        const glm::vec2 pixelDelta = glm::vec2(current[3] - previous[3]) *
+                                     (static_cast<float>(resolution) * 0.5f);
+        const glm::ivec2 rounded = glm::ivec2(glm::round(pixelDelta));
+        const glm::vec2 fractionalError = glm::abs(pixelDelta - glm::vec2(rounded));
+        result.fractionalTexelError = glm::max(fractionalError.x, fractionalError.y);
+        if (result.fractionalTexelError > 0.05f ||
+            std::abs(rounded.x) >= resolution || std::abs(rounded.y) >= resolution)
+        {
+            return result;
+        }
+        result.x = rounded.x;
+        result.y = rounded.y;
+        // A zero offset is still a successful cache reuse. It means only moving
+        // caster dirty regions need redrawing; no texture scroll is necessary.
+        result.valid = true;
+        return result;
+    }
+
+    void EnsureDepthScratchTexture(unsigned int &texture, int &allocatedResolution, int resolution)
+    {
+        if (texture != 0 && allocatedResolution == resolution)
+        {
+            return;
+        }
+        if (texture != 0)
+        {
+            glDeleteTextures(1, &texture);
+        }
+        glGenTextures(1, &texture);
+        glBindTexture(GL_TEXTURE_2D, texture);
+        // Match TextureManager::CreateDepthTexture exactly; image copies require
+        // compatible internal formats.
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, resolution, resolution,
+                     0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+        const GLfloat borderDepth[] = {1.0f, 1.0f, 1.0f, 1.0f};
+        glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, borderDepth);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        allocatedResolution = resolution;
+    }
+
     bool IsBoundsOverlappingDirectionalRegion(const PlutoGE::render::MeshBounds &bounds,
                                                const glm::mat4 &lightView,
                                                const glm::vec3 &shadowWorldOrigin,
@@ -801,6 +906,18 @@ namespace
                lightSpaceCenter.x - radius <= regionMax.x &&
                lightSpaceCenter.y + radius >= regionMin.y &&
                lightSpaceCenter.y - radius <= regionMax.y;
+    }
+
+    PlutoGE::render::MeshBounds TransformShadowBounds(const PlutoGE::render::MeshBounds &bounds,
+                                                      const glm::mat4 &model)
+    {
+        const float scaleX = glm::length(glm::vec3(model[0]));
+        const float scaleY = glm::length(glm::vec3(model[1]));
+        const float scaleZ = glm::length(glm::vec3(model[2]));
+        return PlutoGE::render::MeshBounds{
+            .center = glm::vec3(model * glm::vec4(bounds.center, 1.0f)),
+            .radius = bounds.radius * glm::max(scaleX, glm::max(scaleY, scaleZ)),
+        };
     }
 
     DirectionalShadowDirtyRegion BuildMovedCasterDirtyRegion(
@@ -948,10 +1065,11 @@ namespace
         shader->SetUniformMatrixArray("uJointMatrices[0]", jointMatrices->data(), jointCount);
     }
 
-    template <typename Predicate, typename LodSelector>
+    template <typename Predicate, typename LodSelector, typename InstancePredicate>
     ShadowDrawStats DrawShadowCasterBatches(const std::vector<const ShadowCasterEntry *> &sortedShadowCasters,
                                             Predicate &&predicate,
                                             LodSelector &&lodSelector,
+                                            InstancePredicate &&instancePredicate,
                                             PlutoGE::render::Shader *shader,
                                             unsigned int &instanceBuffer,
                                             std::size_t &instanceCapacity,
@@ -983,18 +1101,20 @@ namespace
         draws.clear();
         draws.reserve(sortedShadowCasters.size());
 
-        const auto appendInstances = [](const PlutoGE::render::RenderCommand &command, std::vector<TransformInstanceData> &instances)
+        const auto appendInstances = [&](const PlutoGE::render::RenderCommand &command, std::vector<TransformInstanceData> &instances)
         {
             if (!command.instanceModels || command.instanceModels->empty())
             {
-                instances.push_back(TransformInstanceData{.model = command.model});
+                if (instancePredicate(command, command.model))
+                    instances.push_back(TransformInstanceData{.model = command.model});
                 return;
             }
 
             instances.reserve(instances.size() + command.instanceModels->size());
             for (const auto &model : *command.instanceModels)
             {
-                instances.push_back(TransformInstanceData{.model = model});
+                if (instancePredicate(command, model))
+                    instances.push_back(TransformInstanceData{.model = model});
             }
         };
 
@@ -1007,6 +1127,13 @@ namespace
 
             const auto *command = shadowCaster->command;
             const std::size_t selectedLodIndex = lodSelector(*shadowCaster);
+            const std::size_t previousInstanceCount = batchInstances.size();
+            appendInstances(*command, batchInstances);
+            const std::size_t appendedInstanceCount = batchInstances.size() - previousInstanceCount;
+            if (appendedInstanceCount == 0)
+            {
+                continue;
+            }
             const bool appendToPrevious = !command->jointMatrices &&
                                           !draws.empty() &&
                                           !draws.back().command->jointMatrices &&
@@ -1019,13 +1146,10 @@ namespace
                 draws.push_back(PreparedShadowDraw{
                     .command = command,
                     .lodIndex = selectedLodIndex,
-                    .firstInstance = batchInstances.size(),
+                    .firstInstance = previousInstanceCount,
                 });
             }
-
-            const std::size_t previousInstanceCount = batchInstances.size();
-            appendInstances(*command, batchInstances);
-            draws.back().instanceCount += batchInstances.size() - previousInstanceCount;
+            draws.back().instanceCount += appendedInstanceCount;
         }
 
         // Upload the pass's complete transform stream once. The old path orphaned
@@ -1261,6 +1385,15 @@ namespace
 
 namespace PlutoGE::render
 {
+    ShadowPass::~ShadowPass()
+    {
+        glDeleteTextures(static_cast<GLsizei>(m_directionalScrollScratchTextures.size()),
+                         m_directionalScrollScratchTextures.data());
+        if (m_instanceBuffer != 0) glDeleteBuffers(1, &m_instanceBuffer);
+        if (m_indirectBuffer != 0) glDeleteBuffers(1, &m_indirectBuffer);
+        if (m_shadowFramebuffer != 0) glDeleteFramebuffers(1, &m_shadowFramebuffer);
+    }
+
     void ShadowPass::Initialize()
     {
         m_shadowPassShader = Shader::CreateShadowPassShader();
@@ -1353,10 +1486,9 @@ namespace PlutoGE::render
 
         const ShadowCasterFrameState casterFrameState = InspectShadowCasters(*ctx.renderCommands);
         m_allCachedShadowCastersStatic = casterFrameState.allCastersStatic;
-        bool shadowCastersChanged =
-            casterFrameState.hasMovedCaster ||
-            !m_hasShadowCasterFingerprint ||
-            casterFrameState.fingerprint != m_shadowCasterFingerprint;
+        const bool shadowCasterTopologyChanged = !m_hasShadowCasterFingerprint ||
+                                                 casterFrameState.fingerprint != m_shadowCasterFingerprint;
+        bool shadowCastersChanged = casterFrameState.hasMovedCaster || shadowCasterTopologyChanged;
         const bool cameraDataChanged = ctx.hasCameraData &&
                                        (!ctx.hasPreviousCameraData ||
                                         HasDirectionalCameraOrientationOrProjectionChanged(ctx.cameraData, ctx.previousCameraData));
@@ -1601,6 +1733,7 @@ namespace PlutoGE::render
                         {
                             return SelectDefaultShadowLod(*shadowCaster.command);
                         },
+                        [](const PlutoGE::render::RenderCommand &, const glm::mat4 &) { return true; },
                         m_shadowPassShader,
                         m_instanceBuffer,
                         m_instanceCapacity,
@@ -1749,6 +1882,32 @@ namespace PlutoGE::render
                     const auto cascadeProjection = BuildDirectionalCascadeProjection(*light, ctx.cameraData, cascadeShadowWorldOrigin, cascadeNear, cascadeFar, shadowResolution);
                     const glm::mat4 &cascadeMatrix = cascadeProjection.lightSpaceMatrix;
                     const bool cascadeMatrixChanged = !AreMatricesApproximatelyEqual(cascadeMatrix, light->shadowCascadeMatrices[cascadeIndex]);
+                    const DirectionalShadowScroll cascadeScroll =
+                        // A camera-relative origin recenter is the primary reason
+                        // to scroll a cached cascade. ResolveDirectionalShadowScroll
+                        // validates that the resulting matrix change is only an
+                        // integer-texel XY translation before reuse is allowed.
+                        !forceFullCascadeUpdate && !cascadeSplitChanged && !shadowCasterTopologyChanged
+                            ? ResolveDirectionalShadowScroll(
+                                  light->shadowCascadeMatrices[cascadeIndex],
+                                  light->shadowCascadeWorldOrigins[cascadeIndex],
+                                  cascadeMatrix,
+                                  cascadeShadowWorldOrigin,
+                                  shadowResolution)
+                            : DirectionalShadowScroll{};
+                    const glm::mat4 &cascadeRenderMatrix = cascadeScroll.valid
+                                                               ? cascadeScroll.resolvedRelativeMatrix
+                                                               : cascadeMatrix;
+                    if (ctx.renderer)
+                    {
+                        const bool scrollCandidate = !forceFullCascadeUpdate && !cascadeSplitChanged && !shadowCasterTopologyChanged;
+                        ctx.renderer->RecordDirectionalShadowScroll(
+                            scrollCandidate,
+                            cascadeScroll.valid,
+                            !forceFullCascadeUpdate && !cascadeSplitChanged && shadowCasterTopologyChanged,
+                            cascadeScroll.maxMatrixDelta,
+                            cascadeScroll.fractionalTexelError);
+                    }
                     if (cameraOnlyInvalidation && !cascadeMatrixChanged && !cascadeSplitChanged && !cascadeOriginChanged)
                     {
                         light->pendingShadowCascadeMask &= static_cast<std::uint8_t>(~(1u << cascadeIndex));
@@ -1775,10 +1934,12 @@ namespace PlutoGE::render
                         continue;
                     }
 
-                    const bool canPartiallyRefreshMovedCasters = casterOnlyCascadeInvalidation &&
-                                                                  !cascadeMatrixChanged &&
+                    const bool canPartiallyRefreshMovedCasters =
+                                                                  (casterOnlyCascadeInvalidation ||
+                                                                   (cascadeScroll.valid && casterFrameState.hasMovedCaster && !shadowCasterTopologyChanged)) &&
+                                                                  (!cascadeMatrixChanged || cascadeScroll.valid) &&
                                                                   !cascadeSplitChanged &&
-                                                                  !cascadeOriginChanged;
+                                                                  (!cascadeOriginChanged || cascadeScroll.valid);
                     const DirectionalShadowDirtyRegion dirtyRegion = canPartiallyRefreshMovedCasters
                                                                           ? BuildMovedCasterDirtyRegion(
                                                                                 shadowCasters,
@@ -1799,68 +1960,170 @@ namespace PlutoGE::render
                     }
 
                     light->shadowCascadeWorldOrigins[cascadeIndex] = cascadeShadowWorldOrigin;
-                    light->shadowCascadeMatrices[cascadeIndex] = cascadeMatrix;
+                    light->shadowCascadeMatrices[cascadeIndex] = cascadeRenderMatrix;
 
                     glViewport(0, 0, shadowResolution, shadowResolution);
                     m_shadowPassShader->SetUniform("uShadowWorldOrigin", light->shadowCascadeWorldOrigins[cascadeIndex]);
-                    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, cascadeMap->GetTextureID(), 0);
+                    unsigned int renderDepthTexture = cascadeMap->GetTextureID();
+                    constexpr int kMaximumSparseRegionCommands = 32;
+                    bool forceFullDirtyCascade = false;
+                    if (dirtyRegion.valid)
+                    {
+                        int relevantCommandCount = 0;
+                        for (const auto *shadowCaster : sortedShadowCasters)
+                        {
+                            if (IsCommandRelevantForDirectionalCascade(
+                                    *shadowCaster, cascadeProjection.lightViewMatrix, cascadeShadowWorldOrigin,
+                                    cascadeProjection.receiverMin, cascadeProjection.receiverMax,
+                                    cascadeProjection.receiverExtent, shadowResolution, effectiveMinCasterTexelRadius) &&
+                                IsBoundsOverlappingDirectionalRegion(
+                                    shadowCaster->bounds, cascadeProjection.lightViewMatrix,
+                                    cascadeShadowWorldOrigin, dirtyRegion.min, dirtyRegion.max) &&
+                                ++relevantCommandCount > kMaximumSparseRegionCommands)
+                            {
+                                forceFullDirtyCascade = true;
+                                break;
+                            }
+                        }
+                    }
+                    const bool requiresScrollCopy = !forceFullDirtyCascade && cascadeScroll.valid &&
+                                                    (cascadeScroll.x != 0 || cascadeScroll.y != 0);
+                    if (requiresScrollCopy)
+                    {
+                        auto &scratchTexture = m_directionalScrollScratchTextures[static_cast<std::size_t>(cascadeIndex)];
+                        auto &scratchResolution = m_directionalScrollScratchResolutions[static_cast<std::size_t>(cascadeIndex)];
+                        EnsureDepthScratchTexture(scratchTexture, scratchResolution, shadowResolution);
+                        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, scratchTexture, 0);
+                        glDisable(GL_SCISSOR_TEST);
+                        glClear(GL_DEPTH_BUFFER_BIT);
+
+                        const int sourceX = glm::max(0, -cascadeScroll.x);
+                        const int sourceY = glm::max(0, -cascadeScroll.y);
+                        const int destinationX = glm::max(0, cascadeScroll.x);
+                        const int destinationY = glm::max(0, cascadeScroll.y);
+                        const int copyWidth = shadowResolution - std::abs(cascadeScroll.x);
+                        const int copyHeight = shadowResolution - std::abs(cascadeScroll.y);
+                        glCopyImageSubData(cascadeMap->GetTextureID(), GL_TEXTURE_2D, 0, sourceX, sourceY, 0,
+                                           scratchTexture, GL_TEXTURE_2D, 0, destinationX, destinationY, 0,
+                                           copyWidth, copyHeight, 1);
+                        renderDepthTexture = scratchTexture;
+                    }
+
+                    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, renderDepthTexture, 0);
                     if (!ValidateShadowFramebuffer(
-                            "directional cascade shadow", cascadeMap->GetTextureID()))
+                            "directional cascade shadow", renderDepthTexture))
                     {
                         continue;
                     }
-                    if (dirtyRegion.valid)
+                    m_shadowPassShader->SetUniform("uLightSpaceMatrix", cascadeRenderMatrix);
+                    ShadowDrawStats drawStats;
+                    int updatedPixels = 0;
+                    const auto lightSpaceRegionForPixels = [&](int x, int y, int width, int height)
                     {
-                        glEnable(GL_SCISSOR_TEST);
-                        glScissor(dirtyRegion.pixelX, dirtyRegion.pixelY,
-                                  dirtyRegion.pixelWidth, dirtyRegion.pixelHeight);
-                    }
-                    glClear(GL_DEPTH_BUFFER_BIT);
-                    m_shadowPassShader->SetUniform("uLightSpaceMatrix", cascadeMatrix);
-                    const ShadowDrawStats drawStats = DrawShadowCasterBatches(
-                        sortedShadowCasters,
-                        [&](const ShadowCasterEntry &shadowCaster)
-                        {
-                            const bool relevantToCascade = IsCommandRelevantForDirectionalCascade(
-                                shadowCaster,
-                                cascadeProjection.lightViewMatrix,
-                                cascadeShadowWorldOrigin,
-                                cascadeProjection.receiverMin,
-                                cascadeProjection.receiverMax,
-                                cascadeProjection.receiverExtent,
-                                shadowResolution,
-                                effectiveMinCasterTexelRadius);
-                            return relevantToCascade &&
-                                   (!dirtyRegion.valid ||
-                                    IsBoundsOverlappingDirectionalRegion(
-                                        shadowCaster.bounds,
-                                        cascadeProjection.lightViewMatrix,
-                                        cascadeShadowWorldOrigin,
-                                        dirtyRegion.min,
-                                        dirtyRegion.max));
-                        },
-                        [&](const ShadowCasterEntry &shadowCaster)
-                        {
-                            return SelectDirectionalShadowLod(*shadowCaster.command, cascadeIndex, cascadeCount, shadowResolution);
-                        },
-                        m_shadowPassShader,
-                        m_instanceBuffer,
-                        m_instanceCapacity,
-                        m_indirectBuffer,
-                        m_indirectCapacity,
-                        m_indirectDrawEnabled,
-                        m_indirectDrawValidated,
-                        shadowBatchInstances);
-                    if (dirtyRegion.valid)
+                        const glm::vec2 scale = cascadeProjection.receiverExtent /
+                                                static_cast<float>(shadowResolution);
+                        DirectionalShadowDirtyRegion region;
+                        region.min = cascadeProjection.receiverMin + glm::vec2(x, y) * scale;
+                        region.max = region.min + glm::vec2(width, height) * scale;
+                        region.valid = true;
+                        return region;
+                    };
+                    const auto drawRegion = [&](int x, int y, int width, int height,
+                                                const DirectionalShadowDirtyRegion *lightSpaceRegion,
+                                                bool clearDepth)
                     {
+                        if (width <= 0 || height <= 0) return;
+                        int drawX = x;
+                        int drawY = y;
+                        int drawWidth = width;
+                        int drawHeight = height;
+                        const DirectionalShadowDirtyRegion *effectiveRegion = lightSpaceRegion;
+
+                        const bool scissored = drawWidth != shadowResolution || drawHeight != shadowResolution || drawX != 0 || drawY != 0;
+                        if (scissored)
+                        {
+                            glEnable(GL_SCISSOR_TEST);
+                            glScissor(drawX, drawY, drawWidth, drawHeight);
+                        }
+                        else glDisable(GL_SCISSOR_TEST);
+                        if (clearDepth) glClear(GL_DEPTH_BUFFER_BIT);
+                        const ShadowDrawStats regionStats = DrawShadowCasterBatches(
+                            sortedShadowCasters,
+                            [&](const ShadowCasterEntry &shadowCaster)
+                            {
+                                const bool relevant = IsCommandRelevantForDirectionalCascade(
+                                    shadowCaster, cascadeProjection.lightViewMatrix, cascadeShadowWorldOrigin,
+                                    cascadeProjection.receiverMin, cascadeProjection.receiverMax,
+                                    cascadeProjection.receiverExtent, shadowResolution, effectiveMinCasterTexelRadius);
+                                return relevant && (!effectiveRegion ||
+                                    IsBoundsOverlappingDirectionalRegion(shadowCaster.bounds,
+                                        cascadeProjection.lightViewMatrix, cascadeShadowWorldOrigin,
+                                        effectiveRegion->min, effectiveRegion->max));
+                            },
+                            [&](const ShadowCasterEntry &shadowCaster)
+                            { return SelectDirectionalShadowLod(*shadowCaster.command, cascadeIndex, cascadeCount, shadowResolution); },
+                            [&](const PlutoGE::render::RenderCommand &command, const glm::mat4 &model)
+                            {
+                                if (!effectiveRegion || !command.mesh || command.submeshIndex >= command.mesh->GetSubmeshCount())
+                                    return true;
+                                const auto instanceBounds = TransformShadowBounds(
+                                    command.mesh->GetSubmesh(command.submeshIndex).bounds, model);
+                                return IsBoundsOverlappingDirectionalRegion(
+                                    instanceBounds, cascadeProjection.lightViewMatrix,
+                                    cascadeShadowWorldOrigin, effectiveRegion->min, effectiveRegion->max);
+                            },
+                            m_shadowPassShader, m_instanceBuffer, m_instanceCapacity,
+                            m_indirectBuffer, m_indirectCapacity, m_indirectDrawEnabled,
+                            m_indirectDrawValidated, shadowBatchInstances);
+                        drawStats.submittedInstances += regionStats.submittedInstances;
+                        drawStats.submittedBatches += regionStats.submittedBatches;
+                        drawStats.submittedTriangles += regionStats.submittedTriangles;
+                        drawStats.materialGroups += regionStats.materialGroups;
+                        drawStats.apiDrawCalls += regionStats.apiDrawCalls;
+                        updatedPixels += drawWidth * drawHeight;
                         glDisable(GL_SCISSOR_TEST);
+                    };
+
+                    if (forceFullDirtyCascade)
+                    {
+                        drawRegion(0, 0, shadowResolution, shadowResolution, nullptr, true);
+                    }
+                    else if (requiresScrollCopy)
+                    {
+                        if (cascadeScroll.x != 0)
+                        {
+                            const int width = std::abs(cascadeScroll.x);
+                            const int x = cascadeScroll.x > 0 ? 0 : shadowResolution - width;
+                            const auto exposedRegion = lightSpaceRegionForPixels(x, 0, width, shadowResolution);
+                            drawRegion(x, 0, width, shadowResolution, &exposedRegion, false);
+                        }
+                        if (cascadeScroll.y != 0)
+                        {
+                            const int height = std::abs(cascadeScroll.y);
+                            const int y = cascadeScroll.y > 0 ? 0 : shadowResolution - height;
+                            const auto exposedRegion = lightSpaceRegionForPixels(0, y, shadowResolution, height);
+                            drawRegion(0, y, shadowResolution, height, &exposedRegion, false);
+                        }
+                        if (dirtyRegion.valid)
+                            drawRegion(dirtyRegion.pixelX, dirtyRegion.pixelY, dirtyRegion.pixelWidth,
+                                       dirtyRegion.pixelHeight, &dirtyRegion, true);
+                        glCopyImageSubData(renderDepthTexture, GL_TEXTURE_2D, 0, 0, 0, 0,
+                                           cascadeMap->GetTextureID(), GL_TEXTURE_2D, 0, 0, 0, 0,
+                                           shadowResolution, shadowResolution, 1);
+                    }
+                    else if (dirtyRegion.valid)
+                    {
+                        drawRegion(dirtyRegion.pixelX, dirtyRegion.pixelY, dirtyRegion.pixelWidth,
+                                   dirtyRegion.pixelHeight, &dirtyRegion, true);
+                    }
+                    else
+                    {
+                        drawRegion(0, 0, shadowResolution, shadowResolution, nullptr, true);
                     }
                     if (ctx.renderer)
                     {
                         ctx.renderer->RecordShadowMapUpdate(
-                            dirtyRegion.valid
-                                ? dirtyRegion.pixelWidth * dirtyRegion.pixelHeight
-                                : shadowResolution * shadowResolution,
+                            updatedPixels,
                             drawStats.submittedInstances,
                             drawStats.submittedBatches,
                             drawStats.submittedTriangles,
@@ -1950,6 +2213,7 @@ namespace PlutoGE::render
                 {
                     return SelectDefaultShadowLod(*shadowCaster.command);
                 },
+                [](const PlutoGE::render::RenderCommand &, const glm::mat4 &) { return true; },
                 m_shadowPassShader,
                 m_instanceBuffer,
                 m_instanceCapacity,

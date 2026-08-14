@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <array>
 
 namespace PlutoGE::render
 {
@@ -13,7 +14,7 @@ namespace PlutoGE::render
     {
     public:
         ShadowPass() = default;
-        ~ShadowPass() = default;
+        ~ShadowPass() override;
 
         void Initialize() override;
         void Execute(const RenderContext &ctx) override;
@@ -32,5 +33,7 @@ namespace PlutoGE::render
         std::uint64_t m_shadowCasterFingerprint = 0;
         bool m_hasShadowCasterFingerprint = false;
         bool m_allCachedShadowCastersStatic = false;
+        std::array<unsigned int, 4> m_directionalScrollScratchTextures{};
+        std::array<int, 4> m_directionalScrollScratchResolutions{};
     };
 }

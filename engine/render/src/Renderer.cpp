@@ -721,6 +721,12 @@ namespace PlutoGE::render
 
     void Renderer::RenderFrame(const CameraData &cameraData, RenderTarget *renderTarget, std::vector<scene::Light *> lights, const std::vector<IPostProcessEffect *> *postProcessEffects, const scene::Scene *scene, bool renderEditorGrid, bool interactivePreview)
     {
+        const auto renderFrameStart = std::chrono::high_resolution_clock::now();
+        const auto elapsedMs = [](const auto &start, const auto &end)
+        {
+            return std::chrono::duration<float, std::milli>(end - start).count();
+        };
+
         if (!m_isInitialized)
             return;
 
@@ -751,6 +757,8 @@ namespace PlutoGE::render
         }
 
         Shader::ResetStateCache();
+        const auto contextSetupEnd = std::chrono::high_resolution_clock::now();
+        m_cpuFrameStats.renderFrameContextSetupMs += elapsedMs(renderFrameStart, contextSetupEnd);
 
         ++m_profiledRenderCount;
 
@@ -789,10 +797,20 @@ namespace PlutoGE::render
         frameResources->hasLastRenderedCameraData = true;
         frameResources->lastUnjitteredCameraData = cameraData;
         frameResources->hasLastUnjitteredCameraData = true;
+        const auto resourceSetupEnd = std::chrono::high_resolution_clock::now();
+        m_cpuFrameStats.renderFrameResourceSetupMs += elapsedMs(contextSetupEnd, resourceSetupEnd);
 
+        const auto lodUpdateStart = resourceSetupEnd;
         UpdateRenderCommandLods(activeCameraData, renderHeight);
-        EnsureRenderCommandsSorted();
+        const auto lodUpdateEnd = std::chrono::high_resolution_clock::now();
+        m_cpuFrameStats.renderFrameLodUpdateMs += elapsedMs(lodUpdateStart, lodUpdateEnd);
 
+        const auto commandSortStart = lodUpdateEnd;
+        EnsureRenderCommandsSorted();
+        const auto commandSortEnd = std::chrono::high_resolution_clock::now();
+        m_cpuFrameStats.renderFrameCommandSortMs += elapsedMs(commandSortStart, commandSortEnd);
+
+        const auto visibilityStart = commandSortEnd;
         m_visibleRenderCommands.clear();
         m_visibleRenderCommands.reserve(m_renderCommands.size());
         const auto frustumPlanes = ExtractFrustumPlanes(activeCameraData.projection * activeCameraData.view);
@@ -826,6 +844,8 @@ namespace PlutoGE::render
         }
         m_cpuFrameStats.visibleRenderCommandCount = static_cast<int>(m_visibleRenderCommands.size());
         m_cpuFrameStats.frustumCulledRenderCommandCount = static_cast<int>(m_renderCommands.size() - m_visibleRenderCommands.size());
+        const auto visibilityEnd = std::chrono::high_resolution_clock::now();
+        m_cpuFrameStats.renderFrameVisibilityMs += elapsedMs(visibilityStart, visibilityEnd);
 
         RenderContext ctx{
             .renderer = this,
@@ -855,6 +875,7 @@ namespace PlutoGE::render
 
         if (m_shadowPass)
         {
+            const auto shadowSubmissionStart = std::chrono::high_resolution_clock::now();
             auto *shadowPass = static_cast<ShadowPass *>(m_shadowPass);
             RenderContext shadowCtx = ctx;
             shadowCtx.cameraData = cameraData;
@@ -868,27 +889,19 @@ namespace PlutoGE::render
             }
             else
             {
-            static thread_local std::vector<RenderCommand> shadowRenderCommands;
-            shadowRenderCommands.clear();
-            shadowRenderCommands.reserve(m_renderCommands.size());
-            for (const auto &command : m_renderCommands)
-            {
-                if (PassesDistanceCull(command, cameraPosition, command.maxShadowDistance))
-                {
-                    RenderCommand shadowCommand = CullRenderCommandInstances(
-                        command, cameraPosition, command.maxShadowDistance, nullptr);
-                    if (!shadowCommand.instanceModels || !shadowCommand.instanceModels->empty())
-                    {
-                        shadowRenderCommands.push_back(std::move(shadowCommand));
-                    }
-                }
+                // Keep the original command stream intact until the shadow pass
+                // has established that a surface really needs updating. The
+                // former eager copy transformed and distance-tested every
+                // foliage instance even on frames that rendered no shadows.
+                // Per-instance shadow-distance filtering now happens lazily in
+                // ShadowPass while preparing an actual draw surface.
+                ExecutePassWithGpuTiming(*m_shadowPass, shadowCtx, 0);
             }
-
-            shadowCtx.renderCommands = &shadowRenderCommands;
-            ExecutePassWithGpuTiming(*m_shadowPass, shadowCtx, 0);
-            }
+            const auto shadowSubmissionEnd = std::chrono::high_resolution_clock::now();
+            m_cpuFrameStats.renderFrameShadowSubmissionMs += elapsedMs(shadowSubmissionStart, shadowSubmissionEnd);
         }
 
+        const auto passSubmissionStart = std::chrono::high_resolution_clock::now();
         for (std::size_t index = 0; index < m_renderPasses.size(); ++index)
         {
             if (std::string_view(m_renderPasses[index]->GetName()) == "Volumetric Clouds")
@@ -898,11 +911,17 @@ namespace PlutoGE::render
 
             ExecutePassWithGpuTiming(*m_renderPasses[index], ctx, index + 1);
         }
+        const auto passSubmissionEnd = std::chrono::high_resolution_clock::now();
+        m_cpuFrameStats.renderFramePassSubmissionMs += elapsedMs(passSubmissionStart, passSubmissionEnd);
 
+        const auto finalizationStart = passSubmissionEnd;
         frameResources->previousCameraData = activeCameraData;
         frameResources->hasPreviousCameraData = true;
         frameResources->previousShadowCameraData = cameraData;
         frameResources->hasPreviousShadowCameraData = true;
+        const auto renderFrameEnd = std::chrono::high_resolution_clock::now();
+        m_cpuFrameStats.renderFrameFinalizationMs += elapsedMs(finalizationStart, renderFrameEnd);
+        m_cpuFrameStats.renderFrameTotalMs += elapsedMs(renderFrameStart, renderFrameEnd);
     }
 
     bool Renderer::GetLastRenderedCameraData(RenderTarget *renderTarget, CameraData &cameraData) const

@@ -1485,6 +1485,29 @@ namespace PlutoGE::render
         }
 
         const ShadowCasterFrameState casterFrameState = InspectShadowCasters(*ctx.renderCommands);
+        const glm::vec3 shadowCameraPosition = ctx.hasCameraData
+                                                   ? glm::vec3(glm::inverse(ctx.cameraData.view)[3])
+                                                   : glm::vec3(0.0f);
+        const auto passesInstanceShadowDistance = [&](const PlutoGE::render::RenderCommand &command,
+                                                       const glm::mat4 &model)
+        {
+            if (!ctx.hasCameraData || command.maxShadowDistance <= 0.0f ||
+                command.maxShadowDistance == std::numeric_limits<float>::max())
+            {
+                return true;
+            }
+            if (!command.mesh || command.submeshIndex >= command.mesh->GetSubmeshCount())
+            {
+                return false;
+            }
+
+            const auto bounds = TransformShadowBounds(
+                command.mesh->GetSubmesh(command.submeshIndex).bounds, model);
+            const float maximumCenterDistance = command.maxShadowDistance +
+                                                glm::max(bounds.radius, 0.0f);
+            const glm::vec3 offset = bounds.center - shadowCameraPosition;
+            return glm::dot(offset, offset) <= maximumCenterDistance * maximumCenterDistance;
+        };
         m_allCachedShadowCastersStatic = casterFrameState.allCastersStatic;
         const bool shadowCasterTopologyChanged = !m_hasShadowCasterFingerprint ||
                                                  casterFrameState.fingerprint != m_shadowCasterFingerprint;
@@ -1733,7 +1756,10 @@ namespace PlutoGE::render
                         {
                             return SelectDefaultShadowLod(*shadowCaster.command);
                         },
-                        [](const PlutoGE::render::RenderCommand &, const glm::mat4 &) { return true; },
+                        [&](const PlutoGE::render::RenderCommand &command, const glm::mat4 &model)
+                        {
+                            return passesInstanceShadowDistance(command, model);
+                        },
                         m_shadowPassShader,
                         m_instanceBuffer,
                         m_instanceCapacity,
@@ -2044,6 +2070,8 @@ namespace PlutoGE::render
                             { return SelectDirectionalShadowLod(*shadowCaster.command, cascadeIndex, cascadeCount, shadowResolution); },
                             [&](const PlutoGE::render::RenderCommand &command, const glm::mat4 &model)
                             {
+                                if (!passesInstanceShadowDistance(command, model))
+                                    return false;
                                 if (!effectiveRegion || !command.mesh || command.submeshIndex >= command.mesh->GetSubmeshCount())
                                     return true;
                                 const auto instanceBounds = TransformShadowBounds(
@@ -2194,7 +2222,10 @@ namespace PlutoGE::render
                 {
                     return SelectDefaultShadowLod(*shadowCaster.command);
                 },
-                [](const PlutoGE::render::RenderCommand &, const glm::mat4 &) { return true; },
+                [&](const PlutoGE::render::RenderCommand &command, const glm::mat4 &model)
+                {
+                    return passesInstanceShadowDistance(command, model);
+                },
                 m_shadowPassShader,
                 m_instanceBuffer,
                 m_instanceCapacity,

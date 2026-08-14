@@ -182,6 +182,16 @@ namespace PlutoGE::ui
         report << "Context restore: " << timingStats.contextRestoreMs << " ms\n";
         report << "Platform viewports: " << timingStats.platformViewportCount << "\n";
         report << "CPU passes total: " << totalCpuPassTimeMs << " ms\n";
+        report << "Renderer frame total: " << cpuFrameStats.renderFrameTotalMs << " ms\n";
+        report << "Renderer / Context + effects: " << cpuFrameStats.renderFrameContextSetupMs << " ms\n";
+        report << "Renderer / Resources + camera: " << cpuFrameStats.renderFrameResourceSetupMs << " ms\n";
+        report << "Renderer / LOD update: " << cpuFrameStats.renderFrameLodUpdateMs << " ms\n";
+        report << "Renderer / Command sort: " << cpuFrameStats.renderFrameCommandSortMs << " ms\n";
+        report << "Renderer / Visibility + instance culling: " << cpuFrameStats.renderFrameVisibilityMs << " ms\n";
+        report << "Renderer / Shadow command preparation: " << cpuFrameStats.renderFrameShadowPreparationMs << " ms\n";
+        report << "Renderer / Shadow submission: " << cpuFrameStats.renderFrameShadowSubmissionMs << " ms\n";
+        report << "Renderer / Main pass submission: " << cpuFrameStats.renderFramePassSubmissionMs << " ms\n";
+        report << "Renderer / Finalization: " << cpuFrameStats.renderFrameFinalizationMs << " ms\n";
         report << "Render commands submitted: " << cpuFrameStats.submittedRenderCommandCount << "\n";
         report << "Render commands submission culled: " << cpuFrameStats.submissionCulledRenderCommandCount << "\n";
         report << "Render commands visible: " << cpuFrameStats.visibleRenderCommandCount << "\n";

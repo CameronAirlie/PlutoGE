@@ -170,6 +170,20 @@ namespace PlutoGE::ui
         ImGui::Separator();
         ImGui::Text("Profiled renders: %d", m_renderer->GetProfiledRenderCount());
         ImGui::Text("CPU passes total: %.2f ms", m_renderer->GetTotalCpuPassTimeMs());
+        if (ImGui::TreeNode("Renderer frame breakdown"))
+        {
+            ImGui::Text("Total: %.2f ms", cpuFrameStats.renderFrameTotalMs);
+            ImGui::Text("Context + effects: %.2f ms", cpuFrameStats.renderFrameContextSetupMs);
+            ImGui::Text("Resources + camera: %.2f ms", cpuFrameStats.renderFrameResourceSetupMs);
+            ImGui::Text("LOD update: %.2f ms", cpuFrameStats.renderFrameLodUpdateMs);
+            ImGui::Text("Command sort: %.2f ms", cpuFrameStats.renderFrameCommandSortMs);
+            ImGui::Text("Visibility + instance culling: %.2f ms", cpuFrameStats.renderFrameVisibilityMs);
+            ImGui::Text("Shadow command preparation: %.2f ms", cpuFrameStats.renderFrameShadowPreparationMs);
+            ImGui::Text("Shadow submission: %.2f ms", cpuFrameStats.renderFrameShadowSubmissionMs);
+            ImGui::Text("Main pass submission: %.2f ms", cpuFrameStats.renderFramePassSubmissionMs);
+            ImGui::Text("Finalization: %.2f ms", cpuFrameStats.renderFrameFinalizationMs);
+            ImGui::TreePop();
+        }
         ImGui::Text("Render commands: %d submitted, %d submission culled", cpuFrameStats.submittedRenderCommandCount, cpuFrameStats.submissionCulledRenderCommandCount);
         ImGui::Text("Visible commands: %d visible, %d frustum culled", cpuFrameStats.visibleRenderCommandCount, cpuFrameStats.frustumCulledRenderCommandCount);
         ImGui::Text("Visible LOD availability: %d single-level, %d multi-level", cpuFrameStats.visibleSingleLodCommandCount, cpuFrameStats.visibleMultiLodCommandCount);

@@ -329,6 +329,24 @@ namespace PlutoGE::render
             )";
 
             source.fragmentSource += R"(
+                float SampleShadowComparisonBilinear(sampler2D shadowMap, vec2 uv, float receiverDepth)
+                {
+                    ivec2 mapSize = textureSize(shadowMap, 0);
+                    vec2 texelPosition = uv * vec2(mapSize) - vec2(0.5);
+                    ivec2 baseTexel = ivec2(floor(texelPosition));
+                    vec2 fraction = fract(texelPosition);
+                    ivec2 maximumTexel = mapSize - ivec2(1);
+                    ivec2 p00 = clamp(baseTexel, ivec2(0), maximumTexel);
+                    ivec2 p10 = clamp(baseTexel + ivec2(1, 0), ivec2(0), maximumTexel);
+                    ivec2 p01 = clamp(baseTexel + ivec2(0, 1), ivec2(0), maximumTexel);
+                    ivec2 p11 = clamp(baseTexel + ivec2(1, 1), ivec2(0), maximumTexel);
+                    float v00 = receiverDepth > texelFetch(shadowMap, p00, 0).r ? 1.0 : 0.0;
+                    float v10 = receiverDepth > texelFetch(shadowMap, p10, 0).r ? 1.0 : 0.0;
+                    float v01 = receiverDepth > texelFetch(shadowMap, p01, 0).r ? 1.0 : 0.0;
+                    float v11 = receiverDepth > texelFetch(shadowMap, p11, 0).r ? 1.0 : 0.0;
+                    return mix(mix(v00, v10, fraction.x), mix(v01, v11, fraction.x), fraction.y);
+                }
+
                 float SampleShadowMapPCF(sampler2D shadowMap, vec3 projectedCoords, float depthBias, float softness)
                 {
                     vec2 texelSize = 1.0 / vec2(textureSize(shadowMap, 0));
@@ -340,20 +358,36 @@ namespace PlutoGE::render
                     }
 
                     float kernelRadius = clamp(softness, 0.5, 3.0);
-                    vec2 stepSize = texelSize * kernelRadius;
-                    float shadow = 0.0;
-                    float totalWeight = 0.0;
-                    for (int y = -1; y <= 1; ++y)
+                    vec2 probeStep = texelSize * kernelRadius;
+                    float center = receiverDepth > texture(shadowMap, projectedCoords.xy).r ? 1.0 : 0.0;
+                    float probes = center;
+                    probes += receiverDepth > texture(shadowMap, projectedCoords.xy + vec2(probeStep.x, 0.0)).r ? 1.0 : 0.0;
+                    probes += receiverDepth > texture(shadowMap, projectedCoords.xy - vec2(probeStep.x, 0.0)).r ? 1.0 : 0.0;
+                    probes += receiverDepth > texture(shadowMap, projectedCoords.xy + vec2(0.0, probeStep.y)).r ? 1.0 : 0.0;
+                    probes += receiverDepth > texture(shadowMap, projectedCoords.xy - vec2(0.0, probeStep.y)).r ? 1.0 : 0.0;
+
+                    // Most pixels are nowhere near a visibility boundary. Keep
+                    // those at five taps and spend the denser disk only where it
+                    // can improve silhouette antialiasing.
+                    if (probes <= 0.0 || probes >= 5.0)
                     {
-                        for (int x = -1; x <= 1; ++x)
-                        {
-                            float weight = float((2 - abs(x)) * (2 - abs(y)));
-                            float closestDepth = texture(shadowMap, projectedCoords.xy + vec2(x, y) * stepSize).r;
-                            shadow += (receiverDepth > closestDepth ? 1.0 : 0.0) * weight;
-                            totalWeight += weight;
-                        }
+                        return center;
                     }
-                    return shadow / totalWeight;
+
+                    const vec2 poissonDisk[4] = vec2[](
+                        vec2(-0.94201624, -0.39906216), vec2(0.94558609, -0.76890725),
+                        vec2(-0.38277543, 0.27676845), vec2(0.97484398, 0.75648379)
+                    );
+                    float shadow = 0.0;
+                    vec2 diskScale = texelSize * kernelRadius * 1.35;
+                    for (int sampleIndex = 0; sampleIndex < 4; ++sampleIndex)
+                    {
+                        shadow += SampleShadowComparisonBilinear(
+                            shadowMap,
+                            projectedCoords.xy + poissonDisk[sampleIndex] * diskScale,
+                            receiverDepth);
+                    }
+                    return shadow * 0.25;
                 }
 
                 float SampleDirectionalCascadeShadow(int cascadeIndex, vec3 projectedCoords, float depthBias, float softness)
@@ -810,14 +844,24 @@ namespace PlutoGE::render
                             // outline between fully lit and shadowed pixels.
                             bool centerOccluded = centerShadow >= 0.5;
                             bool sampleOccluded = sampleShadow >= 0.5;
+                            float visibilityEdgeWeight = 1.0;
                             if (centerOccluded != sampleOccluded)
                             {
-                                continue;
+                                // A hard visibility rejection preserves a
+                                // one-pixel staircase at the 0.5 contour. Allow
+                                // only the immediate neighbour to contribute at
+                                // low weight, providing narrow subpixel coverage
+                                // without recreating the former wide halo.
+                                if (sampleIndex > 1)
+                                {
+                                    continue;
+                                }
+                                visibilityEdgeWeight = 0.18;
                             }
 
                             float normalWeight = smoothstep(uNormalThreshold, normalBlendEnd, dot(centerNormal, sampleNormal));
                             float depthWeight = exp(-depthDelta / max(depthScale, 0.0001)) * edgeStop;
-                            float weight = baseWeight * normalWeight * depthWeight;
+                            float weight = baseWeight * normalWeight * depthWeight * visibilityEdgeWeight;
                             shadow += sampleShadow * weight;
                             totalWeight += weight;
                         }
@@ -827,6 +871,97 @@ namespace PlutoGE::render
                 }
             )";
 
+            return Shader::Create(source);
+        }
+
+        Shader *CreateShadowMaskUpsampleShader()
+        {
+            ShaderSource source;
+            source.vertexSource = R"(
+                #version 330 core
+                out vec2 UV;
+                const vec2 vertices[3] = vec2[](vec2(-1.0, -1.0), vec2(3.0, -1.0), vec2(-1.0, 3.0));
+                void main()
+                {
+                    gl_Position = vec4(vertices[gl_VertexID], 0.0, 1.0);
+                    UV = gl_Position.xy * 0.5 + 0.5;
+                }
+            )";
+            source.fragmentSource = R"(
+                #version 330 core
+                in vec2 UV;
+                out vec4 FragColor;
+                uniform sampler2D uShadowMaskTexture;
+                uniform sampler2D uScenePositionTexture;
+                uniform sampler2D uSceneNormalTexture;
+                uniform vec3 uViewPos;
+                uniform mat4 uViewMatrix;
+                uniform float uDepthScale;
+                uniform float uMinDepthScale;
+                uniform float uNormalThreshold;
+                uniform float uNormalSoftness;
+
+                float ComputeViewDepth(vec3 worldPosition)
+                {
+                    vec3 cameraForward = -normalize(vec3(uViewMatrix[0][2], uViewMatrix[1][2], uViewMatrix[2][2]));
+                    return max(dot(worldPosition - uViewPos, cameraForward), 0.0);
+                }
+
+                void main()
+                {
+                    vec3 centerPosition = texture(uScenePositionTexture, UV).rgb;
+                    vec3 centerNormalRaw = texture(uSceneNormalTexture, UV).rgb;
+                    ivec2 maskSize = textureSize(uShadowMaskTexture, 0);
+                    vec2 maskPosition = UV * vec2(maskSize) - vec2(0.5);
+                    ivec2 baseTexel = ivec2(floor(maskPosition));
+                    vec2 fraction = fract(maskPosition);
+                    ivec2 maximumTexel = maskSize - ivec2(1);
+
+                    if (dot(centerNormalRaw, centerNormalRaw) <= 0.000001)
+                    {
+                        float value = texelFetch(uShadowMaskTexture, clamp(baseTexel, ivec2(0), maximumTexel), 0).r;
+                        FragColor = vec4(vec3(value), 1.0);
+                        return;
+                    }
+
+                    vec3 centerNormal = normalize(centerNormalRaw);
+                    float centerDepth = ComputeViewDepth(centerPosition);
+                    float depthTolerance = max(centerDepth * uDepthScale, uMinDepthScale);
+                    float normalBlendEnd = min(uNormalThreshold + uNormalSoftness, 1.0);
+                    float shadow = 0.0;
+                    float totalWeight = 0.0;
+
+                    for (int y = 0; y < 2; ++y)
+                    {
+                        for (int x = 0; x < 2; ++x)
+                        {
+                            ivec2 texel = clamp(baseTexel + ivec2(x, y), ivec2(0), maximumTexel);
+                            vec2 sampleUv = (vec2(texel) + vec2(0.5)) / vec2(maskSize);
+                            vec3 samplePosition = texture(uScenePositionTexture, sampleUv).rgb;
+                            vec3 sampleNormalRaw = texture(uSceneNormalTexture, sampleUv).rgb;
+                            if (dot(sampleNormalRaw, sampleNormalRaw) <= 0.000001) continue;
+
+                            float bilinearWeight = (x == 0 ? 1.0 - fraction.x : fraction.x) *
+                                                   (y == 0 ? 1.0 - fraction.y : fraction.y);
+                            float depthDelta = abs(ComputeViewDepth(samplePosition) - centerDepth);
+                            float depthWeight = exp(-depthDelta / max(depthTolerance, 0.0001));
+                            float normalWeight = smoothstep(
+                                uNormalThreshold, normalBlendEnd,
+                                dot(centerNormal, normalize(sampleNormalRaw)));
+                            float weight = bilinearWeight * depthWeight * normalWeight;
+                            shadow += texelFetch(uShadowMaskTexture, texel, 0).r * weight;
+                            totalWeight += weight;
+                        }
+                    }
+
+                    if (totalWeight <= 0.0001)
+                    {
+                        shadow = texelFetch(uShadowMaskTexture, clamp(ivec2(round(maskPosition)), ivec2(0), maximumTexel), 0).r;
+                        totalWeight = 1.0;
+                    }
+                    FragColor = vec4(vec3(shadow / totalWeight), 1.0);
+                }
+            )";
             return Shader::Create(source);
         }
 
@@ -1073,6 +1208,7 @@ namespace PlutoGE::render
         m_lightingPassShader = Shader::CreateLightingPassShader();
         m_directLightingPassShader = CreateDirectLightingAccumulationShader();
         m_shadowMaskBlurShader = CreateShadowMaskBlurShader();
+        m_shadowMaskUpsampleShader = CreateShadowMaskUpsampleShader();
 
         ShaderSource indirectCompositeSource;
         indirectCompositeSource.vertexSource = R"(
@@ -1227,7 +1363,7 @@ namespace PlutoGE::render
         m_indirectCompositeShader = Shader::Create(indirectCompositeSource);
     }
 
-    void LightingPass::EnsureShadowMaskTargets(int width, int height)
+    void LightingPass::EnsureShadowMaskTargets(int width, int height, int outputWidth, int outputHeight)
     {
         width = std::max(width, 1);
         height = std::max(height, 1);
@@ -1257,21 +1393,43 @@ namespace PlutoGE::render
         {
             m_blurredShadowMaskTarget->Resize(width, height);
         }
+
+        outputWidth = std::max(outputWidth, 1);
+        outputHeight = std::max(outputHeight, 1);
+        if (!m_upsampledShadowMaskTarget)
+        {
+            RenderTargetConfig config;
+            config.width = outputWidth;
+            config.height = outputHeight;
+            config.clearColor = glm::vec4(0.0f);
+            m_upsampledShadowMaskTarget = std::make_unique<RenderTarget>(config);
+        }
+        else
+        {
+            m_upsampledShadowMaskTarget->Resize(outputWidth, outputHeight);
+        }
     }
 
     RenderTarget *LightingPass::GenerateDirectionalShadowMask(const RenderContext &ctx, const scene::Light &light, bool filtered)
     {
-        if (!m_directLightingPassShader || !m_shadowMaskBlurShader || !ctx.temporaryRenderTarget || !ctx.gBuffer)
+        if (!m_directLightingPassShader || !m_shadowMaskBlurShader || !m_shadowMaskUpsampleShader || !ctx.temporaryRenderTarget || !ctx.gBuffer)
         {
             return nullptr;
         }
 
         const float configuredRenderScale = glm::clamp(light.directionalShadowSettings.screenSpaceFilterRenderScale, 0.25f, 1.0f);
+        // A filtered visibility mask must align one-to-one with the final
+        // lighting pixels. Upsampling a reduced mask cannot respect foreground
+        // depth discontinuities: it creates bright halos around lit objects in
+        // front of shadowed surfaces and quantizes distant shadow silhouettes.
+        // Raw/debug masks retain the configured scale; the production filtered
+        // path runs at full resolution for correct reconstruction.
         const float renderScale = configuredRenderScale;
         const int maskWidth = std::max(1, static_cast<int>(std::lround(static_cast<float>(ctx.temporaryRenderTarget->GetWidth()) * renderScale)));
         const int maskHeight = std::max(1, static_cast<int>(std::lround(static_cast<float>(ctx.temporaryRenderTarget->GetHeight()) * renderScale)));
-        EnsureShadowMaskTargets(maskWidth, maskHeight);
-        if (!m_rawShadowMaskTarget || !m_blurredShadowMaskTarget)
+        EnsureShadowMaskTargets(maskWidth, maskHeight,
+                                ctx.temporaryRenderTarget->GetWidth(), ctx.temporaryRenderTarget->GetHeight());
+        if (!m_rawShadowMaskTarget || !m_blurredShadowMaskTarget || !m_upsampledShadowMaskTarget)
         {
             return nullptr;
         }
@@ -1281,8 +1439,12 @@ namespace PlutoGE::render
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
         glBindTexture(GL_TEXTURE_2D, m_blurredShadowMaskTarget->GetColorTextureID());
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        // The filtered mask is often rendered below full resolution. Linear
+        // reconstruction prevents each mask texel from becoming a visible
+        // screen-space block along diagonal shadow edges. The raw input remains
+        // nearest-filtered so the bilateral passes control all prefiltering.
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glBindTexture(GL_TEXTURE_2D, 0);
 
         Graphics::BindRenderTarget(m_rawShadowMaskTarget.get());
@@ -1355,11 +1517,43 @@ namespace PlutoGE::render
         Graphics::DrawFullscreenTriangle();
 
         glBindTexture(GL_TEXTURE_2D, m_rawShadowMaskTarget->GetColorTextureID());
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, renderScale < 1.0f ? GL_LINEAR : GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, renderScale < 1.0f ? GL_LINEAR : GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
         glBindTexture(GL_TEXTURE_2D, 0);
 
-        return m_rawShadowMaskTarget.get();
+        if (renderScale >= 0.999f)
+        {
+            return m_rawShadowMaskTarget.get();
+        }
+
+        m_shadowMaskUpsampleShader->Bind();
+        glActiveTexture(GL_TEXTURE0 + kShadowMaskTextureSlot);
+        glBindTexture(GL_TEXTURE_2D, m_rawShadowMaskTarget->GetColorTextureID());
+        m_shadowMaskUpsampleShader->SetUniform("uShadowMaskTexture", kShadowMaskTextureSlot);
+        glActiveTexture(GL_TEXTURE0 + kShadowMaskPositionTextureSlot);
+        glBindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetPositionTextureID());
+        m_shadowMaskUpsampleShader->SetUniform("uScenePositionTexture", kShadowMaskPositionTextureSlot);
+        glActiveTexture(GL_TEXTURE0 + kShadowMaskNormalTextureSlot);
+        glBindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetNormalTextureID());
+        m_shadowMaskUpsampleShader->SetUniform("uSceneNormalTexture", kShadowMaskNormalTextureSlot);
+        m_shadowMaskUpsampleShader->SetUniform("uViewPos", cameraPosition);
+        m_shadowMaskUpsampleShader->SetUniform("uViewMatrix", ctx.cameraData.view);
+        m_shadowMaskUpsampleShader->SetUniform("uDepthScale", glm::max(light.directionalShadowSettings.screenSpaceFilterDepthScale, 0.0f));
+        m_shadowMaskUpsampleShader->SetUniform("uMinDepthScale", glm::max(light.directionalShadowSettings.screenSpaceFilterMinDepthScale, 0.001f));
+        m_shadowMaskUpsampleShader->SetUniform("uNormalThreshold", glm::clamp(light.directionalShadowSettings.screenSpaceFilterNormalThreshold, -1.0f, 1.0f));
+        m_shadowMaskUpsampleShader->SetUniform("uNormalSoftness", glm::max(light.directionalShadowSettings.screenSpaceFilterNormalSoftness, 0.001f));
+
+        Graphics::BindRenderTarget(m_upsampledShadowMaskTarget.get());
+        glViewport(0, 0, m_upsampledShadowMaskTarget->GetWidth(), m_upsampledShadowMaskTarget->GetHeight());
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        Graphics::DrawFullscreenTriangle();
+
+        glBindTexture(GL_TEXTURE_2D, m_upsampledShadowMaskTarget->GetColorTextureID());
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        return m_upsampledShadowMaskTarget.get();
     }
 
     void LightingPass::Execute(const RenderContext &ctx)

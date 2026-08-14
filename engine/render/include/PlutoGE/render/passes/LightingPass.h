@@ -26,14 +26,16 @@ namespace PlutoGE::render
         const char *GetName() const override { return "Lighting"; }
 
     private:
-        void EnsureShadowMaskTargets(int width, int height);
+        void EnsureShadowMaskTargets(int width, int height, int outputWidth, int outputHeight);
         RenderTarget *GenerateDirectionalShadowMask(const RenderContext &ctx, const scene::Light &light, bool filtered);
 
         Shader *m_lightingPassShader = nullptr;
         Shader *m_directLightingPassShader = nullptr;
         Shader *m_shadowMaskBlurShader = nullptr;
+        Shader *m_shadowMaskUpsampleShader = nullptr;
         Shader *m_indirectCompositeShader = nullptr;
         std::unique_ptr<RenderTarget> m_rawShadowMaskTarget;
         std::unique_ptr<RenderTarget> m_blurredShadowMaskTarget;
+        std::unique_ptr<RenderTarget> m_upsampledShadowMaskTarget;
     };
 }

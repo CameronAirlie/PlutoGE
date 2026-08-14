@@ -127,6 +127,16 @@ namespace PlutoGE::render
 
     struct RendererCpuFrameStats
     {
+        float renderFrameTotalMs = 0.0f;
+        float renderFrameContextSetupMs = 0.0f;
+        float renderFrameResourceSetupMs = 0.0f;
+        float renderFrameLodUpdateMs = 0.0f;
+        float renderFrameCommandSortMs = 0.0f;
+        float renderFrameVisibilityMs = 0.0f;
+        float renderFrameShadowPreparationMs = 0.0f;
+        float renderFrameShadowSubmissionMs = 0.0f;
+        float renderFramePassSubmissionMs = 0.0f;
+        float renderFrameFinalizationMs = 0.0f;
         float intermediateTargetResizeMs = 0.0f;
         int intermediateTargetResizeCount = 0;
         float gBufferResizeMs = 0.0f;

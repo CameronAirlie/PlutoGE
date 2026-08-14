@@ -17,6 +17,7 @@
 #include <functional>
 #include <iostream>
 #include <limits>
+#include <numeric>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -1013,6 +1014,151 @@ namespace
         region.pixelWidth = pixelMaxX - region.pixelX;
         region.pixelHeight = pixelMaxY - region.pixelY;
         return region;
+    }
+
+    std::vector<DirectionalShadowDirtyRegion> BuildMovedCasterDirtyRegions(
+        const std::vector<ShadowCasterEntry> &shadowCasters,
+        const DirectionalCascadeProjection &cascadeProjection,
+        const glm::vec3 &shadowWorldOrigin,
+        int shadowResolution,
+        float filterRadiusPixels)
+    {
+        std::vector<DirectionalShadowDirtyRegion> regions;
+        regions.reserve(shadowCasters.size());
+        const float safeResolution = static_cast<float>(glm::max(shadowResolution, 1));
+        const glm::vec2 texelSize = cascadeProjection.receiverExtent / safeResolution;
+        const glm::vec2 guard = texelSize * glm::max(filterRadiusPixels + 2.0f, 2.0f);
+
+        const auto buildRegion = [&](const ShadowCasterEntry &shadowCaster)
+        {
+            DirectionalShadowDirtyRegion region;
+            glm::vec2 dirtyMin(std::numeric_limits<float>::max());
+            glm::vec2 dirtyMax(std::numeric_limits<float>::lowest());
+            const auto includeBounds = [&](const PlutoGE::render::MeshBounds &bounds)
+            {
+                if (!IsBoundsOverlappingDirectionalRegion(
+                        bounds, cascadeProjection.lightViewMatrix, shadowWorldOrigin,
+                        cascadeProjection.receiverMin, cascadeProjection.receiverMax))
+                {
+                    return;
+                }
+                const glm::vec3 relativeCenter = bounds.center - shadowWorldOrigin;
+                const glm::vec3 lightSpaceCenter = glm::vec3(
+                    cascadeProjection.lightViewMatrix * glm::vec4(relativeCenter, 1.0f));
+                const glm::vec2 radius(glm::max(bounds.radius, 0.001f));
+                dirtyMin = glm::min(dirtyMin, glm::vec2(lightSpaceCenter) - radius);
+                dirtyMax = glm::max(dirtyMax, glm::vec2(lightSpaceCenter) + radius);
+                region.valid = true;
+            };
+            includeBounds(shadowCaster.previousBounds);
+            includeBounds(shadowCaster.bounds);
+            if (!region.valid)
+                return region;
+
+            dirtyMin = glm::max(dirtyMin - guard, cascadeProjection.receiverMin);
+            dirtyMax = glm::min(dirtyMax + guard, cascadeProjection.receiverMax);
+            if (glm::any(glm::lessThanEqual(dirtyMax, dirtyMin)))
+            {
+                region.valid = false;
+                return region;
+            }
+
+            region.min = dirtyMin;
+            region.max = dirtyMax;
+            const glm::vec2 normalizedMin = glm::clamp(
+                (dirtyMin - cascadeProjection.receiverMin) / cascadeProjection.receiverExtent,
+                glm::vec2(0.0f), glm::vec2(1.0f));
+            const glm::vec2 normalizedMax = glm::clamp(
+                (dirtyMax - cascadeProjection.receiverMin) / cascadeProjection.receiverExtent,
+                glm::vec2(0.0f), glm::vec2(1.0f));
+            region.pixelX = glm::clamp(static_cast<int>(std::floor(normalizedMin.x * safeResolution)), 0, shadowResolution - 1);
+            region.pixelY = glm::clamp(static_cast<int>(std::floor(normalizedMin.y * safeResolution)), 0, shadowResolution - 1);
+            const int pixelMaxX = glm::clamp(static_cast<int>(std::ceil(normalizedMax.x * safeResolution)), region.pixelX + 1, shadowResolution);
+            const int pixelMaxY = glm::clamp(static_cast<int>(std::ceil(normalizedMax.y * safeResolution)), region.pixelY + 1, shadowResolution);
+            region.pixelWidth = pixelMaxX - region.pixelX;
+            region.pixelHeight = pixelMaxY - region.pixelY;
+            return region;
+        };
+
+        const auto mergeRegions = [](DirectionalShadowDirtyRegion &target,
+                                     const DirectionalShadowDirtyRegion &source)
+        {
+            const int minX = std::min(target.pixelX, source.pixelX);
+            const int minY = std::min(target.pixelY, source.pixelY);
+            const int maxX = std::max(target.pixelX + target.pixelWidth, source.pixelX + source.pixelWidth);
+            const int maxY = std::max(target.pixelY + target.pixelHeight, source.pixelY + source.pixelHeight);
+            target.pixelX = minX;
+            target.pixelY = minY;
+            target.pixelWidth = maxX - minX;
+            target.pixelHeight = maxY - minY;
+            target.min = glm::min(target.min, source.min);
+            target.max = glm::max(target.max, source.max);
+        };
+        const auto overlaps = [](const DirectionalShadowDirtyRegion &a,
+                                 const DirectionalShadowDirtyRegion &b)
+        {
+            return a.pixelX <= b.pixelX + b.pixelWidth &&
+                   b.pixelX <= a.pixelX + a.pixelWidth &&
+                   a.pixelY <= b.pixelY + b.pixelHeight &&
+                   b.pixelY <= a.pixelY + a.pixelHeight;
+        };
+
+        for (const auto &shadowCaster : shadowCasters)
+        {
+            if (!shadowCaster.hasMoved)
+                continue;
+            auto region = buildRegion(shadowCaster);
+            if (!region.valid)
+                continue;
+            for (std::size_t index = 0; index < regions.size();)
+            {
+                if (!overlaps(region, regions[index]))
+                {
+                    ++index;
+                    continue;
+                }
+                mergeRegions(region, regions[index]);
+                regions.erase(regions.begin() + static_cast<std::ptrdiff_t>(index));
+                index = 0;
+            }
+            regions.push_back(region);
+        }
+
+        // Bound draw repetition when many independent casters are scattered
+        // across a cascade. Merge the pair with the smallest additional area
+        // until the cluster count is practical.
+        constexpr std::size_t kMaximumDirtyRegionClusters = 8;
+        while (regions.size() > kMaximumDirtyRegionClusters)
+        {
+            std::size_t bestA = 0;
+            std::size_t bestB = 1;
+            std::int64_t bestGrowth = std::numeric_limits<std::int64_t>::max();
+            for (std::size_t a = 0; a + 1 < regions.size(); ++a)
+            {
+                for (std::size_t b = a + 1; b < regions.size(); ++b)
+                {
+                    const int minX = std::min(regions[a].pixelX, regions[b].pixelX);
+                    const int minY = std::min(regions[a].pixelY, regions[b].pixelY);
+                    const int maxX = std::max(regions[a].pixelX + regions[a].pixelWidth,
+                                              regions[b].pixelX + regions[b].pixelWidth);
+                    const int maxY = std::max(regions[a].pixelY + regions[a].pixelHeight,
+                                              regions[b].pixelY + regions[b].pixelHeight);
+                    const std::int64_t mergedArea = static_cast<std::int64_t>(maxX - minX) * (maxY - minY);
+                    const std::int64_t originalArea =
+                        static_cast<std::int64_t>(regions[a].pixelWidth) * regions[a].pixelHeight +
+                        static_cast<std::int64_t>(regions[b].pixelWidth) * regions[b].pixelHeight;
+                    if (mergedArea - originalArea < bestGrowth)
+                    {
+                        bestGrowth = mergedArea - originalArea;
+                        bestA = a;
+                        bestB = b;
+                    }
+                }
+            }
+            mergeRegions(regions[bestA], regions[bestB]);
+            regions.erase(regions.begin() + static_cast<std::ptrdiff_t>(bestB));
+        }
+        return regions;
     }
 
     bool IsCommandRelevantForDirectionalCascade(const ShadowCasterEntry &shadowCaster,
@@ -2182,7 +2328,7 @@ namespace PlutoGE::render
                     // unmoved dynamic caster intersecting the rectangle is
                     // included by drawRegion below, so overlapping shadows are
                     // reconstructed exactly.
-                    const auto movedCasterDirtyRegion = BuildMovedCasterDirtyRegion(
+                    const auto movedCasterDirtyRegions = BuildMovedCasterDirtyRegions(
                         shadowCasters,
                         cascadeProjection,
                         cascadeShadowWorldOrigin,
@@ -2190,27 +2336,32 @@ namespace PlutoGE::render
                         glm::max(light->directionalShadowSettings.softness, 0.0f));
                     const std::int64_t cascadePixelCount =
                         static_cast<std::int64_t>(shadowResolution) * shadowResolution;
-                    const std::int64_t dirtyPixelCount = movedCasterDirtyRegion.valid
-                                                             ? static_cast<std::int64_t>(movedCasterDirtyRegion.pixelWidth) *
-                                                                   movedCasterDirtyRegion.pixelHeight
-                                                             : cascadePixelCount;
+                    const std::int64_t dirtyPixelCount = std::accumulate(
+                        movedCasterDirtyRegions.begin(), movedCasterDirtyRegions.end(), std::int64_t{0},
+                        [](std::int64_t total, const DirectionalShadowDirtyRegion &region)
+                        {
+                            return total + static_cast<std::int64_t>(region.pixelWidth) * region.pixelHeight;
+                        });
                     constexpr float kMaximumPartialDynamicUpdateCoverage = 0.6f;
                     const bool canPartiallyRestoreDynamicDepth =
                         !staticNeedsFullRefresh &&
                         !requiresScrollCopy &&
                         cascadeScroll.valid && cascadeScroll.x == 0 && cascadeScroll.y == 0 &&
-                        movedCasterDirtyRegion.valid &&
+                        !movedCasterDirtyRegions.empty() &&
                         static_cast<double>(dirtyPixelCount) <=
                             static_cast<double>(cascadePixelCount) * kMaximumPartialDynamicUpdateCoverage;
 
                     if (canPartiallyRestoreDynamicDepth)
                     {
-                        glCopyImageSubData(
-                            staticCascadeMap->GetTextureID(), GL_TEXTURE_2D, 0,
-                            movedCasterDirtyRegion.pixelX, movedCasterDirtyRegion.pixelY, 0,
-                            cascadeMap->GetTextureID(), GL_TEXTURE_2D, 0,
-                            movedCasterDirtyRegion.pixelX, movedCasterDirtyRegion.pixelY, 0,
-                            movedCasterDirtyRegion.pixelWidth, movedCasterDirtyRegion.pixelHeight, 1);
+                        for (const auto &dirtyRegion : movedCasterDirtyRegions)
+                        {
+                            glCopyImageSubData(
+                                staticCascadeMap->GetTextureID(), GL_TEXTURE_2D, 0,
+                                dirtyRegion.pixelX, dirtyRegion.pixelY, 0,
+                                cascadeMap->GetTextureID(), GL_TEXTURE_2D, 0,
+                                dirtyRegion.pixelX, dirtyRegion.pixelY, 0,
+                                dirtyRegion.pixelWidth, dirtyRegion.pixelHeight, 1);
+                        }
                     }
                     else
                     {
@@ -2225,13 +2376,16 @@ namespace PlutoGE::render
                     }
                     if (canPartiallyRestoreDynamicDepth)
                     {
-                        drawRegion(movedCasterDirtyRegion.pixelX,
-                                   movedCasterDirtyRegion.pixelY,
-                                   movedCasterDirtyRegion.pixelWidth,
-                                   movedCasterDirtyRegion.pixelHeight,
-                                   &movedCasterDirtyRegion,
-                                   false,
-                                   false);
+                        for (const auto &dirtyRegion : movedCasterDirtyRegions)
+                        {
+                            drawRegion(dirtyRegion.pixelX,
+                                       dirtyRegion.pixelY,
+                                       dirtyRegion.pixelWidth,
+                                       dirtyRegion.pixelHeight,
+                                       &dirtyRegion,
+                                       false,
+                                       false);
+                        }
                     }
                     else
                     {

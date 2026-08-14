@@ -111,12 +111,12 @@ namespace PlutoGE::render
                 return true;
             }
 
-            const float distance = glm::length(command.worldBounds.center - cameraPosition);
-            const float safeDistance = std::max(distance, 0.001f);
-            const float projectedRadiusPixels = (std::max(command.worldBounds.radius, 0.001f) / safeDistance) *
-                                                projectionScaleY *
-                                                halfViewportHeight;
-            return projectedRadiusPixels >= kStaticSubmeshPixelCullThreshold;
+            const glm::vec3 offset = command.worldBounds.center - cameraPosition;
+            const float distanceSquared = std::max(glm::dot(offset, offset), 0.000001f);
+            const float projectedRadiusNumerator = std::max(command.worldBounds.radius, 0.001f) *
+                                                   projectionScaleY * halfViewportHeight;
+            const float thresholdSquared = kStaticSubmeshPixelCullThreshold * kStaticSubmeshPixelCullThreshold;
+            return projectedRadiusNumerator * projectedRadiusNumerator >= distanceSquared * thresholdSquared;
         }
 
         bool PassesDistanceCull(const RenderCommand &command, const glm::vec3 &cameraPosition, float maxDistance)
@@ -127,7 +127,9 @@ namespace PlutoGE::render
             }
 
             const float radius = std::max(command.worldBounds.radius, 0.0f);
-            return glm::length(command.worldBounds.center - cameraPosition) <= maxDistance + radius;
+            const float maximumCenterDistance = maxDistance + radius;
+            const glm::vec3 offset = command.worldBounds.center - cameraPosition;
+            return glm::dot(offset, offset) <= maximumCenterDistance * maximumCenterDistance;
         }
 
         MeshBounds TransformBounds(const MeshBounds &bounds, const glm::mat4 &model)

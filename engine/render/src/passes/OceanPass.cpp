@@ -467,20 +467,43 @@ namespace PlutoGE::render
                     else if (cascadeIndex == 2) texelSize = 1.0 / vec2(textureSize(uShadowCascadeMap2, 0));
                     else texelSize = 1.0 / vec2(textureSize(uShadowCascadeMap3, 0));
 
-                    float shadow = 0.0;
                     float radius = clamp(uShadowSoftness, 0.5, 3.0);
-                    for (int y = -1; y <= 1; ++y)
+                    vec2 stepSize = texelSize * radius;
+                    float center;
+                    if (cascadeIndex == 0) center = texture(uShadowCascadeMap0, projectedCoords.xy).r;
+                    else if (cascadeIndex == 1) center = texture(uShadowCascadeMap1, projectedCoords.xy).r;
+                    else if (cascadeIndex == 2) center = texture(uShadowCascadeMap2, projectedCoords.xy).r;
+                    else center = texture(uShadowCascadeMap3, projectedCoords.xy).r;
+                    float receiverDepth = projectedCoords.z - bias;
+                    float shadow = receiverDepth > center ? 1.0 : 0.0;
+                    const vec2 crossOffsets[4] = vec2[](
+                        vec2(1.0, 0.0), vec2(-1.0, 0.0),
+                        vec2(0.0, 1.0), vec2(0.0, -1.0));
+                    for (int sampleIndex = 0; sampleIndex < 4; ++sampleIndex)
                     {
-                        for (int x = -1; x <= 1; ++x)
-                        {
-                            vec2 uv = projectedCoords.xy + vec2(x, y) * texelSize * radius;
-                            float closestDepth;
-                            if (cascadeIndex == 0) closestDepth = texture(uShadowCascadeMap0, uv).r;
-                            else if (cascadeIndex == 1) closestDepth = texture(uShadowCascadeMap1, uv).r;
-                            else if (cascadeIndex == 2) closestDepth = texture(uShadowCascadeMap2, uv).r;
-                            else closestDepth = texture(uShadowCascadeMap3, uv).r;
-                            shadow += projectedCoords.z - bias > closestDepth ? 1.0 : 0.0;
-                        }
+                        vec2 uv = projectedCoords.xy + crossOffsets[sampleIndex] * stepSize;
+                        float closestDepth;
+                        if (cascadeIndex == 0) closestDepth = texture(uShadowCascadeMap0, uv).r;
+                        else if (cascadeIndex == 1) closestDepth = texture(uShadowCascadeMap1, uv).r;
+                        else if (cascadeIndex == 2) closestDepth = texture(uShadowCascadeMap2, uv).r;
+                        else closestDepth = texture(uShadowCascadeMap3, uv).r;
+                        shadow += receiverDepth > closestDepth ? 1.0 : 0.0;
+                    }
+                    // Uniformly lit or shadowed water needs no corner probes.
+                    // Preserve the denser kernel only along a shadow boundary.
+                    if (shadow <= 0.0 || shadow >= 5.0) return shadow * 0.2;
+                    const vec2 cornerOffsets[4] = vec2[](
+                        vec2(-1.0, -1.0), vec2(1.0, -1.0),
+                        vec2(-1.0, 1.0), vec2(1.0, 1.0));
+                    for (int sampleIndex = 0; sampleIndex < 4; ++sampleIndex)
+                    {
+                        vec2 uv = projectedCoords.xy + cornerOffsets[sampleIndex] * stepSize;
+                        float closestDepth;
+                        if (cascadeIndex == 0) closestDepth = texture(uShadowCascadeMap0, uv).r;
+                        else if (cascadeIndex == 1) closestDepth = texture(uShadowCascadeMap1, uv).r;
+                        else if (cascadeIndex == 2) closestDepth = texture(uShadowCascadeMap2, uv).r;
+                        else closestDepth = texture(uShadowCascadeMap3, uv).r;
+                        shadow += receiverDepth > closestDepth ? 1.0 : 0.0;
                     }
                     return shadow / 9.0;
                 }
@@ -770,9 +793,14 @@ namespace PlutoGE::render
                     vec3 reflectionColor = uEnvironmentEnabled != 0
                         ? SampleEnvironment(reflectionDirection)
                         : vec3(0.0);
+                    float reflectionStrength = mix(0.12, 1.0, fresnel) * clamp(uSmoothness, 0.0, 1.0);
                     vec2 reflectionUv;
                     float reflectionConfidence;
-                    if (TraceScreenSpaceReflection(worldHit, normal, viewVector, reflectionUv, reflectionConfidence))
+                    // Near-normal water has very little reflected contribution.
+                    // Skip its expensive ray march until the Fresnel term can
+                    // make a visible difference; grazing angles retain SSR.
+                    if (reflectionStrength >= 0.20 &&
+                        TraceScreenSpaceReflection(worldHit, normal, viewVector, reflectionUv, reflectionConfidence))
                     {
                         vec3 screenSpaceReflection = texture(uSceneColor, reflectionUv).rgb;
                         reflectionColor = mix(reflectionColor, screenSpaceReflection, reflectionConfidence);
@@ -787,7 +815,6 @@ namespace PlutoGE::render
                     float foam = max(shoreFoam, crest * (0.65 + 0.35 * foamNoise)) * uFoamIntensity;
 
                     vec3 composed = mix(refractedColor, litWaterTint, 0.58);
-                    float reflectionStrength = mix(0.12, 1.0, fresnel) * clamp(uSmoothness, 0.0, 1.0);
                     composed = mix(composed, reflectionColor + sunGlint, reflectionStrength);
                     vec3 litFoamColor = uFoamColor * incidentLight;
                     composed = mix(composed, litFoamColor, clamp(foam, 0.0, 1.0));

@@ -64,7 +64,6 @@ namespace PlutoGE::render
             uniform sampler2D uSceneAlbedoTexture;
             uniform mat4 uView;
             uniform mat4 uProjection;
-            uniform mat4 uInverseProjection;
             uniform float uIntensity;
             uniform float uMaxRayDistance;
             uniform float uThickness;
@@ -93,8 +92,14 @@ namespace PlutoGE::render
                 // zero. Reconstructing from depth avoids fetching a 96-bit
                 // world position and a normal at every ray-march step.
                 if (depth <= 0.0) return 1e20;
-                vec4 viewPosition = uInverseProjection * vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
-                return -viewPosition.z / max(viewPosition.w, 0.000001);
+                float ndcDepth = depth * 2.0 - 1.0;
+                // Solve the projection's z/w equation directly. This handles
+                // perspective, orthographic and reversed-Z projections while
+                // avoiding a mat4 multiply at every ray-march sample.
+                float numerator = uProjection[3][2] - ndcDepth * uProjection[3][3];
+                float denominator = ndcDepth * uProjection[2][3] - uProjection[2][2];
+                if (abs(denominator) <= 0.000001) return 1e20;
+                return -numerator / denominator;
             }
 
             void main()
@@ -227,7 +232,6 @@ namespace PlutoGE::render
         m_shader->SetUniform("uGBufferDepthTexture", 6);
         m_shader->SetUniform("uView", context.renderContext.cameraData.view);
         m_shader->SetUniform("uProjection", context.renderContext.cameraData.projection);
-        m_shader->SetUniform("uInverseProjection", glm::inverse(context.renderContext.cameraData.projection));
         m_shader->SetUniform("uIntensity", m_intensity);
         m_shader->SetUniform("uMaxRayDistance", m_maxRayDistance);
         m_shader->SetUniform("uThickness", m_thickness);

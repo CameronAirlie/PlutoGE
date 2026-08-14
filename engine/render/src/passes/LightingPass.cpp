@@ -802,10 +802,23 @@ namespace PlutoGE::render
                                 continue;
                             }
 
+                            float sampleShadow = texture(uShadowMaskTexture, sampleUv).r;
+                            // Do not blur across the actual visibility edge.
+                            // Depth/normal bilateral weights cannot distinguish
+                            // a cast-shadow boundary on one continuous surface,
+                            // which previously produced a second ~50% opacity
+                            // outline between fully lit and shadowed pixels.
+                            bool centerOccluded = centerShadow >= 0.5;
+                            bool sampleOccluded = sampleShadow >= 0.5;
+                            if (centerOccluded != sampleOccluded)
+                            {
+                                continue;
+                            }
+
                             float normalWeight = smoothstep(uNormalThreshold, normalBlendEnd, dot(centerNormal, sampleNormal));
                             float depthWeight = exp(-depthDelta / max(depthScale, 0.0001)) * edgeStop;
                             float weight = baseWeight * normalWeight * depthWeight;
-                            shadow += texture(uShadowMaskTexture, sampleUv).r * weight;
+                            shadow += sampleShadow * weight;
                             totalWeight += weight;
                         }
                     }

@@ -1934,21 +1934,6 @@ namespace PlutoGE::render
                         continue;
                     }
 
-                    const bool canPartiallyRefreshMovedCasters =
-                                                                  (casterOnlyCascadeInvalidation ||
-                                                                   (cascadeScroll.valid && casterFrameState.hasMovedCaster && !shadowCasterTopologyChanged)) &&
-                                                                  (!cascadeMatrixChanged || cascadeScroll.valid) &&
-                                                                  !cascadeSplitChanged &&
-                                                                  (!cascadeOriginChanged || cascadeScroll.valid);
-                    const DirectionalShadowDirtyRegion dirtyRegion = canPartiallyRefreshMovedCasters
-                                                                          ? BuildMovedCasterDirtyRegion(
-                                                                                shadowCasters,
-                                                                                cascadeProjection,
-                                                                                cascadeShadowWorldOrigin,
-                                                                                shadowResolution,
-                                                                                light->directionalShadowSettings.softness)
-                                                                          : DirectionalShadowDirtyRegion{};
-
                     const bool urgentMovedCasterUpdate =
                         (movedCasterCascadeMask & static_cast<std::uint8_t>(1u << cascadeIndex)) != 0;
                     if (!forceFullCascadeUpdate &&
@@ -1964,30 +1949,23 @@ namespace PlutoGE::render
 
                     glViewport(0, 0, shadowResolution, shadowResolution);
                     m_shadowPassShader->SetUniform("uShadowWorldOrigin", light->shadowCascadeWorldOrigins[cascadeIndex]);
-                    unsigned int renderDepthTexture = cascadeMap->GetTextureID();
-                    constexpr int kMaximumSparseRegionCommands = 32;
-                    bool forceFullDirtyCascade = false;
-                    if (dirtyRegion.valid)
+                    auto *staticCascadeMap = light->staticShadowCascadeMaps[cascadeIndex].get();
+                    if (!staticCascadeMap)
                     {
-                        int relevantCommandCount = 0;
-                        for (const auto *shadowCaster : sortedShadowCasters)
-                        {
-                            if (IsCommandRelevantForDirectionalCascade(
-                                    *shadowCaster, cascadeProjection.lightViewMatrix, cascadeShadowWorldOrigin,
-                                    cascadeProjection.receiverMin, cascadeProjection.receiverMax,
-                                    cascadeProjection.receiverExtent, shadowResolution, effectiveMinCasterTexelRadius) &&
-                                IsBoundsOverlappingDirectionalRegion(
-                                    shadowCaster->bounds, cascadeProjection.lightViewMatrix,
-                                    cascadeShadowWorldOrigin, dirtyRegion.min, dirtyRegion.max) &&
-                                ++relevantCommandCount > kMaximumSparseRegionCommands)
-                            {
-                                forceFullDirtyCascade = true;
-                                break;
-                            }
-                        }
+                        continue;
                     }
-                    const bool requiresScrollCopy = !forceFullDirtyCascade && cascadeScroll.valid &&
+                    const bool movedStaticCaster = std::any_of(
+                        shadowCasters.begin(), shadowCasters.end(),
+                        [](const ShadowCasterEntry &caster)
+                        {
+                            return caster.hasMoved && caster.command->isStatic && !caster.command->jointMatrices;
+                        });
+                    const bool staticNeedsFullRefresh = !light->staticShadowCascadeValid[cascadeIndex] ||
+                                                        forceFullCascadeUpdate || shadowCasterTopologyChanged ||
+                                                        movedStaticCaster || !cascadeScroll.valid;
+                    const bool requiresScrollCopy = !staticNeedsFullRefresh &&
                                                     (cascadeScroll.x != 0 || cascadeScroll.y != 0);
+                    unsigned int renderDepthTexture = staticCascadeMap->GetTextureID();
                     if (requiresScrollCopy)
                     {
                         auto &scratchTexture = m_directionalScrollScratchTextures[static_cast<std::size_t>(cascadeIndex)];
@@ -2003,7 +1981,7 @@ namespace PlutoGE::render
                         const int destinationY = glm::max(0, cascadeScroll.y);
                         const int copyWidth = shadowResolution - std::abs(cascadeScroll.x);
                         const int copyHeight = shadowResolution - std::abs(cascadeScroll.y);
-                        glCopyImageSubData(cascadeMap->GetTextureID(), GL_TEXTURE_2D, 0, sourceX, sourceY, 0,
+                        glCopyImageSubData(staticCascadeMap->GetTextureID(), GL_TEXTURE_2D, 0, sourceX, sourceY, 0,
                                            scratchTexture, GL_TEXTURE_2D, 0, destinationX, destinationY, 0,
                                            copyWidth, copyHeight, 1);
                         renderDepthTexture = scratchTexture;
@@ -2030,7 +2008,8 @@ namespace PlutoGE::render
                     };
                     const auto drawRegion = [&](int x, int y, int width, int height,
                                                 const DirectionalShadowDirtyRegion *lightSpaceRegion,
-                                                bool clearDepth)
+                                                bool clearDepth,
+                                                bool drawStaticCasters)
                     {
                         if (width <= 0 || height <= 0) return;
                         int drawX = x;
@@ -2055,7 +2034,8 @@ namespace PlutoGE::render
                                     shadowCaster, cascadeProjection.lightViewMatrix, cascadeShadowWorldOrigin,
                                     cascadeProjection.receiverMin, cascadeProjection.receiverMax,
                                     cascadeProjection.receiverExtent, shadowResolution, effectiveMinCasterTexelRadius);
-                                return relevant && (!effectiveRegion ||
+                                const bool isStaticCaster = shadowCaster.command->isStatic && !shadowCaster.command->jointMatrices;
+                                return relevant && isStaticCaster == drawStaticCasters && (!effectiveRegion ||
                                     IsBoundsOverlappingDirectionalRegion(shadowCaster.bounds,
                                         cascadeProjection.lightViewMatrix, cascadeShadowWorldOrigin,
                                         effectiveRegion->min, effectiveRegion->max));
@@ -2084,9 +2064,10 @@ namespace PlutoGE::render
                         glDisable(GL_SCISSOR_TEST);
                     };
 
-                    if (forceFullDirtyCascade)
+                    if (staticNeedsFullRefresh)
                     {
-                        drawRegion(0, 0, shadowResolution, shadowResolution, nullptr, true);
+                        drawRegion(0, 0, shadowResolution, shadowResolution, nullptr, true, true);
+                        light->staticShadowCascadeValid[cascadeIndex] = true;
                     }
                     else if (requiresScrollCopy)
                     {
@@ -2095,31 +2076,31 @@ namespace PlutoGE::render
                             const int width = std::abs(cascadeScroll.x);
                             const int x = cascadeScroll.x > 0 ? 0 : shadowResolution - width;
                             const auto exposedRegion = lightSpaceRegionForPixels(x, 0, width, shadowResolution);
-                            drawRegion(x, 0, width, shadowResolution, &exposedRegion, false);
+                            drawRegion(x, 0, width, shadowResolution, &exposedRegion, false, true);
                         }
                         if (cascadeScroll.y != 0)
                         {
                             const int height = std::abs(cascadeScroll.y);
                             const int y = cascadeScroll.y > 0 ? 0 : shadowResolution - height;
                             const auto exposedRegion = lightSpaceRegionForPixels(0, y, shadowResolution, height);
-                            drawRegion(0, y, shadowResolution, height, &exposedRegion, false);
+                            drawRegion(0, y, shadowResolution, height, &exposedRegion, false, true);
                         }
-                        if (dirtyRegion.valid)
-                            drawRegion(dirtyRegion.pixelX, dirtyRegion.pixelY, dirtyRegion.pixelWidth,
-                                       dirtyRegion.pixelHeight, &dirtyRegion, true);
                         glCopyImageSubData(renderDepthTexture, GL_TEXTURE_2D, 0, 0, 0, 0,
-                                           cascadeMap->GetTextureID(), GL_TEXTURE_2D, 0, 0, 0, 0,
+                                           staticCascadeMap->GetTextureID(), GL_TEXTURE_2D, 0, 0, 0, 0,
                                            shadowResolution, shadowResolution, 1);
                     }
-                    else if (dirtyRegion.valid)
+
+                    // Restore the immutable static depth, erasing last frame's
+                    // dynamic casters without clearing or redrawing foliage.
+                    glCopyImageSubData(staticCascadeMap->GetTextureID(), GL_TEXTURE_2D, 0, 0, 0, 0,
+                                       cascadeMap->GetTextureID(), GL_TEXTURE_2D, 0, 0, 0, 0,
+                                       shadowResolution, shadowResolution, 1);
+                    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, cascadeMap->GetTextureID(), 0);
+                    if (!ValidateShadowFramebuffer("combined directional cascade shadow", cascadeMap->GetTextureID()))
                     {
-                        drawRegion(dirtyRegion.pixelX, dirtyRegion.pixelY, dirtyRegion.pixelWidth,
-                                   dirtyRegion.pixelHeight, &dirtyRegion, true);
+                        continue;
                     }
-                    else
-                    {
-                        drawRegion(0, 0, shadowResolution, shadowResolution, nullptr, true);
-                    }
+                    drawRegion(0, 0, shadowResolution, shadowResolution, nullptr, false, false);
                     if (ctx.renderer)
                     {
                         ctx.renderer->RecordShadowMapUpdate(

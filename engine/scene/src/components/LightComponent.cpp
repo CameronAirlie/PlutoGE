@@ -41,6 +41,11 @@ namespace PlutoGE::scene
             {
                 shadowCascadeMap.reset();
             }
+            for (auto &staticShadowCascadeMap : light.staticShadowCascadeMaps)
+            {
+                staticShadowCascadeMap.reset();
+            }
+            light.staticShadowCascadeValid.fill(false);
             for (auto &shadowCascadeWorldOrigin : light.shadowCascadeWorldOrigins)
             {
                 shadowCascadeWorldOrigin = glm::vec3(0.0f);
@@ -388,6 +393,12 @@ namespace PlutoGE::scene
                         m_config.shadowCascadeMaps[cascadeIndex].reset();
                         recreatedShadowMap = true;
                     }
+                    if (m_config.staticShadowCascadeMaps[cascadeIndex])
+                    {
+                        m_config.staticShadowCascadeMaps[cascadeIndex].reset();
+                        recreatedShadowMap = true;
+                    }
+                    m_config.staticShadowCascadeValid[cascadeIndex] = false;
                     m_config.shadowCascadeWorldOrigins[cascadeIndex] = glm::vec3(0.0f);
                     m_config.shadowCascadeMatrices[cascadeIndex] = glm::mat4(1.0f);
                     m_config.shadowCascadeSplits[cascadeIndex] = 0.0f;
@@ -398,6 +409,12 @@ namespace PlutoGE::scene
                 if (NeedsShadowTextureRecreation(m_config.shadowCascadeMaps[cascadeIndex].get(), GL_TEXTURE_2D, cascadeResolution))
                 {
                     m_config.shadowCascadeMaps[cascadeIndex] = CreateDirectionalCascadeTexture(m_config, cascadeIndex);
+                    recreatedShadowMap = true;
+                }
+                if (NeedsShadowTextureRecreation(m_config.staticShadowCascadeMaps[cascadeIndex].get(), GL_TEXTURE_2D, cascadeResolution))
+                {
+                    m_config.staticShadowCascadeMaps[cascadeIndex] = CreateDirectionalCascadeTexture(m_config, cascadeIndex);
+                    m_config.staticShadowCascadeValid[cascadeIndex] = false;
                     recreatedShadowMap = true;
                 }
             }
@@ -414,6 +431,11 @@ namespace PlutoGE::scene
         {
             shadowCascadeMap.reset();
         }
+        for (auto &staticShadowCascadeMap : m_config.staticShadowCascadeMaps)
+        {
+            staticShadowCascadeMap.reset();
+        }
+        m_config.staticShadowCascadeValid.fill(false);
         m_config.activeShadowCascadeCount = 0;
 
         const GLenum expectedTextureType = GetExpectedShadowTextureType(m_config);

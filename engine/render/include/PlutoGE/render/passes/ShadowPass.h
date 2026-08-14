@@ -23,7 +23,6 @@ namespace PlutoGE::render
 
     private:
         Shader *m_shadowPassShader = nullptr;
-        Shader *m_directionalDepthRemapShader = nullptr;
         unsigned int m_shadowFramebuffer = 0;
         unsigned int m_instanceBuffer = 0;
         std::size_t m_instanceCapacity = 0;

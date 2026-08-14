@@ -2986,6 +2986,11 @@ namespace PlutoGE::ui
             if (shouldRenderViewport1)
             {
                 ++frameTimingStats.renderedViewportCount;
+                frameTimingStats.editorViewportWidth = renderTargetWidth;
+                frameTimingStats.editorViewportHeight = renderTargetHeight;
+                frameTimingStats.renderedViewportPixels +=
+                    static_cast<std::uint64_t>((std::max)(renderTargetWidth, 0)) *
+                    static_cast<std::uint64_t>((std::max)(renderTargetHeight, 0));
                 std::vector<render::IPostProcessEffect *> editorPostProcessEffects;
                 editorPostProcessEffects.reserve(m_editorCamera.GetPostProcessEffects().size());
                 for (const auto &effect : m_editorCamera.GetPostProcessEffects())
@@ -3015,6 +3020,11 @@ namespace PlutoGE::ui
             if (shouldRenderViewport2 && cameraComponent2)
             {
                 ++frameTimingStats.renderedViewportCount;
+                frameTimingStats.gameViewportWidth = renderTarget2Width;
+                frameTimingStats.gameViewportHeight = renderTarget2Height;
+                frameTimingStats.renderedViewportPixels +=
+                    static_cast<std::uint64_t>((std::max)(renderTarget2Width, 0)) *
+                    static_cast<std::uint64_t>((std::max)(renderTarget2Height, 0));
                 viewportPanel2->RenderFrame(*cameraComponent2);
             }
             else

@@ -6,6 +6,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <string>
 
 namespace PlutoGE::ui
@@ -32,6 +33,11 @@ namespace PlutoGE::ui
         float eventPollingMs = 0.0f;
         bool vSyncEnabled = false;
         int renderedViewportCount = 0;
+        int editorViewportWidth = 0;
+        int editorViewportHeight = 0;
+        int gameViewportWidth = 0;
+        int gameViewportHeight = 0;
+        std::uint64_t renderedViewportPixels = 0;
         std::vector<scene::SceneUpdateTimingStats::ComponentTiming> componentTimings;
         std::vector<scene::SceneUpdateTimingStats::ComponentTiming> animationTimings;
         std::vector<scene::SceneUpdateTimingStats::ComponentTiming> scriptUpdateTimings;

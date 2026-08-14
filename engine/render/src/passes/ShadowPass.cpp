@@ -1,7 +1,6 @@
 #include "PlutoGE/render/passes/ShadowPass.h"
 
 #include "PlutoGE/render/Material.h"
-#include "PlutoGE/render/Graphics.h"
 #include "PlutoGE/render/IndirectDraw.h"
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/render/Renderer.h"
@@ -97,44 +96,8 @@ namespace
         float maxMatrixDelta = 0.0f;
         float fractionalTexelError = 0.0f;
         glm::mat4 resolvedRelativeMatrix{1.0f};
-        float depthOffset = 0.0f;
-        bool requiresDepthRemap = false;
         bool valid = false;
     };
-
-    PlutoGE::render::Shader *CreateDirectionalDepthRemapShader()
-    {
-        PlutoGE::render::ShaderSource source;
-        source.vertexSource = R"(
-            #version 330 core
-            const vec2 vertices[3] = vec2[](vec2(-1.0, -1.0), vec2(3.0, -1.0), vec2(-1.0, 3.0));
-            void main()
-            {
-                gl_Position = vec4(vertices[gl_VertexID], 0.0, 1.0);
-            }
-        )";
-        source.fragmentSource = R"(
-            #version 330 core
-            uniform sampler2D uSourceDepth;
-            uniform vec2 uScrollOffset;
-            uniform float uDepthOffset;
-            void main()
-            {
-                ivec2 sourceSize = textureSize(uSourceDepth, 0);
-                ivec2 destinationPixel = ivec2(gl_FragCoord.xy);
-                ivec2 sourcePixel = destinationPixel - ivec2(round(uScrollOffset));
-                if (any(lessThan(sourcePixel, ivec2(0))) ||
-                    any(greaterThanEqual(sourcePixel, sourceSize)))
-                {
-                    gl_FragDepth = 1.0;
-                    return;
-                }
-                float sourceDepth = texelFetch(uSourceDepth, sourcePixel, 0).r;
-                gl_FragDepth = clamp(sourceDepth + uDepthOffset, 0.0, 1.0);
-            }
-        )";
-        return PlutoGE::render::Shader::Create(source);
-    }
 
     struct ShadowDrawStats
     {
@@ -881,6 +844,11 @@ namespace
         // range so a periodic full refresh recentres depth coverage safely.
         const float depthTranslationDelta = std::abs(previous[3][2] - current[3][2]);
         result.maxMatrixDelta = glm::max(result.maxMatrixDelta, depthTranslationDelta);
+        constexpr float kMaximumRetainedDepthTranslation = 0.02f;
+        if (depthTranslationDelta > kMaximumRetainedDepthTranslation) return result;
+        current[3][2] = previous[3][2];
+        result.resolvedRelativeMatrix = current *
+                                        glm::translate(glm::mat4(1.0f), currentWorldOrigin);
 
         const glm::vec2 pixelDelta = glm::vec2(current[3] - previous[3]) *
                                      (static_cast<float>(resolution) * 0.5f);
@@ -894,21 +862,6 @@ namespace
         }
         result.x = rounded.x;
         result.y = rounded.y;
-        constexpr float kMaximumRetainedDepthTranslation = 0.02f;
-        if (depthTranslationDelta > kMaximumRetainedDepthTranslation)
-        {
-            // Orthographic depth differs only by an additive NDC translation.
-            // Remap cached depth exactly instead of rebuilding static casters.
-            result.depthOffset = (current[3][2] - previous[3][2]) * 0.5f;
-            result.requiresDepthRemap = true;
-            result.resolvedRelativeMatrix = currentRelative;
-        }
-        else
-        {
-            current[3][2] = previous[3][2];
-            result.resolvedRelativeMatrix = current *
-                                            glm::translate(glm::mat4(1.0f), currentWorldOrigin);
-        }
         // A zero offset is still a successful cache reuse. It means only moving
         // caster dirty regions need redrawing; no texture scroll is necessary.
         result.valid = true;
@@ -1562,7 +1515,6 @@ namespace PlutoGE::render
     void ShadowPass::Initialize()
     {
         m_shadowPassShader = Shader::CreateShadowPassShader();
-        m_directionalDepthRemapShader = CreateDirectionalDepthRemapShader();
         glGenFramebuffers(1, &m_shadowFramebuffer);
         if (m_instanceBuffer == 0)
         {
@@ -2154,11 +2106,9 @@ namespace PlutoGE::render
                         });
                     const bool staticNeedsFullRefresh = !light->staticShadowCascadeValid[cascadeIndex] ||
                                                         forceFullCascadeUpdate || shadowCasterTopologyChanged ||
-                                                        movedStaticCaster || !cascadeScroll.valid ||
-                                                        (cascadeScroll.requiresDepthRemap && !m_directionalDepthRemapShader);
+                                                        movedStaticCaster || !cascadeScroll.valid;
                     const bool requiresScrollCopy = !staticNeedsFullRefresh &&
-                                                    (cascadeScroll.x != 0 || cascadeScroll.y != 0 ||
-                                                     cascadeScroll.requiresDepthRemap);
+                                                    (cascadeScroll.x != 0 || cascadeScroll.y != 0);
                     unsigned int renderDepthTexture = staticCascadeMap->GetTextureID();
                     std::uint8_t activeScratchIndex = 0;
                     if (requiresScrollCopy)
@@ -2181,31 +2131,10 @@ namespace PlutoGE::render
                         const int destinationY = glm::max(0, cascadeScroll.y);
                         const int copyWidth = shadowResolution - std::abs(cascadeScroll.x);
                         const int copyHeight = shadowResolution - std::abs(cascadeScroll.y);
-                        if (cascadeScroll.requiresDepthRemap && m_directionalDepthRemapShader)
-                        {
-                            m_directionalDepthRemapShader->Bind();
-                            glActiveTexture(GL_TEXTURE0);
-                            glBindTexture(GL_TEXTURE_2D, staticCascadeMap->GetTextureID());
-                            m_directionalDepthRemapShader->SetUniform("uSourceDepth", 0);
-                            m_directionalDepthRemapShader->SetUniform(
-                                "uScrollOffset", glm::vec2(cascadeScroll.x, cascadeScroll.y));
-                            m_directionalDepthRemapShader->SetUniform("uDepthOffset", cascadeScroll.depthOffset);
-                            glDepthFunc(GL_ALWAYS);
-                            glDepthMask(GL_TRUE);
-                            Graphics::DrawFullscreenTriangle();
-                            glDepthFunc(GL_LESS);
-                            m_shadowPassShader->Bind();
-                            m_shadowPassShader->SetUniform("uShadowPassMode", kProjectedShadowPassMode);
-                            m_shadowPassShader->SetUniform("uShadowWorldOrigin", light->shadowCascadeWorldOrigins[cascadeIndex]);
-                            m_shadowPassShader->SetUniform("uLightSpaceMatrix", cascadeRenderMatrix);
-                        }
-                        else
-                        {
-                            glClear(GL_DEPTH_BUFFER_BIT);
-                            glCopyImageSubData(staticCascadeMap->GetTextureID(), GL_TEXTURE_2D, 0, sourceX, sourceY, 0,
-                                               scratchTexture, GL_TEXTURE_2D, 0, destinationX, destinationY, 0,
-                                               copyWidth, copyHeight, 1);
-                        }
+                        glClear(GL_DEPTH_BUFFER_BIT);
+                        glCopyImageSubData(staticCascadeMap->GetTextureID(), GL_TEXTURE_2D, 0, sourceX, sourceY, 0,
+                                           scratchTexture, GL_TEXTURE_2D, 0, destinationX, destinationY, 0,
+                                           copyWidth, copyHeight, 1);
                         renderDepthTexture = scratchTexture;
                     }
 

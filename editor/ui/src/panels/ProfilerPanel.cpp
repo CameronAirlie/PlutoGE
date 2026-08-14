@@ -139,6 +139,18 @@ namespace PlutoGE::ui
         }
         ImGui::Text("Viewport render: %.2f ms", frameTimingStats.viewportRenderMs);
         ImGui::Text("Viewport renders: %d", frameTimingStats.renderedViewportCount);
+        if (frameTimingStats.editorViewportWidth > 0 && frameTimingStats.editorViewportHeight > 0)
+        {
+            ImGui::Text("Editor viewport resolution: %d x %d",
+                        frameTimingStats.editorViewportWidth, frameTimingStats.editorViewportHeight);
+        }
+        if (frameTimingStats.gameViewportWidth > 0 && frameTimingStats.gameViewportHeight > 0)
+        {
+            ImGui::Text("Game viewport resolution: %d x %d",
+                        frameTimingStats.gameViewportWidth, frameTimingStats.gameViewportHeight);
+        }
+        ImGui::Text("Rendered viewport pixels: %llu",
+                    static_cast<unsigned long long>(frameTimingStats.renderedViewportPixels));
         ImGui::Text("Renderer begin frame: %.2f ms", frameTimingStats.rendererBeginFrameMs);
         ImGui::Text("Editor UI total: %.2f ms", frameTimingStats.editorUiMs);
         ImGui::Text("ImGui frame begin: %.2f ms", timingStats.beginPanelUpdateMs);

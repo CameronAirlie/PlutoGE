@@ -155,6 +155,17 @@ namespace PlutoGE::ui
         report << "Scene / Physics: " << frameTimingStats.scenePhysicsMs << " ms\n";
         report << "Viewport render: " << frameTimingStats.viewportRenderMs << " ms\n";
         report << "Viewport renders: " << frameTimingStats.renderedViewportCount << "\n";
+        if (frameTimingStats.editorViewportWidth > 0 && frameTimingStats.editorViewportHeight > 0)
+        {
+            report << "Editor viewport resolution: " << frameTimingStats.editorViewportWidth << " x "
+                   << frameTimingStats.editorViewportHeight << "\n";
+        }
+        if (frameTimingStats.gameViewportWidth > 0 && frameTimingStats.gameViewportHeight > 0)
+        {
+            report << "Game viewport resolution: " << frameTimingStats.gameViewportWidth << " x "
+                   << frameTimingStats.gameViewportHeight << "\n";
+        }
+        report << "Rendered viewport pixels: " << frameTimingStats.renderedViewportPixels << "\n";
         report << "Renderer begin frame: " << frameTimingStats.rendererBeginFrameMs << " ms\n";
         report << "Editor UI total: " << frameTimingStats.editorUiMs << " ms\n";
         report << "ImGui frame begin: " << timingStats.beginPanelUpdateMs << " ms\n";

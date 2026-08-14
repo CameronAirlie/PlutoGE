@@ -130,6 +130,107 @@ namespace PlutoGE::render
             return glm::length(command.worldBounds.center - cameraPosition) <= maxDistance + radius;
         }
 
+        MeshBounds TransformBounds(const MeshBounds &bounds, const glm::mat4 &model)
+        {
+            const glm::vec3 worldCenter = glm::vec3(model * glm::vec4(bounds.center, 1.0f));
+            const float scaleX = glm::length(glm::vec3(model[0]));
+            const float scaleY = glm::length(glm::vec3(model[1]));
+            const float scaleZ = glm::length(glm::vec3(model[2]));
+            return MeshBounds{
+                .center = worldCenter,
+                .radius = bounds.radius * std::max(scaleX, std::max(scaleY, scaleZ)),
+            };
+        }
+
+        bool IsBoundsVisible(const MeshBounds &bounds, const std::array<FrustumPlane, 6> &planes)
+        {
+            for (const auto &plane : planes)
+            {
+                if (glm::dot(plane.normal, bounds.center) + plane.distance < -bounds.radius)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        bool PassesBoundsDistanceCull(const MeshBounds &bounds, const glm::vec3 &cameraPosition, float maxDistance)
+        {
+            if (maxDistance <= 0.0f || maxDistance == std::numeric_limits<float>::max())
+            {
+                return true;
+            }
+            const float maxCenterDistance = maxDistance + std::max(bounds.radius, 0.0f);
+            const glm::vec3 offset = bounds.center - cameraPosition;
+            return glm::dot(offset, offset) <= maxCenterDistance * maxCenterDistance;
+        }
+
+        RenderCommand CullRenderCommandInstances(
+            const RenderCommand &command,
+            const glm::vec3 &cameraPosition,
+            float maxDistance,
+            const std::array<FrustumPlane, 6> *frustumPlanes)
+        {
+            if (!command.mesh || !command.instanceModels || command.instanceModels->empty() ||
+                command.submeshIndex >= command.mesh->GetSubmeshCount())
+            {
+                return command;
+            }
+
+            const auto &sourceBounds = command.mesh->GetSubmesh(command.submeshIndex).bounds;
+            std::shared_ptr<std::vector<glm::mat4>> visibleModels;
+            std::shared_ptr<std::vector<glm::mat4>> visiblePreviousModels;
+
+            for (std::size_t index = 0; index < command.instanceModels->size(); ++index)
+            {
+                const glm::mat4 &model = (*command.instanceModels)[index];
+                const MeshBounds instanceBounds = TransformBounds(sourceBounds, model);
+                if ((frustumPlanes && !IsBoundsVisible(instanceBounds, *frustumPlanes)) ||
+                    !PassesBoundsDistanceCull(instanceBounds, cameraPosition, maxDistance))
+                {
+                    if (!visibleModels)
+                    {
+                        visibleModels = std::make_shared<std::vector<glm::mat4>>();
+                        visibleModels->reserve(command.instanceModels->size());
+                        visibleModels->insert(visibleModels->end(), command.instanceModels->begin(), command.instanceModels->begin() + index);
+                        if (command.previousInstanceModels)
+                        {
+                            visiblePreviousModels = std::make_shared<std::vector<glm::mat4>>();
+                            visiblePreviousModels->reserve(command.instanceModels->size());
+                            for (std::size_t prefixIndex = 0; prefixIndex < index; ++prefixIndex)
+                            {
+                                visiblePreviousModels->push_back(prefixIndex < command.previousInstanceModels->size()
+                                                                     ? (*command.previousInstanceModels)[prefixIndex]
+                                                                     : (*command.instanceModels)[prefixIndex]);
+                            }
+                        }
+                    }
+                    continue;
+                }
+
+                if (visibleModels)
+                {
+                    visibleModels->push_back(model);
+                    if (visiblePreviousModels)
+                    {
+                        visiblePreviousModels->push_back(index < command.previousInstanceModels->size()
+                                                             ? (*command.previousInstanceModels)[index]
+                                                             : model);
+                    }
+                }
+            }
+
+            if (!visibleModels)
+            {
+                return command;
+            }
+
+            RenderCommand culled = command;
+            culled.instanceModels = std::move(visibleModels);
+            culled.previousInstanceModels = std::move(visiblePreviousModels);
+            return culled;
+        }
+
         Shader *GetRenderCommandShaderKey(const RenderCommand &command)
         {
             return command.material ? command.material->GetShader() : command.shader;
@@ -706,7 +807,13 @@ namespace PlutoGE::render
                 PassesDistanceCull(command, cameraPosition, command.maxDrawDistance) &&
                 PassesStaticProjectedSizeCull(command, cameraPosition, projectionScaleY, halfViewportHeight))
             {
-                m_visibleRenderCommands.push_back(command);
+                RenderCommand visibleCommand = CullRenderCommandInstances(
+                    command, cameraPosition, command.maxDrawDistance, &frustumPlanes);
+                if (visibleCommand.instanceModels && visibleCommand.instanceModels->empty())
+                {
+                    continue;
+                }
+                m_visibleRenderCommands.push_back(std::move(visibleCommand));
                 if (command.mesh && command.mesh->GetSubmeshLodCount(command.submeshIndex) > 1)
                 {
                     ++m_cpuFrameStats.visibleMultiLodCommandCount;
@@ -761,13 +868,19 @@ namespace PlutoGE::render
             }
             else
             {
-            std::vector<RenderCommand> shadowRenderCommands;
+            static thread_local std::vector<RenderCommand> shadowRenderCommands;
+            shadowRenderCommands.clear();
             shadowRenderCommands.reserve(m_renderCommands.size());
             for (const auto &command : m_renderCommands)
             {
                 if (PassesDistanceCull(command, cameraPosition, command.maxShadowDistance))
                 {
-                    shadowRenderCommands.push_back(command);
+                    RenderCommand shadowCommand = CullRenderCommandInstances(
+                        command, cameraPosition, command.maxShadowDistance, nullptr);
+                    if (!shadowCommand.instanceModels || !shadowCommand.instanceModels->empty())
+                    {
+                        shadowRenderCommands.push_back(std::move(shadowCommand));
+                    }
                 }
             }
 

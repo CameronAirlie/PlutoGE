@@ -1403,7 +1403,12 @@ namespace PlutoGE::render
         m_lightingPassShader->Bind();
         BindLightingInputs(m_lightingPassShader, ctx);
 
-        const glm::vec3 cameraPos = glm::vec3(glm::inverse(ctx.cameraData.view)[3]);
+        // These matrices are shared by the ambient pass, every direct light,
+        // and the optional filtered-shadow path. Inverting them again for each
+        // stage adds avoidable CPU work in light-heavy scenes.
+        const glm::mat4 inverseViewMatrix = glm::inverse(ctx.cameraData.view);
+        const glm::mat4 inverseProjectionMatrix = glm::inverse(ctx.cameraData.projection);
+        const glm::vec3 cameraPos = glm::vec3(inverseViewMatrix[3]);
         auto *lpvPass = ctx.lightPropagationVolumePass;
         const IndirectLightingSettings indirectSettings = ResolveIndirectLightingSettings(ctx);
         const bool enableLpv = IsLpvEffectEnabled(ctx);
@@ -1518,8 +1523,8 @@ namespace PlutoGE::render
 
         m_lightingPassShader->SetUniform("uViewPos", cameraPos);
         m_lightingPassShader->SetUniform("uViewMatrix", ctx.cameraData.view);
-        m_lightingPassShader->SetUniform("uInverseViewMatrix", glm::inverse(ctx.cameraData.view));
-        m_lightingPassShader->SetUniform("uInverseProjectionMatrix", glm::inverse(ctx.cameraData.projection));
+        m_lightingPassShader->SetUniform("uInverseViewMatrix", inverseViewMatrix);
+        m_lightingPassShader->SetUniform("uInverseProjectionMatrix", inverseProjectionMatrix);
         m_lightingPassShader->SetUniform("uLpvEnabled", enableLpv && lpvPass && lpvPass->GetVolumeTexture() ? 1 : 0);
         m_lightingPassShader->SetUniform("uLpvOrigin", lpvPass ? lpvPass->GetGridOrigin() : glm::vec3(0.0f));
         m_lightingPassShader->SetUniform("uLpvSize", lpvPass ? lpvPass->GetGridSize() : glm::vec3(1.0f));
@@ -1617,8 +1622,8 @@ namespace PlutoGE::render
             BindLightingInputs(m_directLightingPassShader, ctx);
             m_directLightingPassShader->SetUniform("uViewPos", cameraPos);
             m_directLightingPassShader->SetUniform("uViewMatrix", ctx.cameraData.view);
-            m_directLightingPassShader->SetUniform("uInverseViewMatrix", glm::inverse(ctx.cameraData.view));
-            m_directLightingPassShader->SetUniform("uInverseProjectionMatrix", glm::inverse(ctx.cameraData.projection));
+            m_directLightingPassShader->SetUniform("uInverseViewMatrix", inverseViewMatrix);
+            m_directLightingPassShader->SetUniform("uInverseProjectionMatrix", inverseProjectionMatrix);
             m_directLightingPassShader->SetUniform("uDebugViewMode", static_cast<int>(ctx.postProcessDebugView));
             m_directLightingPassShader->SetUniform("uOutputShadowMask", 0);
             m_directLightingPassShader->SetUniform("uUseFilteredShadowMask", 0);
@@ -1655,8 +1660,8 @@ namespace PlutoGE::render
                         BindLightUniforms(m_directLightingPassShader, *light, hasShadowMap, skyVisibility);
                         m_directLightingPassShader->SetUniform("uViewPos", cameraPos);
                         m_directLightingPassShader->SetUniform("uViewMatrix", ctx.cameraData.view);
-                        m_directLightingPassShader->SetUniform("uInverseViewMatrix", glm::inverse(ctx.cameraData.view));
-                        m_directLightingPassShader->SetUniform("uInverseProjectionMatrix", glm::inverse(ctx.cameraData.projection));
+                        m_directLightingPassShader->SetUniform("uInverseViewMatrix", inverseViewMatrix);
+                        m_directLightingPassShader->SetUniform("uInverseProjectionMatrix", inverseProjectionMatrix);
                         m_directLightingPassShader->SetUniform("uDebugViewMode", static_cast<int>(ctx.postProcessDebugView));
                         m_directLightingPassShader->SetUniform("uOutputShadowMask", 0);
                         m_directLightingPassShader->SetUniform("uUseFilteredShadowMask", 1);

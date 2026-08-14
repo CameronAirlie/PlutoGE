@@ -867,32 +867,6 @@ namespace
         return result;
     }
 
-    void EnsureDepthScratchTexture(unsigned int &texture, int &allocatedResolution, int resolution)
-    {
-        if (texture != 0 && allocatedResolution == resolution)
-        {
-            return;
-        }
-        if (texture != 0)
-        {
-            glDeleteTextures(1, &texture);
-        }
-        glGenTextures(1, &texture);
-        glBindTexture(GL_TEXTURE_2D, texture);
-        // Match TextureManager::CreateDepthTexture exactly; image copies require
-        // compatible internal formats.
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, resolution, resolution,
-                     0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
-        const GLfloat borderDepth[] = {1.0f, 1.0f, 1.0f, 1.0f};
-        glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, borderDepth);
-        glBindTexture(GL_TEXTURE_2D, 0);
-        allocatedResolution = resolution;
-    }
-
     bool IsBoundsOverlappingDirectionalRegion(const PlutoGE::render::MeshBounds &bounds,
                                                const glm::mat4 &lightView,
                                                const glm::vec3 &shadowWorldOrigin,
@@ -1387,8 +1361,6 @@ namespace PlutoGE::render
 {
     ShadowPass::~ShadowPass()
     {
-        glDeleteTextures(static_cast<GLsizei>(m_directionalScrollScratchTextures.size()),
-                         m_directionalScrollScratchTextures.data());
         if (m_instanceBuffer != 0) glDeleteBuffers(1, &m_instanceBuffer);
         if (m_indirectBuffer != 0) glDeleteBuffers(1, &m_indirectBuffer);
         if (m_shadowFramebuffer != 0) glDeleteFramebuffers(1, &m_shadowFramebuffer);
@@ -1992,11 +1964,18 @@ namespace PlutoGE::render
                     const bool requiresScrollCopy = !staticNeedsFullRefresh &&
                                                     (cascadeScroll.x != 0 || cascadeScroll.y != 0);
                     unsigned int renderDepthTexture = staticCascadeMap->GetTextureID();
+                    std::uint8_t activeScratchIndex = 0;
                     if (requiresScrollCopy)
                     {
-                        auto &scratchTexture = m_directionalScrollScratchTextures[static_cast<std::size_t>(cascadeIndex)];
-                        auto &scratchResolution = m_directionalScrollScratchResolutions[static_cast<std::size_t>(cascadeIndex)];
-                        EnsureDepthScratchTexture(scratchTexture, scratchResolution, shadowResolution);
+                        activeScratchIndex = static_cast<std::uint8_t>(
+                            light->nextStaticShadowScratchIndex[cascadeIndex] % 2u);
+                        auto &scratchMap = light->staticShadowCascadeScratchMaps[cascadeIndex][activeScratchIndex];
+                        if (!scratchMap || scratchMap->GetWidth() != shadowResolution ||
+                            scratchMap->GetHeight() != shadowResolution)
+                        {
+                            scratchMap.reset(Texture::DepthTexture(shadowResolution, shadowResolution));
+                        }
+                        const unsigned int scratchTexture = scratchMap->GetTextureID();
                         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, scratchTexture, 0);
                         glDisable(GL_SCISSOR_TEST);
                         glClear(GL_DEPTH_BUFFER_BIT);
@@ -2113,9 +2092,15 @@ namespace PlutoGE::render
                             const auto exposedRegion = lightSpaceRegionForPixels(0, y, shadowResolution, height);
                             drawRegion(0, y, shadowResolution, height, &exposedRegion, false, true);
                         }
-                        glCopyImageSubData(renderDepthTexture, GL_TEXTURE_2D, 0, 0, 0, 0,
-                                           staticCascadeMap->GetTextureID(), GL_TEXTURE_2D, 0, 0, 0, 0,
-                                           shadowResolution, shadowResolution, 1);
+                        // The scratch target now contains the complete shifted
+                        // cache plus the newly exposed strips. Promote it by
+                        // swapping ownership instead of copying a full depth
+                        // texture back to the old static allocation.
+                        std::swap(light->staticShadowCascadeMaps[cascadeIndex],
+                                  light->staticShadowCascadeScratchMaps[cascadeIndex][activeScratchIndex]);
+                        light->nextStaticShadowScratchIndex[cascadeIndex] =
+                            static_cast<std::uint8_t>((activeScratchIndex + 1u) % 2u);
+                        staticCascadeMap = light->staticShadowCascadeMaps[cascadeIndex].get();
                     }
 
                     // Restore the immutable static depth, erasing last frame's

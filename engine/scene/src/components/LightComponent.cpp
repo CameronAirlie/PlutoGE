@@ -45,6 +45,14 @@ namespace PlutoGE::scene
             {
                 staticShadowCascadeMap.reset();
             }
+            for (auto &staticShadowCascadeScratchMaps : light.staticShadowCascadeScratchMaps)
+            {
+                for (auto &staticShadowCascadeScratchMap : staticShadowCascadeScratchMaps)
+                {
+                    staticShadowCascadeScratchMap.reset();
+                }
+            }
+            light.nextStaticShadowScratchIndex.fill(0);
             light.staticShadowCascadeValid.fill(false);
             for (auto &shadowCascadeWorldOrigin : light.shadowCascadeWorldOrigins)
             {
@@ -398,6 +406,11 @@ namespace PlutoGE::scene
                         m_config.staticShadowCascadeMaps[cascadeIndex].reset();
                         recreatedShadowMap = true;
                     }
+                    for (auto &scratchMap : m_config.staticShadowCascadeScratchMaps[cascadeIndex])
+                    {
+                        scratchMap.reset();
+                    }
+                    m_config.nextStaticShadowScratchIndex[cascadeIndex] = 0;
                     m_config.staticShadowCascadeValid[cascadeIndex] = false;
                     m_config.shadowCascadeWorldOrigins[cascadeIndex] = glm::vec3(0.0f);
                     m_config.shadowCascadeMatrices[cascadeIndex] = glm::mat4(1.0f);
@@ -435,6 +448,14 @@ namespace PlutoGE::scene
         {
             staticShadowCascadeMap.reset();
         }
+        for (auto &staticShadowCascadeScratchMaps : m_config.staticShadowCascadeScratchMaps)
+        {
+            for (auto &staticShadowCascadeScratchMap : staticShadowCascadeScratchMaps)
+            {
+                staticShadowCascadeScratchMap.reset();
+            }
+        }
+        m_config.nextStaticShadowScratchIndex.fill(0);
         m_config.staticShadowCascadeValid.fill(false);
         m_config.activeShadowCascadeCount = 0;
 

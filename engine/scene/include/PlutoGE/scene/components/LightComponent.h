@@ -57,6 +57,11 @@ namespace PlutoGE::scene
         // before dynamic casters are overlaid. Consumers continue sampling the
         // combined maps through the existing public interface.
         std::array<std::unique_ptr<render::Texture>, kMaxDirectionalShadowCascades> staticShadowCascadeMaps;
+        // Persistent ping-pong targets let scrolling cascades promote the
+        // shifted texture to the static cache without copying the entire map
+        // back into its previous allocation.
+        std::array<std::array<std::unique_ptr<render::Texture>, 2>, kMaxDirectionalShadowCascades> staticShadowCascadeScratchMaps;
+        std::array<std::uint8_t, kMaxDirectionalShadowCascades> nextStaticShadowScratchIndex{};
         std::array<bool, kMaxDirectionalShadowCascades> staticShadowCascadeValid{false, false, false, false};
         std::array<glm::vec3, kMaxDirectionalShadowCascades> shadowCascadeWorldOrigins{
             glm::vec3(0.0f), glm::vec3(0.0f), glm::vec3(0.0f), glm::vec3(0.0f)};

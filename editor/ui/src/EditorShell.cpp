@@ -1818,7 +1818,7 @@ namespace PlutoGE::ui
         return true;
     }
 
-    void EditorShell::HandleEditorShortcuts(bool isRuntimeRunning)
+    void EditorShell::HandleEditorShortcuts(bool isRuntimeRunning, ProfilerPanel *profilerPanel)
     {
         const ImGuiIO &io = ImGui::GetIO();
         if (io.WantTextInput)
@@ -1835,6 +1835,14 @@ namespace PlutoGE::ui
             return;
         }
         const bool command = io.KeyCtrl || io.KeySuper;
+        if (command && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_C))
+        {
+            if (profilerPanel)
+            {
+                profilerPanel->CopyMetricsToClipboard();
+            }
+            return;
+        }
         if (isRuntimeRunning)
         {
             return;
@@ -3047,7 +3055,7 @@ namespace PlutoGE::ui
             m_panelManager.BeginPanelUpdate();
             const auto editorChromeStart = std::chrono::high_resolution_clock::now();
 
-            HandleEditorShortcuts(isRuntimeRunning);
+            HandleEditorShortcuts(isRuntimeRunning, profilerPanel);
 
             auto sanitizeBakeSettings = [](scene::SceneBakeSettings &settings)
             {

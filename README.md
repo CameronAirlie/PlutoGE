@@ -219,6 +219,7 @@ Useful shortcuts:
 | `F` | Focus the selected entity in the viewport |
 | `Ctrl+Z`, `Ctrl+Y` | Undo and redo |
 | `Ctrl+C`, `Ctrl+V`, `Ctrl+D` | Copy, paste, and duplicate the selected entity |
+| `Ctrl+Shift+C` | Copy profiler metrics (also available during play mode) |
 | `Delete` | Delete the selected entity |
 
 Editor camera navigation uses `W/A/S/D` for planar movement, `Q/E` for vertical movement, and Shift to move faster. Drag with the right mouse button to look and the middle mouse button to pan. On a trackpad, use `Alt` + left-drag to look and `Alt` + `Shift` + left-drag to pan. Two-finger scrolling adjusts movement speed (or zooms an orthographic view).

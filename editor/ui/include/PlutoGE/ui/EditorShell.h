@@ -31,6 +31,8 @@ namespace PlutoGE::scene
 
 namespace PlutoGE::ui
 {
+    class ProfilerPanel;
+
     class EditorShell
     {
     public:
@@ -284,7 +286,7 @@ namespace PlutoGE::ui
         bool ConfirmContinueWithUnsavedChanges();
         void MarkSceneClean();
         void MarkProjectClean();
-        void HandleEditorShortcuts(bool isRuntimeRunning);
+        void HandleEditorShortcuts(bool isRuntimeRunning, ProfilerPanel *profilerPanel);
 
         core::Engine &m_engine = core::Engine::GetInstance();
         PanelManager m_panelManager;

@@ -415,6 +415,11 @@ namespace
                       {
                           return std::less<PlutoGE::render::Mesh *>{}(aCommand->mesh, bCommand->mesh);
                       }
+                      if (aCommand->jointMatrices != bCommand->jointMatrices)
+                      {
+                          return std::less<const std::vector<glm::mat4> *>{}(aCommand->jointMatrices,
+                                                                           bCommand->jointMatrices);
+                      }
                       if (aCommand->submeshIndex != bCommand->submeshIndex)
                       {
                           return aCommand->submeshIndex < bCommand->submeshIndex;
@@ -1294,7 +1299,10 @@ namespace
         for (std::size_t drawIndex = 0; drawIndex < draws.size();)
         {
             const auto &head = draws[drawIndex];
-            const bool canUseIndirect = !head.command->jointMatrices;
+            // Skinned submeshes can share one multi-draw as long as they use
+            // the same pose. Joint matrices are uniform state, while each
+            // indirect command retains its own index range and base instance.
+            const bool canUseIndirect = true;
             const bool headAlphaTested = IsAlphaTestedShadowCaster(*head.command);
             const PlutoGE::render::IndirectDrawGroupingKey headKey{
                 .material = head.command->material,
@@ -1315,7 +1323,13 @@ namespace
                         .skinned = candidate.command->jointMatrices != nullptr,
                         .alphaTested = candidateAlphaTested,
                     };
-                    if (!PlutoGE::render::CanGroupShadowIndirectDraws(headKey, candidateKey))
+                    const bool compatibleSkinnedDraw = headKey.skinned && candidateKey.skinned &&
+                                                       headKey.mesh == candidateKey.mesh &&
+                                                       headKey.alphaTested == candidateKey.alphaTested &&
+                                                       (!headKey.alphaTested || headKey.material == candidateKey.material);
+                    if ((!PlutoGE::render::CanGroupShadowIndirectDraws(headKey, candidateKey) &&
+                         !compatibleSkinnedDraw) ||
+                        candidate.command->jointMatrices != head.command->jointMatrices)
                     {
                         break;
                     }
@@ -1383,7 +1397,16 @@ namespace
 
             if (group.usesIndirect)
             {
-                if (skinningEnabled)
+                if (command.jointMatrices)
+                {
+                    if (command.jointMatrices != boundJointMatrices)
+                    {
+                        UploadShadowJointMatrices(shader, command.jointMatrices);
+                        boundJointMatrices = command.jointMatrices;
+                    }
+                    skinningEnabled = true;
+                }
+                else if (skinningEnabled)
                 {
                     shader->SetUniform("uUseSkinning", 0);
                     skinningEnabled = false;
@@ -1956,24 +1979,23 @@ namespace PlutoGE::render
                 std::uint8_t scheduledCascadeMask = 0;
                 if (!forceFullCascadeUpdate)
                 {
-                    // Moving casters are latency-sensitive. Refresh every
-                    // cascade containing their previous or current bounds now;
-                    // the round-robin scheduler remains for camera/cache work.
-                    scheduledCascadeMask = light->pendingShadowCascadeMask & movedCasterCascadeMask;
-                    if (scheduledCascadeMask == 0)
+                    // Keep directional work to one cascade per frame. The
+                    // weighted schedule revisits near cascades most often while
+                    // still guaranteeing that pending far cascades advance. In
+                    // particular, moving casters must not bypass this scheduler
+                    // and combine normal scroll work with several full
+                    // depth-range refreshes in one frame.
+                    for (std::size_t attempt = 0; attempt < kDirectionalCascadeRefreshSchedule.size(); ++attempt)
                     {
-                        for (std::size_t attempt = 0; attempt < kDirectionalCascadeRefreshSchedule.size(); ++attempt)
+                        const int scheduleIndex = light->nextShadowCascadeToRefresh % static_cast<int>(kDirectionalCascadeRefreshSchedule.size());
+                        light->nextShadowCascadeToRefresh = (scheduleIndex + 1) % static_cast<int>(kDirectionalCascadeRefreshSchedule.size());
+                        const int candidateCascadeIndex = kDirectionalCascadeRefreshSchedule[static_cast<std::size_t>(scheduleIndex)];
+                        const std::uint8_t candidateCascadeBit = static_cast<std::uint8_t>(1u << candidateCascadeIndex);
+                        if (candidateCascadeIndex < cascadeCount &&
+                            (light->pendingShadowCascadeMask & candidateCascadeBit) != 0)
                         {
-                            const int scheduleIndex = light->nextShadowCascadeToRefresh % static_cast<int>(kDirectionalCascadeRefreshSchedule.size());
-                            light->nextShadowCascadeToRefresh = (scheduleIndex + 1) % static_cast<int>(kDirectionalCascadeRefreshSchedule.size());
-                            const int candidateCascadeIndex = kDirectionalCascadeRefreshSchedule[static_cast<std::size_t>(scheduleIndex)];
-                            const std::uint8_t candidateCascadeBit = static_cast<std::uint8_t>(1u << candidateCascadeIndex);
-                            if (candidateCascadeIndex < cascadeCount &&
-                                (light->pendingShadowCascadeMask & candidateCascadeBit) != 0)
-                            {
-                                scheduledCascadeMask = candidateCascadeBit;
-                                break;
-                            }
+                            scheduledCascadeMask = candidateCascadeBit;
+                            break;
                         }
                     }
                 }
@@ -2154,6 +2176,10 @@ namespace PlutoGE::render
                         DirectionalShadowDirtyRegion region;
                         region.min = cascadeProjection.receiverMin + glm::vec2(x, y) * scale;
                         region.max = region.min + glm::vec2(width, height) * scale;
+                        region.pixelX = x;
+                        region.pixelY = y;
+                        region.pixelWidth = width;
+                        region.pixelHeight = height;
                         region.valid = true;
                         return region;
                     };
@@ -2263,10 +2289,34 @@ namespace PlutoGE::render
                         cascadeShadowWorldOrigin,
                         shadowResolution,
                         glm::max(light->directionalShadowSettings.softness, 0.0f));
+                    auto dynamicRefreshRegions = movedCasterDirtyRegions;
+                    if (requiresScrollCopy)
+                    {
+                        if (cascadeScroll.x != 0)
+                        {
+                            const int width = std::abs(cascadeScroll.x);
+                            const int x = cascadeScroll.x > 0 ? 0 : shadowResolution - width;
+                            dynamicRefreshRegions.push_back(
+                                lightSpaceRegionForPixels(x, 0, width, shadowResolution));
+                        }
+                        if (cascadeScroll.y != 0)
+                        {
+                            const int height = std::abs(cascadeScroll.y);
+                            const int y = cascadeScroll.y > 0 ? 0 : shadowResolution - height;
+                            dynamicRefreshRegions.push_back(
+                                lightSpaceRegionForPixels(0, y, shadowResolution, height));
+                        }
+                    }
+
+                    // Keep exposed X/Y strips independent. Their small corner
+                    // overlap is cheaper than replacing the resulting L-shape
+                    // with its bounding rectangle, which would cover the whole
+                    // cascade whenever both axes scroll. Moving-caster regions
+                    // are already clustered by BuildMovedCasterDirtyRegions.
                     const std::int64_t cascadePixelCount =
                         static_cast<std::int64_t>(shadowResolution) * shadowResolution;
                     const std::int64_t dirtyPixelCount = std::accumulate(
-                        movedCasterDirtyRegions.begin(), movedCasterDirtyRegions.end(), std::int64_t{0},
+                        dynamicRefreshRegions.begin(), dynamicRefreshRegions.end(), std::int64_t{0},
                         [](std::int64_t total, const DirectionalShadowDirtyRegion &region)
                         {
                             return total + static_cast<std::int64_t>(region.pixelWidth) * region.pixelHeight;
@@ -2274,15 +2324,44 @@ namespace PlutoGE::render
                     constexpr float kMaximumPartialDynamicUpdateCoverage = 0.6f;
                     const bool canPartiallyRestoreDynamicDepth =
                         !staticNeedsFullRefresh &&
-                        !requiresScrollCopy &&
-                        cascadeScroll.valid && cascadeScroll.x == 0 && cascadeScroll.y == 0 &&
-                        !movedCasterDirtyRegions.empty() &&
+                        cascadeScroll.valid &&
+                        !dynamicRefreshRegions.empty() &&
                         static_cast<double>(dirtyPixelCount) <=
                             static_cast<double>(cascadePixelCount) * kMaximumPartialDynamicUpdateCoverage;
 
                     if (canPartiallyRestoreDynamicDepth)
                     {
-                        for (const auto &dirtyRegion : movedCasterDirtyRegions)
+                        if (requiresScrollCopy)
+                        {
+                            // The static cache has already been promoted, so its
+                            // retired allocation is free to receive the shifted
+                            // combined (static + dynamic) map. Promote that map
+                            // too, then repair only newly exposed and caster-dirty
+                            // rectangles below.
+                            auto &combinedScratchMap =
+                                light->staticShadowCascadeScratchMaps[cascadeIndex][activeScratchIndex];
+                            const unsigned int combinedScratchTexture = combinedScratchMap->GetTextureID();
+                            const unsigned int previousCombinedTexture = cascadeMap->GetTextureID();
+                            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D,
+                                                   combinedScratchTexture, 0);
+                            glDisable(GL_SCISSOR_TEST);
+                            glClear(GL_DEPTH_BUFFER_BIT);
+                            const int sourceX = glm::max(0, -cascadeScroll.x);
+                            const int sourceY = glm::max(0, -cascadeScroll.y);
+                            const int destinationX = glm::max(0, cascadeScroll.x);
+                            const int destinationY = glm::max(0, cascadeScroll.y);
+                            const int copyWidth = shadowResolution - std::abs(cascadeScroll.x);
+                            const int copyHeight = shadowResolution - std::abs(cascadeScroll.y);
+                            glCopyImageSubData(previousCombinedTexture, GL_TEXTURE_2D, 0,
+                                               sourceX, sourceY, 0,
+                                               combinedScratchTexture, GL_TEXTURE_2D, 0,
+                                               destinationX, destinationY, 0,
+                                               copyWidth, copyHeight, 1);
+                            std::swap(light->shadowCascadeMaps[cascadeIndex], combinedScratchMap);
+                            cascadeMap = light->shadowCascadeMaps[cascadeIndex].get();
+                        }
+
+                        for (const auto &dirtyRegion : dynamicRefreshRegions)
                         {
                             glCopyImageSubData(
                                 staticCascadeMap->GetTextureID(), GL_TEXTURE_2D, 0,
@@ -2305,7 +2384,7 @@ namespace PlutoGE::render
                     }
                     if (canPartiallyRestoreDynamicDepth)
                     {
-                        for (const auto &dirtyRegion : movedCasterDirtyRegions)
+                        for (const auto &dirtyRegion : dynamicRefreshRegions)
                         {
                             drawRegion(dirtyRegion.pixelX,
                                        dirtyRegion.pixelY,

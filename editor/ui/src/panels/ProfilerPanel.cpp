@@ -34,6 +34,43 @@ namespace
 
 namespace PlutoGE::ui
 {
+    void ProfilerPanel::CopyMetricsToClipboard()
+    {
+        if (!m_profiler || !m_panelManager || !m_renderer)
+        {
+            return;
+        }
+
+        const auto &rmlTiming = render::RmlUiRuntime::Get().GetCpuTiming();
+        m_lastCopiedMetrics = m_profiler->BuildMetricsReport(
+            m_panelManager->GetTimingStats(),
+            m_profiler->GetLatestFrameTimingStats(),
+            m_renderer->GetCpuPassTimings(),
+            m_renderer->GetCpuFrameStats(),
+            m_renderer->GetGpuPassTimings(),
+            m_renderer->GetPostProcessGpuTimings(),
+            m_renderer->GetTotalCpuPassTimeMs(),
+            m_renderer->GetTotalGpuPassTimeMs(),
+            m_renderer->GetLightingGpuTiming());
+        std::ostringstream rmlReport;
+        rmlReport << std::fixed << std::setprecision(3)
+                  << "\nRmlUi CPU measured total: " << rmlTiming.TotalMs() << " ms\n"
+                  << "RmlUi documents: " << rmlTiming.visibleDocumentCount << "/"
+                  << rmlTiming.documentCount << " visible\n"
+                  << "RmlUi initialize: " << rmlTiming.initializeMs << " ms\n"
+                  << "RmlUi viewport resize: " << rmlTiming.resizeMs << " ms\n"
+                  << "RmlUi document synchronization: " << rmlTiming.synchronizeMs << " ms\n"
+                  << "RmlUi input + layout update: " << rmlTiming.inputUpdateMs << " ms\n"
+                  << "RmlUi world-surface update: " << rmlTiming.worldSurfaceMs << " ms\n"
+                  << "RmlUi backend begin frame: " << rmlTiming.beginFrameMs << " ms\n"
+                  << "RmlUi backdrop copy: " << rmlTiming.backdropMs << " ms ("
+                  << (rmlTiming.copiedBackdrop ? "performed" : "skipped") << ")\n"
+                  << "RmlUi render submission: " << rmlTiming.renderMs << " ms\n"
+                  << "RmlUi backend end frame: " << rmlTiming.endFrameMs << " ms\n";
+        m_lastCopiedMetrics += rmlReport.str();
+        ImGui::SetClipboardText(m_lastCopiedMetrics.c_str());
+    }
+
     void ProfilerPanel::Initialize()
     {
     }
@@ -326,33 +363,7 @@ namespace PlutoGE::ui
 
         if (ImGui::Button("Copy Metrics"))
         {
-            m_lastCopiedMetrics = m_profiler->BuildMetricsReport(
-                timingStats,
-                frameTimingStats,
-                cpuPassTimings,
-                cpuFrameStats,
-                gpuPassTimings,
-                postProcessGpuTimings,
-                m_renderer->GetTotalCpuPassTimeMs(),
-                m_renderer->GetTotalGpuPassTimeMs(),
-                lightingGpuTiming);
-            std::ostringstream rmlReport;
-            rmlReport << std::fixed << std::setprecision(3)
-                      << "\nRmlUi CPU measured total: " << rmlTiming.TotalMs() << " ms\n"
-                      << "RmlUi documents: " << rmlTiming.visibleDocumentCount << "/"
-                      << rmlTiming.documentCount << " visible\n"
-                      << "RmlUi initialize: " << rmlTiming.initializeMs << " ms\n"
-                      << "RmlUi viewport resize: " << rmlTiming.resizeMs << " ms\n"
-                      << "RmlUi document synchronization: " << rmlTiming.synchronizeMs << " ms\n"
-                      << "RmlUi input + layout update: " << rmlTiming.inputUpdateMs << " ms\n"
-                      << "RmlUi world-surface update: " << rmlTiming.worldSurfaceMs << " ms\n"
-                      << "RmlUi backend begin frame: " << rmlTiming.beginFrameMs << " ms\n"
-                      << "RmlUi backdrop copy: " << rmlTiming.backdropMs << " ms ("
-                      << (rmlTiming.copiedBackdrop ? "performed" : "skipped") << ")\n"
-                      << "RmlUi render submission: " << rmlTiming.renderMs << " ms\n"
-                      << "RmlUi backend end frame: " << rmlTiming.endFrameMs << " ms\n";
-            m_lastCopiedMetrics += rmlReport.str();
-            ImGui::SetClipboardText(m_lastCopiedMetrics.c_str());
+            CopyMetricsToClipboard();
         }
 
         if (!m_lastCopiedMetrics.empty())

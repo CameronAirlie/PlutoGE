@@ -35,8 +35,11 @@ namespace PlutoGE::render
     private:
         bool PrepareForGpuAccess() const;
 
-        platform::Window *m_window = nullptr;
         GLuint m_nextTextureID = 1;                                // Start from 1 since 0 is reserved for "no texture"
         std::unordered_map<std::string, Texture *> m_textureCache; // Cache for loaded textures
+        // Keep newly added state after the established cache fields. Besides making the layout easier
+        // to evolve, this preserves their offsets when an incremental MSVC build contains an older
+        // object file compiled before window-aware texture uploads were introduced.
+        platform::Window *m_window = nullptr;
     };
 }

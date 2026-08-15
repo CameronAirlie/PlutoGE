@@ -23,6 +23,8 @@ namespace PlutoGE::ui
         void Render() override;
         void Shutdown() override;
 
+        void CopyMetricsToClipboard();
+
     private:
         EditorProfiler *m_profiler = nullptr;
         PanelManager *m_panelManager = nullptr;

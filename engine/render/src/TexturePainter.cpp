@@ -1,4 +1,5 @@
 #include "PlutoGE/render/TexturePainter.h"
+#include "PlutoGE/render/Graphics.h"
 #include "PlutoGE/render/Texture.h"
 
 #include <glad/glad.h>
@@ -55,7 +56,7 @@ namespace PlutoGE::render
 
         // Memory-created textures have no source file. Reading level zero once is
         // preferable to retaining a duplicate CPU copy for every texture.
-        glBindTexture(GL_TEXTURE_2D, texture.GetTextureID());
+        Graphics::BindTexture(GL_TEXTURE_2D, texture.GetTextureID());
         glGetTexImage(GL_TEXTURE_2D, 0, PixelFormat(m_channels), GL_UNSIGNED_BYTE, m_pixels.data());
     }
 
@@ -71,7 +72,7 @@ namespace PlutoGE::render
         if (!texture || m_brushWidth <= 0 || m_brushHeight <= 0 || m_brushChannels < 1 || m_brushChannels > 4)
             return;
         m_brushPixels.resize(static_cast<std::size_t>(m_brushWidth) * m_brushHeight * m_brushChannels);
-        glBindTexture(GL_TEXTURE_2D, texture->GetTextureID());
+        Graphics::BindTexture(GL_TEXTURE_2D, texture->GetTextureID());
         glGetTexImage(GL_TEXTURE_2D, 0, PixelFormat(m_brushChannels), GL_UNSIGNED_BYTE, m_brushPixels.data());
     }
 
@@ -162,7 +163,7 @@ namespace PlutoGE::render
         glGetIntegerv(GL_UNPACK_ROW_LENGTH, &previousRowLength);
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
         glPixelStorei(GL_UNPACK_ROW_LENGTH, m_width);
-        glBindTexture(GL_TEXTURE_2D, m_texture->GetTextureID());
+        Graphics::BindTexture(GL_TEXTURE_2D, m_texture->GetTextureID());
         glTexSubImage2D(GL_TEXTURE_2D, 0, minX, minY, uploadWidth, uploadHeight,
                         PixelFormat(m_channels), GL_UNSIGNED_BYTE, firstPixel);
         glPixelStorei(GL_UNPACK_ROW_LENGTH, previousRowLength);
@@ -175,7 +176,7 @@ namespace PlutoGE::render
     {
         if (!m_mipmapsDirty || !IsValid())
             return;
-        glBindTexture(GL_TEXTURE_2D, m_texture->GetTextureID());
+        Graphics::BindTexture(GL_TEXTURE_2D, m_texture->GetTextureID());
         glGenerateMipmap(GL_TEXTURE_2D);
         m_mipmapsDirty = false;
     }

@@ -317,11 +317,11 @@ namespace PlutoGE::render
     void BloomEffect::RenderPrefilter(GLuint sourceTexture, int sourceWidth, int sourceHeight, RenderTarget &destination)
     {
         Graphics::BindRenderTarget(&destination);
-        glViewport(0, 0, destination.GetWidth(), destination.GetHeight());
-        glDisable(GL_BLEND);
+        Graphics::SetViewport(0, 0, destination.GetWidth(), destination.GetHeight());
+        Graphics::Disable(GL_BLEND);
         m_prefilterShader->Bind();
-        glActiveTexture(GL_TEXTURE0 + kSourceTextureSlot);
-        glBindTexture(GL_TEXTURE_2D, sourceTexture);
+        Graphics::ActiveTexture(GL_TEXTURE0 + kSourceTextureSlot);
+        Graphics::BindTexture(GL_TEXTURE_2D, sourceTexture);
         m_prefilterShader->SetUniform("uSourceTexture", kSourceTextureSlot);
         m_prefilterShader->SetUniform("uSourceTexelSize", glm::vec2(1.0f / std::max(sourceWidth, 1), 1.0f / std::max(sourceHeight, 1)));
         m_prefilterShader->SetUniform("uThreshold", std::max(m_threshold, 0.0f));
@@ -332,11 +332,11 @@ namespace PlutoGE::render
     void BloomEffect::RenderDownsample(GLuint sourceTexture, int sourceWidth, int sourceHeight, RenderTarget &destination)
     {
         Graphics::BindRenderTarget(&destination);
-        glViewport(0, 0, destination.GetWidth(), destination.GetHeight());
-        glDisable(GL_BLEND);
+        Graphics::SetViewport(0, 0, destination.GetWidth(), destination.GetHeight());
+        Graphics::Disable(GL_BLEND);
         m_downsampleShader->Bind();
-        glActiveTexture(GL_TEXTURE0 + kSourceTextureSlot);
-        glBindTexture(GL_TEXTURE_2D, sourceTexture);
+        Graphics::ActiveTexture(GL_TEXTURE0 + kSourceTextureSlot);
+        Graphics::BindTexture(GL_TEXTURE_2D, sourceTexture);
         m_downsampleShader->SetUniform("uSourceTexture", kSourceTextureSlot);
         m_downsampleShader->SetUniform("uSourceTexelSize", glm::vec2(1.0f / std::max(sourceWidth, 1), 1.0f / std::max(sourceHeight, 1)));
         DrawFullscreenTriangle();
@@ -345,11 +345,11 @@ namespace PlutoGE::render
     void BloomEffect::RenderCopy(GLuint sourceTexture, RenderTarget &destination)
     {
         Graphics::BindRenderTarget(&destination);
-        glViewport(0, 0, destination.GetWidth(), destination.GetHeight());
-        glDisable(GL_BLEND);
+        Graphics::SetViewport(0, 0, destination.GetWidth(), destination.GetHeight());
+        Graphics::Disable(GL_BLEND);
         m_copyShader->Bind();
-        glActiveTexture(GL_TEXTURE0 + kSourceTextureSlot);
-        glBindTexture(GL_TEXTURE_2D, sourceTexture);
+        Graphics::ActiveTexture(GL_TEXTURE0 + kSourceTextureSlot);
+        Graphics::BindTexture(GL_TEXTURE_2D, sourceTexture);
         m_copyShader->SetUniform("uSourceTexture", kSourceTextureSlot);
         DrawFullscreenTriangle();
     }
@@ -357,14 +357,14 @@ namespace PlutoGE::render
     void BloomEffect::RenderUpsample(GLuint baseTexture, GLuint bloomTexture, int bloomWidth, int bloomHeight, RenderTarget &destination)
     {
         Graphics::BindRenderTarget(&destination);
-        glViewport(0, 0, destination.GetWidth(), destination.GetHeight());
-        glDisable(GL_BLEND);
+        Graphics::SetViewport(0, 0, destination.GetWidth(), destination.GetHeight());
+        Graphics::Disable(GL_BLEND);
         m_upsampleShader->Bind();
-        glActiveTexture(GL_TEXTURE0 + kBaseTextureSlot);
-        glBindTexture(GL_TEXTURE_2D, baseTexture);
+        Graphics::ActiveTexture(GL_TEXTURE0 + kBaseTextureSlot);
+        Graphics::BindTexture(GL_TEXTURE_2D, baseTexture);
         m_upsampleShader->SetUniform("uBaseTexture", kBaseTextureSlot);
-        glActiveTexture(GL_TEXTURE0 + kBloomTextureSlot);
-        glBindTexture(GL_TEXTURE_2D, bloomTexture);
+        Graphics::ActiveTexture(GL_TEXTURE0 + kBloomTextureSlot);
+        Graphics::BindTexture(GL_TEXTURE_2D, bloomTexture);
         m_upsampleShader->SetUniform("uBloomTexture", kBloomTextureSlot);
         m_upsampleShader->SetUniform("uBloomTexelSize", glm::vec2(1.0f / std::max(bloomWidth, 1), 1.0f / std::max(bloomHeight, 1)));
         m_upsampleShader->SetUniform("uRadius", std::clamp(m_radius, 0.25f, 2.5f));
@@ -414,11 +414,11 @@ namespace PlutoGE::render
         }
 
         BeginApply(context);
-        glDisable(GL_BLEND);
+        Graphics::Disable(GL_BLEND);
         m_compositeShader->Bind();
         BindCommonInputs(m_compositeShader, context);
-        glActiveTexture(GL_TEXTURE0 + kCompositeBloomTextureSlot);
-        glBindTexture(GL_TEXTURE_2D, m_upsampleTargets[0]->GetColorTextureID());
+        Graphics::ActiveTexture(GL_TEXTURE0 + kCompositeBloomTextureSlot);
+        Graphics::BindTexture(GL_TEXTURE_2D, m_upsampleTargets[0]->GetColorTextureID());
         m_compositeShader->SetUniform("uBloomTexture", kCompositeBloomTextureSlot);
         m_compositeShader->SetUniform("uIntensity", std::max(m_intensity, 0.0f));
         DrawFullscreenTriangle();

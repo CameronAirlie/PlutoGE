@@ -247,9 +247,9 @@ namespace PlutoGE::render
     PhysicalSkyPass::~PhysicalSkyPass()
     {
         if (m_environmentFramebuffer)
-            glDeleteFramebuffers(1, &m_environmentFramebuffer);
+            Graphics::DeleteFramebuffers(1, &m_environmentFramebuffer);
         if (m_environmentTexture)
-            glDeleteTextures(1, &m_environmentTexture);
+            Graphics::DeleteTextures(1, &m_environmentTexture);
         if (m_vao)
             glDeleteVertexArrays(1, &m_vao);
     }
@@ -277,7 +277,7 @@ namespace PlutoGE::render
         if (!m_environmentTexture)
         {
             glGenTextures(1, &m_environmentTexture);
-            glBindTexture(GL_TEXTURE_2D, m_environmentTexture);
+            Graphics::BindTexture(GL_TEXTURE_2D, m_environmentTexture);
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, m_environmentWidth, m_environmentHeight, 0, GL_RGBA, GL_FLOAT, nullptr);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -295,13 +295,13 @@ namespace PlutoGE::render
         glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previousReadFramebuffer);
         glGetIntegerv(GL_VIEWPORT, previousViewport);
 
-        glBindFramebuffer(GL_FRAMEBUFFER, m_environmentFramebuffer);
+        Graphics::BindFramebuffer(GL_FRAMEBUFFER, m_environmentFramebuffer);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_environmentTexture, 0);
         if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
         {
-            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(previousDrawFramebuffer));
-            glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(previousReadFramebuffer));
-            glViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
+            Graphics::BindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(previousDrawFramebuffer));
+            Graphics::BindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(previousReadFramebuffer));
+            Graphics::SetViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
             m_environmentAvailable = false;
             return false;
         }
@@ -310,23 +310,23 @@ namespace PlutoGE::render
         const glm::vec3 sunDirection = ResolveSunDirection(ctx);
         m_environmentSunVisibility = glm::smoothstep(-0.02f, 0.03f, sunDirection.y);
 
-        glViewport(0, 0, m_environmentWidth, m_environmentHeight);
-        glDisable(GL_DEPTH_TEST);
+        Graphics::SetViewport(0, 0, m_environmentWidth, m_environmentHeight);
+        Graphics::Disable(GL_DEPTH_TEST);
         glDepthMask(GL_FALSE);
-        glDisable(GL_CULL_FACE);
-        glDisable(GL_BLEND);
+        Graphics::Disable(GL_CULL_FACE);
+        Graphics::Disable(GL_BLEND);
         m_shader->Bind();
         m_shader->SetUniform("uEnvironmentCapture", 1);
         SetSkyUniforms(*m_shader, *sky, sunDirection);
         Graphics::DrawFullscreenTriangle();
         m_shader->Unbind();
 
-        glBindTexture(GL_TEXTURE_2D, m_environmentTexture);
+        Graphics::BindTexture(GL_TEXTURE_2D, m_environmentTexture);
         glGenerateMipmap(GL_TEXTURE_2D);
-        glBindTexture(GL_TEXTURE_2D, 0);
-        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(previousDrawFramebuffer));
-        glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(previousReadFramebuffer));
-        glViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
+        Graphics::BindTexture(GL_TEXTURE_2D, 0);
+        Graphics::BindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(previousDrawFramebuffer));
+        Graphics::BindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(previousReadFramebuffer));
+        Graphics::SetViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
         glDepthMask(GL_TRUE);
 
         m_lastEnvironmentFrame = ctx.frameSequence;
@@ -352,18 +352,18 @@ namespace PlutoGE::render
         const glm::vec3 sunDirection = ResolveSunDirection(ctx);
 
         Graphics::BindRenderTarget(ctx.temporaryRenderTarget);
-        glViewport(0, 0, ctx.temporaryRenderTarget->GetWidth(), ctx.temporaryRenderTarget->GetHeight());
-        glDisable(GL_DEPTH_TEST);
+        Graphics::SetViewport(0, 0, ctx.temporaryRenderTarget->GetWidth(), ctx.temporaryRenderTarget->GetHeight());
+        Graphics::Disable(GL_DEPTH_TEST);
         glDepthMask(GL_FALSE);
-        glDisable(GL_CULL_FACE);
-        glDisable(GL_BLEND);
+        Graphics::Disable(GL_CULL_FACE);
+        Graphics::Disable(GL_BLEND);
         m_shader->Bind();
         m_shader->SetUniform("uEnvironmentCapture", 0);
         m_shader->SetUniform("uInverseView", glm::inverse(ctx.cameraData.view));
         m_shader->SetUniform("uInverseProjection", glm::inverse(ctx.cameraData.projection));
         SetSkyUniforms(*m_shader, *sky, sunDirection);
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, ctx.temporaryRenderTarget->GetDepthTextureID());
+        Graphics::ActiveTexture(GL_TEXTURE0);
+        Graphics::BindTexture(GL_TEXTURE_2D, ctx.temporaryRenderTarget->GetDepthTextureID());
         m_shader->SetUniform("uSceneDepth", 0);
         Graphics::DrawFullscreenTriangle();
         m_shader->Unbind();

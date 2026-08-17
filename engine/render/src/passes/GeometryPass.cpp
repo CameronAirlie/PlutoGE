@@ -1,4 +1,5 @@
 #include "PlutoGE/render/passes/GeometryPass.h"
+#include "PlutoGE/render/Graphics.h"
 #include "PlutoGE/render/RenderTarget.h"
 #include "PlutoGE/render/GBuffer.h"
 #include "PlutoGE/render/IndirectDraw.h"
@@ -11,7 +12,9 @@
 #include <array>
 #include <cstddef>
 #include <chrono>
+#include <cstdint>
 #include <iostream>
+#include <unordered_set>
 #include <vector>
 
 namespace PlutoGE::render
@@ -134,6 +137,7 @@ namespace PlutoGE::render
             std::size_t lodIndex = 0;
             std::size_t firstInstance = 0;
             std::size_t instanceCount = 0;
+            bool staticResident = false;
         };
 
         struct PreparedGeometryGroup
@@ -146,7 +150,8 @@ namespace PlutoGE::render
 
         void UploadGeometryInstances(unsigned int &instanceBuffer,
                                      std::size_t &instanceCapacity,
-                                     const std::vector<GeometryInstanceData> &instances)
+                                     const std::vector<GeometryInstanceData> &instances,
+                                     GLenum usage = GL_STREAM_DRAW)
         {
             if (instances.empty())
             {
@@ -162,7 +167,7 @@ namespace PlutoGE::render
             if (instanceCapacity < instances.size())
             {
                 instanceCapacity = std::max(instances.size(), instanceCapacity == 0 ? instances.size() : instanceCapacity * 2);
-                glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(instanceCapacity * sizeof(GeometryInstanceData)), nullptr, GL_STREAM_DRAW);
+                glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(instanceCapacity * sizeof(GeometryInstanceData)), nullptr, usage);
             }
 
             glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(instances.size() * sizeof(GeometryInstanceData)), instances.data());
@@ -174,6 +179,8 @@ namespace PlutoGE::render
     {
     public:
         std::vector<GeometryInstanceData> instances;
+        std::vector<GeometryInstanceData> staticInstances;
+        std::unordered_set<const std::vector<glm::mat4> *> submittedStaticSnapshots;
         std::vector<PreparedGeometryDraw> draws;
         std::vector<DrawElementsIndirectCommand> indirectCommands;
         std::vector<PreparedGeometryGroup> groups;
@@ -188,6 +195,8 @@ namespace PlutoGE::render
     {
         glDeleteBuffers(static_cast<GLsizei>(m_instanceBuffers.size()), m_instanceBuffers.data());
         glDeleteBuffers(static_cast<GLsizei>(m_indirectBuffers.size()), m_indirectBuffers.data());
+        if (m_staticInstanceBuffer)
+            glDeleteBuffers(1, &m_staticInstanceBuffer);
     }
 
     void GeometryPass::Initialize()
@@ -195,6 +204,7 @@ namespace PlutoGE::render
         m_geometryPassShader = Shader::CreateGeometryPassShader();
         glGenBuffers(static_cast<GLsizei>(m_instanceBuffers.size()), m_instanceBuffers.data());
         glGenBuffers(static_cast<GLsizei>(m_indirectBuffers.size()), m_indirectBuffers.data());
+        glGenBuffers(1, &m_staticInstanceBuffer);
     }
 
     void GeometryPass::Execute(const RenderContext &ctx)
@@ -223,13 +233,13 @@ namespace PlutoGE::render
         // Opaque geometry must establish its own blend state. Late-frame UI
         // and transparent passes intentionally enable blending and may be the
         // final pass executed in the previous frame.
-        glDisable(GL_BLEND);
-        glEnable(GL_DEPTH_TEST);
+        Graphics::Disable(GL_BLEND);
+        Graphics::Enable(GL_DEPTH_TEST);
         glDepthMask(GL_TRUE);
         glDepthFunc(GL_GEQUAL);
-        glEnable(GL_CULL_FACE);
+        Graphics::Enable(GL_CULL_FACE);
         glCullFace(GL_BACK);
-        glViewport(0, 0, ctx.gBuffer->GetWidth(), ctx.gBuffer->GetHeight());
+        Graphics::SetViewport(0, 0, ctx.gBuffer->GetWidth(), ctx.gBuffer->GetHeight());
         // The array index maps directly to the fragment output location. Keep a
         // GL_NONE placeholder for location 5 when LOD debug output is disabled
         // so location 6 still reaches the emission attachment.
@@ -273,9 +283,63 @@ namespace PlutoGE::render
         auto &instances = m_scratch->instances;
         instances.clear();
         instances.reserve(ctx.renderCommands->size());
+        auto &staticInstances = m_scratch->staticInstances;
         auto &draws = m_scratch->draws;
         draws.clear();
         draws.reserve(ctx.renderCommands->size());
+
+        // A static command is resident only when its transform snapshot came
+        // directly from submission. Partially visible commands use renderer-owned
+        // scratch vectors and deliberately remain on the streamed path.
+        auto &submittedStaticSnapshots = m_scratch->submittedStaticSnapshots;
+        submittedStaticSnapshots.clear();
+        if (ctx.renderer)
+        {
+            for (const auto &submittedCommand : ctx.renderer->GetSceneRenderCommands())
+            {
+                if (submittedCommand.isStatic && submittedCommand.instanceModels)
+                    submittedStaticSnapshots.insert(submittedCommand.instanceModels.get());
+            }
+        }
+        const auto isStaticResident = [&submittedStaticSnapshots](const RenderCommand &command)
+        {
+            return command.isStatic && !command.jointMatrices &&
+                   command.instanceModels &&
+                   submittedStaticSnapshots.contains(command.instanceModels.get());
+        };
+        std::uint64_t staticSignature = 1469598103934665603ull;
+        std::size_t expectedStaticInstanceCount = 0;
+        const auto combineStaticSignature = [&staticSignature](std::uint64_t value)
+        {
+            staticSignature ^= value + 0x9e3779b97f4a7c15ull +
+                               (staticSignature << 6u) + (staticSignature >> 2u);
+        };
+        for (const auto &command : *ctx.renderCommands)
+        {
+            if (!command.material || !command.mesh || IsBlendMaterial(command.material) ||
+                !isStaticResident(command))
+                continue;
+            combineStaticSignature(reinterpret_cast<std::uintptr_t>(command.instanceModels.get()));
+            combineStaticSignature(reinterpret_cast<std::uintptr_t>(command.previousInstanceModels.get()));
+            combineStaticSignature(command.instanceModels->size());
+            combineStaticSignature(command.submeshIndex);
+            combineStaticSignature(command.lodIndex);
+            combineStaticSignature(command.minLodIndex);
+            combineStaticSignature(command.usePrimaryUvForLightmap ? 1u : 0u);
+            expectedStaticInstanceCount += command.instanceModels->size();
+            if (command.GetLodTransitionIndex() != command.lodIndex &&
+                command.GetLodTransitionFade() > 0.0f && command.GetLodTransitionFade() < 1.0f)
+                expectedStaticInstanceCount += command.instanceModels->size();
+        }
+        combineStaticSignature(expectedStaticInstanceCount);
+        const bool rebuildStaticInstances = staticSignature != m_staticInstanceSignature ||
+                                            expectedStaticInstanceCount != m_staticInstanceCount;
+        if (rebuildStaticInstances)
+        {
+            staticInstances.clear();
+            staticInstances.reserve(expectedStaticInstanceCount);
+        }
+        std::size_t staticInstanceCursor = 0;
 
         // Build one contiguous instance stream for the entire pass. Uploading and
         // orphaning the buffer once per draw is especially expensive in scenes
@@ -289,9 +353,11 @@ namespace PlutoGE::render
 
             const auto appendDraw = [&](std::size_t lodIndex, float lodFade, bool incomingLod)
             {
+                const bool resident = isStaticResident(command);
                 const bool appendToPrevious = !command.jointMatrices &&
                                               !draws.empty() &&
                                               !draws.back().command->jointMatrices &&
+                                              draws.back().staticResident == resident &&
                                               CanBatchGeometryCommands(*draws.back().command, draws.back().lodIndex,
                                                                        command, lodIndex);
                 if (!appendToPrevious)
@@ -299,13 +365,25 @@ namespace PlutoGE::render
                     draws.push_back(PreparedGeometryDraw{
                         .command = &command,
                         .lodIndex = lodIndex,
-                        .firstInstance = instances.size(),
+                        .firstInstance = resident ? staticInstanceCursor : instances.size(),
+                        .staticResident = resident,
                     });
                 }
 
-                const std::size_t previousInstanceCount = instances.size();
-                AppendGeometryInstances(command, lodIndex, lodFade, incomingLod, instances);
-                draws.back().instanceCount += instances.size() - previousInstanceCount;
+                if (resident)
+                {
+                    const std::size_t instanceCount = command.instanceModels->size();
+                    if (rebuildStaticInstances)
+                        AppendGeometryInstances(command, lodIndex, lodFade, incomingLod, staticInstances);
+                    staticInstanceCursor += instanceCount;
+                    draws.back().instanceCount += instanceCount;
+                }
+                else
+                {
+                    const std::size_t previousInstanceCount = instances.size();
+                    AppendGeometryInstances(command, lodIndex, lodFade, incomingLod, instances);
+                    draws.back().instanceCount += instances.size() - previousInstanceCount;
+                }
             };
 
             const std::size_t transitionLodIndex = command.GetLodTransitionIndex();
@@ -318,6 +396,14 @@ namespace PlutoGE::render
             {
                 appendDraw(transitionLodIndex, transitionFade, true);
             }
+        }
+
+        if (rebuildStaticInstances)
+        {
+            UploadGeometryInstances(m_staticInstanceBuffer, m_staticInstanceCapacity,
+                                    staticInstances, GL_STATIC_DRAW);
+            m_staticInstanceSignature = staticSignature;
+            m_staticInstanceCount = expectedStaticInstanceCount;
         }
 
         const std::size_t streamBufferIndex = m_streamBufferIndex;
@@ -356,7 +442,8 @@ namespace PlutoGE::render
                         .mesh = candidate->mesh,
                         .skinned = candidate->jointMatrices != nullptr,
                     };
-                    if (!CanGroupGeometryIndirectDraws(headKey, candidateKey))
+                    if (draws[drawEnd].staticResident != head.staticResident ||
+                        !CanGroupGeometryIndirectDraws(headKey, candidateKey))
                     {
                         break;
                     }
@@ -395,6 +482,7 @@ namespace PlutoGE::render
 
         Material *boundMaterial = nullptr;
         Mesh *boundMesh = nullptr;
+        unsigned int boundInstanceBuffer = 0;
         bool skinningEnabled = false;
         const std::vector<glm::mat4> *boundJointMatrices = nullptr;
         bool bakedLightingWriteEnabled = true;
@@ -404,6 +492,9 @@ namespace PlutoGE::render
         {
             const auto &draw = draws[group.firstDraw];
             const auto &command = *draw.command;
+            const unsigned int groupInstanceBuffer = draw.staticResident
+                                                         ? m_staticInstanceBuffer
+                                                         : instanceBuffer;
             if (command.material != boundMaterial)
             {
                 Shader *previousShader = activeShader;
@@ -448,10 +539,11 @@ namespace PlutoGE::render
                     skinningEnabled = false;
                     boundJointMatrices = nullptr;
                 }
-                if (command.mesh != boundMesh)
+                if (command.mesh != boundMesh || groupInstanceBuffer != boundInstanceBuffer)
                 {
-                    BindGeometryInstanceAttributes(*command.mesh, instanceBuffer, 0);
+                    BindGeometryInstanceAttributes(*command.mesh, groupInstanceBuffer, 0);
                     boundMesh = command.mesh;
+                    boundInstanceBuffer = groupInstanceBuffer;
                 }
                 bool submittedIndirectly = false;
                 if (m_indirectDrawEnabled)
@@ -528,12 +620,13 @@ namespace PlutoGE::render
                     skinningEnabled = false;
                     boundJointMatrices = nullptr;
                 }
-                BindGeometryInstanceAttributes(*command.mesh, instanceBuffer, 0);
+                BindGeometryInstanceAttributes(*command.mesh, groupInstanceBuffer, 0);
                 command.mesh->DrawSubmeshInstancedBaseInstanceBound(command.submeshIndex,
                                                                     draw.instanceCount,
                                                                     draw.firstInstance,
                                                                     draw.lodIndex);
                 boundMesh = command.mesh;
+                boundInstanceBuffer = groupInstanceBuffer;
                 ++apiDrawCalls;
             }
 

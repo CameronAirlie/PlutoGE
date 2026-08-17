@@ -506,14 +506,14 @@ namespace PlutoGE::render
             }
 
             glGenTextures(1, &atlas->textureId);
-            glBindTexture(GL_TEXTURE_2D, atlas->textureId);
+            Graphics::BindTexture(GL_TEXTURE_2D, atlas->textureId);
             glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
             glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, atlasSize, atlasSize, 0, GL_RED, GL_UNSIGNED_BYTE, pixels.data());
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-            glBindTexture(GL_TEXTURE_2D, 0);
+            Graphics::BindTexture(GL_TEXTURE_2D, 0);
 
             auto *atlasPtr = atlas.get();
             fontAtlases.emplace(key, std::move(atlas));
@@ -1153,7 +1153,7 @@ namespace PlutoGE::render
         {
             renderWidth = ctx.temporaryRenderTarget->GetWidth();
             renderHeight = ctx.temporaryRenderTarget->GetHeight();
-            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            Graphics::BindFramebuffer(GL_FRAMEBUFFER, 0);
         }
 
         if (renderWidth <= 0 || renderHeight <= 0)
@@ -1191,12 +1191,12 @@ namespace PlutoGE::render
                              return a.entityId < b.entityId;
                          });
 
-        glViewport(0, 0, renderWidth, renderHeight);
-        glDisable(GL_DEPTH_TEST);
+        Graphics::SetViewport(0, 0, renderWidth, renderHeight);
+        Graphics::Disable(GL_DEPTH_TEST);
         glDepthMask(GL_FALSE);
-        glDisable(GL_CULL_FACE);
-        glEnable(GL_BLEND);
-        glEnable(GL_SCISSOR_TEST);
+        Graphics::Disable(GL_CULL_FACE);
+        Graphics::Enable(GL_BLEND);
+        Graphics::Enable(GL_SCISSOR_TEST);
         glBlendEquation(GL_FUNC_ADD);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
@@ -1207,8 +1207,8 @@ namespace PlutoGE::render
         m_shader->SetUniform("uImageTexture", 0);
         m_shader->SetUniform("uSceneDepthTexture", 1);
 
-        glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, sceneDepthTexture);
+        Graphics::ActiveTexture(GL_TEXTURE1);
+        Graphics::BindTexture(GL_TEXTURE_2D, sceneDepthTexture);
 
         glBindVertexArray(m_vao);
         for (std::size_t quadIndex = 0; quadIndex < quads.size();)
@@ -1251,8 +1251,8 @@ namespace PlutoGE::render
                       static_cast<GLsizei>(std::ceil(clipSize.y)));
             m_shader->SetUniform("uHasTexture", quad.textureId != 0 ? 1 : 0);
             m_shader->SetUniform("uDepthTest", depthTest ? 1 : 0);
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, quad.textureId);
+            Graphics::ActiveTexture(GL_TEXTURE0);
+            Graphics::BindTexture(GL_TEXTURE_2D, quad.textureId);
             glBindBuffer(GL_ARRAY_BUFFER, m_instanceVbo);
             glBufferData(GL_ARRAY_BUFFER,
                          static_cast<GLsizeiptr>(instances.size() * sizeof(UIQuadInstance)),
@@ -1274,15 +1274,15 @@ namespace PlutoGE::render
                              return a.entityId < b.entityId;
                          });
 
-        glEnable(GL_SCISSOR_TEST);
+        Graphics::Enable(GL_SCISSOR_TEST);
         m_textShader->Bind();
         m_textShader->SetUniform("uViewportSize", viewportSize);
         m_textShader->SetUniform("uFontAtlas", 0);
         m_textShader->SetUniform("uSceneDepthTexture", 1);
 
-        glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, sceneDepthTexture);
-        glActiveTexture(GL_TEXTURE0);
+        Graphics::ActiveTexture(GL_TEXTURE1);
+        Graphics::BindTexture(GL_TEXTURE_2D, sceneDepthTexture);
+        Graphics::ActiveTexture(GL_TEXTURE0);
         for (const auto &textRun : textRuns)
         {
             if (textRun.clipped)
@@ -1303,7 +1303,7 @@ namespace PlutoGE::render
                     continue;
                 }
 
-                glBindTexture(GL_TEXTURE_2D, glyphQuad.fontAtlas->textureId);
+                Graphics::BindTexture(GL_TEXTURE_2D, glyphQuad.fontAtlas->textureId);
                 if (glyphQuad.outlineWidth > 0.0f && glyphQuad.outlineColor.a > 0.0f)
                 {
                     m_textShader->SetUniform("uColor", glyphQuad.outlineColor);
@@ -1338,14 +1338,14 @@ namespace PlutoGE::render
                 }
             }
         }
-        glBindTexture(GL_TEXTURE_2D, 0);
-        glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, 0);
-        glActiveTexture(GL_TEXTURE0);
+        Graphics::BindTexture(GL_TEXTURE_2D, 0);
+        Graphics::ActiveTexture(GL_TEXTURE1);
+        Graphics::BindTexture(GL_TEXTURE_2D, 0);
+        Graphics::ActiveTexture(GL_TEXTURE0);
         glBindVertexArray(0);
 
         glDepthMask(GL_TRUE);
-        glDisable(GL_SCISSOR_TEST);
-        glDisable(GL_BLEND);
+        Graphics::Disable(GL_SCISSOR_TEST);
+        Graphics::Disable(GL_BLEND);
     }
 }

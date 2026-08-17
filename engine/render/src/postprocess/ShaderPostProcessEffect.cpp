@@ -19,8 +19,8 @@ namespace PlutoGE::render
                 return;
             }
 
-            glBindFramebuffer(GL_READ_FRAMEBUFFER, source->GetFramebufferID());
-            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, destination->GetFramebufferID());
+            Graphics::BindFramebuffer(GL_READ_FRAMEBUFFER, source->GetFramebufferID());
+            Graphics::BindFramebuffer(GL_DRAW_FRAMEBUFFER, destination->GetFramebufferID());
             glBlitFramebuffer(
                 0, 0, source->GetWidth(), source->GetHeight(),
                 0, 0, destination->GetWidth(), destination->GetHeight(),
@@ -31,8 +31,8 @@ namespace PlutoGE::render
 
     void ShaderPostProcessEffect::BeginApply(const PostProcessContext &context) const
     {
-        glDisable(GL_DEPTH_TEST);
-        glDisable(GL_CULL_FACE);
+        Graphics::Disable(GL_DEPTH_TEST);
+        Graphics::Disable(GL_CULL_FACE);
 
         if (context.destinationRenderTarget)
         {
@@ -41,14 +41,14 @@ namespace PlutoGE::render
                 CopyDepthBuffer(context.sourceRenderTarget, context.destinationRenderTarget);
             }
             Graphics::BindRenderTarget(context.destinationRenderTarget);
-            glViewport(0, 0, context.destinationRenderTarget->GetWidth(), context.destinationRenderTarget->GetHeight());
+            Graphics::SetViewport(0, 0, context.destinationRenderTarget->GetWidth(), context.destinationRenderTarget->GetHeight());
             return;
         }
 
         Graphics::UnbindRenderTarget();
         if (context.sourceRenderTarget)
         {
-            glViewport(0, 0, context.sourceRenderTarget->GetWidth(), context.sourceRenderTarget->GetHeight());
+            Graphics::SetViewport(0, 0, context.sourceRenderTarget->GetWidth(), context.sourceRenderTarget->GetHeight());
         }
     }
 
@@ -64,15 +64,15 @@ namespace PlutoGE::render
             return;
         }
 
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, context.sourceRenderTarget->GetColorTextureID());
+        Graphics::ActiveTexture(GL_TEXTURE0);
+        Graphics::BindTexture(GL_TEXTURE_2D, context.sourceRenderTarget->GetColorTextureID());
         if (shader->HasUniform("uSceneTexture"))
         {
             shader->SetUniform("uSceneTexture", 0);
         }
 
-        glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, context.sourceRenderTarget->GetDepthTextureID());
+        Graphics::ActiveTexture(GL_TEXTURE1);
+        Graphics::BindTexture(GL_TEXTURE_2D, context.sourceRenderTarget->GetDepthTextureID());
         if (shader->HasUniform("uSceneDepthTexture"))
         {
             shader->SetUniform("uSceneDepthTexture", 1);
@@ -80,29 +80,29 @@ namespace PlutoGE::render
 
         if (context.renderContext.gBuffer)
         {
-            glActiveTexture(GL_TEXTURE2);
-            glBindTexture(GL_TEXTURE_2D, context.renderContext.gBuffer->GetPositionTextureID());
+            Graphics::ActiveTexture(GL_TEXTURE2);
+            Graphics::BindTexture(GL_TEXTURE_2D, context.renderContext.gBuffer->GetPositionTextureID());
             if (shader->HasUniform("uScenePositionTexture"))
             {
                 shader->SetUniform("uScenePositionTexture", 2);
             }
 
-            glActiveTexture(GL_TEXTURE3);
-            glBindTexture(GL_TEXTURE_2D, context.renderContext.gBuffer->GetNormalTextureID());
+            Graphics::ActiveTexture(GL_TEXTURE3);
+            Graphics::BindTexture(GL_TEXTURE_2D, context.renderContext.gBuffer->GetNormalTextureID());
             if (shader->HasUniform("uSceneNormalTexture"))
             {
                 shader->SetUniform("uSceneNormalTexture", 3);
             }
 
-            glActiveTexture(GL_TEXTURE4);
-            glBindTexture(GL_TEXTURE_2D, context.renderContext.gBuffer->GetAlbedoTextureID());
+            Graphics::ActiveTexture(GL_TEXTURE4);
+            Graphics::BindTexture(GL_TEXTURE_2D, context.renderContext.gBuffer->GetAlbedoTextureID());
             if (shader->HasUniform("uSceneAlbedoTexture"))
             {
                 shader->SetUniform("uSceneAlbedoTexture", 4);
             }
 
-            glActiveTexture(GL_TEXTURE15);
-            glBindTexture(GL_TEXTURE_2D, context.renderContext.gBuffer->GetEmissionTextureID());
+            Graphics::ActiveTexture(GL_TEXTURE15);
+            Graphics::BindTexture(GL_TEXTURE_2D, context.renderContext.gBuffer->GetEmissionTextureID());
             if (shader->HasUniform("uSceneEmissionTexture"))
             {
                 shader->SetUniform("uSceneEmissionTexture", 15);

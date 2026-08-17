@@ -5,14 +5,21 @@ Constraint: preserve all post-process effects and visual fidelity.
 - [x] Hierarchical cluster accept/reject culling using cached aggregate foliage bounds.
 - [x] Renderer-owned reusable visibility scratch buffers, removing per-frame vector allocations
   without changing the public `RenderCommand` layout.
-- [ ] Static GPU-resident instance data with a separate dynamic update path. *(In progress)*
+- [x] Static GPU-resident geometry instance arena with a separate triple-buffered stream for
+  dynamic, skinned, and partially visible instance data. Static topology/LOD signatures avoid
+  redundant uploads while indirect groups preserve cross-command batching within each arena.
 - [x] Capacity-retaining eight-slot ring for shadow instance and indirect-command uploads.
 - [x] Cached static shadow caster ordering and transformed instance bounds; per-region membership
   remains exact and dynamic for scrolling cascades.
-- [ ] Unified visibility, distance, projected-size, and LOD traversal.
-- [ ] Optional GPU-driven culling and indirect-command generation.
-- [ ] Renderer-wide OpenGL state caching.
-- [ ] Pre-cached indexed uniforms without render-time name construction.
+- [x] Unified command-level visibility, distance, projected-size, and LOD traversal, followed by
+  per-instance culling only for candidate clusters.
+- [ ] Optional GPU-driven culling and indirect-command generation. *(The resident static arena and
+  explicit submitted-snapshot ownership required by GPU compaction are now in place.)*
+- [x] Renderer-wide OpenGL state caching for framebuffer/read-draw bindings, viewport, common
+  capabilities, active texture unit, and per-unit 2D/3D/cubemap bindings. Cache state is reset at
+  context and external RmlUi boundaries, and deleted resource IDs are invalidated before reuse.
+- [x] Pre-generated indexed uniform names across lighting, transparent, ocean, fog, LPV, VCTGI,
+  and SSAO paths; shader locations and values remain cached by `Shader`.
 - [ ] Uniform buffers for shared camera, light, cascade, and effect constants.
 - [ ] Full build, tests, profiler comparison, and visual-equivalence validation.
 
@@ -30,3 +37,9 @@ Constraint: preserve all post-process effects and visual fidelity.
 - The shadow upload ring and cached caster ordering both pass the RelWithDebInfo `PlutoGERender` build.
 - Static shadow instance bounds are cached per immutable instance snapshot and mesh/submesh, with
   weak ownership validation and topology-triggered pruning. Dynamic/skinned casters bypass the cache.
+- Command LOD selection and aggregate visibility now share one traversal and camera calculation.
+  The complete RelWithDebInfo editor linked successfully (`PlutoGEEditor.exe`, 2026-08-17 12:30:37).
+- Indexed uniform names are generated once per fixed-size uniform family instead of formatting and
+  allocating strings inside render loops.
+- Shadow-map filtering is now configured only when depth textures are created; lighting and
+  transparency no longer reapply immutable `GL_NEAREST` parameters on every bind.

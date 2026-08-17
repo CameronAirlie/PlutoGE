@@ -1,4 +1,5 @@
 #include "PlutoGE/render/postprocess/AutoExposureEffect.h"
+#include "PlutoGE/render/Graphics.h"
 
 #include "PlutoGE/render/RenderTarget.h"
 #include "PlutoGE/render/Shader.h"
@@ -181,7 +182,7 @@ namespace PlutoGE::render
 
         for (GLuint exposureTexture : m_exposureTextures)
         {
-            glBindTexture(GL_TEXTURE_2D, exposureTexture);
+            Graphics::BindTexture(GL_TEXTURE_2D, exposureTexture);
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, 1, 1, 0, GL_RGBA, GL_FLOAT, kInitialExposureValue);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -189,9 +190,9 @@ namespace PlutoGE::render
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         }
 
-        glBindFramebuffer(GL_FRAMEBUFFER, m_exposureFramebuffer);
+        Graphics::BindFramebuffer(GL_FRAMEBUFFER, m_exposureFramebuffer);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_exposureTextures[m_writeExposureTextureIndex], 0);
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        Graphics::BindFramebuffer(GL_FRAMEBUFFER, 0);
 
         m_readExposureTextureIndex = 0;
         m_writeExposureTextureIndex = 1;
@@ -202,13 +203,13 @@ namespace PlutoGE::render
     {
         if (m_exposureFramebuffer != 0)
         {
-            glDeleteFramebuffers(1, &m_exposureFramebuffer);
+            Graphics::DeleteFramebuffers(1, &m_exposureFramebuffer);
             m_exposureFramebuffer = 0;
         }
 
         if (m_exposureTextures[0] != 0 || m_exposureTextures[1] != 0)
         {
-            glDeleteTextures(2, m_exposureTextures);
+            Graphics::DeleteTextures(2, m_exposureTextures);
             m_exposureTextures[0] = 0;
             m_exposureTextures[1] = 0;
         }
@@ -225,19 +226,19 @@ namespace PlutoGE::render
             return;
         }
 
-        glDisable(GL_DEPTH_TEST);
-        glDisable(GL_CULL_FACE);
-        glViewport(0, 0, 1, 1);
-        glBindFramebuffer(GL_FRAMEBUFFER, m_exposureFramebuffer);
+        Graphics::Disable(GL_DEPTH_TEST);
+        Graphics::Disable(GL_CULL_FACE);
+        Graphics::SetViewport(0, 0, 1, 1);
+        Graphics::BindFramebuffer(GL_FRAMEBUFFER, m_exposureFramebuffer);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_exposureTextures[m_writeExposureTextureIndex], 0);
 
         m_adaptationShader->Bind();
-        glActiveTexture(GL_TEXTURE0 + kSceneTextureSlot);
-        glBindTexture(GL_TEXTURE_2D, context.sourceRenderTarget->GetColorTextureID());
+        Graphics::ActiveTexture(GL_TEXTURE0 + kSceneTextureSlot);
+        Graphics::BindTexture(GL_TEXTURE_2D, context.sourceRenderTarget->GetColorTextureID());
         m_adaptationShader->SetUniform("uSceneTexture", kSceneTextureSlot);
 
-        glActiveTexture(GL_TEXTURE0 + kPreviousExposureTextureSlot);
-        glBindTexture(GL_TEXTURE_2D, m_exposureTextures[m_readExposureTextureIndex]);
+        Graphics::ActiveTexture(GL_TEXTURE0 + kPreviousExposureTextureSlot);
+        Graphics::BindTexture(GL_TEXTURE_2D, m_exposureTextures[m_readExposureTextureIndex]);
         m_adaptationShader->SetUniform("uPreviousExposureTexture", kPreviousExposureTextureSlot);
         m_adaptationShader->SetUniform("uKeyValue", std::max(m_keyValue, 0.001f));
         m_adaptationShader->SetUniform("uMinExposure", std::max(m_minExposure, 0.001f));
@@ -246,7 +247,7 @@ namespace PlutoGE::render
         m_adaptationShader->SetUniform("uAdaptDown", std::clamp(m_adaptationSpeedDown, 0.0f, 1.0f));
         DrawFullscreenTriangle();
 
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        Graphics::BindFramebuffer(GL_FRAMEBUFFER, 0);
     }
 
     void AutoExposureEffect::Apply(const PostProcessContext &context)
@@ -263,8 +264,8 @@ namespace PlutoGE::render
 
         m_applyShader->Bind();
         BindCommonInputs(m_applyShader, context);
-        glActiveTexture(GL_TEXTURE0 + kCurrentExposureTextureSlot);
-        glBindTexture(GL_TEXTURE_2D, m_exposureTextures[m_writeExposureTextureIndex]);
+        Graphics::ActiveTexture(GL_TEXTURE0 + kCurrentExposureTextureSlot);
+        Graphics::BindTexture(GL_TEXTURE_2D, m_exposureTextures[m_writeExposureTextureIndex]);
         m_applyShader->SetUniform("uExposureTexture", kCurrentExposureTextureSlot);
         DrawFullscreenTriangle();
 

@@ -11,11 +11,11 @@ namespace PlutoGE::render
         m_height = height;
 
         glGenFramebuffers(1, &m_fbo);
-        glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
+        Graphics::BindFramebuffer(GL_FRAMEBUFFER, m_fbo);
 
         // Position
         glGenTextures(1, &m_positionTexture);
-        glBindTexture(GL_TEXTURE_2D, m_positionTexture);
+        Graphics::BindTexture(GL_TEXTURE_2D, m_positionTexture);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB32F, width, height, 0, GL_RGB, GL_FLOAT, nullptr);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -23,7 +23,7 @@ namespace PlutoGE::render
 
         // Normal
         glGenTextures(1, &m_normalTexture);
-        glBindTexture(GL_TEXTURE_2D, m_normalTexture);
+        Graphics::BindTexture(GL_TEXTURE_2D, m_normalTexture);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8_SNORM, width, height, 0, GL_RGBA, GL_BYTE, nullptr);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -31,7 +31,7 @@ namespace PlutoGE::render
 
         // Albedo
         glGenTextures(1, &m_albedoTexture);
-        glBindTexture(GL_TEXTURE_2D, m_albedoTexture);
+        Graphics::BindTexture(GL_TEXTURE_2D, m_albedoTexture);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -39,7 +39,7 @@ namespace PlutoGE::render
 
         // Motion vectors
         glGenTextures(1, &m_motionTexture);
-        glBindTexture(GL_TEXTURE_2D, m_motionTexture);
+        Graphics::BindTexture(GL_TEXTURE_2D, m_motionTexture);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RG16F, width, height, 0, GL_RG, GL_FLOAT, nullptr);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -47,7 +47,7 @@ namespace PlutoGE::render
 
         // Baked lighting RGB plus static-mask alpha
         glGenTextures(1, &m_bakedLightingTexture);
-        glBindTexture(GL_TEXTURE_2D, m_bakedLightingTexture);
+        Graphics::BindTexture(GL_TEXTURE_2D, m_bakedLightingTexture);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, width, height, 0, GL_RGBA, GL_FLOAT, nullptr);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -55,7 +55,7 @@ namespace PlutoGE::render
 
         // Debug data
         glGenTextures(1, &m_debugTexture);
-        glBindTexture(GL_TEXTURE_2D, m_debugTexture);
+        Graphics::BindTexture(GL_TEXTURE_2D, m_debugTexture);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_R16F, width, height, 0, GL_RED, GL_FLOAT, nullptr);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -63,7 +63,7 @@ namespace PlutoGE::render
 
         // HDR material emission
         glGenTextures(1, &m_emissionTexture);
-        glBindTexture(GL_TEXTURE_2D, m_emissionTexture);
+        Graphics::BindTexture(GL_TEXTURE_2D, m_emissionTexture);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, width, height, 0, GL_RGB, GL_FLOAT, nullptr);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -74,7 +74,7 @@ namespace PlutoGE::render
 
         // Depth
         glGenTextures(1, &m_depthTexture);
-        glBindTexture(GL_TEXTURE_2D, m_depthTexture);
+        Graphics::BindTexture(GL_TEXTURE_2D, m_depthTexture);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT32F, width, height, 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -83,7 +83,7 @@ namespace PlutoGE::render
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, m_depthTexture, 0);
 
         assert(glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE && "GBuffer framebuffer is not complete!");
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        Graphics::BindFramebuffer(GL_FRAMEBUFFER, 0);
 
         m_isInitialized = true;
         return true;
@@ -103,55 +103,55 @@ namespace PlutoGE::render
     {
         if (m_positionTexture)
         {
-            glDeleteTextures(1, &m_positionTexture);
+            Graphics::DeleteTextures(1, &m_positionTexture);
             m_positionTexture = 0;
         }
 
         if (m_normalTexture)
         {
-            glDeleteTextures(1, &m_normalTexture);
+            Graphics::DeleteTextures(1, &m_normalTexture);
             m_normalTexture = 0;
         }
 
         if (m_albedoTexture)
         {
-            glDeleteTextures(1, &m_albedoTexture);
+            Graphics::DeleteTextures(1, &m_albedoTexture);
             m_albedoTexture = 0;
         }
 
         if (m_motionTexture)
         {
-            glDeleteTextures(1, &m_motionTexture);
+            Graphics::DeleteTextures(1, &m_motionTexture);
             m_motionTexture = 0;
         }
 
         if (m_bakedLightingTexture)
         {
-            glDeleteTextures(1, &m_bakedLightingTexture);
+            Graphics::DeleteTextures(1, &m_bakedLightingTexture);
             m_bakedLightingTexture = 0;
         }
 
         if (m_debugTexture)
         {
-            glDeleteTextures(1, &m_debugTexture);
+            Graphics::DeleteTextures(1, &m_debugTexture);
             m_debugTexture = 0;
         }
 
         if (m_emissionTexture)
         {
-            glDeleteTextures(1, &m_emissionTexture);
+            Graphics::DeleteTextures(1, &m_emissionTexture);
             m_emissionTexture = 0;
         }
 
         if (m_depthTexture)
         {
-            glDeleteTextures(1, &m_depthTexture);
+            Graphics::DeleteTextures(1, &m_depthTexture);
             m_depthTexture = 0;
         }
 
         if (m_fbo)
         {
-            glDeleteFramebuffers(1, &m_fbo);
+            Graphics::DeleteFramebuffers(1, &m_fbo);
             m_fbo = 0;
         }
 

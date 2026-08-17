@@ -1,4 +1,5 @@
 #include "PlutoGE/render/RenderTarget.h"
+#include "PlutoGE/render/Graphics.h"
 
 namespace PlutoGE::render
 {
@@ -26,11 +27,11 @@ namespace PlutoGE::render
 
         // Generate framebuffer
         glGenFramebuffers(1, &m_framebufferID);
-        glBindFramebuffer(GL_FRAMEBUFFER, m_framebufferID);
+        Graphics::BindFramebuffer(GL_FRAMEBUFFER, m_framebufferID);
 
         // Create color texture
         glGenTextures(1, &m_colorTextureID);
-        glBindTexture(GL_TEXTURE_2D, m_colorTextureID);
+        Graphics::BindTexture(GL_TEXTURE_2D, m_colorTextureID);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, m_width, m_height, 0, GL_RGBA, GL_FLOAT, nullptr);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -40,7 +41,7 @@ namespace PlutoGE::render
 
         // Create depth texture (sampleable)
         glGenTextures(1, &m_depthTextureID);
-        glBindTexture(GL_TEXTURE_2D, m_depthTextureID);
+        Graphics::BindTexture(GL_TEXTURE_2D, m_depthTextureID);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT32F, m_width, m_height, 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -62,20 +63,20 @@ namespace PlutoGE::render
         }
 
         // Unbind framebuffer
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        Graphics::BindFramebuffer(GL_FRAMEBUFFER, 0);
         return true;
     }
 
     void RenderTarget::Cleanup()
     {
         if (m_colorTextureID)
-            glDeleteTextures(1, &m_colorTextureID);
+            Graphics::DeleteTextures(1, &m_colorTextureID);
         if (m_depthTextureID)
-            glDeleteTextures(1, &m_depthTextureID);
+            Graphics::DeleteTextures(1, &m_depthTextureID);
         if (m_depthStencilBufferID)
             glDeleteRenderbuffers(1, &m_depthStencilBufferID);
         if (m_framebufferID)
-            glDeleteFramebuffers(1, &m_framebufferID);
+            Graphics::DeleteFramebuffers(1, &m_framebufferID);
 
         m_colorTextureID = 0;
         m_depthTextureID = 0;
@@ -88,13 +89,13 @@ namespace PlutoGE::render
 
     void RenderTarget::Bind() const
     {
-        glViewport(0, 0, m_width, m_height);
-        glBindFramebuffer(GL_FRAMEBUFFER, m_framebufferID);
+        Graphics::SetViewport(0, 0, m_width, m_height);
+        Graphics::BindFramebuffer(GL_FRAMEBUFFER, m_framebufferID);
     }
 
     void RenderTarget::Unbind() const
     {
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        Graphics::BindFramebuffer(GL_FRAMEBUFFER, 0);
     }
 
 }

@@ -1,6 +1,7 @@
 #include "PlutoGE/render/postprocess/MotionBlurEffect.h"
 
 #include "PlutoGE/render/GBuffer.h"
+#include "PlutoGE/render/Graphics.h"
 #include "PlutoGE/render/RenderTarget.h"
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/Shader.h"
@@ -208,8 +209,8 @@ namespace PlutoGE::render
         m_shader->Bind();
         BindCommonInputs(m_shader, context);
 
-        glActiveTexture(GL_TEXTURE5);
-        glBindTexture(GL_TEXTURE_2D, context.renderContext.gBuffer->GetMotionTextureID());
+        Graphics::ActiveTexture(GL_TEXTURE5);
+        Graphics::BindTexture(GL_TEXTURE_2D, context.renderContext.gBuffer->GetMotionTextureID());
         m_shader->SetUniform("uSceneMotionTexture", 5);
 
         m_shader->SetUniform("uNearPlane", context.renderContext.cameraData.nearPlane);

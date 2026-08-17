@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 
 namespace PlutoGE::render
@@ -28,6 +29,10 @@ namespace PlutoGE::render
         std::array<std::size_t, kStreamBufferCount> m_instanceCapacities{};
         std::array<unsigned int, kStreamBufferCount> m_indirectBuffers{};
         std::array<std::size_t, kStreamBufferCount> m_indirectCapacities{};
+        unsigned int m_staticInstanceBuffer = 0;
+        std::size_t m_staticInstanceCapacity = 0;
+        std::uint64_t m_staticInstanceSignature = 0;
+        std::size_t m_staticInstanceCount = 0;
         std::size_t m_streamBufferIndex = 0;
         bool m_indirectDrawEnabled = true;
         bool m_indirectDrawValidated = false;

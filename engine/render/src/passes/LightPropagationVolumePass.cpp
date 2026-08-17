@@ -5,6 +5,7 @@
 #include "PlutoGE/render/Graphics.h"
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/Shader.h"
+#include "PlutoGE/render/UniformNames.h"
 #include "PlutoGE/render/Texture.h"
 #include "PlutoGE/render/postprocess/IPostProcessEffect.h"
 #include "PlutoGE/render/postprocess/LPVEffect.h"
@@ -753,7 +754,7 @@ namespace PlutoGE::render
     {
         if (m_volumeFramebuffer)
         {
-            glDeleteFramebuffers(1, &m_volumeFramebuffer);
+            Graphics::DeleteFramebuffers(1, &m_volumeFramebuffer);
             m_volumeFramebuffer = 0;
         }
         if (m_fullscreenVao)
@@ -796,10 +797,10 @@ namespace PlutoGE::render
         glGetIntegerv(GL_BLEND_EQUATION_RGB, &previousBlendEquationRgb);
         glGetIntegerv(GL_BLEND_EQUATION_ALPHA, &previousBlendEquationAlpha);
 
-        glDisable(GL_DEPTH_TEST);
-        glDisable(GL_BLEND);
-        glBindFramebuffer(GL_FRAMEBUFFER, m_volumeFramebuffer);
-        glViewport(0, 0, m_resolution.x, m_resolution.y);
+        Graphics::Disable(GL_DEPTH_TEST);
+        Graphics::Disable(GL_BLEND);
+        Graphics::BindFramebuffer(GL_FRAMEBUFFER, m_volumeFramebuffer);
+        Graphics::SetViewport(0, 0, m_resolution.x, m_resolution.y);
         glBindVertexArray(m_fullscreenVao);
 
         constexpr GLfloat kClearColor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
@@ -811,34 +812,40 @@ namespace PlutoGE::render
         }
 
         m_injectionShader->Bind();
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetPositionTextureID());
+        Graphics::ActiveTexture(GL_TEXTURE0);
+        Graphics::BindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetPositionTextureID());
         m_injectionShader->SetUniform("uPositionTexture", 0);
-        glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetNormalTextureID());
+        Graphics::ActiveTexture(GL_TEXTURE1);
+        Graphics::BindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetNormalTextureID());
         m_injectionShader->SetUniform("uNormalTexture", 1);
-        glActiveTexture(GL_TEXTURE2);
-        glBindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetAlbedoTextureID());
+        Graphics::ActiveTexture(GL_TEXTURE2);
+        Graphics::BindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetAlbedoTextureID());
         m_injectionShader->SetUniform("uAlbedoTexture", 2);
         m_injectionShader->SetUniform("uGridOrigin", m_gridOrigin);
         m_injectionShader->SetUniform("uGridSize", m_gridSize);
         m_injectionShader->SetUniform("uResolution", glm::vec3(m_resolution));
 
         const int lightCount = std::min<int>(ctx.lights ? static_cast<int>(ctx.lights->size()) : 0, 16);
+        static const auto lightTypeNames = MakeArrayUniformNames<16>("uLightType");
+        static const auto lightPositionNames = MakeArrayUniformNames<16>("uLightPosition");
+        static const auto lightDirectionNames = MakeArrayUniformNames<16>("uLightDirection");
+        static const auto lightColorNames = MakeArrayUniformNames<16>("uLightColor");
+        static const auto lightIntensityNames = MakeArrayUniformNames<16>("uLightIntensity");
+        static const auto lightRangeNames = MakeArrayUniformNames<16>("uLightRange");
         m_injectionShader->SetUniform("uLightCount", lightCount);
         for (int lightIndex = 0; lightIndex < lightCount; ++lightIndex)
         {
             const auto *light = (*ctx.lights)[lightIndex];
             const int lightType = light ? static_cast<int>(light->type) : 0;
-            m_injectionShader->SetUniform("uLightType[" + std::to_string(lightIndex) + "]", lightType);
-            m_injectionShader->SetUniform("uLightPosition[" + std::to_string(lightIndex) + "]", light ? light->position : glm::vec3(0.0f));
-            m_injectionShader->SetUniform("uLightDirection[" + std::to_string(lightIndex) + "]", light ? light->direction : glm::vec3(0.0f, -1.0f, 0.0f));
-            m_injectionShader->SetUniform("uLightColor[" + std::to_string(lightIndex) + "]", light ? light->color : glm::vec3(0.0f));
-            m_injectionShader->SetUniform("uLightIntensity[" + std::to_string(lightIndex) + "]", light ? light->intensity : 0.0f);
-            m_injectionShader->SetUniform("uLightRange[" + std::to_string(lightIndex) + "]", light ? light->range : 1.0f);
+            m_injectionShader->SetUniform(lightTypeNames[lightIndex], lightType);
+            m_injectionShader->SetUniform(lightPositionNames[lightIndex], light ? light->position : glm::vec3(0.0f));
+            m_injectionShader->SetUniform(lightDirectionNames[lightIndex], light ? light->direction : glm::vec3(0.0f, -1.0f, 0.0f));
+            m_injectionShader->SetUniform(lightColorNames[lightIndex], light ? light->color : glm::vec3(0.0f));
+            m_injectionShader->SetUniform(lightIntensityNames[lightIndex], light ? light->intensity : 0.0f);
+            m_injectionShader->SetUniform(lightRangeNames[lightIndex], light ? light->range : 1.0f);
         }
 
-        glEnable(GL_BLEND);
+        Graphics::Enable(GL_BLEND);
         glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
         glBlendFuncSeparate(GL_ONE, GL_ONE, GL_ONE, GL_ONE);
         for (int layer = 0; layer < m_resolution.z; ++layer)
@@ -849,7 +856,7 @@ namespace PlutoGE::render
             glDrawArrays(GL_POINTS, 0, kInjectionSampleCount);
         }
 
-        glDisable(GL_BLEND);
+        Graphics::Disable(GL_BLEND);
         m_injectionResolveShader->Bind();
         m_injectionResolveShader->SetUniform("uInjectedVolume", m_volumeTexture.get(), 0);
         for (int layer = 0; layer < m_resolution.z; ++layer)
@@ -862,18 +869,18 @@ namespace PlutoGE::render
 
         m_volumeTexture.swap(m_propagationTexture);
 
-        glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previousFramebuffer));
+        Graphics::BindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previousFramebuffer));
         glBindVertexArray(0);
-        glViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
+        Graphics::SetViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
         glBlendFuncSeparate(previousBlendSrcRgb, previousBlendDstRgb, previousBlendSrcAlpha, previousBlendDstAlpha);
         glBlendEquationSeparate(previousBlendEquationRgb, previousBlendEquationAlpha);
         if (depthTestEnabled)
         {
-            glEnable(GL_DEPTH_TEST);
+            Graphics::Enable(GL_DEPTH_TEST);
         }
         if (blendEnabled)
         {
-            glEnable(GL_BLEND);
+            Graphics::Enable(GL_BLEND);
         }
         Shader::ResetStateCache();
     }
@@ -893,10 +900,10 @@ namespace PlutoGE::render
         glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previousFramebuffer);
         glGetIntegerv(GL_VIEWPORT, previousViewport);
 
-        glDisable(GL_DEPTH_TEST);
-        glDisable(GL_BLEND);
-        glBindFramebuffer(GL_FRAMEBUFFER, m_volumeFramebuffer);
-        glViewport(0, 0, m_resolution.x, m_resolution.y);
+        Graphics::Disable(GL_DEPTH_TEST);
+        Graphics::Disable(GL_BLEND);
+        Graphics::BindFramebuffer(GL_FRAMEBUFFER, m_volumeFramebuffer);
+        Graphics::SetViewport(0, 0, m_resolution.x, m_resolution.y);
         glBindVertexArray(m_fullscreenVao);
 
         m_propagationShader->Bind();
@@ -921,16 +928,16 @@ namespace PlutoGE::render
             m_volumeTexture.swap(m_propagationTexture);
         }
 
-        glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previousFramebuffer));
+        Graphics::BindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previousFramebuffer));
         glBindVertexArray(0);
-        glViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
+        Graphics::SetViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
         if (depthTestEnabled)
         {
-            glEnable(GL_DEPTH_TEST);
+            Graphics::Enable(GL_DEPTH_TEST);
         }
         if (blendEnabled)
         {
-            glEnable(GL_BLEND);
+            Graphics::Enable(GL_BLEND);
         }
         Shader::ResetStateCache();
     }
@@ -950,10 +957,10 @@ namespace PlutoGE::render
         glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previousFramebuffer);
         glGetIntegerv(GL_VIEWPORT, previousViewport);
 
-        glDisable(GL_DEPTH_TEST);
-        glDisable(GL_BLEND);
-        glBindFramebuffer(GL_FRAMEBUFFER, m_volumeFramebuffer);
-        glViewport(0, 0, m_resolution.x, m_resolution.y);
+        Graphics::Disable(GL_DEPTH_TEST);
+        Graphics::Disable(GL_BLEND);
+        Graphics::BindFramebuffer(GL_FRAMEBUFFER, m_volumeFramebuffer);
+        Graphics::SetViewport(0, 0, m_resolution.x, m_resolution.y);
         glBindVertexArray(m_fullscreenVao);
 
         m_blendShader->Bind();
@@ -975,16 +982,16 @@ namespace PlutoGE::render
             Graphics::DrawFullscreenTriangle();
         }
 
-        glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previousFramebuffer));
+        Graphics::BindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previousFramebuffer));
         glBindVertexArray(0);
-        glViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
+        Graphics::SetViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
         if (depthTestEnabled)
         {
-            glEnable(GL_DEPTH_TEST);
+            Graphics::Enable(GL_DEPTH_TEST);
         }
         if (blendEnabled)
         {
-            glEnable(GL_BLEND);
+            Graphics::Enable(GL_BLEND);
         }
         Shader::ResetStateCache();
     }

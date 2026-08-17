@@ -1,4 +1,5 @@
 #include "PlutoGE/render/passes/ShadowPass.h"
+#include "PlutoGE/render/Graphics.h"
 
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/IndirectDraw.h"
@@ -1559,7 +1560,7 @@ namespace PlutoGE::render
     {
         glDeleteBuffers(static_cast<GLsizei>(m_instanceBuffers.size()), m_instanceBuffers.data());
         glDeleteBuffers(static_cast<GLsizei>(m_indirectBuffers.size()), m_indirectBuffers.data());
-        if (m_shadowFramebuffer != 0) glDeleteFramebuffers(1, &m_shadowFramebuffer);
+        if (m_shadowFramebuffer != 0) Graphics::DeleteFramebuffers(1, &m_shadowFramebuffer);
     }
 
     void ShadowPass::Initialize()
@@ -1786,18 +1787,18 @@ namespace PlutoGE::render
         GLint previousViewport[4] = {0, 0, 0, 0};
         glGetIntegerv(GL_VIEWPORT, previousViewport);
 
-        glBindFramebuffer(GL_FRAMEBUFFER, m_shadowFramebuffer);
+        Graphics::BindFramebuffer(GL_FRAMEBUFFER, m_shadowFramebuffer);
         glDrawBuffer(GL_NONE);
         glReadBuffer(GL_NONE);
-        glEnable(GL_DEPTH_TEST);
-        glDisable(GL_SCISSOR_TEST);
+        Graphics::Enable(GL_DEPTH_TEST);
+        Graphics::Disable(GL_SCISSOR_TEST);
         glDepthMask(GL_TRUE);
         glDepthFunc(GL_LESS);
         glDepthRange(0.0, 1.0);
         glClearDepth(1.0);
-        glEnable(GL_CULL_FACE);
+        Graphics::Enable(GL_CULL_FACE);
         glCullFace(GL_BACK);
-        glDisable(GL_POLYGON_OFFSET_FILL);
+        Graphics::Disable(GL_POLYGON_OFFSET_FILL);
 
         m_shadowPassShader->Bind();
         m_shadowPassShader->SetUniform("uShadowWorldOrigin", glm::vec3(0.0f));
@@ -1907,7 +1908,7 @@ namespace PlutoGE::render
                     continue;
                 }
 
-                glDisable(GL_POLYGON_OFFSET_FILL);
+                Graphics::Disable(GL_POLYGON_OFFSET_FILL);
                 const float farPlane = glm::max(light->range, 0.1f);
                 light->shadowFarPlane = farPlane;
                 const auto shadowMatrices = BuildPointShadowMatrices(*light, farPlane);
@@ -1915,7 +1916,7 @@ namespace PlutoGE::render
                 {
                     light->pendingPointShadowFaceMask = kAllPointShadowFacesMask;
                 }
-                glViewport(0, 0, shadowMap->GetWidth(), shadowMap->GetHeight());
+                Graphics::SetViewport(0, 0, shadowMap->GetWidth(), shadowMap->GetHeight());
 
                 m_shadowPassShader->SetUniform("uShadowPassMode", kPointShadowPassMode);
                 m_shadowPassShader->SetUniform("uLightPosition", light->position);
@@ -2085,9 +2086,9 @@ namespace PlutoGE::render
                 // Directional cascades need raster-space slope bias. Receiver
                 // normal bias alone loses effectiveness as a surface becomes
                 // parallel to the light and produces acne on steep terrain.
-                glEnable(GL_POLYGON_OFFSET_FILL);
+                Graphics::Enable(GL_POLYGON_OFFSET_FILL);
                 glPolygonOffset(kDirectionalShadowSlopeBias, kDirectionalShadowConstantBias);
-                glDisable(GL_CULL_FACE);
+                Graphics::Disable(GL_CULL_FACE);
                 m_shadowPassShader->SetUniform("uShadowPassMode", kProjectedShadowPassMode);
 
                 for (int cascadeIndex = 0; cascadeIndex < cascadeCount; ++cascadeIndex)
@@ -2193,7 +2194,7 @@ namespace PlutoGE::render
                     light->shadowCascadeWorldOrigins[cascadeIndex] = cascadeShadowWorldOrigin;
                     light->shadowCascadeMatrices[cascadeIndex] = cascadeRenderMatrix;
 
-                    glViewport(0, 0, shadowResolution, shadowResolution);
+                    Graphics::SetViewport(0, 0, shadowResolution, shadowResolution);
                     m_shadowPassShader->SetUniform("uShadowWorldOrigin", light->shadowCascadeWorldOrigins[cascadeIndex]);
                     auto *staticCascadeMap = light->staticShadowCascadeMaps[cascadeIndex].get();
                     if (!staticCascadeMap)
@@ -2225,7 +2226,7 @@ namespace PlutoGE::render
                         }
                         const unsigned int scratchTexture = scratchMap->GetTextureID();
                         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, scratchTexture, 0);
-                        glDisable(GL_SCISSOR_TEST);
+                        Graphics::Disable(GL_SCISSOR_TEST);
 
                         const int sourceX = glm::max(0, -cascadeScroll.x);
                         const int sourceY = glm::max(0, -cascadeScroll.y);
@@ -2278,10 +2279,10 @@ namespace PlutoGE::render
                         const bool scissored = drawWidth != shadowResolution || drawHeight != shadowResolution || drawX != 0 || drawY != 0;
                         if (scissored)
                         {
-                            glEnable(GL_SCISSOR_TEST);
+                            Graphics::Enable(GL_SCISSOR_TEST);
                             glScissor(drawX, drawY, drawWidth, drawHeight);
                         }
-                        else glDisable(GL_SCISSOR_TEST);
+                        else Graphics::Disable(GL_SCISSOR_TEST);
                         if (clearDepth) glClear(GL_DEPTH_BUFFER_BIT);
                         const std::size_t streamBufferIndex = AcquireStreamBuffer();
                         const ShadowDrawStats regionStats = DrawShadowCasterBatches(
@@ -2321,7 +2322,7 @@ namespace PlutoGE::render
                         drawStats.materialGroups += regionStats.materialGroups;
                         drawStats.apiDrawCalls += regionStats.apiDrawCalls;
                         updatedPixels += drawWidth * drawHeight;
-                        glDisable(GL_SCISSOR_TEST);
+                        Graphics::Disable(GL_SCISSOR_TEST);
                     };
 
                     if (staticNeedsFullRefresh)
@@ -2425,7 +2426,7 @@ namespace PlutoGE::render
                             const unsigned int previousCombinedTexture = cascadeMap->GetTextureID();
                             glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D,
                                                    combinedScratchTexture, 0);
-                            glDisable(GL_SCISSOR_TEST);
+                            Graphics::Disable(GL_SCISSOR_TEST);
                             glClear(GL_DEPTH_BUFFER_BIT);
                             const int sourceX = glm::max(0, -cascadeScroll.x);
                             const int sourceY = glm::max(0, -cascadeScroll.y);
@@ -2503,8 +2504,8 @@ namespace PlutoGE::render
 
                 light->isDirty = false;
                 light->shadowRefreshPending = deferredShadowRefresh || light->pendingShadowCascadeMask != 0;
-                glDisable(GL_POLYGON_OFFSET_FILL);
-                glEnable(GL_CULL_FACE);
+                Graphics::Disable(GL_POLYGON_OFFSET_FILL);
+                Graphics::Enable(GL_CULL_FACE);
                 glCullFace(GL_BACK);
                 m_shadowPassShader->SetUniform("uShadowWorldOrigin", glm::vec3(0.0f));
                 continue;
@@ -2549,9 +2550,9 @@ namespace PlutoGE::render
 
             light->shadowMatrix = shadowMatrix;
             light->shadowFarPlane = glm::max(light->range, 0.1f);
-            glViewport(0, 0, shadowMap->GetWidth(), shadowMap->GetHeight());
+            Graphics::SetViewport(0, 0, shadowMap->GetWidth(), shadowMap->GetHeight());
 
-            glEnable(GL_POLYGON_OFFSET_FILL);
+            Graphics::Enable(GL_POLYGON_OFFSET_FILL);
             glPolygonOffset(1.0f, 2.0f);
             glCullFace(GL_FRONT);
             glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, shadowMap->GetTextureID(), 0);
@@ -2604,10 +2605,10 @@ namespace PlutoGE::render
         }
 
         m_shadowPassShader->Unbind();
-        glDisable(GL_POLYGON_OFFSET_FILL);
+        Graphics::Disable(GL_POLYGON_OFFSET_FILL);
         glCullFace(GL_BACK);
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
-        glViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
+        Graphics::BindFramebuffer(GL_FRAMEBUFFER, 0);
+        Graphics::SetViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
         // Shadow maps remain conventional; restore the scene's reversed-Z state.
         glClearDepth(0.0);
         glDepthFunc(GL_GREATER);

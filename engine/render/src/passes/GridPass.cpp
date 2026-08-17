@@ -192,11 +192,11 @@ namespace PlutoGE::render
         const glm::vec3 cameraPosition = glm::vec3(glm::inverse(ctx.cameraData.view)[3]);
 
         Graphics::BindRenderTarget(ctx.temporaryRenderTarget);
-        glViewport(0, 0, ctx.temporaryRenderTarget->GetWidth(), ctx.temporaryRenderTarget->GetHeight());
-        glDisable(GL_DEPTH_TEST);
+        Graphics::SetViewport(0, 0, ctx.temporaryRenderTarget->GetWidth(), ctx.temporaryRenderTarget->GetHeight());
+        Graphics::Disable(GL_DEPTH_TEST);
         glDepthMask(GL_FALSE);
-        glDisable(GL_CULL_FACE);
-        glEnable(GL_BLEND);
+        Graphics::Disable(GL_CULL_FACE);
+        Graphics::Enable(GL_BLEND);
         glBlendEquation(GL_FUNC_ADD);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
@@ -244,14 +244,14 @@ namespace PlutoGE::render
         m_gridShader->SetUniform("uGridAxisV", gridAxisV);
         m_gridShader->SetUniform("uGridAxisUColor", gridAxisUColor);
         m_gridShader->SetUniform("uGridAxisVColor", gridAxisVColor);
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, ctx.temporaryRenderTarget->GetDepthTextureID());
+        Graphics::ActiveTexture(GL_TEXTURE0);
+        Graphics::BindTexture(GL_TEXTURE_2D, ctx.temporaryRenderTarget->GetDepthTextureID());
         m_gridShader->SetUniform("uSceneDepthTexture", 0);
 
         Graphics::DrawFullscreenTriangle();
 
         m_gridShader->Unbind();
-        glDisable(GL_BLEND);
+        Graphics::Disable(GL_BLEND);
         glDepthMask(GL_TRUE);
         Graphics::UnbindRenderTarget();
     }

@@ -7,6 +7,7 @@
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/RenderTarget.h"
 #include "PlutoGE/render/Shader.h"
+#include "PlutoGE/render/UniformNames.h"
 #include "PlutoGE/render/Texture.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/Scene.h"
@@ -138,10 +139,17 @@ namespace PlutoGE::render
 
         void BindTransparentEnvironment(Shader *shader, const RenderContext &ctx)
         {
+            static const auto iblMapNames = MakeArrayUniformNames<scene::kMaxIblCaptureVolumes>("uIblCaptureMaps");
+            static const auto iblOriginNames = MakeArrayUniformNames<scene::kMaxIblCaptureVolumes>("uIblCaptureOrigins");
+            static const auto iblSizeNames = MakeArrayUniformNames<scene::kMaxIblCaptureVolumes>("uIblCaptureSizes");
+            static const auto iblIntensityNames = MakeArrayUniformNames<scene::kMaxIblCaptureVolumes>("uIblCaptureIntensities");
+            static const auto iblBlendNames = MakeArrayUniformNames<scene::kMaxIblCaptureVolumes>("uIblCaptureBlendDistances");
+            static const auto iblMipNames = MakeArrayUniformNames<scene::kMaxIblCaptureVolumes>("uIblCaptureMaxMipLevels");
+            static const auto iblEnabledNames = MakeArrayUniformNames<scene::kMaxIblCaptureVolumes>("uIblCaptureEnabled");
             const auto *environmentTexture = ctx.scene ? ctx.scene->GetEnvironmentMapTexture() : nullptr;
             const GLuint physicalSkyTexture = ctx.renderer ? ctx.renderer->GetPhysicalSkyEnvironmentTextureID() : 0;
-            glActiveTexture(GL_TEXTURE0 + kTransparentEnvironmentTextureSlot);
-            glBindTexture(GL_TEXTURE_2D, physicalSkyTexture ? physicalSkyTexture : (environmentTexture ? environmentTexture->GetTextureID() : 0));
+            Graphics::ActiveTexture(GL_TEXTURE0 + kTransparentEnvironmentTextureSlot);
+            Graphics::BindTexture(GL_TEXTURE_2D, physicalSkyTexture ? physicalSkyTexture : (environmentTexture ? environmentTexture->GetTextureID() : 0));
             shader->SetUniform("uEnvironmentMap", kTransparentEnvironmentTextureSlot);
             shader->SetUniform("uEnvironmentEnabled", physicalSkyTexture || environmentTexture ? 1 : 0);
             shader->SetUniform("uEnvironmentIntensity", ctx.scene ? ctx.scene->GetEnvironmentIntensity() : 1.0f);
@@ -158,17 +166,17 @@ namespace PlutoGE::render
                                         iblCaptureVolumes[static_cast<std::size_t>(captureIndex)].environmentMapTexture->GetType() == GL_TEXTURE_CUBE_MAP;
                 const auto &captureVolume = hasCapture ? iblCaptureVolumes[static_cast<std::size_t>(captureIndex)] : scene::IblCaptureVolume{};
                 const int textureSlot = kTransparentIblCaptureTextureSlotStart + captureIndex;
-                glActiveTexture(GL_TEXTURE0 + textureSlot);
-                glBindTexture(GL_TEXTURE_CUBE_MAP, hasCapture ? captureVolume.environmentMapTexture->GetTextureID() : 0);
-                shader->SetUniform("uIblCaptureMaps[" + std::to_string(captureIndex) + "]", textureSlot);
-                shader->SetUniform("uIblCaptureOrigins[" + std::to_string(captureIndex) + "]", captureVolume.origin);
-                shader->SetUniform("uIblCaptureSizes[" + std::to_string(captureIndex) + "]", captureVolume.size);
-                shader->SetUniform("uIblCaptureIntensities[" + std::to_string(captureIndex) + "]", hasCapture ? captureVolume.intensity : 0.0f);
-                shader->SetUniform("uIblCaptureBlendDistances[" + std::to_string(captureIndex) + "]", captureVolume.blendDistance);
+                Graphics::ActiveTexture(GL_TEXTURE0 + textureSlot);
+                Graphics::BindTexture(GL_TEXTURE_CUBE_MAP, hasCapture ? captureVolume.environmentMapTexture->GetTextureID() : 0);
+                shader->SetUniform(iblMapNames[captureIndex], textureSlot);
+                shader->SetUniform(iblOriginNames[captureIndex], captureVolume.origin);
+                shader->SetUniform(iblSizeNames[captureIndex], captureVolume.size);
+                shader->SetUniform(iblIntensityNames[captureIndex], hasCapture ? captureVolume.intensity : 0.0f);
+                shader->SetUniform(iblBlendNames[captureIndex], captureVolume.blendDistance);
                 const float captureMaxMipLevel = hasCapture ? ResolveMaxMipLevel(captureVolume.environmentMapTexture) : 0.0f;
                 reflectionMaxMipLevel = std::max(reflectionMaxMipLevel, captureMaxMipLevel);
-                shader->SetUniform("uIblCaptureMaxMipLevels[" + std::to_string(captureIndex) + "]", captureMaxMipLevel);
-                shader->SetUniform("uIblCaptureEnabled[" + std::to_string(captureIndex) + "]", hasCapture ? 1 : 0);
+                shader->SetUniform(iblMipNames[captureIndex], captureMaxMipLevel);
+                shader->SetUniform(iblEnabledNames[captureIndex], hasCapture ? 1 : 0);
             }
             shader->SetUniform("uEnvironmentMaxMipLevel", reflectionMaxMipLevel);
             shader->SetUniform("uIblCaptureCount", iblCaptureCount);
@@ -176,6 +184,20 @@ namespace PlutoGE::render
 
         void BindTransparentLights(Shader *shader, const RenderContext &ctx)
         {
+            static const auto lightPositionNames = MakeArrayUniformNames<kMaxTransparentLights>("uLightPositions");
+            static const auto lightColorNames = MakeArrayUniformNames<kMaxTransparentLights>("uLightColors");
+            static const auto lightIntensityNames = MakeArrayUniformNames<kMaxTransparentLights>("uLightIntensities");
+            static const auto lightRangeNames = MakeArrayUniformNames<kMaxTransparentLights>("uLightRanges");
+            static const auto lightDirectionNames = MakeArrayUniformNames<kMaxTransparentLights>("uLightDirections");
+            static const auto lightTypeNames = MakeArrayUniformNames<kMaxTransparentLights>("uLightTypes");
+            static const auto lightCastsShadowNames = MakeArrayUniformNames<kMaxTransparentLights>("uLightCastsShadows");
+            static const auto lightShadowBaseNames = MakeArrayUniformNames<kMaxTransparentLights>("uLightShadowMapBase");
+            static const auto lightCascadeCountNames = MakeArrayUniformNames<kMaxTransparentLights>("uLightCascadeCount");
+            static const auto lightCascadeSplitNames = MakeArrayUniformNames<kMaxTransparentLights>("uLightCascadeSplits");
+            static const auto lightCascadeBlendNames = MakeArrayUniformNames<kMaxTransparentLights>("uLightCascadeBlendDistances");
+            static const auto directionalShadowMapNames = MakeArrayUniformNames<kMaxTransparentShadowMaps>("uDirectionalShadowMaps");
+            static const auto cascadeMatrixNames = MakeArrayUniformNames<kMaxTransparentLights * kMaxTransparentShadowCascades>("uLightCascadeMatrices");
+            static const auto cascadeOriginNames = MakeArrayUniformNames<kMaxTransparentLights * kMaxTransparentShadowCascades>("uLightCascadeOrigins");
             const int lightCount = std::min(kMaxTransparentLights, ctx.lights ? static_cast<int>(ctx.lights->size()) : 0);
             int shadowMapCount = 0;
             shader->SetUniform("uLightCount", lightCount);
@@ -187,19 +209,18 @@ namespace PlutoGE::render
                     continue;
                 }
 
-                const std::string index = "[" + std::to_string(lightIndex) + "]";
-                shader->SetUniform("uLightPositions" + index, light->position);
-                shader->SetUniform("uLightColors" + index, light->color);
+                shader->SetUniform(lightPositionNames[lightIndex], light->position);
+                shader->SetUniform(lightColorNames[lightIndex], light->color);
                 const float skyVisibility = ctx.renderer ? ctx.renderer->GetPhysicalSkyDirectionalLightVisibility(light) : 1.0f;
-                shader->SetUniform("uLightIntensities" + index, light->intensity * skyVisibility);
-                shader->SetUniform("uLightRanges" + index, light->range);
-                shader->SetUniform("uLightDirections" + index, light->direction);
-                shader->SetUniform("uLightTypes" + index, static_cast<int>(light->type));
-                shader->SetUniform("uLightCastsShadows" + index, 0);
-                shader->SetUniform("uLightShadowMapBase" + index, -1);
-                shader->SetUniform("uLightCascadeCount" + index, 0);
-                shader->SetUniform("uLightCascadeSplits" + index, glm::vec4(0.0f));
-                shader->SetUniform("uLightCascadeBlendDistances" + index, light->directionalShadowSettings.cascadeBlendDistance);
+                shader->SetUniform(lightIntensityNames[lightIndex], light->intensity * skyVisibility);
+                shader->SetUniform(lightRangeNames[lightIndex], light->range);
+                shader->SetUniform(lightDirectionNames[lightIndex], light->direction);
+                shader->SetUniform(lightTypeNames[lightIndex], static_cast<int>(light->type));
+                shader->SetUniform(lightCastsShadowNames[lightIndex], 0);
+                shader->SetUniform(lightShadowBaseNames[lightIndex], -1);
+                shader->SetUniform(lightCascadeCountNames[lightIndex], 0);
+                shader->SetUniform(lightCascadeSplitNames[lightIndex], glm::vec4(0.0f));
+                shader->SetUniform(lightCascadeBlendNames[lightIndex], light->directionalShadowSettings.cascadeBlendDistance);
 
                 const bool hasDirectionalShadows =
                     light->type == scene::LightType::Directional &&
@@ -231,10 +252,10 @@ namespace PlutoGE::render
                 }
 
                 const int shadowMapBase = shadowMapCount;
-                shader->SetUniform("uLightCastsShadows" + index, 1);
-                shader->SetUniform("uLightShadowMapBase" + index, shadowMapBase);
-                shader->SetUniform("uLightCascadeCount" + index, cascadeCount);
-                shader->SetUniform("uLightCascadeSplits" + index, glm::vec4(
+                shader->SetUniform(lightCastsShadowNames[lightIndex], 1);
+                shader->SetUniform(lightShadowBaseNames[lightIndex], shadowMapBase);
+                shader->SetUniform(lightCascadeCountNames[lightIndex], cascadeCount);
+                shader->SetUniform(lightCascadeSplitNames[lightIndex], glm::vec4(
                                                                       light->shadowCascadeSplits[0],
                                                                       light->shadowCascadeSplits[1],
                                                                       light->shadowCascadeSplits[2],
@@ -243,15 +264,13 @@ namespace PlutoGE::render
                 {
                     const int shadowMapIndex = shadowMapBase + cascadeIndex;
                     const int textureSlot = kTransparentShadowTextureSlotStart + shadowMapIndex;
-                    glActiveTexture(GL_TEXTURE0 + textureSlot);
-                    glBindTexture(GL_TEXTURE_2D, light->shadowCascadeMaps[cascadeIndex]->GetTextureID());
-                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+                    Graphics::ActiveTexture(GL_TEXTURE0 + textureSlot);
+                    Graphics::BindTexture(GL_TEXTURE_2D, light->shadowCascadeMaps[cascadeIndex]->GetTextureID());
 
-                    shader->SetUniform("uDirectionalShadowMaps[" + std::to_string(shadowMapIndex) + "]", textureSlot);
+                    shader->SetUniform(directionalShadowMapNames[shadowMapIndex], textureSlot);
                     const int cascadeUniformIndex = lightIndex * kMaxTransparentShadowCascades + cascadeIndex;
-                    shader->SetUniform("uLightCascadeMatrices[" + std::to_string(cascadeUniformIndex) + "]", light->shadowCascadeMatrices[cascadeIndex]);
-                    shader->SetUniform("uLightCascadeOrigins[" + std::to_string(cascadeUniformIndex) + "]", light->shadowCascadeWorldOrigins[cascadeIndex]);
+                    shader->SetUniform(cascadeMatrixNames[cascadeUniformIndex], light->shadowCascadeMatrices[cascadeIndex]);
+                    shader->SetUniform(cascadeOriginNames[cascadeUniformIndex], light->shadowCascadeWorldOrigins[cascadeIndex]);
                 }
 
                 shadowMapCount += cascadeCount;
@@ -262,38 +281,38 @@ namespace PlutoGE::render
         {
             destination.Resize(source.GetWidth(), source.GetHeight());
 
-            glBindFramebuffer(GL_READ_FRAMEBUFFER, source.GetFramebufferID());
-            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, destination.GetFramebufferID());
+            Graphics::BindFramebuffer(GL_READ_FRAMEBUFFER, source.GetFramebufferID());
+            Graphics::BindFramebuffer(GL_DRAW_FRAMEBUFFER, destination.GetFramebufferID());
             glBlitFramebuffer(
                 0, 0, source.GetWidth(), source.GetHeight(),
                 0, 0, destination.GetWidth(), destination.GetHeight(),
                 GL_COLOR_BUFFER_BIT,
                 GL_LINEAR);
 
-            glBindTexture(GL_TEXTURE_2D, destination.GetColorTextureID());
+            Graphics::BindTexture(GL_TEXTURE_2D, destination.GetColorTextureID());
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
             glGenerateMipmap(GL_TEXTURE_2D);
-            glBindTexture(GL_TEXTURE_2D, 0);
+            Graphics::BindTexture(GL_TEXTURE_2D, 0);
         }
 
         void CopyFramebufferColorForTransparentRefraction(GLuint sourceFramebuffer, int width, int height, RenderTarget &destination)
         {
             destination.Resize(width, height);
 
-            glBindFramebuffer(GL_READ_FRAMEBUFFER, sourceFramebuffer);
-            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, destination.GetFramebufferID());
+            Graphics::BindFramebuffer(GL_READ_FRAMEBUFFER, sourceFramebuffer);
+            Graphics::BindFramebuffer(GL_DRAW_FRAMEBUFFER, destination.GetFramebufferID());
             glBlitFramebuffer(
                 0, 0, width, height,
                 0, 0, destination.GetWidth(), destination.GetHeight(),
                 GL_COLOR_BUFFER_BIT,
                 GL_LINEAR);
 
-            glBindTexture(GL_TEXTURE_2D, destination.GetColorTextureID());
+            Graphics::BindTexture(GL_TEXTURE_2D, destination.GetColorTextureID());
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
             glGenerateMipmap(GL_TEXTURE_2D);
-            glBindTexture(GL_TEXTURE_2D, 0);
+            Graphics::BindTexture(GL_TEXTURE_2D, 0);
         }
     }
 
@@ -359,8 +378,8 @@ namespace PlutoGE::render
                       return distanceA > distanceB;
                   });
 
-        glBindFramebuffer(GL_READ_FRAMEBUFFER, ctx.gBuffer->GetFBO());
-        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, targetFramebuffer);
+        Graphics::BindFramebuffer(GL_READ_FRAMEBUFFER, ctx.gBuffer->GetFBO());
+        Graphics::BindFramebuffer(GL_DRAW_FRAMEBUFFER, targetFramebuffer);
         glBlitFramebuffer(
             0, 0, ctx.gBuffer->GetWidth(), ctx.gBuffer->GetHeight(),
             0, 0, targetWidth, targetHeight,
@@ -373,22 +392,22 @@ namespace PlutoGE::render
         }
         else
         {
-            glBindFramebuffer(GL_FRAMEBUFFER, 0);
-            glViewport(0, 0, targetWidth, targetHeight);
+            Graphics::BindFramebuffer(GL_FRAMEBUFFER, 0);
+            Graphics::SetViewport(0, 0, targetWidth, targetHeight);
         }
-        glEnable(GL_DEPTH_TEST);
+        Graphics::Enable(GL_DEPTH_TEST);
         glDepthFunc(GL_GEQUAL);
         glDepthMask(GL_FALSE);
-        glDisable(GL_CULL_FACE);
-        glEnable(GL_BLEND);
+        Graphics::Disable(GL_CULL_FACE);
+        Graphics::Enable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
         m_transparentShader->Bind();
         m_transparentShader->SetUniform("uView", ctx.cameraData.view);
         m_transparentShader->SetUniform("uProjection", ctx.cameraData.projection);
         m_transparentShader->SetUniform("uViewPos", cameraPosition);
-        glActiveTexture(GL_TEXTURE0 + kTransparentSceneColorTextureSlot);
-        glBindTexture(GL_TEXTURE_2D, m_sceneColorCopy ? m_sceneColorCopy->GetColorTextureID() : 0);
+        Graphics::ActiveTexture(GL_TEXTURE0 + kTransparentSceneColorTextureSlot);
+        Graphics::BindTexture(GL_TEXTURE_2D, m_sceneColorCopy ? m_sceneColorCopy->GetColorTextureID() : 0);
         m_transparentShader->SetUniform("uSceneColorTexture", kTransparentSceneColorTextureSlot);
         m_transparentShader->SetUniform("uSceneColorEnabled", m_sceneColorCopy && m_sceneColorCopy->IsInitialized() ? 1 : 0);
         m_transparentShader->SetUniform("uSceneColorTextureSize", glm::vec2(
@@ -452,9 +471,9 @@ namespace PlutoGE::render
 
         m_transparentShader->SetUniform("uUseSkinning", 0);
         m_transparentShader->Unbind();
-        glDisable(GL_BLEND);
+        Graphics::Disable(GL_BLEND);
         glDepthMask(GL_TRUE);
-        glEnable(GL_CULL_FACE);
+        Graphics::Enable(GL_CULL_FACE);
         glCullFace(GL_BACK);
         glDepthFunc(GL_GREATER);
         Graphics::UnbindRenderTarget();

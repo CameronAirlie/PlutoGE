@@ -1,4 +1,5 @@
 #include "PlutoGE/render/passes/PostProcessPass.h"
+#include "PlutoGE/render/Graphics.h"
 
 #include "PlutoGE/render/postprocess/IPostProcessEffect.h"
 #include "PlutoGE/render/postprocess/SSAOEffect.h"
@@ -30,14 +31,14 @@ namespace PlutoGE::render
                 return;
             }
 
-            glBindFramebuffer(GL_READ_FRAMEBUFFER, source->GetFramebufferID());
-            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, destination ? destination->GetFramebufferID() : 0);
+            Graphics::BindFramebuffer(GL_READ_FRAMEBUFFER, source->GetFramebufferID());
+            Graphics::BindFramebuffer(GL_DRAW_FRAMEBUFFER, destination ? destination->GetFramebufferID() : 0);
             glBlitFramebuffer(
                 0, 0, source->GetWidth(), source->GetHeight(),
                 0, 0, source->GetWidth(), source->GetHeight(),
                 GL_COLOR_BUFFER_BIT,
                 GL_NEAREST);
-            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            Graphics::BindFramebuffer(GL_FRAMEBUFFER, 0);
         }
 
         void BlitDepthBuffer(RenderTarget *source, RenderTarget *destination)
@@ -47,14 +48,14 @@ namespace PlutoGE::render
                 return;
             }
 
-            glBindFramebuffer(GL_READ_FRAMEBUFFER, source->GetFramebufferID());
-            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, destination->GetFramebufferID());
+            Graphics::BindFramebuffer(GL_READ_FRAMEBUFFER, source->GetFramebufferID());
+            Graphics::BindFramebuffer(GL_DRAW_FRAMEBUFFER, destination->GetFramebufferID());
             glBlitFramebuffer(
                 0, 0, source->GetWidth(), source->GetHeight(),
                 0, 0, destination->GetWidth(), destination->GetHeight(),
                 GL_DEPTH_BUFFER_BIT,
                 GL_NEAREST);
-            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            Graphics::BindFramebuffer(GL_FRAMEBUFFER, 0);
         }
     }
 

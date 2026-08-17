@@ -350,14 +350,14 @@ namespace PlutoGE::render
                 return;
             }
 
-            glBindFramebuffer(GL_READ_FRAMEBUFFER, source->GetFramebufferID());
-            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, destination->GetFramebufferID());
+            Graphics::BindFramebuffer(GL_READ_FRAMEBUFFER, source->GetFramebufferID());
+            Graphics::BindFramebuffer(GL_DRAW_FRAMEBUFFER, destination->GetFramebufferID());
             glBlitFramebuffer(
                 0, 0, source->GetWidth(), source->GetHeight(),
                 0, 0, destination->GetWidth(), destination->GetHeight(),
                 GL_COLOR_BUFFER_BIT,
                 GL_NEAREST);
-            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            Graphics::BindFramebuffer(GL_FRAMEBUFFER, 0);
         }
 
         TAAEffect *FindActiveTAAEffect(const std::vector<IPostProcessEffect *> *postProcessEffects)
@@ -450,7 +450,7 @@ namespace PlutoGE::render
 
     void ResizeCallback(int width, int height)
     {
-        glViewport(0, 0, width, height);
+        Graphics::SetViewport(0, 0, width, height);
     }
 
     bool Renderer::Initialize(const RendererConfig &config)
@@ -473,12 +473,12 @@ namespace PlutoGE::render
         }
 
         auto extents = window->GetExtents();
-        glViewport(0, 0, extents.width, extents.height);
+        Graphics::SetViewport(0, 0, extents.width, extents.height);
 
-        glEnable(GL_DEPTH_TEST);
+        Graphics::Enable(GL_DEPTH_TEST);
         glClearDepth(0.0);
         glDepthFunc(GL_GREATER);
-        glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);
+        Graphics::Enable(GL_TEXTURE_CUBE_MAP_SEAMLESS);
 
         auto geometryPass = new GeometryPass();
         geometryPass->Initialize();
@@ -570,7 +570,7 @@ namespace PlutoGE::render
         if (m_config.window)
         {
             const auto extents = m_config.window->GetExtents();
-            glViewport(0, 0, extents.width, extents.height);
+            Graphics::SetViewport(0, 0, extents.width, extents.height);
         }
 
         Graphics::ClearRenderTarget(nullptr);
@@ -613,6 +613,7 @@ namespace PlutoGE::render
         }
 
         Shader::ResetStateCache();
+        Graphics::ResetStateCache();
 
         if (!m_config.window)
         {
@@ -696,15 +697,15 @@ namespace PlutoGE::render
 
             RenderFrame(cameraData, &captureTarget, lights, nullptr, scene, false, false);
 
-            glBindFramebuffer(GL_READ_FRAMEBUFFER, captureTarget.GetFramebufferID());
-            glBindTexture(GL_TEXTURE_CUBE_MAP, targetCubemap->GetTextureID());
+            Graphics::BindFramebuffer(GL_READ_FRAMEBUFFER, captureTarget.GetFramebufferID());
+            Graphics::BindTexture(GL_TEXTURE_CUBE_MAP, targetCubemap->GetTextureID());
             glCopyTexSubImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + faceIndex, 0, 0, 0, 0, 0, resolution, resolution);
         }
 
-        glBindTexture(GL_TEXTURE_CUBE_MAP, targetCubemap->GetTextureID());
+        Graphics::BindTexture(GL_TEXTURE_CUBE_MAP, targetCubemap->GetTextureID());
         glGenerateMipmap(GL_TEXTURE_CUBE_MAP);
-        glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
-        glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+        Graphics::BindTexture(GL_TEXTURE_CUBE_MAP, 0);
+        Graphics::BindFramebuffer(GL_READ_FRAMEBUFFER, 0);
 
         m_postProcessDebugView = previousDebugView;
         if (auto frameResourceIt = m_frameResources.find(&captureTarget); frameResourceIt != m_frameResources.end())
@@ -784,6 +785,7 @@ namespace PlutoGE::render
         }
 
         Shader::ResetStateCache();
+        Graphics::ResetStateCache();
         const auto contextSetupEnd = std::chrono::high_resolution_clock::now();
         m_cpuFrameStats.renderFrameContextSetupMs += elapsedMs(renderFrameStart, contextSetupEnd);
 
@@ -827,65 +829,49 @@ namespace PlutoGE::render
         const auto resourceSetupEnd = std::chrono::high_resolution_clock::now();
         m_cpuFrameStats.renderFrameResourceSetupMs += elapsedMs(contextSetupEnd, resourceSetupEnd);
 
-        const auto lodUpdateStart = resourceSetupEnd;
-        UpdateRenderCommandLods(activeCameraData, renderHeight);
-        const auto lodUpdateEnd = std::chrono::high_resolution_clock::now();
-        m_cpuFrameStats.renderFrameLodUpdateMs += elapsedMs(lodUpdateStart, lodUpdateEnd);
-
-        const auto commandSortStart = lodUpdateEnd;
+        const auto commandSortStart = resourceSetupEnd;
         EnsureRenderCommandsSorted();
         const auto commandSortEnd = std::chrono::high_resolution_clock::now();
         m_cpuFrameStats.renderFrameCommandSortMs += elapsedMs(commandSortStart, commandSortEnd);
 
-        const auto visibilityStart = commandSortEnd;
+        const auto lodUpdateStart = commandSortEnd;
+        UpdateRenderCommandLods(activeCameraData, renderHeight);
+        const auto lodUpdateEnd = std::chrono::high_resolution_clock::now();
+        m_cpuFrameStats.renderFrameLodUpdateMs += elapsedMs(lodUpdateStart, lodUpdateEnd);
+
+        const auto visibilityStart = lodUpdateEnd;
         m_visibleRenderCommands.clear();
         m_visibleRenderCommands.reserve(m_renderCommands.size());
         std::size_t visibleInstanceScratchCursor = 0;
         const auto frustumPlanes = ExtractFrustumPlanes(activeCameraData.projection * activeCameraData.view);
         const glm::vec3 cameraPosition = glm::vec3(glm::inverse(activeCameraData.view)[3]);
-        const float projectionScaleY = std::abs(activeCameraData.projection[1][1]);
-        const float halfViewportHeight = static_cast<float>(std::max(renderHeight, 1)) * 0.5f;
         m_cpuFrameStats.visibleSingleLodCommandCount = 0;
         m_cpuFrameStats.visibleMultiLodCommandCount = 0;
-        for (const auto &command : m_renderCommands)
+        for (const auto &[commandIndex, fullyInsideFrustum] : m_visibilityCandidates)
         {
-            const FrustumContainment containment = command.mesh
-                                                       ? ClassifyBounds(command.worldBounds, frustumPlanes)
-                                                       : FrustumContainment::Outside;
-            if (containment != FrustumContainment::Outside &&
-                PassesDistanceCull(command, cameraPosition, command.maxDrawDistance) &&
-                PassesStaticProjectedSizeCull(command, cameraPosition, projectionScaleY, halfViewportHeight))
+            if (commandIndex >= m_renderCommands.size())
+                continue;
+            const auto &command = m_renderCommands[commandIndex];
+            if (visibleInstanceScratchCursor == m_visibleInstanceModelPool.size())
             {
-                if (visibleInstanceScratchCursor == m_visibleInstanceModelPool.size())
-                {
-                    m_visibleInstanceModelPool.push_back(std::make_shared<std::vector<glm::mat4>>());
-                    m_visiblePreviousInstanceModelPool.push_back(std::make_shared<std::vector<glm::mat4>>());
-                }
-                const auto &modelScratch = m_visibleInstanceModelPool[visibleInstanceScratchCursor];
-                const auto &previousModelScratch = m_visiblePreviousInstanceModelPool[visibleInstanceScratchCursor++];
-                RenderCommand visibleCommand = CullRenderCommandInstances(
-                    command,
-                    cameraPosition,
-                    command.maxDrawDistance,
-                    &frustumPlanes,
-                    containment == FrustumContainment::Inside,
-                    modelScratch,
-                    previousModelScratch);
-                if (visibleCommand.instanceModels && visibleCommand.instanceModels->empty())
-                {
-                    continue;
-                }
-                m_visibleRenderCommands.push_back(std::move(visibleCommand));
-                if (command.mesh && command.mesh->GetSubmeshLodCount(command.submeshIndex) > 1)
-                {
-                    ++m_cpuFrameStats.visibleMultiLodCommandCount;
-                }
-                else
-                {
-                    ++m_cpuFrameStats.visibleSingleLodCommandCount;
-                }
+                m_visibleInstanceModelPool.push_back(std::make_shared<std::vector<glm::mat4>>());
+                m_visiblePreviousInstanceModelPool.push_back(std::make_shared<std::vector<glm::mat4>>());
             }
+            const auto &modelScratch = m_visibleInstanceModelPool[visibleInstanceScratchCursor];
+            const auto &previousModelScratch = m_visiblePreviousInstanceModelPool[visibleInstanceScratchCursor++];
+            RenderCommand visibleCommand = CullRenderCommandInstances(
+                command, cameraPosition, command.maxDrawDistance, &frustumPlanes,
+                fullyInsideFrustum, modelScratch, previousModelScratch);
+            if (visibleCommand.instanceModels && visibleCommand.instanceModels->empty())
+                continue;
+            m_visibleRenderCommands.push_back(std::move(visibleCommand));
+            if (command.mesh && command.mesh->GetSubmeshLodCount(command.submeshIndex) > 1)
+                ++m_cpuFrameStats.visibleMultiLodCommandCount;
+            else
+                ++m_cpuFrameStats.visibleSingleLodCommandCount;
         }
+        if (m_renderCommandsDirty)
+            std::sort(m_visibleRenderCommands.begin(), m_visibleRenderCommands.end(), CompareRenderCommandKeysImpl);
         m_cpuFrameStats.visibleRenderCommandCount = static_cast<int>(m_visibleRenderCommands.size());
         m_cpuFrameStats.frustumCulledRenderCommandCount = static_cast<int>(m_renderCommands.size() - m_visibleRenderCommands.size());
         const auto visibilityEnd = std::chrono::high_resolution_clock::now();
@@ -1077,10 +1063,14 @@ namespace PlutoGE::render
         const glm::vec3 cameraPosition = glm::vec3(inverseView[3]);
         const float projectionScaleY = std::abs(cameraData.projection[1][1]);
         const float halfViewportHeight = static_cast<float>(std::max(viewportHeight, 1)) * 0.5f;
+        const auto frustumPlanes = ExtractFrustumPlanes(cameraData.projection * cameraData.view);
         bool changed = false;
+        m_visibilityCandidates.clear();
+        m_visibilityCandidates.reserve(m_renderCommands.size());
 
-        for (auto &command : m_renderCommands)
+        for (std::size_t commandIndex = 0; commandIndex < m_renderCommands.size(); ++commandIndex)
         {
+            auto &command = m_renderCommands[commandIndex];
             if (!command.mesh)
             {
                 continue;
@@ -1099,66 +1089,60 @@ namespace PlutoGE::render
                     command.SetLodTransition(0, 0.0f);
                     changed = true;
                 }
-                continue;
             }
-
-            if (command.mesh->GetSubmeshLodCount(command.submeshIndex) <= 1)
+            else if (command.mesh->GetSubmeshLodCount(command.submeshIndex) > 1)
             {
-                continue;
-            }
+                const glm::vec3 cameraOffset = command.worldBounds.center - cameraPosition;
+                const float safeDistance = std::sqrt(std::max(glm::dot(cameraOffset, cameraOffset), 0.000001f));
+                const float projectedRadiusPixels = (std::max(command.worldBounds.radius, 0.001f) / safeDistance) * projectionScaleY * halfViewportHeight;
+                const uint32_t selectedLodIndex = static_cast<uint32_t>(command.mesh->SelectSubmeshLodByProjectedRadius(command.submeshIndex, projectedRadiusPixels));
+                const std::size_t lodCount = command.mesh->GetSubmeshLodCount(command.submeshIndex);
+                const uint32_t minLodIndex = lodCount > 0 ? std::min(command.GetMinLodIndex(), static_cast<uint32_t>(lodCount - 1)) : 0u;
+                const uint32_t lodIndex = std::max(selectedLodIndex, minLodIndex);
+                uint32_t transitionIndex = lodIndex;
+                uint32_t transitionBaseIndex = lodIndex;
+                float transitionFade = 0.0f;
 
-            const float distance = glm::length(command.worldBounds.center - cameraPosition);
-            const float safeDistance = std::max(distance, 0.001f);
-            const float projectedRadiusPixels = (std::max(command.worldBounds.radius, 0.001f) / safeDistance) * projectionScaleY * halfViewportHeight;
-            const uint32_t selectedLodIndex = static_cast<uint32_t>(command.mesh->SelectSubmeshLodByProjectedRadius(command.submeshIndex, projectedRadiusPixels));
-            const std::size_t lodCount = command.mesh->GetSubmeshLodCount(command.submeshIndex);
-            const uint32_t minLodIndex = lodCount > 0 ? std::min(command.GetMinLodIndex(), static_cast<uint32_t>(lodCount - 1)) : 0u;
-            const uint32_t lodIndex = std::max(selectedLodIndex, minLodIndex);
-            uint32_t transitionIndex = lodIndex;
-            uint32_t transitionBaseIndex = lodIndex;
-            float transitionFade = 0.0f;
-
-            // Cross-fade adjacent levels over a band centred on the configured
-            // projected-radius threshold. The lower index is the near LOD and
-            // the higher index is the far LOD.
-            for (uint32_t farLodIndex = 1; farLodIndex < lodCount; ++farLodIndex)
-            {
-                const uint32_t nearLodIndex = farLodIndex - 1;
-                if (nearLodIndex < minLodIndex)
+                for (uint32_t farLodIndex = 1; farLodIndex < lodCount; ++farLodIndex)
                 {
-                    continue;
+                    const uint32_t nearLodIndex = farLodIndex - 1;
+                    if (nearLodIndex < minLodIndex)
+                        continue;
+                    const float threshold = command.mesh->GetSubmeshLodRange(command.submeshIndex, farLodIndex).maxScreenRadiusPixels;
+                    if (!std::isfinite(threshold) || threshold <= 0.0f)
+                        continue;
+                    const float upperRadius = threshold * (1.0f + kLodTransitionWidth);
+                    const float lowerRadius = threshold * (1.0f - kLodTransitionWidth);
+                    if (projectedRadiusPixels <= upperRadius && projectedRadiusPixels >= lowerRadius)
+                    {
+                        transitionBaseIndex = nearLodIndex;
+                        transitionIndex = farLodIndex;
+                        transitionFade = glm::clamp((upperRadius - projectedRadiusPixels) /
+                                                        std::max(upperRadius - lowerRadius, 0.001f),
+                                                    0.0f, 1.0f);
+                        break;
+                    }
                 }
 
-                const float threshold = command.mesh->GetSubmeshLodRange(command.submeshIndex, farLodIndex).maxScreenRadiusPixels;
-                if (!std::isfinite(threshold) || threshold <= 0.0f)
+                const uint32_t resolvedLodIndex = transitionFade > 0.0f && transitionFade < 1.0f
+                                                      ? transitionBaseIndex
+                                                      : lodIndex;
+                if (command.lodIndex != resolvedLodIndex ||
+                    command.GetLodTransitionIndex() != transitionIndex ||
+                    std::abs(command.GetLodTransitionFade() - transitionFade) > (1.0f / 65535.0f))
                 {
-                    continue;
-                }
-
-                const float upperRadius = threshold * (1.0f + kLodTransitionWidth);
-                const float lowerRadius = threshold * (1.0f - kLodTransitionWidth);
-                if (projectedRadiusPixels <= upperRadius && projectedRadiusPixels >= lowerRadius)
-                {
-                    transitionBaseIndex = nearLodIndex;
-                    transitionIndex = farLodIndex;
-                    transitionFade = glm::clamp((upperRadius - projectedRadiusPixels) /
-                                                    std::max(upperRadius - lowerRadius, 0.001f),
-                                                0.0f,
-                                                1.0f);
-                    break;
+                    command.lodIndex = resolvedLodIndex;
+                    command.SetLodTransition(transitionIndex, transitionFade);
+                    changed = true;
                 }
             }
 
-            const uint32_t resolvedLodIndex = transitionFade > 0.0f && transitionFade < 1.0f
-                                                  ? transitionBaseIndex
-                                                  : lodIndex;
-            if (command.lodIndex != resolvedLodIndex ||
-                command.GetLodTransitionIndex() != transitionIndex ||
-                std::abs(command.GetLodTransitionFade() - transitionFade) > (1.0f / 65535.0f))
+            const FrustumContainment containment = ClassifyBounds(command.worldBounds, frustumPlanes);
+            if (containment != FrustumContainment::Outside &&
+                PassesDistanceCull(command, cameraPosition, command.maxDrawDistance) &&
+                PassesStaticProjectedSizeCull(command, cameraPosition, projectionScaleY, halfViewportHeight))
             {
-                command.lodIndex = resolvedLodIndex;
-                command.SetLodTransition(transitionIndex, transitionFade);
-                changed = true;
+                m_visibilityCandidates.emplace_back(commandIndex, containment == FrustumContainment::Inside);
             }
         }
 

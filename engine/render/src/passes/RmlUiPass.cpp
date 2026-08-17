@@ -60,13 +60,13 @@ namespace PlutoGE::render
         if (ctx.renderTarget)
             Graphics::BindRenderTarget(ctx.renderTarget);
         else
-            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            Graphics::BindFramebuffer(GL_FRAMEBUFFER, 0);
 
-        glEnable(GL_DEPTH_TEST);
+        Graphics::Enable(GL_DEPTH_TEST);
         glDepthFunc(GL_GEQUAL);
         glDepthMask(GL_FALSE);
-        glDisable(GL_CULL_FACE);
-        glEnable(GL_BLEND);
+        Graphics::Disable(GL_CULL_FACE);
+        Graphics::Enable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
         m_surfaceShader->Bind();
@@ -74,14 +74,14 @@ namespace PlutoGE::render
         m_surfaceShader->SetUniform("uProjection", ctx.cameraData.projection);
         m_surfaceShader->SetUniform("uSurface", 0);
         glBindVertexArray(m_surfaceVao);
-        glActiveTexture(GL_TEXTURE0);
+        Graphics::ActiveTexture(GL_TEXTURE0);
         for (const auto &surface : RmlUiRuntime::Get().GetWorldSurfaces())
         {
             m_surfaceShader->SetUniform("uModel", surface.model);
-            glBindTexture(GL_TEXTURE_2D, surface.texture);
+            Graphics::BindTexture(GL_TEXTURE_2D, surface.texture);
             glDrawArrays(GL_TRIANGLES, 0, 6);
         }
-        glBindTexture(GL_TEXTURE_2D, 0);
+        Graphics::BindTexture(GL_TEXTURE_2D, 0);
         glBindVertexArray(0);
         m_surfaceShader->Unbind();
         glDepthMask(GL_TRUE);
@@ -105,13 +105,26 @@ namespace PlutoGE::render
         {
             width = ctx.temporaryRenderTarget->GetWidth();
             height = ctx.temporaryRenderTarget->GetHeight();
-            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            Graphics::BindFramebuffer(GL_FRAMEBUFFER, 0);
             PlutoGE_SetRmlUiFramebuffer(0);
         }
 
         if (width > 0 && height > 0)
             RmlUiRuntime::Get().Render(*ctx.scene, width, height, ctx.frameSequence,
                                       ctx.cameraData.view, ctx.cameraData.projection,
-                                      [this, &ctx]() { DrawWorldSurfaces(ctx); });
-    }
+                                      [this, &ctx]()
+                                      {
+                                          // RmlUi renders before invoking this engine callback.
+                                          Shader::ResetStateCache();
+                                          Graphics::ResetStateCache();
+                                          DrawWorldSurfaces(ctx);
+                                          // RmlUi resumes with its own state tracking afterward.
+                                          Shader::ResetStateCache();
+                                          Graphics::ResetStateCache();
+                                      });
+            // RmlUi owns the OpenGL context while rendering and may alter any
+            // cached binding or capability behind the renderer's state facade.
+            Shader::ResetStateCache();
+            Graphics::ResetStateCache();
+        }
 }

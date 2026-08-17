@@ -394,19 +394,19 @@ namespace PlutoGE::render
         RenderTarget *writeTarget = m_historyTargets[1 - m_historyIndex].get();
         RenderTarget *readTarget = m_historyTargets[m_historyIndex].get();
 
-        glDisable(GL_DEPTH_TEST);
-        glDisable(GL_CULL_FACE);
+        Graphics::Disable(GL_DEPTH_TEST);
+        Graphics::Disable(GL_CULL_FACE);
         Graphics::BindRenderTarget(writeTarget);
 
         m_shader->Bind();
         BindCommonInputs(m_shader, context);
 
-        glActiveTexture(GL_TEXTURE5);
-        glBindTexture(GL_TEXTURE_2D, context.renderContext.gBuffer->GetMotionTextureID());
+        Graphics::ActiveTexture(GL_TEXTURE5);
+        Graphics::BindTexture(GL_TEXTURE_2D, context.renderContext.gBuffer->GetMotionTextureID());
         m_shader->SetUniform("uSceneMotionTexture", 5);
 
-        glActiveTexture(GL_TEXTURE6);
-        glBindTexture(GL_TEXTURE_2D, readTarget ? readTarget->GetColorTextureID() : 0);
+        Graphics::ActiveTexture(GL_TEXTURE6);
+        Graphics::BindTexture(GL_TEXTURE_2D, readTarget ? readTarget->GetColorTextureID() : 0);
         m_shader->SetUniform("uHistoryTexture", 6);
 
         m_shader->SetUniform("uHasHistory", m_hasHistory ? 1 : 0);
@@ -479,8 +479,8 @@ namespace PlutoGE::render
             return;
         }
 
-        glBindFramebuffer(GL_READ_FRAMEBUFFER, source->GetFramebufferID());
-        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, destination ? destination->GetFramebufferID() : 0);
+        Graphics::BindFramebuffer(GL_READ_FRAMEBUFFER, source->GetFramebufferID());
+        Graphics::BindFramebuffer(GL_DRAW_FRAMEBUFFER, destination ? destination->GetFramebufferID() : 0);
         glBlitFramebuffer(
             0, 0, source->GetWidth(), source->GetHeight(),
             0, 0, source->GetWidth(), source->GetHeight(),
@@ -489,8 +489,8 @@ namespace PlutoGE::render
 
         if (destination && depthSource)
         {
-            glBindFramebuffer(GL_READ_FRAMEBUFFER, depthSource->GetFramebufferID());
-            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, destination->GetFramebufferID());
+            Graphics::BindFramebuffer(GL_READ_FRAMEBUFFER, depthSource->GetFramebufferID());
+            Graphics::BindFramebuffer(GL_DRAW_FRAMEBUFFER, destination->GetFramebufferID());
             glBlitFramebuffer(
                 0, 0, depthSource->GetWidth(), depthSource->GetHeight(),
                 0, 0, destination->GetWidth(), destination->GetHeight(),
@@ -498,7 +498,7 @@ namespace PlutoGE::render
                 GL_NEAREST);
         }
 
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        Graphics::BindFramebuffer(GL_FRAMEBUFFER, 0);
     }
 
     void TAAEffect::ResetHistory()

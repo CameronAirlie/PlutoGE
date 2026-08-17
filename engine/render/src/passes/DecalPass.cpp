@@ -1,6 +1,7 @@
 #include "PlutoGE/render/passes/DecalPass.h"
 
 #include "PlutoGE/render/GBuffer.h"
+#include "PlutoGE/render/Graphics.h"
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/Shader.h"
@@ -168,19 +169,19 @@ void main()
         ctx.gBuffer->Bind();
         const GLenum drawBuffers[] = {GL_NONE, GL_NONE, GL_COLOR_ATTACHMENT2};
         glDrawBuffers(3, drawBuffers);
-        glDisable(GL_DEPTH_TEST);
-        glDisable(GL_CULL_FACE);
-        glEnable(GL_BLEND);
+        Graphics::Disable(GL_DEPTH_TEST);
+        Graphics::Disable(GL_CULL_FACE);
+        Graphics::Enable(GL_BLEND);
         glBlendEquation(GL_FUNC_ADD);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        glEnable(GL_SCISSOR_TEST);
+        Graphics::Enable(GL_SCISSOR_TEST);
 
         m_shader->Bind();
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetPositionTextureID());
+        Graphics::ActiveTexture(GL_TEXTURE0);
+        Graphics::BindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetPositionTextureID());
         m_shader->SetUniform("uWorldPosition", 0);
-        glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetNormalTextureID());
+        Graphics::ActiveTexture(GL_TEXTURE1);
+        Graphics::BindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetNormalTextureID());
         m_shader->SetUniform("uWorldNormal", 1);
         glBindVertexArray(m_fullscreenVao);
 
@@ -204,8 +205,8 @@ void main()
             m_shader->SetUniform("uAlphaMode", static_cast<int>(material.alphaMode));
             m_shader->SetUniform("uAlphaCutoff", material.alphaCutoff);
             m_shader->SetUniform("uNormalCutoff", decal.normalCutoff);
-            glActiveTexture(GL_TEXTURE2);
-            glBindTexture(GL_TEXTURE_2D, material.albedoTexture ? material.albedoTexture->GetTextureID() : 0);
+            Graphics::ActiveTexture(GL_TEXTURE2);
+            Graphics::BindTexture(GL_TEXTURE_2D, material.albedoTexture ? material.albedoTexture->GetTextureID() : 0);
             m_shader->SetUniform("uHasAlbedoTexture", material.albedoTexture != nullptr);
             m_shader->SetUniform("uDecalTexture", 2);
             glDrawArrays(GL_TRIANGLES, 0, 3);
@@ -213,10 +214,10 @@ void main()
 
         glBindVertexArray(0);
         m_shader->Unbind();
-        glDisable(GL_SCISSOR_TEST);
-        glDisable(GL_BLEND);
-        glEnable(GL_DEPTH_TEST);
-        glEnable(GL_CULL_FACE);
+        Graphics::Disable(GL_SCISSOR_TEST);
+        Graphics::Disable(GL_BLEND);
+        Graphics::Enable(GL_DEPTH_TEST);
+        Graphics::Enable(GL_CULL_FACE);
         ctx.gBuffer->Unbind();
     }
 }

@@ -578,8 +578,8 @@ namespace PlutoGE::render
         }
         else
         {
-            glBindFramebuffer(GL_FRAMEBUFFER, 0);
-            glViewport(0, 0, targetWidth, targetHeight);
+            Graphics::BindFramebuffer(GL_FRAMEBUFFER, 0);
+            Graphics::SetViewport(0, 0, targetWidth, targetHeight);
         }
 
         const glm::mat4 inverseView = glm::inverse(ctx.cameraData.view);
@@ -587,11 +587,11 @@ namespace PlutoGE::render
         const glm::vec3 cameraUp = glm::normalize(glm::vec3(inverseView[1]));
         const glm::vec3 cameraForward = -glm::normalize(glm::vec3(inverseView[2]));
 
-        glEnable(GL_DEPTH_TEST);
+        Graphics::Enable(GL_DEPTH_TEST);
         glDepthFunc(GL_GEQUAL);
         glDepthMask(GL_FALSE);
-        glDisable(GL_CULL_FACE);
-        glEnable(GL_BLEND);
+        Graphics::Disable(GL_CULL_FACE);
+        Graphics::Enable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
         for (auto *particleSystem : particleSystems)
@@ -636,14 +636,14 @@ namespace PlutoGE::render
                     m_updateShader->SetUniform("uStartLifetime", particleSystem->GetStartLifetime());
                     m_updateShader->SetUniform("uGravityModifier", particleSystem->GetGravityModifier());
 
-                    glEnable(GL_RASTERIZER_DISCARD);
+                    Graphics::Enable(GL_RASTERIZER_DISCARD);
                     glBindVertexArray(particleSystem->GetReadVao());
                     glBindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER, 0, particleSystem->GetWriteBuffer());
                     glBeginTransformFeedback(GL_POINTS);
                     glDrawArrays(GL_POINTS, 0, particleSystem->GetGpuCapacity());
                     glEndTransformFeedback();
                     glBindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER, 0, 0);
-                    glDisable(GL_RASTERIZER_DISCARD);
+                    Graphics::Disable(GL_RASTERIZER_DISCARD);
                     particleSystem->SwapGpuBuffers();
                 }
 
@@ -747,9 +747,9 @@ namespace PlutoGE::render
         {
             m_trailShader->Unbind();
         }
-        glDisable(GL_BLEND);
+        Graphics::Disable(GL_BLEND);
         glDepthMask(GL_TRUE);
-        glEnable(GL_CULL_FACE);
+        Graphics::Enable(GL_CULL_FACE);
         glCullFace(GL_BACK);
         glDepthFunc(GL_GREATER);
         Graphics::UnbindRenderTarget();

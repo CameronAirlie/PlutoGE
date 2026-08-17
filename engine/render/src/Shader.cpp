@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "PlutoGE/render/Shader.h"
+#include "PlutoGE/render/Graphics.h"
 #include "PlutoGE/render/Texture.h"
 #include "PlutoGE/core/Engine.h"
 
@@ -90,8 +91,8 @@ namespace PlutoGE::render
             // synchronized for diagnostics and for callers of ResetStateCache,
             // but do not use it to elide texture binds until all direct binding
             // sites have been routed through one shared state tracker.
-            glActiveTexture(GL_TEXTURE0 + slot);
-            glBindTexture(textureType, textureId);
+            Graphics::ActiveTexture(GL_TEXTURE0 + slot);
+            Graphics::BindTexture(textureType, textureId);
             cache.activeTextureSlot = slot;
 
             if (slot < static_cast<int>(textureUnits.size()))

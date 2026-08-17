@@ -1,4 +1,5 @@
 #include "PlutoGE/render/Texture.h"
+#include "PlutoGE/render/Graphics.h"
 #include "PlutoGE/core/Engine.h"
 
 namespace PlutoGE::render
@@ -16,7 +17,7 @@ namespace PlutoGE::render
     {
         if (m_textureID != 0 && PrepareTextureGpuAccess())
         {
-            glDeleteTextures(1, &m_textureID);
+            Graphics::DeleteTextures(1, &m_textureID);
         }
         m_textureID = 0;
     }
@@ -89,14 +90,14 @@ namespace PlutoGE::render
         texture->m_channels = 4;
 
         glGenTextures(1, &texture->m_textureID);
-        glBindTexture(GL_TEXTURE_3D, texture->m_textureID);
+        Graphics::BindTexture(GL_TEXTURE_3D, texture->m_textureID);
         glTexImage3D(GL_TEXTURE_3D, 0, GL_RGBA16F, width, height, depth, 0, GL_RGBA, GL_FLOAT, nullptr);
         glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
-        glBindTexture(GL_TEXTURE_3D, 0);
+        Graphics::BindTexture(GL_TEXTURE_3D, 0);
         return texture;
     }
 
@@ -107,9 +108,9 @@ namespace PlutoGE::render
             return;
         }
 
-        glBindTexture(GL_TEXTURE_3D, m_textureID);
+        Graphics::BindTexture(GL_TEXTURE_3D, m_textureID);
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
         glTexSubImage3D(GL_TEXTURE_3D, 0, 0, 0, 0, m_width, m_height, m_depth, format, type, data);
-        glBindTexture(GL_TEXTURE_3D, 0);
+        Graphics::BindTexture(GL_TEXTURE_3D, 0);
     }
 }

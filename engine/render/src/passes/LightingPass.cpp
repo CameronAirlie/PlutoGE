@@ -3,6 +3,7 @@
 #include "PlutoGE/render/GBuffer.h"
 #include "PlutoGE/render/Camera.h"
 #include "PlutoGE/render/Shader.h"
+#include "PlutoGE/render/UniformNames.h"
 #include "PlutoGE/render/Texture.h"
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/Graphics.h"
@@ -968,76 +969,78 @@ namespace PlutoGE::render
         void BindLightingInputs(Shader *shader, const RenderContext &ctx)
         {
             auto *gBuffer = ctx.gBuffer;
-            glActiveTexture(GL_TEXTURE0 + kPositionTextureSlot);
-            glBindTexture(GL_TEXTURE_2D, gBuffer->GetPositionTextureID());
+            Graphics::ActiveTexture(GL_TEXTURE0 + kPositionTextureSlot);
+            Graphics::BindTexture(GL_TEXTURE_2D, gBuffer->GetPositionTextureID());
             if (shader->HasUniform("gPosition"))
             {
                 shader->SetUniform("gPosition", kPositionTextureSlot);
             }
 
-            glActiveTexture(GL_TEXTURE0 + kNormalTextureSlot);
-            glBindTexture(GL_TEXTURE_2D, gBuffer->GetNormalTextureID());
+            Graphics::ActiveTexture(GL_TEXTURE0 + kNormalTextureSlot);
+            Graphics::BindTexture(GL_TEXTURE_2D, gBuffer->GetNormalTextureID());
             if (shader->HasUniform("gNormal"))
             {
                 shader->SetUniform("gNormal", kNormalTextureSlot);
             }
 
-            glActiveTexture(GL_TEXTURE0 + kAlbedoTextureSlot);
-            glBindTexture(GL_TEXTURE_2D, gBuffer->GetAlbedoTextureID());
+            Graphics::ActiveTexture(GL_TEXTURE0 + kAlbedoTextureSlot);
+            Graphics::BindTexture(GL_TEXTURE_2D, gBuffer->GetAlbedoTextureID());
             if (shader->HasUniform("gAlbedoSpec"))
             {
                 shader->SetUniform("gAlbedoSpec", kAlbedoTextureSlot);
             }
 
-            glActiveTexture(GL_TEXTURE0 + kBakedLightingTextureSlot);
-            glBindTexture(GL_TEXTURE_2D, gBuffer->GetBakedLightingTextureID());
+            Graphics::ActiveTexture(GL_TEXTURE0 + kBakedLightingTextureSlot);
+            Graphics::BindTexture(GL_TEXTURE_2D, gBuffer->GetBakedLightingTextureID());
             if (shader->HasUniform("gBakedLighting"))
             {
                 shader->SetUniform("gBakedLighting", kBakedLightingTextureSlot);
             }
 
-            glActiveTexture(GL_TEXTURE0 + kEmissionTextureSlot);
-            glBindTexture(GL_TEXTURE_2D, gBuffer->GetEmissionTextureID());
+            Graphics::ActiveTexture(GL_TEXTURE0 + kEmissionTextureSlot);
+            Graphics::BindTexture(GL_TEXTURE_2D, gBuffer->GetEmissionTextureID());
             if (shader->HasUniform("gEmission"))
             {
                 shader->SetUniform("gEmission", kEmissionTextureSlot);
             }
 
-            glActiveTexture(GL_TEXTURE0 + kDebugTextureSlot);
-            glBindTexture(GL_TEXTURE_2D, gBuffer->GetDebugTextureID());
+            Graphics::ActiveTexture(GL_TEXTURE0 + kDebugTextureSlot);
+            Graphics::BindTexture(GL_TEXTURE_2D, gBuffer->GetDebugTextureID());
             if (shader->HasUniform("gDebug"))
             {
                 shader->SetUniform("gDebug", kDebugTextureSlot);
             }
 
-            glActiveTexture(GL_TEXTURE0 + kDepthTextureSlot);
-            glBindTexture(GL_TEXTURE_2D, gBuffer->GetDepthTextureID());
+            Graphics::ActiveTexture(GL_TEXTURE0 + kDepthTextureSlot);
+            Graphics::BindTexture(GL_TEXTURE_2D, gBuffer->GetDepthTextureID());
             if (shader->HasUniform("gDepth"))
             {
                 shader->SetUniform("gDepth", kDepthTextureSlot);
             }
 
+            static const auto shadowCascadeMapNames =
+                MakeNumberedUniformNames<scene::kMaxDirectionalShadowCascades>("uShadowCascadeMap");
             for (int cascadeIndex = 0; cascadeIndex < scene::kMaxDirectionalShadowCascades; ++cascadeIndex)
             {
                 const int textureSlot = kDirectionalShadowCascadeTextureStartSlot + cascadeIndex;
-                glActiveTexture(GL_TEXTURE0 + textureSlot);
-                glBindTexture(GL_TEXTURE_2D, 0);
-                const std::string uniformName = "uShadowCascadeMap" + std::to_string(cascadeIndex);
+                Graphics::ActiveTexture(GL_TEXTURE0 + textureSlot);
+                Graphics::BindTexture(GL_TEXTURE_2D, 0);
+                const auto &uniformName = shadowCascadeMapNames[cascadeIndex];
                 if (shader->HasUniform(uniformName))
                 {
                     shader->SetUniform(uniformName, textureSlot);
                 }
             }
 
-            glActiveTexture(GL_TEXTURE0 + kShadowMap2DTextureSlot);
-            glBindTexture(GL_TEXTURE_2D, 0);
+            Graphics::ActiveTexture(GL_TEXTURE0 + kShadowMap2DTextureSlot);
+            Graphics::BindTexture(GL_TEXTURE_2D, 0);
             if (shader->HasUniform("uShadowMap2D"))
             {
                 shader->SetUniform("uShadowMap2D", kShadowMap2DTextureSlot);
             }
 
-            glActiveTexture(GL_TEXTURE0 + kShadowMapCubeTextureSlot);
-            glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
+            Graphics::ActiveTexture(GL_TEXTURE0 + kShadowMapCubeTextureSlot);
+            Graphics::BindTexture(GL_TEXTURE_CUBE_MAP, 0);
             if (shader->HasUniform("uShadowMapCube"))
             {
                 shader->SetUniform("uShadowMapCube", kShadowMapCubeTextureSlot);
@@ -1047,24 +1050,24 @@ namespace PlutoGE::render
             // RenderContext extension fields are appended to preserve this
             // pointer's offset across incremental editor builds.
             auto *lpvTexture = lpvPass ? lpvPass->GetVolumeTexture() : nullptr;
-            glActiveTexture(GL_TEXTURE0 + kLightPropagationVolumeTextureSlot);
-            glBindTexture(GL_TEXTURE_3D, lpvTexture ? lpvTexture->GetTextureID() : 0);
+            Graphics::ActiveTexture(GL_TEXTURE0 + kLightPropagationVolumeTextureSlot);
+            Graphics::BindTexture(GL_TEXTURE_3D, lpvTexture ? lpvTexture->GetTextureID() : 0);
             if (shader->HasUniform("uLpvVolume"))
             {
                 shader->SetUniform("uLpvVolume", kLightPropagationVolumeTextureSlot);
             }
 
             auto *previousLpvTexture = lpvPass ? lpvPass->GetPreviousVolumeTexture() : nullptr;
-            glActiveTexture(GL_TEXTURE0 + kPreviousLightPropagationVolumeTextureSlot);
-            glBindTexture(GL_TEXTURE_3D, previousLpvTexture ? previousLpvTexture->GetTextureID() : 0);
+            Graphics::ActiveTexture(GL_TEXTURE0 + kPreviousLightPropagationVolumeTextureSlot);
+            Graphics::BindTexture(GL_TEXTURE_3D, previousLpvTexture ? previousLpvTexture->GetTextureID() : 0);
             if (shader->HasUniform("uPreviousLpvVolume"))
             {
                 shader->SetUniform("uPreviousLpvVolume", kPreviousLightPropagationVolumeTextureSlot);
             }
 
             auto *bakedProbeTexture = ctx.scene ? ctx.scene->GetBakedProbeTexture() : nullptr;
-            glActiveTexture(GL_TEXTURE0 + kBakedProbeTextureSlot);
-            glBindTexture(GL_TEXTURE_3D, bakedProbeTexture ? bakedProbeTexture->GetTextureID() : 0);
+            Graphics::ActiveTexture(GL_TEXTURE0 + kBakedProbeTextureSlot);
+            Graphics::BindTexture(GL_TEXTURE_3D, bakedProbeTexture ? bakedProbeTexture->GetTextureID() : 0);
             if (shader->HasUniform("uBakedProbeVolume"))
             {
                 shader->SetUniform("uBakedProbeVolume", kBakedProbeTextureSlot);
@@ -1072,8 +1075,8 @@ namespace PlutoGE::render
 
             auto *environmentTexture = ctx.scene ? ctx.scene->GetEnvironmentMapTexture() : nullptr;
             const GLuint physicalSkyTexture = ctx.renderer ? ctx.renderer->GetPhysicalSkyEnvironmentTextureID() : 0;
-            glActiveTexture(GL_TEXTURE0 + kEnvironmentTextureSlot);
-            glBindTexture(GL_TEXTURE_2D, physicalSkyTexture ? physicalSkyTexture : (environmentTexture ? environmentTexture->GetTextureID() : 0));
+            Graphics::ActiveTexture(GL_TEXTURE0 + kEnvironmentTextureSlot);
+            Graphics::BindTexture(GL_TEXTURE_2D, physicalSkyTexture ? physicalSkyTexture : (environmentTexture ? environmentTexture->GetTextureID() : 0));
             if (shader->HasUniform("uEnvironmentMap"))
             {
                 shader->SetUniform("uEnvironmentMap", kEnvironmentTextureSlot);
@@ -1081,6 +1084,8 @@ namespace PlutoGE::render
 
             if (shader->HasUniform("uIblCaptureMaps[0]"))
             {
+                static const auto iblCaptureMapNames =
+                    MakeArrayUniformNames<scene::kMaxIblCaptureVolumes>("uIblCaptureMaps");
                 const auto &iblCaptureVolumes = ctx.scene ? ctx.scene->GetIblCaptureVolumes() : std::vector<scene::IblCaptureVolume>{};
                 for (int captureIndex = 0; captureIndex < scene::kMaxIblCaptureVolumes; ++captureIndex)
                 {
@@ -1088,10 +1093,9 @@ namespace PlutoGE::render
                     const auto *captureTexture = captureIndex < static_cast<int>(iblCaptureVolumes.size())
                                                      ? iblCaptureVolumes[static_cast<std::size_t>(captureIndex)].environmentMapTexture
                                                      : nullptr;
-                    glActiveTexture(GL_TEXTURE0 + textureSlot);
-                    glBindTexture(GL_TEXTURE_CUBE_MAP, captureTexture && captureTexture->GetType() == GL_TEXTURE_CUBE_MAP ? captureTexture->GetTextureID() : 0);
-                    const std::string uniformName = "uIblCaptureMaps[" + std::to_string(captureIndex) + "]";
-                    shader->SetUniform(uniformName, textureSlot);
+                    Graphics::ActiveTexture(GL_TEXTURE0 + textureSlot);
+                    Graphics::BindTexture(GL_TEXTURE_CUBE_MAP, captureTexture && captureTexture->GetType() == GL_TEXTURE_CUBE_MAP ? captureTexture->GetTextureID() : 0);
+                    shader->SetUniform(iblCaptureMapNames[captureIndex], textureSlot);
                 }
             }
         }
@@ -1100,15 +1104,15 @@ namespace PlutoGE::render
         {
             for (int cascadeIndex = 0; cascadeIndex < scene::kMaxDirectionalShadowCascades; ++cascadeIndex)
             {
-                glActiveTexture(GL_TEXTURE0 + kDirectionalShadowCascadeTextureStartSlot + cascadeIndex);
-                glBindTexture(GL_TEXTURE_2D, 0);
+                Graphics::ActiveTexture(GL_TEXTURE0 + kDirectionalShadowCascadeTextureStartSlot + cascadeIndex);
+                Graphics::BindTexture(GL_TEXTURE_2D, 0);
             }
 
-            glActiveTexture(GL_TEXTURE0 + kShadowMap2DTextureSlot);
-            glBindTexture(GL_TEXTURE_2D, 0);
+            Graphics::ActiveTexture(GL_TEXTURE0 + kShadowMap2DTextureSlot);
+            Graphics::BindTexture(GL_TEXTURE_2D, 0);
 
-            glActiveTexture(GL_TEXTURE0 + kShadowMapCubeTextureSlot);
-            glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
+            Graphics::ActiveTexture(GL_TEXTURE0 + kShadowMapCubeTextureSlot);
+            Graphics::BindTexture(GL_TEXTURE_CUBE_MAP, 0);
 
             if (!light.castsShadows)
             {
@@ -1131,10 +1135,8 @@ namespace PlutoGE::render
                         continue;
                     }
 
-                    glActiveTexture(GL_TEXTURE0 + kDirectionalShadowCascadeTextureStartSlot + cascadeIndex);
-                    glBindTexture(GL_TEXTURE_2D, shadowCascadeMap->GetTextureID());
-                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+                    Graphics::ActiveTexture(GL_TEXTURE0 + kDirectionalShadowCascadeTextureStartSlot + cascadeIndex);
+                    Graphics::BindTexture(GL_TEXTURE_2D, shadowCascadeMap->GetTextureID());
                     boundCascade = true;
                 }
 
@@ -1159,10 +1161,8 @@ namespace PlutoGE::render
                     return false;
                 }
 
-                glActiveTexture(GL_TEXTURE0 + kShadowMapCubeTextureSlot);
-                glBindTexture(GL_TEXTURE_CUBE_MAP, shadowMap->GetTextureID());
-                glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-                glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+                Graphics::ActiveTexture(GL_TEXTURE0 + kShadowMapCubeTextureSlot);
+                Graphics::BindTexture(GL_TEXTURE_CUBE_MAP, shadowMap->GetTextureID());
                 return true;
             }
 
@@ -1171,15 +1171,19 @@ namespace PlutoGE::render
                 return false;
             }
 
-            glActiveTexture(GL_TEXTURE0 + kShadowMap2DTextureSlot);
-            glBindTexture(GL_TEXTURE_2D, shadowMap->GetTextureID());
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+            Graphics::ActiveTexture(GL_TEXTURE0 + kShadowMap2DTextureSlot);
+            Graphics::BindTexture(GL_TEXTURE_2D, shadowMap->GetTextureID());
             return true;
         }
 
         void BindLightUniforms(Shader *shader, const scene::Light &light, bool hasShadowMap, float intensityScale = 1.0f)
         {
+            static const auto cascadeOriginNames =
+                MakeArrayUniformNames<scene::kMaxDirectionalShadowCascades>("uLight.CascadeWorldOrigins");
+            static const auto cascadeMatrixNames =
+                MakeArrayUniformNames<scene::kMaxDirectionalShadowCascades>("uLight.CascadeLightSpaceMatrices");
+            static const auto cascadeSplitNames =
+                MakeArrayUniformNames<scene::kMaxDirectionalShadowCascades>("uLight.CascadeSplits");
             shader->SetUniform("uLight.Position", light.position);
             shader->SetUniform("uLight.Color", light.color);
             shader->SetUniform("uLight.Intensity", light.intensity * intensityScale);
@@ -1196,9 +1200,9 @@ namespace PlutoGE::render
 
             for (int cascadeIndex = 0; cascadeIndex < scene::kMaxDirectionalShadowCascades; ++cascadeIndex)
             {
-                shader->SetUniform("uLight.CascadeWorldOrigins[" + std::to_string(cascadeIndex) + "]", light.shadowCascadeWorldOrigins[cascadeIndex]);
-                shader->SetUniform("uLight.CascadeLightSpaceMatrices[" + std::to_string(cascadeIndex) + "]", light.shadowCascadeMatrices[cascadeIndex]);
-                shader->SetUniform("uLight.CascadeSplits[" + std::to_string(cascadeIndex) + "]", light.shadowCascadeSplits[cascadeIndex]);
+                shader->SetUniform(cascadeOriginNames[cascadeIndex], light.shadowCascadeWorldOrigins[cascadeIndex]);
+                shader->SetUniform(cascadeMatrixNames[cascadeIndex], light.shadowCascadeMatrices[cascadeIndex]);
+                shader->SetUniform(cascadeSplitNames[cascadeIndex], light.shadowCascadeSplits[cascadeIndex]);
             }
         }
     }
@@ -1435,21 +1439,21 @@ namespace PlutoGE::render
         }
         const glm::vec3 cameraPosition = glm::vec3(glm::inverse(ctx.cameraData.view)[3]);
 
-        glBindTexture(GL_TEXTURE_2D, m_rawShadowMaskTarget->GetColorTextureID());
+        Graphics::BindTexture(GL_TEXTURE_2D, m_rawShadowMaskTarget->GetColorTextureID());
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        glBindTexture(GL_TEXTURE_2D, m_blurredShadowMaskTarget->GetColorTextureID());
+        Graphics::BindTexture(GL_TEXTURE_2D, m_blurredShadowMaskTarget->GetColorTextureID());
         // The filtered mask is often rendered below full resolution. Linear
         // reconstruction prevents each mask texel from becoming a visible
         // screen-space block along diagonal shadow edges. The raw input remains
         // nearest-filtered so the bilateral passes control all prefiltering.
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glBindTexture(GL_TEXTURE_2D, 0);
+        Graphics::BindTexture(GL_TEXTURE_2D, 0);
 
         Graphics::BindRenderTarget(m_rawShadowMaskTarget.get());
-        glViewport(0, 0, m_rawShadowMaskTarget->GetWidth(), m_rawShadowMaskTarget->GetHeight());
-        glDisable(GL_BLEND);
+        Graphics::SetViewport(0, 0, m_rawShadowMaskTarget->GetWidth(), m_rawShadowMaskTarget->GetHeight());
+        Graphics::Disable(GL_BLEND);
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
 
@@ -1473,14 +1477,14 @@ namespace PlutoGE::render
         }
 
         m_shadowMaskBlurShader->Bind();
-        glActiveTexture(GL_TEXTURE0 + kShadowMaskTextureSlot);
-        glBindTexture(GL_TEXTURE_2D, m_rawShadowMaskTarget->GetColorTextureID());
+        Graphics::ActiveTexture(GL_TEXTURE0 + kShadowMaskTextureSlot);
+        Graphics::BindTexture(GL_TEXTURE_2D, m_rawShadowMaskTarget->GetColorTextureID());
         m_shadowMaskBlurShader->SetUniform("uShadowMaskTexture", kShadowMaskTextureSlot);
-        glActiveTexture(GL_TEXTURE0 + kShadowMaskPositionTextureSlot);
-        glBindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetPositionTextureID());
+        Graphics::ActiveTexture(GL_TEXTURE0 + kShadowMaskPositionTextureSlot);
+        Graphics::BindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetPositionTextureID());
         m_shadowMaskBlurShader->SetUniform("uScenePositionTexture", kShadowMaskPositionTextureSlot);
-        glActiveTexture(GL_TEXTURE0 + kShadowMaskNormalTextureSlot);
-        glBindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetNormalTextureID());
+        Graphics::ActiveTexture(GL_TEXTURE0 + kShadowMaskNormalTextureSlot);
+        Graphics::BindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetNormalTextureID());
         m_shadowMaskBlurShader->SetUniform("uSceneNormalTexture", kShadowMaskNormalTextureSlot);
         m_shadowMaskBlurShader->SetUniform("uViewPos", cameraPosition);
         m_shadowMaskBlurShader->SetUniform("uViewMatrix", ctx.cameraData.view);
@@ -1492,14 +1496,14 @@ namespace PlutoGE::render
         m_shadowMaskBlurShader->SetUniform("uNormalSoftness", glm::max(light.directionalShadowSettings.screenSpaceFilterNormalSoftness, 0.001f));
 
         Graphics::BindRenderTarget(m_blurredShadowMaskTarget.get());
-        glViewport(0, 0, m_blurredShadowMaskTarget->GetWidth(), m_blurredShadowMaskTarget->GetHeight());
+        Graphics::SetViewport(0, 0, m_blurredShadowMaskTarget->GetWidth(), m_blurredShadowMaskTarget->GetHeight());
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
         Graphics::DrawFullscreenTriangle();
 
         m_shadowMaskBlurShader->Bind();
-        glActiveTexture(GL_TEXTURE0 + kShadowMaskTextureSlot);
-        glBindTexture(GL_TEXTURE_2D, m_blurredShadowMaskTarget->GetColorTextureID());
+        Graphics::ActiveTexture(GL_TEXTURE0 + kShadowMaskTextureSlot);
+        Graphics::BindTexture(GL_TEXTURE_2D, m_blurredShadowMaskTarget->GetColorTextureID());
         m_shadowMaskBlurShader->SetUniform("uShadowMaskTexture", kShadowMaskTextureSlot);
         m_shadowMaskBlurShader->SetUniform("uViewPos", cameraPosition);
         m_shadowMaskBlurShader->SetUniform("uViewMatrix", ctx.cameraData.view);
@@ -1511,15 +1515,15 @@ namespace PlutoGE::render
         m_shadowMaskBlurShader->SetUniform("uNormalSoftness", glm::max(light.directionalShadowSettings.screenSpaceFilterNormalSoftness, 0.001f));
 
         Graphics::BindRenderTarget(m_rawShadowMaskTarget.get());
-        glViewport(0, 0, m_rawShadowMaskTarget->GetWidth(), m_rawShadowMaskTarget->GetHeight());
+        Graphics::SetViewport(0, 0, m_rawShadowMaskTarget->GetWidth(), m_rawShadowMaskTarget->GetHeight());
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
         Graphics::DrawFullscreenTriangle();
 
-        glBindTexture(GL_TEXTURE_2D, m_rawShadowMaskTarget->GetColorTextureID());
+        Graphics::BindTexture(GL_TEXTURE_2D, m_rawShadowMaskTarget->GetColorTextureID());
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        glBindTexture(GL_TEXTURE_2D, 0);
+        Graphics::BindTexture(GL_TEXTURE_2D, 0);
 
         if (renderScale >= 0.999f)
         {
@@ -1527,14 +1531,14 @@ namespace PlutoGE::render
         }
 
         m_shadowMaskUpsampleShader->Bind();
-        glActiveTexture(GL_TEXTURE0 + kShadowMaskTextureSlot);
-        glBindTexture(GL_TEXTURE_2D, m_rawShadowMaskTarget->GetColorTextureID());
+        Graphics::ActiveTexture(GL_TEXTURE0 + kShadowMaskTextureSlot);
+        Graphics::BindTexture(GL_TEXTURE_2D, m_rawShadowMaskTarget->GetColorTextureID());
         m_shadowMaskUpsampleShader->SetUniform("uShadowMaskTexture", kShadowMaskTextureSlot);
-        glActiveTexture(GL_TEXTURE0 + kShadowMaskPositionTextureSlot);
-        glBindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetPositionTextureID());
+        Graphics::ActiveTexture(GL_TEXTURE0 + kShadowMaskPositionTextureSlot);
+        Graphics::BindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetPositionTextureID());
         m_shadowMaskUpsampleShader->SetUniform("uScenePositionTexture", kShadowMaskPositionTextureSlot);
-        glActiveTexture(GL_TEXTURE0 + kShadowMaskNormalTextureSlot);
-        glBindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetNormalTextureID());
+        Graphics::ActiveTexture(GL_TEXTURE0 + kShadowMaskNormalTextureSlot);
+        Graphics::BindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetNormalTextureID());
         m_shadowMaskUpsampleShader->SetUniform("uSceneNormalTexture", kShadowMaskNormalTextureSlot);
         m_shadowMaskUpsampleShader->SetUniform("uViewPos", cameraPosition);
         m_shadowMaskUpsampleShader->SetUniform("uViewMatrix", ctx.cameraData.view);
@@ -1544,15 +1548,15 @@ namespace PlutoGE::render
         m_shadowMaskUpsampleShader->SetUniform("uNormalSoftness", glm::max(light.directionalShadowSettings.screenSpaceFilterNormalSoftness, 0.001f));
 
         Graphics::BindRenderTarget(m_upsampledShadowMaskTarget.get());
-        glViewport(0, 0, m_upsampledShadowMaskTarget->GetWidth(), m_upsampledShadowMaskTarget->GetHeight());
+        Graphics::SetViewport(0, 0, m_upsampledShadowMaskTarget->GetWidth(), m_upsampledShadowMaskTarget->GetHeight());
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
         Graphics::DrawFullscreenTriangle();
 
-        glBindTexture(GL_TEXTURE_2D, m_upsampledShadowMaskTarget->GetColorTextureID());
+        Graphics::BindTexture(GL_TEXTURE_2D, m_upsampledShadowMaskTarget->GetColorTextureID());
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        glBindTexture(GL_TEXTURE_2D, 0);
+        Graphics::BindTexture(GL_TEXTURE_2D, 0);
         return m_upsampledShadowMaskTarget.get();
     }
 
@@ -1587,12 +1591,12 @@ namespace PlutoGE::render
             ctx.renderer->BeginLightingStageTiming(kLightingSetupStage);
         }
 
-        glDisable(GL_DEPTH_TEST);
-        glDisable(GL_CULL_FACE);
+        Graphics::Disable(GL_DEPTH_TEST);
+        Graphics::Disable(GL_CULL_FACE);
         Graphics::ClearRenderTarget(ctx.temporaryRenderTarget);
 
-        glBindFramebuffer(GL_READ_FRAMEBUFFER, ctx.gBuffer->GetFBO());
-        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, ctx.temporaryRenderTarget->GetFramebufferID());
+        Graphics::BindFramebuffer(GL_READ_FRAMEBUFFER, ctx.gBuffer->GetFBO());
+        Graphics::BindFramebuffer(GL_DRAW_FRAMEBUFFER, ctx.temporaryRenderTarget->GetFramebufferID());
         glBlitFramebuffer(
             0, 0, ctx.gBuffer->GetWidth(), ctx.gBuffer->GetHeight(),
             0, 0, ctx.temporaryRenderTarget->GetWidth(), ctx.temporaryRenderTarget->GetHeight(),
@@ -1637,36 +1641,36 @@ namespace PlutoGE::render
             }
 
             Graphics::BindRenderTarget(ctx.temporaryRenderTarget);
-            glViewport(0, 0, ctx.temporaryRenderTarget->GetWidth(), ctx.temporaryRenderTarget->GetHeight());
+            Graphics::SetViewport(0, 0, ctx.temporaryRenderTarget->GetWidth(), ctx.temporaryRenderTarget->GetHeight());
             if (indirectOnly)
             {
-                glDisable(GL_BLEND);
+                Graphics::Disable(GL_BLEND);
             }
             else
             {
-                glEnable(GL_BLEND);
+                Graphics::Enable(GL_BLEND);
                 glBlendEquation(GL_FUNC_ADD);
                 glBlendFunc(GL_ONE, GL_ONE);
             }
 
             m_indirectCompositeShader->Bind();
-            glActiveTexture(GL_TEXTURE0 + kIndirectTextureSlot);
-            glBindTexture(GL_TEXTURE_2D, resolvedIndirectTarget->GetColorTextureID());
+            Graphics::ActiveTexture(GL_TEXTURE0 + kIndirectTextureSlot);
+            Graphics::BindTexture(GL_TEXTURE_2D, resolvedIndirectTarget->GetColorTextureID());
             m_indirectCompositeShader->SetUniform("uIndirectTexture", kIndirectTextureSlot);
-            glActiveTexture(GL_TEXTURE1);
-            glBindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetEmissionTextureID());
+            Graphics::ActiveTexture(GL_TEXTURE1);
+            Graphics::BindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetEmissionTextureID());
             m_indirectCompositeShader->SetUniform("uEmissionTexture", 1);
-            glActiveTexture(GL_TEXTURE2);
-            glBindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetPositionTextureID());
+            Graphics::ActiveTexture(GL_TEXTURE2);
+            Graphics::BindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetPositionTextureID());
             m_indirectCompositeShader->SetUniform("uScenePositionTexture", 2);
-            glActiveTexture(GL_TEXTURE3);
-            glBindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetNormalTextureID());
+            Graphics::ActiveTexture(GL_TEXTURE3);
+            Graphics::BindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetNormalTextureID());
             m_indirectCompositeShader->SetUniform("uSceneNormalTexture", 3);
-            glActiveTexture(GL_TEXTURE4);
-            glBindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetBakedLightingTextureID());
+            Graphics::ActiveTexture(GL_TEXTURE4);
+            Graphics::BindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetBakedLightingTextureID());
             m_indirectCompositeShader->SetUniform("uBakedLightingTexture", 4);
-            glActiveTexture(GL_TEXTURE5);
-            glBindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetAlbedoTextureID());
+            Graphics::ActiveTexture(GL_TEXTURE5);
+            Graphics::BindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetAlbedoTextureID());
             m_indirectCompositeShader->SetUniform("uSceneAlbedoTexture", 5);
             m_indirectCompositeShader->SetUniform("uViewMatrix", ctx.cameraData.view);
             m_indirectCompositeShader->SetUniform("uMaskEmission", indirectOnly ? 0 : 1);
@@ -1757,22 +1761,28 @@ namespace PlutoGE::render
         m_lightingPassShader->SetUniform("uEnvironmentMaxMipLevel", environmentMaxMipLevel);
         const auto &iblCaptureVolumes = ctx.scene ? ctx.scene->GetIblCaptureVolumes() : std::vector<scene::IblCaptureVolume>{};
         const int iblCaptureCount = std::min(scene::kMaxIblCaptureVolumes, static_cast<int>(iblCaptureVolumes.size()));
+        static const auto iblOriginNames = MakeArrayUniformNames<scene::kMaxIblCaptureVolumes>("uIblCaptureOrigins");
+        static const auto iblSizeNames = MakeArrayUniformNames<scene::kMaxIblCaptureVolumes>("uIblCaptureSizes");
+        static const auto iblIntensityNames = MakeArrayUniformNames<scene::kMaxIblCaptureVolumes>("uIblCaptureIntensities");
+        static const auto iblBlendNames = MakeArrayUniformNames<scene::kMaxIblCaptureVolumes>("uIblCaptureBlendDistances");
+        static const auto iblMipNames = MakeArrayUniformNames<scene::kMaxIblCaptureVolumes>("uIblCaptureMaxMipLevels");
+        static const auto iblEnabledNames = MakeArrayUniformNames<scene::kMaxIblCaptureVolumes>("uIblCaptureEnabled");
         for (int captureIndex = 0; captureIndex < scene::kMaxIblCaptureVolumes; ++captureIndex)
         {
             const bool hasCapture = captureIndex < static_cast<int>(iblCaptureVolumes.size()) &&
                                     iblCaptureVolumes[static_cast<std::size_t>(captureIndex)].IsValid() &&
                                     iblCaptureVolumes[static_cast<std::size_t>(captureIndex)].environmentMapTexture->GetType() == GL_TEXTURE_CUBE_MAP;
             const auto &captureVolume = hasCapture ? iblCaptureVolumes[static_cast<std::size_t>(captureIndex)] : scene::IblCaptureVolume{};
-            m_lightingPassShader->SetUniform("uIblCaptureOrigins[" + std::to_string(captureIndex) + "]", captureVolume.origin);
-            m_lightingPassShader->SetUniform("uIblCaptureSizes[" + std::to_string(captureIndex) + "]", captureVolume.size);
-            m_lightingPassShader->SetUniform("uIblCaptureIntensities[" + std::to_string(captureIndex) + "]", hasCapture ? captureVolume.intensity : 0.0f);
-            m_lightingPassShader->SetUniform("uIblCaptureBlendDistances[" + std::to_string(captureIndex) + "]", captureVolume.blendDistance);
-            m_lightingPassShader->SetUniform("uIblCaptureMaxMipLevels[" + std::to_string(captureIndex) + "]", hasCapture ? resolveMaxMipLevel(captureVolume.environmentMapTexture) : 0.0f);
-            m_lightingPassShader->SetUniform("uIblCaptureEnabled[" + std::to_string(captureIndex) + "]", hasCapture ? 1 : 0);
+            m_lightingPassShader->SetUniform(iblOriginNames[captureIndex], captureVolume.origin);
+            m_lightingPassShader->SetUniform(iblSizeNames[captureIndex], captureVolume.size);
+            m_lightingPassShader->SetUniform(iblIntensityNames[captureIndex], hasCapture ? captureVolume.intensity : 0.0f);
+            m_lightingPassShader->SetUniform(iblBlendNames[captureIndex], captureVolume.blendDistance);
+            m_lightingPassShader->SetUniform(iblMipNames[captureIndex], hasCapture ? resolveMaxMipLevel(captureVolume.environmentMapTexture) : 0.0f);
+            m_lightingPassShader->SetUniform(iblEnabledNames[captureIndex], hasCapture ? 1 : 0);
         }
         m_lightingPassShader->SetUniform("uIblCaptureCount", iblCaptureCount);
 
-        glDisable(GL_BLEND);
+        Graphics::Disable(GL_BLEND);
         m_lightingPassShader->SetUniform("uPassMode", kAmbientPassMode);
         Graphics::DrawFullscreenTriangle();
 
@@ -1796,14 +1806,14 @@ namespace PlutoGE::render
                 if (RenderTarget *shadowMask = GenerateDirectionalShadowMask(ctx, *light, debugFilteredShadowMask))
                 {
                     Graphics::BindRenderTarget(ctx.temporaryRenderTarget);
-                    glViewport(0, 0, ctx.temporaryRenderTarget->GetWidth(), ctx.temporaryRenderTarget->GetHeight());
-                    glDisable(GL_BLEND);
+                    Graphics::SetViewport(0, 0, ctx.temporaryRenderTarget->GetWidth(), ctx.temporaryRenderTarget->GetHeight());
+                    Graphics::Disable(GL_BLEND);
                     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
                     glClear(GL_COLOR_BUFFER_BIT);
 
                     m_indirectCompositeShader->Bind();
-                    glActiveTexture(GL_TEXTURE0 + kIndirectTextureSlot);
-                    glBindTexture(GL_TEXTURE_2D, shadowMask->GetColorTextureID());
+                    Graphics::ActiveTexture(GL_TEXTURE0 + kIndirectTextureSlot);
+                    Graphics::BindTexture(GL_TEXTURE_2D, shadowMask->GetColorTextureID());
                     m_indirectCompositeShader->SetUniform("uIndirectTexture", kIndirectTextureSlot);
                     m_indirectCompositeShader->SetUniform("uMaskEmission", 0);
                     m_indirectCompositeShader->SetUniform("uMaskBakedLighting", 0);
@@ -1818,7 +1828,7 @@ namespace PlutoGE::render
                 ctx.renderer->EndLightingStageTiming(kLightingAccumulationStage);
             }
 
-            glDisable(GL_BLEND);
+            Graphics::Disable(GL_BLEND);
             Graphics::UnbindRenderTarget();
             return;
         }
@@ -1835,7 +1845,7 @@ namespace PlutoGE::render
             m_directLightingPassShader->SetUniform("uOutputShadowMask", 0);
             m_directLightingPassShader->SetUniform("uUseFilteredShadowMask", 0);
 
-            glEnable(GL_BLEND);
+            Graphics::Enable(GL_BLEND);
             glBlendEquation(GL_FUNC_ADD);
             glBlendFunc(GL_ONE, GL_ONE);
 
@@ -1857,8 +1867,8 @@ namespace PlutoGE::render
                     if (RenderTarget *filteredShadowMask = GenerateDirectionalShadowMask(ctx, *light, true))
                     {
                         Graphics::BindRenderTarget(ctx.temporaryRenderTarget);
-                        glViewport(0, 0, ctx.temporaryRenderTarget->GetWidth(), ctx.temporaryRenderTarget->GetHeight());
-                        glEnable(GL_BLEND);
+                        Graphics::SetViewport(0, 0, ctx.temporaryRenderTarget->GetWidth(), ctx.temporaryRenderTarget->GetHeight());
+                        Graphics::Enable(GL_BLEND);
                         glBlendEquation(GL_FUNC_ADD);
                         glBlendFunc(GL_ONE, GL_ONE);
 
@@ -1872,8 +1882,8 @@ namespace PlutoGE::render
                         m_directLightingPassShader->SetUniform("uDebugViewMode", static_cast<int>(ctx.postProcessDebugView));
                         m_directLightingPassShader->SetUniform("uOutputShadowMask", 0);
                         m_directLightingPassShader->SetUniform("uUseFilteredShadowMask", 1);
-                        glActiveTexture(GL_TEXTURE0 + kShadowMaskTextureSlot);
-                        glBindTexture(GL_TEXTURE_2D, filteredShadowMask->GetColorTextureID());
+                        Graphics::ActiveTexture(GL_TEXTURE0 + kShadowMaskTextureSlot);
+                        Graphics::BindTexture(GL_TEXTURE_2D, filteredShadowMask->GetColorTextureID());
                         m_directLightingPassShader->SetUniform("uFilteredShadowMask", kShadowMaskTextureSlot);
                         Graphics::DrawFullscreenTriangle();
                         continue;
@@ -1964,7 +1974,7 @@ namespace PlutoGE::render
             }
         }
 
-        glDisable(GL_BLEND);
+        Graphics::Disable(GL_BLEND);
         Graphics::UnbindRenderTarget();
     }
 }

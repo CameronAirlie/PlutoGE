@@ -4,6 +4,7 @@
 #include "PlutoGE/render/RenderTarget.h"
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/Shader.h"
+#include "PlutoGE/render/UniformNames.h"
 
 #include <algorithm>
 #include <array>
@@ -529,8 +530,8 @@ namespace PlutoGE::render
             return nullptr;
         }
 
-        glDisable(GL_DEPTH_TEST);
-        glDisable(GL_CULL_FACE);
+        Graphics::Disable(GL_DEPTH_TEST);
+        Graphics::Disable(GL_CULL_FACE);
 
         const glm::mat4 viewProjection = renderContext.cameraData.projection * renderContext.cameraData.view;
         const glm::mat4 inverseView = glm::inverse(renderContext.cameraData.view);
@@ -542,14 +543,14 @@ namespace PlutoGE::render
         };
 
         Graphics::BindRenderTarget(m_rawAoRenderTarget.get());
-        glViewport(0, 0, m_internalWidth, m_internalHeight);
+        Graphics::SetViewport(0, 0, m_internalWidth, m_internalHeight);
         glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
 
         m_ssaoShader->Bind();
         BindCommonInputs(m_ssaoShader, internalContext);
-        glActiveTexture(GL_TEXTURE5);
-        glBindTexture(GL_TEXTURE_2D, renderContext.gBuffer->GetDepthTextureID());
+        Graphics::ActiveTexture(GL_TEXTURE5);
+        Graphics::BindTexture(GL_TEXTURE_2D, renderContext.gBuffer->GetDepthTextureID());
         m_ssaoShader->SetUniform("uSceneDepthTexture", 5);
         m_ssaoShader->SetUniform("uView", renderContext.cameraData.view);
         m_ssaoShader->SetUniform("uProjection", renderContext.cameraData.projection);
@@ -559,27 +560,28 @@ namespace PlutoGE::render
         m_ssaoShader->SetUniform("uBias", m_bias);
         m_ssaoShader->SetUniform("uIntensity", m_intensity);
         m_ssaoShader->SetUniform("uPower", m_power);
+        static const auto sampleNames = MakeArrayUniformNames<kKernelSize>("uSamples");
         for (int index = 0; index < kKernelSize; ++index)
         {
-            m_ssaoShader->SetUniform(std::string("uSamples[") + std::to_string(index) + "]", m_kernel[index]);
+            m_ssaoShader->SetUniform(sampleNames[index], m_kernel[index]);
         }
         DrawFullscreenTriangle();
 
         Graphics::BindRenderTarget(resolvedHistoryTarget);
-        glViewport(0, 0, m_internalWidth, m_internalHeight);
+        Graphics::SetViewport(0, 0, m_internalWidth, m_internalHeight);
         glClearColor(1.0f, 0.0f, 0.5f, 0.5f);
         glClear(GL_COLOR_BUFFER_BIT);
 
         m_resolveShader->Bind();
         BindCommonInputs(m_resolveShader, internalContext);
-        glActiveTexture(GL_TEXTURE5);
-        glBindTexture(GL_TEXTURE_2D, m_rawAoRenderTarget->GetColorTextureID());
+        Graphics::ActiveTexture(GL_TEXTURE5);
+        Graphics::BindTexture(GL_TEXTURE_2D, m_rawAoRenderTarget->GetColorTextureID());
         m_resolveShader->SetUniform("uRawAoTexture", 5);
-        glActiveTexture(GL_TEXTURE6);
-        glBindTexture(GL_TEXTURE_2D, previousHistoryTarget->GetColorTextureID());
+        Graphics::ActiveTexture(GL_TEXTURE6);
+        Graphics::BindTexture(GL_TEXTURE_2D, previousHistoryTarget->GetColorTextureID());
         m_resolveShader->SetUniform("uHistoryTexture", 6);
-        glActiveTexture(GL_TEXTURE7);
-        glBindTexture(GL_TEXTURE_2D, renderContext.gBuffer->GetDepthTextureID());
+        Graphics::ActiveTexture(GL_TEXTURE7);
+        Graphics::BindTexture(GL_TEXTURE_2D, renderContext.gBuffer->GetDepthTextureID());
         m_resolveShader->SetUniform("uSceneDepthTexture", 7);
         m_resolveShader->SetUniform("uView", renderContext.cameraData.view);
         m_resolveShader->SetUniform("uInverseView", inverseView);
@@ -611,8 +613,8 @@ namespace PlutoGE::render
 
         m_compositeShader->Bind();
         BindCommonInputs(m_compositeShader, context);
-        glActiveTexture(GL_TEXTURE5);
-        glBindTexture(GL_TEXTURE_2D, resolvedAoTarget->GetColorTextureID());
+        Graphics::ActiveTexture(GL_TEXTURE5);
+        Graphics::BindTexture(GL_TEXTURE_2D, resolvedAoTarget->GetColorTextureID());
         m_compositeShader->SetUniform("uResolvedAoTexture", 5);
         m_compositeShader->SetUniform("uOutputMode", outputMode);
         DrawFullscreenTriangle();

@@ -4,6 +4,7 @@
 #include "PlutoGE/render/RenderTarget.h"
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/Shader.h"
+#include "PlutoGE/render/UniformNames.h"
 #include "PlutoGE/render/Texture.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
@@ -837,14 +838,14 @@ namespace PlutoGE::render
             {
                 return;
             }
-            glBindFramebuffer(GL_READ_FRAMEBUFFER, source.GetFramebufferID());
-            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, destination.GetFramebufferID());
+            Graphics::BindFramebuffer(GL_READ_FRAMEBUFFER, source.GetFramebufferID());
+            Graphics::BindFramebuffer(GL_DRAW_FRAMEBUFFER, destination.GetFramebufferID());
             glBlitFramebuffer(
                 0, 0, source.GetWidth(), source.GetHeight(),
                 0, 0, destination.GetWidth(), destination.GetHeight(),
                 GL_COLOR_BUFFER_BIT,
                 GL_LINEAR);
-            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            Graphics::BindFramebuffer(GL_FRAMEBUFFER, 0);
         }
 
         void CopyGeometryDepth(const GBuffer &source, RenderTarget &destination)
@@ -853,22 +854,22 @@ namespace PlutoGE::render
             {
                 return;
             }
-            glBindFramebuffer(GL_READ_FRAMEBUFFER, source.GetFBO());
-            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, destination.GetFramebufferID());
+            Graphics::BindFramebuffer(GL_READ_FRAMEBUFFER, source.GetFBO());
+            Graphics::BindFramebuffer(GL_DRAW_FRAMEBUFFER, destination.GetFramebufferID());
             glBlitFramebuffer(
                 0, 0, source.GetWidth(), source.GetHeight(),
                 0, 0, destination.GetWidth(), destination.GetHeight(),
                 GL_DEPTH_BUFFER_BIT,
                 GL_NEAREST);
-            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            Graphics::BindFramebuffer(GL_FRAMEBUFFER, 0);
         }
 
         void SetCameraUnderwaterMarker(RenderTarget &target, bool underwater)
         {
-            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, target.GetFramebufferID());
+            Graphics::BindFramebuffer(GL_DRAW_FRAMEBUFFER, target.GetFramebufferID());
             const GLfloat marker[4] = {underwater ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f};
             glClearBufferfv(GL_COLOR, 0, marker);
-            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            Graphics::BindFramebuffer(GL_FRAMEBUFFER, 0);
         }
     }
 
@@ -936,41 +937,49 @@ namespace PlutoGE::render
         SetCameraUnderwaterMarker(*ctx.oceanSurfaceDepthRenderTarget, cameraUnderwater);
 
         Graphics::BindRenderTarget(ctx.temporaryRenderTarget);
-        glViewport(0, 0, ctx.temporaryRenderTarget->GetWidth(), ctx.temporaryRenderTarget->GetHeight());
-        glDisable(GL_DEPTH_TEST);
+        Graphics::SetViewport(0, 0, ctx.temporaryRenderTarget->GetWidth(), ctx.temporaryRenderTarget->GetHeight());
+        Graphics::Disable(GL_DEPTH_TEST);
         glDepthMask(GL_FALSE);
-        glDisable(GL_CULL_FACE);
-        glEnable(GL_BLEND);
+        Graphics::Disable(GL_CULL_FACE);
+        Graphics::Enable(GL_BLEND);
         glBlendEquation(GL_FUNC_ADD);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
         m_shader->Bind();
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, ctx.oceanSceneColorCopyRenderTarget->GetColorTextureID());
+        Graphics::ActiveTexture(GL_TEXTURE0);
+        Graphics::BindTexture(GL_TEXTURE_2D, ctx.oceanSceneColorCopyRenderTarget->GetColorTextureID());
         m_shader->SetUniform("uSceneColor", 0);
-        glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetDepthTextureID());
+        Graphics::ActiveTexture(GL_TEXTURE1);
+        Graphics::BindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetDepthTextureID());
         m_shader->SetUniform("uSceneDepth", 1);
         const auto *environmentTexture = ctx.scene->GetEnvironmentMapTexture();
         const GLuint physicalSkyTexture = ctx.renderer ? ctx.renderer->GetPhysicalSkyEnvironmentTextureID() : 0;
-        glActiveTexture(GL_TEXTURE2);
-        glBindTexture(GL_TEXTURE_2D, physicalSkyTexture ? physicalSkyTexture : (environmentTexture ? environmentTexture->GetTextureID() : 0));
+        Graphics::ActiveTexture(GL_TEXTURE2);
+        Graphics::BindTexture(GL_TEXTURE_2D, physicalSkyTexture ? physicalSkyTexture : (environmentTexture ? environmentTexture->GetTextureID() : 0));
         m_shader->SetUniform("uEnvironmentMap", 2);
         m_shader->SetUniform("uEnvironmentEnabled", physicalSkyTexture || environmentTexture ? 1 : 0);
         m_shader->SetUniform("uEnvironmentIntensity", ctx.scene->GetEnvironmentIntensity());
+        static const auto shadowMapNames =
+            MakeNumberedUniformNames<scene::kMaxDirectionalShadowCascades>("uShadowCascadeMap");
+        static const auto shadowOriginNames =
+            MakeArrayUniformNames<scene::kMaxDirectionalShadowCascades>("uShadowCascadeWorldOrigins");
+        static const auto shadowMatrixNames =
+            MakeArrayUniformNames<scene::kMaxDirectionalShadowCascades>("uShadowCascadeMatrices");
+        static const auto shadowSplitNames =
+            MakeArrayUniformNames<scene::kMaxDirectionalShadowCascades>("uShadowCascadeSplits");
         for (int cascadeIndex = 0; cascadeIndex < scene::kMaxDirectionalShadowCascades; ++cascadeIndex)
         {
-            glActiveTexture(GL_TEXTURE3 + cascadeIndex);
+            Graphics::ActiveTexture(GL_TEXTURE3 + cascadeIndex);
             const GLuint shadowTexture = cascadeIndex < shadowCascadeCount
                 ? sun->shadowCascadeMaps[static_cast<std::size_t>(cascadeIndex)]->GetTextureID()
                 : 0;
-            glBindTexture(GL_TEXTURE_2D, shadowTexture);
-            m_shader->SetUniform("uShadowCascadeMap" + std::to_string(cascadeIndex), 3 + cascadeIndex);
-            m_shader->SetUniform("uShadowCascadeWorldOrigins[" + std::to_string(cascadeIndex) + "]",
+            Graphics::BindTexture(GL_TEXTURE_2D, shadowTexture);
+            m_shader->SetUniform(shadowMapNames[cascadeIndex], 3 + cascadeIndex);
+            m_shader->SetUniform(shadowOriginNames[cascadeIndex],
                                  sun ? sun->shadowCascadeWorldOrigins[static_cast<std::size_t>(cascadeIndex)] : glm::vec3(0.0f));
-            m_shader->SetUniform("uShadowCascadeMatrices[" + std::to_string(cascadeIndex) + "]",
+            m_shader->SetUniform(shadowMatrixNames[cascadeIndex],
                                  sun ? sun->shadowCascadeMatrices[static_cast<std::size_t>(cascadeIndex)] : glm::mat4(1.0f));
-            m_shader->SetUniform("uShadowCascadeSplits[" + std::to_string(cascadeIndex) + "]",
+            m_shader->SetUniform(shadowSplitNames[cascadeIndex],
                                  sun ? sun->shadowCascadeSplits[static_cast<std::size_t>(cascadeIndex)] : 0.0f);
         }
         m_shader->SetUniform("uShadowCascadeCount", shadowCascadeCount);
@@ -1025,37 +1034,39 @@ namespace PlutoGE::render
             m_shader->SetUniform("uInvertAreaMask", ocean.component->GetInvertAreaMask() ? 1 : 0);
             m_shader->SetUniform("uAreaCount", areaCount);
             m_shader->SetUniform("uUnderwater", IsCameraInsideOcean(ocean, cameraPosition) ? 1 : 0);
+            static const auto areaPointCountNames = MakeArrayUniformNames<kMaxOceanAreas>("uAreaPointCounts");
+            static const auto areaPointNames = MakeArrayUniformNames<kMaxOceanAreas * kMaxOceanAreaPoints>("uAreaPoints");
             for (int areaIndex = 0; areaIndex < kMaxOceanAreas; ++areaIndex)
             {
-                m_shader->SetUniform("uAreaPointCounts[" + std::to_string(areaIndex) + "]", pointCounts[static_cast<std::size_t>(areaIndex)]);
+                m_shader->SetUniform(areaPointCountNames[areaIndex], pointCounts[static_cast<std::size_t>(areaIndex)]);
             }
             for (int pointIndex = 0; pointIndex < kMaxOceanAreas * kMaxOceanAreaPoints; ++pointIndex)
             {
-                m_shader->SetUniform("uAreaPoints[" + std::to_string(pointIndex) + "]", flattenedPoints[static_cast<std::size_t>(pointIndex)]);
+                m_shader->SetUniform(areaPointNames[pointIndex], flattenedPoints[static_cast<std::size_t>(pointIndex)]);
             }
 
             m_shader->SetUniform("uDepthOnly", 0);
             Graphics::BindRenderTarget(ctx.temporaryRenderTarget);
-            glViewport(0, 0, ctx.temporaryRenderTarget->GetWidth(), ctx.temporaryRenderTarget->GetHeight());
+            Graphics::SetViewport(0, 0, ctx.temporaryRenderTarget->GetWidth(), ctx.temporaryRenderTarget->GetHeight());
             glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
             glDepthMask(GL_FALSE);
             Graphics::DrawFullscreenTriangle();
 
             m_shader->SetUniform("uDepthOnly", 1);
             Graphics::BindRenderTarget(ctx.oceanSurfaceDepthRenderTarget);
-            glViewport(0, 0, ctx.oceanSurfaceDepthRenderTarget->GetWidth(), ctx.oceanSurfaceDepthRenderTarget->GetHeight());
+            Graphics::SetViewport(0, 0, ctx.oceanSurfaceDepthRenderTarget->GetWidth(), ctx.oceanSurfaceDepthRenderTarget->GetHeight());
             glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
-            glEnable(GL_DEPTH_TEST);
+            Graphics::Enable(GL_DEPTH_TEST);
             glDepthFunc(GL_GREATER);
             glDepthMask(GL_TRUE);
             Graphics::DrawFullscreenTriangle();
-            glDisable(GL_DEPTH_TEST);
+            Graphics::Disable(GL_DEPTH_TEST);
         }
 
         m_shader->Unbind();
         glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
         glDepthMask(GL_TRUE);
-        glDisable(GL_BLEND);
+        Graphics::Disable(GL_BLEND);
         Graphics::UnbindRenderTarget();
     }
 }

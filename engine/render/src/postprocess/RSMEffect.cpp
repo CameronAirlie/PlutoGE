@@ -420,7 +420,7 @@ namespace PlutoGE::render
         {
             if (textureId != 0)
             {
-                glDeleteTextures(1, &textureId);
+                Graphics::DeleteTextures(1, &textureId);
                 textureId = 0;
             }
         }
@@ -428,7 +428,7 @@ namespace PlutoGE::render
         void CreateColorAttachment(unsigned int &textureId, int width, int height, unsigned int attachment)
         {
             glGenTextures(1, &textureId);
-            glBindTexture(GL_TEXTURE_2D, textureId);
+            Graphics::BindTexture(GL_TEXTURE_2D, textureId);
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, width, height, 0, GL_RGB, GL_FLOAT, nullptr);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -1123,14 +1123,14 @@ namespace PlutoGE::render
             return;
         }
 
-        glBindFramebuffer(GL_READ_FRAMEBUFFER, context.sourceRenderTarget->GetFramebufferID());
-        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, context.destinationRenderTarget->GetFramebufferID());
+        Graphics::BindFramebuffer(GL_READ_FRAMEBUFFER, context.sourceRenderTarget->GetFramebufferID());
+        Graphics::BindFramebuffer(GL_DRAW_FRAMEBUFFER, context.destinationRenderTarget->GetFramebufferID());
         glBlitFramebuffer(
             0, 0, context.sourceRenderTarget->GetWidth(), context.sourceRenderTarget->GetHeight(),
             0, 0, context.destinationRenderTarget->GetWidth(), context.destinationRenderTarget->GetHeight(),
             GL_COLOR_BUFFER_BIT,
             GL_NEAREST);
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        Graphics::BindFramebuffer(GL_FRAMEBUFFER, 0);
     }
 
     RenderTarget *RSMEffect::GenerateResolvedIndirectLighting(const PostProcessContext &context, int width, int height)
@@ -1166,9 +1166,9 @@ namespace PlutoGE::render
             if (m_debugOutput != RsmDebugOutput::Indirect && m_resolvedIndirectRenderTarget && m_resolvedIndirectRenderTarget->IsInitialized())
             {
                 Graphics::BindRenderTarget(m_resolvedIndirectRenderTarget.get());
-                glViewport(0, 0, width, height);
-                glDisable(GL_DEPTH_TEST);
-                glDisable(GL_CULL_FACE);
+                Graphics::SetViewport(0, 0, width, height);
+                Graphics::Disable(GL_DEPTH_TEST);
+                Graphics::Disable(GL_CULL_FACE);
                 glClearColor(1.0f, 0.0f, 0.0f, 1.0f);
                 glClear(GL_COLOR_BUFFER_BIT);
                 return m_resolvedIndirectRenderTarget.get();
@@ -1222,9 +1222,9 @@ namespace PlutoGE::render
             if (m_debugOutput != RsmDebugOutput::Indirect && m_resolvedIndirectRenderTarget && m_resolvedIndirectRenderTarget->IsInitialized())
             {
                 Graphics::BindRenderTarget(m_resolvedIndirectRenderTarget.get());
-                glViewport(0, 0, width, height);
-                glDisable(GL_DEPTH_TEST);
-                glDisable(GL_CULL_FACE);
+                Graphics::SetViewport(0, 0, width, height);
+                Graphics::Disable(GL_DEPTH_TEST);
+                Graphics::Disable(GL_CULL_FACE);
                 glClearColor(1.0f, 1.0f, 0.0f, 1.0f);
                 glClear(GL_COLOR_BUFFER_BIT);
                 return m_resolvedIndirectRenderTarget.get();
@@ -1236,10 +1236,10 @@ namespace PlutoGE::render
         GLint previousViewport[4] = {0, 0, 0, 0};
         glGetIntegerv(GL_VIEWPORT, previousViewport);
 
-        glBindFramebuffer(GL_FRAMEBUFFER, m_captureFramebuffer);
-        glViewport(0, 0, m_captureWidth, m_captureHeight);
-        glEnable(GL_DEPTH_TEST);
-        glEnable(GL_CULL_FACE);
+        Graphics::BindFramebuffer(GL_FRAMEBUFFER, m_captureFramebuffer);
+        Graphics::SetViewport(0, 0, m_captureWidth, m_captureHeight);
+        Graphics::Enable(GL_DEPTH_TEST);
+        Graphics::Enable(GL_CULL_FACE);
         glCullFace(GL_BACK);
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -1326,9 +1326,9 @@ namespace PlutoGE::render
 
         RenderTarget *initialTarget = m_debugOutput == RsmDebugOutput::Indirect ? m_rawIndirectRenderTarget.get() : m_resolvedIndirectRenderTarget.get();
         Graphics::BindRenderTarget(initialTarget);
-        glViewport(0, 0, width, height);
-        glDisable(GL_DEPTH_TEST);
-        glDisable(GL_CULL_FACE);
+        Graphics::SetViewport(0, 0, width, height);
+        Graphics::Disable(GL_DEPTH_TEST);
+        Graphics::Disable(GL_CULL_FACE);
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
 
@@ -1340,16 +1340,16 @@ namespace PlutoGE::render
         m_resolveShader->Bind();
         BindCommonInputs(m_resolveShader, internalContext);
 
-        glActiveTexture(GL_TEXTURE5);
-        glBindTexture(GL_TEXTURE_2D, m_normalTexture);
+        Graphics::ActiveTexture(GL_TEXTURE5);
+        Graphics::BindTexture(GL_TEXTURE_2D, m_normalTexture);
         m_resolveShader->SetUniform("uRsmNormalTexture", 5);
 
-        glActiveTexture(GL_TEXTURE6);
-        glBindTexture(GL_TEXTURE_2D, m_fluxTexture);
+        Graphics::ActiveTexture(GL_TEXTURE6);
+        Graphics::BindTexture(GL_TEXTURE_2D, m_fluxTexture);
         m_resolveShader->SetUniform("uRsmFluxTexture", 6);
 
-        glActiveTexture(GL_TEXTURE7);
-        glBindTexture(GL_TEXTURE_2D, m_depthTexture);
+        Graphics::ActiveTexture(GL_TEXTURE7);
+        Graphics::BindTexture(GL_TEXTURE_2D, m_depthTexture);
         m_resolveShader->SetUniform("uRsmDepthTexture", 7);
 
         m_resolveShader->SetUniform("uRsmLightSpaceMatrix", rsmSource.lightSpaceMatrix);
@@ -1372,7 +1372,7 @@ namespace PlutoGE::render
             };
 
             Graphics::BindRenderTarget(m_blurIntermediateRenderTarget.get());
-            glViewport(0, 0, width, height);
+            Graphics::SetViewport(0, 0, width, height);
             glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
             glClear(GL_COLOR_BUFFER_BIT);
 
@@ -1388,7 +1388,7 @@ namespace PlutoGE::render
             };
 
             Graphics::BindRenderTarget(m_resolvedIndirectRenderTarget.get());
-            glViewport(0, 0, width, height);
+            Graphics::SetViewport(0, 0, width, height);
             glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
             glClear(GL_COLOR_BUFFER_BIT);
 
@@ -1406,23 +1406,23 @@ namespace PlutoGE::render
             };
 
             Graphics::BindRenderTarget(resolvedHistoryColorTarget);
-            glViewport(0, 0, width, height);
+            Graphics::SetViewport(0, 0, width, height);
             glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
             glClear(GL_COLOR_BUFFER_BIT);
 
             m_temporalResolveShader->Bind();
             BindCommonInputs(m_temporalResolveShader, temporalContext);
-            glActiveTexture(GL_TEXTURE5);
-            glBindTexture(GL_TEXTURE_2D, m_resolvedIndirectRenderTarget->GetColorTextureID());
+            Graphics::ActiveTexture(GL_TEXTURE5);
+            Graphics::BindTexture(GL_TEXTURE_2D, m_resolvedIndirectRenderTarget->GetColorTextureID());
             m_temporalResolveShader->SetUniform("uCurrentIndirectTexture", 5);
-            glActiveTexture(GL_TEXTURE6);
-            glBindTexture(GL_TEXTURE_2D, previousHistoryColorTarget->GetColorTextureID());
+            Graphics::ActiveTexture(GL_TEXTURE6);
+            Graphics::BindTexture(GL_TEXTURE_2D, previousHistoryColorTarget->GetColorTextureID());
             m_temporalResolveShader->SetUniform("uHistoryColorTexture", 6);
-            glActiveTexture(GL_TEXTURE7);
-            glBindTexture(GL_TEXTURE_2D, previousHistoryMetadataTarget->GetColorTextureID());
+            Graphics::ActiveTexture(GL_TEXTURE7);
+            Graphics::BindTexture(GL_TEXTURE_2D, previousHistoryMetadataTarget->GetColorTextureID());
             m_temporalResolveShader->SetUniform("uHistoryMetadataTexture", 7);
-            glActiveTexture(GL_TEXTURE8);
-            glBindTexture(GL_TEXTURE_2D, context.renderContext.gBuffer->GetMotionTextureID());
+            Graphics::ActiveTexture(GL_TEXTURE8);
+            Graphics::BindTexture(GL_TEXTURE_2D, context.renderContext.gBuffer->GetMotionTextureID());
             m_temporalResolveShader->SetUniform("uSceneMotionTexture", 8);
             m_temporalResolveShader->SetUniform("uView", context.renderContext.cameraData.view);
             m_temporalResolveShader->SetUniform("uPreviousView", m_previousView);
@@ -1436,7 +1436,7 @@ namespace PlutoGE::render
             DrawFullscreenTriangle();
 
             Graphics::BindRenderTarget(resolvedHistoryMetadataTarget);
-            glViewport(0, 0, width, height);
+            Graphics::SetViewport(0, 0, width, height);
             glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
             glClear(GL_COLOR_BUFFER_BIT);
 
@@ -1464,8 +1464,8 @@ namespace PlutoGE::render
         m_lastResolveTime = now;
         m_skippedResolveFrames = 0;
 
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
-        glViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
+        Graphics::BindFramebuffer(GL_FRAMEBUFFER, 0);
+        Graphics::SetViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
         if (m_debugOutput == RsmDebugOutput::Indirect)
         {
             return m_historyColorRenderTargets[m_historyIndex].get();
@@ -1555,13 +1555,13 @@ namespace PlutoGE::render
         ReleaseCaptureResources();
 
         glGenFramebuffers(1, &m_captureFramebuffer);
-        glBindFramebuffer(GL_FRAMEBUFFER, m_captureFramebuffer);
+        Graphics::BindFramebuffer(GL_FRAMEBUFFER, m_captureFramebuffer);
 
         CreateColorAttachment(m_normalTexture, captureWidth, captureHeight, GL_COLOR_ATTACHMENT0);
         CreateColorAttachment(m_fluxTexture, captureWidth, captureHeight, GL_COLOR_ATTACHMENT1);
 
         glGenTextures(1, &m_depthTexture);
-        glBindTexture(GL_TEXTURE_2D, m_depthTexture);
+        Graphics::BindTexture(GL_TEXTURE_2D, m_depthTexture);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, captureWidth, captureHeight, 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -1575,11 +1575,11 @@ namespace PlutoGE::render
         if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
         {
             ReleaseCaptureResources();
-            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            Graphics::BindFramebuffer(GL_FRAMEBUFFER, 0);
             return;
         }
 
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        Graphics::BindFramebuffer(GL_FRAMEBUFFER, 0);
         m_captureWidth = captureWidth;
         m_captureHeight = captureHeight;
     }
@@ -1591,7 +1591,7 @@ namespace PlutoGE::render
         DeleteTexture(m_depthTexture);
         if (m_captureFramebuffer != 0)
         {
-            glDeleteFramebuffers(1, &m_captureFramebuffer);
+            Graphics::DeleteFramebuffers(1, &m_captureFramebuffer);
             m_captureFramebuffer = 0;
         }
         m_captureWidth = 0;

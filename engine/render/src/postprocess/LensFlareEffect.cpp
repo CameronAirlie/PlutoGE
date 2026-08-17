@@ -334,13 +334,13 @@ namespace PlutoGE::render
         // Evaluate the stabilising cross filter and soft threshold once per
         // source pixel, then reuse it for every ghost, halo, and glare tap.
         Graphics::BindRenderTarget(m_brightTarget.get());
-        glViewport(0, 0, targetWidth, targetHeight);
-        glDisable(GL_DEPTH_TEST);
-        glDisable(GL_CULL_FACE);
-        glDisable(GL_BLEND);
+        Graphics::SetViewport(0, 0, targetWidth, targetHeight);
+        Graphics::Disable(GL_DEPTH_TEST);
+        Graphics::Disable(GL_CULL_FACE);
+        Graphics::Disable(GL_BLEND);
         m_brightPassShader->Bind();
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, context.sourceRenderTarget->GetColorTextureID());
+        Graphics::ActiveTexture(GL_TEXTURE0);
+        Graphics::BindTexture(GL_TEXTURE_2D, context.sourceRenderTarget->GetColorTextureID());
         m_brightPassShader->SetUniform("uSceneTexture", 0);
         m_brightPassShader->SetUniform("uTexelSize", glm::vec2(1.0f / targetWidth, 1.0f / targetHeight));
         m_brightPassShader->SetUniform("uThreshold", m_threshold);
@@ -350,11 +350,11 @@ namespace PlutoGE::render
 
         m_shader->Bind();
         BindCommonInputs(m_shader, context);
-        glActiveTexture(GL_TEXTURE5);
-        glBindTexture(GL_TEXTURE_2D, flareTexture->GetTextureID());
+        Graphics::ActiveTexture(GL_TEXTURE5);
+        Graphics::BindTexture(GL_TEXTURE_2D, flareTexture->GetTextureID());
         m_shader->SetUniform("uFlareTexture", 5);
-        glActiveTexture(GL_TEXTURE6);
-        glBindTexture(GL_TEXTURE_2D, m_brightTarget->GetColorTextureID());
+        Graphics::ActiveTexture(GL_TEXTURE6);
+        Graphics::BindTexture(GL_TEXTURE_2D, m_brightTarget->GetColorTextureID());
         m_shader->SetUniform("uBrightTexture", 6);
         m_shader->SetUniform("uIntensity", m_intensity);
         m_shader->SetUniform("uScale", m_scale);

@@ -1,4 +1,5 @@
 #include "PlutoGE/render/postprocess/DepthOfFieldEffect.h"
+#include "PlutoGE/render/Graphics.h"
 
 #include "PlutoGE/render/RenderTarget.h"
 #include "PlutoGE/render/Renderer.h"
@@ -284,9 +285,9 @@ namespace PlutoGE::render
         std::vector<float> depthSamples(static_cast<std::size_t>(sampleSize * sampleSize), 1.0f);
         GLint previousReadFramebuffer = 0;
         glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previousReadFramebuffer);
-        glBindFramebuffer(GL_READ_FRAMEBUFFER, source->GetFramebufferID());
+        Graphics::BindFramebuffer(GL_READ_FRAMEBUFFER, source->GetFramebufferID());
         glReadPixels(readX, readY, sampleSize, sampleSize, GL_DEPTH_COMPONENT, GL_FLOAT, depthSamples.data());
-        glBindFramebuffer(GL_READ_FRAMEBUFFER, previousReadFramebuffer);
+        Graphics::BindFramebuffer(GL_READ_FRAMEBUFFER, previousReadFramebuffer);
 
         const float nearPlane = context.renderContext.cameraData.nearPlane;
         const float farPlane = context.renderContext.cameraData.farPlane;

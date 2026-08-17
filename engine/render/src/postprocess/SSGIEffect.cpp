@@ -685,8 +685,8 @@ namespace PlutoGE::render
             return nullptr;
         }
 
-        glDisable(GL_DEPTH_TEST);
-        glDisable(GL_CULL_FACE);
+        Graphics::Disable(GL_DEPTH_TEST);
+        Graphics::Disable(GL_CULL_FACE);
 
         const glm::mat4 viewProjection = context.renderContext.cameraData.projection * context.renderContext.cameraData.view;
         glm::vec3 dominantLightDirectionView(0.0f, 0.0f, 1.0f);
@@ -721,7 +721,7 @@ namespace PlutoGE::render
         };
 
         Graphics::BindRenderTarget(m_rawIndirectRenderTarget.get());
-        glViewport(0, 0, m_internalWidth, m_internalHeight);
+        Graphics::SetViewport(0, 0, m_internalWidth, m_internalHeight);
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
 
@@ -742,23 +742,23 @@ namespace PlutoGE::render
         DrawFullscreenTriangle();
 
         Graphics::BindRenderTarget(resolvedHistoryColorTarget);
-        glViewport(0, 0, m_internalWidth, m_internalHeight);
+        Graphics::SetViewport(0, 0, m_internalWidth, m_internalHeight);
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
 
         m_resolveShader->Bind();
         BindCommonInputs(m_resolveShader, internalContext);
-        glActiveTexture(GL_TEXTURE5);
-        glBindTexture(GL_TEXTURE_2D, m_rawIndirectRenderTarget->GetColorTextureID());
+        Graphics::ActiveTexture(GL_TEXTURE5);
+        Graphics::BindTexture(GL_TEXTURE_2D, m_rawIndirectRenderTarget->GetColorTextureID());
         m_resolveShader->SetUniform("uRawIndirectTexture", 5);
-        glActiveTexture(GL_TEXTURE6);
-        glBindTexture(GL_TEXTURE_2D, previousHistoryColorTarget->GetColorTextureID());
+        Graphics::ActiveTexture(GL_TEXTURE6);
+        Graphics::BindTexture(GL_TEXTURE_2D, previousHistoryColorTarget->GetColorTextureID());
         m_resolveShader->SetUniform("uHistoryColorTexture", 6);
-        glActiveTexture(GL_TEXTURE7);
-        glBindTexture(GL_TEXTURE_2D, previousHistoryMetadataTarget->GetColorTextureID());
+        Graphics::ActiveTexture(GL_TEXTURE7);
+        Graphics::BindTexture(GL_TEXTURE_2D, previousHistoryMetadataTarget->GetColorTextureID());
         m_resolveShader->SetUniform("uHistoryMetadataTexture", 7);
-        glActiveTexture(GL_TEXTURE8);
-        glBindTexture(GL_TEXTURE_2D, context.renderContext.gBuffer->GetMotionTextureID());
+        Graphics::ActiveTexture(GL_TEXTURE8);
+        Graphics::BindTexture(GL_TEXTURE_2D, context.renderContext.gBuffer->GetMotionTextureID());
         m_resolveShader->SetUniform("uSceneMotionTexture", 8);
         m_resolveShader->SetUniform("uView", context.renderContext.cameraData.view);
         m_resolveShader->SetUniform("uPreviousView", m_previousView);
@@ -775,7 +775,7 @@ namespace PlutoGE::render
         DrawFullscreenTriangle();
 
         Graphics::BindRenderTarget(resolvedHistoryMetadataTarget);
-        glViewport(0, 0, m_internalWidth, m_internalHeight);
+        Graphics::SetViewport(0, 0, m_internalWidth, m_internalHeight);
         glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
         glClear(GL_COLOR_BUFFER_BIT);
 
@@ -804,8 +804,8 @@ namespace PlutoGE::render
 
         m_compositeShader->Bind();
         BindCommonInputs(m_compositeShader, context);
-        glActiveTexture(GL_TEXTURE5);
-        glBindTexture(GL_TEXTURE_2D, resolvedIndirectTarget->GetColorTextureID());
+        Graphics::ActiveTexture(GL_TEXTURE5);
+        Graphics::BindTexture(GL_TEXTURE_2D, resolvedIndirectTarget->GetColorTextureID());
         m_compositeShader->SetUniform("uResolvedIndirectTexture", 5);
         m_compositeShader->SetUniform("uOutputMode", m_outputMode);
         DrawFullscreenTriangle();

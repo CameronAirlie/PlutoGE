@@ -412,11 +412,11 @@ namespace PlutoGE::render
 
         Graphics::ClearRenderTarget(m_cloudTarget.get());
         Graphics::BindRenderTarget(m_cloudTarget.get());
-        glViewport(0, 0, cloudWidth, cloudHeight);
-        glDisable(GL_DEPTH_TEST);
+        Graphics::SetViewport(0, 0, cloudWidth, cloudHeight);
+        Graphics::Disable(GL_DEPTH_TEST);
         glDepthMask(GL_FALSE);
-        glDisable(GL_CULL_FACE);
-        glEnable(GL_BLEND);
+        Graphics::Disable(GL_CULL_FACE);
+        Graphics::Enable(GL_BLEND);
         glBlendEquation(GL_FUNC_ADD);
         glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
         m_shader->Bind();
@@ -429,14 +429,14 @@ namespace PlutoGE::render
         m_shader->SetUniform("uFarPlane", std::max(ctx.cameraData.farPlane, 1.0f));
         m_shader->SetUniform("uFrameIndex", hasTemporalAA ? static_cast<float>(ctx.frameSequence % 4096) : 0.0f);
         m_shader->SetUniform("uTemporalSampling", hasTemporalAA ? 1 : 0);
-        glActiveTexture(GL_TEXTURE0);
+        Graphics::ActiveTexture(GL_TEXTURE0);
         // OceanPass runs first and writes the nearest geometry/ocean surface.
         // Marching against that combined depth prevents clouds behind the sea
         // surface from being composited over the water.
         const GLuint sceneDepth = ctx.oceanSurfaceDepthRenderTarget
             ? ctx.oceanSurfaceDepthRenderTarget->GetDepthTextureID()
             : ctx.temporaryRenderTarget->GetDepthTextureID();
-        glBindTexture(GL_TEXTURE_2D, sceneDepth);
+        Graphics::BindTexture(GL_TEXTURE_2D, sceneDepth);
         m_shader->SetUniform("uSceneDepth", 0);
         glBindVertexArray(m_vao);
 
@@ -474,15 +474,15 @@ namespace PlutoGE::render
         // Upsample the premultiplied cloud radiance once, instead of ray marching
         // every full-resolution pixel.
         Graphics::BindRenderTarget(ctx.temporaryRenderTarget);
-        glViewport(0, 0, ctx.temporaryRenderTarget->GetWidth(), ctx.temporaryRenderTarget->GetHeight());
+        Graphics::SetViewport(0, 0, ctx.temporaryRenderTarget->GetWidth(), ctx.temporaryRenderTarget->GetHeight());
         m_compositeShader->Bind();
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, m_cloudTarget->GetColorTextureID());
+        Graphics::ActiveTexture(GL_TEXTURE0);
+        Graphics::BindTexture(GL_TEXTURE_2D, m_cloudTarget->GetColorTextureID());
         m_compositeShader->SetUniform("uCloudTexture", 0);
         m_compositeShader->SetUniform("uCloudTexelSize", glm::vec2(1.0f / static_cast<float>(cloudWidth), 1.0f / static_cast<float>(cloudHeight)));
         Graphics::DrawFullscreenTriangle();
         m_compositeShader->Unbind();
-        glDisable(GL_BLEND);
+        Graphics::Disable(GL_BLEND);
         glDepthMask(GL_TRUE);
         Graphics::UnbindRenderTarget();
     }

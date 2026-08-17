@@ -1,4 +1,5 @@
 #include "PlutoGE/render/RmlUiRuntime.h"
+#include "PlutoGE/render/Graphics.h"
 
 #include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/core/Engine.h"
@@ -679,8 +680,8 @@ namespace PlutoGE::render
             const auto request = requestedDocuments.find(it->first);
             if (request == requestedDocuments.end() || !request->second.worldSurface)
             {
-                if (it->second.framebuffer) glDeleteFramebuffers(1, &it->second.framebuffer);
-                if (it->second.texture) glDeleteTextures(1, &it->second.texture);
+                if (it->second.framebuffer) Graphics::DeleteFramebuffers(1, &it->second.framebuffer);
+                if (it->second.texture) Graphics::DeleteTextures(1, &it->second.texture);
                 it = m_worldSurfaceTargets.erase(it);
             }
             else
@@ -788,10 +789,10 @@ namespace PlutoGE::render
                 target.model = request.model;
                 if (!target.framebuffer || target.width != surfaceWidth || target.height != surfaceHeight)
                 {
-                    if (target.framebuffer) glDeleteFramebuffers(1, &target.framebuffer);
-                    if (target.texture) glDeleteTextures(1, &target.texture);
+                    if (target.framebuffer) Graphics::DeleteFramebuffers(1, &target.framebuffer);
+                    if (target.texture) Graphics::DeleteTextures(1, &target.texture);
                     glGenTextures(1, &target.texture);
-                    glBindTexture(GL_TEXTURE_2D, target.texture);
+                    Graphics::BindTexture(GL_TEXTURE_2D, target.texture);
                     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, surfaceWidth, surfaceHeight, 0,
                                  GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
                     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -799,7 +800,7 @@ namespace PlutoGE::render
                     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
                     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
                     glGenFramebuffers(1, &target.framebuffer);
-                    glBindFramebuffer(GL_FRAMEBUFFER, target.framebuffer);
+                    Graphics::BindFramebuffer(GL_FRAMEBUFFER, target.framebuffer);
                     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, target.texture, 0);
                     target.width = surfaceWidth;
                     target.height = surfaceHeight;
@@ -1066,8 +1067,8 @@ namespace PlutoGE::render
     {
         for (auto &[key, target] : m_worldSurfaceTargets)
         {
-            if (target.framebuffer) glDeleteFramebuffers(1, &target.framebuffer);
-            if (target.texture) glDeleteTextures(1, &target.texture);
+            if (target.framebuffer) Graphics::DeleteFramebuffers(1, &target.framebuffer);
+            if (target.texture) Graphics::DeleteTextures(1, &target.texture);
         }
         m_worldSurfaceTargets.clear();
         m_worldSurfaceDraws.clear();
@@ -1113,8 +1114,8 @@ namespace PlutoGE::render
             m_renderer->SetViewport(target.width, target.height);
             m_context->Update();
 
-            glBindFramebuffer(GL_FRAMEBUFFER, target.framebuffer);
-            glViewport(0, 0, target.width, target.height);
+            Graphics::BindFramebuffer(GL_FRAMEBUFFER, target.framebuffer);
+            Graphics::SetViewport(0, 0, target.width, target.height);
             glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
             glClear(GL_COLOR_BUFFER_BIT);
             PlutoGE_SetRmlUiFramebuffer(target.framebuffer);
@@ -1130,8 +1131,8 @@ namespace PlutoGE::render
 
         m_context->SetDimensions({m_width, m_height});
         m_renderer->SetViewport(m_width, m_height);
-        glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previousFramebuffer));
-        glViewport(0, 0, m_width, m_height);
+        Graphics::BindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previousFramebuffer));
+        Graphics::SetViewport(0, 0, m_width, m_height);
         PlutoGE_SetRmlUiFramebuffer(static_cast<GLuint>(previousFramebuffer));
     }
 

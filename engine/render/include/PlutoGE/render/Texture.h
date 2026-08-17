@@ -1,5 +1,7 @@
 #pragma once
 
+#include "PlutoGE/render/Graphics.h"
+
 #include <glad/glad.h>
 #include <string>
 
@@ -51,7 +53,7 @@ namespace PlutoGE::render
             TextureConfig config;
             Texture *texture = new Texture(config);
             glGenTextures(1, &texture->m_textureID);
-            glBindTexture(GL_TEXTURE_2D, texture->m_textureID);
+            Graphics::BindTexture(GL_TEXTURE_2D, texture->m_textureID);
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);

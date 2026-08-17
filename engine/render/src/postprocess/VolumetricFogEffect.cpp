@@ -4,6 +4,7 @@
 #include "PlutoGE/render/RenderTarget.h"
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/Shader.h"
+#include "PlutoGE/render/UniformNames.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 
 #include <algorithm>
@@ -60,12 +61,21 @@ namespace PlutoGE::render
                 return;
             }
 
+            static const auto shadowMapNames =
+                MakeNumberedUniformNames<scene::kMaxDirectionalShadowCascades>("uShadowCascadeMap");
+            static const auto cascadeMatrixNames =
+                MakeArrayUniformNames<scene::kMaxDirectionalShadowCascades>("uCascadeLightSpaceMatrices");
+            static const auto cascadeSplitNames =
+                MakeArrayUniformNames<scene::kMaxDirectionalShadowCascades>("uCascadeSplits");
+            static const auto cascadeOriginNames =
+                MakeArrayUniformNames<scene::kMaxDirectionalShadowCascades>("uCascadeWorldOrigins");
+
             for (int cascadeIndex = 0; cascadeIndex < scene::kMaxDirectionalShadowCascades; ++cascadeIndex)
             {
                 const int textureSlot = kDirectionalShadowCascadeTextureStartSlot + cascadeIndex;
-                glActiveTexture(GL_TEXTURE0 + textureSlot);
-                glBindTexture(GL_TEXTURE_2D, 0);
-                shader->SetUniform("uShadowCascadeMap" + std::to_string(cascadeIndex), textureSlot);
+                Graphics::ActiveTexture(GL_TEXTURE0 + textureSlot);
+                Graphics::BindTexture(GL_TEXTURE_2D, 0);
+                shader->SetUniform(shadowMapNames[cascadeIndex], textureSlot);
             }
 
             int cascadeCount = 0;
@@ -86,8 +96,8 @@ namespace PlutoGE::render
                         continue;
                     }
 
-                    glActiveTexture(GL_TEXTURE0 + kDirectionalShadowCascadeTextureStartSlot + cascadeIndex);
-                    glBindTexture(GL_TEXTURE_2D, shadowCascadeMap->GetTextureID());
+                    Graphics::ActiveTexture(GL_TEXTURE0 + kDirectionalShadowCascadeTextureStartSlot + cascadeIndex);
+                    Graphics::BindTexture(GL_TEXTURE_2D, shadowCascadeMap->GetTextureID());
                 }
             }
 
@@ -99,13 +109,13 @@ namespace PlutoGE::render
             {
                 const glm::mat4 lightSpaceMatrix = directionalLight ? directionalLight->shadowCascadeMatrices[cascadeIndex] : glm::mat4(1.0f);
                 const float cascadeSplit = directionalLight ? directionalLight->shadowCascadeSplits[cascadeIndex] : 0.0f;
-                shader->SetUniform("uCascadeLightSpaceMatrices[" + std::to_string(cascadeIndex) + "]", lightSpaceMatrix);
-                shader->SetUniform("uCascadeSplits[" + std::to_string(cascadeIndex) + "]", cascadeSplit);
+                shader->SetUniform(cascadeMatrixNames[cascadeIndex], lightSpaceMatrix);
+                shader->SetUniform(cascadeSplitNames[cascadeIndex], cascadeSplit);
             }
             for (int cascadeIndex = 0; cascadeIndex < scene::kMaxDirectionalShadowCascades; ++cascadeIndex)
             {
                 const glm::vec3 shadowWorldOrigin = directionalLight ? directionalLight->shadowCascadeWorldOrigins[cascadeIndex] : glm::vec3(0.0f);
-                shader->SetUniform("uCascadeWorldOrigins[" + std::to_string(cascadeIndex) + "]", shadowWorldOrigin);
+                shader->SetUniform(cascadeOriginNames[cascadeIndex], shadowWorldOrigin);
             }
         }
     }
@@ -676,11 +686,11 @@ namespace PlutoGE::render
         };
 
         Graphics::BindRenderTarget(m_fogRenderTarget.get());
-        glViewport(0, 0, m_internalWidth, m_internalHeight);
-        glDisable(GL_DEPTH_TEST);
+        Graphics::SetViewport(0, 0, m_internalWidth, m_internalHeight);
+        Graphics::Disable(GL_DEPTH_TEST);
         glDepthMask(GL_FALSE);
-        glDisable(GL_CULL_FACE);
-        glDisable(GL_BLEND);
+        Graphics::Disable(GL_CULL_FACE);
+        Graphics::Disable(GL_BLEND);
         glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
         glClear(GL_COLOR_BUFFER_BIT);
 
@@ -691,15 +701,15 @@ namespace PlutoGE::render
                                                      : 0;
         if (oceanSurfaceDepthTexture != 0)
         {
-            glActiveTexture(GL_TEXTURE1);
-            glBindTexture(GL_TEXTURE_2D, oceanSurfaceDepthTexture);
+            Graphics::ActiveTexture(GL_TEXTURE1);
+            Graphics::BindTexture(GL_TEXTURE_2D, oceanSurfaceDepthTexture);
             m_shader->SetUniform("uSceneDepthTexture", 1);
 
             // Shadow cascades occupy slots 5-8. Keep ocean state outside that
             // range or the third cascade replaces it and makes fog depend on
             // the sampled shadow map (most visibly around the horizon).
-            glActiveTexture(GL_TEXTURE0 + kOceanStateTextureSlot);
-            glBindTexture(GL_TEXTURE_2D, context.renderContext.oceanSurfaceDepthRenderTarget->GetColorTextureID());
+            Graphics::ActiveTexture(GL_TEXTURE0 + kOceanStateTextureSlot);
+            Graphics::BindTexture(GL_TEXTURE_2D, context.renderContext.oceanSurfaceDepthRenderTarget->GetColorTextureID());
             m_shader->SetUniform("uOceanStateTexture", kOceanStateTextureSlot);
         }
         BindDirectionalShadowInputs(m_shader, primaryDirectionalLight);
@@ -731,13 +741,13 @@ namespace PlutoGE::render
             glBindSampler(kDirectionalShadowCascadeTextureStartSlot + cascadeIndex, 0);
 
         BeginApply(context);
-        glViewport(0, 0, context.destinationRenderTarget->GetWidth(), context.destinationRenderTarget->GetHeight());
-        glDisable(GL_BLEND);
+        Graphics::SetViewport(0, 0, context.destinationRenderTarget->GetWidth(), context.destinationRenderTarget->GetHeight());
+        Graphics::Disable(GL_BLEND);
 
         m_compositeShader->Bind();
         BindCommonInputs(m_compositeShader, context);
-        glActiveTexture(GL_TEXTURE5);
-        glBindTexture(GL_TEXTURE_2D, m_fogRenderTarget->GetColorTextureID());
+        Graphics::ActiveTexture(GL_TEXTURE5);
+        Graphics::BindTexture(GL_TEXTURE_2D, m_fogRenderTarget->GetColorTextureID());
         m_compositeShader->SetUniform("uFogTexture", 5);
         DrawFullscreenTriangle();
 

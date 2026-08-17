@@ -6,6 +6,7 @@
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/Shader.h"
+#include "PlutoGE/render/UniformNames.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 
 #include <algorithm>
@@ -561,15 +562,15 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
         for (auto &cascade : m_cascades)
         {
             if (cascade.framebuffer)
-                glDeleteFramebuffers(1, &cascade.framebuffer);
+                Graphics::DeleteFramebuffers(1, &cascade.framebuffer);
             cascade.framebuffer = 0;
             const unsigned int transientTextures[] = {
                 cascade.accumulationR, cascade.accumulationG, cascade.accumulationB,
                 cascade.accumulationCount, cascade.accumulationOpacity};
-            glDeleteTextures(static_cast<GLsizei>(std::size(transientTextures)), transientTextures);
+            Graphics::DeleteTextures(static_cast<GLsizei>(std::size(transientTextures)), transientTextures);
             // pendingShadowMaps are persistent staging textures reused by
             // progressive voxel rebuilds.
-            glDeleteTextures(static_cast<GLsizei>(cascade.pendingShadowMaps.size()), cascade.pendingShadowMaps.data());
+            Graphics::DeleteTextures(static_cast<GLsizei>(cascade.pendingShadowMaps.size()), cascade.pendingShadowMaps.data());
             cascade.pendingShadowMaps.fill(0);
             cascade.pendingShadowSourceMaps.fill(0);
             cascade.accumulationR = 0;
@@ -587,7 +588,7 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
             cascade.hasVolume = false;
             cascade.rebuildInProgress = false;
         }
-        glDeleteTextures(static_cast<GLsizei>(m_radianceAtlases.size()), m_radianceAtlases.data());
+        Graphics::DeleteTextures(static_cast<GLsizei>(m_radianceAtlases.size()), m_radianceAtlases.data());
         m_radianceAtlases.fill(0);
         m_allocatedResolution = 0;
         m_allocatedCascadeCount = 0;
@@ -610,7 +611,7 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
             glGenTextures(static_cast<GLsizei>(m_radianceAtlases.size()), m_radianceAtlases.data());
             for (const unsigned int atlas : m_radianceAtlases)
             {
-                glBindTexture(GL_TEXTURE_3D, atlas);
+                Graphics::BindTexture(GL_TEXTURE_3D, atlas);
                 glTexStorage3D(
                     GL_TEXTURE_3D, mipCount, GL_RGBA16F,
                     m_resolution, m_resolution,
@@ -635,14 +636,14 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
                 cascade.accumulationOpacity = accumulationVolumes[4];
                 for (const unsigned int volume : accumulationVolumes)
                 {
-                    glBindTexture(GL_TEXTURE_3D, volume);
+                    Graphics::BindTexture(GL_TEXTURE_3D, volume);
                     glTexStorage3D(GL_TEXTURE_3D, 1, GL_R32UI, m_resolution, m_resolution, m_resolution);
                     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
                     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
                 }
                 glGenFramebuffers(1, &cascade.framebuffer);
             }
-            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            Graphics::BindFramebuffer(GL_FRAMEBUFFER, 0);
             m_allocatedResolution = m_resolution;
             m_allocatedCascadeCount = m_activeCascadeCount;
             m_nextCascadeToUpdate = 0;
@@ -674,7 +675,7 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
             }
             if (changed)
             {
-                glBindTexture(GL_TEXTURE_2D, target->GetColorTextureID());
+                Graphics::BindTexture(GL_TEXTURE_2D, target->GetColorTextureID());
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
             }
@@ -694,12 +695,12 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
             }
             if (changed)
             {
-                glBindTexture(GL_TEXTURE_2D, target->GetColorTextureID());
+                Graphics::BindTexture(GL_TEXTURE_2D, target->GetColorTextureID());
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
             }
         }
-        glBindTexture(GL_TEXTURE_2D, 0);
+        Graphics::BindTexture(GL_TEXTURE_2D, 0);
         if (resized)
             ResetHistory();
     }
@@ -789,9 +790,9 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
                 cascade.pendingShadowHeights[shadowCascade] != shadowHeight)
             {
                 if (cascade.pendingShadowMaps[shadowCascade])
-                    glDeleteTextures(1, &cascade.pendingShadowMaps[shadowCascade]);
+                    Graphics::DeleteTextures(1, &cascade.pendingShadowMaps[shadowCascade]);
                 glGenTextures(1, &cascade.pendingShadowMaps[shadowCascade]);
-                glBindTexture(GL_TEXTURE_2D, cascade.pendingShadowMaps[shadowCascade]);
+                Graphics::BindTexture(GL_TEXTURE_2D, cascade.pendingShadowMaps[shadowCascade]);
                 glTexStorage2D(GL_TEXTURE_2D, 1, GL_DEPTH_COMPONENT24, shadowWidth, shadowHeight);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -856,7 +857,7 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
         cascade.rebuildInProgress = true;
 
         const unsigned int zero[4] = {0, 0, 0, 0};
-        glBindFramebuffer(GL_FRAMEBUFFER, cascade.framebuffer);
+        Graphics::BindFramebuffer(GL_FRAMEBUFFER, cascade.framebuffer);
         const unsigned int accumulationVolumes[] = {
             cascade.accumulationR, cascade.accumulationG, cascade.accumulationB,
             cascade.accumulationCount, cascade.accumulationOpacity};
@@ -865,7 +866,7 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
             glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, volume, 0);
             glClearBufferuiv(GL_COLOR, 0, zero);
         }
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        Graphics::BindFramebuffer(GL_FRAMEBUFFER, 0);
         // The accumulation textures switch from framebuffer clears to shader
         // image atomics. Make every cleared layer visible before the first chunk.
         glMemoryBarrier(GL_FRAMEBUFFER_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
@@ -888,8 +889,8 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
         for (std::size_t direction = 0; direction < kDirectionCount; ++direction)
         {
             m_directionalMipShader->Bind();
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_3D, m_radianceAtlases[direction]);
+            Graphics::ActiveTexture(GL_TEXTURE0);
+            Graphics::BindTexture(GL_TEXTURE_3D, m_radianceAtlases[direction]);
             m_directionalMipShader->SetUniform("uSource", 0);
             const int axis = static_cast<int>(direction / 2);
             const int sign = direction % 2 == 0 ? 1 : -1;
@@ -934,9 +935,9 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
         // Progressive rebuilds continue on a later frame. Shader-image writes
         // from the previous chunk must be visible before issuing more atomics.
         glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
-        glViewport(0, 0, m_resolution, m_resolution);
-        glDisable(GL_DEPTH_TEST);
-        glDisable(GL_CULL_FACE);
+        Graphics::SetViewport(0, 0, m_resolution, m_resolution);
+        Graphics::Disable(GL_DEPTH_TEST);
+        Graphics::Disable(GL_CULL_FACE);
         glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
         glBindImageTexture(0, cascade.accumulationR, 0, GL_TRUE, 0, GL_READ_WRITE, GL_R32UI);
         glBindImageTexture(1, cascade.accumulationG, 0, GL_TRUE, 0, GL_READ_WRITE, GL_R32UI);
@@ -952,28 +953,37 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
         m_voxelizationShader->SetUniform("uLightColor", cascade.pendingLightColor);
         m_voxelizationShader->SetUniform("uLightIntensity", cascade.pendingLightIntensity);
         m_voxelizationShader->SetUniform("uLocalLightCount", cascade.pendingLocalLightCount);
+        static const auto localLightTypeNames = MakeArrayUniformNames<kMaxLocalInjectionLights>("uLocalLightType");
+        static const auto localLightPositionNames = MakeArrayUniformNames<kMaxLocalInjectionLights>("uLocalLightPosition");
+        static const auto localLightDirectionNames = MakeArrayUniformNames<kMaxLocalInjectionLights>("uLocalLightDirection");
+        static const auto localLightColorNames = MakeArrayUniformNames<kMaxLocalInjectionLights>("uLocalLightColor");
+        static const auto localLightIntensityNames = MakeArrayUniformNames<kMaxLocalInjectionLights>("uLocalLightIntensity");
+        static const auto localLightRangeNames = MakeArrayUniformNames<kMaxLocalInjectionLights>("uLocalLightRange");
         for (int lightIndex = 0; lightIndex < cascade.pendingLocalLightCount; ++lightIndex)
         {
-            const std::string index = "[" + std::to_string(lightIndex) + "]";
-            m_voxelizationShader->SetUniform("uLocalLightType" + index, cascade.pendingLocalLightTypes[lightIndex]);
-            m_voxelizationShader->SetUniform("uLocalLightPosition" + index, cascade.pendingLocalLightPositions[lightIndex]);
-            m_voxelizationShader->SetUniform("uLocalLightDirection" + index, cascade.pendingLocalLightDirections[lightIndex]);
-            m_voxelizationShader->SetUniform("uLocalLightColor" + index, cascade.pendingLocalLightColors[lightIndex]);
-            m_voxelizationShader->SetUniform("uLocalLightIntensity" + index, cascade.pendingLocalLightIntensities[lightIndex]);
-            m_voxelizationShader->SetUniform("uLocalLightRange" + index, cascade.pendingLocalLightRanges[lightIndex]);
+            m_voxelizationShader->SetUniform(localLightTypeNames[lightIndex], cascade.pendingLocalLightTypes[lightIndex]);
+            m_voxelizationShader->SetUniform(localLightPositionNames[lightIndex], cascade.pendingLocalLightPositions[lightIndex]);
+            m_voxelizationShader->SetUniform(localLightDirectionNames[lightIndex], cascade.pendingLocalLightDirections[lightIndex]);
+            m_voxelizationShader->SetUniform(localLightColorNames[lightIndex], cascade.pendingLocalLightColors[lightIndex]);
+            m_voxelizationShader->SetUniform(localLightIntensityNames[lightIndex], cascade.pendingLocalLightIntensities[lightIndex]);
+            m_voxelizationShader->SetUniform(localLightRangeNames[lightIndex], cascade.pendingLocalLightRanges[lightIndex]);
         }
         m_voxelizationShader->SetUniform("uViewMatrix", cascade.pendingView);
         m_voxelizationShader->SetUniform("uInjectionLightHasShadow", cascade.pendingShadowCascadeCount > 0 ? 1 : 0);
         m_voxelizationShader->SetUniform("uShadowCascadeCount", cascade.pendingShadowCascadeCount);
+        static const auto shadowNames = MakeNumberedUniformNames<scene::kMaxDirectionalShadowCascades>("uShadow");
+        static const auto shadowMatrixNames = MakeArrayUniformNames<scene::kMaxDirectionalShadowCascades>("uShadowMatrix");
+        static const auto shadowOriginNames = MakeArrayUniformNames<scene::kMaxDirectionalShadowCascades>("uShadowOrigin");
+        static const auto shadowSplitNames = MakeArrayUniformNames<scene::kMaxDirectionalShadowCascades>("uShadowSplit");
         for (int shadowCascade = 0; shadowCascade < scene::kMaxDirectionalShadowCascades; ++shadowCascade)
         {
             const int slot = 6 + shadowCascade;
-            glActiveTexture(GL_TEXTURE0 + slot);
-            glBindTexture(GL_TEXTURE_2D, cascade.pendingShadowMaps[shadowCascade]);
-            m_voxelizationShader->SetUniform("uShadow" + std::to_string(shadowCascade), slot);
-            m_voxelizationShader->SetUniform("uShadowMatrix[" + std::to_string(shadowCascade) + "]", cascade.pendingShadowMatrices[shadowCascade]);
-            m_voxelizationShader->SetUniform("uShadowOrigin[" + std::to_string(shadowCascade) + "]", cascade.pendingShadowOrigins[shadowCascade]);
-            m_voxelizationShader->SetUniform("uShadowSplit[" + std::to_string(shadowCascade) + "]", cascade.pendingShadowSplits[shadowCascade]);
+            Graphics::ActiveTexture(GL_TEXTURE0 + slot);
+            Graphics::BindTexture(GL_TEXTURE_2D, cascade.pendingShadowMaps[shadowCascade]);
+            m_voxelizationShader->SetUniform(shadowNames[shadowCascade], slot);
+            m_voxelizationShader->SetUniform(shadowMatrixNames[shadowCascade], cascade.pendingShadowMatrices[shadowCascade]);
+            m_voxelizationShader->SetUniform(shadowOriginNames[shadowCascade], cascade.pendingShadowOrigins[shadowCascade]);
+            m_voxelizationShader->SetUniform(shadowSplitNames[shadowCascade], cascade.pendingShadowSplits[shadowCascade]);
         }
         int submittedDraws = 0;
         while (cascade.jobIndex < cascade.jobs.size() && submittedDraws < m_voxelizationCommandBudget)
@@ -1247,35 +1257,35 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
             ResetHistory();
         const auto bindTraceVolumes = [&](Shader *shader)
         {
+            static const auto voxelNames = MakeNumberedUniformNames<kDirectionCount>("uVoxel");
+            static const auto sampleCountNames = MakeNumberedUniformNames<kCascadeCount>("uVoxelSampleCount");
+            static const auto cascadeOriginNames = MakeArrayUniformNames<kCascadeCount>("uCascadeOrigin");
+            static const auto cascadeSizeNames = MakeArrayUniformNames<kCascadeCount>("uCascadeSize");
             for (std::size_t direction = 0; direction < kDirectionCount; ++direction)
             {
                 const int slot = 5 + static_cast<int>(direction);
-                glActiveTexture(GL_TEXTURE0 + slot);
-                glBindTexture(GL_TEXTURE_3D, m_radianceAtlases[direction]);
-                shader->SetUniform("uVoxel" + std::to_string(direction), slot);
+                Graphics::ActiveTexture(GL_TEXTURE0 + slot);
+                Graphics::BindTexture(GL_TEXTURE_3D, m_radianceAtlases[direction]);
+                shader->SetUniform(voxelNames[direction], slot);
             }
             for (std::size_t cascadeIndex = 0; cascadeIndex < kCascadeCount; ++cascadeIndex)
             {
                 const std::size_t sourceCascade =
                     std::min<std::size_t>(cascadeIndex, static_cast<std::size_t>(availableCascadeCount - 1));
                 const int slot = 11 + static_cast<int>(cascadeIndex);
-                glActiveTexture(GL_TEXTURE0 + slot);
-                glBindTexture(GL_TEXTURE_3D, m_cascades[sourceCascade].accumulationCount);
-                shader->SetUniform("uVoxelSampleCount" + std::to_string(cascadeIndex), slot);
-                shader->SetUniform(
-                    "uCascadeOrigin[" + std::to_string(cascadeIndex) + "]",
-                    m_cascades[sourceCascade].origin);
-                shader->SetUniform(
-                    "uCascadeSize[" + std::to_string(cascadeIndex) + "]",
-                    m_cascades[sourceCascade].size);
+                Graphics::ActiveTexture(GL_TEXTURE0 + slot);
+                Graphics::BindTexture(GL_TEXTURE_3D, m_cascades[sourceCascade].accumulationCount);
+                shader->SetUniform(sampleCountNames[cascadeIndex], slot);
+                shader->SetUniform(cascadeOriginNames[cascadeIndex], m_cascades[sourceCascade].origin);
+                shader->SetUniform(cascadeSizeNames[cascadeIndex], m_cascades[sourceCascade].size);
             }
             shader->SetUniform("uCascadeCount", availableCascadeCount);
             shader->SetUniform("uAtlasCascadeCount", static_cast<int>(m_activeCascadeCount));
         };
         Graphics::BindRenderTarget(m_indirectTarget.get());
-        glViewport(0, 0, width, height);
-        glDisable(GL_DEPTH_TEST);
-        glDisable(GL_CULL_FACE);
+        Graphics::SetViewport(0, 0, width, height);
+        Graphics::Disable(GL_DEPTH_TEST);
+        Graphics::Disable(GL_CULL_FACE);
         glClearColor(0, 0, 0, 0);
         glClear(GL_COLOR_BUFFER_BIT);
         m_coneTraceShader->Bind();
@@ -1300,21 +1310,21 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
         const std::uint8_t next = static_cast<std::uint8_t>((m_historyIndex + 1) % 2);
         auto *resolvedColor = m_historyColorTargets[next].get();
         Graphics::BindRenderTarget(resolvedColor);
-        glViewport(0, 0, width, height);
+        Graphics::SetViewport(0, 0, width, height);
         glClear(GL_COLOR_BUFFER_BIT);
         m_temporalResolveShader->Bind();
         BindCommonInputs(m_temporalResolveShader, context);
-        glActiveTexture(GL_TEXTURE5);
-        glBindTexture(GL_TEXTURE_2D, m_indirectTarget->GetColorTextureID());
+        Graphics::ActiveTexture(GL_TEXTURE5);
+        Graphics::BindTexture(GL_TEXTURE_2D, m_indirectTarget->GetColorTextureID());
         m_temporalResolveShader->SetUniform("uCurrentIndirectTexture", 5);
-        glActiveTexture(GL_TEXTURE6);
-        glBindTexture(GL_TEXTURE_2D, m_historyColorTargets[m_historyIndex]->GetColorTextureID());
+        Graphics::ActiveTexture(GL_TEXTURE6);
+        Graphics::BindTexture(GL_TEXTURE_2D, m_historyColorTargets[m_historyIndex]->GetColorTextureID());
         m_temporalResolveShader->SetUniform("uHistoryColorTexture", 6);
-        glActiveTexture(GL_TEXTURE7);
-        glBindTexture(GL_TEXTURE_2D, m_historyMetadataTargets[m_historyIndex]->GetColorTextureID());
+        Graphics::ActiveTexture(GL_TEXTURE7);
+        Graphics::BindTexture(GL_TEXTURE_2D, m_historyMetadataTargets[m_historyIndex]->GetColorTextureID());
         m_temporalResolveShader->SetUniform("uHistoryMetadataTexture", 7);
-        glActiveTexture(GL_TEXTURE8);
-        glBindTexture(GL_TEXTURE_2D, context.renderContext.gBuffer->GetMotionTextureID());
+        Graphics::ActiveTexture(GL_TEXTURE8);
+        Graphics::BindTexture(GL_TEXTURE_2D, context.renderContext.gBuffer->GetMotionTextureID());
         m_temporalResolveShader->SetUniform("uSceneMotionTexture", 8);
         m_temporalResolveShader->SetUniform("uView", context.renderContext.cameraData.view);
         m_temporalResolveShader->SetUniform("uPreviousView", m_previousView);
@@ -1326,7 +1336,7 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
         DrawFullscreenTriangle();
 
         Graphics::BindRenderTarget(m_historyMetadataTargets[next].get());
-        glViewport(0, 0, width, height);
+        Graphics::SetViewport(0, 0, width, height);
         glClear(GL_COLOR_BUFFER_BIT);
         m_historyMetadataShader->Bind();
         BindCommonInputs(m_historyMetadataShader, context);
@@ -1343,21 +1353,21 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
             // Re-run only the cheap temporal resolve into a disposable target so
             // diagnostic colours never enter the accumulated history.
             Graphics::BindRenderTarget(m_debugTarget.get());
-            glViewport(0, 0, width, height);
+            Graphics::SetViewport(0, 0, width, height);
             glClear(GL_COLOR_BUFFER_BIT);
             m_temporalResolveShader->Bind();
             BindCommonInputs(m_temporalResolveShader, context);
-            glActiveTexture(GL_TEXTURE5);
-            glBindTexture(GL_TEXTURE_2D, m_indirectTarget->GetColorTextureID());
+            Graphics::ActiveTexture(GL_TEXTURE5);
+            Graphics::BindTexture(GL_TEXTURE_2D, m_indirectTarget->GetColorTextureID());
             m_temporalResolveShader->SetUniform("uCurrentIndirectTexture", 5);
-            glActiveTexture(GL_TEXTURE6);
-            glBindTexture(GL_TEXTURE_2D, m_historyColorTargets[m_historyIndex]->GetColorTextureID());
+            Graphics::ActiveTexture(GL_TEXTURE6);
+            Graphics::BindTexture(GL_TEXTURE_2D, m_historyColorTargets[m_historyIndex]->GetColorTextureID());
             m_temporalResolveShader->SetUniform("uHistoryColorTexture", 6);
-            glActiveTexture(GL_TEXTURE7);
-            glBindTexture(GL_TEXTURE_2D, m_historyMetadataTargets[m_historyIndex]->GetColorTextureID());
+            Graphics::ActiveTexture(GL_TEXTURE7);
+            Graphics::BindTexture(GL_TEXTURE_2D, m_historyMetadataTargets[m_historyIndex]->GetColorTextureID());
             m_temporalResolveShader->SetUniform("uHistoryMetadataTexture", 7);
-            glActiveTexture(GL_TEXTURE8);
-            glBindTexture(GL_TEXTURE_2D, context.renderContext.gBuffer->GetMotionTextureID());
+            Graphics::ActiveTexture(GL_TEXTURE8);
+            Graphics::BindTexture(GL_TEXTURE_2D, context.renderContext.gBuffer->GetMotionTextureID());
             m_temporalResolveShader->SetUniform("uSceneMotionTexture", 8);
             m_temporalResolveShader->SetUniform("uView", context.renderContext.cameraData.view);
             m_temporalResolveShader->SetUniform("uPreviousView", m_previousView);
@@ -1374,7 +1384,7 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
             // Sample the published voxel field at each visible receiver. This
             // separates corrupt volume data from cone/history/upsample errors.
             Graphics::BindRenderTarget(m_debugTarget.get());
-            glViewport(0, 0, width, height);
+            Graphics::SetViewport(0, 0, width, height);
             glClear(GL_COLOR_BUFFER_BIT);
             m_coneTraceShader->Bind();
             BindCommonInputs(m_coneTraceShader, context);
@@ -1407,10 +1417,10 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
     {
         if (!context.sourceRenderTarget || !context.destinationRenderTarget)
             return;
-        glBindFramebuffer(GL_READ_FRAMEBUFFER, context.sourceRenderTarget->GetFramebufferID());
-        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, context.destinationRenderTarget->GetFramebufferID());
+        Graphics::BindFramebuffer(GL_READ_FRAMEBUFFER, context.sourceRenderTarget->GetFramebufferID());
+        Graphics::BindFramebuffer(GL_DRAW_FRAMEBUFFER, context.destinationRenderTarget->GetFramebufferID());
         glBlitFramebuffer(0, 0, context.sourceRenderTarget->GetWidth(), context.sourceRenderTarget->GetHeight(), 0, 0, context.destinationRenderTarget->GetWidth(), context.destinationRenderTarget->GetHeight(), GL_COLOR_BUFFER_BIT, GL_NEAREST);
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        Graphics::BindFramebuffer(GL_FRAMEBUFFER, 0);
     }
 
     void VoxelConeTracingEffect::ResetHistory()

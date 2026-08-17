@@ -1,6 +1,7 @@
 #include "PlutoGE/render/postprocess/SSREffect.h"
 
 #include "PlutoGE/render/GBuffer.h"
+#include "PlutoGE/render/Graphics.h"
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/Shader.h"
 
@@ -227,8 +228,8 @@ namespace PlutoGE::render
         BeginApply(context);
         m_shader->Bind();
         BindCommonInputs(m_shader, context);
-        glActiveTexture(GL_TEXTURE6);
-        glBindTexture(GL_TEXTURE_2D, context.renderContext.gBuffer->GetDepthTextureID());
+        Graphics::ActiveTexture(GL_TEXTURE6);
+        Graphics::BindTexture(GL_TEXTURE_2D, context.renderContext.gBuffer->GetDepthTextureID());
         m_shader->SetUniform("uGBufferDepthTexture", 6);
         m_shader->SetUniform("uView", context.renderContext.cameraData.view);
         m_shader->SetUniform("uProjection", context.renderContext.cameraData.projection);

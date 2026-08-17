@@ -404,8 +404,7 @@ namespace PlutoGE::render
                 gNormalRoughness = vec4(normalize(normal), clamp(roughness, 0.04, 1.0));
                 gAlbedoMetallic = vec4(albedo, clamp(metallic, 0.0, 1.0));
                 gEmission = max(uEmission, vec3(0.0));
-                float subsurfaceProfile = max(uSubsurfaceRadius, 0.001) / (max(uSubsurfaceRadius, 0.001) + 1.0);
-                gSubsurface = vec4(max(uSubsurfaceColor, vec3(0.0)), clamp(uSubsurfaceFactor, 0.0, 1.0) * subsurfaceProfile);
+                gSubsurface = vec4(max(uSubsurfaceColor, vec3(0.0)), clamp(uSubsurfaceFactor, 0.0, 1.0));
                 gBakedLighting = vec4(0.0);
                 gDebug = InstanceFlags.w <= 0.5 ? -1.0 : clamp(floor(InstanceFlags.z) / InstanceFlags.w, 0.0, 1.0);
 

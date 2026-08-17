@@ -690,16 +690,28 @@ namespace PlutoGE::render
                     vec3 surfaceLighting = ndotl > 0.0
                                                ? EvaluatePbrLighting(normal, viewDir, albedo, metallic, roughness, lightDir, radiance)
                                                : vec3(0.0);
+                    vec3 subsurfaceLighting = vec3(0.0);
                     if (subsurface.a > 0.0001 && metallic < 0.999)
                     {
-                        float wrap = mix(0.08, 0.75, clamp(subsurface.a, 0.0, 1.0));
+                        float wrap = mix(0.25, 0.85, clamp(subsurface.a, 0.0, 1.0));
                         float wrappedDiffuse = clamp((ndotl + wrap) / (1.0 + wrap), 0.0, 1.0);
                         float backScatter = pow(clamp(dot(viewDir, -lightDir), 0.0, 1.0), mix(8.0, 2.0, wrap));
-                        float profile = max(wrappedDiffuse, backScatter * 0.55);
-                        surfaceLighting += radiance * albedo * max(subsurface.rgb, vec3(0.0)) *
-                                           profile * subsurface.a * (1.0 - metallic) / PI;
+                        // Thin leaves and grass are commonly viewed with the light nearly
+                        // tangent to their card normal. A broad grazing lobe prevents that
+                        // orientation from collapsing to black while the ordinary PBR term
+                        // still supplies directional shape on the lit side.
+                        float grazingTransmission = sqrt(max(1.0 - ndotl * ndotl, 0.0));
+                        float profile = max(wrappedDiffuse, max(backScatter * 0.65,
+                                                               grazingTransmission * mix(0.2, 0.45, subsurface.a)));
+                        subsurfaceLighting = radiance * albedo * max(subsurface.rgb, vec3(0.0)) *
+                                             profile * subsurface.a * (1.0 - metallic) / PI;
                     }
-                    return surfaceLighting * (1.0 - shadow);
+                    float surfaceVisibility = 1.0 - shadow;
+                    // The shadow map sees an infinitesimally thin card as opaque. Permit a
+                    // modest transmitted component so the card does not self-blacken while
+                    // retaining most occlusion from surrounding geometry.
+                    float scatteringVisibility = mix(surfaceVisibility, 1.0, 0.25 * clamp(subsurface.a, 0.0, 1.0));
+                    return surfaceLighting * surfaceVisibility + subsurfaceLighting * scatteringVisibility;
                 }
             )";
 

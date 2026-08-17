@@ -1129,6 +1129,62 @@ namespace PlutoGE::scene
         return changedCount;
     }
 
+    std::size_t FoliageComponent::SnapSelectedTypeInstancesToSurface(
+        const std::function<float(float, float)> &sampleTerrainHeight)
+    {
+        auto *type = GetSelectedType();
+        if (!type || !sampleTerrainHeight)
+        {
+            return 0;
+        }
+
+        std::size_t changedCount = 0;
+        for (auto &instance : type->instances)
+        {
+            const float height = sampleTerrainHeight(instance.position.x, instance.position.z);
+            if (instance.position.y != height)
+            {
+                instance.position.y = height;
+                ++changedCount;
+            }
+        }
+
+        if (changedCount > 0)
+        {
+            MarkInstancesDirty();
+        }
+        return changedCount;
+    }
+
+    std::size_t FoliageComponent::SnapAllInstancesToSurface(
+        const std::function<float(float, float)> &sampleTerrainHeight)
+    {
+        if (!sampleTerrainHeight)
+        {
+            return 0;
+        }
+
+        std::size_t changedCount = 0;
+        for (auto &type : m_types)
+        {
+            for (auto &instance : type.instances)
+            {
+                const float height = sampleTerrainHeight(instance.position.x, instance.position.z);
+                if (instance.position.y != height)
+                {
+                    instance.position.y = height;
+                    ++changedCount;
+                }
+            }
+        }
+
+        if (changedCount > 0)
+        {
+            MarkInstancesDirty();
+        }
+        return changedCount;
+    }
+
     bool FoliageComponent::RemoveSelectedTypeInstance(std::size_t instanceIndex)
     {
         auto *type = GetSelectedType();

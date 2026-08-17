@@ -148,6 +148,8 @@ namespace PlutoGE::scene
                                               const glm::vec3 &rotationDegrees,
                                               const glm::vec3 &scale);
         std::size_t SetSelectedTypeInstancesScale(const glm::vec3 &scale);
+        std::size_t SnapSelectedTypeInstancesToSurface(const std::function<float(float, float)> &sampleTerrainHeight);
+        std::size_t SnapAllInstancesToSurface(const std::function<float(float, float)> &sampleTerrainHeight);
         bool RemoveSelectedTypeInstance(std::size_t instanceIndex);
         std::size_t GetTotalInstanceCount() const;
         std::size_t GetSelectedTypeInstanceCount() const;

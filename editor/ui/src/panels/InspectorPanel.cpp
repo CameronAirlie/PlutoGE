@@ -5388,6 +5388,44 @@ namespace PlutoGE::ui
                                 editorShell.MarkSceneDirty();
                             }
                             ImGui::EndDisabled();
+
+                            auto *terrainComponent = entity->GetComponent<scene::TerrainComponent>();
+                            ImGui::BeginDisabled(terrainComponent == nullptr || foliageComponent->GetSelectedTypeInstanceCount() == 0);
+                            if (ImGui::Button("Snap Selected Type To Terrain"))
+                            {
+                                const std::size_t changedCount = foliageComponent->SnapSelectedTypeInstancesToSurface(
+                                    [terrainComponent](float localX, float localZ)
+                                    {
+                                        return terrainComponent->GetHeightAtLocalPosition(localX, localZ);
+                                    });
+                                if (changedCount > 0)
+                                {
+                                    entity->AddPrefabOverride("Component:FoliageComponent:Type." + std::to_string(selectedTypeIndex) + ".Instances");
+                                    entity->AddPrefabOverride("Component:FoliageComponent:Instances");
+                                    editorShell.MarkSceneDirty();
+                                }
+                                editorShell.Log(EditorShell::ConsoleSeverity::Info,
+                                                "Snapped " + std::to_string(changedCount) + " foliage instances to the terrain.");
+                            }
+                            ImGui::EndDisabled();
+                            ImGui::SameLine();
+                            ImGui::BeginDisabled(terrainComponent == nullptr || foliageComponent->GetTotalInstanceCount() == 0);
+                            if (ImGui::Button("Snap All To Terrain"))
+                            {
+                                const std::size_t changedCount = foliageComponent->SnapAllInstancesToSurface(
+                                    [terrainComponent](float localX, float localZ)
+                                    {
+                                        return terrainComponent->GetHeightAtLocalPosition(localX, localZ);
+                                    });
+                                if (changedCount > 0)
+                                {
+                                    entity->AddPrefabOverride("Component:FoliageComponent:Instances");
+                                    editorShell.MarkSceneDirty();
+                                }
+                                editorShell.Log(EditorShell::ConsoleSeverity::Info,
+                                                "Snapped " + std::to_string(changedCount) + " foliage instances to the terrain.");
+                            }
+                            ImGui::EndDisabled();
                             ImGui::SameLine();
                             ImGui::BeginDisabled(foliageComponent->GetTotalInstanceCount() == 0);
                             if (ImGui::Button("Clear All Foliage"))

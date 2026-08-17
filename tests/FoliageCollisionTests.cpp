@@ -65,5 +65,40 @@ int main()
         std::cerr << "Foliage collision inherited render or owner scale.\n";
         return 1;
     }
+
+    type.instances.front().position = {2.0f, -4.0f, 3.0f};
+    type.instances.front().rotationDegrees = {1.0f, 2.0f, 3.0f};
+    type.instances.front().scale = {0.5f, 0.75f, 1.0f};
+    const std::uint64_t revisionBeforeSelectedSnap = foliage->GetRevision();
+    const std::size_t selectedSnapCount = foliage->SnapSelectedTypeInstancesToSurface(
+        [](float x, float z)
+        {
+            return x + z;
+        });
+    if (selectedSnapCount != 1 || type.instances.front().position != glm::vec3(2.0f, 5.0f, 3.0f) ||
+        type.instances.front().rotationDegrees != glm::vec3(1.0f, 2.0f, 3.0f) ||
+        type.instances.front().scale != glm::vec3(0.5f, 0.75f, 1.0f) ||
+        foliage->GetRevision() == revisionBeforeSelectedSnap)
+    {
+        std::cerr << "Selected foliage type did not snap vertically to the sampled surface.\n";
+        return 1;
+    }
+
+    const std::size_t treeTypeIndex = static_cast<std::size_t>(foliage->GetSelectedTypeIndex());
+    auto &secondType = foliage->AddType("Bush");
+    secondType.instances.push_back(FoliageInstance{.id = 2, .position = {-2.0f, 10.0f, 1.0f}});
+    const std::size_t allSnapCount = foliage->SnapAllInstancesToSurface(
+        [](float x, float z)
+        {
+            return x * z;
+        });
+    const auto *snappedTreeType = foliage->GetType(treeTypeIndex);
+    const auto *snappedBushType = foliage->GetSelectedType();
+    if (allSnapCount != 2 || !snappedTreeType || !snappedBushType ||
+        snappedTreeType->instances.front().position.y != 6.0f || snappedBushType->instances.front().position.y != -2.0f)
+    {
+        std::cerr << "All foliage types did not snap to the sampled surface.\n";
+        return 1;
+    }
     return 0;
 }

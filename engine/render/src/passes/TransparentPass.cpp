@@ -64,9 +64,7 @@ namespace PlutoGE::render
 
             instances.reserve(instances.size() + command.instanceModels->size());
             for (const auto &model : *command.instanceModels)
-            {
                 instances.push_back(TransparentInstanceData{.model = model});
-            }
         }
 
         void ConfigureMatrixAttributes(unsigned int baseLocation, std::size_t offset, std::size_t stride)

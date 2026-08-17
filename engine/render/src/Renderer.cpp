@@ -81,24 +81,6 @@ namespace PlutoGE::render
             return planes;
         }
 
-        bool IsRenderCommandVisible(const RenderCommand &command, const std::array<FrustumPlane, 6> &planes)
-        {
-            if (!command.mesh)
-            {
-                return false;
-            }
-
-            for (const auto &plane : planes)
-            {
-                if (glm::dot(plane.normal, command.worldBounds.center) + plane.distance < -command.worldBounds.radius)
-                {
-                    return false;
-                }
-            }
-
-            return true;
-        }
-
         bool PassesStaticProjectedSizeCull(
             const RenderCommand &command,
             const glm::vec3 &cameraPosition,
@@ -156,6 +138,28 @@ namespace PlutoGE::render
             return true;
         }
 
+        enum class FrustumContainment
+        {
+            Outside,
+            Intersecting,
+            Inside,
+        };
+
+        FrustumContainment ClassifyBounds(const MeshBounds &bounds, const std::array<FrustumPlane, 6> &planes)
+        {
+            bool intersects = false;
+            for (const auto &plane : planes)
+            {
+                const float signedDistance = glm::dot(plane.normal, bounds.center) + plane.distance;
+                if (signedDistance < -bounds.radius)
+                {
+                    return FrustumContainment::Outside;
+                }
+                intersects |= signedDistance < bounds.radius;
+            }
+            return intersects ? FrustumContainment::Intersecting : FrustumContainment::Inside;
+        }
+
         bool PassesBoundsDistanceCull(const MeshBounds &bounds, const glm::vec3 &cameraPosition, float maxDistance)
         {
             if (maxDistance <= 0.0f || maxDistance == std::numeric_limits<float>::max())
@@ -167,11 +171,25 @@ namespace PlutoGE::render
             return glm::dot(offset, offset) <= maxCenterDistance * maxCenterDistance;
         }
 
+        bool IsBoundsFullyInsideDistanceCull(const MeshBounds &bounds, const glm::vec3 &cameraPosition, float maxDistance)
+        {
+            if (maxDistance <= 0.0f || maxDistance == std::numeric_limits<float>::max())
+            {
+                return true;
+            }
+            const float maximumCenterDistance = std::max(maxDistance - std::max(bounds.radius, 0.0f), 0.0f);
+            const glm::vec3 offset = bounds.center - cameraPosition;
+            return glm::dot(offset, offset) <= maximumCenterDistance * maximumCenterDistance;
+        }
+
         RenderCommand CullRenderCommandInstances(
             const RenderCommand &command,
             const glm::vec3 &cameraPosition,
             float maxDistance,
-            const std::array<FrustumPlane, 6> *frustumPlanes)
+            const std::array<FrustumPlane, 6> *frustumPlanes,
+            bool fullyInsideFrustum,
+            const std::shared_ptr<std::vector<glm::mat4>> &modelScratch,
+            const std::shared_ptr<std::vector<glm::mat4>> &previousModelScratch)
         {
             if (!command.mesh || !command.instanceModels || command.instanceModels->empty() ||
                 command.submeshIndex >= command.mesh->GetSubmeshCount())
@@ -179,9 +197,18 @@ namespace PlutoGE::render
                 return command;
             }
 
+            // Foliage and other static instance producers submit spatially coherent
+            // clusters with conservative aggregate bounds. Most clusters are wholly
+            // inside the camera volume, so avoid transforming and testing every
+            // member unless the aggregate sphere crosses a culling boundary.
+            if (fullyInsideFrustum &&
+                IsBoundsFullyInsideDistanceCull(command.worldBounds, cameraPosition, maxDistance))
+            {
+                return command;
+            }
+
             const auto &sourceBounds = command.mesh->GetSubmesh(command.submeshIndex).bounds;
-            std::shared_ptr<std::vector<glm::mat4>> visibleModels;
-            std::shared_ptr<std::vector<glm::mat4>> visiblePreviousModels;
+            bool hasRejectedInstance = false;
 
             for (std::size_t index = 0; index < command.instanceModels->size(); ++index)
             {
@@ -190,46 +217,44 @@ namespace PlutoGE::render
                 if ((frustumPlanes && !IsBoundsVisible(instanceBounds, *frustumPlanes)) ||
                     !PassesBoundsDistanceCull(instanceBounds, cameraPosition, maxDistance))
                 {
-                    if (!visibleModels)
+                    if (!hasRejectedInstance)
                     {
-                        visibleModels = std::make_shared<std::vector<glm::mat4>>();
-                        visibleModels->reserve(command.instanceModels->size());
-                        visibleModels->insert(visibleModels->end(), command.instanceModels->begin(), command.instanceModels->begin() + index);
+                        hasRejectedInstance = true;
+                        modelScratch->clear();
+                        modelScratch->reserve(command.instanceModels->size());
+                        previousModelScratch->clear();
                         if (command.previousInstanceModels)
+                            previousModelScratch->reserve(command.instanceModels->size());
+                        for (std::size_t prefixIndex = 0; prefixIndex < index; ++prefixIndex)
                         {
-                            visiblePreviousModels = std::make_shared<std::vector<glm::mat4>>();
-                            visiblePreviousModels->reserve(command.instanceModels->size());
-                            for (std::size_t prefixIndex = 0; prefixIndex < index; ++prefixIndex)
-                            {
-                                visiblePreviousModels->push_back(prefixIndex < command.previousInstanceModels->size()
-                                                                     ? (*command.previousInstanceModels)[prefixIndex]
-                                                                     : (*command.instanceModels)[prefixIndex]);
-                            }
+                            modelScratch->push_back((*command.instanceModels)[prefixIndex]);
+                            if (command.previousInstanceModels)
+                                previousModelScratch->push_back(prefixIndex < command.previousInstanceModels->size()
+                                                                    ? (*command.previousInstanceModels)[prefixIndex]
+                                                                    : (*command.instanceModels)[prefixIndex]);
                         }
                     }
                     continue;
                 }
 
-                if (visibleModels)
+                if (hasRejectedInstance)
                 {
-                    visibleModels->push_back(model);
-                    if (visiblePreviousModels)
-                    {
-                        visiblePreviousModels->push_back(index < command.previousInstanceModels->size()
-                                                             ? (*command.previousInstanceModels)[index]
-                                                             : model);
-                    }
+                    modelScratch->push_back(model);
+                    if (command.previousInstanceModels)
+                        previousModelScratch->push_back(index < command.previousInstanceModels->size()
+                                                            ? (*command.previousInstanceModels)[index]
+                                                            : model);
                 }
             }
 
-            if (!visibleModels)
+            if (!hasRejectedInstance)
             {
                 return command;
             }
 
             RenderCommand culled = command;
-            culled.instanceModels = std::move(visibleModels);
-            culled.previousInstanceModels = std::move(visiblePreviousModels);
+            culled.instanceModels = modelScratch;
+            culled.previousInstanceModels = command.previousInstanceModels ? previousModelScratch : nullptr;
             return culled;
         }
 
@@ -815,6 +840,7 @@ namespace PlutoGE::render
         const auto visibilityStart = commandSortEnd;
         m_visibleRenderCommands.clear();
         m_visibleRenderCommands.reserve(m_renderCommands.size());
+        std::size_t visibleInstanceScratchCursor = 0;
         const auto frustumPlanes = ExtractFrustumPlanes(activeCameraData.projection * activeCameraData.view);
         const glm::vec3 cameraPosition = glm::vec3(glm::inverse(activeCameraData.view)[3]);
         const float projectionScaleY = std::abs(activeCameraData.projection[1][1]);
@@ -823,12 +849,28 @@ namespace PlutoGE::render
         m_cpuFrameStats.visibleMultiLodCommandCount = 0;
         for (const auto &command : m_renderCommands)
         {
-            if (IsRenderCommandVisible(command, frustumPlanes) &&
+            const FrustumContainment containment = command.mesh
+                                                       ? ClassifyBounds(command.worldBounds, frustumPlanes)
+                                                       : FrustumContainment::Outside;
+            if (containment != FrustumContainment::Outside &&
                 PassesDistanceCull(command, cameraPosition, command.maxDrawDistance) &&
                 PassesStaticProjectedSizeCull(command, cameraPosition, projectionScaleY, halfViewportHeight))
             {
+                if (visibleInstanceScratchCursor == m_visibleInstanceModelPool.size())
+                {
+                    m_visibleInstanceModelPool.push_back(std::make_shared<std::vector<glm::mat4>>());
+                    m_visiblePreviousInstanceModelPool.push_back(std::make_shared<std::vector<glm::mat4>>());
+                }
+                const auto &modelScratch = m_visibleInstanceModelPool[visibleInstanceScratchCursor];
+                const auto &previousModelScratch = m_visiblePreviousInstanceModelPool[visibleInstanceScratchCursor++];
                 RenderCommand visibleCommand = CullRenderCommandInstances(
-                    command, cameraPosition, command.maxDrawDistance, &frustumPlanes);
+                    command,
+                    cameraPosition,
+                    command.maxDrawDistance,
+                    &frustumPlanes,
+                    containment == FrustumContainment::Inside,
+                    modelScratch,
+                    previousModelScratch);
                 if (visibleCommand.instanceModels && visibleCommand.instanceModels->empty())
                 {
                     continue;

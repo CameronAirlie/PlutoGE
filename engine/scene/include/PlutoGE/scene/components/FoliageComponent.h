@@ -121,6 +121,17 @@ namespace PlutoGE::scene
         int GetMinShadowLod() const { return m_minShadowLod; }
         void SetCastShadows(bool castShadows);
         bool GetCastShadows() const { return m_castShadows; }
+        void SetStatic(bool isStatic)
+        {
+            if (m_isStatic == isStatic)
+                return;
+            m_isStatic = isStatic;
+            MarkRenderCommandsDirty();
+        }
+        bool IsStatic() const { return m_isStatic; }
+        std::vector<std::size_t> GetBakeSubmeshes(std::size_t typeIndex) const;
+        render::Material *GetBakeMaterial(std::size_t typeIndex, std::size_t submeshIndex) const;
+        glm::mat4 GetBakeInstanceTransform(std::size_t typeIndex, std::size_t instanceIndex) const;
 
         bool ApplyBrushAtWorldPosition(
             const glm::vec3 &worldPosition,
@@ -209,5 +220,6 @@ namespace PlutoGE::scene
         int m_minRenderLod = 2;
         int m_minShadowLod = 3;
         bool m_castShadows = false;
+        bool m_isStatic = true;
     };
 }

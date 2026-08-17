@@ -67,6 +67,10 @@ namespace PlutoGE::scene
         int GetChunkSize() const { return m_chunkSize; }
         void SetLodCount(int lodCount);
         int GetLodCount() const { return m_lodCount; }
+        void SetStatic(bool isStatic) { m_isStatic = isStatic; }
+        bool IsStatic() const { return m_isStatic; }
+        render::Mesh *GetMeshForBaking();
+        render::Material *CreateUniqueMaterialForBaking();
 
         void SetMaterial(render::Material *material);
         render::Material *GetMaterial() const { return m_material; }
@@ -104,6 +108,7 @@ namespace PlutoGE::scene
         float m_surfaceSmoothing = 0.35f;
         int m_chunkSize = 32;
         int m_lodCount = 4;
+        bool m_isStatic = false;
         std::vector<float> m_heights;
 
         std::unique_ptr<render::Mesh> m_mesh;

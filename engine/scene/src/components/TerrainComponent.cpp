@@ -209,13 +209,26 @@ namespace PlutoGE::scene
             command.worldBounds = ComputeWorldBounds(*m_mesh, submeshIndex, modelMatrix);
             command.previousWorldBounds = ComputeWorldBounds(*m_mesh, submeshIndex, command.previousModel);
             command.submeshIndex = static_cast<uint32_t>(submeshIndex);
-            command.isStatic = false;
+            command.isStatic = m_isStatic;
             command.usePrimaryUvForLightmap = true;
             renderer.SubmitRenderCommand(command);
         }
 
         m_previousModelMatrix = modelMatrix;
         m_hasPreviousModelMatrix = true;
+    }
+
+    render::Mesh *TerrainComponent::GetMeshForBaking()
+    {
+        if (m_meshDirty)
+            RebuildMesh();
+        return m_mesh.get();
+    }
+
+    render::Material *TerrainComponent::CreateUniqueMaterialForBaking()
+    {
+        m_material = m_material ? new render::Material(m_material->GetConfig()) : new render::Material();
+        return m_material;
     }
 
     std::vector<Property> TerrainComponent::Serialize() const
@@ -228,6 +241,7 @@ namespace PlutoGE::scene
             {"SurfaceSmoothing", PropertyType::Float, std::to_string(m_surfaceSmoothing)},
             {"ChunkSize", PropertyType::Int, std::to_string(m_chunkSize)},
             {"LodCount", PropertyType::Int, std::to_string(m_lodCount)},
+            {"Static", PropertyType::Bool, m_isStatic ? "true" : "false"},
             {"HeightMap", PropertyType::String, m_heightMapPath},
             {"HeightSamples", PropertyType::String, SerializeHeightSamples(m_heights)},
             {"MaterialAsset", PropertyType::String, m_materialAssetReference},
@@ -262,6 +276,8 @@ namespace PlutoGE::scene
                 m_chunkSize = std::max(2, std::stoi(property.value));
             else if (property.name == "LodCount")
                 m_lodCount = glm::clamp(std::stoi(property.value), 1, 6);
+            else if (property.name == "Static")
+                m_isStatic = property.value == "true" || property.value == "1";
             else if (property.name == "HeightMap")
                 heightMapPath = property.value;
             else if (property.name == "HeightSamples")

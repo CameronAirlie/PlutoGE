@@ -54,7 +54,7 @@ namespace PlutoGE::render
             const float packedLod = static_cast<float>(lodIndex) +
                                     (incomingLod ? 0.5f + lodFade * 0.25f : lodFade * 0.25f);
             return glm::vec4(
-                command.isStatic ? 1.0f : 0.0f,
+                command.isStatic && command.material && command.material->GetConfig().lightmapTexture ? 1.0f : 0.0f,
                 command.usePrimaryUvForLightmap ? 1.0f : 0.0f,
                 packedLod,
                 lodMaxIndex);

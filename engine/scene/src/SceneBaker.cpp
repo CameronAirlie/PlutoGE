@@ -8,6 +8,8 @@
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
+#include "PlutoGE/scene/components/TerrainComponent.h"
+#include "PlutoGE/scene/components/FoliageComponent.h"
 
 #include <algorithm>
 #include <array>
@@ -267,6 +269,15 @@ namespace PlutoGE::scene
                 {
                     return true;
                 }
+                const auto *foliageComponent = entity ? entity->GetComponent<FoliageComponent>() : nullptr;
+                if (foliageComponent && foliageComponent->IsEnabled() &&
+                    foliageComponent->GetTotalInstanceCount() > 0)
+                {
+                    // Instanced foliage cannot share a conventional lightmap
+                    // atlas, so it receives baked irradiance from probes even
+                    // when its geometry is marked Static.
+                    return true;
+                }
             }
 
             return false;
@@ -321,6 +332,8 @@ namespace PlutoGE::scene
         struct BakeTarget
         {
             MeshComponent *meshComponent = nullptr;
+            TerrainComponent *terrainComponent = nullptr;
+            render::Mesh *mesh = nullptr;
             std::size_t submeshIndex = 0;
             uint32_t materialSlot = 0;
             std::vector<std::size_t> triangleIndices;
@@ -333,6 +346,8 @@ namespace PlutoGE::scene
             bool hasOverlappingUvCharts = false;
             glm::vec4 lightmapUvTransform{1.0f, 1.0f, 0.0f, 0.0f};
         };
+
+        using BakeTargetKey = std::pair<const void *, std::size_t>;
 
         struct RasterizedBakeTriangle
         {
@@ -422,11 +437,11 @@ namespace PlutoGE::scene
             std::chrono::steady_clock::time_point bakeStartTime;
             std::vector<BakeLight> lights;
             std::vector<BakeTriangle> triangles;
-            std::map<std::pair<MeshComponent *, std::size_t>, BakeTarget> targets;
+            std::map<BakeTargetKey, BakeTarget> targets;
             BakeAccelerationStructure acceleration;
             std::unordered_map<render::Texture *, CpuTextureData> albedoTextureCache;
             std::vector<glm::vec3> indirectBounceDirections;
-            std::map<std::pair<MeshComponent *, std::size_t>, GpuBakedLightmap> gpuLightmaps;
+            std::map<BakeTargetKey, GpuBakedLightmap> gpuLightmaps;
             bool gpuBakeActive = false;
             bool gpuGiActive = false;
             bool shouldStoreProbeVolume = false;
@@ -1757,6 +1772,8 @@ namespace PlutoGE::scene
                 // so Ultra retains the previous 256-sample command size.
                 constexpr std::size_t kMinGpuBakeChunkSize = 256;
                 constexpr std::size_t kMaxGpuBakeChunkSize = 8192;
+                constexpr std::size_t kLargeSceneGpuBakeChunkSize = 2048;
+                constexpr std::size_t kLargeSceneTriangleThreshold = 250000;
                 constexpr std::size_t kGpuBakeWorkBudget = 256 * 192 * 6;
                 const std::size_t giWorkPerSample = gpuGiEnabled
                                                         ? static_cast<std::size_t>(
@@ -1768,18 +1785,39 @@ namespace PlutoGE::scene
                     kGpuBakeWorkBudget / std::max<std::size_t>(giWorkPerSample, 1),
                     kMinGpuBakeChunkSize,
                     kMaxGpuBakeChunkSize);
-                const std::size_t gpuBakeChunkSize =
-                    std::max(kMinGpuBakeChunkSize, unalignedChunkSize - unalignedChunkSize % 64);
+                const std::size_t sceneChunkLimit = preparedBake.triangles.size() >= kLargeSceneTriangleThreshold
+                                                        ? kLargeSceneGpuBakeChunkSize
+                                                        : kMaxGpuBakeChunkSize;
+                const std::size_t gpuBakeChunkSize = std::min(
+                    sceneChunkLimit,
+                    std::max(kMinGpuBakeChunkSize, unalignedChunkSize - unalignedChunkSize % 64));
                 const GLint sampleOffsetLocation = glGetUniformLocation(program, "uSampleOffset");
                 for (std::size_t sampleOffset = 0; sampleOffset < samples.size(); sampleOffset += gpuBakeChunkSize)
                 {
                     const std::size_t chunkSampleCount = std::min(gpuBakeChunkSize, samples.size() - sampleOffset);
                     glUniform1ui(sampleOffsetLocation, static_cast<GLuint>(sampleOffset));
                     glDispatchCompute(static_cast<GLuint>((chunkSampleCount + 63) / 64), 1, 1);
+                    // Do not leave several seconds of compute queued as one
+                    // uninterrupted submission. On Windows that can trigger
+                    // TDR, particularly on AMD drivers, even though each
+                    // individual dispatch is reasonably small.
+                    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+                    GLsync dispatchFence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+                    glFlush();
+                    if (dispatchFence)
+                    {
+                        GLenum waitResult = GL_TIMEOUT_EXPIRED;
+                        while (waitResult == GL_TIMEOUT_EXPIRED)
+                        {
+                            waitResult = glClientWaitSync(
+                                dispatchFence, GL_SYNC_FLUSH_COMMANDS_BIT, 100000000ull);
+                        }
+                        glDeleteSync(dispatchFence);
+                    }
                 }
                 // Dispatches are ordered and write disjoint result ranges. A
                 // single barrier is sufficient before the blocking readback.
-                glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
+                glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_BUFFER_UPDATE_BARRIER_BIT);
 
                 std::vector<GpuBakeResult> results(samples.size());
                 glBindBuffer(GL_SHADER_STORAGE_BUFFER, buffers[3]);
@@ -2827,7 +2865,7 @@ namespace PlutoGE::scene
 
         void CollectStaticTriangles(const Scene &scene,
                                     std::vector<BakeTriangle> &triangles,
-                                    std::map<std::pair<MeshComponent *, std::size_t>, BakeTarget> &targets,
+                                    std::map<BakeTargetKey, BakeTarget> &targets,
                                     const std::filesystem::path &outputDirectory,
                                     int lightmapResolution)
         {
@@ -2842,8 +2880,116 @@ namespace PlutoGE::scene
                 }
             }
 
+            const auto appendOccluderSubmesh = [&](render::Mesh &mesh,
+                                                    std::size_t submeshIndex,
+                                                    render::Material &material,
+                                                    const glm::mat4 &worldTransform,
+                                                    bool castsShadow,
+                                                    BakeTarget *target = nullptr)
+            {
+                if (material.GetConfig().alphaMode == render::AlphaMode::Blend ||
+                    submeshIndex >= mesh.GetSubmeshCount())
+                    return;
+                const auto &meshData = mesh.GetMeshData();
+                const auto &submesh = mesh.GetSubmesh(submeshIndex);
+                if (submesh.indexCount < 3)
+                    return;
+                const glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(worldTransform)));
+                for (uint32_t triangleOffset = 0; triangleOffset + 2 < submesh.indexCount; triangleOffset += 3)
+                {
+                    BakeTriangle triangle;
+                    glm::vec3 localPositions[3]{};
+                    triangle.materialSlot = submesh.materialIndex;
+                    triangle.baseColor = glm::vec3(material.GetConfig().color);
+                    triangle.baseAlpha = glm::clamp(material.GetConfig().color.a, 0.0f, 1.0f);
+                    triangle.albedoTexture = material.GetConfig().albedoTexture;
+                    triangle.castsShadow = castsShadow && material.GetConfig().castsShadow;
+                    triangle.alphaMode = material.GetConfig().alphaMode;
+                    triangle.alphaCutoff = material.GetConfig().alphaCutoff;
+                    bool validTriangle = true;
+                    for (int vertexIndex = 0; vertexIndex < 3; ++vertexIndex)
+                    {
+                        const auto sourceIndex = meshData.indices[
+                            submesh.indexOffset + triangleOffset + static_cast<uint32_t>(vertexIndex)];
+                        if (sourceIndex >= meshData.vertices.size())
+                        {
+                            validTriangle = false;
+                            break;
+                        }
+                        const auto &sourceVertex = meshData.vertices[sourceIndex];
+                        localPositions[vertexIndex] = glm::vec3(sourceVertex.position[0], sourceVertex.position[1],
+                                                                sourceVertex.position[2]);
+                        triangle.worldPositions[vertexIndex] = glm::vec3(
+                            worldTransform * glm::vec4(sourceVertex.position[0], sourceVertex.position[1],
+                                                       sourceVertex.position[2], 1.0f));
+                        triangle.worldNormals[vertexIndex] = NormalizeOr(
+                            normalMatrix * glm::vec3(sourceVertex.normal[0], sourceVertex.normal[1],
+                                                     sourceVertex.normal[2]), glm::vec3(0.0f));
+                        triangle.primaryUvs[vertexIndex] =
+                            glm::vec2(sourceVertex.uv[0], sourceVertex.uv[1]) * material.GetConfig().uvScale;
+                        triangle.lightmapUvs[vertexIndex] = glm::vec2(sourceVertex.uv[0], sourceVertex.uv[1]);
+                    }
+                    if (!validTriangle)
+                        continue;
+                    const glm::vec3 geometricNormal = ComputeTriangleNormal(triangle);
+                    for (auto &worldNormal : triangle.worldNormals)
+                        worldNormal = NormalizeOr(worldNormal, geometricNormal);
+                    if (target)
+                    {
+                        target->localSurfaceArea += glm::length(glm::cross(
+                            localPositions[1] - localPositions[0], localPositions[2] - localPositions[0])) * 0.5f;
+                        target->worldSurfaceArea += glm::length(glm::cross(
+                            triangle.worldPositions[1] - triangle.worldPositions[0],
+                            triangle.worldPositions[2] - triangle.worldPositions[0])) * 0.5f;
+                        target->triangleIndices.push_back(triangles.size());
+                    }
+                    triangles.push_back(triangle);
+                }
+            };
+
             for (const auto *entity : entities)
             {
+                auto *mutableEntity = const_cast<Entity *>(entity);
+                if (auto *terrain = mutableEntity->GetComponent<TerrainComponent>();
+                    terrain && terrain->IsEnabled() && terrain->IsStatic() && terrain->GetMaterial())
+                {
+                    if (auto *terrainMesh = terrain->GetMeshForBaking())
+                    {
+                        const BakeTargetKey targetKey{terrain, 0};
+                        auto &terrainTarget = targets[targetKey];
+                        terrainTarget.terrainComponent = terrain;
+                        terrainTarget.mesh = terrainMesh;
+                        terrainTarget.outputPath = outputDirectory /
+                            ("lightmap_terrain_entity_" + std::to_string(entity->GetID()) + ".pfm");
+                        terrainTarget.resolution = lightmapResolution;
+                        for (std::size_t submeshIndex = 0; submeshIndex < terrainMesh->GetSubmeshCount(); ++submeshIndex)
+                            appendOccluderSubmesh(*terrainMesh, submeshIndex, *terrain->GetMaterial(),
+                                                  entity->GetWorldTransform(), true, &terrainTarget);
+                    }
+                }
+
+                if (auto *foliage = mutableEntity->GetComponent<FoliageComponent>();
+                    foliage && foliage->IsEnabled() && foliage->IsStatic())
+                {
+                    for (std::size_t typeIndex = 0; typeIndex < foliage->GetTypeCount(); ++typeIndex)
+                    {
+                        const auto *type = foliage->GetType(typeIndex);
+                        if (!type || !type->mesh)
+                            continue;
+                        const auto submeshes = foliage->GetBakeSubmeshes(typeIndex);
+                        for (std::size_t instanceIndex = 0; instanceIndex < type->instances.size(); ++instanceIndex)
+                        {
+                            const glm::mat4 instanceTransform = foliage->GetBakeInstanceTransform(typeIndex, instanceIndex);
+                            for (const auto submeshIndex : submeshes)
+                            {
+                                if (auto *material = foliage->GetBakeMaterial(typeIndex, submeshIndex))
+                                    appendOccluderSubmesh(*type->mesh, submeshIndex, *material,
+                                                          instanceTransform, foliage->GetCastShadows());
+                            }
+                        }
+                    }
+                }
+
                 auto *meshComponent = const_cast<Entity *>(entity)->GetComponent<MeshComponent>();
                 if (!meshComponent || !meshComponent->IsEnabled() || !meshComponent->IsStatic() || !meshComponent->GetMesh())
                 {
@@ -2877,6 +3023,7 @@ namespace PlutoGE::scene
                         const auto targetKey = std::make_pair(meshComponent, submeshIndex);
                         auto &targetEntry = targets[targetKey];
                         targetEntry.meshComponent = meshComponent;
+                        targetEntry.mesh = meshComponent->GetMesh();
                         targetEntry.submeshIndex = submeshIndex;
                         targetEntry.materialSlot = submesh.materialIndex;
                         targetEntry.outputPath = outputDirectory / ("lightmap_entity_" + std::to_string(entity->GetID()) + "_submesh_" + std::to_string(submeshIndex) + ".pfm");
@@ -3126,17 +3273,20 @@ namespace PlutoGE::scene
         }
 
         size_t GenerateFallbackLightmapUvAtlases(
-            std::map<std::pair<MeshComponent *, std::size_t>, BakeTarget> &targets,
+            std::map<BakeTargetKey, BakeTarget> &targets,
             const std::vector<BakeTriangle> &triangles)
         {
             std::map<MeshComponent *, std::vector<size_t>> invalidSubmeshes;
-            for (const auto &[targetKey, target] : targets)
+            for (auto &[targetKey, target] : targets)
             {
                 static_cast<void>(targetKey);
                 if (!target.uvCoordinatesInRange ||
                     BakeTargetHasOverlappingUvs(target, triangles))
                 {
-                    invalidSubmeshes[target.meshComponent].push_back(target.submeshIndex);
+                    if (target.meshComponent)
+                        invalidSubmeshes[target.meshComponent].push_back(target.submeshIndex);
+                    else
+                        target.hasOverlappingUvCharts = true;
                 }
             }
 
@@ -3668,8 +3818,8 @@ namespace PlutoGE::scene
                     denoiseStart);
                 const auto seamStitchStart = std::chrono::steady_clock::now();
                 if (target.meshComponent &&
-                    target.meshComponent->GetMesh() &&
-                    target.meshComponent->GetMesh()->HasGeneratedLightmapUvsForSubmesh(
+                    target.meshComponent && target.mesh &&
+                    target.mesh->HasGeneratedLightmapUvsForSubmesh(
                         target.submeshIndex))
                 {
                     // The emergency UV generator isolates every triangle in
@@ -3691,8 +3841,8 @@ namespace PlutoGE::scene
                 if (preparedBake.settings.bakeIndirectBounce ||
                     preparedBake.settings.directShadowSampleCount > 1 ||
                     (target.meshComponent &&
-                     target.meshComponent->GetMesh() &&
-                     target.meshComponent->GetMesh()->HasGeneratedLightmapUvsForSubmesh(
+                     target.meshComponent && target.mesh &&
+                     target.mesh->HasGeneratedLightmapUvsForSubmesh(
                          target.submeshIndex)))
                 {
                     for (std::size_t pixelIndex = 0; pixelIndex < bakedPixels.size(); ++pixelIndex)
@@ -3893,7 +4043,16 @@ namespace PlutoGE::scene
                     continue;
                 }
 
-                auto *material = lightmap.target.meshComponent->CreateUniqueMaterialForSubmesh(lightmap.target.submeshIndex);
+                auto *material = lightmap.target.meshComponent
+                                     ? lightmap.target.meshComponent->CreateUniqueMaterialForSubmesh(lightmap.target.submeshIndex)
+                                     : lightmap.target.terrainComponent
+                                           ? lightmap.target.terrainComponent->CreateUniqueMaterialForBaking()
+                                           : nullptr;
+                if (!material)
+                {
+                    ++failedLightmapLoads;
+                    continue;
+                }
                 material->SetLightmapTexture(lightmapTexture);
                 material->SetLightmapUvTransform(lightmap.target.lightmapUvTransform);
                 ++bakedLightmapCount;

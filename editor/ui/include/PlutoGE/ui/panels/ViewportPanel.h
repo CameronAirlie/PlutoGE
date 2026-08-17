@@ -51,6 +51,7 @@ namespace PlutoGE::ui
         glm::vec2 GetViewportMin() const { return m_viewportMin; }
         glm::vec2 GetViewportSize() const { return m_viewportSize; }
         void SetPanelControlsEnabled(bool enabled) { m_panelControlsEnabled = enabled; }
+        void SetEditorMovementEnabled(bool enabled) { m_editorMovementEnabled = enabled; }
         void SetEditorCameraData(const render::CameraData &cameraData);
         void ClearEditorCameraData();
         static const char *GetDebugViewLabel(render::PostProcessDebugView debugView);
@@ -87,6 +88,7 @@ namespace PlutoGE::ui
         bool m_isSplinePointGizmoUsing = false;
         bool m_isOceanPointGizmoUsing = false;
         bool m_panelControlsEnabled = true;
+        bool m_editorMovementEnabled = false;
         bool m_hasEditorCameraData = false;
         render::CameraData m_editorCameraData{};
         glm::vec2 m_viewportMin{0.0f};
@@ -99,5 +101,13 @@ namespace PlutoGE::ui
         int m_selectedOceanPointIndex = -1;
         bool m_splinePointEditActive = false;
         bool m_oceanPointEditActive = false;
+        uint32_t m_resizeHandleEntityId = 0;
+        int m_resizeHandleTarget = 0;
+        int m_resizeHandleAxis = -1;
+        int m_resizeHandleSign = 1;
+        glm::vec2 m_resizeHandleStartMouse{0.0f};
+        glm::vec2 m_resizeHandleScreenDirection{1.0f, 0.0f};
+        glm::vec3 m_resizeHandleStartSize{1.0f};
+        float m_resizeHandleStartHalfPixels = 1.0f;
     };
 }

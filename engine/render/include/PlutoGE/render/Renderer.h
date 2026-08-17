@@ -383,6 +383,8 @@ namespace PlutoGE::render
         std::vector<std::size_t> m_cachedSubmissionSortPermutation;
         std::vector<DecalCommand> m_decalCommands;
         std::vector<RenderCommand> m_visibleRenderCommands;
+        std::vector<std::shared_ptr<std::vector<glm::mat4>>> m_visibleInstanceModelPool;
+        std::vector<std::shared_ptr<std::vector<glm::mat4>>> m_visiblePreviousInstanceModelPool;
         std::vector<SubmissionFrustum> m_submissionFrustums;
         std::unordered_map<const RenderTarget *, std::unique_ptr<FrameResources>> m_frameResources;
         std::vector<CpuPassTiming> m_cpuPassTimings;

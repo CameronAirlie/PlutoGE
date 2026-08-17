@@ -551,6 +551,29 @@ namespace PlutoGE::scene
         core::Engine::GetInstance().GetRenderer().SubmitSortedRenderCommands(m_cachedRenderCommands, true);
     }
 
+    std::vector<std::size_t> FoliageComponent::GetBakeSubmeshes(std::size_t typeIndex) const
+    {
+        const auto *type = GetType(typeIndex);
+        return type ? ResolveSelectedSubmeshes(*type) : std::vector<std::size_t>{};
+    }
+
+    render::Material *FoliageComponent::GetBakeMaterial(std::size_t typeIndex, std::size_t submeshIndex) const
+    {
+        const auto *type = GetType(typeIndex);
+        return type ? GetMaterialForTypeSubmesh(*type, submeshIndex) : nullptr;
+    }
+
+    glm::mat4 FoliageComponent::GetBakeInstanceTransform(std::size_t typeIndex, std::size_t instanceIndex) const
+    {
+        const auto *type = GetType(typeIndex);
+        const auto *owner = GetOwner();
+        if (!type || !type->mesh || !owner || instanceIndex >= type->instances.size())
+            return glm::mat4(1.0f);
+        const auto selectedSubmeshes = ResolveSelectedSubmeshes(*type);
+        const glm::vec3 localOriginOffset = ComputeSubmeshGroupCenterOfMass(*type->mesh, selectedSubmeshes);
+        return ComposeInstanceTransform(owner->GetWorldTransform(), type->instances[instanceIndex], localOriginOffset);
+    }
+
     void FoliageComponent::RebuildRenderCommandCache(const glm::mat4 &ownerTransform)
     {
         m_cachedRenderCommands.clear();
@@ -613,7 +636,7 @@ namespace PlutoGE::scene
                     command.minShadowLodIndex = static_cast<uint32_t>((std::max)(0, m_minShadowLod));
                     command.maxDrawDistance = m_maxDrawDistance;
                     command.maxShadowDistance = m_maxShadowDistance;
-                    command.isStatic = true;
+                    command.isStatic = m_isStatic;
                     command.castsShadow = m_castShadows;
                     command.usePrimaryUvForLightmap = true;
                     m_cachedRenderCommands.push_back(command);
@@ -641,6 +664,7 @@ namespace PlutoGE::scene
             {"MinRenderLod", PropertyType::Int, std::to_string(m_minRenderLod)},
             {"MinShadowLod", PropertyType::Int, std::to_string(m_minShadowLod)},
             {"CastShadows", PropertyType::Bool, m_castShadows ? "true" : "false"},
+            {"Static", PropertyType::Bool, m_isStatic ? "true" : "false"},
             {"SelectedType", PropertyType::Int, std::to_string(m_selectedTypeIndex)},
             {"FoliageTypeCount", PropertyType::Int, std::to_string(m_types.size())},
         };
@@ -702,6 +726,8 @@ namespace PlutoGE::scene
                 SetMinShadowLod(std::stoi(property.value));
             else if (property.name == "CastShadows")
                 SetCastShadows(property.value == "true" || property.value == "1");
+            else if (property.name == "Static")
+                SetStatic(property.value == "true" || property.value == "1");
             else if (property.name == "SelectedType")
                 m_selectedTypeIndex = std::stoi(property.value);
             else if (property.name == "FoliageTypeCount")

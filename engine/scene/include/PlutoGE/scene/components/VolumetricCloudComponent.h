@@ -16,6 +16,7 @@ namespace PlutoGE::scene
         void Deserialize(const std::vector<Property> &properties) override;
 
         const glm::vec3 &GetSize() const { return m_size; }
+        void SetSize(const glm::vec3 &size) { m_size = glm::max(size, glm::vec3(0.01f)); }
         const glm::vec3 &GetWindDirection() const { return m_windDirection; }
         const glm::vec3 &GetCloudColor() const { return m_cloudColor; }
         float GetCoverage() const { return m_coverage; }

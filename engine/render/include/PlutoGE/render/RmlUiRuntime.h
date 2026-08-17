@@ -69,6 +69,7 @@ namespace PlutoGE::render
         static RmlUiRuntime &Get();
 
         bool Initialize(platform::Window &window);
+        void ResetRuntimeState();
         void Shutdown();
         void Render(const scene::Scene &scene, int width, int height, std::uint64_t frameSequence,
                     const glm::mat4 &view, const glm::mat4 &projection,

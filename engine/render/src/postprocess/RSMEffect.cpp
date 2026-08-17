@@ -1267,9 +1267,7 @@ namespace PlutoGE::render
 
             instances.reserve(instances.size() + command.instanceModels->size());
             for (const auto &model : *command.instanceModels)
-            {
                 instances.push_back(CaptureInstanceData{.model = model});
-            }
         };
 
         const auto flushBatch = [&]()

@@ -4755,6 +4755,7 @@ namespace PlutoGE::ui
                         {
                             propertiesProvided = true;
                             properties = {
+                                {"Static", scene::PropertyType::Bool, terrainComponent->IsStatic() ? "true" : "false"},
                                 {"CellSize", scene::PropertyType::Float, std::to_string(terrainComponent->GetCellSize())},
                                 {"HeightScale", scene::PropertyType::Float, std::to_string(terrainComponent->GetHeightScale())},
                                 {"SurfaceSmoothing", scene::PropertyType::Float, std::to_string(terrainComponent->GetSurfaceSmoothing())},
@@ -5065,6 +5066,7 @@ namespace PlutoGE::ui
                         {
                             propertiesProvided = true;
                             properties = {
+                                {"Static", scene::PropertyType::Bool, foliageComponent->IsStatic() ? "true" : "false"},
                                 {"PaintEnabled", scene::PropertyType::Bool, foliageComponent->IsPaintEnabled() ? "true" : "false"},
                                 {"BrushRadius", scene::PropertyType::Float, std::to_string(foliageComponent->GetBrushRadius())},
                                 {"Density", scene::PropertyType::Int, std::to_string(foliageComponent->GetDensity())},
@@ -5656,8 +5658,127 @@ namespace PlutoGE::ui
                             }
 
                             ImGui::PushID(propertyIndex++);
-                            propertiesChanged |= RenderPropertyEditor(property);
+                            bool renderedCustomLightProperty = false;
+                            if (auto *lightComponent = dynamic_cast<scene::LightComponent *>(componentPtr);
+                                lightComponent && lightComponent->GetLight().type == scene::LightType::Directional)
+                            {
+                                const auto showHelp = [](const char *text)
+                                {
+                                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+                                    {
+                                        ImGui::BeginTooltip();
+                                        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 28.0f);
+                                        ImGui::TextUnformatted(text);
+                                        ImGui::PopTextWrapPos();
+                                        ImGui::EndTooltip();
+                                    }
+                                };
+
+                                if (property.name == "Shadow Cascade Count")
+                                {
+                                    ImGui::SeparatorText("Directional Shadow Coverage");
+                                    int value = std::stoi(property.value);
+                                    if (ImGui::SliderInt("Cascade Count", &value, 1, scene::kMaxDirectionalShadowCascades))
+                                    {
+                                        property.value = std::to_string(value);
+                                        propertiesChanged = true;
+                                    }
+                                    showHelp("More cascades preserve detail over a longer distance, but require more shadow-map work.");
+                                    renderedCustomLightProperty = true;
+                                }
+                                else if (property.name == "Shadow Distance (0 = Camera Far)")
+                                {
+                                    float value = std::stof(property.value);
+                                    bool useCameraFarPlane = value <= 0.0f;
+                                    if (ImGui::Checkbox("Use Camera Far Plane", &useCameraFarPlane))
+                                    {
+                                        value = useCameraFarPlane ? 0.0f : 150.0f;
+                                        property.value = std::to_string(value);
+                                        propertiesChanged = true;
+                                    }
+                                    showHelp("When enabled, shadows extend to the active camera's far clipping plane.");
+                                    ImGui::BeginDisabled(useCameraFarPlane);
+                                    if (ImGui::DragFloat("Maximum Shadow Distance", &value, 1.0f, 0.1f, 100000.0f, "%.1f m"))
+                                    {
+                                        property.value = std::to_string(value);
+                                        propertiesChanged = true;
+                                    }
+                                    ImGui::EndDisabled();
+                                    showHelp("The far edge of the last cascade. Shorter distances give nearby shadows more texture detail.");
+                                    renderedCustomLightProperty = true;
+                                }
+                                else if (property.name == "Near Shadow Distance (0 = Auto)")
+                                {
+                                    float value = std::stof(property.value);
+                                    bool automatic = value <= 0.0f;
+                                    if (ImGui::Checkbox("Automatic First Cascade", &automatic))
+                                    {
+                                        value = automatic ? 0.0f : 8.0f;
+                                        property.value = std::to_string(value);
+                                        propertiesChanged = true;
+                                    }
+                                    showHelp("Automatically places the first split using the cascade distribution setting.");
+                                    ImGui::BeginDisabled(automatic);
+                                    if (ImGui::DragFloat("First Cascade Ends At", &value, 0.25f, 0.1f, 100000.0f, "%.1f m"))
+                                    {
+                                        property.value = std::to_string(value);
+                                        propertiesChanged = true;
+                                    }
+                                    ImGui::EndDisabled();
+                                    showHelp("Keep this beyond the player and first-person weapon to give their nearby shadows maximum resolution.");
+                                    renderedCustomLightProperty = true;
+                                }
+                                else if (property.name == "Shadow Split Lambda")
+                                {
+                                    float value = std::stof(property.value);
+                                    if (ImGui::SliderFloat("Cascade Distribution", &value, 0.0f, 1.0f, "%.2f"))
+                                    {
+                                        property.value = std::to_string(value);
+                                        propertiesChanged = true;
+                                    }
+                                    showHelp("0 spreads cascades evenly by distance. 1 concentrates them near the camera for sharper nearby shadows.");
+                                    renderedCustomLightProperty = true;
+                                }
+                                else if (property.name == "Shadow Cascade Blend Distance")
+                                {
+                                    float value = std::stof(property.value);
+                                    if (ImGui::DragFloat("Cascade Transition Width", &value, 0.1f, 0.0f, 1000.0f, "%.1f m"))
+                                    {
+                                        property.value = std::to_string(value);
+                                        propertiesChanged = true;
+                                    }
+                                    showHelp("Width of the cross-fade around cascade boundaries. Increase it if transitions are visible.");
+                                    renderedCustomLightProperty = true;
+                                }
+                            }
+                            if (!renderedCustomLightProperty)
+                            {
+                                propertiesChanged |= RenderPropertyEditor(property);
+                            }
                             ImGui::PopID();
+                        }
+
+                        if (auto *lightComponent = dynamic_cast<scene::LightComponent *>(componentPtr);
+                            lightComponent && lightComponent->GetLight().type == scene::LightType::Directional)
+                        {
+                            const auto &light = lightComponent->GetLight();
+                            const int activeCascadeCount = std::clamp(
+                                light.activeShadowCascadeCount, 0, scene::kMaxDirectionalShadowCascades);
+                            if (activeCascadeCount > 0 && light.shadowCascadeSplits[0] > 0.0f)
+                            {
+                                ImGui::TextDisabled("Active cascade ranges:");
+                                float rangeStart = 0.0f;
+                                for (int cascadeIndex = 0; cascadeIndex < activeCascadeCount; ++cascadeIndex)
+                                {
+                                    ImGui::BulletText("%d: %.1f - %.1f m", cascadeIndex + 1,
+                                                      rangeStart, light.shadowCascadeSplits[cascadeIndex]);
+                                    rangeStart = light.shadowCascadeSplits[cascadeIndex];
+                                }
+                            }
+                            else
+                            {
+                                ImGui::TextDisabled("Cascade ranges appear after the scene has rendered.");
+                            }
                         }
 
                         if (propertiesChanged)
@@ -5686,6 +5807,8 @@ namespace PlutoGE::ui
                                         foliageComponent->SetMinShadowLod(std::stoi(property.value));
                                     else if (property.name == "CastShadows")
                                         foliageComponent->SetCastShadows(property.value == "true" || property.value == "1");
+                                    else if (property.name == "Static")
+                                        foliageComponent->SetStatic(property.value == "true" || property.value == "1");
                                 }
                             }
                             else

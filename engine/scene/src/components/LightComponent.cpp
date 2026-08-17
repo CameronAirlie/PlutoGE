@@ -371,7 +371,13 @@ namespace PlutoGE::scene
                 m_config.directionalShadowSettings.screenSpaceFilterNormalSoftness = std::clamp(std::stof(property.value), 0.001f, 1.0f);
             }
         }
-        Initialize(); // Re-initialize to apply any changes that require setup (like shadow map creation)
+        // Most directional-shadow settings (distance, first split, lambda and
+        // blend width) do not require texture recreation. They still change the
+        // cascade projections, so explicitly invalidate the cached shadow state
+        // before Initialize(); otherwise the shadow pass keeps using the old
+        // splits and the cascade debug view appears unaffected by inspector edits.
+        MarkDirty();
+        Initialize(); // Re-initialize to apply changes that require setup (like shadow map creation)
     }
 
     void LightComponent::Initialize()

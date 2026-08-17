@@ -19,6 +19,7 @@
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/Mesh.h"
+#include "PlutoGE/render/RmlUiRuntime.h"
 #include "PlutoGE/scripting/ScriptEngine.h"
 #include "PlutoGE/scripting/ScriptLogging.h"
 #include "PlutoGE/scene/SceneBaker.h"
@@ -1505,6 +1506,7 @@ namespace PlutoGE::ui
         }
 
         m_engine.StopRuntime();
+        render::RmlUiRuntime::Get().ResetRuntimeState();
         auto &window = m_engine.GetWindow();
         window.SetCursorLockOverride(false);
         window.SetScriptInputEnabled(false);
@@ -1758,7 +1760,7 @@ namespace PlutoGE::ui
                              createdEntity = scene::Prefab::DuplicateEntity(*m_scene, *sourceRoot, parent, true);
                              if (createdEntity)
                              {
-                                 createdEntity->SetPosition(createdEntity->GetPosition() + glm::vec3(0.25f, 0.0f, 0.25f));
+                                 createdEntity->SetPosition(createdEntity->GetPosition() + glm::vec3(0.0f, 0.0f, 0.0f));
                              }
                          });
 
@@ -1788,7 +1790,7 @@ namespace PlutoGE::ui
                              if (createdEntity)
                              {
                                  createdEntity->SetName(sourceEntity->GetName() + " Copy");
-                                 createdEntity->SetPosition(sourceEntity->GetPosition() + glm::vec3(0.25f, 0.0f, 0.25f));
+                                 createdEntity->SetPosition(sourceEntity->GetPosition() + glm::vec3(0.0f, 0.0f, 0.0f));
                              }
                          });
 
@@ -2780,6 +2782,7 @@ namespace PlutoGE::ui
                                lastEditorCameraCursorY,
                                restoreEditorCameraCursorX,
                                restoreEditorCameraCursorY);
+            viewportPanel->SetEditorMovementEnabled(isEditorCameraLookActive);
             auto shouldEnableRuntimeInput = [&]()
             {
                 return m_engine.IsRuntimeRunning() &&
@@ -3273,6 +3276,16 @@ namespace PlutoGE::ui
                     if (ImGui::MenuItem("Bake Scene Custom..."))
                     {
                         shouldOpenBakeSceneCustomPopup = true;
+                    }
+                    if (ImGui::MenuItem("Clear Baked Lighting", nullptr, false, m_scene != nullptr))
+                    {
+                        const bool hadProbeVolume = m_scene->HasBakedProbeVolume();
+                        const std::size_t clearedLightmaps = m_scene->ClearBakedLighting();
+                        MarkSceneDirty();
+                        m_statusMessage = "Cleared " + std::to_string(clearedLightmaps) +
+                                          " baked lightmap(s)" +
+                                          (hadProbeVolume ? " and the baked probe volume." : ".");
+                        Log(ConsoleSeverity::Info, m_statusMessage);
                     }
                     ImGui::EndDisabled();
 

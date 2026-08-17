@@ -543,7 +543,31 @@ namespace PlutoGE::render
         if (!m_context && !m_renderer && !m_system)
             return;
 
+        ResetRuntimeState();
+        m_loadedFontFaces.clear();
+        m_fontData.clear();
+        if (m_context)
+        {
+            Rml::RemoveContext(m_context->GetName());
+            m_context = nullptr;
+        }
+        Rml::Shutdown();
+        m_system.reset();
+        m_renderer.reset();
+        m_window = nullptr;
+        m_width = 0;
+        m_height = 0;
+        CloseAssetFileWatcher();
+    }
+
+    void RmlUiRuntime::ResetRuntimeState()
+    {
         DetachEventSubscriptions();
+        for (const auto &[key, document] : m_documents)
+        {
+            if (document)
+                document->Close();
+        }
         m_documents.clear();
         m_documentReferences.clear();
         m_documentWriteTimes.clear();
@@ -556,22 +580,9 @@ namespace PlutoGE::render
         DestroyWorldSurfaceTargets();
         m_eventSubscriptions.clear();
         m_reportedLoadFailures.clear();
-        m_loadedFontFaces.clear();
-        m_fontData.clear();
         m_pendingEvents.clear();
-        if (m_context)
-        {
-            Rml::RemoveContext(m_context->GetName());
-            m_context = nullptr;
-        }
-        Rml::Shutdown();
-        m_system.reset();
-        m_renderer.reset();
-        m_window = nullptr;
-        m_width = 0;
-        m_height = 0;
         m_lastInputFrame = 0;
-        CloseAssetFileWatcher();
+        m_cpuTiming = {};
     }
 
     bool RmlUiRuntime::ConsumeAssetFileChange()

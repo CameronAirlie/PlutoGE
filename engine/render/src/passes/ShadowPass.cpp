@@ -29,7 +29,11 @@ namespace
 {
     constexpr int kProjectedShadowPassMode = 0;
     constexpr int kPointShadowPassMode = 1;
-    constexpr int kMaxIncrementalShadowSurfaceUpdatesPerFrame = 1;
+    // Reserve one update for the camera/player-facing near cascade and one for
+    // queued background work. Updating only a single weighted cascade made the
+    // near map advance every few frames while walking or looking around, which
+    // was visible as flicker on first-person weapons and stepped ground shadows.
+    constexpr int kMaxIncrementalShadowSurfaceUpdatesPerFrame = 2;
     constexpr std::uint8_t kAllPointShadowFacesMask = 0x3fu;
     constexpr float kDirectionalShadowPadding = 2.0f;
     constexpr float kShadowUpdateMatrixEpsilon = 0.0001f;
@@ -1979,12 +1983,16 @@ namespace PlutoGE::render
                 std::uint8_t scheduledCascadeMask = 0;
                 if (!forceFullCascadeUpdate)
                 {
-                    // Keep directional work to one cascade per frame. The
-                    // weighted schedule revisits near cascades most often while
-                    // still guaranteeing that pending far cascades advance. In
-                    // particular, moving casters must not bypass this scheduler
-                    // and combine normal scroll work with several full
-                    // depth-range refreshes in one frame.
+                    // The nearest cascade covers first-person geometry and the
+                    // player's local ground shadow, so never defer it behind a
+                    // farther weighted update. A second incremental-update slot
+                    // lets the weighted schedule continue draining far cascades.
+                    const std::uint8_t nearCascadeBit = 1u;
+                    if ((light->pendingShadowCascadeMask & nearCascadeBit) != 0)
+                    {
+                        scheduledCascadeMask |= nearCascadeBit;
+                    }
+
                     for (std::size_t attempt = 0; attempt < kDirectionalCascadeRefreshSchedule.size(); ++attempt)
                     {
                         const int scheduleIndex = light->nextShadowCascadeToRefresh % static_cast<int>(kDirectionalCascadeRefreshSchedule.size());
@@ -1994,7 +2002,7 @@ namespace PlutoGE::render
                         if (candidateCascadeIndex < cascadeCount &&
                             (light->pendingShadowCascadeMask & candidateCascadeBit) != 0)
                         {
-                            scheduledCascadeMask = candidateCascadeBit;
+                            scheduledCascadeMask |= candidateCascadeBit;
                             break;
                         }
                     }

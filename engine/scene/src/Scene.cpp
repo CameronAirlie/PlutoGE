@@ -19,6 +19,7 @@
 #include "PlutoGE/scene/components/TerrainComponent.h"
 #include "PlutoGE/scene/components/UIComponent.h"
 #include "PlutoGE/render/Texture.h"
+#include "PlutoGE/render/Material.h"
 #include "PlutoGE/scripting/ScriptLogging.h"
 
 #include <btBulletDynamicsCommon.h>
@@ -1972,6 +1973,64 @@ namespace PlutoGE::scene
     {
         m_bakedProbeVolume = {};
         m_bakedProbeTexture.reset();
+    }
+
+    std::size_t Scene::ClearBakedLighting()
+    {
+        std::unordered_set<render::Material *> materials;
+
+        for (auto *meshComponent : m_meshComponents)
+        {
+            if (!meshComponent)
+                continue;
+
+            for (auto *material : meshComponent->GetMaterials())
+                if (material) materials.insert(material);
+
+            if (auto *mesh = meshComponent->GetMesh())
+            {
+                for (std::size_t submeshIndex = 0; submeshIndex < mesh->GetSubmeshCount(); ++submeshIndex)
+                    if (auto *material = meshComponent->GetMaterialForSubmesh(submeshIndex))
+                        materials.insert(material);
+            }
+        }
+
+        for (auto *terrainComponent : m_terrainComponents)
+            if (terrainComponent && terrainComponent->GetMaterial())
+                materials.insert(terrainComponent->GetMaterial());
+
+        for (auto *foliageComponent : m_foliageComponents)
+        {
+            if (!foliageComponent)
+                continue;
+            if (auto *material = foliageComponent->GetMaterial())
+                materials.insert(material);
+
+            for (std::size_t typeIndex = 0; typeIndex < foliageComponent->GetTypeCount(); ++typeIndex)
+            {
+                auto *type = foliageComponent->GetType(typeIndex);
+                if (!type)
+                    continue;
+                if (type->materialOverride) materials.insert(type->materialOverride);
+                for (auto *material : type->materials)
+                    if (material) materials.insert(material);
+                for (const auto &material : type->ownedMaterials)
+                    if (material) materials.insert(material.get());
+            }
+        }
+
+        std::size_t clearedLightmapCount = 0;
+        for (auto *material : materials)
+        {
+            if (!material->GetConfig().lightmapTexture)
+                continue;
+            material->SetLightmapTexture(nullptr);
+            material->SetLightmapUvTransform(glm::vec4(1.0f, 1.0f, 0.0f, 0.0f));
+            ++clearedLightmapCount;
+        }
+
+        ClearBakedProbeVolume();
+        return clearedLightmapCount;
     }
 
     namespace

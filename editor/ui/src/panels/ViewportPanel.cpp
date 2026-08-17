@@ -26,6 +26,7 @@
 #include "PlutoGE/scene/components/SplineComponent.h"
 #include "PlutoGE/scene/components/TerrainComponent.h"
 #include "PlutoGE/scene/components/UIComponent.h"
+#include "PlutoGE/scene/components/VolumetricCloudComponent.h"
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/ui/panels/ContentBrowserPanel.h"
 #include <ImGuizmo.h>
@@ -556,6 +557,29 @@ namespace PlutoGE::ui
             }
         }
 
+        void DrawWorldArc(ImDrawList *drawList,
+                          const glm::vec3 &center,
+                          const glm::vec3 &axisA,
+                          const glm::vec3 &axisB,
+                          float startAngle,
+                          float endAngle,
+                          const render::CameraData &cameraData,
+                          const ImVec2 &viewportMin,
+                          const ImVec2 &viewportSize,
+                          ImU32 color)
+        {
+            constexpr int kSegmentCount = 24;
+            glm::vec3 previousPoint = center + std::cos(startAngle) * axisA + std::sin(startAngle) * axisB;
+            for (int segmentIndex = 1; segmentIndex <= kSegmentCount; ++segmentIndex)
+            {
+                const float t = static_cast<float>(segmentIndex) / static_cast<float>(kSegmentCount);
+                const float angle = glm::mix(startAngle, endAngle, t);
+                const glm::vec3 point = center + std::cos(angle) * axisA + std::sin(angle) * axisB;
+                DrawWorldLine(drawList, previousPoint, point, cameraData, viewportMin, viewportSize, color, 1.0f);
+                previousPoint = point;
+            }
+        }
+
         void DrawWireBox(ImDrawList *drawList,
                          const glm::mat4 &transform,
                          const render::CameraData &cameraData,
@@ -737,8 +761,10 @@ namespace PlutoGE::ui
 
             DrawWorldCircle(drawList, topCenter, right * radius, forward * radius, cameraData, viewportMin, viewportSize, color);
             DrawWorldCircle(drawList, bottomCenter, right * radius, forward * radius, cameraData, viewportMin, viewportSize, color);
-            DrawWorldCircle(drawList, center, right * radius, up * (radius + cylinderHalfHeight), cameraData, viewportMin, viewportSize, color);
-            DrawWorldCircle(drawList, center, forward * radius, up * (radius + cylinderHalfHeight), cameraData, viewportMin, viewportSize, color);
+            DrawWorldArc(drawList, topCenter, right * radius, up * radius, 0.0f, glm::pi<float>(), cameraData, viewportMin, viewportSize, color);
+            DrawWorldArc(drawList, bottomCenter, right * radius, up * radius, glm::pi<float>(), glm::two_pi<float>(), cameraData, viewportMin, viewportSize, color);
+            DrawWorldArc(drawList, topCenter, forward * radius, up * radius, 0.0f, glm::pi<float>(), cameraData, viewportMin, viewportSize, color);
+            DrawWorldArc(drawList, bottomCenter, forward * radius, up * radius, glm::pi<float>(), glm::two_pi<float>(), cameraData, viewportMin, viewportSize, color);
 
             DrawWorldLine(drawList, topCenter + right * radius, bottomCenter + right * radius, cameraData, viewportMin, viewportSize, color, 1.75f);
             DrawWorldLine(drawList, topCenter - right * radius, bottomCenter - right * radius, cameraData, viewportMin, viewportSize, color, 1.75f);
@@ -782,6 +808,17 @@ namespace PlutoGE::ui
                                                 ? IM_COL32(118, 236, 170, 230)
                                                 : IM_COL32(118, 236, 170, 120);
                         DrawWireBox(drawList, iblCaptureComponent->GetVolumeTransform(), cameraData, viewportMin, viewportSize, color, 1.75f);
+                    }
+                }
+
+                if (auto *cloudComponent = entity->GetComponent<scene::VolumetricCloudComponent>())
+                {
+                    if (cloudComponent->IsEnabled())
+                    {
+                        const glm::mat4 volumeTransform = entity->GetWorldTransform() *
+                            glm::scale(glm::mat4(1.0f), cloudComponent->GetSize());
+                        DrawWireBox(drawList, volumeTransform, cameraData, viewportMin, viewportSize,
+                                    IM_COL32(175, 150, 255, 220), 1.75f);
                     }
                 }
 
@@ -1925,7 +1962,7 @@ namespace PlutoGE::ui
             // ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
             !ImGui::GetIO().WantTextInput;
 
-        if (allowEditorViewportHotkeys)
+        if (allowEditorViewportHotkeys && !m_editorMovementEnabled)
         {
             if (ImGui::IsKeyPressed(ImGuiKey_W))
             {
@@ -1939,10 +1976,10 @@ namespace PlutoGE::ui
             {
                 m_gizmoOperation = ImGuizmo::SCALE;
             }
-            if (ImGui::IsKeyPressed(ImGuiKey_F))
-            {
-                FrameSelectedEntity(EditorShell::GetInstance());
-            }
+        }
+        if (allowEditorViewportHotkeys && ImGui::IsKeyPressed(ImGuiKey_F))
+        {
+            FrameSelectedEntity(EditorShell::GetInstance());
         }
 
         auto &renderer = EditorShell::GetInstance().GetEngine().GetRenderer();
@@ -2275,6 +2312,7 @@ namespace PlutoGE::ui
         bool gizmoBlocksSelection = false;
         bool splineHandleClicked = false;
         bool entityGizmoSubmitted = false;
+        bool shapeHandleBlocksGizmo = false;
 
         if (m_showDebugShapes)
         {
@@ -2388,6 +2426,15 @@ namespace PlutoGE::ui
 
         if (auto *selectedEntity = editorShell.GetSelectedEntity())
         {
+            if (m_resizeHandleAxis >= 0 &&
+                (m_resizeHandleEntityId != selectedEntity->GetID() ||
+                 !ImGui::IsMouseDown(ImGuiMouseButton_Left)))
+            {
+                editorShell.EndSceneEdit();
+                m_resizeHandleAxis = -1;
+                m_resizeHandleEntityId = 0;
+                m_resizeHandleTarget = 0;
+            }
             if (m_splinePointEntity != selectedEntity)
             {
                 if (m_isSplinePointGizmoUsing)
@@ -2430,6 +2477,173 @@ namespace PlutoGE::ui
                 m_selectedOceanEntityId = oceanComponent ? selectedEntity->GetID() : 0;
                 m_selectedOceanAreaIndex = -1;
                 m_selectedOceanPointIndex = -1;
+            }
+
+            // Collider and volume dimensions are component properties, not entity scale.
+            // Six face handles make those authored bounds directly editable in the viewport.
+            if (m_showDebugShapes && !splineComponent && !oceanComponent)
+            {
+                auto *collider = selectedEntity->GetComponent<scene::ColliderComponent>();
+                auto *iblCapture = selectedEntity->GetComponent<scene::IblCaptureComponent>();
+                auto *cloud = selectedEntity->GetComponent<scene::VolumetricCloudComponent>();
+                int resizeTarget = 0;
+                glm::vec3 localCenter(0.0f);
+                glm::vec3 authoredSize(1.0f);
+                if (collider && collider->IsEnabled() &&
+                    collider->GetShape() != scene::ColliderShape::Terrain &&
+                    collider->GetShape() != scene::ColliderShape::Mesh)
+                {
+                    resizeTarget = 1;
+                    localCenter = collider->GetCenter();
+                    if (collider->GetShape() == scene::ColliderShape::Box)
+                        authoredSize = collider->GetSize();
+                    else if (collider->GetShape() == scene::ColliderShape::Sphere)
+                        authoredSize = glm::vec3(collider->GetRadius() * 2.0f);
+                    else
+                        authoredSize = glm::vec3(collider->GetRadius() * 2.0f,
+                                                 collider->GetHeight(),
+                                                 collider->GetRadius() * 2.0f);
+                }
+                else if (iblCapture && iblCapture->IsEnabled())
+                {
+                    resizeTarget = 2;
+                    authoredSize = iblCapture->GetSize();
+                }
+                else if (cloud && cloud->IsEnabled())
+                {
+                    resizeTarget = 3;
+                    authoredSize = cloud->GetSize();
+                }
+
+                if (resizeTarget != 0)
+                {
+                    const glm::mat4 boundsTransform = selectedEntity->GetWorldTransform() *
+                        glm::translate(glm::mat4(1.0f), localCenter) *
+                        glm::scale(glm::mat4(1.0f), authoredSize);
+                    const glm::vec3 worldCenter(boundsTransform[3]);
+                    const auto projectedCenter = ProjectWorldPoint(worldCenter, cameraData, viewportMin, viewportSize);
+                    const ImVec2 mouse = ImGui::GetIO().MousePos;
+                    int hoveredAxis = -1;
+                    int hoveredSign = 1;
+                    float nearestDistanceSquared = 100.0f;
+                    std::array<ProjectedPoint, 6> projectedHandles{};
+
+                    for (int axis = 0; axis < 3; ++axis)
+                    {
+                        for (int signIndex = 0; signIndex < 2; ++signIndex)
+                        {
+                            const int sign = signIndex == 0 ? -1 : 1;
+                            glm::vec3 localFace(0.0f);
+                            localFace[axis] = static_cast<float>(sign) * 0.5f;
+                            const int handleIndex = axis * 2 + signIndex;
+                            projectedHandles[handleIndex] = ProjectWorldPoint(
+                                glm::vec3(boundsTransform * glm::vec4(localFace, 1.0f)),
+                                cameraData, viewportMin, viewportSize);
+                            if (!projectedHandles[handleIndex].visible)
+                                continue;
+                            const float dx = mouse.x - projectedHandles[handleIndex].screen.x;
+                            const float dy = mouse.y - projectedHandles[handleIndex].screen.y;
+                            const float distanceSquared = dx * dx + dy * dy;
+                            if (distanceSquared < nearestDistanceSquared)
+                            {
+                                nearestDistanceSquared = distanceSquared;
+                                hoveredAxis = axis;
+                                hoveredSign = sign;
+                            }
+                        }
+                    }
+
+                    const bool activeForSelection = m_resizeHandleAxis >= 0 &&
+                                                    m_resizeHandleEntityId == selectedEntity->GetID() &&
+                                                    m_resizeHandleTarget == resizeTarget;
+                    shapeHandleBlocksGizmo = hoveredAxis >= 0 || activeForSelection;
+                    gizmoBlocksSelection = gizmoBlocksSelection || shapeHandleBlocksGizmo;
+
+                    auto *drawList = ImGui::GetWindowDrawList();
+                    drawList->PushClipRect(viewportMin,
+                                           ImVec2(viewportMin.x + viewportSize.x, viewportMin.y + viewportSize.y), true);
+                    for (int handleIndex = 0; handleIndex < 6; ++handleIndex)
+                    {
+                        if (!projectedHandles[handleIndex].visible)
+                            continue;
+                        const int axis = handleIndex / 2;
+                        const int sign = (handleIndex & 1) == 0 ? -1 : 1;
+                        const bool active = activeForSelection && axis == m_resizeHandleAxis && sign == m_resizeHandleSign;
+                        const bool hovered = axis == hoveredAxis && sign == hoveredSign;
+                        const ImVec2 point = projectedHandles[handleIndex].screen;
+                        const float radius = active || hovered ? 6.0f : 4.5f;
+                        drawList->AddCircleFilled(point, radius,
+                                                  active ? IM_COL32(255, 215, 70, 255)
+                                                         : hovered ? IM_COL32(245, 250, 255, 255)
+                                                                   : IM_COL32(80, 205, 245, 245), 12);
+                        drawList->AddCircle(point, radius, IM_COL32(25, 55, 70, 255), 12, 1.5f);
+                    }
+                    drawList->PopClipRect();
+
+                    if (!activeForSelection && hoveredAxis >= 0 && viewportClicked &&
+                        m_isViewportHovered && !controlsHovered)
+                    {
+                        const ProjectedPoint &handle = projectedHandles[hoveredAxis * 2 + (hoveredSign > 0 ? 1 : 0)];
+                        const glm::vec2 screenAxis(handle.screen.x - projectedCenter.screen.x,
+                                                   handle.screen.y - projectedCenter.screen.y);
+                        const float halfPixels = glm::length(screenAxis);
+                        if (projectedCenter.visible && halfPixels > 0.001f)
+                        {
+                            m_resizeHandleEntityId = selectedEntity->GetID();
+                            m_resizeHandleTarget = resizeTarget;
+                            m_resizeHandleAxis = hoveredAxis;
+                            m_resizeHandleSign = hoveredSign;
+                            m_resizeHandleStartMouse = glm::vec2(mouse.x, mouse.y);
+                            m_resizeHandleScreenDirection = screenAxis / halfPixels;
+                            m_resizeHandleStartSize = authoredSize;
+                            m_resizeHandleStartHalfPixels = halfPixels;
+                            editorShell.BeginSceneEdit(resizeTarget == 1 ? "Resize Collider" : "Resize Volume");
+                            shapeHandleBlocksGizmo = true;
+                            gizmoBlocksSelection = true;
+                        }
+                    }
+
+                    if (activeForSelection)
+                    {
+                        const glm::vec2 mouseDelta = glm::vec2(mouse.x, mouse.y) - m_resizeHandleStartMouse;
+                        const float signedPixelDelta = glm::dot(mouseDelta, m_resizeHandleScreenDirection);
+                        glm::vec3 newSize = m_resizeHandleStartSize;
+                        newSize[m_resizeHandleAxis] = std::max(
+                            m_resizeHandleStartSize[m_resizeHandleAxis] *
+                                (1.0f + signedPixelDelta / m_resizeHandleStartHalfPixels),
+                            0.0001f);
+
+                        if (resizeTarget == 1)
+                        {
+                            if (collider->GetShape() == scene::ColliderShape::Box)
+                                collider->SetSize(newSize);
+                            else if (collider->GetShape() == scene::ColliderShape::Sphere)
+                                collider->SetRadius(newSize[m_resizeHandleAxis] * 0.5f);
+                            else if (m_resizeHandleAxis == 1)
+                                collider->SetHeight(newSize.y);
+                            else
+                                collider->SetRadius(newSize[m_resizeHandleAxis] * 0.5f);
+                            selectedEntity->AddPrefabOverride(m_resizeHandleAxis == 1 && collider->GetShape() == scene::ColliderShape::Capsule
+                                                                  ? "Component:ColliderComponent:Height"
+                                                                  : collider->GetShape() == scene::ColliderShape::Box
+                                                                        ? "Component:ColliderComponent:Size"
+                                                                        : "Component:ColliderComponent:Radius");
+                        }
+                        else if (resizeTarget == 2)
+                        {
+                            iblCapture->SetSize(newSize);
+                            iblCapture->MarkDirty();
+                            selectedEntity->AddPrefabOverride("Component:IblCaptureComponent:Size");
+                        }
+                        else
+                        {
+                            cloud->SetSize(newSize);
+                            selectedEntity->AddPrefabOverride("Component:VolumetricCloudComponent:Size");
+                        }
+                        editorShell.MarkSceneDirty();
+                        m_isTransformGizmoUsing = true;
+                    }
+                }
             }
 
             bool splinePointClickConsumed = false;
@@ -3151,8 +3365,11 @@ namespace PlutoGE::ui
                     }
                     else
                     {
-                        submitEntityGizmo(snapValues);
-                        entityGizmoSubmitted = true;
+                        if (!shapeHandleBlocksGizmo)
+                        {
+                            submitEntityGizmo(snapValues);
+                            entityGizmoSubmitted = true;
+                        }
                     }
                 }
             }
@@ -3211,8 +3428,11 @@ namespace PlutoGE::ui
                 }
                 else
                 {
-                    submitEntityGizmo(snapValues);
-                    entityGizmoSubmitted = true;
+                    if (!shapeHandleBlocksGizmo)
+                    {
+                        submitEntityGizmo(snapValues);
+                        entityGizmoSubmitted = true;
+                    }
                 }
             }
             // IsOver is global state inside ImGuizmo. Only trust it in a frame
@@ -3289,6 +3509,13 @@ namespace PlutoGE::ui
         }
         else
         {
+            if (m_resizeHandleAxis >= 0)
+            {
+                editorShell.EndSceneEdit();
+                m_resizeHandleAxis = -1;
+                m_resizeHandleEntityId = 0;
+                m_resizeHandleTarget = 0;
+            }
             if (m_isSplinePointGizmoUsing)
             {
                 editorShell.EndSceneEdit();

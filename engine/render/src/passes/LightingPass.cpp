@@ -313,6 +313,12 @@ namespace PlutoGE::render
                     float geometry = GeometrySmith(normal, viewDir, lightDir, roughness);
 
                     vec3 specular = (distribution * geometry * fresnel) / max(4.0 * ndotv * ndotl, 0.0001);
+                    // At the fully rough end of the material range the GGX lobe
+                    // is indistinguishable from diffuse response. Fading that
+                    // residual lobe prevents artist-authored foliage normals
+                    // (commonly bent straight upward) from projecting the N.V
+                    // zero crossing as a screen-space line at the horizon.
+                    specular *= 1.0 - smoothstep(0.92, 1.0, roughness);
                     vec3 kS = fresnel;
                     vec3 kD = (vec3(1.0) - kS) * (1.0 - metallic);
                     vec3 diffuse = kD * albedo / PI;

@@ -773,12 +773,16 @@ vec3 EvaluatePbrLighting(vec3 normal, vec3 viewDir, vec3 albedo, float metallic,
     float geometry = GeometrySmith(normal, viewDir, lightDir, roughness);
 
     vec3 specular = (distribution * geometry * fresnel) / max(4.0 * ndotv * ndotl, 0.0001);
+    specular *= 1.0 - smoothstep(0.92, 1.0, roughness);
     vec3 kS = fresnel;
     vec3 kD = (vec3(1.0) - kS) * (1.0 - metallic);
     vec3 diffuse = kD * albedo / PI;
 
     return (diffuse + specular) * radiance * ndotl;
 }
+
+            )";
+            source.fragmentSource += R"(
 
 float SampleShadowMapPCF(sampler2D shadowMap, vec3 projectedCoords, float depthBias, float softness)
 {

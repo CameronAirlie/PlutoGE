@@ -147,6 +147,7 @@ namespace PlutoGE::scene
                                               const glm::vec3 &position,
                                               const glm::vec3 &rotationDegrees,
                                               const glm::vec3 &scale);
+        std::size_t SetSelectedTypeInstancesScale(const glm::vec3 &scale);
         bool RemoveSelectedTypeInstance(std::size_t instanceIndex);
         std::size_t GetTotalInstanceCount() const;
         std::size_t GetSelectedTypeInstanceCount() const;

@@ -5369,6 +5369,18 @@ namespace PlutoGE::ui
                             }
 
                             ImGui::BeginDisabled(foliageComponent->GetSelectedTypeInstanceCount() == 0);
+                            if (ImGui::Button("Set Selected Type Scale To 1"))
+                            {
+                                const std::size_t changedCount = foliageComponent->SetSelectedTypeInstancesScale(glm::vec3(1.0f));
+                                if (changedCount > 0)
+                                {
+                                    entity->AddPrefabOverride("Component:FoliageComponent:Type." + std::to_string(selectedTypeIndex) + ".Instances");
+                                    editorShell.MarkSceneDirty();
+                                    editorShell.Log(EditorShell::ConsoleSeverity::Info,
+                                                    "Reset " + std::to_string(changedCount) + " foliage instance scales to 1.0.");
+                                }
+                            }
+                            ImGui::SameLine();
                             if (ImGui::Button("Clear Selected Type"))
                             {
                                 foliageComponent->ClearSelectedTypeInstances();

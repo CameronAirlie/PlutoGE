@@ -1100,6 +1100,35 @@ namespace PlutoGE::scene
         return true;
     }
 
+    std::size_t FoliageComponent::SetSelectedTypeInstancesScale(const glm::vec3 &scale)
+    {
+        auto *type = GetSelectedType();
+        if (!type)
+        {
+            return 0;
+        }
+
+        const glm::vec3 sanitizedScale{
+            (std::max)(scale.x, 0.0001f),
+            (std::max)(scale.y, 0.0001f),
+            (std::max)(scale.z, 0.0001f),
+        };
+        std::size_t changedCount = 0;
+        for (auto &instance : type->instances)
+        {
+            if (instance.scale != sanitizedScale)
+            {
+                instance.scale = sanitizedScale;
+                ++changedCount;
+            }
+        }
+        if (changedCount > 0)
+        {
+            MarkInstancesDirty();
+        }
+        return changedCount;
+    }
+
     bool FoliageComponent::RemoveSelectedTypeInstance(std::size_t instanceIndex)
     {
         auto *type = GetSelectedType();

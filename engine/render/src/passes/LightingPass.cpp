@@ -517,9 +517,7 @@ namespace PlutoGE::render
                     }
 
                     int cascadeIndex = SelectDirectionalCascadeIndex(light, cameraDistance);
-                    float cascadeSplit = light.CascadeSplits[cascadeIndex];
-                    float cascadeBiasScale = clamp(cascadeSplit / max(light.CascadeSplits[0], 0.0001), 1.0, 8.0);
-                    float depthBias = max(0.00012 + (1.0 - ndotl) * 0.00035, 0.00004) * cascadeBiasScale;
+                    float depthBias = max(0.00012 + (1.0 - ndotl) * 0.00035, 0.00004);
                     bool hasCascadeCoverage = false;
                     float shadow = ComputeDirectionalCascadeShadow(receiverPosition, light, cascadeIndex, depthBias, hasCascadeCoverage);
                     sampledCascadeIndex = cascadeIndex;
@@ -538,8 +536,7 @@ namespace PlutoGE::render
                         if (cameraDistance > blendStart)
                         {
                             bool hasNextCascadeCoverage = false;
-                            float nextCascadeBiasScale = clamp(light.CascadeSplits[cascadeIndex + 1] / max(light.CascadeSplits[0], 0.0001), 1.0, 8.0);
-                            float nextDepthBias = max(0.00012 + (1.0 - ndotl) * 0.00035, 0.00004) * nextCascadeBiasScale;
+                            float nextDepthBias = max(0.00012 + (1.0 - ndotl) * 0.00035, 0.00004);
                             float nextShadow = ComputeDirectionalCascadeShadow(receiverPosition, light, cascadeIndex + 1, nextDepthBias, hasNextCascadeCoverage);
                             if (hasNextCascadeCoverage)
                             {
@@ -1462,7 +1459,7 @@ namespace PlutoGE::render
         // front of shadowed surfaces and quantizes distant shadow silhouettes.
         // Raw/debug masks retain the configured scale; the production filtered
         // path runs at full resolution for correct reconstruction.
-        const float renderScale = configuredRenderScale;
+        const float renderScale = filtered ? 1.0f : configuredRenderScale;
         const int maskWidth = std::max(1, static_cast<int>(std::lround(static_cast<float>(ctx.temporaryRenderTarget->GetWidth()) * renderScale)));
         const int maskHeight = std::max(1, static_cast<int>(std::lround(static_cast<float>(ctx.temporaryRenderTarget->GetHeight()) * renderScale)));
         EnsureShadowMaskTargets(maskWidth, maskHeight,

@@ -230,7 +230,12 @@ namespace PlutoGE::render
                 {
                     vec2 sampleUv = clamp(baseUv + offsets[sampleIndex] * texelSize, vec2(0.0), vec2(1.0));
                     float depth = texture(uSceneDepthTexture, sampleUv).r;
-                    if (depth > closestDepth)
+                    // OpenGL depth is smaller for the surface nearest the
+                    // camera. Dilate foreground motion into silhouette pixels;
+                    // selecting the farthest neighbour instead pulled terrain
+                    // motion across tree edges and made their shadows wobble
+                    // only on TAA-enabled gameplay cameras.
+                    if (depth < closestDepth)
                     {
                         closestDepth = depth;
                         bestMotion = texture(uSceneMotionTexture, sampleUv).xy;
@@ -324,6 +329,11 @@ namespace PlutoGE::render
                 float disocclusionWeight = smoothstep(0.35, 2.0, unjitteredMotionPixels);
                 historyValidity *= mix(1.0, depthValidity * normalValidity, disocclusionWeight);
                 historyValidity *= clamp(1.0 - length(unjitteredMotion) * uVelocityRejectionScale, 0.0, 1.0);
+                // Lighting is not represented by geometry motion vectors. Reject
+                // history when a hard shadow edge no longer agrees with the
+                // current frame instead of dragging that edge with the camera.
+                float historyLumaDelta = abs(Luma(clippedHistory) - centerLuma) / max(centerLuma, 0.05);
+                historyValidity *= 1.0 - smoothstep(0.08, 0.30, historyLumaDelta);
 
                 float localContrast = (maxLuma - minLuma) / max(maxLuma, 0.01);
                 float detailContrast = length(current - spatial / max(spatialWeight, 0.0001)) / max(centerLuma + 0.05, 0.05);

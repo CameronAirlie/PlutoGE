@@ -170,10 +170,17 @@ namespace
     bool ShouldRefreshCameraRelativeCascade(const glm::vec3 &currentOrigin,
                                             const glm::vec3 &storedOrigin,
                                             float cascadeNear,
-                                            float cascadeFar)
+                                            float cascadeFar,
+                                            int shadowResolution)
     {
         const float cascadeThickness = glm::max(cascadeFar - cascadeNear, 0.1f);
-        const float recenterThreshold = glm::max(0.5f, cascadeThickness * 0.25f);
+        // Refresh when camera translation reaches approximately one shadow
+        // texel. Waiting for a fraction of the entire cascade made the cached
+        // projection jump by metres at once, which looked like stationary
+        // shadows moving whenever a sprint crossed the threshold.
+        const float recenterThreshold = glm::max(
+            cascadeThickness / static_cast<float>(std::max(shadowResolution, 1)),
+            0.0025f);
         return glm::distance(currentOrigin, storedOrigin) > recenterThreshold;
     }
 
@@ -263,20 +270,17 @@ namespace
     }
 
     std::size_t SelectDirectionalShadowLod(const PlutoGE::render::RenderCommand &command,
-                                           int cascadeIndex,
-                                           int cascadeCount,
+                                           int /*cascadeIndex*/,
+                                           int /*cascadeCount*/,
                                            int shadowResolution)
     {
-        const bool isFarthestCascade = cascadeIndex >= cascadeCount - 1;
         // Never make a shadow draw more detailed than the LOD already selected
-        // for visible scene geometry. The previous path forced LOD 0 in every
-        // non-farthest cascade, which made a camera-driven shadow refresh submit
-        // maximum-detail terrain, foliage and meshes across large scenes.
+        // for visible scene geometry. All cascades must use the same caster LOD,
+        // otherwise the silhouette changes at cascade boundaries and stationary
+        // shadows appear to wiggle as the camera moves across those boundaries.
         const std::size_t sceneLod = command.lodIndex;
-        const std::size_t cascadeLodFloor = cascadeIndex > 0 ? 1u : 0u;
         const std::size_t resolutionLodFloor = shadowResolution <= 1024 ? 1u : 0u;
-        const std::size_t farCascadeLodFloor = isFarthestCascade ? 1u : 0u;
-        const std::size_t automaticShadowLod = std::max({cascadeLodFloor, resolutionLodFloor, farCascadeLodFloor});
+        const std::size_t automaticShadowLod = resolutionLodFloor;
         return ClampShadowLodIndex(command, std::max<std::size_t>(
                                                 std::max<std::size_t>(sceneLod, automaticShadowLod),
                                                 command.minShadowLodIndex));
@@ -542,40 +546,29 @@ namespace
         return mask;
     }
 
-    void SnapDirectionalProjectionBoundsToTexels(glm::vec3 &minBounds, glm::vec3 &maxBounds, int shadowResolution)
+    void SnapDirectionalProjectionBoundsToWorldTexels(glm::vec3 &minBounds,
+                                                       glm::vec3 &maxBounds,
+                                                       const glm::mat4 &view,
+                                                       const glm::vec3 &shadowWorldOrigin,
+                                                       int shadowResolution)
     {
         const float safeResolution = static_cast<float>(std::max(shadowResolution, 1));
         const glm::vec2 extents = glm::max(glm::vec2(maxBounds.x - minBounds.x, maxBounds.y - minBounds.y), glm::vec2(0.001f));
         const glm::vec2 texelSize = extents / safeResolution;
-        const glm::vec2 center = (glm::vec2(minBounds.x, minBounds.y) + glm::vec2(maxBounds.x, maxBounds.y)) * 0.5f;
-        const glm::vec2 snappedCenter = glm::round(center / texelSize) * texelSize;
-        const glm::vec2 halfExtents = extents * 0.5f;
+        // Shadow matrices consume positions relative to shadowWorldOrigin. Anchor
+        // the projection to absolute world zero in light space so camera motion
+        // cannot change the shadow texel-grid phase. Adjusting the bounds keeps
+        // dirty-region calculations and the projection on the same grid.
+        const glm::vec2 worldAnchor = glm::vec2(view * glm::vec4(-shadowWorldOrigin, 1.0f));
+        const glm::vec2 minimum(minBounds.x, minBounds.y);
+        const glm::vec2 anchorTexel = (worldAnchor - minimum) / texelSize;
+        const glm::vec2 snappedMinimum = worldAnchor - glm::round(anchorTexel) * texelSize;
+        const glm::vec2 offset = snappedMinimum - minimum;
 
-        minBounds.x = snappedCenter.x - halfExtents.x;
-        maxBounds.x = snappedCenter.x + halfExtents.x;
-        minBounds.y = snappedCenter.y - halfExtents.y;
-        maxBounds.y = snappedCenter.y + halfExtents.y;
-    }
-
-    void SnapDirectionalProjectionMatrixToTexels(glm::mat4 &projection,
-                                                 const glm::mat4 &view,
-                                                 const glm::vec3 &shadowWorldOrigin,
-                                                 int shadowResolution)
-    {
-        const float safeResolution = static_cast<float>(std::max(shadowResolution, 1));
-        const glm::mat4 lightSpaceMatrix = projection * view;
-        // The matrix consumes camera-relative positions. Absolute world zero is
-        // therefore -shadowWorldOrigin in that coordinate system. Snapping the
-        // relative origin instead changes the absolute texel-grid phase whenever
-        // the camera origin recenters, making cached cascades impossible to scroll.
-        const glm::vec4 stableWorldAnchor = lightSpaceMatrix *
-                                            glm::vec4(-shadowWorldOrigin, 1.0f);
-        const glm::vec2 shadowTexelOrigin = glm::vec2(stableWorldAnchor) * (safeResolution * 0.5f);
-        const glm::vec2 roundedTexelOrigin = glm::round(shadowTexelOrigin);
-        const glm::vec2 shadowTexelOffset = (roundedTexelOrigin - shadowTexelOrigin) * (2.0f / safeResolution);
-
-        projection[3][0] += shadowTexelOffset.x;
-        projection[3][1] += shadowTexelOffset.y;
+        minBounds.x += offset.x;
+        maxBounds.x += offset.x;
+        minBounds.y += offset.y;
+        maxBounds.y += offset.y;
     }
 
     DirectionalCascadeProjection BuildDirectionalCascadeProjection(
@@ -587,7 +580,22 @@ namespace
         int shadowResolution)
     {
         const glm::vec3 lightDirection = glm::normalize(light.direction);
-        const auto cameraRelativeCascadeCorners = BuildCameraRelativeCascadeFrustumCorners(cameraData, cascadeNear, cascadeFar);
+        // Gameplay cameras commonly animate FOV while sprinting or aiming. A
+        // cascade fitted to that changing projection rescales its texel grid
+        // every frame, making stationary shadows swim. Fit shadows to a stable,
+        // conservative 90-degree vertical FOV while allowing wider cameras to
+        // retain their actual projection.
+        PlutoGE::render::CameraData shadowCameraData = cameraData;
+        constexpr float kStableProjectionY = 1.0f; // 1 / tan(90 degrees / 2)
+        const float projectionY = std::abs(shadowCameraData.projection[1][1]);
+        const float projectionX = std::abs(shadowCameraData.projection[0][0]);
+        if (projectionY > kStableProjectionY && projectionX > 0.000001f)
+        {
+            const float aspectRatio = projectionY / projectionX;
+            shadowCameraData.projection[1][1] = std::copysign(kStableProjectionY, shadowCameraData.projection[1][1]);
+            shadowCameraData.projection[0][0] = std::copysign(kStableProjectionY / aspectRatio, shadowCameraData.projection[0][0]);
+        }
+        const auto cameraRelativeCascadeCorners = BuildCameraRelativeCascadeFrustumCorners(shadowCameraData, cascadeNear, cascadeFar);
         const glm::vec3 cameraPosition = glm::vec3(glm::inverse(cameraData.view)[3]);
         glm::vec3 cameraRelativeCascadeCenter(0.0f);
         for (const glm::vec3 &corner : cameraRelativeCascadeCorners)
@@ -649,9 +657,9 @@ namespace
 
         const float nearPlane = glm::max(0.1f, -maxBounds.z);
         const float farPlane = glm::max(nearPlane + 0.1f, -minBounds.z);
-        SnapDirectionalProjectionBoundsToTexels(minBounds, maxBounds, shadowResolution);
+        SnapDirectionalProjectionBoundsToWorldTexels(
+            minBounds, maxBounds, view, shadowWorldOrigin, shadowResolution);
         glm::mat4 projection = glm::ortho(minBounds.x, maxBounds.x, minBounds.y, maxBounds.y, nearPlane, farPlane);
-        SnapDirectionalProjectionMatrixToTexels(projection, view, shadowWorldOrigin, shadowResolution);
         return DirectionalCascadeProjection{
             .lightSpaceMatrix = projection * view,
             .lightViewMatrix = view,
@@ -1624,7 +1632,8 @@ namespace PlutoGE::render
                     ShouldRefreshCameraRelativeCascade(currentOrigin,
                                                        light->shadowCascadeWorldOrigins[cascadeIndex],
                                                        cascadeNear,
-                                                       splits[cascadeIndex]))
+                                                       splits[cascadeIndex],
+                                                       GetShadowResolution(*light)))
                 {
                     return false;
                 }
@@ -1773,7 +1782,8 @@ namespace PlutoGE::render
                     ShouldRefreshCameraRelativeCascade(currentShadowWorldOrigin,
                                                        light->shadowCascadeWorldOrigins[cascadeIndex],
                                                        cascadeNear,
-                                                       cascadeFar))
+                                                       cascadeFar,
+                                                       GetShadowResolution(*light)))
                 {
                     needsAnyShadowUpdate = true;
                     break;
@@ -1886,7 +1896,8 @@ namespace PlutoGE::render
                         ShouldRefreshCameraRelativeCascade(currentShadowWorldOrigin,
                                                            light->shadowCascadeWorldOrigins[cascadeIndex],
                                                            cascadeNear,
-                                                           cascadeFar))
+                                                           cascadeFar,
+                                                           GetShadowResolution(*light)))
                     {
                         directionalCascadeOriginMismatch = true;
                         directionalCascadeOriginMismatchMask |= static_cast<std::uint8_t>(1u << cascadeIndex);
@@ -2121,7 +2132,8 @@ namespace PlutoGE::render
                         currentShadowWorldOrigin,
                         light->shadowCascadeWorldOrigins[cascadeIndex],
                         cascadeNear,
-                        cascadeFar);
+                        cascadeFar,
+                        shadowResolution);
                     const glm::vec3 cascadeShadowWorldOrigin = (forceFullCascadeUpdate || !hasStoredCascadeOrigin || cascadeOriginChanged)
                                                                    ? currentShadowWorldOrigin
                                                                    : light->shadowCascadeWorldOrigins[cascadeIndex];

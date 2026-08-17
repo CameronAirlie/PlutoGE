@@ -391,6 +391,11 @@ namespace PlutoGE::render
                     normal = normalize(TBN * normal); // Transform to world space
                 }
 
+                if (uTwoSided != 0 && !gl_FrontFacing)
+                {
+                    normal = -normal;
+                }
+
                 if (uHasMetallicTexture > 0.5)
                 {
                     metallic *= ReadTextureChannel(texture(uMetallicTexture, UV), uMetallicTextureChannel);
@@ -952,8 +957,7 @@ float ComputeDirectionalShadow(vec3 fragPos,
 
     for (int sampleCascadeIndex = cascadeIndex; sampleCascadeIndex < light.CascadeCount; ++sampleCascadeIndex)
     {
-        float cascadeBiasScale = clamp(light.CascadeSplits[sampleCascadeIndex] / max(light.CascadeSplits[0], 0.0001), 1.0, 8.0);
-        float depthBias = baseDepthBias * cascadeBiasScale;
+        float depthBias = baseDepthBias;
         shadow = ComputeDirectionalCascadeShadow(receiverPosition, light, sampleCascadeIndex, depthBias, hasCascadeCoverage);
         if (hasCascadeCoverage)
         {
@@ -977,8 +981,7 @@ float ComputeDirectionalShadow(vec3 fragPos,
         if (viewDepth > blendStart)
         {
             bool hasNextCascadeCoverage = false;
-            float nextCascadeBiasScale = clamp(light.CascadeSplits[shadowCascadeIndex + 1] / max(light.CascadeSplits[0], 0.0001), 1.0, 8.0);
-            float nextShadow = ComputeDirectionalCascadeShadow(receiverPosition, light, shadowCascadeIndex + 1, baseDepthBias * nextCascadeBiasScale, hasNextCascadeCoverage);
+            float nextShadow = ComputeDirectionalCascadeShadow(receiverPosition, light, shadowCascadeIndex + 1, baseDepthBias, hasNextCascadeCoverage);
             if (hasNextCascadeCoverage)
             {
                 float blendFactor = clamp((viewDepth - blendStart) / max(splitDistance - blendStart, 0.0001), 0.0, 1.0);
@@ -1819,6 +1822,38 @@ void main()
                 return texture(uDirectionalShadowMaps[15], uv).r;
             }
 
+            float SampleTransparentDirectionalCascadeVisibility(vec3 receiverPosition,
+                                                                 float depthBias,
+                                                                 int lightIndex,
+                                                                 int cascadeIndex)
+            {
+                int cascadeUniformIndex = lightIndex * 4 + cascadeIndex;
+                vec4 lightSpacePosition = uLightCascadeMatrices[cascadeUniformIndex] *
+                                          vec4(receiverPosition - uLightCascadeOrigins[cascadeUniformIndex], 1.0);
+                vec3 projectedCoords = lightSpacePosition.xyz / max(lightSpacePosition.w, 0.0001);
+                projectedCoords = projectedCoords * 0.5 + 0.5;
+                if (projectedCoords.z < 0.0 || projectedCoords.z > 1.0 ||
+                    projectedCoords.x < 0.0 || projectedCoords.x > 1.0 ||
+                    projectedCoords.y < 0.0 || projectedCoords.y > 1.0)
+                {
+                    return 1.0;
+                }
+
+                int shadowMapIndex = uLightShadowMapBase[lightIndex] + cascadeIndex;
+                float visibility = 0.0;
+                vec2 texelSize = vec2(1.0) / vec2(textureSize(uDirectionalShadowMaps[0], 0));
+                for (int y = -1; y <= 1; ++y)
+                {
+                    for (int x = -1; x <= 1; ++x)
+                    {
+                        float closestDepth = SampleTransparentDirectionalShadowMap(
+                            shadowMapIndex, projectedCoords.xy + vec2(x, y) * texelSize);
+                        visibility += projectedCoords.z - depthBias > closestDepth ? 0.0 : 1.0;
+                    }
+                }
+                return visibility / 9.0;
+            }
+
             float ComputeTransparentDirectionalLightVisibility(vec3 fragPos, vec3 normal, int lightIndex)
             {
                 if (uLightCastsShadows[lightIndex] == 0 ||
@@ -1840,31 +1875,27 @@ void main()
                 float ndotl = max(dot(normal, lightDir), 0.0);
                 float normalBias = max(0.004 * (1.0 - ndotl), 0.00075);
                 float depthBias = max(0.00012 + (1.0 - ndotl) * 0.00035, 0.00004);
-                int cascadeUniformIndex = lightIndex * 4 + cascadeIndex;
                 vec3 receiverPosition = fragPos + normal * normalBias;
-                vec4 lightSpacePosition = uLightCascadeMatrices[cascadeUniformIndex] *
-                                          vec4(receiverPosition - uLightCascadeOrigins[cascadeUniformIndex], 1.0);
-                vec3 projectedCoords = lightSpacePosition.xyz / max(lightSpacePosition.w, 0.0001);
-                projectedCoords = projectedCoords * 0.5 + 0.5;
-                if (projectedCoords.z < 0.0 || projectedCoords.z > 1.0 ||
-                    projectedCoords.x < 0.0 || projectedCoords.x > 1.0 ||
-                    projectedCoords.y < 0.0 || projectedCoords.y > 1.0)
-                {
-                    return 1.0;
-                }
+                float visibility = SampleTransparentDirectionalCascadeVisibility(
+                    receiverPosition, depthBias, lightIndex, cascadeIndex);
 
-                int shadowMapIndex = uLightShadowMapBase[lightIndex] + cascadeIndex;
-                float visibility = 0.0;
-                vec2 texelSize = vec2(1.0) / vec2(textureSize(uDirectionalShadowMaps[0], 0));
-                for (int y = -1; y <= 1; ++y)
+                int cascadeCount = uLightCascadeCount[lightIndex];
+                if (cascadeIndex < cascadeCount - 1)
                 {
-                    for (int x = -1; x <= 1; ++x)
+                    float splitDistance = ReadCascadeSplit(lightIndex, cascadeIndex);
+                    float blendDistance = max(uLightCascadeBlendDistances[lightIndex], 0.0);
+                    float blendStart = max(splitDistance - blendDistance, 0.0);
+                    if (viewDepth > blendStart)
                     {
-                        float closestDepth = SampleTransparentDirectionalShadowMap(shadowMapIndex, projectedCoords.xy + vec2(x, y) * texelSize);
-                        visibility += projectedCoords.z - depthBias > closestDepth ? 0.0 : 1.0;
+                        float nextVisibility = SampleTransparentDirectionalCascadeVisibility(
+                            receiverPosition, depthBias, lightIndex, cascadeIndex + 1);
+                        float blendFactor = clamp(
+                            (viewDepth - blendStart) / max(splitDistance - blendStart, 0.0001),
+                            0.0, 1.0);
+                        visibility = mix(visibility, nextVisibility, blendFactor);
                     }
                 }
-                return visibility / 9.0;
+                return visibility;
             }
 
             float ComputeLightVisibility(vec3 fragPos, vec3 normal, int lightIndex)

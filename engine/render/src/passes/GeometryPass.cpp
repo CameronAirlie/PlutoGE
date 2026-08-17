@@ -243,10 +243,10 @@ namespace PlutoGE::render
         // The array index maps directly to the fragment output location. Keep a
         // GL_NONE placeholder for location 5 when LOD debug output is disabled
         // so location 6 still reaches the emission attachment.
-        const GLenum defaultAttachments[7] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3, GL_COLOR_ATTACHMENT4, GL_NONE, GL_COLOR_ATTACHMENT6};
-        const GLenum debugAttachments[7] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3, GL_COLOR_ATTACHMENT4, GL_COLOR_ATTACHMENT5, GL_COLOR_ATTACHMENT6};
+        const GLenum defaultAttachments[8] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3, GL_COLOR_ATTACHMENT4, GL_NONE, GL_COLOR_ATTACHMENT6, GL_COLOR_ATTACHMENT7};
+        const GLenum debugAttachments[8] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3, GL_COLOR_ATTACHMENT4, GL_COLOR_ATTACHMENT5, GL_COLOR_ATTACHMENT6, GL_COLOR_ATTACHMENT7};
         const bool writeLodDebug = ctx.postProcessDebugView == PostProcessDebugView::Lod;
-        glDrawBuffers(7, writeLodDebug ? debugAttachments : defaultAttachments);
+        glDrawBuffers(8, writeLodDebug ? debugAttachments : defaultAttachments);
         glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         if (writeLodDebug)
@@ -508,6 +508,15 @@ namespace PlutoGE::render
                 // covered sample. Custom shaders remain fully enabled
                 // because their graph outputs cannot be inferred here.
                 const auto &materialConfig = command.material->GetConfig();
+                if (materialConfig.twoSided)
+                {
+                    Graphics::Disable(GL_CULL_FACE);
+                }
+                else
+                {
+                    Graphics::Enable(GL_CULL_FACE);
+                    glCullFace(GL_BACK);
+                }
                 const bool usesCustomShader = command.material->GetShader() != nullptr;
                 const bool shouldWriteBakedLighting = usesCustomShader || materialConfig.lightmapTexture != nullptr;
                 const bool shouldWriteEmission = usesCustomShader ||
@@ -658,6 +667,8 @@ namespace PlutoGE::render
         {
             glColorMaski(6, GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
         }
+        Graphics::Enable(GL_CULL_FACE);
+        glCullFace(GL_BACK);
         if (ctx.renderer)
         {
             ctx.renderer->RecordGeometryDriverSubmission(static_cast<int>(groups.size()), apiDrawCalls);

@@ -274,6 +274,7 @@ namespace PlutoGE::render
             layout (location = 4) out vec4 gBakedLighting;
             layout (location = 5) out float gDebug;
             layout (location = 6) out vec3 gEmission;
+            layout (location = 7) out vec4 gSubsurface;
 
             in vec3 FragPos;
             in vec3 Normal;
@@ -288,6 +289,7 @@ namespace PlutoGE::render
             uniform float uHasAlbedoTexture = 0.0;
             uniform vec4 uColor = vec4(1.0, 1.0, 1.0, 1.0);
             uniform int uAlphaMode = 0;
+            uniform int uTwoSided = 0;
             uniform float uAlphaCutoff = 0.5;
 
             uniform sampler2D uNormalTexture;
@@ -304,6 +306,9 @@ namespace PlutoGE::render
             uniform float uRoughnessFactor = 1.0;
             uniform int uRoughnessTextureChannel = 0;
             uniform vec3 uEmission = vec3(0.0);
+            uniform float uSubsurfaceFactor = 0.0;
+            uniform vec3 uSubsurfaceColor = vec3(1.0, 0.35, 0.2);
+            uniform float uSubsurfaceRadius = 1.0;
 
             uniform sampler2D uLightmapTexture;
             uniform float uHasLightmapTexture = 0.0;
@@ -424,6 +429,11 @@ namespace PlutoGE::render
                                          "                vec3 finalEmission = ToVec3(" +
                                emission + ");\n" + R"(
 
+                if (uTwoSided != 0 && !gl_FrontFacing)
+                {
+                    finalNormal = -finalNormal;
+                }
+
                 if (uAlphaMode == 1 && finalOpacity < uAlphaCutoff)
                 {
                     discard;
@@ -432,6 +442,8 @@ namespace PlutoGE::render
                 gNormalRoughness = vec4(normalize(finalNormal), clamp(finalRoughness, 0.04, 1.0));
                 gAlbedoMetallic = vec4(finalAlbedo, clamp(finalMetallic, 0.0, 1.0));
                 gEmission = max(finalEmission, vec3(0.0));
+                float subsurfaceProfile = max(uSubsurfaceRadius, 0.001) / (max(uSubsurfaceRadius, 0.001) + 1.0);
+                gSubsurface = vec4(max(uSubsurfaceColor, vec3(0.0)), clamp(uSubsurfaceFactor, 0.0, 1.0) * subsurfaceProfile);
                 gBakedLighting = vec4(0.0, 0.0, 0.0, )" +
                                std::string(initialBakedLightingAlpha) + R"();
                 gDebug = InstanceFlags.w <= 0.5 ? -1.0 : clamp(floor(InstanceFlags.z) / InstanceFlags.w, 0.0, 1.0);

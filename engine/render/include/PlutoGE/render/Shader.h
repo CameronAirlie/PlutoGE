@@ -273,6 +273,7 @@ namespace PlutoGE::render
             layout (location = 4) out vec4 gBakedLighting;
             layout (location = 5) out float gDebug;
             layout (location = 6) out vec3 gEmission;
+            layout (location = 7) out vec4 gSubsurface;
             
             in vec3 FragPos;
             in vec3 Normal;
@@ -287,6 +288,7 @@ namespace PlutoGE::render
             uniform float uHasAlbedoTexture = 0.0;
             uniform vec4 uColor = vec4(1.0, 1.0, 1.0, 1.0); // Placeholder color
             uniform int uAlphaMode = 0;
+            uniform int uTwoSided = 0;
             uniform float uAlphaCutoff = 0.5;
             
             uniform sampler2D uNormalTexture;
@@ -303,6 +305,9 @@ namespace PlutoGE::render
             uniform float uRoughnessFactor = 1.0;
             uniform int uRoughnessTextureChannel = 0;
             uniform vec3 uEmission = vec3(0.0);
+            uniform float uSubsurfaceFactor = 0.0;
+            uniform vec3 uSubsurfaceColor = vec3(1.0, 0.35, 0.2);
+            uniform float uSubsurfaceRadius = 1.0;
 
             uniform sampler2D uLightmapTexture;
             uniform float uHasLightmapTexture = 0.0;
@@ -399,6 +404,8 @@ namespace PlutoGE::render
                 gNormalRoughness = vec4(normalize(normal), clamp(roughness, 0.04, 1.0));
                 gAlbedoMetallic = vec4(albedo, clamp(metallic, 0.0, 1.0));
                 gEmission = max(uEmission, vec3(0.0));
+                float subsurfaceProfile = max(uSubsurfaceRadius, 0.001) / (max(uSubsurfaceRadius, 0.001) + 1.0);
+                gSubsurface = vec4(max(uSubsurfaceColor, vec3(0.0)), clamp(uSubsurfaceFactor, 0.0, 1.0) * subsurfaceProfile);
                 gBakedLighting = vec4(0.0);
                 gDebug = InstanceFlags.w <= 0.5 ? -1.0 : clamp(floor(InstanceFlags.z) / InstanceFlags.w, 0.0, 1.0);
 
@@ -1633,6 +1640,9 @@ void main()
             uniform float uHasRoughnessTexture = 0.0;
             uniform float uRoughnessFactor = 1.0;
             uniform int uRoughnessTextureChannel = 0;
+            uniform float uSubsurfaceFactor = 0.0;
+            uniform vec3 uSubsurfaceColor = vec3(1.0, 0.35, 0.2);
+            uniform float uSubsurfaceRadius = 1.0;
             uniform float uTransmissionFactor = 0.0;
             uniform float uIor = 1.45;
             uniform float uThickness = 0.01;
@@ -1918,6 +1928,47 @@ void main()
                 return specularLighting;
             }
 
+            // A real-time diffusion-profile approximation: broadened forward diffuse plus
+            // view-dependent back lighting. Radius controls the wrap/profile width while
+            // preserving the material's ordinary PBR response when strength is zero.
+            vec3 ComputeSubsurfaceLighting(vec3 fragPos, vec3 normal, vec3 viewDir, vec3 albedo)
+            {
+                float strength = clamp(uSubsurfaceFactor, 0.0, 1.0);
+                if (strength <= 0.0001)
+                {
+                    return vec3(0.0);
+                }
+
+                vec3 scattering = vec3(0.0);
+                float radius = max(uSubsurfaceRadius, 0.001);
+                float wrap = clamp(radius / (radius + 1.0), 0.05, 0.85);
+                for (int lightIndex = 0; lightIndex < 16; ++lightIndex)
+                {
+                    if (lightIndex >= uLightCount) break;
+                    vec3 lightDir;
+                    float attenuation = 1.0;
+                    if (uLightTypes[lightIndex] == LIGHT_TYPE_DIRECTIONAL)
+                    {
+                        lightDir = normalize(-uLightDirections[lightIndex]);
+                    }
+                    else
+                    {
+                        lightDir = normalize(uLightPositions[lightIndex] - fragPos);
+                        attenuation = uLightTypes[lightIndex] == LIGHT_TYPE_SPOT
+                                          ? ComputeSpotAttenuation(fragPos, lightDir, lightIndex)
+                                          : ComputePointAttenuation(fragPos, lightIndex);
+                    }
+                    float wrappedDiffuse = clamp((dot(normal, lightDir) + wrap) / (1.0 + wrap), 0.0, 1.0);
+                    float backScatter = pow(clamp(dot(viewDir, -lightDir), 0.0, 1.0), mix(8.0, 2.0, wrap));
+                    float profile = mix(wrappedDiffuse, max(wrappedDiffuse, backScatter), 0.45);
+                    float visibility = ComputeLightVisibility(fragPos, normal, lightIndex);
+                    vec3 radiance = uLightColors[lightIndex] * uLightIntensities[lightIndex] * attenuation;
+                    scattering += radiance * profile * visibility;
+                }
+                vec3 scatterColor = max(uSubsurfaceColor, vec3(0.0)) * albedo;
+                return scattering * scatterColor * strength * (1.0 / PI);
+            }
+
             vec3 ComputeGlassLightSpecular(vec3 fragPos, vec3 normal, vec3 viewDir, float roughness, vec3 f0)
             {
                 vec3 specularLighting = vec3(0.0);
@@ -2107,6 +2158,10 @@ void main()
                     normal = normalize(normal * 2.0 - 1.0);
                     normal = normalize(TBN * normal);
                 }
+                if (uTwoSided != 0 && !gl_FrontFacing)
+                {
+                    normal = -normal;
+                }
 
                 float metallic = clamp(uMetallicFactor, 0.0, 1.0);
                 float roughness = clamp(uRoughnessFactor, 0.04, 1.0);
@@ -2187,6 +2242,10 @@ void main()
 
                 vec3 emission = max(uEmission, vec3(0.0));
                 vec3 litSurface = baseColor + environmentSpecular + directSpecular;
+                if (uSurfaceType == SURFACE_STANDARD)
+                {
+                    litSurface += ComputeSubsurfaceLighting(FragPos, normal, viewDir, color.rgb) * (1.0 - metallic);
+                }
                 FragColor = vec4(litSurface + emission, outputAlpha);
             }
         )";

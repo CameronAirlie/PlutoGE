@@ -41,6 +41,7 @@ namespace PlutoGE::render
         constexpr int kShadowMaskTextureSlot = kIblCaptureTextureSlotStart + scene::kMaxIblCaptureVolumes;
         constexpr int kShadowMaskPositionTextureSlot = kShadowMaskTextureSlot + 1;
         constexpr int kShadowMaskNormalTextureSlot = kShadowMaskPositionTextureSlot + 1;
+        constexpr int kSubsurfaceTextureSlot = kShadowMaskNormalTextureSlot + 1;
         constexpr int kAmbientPassMode = 0;
         constexpr int kLightPassMode = 1;
         constexpr int kIndirectTextureSlot = 0;
@@ -182,6 +183,7 @@ namespace PlutoGE::render
                 uniform sampler2D gBakedLighting;
                 uniform sampler2D gEmission;
                 uniform sampler2D gDebug;
+                uniform sampler2D gSubsurface;
 
                 const float PI = 3.14159265359;
                 const float MATERIAL_FLAG_BAKED_STATIC = 1.0;
@@ -625,7 +627,7 @@ namespace PlutoGE::render
                     return ComputeSpotShadow(fragPos, normal, light);
                 }
 
-                vec3 ComputeLightContribution(vec3 fragPos, vec3 normal, vec3 viewDir, vec3 albedo, float metallic, float roughness, Light light, float filteredShadow)
+                vec3 ComputeLightContribution(vec3 fragPos, vec3 normal, vec3 viewDir, vec3 albedo, float metallic, float roughness, vec4 subsurface, Light light, float filteredShadow)
                 {
                     vec3 lightDir;
                     float attenuation = 1.0;
@@ -651,7 +653,7 @@ namespace PlutoGE::render
                     }
 
                     float ndotl = dot(normal, lightDir);
-                    if (ndotl <= 0.0001)
+                    if (ndotl <= 0.0001 && subsurface.a <= 0.0001)
                     {
                         return vec3(0.0);
                     }
@@ -685,7 +687,19 @@ namespace PlutoGE::render
                         return GetDirectionalCascadeDebugColor(sampledCascadeIndex);
                     }
 
-                    return EvaluatePbrLighting(normal, viewDir, albedo, metallic, roughness, lightDir, radiance) * (1.0 - shadow);
+                    vec3 surfaceLighting = ndotl > 0.0
+                                               ? EvaluatePbrLighting(normal, viewDir, albedo, metallic, roughness, lightDir, radiance)
+                                               : vec3(0.0);
+                    if (subsurface.a > 0.0001 && metallic < 0.999)
+                    {
+                        float wrap = mix(0.08, 0.75, clamp(subsurface.a, 0.0, 1.0));
+                        float wrappedDiffuse = clamp((ndotl + wrap) / (1.0 + wrap), 0.0, 1.0);
+                        float backScatter = pow(clamp(dot(viewDir, -lightDir), 0.0, 1.0), mix(8.0, 2.0, wrap));
+                        float profile = max(wrappedDiffuse, backScatter * 0.55);
+                        surfaceLighting += radiance * albedo * max(subsurface.rgb, vec3(0.0)) *
+                                           profile * subsurface.a * (1.0 - metallic) / PI;
+                    }
+                    return surfaceLighting * (1.0 - shadow);
                 }
             )";
 
@@ -705,6 +719,7 @@ namespace PlutoGE::render
                     vec3 albedo = albedoMetallic.rgb;
                     float roughness = clamp(normalRoughness.a, 0.04, 1.0);
                     float metallic = clamp(albedoMetallic.a, 0.0, 1.0);
+                    vec4 subsurface = texture(gSubsurface, UV);
                     float materialFlag = texture(gBakedLighting, UV).a;
                     if (uDebugViewMode == DEBUG_VIEW_LOD)
                     {
@@ -740,7 +755,7 @@ namespace PlutoGE::render
                     float filteredShadow = uUseFilteredShadowMask != 0 && uLight.Type == LIGHT_TYPE_DIRECTIONAL
                                                ? texture(uFilteredShadowMask, UV).r
                                                : -1.0;
-                    vec3 lighting = ComputeLightContribution(fragPos, normal, viewDir, albedo, metallic, roughness, uLight, filteredShadow);
+                    vec3 lighting = ComputeLightContribution(fragPos, normal, viewDir, albedo, metallic, roughness, subsurface, uLight, filteredShadow);
                     FragColor = vec4(lighting, 1.0);
                 }
             )";
@@ -1016,6 +1031,13 @@ namespace PlutoGE::render
             if (shader->HasUniform("gDepth"))
             {
                 shader->SetUniform("gDepth", kDepthTextureSlot);
+            }
+
+            Graphics::ActiveTexture(GL_TEXTURE0 + kSubsurfaceTextureSlot);
+            Graphics::BindTexture(GL_TEXTURE_2D, gBuffer->GetSubsurfaceTextureID());
+            if (shader->HasUniform("gSubsurface"))
+            {
+                shader->SetUniform("gSubsurface", kSubsurfaceTextureSlot);
             }
 
             static const auto shadowCascadeMapNames =

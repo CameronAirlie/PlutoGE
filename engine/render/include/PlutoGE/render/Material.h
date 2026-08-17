@@ -42,6 +42,7 @@ namespace PlutoGE::render
         AlphaMode alphaMode = AlphaMode::Opaque;
         float alphaCutoff = 0.5f;
         bool castsShadow = true;
+        bool twoSided = false;                 // Render both front and back faces
 
         Texture *normalTexture = nullptr; // Pointer to a normal map texture (if any)
         bool flipNormalY = false;         // Flip green channel for DirectX-style normal maps
@@ -55,6 +56,10 @@ namespace PlutoGE::render
         TextureChannel roughnessTextureChannel = TextureChannel::Red;
 
         glm::vec3 emission{0.0f}; // HDR self-illumination color
+
+        float subsurface = 0.0f;                         // Approximate diffuse subsurface scattering strength
+        glm::vec3 subsurfaceColor{1.0f, 0.35f, 0.2f};    // Color of light scattered through the surface
+        float subsurfaceRadius = 1.0f;                   // Relative scattering distance/profile width
 
         float transmission = 0.0f;                        // Transmitted light amount for glass-like materials
         float ior = 1.45f;                                // Index of refraction; common window glass is around 1.45-1.52
@@ -89,6 +94,7 @@ namespace PlutoGE::render
         void SetAlphaMode(AlphaMode alphaMode) { m_config.alphaMode = alphaMode; }
         void SetAlphaCutoff(float alphaCutoff) { m_config.alphaCutoff = alphaCutoff; }
         void SetCastsShadow(bool castsShadow) { m_config.castsShadow = castsShadow; }
+        void SetTwoSided(bool twoSided) { m_config.twoSided = twoSided; }
         void SetNormalTexture(Texture *texture) { m_config.normalTexture = texture; }
         void SetFlipNormalY(bool flipNormalY) { m_config.flipNormalY = flipNormalY; }
         void SetMetallic(float metallic) { m_config.metallic = metallic; }
@@ -98,6 +104,9 @@ namespace PlutoGE::render
         void SetRoughnessTexture(Texture *texture) { m_config.roughnessTexture = texture; }
         void SetRoughnessTextureChannel(TextureChannel channel) { m_config.roughnessTextureChannel = channel; }
         void SetEmission(const glm::vec3 &emission) { m_config.emission = emission; }
+        void SetSubsurface(float subsurface) { m_config.subsurface = subsurface; }
+        void SetSubsurfaceColor(const glm::vec3 &color) { m_config.subsurfaceColor = color; }
+        void SetSubsurfaceRadius(float radius) { m_config.subsurfaceRadius = radius; }
         void SetTransmission(float transmission) { m_config.transmission = transmission; }
         void SetIor(float ior) { m_config.ior = ior; }
         void SetThickness(float thickness) { m_config.thickness = thickness; }

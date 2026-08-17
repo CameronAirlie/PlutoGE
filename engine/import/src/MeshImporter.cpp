@@ -178,7 +178,61 @@ namespace PlutoGE::assetimport
         constexpr uint32_t kCookedMeshCacheMagic = 0x434d4750; // PGMC
         // Increment whenever imported geometry, skeleton, or animation
         // semantics change so unchanged source files are recooked.
-        constexpr uint32_t kCookedMeshCacheVersion = 30;
+        constexpr uint32_t kCookedMeshCacheVersion = 33;
+
+        bool ImportedMaterialsEqual(const ImportedMaterialData &a, const ImportedMaterialData &b)
+        {
+            return a.color == b.color &&
+                   a.surfaceType == b.surfaceType && a.alphaMode == b.alphaMode &&
+                   a.alphaCutoff == b.alphaCutoff && a.castsShadow == b.castsShadow && a.twoSided == b.twoSided &&
+                   a.metallic == b.metallic && a.roughness == b.roughness && a.emission == b.emission &&
+                   a.subsurface == b.subsurface && a.subsurfaceColor == b.subsurfaceColor &&
+                   a.subsurfaceRadius == b.subsurfaceRadius && a.transmission == b.transmission &&
+                   a.ior == b.ior && a.thickness == b.thickness &&
+                   a.attenuationColor == b.attenuationColor && a.attenuationDistance == b.attenuationDistance &&
+                   a.albedoTextureIndex == b.albedoTextureIndex && a.normalTextureIndex == b.normalTextureIndex &&
+                   a.metallicRoughnessTextureIndex == b.metallicRoughnessTextureIndex &&
+                   a.metallicRoughnessTextureHasMetallicChannel == b.metallicRoughnessTextureHasMetallicChannel &&
+                   a.flipNormalY == b.flipNormalY;
+        }
+
+        void DeduplicateImportedMaterials(ImportedMeshSourceAsset &asset)
+        {
+            if (asset.materials.size() < 2)
+            {
+                return;
+            }
+
+            std::vector<ImportedMaterialData> uniqueMaterials;
+            uniqueMaterials.reserve(asset.materials.size());
+            std::vector<uint32_t> remap(asset.materials.size(), 0);
+            for (size_t oldIndex = 0; oldIndex < asset.materials.size(); ++oldIndex)
+            {
+                const auto match = std::find_if(uniqueMaterials.begin(), uniqueMaterials.end(),
+                                                [&](const ImportedMaterialData &candidate)
+                                                {
+                                                    return ImportedMaterialsEqual(candidate, asset.materials[oldIndex]);
+                                                });
+                if (match != uniqueMaterials.end())
+                {
+                    remap[oldIndex] = static_cast<uint32_t>(std::distance(uniqueMaterials.begin(), match));
+                }
+                else
+                {
+                    remap[oldIndex] = static_cast<uint32_t>(uniqueMaterials.size());
+                    uniqueMaterials.push_back(asset.materials[oldIndex]);
+                }
+            }
+
+            for (auto &submesh : asset.submeshes)
+            {
+                if (submesh.materialIndex < remap.size())
+                {
+                    submesh.materialIndex = remap[submesh.materialIndex];
+                }
+            }
+            asset.materials = std::move(uniqueMaterials);
+        }
 
         bool ReadBooleanEnvironmentFlag(const char *name, bool defaultValue)
         {
@@ -462,11 +516,17 @@ namespace PlutoGE::assetimport
             WritePod(output, static_cast<uint32_t>(material.alphaMode));
             WritePod(output, material.alphaCutoff);
             WriteBool(output, material.castsShadow);
+            WriteBool(output, material.twoSided);
             WritePod(output, material.metallic);
             WritePod(output, material.roughness);
             WritePod(output, material.emission.r);
             WritePod(output, material.emission.g);
             WritePod(output, material.emission.b);
+            WritePod(output, material.subsurface);
+            WritePod(output, material.subsurfaceColor.r);
+            WritePod(output, material.subsurfaceColor.g);
+            WritePod(output, material.subsurfaceColor.b);
+            WritePod(output, material.subsurfaceRadius);
             WritePod(output, material.transmission);
             WritePod(output, material.ior);
             WritePod(output, material.thickness);
@@ -489,11 +549,17 @@ namespace PlutoGE::assetimport
             material.alphaMode = static_cast<render::AlphaMode>(ReadPod<uint32_t>(input));
             material.alphaCutoff = ReadPod<float>(input);
             material.castsShadow = ReadBool(input);
+            material.twoSided = ReadBool(input);
             material.metallic = ReadPod<float>(input);
             material.roughness = ReadPod<float>(input);
             material.emission.r = ReadPod<float>(input);
             material.emission.g = ReadPod<float>(input);
             material.emission.b = ReadPod<float>(input);
+            material.subsurface = ReadPod<float>(input);
+            material.subsurfaceColor.r = ReadPod<float>(input);
+            material.subsurfaceColor.g = ReadPod<float>(input);
+            material.subsurfaceColor.b = ReadPod<float>(input);
+            material.subsurfaceRadius = ReadPod<float>(input);
             material.transmission = ReadPod<float>(input);
             material.ior = ReadPod<float>(input);
             material.thickness = ReadPod<float>(input);
@@ -1014,6 +1080,7 @@ namespace PlutoGE::assetimport
             MeshImportProfile *profile = nullptr)
         {
             ImportedMaterialData parsedMaterial;
+            parsedMaterial.twoSided = material.doubleSided;
             const auto readExtensionNumber = [&material](const char *extensionName, const char *propertyName, float fallback)
             {
                 const auto extensionIt = material.extensions.find(extensionName);
@@ -1110,6 +1177,22 @@ namespace PlutoGE::assetimport
             }
 
             parsedMaterial.transmission = std::clamp(readExtensionNumber("KHR_materials_transmission", "transmissionFactor", 0.0f), 0.0f, 1.0f);
+            // KHR_materials_diffuse_transmission is the standard glTF representation closest to
+            // diffuse subsurface transport. Also accept the names used by existing exporter drafts.
+            parsedMaterial.subsurface = std::clamp(
+                readExtensionNumber("KHR_materials_diffuse_transmission", "diffuseTransmissionFactor",
+                    readExtensionNumber("KHR_materials_subsurface", "subsurfaceFactor",
+                        readExtensionNumber("EXT_materials_subsurface_scattering", "subsurfaceFactor", 0.0f))),
+                0.0f, 1.0f);
+            parsedMaterial.subsurfaceColor = glm::max(
+                readExtensionVec3("KHR_materials_diffuse_transmission", "diffuseTransmissionColorFactor",
+                    readExtensionVec3("KHR_materials_subsurface", "subsurfaceColorFactor",
+                        readExtensionVec3("EXT_materials_subsurface_scattering", "subsurfaceColorFactor", parsedMaterial.color))),
+                glm::vec3(0.0f));
+            parsedMaterial.subsurfaceRadius = std::max(
+                readExtensionNumber("KHR_materials_subsurface", "subsurfaceRadius",
+                    readExtensionNumber("EXT_materials_subsurface_scattering", "subsurfaceRadius", 1.0f)),
+                0.001f);
             parsedMaterial.ior = std::clamp(readExtensionNumber("KHR_materials_ior", "ior", 1.45f), 1.0f, 2.5f);
             parsedMaterial.thickness = std::max(readExtensionNumber("KHR_materials_volume", "thicknessFactor", 0.01f), 0.0f);
             parsedMaterial.attenuationColor = glm::clamp(
@@ -3198,6 +3281,51 @@ namespace PlutoGE::assetimport
             unsigned int *primaryUvChannel = nullptr)
         {
             ImportedMaterialData importedMaterial;
+            int twoSided = 0;
+            if (AI_SUCCESS == aiGetMaterialInteger(&material, AI_MATKEY_TWOSIDED, &twoSided))
+            {
+                importedMaterial.twoSided = twoSided != 0;
+            }
+            // Preserve renderer-specific SSS properties carried by FBX/Assimp even though
+            // Assimp does not expose a single cross-format material key for them.
+            for (unsigned int propertyIndex = 0; propertyIndex < material.mNumProperties; ++propertyIndex)
+            {
+                const aiMaterialProperty *property = material.mProperties[propertyIndex];
+                if (!property)
+                {
+                    continue;
+                }
+                std::string key = property->mKey.C_Str();
+                std::transform(key.begin(), key.end(), key.begin(), [](unsigned char character) { return static_cast<char>(std::tolower(character)); });
+                if (key.find("subsurface") == std::string::npos && key.find("sss") == std::string::npos)
+                {
+                    continue;
+                }
+
+                if (key.find("color") != std::string::npos)
+                {
+                    aiColor4D color;
+                    if (AI_SUCCESS == aiGetMaterialColor(&material, property->mKey.C_Str(), property->mSemantic, property->mIndex, &color))
+                    {
+                        importedMaterial.subsurfaceColor = glm::max(glm::vec3(color.r, color.g, color.b), glm::vec3(0.0f));
+                    }
+                }
+                else
+                {
+                    ai_real value = 0.0;
+                    if (AI_SUCCESS == aiGetMaterialFloat(&material, property->mKey.C_Str(), property->mSemantic, property->mIndex, &value))
+                    {
+                        if (key.find("radius") != std::string::npos || key.find("scale") != std::string::npos)
+                        {
+                            importedMaterial.subsurfaceRadius = std::max(static_cast<float>(value), 0.001f);
+                        }
+                        else
+                        {
+                            importedMaterial.subsurface = std::clamp(static_cast<float>(value), 0.0f, 1.0f);
+                        }
+                    }
+                }
+            }
             aiColor4D diffuseColor;
             if (AI_SUCCESS == aiGetMaterialColor(&material, AI_MATKEY_COLOR_DIFFUSE, &diffuseColor))
             {
@@ -4336,6 +4464,7 @@ namespace PlutoGE::assetimport
             }
             GenerateSubmeshLods(asset.meshData, asset.submeshes, cookOptions.generateLods);
             OptimizeGeneratedLodRanges(asset.meshData, asset.submeshes, cookOptions.optimizeVertexCache, cookOptions.optimizeOverdraw);
+            DeduplicateImportedMaterials(asset);
             return asset;
         }
 
@@ -4521,6 +4650,7 @@ namespace PlutoGE::assetimport
             OptimizeMeshData(parsedMeshAsset.meshData, parsedMeshAsset.submeshes, cookOptions.optimizeVertexCache, cookOptions.optimizeOverdraw, &profile);
             GenerateSubmeshLods(parsedMeshAsset.meshData, parsedMeshAsset.submeshes, cookOptions.generateLods);
             OptimizeGeneratedLodRanges(parsedMeshAsset.meshData, parsedMeshAsset.submeshes, cookOptions.optimizeVertexCache, cookOptions.optimizeOverdraw);
+            DeduplicateImportedMaterials(parsedMeshAsset);
             profile.optimizeMs = ElapsedMilliseconds(optimizeStart);
             logProgress("Mesh optimized; writing cooked cache");
             StoreCookedMeshAsset(filePath, cookOptions, parsedMeshAsset);

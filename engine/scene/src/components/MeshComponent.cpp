@@ -203,10 +203,14 @@ namespace PlutoGE::scene
             std::optional<render::AlphaMode> alphaMode;
             std::optional<float> alphaCutoff;
             std::optional<bool> castsShadow;
+            std::optional<bool> twoSided;
             std::optional<glm::vec2> uvScale;
             std::optional<float> metallic;
             std::optional<float> roughness;
             std::optional<glm::vec3> emission;
+            std::optional<float> subsurface;
+            std::optional<glm::vec3> subsurfaceColor;
+            std::optional<float> subsurfaceRadius;
             std::optional<float> transmission;
             std::optional<float> ior;
             std::optional<float> thickness;
@@ -225,10 +229,14 @@ namespace PlutoGE::scene
             properties.push_back({prefix + "AlphaMode", PropertyType::String, config.alphaMode == render::AlphaMode::Blend ? "Blend" : config.alphaMode == render::AlphaMode::Mask ? "Mask" : "Opaque"});
             properties.push_back({prefix + "AlphaCutoff", PropertyType::Float, std::to_string(config.alphaCutoff)});
             properties.push_back({prefix + "CastsShadow", PropertyType::Bool, config.castsShadow ? "true" : "false"});
+            properties.push_back({prefix + "TwoSided", PropertyType::Bool, config.twoSided ? "true" : "false"});
             properties.push_back({prefix + "UvScale", PropertyType::String, SerializeVec2(config.uvScale)});
             properties.push_back({prefix + "Metallic", PropertyType::Float, std::to_string(config.metallic)});
             properties.push_back({prefix + "Roughness", PropertyType::Float, std::to_string(config.roughness)});
             properties.push_back({prefix + "Emission", PropertyType::String, SerializeVec3(config.emission)});
+            properties.push_back({prefix + "Subsurface", PropertyType::Float, std::to_string(config.subsurface)});
+            properties.push_back({prefix + "SubsurfaceColor", PropertyType::String, SerializeVec3(config.subsurfaceColor)});
+            properties.push_back({prefix + "SubsurfaceRadius", PropertyType::Float, std::to_string(config.subsurfaceRadius)});
             properties.push_back({prefix + "Transmission", PropertyType::Float, std::to_string(config.transmission)});
             properties.push_back({prefix + "Ior", PropertyType::Float, std::to_string(config.ior)});
             properties.push_back({prefix + "Thickness", PropertyType::Float, std::to_string(config.thickness)});
@@ -273,6 +281,10 @@ namespace PlutoGE::scene
             {
                 serializedMaterial.castsShadow = (value == "true" || value == "1");
             }
+            else if (fieldName == "TwoSided")
+            {
+                serializedMaterial.twoSided = (value == "true" || value == "1");
+            }
             else if (fieldName == "UvScale")
             {
                 serializedMaterial.uvScale = ParseVec2(value);
@@ -288,6 +300,18 @@ namespace PlutoGE::scene
             else if (fieldName == "Emission")
             {
                 serializedMaterial.emission = ParseVec3(value);
+            }
+            else if (fieldName == "Subsurface")
+            {
+                serializedMaterial.subsurface = std::stof(value);
+            }
+            else if (fieldName == "SubsurfaceColor")
+            {
+                serializedMaterial.subsurfaceColor = ParseVec3(value);
+            }
+            else if (fieldName == "SubsurfaceRadius")
+            {
+                serializedMaterial.subsurfaceRadius = std::stof(value);
             }
             else if (fieldName == "Transmission")
             {
@@ -351,6 +375,10 @@ namespace PlutoGE::scene
             {
                 material.SetCastsShadow(*serializedMaterial.castsShadow);
             }
+            if (serializedMaterial.twoSided.has_value())
+            {
+                material.SetTwoSided(*serializedMaterial.twoSided);
+            }
             if (serializedMaterial.uvScale.has_value())
             {
                 material.SetUvScale(*serializedMaterial.uvScale);
@@ -366,6 +394,18 @@ namespace PlutoGE::scene
             if (serializedMaterial.emission.has_value())
             {
                 material.SetEmission(*serializedMaterial.emission);
+            }
+            if (serializedMaterial.subsurface.has_value())
+            {
+                material.SetSubsurface(*serializedMaterial.subsurface);
+            }
+            if (serializedMaterial.subsurfaceColor.has_value())
+            {
+                material.SetSubsurfaceColor(*serializedMaterial.subsurfaceColor);
+            }
+            if (serializedMaterial.subsurfaceRadius.has_value())
+            {
+                material.SetSubsurfaceRadius(*serializedMaterial.subsurfaceRadius);
             }
             if (serializedMaterial.transmission.has_value())
             {

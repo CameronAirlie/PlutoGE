@@ -49,10 +49,14 @@ namespace PlutoGE::render
         setVec4("uColor", m_config.color);
         setInt("uSurfaceType", static_cast<int>(m_config.surfaceType));
         setInt("uAlphaMode", static_cast<int>(m_config.alphaMode));
+        setInt("uTwoSided", m_config.twoSided ? 1 : 0);
         setFloat("uAlphaCutoff", m_config.alphaCutoff);
         setFloat("uMetallicFactor", m_config.metallic);
         setFloat("uRoughnessFactor", m_config.roughness);
         setVec3("uEmission", glm::max(m_config.emission, glm::vec3(0.0f)));
+        setFloat("uSubsurfaceFactor", glm::clamp(m_config.subsurface, 0.0f, 1.0f));
+        setVec3("uSubsurfaceColor", glm::max(m_config.subsurfaceColor, glm::vec3(0.0f)));
+        setFloat("uSubsurfaceRadius", glm::max(m_config.subsurfaceRadius, 0.001f));
         setFloat("uFlipNormalY", m_config.flipNormalY ? 1.0f : 0.0f);
         setFloat("uTransmissionFactor", m_config.transmission);
         setFloat("uIor", m_config.ior);

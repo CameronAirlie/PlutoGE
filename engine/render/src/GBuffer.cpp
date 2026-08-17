@@ -69,8 +69,16 @@ namespace PlutoGE::render
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT6, GL_TEXTURE_2D, m_emissionTexture, 0);
 
-        GLuint attachments[7] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3, GL_COLOR_ATTACHMENT4, GL_COLOR_ATTACHMENT5, GL_COLOR_ATTACHMENT6};
-        glDrawBuffers(7, attachments);
+        // Subsurface scattering color plus effective profile strength.
+        glGenTextures(1, &m_subsurfaceTexture);
+        Graphics::BindTexture(GL_TEXTURE_2D, m_subsurfaceTexture);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, width, height, 0, GL_RGBA, GL_FLOAT, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT7, GL_TEXTURE_2D, m_subsurfaceTexture, 0);
+
+        GLuint attachments[8] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3, GL_COLOR_ATTACHMENT4, GL_COLOR_ATTACHMENT5, GL_COLOR_ATTACHMENT6, GL_COLOR_ATTACHMENT7};
+        glDrawBuffers(8, attachments);
 
         // Depth
         glGenTextures(1, &m_depthTexture);
@@ -141,6 +149,12 @@ namespace PlutoGE::render
         {
             Graphics::DeleteTextures(1, &m_emissionTexture);
             m_emissionTexture = 0;
+        }
+
+        if (m_subsurfaceTexture)
+        {
+            Graphics::DeleteTextures(1, &m_subsurfaceTexture);
+            m_subsurfaceTexture = 0;
         }
 
         if (m_depthTexture)

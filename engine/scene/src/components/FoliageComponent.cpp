@@ -11,6 +11,7 @@
 #include <cmath>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <random>
 #include <sstream>
 #include <unordered_map>
@@ -435,20 +436,31 @@ namespace PlutoGE::scene
 
         void AssignFoliageMaterials(FoliageType &type, const std::vector<render::Material *> &materials)
         {
+            // The caller may pass type.materials itself (or another view containing pointers
+            // owned by type). Snapshot every config before releasing the old ownership;
+            // otherwise clearing ownedMaterials leaves the input vector full of dangling
+            // pointers and the first GetConfig() below becomes a use-after-free.
+            std::vector<std::optional<render::MaterialConfig>> materialConfigs;
+            materialConfigs.reserve(materials.size());
+            for (const auto *material : materials)
+            {
+                materialConfigs.emplace_back(material ? std::optional<render::MaterialConfig>(material->GetConfig()) : std::nullopt);
+            }
+
             type.ownedMaterials.clear();
             type.materials.clear();
-            type.ownedMaterials.reserve(materials.size());
-            type.materials.reserve(materials.size());
+            type.ownedMaterials.reserve(materialConfigs.size());
+            type.materials.reserve(materialConfigs.size());
 
-            for (auto *material : materials)
+            for (auto &materialConfig : materialConfigs)
             {
-                if (!material)
+                if (!materialConfig)
                 {
                     type.materials.push_back(nullptr);
                     continue;
                 }
 
-                auto config = material->GetConfig();
+                auto &config = *materialConfig;
                 if (config.alphaMode == render::AlphaMode::Blend && config.albedoTexture)
                 {
                     config.alphaMode = render::AlphaMode::Mask;

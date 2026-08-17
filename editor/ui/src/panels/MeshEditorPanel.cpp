@@ -6,6 +6,7 @@
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/ui/EditorShell.h"
+#include "PlutoGE/ui/panels/ContentBrowserPanel.h"
 
 #include <algorithm>
 #include <array>
@@ -458,12 +459,35 @@ namespace PlutoGE::ui
             ImGui::Text("Slot %zu", slotIndex);
             ImGui::SameLine();
             ImGui::TextWrapped("%s", m_materialReferences[slotIndex].empty() ? "(empty)" : m_materialReferences[slotIndex].c_str());
+            if (ImGui::BeginDragDropTarget())
+            {
+                if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kContentBrowserAssetDragDropPayload))
+                {
+                    if (payload->Data && payload->DataSize > 0)
+                    {
+                        const auto *data = static_cast<const char *>(payload->Data);
+                        const std::string droppedReference(data, data + payload->DataSize - 1);
+                        if (assets::Project::GetAssetTypeForReference(droppedReference) == assets::ProjectAssetType::Material)
+                        {
+                            m_materialReferences[slotIndex] = droppedReference;
+                            m_dirty = true;
+                        }
+                    }
+                }
+                ImGui::EndDragDropTarget();
+            }
             if (!m_materialReferences[slotIndex].empty())
             {
                 ImGui::SameLine();
                 if (ImGui::Button("Open"))
                 {
                     editorShell.OpenMaterialAsset(m_materialReferences[slotIndex]);
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Clear"))
+                {
+                    m_materialReferences[slotIndex].clear();
+                    m_dirty = true;
                 }
             }
             ImGui::PopID();
@@ -493,6 +517,12 @@ namespace PlutoGE::ui
                 m_config = BuildMeshConfigFromMesh(*importedMeshAsset.mesh);
                 m_config.skeleton.humanoidBoneMappings = std::move(humanoidBoneMappings);
                 EnsureBaseLodRanges(m_config);
+                std::size_t requiredMaterialSlots = 0;
+                for (const auto &submesh : m_config.submeshes)
+                {
+                    requiredMaterialSlots = (std::max)(requiredMaterialSlots, static_cast<std::size_t>(submesh.materialIndex) + 1);
+                }
+                m_materialReferences.resize(requiredMaterialSlots);
                 if (m_metadata.sourceAssetReference.empty())
                 {
                     m_metadata.sourceAssetReference = project->MakeAssetReference(sourcePath);

@@ -2149,6 +2149,10 @@ namespace PlutoGE::assets
                     {
                         config.castsShadow = value == "true" || value == "1";
                     }
+                    else if (key == "TwoSided")
+                    {
+                        config.twoSided = value == "true" || value == "1";
+                    }
                     else if (key == "UvScale")
                     {
                         ParseVec2(value, config.uvScale);
@@ -2164,6 +2168,18 @@ namespace PlutoGE::assets
                     else if (key == "Emission")
                     {
                         ParseVec3(value, config.emission);
+                    }
+                    else if (key == "Subsurface")
+                    {
+                        ParseFloat(value, config.subsurface);
+                    }
+                    else if (key == "SubsurfaceColor")
+                    {
+                        ParseVec3(value, config.subsurfaceColor);
+                    }
+                    else if (key == "SubsurfaceRadius")
+                    {
+                        ParseFloat(value, config.subsurfaceRadius);
                     }
                     else if (key == "Transmission")
                     {
@@ -2313,10 +2329,14 @@ namespace PlutoGE::assets
                << "\n";
         output << "AlphaCutoff=" << config.alphaCutoff << "\n";
         output << "CastsShadow=" << (config.castsShadow ? "true" : "false") << "\n";
+        output << "TwoSided=" << (config.twoSided ? "true" : "false") << "\n";
         output << "UvScale=" << config.uvScale.x << "," << config.uvScale.y << "\n";
         output << "Metallic=" << config.metallic << "\n";
         output << "Roughness=" << config.roughness << "\n";
         output << "Emission=" << config.emission.r << "," << config.emission.g << "," << config.emission.b << "\n";
+        output << "Subsurface=" << config.subsurface << "\n";
+        output << "SubsurfaceColor=" << config.subsurfaceColor.r << "," << config.subsurfaceColor.g << "," << config.subsurfaceColor.b << "\n";
+        output << "SubsurfaceRadius=" << config.subsurfaceRadius << "\n";
         output << "Transmission=" << config.transmission << "\n";
         output << "Ior=" << config.ior << "\n";
         output << "Thickness=" << config.thickness << "\n";

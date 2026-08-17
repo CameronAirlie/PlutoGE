@@ -27,6 +27,7 @@ namespace PlutoGE::ui
         render::AlphaMode m_alphaMode = render::AlphaMode::Opaque;
         float m_alphaCutoff = 0.5f;
         bool m_castsShadow = true;
+        bool m_twoSided = false;
         std::string m_albedoTexturePath;
         std::string m_normalTexturePath;
         float m_metallic = 0.0f;
@@ -34,6 +35,9 @@ namespace PlutoGE::ui
         render::TextureChannel m_metallicTextureChannel = render::TextureChannel::Red;
         float m_roughness = 0.55f;
         glm::vec3 m_emission{0.0f};
+        float m_subsurface = 0.0f;
+        glm::vec3 m_subsurfaceColor{1.0f, 0.35f, 0.2f};
+        float m_subsurfaceRadius = 1.0f;
         std::string m_roughnessTexturePath;
         render::TextureChannel m_roughnessTextureChannel = render::TextureChannel::Red;
         float m_transmission = 0.0f;

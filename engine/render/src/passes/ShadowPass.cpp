@@ -1365,6 +1365,14 @@ namespace
         {
             const auto &draw = draws[group.firstDraw];
             const auto &command = *draw.command;
+            if (command.material && command.material->GetConfig().twoSided)
+            {
+                PlutoGE::render::Graphics::Disable(GL_CULL_FACE);
+            }
+            else
+            {
+                PlutoGE::render::Graphics::Enable(GL_CULL_FACE);
+            }
             const bool alphaTested = IsAlphaTestedShadowCaster(command);
             if (alphaTested)
             {
@@ -1513,6 +1521,7 @@ namespace
             shader->SetUniform("uUseSkinning", 0);
         }
 
+        PlutoGE::render::Graphics::Enable(GL_CULL_FACE);
         return stats;
     }
 }

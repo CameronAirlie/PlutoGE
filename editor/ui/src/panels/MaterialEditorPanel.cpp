@@ -415,6 +415,7 @@ namespace PlutoGE::ui
             m_alphaMode = render::AlphaMode::Opaque;
             m_alphaCutoff = 0.5f;
             m_castsShadow = true;
+            m_twoSided = false;
             m_albedoTexturePath.clear();
             m_normalTexturePath.clear();
             m_metallic = 0.0f;
@@ -429,6 +430,9 @@ namespace PlutoGE::ui
             m_thickness = 0.01f;
             m_attenuationColor = glm::vec3(1.0f);
             m_attenuationDistance = 1.0f;
+            m_subsurface = 0.0f;
+            m_subsurfaceColor = glm::vec3(1.0f, 0.35f, 0.2f);
+            m_subsurfaceRadius = 1.0f;
             m_uvScale = glm::vec2(1.0f, 1.0f);
             m_flipNormalY = false;
             return;
@@ -443,6 +447,7 @@ namespace PlutoGE::ui
         m_alphaMode = config.alphaMode;
         m_alphaCutoff = config.alphaCutoff;
         m_castsShadow = config.castsShadow;
+        m_twoSided = config.twoSided;
         m_albedoTexturePath = config.albedoTexture ? config.albedoTexture->GetFilePath() : std::string{};
         m_normalTexturePath = config.normalTexture ? config.normalTexture->GetFilePath() : std::string{};
         m_metallic = config.metallic;
@@ -457,6 +462,9 @@ namespace PlutoGE::ui
         m_thickness = config.thickness;
         m_attenuationColor = config.attenuationColor;
         m_attenuationDistance = config.attenuationDistance;
+        m_subsurface = config.subsurface;
+        m_subsurfaceColor = config.subsurfaceColor;
+        m_subsurfaceRadius = config.subsurfaceRadius;
         m_uvScale = config.uvScale;
         m_flipNormalY = config.flipNormalY;
     }
@@ -488,6 +496,7 @@ namespace PlutoGE::ui
         previewConfig.color = m_color;
         previewConfig.surfaceType = m_surfaceType;
         previewConfig.alphaMode = m_alphaMode;
+        previewConfig.twoSided = m_twoSided;
         previewConfig.albedoTexture = LoadMaterialEditorTexture(m_albedoTexturePath);
         previewConfig.normalTexture = LoadMaterialEditorTexture(m_normalTexturePath);
         previewConfig.metallic = m_metallic;
@@ -498,6 +507,9 @@ namespace PlutoGE::ui
         previewConfig.roughnessTextureChannel = m_roughnessTextureChannel;
         previewConfig.emission = m_emission;
         previewConfig.transmission = m_transmission;
+        previewConfig.subsurface = m_subsurface;
+        previewConfig.subsurfaceColor = m_subsurfaceColor;
+        previewConfig.subsurfaceRadius = m_subsurfaceRadius;
         previewConfig.ior = m_ior;
         previewConfig.attenuationColor = m_attenuationColor;
         previewConfig.uvScale = m_uvScale;
@@ -505,6 +517,7 @@ namespace PlutoGE::ui
         std::size_t previewRevision = 0;
         for (const float value : {m_color.r, m_color.g, m_color.b, m_color.a, m_metallic, m_roughness,
                                   m_emission.r, m_emission.g, m_emission.b, m_uvScale.x, m_uvScale.y,
+                                  m_subsurface, m_subsurfaceColor.r, m_subsurfaceColor.g, m_subsurfaceColor.b, m_subsurfaceRadius,
                                   m_transmission, m_ior, m_attenuationColor.r, m_attenuationColor.g, m_attenuationColor.b})
             HashPreviewValue(previewRevision, value);
         HashPreviewValue(previewRevision, m_albedoTexturePath);
@@ -514,6 +527,7 @@ namespace PlutoGE::ui
         HashPreviewValue(previewRevision, static_cast<int>(m_metallicTextureChannel));
         HashPreviewValue(previewRevision, static_cast<int>(m_roughnessTextureChannel));
         HashPreviewValue(previewRevision, m_flipNormalY);
+        HashPreviewValue(previewRevision, m_twoSided);
 
         const float previewExtent = (std::min)(ImGui::GetContentRegionAvail().x, 280.0f);
         const ImVec2 previewSize(previewExtent, previewExtent);
@@ -597,6 +611,10 @@ namespace PlutoGE::ui
         {
             m_dirty = true;
         }
+        if (ImGui::Checkbox("Two Sided", &m_twoSided))
+        {
+            m_dirty = true;
+        }
 
         ImGui::SeparatorText("Textures");
         if (RenderTexturePathControl(reference, "Albedo", "Albedo", m_albedoTexturePath))
@@ -642,6 +660,25 @@ namespace PlutoGE::ui
         if (RenderVector2Control("UV Scale", m_uvScale, 0.2f))
         {
             m_dirty = true;
+        }
+
+        ImGui::SeparatorText("Subsurface Scattering");
+        if (ImGui::SliderFloat("Strength##Subsurface", &m_subsurface, 0.0f, 1.0f, "%.2f"))
+        {
+            m_dirty = true;
+        }
+        if (m_subsurface > 0.001f)
+        {
+            float subsurfaceColor[3] = {m_subsurfaceColor.r, m_subsurfaceColor.g, m_subsurfaceColor.b};
+            if (ImGui::ColorEdit3("Scattering Color", subsurfaceColor))
+            {
+                m_subsurfaceColor = glm::vec3(subsurfaceColor[0], subsurfaceColor[1], subsurfaceColor[2]);
+                m_dirty = true;
+            }
+            if (ImGui::DragFloat("Scattering Radius", &m_subsurfaceRadius, 0.01f, 0.001f, 100.0f, "%.3f"))
+            {
+                m_dirty = true;
+            }
         }
 
         if (m_surfaceType == render::MaterialSurfaceType::Glass)
@@ -695,6 +732,7 @@ namespace PlutoGE::ui
             config.alphaMode = m_alphaMode;
             config.alphaCutoff = (std::clamp)(m_alphaCutoff, 0.0f, 1.0f);
             config.castsShadow = m_castsShadow;
+            config.twoSided = m_twoSided;
             config.albedoTexture = LoadMaterialEditorTexture(m_albedoTexturePath);
             config.normalTexture = LoadMaterialEditorTexture(m_normalTexturePath);
             config.metallic = (std::clamp)(m_metallic, 0.0f, 1.0f);
@@ -702,6 +740,9 @@ namespace PlutoGE::ui
             config.metallicTextureChannel = m_metallicTextureChannel;
             config.roughness = (std::clamp)(m_roughness, 0.04f, 1.0f);
             config.emission = glm::max(m_emission, glm::vec3(0.0f));
+            config.subsurface = (std::clamp)(m_subsurface, 0.0f, 1.0f);
+            config.subsurfaceColor = glm::max(m_subsurfaceColor, glm::vec3(0.0f));
+            config.subsurfaceRadius = (std::max)(m_subsurfaceRadius, 0.001f);
             config.roughnessTexture = LoadMaterialEditorTexture(m_roughnessTexturePath);
             config.roughnessTextureChannel = m_roughnessTextureChannel;
             config.transmission = (std::clamp)(m_transmission, 0.0f, 1.0f);

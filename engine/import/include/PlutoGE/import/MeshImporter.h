@@ -42,9 +42,13 @@ namespace PlutoGE::assetimport
         render::AlphaMode alphaMode = render::AlphaMode::Opaque;
         float alphaCutoff = 0.5f;
         bool castsShadow = true;
+        bool twoSided = false;
         float metallic = 0.0f;
         float roughness = 1.0f;
         glm::vec3 emission{0.0f};
+        float subsurface = 0.0f;
+        glm::vec3 subsurfaceColor{1.0f, 0.35f, 0.2f};
+        float subsurfaceRadius = 1.0f;
         float transmission = 0.0f;
         float ior = 1.45f;
         float thickness = 0.01f;

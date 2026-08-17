@@ -6,8 +6,9 @@ Constraint: preserve all post-process effects and visual fidelity.
 - [x] Renderer-owned reusable visibility scratch buffers, removing per-frame vector allocations
   without changing the public `RenderCommand` layout.
 - [ ] Static GPU-resident instance data with a separate dynamic update path. *(In progress)*
-- [ ] Persistent or ring-buffered shadow instance uploads.
-- [ ] Cached static shadow draw preparation and per-cascade caster membership.
+- [x] Capacity-retaining eight-slot ring for shadow instance and indirect-command uploads.
+- [x] Cached static shadow caster ordering and transformed instance bounds; per-region membership
+  remains exact and dynamic for scrolling cascades.
 - [ ] Unified visibility, distance, projected-size, and LOD traversal.
 - [ ] Optional GPU-driven culling and indirect-command generation.
 - [ ] Renderer-wide OpenGL state caching.
@@ -24,3 +25,8 @@ Constraint: preserve all post-process effects and visual fidelity.
 - A compact-index field was initially added to `RenderCommand`, but this exposed an ABI mismatch
   when the editor and engine libraries were rebuilt at different times. The field was removed and
   the original layout restored; pooled transform scratch storage now lives privately in `Renderer`.
+- The complete RelWithDebInfo editor rebuilt successfully with the ABI-safe layout
+  (`PlutoGEEditor.exe`, 2026-08-17 11:58:44).
+- The shadow upload ring and cached caster ordering both pass the RelWithDebInfo `PlutoGERender` build.
+- Static shadow instance bounds are cached per immutable instance snapshot and mesh/submesh, with
+  weak ownership validation and topology-triggered pruning. Dynamic/skinned casters bypass the cache.

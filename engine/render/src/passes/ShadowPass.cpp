@@ -216,9 +216,8 @@ namespace
         if (instanceCapacity < instances.size())
         {
             instanceCapacity = std::max(instances.size(), instanceCapacity == 0 ? instances.size() : instanceCapacity * 2);
+            glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(instanceCapacity * sizeof(TransformInstanceData)), nullptr, GL_STREAM_DRAW);
         }
-
-        glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(instanceCapacity * sizeof(TransformInstanceData)), nullptr, GL_STREAM_DRAW);
         glBufferSubData(GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(instances.size() * sizeof(TransformInstanceData)), instances.data());
         glBindBuffer(GL_ARRAY_BUFFER, 0);
     }
@@ -320,24 +319,19 @@ namespace
     }
 
     void BuildShadowCasterEntries(const std::vector<PlutoGE::render::RenderCommand> &renderCommands,
+                                  const std::vector<std::size_t> &sortedCommandIndices,
                                   std::vector<ShadowCasterEntry> &shadowCasters,
                                   bool &shadowCastersChanged)
     {
         shadowCasters.clear();
-        shadowCasters.reserve(renderCommands.size());
+        shadowCasters.reserve(sortedCommandIndices.size());
         shadowCastersChanged = false;
 
-        for (const auto &command : renderCommands)
+        for (const std::size_t commandIndex : sortedCommandIndices)
         {
-            if (!command.mesh || !command.material)
-            {
+            if (commandIndex >= renderCommands.size())
                 continue;
-            }
-
-            if (!CastsShadow(command))
-            {
-                continue;
-            }
+            const auto &command = renderCommands[commandIndex];
 
             // Skeletal animation changes vertex positions without changing the
             // model matrix. Treat a newly evaluated skinning pose as caster
@@ -352,6 +346,37 @@ namespace
                 .hasMoved = hasMoved,
             });
         }
+    }
+
+    std::vector<std::size_t> BuildSortedShadowCasterCommandIndices(
+        const std::vector<PlutoGE::render::RenderCommand> &renderCommands)
+    {
+        std::vector<std::size_t> indices;
+        indices.reserve(renderCommands.size());
+        for (std::size_t index = 0; index < renderCommands.size(); ++index)
+        {
+            if (renderCommands[index].mesh && renderCommands[index].material && CastsShadow(renderCommands[index]))
+                indices.push_back(index);
+        }
+
+        std::sort(indices.begin(), indices.end(), [&](std::size_t aIndex, std::size_t bIndex)
+        {
+            const auto *aCommand = &renderCommands[aIndex];
+            const auto *bCommand = &renderCommands[bIndex];
+            const bool aAlphaTested = IsAlphaTestedShadowCaster(*aCommand);
+            const bool bAlphaTested = IsAlphaTestedShadowCaster(*bCommand);
+            if (aAlphaTested != bAlphaTested) return aAlphaTested < bAlphaTested;
+            if (aAlphaTested && aCommand->material != bCommand->material)
+                return std::less<PlutoGE::render::Material *>{}(aCommand->material, bCommand->material);
+            if (aCommand->mesh != bCommand->mesh)
+                return std::less<PlutoGE::render::Mesh *>{}(aCommand->mesh, bCommand->mesh);
+            if (aCommand->jointMatrices != bCommand->jointMatrices)
+                return std::less<const std::vector<glm::mat4> *>{}(aCommand->jointMatrices, bCommand->jointMatrices);
+            if (aCommand->submeshIndex != bCommand->submeshIndex)
+                return aCommand->submeshIndex < bCommand->submeshIndex;
+            return aCommand->lodIndex < bCommand->lodIndex;
+        });
+        return indices;
     }
 
     struct ShadowCasterFrameState
@@ -390,46 +415,6 @@ namespace
 
         HashCombine(state.fingerprint, static_cast<std::uint64_t>(state.casterCount));
         return state;
-    }
-
-    std::vector<const ShadowCasterEntry *> BuildSortedShadowCasters(const std::vector<ShadowCasterEntry> &shadowCasters)
-    {
-        std::vector<const ShadowCasterEntry *> sortedShadowCasters;
-        sortedShadowCasters.reserve(shadowCasters.size());
-        for (const auto &shadowCaster : shadowCasters)
-        {
-            sortedShadowCasters.push_back(&shadowCaster);
-        }
-
-        std::sort(sortedShadowCasters.begin(), sortedShadowCasters.end(), [](const auto *a, const auto *b)
-                  {
-                      const auto *aCommand = a->command;
-                      const auto *bCommand = b->command;
-                      const bool aAlphaTested = IsAlphaTestedShadowCaster(*aCommand);
-                      const bool bAlphaTested = IsAlphaTestedShadowCaster(*bCommand);
-                      if (aAlphaTested != bAlphaTested)
-                      {
-                          return aAlphaTested < bAlphaTested;
-                      }
-                      if (aAlphaTested && aCommand->material != bCommand->material)
-                      {
-                          return std::less<PlutoGE::render::Material *>{}(aCommand->material, bCommand->material);
-                      }
-                      if (aCommand->mesh != bCommand->mesh)
-                      {
-                          return std::less<PlutoGE::render::Mesh *>{}(aCommand->mesh, bCommand->mesh);
-                      }
-                      if (aCommand->jointMatrices != bCommand->jointMatrices)
-                      {
-                          return std::less<const std::vector<glm::mat4> *>{}(aCommand->jointMatrices,
-                                                                           bCommand->jointMatrices);
-                      }
-                      if (aCommand->submeshIndex != bCommand->submeshIndex)
-                      {
-                          return aCommand->submeshIndex < bCommand->submeshIndex;
-                      }
-                      return aCommand->lodIndex < bCommand->lodIndex; });
-        return sortedShadowCasters;
     }
 
     std::array<glm::vec3, 8> BuildCameraRelativeFrustumCorners(const PlutoGE::render::CameraData &cameraData)
@@ -1234,15 +1219,16 @@ namespace
         {
             if (!command.instanceModels || command.instanceModels->empty())
             {
-                if (instancePredicate(command, command.model))
+                if (instancePredicate(command, command.model, std::numeric_limits<std::size_t>::max()))
                     instances.push_back(TransformInstanceData{.model = command.model});
                 return;
             }
 
             instances.reserve(instances.size() + command.instanceModels->size());
-            for (const auto &model : *command.instanceModels)
+            for (std::size_t instanceIndex = 0; instanceIndex < command.instanceModels->size(); ++instanceIndex)
             {
-                if (instancePredicate(command, model))
+                const auto &model = (*command.instanceModels)[instanceIndex];
+                if (instancePredicate(command, model, instanceIndex))
                     instances.push_back(TransformInstanceData{.model = model});
             }
         };
@@ -1532,10 +1518,47 @@ namespace
 
 namespace PlutoGE::render
 {
+    class ShadowPassCache
+    {
+    public:
+        struct Key
+        {
+            const std::vector<glm::mat4> *instances = nullptr;
+            const Mesh *mesh = nullptr;
+            std::uint32_t submeshIndex = 0;
+
+            bool operator==(const Key &) const = default;
+        };
+
+        struct KeyHash
+        {
+            std::size_t operator()(const Key &key) const noexcept
+            {
+                std::size_t hash = std::hash<const void *>{}(key.instances);
+                hash ^= std::hash<const void *>{}(key.mesh) + 0x9e3779b97f4a7c15ull + (hash << 6) + (hash >> 2);
+                hash ^= std::hash<std::uint32_t>{}(key.submeshIndex) + 0x9e3779b97f4a7c15ull + (hash << 6) + (hash >> 2);
+                return hash;
+            }
+        };
+
+        struct Entry
+        {
+            std::weak_ptr<const std::vector<glm::mat4>> owner;
+            std::vector<MeshBounds> bounds;
+        };
+
+        std::unordered_map<Key, Entry, KeyHash> staticInstanceBounds;
+    };
+
+    ShadowPass::ShadowPass()
+        : m_cache(std::make_unique<ShadowPassCache>())
+    {
+    }
+
     ShadowPass::~ShadowPass()
     {
-        if (m_instanceBuffer != 0) glDeleteBuffers(1, &m_instanceBuffer);
-        if (m_indirectBuffer != 0) glDeleteBuffers(1, &m_indirectBuffer);
+        glDeleteBuffers(static_cast<GLsizei>(m_instanceBuffers.size()), m_instanceBuffers.data());
+        glDeleteBuffers(static_cast<GLsizei>(m_indirectBuffers.size()), m_indirectBuffers.data());
         if (m_shadowFramebuffer != 0) glDeleteFramebuffers(1, &m_shadowFramebuffer);
     }
 
@@ -1543,10 +1566,7 @@ namespace PlutoGE::render
     {
         m_shadowPassShader = Shader::CreateShadowPassShader();
         glGenFramebuffers(1, &m_shadowFramebuffer);
-        if (m_instanceBuffer == 0)
-        {
-            glGenBuffers(1, &m_instanceBuffer);
-        }
+        glGenBuffers(static_cast<GLsizei>(m_instanceBuffers.size()), m_instanceBuffers.data());
     }
 
     bool ShadowPass::CanSkipStaticFrame(const RenderContext &ctx) const
@@ -1633,8 +1653,41 @@ namespace PlutoGE::render
         const glm::vec3 shadowCameraPosition = ctx.hasCameraData
                                                    ? glm::vec3(glm::inverse(ctx.cameraData.view)[3])
                                                    : glm::vec3(0.0f);
+        const auto resolveInstanceBounds = [&](const PlutoGE::render::RenderCommand &command,
+                                               const glm::mat4 &model,
+                                               std::size_t instanceIndex)
+        {
+            if (!command.isStatic || !command.instanceModels ||
+                instanceIndex >= command.instanceModels->size() || !command.mesh ||
+                command.submeshIndex >= command.mesh->GetSubmeshCount())
+            {
+                return command.mesh && command.submeshIndex < command.mesh->GetSubmeshCount()
+                           ? TransformShadowBounds(command.mesh->GetSubmesh(command.submeshIndex).bounds, model)
+                           : MeshBounds{};
+            }
+
+            const ShadowPassCache::Key key{
+                .instances = command.instanceModels.get(),
+                .mesh = command.mesh,
+                .submeshIndex = command.submeshIndex,
+            };
+            auto &entry = m_cache->staticInstanceBounds[key];
+            const auto owner = entry.owner.lock();
+            if (owner.get() != command.instanceModels.get() ||
+                entry.bounds.size() != command.instanceModels->size())
+            {
+                entry.owner = command.instanceModels;
+                entry.bounds.clear();
+                entry.bounds.reserve(command.instanceModels->size());
+                const auto &sourceBounds = command.mesh->GetSubmesh(command.submeshIndex).bounds;
+                for (const auto &instanceModel : *command.instanceModels)
+                    entry.bounds.push_back(TransformShadowBounds(sourceBounds, instanceModel));
+            }
+            return entry.bounds[instanceIndex];
+        };
         const auto passesInstanceShadowDistance = [&](const PlutoGE::render::RenderCommand &command,
-                                                       const glm::mat4 &model)
+                                                       const glm::mat4 &model,
+                                                       std::size_t instanceIndex)
         {
             if (!ctx.hasCameraData || command.maxShadowDistance <= 0.0f ||
                 command.maxShadowDistance == std::numeric_limits<float>::max())
@@ -1646,8 +1699,7 @@ namespace PlutoGE::render
                 return false;
             }
 
-            const auto bounds = TransformShadowBounds(
-                command.mesh->GetSubmesh(command.submeshIndex).bounds, model);
+            const auto bounds = resolveInstanceBounds(command, model, instanceIndex);
             const float maximumCenterDistance = command.maxShadowDistance +
                                                 glm::max(bounds.radius, 0.0f);
             const glm::vec3 offset = bounds.center - shadowCameraPosition;
@@ -1656,6 +1708,13 @@ namespace PlutoGE::render
         m_allCachedShadowCastersStatic = casterFrameState.allCastersStatic;
         const bool shadowCasterTopologyChanged = !m_hasShadowCasterFingerprint ||
                                                  casterFrameState.fingerprint != m_shadowCasterFingerprint;
+        if (shadowCasterTopologyChanged)
+        {
+            std::erase_if(m_cache->staticInstanceBounds, [](const auto &item)
+            {
+                return item.second.owner.expired();
+            });
+        }
         bool shadowCastersChanged = casterFrameState.hasMovedCaster || shadowCasterTopologyChanged;
         const bool cameraDataChanged = ctx.hasCameraData &&
                                        (!ctx.hasPreviousCameraData ||
@@ -1745,10 +1804,22 @@ namespace PlutoGE::render
         static thread_local std::vector<ShadowCasterEntry> shadowCasters;
         shadowCasters.clear();
         shadowCasters.reserve(ctx.renderCommands->size());
+        if (shadowCasterTopologyChanged ||
+            m_sortedShadowCasterCommandIndices.size() != casterFrameState.casterCount)
+        {
+            m_sortedShadowCasterCommandIndices = BuildSortedShadowCasterCommandIndices(*ctx.renderCommands);
+        }
         bool movedShadowCaster = false;
-        BuildShadowCasterEntries(*ctx.renderCommands, shadowCasters, movedShadowCaster);
+        BuildShadowCasterEntries(
+            *ctx.renderCommands,
+            m_sortedShadowCasterCommandIndices,
+            shadowCasters,
+            movedShadowCaster);
         shadowCastersChanged = shadowCastersChanged || movedShadowCaster;
-        const auto sortedShadowCasters = BuildSortedShadowCasters(shadowCasters);
+        std::vector<const ShadowCasterEntry *> sortedShadowCasters;
+        sortedShadowCasters.reserve(shadowCasters.size());
+        for (const auto &shadowCaster : shadowCasters)
+            sortedShadowCasters.push_back(&shadowCaster);
         static thread_local std::vector<TransformInstanceData> shadowBatchInstances;
         int incrementalShadowSurfaceUpdates = 0;
         auto reserveIncrementalShadowSurfaceUpdate = [&]()
@@ -1890,6 +1961,7 @@ namespace PlutoGE::render
                     }
                     glClear(GL_DEPTH_BUFFER_BIT);
                     m_shadowPassShader->SetUniform("uLightSpaceMatrix", shadowMatrices[face]);
+                    const std::size_t streamBufferIndex = AcquireStreamBuffer();
                     const ShadowDrawStats drawStats = DrawShadowCasterBatches(
                         sortedShadowCasters,
                         [&](const ShadowCasterEntry &shadowCaster)
@@ -1901,15 +1973,15 @@ namespace PlutoGE::render
                         {
                             return SelectDefaultShadowLod(*shadowCaster.command);
                         },
-                        [&](const PlutoGE::render::RenderCommand &command, const glm::mat4 &model)
+                        [&](const PlutoGE::render::RenderCommand &command, const glm::mat4 &model, std::size_t instanceIndex)
                         {
-                            return passesInstanceShadowDistance(command, model);
+                            return passesInstanceShadowDistance(command, model, instanceIndex);
                         },
                         m_shadowPassShader,
-                        m_instanceBuffer,
-                        m_instanceCapacity,
-                        m_indirectBuffer,
-                        m_indirectCapacity,
+                        m_instanceBuffers[streamBufferIndex],
+                        m_instanceCapacities[streamBufferIndex],
+                        m_indirectBuffers[streamBufferIndex],
+                        m_indirectCapacities[streamBufferIndex],
                         m_indirectDrawEnabled,
                         m_indirectDrawValidated,
                         shadowBatchInstances);
@@ -2211,6 +2283,7 @@ namespace PlutoGE::render
                         }
                         else glDisable(GL_SCISSOR_TEST);
                         if (clearDepth) glClear(GL_DEPTH_BUFFER_BIT);
+                        const std::size_t streamBufferIndex = AcquireStreamBuffer();
                         const ShadowDrawStats regionStats = DrawShadowCasterBatches(
                             sortedShadowCasters,
                             [&](const ShadowCasterEntry &shadowCaster)
@@ -2227,20 +2300,20 @@ namespace PlutoGE::render
                             },
                             [&](const ShadowCasterEntry &shadowCaster)
                             { return SelectDirectionalShadowLod(*shadowCaster.command, cascadeIndex, cascadeCount, shadowResolution); },
-                            [&](const PlutoGE::render::RenderCommand &command, const glm::mat4 &model)
+                            [&](const PlutoGE::render::RenderCommand &command, const glm::mat4 &model, std::size_t instanceIndex)
                             {
-                                if (!passesInstanceShadowDistance(command, model))
+                                if (!passesInstanceShadowDistance(command, model, instanceIndex))
                                     return false;
                                 if (!effectiveRegion || !command.mesh || command.submeshIndex >= command.mesh->GetSubmeshCount())
                                     return true;
-                                const auto instanceBounds = TransformShadowBounds(
-                                    command.mesh->GetSubmesh(command.submeshIndex).bounds, model);
+                                const auto instanceBounds = resolveInstanceBounds(command, model, instanceIndex);
                                 return IsBoundsOverlappingDirectionalRegion(
                                     instanceBounds, cascadeProjection.lightViewMatrix,
                                     cascadeShadowWorldOrigin, effectiveRegion->min, effectiveRegion->max);
                             },
-                            m_shadowPassShader, m_instanceBuffer, m_instanceCapacity,
-                            m_indirectBuffer, m_indirectCapacity, m_indirectDrawEnabled,
+                            m_shadowPassShader,
+                            m_instanceBuffers[streamBufferIndex], m_instanceCapacities[streamBufferIndex],
+                            m_indirectBuffers[streamBufferIndex], m_indirectCapacities[streamBufferIndex], m_indirectDrawEnabled,
                             m_indirectDrawValidated, shadowBatchInstances);
                         drawStats.submittedInstances += regionStats.submittedInstances;
                         drawStats.submittedBatches += regionStats.submittedBatches;
@@ -2489,6 +2562,7 @@ namespace PlutoGE::render
             glClear(GL_DEPTH_BUFFER_BIT);
             m_shadowPassShader->SetUniform("uShadowPassMode", kProjectedShadowPassMode);
             m_shadowPassShader->SetUniform("uLightSpaceMatrix", shadowMatrix);
+            const std::size_t streamBufferIndex = AcquireStreamBuffer();
             const ShadowDrawStats drawStats = DrawShadowCasterBatches(
                 sortedShadowCasters,
                 [&](const ShadowCasterEntry &shadowCaster)
@@ -2500,15 +2574,15 @@ namespace PlutoGE::render
                 {
                     return SelectDefaultShadowLod(*shadowCaster.command);
                 },
-                [&](const PlutoGE::render::RenderCommand &command, const glm::mat4 &model)
+                [&](const PlutoGE::render::RenderCommand &command, const glm::mat4 &model, std::size_t instanceIndex)
                 {
-                    return passesInstanceShadowDistance(command, model);
+                    return passesInstanceShadowDistance(command, model, instanceIndex);
                 },
                 m_shadowPassShader,
-                m_instanceBuffer,
-                m_instanceCapacity,
-                m_indirectBuffer,
-                m_indirectCapacity,
+                m_instanceBuffers[streamBufferIndex],
+                m_instanceCapacities[streamBufferIndex],
+                m_indirectBuffers[streamBufferIndex],
+                m_indirectCapacities[streamBufferIndex],
                 m_indirectDrawEnabled,
                 m_indirectDrawValidated,
                 shadowBatchInstances);

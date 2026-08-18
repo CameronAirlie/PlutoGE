@@ -278,6 +278,42 @@ namespace PlutoGE::render
                     return f0 + (1.0 - f0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
                 }
 
+                vec3 EvaluatePbrDiffuse(vec3 normal, vec3 viewDir, vec3 albedo, float metallic, vec3 lightDir, vec3 radiance)
+                {
+                    vec3 halfwayDir = normalize(viewDir + lightDir);
+                    float ndotl = max(dot(normal, lightDir), 0.0);
+
+                    if (ndotl <= 0.0)
+                    {
+                        return vec3(0.0);
+                    }
+
+                    vec3 f0 = mix(vec3(0.04), albedo, metallic);
+                    vec3 fresnel = FresnelSchlick(max(dot(halfwayDir, viewDir), 0.0), f0);
+                    vec3 kD = (vec3(1.0) - fresnel) * (1.0 - metallic);
+                    return kD * albedo / PI * radiance * ndotl;
+                }
+
+                vec3 EvaluatePbrSpecular(vec3 normal, vec3 viewDir, vec3 albedo, float metallic, float roughness, vec3 lightDir, vec3 radiance)
+                {
+                    vec3 halfwayDir = normalize(viewDir + lightDir);
+                    float ndotv = max(dot(normal, viewDir), 0.0);
+                    float ndotl = max(dot(normal, lightDir), 0.0);
+
+                    if (ndotl <= 0.0)
+                    {
+                        return vec3(0.0);
+                    }
+
+                    vec3 f0 = mix(vec3(0.04), albedo, metallic);
+                    vec3 fresnel = FresnelSchlick(max(dot(halfwayDir, viewDir), 0.0), f0);
+                    float distribution = DistributionGGX(normal, halfwayDir, roughness);
+                    float geometry = GeometrySmith(normal, viewDir, lightDir, roughness);
+                    vec3 specular = (distribution * geometry * fresnel) / max(4.0 * ndotv * ndotl, 0.0001);
+                    specular *= 1.0 - smoothstep(0.92, 1.0, roughness);
+                    return specular * radiance * ndotl;
+                }
+
                 float ComputePointAttenuation(vec3 fragPos, Light light)
                 {
                     float distanceToLight = length(light.Position - fragPos);
@@ -295,35 +331,8 @@ namespace PlutoGE::render
 
                 vec3 EvaluatePbrLighting(vec3 normal, vec3 viewDir, vec3 albedo, float metallic, float roughness, vec3 lightDir, vec3 radiance)
                 {
-                    vec3 halfwayDir = normalize(viewDir + lightDir);
-                    float ndotv = max(dot(normal, viewDir), 0.0);
-                    float ndotl = max(dot(normal, lightDir), 0.0);
-
-                    // Keep Lambertian diffuse independent of the view angle.
-                    // Interpolated normals can fall just behind the view
-                    // hemisphere at silhouettes; only specular should vanish.
-                    if (ndotl <= 0.0)
-                    {
-                        return vec3(0.0);
-                    }
-
-                    vec3 f0 = mix(vec3(0.04), albedo, metallic);
-                    vec3 fresnel = FresnelSchlick(max(dot(halfwayDir, viewDir), 0.0), f0);
-                    float distribution = DistributionGGX(normal, halfwayDir, roughness);
-                    float geometry = GeometrySmith(normal, viewDir, lightDir, roughness);
-
-                    vec3 specular = (distribution * geometry * fresnel) / max(4.0 * ndotv * ndotl, 0.0001);
-                    // At the fully rough end of the material range the GGX lobe
-                    // is indistinguishable from diffuse response. Fading that
-                    // residual lobe prevents artist-authored foliage normals
-                    // (commonly bent straight upward) from projecting the N.V
-                    // zero crossing as a screen-space line at the horizon.
-                    specular *= 1.0 - smoothstep(0.92, 1.0, roughness);
-                    vec3 kS = fresnel;
-                    vec3 kD = (vec3(1.0) - kS) * (1.0 - metallic);
-                    vec3 diffuse = kD * albedo / PI;
-
-                    return (diffuse + specular) * radiance * ndotl;
+                    return EvaluatePbrDiffuse(normal, viewDir, albedo, metallic, lightDir, radiance) +
+                           EvaluatePbrSpecular(normal, viewDir, albedo, metallic, roughness, lightDir, radiance);
                 }
 
                 bool IsBakedStaticMaterial(float materialFlag)
@@ -690,13 +699,17 @@ namespace PlutoGE::render
                         return GetDirectionalCascadeDebugColor(sampledCascadeIndex);
                     }
 
-                    vec3 surfaceLighting = ndotl > 0.0
-                                               ? EvaluatePbrLighting(normal, viewDir, albedo, metallic, roughness, lightDir, radiance)
+                    float sssStrength = clamp(subsurface.a, 0.0, 1.0);
+                    vec3 diffuseLighting = ndotl > 0.0
+                                               ? EvaluatePbrDiffuse(normal, viewDir, albedo, metallic, lightDir, radiance)
                                                : vec3(0.0);
+                    vec3 specularLighting = ndotl > 0.0
+                                                ? EvaluatePbrSpecular(normal, viewDir, albedo, metallic, roughness, lightDir, radiance)
+                                                : vec3(0.0);
                     vec3 subsurfaceLighting = vec3(0.0);
-                    if (subsurface.a > 0.0001 && metallic < 0.999)
+                    if (sssStrength > 0.0001 && metallic < 0.999)
                     {
-                        float wrap = mix(0.25, 0.85, clamp(subsurface.a, 0.0, 1.0));
+                        float wrap = mix(0.25, 0.85, sssStrength);
                         float wrappedDiffuse = clamp((ndotl + wrap) / (1.0 + wrap), 0.0, 1.0);
                         float backScatter = pow(clamp(dot(viewDir, -lightDir), 0.0, 1.0), mix(8.0, 2.0, wrap));
                         // Thin leaves and grass are commonly viewed with the light nearly
@@ -705,14 +718,14 @@ namespace PlutoGE::render
                         // still supplies directional shape on the lit side.
                         float grazingTransmission = sqrt(max(1.0 - ndotl * ndotl, 0.0));
                         float profile = max(wrappedDiffuse, max(backScatter * 0.65,
-                                                               grazingTransmission * mix(0.2, 0.45, subsurface.a)));
+                                                               grazingTransmission * mix(0.2, 0.45, sssStrength)));
                         subsurfaceLighting = radiance * albedo * max(subsurface.rgb, vec3(0.0)) *
-                                             profile * subsurface.a * (1.0 - metallic) / PI;
+                                             profile * sssStrength * (1.0 - metallic) / PI;
                     }
                     float surfaceVisibility = 1.0 - shadow;
                     // Subsurface scattering is still energy supplied by this light.
                     // Do not leak a transmitted contribution through full occlusion.
-                    return (surfaceLighting + subsurfaceLighting) * surfaceVisibility;
+                    return (specularLighting + diffuseLighting * (1.0 - sssStrength) + subsurfaceLighting) * surfaceVisibility;
                 }
             )";
 

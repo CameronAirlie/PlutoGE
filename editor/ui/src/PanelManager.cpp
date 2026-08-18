@@ -96,14 +96,14 @@ namespace PlutoGE::ui
             ImGui::DockBuilderFinish(dockspaceId);
         }
 
-        std::filesystem::path ResolveEditorFontPath()
+        std::filesystem::path ResolveEditorFontPath(const char *fontFileName)
         {
-            constexpr const char *kMartianMonoFont = "resources/fonts/MartianMono-StdRg.ttf";
+            const std::filesystem::path relativeFontPath = std::filesystem::path("resources/fonts") / fontFileName;
             const std::array<std::filesystem::path, 4> candidates = {
-                GetExecutableDirectory() / kMartianMonoFont,
-                std::filesystem::current_path() / kMartianMonoFont,
-                std::filesystem::current_path() / "editor" / kMartianMonoFont,
-                std::filesystem::current_path() / ".." / ".." / ".." / "editor" / kMartianMonoFont,
+                GetExecutableDirectory() / relativeFontPath,
+                std::filesystem::current_path() / relativeFontPath,
+                std::filesystem::current_path() / "editor" / relativeFontPath,
+                std::filesystem::current_path() / ".." / ".." / ".." / "editor" / relativeFontPath,
             };
 
             for (const auto &candidate : candidates)
@@ -118,22 +118,22 @@ namespace PlutoGE::ui
             return {};
         }
 
-        void LoadEditorFont(ImGuiIO &io)
+        ImFont *LoadEditorFont(ImGuiIO &io, const char *fontFileName)
         {
-            const auto fontPath = ResolveEditorFontPath();
+            const auto fontPath = ResolveEditorFontPath(fontFileName);
             if (!fontPath.empty())
             {
                 ImFontConfig fontConfig{};
                 fontConfig.OversampleH = 3;
                 fontConfig.OversampleV = 2;
-                fontConfig.PixelSnapH = false;
+                fontConfig.PixelSnapH = true;
                 if (io.Fonts->AddFontFromFileTTF(fontPath.string().c_str(), kDefaultEditorFontSize, &fontConfig))
                 {
-                    return;
+                    return io.Fonts->Fonts.back();
                 }
             }
 
-            io.Fonts->AddFontDefault();
+            return nullptr;
         }
 
         void ApplyModernProfessionalTheme()
@@ -249,7 +249,10 @@ namespace PlutoGE::ui
             io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
             io.ConfigViewportsNoDecoration = false;
         }
-        LoadEditorFont(io);
+        m_martianMonoFont = LoadEditorFont(io, "MartianMono-StdRg.ttf");
+        m_georamaFont = LoadEditorFont(io, "Georama-Regular.ttf");
+        m_defaultFont = io.Fonts->AddFontDefault();
+        SetEditorFont(m_editorFont);
         SetEditorFontSize(kDefaultEditorFontSize);
 
         ImGui_ImplGlfw_InitForOpenGL(static_cast<GLFWwindow *>(window->GetWindow()), true);
@@ -285,6 +288,30 @@ namespace PlutoGE::ui
     {
         m_editorFontSize = std::clamp(fontSize, kMinEditorFontSize, kMaxEditorFontSize);
         ImGui::GetIO().FontGlobalScale = m_editorFontSize / kDefaultEditorFontSize;
+    }
+
+    void PanelManager::SetEditorFont(const std::string &fontName)
+    {
+        ImFont *selectedFont = nullptr;
+        if (fontName == "Georama")
+        {
+            selectedFont = m_georamaFont;
+        }
+        else if (fontName == "ImGui Default")
+        {
+            selectedFont = m_defaultFont;
+        }
+        else
+        {
+            selectedFont = m_martianMonoFont;
+        }
+
+        if (selectedFont == nullptr)
+        {
+            selectedFont = m_defaultFont;
+        }
+        ImGui::GetIO().FontDefault = selectedFont;
+        m_editorFont = fontName == "Georama" || fontName == "ImGui Default" ? fontName : "Martian Mono";
     }
 
     void PanelManager::AddPanel(Panel *panel)

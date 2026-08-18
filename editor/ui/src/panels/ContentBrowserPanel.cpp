@@ -1502,7 +1502,8 @@ void main() {
         bool ConfigureMeshComponentForReference(scene::Entity &entity,
                                                 const std::string &reference,
                                                 std::string *errorMessage,
-                                                bool attachAnimation = true)
+                                                bool attachAnimation = true,
+                                                const std::string &materialBindingReference = {})
         {
             auto &engine = core::Engine::GetInstance();
             auto *meshComponent = entity.CreateComponent<scene::MeshComponent>(scene::MeshComponentConfig{});
@@ -1521,7 +1522,8 @@ void main() {
                     if (metadata.sourceAssetId.empty() || metadata.sourceObjectId == 0) return false;
                     meshComponent->SetModelObjectIdentity(metadata.sourceAssetId, metadata.sourceObjectId);
                 }
-                const auto &materialReferences = engine.GetAssetManager().GetMeshAssetMaterialReferences(reference);
+                const auto &materialReferences = engine.GetAssetManager().GetMeshAssetMaterialReferences(
+                    materialBindingReference.empty() ? reference : materialBindingReference);
                 const auto materials = LoadMaterialReferences(engine, materialReferences);
                 meshComponent->SetMaterials(materials);
                 for (size_t materialSlotIndex = 0; materialSlotIndex < materialReferences.size(); ++materialSlotIndex)
@@ -1779,7 +1781,9 @@ void main() {
 
     }
 
-    bool InstantiateMeshAssetIntoScene(std::string reference, scene::Entity *parent)
+    bool InstantiateMeshAssetIntoScene(std::string reference,
+                                       scene::Entity *parent,
+                                       std::string materialBindingReference)
     {
         if (reference.empty() || assets::Project::GetAssetTypeForReference(reference) != assets::ProjectAssetType::Mesh)
         {
@@ -1796,7 +1800,7 @@ void main() {
         scene::Entity *createdEntity = nullptr;
         std::string errorMessage;
         editorShell.ExecuteSceneEdit("Instantiate Model Mesh Object",
-                                     [scene, parent, reference, &createdEntity, &errorMessage]()
+                                     [scene, parent, reference, materialBindingReference, &createdEntity, &errorMessage]()
                                      {
                                          auto &engine = core::Engine::GetInstance();
                                          auto *mesh = engine.GetAssetManager().LoadMeshAsset(reference);
@@ -1817,7 +1821,8 @@ void main() {
 
                                          if (mesh->GetSubmeshCount() <= 1)
                                          {
-                                             if (ConfigureMeshComponentForReference(*createdEntity, reference, &errorMessage))
+                                             if (ConfigureMeshComponentForReference(
+                                                     *createdEntity, reference, &errorMessage, true, materialBindingReference))
                                              {
                                                  return;
                                              }
@@ -1839,7 +1844,8 @@ void main() {
                                                  });
                                                  auto *childEntity = scene->AddEntity(std::move(child), createdEntity);
                                                  if (!childEntity ||
-                                                     !ConfigureMeshComponentForReference(*childEntity, reference, &errorMessage, false))
+                                                     !ConfigureMeshComponentForReference(
+                                                         *childEntity, reference, &errorMessage, false, materialBindingReference))
                                                  {
                                                      allChildrenCreated = false;
                                                      break;
@@ -1891,7 +1897,33 @@ void main() {
         }
         const auto meshObject = std::find_if(model.objects.begin(), model.objects.end(), [](const auto &object)
                                              { return object.type == assets::ProjectAssetType::Mesh; });
-        return meshObject != model.objects.end() && InstantiateMeshAssetIntoScene(meshObject->reference, parent);
+        if (meshObject == model.objects.end())
+        {
+            return false;
+        }
+
+        // A source model can have an authored mesh asset beside it. That asset is
+        // the editable representation exposed in the content browser (including
+        // its saved LOD ranges and thresholds), while the manifest object is the
+        // importer-owned fallback. Prefer the authored mesh when placing the
+        // model so dragging it uses the mesh's authored geometry configuration.
+        std::string placementMeshReference = meshObject->reference;
+        if (!model.sourceReference.empty())
+        {
+            auto authoredMeshPath = project->ResolveAssetReference(model.sourceReference);
+            authoredMeshPath.replace_extension(".plutomesh");
+            std::error_code errorCode;
+            if (std::filesystem::is_regular_file(authoredMeshPath, errorCode))
+            {
+                const std::string authoredMeshReference = project->MakeAssetReference(authoredMeshPath);
+                if (assets::Project::GetAssetTypeForReference(authoredMeshReference) == assets::ProjectAssetType::Mesh)
+                {
+                    placementMeshReference = authoredMeshReference;
+                }
+            }
+        }
+        return InstantiateMeshAssetIntoScene(
+            std::move(placementMeshReference), parent, meshObject->reference);
     }
 
     void ContentBrowserPanel::Render()

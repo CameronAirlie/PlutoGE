@@ -3,6 +3,7 @@
 #include "PlutoGE/scene/components/Component.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -146,6 +147,7 @@ namespace PlutoGE::scene
 
         const std::vector<render::AnimationClip> &GetClips() const { return m_clips; }
         bool IsJointPoseDirty() const { return m_jointMatricesDirty; }
+        std::uint64_t GetJointPoseRevision() const { return m_jointPoseRevision; }
         const std::vector<glm::mat4> &GetJointMatrices(const render::Skeleton &skeleton);
         const std::vector<glm::mat4> &GetJointMatrices(const render::Skeleton &skeleton, const std::vector<render::AnimationNode> &nodes);
         std::vector<glm::mat4> GetAnimatedJointMatrices(const render::Skeleton &skeleton,
@@ -311,6 +313,7 @@ namespace PlutoGE::scene
         bool m_graphStarted = false;
         bool m_jointMatricesDirty = true;
         bool m_nodeMatricesDirty = true;
+        std::uint64_t m_jointPoseRevision = 0;
         glm::vec3 m_pendingRagdollImpulse{0.0f};
         float m_ragdollWeight = 1.0f;
         bool m_ragdollEnabled = false;

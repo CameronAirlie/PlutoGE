@@ -710,11 +710,9 @@ namespace PlutoGE::render
                                              profile * subsurface.a * (1.0 - metallic) / PI;
                     }
                     float surfaceVisibility = 1.0 - shadow;
-                    // The shadow map sees an infinitesimally thin card as opaque. Permit a
-                    // modest transmitted component so the card does not self-blacken while
-                    // retaining most occlusion from surrounding geometry.
-                    float scatteringVisibility = mix(surfaceVisibility, 1.0, 0.25 * clamp(subsurface.a, 0.0, 1.0));
-                    return surfaceLighting * surfaceVisibility + subsurfaceLighting * scatteringVisibility;
+                    // Subsurface scattering is still energy supplied by this light.
+                    // Do not leak a transmitted contribution through full occlusion.
+                    return (surfaceLighting + subsurfaceLighting) * surfaceVisibility;
                 }
             )";
 

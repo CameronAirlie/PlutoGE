@@ -2035,12 +2035,18 @@ namespace PlutoGE::render
                 const glm::vec3 currentShadowWorldOrigin = glm::vec3(glm::inverse(ctx.cameraData.view)[3]);
                 const int cascadeCount = GetDirectionalCascadeCount(*light);
                 const auto cascadeSplits = BuildDirectionalCascadeSplits(ctx.cameraData, light->directionalShadowSettings, cascadeCount);
-                const std::uint8_t movedCasterCascadeMask = BuildMovedCasterCascadeMask(
+                std::uint8_t movedCasterCascadeMask = BuildMovedCasterCascadeMask(
                     shadowCasters,
                     ctx.cameraData,
                     cascadeSplits,
                     cascadeCount,
                     light->directionalShadowSettings.cascadeBlendDistance);
+                const bool hasAnimatedCasterMotion = std::any_of(
+                    shadowCasters.begin(), shadowCasters.end(),
+                    [](const ShadowCasterEntry &caster)
+                    {
+                        return caster.command && caster.command->skinningPoseChanged;
+                    });
                 // A camera-relative origin recenter is normal traversal work. Keep
                 // using the old cascade until its queued replacement is rendered;
                 // only initialization or an explicit light/settings change redraws
@@ -2049,6 +2055,15 @@ namespace PlutoGE::render
                 const bool casterOnlyCascadeInvalidation = shadowCastersChanged && !light->isDirty && !cameraDataChanged && !hasPendingIncrementalRefresh;
                 const bool cameraOnlyInvalidation = cameraDataChanged && !light->isDirty && !shadowCastersChanged;
                 const std::uint8_t allCascadeMask = static_cast<std::uint8_t>((1u << cascadeCount) - 1u);
+                // The two nearest cascades carry the visible detail from animated
+                // characters. Joint motion does not change a command's model
+                // matrix, and bind-pose bounds cannot describe the exact swept
+                // silhouette, so refresh both immediately whenever a skin pose
+                // changes instead of relying solely on depth-range classification.
+                const std::uint8_t animatedMotionCascadeMask = hasAnimatedCasterMotion
+                                                                   ? static_cast<std::uint8_t>(allCascadeMask & 0x03u)
+                                                                   : 0u;
+                movedCasterCascadeMask |= animatedMotionCascadeMask;
                 if (forceFullCascadeUpdate || cameraDataChanged)
                 {
                     light->pendingShadowCascadeMask |= allCascadeMask;
@@ -2076,6 +2091,7 @@ namespace PlutoGE::render
                 std::uint8_t scheduledCascadeMask = 0;
                 if (!forceFullCascadeUpdate)
                 {
+                    scheduledCascadeMask |= animatedMotionCascadeMask;
                     // The nearest cascade covers first-person geometry and the
                     // player's local ground shadow, so never defer it behind a
                     // farther weighted update. A second incremental-update slot
@@ -2182,7 +2198,9 @@ namespace PlutoGE::render
                         continue;
                     }
 
+                    const std::uint8_t cascadeBit = static_cast<std::uint8_t>(1u << cascadeIndex);
                     if (casterOnlyCascadeInvalidation &&
+                        (animatedMotionCascadeMask & cascadeBit) == 0 &&
                         !AnyMovedShadowCasterRelevant(
                             shadowCasters,
                             [&](const ShadowCasterEntry &shadowCaster)
@@ -2203,7 +2221,7 @@ namespace PlutoGE::render
                     }
 
                     const bool urgentMovedCasterUpdate =
-                        (movedCasterCascadeMask & static_cast<std::uint8_t>(1u << cascadeIndex)) != 0;
+                        (movedCasterCascadeMask & cascadeBit) != 0;
                     if (!forceFullCascadeUpdate &&
                         !urgentMovedCasterUpdate &&
                         !reserveIncrementalShadowSurfaceUpdate())

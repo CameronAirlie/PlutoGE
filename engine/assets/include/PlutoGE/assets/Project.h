@@ -76,6 +76,7 @@ namespace PlutoGE::assets
         int windowHeight = 720;
         bool vSyncEnabled = true;
         float editorFontSize = 15.0f;
+        std::string editorFont = "Martian Mono";
         ProjectEditorCameraSettings editorCamera;
         std::string editorCameraPostProcessPreset;
         std::vector<ProjectPostProcessEffect> editorCameraPostProcessEffects;

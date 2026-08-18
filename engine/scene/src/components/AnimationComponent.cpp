@@ -2994,6 +2994,7 @@ namespace PlutoGE::scene
             else
             {
                 m_jointMatricesDirty = false;
+                ++m_jointPoseRevision;
                 ApplyRagdoll(skeleton);
             }
         }
@@ -3599,6 +3600,7 @@ namespace PlutoGE::scene
         recordPhase("Pose / Hierarchy and skin matrices", layersEnd, skinningEnd);
 
         m_jointMatricesDirty = false;
+        ++m_jointPoseRevision;
     }
 
     void AnimationComponent::SetRagdollEnabled(bool enabled)

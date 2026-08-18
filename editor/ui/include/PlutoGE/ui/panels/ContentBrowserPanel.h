@@ -33,7 +33,9 @@ namespace PlutoGE::ui
                                           std::uint64_t revision);
     class AssetThumbnailCache;
     inline constexpr const char *kContentBrowserAssetDragDropPayload = "PLUTOGE_CONTENT_BROWSER_ASSET";
-    bool InstantiateMeshAssetIntoScene(std::string reference, scene::Entity *parent = nullptr);
+    bool InstantiateMeshAssetIntoScene(std::string reference,
+                                       scene::Entity *parent = nullptr,
+                                       std::string materialBindingReference = {});
     bool InstantiateModelAssetIntoScene(const std::string &reference, scene::Entity *parent = nullptr);
 
     class ContentBrowserPanel : public Panel

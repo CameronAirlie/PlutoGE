@@ -3,6 +3,8 @@
 #include <string>
 #include <vector>
 
+struct ImFont;
+
 namespace PlutoGE::platform
 {
     class Window;
@@ -54,6 +56,8 @@ namespace PlutoGE::ui
 
         void SetEditorFontSize(float fontSize);
         [[nodiscard]] float GetEditorFontSize() const { return m_editorFontSize; }
+        void SetEditorFont(const std::string &fontName);
+        [[nodiscard]] const std::string &GetEditorFont() const { return m_editorFont; }
 
         [[nodiscard]] const PanelManagerTimingStats &GetTimingStats() const { return m_timingStats; }
 
@@ -62,6 +66,10 @@ namespace PlutoGE::ui
         platform::Window *m_window = nullptr;
         PanelManagerTimingStats m_timingStats;
         float m_editorFontSize = 12.0f;
+        std::string m_editorFont = "Martian Mono";
+        ImFont *m_martianMonoFont = nullptr;
+        ImFont *m_georamaFont = nullptr;
+        ImFont *m_defaultFont = nullptr;
         std::string m_imguiIniPath;
         bool m_applyDefaultLayout = false;
     };

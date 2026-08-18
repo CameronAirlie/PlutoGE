@@ -806,6 +806,12 @@ namespace PlutoGE::assets
                 continue;
             }
 
+            if (tokens[0] == "EDITOR_FONT" && tokens.size() >= 2)
+            {
+                manifest.editorFont = tokens[1];
+                continue;
+            }
+
             if (tokens[0] == "EDITOR_CAMERA_POSITION" && tokens.size() >= 4)
             {
                 ParseFloat(tokens[1], manifest.editorCamera.positionX);
@@ -1129,6 +1135,7 @@ namespace PlutoGE::assets
         output << "WINDOW_SIZE\t" << m_manifest.windowWidth << '\t' << m_manifest.windowHeight << '\n';
         output << "VSYNC\t" << (m_manifest.vSyncEnabled ? 1 : 0) << '\n';
         output << "EDITOR_FONT_SIZE\t" << std::clamp(m_manifest.editorFontSize, 10.0f, 24.0f) << '\n';
+        output << "EDITOR_FONT\t" << EscapeText(m_manifest.editorFont) << '\n';
         output << "EDITOR_CAMERA_POSITION\t"
                << m_manifest.editorCamera.positionX << '\t'
                << m_manifest.editorCamera.positionY << '\t'

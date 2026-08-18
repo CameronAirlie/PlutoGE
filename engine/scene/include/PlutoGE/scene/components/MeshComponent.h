@@ -5,6 +5,7 @@
 
 #include <glm/glm.hpp>
 #include <algorithm>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -262,6 +263,8 @@ namespace PlutoGE::scene
         bool m_visible = true;
         bool m_useGeneratedLods = false;
         bool m_hasAnimatedNodeSubmeshes = false;
+        std::uint64_t m_lastSubmittedJointPoseRevision = 0;
+        bool m_hasSubmittedJointPoseRevision = false;
         std::vector<size_t> m_generatedLightmapUvSubmeshes;
     };
 }

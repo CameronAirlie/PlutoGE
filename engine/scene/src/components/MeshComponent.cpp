@@ -1307,10 +1307,12 @@ namespace PlutoGE::scene
             {
                 if (animationComponent)
                 {
-                    // Capture this before GetJointMatrices evaluates the pose
-                    // and clears the animation component's dirty flag.
-                    skinningPoseChanged = animationComponent->IsJointPoseDirty();
                     jointMatrices = &animationComponent->GetJointMatrices(m_mesh->GetSkeleton(), m_mesh->GetAnimationNodes());
+                    const std::uint64_t poseRevision = animationComponent->GetJointPoseRevision();
+                    skinningPoseChanged = !m_hasSubmittedJointPoseRevision ||
+                                          poseRevision != m_lastSubmittedJointPoseRevision;
+                    m_lastSubmittedJointPoseRevision = poseRevision;
+                    m_hasSubmittedJointPoseRevision = true;
                 }
             }
             // Command construction is independent of the Static rendering flag.
@@ -1366,8 +1368,17 @@ namespace PlutoGE::scene
                 command.material = material;
                 command.mesh = m_mesh;
                 command.shader = material->GetShader();
-                command.worldBounds = ComputeWorldBounds(*m_mesh, submeshIndex, submeshModelMatrix);
-                command.previousWorldBounds = ComputeWorldBounds(*m_mesh, submeshIndex, command.previousModel);
+                // A skinned primitive's source vertices are stored in bind space,
+                // while the shader can move them well outside that primitive's
+                // original bounds. This is especially visible on assets split
+                // into many small primitives (eyes, lashes, mouth, and so on): a
+                // tiny bind-pose sphere can leave the frustum even though the
+                // skinned geometry is still on screen. Use the conservative
+                // whole-mesh bind bounds for every skinned draw. Computing exact
+                // posed bounds on the CPU would require skinning all vertices.
+                const size_t boundsSubmeshIndex = jointMatrices ? m_mesh->GetSubmeshCount() : submeshIndex;
+                command.worldBounds = ComputeWorldBounds(*m_mesh, boundsSubmeshIndex, submeshModelMatrix);
+                command.previousWorldBounds = ComputeWorldBounds(*m_mesh, boundsSubmeshIndex, command.previousModel);
                 command.jointMatrices = jointMatrices;
                 command.skinningPoseChanged = skinningPoseChanged;
                 command.submeshIndex = static_cast<uint32_t>(submeshIndex);

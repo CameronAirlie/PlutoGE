@@ -178,7 +178,7 @@ namespace PlutoGE::assetimport
         constexpr uint32_t kCookedMeshCacheMagic = 0x434d4750; // PGMC
         // Increment whenever imported geometry, skeleton, or animation
         // semantics change so unchanged source files are recooked.
-        constexpr uint32_t kCookedMeshCacheVersion = 33;
+        constexpr uint32_t kCookedMeshCacheVersion = 34;
 
         bool ImportedMaterialsEqual(const ImportedMaterialData &a, const ImportedMaterialData &b)
         {
@@ -578,7 +578,9 @@ namespace PlutoGE::assetimport
         void WriteImportedTexture(std::ostream &output, const ImportedTextureData &texture)
         {
             WriteString(output, texture.cacheKey);
+            WriteString(output, texture.baseCacheKey);
             WriteString(output, texture.sourcePath);
+            WritePod(output, static_cast<std::uint8_t>(texture.colorSpace));
             WritePod(output, texture.width);
             WritePod(output, texture.height);
             WritePod(output, texture.channels);
@@ -589,7 +591,9 @@ namespace PlutoGE::assetimport
         {
             ImportedTextureData texture;
             texture.cacheKey = ReadString(input);
+            texture.baseCacheKey = ReadString(input);
             texture.sourcePath = ReadString(input);
+            texture.colorSpace = static_cast<ImportedTextureColorSpace>(ReadPod<std::uint8_t>(input));
             texture.width = ReadPod<int>(input);
             texture.height = ReadPod<int>(input);
             texture.channels = ReadPod<int>(input);
@@ -927,6 +931,27 @@ namespace PlutoGE::assetimport
             return BuildSourceStampedCacheKey(filePath) + "#image:" + std::to_string(imageIndex);
         }
 
+        const char *ImportedTextureColorSpaceSuffix(ImportedTextureColorSpace colorSpace)
+        {
+            switch (colorSpace)
+            {
+            case ImportedTextureColorSpace::SRGB:
+                return "#srgb";
+            case ImportedTextureColorSpace::Linear:
+                return "#linear";
+            case ImportedTextureColorSpace::Unknown:
+            default:
+                return "#unknown";
+            }
+        }
+
+        std::string BuildImportedTextureCacheKey(const std::string &baseCacheKey, ImportedTextureColorSpace colorSpace)
+        {
+            std::string cacheKey = baseCacheKey;
+            cacheKey += ImportedTextureColorSpaceSuffix(colorSpace);
+            return cacheKey;
+        }
+
         std::string ResolveImageSourcePath(const std::string &filePath, const tinygltf::Image &image)
         {
             if (image.uri.empty())
@@ -951,6 +976,53 @@ namespace PlutoGE::assetimport
             }
 
             return texture.source;
+        }
+
+        int ResolveImportedTextureColorSpaceIndex(
+            std::vector<ImportedTextureData> &textures,
+            int textureIndex,
+            ImportedTextureColorSpace colorSpace,
+            std::unordered_map<std::string, int> &textureVariantByCacheKey)
+        {
+            if (textureIndex < 0 || textureIndex >= static_cast<int>(textures.size()) || colorSpace == ImportedTextureColorSpace::Unknown)
+            {
+                return textureIndex;
+            }
+
+            ImportedTextureData &sourceTexture = textures[static_cast<size_t>(textureIndex)];
+            if (sourceTexture.baseCacheKey.empty())
+            {
+                sourceTexture.baseCacheKey = sourceTexture.cacheKey;
+            }
+
+            const std::string variantCacheKey = BuildImportedTextureCacheKey(sourceTexture.baseCacheKey, colorSpace);
+            if (const auto existingVariant = textureVariantByCacheKey.find(variantCacheKey); existingVariant != textureVariantByCacheKey.end())
+            {
+                return existingVariant->second;
+            }
+
+            if (sourceTexture.colorSpace == ImportedTextureColorSpace::Unknown)
+            {
+                sourceTexture.colorSpace = colorSpace;
+                sourceTexture.cacheKey = variantCacheKey;
+                textureVariantByCacheKey.emplace(sourceTexture.cacheKey, textureIndex);
+                return textureIndex;
+            }
+
+            if (sourceTexture.colorSpace == colorSpace)
+            {
+                sourceTexture.cacheKey = variantCacheKey;
+                textureVariantByCacheKey.emplace(sourceTexture.cacheKey, textureIndex);
+                return textureIndex;
+            }
+
+            ImportedTextureData variantTexture = sourceTexture;
+            variantTexture.colorSpace = colorSpace;
+            variantTexture.cacheKey = variantCacheKey;
+            const int variantIndex = static_cast<int>(textures.size());
+            textures.push_back(std::move(variantTexture));
+            textureVariantByCacheKey.emplace(variantCacheKey, variantIndex);
+            return variantIndex;
         }
 
         bool HasDistinctBlueChannel(const unsigned char *pixels, int width, int height, int channels)
@@ -1076,6 +1148,8 @@ namespace PlutoGE::assetimport
             const tinygltf::Model &model,
             const tinygltf::Material &material,
             const std::string &filePath,
+            std::vector<ImportedTextureData> &textures,
+            std::unordered_map<std::string, int> &textureVariantByCacheKey,
             std::vector<std::optional<bool>> &metallicChannelCache,
             MeshImportProfile *profile = nullptr)
         {
@@ -1140,15 +1214,31 @@ namespace PlutoGE::assetimport
                 parsedMaterial.castsShadow = false;
             }
 
-            parsedMaterial.albedoTextureIndex = ResolveImageIndex(model, material.pbrMetallicRoughness.baseColorTexture.index);
-            parsedMaterial.normalTextureIndex = ResolveImageIndex(model, material.normalTexture.index);
-            parsedMaterial.metallicRoughnessTextureIndex = ResolveImageIndex(model, material.pbrMetallicRoughness.metallicRoughnessTexture.index);
-            if (parsedMaterial.metallicRoughnessTextureIndex >= 0 && parsedMaterial.metallicRoughnessTextureIndex < static_cast<int>(model.images.size()))
+            const int albedoImageIndex = ResolveImageIndex(model, material.pbrMetallicRoughness.baseColorTexture.index);
+            const int normalImageIndex = ResolveImageIndex(model, material.normalTexture.index);
+            const int metallicRoughnessImageIndex = ResolveImageIndex(model, material.pbrMetallicRoughness.metallicRoughnessTexture.index);
+
+            parsedMaterial.albedoTextureIndex = ResolveImportedTextureColorSpaceIndex(
+                textures,
+                albedoImageIndex,
+                ImportedTextureColorSpace::SRGB,
+                textureVariantByCacheKey);
+            parsedMaterial.normalTextureIndex = ResolveImportedTextureColorSpaceIndex(
+                textures,
+                normalImageIndex,
+                ImportedTextureColorSpace::Linear,
+                textureVariantByCacheKey);
+            parsedMaterial.metallicRoughnessTextureIndex = ResolveImportedTextureColorSpaceIndex(
+                textures,
+                metallicRoughnessImageIndex,
+                ImportedTextureColorSpace::Linear,
+                textureVariantByCacheKey);
+            if (metallicRoughnessImageIndex >= 0 && metallicRoughnessImageIndex < static_cast<int>(model.images.size()))
             {
-                auto &cachedHasMetallicChannel = metallicChannelCache[parsedMaterial.metallicRoughnessTextureIndex];
+                auto &cachedHasMetallicChannel = metallicChannelCache[metallicRoughnessImageIndex];
                 if (!cachedHasMetallicChannel.has_value())
                 {
-                    const auto &packedImage = model.images[parsedMaterial.metallicRoughnessTextureIndex];
+                    const auto &packedImage = model.images[metallicRoughnessImageIndex];
                     cachedHasMetallicChannel = ImageHasDistinctBlueChannel(
                         packedImage,
                         ResolveImageSourcePath(filePath, packedImage),
@@ -1506,16 +1596,92 @@ namespace PlutoGE::assetimport
             return glm::normalize(glm::cross(referenceAxis, normal));
         }
 
-        void FillMissingTangentsWithFallbacks(render::MeshData &meshData)
+        void GenerateMissingTangents(render::MeshData &meshData)
         {
-            for (auto &vertex : meshData.vertices)
+            if (meshData.vertices.empty())
             {
+                return;
+            }
+
+            std::vector<uint8_t> needsTangent(meshData.vertices.size(), 0u);
+            bool anyMissingTangents = false;
+            for (size_t vertexIndex = 0; vertexIndex < meshData.vertices.size(); ++vertexIndex)
+            {
+                auto &vertex = meshData.vertices[vertexIndex];
                 glm::vec3 tangent(vertex.tangent[0], vertex.tangent[1], vertex.tangent[2]);
                 if (SquaredLength(tangent) > 1e-8f && std::abs(vertex.tangent[3]) >= 0.5f)
                 {
                     continue;
                 }
 
+                needsTangent[vertexIndex] = 1u;
+                anyMissingTangents = true;
+            }
+
+            if (!anyMissingTangents)
+            {
+                return;
+            }
+
+            std::vector<glm::vec3> accumulatedTangents(meshData.vertices.size(), glm::vec3(0.0f));
+            std::vector<glm::vec3> accumulatedBitangents(meshData.vertices.size(), glm::vec3(0.0f));
+
+            for (size_t triangleStart = 0; triangleStart + 2 < meshData.indices.size(); triangleStart += 3)
+            {
+                const auto index0 = meshData.indices[triangleStart];
+                const auto index1 = meshData.indices[triangleStart + 1];
+                const auto index2 = meshData.indices[triangleStart + 2];
+
+                if (index0 >= meshData.vertices.size() ||
+                    index1 >= meshData.vertices.size() ||
+                    index2 >= meshData.vertices.size())
+                {
+                    continue;
+                }
+
+                const auto &vertex0 = meshData.vertices[index0];
+                const auto &vertex1 = meshData.vertices[index1];
+                const auto &vertex2 = meshData.vertices[index2];
+
+                const glm::vec3 position0(vertex0.position[0], vertex0.position[1], vertex0.position[2]);
+                const glm::vec3 position1(vertex1.position[0], vertex1.position[1], vertex1.position[2]);
+                const glm::vec3 position2(vertex2.position[0], vertex2.position[1], vertex2.position[2]);
+
+                const glm::vec2 uv0(vertex0.uv[0], vertex0.uv[1]);
+                const glm::vec2 uv1(vertex1.uv[0], vertex1.uv[1]);
+                const glm::vec2 uv2(vertex2.uv[0], vertex2.uv[1]);
+
+                const glm::vec3 edge1 = position1 - position0;
+                const glm::vec3 edge2 = position2 - position0;
+                const glm::vec2 deltaUv1 = uv1 - uv0;
+                const glm::vec2 deltaUv2 = uv2 - uv0;
+                const float determinant = deltaUv1.x * deltaUv2.y - deltaUv1.y * deltaUv2.x;
+                if (std::abs(determinant) < 1e-8f)
+                {
+                    continue;
+                }
+
+                const float invDeterminant = 1.0f / determinant;
+                const glm::vec3 tangent = (edge1 * deltaUv2.y - edge2 * deltaUv1.y) * invDeterminant;
+                const glm::vec3 bitangent = (edge2 * deltaUv1.x - edge1 * deltaUv2.x) * invDeterminant;
+
+                accumulatedTangents[index0] += tangent;
+                accumulatedTangents[index1] += tangent;
+                accumulatedTangents[index2] += tangent;
+
+                accumulatedBitangents[index0] += bitangent;
+                accumulatedBitangents[index1] += bitangent;
+                accumulatedBitangents[index2] += bitangent;
+            }
+
+            for (size_t vertexIndex = 0; vertexIndex < meshData.vertices.size(); ++vertexIndex)
+            {
+                if (needsTangent[vertexIndex] == 0u)
+                {
+                    continue;
+                }
+
+                auto &vertex = meshData.vertices[vertexIndex];
                 glm::vec3 normal(vertex.normal[0], vertex.normal[1], vertex.normal[2]);
                 if (SquaredLength(normal) <= 1e-12f)
                 {
@@ -1526,8 +1692,21 @@ namespace PlutoGE::assetimport
                     normal = glm::normalize(normal);
                 }
 
-                tangent = BuildFallbackTangent(normal);
-                vertex.tangent = {tangent.x, tangent.y, tangent.z, 1.0f};
+                glm::vec3 tangent = accumulatedTangents[vertexIndex];
+                tangent -= normal * glm::dot(normal, tangent);
+                if (SquaredLength(tangent) <= 1e-8f)
+                {
+                    tangent = BuildFallbackTangent(normal);
+                }
+                else
+                {
+                    tangent = glm::normalize(tangent);
+                }
+
+                const glm::vec3 bitangent = accumulatedBitangents[vertexIndex];
+                const float handedness = glm::dot(glm::cross(normal, tangent), bitangent) < 0.0f ? -1.0f : 1.0f;
+
+                vertex.tangent = {tangent.x, tangent.y, tangent.z, handedness};
             }
         }
 
@@ -3015,7 +3194,9 @@ namespace PlutoGE::assetimport
                 }
 
                 ImportedTextureData importedTexture;
-                importedTexture.cacheKey = cacheKey;
+                importedTexture.baseCacheKey = cacheKey;
+                importedTexture.cacheKey = BuildImportedTextureCacheKey(importedTexture.baseCacheKey, ImportedTextureColorSpace::Unknown);
+                importedTexture.colorSpace = ImportedTextureColorSpace::Unknown;
                 if (embeddedTexture->mHeight == 0)
                 {
                     int width = 0;
@@ -3079,7 +3260,9 @@ namespace PlutoGE::assetimport
             }
 
             ImportedTextureData importedTexture;
-            importedTexture.cacheKey = cacheKey;
+            importedTexture.baseCacheKey = cacheKey;
+            importedTexture.cacheKey = BuildImportedTextureCacheKey(importedTexture.baseCacheKey, ImportedTextureColorSpace::Unknown);
+            importedTexture.colorSpace = ImportedTextureColorSpace::Unknown;
             importedTexture.sourcePath = sourcePath;
             const int textureIndex = static_cast<int>(textures.size());
             textures.push_back(std::move(importedTexture));
@@ -3426,6 +3609,22 @@ namespace PlutoGE::assetimport
                 textureIndexByKey,
                 textures);
             importedMaterial.metallicRoughnessTextureHasMetallicChannel = importedMaterial.metallicRoughnessTextureIndex >= 0;
+
+            importedMaterial.albedoTextureIndex = ResolveImportedTextureColorSpaceIndex(
+                textures,
+                importedMaterial.albedoTextureIndex,
+                ImportedTextureColorSpace::SRGB,
+                textureIndexByKey);
+            importedMaterial.normalTextureIndex = ResolveImportedTextureColorSpaceIndex(
+                textures,
+                importedMaterial.normalTextureIndex,
+                ImportedTextureColorSpace::Linear,
+                textureIndexByKey);
+            importedMaterial.metallicRoughnessTextureIndex = ResolveImportedTextureColorSpaceIndex(
+                textures,
+                importedMaterial.metallicRoughnessTextureIndex,
+                ImportedTextureColorSpace::Linear,
+                textureIndexByKey);
 
             const int opacityTextureIndex = FindAssimpMaterialTexture(
                 scene,
@@ -4452,10 +4651,7 @@ namespace PlutoGE::assetimport
             {
                 profile->missingNormalsMs = ElapsedMilliseconds(missingNormalsStart);
             }
-            if (!cookOptions.generateTangents)
-            {
-                FillMissingTangentsWithFallbacks(asset.meshData);
-            }
+            GenerateMissingTangents(asset.meshData);
             const auto optimizeStart = ImportClock::now();
             OptimizeMeshData(asset.meshData, asset.submeshes, cookOptions.optimizeVertexCache, cookOptions.optimizeOverdraw, profile);
             if (profile && profile->enabled)
@@ -4548,8 +4744,10 @@ namespace PlutoGE::assetimport
             {
                 auto &image = model.images[imageIndex];
                 auto &importedTexture = parsedMeshAsset.textures[imageIndex];
-                importedTexture.cacheKey = BuildImageCacheKey(filePath, static_cast<int>(imageIndex));
+                importedTexture.baseCacheKey = BuildImageCacheKey(filePath, static_cast<int>(imageIndex));
+                importedTexture.cacheKey = BuildImportedTextureCacheKey(importedTexture.baseCacheKey, ImportedTextureColorSpace::Unknown);
                 importedTexture.sourcePath = ResolveImageSourcePath(filePath, image);
+                importedTexture.colorSpace = ImportedTextureColorSpace::Unknown;
                 importedTexture.width = image.width;
                 importedTexture.height = image.height;
                 importedTexture.channels = image.component;
@@ -4559,10 +4757,18 @@ namespace PlutoGE::assetimport
 
             const auto materialStageStart = ImportClock::now();
             std::vector<std::optional<bool>> metallicChannelCache(model.images.size());
+            std::unordered_map<std::string, int> textureVariantByCacheKey;
             parsedMeshAsset.materials.reserve(model.materials.size() + 1);
             for (const auto &material : model.materials)
             {
-                parsedMeshAsset.materials.push_back(ParseMaterial(model, material, filePath, metallicChannelCache, &profile));
+                parsedMeshAsset.materials.push_back(ParseMaterial(
+                    model,
+                    material,
+                    filePath,
+                    parsedMeshAsset.textures,
+                    textureVariantByCacheKey,
+                    metallicChannelCache,
+                    &profile));
             }
             profile.materialStageMs = ElapsedMilliseconds(materialStageStart);
 
@@ -4643,10 +4849,7 @@ namespace PlutoGE::assetimport
 
             logProgress("Mesh assembled; generating LODs and optimizing");
             const auto optimizeStart = ImportClock::now();
-            if (!cookOptions.generateTangents)
-            {
-                FillMissingTangentsWithFallbacks(parsedMeshAsset.meshData);
-            }
+            GenerateMissingTangents(parsedMeshAsset.meshData);
             OptimizeMeshData(parsedMeshAsset.meshData, parsedMeshAsset.submeshes, cookOptions.optimizeVertexCache, cookOptions.optimizeOverdraw, &profile);
             GenerateSubmeshLods(parsedMeshAsset.meshData, parsedMeshAsset.submeshes, cookOptions.generateLods);
             OptimizeGeneratedLodRanges(parsedMeshAsset.meshData, parsedMeshAsset.submeshes, cookOptions.optimizeVertexCache, cookOptions.optimizeOverdraw);

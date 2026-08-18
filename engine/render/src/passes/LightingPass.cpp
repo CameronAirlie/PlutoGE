@@ -1680,8 +1680,8 @@ namespace PlutoGE::render
         bool compositeSsgiOnly = false;
 
         const auto compositeIndirectTarget = [&](RenderTarget *resolvedIndirectTarget, bool indirectOnly,
-                                                  bool maskBakedLighting = false, bool depthAwareUpsample = false,
-                                                  bool applyReceiverAlbedo = false, bool debugUpsample = false)
+                                                 bool maskBakedLighting = false, bool depthAwareUpsample = false,
+                                                 bool applyReceiverAlbedo = false, bool debugUpsample = false)
         {
             if (!resolvedIndirectTarget)
             {
@@ -2005,8 +2005,8 @@ namespace PlutoGE::render
                 const int resolveHeight = std::max(1, ctx.temporaryRenderTarget->GetHeight() / traceDivisor);
                 const bool gpuTimingActive = ctx.renderer && ctx.renderer->BeginPostProcessEffectTiming(vctEffect->GetTypeName());
                 RenderTarget *indirect = vctEffect->GenerateResolvedIndirectLighting(PostProcessContext{
-                    .renderContext = ctx, .sourceRenderTarget = ctx.temporaryRenderTarget, .destinationRenderTarget = nullptr},
-                    resolveWidth, resolveHeight);
+                                                                                         .renderContext = ctx, .sourceRenderTarget = ctx.temporaryRenderTarget, .destinationRenderTarget = nullptr},
+                                                                                     resolveWidth, resolveHeight);
                 if (gpuTimingActive)
                     ctx.renderer->EndPostProcessEffectTiming();
                 const int debugView = vctEffect->GetDebugView();

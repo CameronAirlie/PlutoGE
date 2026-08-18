@@ -48,6 +48,13 @@ namespace PlutoGE::core
             return std::chrono::duration<double, std::milli>(ImportClock::now() - startTime).count();
         }
 
+        render::TextureColorSpace ResolveTextureColorSpace(assetimport::ImportedTextureColorSpace colorSpace)
+        {
+            return colorSpace == assetimport::ImportedTextureColorSpace::SRGB
+                       ? render::TextureColorSpace::SRGB
+                       : render::TextureColorSpace::Linear;
+        }
+
         struct MeshFinalizeProfile
         {
             bool enabled = false;
@@ -167,7 +174,9 @@ namespace PlutoGE::core
                 for (const auto &texture : *importedMeshAsset.textures)
                 {
                     HashString(fingerprint, texture.cacheKey);
+                    HashString(fingerprint, texture.baseCacheKey);
                     HashString(fingerprint, texture.sourcePath);
+                    HashValue(fingerprint, texture.colorSpace);
                     HashValue(fingerprint, texture.width);
                     HashValue(fingerprint, texture.height);
                     HashValue(fingerprint, texture.channels);
@@ -290,7 +299,8 @@ namespace PlutoGE::core
                         texture.pixels.data(),
                         texture.width,
                         texture.height,
-                        texture.channels);
+                        texture.channels,
+                        ResolveTextureColorSpace(texture.colorSpace));
                     profile.textureResolveMs += ElapsedMilliseconds(textureResolveStart);
                     profile.memoryTextureUploads += 1;
                     resolvedTextures[textureIndex] = tex;
@@ -298,7 +308,9 @@ namespace PlutoGE::core
                 }
                 if (!texture.sourcePath.empty())
                 {
-                    auto *tex = m_textureManager.LoadTextureFromFile(texture.sourcePath.c_str());
+                    auto *tex = m_textureManager.LoadTextureFromFile(
+                        texture.sourcePath.c_str(),
+                        ResolveTextureColorSpace(texture.colorSpace));
                     profile.textureResolveMs += ElapsedMilliseconds(textureResolveStart);
                     profile.fileTextureLoads += 1;
                     resolvedTextures[textureIndex] = tex;

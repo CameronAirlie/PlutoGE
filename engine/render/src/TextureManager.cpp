@@ -9,6 +9,7 @@
 #include <cctype>
 #include <fstream>
 #include <limits>
+#include <string_view>
 #include <vector>
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -221,6 +222,36 @@ namespace PlutoGE::render
             }
         }
 
+        GLint ResolveByteTextureInternalFormat(int channels, TextureColorSpace colorSpace)
+        {
+            if (colorSpace == TextureColorSpace::SRGB)
+            {
+                switch (channels)
+                {
+                case 3:
+                    return GL_SRGB8;
+                case 4:
+                    return GL_SRGB8_ALPHA8;
+                default:
+                    break;
+                }
+            }
+
+            return ResolveByteTextureInternalFormat(channels);
+        }
+
+        const char *TextureColorSpaceSuffix(TextureColorSpace colorSpace)
+        {
+            return colorSpace == TextureColorSpace::SRGB ? "#srgb" : "#linear";
+        }
+
+        std::string BuildTextureCacheKey(std::string_view baseKey, TextureColorSpace colorSpace)
+        {
+            std::string cacheKey(baseKey);
+            cacheKey += TextureColorSpaceSuffix(colorSpace);
+            return cacheKey;
+        }
+
         std::vector<unsigned char> ExpandRgbPixelsToRgba(const unsigned char *pixels, int width, int height)
         {
             const std::size_t pixelCount = static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
@@ -299,15 +330,18 @@ namespace PlutoGE::render
         return nullptr;
     }
 
-    Texture *TextureManager::LoadTextureFromFile(const char *filePath)
+    Texture *TextureManager::LoadTextureFromFile(const char *filePath, TextureColorSpace colorSpace)
     {
         if (!filePath || filePath[0] == '\0')
         {
             return nullptr;
         }
 
+        const std::string sourcePath(filePath);
+        const std::string cacheKey = BuildTextureCacheKey(sourcePath, colorSpace);
+
         // Check if the texture is already loaded
-        auto it = m_textureCache.find(filePath);
+        auto it = m_textureCache.find(cacheKey);
         if (it != m_textureCache.end())
         {
             return it->second;
@@ -349,7 +383,7 @@ namespace PlutoGE::render
                 uploadChannels = 4;
             }
             const GLenum format = ResolveTextureFormat(uploadChannels);
-            UploadTexture2D(ResolveByteTextureInternalFormat(uploadChannels), width, height, format, GL_UNSIGNED_BYTE, uploadPixels);
+            UploadTexture2D(ResolveByteTextureInternalFormat(uploadChannels, colorSpace), width, height, format, GL_UNSIGNED_BYTE, uploadPixels);
             glGenerateMipmap(GL_TEXTURE_2D);
 
             texture->m_width = width;
@@ -362,14 +396,14 @@ namespace PlutoGE::render
                 return nullptr;
             }
 
-            m_textureCache[filePath] = texture;
+            m_textureCache[cacheKey] = texture;
             return texture;
         }
 
         return nullptr; // Failed to load texture
     }
 
-    Texture *TextureManager::LoadTextureFromMemory(const std::string &cacheKey, const unsigned char *pixels, int width, int height, int channels)
+    Texture *TextureManager::LoadTextureFromMemory(const std::string &cacheKey, const unsigned char *pixels, int width, int height, int channels, TextureColorSpace colorSpace)
     {
         auto it = m_textureCache.find(cacheKey);
         if (it != m_textureCache.end())
@@ -400,7 +434,7 @@ namespace PlutoGE::render
         Graphics::BindTexture(GL_TEXTURE_2D, texture->m_textureID);
         ConfigureTexture2D(GL_REPEAT, true);
         const GLenum format = ResolveTextureFormat(channels);
-        UploadTexture2D(ResolveByteTextureInternalFormat(channels), width, height, format, GL_UNSIGNED_BYTE, pixels);
+        UploadTexture2D(ResolveByteTextureInternalFormat(channels, colorSpace), width, height, format, GL_UNSIGNED_BYTE, pixels);
         glGenerateMipmap(GL_TEXTURE_2D);
 
         texture->m_width = width;

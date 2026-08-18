@@ -1,5 +1,7 @@
 #pragma once
 
+#include "PlutoGE/render/Texture.h"
+
 #include <unordered_map>
 #include <string>
 #include <glad/glad.h>
@@ -21,8 +23,8 @@ namespace PlutoGE::render
         void SetWindow(platform::Window *window) { m_window = window; }
 
         Texture *FindTexture(const std::string &cacheKey) const;
-        Texture *LoadTextureFromFile(const char *filePath);
-        Texture *LoadTextureFromMemory(const std::string &cacheKey, const unsigned char *pixels, int width, int height, int channels);
+        Texture *LoadTextureFromFile(const char *filePath, TextureColorSpace colorSpace = TextureColorSpace::Linear);
+        Texture *LoadTextureFromMemory(const std::string &cacheKey, const unsigned char *pixels, int width, int height, int channels, TextureColorSpace colorSpace = TextureColorSpace::Linear);
         Texture *LoadEnvironmentTextureFromFile(const char *filePath);
         Texture *LoadLightmapFromFile(const char *filePath);
         Texture *LoadLightmapFromMemory(const std::string &cacheKey, const unsigned char *pixels, int width, int height, int channels);

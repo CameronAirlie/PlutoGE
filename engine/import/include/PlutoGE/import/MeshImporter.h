@@ -11,6 +11,13 @@
 
 namespace PlutoGE::assetimport
 {
+    enum class ImportedTextureColorSpace : std::uint8_t
+    {
+        Unknown = 0,
+        Linear = 1,
+        SRGB = 2,
+    };
+
     struct MeshImportOptions
     {
         bool generateLods = false;
@@ -28,7 +35,9 @@ namespace PlutoGE::assetimport
     struct ImportedTextureData
     {
         std::string cacheKey;
+        std::string baseCacheKey;
         std::string sourcePath;
+        ImportedTextureColorSpace colorSpace = ImportedTextureColorSpace::Unknown;
         int width = 0;
         int height = 0;
         int channels = 0;

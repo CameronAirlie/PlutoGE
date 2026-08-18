@@ -3,10 +3,17 @@
 #include "PlutoGE/render/Graphics.h"
 
 #include <glad/glad.h>
+#include <cstdint>
 #include <string>
 
 namespace PlutoGE::render
 {
+    enum class TextureColorSpace : std::uint8_t
+    {
+        Linear = 0,
+        SRGB = 1,
+    };
+
     struct TextureConfig
     {
         std::string filePath; // Path to the texture file

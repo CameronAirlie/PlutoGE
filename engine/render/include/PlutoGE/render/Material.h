@@ -37,12 +37,12 @@ namespace PlutoGE::render
     {
         glm::vec4 color{1.0f, 1.0f, 1.0f, 1.0f}; // Base color (default to white)
         MaterialSurfaceType surfaceType = MaterialSurfaceType::Standard;
-        Texture *albedoTexture = nullptr;        // Pointer to an albedo texture (if any)
+        Texture *albedoTexture = nullptr; // Pointer to an albedo texture (if any)
         glm::vec2 uvScale{1.0f, 1.0f};
         AlphaMode alphaMode = AlphaMode::Opaque;
         float alphaCutoff = 0.5f;
         bool castsShadow = true;
-        bool twoSided = false;                 // Render both front and back faces
+        bool twoSided = false; // Render both front and back faces
 
         Texture *normalTexture = nullptr; // Pointer to a normal map texture (if any)
         bool flipNormalY = false;         // Flip green channel for DirectX-style normal maps
@@ -55,19 +55,23 @@ namespace PlutoGE::render
         Texture *roughnessTexture = nullptr; // Pointer to a roughness texture (if any)
         TextureChannel roughnessTextureChannel = TextureChannel::Red;
 
+        Texture *occlusionTexture = nullptr; // Linear ambient-occlusion texture, usually glTF ORM red
+        TextureChannel occlusionTextureChannel = TextureChannel::Red;
+        float occlusionStrength = 1.0f;
+
         glm::vec3 emission{0.0f}; // HDR self-illumination color
 
-        float subsurface = 0.0f;                         // Approximate diffuse subsurface scattering strength
-        glm::vec3 subsurfaceColor{1.0f, 0.35f, 0.2f};    // Color of light scattered through the surface
-        float subsurfaceRadius = 1.0f;                   // Relative scattering distance/profile width
+        float subsurface = 0.0f;                      // Approximate diffuse subsurface scattering strength
+        glm::vec3 subsurfaceColor{1.0f, 0.35f, 0.2f}; // Color of light scattered through the surface
+        float subsurfaceRadius = 1.0f;                // Relative scattering distance/profile width
 
-        float transmission = 0.0f;                        // Transmitted light amount for glass-like materials
-        float ior = 1.45f;                                // Index of refraction; common window glass is around 1.45-1.52
-        float thickness = 0.01f;                          // Approximate material thickness in scene units
-        glm::vec3 attenuationColor{1.0f, 1.0f, 1.0f};     // Color retained after passing through the material
-        float attenuationDistance = 1.0f;                 // Distance at which attenuationColor is reached
+        float transmission = 0.0f;                    // Transmitted light amount for glass-like materials
+        float ior = 1.45f;                            // Index of refraction; common window glass is around 1.45-1.52
+        float thickness = 0.01f;                      // Approximate material thickness in scene units
+        glm::vec3 attenuationColor{1.0f, 1.0f, 1.0f}; // Color retained after passing through the material
+        float attenuationDistance = 1.0f;             // Distance at which attenuationColor is reached
 
-        Texture *lightmapTexture = nullptr; // Optional baked lighting texture sampled with UV2
+        Texture *lightmapTexture = nullptr;                    // Optional baked lighting texture sampled with UV2
         glm::vec4 lightmapUvTransform{1.0f, 1.0f, 0.0f, 0.0f}; // scale.xy, offset.zw
 
         std::string shaderGraphReference;
@@ -103,6 +107,9 @@ namespace PlutoGE::render
         void SetRoughness(float roughness) { m_config.roughness = roughness; }
         void SetRoughnessTexture(Texture *texture) { m_config.roughnessTexture = texture; }
         void SetRoughnessTextureChannel(TextureChannel channel) { m_config.roughnessTextureChannel = channel; }
+        void SetOcclusionTexture(Texture *texture) { m_config.occlusionTexture = texture; }
+        void SetOcclusionTextureChannel(TextureChannel channel) { m_config.occlusionTextureChannel = channel; }
+        void SetOcclusionStrength(float strength) { m_config.occlusionStrength = strength; }
         void SetEmission(const glm::vec3 &emission) { m_config.emission = emission; }
         void SetSubsurface(float subsurface) { m_config.subsurface = subsurface; }
         void SetSubsurfaceColor(const glm::vec3 &color) { m_config.subsurfaceColor = color; }

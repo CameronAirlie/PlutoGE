@@ -355,6 +355,9 @@ namespace PlutoGE::core
                     config.attenuationDistance = material.attenuationDistance;
                     config.albedoTexture = loadImportedTexture(material.albedoTextureIndex);
                     config.normalTexture = loadImportedTexture(material.normalTextureIndex);
+                    config.occlusionTexture = loadImportedTexture(material.occlusionTextureIndex);
+                    config.occlusionTextureChannel = render::TextureChannel::Red;
+                    config.occlusionStrength = material.occlusionStrength;
                     config.flipNormalY = material.flipNormalY;
                     if (material.metallicRoughnessTextureIndex >= 0)
                     {

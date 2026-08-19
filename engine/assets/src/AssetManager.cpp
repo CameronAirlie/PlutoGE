@@ -1,7 +1,9 @@
 #include <PlutoGE/assets/AssetManager.h>
 #include <PlutoGE/assets/ModelAsset.h>
+#include <PlutoGE/core/Engine.h>
 #include <PlutoGE/render/Mesh.h>
 #include <PlutoGE/render/Texture.h>
+#include <PlutoGE/render/TextureManager.h>
 #include <PlutoGE/render/Material.h>
 #include <PlutoGE/render/Shader.h>
 #include <PlutoGE/render/ShaderGraph.h>
@@ -32,14 +34,16 @@ namespace PlutoGE::assets
         std::string line;
         while (std::getline(input, line))
         {
-            if (line.rfind("ID\t", 0) == 0) return line.substr(3);
+            if (line.rfind("ID\t", 0) == 0)
+                return line.substr(3);
         }
         return {};
     }
 
     std::string AssetManager::ResolveStableAssetId(const std::string &assetId, const std::string &fallbackReference) const
     {
-        if (assetId.empty() || m_projectRootDirectory.empty()) return fallbackReference;
+        if (assetId.empty() || m_projectRootDirectory.empty())
+            return fallbackReference;
         const auto assetRoot = std::filesystem::path(m_projectRootDirectory) / m_projectAssetDirectory;
         std::error_code error;
         for (std::filesystem::recursive_directory_iterator iterator(assetRoot, std::filesystem::directory_options::skip_permission_denied, error), end;
@@ -59,7 +63,8 @@ namespace PlutoGE::assets
                     auto assetPath = iterator->path();
                     assetPath.replace_extension();
                     const auto relative = std::filesystem::relative(assetPath, assetRoot, error);
-                    if (!error) return std::string(Project::kProjectAssetScheme) + relative.generic_string();
+                    if (!error)
+                        return std::string(Project::kProjectAssetScheme) + relative.generic_string();
                     break;
                 }
             }
@@ -70,16 +75,19 @@ namespace PlutoGE::assets
     std::string AssetManager::ResolveModelObject(const std::string &modelAssetId, std::uint64_t localId) const
     {
         const auto sourceReference = ResolveStableAssetId(modelAssetId);
-        if (sourceReference.empty() || localId == 0) return {};
+        if (sourceReference.empty() || localId == 0)
+            return {};
         const auto sourceRelative = sourceReference.substr(Project::kProjectAssetScheme.size());
         const auto sourcePath = std::filesystem::path(m_projectRootDirectory) / m_projectAssetDirectory / sourceRelative;
         const auto manifestPath = std::filesystem::path(m_projectRootDirectory) / m_projectAssetDirectory / "Imported" /
                                   sourcePath.stem() / (sourcePath.stem().string() + ".plutomodel");
         ModelAsset model;
-        if (!LoadModelAsset(manifestPath.string(), model)) return {};
+        if (!LoadModelAsset(manifestPath.string(), model))
+            return {};
         for (const auto &object : model.objects)
         {
-            if (object.localId == localId) return object.reference;
+            if (object.localId == localId)
+                return object.reference;
         }
         return {};
     }
@@ -375,14 +383,16 @@ namespace PlutoGE::assets
         std::ofstream output(overridePath, std::ios::out | std::ios::trunc);
         if (!output.is_open())
         {
-            if (errorMessage) *errorMessage = "Failed to write extracted material bindings: " + overridePath.string();
+            if (errorMessage)
+                *errorMessage = "Failed to write extracted material bindings: " + overridePath.string();
             return false;
         }
         for (const auto &reference : materialReferences)
             output << reference << '\n';
         if (!output.good())
         {
-            if (errorMessage) *errorMessage = "Failed to save extracted material bindings.";
+            if (errorMessage)
+                *errorMessage = "Failed to save extracted material bindings.";
             return false;
         }
         m_meshMaterialReferenceCache[meshAssetReference] = std::move(materialReferences);
@@ -572,7 +582,8 @@ namespace PlutoGE::assets
             return false;
         }
 
-        clip = ReadAnimationClip(input, version >= 5 ? 6 : version >= 4 ? 5 : version >= 3 ? 4
+        clip = ReadAnimationClip(input, version >= 5 ? 6 : version >= 4 ? 5
+                                                       : version >= 3   ? 4
                                                        : version >= 2   ? 3
                                                                         : 2);
         return input.good();
@@ -2208,7 +2219,9 @@ namespace PlutoGE::assets
                     else if (key == "AlbedoTexture")
                     {
                         const std::string texturePath = ResolveMaterialTexturePath(value);
-                        config.albedoTexture = texturePath.empty() ? nullptr : render::Texture::LoadFromFile(texturePath.c_str());
+                        config.albedoTexture = texturePath.empty()
+                                                   ? nullptr
+                                                   : core::Engine::GetInstance().GetTextureManager().LoadTextureFromFile(texturePath.c_str(), render::TextureColorSpace::SRGB);
                     }
                     else if (key == "NormalTexture")
                     {
@@ -2362,7 +2375,7 @@ namespace PlutoGE::assets
         {
             render::MaterialConfig cachedConfig = config;
             std::unordered_map<std::string, render::Texture *> reloadedTextures;
-            auto reloadTexture = [&](render::Texture *texture) -> render::Texture *
+            auto reloadTexture = [&](render::Texture *texture, render::TextureColorSpace colorSpace) -> render::Texture *
             {
                 if (!texture)
                 {
@@ -2376,18 +2389,21 @@ namespace PlutoGE::assets
                     return nullptr;
                 }
 
-                auto [textureIt, inserted] = reloadedTextures.emplace(resolvedPath, nullptr);
+                std::string reloadKey = resolvedPath;
+                reloadKey += colorSpace == render::TextureColorSpace::SRGB ? "#srgb" : "#linear";
+                auto [textureIt, inserted] = reloadedTextures.emplace(reloadKey, nullptr);
                 if (inserted)
                 {
-                    textureIt->second = render::Texture::LoadFromFile(resolvedPath.c_str());
+                    textureIt->second = core::Engine::GetInstance().GetTextureManager().LoadTextureFromFile(resolvedPath.c_str(), colorSpace);
                 }
                 return textureIt->second;
             };
 
-            cachedConfig.albedoTexture = reloadTexture(config.albedoTexture);
-            cachedConfig.normalTexture = reloadTexture(config.normalTexture);
-            cachedConfig.metallicTexture = reloadTexture(config.metallicTexture);
-            cachedConfig.roughnessTexture = reloadTexture(config.roughnessTexture);
+            cachedConfig.albedoTexture = reloadTexture(config.albedoTexture, render::TextureColorSpace::SRGB);
+            cachedConfig.normalTexture = reloadTexture(config.normalTexture, render::TextureColorSpace::Linear);
+            cachedConfig.metallicTexture = reloadTexture(config.metallicTexture, render::TextureColorSpace::Linear);
+            cachedConfig.roughnessTexture = reloadTexture(config.roughnessTexture, render::TextureColorSpace::Linear);
+            cachedConfig.occlusionTexture = reloadTexture(config.occlusionTexture, render::TextureColorSpace::Linear);
             cachedConfig.lightmapTexture = nullptr;
             if (cachedConfig.shaderGraphReference.empty())
             {
@@ -2895,7 +2911,8 @@ namespace PlutoGE::assets
         if (m_projectRootDirectory.empty())
             return NormalizePath(texturePath);
         return NormalizePath(((std::filesystem::path(m_projectRootDirectory) / m_projectAssetDirectory) /
-                              std::filesystem::path(texturePath)).string());
+                              std::filesystem::path(texturePath))
+                                 .string());
     }
 
     std::string AssetManager::PersistMaterialTexturePath(const std::string &texturePath) const

@@ -380,7 +380,7 @@ namespace PlutoGE::render
                         return receiverDepth > texture(shadowMap, projectedCoords.xy).r ? 1.0 : 0.0;
                     }
 
-                    float kernelRadius = clamp(softness, 0.5, 3.0);
+                    float kernelRadius = clamp(softness, 0.5, 6.0);
                     vec2 probeStep = texelSize * kernelRadius;
                     float center = receiverDepth > texture(shadowMap, projectedCoords.xy).r ? 1.0 : 0.0;
                     float probes = center;
@@ -397,20 +397,29 @@ namespace PlutoGE::render
                         return center;
                     }
 
-                    const vec2 poissonDisk[4] = vec2[](
+                    const vec2 poissonDisk[16] = vec2[](
                         vec2(-0.94201624, -0.39906216), vec2(0.94558609, -0.76890725),
-                        vec2(-0.38277543, 0.27676845), vec2(0.97484398, 0.75648379)
+                        vec2(-0.38277543, 0.27676845), vec2(0.97484398, 0.75648379),
+                        vec2(0.44323325, -0.97511554), vec2(0.53742981, -0.47373420),
+                        vec2(-0.26496911, -0.41893023), vec2(0.79197514, 0.19090188),
+                        vec2(-0.24188840, 0.99706507), vec2(-0.81409955, 0.91437590),
+                        vec2(0.19984126, 0.78641367), vec2(0.14383161, -0.14100790),
+                        vec2(-0.69759607, -0.64189120), vec2(0.42100349, 0.44207078),
+                        vec2(-0.51597447, 0.18630147), vec2(-0.05699051, -0.85734934)
                     );
-                    float shadow = 0.0;
-                    vec2 diskScale = texelSize * kernelRadius * 1.35;
-                    for (int sampleIndex = 0; sampleIndex < 4; ++sampleIndex)
+                    float shadow = center * 2.0;
+                    float totalWeight = 2.0;
+                    vec2 diskScale = texelSize * kernelRadius * 1.85;
+                    for (int sampleIndex = 0; sampleIndex < 16; ++sampleIndex)
                     {
+                        float sampleWeight = sampleIndex < 8 ? 1.0 : 0.65;
                         shadow += SampleShadowComparisonBilinear(
                             shadowMap,
                             projectedCoords.xy + poissonDisk[sampleIndex] * diskScale,
-                            receiverDepth);
+                            receiverDepth) * sampleWeight;
+                        totalWeight += sampleWeight;
                     }
-                    return shadow * 0.25;
+                    return shadow / totalWeight;
                 }
 
                 float SampleDirectionalCascadeShadow(int cascadeIndex, vec3 projectedCoords, float depthBias, float softness)
@@ -751,7 +760,7 @@ namespace PlutoGE::render
                     float roughness = clamp(normalRoughness.a, 0.04, 1.0);
                     float metallic = clamp(albedoMetallic.a, 0.0, 1.0);
                     vec4 subsurface = texture(gSubsurface, UV);
-                    float dielectricSpecular = clamp(texture(gEmission, UV).a, 0.0, 1.0);
+                    float dielectricSpecular = 1.0;
                     float materialFlag = texture(gBakedLighting, UV).a;
                     if (uDebugViewMode == DEBUG_VIEW_LOD)
                     {
@@ -885,26 +894,12 @@ namespace PlutoGE::render
                             }
 
                             float sampleShadow = texture(uShadowMaskTexture, sampleUv).r;
-                            // Do not blur across the actual visibility edge.
-                            // Depth/normal bilateral weights cannot distinguish
-                            // a cast-shadow boundary on one continuous surface,
-                            // which previously produced a second ~50% opacity
-                            // outline between fully lit and shadowed pixels.
                             bool centerOccluded = centerShadow >= 0.5;
                             bool sampleOccluded = sampleShadow >= 0.5;
                             float visibilityEdgeWeight = 1.0;
                             if (centerOccluded != sampleOccluded)
                             {
-                                // A hard visibility rejection preserves a
-                                // one-pixel staircase at the 0.5 contour. Allow
-                                // only the immediate neighbour to contribute at
-                                // low weight, providing narrow subpixel coverage
-                                // without recreating the former wide halo.
-                                if (sampleIndex > 1)
-                                {
-                                    continue;
-                                }
-                                visibilityEdgeWeight = 0.18;
+                                visibilityEdgeWeight = sampleIndex == 1 ? 0.65 : (sampleIndex == 2 ? 0.38 : (sampleIndex == 3 ? 0.22 : 0.12));
                             }
 
                             float normalWeight = smoothstep(uNormalThreshold, normalBlendEnd, dot(centerNormal, sampleNormal));
@@ -1406,7 +1401,9 @@ namespace PlutoGE::render
                 }
                 if (uMaskEmission != 0)
                 {
-                    vec3 emission = max(texture(uEmissionTexture, UV).rgb, vec3(0.0));
+                    vec4 emissionOcclusion = texture(uEmissionTexture, UV);
+                    vec3 emission = max(emissionOcclusion.rgb, vec3(0.0));
+                    indirect *= clamp(emissionOcclusion.a, 0.0, 1.0);
                     float emissionCoverage = clamp(max(max(emission.r, emission.g), emission.b), 0.0, 1.0);
                     indirect *= 1.0 - emissionCoverage;
                 }
@@ -1524,7 +1521,11 @@ namespace PlutoGE::render
         m_directLightingPassShader->SetUniform("uUseFilteredShadowMask", 0);
         Graphics::DrawFullscreenTriangle();
 
-        const int filterRadius = std::clamp(light.directionalShadowSettings.screenSpaceFilterRadius, 0, 4);
+        const int configuredFilterRadius = std::clamp(light.directionalShadowSettings.screenSpaceFilterRadius, 0, 4);
+        const int softnessFilterRadius = std::clamp(static_cast<int>(std::ceil(light.directionalShadowSettings.softness * 2.0f)), 1, 4);
+        const int filterRadius = configuredFilterRadius > 0
+                                     ? std::max(configuredFilterRadius, softnessFilterRadius)
+                                     : 0;
         if (!filtered || !light.directionalShadowSettings.screenSpaceFilterEnabled || filterRadius <= 0)
         {
             return m_rawShadowMaskTarget.get();
@@ -1809,10 +1810,9 @@ namespace PlutoGE::render
         };
 
         const auto *environmentTexture = ctx.scene ? ctx.scene->GetEnvironmentMapTexture() : nullptr;
-        const float environmentMaxMipLevel = hasPhysicalSkyEnvironment
-                                                 ? static_cast<float>(std::max(0, static_cast<int>(std::floor(std::log2(static_cast<float>(std::max(ctx.renderer->GetPhysicalSkyEnvironmentWidth(), ctx.renderer->GetPhysicalSkyEnvironmentHeight())))))))
-                                                 : resolveMaxMipLevel(environmentTexture);
-        m_lightingPassShader->SetUniform("uEnvironmentMaxMipLevel", environmentMaxMipLevel);
+        float iblMaxMipLevel = hasPhysicalSkyEnvironment
+                                   ? static_cast<float>(std::max(0, static_cast<int>(std::floor(std::log2(static_cast<float>(std::max(ctx.renderer->GetPhysicalSkyEnvironmentWidth(), ctx.renderer->GetPhysicalSkyEnvironmentHeight())))))))
+                                   : resolveMaxMipLevel(environmentTexture);
         const auto &iblCaptureVolumes = ctx.scene ? ctx.scene->GetIblCaptureVolumes() : std::vector<scene::IblCaptureVolume>{};
         int iblCaptureCount = 0;
         static const auto iblOriginNames = MakeArrayUniformNames<scene::kMaxIblCaptureVolumes>("uIblCaptureOrigins");
@@ -1831,13 +1831,16 @@ namespace PlutoGE::render
                 iblCaptureCount = captureIndex + 1;
             }
             const auto &captureVolume = hasCapture ? iblCaptureVolumes[static_cast<std::size_t>(captureIndex)] : scene::IblCaptureVolume{};
+            const float captureMaxMipLevel = hasCapture ? resolveMaxMipLevel(captureVolume.environmentMapTexture) : 0.0f;
+            iblMaxMipLevel = std::max(iblMaxMipLevel, captureMaxMipLevel);
             m_lightingPassShader->SetUniform(iblOriginNames[captureIndex], captureVolume.origin);
             m_lightingPassShader->SetUniform(iblSizeNames[captureIndex], captureVolume.size);
             m_lightingPassShader->SetUniform(iblIntensityNames[captureIndex], hasCapture ? captureVolume.intensity : 0.0f);
             m_lightingPassShader->SetUniform(iblBlendNames[captureIndex], captureVolume.blendDistance);
-            m_lightingPassShader->SetUniform(iblMipNames[captureIndex], hasCapture ? resolveMaxMipLevel(captureVolume.environmentMapTexture) : 0.0f);
+            m_lightingPassShader->SetUniform(iblMipNames[captureIndex], captureMaxMipLevel);
             m_lightingPassShader->SetUniform(iblEnabledNames[captureIndex], hasCapture ? 1 : 0);
         }
+        m_lightingPassShader->SetUniform("uEnvironmentMaxMipLevel", iblMaxMipLevel);
         m_lightingPassShader->SetUniform("uIblCaptureCount", iblCaptureCount);
 
         Graphics::Disable(GL_BLEND);

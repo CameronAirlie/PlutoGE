@@ -35,7 +35,7 @@ namespace PlutoGE::scene
         float minCasterTexelRadius = 0.0f;
         bool screenSpaceFilterEnabled = true;
         float screenSpaceFilterRenderScale = 0.5f;
-        int screenSpaceFilterRadius = 2;
+        int screenSpaceFilterRadius = 4;
         float screenSpaceFilterDepthScale = 0.015f;
         float screenSpaceFilterMinDepthScale = 0.05f;
         float screenSpaceFilterNormalThreshold = 0.72f;

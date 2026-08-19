@@ -304,6 +304,10 @@ namespace PlutoGE::render
             uniform float uHasRoughnessTexture = 0.0;
             uniform float uRoughnessFactor = 1.0;
             uniform int uRoughnessTextureChannel = 0;
+            uniform sampler2D uOcclusionTexture;
+            uniform float uHasOcclusionTexture = 0.0;
+            uniform float uOcclusionStrength = 1.0;
+            uniform int uOcclusionTextureChannel = 0;
             uniform vec3 uEmission = vec3(0.0);
             uniform float uSubsurfaceFactor = 0.0;
             uniform vec3 uSubsurfaceColor = vec3(1.0, 0.35, 0.2);
@@ -366,6 +370,7 @@ namespace PlutoGE::render
                 float opacity = uColor.a;
                 float metallic = clamp(uMetallicFactor, 0.0, 1.0);
                 float roughness = clamp(uRoughnessFactor, 0.04, 1.0);
+                float ambientOcclusion = 1.0;
                 vec3 normal = normalize(Normal);
 
                 if (uHasAlbedoTexture > 0.5)
@@ -406,9 +411,15 @@ namespace PlutoGE::render
                     roughness *= ReadTextureChannel(texture(uRoughnessTexture, UV), uRoughnessTextureChannel);
                 }
 
+                if (uHasOcclusionTexture > 0.5)
+                {
+                    float sampledOcclusion = ReadTextureChannel(texture(uOcclusionTexture, UV), uOcclusionTextureChannel);
+                    ambientOcclusion = mix(1.0, sampledOcclusion, clamp(uOcclusionStrength, 0.0, 1.0));
+                }
+
                 gNormalRoughness = vec4(normalize(normal), clamp(roughness, 0.04, 1.0));
                 gAlbedoMetallic = vec4(albedo, clamp(metallic, 0.0, 1.0));
-                gEmission = vec4(max(uEmission, vec3(0.0)), 1.0);
+                gEmission = vec4(max(uEmission, vec3(0.0)), clamp(ambientOcclusion, 0.0, 1.0));
                 gSubsurface = vec4(max(uSubsurfaceColor, vec3(0.0)), clamp(uSubsurfaceFactor, 0.0, 1.0));
                 gBakedLighting = vec4(0.0);
                 gDebug = InstanceFlags.w <= 0.5 ? -1.0 : clamp(floor(InstanceFlags.z) / InstanceFlags.w, 0.0, 1.0);
@@ -784,6 +795,24 @@ vec3 EvaluatePbrLighting(vec3 normal, vec3 viewDir, vec3 albedo, float metallic,
             )";
             source.fragmentSource += R"(
 
+float SampleShadowComparisonBilinear(sampler2D shadowMap, vec2 uv, float receiverDepth)
+{
+    ivec2 mapSize = textureSize(shadowMap, 0);
+    vec2 texelPosition = uv * vec2(mapSize) - vec2(0.5);
+    ivec2 baseTexel = ivec2(floor(texelPosition));
+    vec2 fraction = fract(texelPosition);
+    ivec2 maximumTexel = mapSize - ivec2(1);
+    ivec2 p00 = clamp(baseTexel, ivec2(0), maximumTexel);
+    ivec2 p10 = clamp(baseTexel + ivec2(1, 0), ivec2(0), maximumTexel);
+    ivec2 p01 = clamp(baseTexel + ivec2(0, 1), ivec2(0), maximumTexel);
+    ivec2 p11 = clamp(baseTexel + ivec2(1, 1), ivec2(0), maximumTexel);
+    float v00 = receiverDepth > texelFetch(shadowMap, p00, 0).r ? 1.0 : 0.0;
+    float v10 = receiverDepth > texelFetch(shadowMap, p10, 0).r ? 1.0 : 0.0;
+    float v01 = receiverDepth > texelFetch(shadowMap, p01, 0).r ? 1.0 : 0.0;
+    float v11 = receiverDepth > texelFetch(shadowMap, p11, 0).r ? 1.0 : 0.0;
+    return mix(mix(v00, v10, fraction.x), mix(v01, v11, fraction.x), fraction.y);
+}
+
 float SampleShadowMapPCF(sampler2D shadowMap, vec3 projectedCoords, float depthBias, float softness)
 {
     vec2 texelSize = 1.0 / vec2(textureSize(shadowMap, 0));
@@ -793,18 +822,41 @@ float SampleShadowMapPCF(sampler2D shadowMap, vec3 projectedCoords, float depthB
         return receiverDepth > texture(shadowMap, projectedCoords.xy).r ? 1.0 : 0.0;
     }
 
-    vec2 stepSize = texelSize * clamp(softness, 0.5, 3.0);
-    float shadow = 0.0;
-    float totalWeight = 0.0;
-    for (int y = -1; y <= 1; ++y)
+    float kernelRadius = clamp(softness, 0.5, 6.0);
+    vec2 probeStep = texelSize * kernelRadius;
+    float center = receiverDepth > texture(shadowMap, projectedCoords.xy).r ? 1.0 : 0.0;
+    float probes = center;
+    probes += receiverDepth > texture(shadowMap, projectedCoords.xy + vec2(probeStep.x, 0.0)).r ? 1.0 : 0.0;
+    probes += receiverDepth > texture(shadowMap, projectedCoords.xy - vec2(probeStep.x, 0.0)).r ? 1.0 : 0.0;
+    probes += receiverDepth > texture(shadowMap, projectedCoords.xy + vec2(0.0, probeStep.y)).r ? 1.0 : 0.0;
+    probes += receiverDepth > texture(shadowMap, projectedCoords.xy - vec2(0.0, probeStep.y)).r ? 1.0 : 0.0;
+
+    if (probes <= 0.0 || probes >= 5.0)
     {
-        for (int x = -1; x <= 1; ++x)
-        {
-            float weight = float((2 - abs(x)) * (2 - abs(y)));
-            float closestDepth = texture(shadowMap, projectedCoords.xy + vec2(x, y) * stepSize).r;
-            shadow += (receiverDepth > closestDepth ? 1.0 : 0.0) * weight;
-            totalWeight += weight;
-        }
+        return center;
+    }
+
+    const vec2 poissonDisk[16] = vec2[](
+        vec2(-0.94201624, -0.39906216), vec2(0.94558609, -0.76890725),
+        vec2(-0.38277543, 0.27676845), vec2(0.97484398, 0.75648379),
+        vec2(0.44323325, -0.97511554), vec2(0.53742981, -0.47373420),
+        vec2(-0.26496911, -0.41893023), vec2(0.79197514, 0.19090188),
+        vec2(-0.24188840, 0.99706507), vec2(-0.81409955, 0.91437590),
+        vec2(0.19984126, 0.78641367), vec2(0.14383161, -0.14100790),
+        vec2(-0.69759607, -0.64189120), vec2(0.42100349, 0.44207078),
+        vec2(-0.51597447, 0.18630147), vec2(-0.05699051, -0.85734934)
+    );
+    float shadow = center * 2.0;
+    float totalWeight = 2.0;
+    vec2 diskScale = texelSize * kernelRadius * 1.85;
+    for (int sampleIndex = 0; sampleIndex < 16; ++sampleIndex)
+    {
+        float sampleWeight = sampleIndex < 8 ? 1.0 : 0.65;
+        shadow += SampleShadowComparisonBilinear(
+            shadowMap,
+            projectedCoords.xy + poissonDisk[sampleIndex] * diskScale,
+            receiverDepth) * sampleWeight;
+        totalWeight += sampleWeight;
     }
     return shadow / totalWeight;
 }
@@ -1260,7 +1312,9 @@ void main()
     float roughness = clamp(normalRoughness.a, 0.04, 1.0);
     float metallic = clamp(albedoMetallic.a, 0.0, 1.0);
     vec4 bakedLightingMask = texture(gBakedLighting, UV);
-    vec3 emission = max(texture(gEmission, UV).rgb, vec3(0.0));
+    vec4 emissionOcclusion = texture(gEmission, UV);
+    vec3 emission = max(emissionOcclusion.rgb, vec3(0.0));
+    float ambientOcclusion = clamp(emissionOcclusion.a, 0.0, 1.0);
     vec3 bakedIrradiance = bakedLightingMask.rgb;
     float materialFlag = bakedLightingMask.a;
     bool unlitMaterial = IsUnlitMaterial(materialFlag);
@@ -1294,18 +1348,17 @@ void main()
         vec3 environmentSpecular = ComputeEnvironmentSpecular(fragPos, normal, viewDir, roughness, f0, ndotv);
         if (uAmbientOutputMode == AMBIENT_OUTPUT_NONE)
         {
-            FragColor = vec4(environmentSpecular, 1.0);
+            FragColor = vec4(environmentSpecular * ambientOcclusion, 1.0);
             return;
         }
 
         if (uAmbientOutputMode == AMBIENT_OUTPUT_LPV_ONLY)
         {
-            FragColor = vec4(lpvIndirect + bakedProbeIndirect + environmentSpecular, 1.0);
+            FragColor = vec4((lpvIndirect + bakedProbeIndirect + environmentSpecular) * ambientOcclusion, 1.0);
             return;
         }
 
-        vec3 realtimeAmbient = vec3(0.03) * albedo * (1.0 - metallic);
-        realtimeAmbient += lpvIndirect;
+        vec3 realtimeAmbient = lpvIndirect;
         realtimeAmbient += bakedProbeIndirect;
         realtimeAmbient += environmentDiffuse;
         // Lightmaps contain diffuse irradiance (not already shaded color).
@@ -1315,7 +1368,7 @@ void main()
         vec3 bakedDiffuse = bakedIrradiance * albedo * (vec3(1.0) - f0) * (1.0 - metallic) / PI;
         vec3 ambient = mix(realtimeAmbient, bakedDiffuse, bakedStaticMaterial ? 1.0 : 0.0);
         ambient += environmentSpecular;
-        FragColor = vec4(ambient + emission, 1.0);
+        FragColor = vec4(ambient * ambientOcclusion + emission, 1.0);
         return;
     }
 

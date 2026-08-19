@@ -226,7 +226,8 @@ namespace PlutoGE::scene
             properties.push_back({prefix + "Color", PropertyType::String, SerializeVec4(config.color)});
             properties.push_back({prefix + "AlbedoPath", PropertyType::String, config.albedoTexture ? config.albedoTexture->GetFilePath() : std::string{}});
             properties.push_back({prefix + "SurfaceType", PropertyType::String, ToString(config.surfaceType)});
-            properties.push_back({prefix + "AlphaMode", PropertyType::String, config.alphaMode == render::AlphaMode::Blend ? "Blend" : config.alphaMode == render::AlphaMode::Mask ? "Mask" : "Opaque"});
+            properties.push_back({prefix + "AlphaMode", PropertyType::String, config.alphaMode == render::AlphaMode::Blend ? "Blend" : config.alphaMode == render::AlphaMode::Mask ? "Mask"
+                                                                                                                                                                                   : "Opaque"});
             properties.push_back({prefix + "AlphaCutoff", PropertyType::Float, std::to_string(config.alphaCutoff)});
             properties.push_back({prefix + "CastsShadow", PropertyType::Bool, config.castsShadow ? "true" : "false"});
             properties.push_back({prefix + "TwoSided", PropertyType::Bool, config.twoSided ? "true" : "false"});
@@ -269,9 +270,9 @@ namespace PlutoGE::scene
             {
                 serializedMaterial.alphaMode = value == "Blend" || value == "blend" || value == "2"
                                                    ? render::AlphaMode::Blend
-                                                   : value == "Mask" || value == "mask" || value == "1"
-                                                         ? render::AlphaMode::Mask
-                                                         : render::AlphaMode::Opaque;
+                                               : value == "Mask" || value == "mask" || value == "1"
+                                                   ? render::AlphaMode::Mask
+                                                   : render::AlphaMode::Opaque;
             }
             else if (fieldName == "AlphaCutoff")
             {
@@ -353,7 +354,7 @@ namespace PlutoGE::scene
             {
                 material.SetAlbedoTexture(serializedMaterial.albedoPath->empty()
                                               ? nullptr
-                                              : render::Texture::LoadFromFile(serializedMaterial.albedoPath->c_str()));
+                                              : core::Engine::GetInstance().GetTextureManager().LoadTextureFromFile(serializedMaterial.albedoPath->c_str(), render::TextureColorSpace::SRGB));
             }
             if (serializedMaterial.color.has_value())
             {
@@ -609,9 +610,11 @@ namespace PlutoGE::scene
                 m_materialAssetReferences[slotIndex] = newMaterialAssetReference;
                 if (material)
                 {
-                    if (slotIndex >= m_materials.size()) m_materials.resize(slotIndex + 1, nullptr);
+                    if (slotIndex >= m_materials.size())
+                        m_materials.resize(slotIndex + 1, nullptr);
                     m_materials[slotIndex] = material;
-                    if (slotIndex == 0 || !m_material) m_material = material;
+                    if (slotIndex == 0 || !m_material)
+                        m_material = material;
                 }
                 changed = true;
             }
@@ -623,7 +626,8 @@ namespace PlutoGE::scene
                 m_submeshMaterialAssetReferences[submeshIndex] = newMaterialAssetReference;
                 if (material)
                 {
-                    if (submeshIndex >= m_submeshMaterials.size()) m_submeshMaterials.resize(submeshIndex + 1, nullptr);
+                    if (submeshIndex >= m_submeshMaterials.size())
+                        m_submeshMaterials.resize(submeshIndex + 1, nullptr);
                     m_submeshMaterials[submeshIndex] = material;
                 }
                 changed = true;
@@ -634,7 +638,8 @@ namespace PlutoGE::scene
         // so this also catches compact isolated children without local slot arrays.
         if (RefreshMaterialAsset(newMaterialAssetReference, material))
             changed = true;
-        if (changed) MarkRenderCommandsDirty();
+        if (changed)
+            MarkRenderCommandsDirty();
         return changed;
     }
 
@@ -882,7 +887,14 @@ namespace PlutoGE::scene
             }
             else if (property.name == "ModelObjectId")
             {
-                try { modelObjectId = std::stoull(property.value); } catch (...) { modelObjectId = 0; }
+                try
+                {
+                    modelObjectId = std::stoull(property.value);
+                }
+                catch (...)
+                {
+                    modelObjectId = 0;
+                }
             }
             else if (property.name == "MeshAssetReference" || property.name == "SourceMeshPath")
             {
@@ -999,7 +1011,8 @@ namespace PlutoGE::scene
             {
                 sourceMeshPath = resolvedModelObject;
             }
-            if (sourceMeshPath.empty()) return;
+            if (sourceMeshPath.empty())
+                return;
             if (auto *builtinMesh = engine.GetAssetManager().LoadMeshAsset(sourceMeshPath))
             {
                 SetMesh(builtinMesh);
@@ -1356,8 +1369,8 @@ namespace PlutoGE::scene
                 if (!jointMatrices && submesh.animatedNodeIndex >= 0)
                 {
                     submeshModelMatrix *= (animationComponent && animationComponent->GetClipCount() > 0
-                                                            ? animationComponent->GetNodeMatrix(m_mesh->GetAnimationNodes(), submesh.animatedNodeIndex)
-                                                            : ComputeAnimationNodeBindMatrix(m_mesh->GetAnimationNodes(), submesh.animatedNodeIndex));
+                                               ? animationComponent->GetNodeMatrix(m_mesh->GetAnimationNodes(), submesh.animatedNodeIndex)
+                                               : ComputeAnimationNodeBindMatrix(m_mesh->GetAnimationNodes(), submesh.animatedNodeIndex));
                 }
 
                 render::RenderCommand command;

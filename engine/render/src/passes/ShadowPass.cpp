@@ -36,7 +36,7 @@ namespace
     // was visible as flicker on first-person weapons and stepped ground shadows.
     constexpr int kMaxIncrementalShadowSurfaceUpdatesPerFrame = 2;
     constexpr std::uint8_t kAllPointShadowFacesMask = 0x3fu;
-    constexpr float kDirectionalShadowPadding = 2.0f;
+    constexpr float kDirectionalShadowDepthPadding = 2.0f;
     constexpr float kShadowUpdateMatrixEpsilon = 0.0001f;
     constexpr float kNearCascadeMinCasterTexelRadius = 0.35f;
     constexpr float kFarCascadeMinCasterTexelRadius = 1.0f;
@@ -365,7 +365,7 @@ namespace
         }
 
         std::sort(indices.begin(), indices.end(), [&](std::size_t aIndex, std::size_t bIndex)
-        {
+                  {
             const auto *aCommand = &renderCommands[aIndex];
             const auto *bCommand = &renderCommands[bIndex];
             const bool aAlphaTested = IsAlphaTestedShadowCaster(*aCommand);
@@ -379,8 +379,7 @@ namespace
                 return std::less<const std::vector<glm::mat4> *>{}(aCommand->jointMatrices, bCommand->jointMatrices);
             if (aCommand->submeshIndex != bCommand->submeshIndex)
                 return aCommand->submeshIndex < bCommand->submeshIndex;
-            return aCommand->lodIndex < bCommand->lodIndex;
-        });
+            return aCommand->lodIndex < bCommand->lodIndex; });
         return indices;
     }
 
@@ -547,10 +546,10 @@ namespace
     }
 
     void SnapDirectionalProjectionBoundsToWorldTexels(glm::vec3 &minBounds,
-                                                       glm::vec3 &maxBounds,
-                                                       const glm::mat4 &view,
-                                                       const glm::vec3 &shadowWorldOrigin,
-                                                       int shadowResolution)
+                                                      glm::vec3 &maxBounds,
+                                                      const glm::mat4 &view,
+                                                      const glm::vec3 &shadowWorldOrigin,
+                                                      int shadowResolution)
     {
         const float safeResolution = static_cast<float>(std::max(shadowResolution, 1));
         const glm::vec2 extents = glm::max(glm::vec2(maxBounds.x - minBounds.x, maxBounds.y - minBounds.y), glm::vec2(0.001f));
@@ -580,16 +579,16 @@ namespace
         int shadowResolution)
     {
         const glm::vec3 lightDirection = glm::normalize(light.direction);
-        // Gameplay cameras commonly animate FOV while sprinting or aiming. A
-        // cascade fitted to that changing projection rescales its texel grid
-        // every frame, making stationary shadows swim. Fit shadows to a stable,
-        // conservative 90-degree vertical FOV while allowing wider cameras to
-        // retain their actual projection.
+        // Gameplay cameras commonly animate FOV while sprinting or aiming. Keep
+        // farther cascades conservative for stability, but let cascade zero use
+        // the actual camera projection so close receivers get the intended
+        // world-space texel density.
         PlutoGE::render::CameraData shadowCameraData = cameraData;
         constexpr float kStableProjectionY = 1.0f; // 1 / tan(90 degrees / 2)
         const float projectionY = std::abs(shadowCameraData.projection[1][1]);
         const float projectionX = std::abs(shadowCameraData.projection[0][0]);
-        if (projectionY > kStableProjectionY && projectionX > 0.000001f)
+        const bool isNearCascade = cascadeNear <= cameraData.nearPlane + kShadowUpdateMatrixEpsilon;
+        if (!isNearCascade && projectionY > kStableProjectionY && projectionX > 0.000001f)
         {
             const float aspectRatio = projectionY / projectionX;
             shadowCameraData.projection[1][1] = std::copysign(kStableProjectionY, shadowCameraData.projection[1][1]);
@@ -617,7 +616,7 @@ namespace
         cascadeRadius = glm::ceil(glm::max(cascadeRadius, 0.1f) * 16.0f) / 16.0f;
 
         const float cascadeDepth = glm::max(cascadeFar - cascadeNear, 1.0f);
-        const float casterExtrusionDistance = cascadeDepth * 2.0f + kDirectionalShadowPadding;
+        const float casterExtrusionDistance = cascadeDepth * 2.0f + kDirectionalShadowDepthPadding;
         const glm::vec3 upVector = ResolveUpVector(lightDirection);
 
         const float pcfGuardTexels = glm::max(light.directionalShadowSettings.softness + 1.0f, 2.0f);
@@ -637,9 +636,9 @@ namespace
 
             const glm::vec2 receiverExtent = glm::max(glm::vec2(maxBounds.x - minBounds.x, maxBounds.y - minBounds.y), glm::vec2(0.001f));
             const glm::vec2 texelSize = receiverExtent / static_cast<float>(std::max(shadowResolution, 1));
-            const glm::vec2 xyGuard = texelSize * pcfGuardTexels + glm::vec2(kDirectionalShadowPadding);
-            minBounds -= glm::vec3(xyGuard.x, xyGuard.y, kDirectionalShadowPadding);
-            maxBounds += glm::vec3(xyGuard.x, xyGuard.y, kDirectionalShadowPadding);
+            const glm::vec2 xyGuard = texelSize * pcfGuardTexels;
+            minBounds -= glm::vec3(xyGuard.x, xyGuard.y, kDirectionalShadowDepthPadding);
+            maxBounds += glm::vec3(xyGuard.x, xyGuard.y, kDirectionalShadowDepthPadding);
         };
 
         glm::mat4 view = glm::lookAt(eye, eye + lightDirection, upVector);
@@ -647,9 +646,9 @@ namespace
         glm::vec3 maxBounds(0.0f);
         computeCascadeBounds(view, minBounds, maxBounds);
 
-        if (maxBounds.z > -kDirectionalShadowPadding)
+        if (maxBounds.z > -kDirectionalShadowDepthPadding)
         {
-            const float retreatDistance = maxBounds.z + kDirectionalShadowPadding;
+            const float retreatDistance = maxBounds.z + kDirectionalShadowDepthPadding;
             eye -= lightDirection * retreatDistance;
             view = glm::lookAt(eye, eye + lightDirection, upVector);
             computeCascadeBounds(view, minBounds, maxBounds);
@@ -803,10 +802,10 @@ namespace
     }
 
     DirectionalShadowScroll ResolveDirectionalShadowScroll(const glm::mat4 &previousRelative,
-                                                            const glm::vec3 &previousWorldOrigin,
-                                                            const glm::mat4 &currentRelative,
-                                                            const glm::vec3 &currentWorldOrigin,
-                                                            int resolution)
+                                                           const glm::vec3 &previousWorldOrigin,
+                                                           const glm::mat4 &currentRelative,
+                                                           const glm::vec3 &currentWorldOrigin,
+                                                           int resolution)
     {
         DirectionalShadowScroll result;
         result.resolvedRelativeMatrix = currentRelative;
@@ -839,7 +838,8 @@ namespace
             }
         }
 
-        if (result.maxMatrixDelta > kShadowUpdateMatrixEpsilon) return result;
+        if (result.maxMatrixDelta > kShadowUpdateMatrixEpsilon)
+            return result;
 
         // Fitted cascades move slightly along the light's depth axis as the FPS
         // camera moves or rotates. Cached depth remains exact if rendering and
@@ -848,7 +848,8 @@ namespace
         const float depthTranslationDelta = std::abs(previous[3][2] - current[3][2]);
         result.maxMatrixDelta = glm::max(result.maxMatrixDelta, depthTranslationDelta);
         constexpr float kMaximumRetainedDepthTranslation = 0.02f;
-        if (depthTranslationDelta > kMaximumRetainedDepthTranslation) return result;
+        if (depthTranslationDelta > kMaximumRetainedDepthTranslation)
+            return result;
         current[3][2] = previous[3][2];
         result.resolvedRelativeMatrix = current *
                                         glm::translate(glm::mat4(1.0f), currentWorldOrigin);
@@ -872,10 +873,10 @@ namespace
     }
 
     bool IsBoundsOverlappingDirectionalRegion(const PlutoGE::render::MeshBounds &bounds,
-                                               const glm::mat4 &lightView,
-                                               const glm::vec3 &shadowWorldOrigin,
-                                               const glm::vec2 &regionMin,
-                                               const glm::vec2 &regionMax)
+                                              const glm::mat4 &lightView,
+                                              const glm::vec3 &shadowWorldOrigin,
+                                              const glm::vec2 &regionMin,
+                                              const glm::vec2 &regionMax)
     {
         const glm::vec3 relativeCenter = bounds.center - shadowWorldOrigin;
         const glm::vec3 lightSpaceCenter = glm::vec3(lightView * glm::vec4(relativeCenter, 1.0f));
@@ -1577,7 +1578,8 @@ namespace PlutoGE::render
     {
         glDeleteBuffers(static_cast<GLsizei>(m_instanceBuffers.size()), m_instanceBuffers.data());
         glDeleteBuffers(static_cast<GLsizei>(m_indirectBuffers.size()), m_indirectBuffers.data());
-        if (m_shadowFramebuffer != 0) Graphics::DeleteFramebuffers(1, &m_shadowFramebuffer);
+        if (m_shadowFramebuffer != 0)
+            Graphics::DeleteFramebuffers(1, &m_shadowFramebuffer);
     }
 
     void ShadowPass::Initialize()
@@ -1705,8 +1707,8 @@ namespace PlutoGE::render
             return entry.bounds[instanceIndex];
         };
         const auto passesInstanceShadowDistance = [&](const PlutoGE::render::RenderCommand &command,
-                                                       const glm::mat4 &model,
-                                                       std::size_t instanceIndex)
+                                                      const glm::mat4 &model,
+                                                      std::size_t instanceIndex)
         {
             if (!ctx.hasCameraData || command.maxShadowDistance <= 0.0f ||
                 command.maxShadowDistance == std::numeric_limits<float>::max())
@@ -1730,9 +1732,7 @@ namespace PlutoGE::render
         if (shadowCasterTopologyChanged)
         {
             std::erase_if(m_cache->staticInstanceBounds, [](const auto &item)
-            {
-                return item.second.owner.expired();
-            });
+                          { return item.second.owner.expired(); });
         }
         bool shadowCastersChanged = casterFrameState.hasMovedCaster || shadowCasterTopologyChanged;
         const bool cameraDataChanged = ctx.hasCameraData &&
@@ -2308,7 +2308,8 @@ namespace PlutoGE::render
                                                 bool clearDepth,
                                                 bool drawStaticCasters)
                     {
-                        if (width <= 0 || height <= 0) return;
+                        if (width <= 0 || height <= 0)
+                            return;
                         int drawX = x;
                         int drawY = y;
                         int drawWidth = width;
@@ -2321,8 +2322,10 @@ namespace PlutoGE::render
                             Graphics::Enable(GL_SCISSOR_TEST);
                             glScissor(drawX, drawY, drawWidth, drawHeight);
                         }
-                        else Graphics::Disable(GL_SCISSOR_TEST);
-                        if (clearDepth) glClear(GL_DEPTH_BUFFER_BIT);
+                        else
+                            Graphics::Disable(GL_SCISSOR_TEST);
+                        if (clearDepth)
+                            glClear(GL_DEPTH_BUFFER_BIT);
                         const std::size_t streamBufferIndex = AcquireStreamBuffer();
                         const ShadowDrawStats regionStats = DrawShadowCasterBatches(
                             sortedShadowCasters,
@@ -2333,10 +2336,7 @@ namespace PlutoGE::render
                                     cascadeProjection.receiverMin, cascadeProjection.receiverMax,
                                     cascadeProjection.receiverExtent, shadowResolution, effectiveMinCasterTexelRadius);
                                 const bool isStaticCaster = shadowCaster.command->isStatic && !shadowCaster.command->jointMatrices;
-                                return relevant && isStaticCaster == drawStaticCasters && (!effectiveRegion ||
-                                    IsBoundsOverlappingDirectionalRegion(shadowCaster.bounds,
-                                        cascadeProjection.lightViewMatrix, cascadeShadowWorldOrigin,
-                                        effectiveRegion->min, effectiveRegion->max));
+                                return relevant && isStaticCaster == drawStaticCasters && (!effectiveRegion || IsBoundsOverlappingDirectionalRegion(shadowCaster.bounds, cascadeProjection.lightViewMatrix, cascadeShadowWorldOrigin, effectiveRegion->min, effectiveRegion->max));
                             },
                             [&](const ShadowCasterEntry &shadowCaster)
                             { return SelectDirectionalShadowLod(*shadowCaster.command, cascadeIndex, cascadeCount, shadowResolution); },

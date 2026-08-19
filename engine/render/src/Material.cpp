@@ -53,6 +53,7 @@ namespace PlutoGE::render
         setFloat("uAlphaCutoff", m_config.alphaCutoff);
         setFloat("uMetallicFactor", m_config.metallic);
         setFloat("uRoughnessFactor", m_config.roughness);
+        setFloat("uOcclusionStrength", glm::clamp(m_config.occlusionStrength, 0.0f, 1.0f));
         setVec3("uEmission", glm::max(m_config.emission, glm::vec3(0.0f)));
         setFloat("uSubsurfaceFactor", glm::clamp(m_config.subsurface, 0.0f, 1.0f));
         setVec3("uSubsurfaceColor", glm::max(m_config.subsurfaceColor, glm::vec3(0.0f)));
@@ -119,6 +120,17 @@ namespace PlutoGE::render
         else
         {
             setFloat("uHasRoughnessTexture", 0.0f);
+        }
+
+        if (m_config.occlusionTexture)
+        {
+            setTexture("uOcclusionTexture", m_config.occlusionTexture, 5);
+            setFloat("uHasOcclusionTexture", 1.0f);
+            setInt("uOcclusionTextureChannel", static_cast<int>(m_config.occlusionTextureChannel));
+        }
+        else
+        {
+            setFloat("uHasOcclusionTexture", 0.0f);
         }
 
         if (m_config.lightmapTexture)

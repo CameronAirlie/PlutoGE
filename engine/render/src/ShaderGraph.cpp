@@ -273,7 +273,7 @@ namespace PlutoGE::render
             layout (location = 3) out vec2 gMotionVector;
             layout (location = 4) out vec4 gBakedLighting;
             layout (location = 5) out float gDebug;
-            layout (location = 6) out vec3 gEmission;
+            layout (location = 6) out vec4 gEmission;
             layout (location = 7) out vec4 gSubsurface;
 
             in vec3 FragPos;
@@ -305,6 +305,10 @@ namespace PlutoGE::render
             uniform float uHasRoughnessTexture = 0.0;
             uniform float uRoughnessFactor = 1.0;
             uniform int uRoughnessTextureChannel = 0;
+            uniform sampler2D uOcclusionTexture;
+            uniform float uHasOcclusionTexture = 0.0;
+            uniform float uOcclusionStrength = 1.0;
+            uniform int uOcclusionTextureChannel = 0;
             uniform vec3 uEmission = vec3(0.0);
             uniform float uSubsurfaceFactor = 0.0;
             uniform vec3 uSubsurfaceColor = vec3(1.0, 0.35, 0.2);
@@ -385,6 +389,7 @@ namespace PlutoGE::render
                 float graphOpacity = uColor.a;
                 float graphMetallic = clamp(uMetallicFactor, 0.0, 1.0);
                 float graphRoughness = clamp(uRoughnessFactor, 0.04, 1.0);
+                float graphAmbientOcclusion = 1.0;
                 vec3 graphEmission = max(uEmission, vec3(0.0));
                 vec3 graphNormal = normalize(Normal);
 
@@ -416,6 +421,12 @@ namespace PlutoGE::render
                     graphRoughness *= ReadTextureChannel(texture(uRoughnessTexture, UV), uRoughnessTextureChannel);
                 }
 
+                if (uHasOcclusionTexture > 0.5)
+                {
+                    float sampledOcclusion = ReadTextureChannel(texture(uOcclusionTexture, UV), uOcclusionTextureChannel);
+                    graphAmbientOcclusion = mix(1.0, sampledOcclusion, clamp(uOcclusionStrength, 0.0, 1.0));
+                }
+
                 vec3 finalAlbedo = ToVec3()" +
                                albedo + ");\n"
                                         "                vec3 finalNormal = normalize(ToVec3(" +
@@ -441,7 +452,7 @@ namespace PlutoGE::render
 
                 gNormalRoughness = vec4(normalize(finalNormal), clamp(finalRoughness, 0.04, 1.0));
                 gAlbedoMetallic = vec4(finalAlbedo, clamp(finalMetallic, 0.0, 1.0));
-                gEmission = max(finalEmission, vec3(0.0));
+                gEmission = vec4(max(finalEmission, vec3(0.0)), clamp(graphAmbientOcclusion, 0.0, 1.0));
                 gSubsurface = vec4(max(uSubsurfaceColor, vec3(0.0)), clamp(uSubsurfaceFactor, 0.0, 1.0));
                 gBakedLighting = vec4(0.0, 0.0, 0.0, )" +
                                std::string(initialBakedLightingAlpha) + R"();

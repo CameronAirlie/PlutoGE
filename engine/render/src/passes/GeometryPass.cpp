@@ -486,7 +486,6 @@ namespace PlutoGE::render
         bool skinningEnabled = false;
         const std::vector<glm::mat4> *boundJointMatrices = nullptr;
         bool bakedLightingWriteEnabled = true;
-        bool emissionWriteEnabled = true;
         int apiDrawCalls = 0;
         for (const auto &group : groups)
         {
@@ -519,19 +518,11 @@ namespace PlutoGE::render
                 }
                 const bool usesCustomShader = command.material->GetShader() != nullptr;
                 const bool shouldWriteBakedLighting = usesCustomShader || materialConfig.lightmapTexture != nullptr;
-                const bool shouldWriteEmission = usesCustomShader ||
-                                                 glm::any(glm::greaterThan(materialConfig.emission, glm::vec3(0.0f)));
                 if (bakedLightingWriteEnabled != shouldWriteBakedLighting)
                 {
                     glColorMaski(4, shouldWriteBakedLighting, shouldWriteBakedLighting,
-                                shouldWriteBakedLighting, shouldWriteBakedLighting);
+                                 shouldWriteBakedLighting, shouldWriteBakedLighting);
                     bakedLightingWriteEnabled = shouldWriteBakedLighting;
-                }
-                if (emissionWriteEnabled != shouldWriteEmission)
-                {
-                    glColorMaski(6, shouldWriteEmission, shouldWriteEmission,
-                                shouldWriteEmission, shouldWriteEmission);
-                    emissionWriteEnabled = shouldWriteEmission;
                 }
                 if (activeShader != previousShader)
                 {
@@ -662,10 +653,6 @@ namespace PlutoGE::render
         if (!bakedLightingWriteEnabled)
         {
             glColorMaski(4, GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-        }
-        if (!emissionWriteEnabled)
-        {
-            glColorMaski(6, GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
         }
         Graphics::Enable(GL_CULL_FACE);
         glCullFace(GL_BACK);

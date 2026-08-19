@@ -278,7 +278,12 @@ namespace PlutoGE::render
                     return f0 + (1.0 - f0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
                 }
 
-                vec3 EvaluatePbrDiffuse(vec3 normal, vec3 viewDir, vec3 albedo, float metallic, vec3 lightDir, vec3 radiance)
+                vec3 ResolveF0(vec3 albedo, float metallic, float dielectricSpecular)
+                {
+                    return mix(vec3(0.04 * clamp(dielectricSpecular, 0.0, 1.0)), albedo, metallic);
+                }
+
+                vec3 EvaluatePbrDiffuse(vec3 normal, vec3 viewDir, vec3 albedo, float metallic, float dielectricSpecular, vec3 lightDir, vec3 radiance)
                 {
                     vec3 halfwayDir = normalize(viewDir + lightDir);
                     float ndotl = max(dot(normal, lightDir), 0.0);
@@ -288,13 +293,13 @@ namespace PlutoGE::render
                         return vec3(0.0);
                     }
 
-                    vec3 f0 = mix(vec3(0.04), albedo, metallic);
+                    vec3 f0 = ResolveF0(albedo, metallic, dielectricSpecular);
                     vec3 fresnel = FresnelSchlick(max(dot(halfwayDir, viewDir), 0.0), f0);
                     vec3 kD = (vec3(1.0) - fresnel) * (1.0 - metallic);
                     return kD * albedo / PI * radiance * ndotl;
                 }
 
-                vec3 EvaluatePbrSpecular(vec3 normal, vec3 viewDir, vec3 albedo, float metallic, float roughness, vec3 lightDir, vec3 radiance)
+                vec3 EvaluatePbrSpecular(vec3 normal, vec3 viewDir, vec3 albedo, float metallic, float roughness, float dielectricSpecular, vec3 lightDir, vec3 radiance)
                 {
                     vec3 halfwayDir = normalize(viewDir + lightDir);
                     float ndotv = max(dot(normal, viewDir), 0.0);
@@ -305,7 +310,7 @@ namespace PlutoGE::render
                         return vec3(0.0);
                     }
 
-                    vec3 f0 = mix(vec3(0.04), albedo, metallic);
+                    vec3 f0 = ResolveF0(albedo, metallic, dielectricSpecular);
                     vec3 fresnel = FresnelSchlick(max(dot(halfwayDir, viewDir), 0.0), f0);
                     float distribution = DistributionGGX(normal, halfwayDir, roughness);
                     float geometry = GeometrySmith(normal, viewDir, lightDir, roughness);
@@ -329,10 +334,10 @@ namespace PlutoGE::render
                     return distanceAttenuation * smoothstep(0.9, 0.975, spotEffect);
                 }
 
-                vec3 EvaluatePbrLighting(vec3 normal, vec3 viewDir, vec3 albedo, float metallic, float roughness, vec3 lightDir, vec3 radiance)
+                vec3 EvaluatePbrLighting(vec3 normal, vec3 viewDir, vec3 albedo, float metallic, float roughness, float dielectricSpecular, vec3 lightDir, vec3 radiance)
                 {
-                    return EvaluatePbrDiffuse(normal, viewDir, albedo, metallic, lightDir, radiance) +
-                           EvaluatePbrSpecular(normal, viewDir, albedo, metallic, roughness, lightDir, radiance);
+                    return EvaluatePbrDiffuse(normal, viewDir, albedo, metallic, dielectricSpecular, lightDir, radiance) +
+                           EvaluatePbrSpecular(normal, viewDir, albedo, metallic, roughness, dielectricSpecular, lightDir, radiance);
                 }
 
                 bool IsBakedStaticMaterial(float materialFlag)
@@ -639,7 +644,7 @@ namespace PlutoGE::render
                     return ComputeSpotShadow(fragPos, normal, light);
                 }
 
-                vec3 ComputeLightContribution(vec3 fragPos, vec3 normal, vec3 viewDir, vec3 albedo, float metallic, float roughness, vec4 subsurface, Light light, float filteredShadow)
+                vec3 ComputeLightContribution(vec3 fragPos, vec3 normal, vec3 viewDir, vec3 albedo, float metallic, float roughness, float dielectricSpecular, vec4 subsurface, Light light, float filteredShadow)
                 {
                     vec3 lightDir;
                     float attenuation = 1.0;
@@ -701,10 +706,10 @@ namespace PlutoGE::render
 
                     float sssStrength = clamp(subsurface.a, 0.0, 1.0);
                     vec3 diffuseLighting = ndotl > 0.0
-                                               ? EvaluatePbrDiffuse(normal, viewDir, albedo, metallic, lightDir, radiance)
+                                               ? EvaluatePbrDiffuse(normal, viewDir, albedo, metallic, dielectricSpecular, lightDir, radiance)
                                                : vec3(0.0);
                     vec3 specularLighting = ndotl > 0.0
-                                                ? EvaluatePbrSpecular(normal, viewDir, albedo, metallic, roughness, lightDir, radiance)
+                                                ? EvaluatePbrSpecular(normal, viewDir, albedo, metallic, roughness, dielectricSpecular, lightDir, radiance)
                                                 : vec3(0.0);
                     vec3 subsurfaceLighting = vec3(0.0);
                     if (sssStrength > 0.0001 && metallic < 0.999)
@@ -746,6 +751,7 @@ namespace PlutoGE::render
                     float roughness = clamp(normalRoughness.a, 0.04, 1.0);
                     float metallic = clamp(albedoMetallic.a, 0.0, 1.0);
                     vec4 subsurface = texture(gSubsurface, UV);
+                    float dielectricSpecular = clamp(texture(gEmission, UV).a, 0.0, 1.0);
                     float materialFlag = texture(gBakedLighting, UV).a;
                     if (uDebugViewMode == DEBUG_VIEW_LOD)
                     {
@@ -781,7 +787,7 @@ namespace PlutoGE::render
                     float filteredShadow = uUseFilteredShadowMask != 0 && uLight.Type == LIGHT_TYPE_DIRECTIONAL
                                                ? texture(uFilteredShadowMask, UV).r
                                                : -1.0;
-                    vec3 lighting = ComputeLightContribution(fragPos, normal, viewDir, albedo, metallic, roughness, subsurface, uLight, filteredShadow);
+                    vec3 lighting = ComputeLightContribution(fragPos, normal, viewDir, albedo, metallic, roughness, dielectricSpecular, subsurface, uLight, filteredShadow);
                     FragColor = vec4(lighting, 1.0);
                 }
             )";
@@ -1808,7 +1814,7 @@ namespace PlutoGE::render
                                                  : resolveMaxMipLevel(environmentTexture);
         m_lightingPassShader->SetUniform("uEnvironmentMaxMipLevel", environmentMaxMipLevel);
         const auto &iblCaptureVolumes = ctx.scene ? ctx.scene->GetIblCaptureVolumes() : std::vector<scene::IblCaptureVolume>{};
-        const int iblCaptureCount = std::min(scene::kMaxIblCaptureVolumes, static_cast<int>(iblCaptureVolumes.size()));
+        int iblCaptureCount = 0;
         static const auto iblOriginNames = MakeArrayUniformNames<scene::kMaxIblCaptureVolumes>("uIblCaptureOrigins");
         static const auto iblSizeNames = MakeArrayUniformNames<scene::kMaxIblCaptureVolumes>("uIblCaptureSizes");
         static const auto iblIntensityNames = MakeArrayUniformNames<scene::kMaxIblCaptureVolumes>("uIblCaptureIntensities");
@@ -1820,6 +1826,10 @@ namespace PlutoGE::render
             const bool hasCapture = captureIndex < static_cast<int>(iblCaptureVolumes.size()) &&
                                     iblCaptureVolumes[static_cast<std::size_t>(captureIndex)].IsValid() &&
                                     iblCaptureVolumes[static_cast<std::size_t>(captureIndex)].environmentMapTexture->GetType() == GL_TEXTURE_CUBE_MAP;
+            if (hasCapture)
+            {
+                iblCaptureCount = captureIndex + 1;
+            }
             const auto &captureVolume = hasCapture ? iblCaptureVolumes[static_cast<std::size_t>(captureIndex)] : scene::IblCaptureVolume{};
             m_lightingPassShader->SetUniform(iblOriginNames[captureIndex], captureVolume.origin);
             m_lightingPassShader->SetUniform(iblSizeNames[captureIndex], captureVolume.size);

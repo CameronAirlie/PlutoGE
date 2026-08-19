@@ -65,7 +65,15 @@ namespace PlutoGE::assetimport
         float attenuationDistance = 1.0f;
         int albedoTextureIndex = -1;
         int normalTextureIndex = -1;
+        float normalScale = 1.0f;
         int metallicRoughnessTextureIndex = -1;
+        int emissiveTextureIndex = -1;
+        int occlusionTextureIndex = -1;
+        float occlusionStrength = 1.0f;
+        float specularFactor = 1.0f;
+        glm::vec3 specularColor{1.0f};
+        int specularTextureIndex = -1;
+        int specularColorTextureIndex = -1;
         bool metallicRoughnessTextureHasMetallicChannel = true;
         bool flipNormalY = false;
     };

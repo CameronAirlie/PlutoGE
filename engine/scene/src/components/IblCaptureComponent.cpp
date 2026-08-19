@@ -178,6 +178,18 @@ namespace PlutoGE::scene
         return m_captureTexture.get();
     }
 
+    bool IblCaptureComponent::HasCaptureResult() const
+    {
+        const std::size_t facePixelCount = static_cast<std::size_t>(std::max(m_resolution, 0)) *
+                                           static_cast<std::size_t>(std::max(m_resolution, 0)) * 4;
+        return m_captureTexture &&
+               m_captureTexture->GetType() == GL_TEXTURE_CUBE_MAP &&
+               m_captureTexture->GetWidth() == m_resolution &&
+               m_captureTexture->GetHeight() == m_resolution &&
+               facePixelCount > 0 &&
+               m_capturePixels.size() == facePixelCount * 6;
+    }
+
     void IblCaptureComponent::DiscardCaptureResult()
     {
         m_captureTexture.reset();
@@ -252,6 +264,11 @@ namespace PlutoGE::scene
 
     IblCaptureVolume IblCaptureComponent::BuildCaptureVolume() const
     {
+        if (!HasCaptureResult())
+        {
+            return {};
+        }
+
         const glm::mat4 volumeTransform = GetVolumeTransform();
         glm::vec3 minBounds(std::numeric_limits<float>::max());
         glm::vec3 maxBounds(-std::numeric_limits<float>::max());
@@ -277,10 +294,7 @@ namespace PlutoGE::scene
     std::vector<Property> IblCaptureComponent::Serialize() const
     {
         auto properties = SerializeEditableProperties();
-        properties.push_back({"Capture Pixels", PropertyType::String, m_capturePixels.empty()
-                                                               ? std::string{}
-                                                               : Base64Encode(reinterpret_cast<const unsigned char *>(m_capturePixels.data()),
-                                                                              m_capturePixels.size() * sizeof(float))});
+        properties.push_back({"Capture Pixels", PropertyType::String, m_capturePixels.empty() ? std::string{} : Base64Encode(reinterpret_cast<const unsigned char *>(m_capturePixels.data()), m_capturePixels.size() * sizeof(float))});
         return properties;
     }
 
@@ -345,7 +359,7 @@ namespace PlutoGE::scene
     {
         (void)deltaTime;
 
-        if (!IsEnabled() || !m_captureTexture)
+        if (!IsEnabled() || !HasCaptureResult())
         {
             return;
         }

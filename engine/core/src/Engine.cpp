@@ -161,7 +161,17 @@ namespace PlutoGE::core
                     HashValue(fingerprint, material.attenuationDistance);
                     HashValue(fingerprint, material.albedoTextureIndex);
                     HashValue(fingerprint, material.normalTextureIndex);
+                    HashValue(fingerprint, material.normalScale);
                     HashValue(fingerprint, material.metallicRoughnessTextureIndex);
+                    HashValue(fingerprint, material.emissiveTextureIndex);
+                    HashValue(fingerprint, material.occlusionTextureIndex);
+                    HashValue(fingerprint, material.occlusionStrength);
+                    HashValue(fingerprint, material.specularFactor);
+                    HashValue(fingerprint, material.specularColor.r);
+                    HashValue(fingerprint, material.specularColor.g);
+                    HashValue(fingerprint, material.specularColor.b);
+                    HashValue(fingerprint, material.specularTextureIndex);
+                    HashValue(fingerprint, material.specularColorTextureIndex);
                     HashValue(fingerprint, material.metallicRoughnessTextureHasMetallicChannel);
                     HashValue(fingerprint, material.flipNormalY);
                 }

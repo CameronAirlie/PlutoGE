@@ -178,7 +178,7 @@ namespace PlutoGE::assetimport
         constexpr uint32_t kCookedMeshCacheMagic = 0x434d4750; // PGMC
         // Increment whenever imported geometry, skeleton, or animation
         // semantics change so unchanged source files are recooked.
-        constexpr uint32_t kCookedMeshCacheVersion = 34;
+        constexpr uint32_t kCookedMeshCacheVersion = 35;
 
         bool ImportedMaterialsEqual(const ImportedMaterialData &a, const ImportedMaterialData &b)
         {
@@ -191,7 +191,15 @@ namespace PlutoGE::assetimport
                    a.ior == b.ior && a.thickness == b.thickness &&
                    a.attenuationColor == b.attenuationColor && a.attenuationDistance == b.attenuationDistance &&
                    a.albedoTextureIndex == b.albedoTextureIndex && a.normalTextureIndex == b.normalTextureIndex &&
+                   a.normalScale == b.normalScale &&
                    a.metallicRoughnessTextureIndex == b.metallicRoughnessTextureIndex &&
+                   a.emissiveTextureIndex == b.emissiveTextureIndex &&
+                   a.occlusionTextureIndex == b.occlusionTextureIndex &&
+                   a.occlusionStrength == b.occlusionStrength &&
+                   a.specularFactor == b.specularFactor &&
+                   a.specularColor == b.specularColor &&
+                   a.specularTextureIndex == b.specularTextureIndex &&
+                   a.specularColorTextureIndex == b.specularColorTextureIndex &&
                    a.metallicRoughnessTextureHasMetallicChannel == b.metallicRoughnessTextureHasMetallicChannel &&
                    a.flipNormalY == b.flipNormalY;
         }
@@ -536,7 +544,17 @@ namespace PlutoGE::assetimport
             WritePod(output, material.attenuationDistance);
             WritePod(output, material.albedoTextureIndex);
             WritePod(output, material.normalTextureIndex);
+            WritePod(output, material.normalScale);
             WritePod(output, material.metallicRoughnessTextureIndex);
+            WritePod(output, material.emissiveTextureIndex);
+            WritePod(output, material.occlusionTextureIndex);
+            WritePod(output, material.occlusionStrength);
+            WritePod(output, material.specularFactor);
+            WritePod(output, material.specularColor.r);
+            WritePod(output, material.specularColor.g);
+            WritePod(output, material.specularColor.b);
+            WritePod(output, material.specularTextureIndex);
+            WritePod(output, material.specularColorTextureIndex);
             WriteBool(output, material.metallicRoughnessTextureHasMetallicChannel);
             WriteBool(output, material.flipNormalY);
         }
@@ -569,7 +587,17 @@ namespace PlutoGE::assetimport
             material.attenuationDistance = ReadPod<float>(input);
             material.albedoTextureIndex = ReadPod<int>(input);
             material.normalTextureIndex = ReadPod<int>(input);
+            material.normalScale = ReadPod<float>(input);
             material.metallicRoughnessTextureIndex = ReadPod<int>(input);
+            material.emissiveTextureIndex = ReadPod<int>(input);
+            material.occlusionTextureIndex = ReadPod<int>(input);
+            material.occlusionStrength = ReadPod<float>(input);
+            material.specularFactor = ReadPod<float>(input);
+            material.specularColor.r = ReadPod<float>(input);
+            material.specularColor.g = ReadPod<float>(input);
+            material.specularColor.b = ReadPod<float>(input);
+            material.specularTextureIndex = ReadPod<int>(input);
+            material.specularColorTextureIndex = ReadPod<int>(input);
             material.metallicRoughnessTextureHasMetallicChannel = ReadBool(input);
             material.flipNormalY = ReadBool(input);
             return material;
@@ -1194,6 +1222,24 @@ namespace PlutoGE::assetimport
                 return parsedValue;
             };
 
+            const auto readExtensionTextureIndex = [&material](const char *extensionName, const char *propertyName)
+            {
+                const auto extensionIt = material.extensions.find(extensionName);
+                if (extensionIt == material.extensions.end() || !extensionIt->second.IsObject() || !extensionIt->second.Has(propertyName))
+                {
+                    return -1;
+                }
+
+                const auto &textureObject = extensionIt->second.Get(propertyName);
+                if (!textureObject.IsObject() || !textureObject.Has("index"))
+                {
+                    return -1;
+                }
+
+                const auto &indexValue = textureObject.Get("index");
+                return indexValue.IsInt() ? indexValue.Get<int>() : -1;
+            };
+
             if (material.pbrMetallicRoughness.baseColorFactor.size() == 4)
             {
                 parsedMaterial.color = glm::vec4(
@@ -1228,10 +1274,43 @@ namespace PlutoGE::assetimport
                 normalImageIndex,
                 ImportedTextureColorSpace::Linear,
                 textureVariantByCacheKey);
+            parsedMaterial.normalScale = std::max(static_cast<float>(material.normalTexture.scale), 0.0f);
             parsedMaterial.metallicRoughnessTextureIndex = ResolveImportedTextureColorSpaceIndex(
                 textures,
                 metallicRoughnessImageIndex,
                 ImportedTextureColorSpace::Linear,
+                textureVariantByCacheKey);
+            parsedMaterial.emissiveTextureIndex = ResolveImportedTextureColorSpaceIndex(
+                textures,
+                ResolveImageIndex(model, material.emissiveTexture.index),
+                ImportedTextureColorSpace::SRGB,
+                textureVariantByCacheKey);
+            parsedMaterial.occlusionTextureIndex = ResolveImportedTextureColorSpaceIndex(
+                textures,
+                ResolveImageIndex(model, material.occlusionTexture.index),
+                ImportedTextureColorSpace::Linear,
+                textureVariantByCacheKey);
+            parsedMaterial.occlusionStrength = std::clamp(static_cast<float>(material.occlusionTexture.strength), 0.0f, 1.0f);
+
+            const int specularTextureIndex = readExtensionTextureIndex("KHR_materials_specular", "specularTexture");
+            const int specularColorTextureIndex = readExtensionTextureIndex("KHR_materials_specular", "specularColorTexture");
+            parsedMaterial.specularFactor = std::clamp(
+                readExtensionNumber("KHR_materials_specular", "specularFactor", 1.0f),
+                0.0f,
+                1.0f);
+            parsedMaterial.specularColor = glm::clamp(
+                readExtensionVec3("KHR_materials_specular", "specularColorFactor", glm::vec3(1.0f)),
+                glm::vec3(0.0f),
+                glm::vec3(1.0f));
+            parsedMaterial.specularTextureIndex = ResolveImportedTextureColorSpaceIndex(
+                textures,
+                ResolveImageIndex(model, specularTextureIndex),
+                ImportedTextureColorSpace::Linear,
+                textureVariantByCacheKey);
+            parsedMaterial.specularColorTextureIndex = ResolveImportedTextureColorSpaceIndex(
+                textures,
+                ResolveImageIndex(model, specularColorTextureIndex),
+                ImportedTextureColorSpace::SRGB,
                 textureVariantByCacheKey);
             if (metallicRoughnessImageIndex >= 0 && metallicRoughnessImageIndex < static_cast<int>(model.images.size()))
             {
@@ -1261,9 +1340,11 @@ namespace PlutoGE::assetimport
             {
                 const float emissiveStrength = std::max(readExtensionNumber("KHR_materials_emissive_strength", "emissiveStrength", 1.0f), 0.0f);
                 parsedMaterial.emission = glm::max(glm::vec3(
-                    static_cast<float>(material.emissiveFactor[0]),
-                    static_cast<float>(material.emissiveFactor[1]),
-                    static_cast<float>(material.emissiveFactor[2])) * emissiveStrength, glm::vec3(0.0f));
+                                                       static_cast<float>(material.emissiveFactor[0]),
+                                                       static_cast<float>(material.emissiveFactor[1]),
+                                                       static_cast<float>(material.emissiveFactor[2])) *
+                                                       emissiveStrength,
+                                                   glm::vec3(0.0f));
             }
 
             parsedMaterial.transmission = std::clamp(readExtensionNumber("KHR_materials_transmission", "transmissionFactor", 0.0f), 0.0f, 1.0f);
@@ -1271,17 +1352,17 @@ namespace PlutoGE::assetimport
             // diffuse subsurface transport. Also accept the names used by existing exporter drafts.
             parsedMaterial.subsurface = std::clamp(
                 readExtensionNumber("KHR_materials_diffuse_transmission", "diffuseTransmissionFactor",
-                    readExtensionNumber("KHR_materials_subsurface", "subsurfaceFactor",
-                        readExtensionNumber("EXT_materials_subsurface_scattering", "subsurfaceFactor", 0.0f))),
+                                    readExtensionNumber("KHR_materials_subsurface", "subsurfaceFactor",
+                                                        readExtensionNumber("EXT_materials_subsurface_scattering", "subsurfaceFactor", 0.0f))),
                 0.0f, 1.0f);
             parsedMaterial.subsurfaceColor = glm::max(
                 readExtensionVec3("KHR_materials_diffuse_transmission", "diffuseTransmissionColorFactor",
-                    readExtensionVec3("KHR_materials_subsurface", "subsurfaceColorFactor",
-                        readExtensionVec3("EXT_materials_subsurface_scattering", "subsurfaceColorFactor", parsedMaterial.color))),
+                                  readExtensionVec3("KHR_materials_subsurface", "subsurfaceColorFactor",
+                                                    readExtensionVec3("EXT_materials_subsurface_scattering", "subsurfaceColorFactor", parsedMaterial.color))),
                 glm::vec3(0.0f));
             parsedMaterial.subsurfaceRadius = std::max(
                 readExtensionNumber("KHR_materials_subsurface", "subsurfaceRadius",
-                    readExtensionNumber("EXT_materials_subsurface_scattering", "subsurfaceRadius", 1.0f)),
+                                    readExtensionNumber("EXT_materials_subsurface_scattering", "subsurfaceRadius", 1.0f)),
                 0.001f);
             parsedMaterial.ior = std::clamp(readExtensionNumber("KHR_materials_ior", "ior", 1.45f), 1.0f, 2.5f);
             parsedMaterial.thickness = std::max(readExtensionNumber("KHR_materials_volume", "thicknessFactor", 0.01f), 0.0f);
@@ -2800,9 +2881,9 @@ namespace PlutoGE::assetimport
         }
 
         std::vector<render::AnimationClip> ParseAnimations(const tinygltf::Model &model,
-                                                            const render::Skeleton &skeleton,
-                                                            const std::vector<glm::mat4> &nodeGlobals,
-                                                            const std::vector<int> &nodeParents)
+                                                           const render::Skeleton &skeleton,
+                                                           const std::vector<glm::mat4> &nodeGlobals,
+                                                           const std::vector<int> &nodeParents)
         {
             std::unordered_map<int, int> nodeToJoint;
             for (size_t jointIndex = 0; jointIndex < skeleton.joints.size(); ++jointIndex)
@@ -3479,7 +3560,8 @@ namespace PlutoGE::assetimport
                     continue;
                 }
                 std::string key = property->mKey.C_Str();
-                std::transform(key.begin(), key.end(), key.begin(), [](unsigned char character) { return static_cast<char>(std::tolower(character)); });
+                std::transform(key.begin(), key.end(), key.begin(), [](unsigned char character)
+                               { return static_cast<char>(std::tolower(character)); });
                 if (key.find("subsurface") == std::string::npos && key.find("sss") == std::string::npos)
                 {
                     continue;
@@ -3608,7 +3690,37 @@ namespace PlutoGE::assetimport
                 {aiTextureType_METALNESS, aiTextureType_DIFFUSE_ROUGHNESS, aiTextureType_UNKNOWN},
                 textureIndexByKey,
                 textures);
+            importedMaterial.emissiveTextureIndex = FindAssimpMaterialTexture(
+                scene,
+                material,
+                filePath,
+                {aiTextureType_EMISSIVE},
+                textureIndexByKey,
+                textures);
+            importedMaterial.occlusionTextureIndex = FindAssimpMaterialTexture(
+                scene,
+                material,
+                filePath,
+                {aiTextureType_LIGHTMAP, aiTextureType_AMBIENT},
+                textureIndexByKey,
+                textures);
+            importedMaterial.specularColorTextureIndex = FindAssimpMaterialTexture(
+                scene,
+                material,
+                filePath,
+                {aiTextureType_SPECULAR},
+                textureIndexByKey,
+                textures);
             importedMaterial.metallicRoughnessTextureHasMetallicChannel = importedMaterial.metallicRoughnessTextureIndex >= 0;
+
+            aiColor4D specularColor;
+            if (AI_SUCCESS == aiGetMaterialColor(&material, AI_MATKEY_COLOR_SPECULAR, &specularColor))
+            {
+                importedMaterial.specularColor = glm::clamp(
+                    glm::vec3(specularColor.r, specularColor.g, specularColor.b),
+                    glm::vec3(0.0f),
+                    glm::vec3(1.0f));
+            }
 
             importedMaterial.albedoTextureIndex = ResolveImportedTextureColorSpaceIndex(
                 textures,
@@ -3624,6 +3736,21 @@ namespace PlutoGE::assetimport
                 textures,
                 importedMaterial.metallicRoughnessTextureIndex,
                 ImportedTextureColorSpace::Linear,
+                textureIndexByKey);
+            importedMaterial.emissiveTextureIndex = ResolveImportedTextureColorSpaceIndex(
+                textures,
+                importedMaterial.emissiveTextureIndex,
+                ImportedTextureColorSpace::SRGB,
+                textureIndexByKey);
+            importedMaterial.occlusionTextureIndex = ResolveImportedTextureColorSpaceIndex(
+                textures,
+                importedMaterial.occlusionTextureIndex,
+                ImportedTextureColorSpace::Linear,
+                textureIndexByKey);
+            importedMaterial.specularColorTextureIndex = ResolveImportedTextureColorSpaceIndex(
+                textures,
+                importedMaterial.specularColorTextureIndex,
+                ImportedTextureColorSpace::SRGB,
                 textureIndexByKey);
 
             const int opacityTextureIndex = FindAssimpMaterialTexture(
@@ -4496,11 +4623,11 @@ namespace PlutoGE::assetimport
                     const auto jointIt = boneNameToJointIndex.find(nodeName);
                     const int jointIndex = jointIt == boneNameToJointIndex.end() ? -1 : jointIt->second;
                     const glm::mat4 sourceLocalBindTransform = nodeIt->second >= 0 && nodeIt->second < static_cast<int>(nodes.size())
-                                                                      ? nodes[static_cast<size_t>(nodeIt->second)].localTransform
-                                                                      : glm::mat4(1.0f);
+                                                                   ? nodes[static_cast<size_t>(nodeIt->second)].localTransform
+                                                                   : glm::mat4(1.0f);
                     const glm::mat4 sourceGlobalBindTransform = nodeIt->second >= 0 && nodeIt->second < static_cast<int>(nodes.size())
-                                                                       ? nodes[static_cast<size_t>(nodeIt->second)].globalTransform
-                                                                       : sourceLocalBindTransform;
+                                                                    ? nodes[static_cast<size_t>(nodeIt->second)].globalTransform
+                                                                    : sourceLocalBindTransform;
                     const int sourceParentNodeIndex = nodes[static_cast<size_t>(nodeIt->second)].parentNodeIndex;
                     AddAssimpVectorChannel(clip, nodeIt->second, sourceParentNodeIndex, jointIndex, nodeName, sourceLocalBindTransform, sourceGlobalBindTransform, render::AnimationTargetPath::Translation, sourceChannel->mPositionKeys, sourceChannel->mNumPositionKeys, ticksPerSecond);
                     AddAssimpRotationChannel(clip, nodeIt->second, sourceParentNodeIndex, jointIndex, nodeName, sourceLocalBindTransform, sourceGlobalBindTransform, sourceChannel->mRotationKeys, sourceChannel->mNumRotationKeys, ticksPerSecond);

@@ -155,15 +155,19 @@ namespace PlutoGE::render
             shader->SetUniform("uEnvironmentIntensity", ctx.scene ? ctx.scene->GetEnvironmentIntensity() : 1.0f);
 
             float reflectionMaxMipLevel = physicalSkyTexture
-                ? ResolveMaxMipLevel(ctx.renderer->GetPhysicalSkyEnvironmentWidth(), ctx.renderer->GetPhysicalSkyEnvironmentHeight())
-                : ResolveMaxMipLevel(environmentTexture);
+                                              ? ResolveMaxMipLevel(ctx.renderer->GetPhysicalSkyEnvironmentWidth(), ctx.renderer->GetPhysicalSkyEnvironmentHeight())
+                                              : ResolveMaxMipLevel(environmentTexture);
             const auto &iblCaptureVolumes = ctx.scene ? ctx.scene->GetIblCaptureVolumes() : std::vector<scene::IblCaptureVolume>{};
-            const int iblCaptureCount = std::min(scene::kMaxIblCaptureVolumes, static_cast<int>(iblCaptureVolumes.size()));
+            int iblCaptureCount = 0;
             for (int captureIndex = 0; captureIndex < scene::kMaxIblCaptureVolumes; ++captureIndex)
             {
                 const bool hasCapture = captureIndex < static_cast<int>(iblCaptureVolumes.size()) &&
                                         iblCaptureVolumes[static_cast<std::size_t>(captureIndex)].IsValid() &&
                                         iblCaptureVolumes[static_cast<std::size_t>(captureIndex)].environmentMapTexture->GetType() == GL_TEXTURE_CUBE_MAP;
+                if (hasCapture)
+                {
+                    iblCaptureCount = captureIndex + 1;
+                }
                 const auto &captureVolume = hasCapture ? iblCaptureVolumes[static_cast<std::size_t>(captureIndex)] : scene::IblCaptureVolume{};
                 const int textureSlot = kTransparentIblCaptureTextureSlotStart + captureIndex;
                 Graphics::ActiveTexture(GL_TEXTURE0 + textureSlot);
@@ -256,10 +260,10 @@ namespace PlutoGE::render
                 shader->SetUniform(lightShadowBaseNames[lightIndex], shadowMapBase);
                 shader->SetUniform(lightCascadeCountNames[lightIndex], cascadeCount);
                 shader->SetUniform(lightCascadeSplitNames[lightIndex], glm::vec4(
-                                                                      light->shadowCascadeSplits[0],
-                                                                      light->shadowCascadeSplits[1],
-                                                                      light->shadowCascadeSplits[2],
-                                                                      light->shadowCascadeSplits[3]));
+                                                                           light->shadowCascadeSplits[0],
+                                                                           light->shadowCascadeSplits[1],
+                                                                           light->shadowCascadeSplits[2],
+                                                                           light->shadowCascadeSplits[3]));
                 for (int cascadeIndex = 0; cascadeIndex < cascadeCount; ++cascadeIndex)
                 {
                     const int shadowMapIndex = shadowMapBase + cascadeIndex;
@@ -375,8 +379,7 @@ namespace PlutoGE::render
                       const glm::vec3 offsetB = b->worldBounds.center - cameraPosition;
                       const float distanceA = glm::dot(offsetA, offsetA);
                       const float distanceB = glm::dot(offsetB, offsetB);
-                      return distanceA > distanceB;
-                  });
+                      return distanceA > distanceB; });
 
         Graphics::BindFramebuffer(GL_READ_FRAMEBUFFER, ctx.gBuffer->GetFBO());
         Graphics::BindFramebuffer(GL_DRAW_FRAMEBUFFER, targetFramebuffer);
@@ -411,8 +414,8 @@ namespace PlutoGE::render
         m_transparentShader->SetUniform("uSceneColorTexture", kTransparentSceneColorTextureSlot);
         m_transparentShader->SetUniform("uSceneColorEnabled", m_sceneColorCopy && m_sceneColorCopy->IsInitialized() ? 1 : 0);
         m_transparentShader->SetUniform("uSceneColorTextureSize", glm::vec2(
-                                                                  static_cast<float>(m_sceneColorCopy ? m_sceneColorCopy->GetWidth() : 1),
-                                                                  static_cast<float>(m_sceneColorCopy ? m_sceneColorCopy->GetHeight() : 1)));
+                                                                      static_cast<float>(m_sceneColorCopy ? m_sceneColorCopy->GetWidth() : 1),
+                                                                      static_cast<float>(m_sceneColorCopy ? m_sceneColorCopy->GetHeight() : 1)));
         m_transparentShader->SetUniform("uSceneColorMaxMipLevel", m_sceneColorCopy ? ResolveMaxMipLevel(m_sceneColorCopy->GetWidth(), m_sceneColorCopy->GetHeight()) : 0.0f);
         BindTransparentEnvironment(m_transparentShader, ctx);
         BindTransparentLights(m_transparentShader, ctx);

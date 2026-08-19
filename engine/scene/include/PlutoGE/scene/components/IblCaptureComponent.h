@@ -39,6 +39,7 @@ namespace PlutoGE::scene
         int GetResolution() const { return m_resolution; }
         float GetFarPlane() const { return m_farPlane; }
         bool IsDirty() const { return m_dirty; }
+        bool HasCaptureResult() const;
         render::Texture *GetCaptureTexture() const { return m_captureTexture.get(); }
         render::Texture *EnsureCaptureTexture();
         void DiscardCaptureResult();

@@ -272,7 +272,7 @@ namespace PlutoGE::render
             layout (location = 3) out vec2 gMotionVector;
             layout (location = 4) out vec4 gBakedLighting;
             layout (location = 5) out float gDebug;
-            layout (location = 6) out vec3 gEmission;
+            layout (location = 6) out vec4 gEmission;
             layout (location = 7) out vec4 gSubsurface;
             
             in vec3 FragPos;
@@ -408,7 +408,7 @@ namespace PlutoGE::render
 
                 gNormalRoughness = vec4(normalize(normal), clamp(roughness, 0.04, 1.0));
                 gAlbedoMetallic = vec4(albedo, clamp(metallic, 0.0, 1.0));
-                gEmission = max(uEmission, vec3(0.0));
+                gEmission = vec4(max(uEmission, vec3(0.0)), 1.0);
                 gSubsurface = vec4(max(uSubsurfaceColor, vec3(0.0)), clamp(uSubsurfaceFactor, 0.0, 1.0));
                 gBakedLighting = vec4(0.0);
                 gDebug = InstanceFlags.w <= 0.5 ? -1.0 : clamp(floor(InstanceFlags.z) / InstanceFlags.w, 0.0, 1.0);
@@ -1634,6 +1634,7 @@ void main()
             uniform vec4 uColor = vec4(1.0);
             uniform vec3 uEmission = vec3(0.0);
             uniform int uSurfaceType = 0;
+            uniform int uTwoSided = 0;
             uniform float uAlphaCutoff = 0.01;
             uniform sampler2D uNormalTexture;
             uniform float uHasNormalTexture = 0.0;
@@ -1889,12 +1890,12 @@ void main()
                     float splitDistance = ReadCascadeSplit(lightIndex, cascadeIndex);
                     float blendDistance = max(uLightCascadeBlendDistances[lightIndex], 0.0);
                     float blendStart = max(splitDistance - blendDistance, 0.0);
-                    if (viewDepth > blendStart)
+                    if (cameraDistance > blendStart)
                     {
                         float nextVisibility = SampleTransparentDirectionalCascadeVisibility(
                             receiverPosition, depthBias, lightIndex, cascadeIndex + 1);
                         float blendFactor = clamp(
-                            (viewDepth - blendStart) / max(splitDistance - blendStart, 0.0001),
+                            (cameraDistance - blendStart) / max(splitDistance - blendStart, 0.0001),
                             0.0, 1.0);
                         visibility = mix(visibility, nextVisibility, blendFactor);
                     }

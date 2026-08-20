@@ -1905,12 +1905,12 @@ void main()
                     float splitDistance = ReadCascadeSplit(lightIndex, cascadeIndex);
                     float blendDistance = max(uLightCascadeBlendDistances[lightIndex], 0.0);
                     float blendStart = max(splitDistance - blendDistance, 0.0);
-                    if (viewDepth > blendStart)
+                    if (cameraDistance > blendStart)
                     {
                         float nextVisibility = SampleTransparentDirectionalCascadeVisibility(
                             receiverPosition, depthBias, lightIndex, cascadeIndex + 1);
                         float blendFactor = clamp(
-                            (viewDepth - blendStart) / max(splitDistance - blendStart, 0.0001),
+                            (cameraDistance - blendStart) / max(splitDistance - blendStart, 0.0001),
                             0.0, 1.0);
                         visibility = mix(visibility, nextVisibility, blendFactor);
                     }

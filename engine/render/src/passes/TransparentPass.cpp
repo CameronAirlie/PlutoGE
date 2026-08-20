@@ -327,7 +327,11 @@ namespace PlutoGE::render
 
     void TransparentPass::Execute(const RenderContext &ctx)
     {
-        if (!ctx.renderCommands || !ctx.temporaryRenderTarget || !ctx.gBuffer || !ctx.gBuffer->IsInitialized())
+        // Shader creation can fail when the driver cannot compile or link the
+        // transparent shader.  Blended geometry is the first thing that reaches
+        // this code path, so do not turn that earlier failure into a null-pointer
+        // crash when a transparent material is added to the scene.
+        if (!m_transparentShader || !ctx.renderCommands || !ctx.temporaryRenderTarget || !ctx.gBuffer || !ctx.gBuffer->IsInitialized())
         {
             return;
         }

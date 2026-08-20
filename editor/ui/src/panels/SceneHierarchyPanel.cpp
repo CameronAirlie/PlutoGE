@@ -26,12 +26,95 @@
 #include <cctype>
 #include <cstring>
 #include <filesystem>
+#include <limits>
+
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtx/matrix_decompose.hpp>
+#include <glm/gtx/quaternion.hpp>
 
 namespace PlutoGE::ui
 {
     namespace
     {
         constexpr const char *kHierarchyDragDropPayload = "PLUTOGE_SCENE_ENTITY";
+
+        bool DecomposeEntityTransform(const glm::mat4 &matrix, glm::vec3 &position, glm::vec3 &rotation, glm::vec3 &scale)
+        {
+            glm::quat orientation;
+            glm::vec3 skew;
+            glm::vec4 perspective;
+            if (!glm::decompose(matrix, scale, orientation, position, skew, perspective))
+            {
+                return false;
+            }
+            orientation = glm::conjugate(orientation);
+            rotation = glm::degrees(glm::eulerAngles(orientation));
+            return true;
+        }
+
+        void SetLocalTransform(scene::Entity &entity, const glm::mat4 &matrix)
+        {
+            glm::vec3 position{0.0f};
+            glm::vec3 rotation{0.0f};
+            glm::vec3 scale{1.0f};
+            if (DecomposeEntityTransform(matrix, position, rotation, scale))
+            {
+                entity.SetPosition(position);
+                entity.SetRotation(rotation);
+                entity.SetScale(scale);
+            }
+        }
+
+        void SetWorldTransform(scene::Entity &entity, const glm::mat4 &worldTransform)
+        {
+            const glm::mat4 localTransform = entity.GetParent()
+                                                 ? glm::inverse(entity.GetParent()->GetWorldTransform()) * worldTransform
+                                                 : worldTransform;
+            SetLocalTransform(entity, localTransform);
+        }
+
+        void AccumulateMeshBounds(scene::Entity *entity, glm::vec3 &minimum, glm::vec3 &maximum, bool &hasBounds)
+        {
+            if (!entity)
+            {
+                return;
+            }
+            if (auto *component = entity->GetComponent<scene::MeshComponent>(); component && component->GetMesh())
+            {
+                auto *mesh = component->GetMesh();
+                const std::size_t begin = component->GetSubmeshIndex() >= 0
+                                              ? static_cast<std::size_t>(component->GetSubmeshIndex())
+                                              : 0;
+                const std::size_t end = component->GetSubmeshIndex() >= 0
+                                            ? std::min(begin + static_cast<std::size_t>(std::max(1, component->GetSubmeshRangeCount())), mesh->GetSubmeshCount())
+                                            : mesh->GetSubmeshCount();
+                for (std::size_t index = begin; index < end; ++index)
+                {
+                    const auto &submesh = mesh->GetSubmesh(index);
+                    const glm::mat4 transform = entity->GetWorldTransform() * component->GetMeshOffsetTransform() *
+                                                component->GetSubmeshOffsetTransform(index);
+                    const auto &meshData = mesh->GetMeshData();
+                    const std::size_t indexEnd = std::min<std::size_t>(submesh.indexOffset + submesh.indexCount, meshData.indices.size());
+                    for (std::size_t meshIndex = submesh.indexOffset; meshIndex < indexEnd; ++meshIndex)
+                    {
+                        const auto vertexIndex = meshData.indices[meshIndex];
+                        if (vertexIndex >= meshData.vertices.size())
+                        {
+                            continue;
+                        }
+                        const auto &position = meshData.vertices[vertexIndex].position;
+                        const glm::vec3 worldPosition(transform * glm::vec4(position[0], position[1], position[2], 1.0f));
+                        minimum = glm::min(minimum, worldPosition);
+                        maximum = glm::max(maximum, worldPosition);
+                        hasBounds = true;
+                    }
+                }
+            }
+            for (auto *child : entity->GetChildren())
+            {
+                AccumulateMeshBounds(child, minimum, maximum, hasBounds);
+            }
+        }
 
         bool SceneHasAnyCamera(scene::Entity *entity)
         {
@@ -173,7 +256,7 @@ namespace PlutoGE::ui
             nodeFlags |= ImGuiTreeNodeFlags_Leaf;
         }
 
-        if (EditorShell::GetInstance().GetSelectedEntity() == entity)
+        if (IsEntitySelected(entity))
         {
             nodeFlags |= ImGuiTreeNodeFlags_Selected;
         }
@@ -212,7 +295,7 @@ namespace PlutoGE::ui
         // If clicked, set this entity as the selected entity in the editor shell
         if (ImGui::IsItemClicked() && ImGui::IsItemHovered())
         {
-            EditorShell::GetInstance().SetSelectedEntity(entity);
+            SelectEntity(entity, ImGui::GetIO().KeyShift || ImGui::GetIO().KeyCtrl, ImGui::GetIO().KeyCtrl);
         }
 
         if (ImGui::BeginDragDropSource())
@@ -254,7 +337,29 @@ namespace PlutoGE::ui
         // Context menu for right-clicking on an entity
         if (ImGui::BeginPopupContextItem())
         {
-            EditorShell::GetInstance().SetSelectedEntity(entity);
+            if (!IsEntitySelected(entity))
+            {
+                SelectEntity(entity, false, false);
+            }
+            ImGui::BeginDisabled(m_selectedEntityIds.size() < 2);
+            if (ImGui::MenuItem("Group Selected", "Ctrl+G"))
+            {
+                m_groupSelectionRequested = true;
+            }
+            ImGui::EndDisabled();
+            if (ImGui::BeginMenu("Set Pivot"))
+            {
+                if (ImGui::MenuItem("Bounds Center"))
+                {
+                    SetPivotToMeshBounds(entity, false);
+                }
+                if (ImGui::MenuItem("Bounds Bottom Center"))
+                {
+                    SetPivotToMeshBounds(entity, true);
+                }
+                ImGui::EndMenu();
+            }
+            ImGui::Separator();
             if (ImGui::MenuItem("Rename"))
             {
                 BeginRename(entity);
@@ -694,6 +799,157 @@ namespace PlutoGE::ui
         }
     }
 
+    bool SceneHierarchyPanel::IsEntitySelected(scene::Entity *entity) const
+    {
+        return entity && std::find(m_selectedEntityIds.begin(), m_selectedEntityIds.end(), entity->GetID()) != m_selectedEntityIds.end();
+    }
+
+    void SceneHierarchyPanel::SelectEntity(scene::Entity *entity, bool additive, bool rangeToggle)
+    {
+        if (!entity)
+        {
+            m_selectedEntityIds.clear();
+            EditorShell::GetInstance().SetSelectedEntity(nullptr);
+            return;
+        }
+
+        const auto found = std::find(m_selectedEntityIds.begin(), m_selectedEntityIds.end(), entity->GetID());
+        if (!additive)
+        {
+            m_selectedEntityIds = {entity->GetID()};
+        }
+        else if (rangeToggle && found != m_selectedEntityIds.end())
+        {
+            m_selectedEntityIds.erase(found);
+        }
+        else if (found == m_selectedEntityIds.end())
+        {
+            m_selectedEntityIds.push_back(entity->GetID());
+        }
+
+        auto *scene = EditorShell::GetInstance().GetEngine().GetScene();
+        auto *primary = !m_selectedEntityIds.empty() && scene ? scene->FindEntityByID(m_selectedEntityIds.back()) : nullptr;
+        EditorShell::GetInstance().SetSelectedEntity(primary);
+    }
+
+    void SceneHierarchyPanel::GroupSelectedEntities()
+    {
+        auto *scene = EditorShell::GetInstance().GetEngine().GetScene();
+        if (!scene || m_selectedEntityIds.size() < 2)
+        {
+            return;
+        }
+
+        std::vector<scene::Entity *> entities;
+        entities.reserve(m_selectedEntityIds.size());
+        for (const auto id : m_selectedEntityIds)
+        {
+            if (auto *entity = scene->FindEntityByID(id))
+            {
+                entities.push_back(entity);
+            }
+        }
+        if (entities.size() < 2)
+        {
+            return;
+        }
+
+        auto *commonParent = entities.front()->GetParent();
+        if (std::any_of(entities.begin(), entities.end(), [commonParent](const scene::Entity *entity)
+                        { return entity->GetParent() != commonParent; }))
+        {
+            EditorShell::GetInstance().Log(EditorShell::ConsoleSeverity::Warning,
+                                           "Group Selected requires all selected entities to have the same parent.");
+            return;
+        }
+
+        glm::vec3 minimum(std::numeric_limits<float>::max());
+        glm::vec3 maximum(std::numeric_limits<float>::lowest());
+        bool hasBounds = false;
+        for (auto *entity : entities)
+        {
+            AccumulateMeshBounds(entity, minimum, maximum, hasBounds);
+        }
+        const glm::vec3 pivot = hasBounds ? (minimum + maximum) * 0.5f : entities.front()->GetWorldPosition();
+
+        scene::Entity *group = nullptr;
+        EditorShell::GetInstance().ExecuteSceneEdit("Group Selected Entities",
+                                                    [scene, commonParent, entities, pivot, &group]()
+                                                    {
+                                                        std::vector<glm::mat4> worldTransforms;
+                                                        worldTransforms.reserve(entities.size());
+                                                        for (auto *entity : entities)
+                                                        {
+                                                            worldTransforms.push_back(entity->GetWorldTransform());
+                                                        }
+
+                                                        auto groupEntity = std::make_unique<scene::Entity>(scene::EntityConfig{.name = "New Group"});
+                                                        group = scene->AddEntity(std::move(groupEntity), commonParent);
+                                                        if (!group)
+                                                        {
+                                                            return;
+                                                        }
+                                                        group->SetWorldPosition(pivot);
+                                                        for (std::size_t index = 0; index < entities.size(); ++index)
+                                                        {
+                                                            entities[index]->SetParent(group);
+                                                            SetWorldTransform(*entities[index], worldTransforms[index]);
+                                                        }
+                                                    });
+        if (group)
+        {
+            m_selectedEntityIds = {group->GetID()};
+            EditorShell::GetInstance().SetSelectedEntity(group);
+            BeginRename(group);
+        }
+    }
+
+    void SceneHierarchyPanel::SetPivotToMeshBounds(scene::Entity *entity, bool bottomCenter)
+    {
+        if (!entity)
+        {
+            return;
+        }
+        if (entity->GetComponent<scene::MeshComponent>())
+        {
+            EditorShell::GetInstance().Log(EditorShell::ConsoleSeverity::Warning,
+                                           "Set Pivot currently applies to group entities. Group mesh entities first so geometry can be preserved.");
+            return;
+        }
+
+        glm::vec3 minimum(std::numeric_limits<float>::max());
+        glm::vec3 maximum(std::numeric_limits<float>::lowest());
+        bool hasBounds = false;
+        AccumulateMeshBounds(entity, minimum, maximum, hasBounds);
+        if (!hasBounds)
+        {
+            EditorShell::GetInstance().Log(EditorShell::ConsoleSeverity::Warning, "No mesh bounds were found below this entity.");
+            return;
+        }
+
+        glm::vec3 pivot = (minimum + maximum) * 0.5f;
+        if (bottomCenter)
+        {
+            pivot.y = minimum.y;
+        }
+        auto children = entity->GetChildren();
+        EditorShell::GetInstance().ExecuteSceneEdit(bottomCenter ? "Set Pivot To Bounds Bottom" : "Set Pivot To Bounds Center",
+                                                    [entity, children, pivot]()
+                                                    {
+                                                        std::vector<glm::mat4> childWorldTransforms;
+                                                        childWorldTransforms.reserve(children.size());
+                                                        for (auto *child : children)
+                                                        {
+                                                            childWorldTransforms.push_back(child->GetWorldTransform());
+                                                        }
+                                                        entity->SetWorldPosition(pivot);
+                                                        for (std::size_t index = 0; index < children.size(); ++index)
+                                                        {
+                                                            SetWorldTransform(*children[index], childWorldTransforms[index]);
+                                                        }
+                                                    });
+    }
+
     void SceneHierarchyPanel::Initialize()
     {
         // Initialization code for the scene hierarchy panel (e.g., load icons, set up data structures)
@@ -718,16 +974,40 @@ namespace PlutoGE::ui
             return;
         }
 
+        auto *shellSelection = EditorShell::GetInstance().GetSelectedEntity();
+        if (shellSelection && !IsEntitySelected(shellSelection))
+        {
+            m_selectedEntityIds = {shellSelection->GetID()};
+        }
+        else if (!shellSelection && !m_selectedEntityIds.empty())
+        {
+            m_selectedEntityIds.clear();
+        }
+
+        m_selectedEntityIds.erase(std::remove_if(m_selectedEntityIds.begin(), m_selectedEntityIds.end(),
+                                                  [scene](std::uint32_t id) { return scene->FindEntityByID(id) == nullptr; }),
+                                  m_selectedEntityIds.end());
+        if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_G, false) && !ImGui::GetIO().WantTextInput)
+        {
+            GroupSelectedEntities();
+        }
+
         for (auto entity : scene->GetRootEntities())
         {
             RenderEntityNode(entity);
+        }
+
+        if (m_groupSelectionRequested)
+        {
+            m_groupSelectionRequested = false;
+            GroupSelectedEntities();
         }
 
         if (ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup) &&
             ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
             !ImGui::IsAnyItemHovered())
         {
-            EditorShell::GetInstance().SetSelectedEntity(nullptr);
+            SelectEntity(nullptr, false, false);
         }
 
         ContextMenu();

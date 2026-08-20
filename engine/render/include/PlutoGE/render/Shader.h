@@ -1320,7 +1320,7 @@ void main()
             return;
         }
 
-        vec3 realtimeAmbient = vec3(0.03) * albedo * (1.0 - metallic);
+        vec3 realtimeAmbient = vec3(0.0) * albedo * (1.0 - metallic);
         realtimeAmbient += lpvIndirect;
         realtimeAmbient += bakedProbeIndirect;
         realtimeAmbient += environmentDiffuse;

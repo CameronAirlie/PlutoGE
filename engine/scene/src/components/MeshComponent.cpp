@@ -353,7 +353,7 @@ namespace PlutoGE::scene
             {
                 material.SetAlbedoTexture(serializedMaterial.albedoPath->empty()
                                               ? nullptr
-                                              : render::Texture::LoadFromFile(serializedMaterial.albedoPath->c_str()));
+                                              : render::Texture::LoadFromFile(serializedMaterial.albedoPath->c_str(), render::TextureColorSpace::SRGB));
             }
             if (serializedMaterial.color.has_value())
             {

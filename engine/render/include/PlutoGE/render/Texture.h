@@ -34,7 +34,7 @@ namespace PlutoGE::render
         int GetChannels() const { return m_channels; }
         const std::string &GetFilePath() const { return m_filePath; }
 
-        static Texture *LoadFromFile(const char *filePath);
+        static Texture *LoadFromFile(const char *filePath, TextureColorSpace colorSpace = TextureColorSpace::Linear);
         static Texture *DepthTexture(int width, int height);
         static Texture *DepthCubemap(int width, int height);
         static Texture *ColorCubemap(int width, int height);

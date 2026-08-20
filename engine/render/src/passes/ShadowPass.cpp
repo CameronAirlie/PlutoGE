@@ -81,6 +81,7 @@ namespace
         glm::vec2 receiverMin{0.0f};
         glm::vec2 receiverMax{0.0f};
         glm::vec2 receiverExtent{1.0f};
+        float depthRange = 1.0f;
     };
 
     struct DirectionalShadowDirtyRegion
@@ -666,6 +667,7 @@ namespace
             .receiverMin = glm::vec2(minBounds.x, minBounds.y),
             .receiverMax = glm::vec2(maxBounds.x, maxBounds.y),
             .receiverExtent = glm::max(glm::vec2(maxBounds.x - minBounds.x, maxBounds.y - minBounds.y), glm::vec2(0.001f)),
+            .depthRange = farPlane - nearPlane,
         };
     }
 
@@ -2124,6 +2126,9 @@ namespace PlutoGE::render
                 // parallel to the light and produces acne on steep terrain.
                 Graphics::Enable(GL_POLYGON_OFFSET_FILL);
                 glPolygonOffset(kDirectionalShadowSlopeBias, kDirectionalShadowConstantBias);
+                // Keep both faces for directional cascades. Front-face culling
+                // records the back surface of thick meshes and visibly detaches
+                // their contact shadows from nearby receivers.
                 Graphics::Disable(GL_CULL_FACE);
                 m_shadowPassShader->SetUniform("uShadowPassMode", kProjectedShadowPassMode);
 
@@ -2164,6 +2169,10 @@ namespace PlutoGE::render
                     }
 
                     const auto cascadeProjection = BuildDirectionalCascadeProjection(*light, ctx.cameraData, cascadeShadowWorldOrigin, cascadeNear, cascadeFar, shadowResolution);
+                    light->shadowCascadeWorldTexelSizes[cascadeIndex] =
+                        glm::max(cascadeProjection.receiverExtent.x, cascadeProjection.receiverExtent.y) /
+                        static_cast<float>(glm::max(shadowResolution, 1));
+                    light->shadowCascadeDepthRanges[cascadeIndex] = cascadeProjection.depthRange;
                     const glm::mat4 &cascadeMatrix = cascadeProjection.lightSpaceMatrix;
                     const bool cascadeMatrixChanged = !AreMatricesApproximatelyEqual(cascadeMatrix, light->shadowCascadeMatrices[cascadeIndex]);
                     const DirectionalShadowScroll cascadeScroll =
@@ -2539,6 +2548,8 @@ namespace PlutoGE::render
                     light->shadowCascadeWorldOrigins[cascadeIndex] = glm::vec3(0.0f);
                     light->shadowCascadeMatrices[cascadeIndex] = glm::mat4(1.0f);
                     light->shadowCascadeSplits[cascadeIndex] = light->shadowFarPlane;
+                    light->shadowCascadeWorldTexelSizes[cascadeIndex] = 0.0f;
+                    light->shadowCascadeDepthRanges[cascadeIndex] = 1.0f;
                 }
 
                 light->isDirty = false;

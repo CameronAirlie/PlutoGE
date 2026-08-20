@@ -28,6 +28,7 @@ namespace PlutoGE::render
     {
         const std::vector<std::string> kRegisteredTypes = {
             "Bloom",
+            "SSAO",
             "LSAO",
             "SSGI",
             "SSR",
@@ -63,6 +64,11 @@ namespace PlutoGE::render
         if (typeName == "LSAO")
         {
             return std::make_unique<LSAOEffect>();
+        }
+
+        if (typeName == "SSAO")
+        {
+            return std::make_unique<SSAOEffect>();
         }
 
         if (typeName == "SSGI")

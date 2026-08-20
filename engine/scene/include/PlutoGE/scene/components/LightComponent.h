@@ -68,6 +68,8 @@ namespace PlutoGE::scene
         std::array<glm::mat4, kMaxDirectionalShadowCascades> shadowCascadeMatrices{
             glm::mat4(1.0f), glm::mat4(1.0f), glm::mat4(1.0f), glm::mat4(1.0f)};
         std::array<float, kMaxDirectionalShadowCascades> shadowCascadeSplits{0.0f, 0.0f, 0.0f, 0.0f};
+        std::array<float, kMaxDirectionalShadowCascades> shadowCascadeWorldTexelSizes{0.0f, 0.0f, 0.0f, 0.0f};
+        std::array<float, kMaxDirectionalShadowCascades> shadowCascadeDepthRanges{1.0f, 1.0f, 1.0f, 1.0f};
         DirectionalShadowSettings directionalShadowSettings{};
         int activeShadowCascadeCount = 0;
         float shadowFarPlane = 0.0f; // Far plane used when sampling point-light shadows

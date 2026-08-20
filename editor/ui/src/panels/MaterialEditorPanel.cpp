@@ -310,7 +310,7 @@ namespace PlutoGE::ui
             return changed;
         }
 
-        render::Texture *LoadMaterialEditorTexture(const std::string &path)
+        render::Texture *LoadMaterialEditorTexture(const std::string &path, render::TextureColorSpace colorSpace)
         {
             if (path.empty())
             {
@@ -318,7 +318,7 @@ namespace PlutoGE::ui
             }
 
             const std::string resolvedPath = core::Engine::GetInstance().GetAssetManager().ResolveAssetPath(path);
-            return resolvedPath.empty() ? nullptr : render::Texture::LoadFromFile(resolvedPath.c_str());
+            return resolvedPath.empty() ? nullptr : render::Texture::LoadFromFile(resolvedPath.c_str(), colorSpace);
         }
 
         void HashCombine(std::size_t &seed, std::size_t value)
@@ -497,13 +497,13 @@ namespace PlutoGE::ui
         previewConfig.surfaceType = m_surfaceType;
         previewConfig.alphaMode = m_alphaMode;
         previewConfig.twoSided = m_twoSided;
-        previewConfig.albedoTexture = LoadMaterialEditorTexture(m_albedoTexturePath);
-        previewConfig.normalTexture = LoadMaterialEditorTexture(m_normalTexturePath);
+        previewConfig.albedoTexture = LoadMaterialEditorTexture(m_albedoTexturePath, render::TextureColorSpace::SRGB);
+        previewConfig.normalTexture = LoadMaterialEditorTexture(m_normalTexturePath, render::TextureColorSpace::Linear);
         previewConfig.metallic = m_metallic;
-        previewConfig.metallicTexture = LoadMaterialEditorTexture(m_metallicTexturePath);
+        previewConfig.metallicTexture = LoadMaterialEditorTexture(m_metallicTexturePath, render::TextureColorSpace::Linear);
         previewConfig.metallicTextureChannel = m_metallicTextureChannel;
         previewConfig.roughness = m_roughness;
-        previewConfig.roughnessTexture = LoadMaterialEditorTexture(m_roughnessTexturePath);
+        previewConfig.roughnessTexture = LoadMaterialEditorTexture(m_roughnessTexturePath, render::TextureColorSpace::Linear);
         previewConfig.roughnessTextureChannel = m_roughnessTextureChannel;
         previewConfig.emission = m_emission;
         previewConfig.transmission = m_transmission;
@@ -733,17 +733,17 @@ namespace PlutoGE::ui
             config.alphaCutoff = (std::clamp)(m_alphaCutoff, 0.0f, 1.0f);
             config.castsShadow = m_castsShadow;
             config.twoSided = m_twoSided;
-            config.albedoTexture = LoadMaterialEditorTexture(m_albedoTexturePath);
-            config.normalTexture = LoadMaterialEditorTexture(m_normalTexturePath);
+            config.albedoTexture = LoadMaterialEditorTexture(m_albedoTexturePath, render::TextureColorSpace::SRGB);
+            config.normalTexture = LoadMaterialEditorTexture(m_normalTexturePath, render::TextureColorSpace::Linear);
             config.metallic = (std::clamp)(m_metallic, 0.0f, 1.0f);
-            config.metallicTexture = LoadMaterialEditorTexture(m_metallicTexturePath);
+            config.metallicTexture = LoadMaterialEditorTexture(m_metallicTexturePath, render::TextureColorSpace::Linear);
             config.metallicTextureChannel = m_metallicTextureChannel;
             config.roughness = (std::clamp)(m_roughness, 0.04f, 1.0f);
             config.emission = glm::max(m_emission, glm::vec3(0.0f));
             config.subsurface = (std::clamp)(m_subsurface, 0.0f, 1.0f);
             config.subsurfaceColor = glm::max(m_subsurfaceColor, glm::vec3(0.0f));
             config.subsurfaceRadius = (std::max)(m_subsurfaceRadius, 0.001f);
-            config.roughnessTexture = LoadMaterialEditorTexture(m_roughnessTexturePath);
+            config.roughnessTexture = LoadMaterialEditorTexture(m_roughnessTexturePath, render::TextureColorSpace::Linear);
             config.roughnessTextureChannel = m_roughnessTextureChannel;
             config.transmission = (std::clamp)(m_transmission, 0.0f, 1.0f);
             config.ior = (std::clamp)(m_ior, 1.0f, 2.5f);

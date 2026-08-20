@@ -503,6 +503,8 @@ struct Light {
     vec3 CascadeWorldOrigins[MAX_SHADOW_CASCADES];
     mat4 CascadeLightSpaceMatrices[MAX_SHADOW_CASCADES];
     float CascadeSplits[MAX_SHADOW_CASCADES];
+    float CascadeWorldTexelSizes[MAX_SHADOW_CASCADES];
+    float CascadeDepthRanges[MAX_SHADOW_CASCADES];
     int CascadeCount;
     float ShadowSoftness;
     float CascadeBlendDistance;
@@ -914,6 +916,23 @@ float ComputeDirectionalCascadeShadow(vec3 receiverPosition, Light light, int ca
 
     return SampleDirectionalCascadeShadow(cascadeIndex, projectedCoords, depthBias, light.ShadowSoftness);
 }
+
+float ComputeCascadeNormalBias(Light light, int cascadeIndex, float ndotl)
+{
+    return light.CascadeWorldTexelSizes[cascadeIndex] * mix(0.08, 0.60, 1.0 - ndotl);
+}
+
+float ComputeCascadeDepthBias(Light light, int cascadeIndex, float ndotl)
+{
+    float worldBias = light.CascadeWorldTexelSizes[cascadeIndex] * mix(0.05, 0.30, 1.0 - ndotl);
+    return worldBias / max(light.CascadeDepthRanges[cascadeIndex], 0.0001);
+}
+
+float SampleDirectionalShadowAtCascade(vec3 fragPos, vec3 surfaceNormal, Light light, int cascadeIndex, float ndotl, out bool hasCoverage)
+{
+    vec3 receiverPosition = fragPos + surfaceNormal * ComputeCascadeNormalBias(light, cascadeIndex, ndotl);
+    return ComputeDirectionalCascadeShadow(receiverPosition, light, cascadeIndex, ComputeCascadeDepthBias(light, cascadeIndex, ndotl), hasCoverage);
+}
             )";
 
             source.fragmentSource += R"(
@@ -941,8 +960,6 @@ float ComputeDirectionalShadow(vec3 fragPos,
     vec3 surfaceNormal = normalize(normal);
     vec3 lightVector = normalize(-light.Direction);
     float ndotl = max(dot(surfaceNormal, lightVector), 0.0);
-    float normalBias = max(0.004 * (1.0 - ndotl), 0.00075);
-    vec3 receiverPosition = fragPos + surfaceNormal * normalBias;
     float viewDepth = ComputeViewDepth(fragPos);
 
     if (viewDepth > light.CascadeSplits[light.CascadeCount - 1])
@@ -952,17 +969,16 @@ float ComputeDirectionalShadow(vec3 fragPos,
 
     int cascadeIndex = SelectDirectionalCascadeIndex(light, viewDepth);
     selectedCascadeIndex = cascadeIndex;
-    float baseDepthBias = max(0.00012 + (1.0 - ndotl) * 0.00035, 0.00004);
     bool hasCascadeCoverage = false;
     float shadow = 0.0;
     int shadowCascadeIndex = cascadeIndex;
     vec3 selectedCascadeCoords;
-    selectedCascadeHasCoverage = ProjectDirectionalCascadeCoords(receiverPosition, light, cascadeIndex, selectedCascadeCoords);
+    vec3 selectedReceiverPosition = fragPos + surfaceNormal * ComputeCascadeNormalBias(light, cascadeIndex, ndotl);
+    selectedCascadeHasCoverage = ProjectDirectionalCascadeCoords(selectedReceiverPosition, light, cascadeIndex, selectedCascadeCoords);
 
     for (int sampleCascadeIndex = cascadeIndex; sampleCascadeIndex < light.CascadeCount; ++sampleCascadeIndex)
     {
-        float depthBias = baseDepthBias;
-        shadow = ComputeDirectionalCascadeShadow(receiverPosition, light, sampleCascadeIndex, depthBias, hasCascadeCoverage);
+        shadow = SampleDirectionalShadowAtCascade(fragPos, surfaceNormal, light, sampleCascadeIndex, ndotl, hasCascadeCoverage);
         if (hasCascadeCoverage)
         {
             shadowCascadeIndex = sampleCascadeIndex;
@@ -985,7 +1001,7 @@ float ComputeDirectionalShadow(vec3 fragPos,
         if (viewDepth > blendStart)
         {
             bool hasNextCascadeCoverage = false;
-            float nextShadow = ComputeDirectionalCascadeShadow(receiverPosition, light, shadowCascadeIndex + 1, baseDepthBias, hasNextCascadeCoverage);
+            float nextShadow = SampleDirectionalShadowAtCascade(fragPos, surfaceNormal, light, shadowCascadeIndex + 1, ndotl, hasNextCascadeCoverage);
             if (hasNextCascadeCoverage)
             {
                 float blendFactor = clamp((viewDepth - blendStart) / max(splitDistance - blendStart, 0.0001), 0.0, 1.0);

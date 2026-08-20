@@ -421,6 +421,8 @@ namespace PlutoGE::scene
                     m_config.shadowCascadeWorldOrigins[cascadeIndex] = glm::vec3(0.0f);
                     m_config.shadowCascadeMatrices[cascadeIndex] = glm::mat4(1.0f);
                     m_config.shadowCascadeSplits[cascadeIndex] = 0.0f;
+                    m_config.shadowCascadeWorldTexelSizes[cascadeIndex] = 0.0f;
+                    m_config.shadowCascadeDepthRanges[cascadeIndex] = 1.0f;
                     continue;
                 }
 

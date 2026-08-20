@@ -2208,7 +2208,7 @@ namespace PlutoGE::assets
                     else if (key == "AlbedoTexture")
                     {
                         const std::string texturePath = ResolveMaterialTexturePath(value);
-                        config.albedoTexture = texturePath.empty() ? nullptr : render::Texture::LoadFromFile(texturePath.c_str());
+                        config.albedoTexture = texturePath.empty() ? nullptr : render::Texture::LoadFromFile(texturePath.c_str(), render::TextureColorSpace::SRGB);
                     }
                     else if (key == "NormalTexture")
                     {
@@ -2362,7 +2362,7 @@ namespace PlutoGE::assets
         {
             render::MaterialConfig cachedConfig = config;
             std::unordered_map<std::string, render::Texture *> reloadedTextures;
-            auto reloadTexture = [&](render::Texture *texture) -> render::Texture *
+            auto reloadTexture = [&](render::Texture *texture, render::TextureColorSpace colorSpace) -> render::Texture *
             {
                 if (!texture)
                 {
@@ -2376,18 +2376,19 @@ namespace PlutoGE::assets
                     return nullptr;
                 }
 
-                auto [textureIt, inserted] = reloadedTextures.emplace(resolvedPath, nullptr);
+                const std::string cacheKey = resolvedPath + (colorSpace == render::TextureColorSpace::SRGB ? "#srgb" : "#linear");
+                auto [textureIt, inserted] = reloadedTextures.emplace(cacheKey, nullptr);
                 if (inserted)
                 {
-                    textureIt->second = render::Texture::LoadFromFile(resolvedPath.c_str());
+                    textureIt->second = render::Texture::LoadFromFile(resolvedPath.c_str(), colorSpace);
                 }
                 return textureIt->second;
             };
 
-            cachedConfig.albedoTexture = reloadTexture(config.albedoTexture);
-            cachedConfig.normalTexture = reloadTexture(config.normalTexture);
-            cachedConfig.metallicTexture = reloadTexture(config.metallicTexture);
-            cachedConfig.roughnessTexture = reloadTexture(config.roughnessTexture);
+            cachedConfig.albedoTexture = reloadTexture(config.albedoTexture, render::TextureColorSpace::SRGB);
+            cachedConfig.normalTexture = reloadTexture(config.normalTexture, render::TextureColorSpace::Linear);
+            cachedConfig.metallicTexture = reloadTexture(config.metallicTexture, render::TextureColorSpace::Linear);
+            cachedConfig.roughnessTexture = reloadTexture(config.roughnessTexture, render::TextureColorSpace::Linear);
             cachedConfig.lightmapTexture = nullptr;
             if (cachedConfig.shaderGraphReference.empty())
             {

@@ -22,10 +22,10 @@ namespace PlutoGE::render
         m_textureID = 0;
     }
 
-    Texture *Texture::LoadFromFile(const char *filePath)
+    Texture *Texture::LoadFromFile(const char *filePath, TextureColorSpace colorSpace)
     {
         auto &engine = PlutoGE::core::Engine::GetInstance();
-        Texture *texture = engine.GetTextureManager().LoadTextureFromFile(filePath);
+        Texture *texture = engine.GetTextureManager().LoadTextureFromFile(filePath, colorSpace);
         if (texture == nullptr)
         {
             delete texture;

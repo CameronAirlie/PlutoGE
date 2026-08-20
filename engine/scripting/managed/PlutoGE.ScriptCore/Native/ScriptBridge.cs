@@ -217,6 +217,7 @@ internal static unsafe class ScriptBridge
     private static delegate* unmanaged[Cdecl]<uint, int> _getRigidbodyFreezeRotation;
     private static delegate* unmanaged[Cdecl]<uint, int, void> _setRigidbodyFreezeRotation;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3> _getRigidbodyVelocity;
+    private static delegate* unmanaged[Cdecl]<uint, NativeVector3, NativeVector3> _getRigidbodyVelocityAtPoint;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3, void> _setRigidbodyVelocity;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3> _getRigidbodyAngularVelocity;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3, void> _setRigidbodyAngularVelocity;
@@ -815,6 +816,7 @@ internal static unsafe class ScriptBridge
         delegate* unmanaged[Cdecl]<uint, int> getFreezeRotation,
         delegate* unmanaged[Cdecl]<uint, int, void> setFreezeRotation,
         delegate* unmanaged[Cdecl]<uint, NativeVector3> getVelocity,
+        delegate* unmanaged[Cdecl]<uint, NativeVector3, NativeVector3> getVelocityAtPoint,
         delegate* unmanaged[Cdecl]<uint, NativeVector3, void> setVelocity,
         delegate* unmanaged[Cdecl]<uint, NativeVector3> getAngularVelocity,
         delegate* unmanaged[Cdecl]<uint, NativeVector3, void> setAngularVelocity,
@@ -827,7 +829,7 @@ internal static unsafe class ScriptBridge
             getAngularDrag == null || setAngularDrag == null || getFriction == null || setFriction == null ||
             getUseGravity == null || setUseGravity == null ||
             getKinematic == null || setKinematic == null || getFreezeRotation == null || setFreezeRotation == null ||
-            getVelocity == null || setVelocity == null || getAngularVelocity == null || setAngularVelocity == null ||
+            getVelocity == null || getVelocityAtPoint == null || setVelocity == null || getAngularVelocity == null || setAngularVelocity == null ||
             addForce == null || addImpulse == null || addForceAtPosition == null || addImpulseAtPosition == null)
         {
             SetError("Managed rigidbody component API registration received a null function pointer.");
@@ -849,6 +851,7 @@ internal static unsafe class ScriptBridge
         _getRigidbodyFreezeRotation = getFreezeRotation;
         _setRigidbodyFreezeRotation = setFreezeRotation;
         _getRigidbodyVelocity = getVelocity;
+        _getRigidbodyVelocityAtPoint = getVelocityAtPoint;
         _setRigidbodyVelocity = setVelocity;
         _getRigidbodyAngularVelocity = getAngularVelocity;
         _setRigidbodyAngularVelocity = setAngularVelocity;
@@ -2267,6 +2270,10 @@ internal static unsafe class ScriptBridge
     internal static bool GetRigidbodyFreezeRotation(uint entityId) => _getRigidbodyFreezeRotation != null && _getRigidbodyFreezeRotation(entityId) != 0;
     internal static void SetRigidbodyFreezeRotation(uint entityId, bool value) { if (_setRigidbodyFreezeRotation != null) _setRigidbodyFreezeRotation(entityId, value ? 1 : 0); }
     internal static Vector3 GetRigidbodyVelocity(uint entityId) => _getRigidbodyVelocity == null ? Vector3.Zero : _getRigidbodyVelocity(entityId).ToManaged();
+    internal static Vector3 GetRigidbodyVelocityAtPoint(uint entityId, Vector3 worldPosition) =>
+        _getRigidbodyVelocityAtPoint == null
+            ? GetRigidbodyVelocity(entityId)
+            : _getRigidbodyVelocityAtPoint(entityId, NativeVector3.FromManaged(worldPosition)).ToManaged();
     internal static void SetRigidbodyVelocity(uint entityId, Vector3 value) { if (_setRigidbodyVelocity != null) _setRigidbodyVelocity(entityId, NativeVector3.FromManaged(value)); }
     internal static Vector3 GetRigidbodyAngularVelocity(uint entityId) => _getRigidbodyAngularVelocity == null ? Vector3.Zero : _getRigidbodyAngularVelocity(entityId).ToManaged();
     internal static void SetRigidbodyAngularVelocity(uint entityId, Vector3 value) { if (_setRigidbodyAngularVelocity != null) _setRigidbodyAngularVelocity(entityId, NativeVector3.FromManaged(value)); }

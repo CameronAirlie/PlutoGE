@@ -66,6 +66,11 @@ public sealed class RigidbodyComponent : ComponentReference
         set => ScriptBridge.SetRigidbodyAngularVelocity(EntityId, value);
     }
 
+    public Vector3 GetVelocityAtPoint(Vector3 worldPosition)
+    {
+        return ScriptBridge.GetRigidbodyVelocityAtPoint(EntityId, worldPosition);
+    }
+
     public void AddForce(Vector3 force)
     {
         ScriptBridge.AddRigidbodyForce(EntityId, force);

@@ -101,6 +101,7 @@ namespace PlutoGE::scene
     void Entity::MarkTransformDirtyRecursive()
     {
         m_worldTransformDirty = true;
+        ++m_transformRevision;
         if (m_scene && GetComponent<FoliageComponent>())
         {
             m_scene->InvalidateFoliagePhysics();

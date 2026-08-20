@@ -4,6 +4,7 @@
 
 #include <glm/glm.hpp>
 #include <algorithm>
+#include <cstdint>
 #include <memory>
 #include <type_traits>
 #include <utility>
@@ -43,6 +44,7 @@ namespace PlutoGE::scene
         glm::vec3 GetWorldRotation() const;
         glm::vec3 GetScale() const { return m_transform.scale; }
         glm::vec3 GetWorldScale() const;
+        uint64_t GetTransformRevision() const { return m_transformRevision; }
 
         void SetPosition(const glm::vec3 &position);
         void SetWorldPosition(const glm::vec3 &position);
@@ -238,6 +240,7 @@ namespace PlutoGE::scene
         mutable glm::mat4 m_cachedWorldTransform = glm::mat4(1.0f);
         mutable bool m_localTransformDirty = true;
         mutable bool m_worldTransformDirty = true;
+        uint64_t m_transformRevision = 0;
         EntityID m_id;                   // Unique identifier for the entity
         std::string m_name;              // Optional name for the entity (useful for debugging and editor)
         std::vector<std::string> m_tags; // Optional tags for categorizing entities (e.g., "Player", "Enemy", "Collectible")

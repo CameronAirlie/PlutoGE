@@ -112,7 +112,7 @@ namespace PlutoGE::scripting
         using register_light_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *);
         using register_mesh_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *);
         using register_animation_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
-        using register_rigidbody_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
+        using register_rigidbody_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_collider_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_particle_system_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_sound_emitter_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
@@ -1766,6 +1766,17 @@ namespace PlutoGE::scripting
             auto *component = FindRigidbody(entityId);
             const auto value = component ? component->GetVelocity() : glm::vec3{0.0f};
             return NativeVector3{value.x, value.y, value.z};
+        }
+        NativeVector3 GetRigidbodyVelocityAtPoint(uint32_t entityId, NativeVector3 worldPosition)
+        {
+            glm::vec3 velocity{0.0f};
+            if (auto *scene = core::Engine::GetInstance().GetScene();
+                scene && IsFiniteVector3(worldPosition))
+            {
+                scene->GetRigidbodyVelocityAtPoint(
+                    entityId, glm::vec3(worldPosition.x, worldPosition.y, worldPosition.z), velocity);
+            }
+            return NativeVector3{velocity.x, velocity.y, velocity.z};
         }
         void SetRigidbodyVelocity(uint32_t entityId, NativeVector3 value)
         {
@@ -3916,6 +3927,7 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(static_cast<get_component_bool_fn>(&GetRigidbodyFreezeRotation)),
                 reinterpret_cast<void *>(static_cast<set_component_bool_fn>(&SetRigidbodyFreezeRotation)),
                 reinterpret_cast<void *>(static_cast<get_component_vector3_fn>(&GetRigidbodyVelocity)),
+                reinterpret_cast<void *>(&GetRigidbodyVelocityAtPoint),
                 reinterpret_cast<void *>(static_cast<set_component_vector3_fn>(&SetRigidbodyVelocity)),
                 reinterpret_cast<void *>(static_cast<get_component_vector3_fn>(&GetRigidbodyAngularVelocity)),
                 reinterpret_cast<void *>(static_cast<set_component_vector3_fn>(&SetRigidbodyAngularVelocity)),

@@ -165,6 +165,9 @@ namespace PlutoGE::scene
                                const glm::vec3 &value,
                                bool impulse = false,
                                std::optional<glm::vec3> worldPosition = std::nullopt);
+        bool GetRigidbodyVelocityAtPoint(EntityID entityId,
+                                         const glm::vec3 &worldPosition,
+                                         glm::vec3 &velocity) const;
         Entity *SpawnDecal(const PhysicsRaycastHit &hit,
                            const std::string &materialAssetReference,
                            const glm::vec2 &size,
@@ -270,6 +273,7 @@ namespace PlutoGE::scene
         uint64_t m_updateSequence = 0;
         std::unique_ptr<RuntimePhysicsState> m_runtimePhysicsState;
         std::vector<PendingRigidbodyForce> m_pendingRigidbodyForces;
+        bool m_inFixedScriptUpdate = false;
         struct RuntimeUIInputOverride
         {
             glm::vec2 canvasSize{0.0f};

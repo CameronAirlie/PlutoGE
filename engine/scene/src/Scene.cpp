@@ -368,6 +368,70 @@ namespace PlutoGE::scene
                        : glm::vec3(0.0f, 1.0f, 0.0f);
         }
 
+        bool IntersectBoxColliderExactly(const Entity &entity,
+                                         const ColliderComponent &collider,
+                                         const btCollisionObject &object,
+                                         const btVector3 &from,
+                                         const btVector3 &to,
+                                         btVector3 &hitPoint,
+                                         btVector3 &hitNormal)
+        {
+            if (collider.GetShape() != ColliderShape::Box)
+                return false;
+
+            const btTransform inverseTransform = object.getWorldTransform().inverse();
+            const btVector3 localFrom = inverseTransform * from;
+            const btVector3 localTo = inverseTransform * to;
+            const btVector3 direction = localTo - localFrom;
+            const glm::vec3 worldScale = entity.GetWorldScale();
+            const btVector3 center = ToBullet(collider.GetScaledCenter(worldScale));
+            const btVector3 halfExtents = ToBullet(
+                glm::max(collider.GetScaledSize(worldScale) * 0.5f, glm::vec3(0.0001f)));
+            const btVector3 minimum = center - halfExtents;
+            const btVector3 maximum = center + halfExtents;
+
+            btScalar enter = btScalar(0.0f);
+            btScalar exit = btScalar(1.0f);
+            int enterAxis = -1;
+            btScalar enterSign = btScalar(0.0f);
+            for (int axis = 0; axis < 3; ++axis)
+            {
+                if (btFabs(direction[axis]) <= SIMD_EPSILON)
+                {
+                    if (localFrom[axis] < minimum[axis] || localFrom[axis] > maximum[axis])
+                        return false;
+                    continue;
+                }
+
+                btScalar nearTime = (minimum[axis] - localFrom[axis]) / direction[axis];
+                btScalar farTime = (maximum[axis] - localFrom[axis]) / direction[axis];
+                btScalar nearSign = btScalar(-1.0f);
+                if (nearTime > farTime)
+                {
+                    std::swap(nearTime, farTime);
+                    nearSign = btScalar(1.0f);
+                }
+                if (nearTime > enter)
+                {
+                    enter = nearTime;
+                    enterAxis = axis;
+                    enterSign = nearSign;
+                }
+                exit = btMin(exit, farTime);
+                if (enter > exit)
+                    return false;
+            }
+
+            if (enterAxis < 0 || enter < btScalar(0.0f) || enter > btScalar(1.0f))
+                return false;
+            btVector3 localNormal(0.0f, 0.0f, 0.0f);
+            localNormal[enterAxis] = enterSign;
+            hitPoint.setInterpolate3(from, to, enter);
+            hitNormal = object.getWorldTransform().getBasis() * localNormal;
+            hitNormal.normalize();
+            return true;
+        }
+
         bool IsEntityOrDescendantOf(const Entity *entity, EntityID ancestorId)
         {
             if (!entity || ancestorId == 0)
@@ -717,6 +781,8 @@ namespace PlutoGE::scene
             std::unique_ptr<btDefaultMotionState> motionState;
             std::unique_ptr<btRigidBody> body;
             uint64_t configurationSignature = 0;
+            uint64_t synchronizedTransformRevision = 0;
+            uint64_t synchronizedVelocityRevision = 0;
             bool dynamic = false;
         };
 
@@ -1124,6 +1190,8 @@ namespace PlutoGE::scene
             ApplyWorldPhysicsTransform(*stepBody.entity, transform);
             stepBody.rigidbody->SetVelocity(FromBullet(stepBody.body->getLinearVelocity()));
             stepBody.rigidbody->SetAngularVelocity(FromBullet(stepBody.body->getAngularVelocity()));
+            stepBody.synchronizedTransformRevision = stepBody.entity->GetTransformRevision();
+            stepBody.synchronizedVelocityRevision = stepBody.rigidbody->GetVelocityRevision();
         }
 
         template <typename ValueType>
@@ -1505,7 +1573,11 @@ namespace PlutoGE::scene
             {
                 body->setCcdMotionThreshold(0.0001f);
                 body->setCcdSweptSphereRadius(std::max(0.05f, collider->GetScaledRadius(worldScale)));
-                body->setActivationState(DISABLE_DEACTIVATION);
+                body->setSleepingThresholds(0.1f, 0.1f);
+                // Dynamic bodies must be allowed to sleep. Disabling
+                // deactivation globally keeps resting spring-driven bodies awake
+                // forever and exposes persistent solver noise.
+                body->setActivationState(ACTIVE_TAG);
             }
 
             runtimeWorld->dynamicsWorld.addRigidBody(body.get());
@@ -1521,6 +1593,8 @@ namespace PlutoGE::scene
                 .motionState = std::move(motionState),
                 .body = std::move(body),
                 .configurationSignature = ComputeRuntimePhysicsBodySignature(*entity, *collider, rigidbodyEnabled ? rigidbody : nullptr),
+                .synchronizedTransformRevision = entity->GetTransformRevision(),
+                .synchronizedVelocityRevision = rigidbodyEnabled ? rigidbody->GetVelocityRevision() : 0,
                 .dynamic = dynamic,
             });
         }
@@ -2435,6 +2509,7 @@ namespace PlutoGE::scene
             {
                 for (int substep = 0; substep < physicsSubstepCount; ++substep)
                 {
+                    m_inFixedScriptUpdate = true;
                     for (auto *scriptComponent : GatherRuntimeScriptComponents(m_rootEntities))
                     {
                         if (scriptComponent && scriptComponent->IsEnabled())
@@ -2442,6 +2517,7 @@ namespace PlutoGE::scene
                             scriptComponent->FixedUpdate(fixedPhysicsStep);
                         }
                     }
+                    m_inFixedScriptUpdate = false;
                     StepPhysics(fixedPhysicsStep);
                     m_physicsTimeAccumulator -= fixedPhysicsStep;
                 }
@@ -2943,9 +3019,12 @@ namespace PlutoGE::scene
             return false;
         }
 
-        auto &queryCache = GetPhysicsQueryCache();
         IgnoringRayResultCallback callback(from, to, ignoredEntityId);
-        queryCache.world->collisionWorld.rayTest(from, to, callback);
+        const bool useRuntimeWorld = m_inFixedScriptUpdate && m_runtimePhysicsState && m_runtimePhysicsState->world;
+        if (useRuntimeWorld)
+            m_runtimePhysicsState->world->dynamicsWorld.rayTest(from, to, callback);
+        else
+            GetPhysicsQueryCache().world->collisionWorld.rayTest(from, to, callback);
         if (!callback.hasHit())
         {
             return false;
@@ -2960,17 +3039,27 @@ namespace PlutoGE::scene
         }
 
         hit.entityId = entity->GetID();
-        hit.point = FromBullet(callback.m_hitPointWorld);
-        hit.normal = NormalizeRaycastNormal(callback.m_hitNormalWorld);
+        btVector3 resolvedPoint = callback.m_hitPointWorld;
+        btVector3 resolvedNormal = callback.m_hitNormalWorld;
+        if (const auto *collider = entity->GetComponent<ColliderComponent>())
+            IntersectBoxColliderExactly(*entity, *collider, *callback.m_collisionObject,
+                                        from, to, resolvedPoint, resolvedNormal);
+        hit.point = FromBullet(resolvedPoint);
+        hit.normal = NormalizeRaycastNormal(resolvedNormal);
         hit.distance = glm::length(hit.point - origin);
-        if (callback.m_hitChildIndex >= 0)
-            for (const auto &body : queryCache.world->bodies)
+        // The cached query world retains foliage child-to-instance metadata. The
+        // runtime dynamics world deliberately does not duplicate that editor/query
+        // bookkeeping, so runtime fixed-step rays report the owning entity only.
+        if (!useRuntimeWorld && callback.m_hitChildIndex >= 0)
+        {
+            const auto childIndex = static_cast<std::size_t>(callback.m_hitChildIndex);
+            for (const auto &body : GetPhysicsQueryCache().world->bodies)
                 if (body.object.get() == callback.m_collisionObject)
                 {
-                    const auto childIndex = static_cast<std::size_t>(callback.m_hitChildIndex);
                     if (childIndex < body.foliageInstanceIds.size()) hit.foliageInstanceId = body.foliageInstanceIds[childIndex];
                     break;
                 }
+        }
         return true;
     }
 
@@ -3049,7 +3138,6 @@ namespace PlutoGE::scene
             return false;
         }
 
-        auto &queryCache = GetPhysicsQueryCache();
         class TaggedRayResultCallback final : public IgnoringRayResultCallback
         {
         public:
@@ -3075,7 +3163,11 @@ namespace PlutoGE::scene
         };
 
         TaggedRayResultCallback callback(from, to, ignoredEntityId, tag);
-        queryCache.world->collisionWorld.rayTest(from, to, callback);
+        const bool useRuntimeWorld = m_inFixedScriptUpdate && m_runtimePhysicsState && m_runtimePhysicsState->world;
+        if (useRuntimeWorld)
+            m_runtimePhysicsState->world->dynamicsWorld.rayTest(from, to, callback);
+        else
+            GetPhysicsQueryCache().world->collisionWorld.rayTest(from, to, callback);
         if (!callback.hasHit())
         {
             return false;
@@ -3090,8 +3182,13 @@ namespace PlutoGE::scene
         }
 
         hit.entityId = entity->GetID();
-        hit.point = FromBullet(callback.m_hitPointWorld);
-        hit.normal = NormalizeRaycastNormal(callback.m_hitNormalWorld);
+        btVector3 resolvedPoint = callback.m_hitPointWorld;
+        btVector3 resolvedNormal = callback.m_hitNormalWorld;
+        if (const auto *collider = entity->GetComponent<ColliderComponent>())
+            IntersectBoxColliderExactly(*entity, *collider, *callback.m_collisionObject,
+                                        from, to, resolvedPoint, resolvedNormal);
+        hit.point = FromBullet(resolvedPoint);
+        hit.normal = NormalizeRaycastNormal(resolvedNormal);
         hit.distance = glm::length(hit.point - origin);
         return true;
     }
@@ -3272,12 +3369,71 @@ namespace PlutoGE::scene
             return false;
         }
 
+        if (m_inFixedScriptUpdate && m_runtimePhysicsState && m_runtimePhysicsState->world)
+        {
+            auto &bodies = m_runtimePhysicsState->world->bodies;
+            const auto bodyIterator = std::find_if(bodies.begin(), bodies.end(),
+                                                   [entityId](const BulletStepBody &body)
+                                                   {
+                                                       return body.entityId == entityId && body.dynamic && body.body;
+                                                   });
+            if (bodyIterator != bodies.end())
+            {
+                if (!impulse && !bodyIterator->body->isActive())
+                    return true;
+                if (impulse)
+                    bodyIterator->body->activate(true);
+
+                const btVector3 nativeValue = ToBullet(value);
+                const btVector3 relativePosition = worldPosition
+                                                       ? ToBullet(*worldPosition) - bodyIterator->body->getCenterOfMassPosition()
+                                                       : btVector3(0.0f, 0.0f, 0.0f);
+                if (impulse)
+                {
+                    if (worldPosition) bodyIterator->body->applyImpulse(nativeValue, relativePosition);
+                    else bodyIterator->body->applyCentralImpulse(nativeValue);
+                }
+                else
+                {
+                    if (worldPosition) bodyIterator->body->applyForce(nativeValue, relativePosition);
+                    else bodyIterator->body->applyCentralForce(nativeValue);
+                }
+                return true;
+            }
+        }
+
         m_pendingRigidbodyForces.push_back(PendingRigidbodyForce{
             .entityId = entityId,
             .value = value,
             .worldPosition = worldPosition,
             .impulse = impulse,
         });
+        return true;
+    }
+
+    bool Scene::GetRigidbodyVelocityAtPoint(EntityID entityId,
+                                            const glm::vec3 &worldPosition,
+                                            glm::vec3 &velocity) const
+    {
+        velocity = glm::vec3(0.0f);
+        if (m_runtimePhysicsState && m_runtimePhysicsState->world)
+        {
+            for (const auto &stepBody : m_runtimePhysicsState->world->bodies)
+            {
+                if (stepBody.entityId != entityId || !stepBody.dynamic || !stepBody.body)
+                    continue;
+                const btVector3 relativePosition = ToBullet(worldPosition) - stepBody.body->getCenterOfMassPosition();
+                velocity = FromBullet(stepBody.body->getVelocityInLocalPoint(relativePosition));
+                return true;
+            }
+        }
+
+        auto *entity = FindEntityByID(entityId);
+        auto *rigidbody = entity ? entity->GetComponent<RigidbodyComponent>() : nullptr;
+        if (!entity || !rigidbody)
+            return false;
+        const glm::vec3 relativePosition = worldPosition - entity->GetWorldPosition();
+        velocity = rigidbody->GetVelocity() + glm::cross(rigidbody->GetAngularVelocity(), relativePosition);
         return true;
     }
 
@@ -3470,26 +3626,34 @@ namespace PlutoGE::scene
 
             if (stepBody.dynamic)
             {
-                btTransform transform;
-                transform.setIdentity();
-                transform.setOrigin(ToBullet(stepBody.entity->GetWorldPosition()));
-                transform.setRotation(ToBulletRotation(stepBody.entity->GetWorldTransform()));
-                stepBody.body->setWorldTransform(transform);
-                if (stepBody.motionState)
+                if (stepBody.entity->GetTransformRevision() != stepBody.synchronizedTransformRevision)
                 {
-                    stepBody.motionState->setWorldTransform(transform);
-                }
-                stepBody.body->setInterpolationWorldTransform(transform);
-
-                if (stepBody.rigidbody)
-                {
-                    stepBody.body->setLinearVelocity(ToBullet(stepBody.rigidbody->GetVelocity()));
-                    stepBody.body->setAngularVelocity(stepBody.rigidbody->HasFreezeRotation()
-                                                          ? btVector3(0.0f, 0.0f, 0.0f)
-                                                          : ToBullet(stepBody.rigidbody->GetAngularVelocity()));
+                    btTransform requestedTransform;
+                    requestedTransform.setIdentity();
+                    requestedTransform.setOrigin(ToBullet(stepBody.entity->GetWorldPosition()));
+                    requestedTransform.setRotation(ToBulletRotation(stepBody.entity->GetWorldTransform()));
+                    stepBody.body->setWorldTransform(requestedTransform);
+                    if (stepBody.motionState)
+                        stepBody.motionState->setWorldTransform(requestedTransform);
+                    stepBody.body->setInterpolationWorldTransform(requestedTransform);
+                    stepBody.body->activate(true);
+                    runtimeWorld.dynamicsWorld.updateSingleAabb(stepBody.body.get());
+                    stepBody.synchronizedTransformRevision = stepBody.entity->GetTransformRevision();
                 }
 
-                runtimeWorld.dynamicsWorld.updateSingleAabb(stepBody.body.get());
+                if (stepBody.rigidbody &&
+                    stepBody.rigidbody->GetVelocityRevision() != stepBody.synchronizedVelocityRevision)
+                {
+                    const btVector3 requestedLinearVelocity = ToBullet(stepBody.rigidbody->GetVelocity());
+                    const btVector3 requestedAngularVelocity = stepBody.rigidbody->HasFreezeRotation()
+                                                                   ? btVector3(0.0f, 0.0f, 0.0f)
+                                                                   : ToBullet(stepBody.rigidbody->GetAngularVelocity());
+                    if ((requestedLinearVelocity - stepBody.body->getLinearVelocity()).length2() > btScalar(1.0e-8f))
+                        stepBody.body->setLinearVelocity(requestedLinearVelocity);
+                    if ((requestedAngularVelocity - stepBody.body->getAngularVelocity()).length2() > btScalar(1.0e-8f))
+                        stepBody.body->setAngularVelocity(requestedAngularVelocity);
+                    stepBody.synchronizedVelocityRevision = stepBody.rigidbody->GetVelocityRevision();
+                }
                 continue;
             }
 
@@ -3651,7 +3815,6 @@ namespace PlutoGE::scene
                 continue;
             }
 
-            bodyIterator->body->activate(true);
             const btVector3 force = ToBullet(pendingForce.value);
             const bool hasWorldPosition = pendingForce.worldPosition.has_value();
             const btVector3 relativePosition = hasWorldPosition
@@ -3660,6 +3823,7 @@ namespace PlutoGE::scene
                                                    : btVector3(0.0f, 0.0f, 0.0f);
             if (pendingForce.impulse)
             {
+                bodyIterator->body->activate(true);
                 if (hasWorldPosition)
                 {
                     bodyIterator->body->applyImpulse(force, relativePosition);
@@ -3671,6 +3835,13 @@ namespace PlutoGE::scene
             }
             else
             {
+                // Continuous support forces should not wake a body that Bullet
+                // has already settled. Input and other discrete events use an
+                // impulse to wake it before new forces are evaluated.
+                if (!bodyIterator->body->isActive())
+                {
+                    continue;
+                }
                 if (hasWorldPosition)
                 {
                     bodyIterator->body->applyForce(force, relativePosition);

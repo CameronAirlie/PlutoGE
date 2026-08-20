@@ -3,6 +3,7 @@
 #include "PlutoGE/scene/components/Component.h"
 
 #include <glm/glm.hpp>
+#include <cstdint>
 
 namespace PlutoGE::scene
 {
@@ -52,14 +53,26 @@ namespace PlutoGE::scene
         void SetFreezeRotation(bool freezeRotation) { m_config.freezeRotation = freezeRotation; }
 
         const glm::vec3 &GetVelocity() const { return m_config.velocity; }
-        void SetVelocity(const glm::vec3 &velocity) { m_config.velocity = velocity; }
+        void SetVelocity(const glm::vec3 &velocity)
+        {
+            if (m_config.velocity == velocity) return;
+            m_config.velocity = velocity;
+            ++m_velocityRevision;
+        }
 
         const glm::vec3 &GetAngularVelocity() const { return m_config.angularVelocity; }
-        void SetAngularVelocity(const glm::vec3 &angularVelocity) { m_config.angularVelocity = angularVelocity; }
+        void SetAngularVelocity(const glm::vec3 &angularVelocity)
+        {
+            if (m_config.angularVelocity == angularVelocity) return;
+            m_config.angularVelocity = angularVelocity;
+            ++m_velocityRevision;
+        }
+        uint64_t GetVelocityRevision() const { return m_velocityRevision; }
 
         const RigidbodyComponentConfig &GetConfig() const { return m_config; }
 
     private:
         RigidbodyComponentConfig m_config;
+        uint64_t m_velocityRevision = 0;
     };
 }

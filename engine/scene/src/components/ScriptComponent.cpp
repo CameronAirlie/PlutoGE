@@ -273,6 +273,20 @@ namespace PlutoGE::scene
         m_instance->OnLateUpdate(deltaTime);
     }
 
+    void ScriptComponent::FixedUpdate(float fixedDeltaTime)
+    {
+        if (!core::Engine::GetInstance().IsRuntimeRunning() || m_scriptClass.empty())
+        {
+            return;
+        }
+
+        Start();
+        if (m_instance)
+        {
+            m_instance->OnFixedUpdate(fixedDeltaTime);
+        }
+    }
+
     void ScriptComponent::OnCollisionEnter(uint32_t otherEntityId)
     {
         if (!core::Engine::GetInstance().IsRuntimeRunning() || m_scriptClass.empty())
@@ -454,6 +468,35 @@ namespace PlutoGE::scene
     std::vector<scripting::ScriptFieldDefinition> ScriptComponent::GetSerializedFields() const
     {
         return core::Engine::GetInstance().GetScriptEngine().GetSerializedFields(m_scriptClass);
+    }
+
+    bool ScriptComponent::RestoreFieldValuesToDefaults()
+    {
+        bool changed = false;
+        for (const auto &field : GetSerializedFields())
+        {
+            // A null reflected default means the script did not provide a value
+            // that can replace the component's current reference/value.
+            if (field.defaultValueIsNull ||
+                std::holds_alternative<std::monostate>(field.defaultValue) ||
+                !scripting::IsFieldValueCompatible(field.type, field.defaultValue))
+            {
+                continue;
+            }
+
+            const auto currentValue = GetFieldValue(field.name);
+            if (!currentValue || *currentValue != field.defaultValue)
+            {
+                m_fieldValues.insert_or_assign(field.name, field.defaultValue);
+                changed = true;
+            }
+        }
+
+        if (changed)
+        {
+            ApplySerializedFields();
+        }
+        return changed;
     }
 
     void ScriptComponent::RemapEntityReferences(const std::unordered_map<uint32_t, uint32_t> &entityIdRemap)

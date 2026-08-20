@@ -23,6 +23,7 @@ namespace PlutoGE::scripting
 
         virtual void OnCreate() {}
         virtual void OnUpdate(float deltaTime) {}
+        virtual void OnFixedUpdate(float fixedDeltaTime) { (void)fixedDeltaTime; }
         virtual void OnLateUpdate(float deltaTime) {}
         virtual void OnDestroy() {}
         virtual void OnCollisionEnter(uint32_t otherEntityId) { (void)otherEntityId; }

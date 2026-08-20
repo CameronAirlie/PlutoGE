@@ -6,7 +6,7 @@ using PlutoGE.ScriptCore;
 namespace PlutoGE.ScriptCore.Examples;
 
 /// <summary>
-/// Simple arcade raycast vehicle controller tuned for fast, forgiving handling.
+/// Raycast vehicle controller tuned for weighty, compliant arcade handling.
 /// </summary>
 public sealed class RaycastVehicleController : ScriptBehaviour
 {
@@ -22,10 +22,12 @@ public sealed class RaycastVehicleController : ScriptBehaviour
 
     [SerializedField] private float mass    = 1250.0f;
     [SerializedField] private float wheelRadius    = 0.5f;
-    [SerializedField] private float suspensionTravel    = 0.100000001f;
-    [SerializedField] private float rideHeight    = 0.170000002f;
-    [SerializedField] private float springStrength    = 118000.0f;
-    [SerializedField] private float damperStrength    = 12000.0f;
+    [SerializedField] private float suspensionTravel    = 0.32f;
+    [SerializedField] private float rideHeight    = 0.42f;
+    [SerializedField] private float springStrength    = 24000.0f;
+    [SerializedField] private float damperStrength    = 5000.0f;
+    [SerializedField] private float visualSuspensionSharpness = 12.0f;
+    [SerializedField] private float visualSuspensionDeadZone = 0.003f;
 
     [SerializedField] private float acceleration    = 40.0f;
     [SerializedField] private float reverseAcceleration    = 14.0f;
@@ -62,7 +64,6 @@ public sealed class RaycastVehicleController : ScriptBehaviour
     [SerializedField] private float steerSharpness    = 5.0f;
     [SerializedField] private float highSpeedSteerFade    = 0.400000006f;
     [SerializedField] private float yawAssist    = 0.0f;
-    [SerializedField] private float uprightAssist    = 7.5f;
 
     [SerializedField] private bool steerFrontWheelAnchors    = true;
     [SerializedField] private float physicsSteerDirection    = -1.0f;
@@ -83,6 +84,10 @@ public sealed class RaycastVehicleController : ScriptBehaviour
     private float _shiftTimer;
     private int _currentGear = 1;
     private int _groundedWheelCount;
+    private float _throttleInput;
+    private float _brakeInput;
+    private float _steerInput;
+    private bool _handbrakeInput;
 
     public static bool TryGetTelemetry(GameObject? vehicle, out VehicleTelemetry telemetry)
     {
@@ -97,6 +102,8 @@ public sealed class RaycastVehicleController : ScriptBehaviour
 
     public override void OnCreate()
     {
+        UpgradeLegacySuspensionPreset();
+
         _rigidbody = GameObject.GetComponent<RigidbodyComponent>();
         if (_rigidbody is not null)
         {
@@ -125,6 +132,37 @@ public sealed class RaycastVehicleController : ScriptBehaviour
         ConfigureWheel(3, rearRightWheelAnchor, rearRightWheelVisual, false, true);
     }
 
+    private void UpgradeLegacySuspensionPreset()
+    {
+        // Migrate the short-lived 0.34 m default used by an earlier controller
+        // revision; this vehicle's wheel mesh is authored for a 0.5 m radius.
+        if (wheelRadius >= 0.33f && wheelRadius <= 0.35f)
+        {
+            wheelRadius = 0.5f;
+        }
+        if (springStrength >= 27000.0f && springStrength <= 29000.0f &&
+            damperStrength >= 4900.0f && damperStrength <= 5300.0f)
+        {
+            springStrength = 24000.0f;
+            damperStrength = 5000.0f;
+        }
+        // Existing scene components retain serialized field values when script
+        // defaults change. Migrate only the original rigid preset, leaving any
+        // deliberately customized suspension untouched.
+        var hasLegacyPreset = suspensionTravel <= 0.11f &&
+                              springStrength >= 100000.0f &&
+                              damperStrength >= 10000.0f;
+        if (!hasLegacyPreset)
+        {
+            return;
+        }
+
+        suspensionTravel = 0.32f;
+        rideHeight = 0.42f;
+        springStrength = 24000.0f;
+        damperStrength = 5000.0f;
+    }
+
     public override void OnUpdate(float deltaTime)
     {
         if (deltaTime <= 0.0f || _rigidbody is null)
@@ -142,25 +180,42 @@ public sealed class RaycastVehicleController : ScriptBehaviour
             RecoverCar();
         }
 
-        var throttle = Input.IsKeyDown(KeyCode.W) ? 1.0f : 0.0f;
-        var brake = Input.IsKeyDown(KeyCode.S) ? 1.0f : 0.0f;
-        var handbrake = Input.IsKeyDown(KeyCode.Space);
-        var steerInput = 0.0f;
-        if (Input.IsKeyDown(KeyCode.A)) steerInput += 1.0f;
-        if (Input.IsKeyDown(KeyCode.D)) steerInput -= 1.0f;
+        _throttleInput = Input.IsKeyDown(KeyCode.W) ? 1.0f : 0.0f;
+        _brakeInput = Input.IsKeyDown(KeyCode.S) ? 1.0f : 0.0f;
+        _handbrakeInput = Input.IsKeyDown(KeyCode.Space);
+        _steerInput = 0.0f;
+        if (Input.IsKeyDown(KeyCode.A)) _steerInput += 1.0f;
+        if (Input.IsKeyDown(KeyCode.D)) _steerInput -= 1.0f;
 
         var forwardSpeed = Vector3.Dot(_rigidbody.Velocity, Forward);
         var speed01 = Math.Clamp(MathF.Abs(forwardSpeed) / MathF.Max(maxSpeed, 1.0f), 0.0f, 1.0f);
         var steerLimit = maxSteerAngle * Lerp(1.0f, Math.Clamp(highSpeedSteerFade, 0.1f, 1.0f), speed01);
-        _steerAngle = Lerp(_steerAngle, steerInput * steerLimit, 1.0f - MathF.Exp(-steerSharpness * deltaTime));
+        _steerAngle = Lerp(_steerAngle, _steerInput * steerLimit, 1.0f - MathF.Exp(-steerSharpness * deltaTime));
+    }
 
+    public override void OnFixedUpdate(float fixedDeltaTime)
+    {
+        if (fixedDeltaTime <= 0.0f || _rigidbody is null)
+        {
+            return;
+        }
+
+        var forwardSpeed = Vector3.Dot(_rigidbody.Velocity, Forward);
         ClampTopSpeed();
         var driveSplit = GetDriveSplit();
-        UpdateDrivetrain(deltaTime, throttle, brake, forwardSpeed, driveSplit);
-        var drivePower = throttle * GetEngineTorqueMultiplier();
-        ApplyWheels(deltaTime, drivePower, brake, handbrake, driveSplit);
-        ApplyArcadeAssists(deltaTime, steerInput, handbrake);
-        UpdateTelemetry(deltaTime, throttle, brake, handbrake, steerInput, driveSplit);
+        UpdateDrivetrain(fixedDeltaTime, _throttleInput, _brakeInput, forwardSpeed, driveSplit);
+        var drivePower = _throttleInput * GetEngineTorqueMultiplier();
+        ApplyWheels(fixedDeltaTime, drivePower, _brakeInput, _handbrakeInput, driveSplit);
+        ApplyArcadeAssists(fixedDeltaTime, _steerInput, _handbrakeInput);
+    }
+
+    public override void OnLateUpdate(float deltaTime)
+    {
+        // Scene physics runs between OnUpdate and OnLateUpdate. Wheel transforms
+        // must be written here; otherwise the physics-driven parent transform
+        // moves them immediately after placement and they snap back next frame.
+        var driveSplit = GetDriveSplit();
+        UpdateTelemetry(deltaTime, _throttleInput, _brakeInput, _handbrakeInput, _steerInput, driveSplit);
         UpdateWheelVisuals(deltaTime);
     }
 
@@ -179,17 +234,24 @@ public sealed class RaycastVehicleController : ScriptBehaviour
             BaseAnchorRotation = anchor?.Rotation ?? Vector3.Zero,
             BaseVisualPosition = visual?.Position ?? Vector3.Zero,
             BaseVisualRotation = visual?.Rotation ?? Vector3.Zero,
+            VisualCompression = Math.Clamp(rideHeight, 0.05f, 0.95f),
+            LastCompression = Math.Clamp(rideHeight, 0.05f, 0.95f) * MathF.Max(suspensionTravel, 0.01f),
         };
     }
 
-    private void ApplyWheels(float deltaTime, float drivePower, float brake, bool handbrake, DriveSplit driveSplit)
+    private void ApplyWheels(float fixedDeltaTime, float drivePower, float brake, bool handbrake, DriveSplit driveSplit)
     {
         _groundedWheelCount = 0;
         var bodyForward = Forward;
         var bodyRight = Right;
         var bodyUp = Up;
-        var rideCompression = Math.Clamp(rideHeight, 0.05f, 0.95f) * suspensionTravel;
-        var rayLength = wheelRadius + suspensionTravel - rideCompression + 0.2f;
+        var travel = MathF.Max(suspensionTravel, 0.01f);
+        var rideCompression = Math.Clamp(rideHeight, 0.05f, 0.95f) * travel;
+        const float rayOriginOffset = 0.2f;
+        // Probe through the complete travel so contact cannot chatter at the
+        // droop boundary. Compression below the configured ride droop still
+        // clamps to zero, so this extra query range creates no lifting force.
+        var rayLength = wheelRadius + travel + rayOriginOffset + 0.05f;
 
         for (var index = 0; index < _wheels.Length; ++index)
         {
@@ -198,6 +260,8 @@ public sealed class RaycastVehicleController : ScriptBehaviour
             {
                 continue;
             }
+
+            var anchorWorldPosition = wheel.Anchor.WorldPosition;
 
             var wheelForward = bodyForward;
             var wheelRight = bodyRight;
@@ -208,7 +272,7 @@ public sealed class RaycastVehicleController : ScriptBehaviour
                 wheelRight = RotateAroundUp(bodyRight, signedSteer);
             }
 
-            var rayOrigin = wheel.Anchor.WorldPosition + bodyUp * 0.2f;
+            var rayOrigin = anchorWorldPosition + bodyUp * rayOriginOffset;
             var hitGround = string.IsNullOrWhiteSpace(groundTag)
                 ? Physics.Raycast(rayOrigin, -bodyUp, rayLength, GameObject, out var hit)
                 : Physics.RaycastTagged(rayOrigin, -bodyUp, rayLength, groundTag, GameObject, out hit);
@@ -217,19 +281,29 @@ public sealed class RaycastVehicleController : ScriptBehaviour
             {
                 wheel.Grounded = false;
                 wheel.Compression = 0.0f;
+                wheel.HasCompressionSample = false;
                 _wheels[index] = wheel;
                 continue;
             }
 
             _groundedWheelCount++;
 
-            var pointVelocity = PointVelocity(wheel.Anchor.WorldPosition);
-            var distanceFromAnchor = MathF.Max(hit.Distance - 0.2f, 0.0f);
-            var compression = Math.Clamp(rideCompression + wheelRadius - distanceFromAnchor, 0.0f, suspensionTravel);
-            var compression01 = compression / MathF.Max(suspensionTravel, 0.001f);
-            var springVelocity = Vector3.Dot(pointVelocity, bodyUp);
-            var suspensionForce = compression * springStrength - springVelocity * damperStrength;
-            suspensionForce = Math.Clamp(suspensionForce, 0.0f, _rigidbody!.Mass * 9.81f * 0.9f);
+            var pointVelocity = PointVelocity(anchorWorldPosition);
+            var distanceFromAnchor = MathF.Max(hit.Distance - rayOriginOffset, 0.0f);
+            var compression = Math.Clamp(wheelRadius + rideCompression - distanceFromAnchor, 0.0f, travel);
+            var compression01 = compression / travel;
+            // Derive damper velocity from the same ray length used by the
+            // spring. This avoids mixing Bullet COM/angular velocity with a
+            // hierarchy-derived anchor position, which can inject false damping.
+            var compressionVelocity = wheel.HasCompressionSample
+                ? (compression - wheel.LastCompression) / MathF.Max(fixedDeltaTime, 0.0001f)
+                : 0.0f;
+            var cornerWeight = _rigidbody!.Mass * 9.81f * 0.25f;
+            var springDisplacement = compression - rideCompression;
+            var suspensionForce = cornerWeight +
+                                  springDisplacement * MathF.Max(springStrength, 0.0f) +
+                                  compressionVelocity * MathF.Max(damperStrength, 0.0f);
+            suspensionForce = Math.Clamp(suspensionForce, 0.0f, cornerWeight * 3.0f);
             _rigidbody.AddForceAtPosition(bodyUp * suspensionForce, hit.Point + bodyUp * wheelRadius);
 
             var lateralSpeed = Vector3.Dot(pointVelocity, wheelRight);
@@ -267,7 +341,7 @@ public sealed class RaycastVehicleController : ScriptBehaviour
                 }
             }
 
-            if (handbrake && !wheel.Steering)
+            if (handbrake && !wheel.Steering && MathF.Abs(forwardSpeed) > 0.1f)
             {
                 tireForce += -wheelForward * MathF.Sign(NonZero(forwardSpeed)) * brakePower * _rigidbody.Mass * 0.18f;
             }
@@ -276,6 +350,8 @@ public sealed class RaycastVehicleController : ScriptBehaviour
 
             wheel.Grounded = true;
             wheel.Compression = compression01;
+            wheel.LastCompression = compression;
+            wheel.HasCompressionSample = true;
             wheel.ForwardSpeed = forwardSpeed;
             wheel.VisualSteerAngle = wheel.Steering ? _steerAngle : 0.0f;
             _wheels[index] = wheel;
@@ -293,13 +369,11 @@ public sealed class RaycastVehicleController : ScriptBehaviour
         var speed = velocity.Length();
         if (speed > 0.1f)
         {
-            _rigidbody.AddForce(-Vector3.UnitY * MathF.Min(downforce * speed * speed, _rigidbody.Mass * 9.81f * 2.5f));
+            var downforceForce = MathF.Min(downforce * speed * speed, _rigidbody.Mass * 9.81f * 2.5f);
+            _rigidbody.AddForce(-Vector3.UnitY * downforceForce);
         }
 
-        var up = Up;
         var angularVelocity = _rigidbody.AngularVelocity;
-        var uprightCorrection = Vector3.Cross(up, Vector3.UnitY) * uprightAssist;
-        angularVelocity += uprightCorrection * deltaTime;
 
         if (_groundedWheelCount > 0)
         {
@@ -309,10 +383,6 @@ public sealed class RaycastVehicleController : ScriptBehaviour
             var yawBlend = 1.0f - MathF.Exp(-(handbrake ? driftAssist : yawAssist) * deltaTime);
             angularVelocity.Y = Lerp(angularVelocity.Y, targetYaw, yawBlend);
 
-            if (velocity.Y > 0.0f)
-            {
-                _rigidbody.Velocity = new Vector3(velocity.X, velocity.Y * MathF.Exp(-2.0f * deltaTime), velocity.Z);
-            }
         }
 
         _rigidbody.AngularVelocity = ClampMagnitude(angularVelocity, 14.0f);
@@ -596,6 +666,9 @@ public sealed class RaycastVehicleController : ScriptBehaviour
 
     private void UpdateWheelVisuals(float deltaTime)
     {
+        var travel = MathF.Max(suspensionTravel, 0.01f);
+        var rideCompression = Math.Clamp(rideHeight, 0.05f, 0.95f) * travel;
+
         for (var index = 0; index < _wheels.Length; ++index)
         {
             var wheel = _wheels[index];
@@ -609,7 +682,18 @@ public sealed class RaycastVehicleController : ScriptBehaviour
                 wheel.Anchor.Rotation = wheel.BaseAnchorRotation + wheelSteerAxis * wheel.VisualSteerAngle;
             }
 
-            var localRise = wheel.Compression * suspensionTravel - rideHeight * suspensionTravel;
+            // Physics compression changes at 60 Hz. Reject sub-millimetre solver
+            // noise, then smooth only the rendered mesh. Neither value feeds
+            // back into the spring calculation or its ray origin.
+            var visualTarget = wheel.Compression;
+            var normalizedDeadZone = MathF.Max(visualSuspensionDeadZone, 0.0f) / travel;
+            if (MathF.Abs(visualTarget - wheel.VisualCompression) <= normalizedDeadZone)
+            {
+                visualTarget = wheel.VisualCompression;
+            }
+            var visualBlend = 1.0f - MathF.Exp(-MathF.Max(visualSuspensionSharpness, 0.1f) * MathF.Max(deltaTime, 0.0f));
+            wheel.VisualCompression = Lerp(wheel.VisualCompression, visualTarget, visualBlend);
+            var localRise = wheel.VisualCompression * travel - rideCompression;
             wheel.Visual.Position = new Vector3(
                 wheel.BaseVisualPosition.X,
                 wheel.BaseVisualPosition.Y + localRise,
@@ -690,7 +774,10 @@ public sealed class RaycastVehicleController : ScriptBehaviour
         public bool Steering;
         public bool RightSide;
         public bool Grounded;
+        public bool HasCompressionSample;
         public float Compression;
+        public float LastCompression;
+        public float VisualCompression;
         public float ForwardSpeed;
         public float VisualSteerAngle;
         public float SpinDegrees;

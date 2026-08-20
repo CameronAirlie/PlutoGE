@@ -96,6 +96,7 @@ namespace PlutoGE::scripting
         using destroy_script_instance_fn = void(PLUTO_HOST_CALL *)(int64_t);
         using invoke_on_create_fn = int(PLUTO_HOST_CALL *)(int64_t);
         using invoke_on_update_fn = int(PLUTO_HOST_CALL *)(int64_t, float);
+        using invoke_on_fixed_update_fn = int(PLUTO_HOST_CALL *)(int64_t, float);
         using invoke_on_late_update_fn = int(PLUTO_HOST_CALL *)(int64_t, float);
         using invoke_on_destroy_fn = int(PLUTO_HOST_CALL *)(int64_t);
         using invoke_on_collision_fn = int(PLUTO_HOST_CALL *)(int64_t, uint32_t);
@@ -817,6 +818,10 @@ namespace PlutoGE::scripting
                             if (tokens.size() >= 6)
                             {
                                 fieldDefinition.referenceTypeName = tokens[5];
+                            }
+                            if (tokens.size() >= 7)
+                            {
+                                fieldDefinition.defaultValueIsNull = tokens[6] == "1";
                             }
                             currentClass->fields.push_back(std::move(fieldDefinition));
                         }
@@ -3045,6 +3050,7 @@ namespace PlutoGE::scripting
         destroy_script_instance_fn destroyScriptInstance = nullptr;
         invoke_on_create_fn invokeOnCreate = nullptr;
         invoke_on_update_fn invokeOnUpdate = nullptr;
+        invoke_on_fixed_update_fn invokeOnFixedUpdate = nullptr;
         invoke_on_late_update_fn invokeOnLateUpdate = nullptr;
         invoke_on_destroy_fn invokeOnDestroy = nullptr;
         invoke_on_collision_fn invokeOnCollisionEnter = nullptr;
@@ -3147,6 +3153,7 @@ namespace PlutoGE::scripting
             impl.destroyScriptInstance = nullptr;
             impl.invokeOnCreate = nullptr;
             impl.invokeOnUpdate = nullptr;
+            impl.invokeOnFixedUpdate = nullptr;
             impl.invokeOnLateUpdate = nullptr;
             impl.invokeOnDestroy = nullptr;
             impl.invokeOnCollisionEnter = nullptr;
@@ -3488,6 +3495,7 @@ namespace PlutoGE::scripting
                 LoadManagedExport(impl, HOST_TEXT("DestroyScriptInstance"), impl.destroyScriptInstance) &&
                 LoadManagedExport(impl, HOST_TEXT("InvokeOnCreate"), impl.invokeOnCreate) &&
                 LoadManagedExport(impl, HOST_TEXT("InvokeOnUpdate"), impl.invokeOnUpdate) &&
+                LoadManagedExport(impl, HOST_TEXT("InvokeOnFixedUpdate"), impl.invokeOnFixedUpdate) &&
                 LoadManagedExport(impl, HOST_TEXT("InvokeOnLateUpdate"), impl.invokeOnLateUpdate) &&
                 LoadManagedExport(impl, HOST_TEXT("InvokeOnDestroy"), impl.invokeOnDestroy) &&
                 LoadManagedExport(impl, HOST_TEXT("InvokeOnCollisionEnter"), impl.invokeOnCollisionEnter) &&
@@ -3616,6 +3624,14 @@ namespace PlutoGE::scripting
                 if (m_impl && m_impl->invokeOnLateUpdate)
                 {
                     m_impl->invokeOnLateUpdate(m_instanceHandle, deltaTime);
+                }
+            }
+
+            void OnFixedUpdate(float fixedDeltaTime) override
+            {
+                if (m_impl && m_impl->invokeOnFixedUpdate)
+                {
+                    m_impl->invokeOnFixedUpdate(m_instanceHandle, fixedDeltaTime);
                 }
             }
 

@@ -56,6 +56,7 @@ namespace PlutoGE::scripting
         // The managed full type name used to filter typed asset references.
         std::string referenceTypeName;
         ScriptFieldValue defaultValue{};
+        bool defaultValueIsNull = false;
     };
 
     struct ScriptClassDefinition

@@ -34,6 +34,7 @@ namespace PlutoGE::scene
         void Start();
         void Stop();
         void Update(float deltaTime) override;
+        void FixedUpdate(float fixedDeltaTime);
         void LateUpdate(float deltaTime);
         void OnCollisionEnter(uint32_t otherEntityId);
         void OnCollisionExit(uint32_t otherEntityId);
@@ -51,6 +52,7 @@ namespace PlutoGE::scene
         [[nodiscard]] const std::unordered_map<std::string, scripting::ScriptFieldValue> &GetFieldValues() const { return m_fieldValues; }
         [[nodiscard]] std::unordered_map<std::string, scripting::ScriptFieldValue> GetFieldValuesSnapshot() const;
         [[nodiscard]] std::vector<scripting::ScriptFieldDefinition> GetSerializedFields() const;
+        [[nodiscard]] bool RestoreFieldValuesToDefaults();
         [[nodiscard]] bool IsStarted() const { return m_started; }
 
         void RemapEntityReferences(const std::unordered_map<uint32_t, uint32_t> &entityIdRemap);

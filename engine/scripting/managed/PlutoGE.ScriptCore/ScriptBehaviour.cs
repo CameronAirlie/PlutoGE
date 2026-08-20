@@ -38,6 +38,10 @@ public abstract class ScriptBehaviour
     {
     }
 
+    public virtual void OnFixedUpdate(float fixedDeltaTime)
+    {
+    }
+
     public virtual void OnLateUpdate(float deltaTime)
     {
     }

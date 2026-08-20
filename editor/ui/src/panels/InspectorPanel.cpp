@@ -2512,8 +2512,25 @@ namespace PlutoGE::ui
 
         const auto serializedFields = scriptComponent.GetSerializedFields();
         const auto fieldValues = scriptComponent.GetFieldValuesSnapshot();
+        if (!currentSource.empty() && !serializedFields.empty())
+        {
+            if (ImGui::Button("Restore Script Defaults"))
+            {
+                if (scriptComponent.RestoreFieldValuesToDefaults())
+                {
+                    changed = true;
+                    editorShell.SetStatusMessage("Restored script component values to script defaults.");
+                }
+                else
+                {
+                    editorShell.SetStatusMessage("Script component values already match the available defaults.");
+                }
+            }
+        }
+
         if (!currentSource.empty() && selectedSourceOption && !serializedFields.empty())
         {
+            ImGui::SameLine();
             ImGui::BeginDisabled(selectedSourceOption->sourcePath.empty() || editorShell.IsRuntimeExportProject());
             if (ImGui::Button("Set Values As Script Defaults"))
             {

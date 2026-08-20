@@ -2365,6 +2365,12 @@ namespace PlutoGE::scene
                                               ? std::max(deltaTime, 0.0f) * m_timeScale
                                               : deltaTime;
         ++m_updateSequence;
+        // Continuous forces are state sampled by scripts each render frame. If
+        // no fixed step occurred after the previous sample, replace that stale
+        // sample rather than accumulating another full-strength copy. Impulses
+        // are discrete events and must remain queued until physics consumes them.
+        std::erase_if(m_pendingRigidbodyForces,
+                      [](const PendingRigidbodyForce &force) { return !force.impulse; });
         ClearIblCaptureVolumes();
         const auto preparationEnd = Clock::now();
 
@@ -2427,9 +2433,18 @@ namespace PlutoGE::scene
                 maximumPhysicsSubstepsPerFrame);
             if (physicsSubstepCount > 0)
             {
-                const float physicsTime = fixedPhysicsStep * static_cast<float>(physicsSubstepCount);
-                StepPhysics(physicsTime);
-                m_physicsTimeAccumulator -= physicsTime;
+                for (int substep = 0; substep < physicsSubstepCount; ++substep)
+                {
+                    for (auto *scriptComponent : GatherRuntimeScriptComponents(m_rootEntities))
+                    {
+                        if (scriptComponent && scriptComponent->IsEnabled())
+                        {
+                            scriptComponent->FixedUpdate(fixedPhysicsStep);
+                        }
+                    }
+                    StepPhysics(fixedPhysicsStep);
+                    m_physicsTimeAccumulator -= fixedPhysicsStep;
+                }
             }
         }
         FlushPendingDestroyEntities();

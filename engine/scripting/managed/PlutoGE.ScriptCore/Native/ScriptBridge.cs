@@ -1454,6 +1454,27 @@ internal static unsafe class ScriptBridge
         }
     }
 
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "InvokeOnFixedUpdate")]
+    public static int InvokeOnFixedUpdate(long handle, float fixedDeltaTime)
+    {
+        try
+        {
+            if (!Instances.TryGetValue(handle, out var instance))
+            {
+                SetError($"Unknown managed script instance handle '{handle}'.");
+                return 0;
+            }
+
+            instance.OnFixedUpdate(fixedDeltaTime);
+            return 1;
+        }
+        catch (Exception exception)
+        {
+            SetError(exception.ToString());
+            return 0;
+        }
+    }
+
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "InvokeOnDestroy")]
     public static int InvokeOnDestroy(long handle)
     {
@@ -3069,7 +3090,8 @@ internal static unsafe class ScriptBridge
                     .Append(field.Type.ToString(CultureInfo.InvariantCulture)).Append('\t')
                     .Append('1').Append('\t')
                     .Append(Escape(SerializeValue(field.Type, field.DefaultValue))).Append('\t')
-                    .Append(Escape(field.ReferenceTypeName)).Append('\n');
+                    .Append(Escape(field.ReferenceTypeName)).Append('\t')
+                    .Append(field.DefaultValue is null ? '1' : '0').Append('\n');
             }
 
             builder.Append("END\n");

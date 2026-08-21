@@ -1844,6 +1844,7 @@ namespace PlutoGE::render
             sortedShadowCasters.push_back(&shadowCaster);
         static thread_local std::vector<TransformInstanceData> shadowBatchInstances;
         int incrementalShadowSurfaceUpdates = 0;
+        bool submittedFullDirectionalStaticRefresh = false;
         auto reserveIncrementalShadowSurfaceUpdate = [&]()
         {
             if (incrementalShadowSurfaceUpdates >= kMaxIncrementalShadowSurfaceUpdatesPerFrame)
@@ -2239,6 +2240,30 @@ namespace PlutoGE::render
                         continue;
                     }
 
+                    const bool movedStaticCaster = std::any_of(
+                        shadowCasters.begin(), shadowCasters.end(),
+                        [](const ShadowCasterEntry &caster)
+                        {
+                            return caster.hasMoved && caster.command->isStatic && !caster.command->jointMatrices;
+                        });
+                    const bool staticNeedsFullRefresh = !light->staticShadowCascadeValid[cascadeIndex] ||
+                                                        forceFullCascadeUpdate || shadowCasterTopologyChanged ||
+                                                        movedStaticCaster || !cascadeScroll.valid;
+                    // A depth-range recenter can invalidate several cached
+                    // cascades together. Redrawing multiple full 2048² static
+                    // maps in one frame can miss a presentation interval even
+                    // though each individual shadow pass is inexpensive. Keep
+                    // the old valid cascade for one more frame and consume the
+                    // queued refresh on the next frame.
+                    if (!forceFullCascadeUpdate && staticNeedsFullRefresh &&
+                        submittedFullDirectionalStaticRefresh)
+                    {
+                        deferredShadowRefresh = true;
+                        continue;
+                    }
+                    if (staticNeedsFullRefresh)
+                        submittedFullDirectionalStaticRefresh = true;
+
                     light->shadowCascadeWorldOrigins[cascadeIndex] = cascadeShadowWorldOrigin;
                     light->shadowCascadeMatrices[cascadeIndex] = cascadeRenderMatrix;
 
@@ -2249,15 +2274,6 @@ namespace PlutoGE::render
                     {
                         continue;
                     }
-                    const bool movedStaticCaster = std::any_of(
-                        shadowCasters.begin(), shadowCasters.end(),
-                        [](const ShadowCasterEntry &caster)
-                        {
-                            return caster.hasMoved && caster.command->isStatic && !caster.command->jointMatrices;
-                        });
-                    const bool staticNeedsFullRefresh = !light->staticShadowCascadeValid[cascadeIndex] ||
-                                                        forceFullCascadeUpdate || shadowCasterTopologyChanged ||
-                                                        movedStaticCaster || !cascadeScroll.valid;
                     const bool requiresScrollCopy = !staticNeedsFullRefresh &&
                                                     (cascadeScroll.x != 0 || cascadeScroll.y != 0);
                     unsigned int renderDepthTexture = staticCascadeMap->GetTextureID();

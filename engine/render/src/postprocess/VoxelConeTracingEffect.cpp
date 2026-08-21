@@ -28,8 +28,14 @@ namespace PlutoGE::render
         // also what makes m_voxelizationCommandBudget a real per-frame budget:
         // previously one "command" could contain an unbounded instance count
         // and prevent the render thread from processing editor commands.
-        constexpr std::size_t kMaxVoxelInstancesPerDraw = 64;
-        constexpr std::size_t kMaxVoxelTrianglesPerDraw = 131072;
+        constexpr std::size_t kMaxVoxelInstancesPerDraw = 32;
+        constexpr std::size_t kMaxVoxelTrianglesPerDraw = 32768;
+        // Geometry-shader voxelization performs several image atomics per
+        // fragment. A command-count budget alone allowed eight individually
+        // large draws to land in one frame. Keep the progressive job below a
+        // predictable amount of raster/atomic work regardless of how scene
+        // commands happen to be batched.
+        constexpr std::size_t kMaxVoxelTrianglesPerFrame = 65536;
 
         bool ParseBool(const std::string &value) { return value == "true" || value == "1"; }
 
@@ -987,7 +993,10 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
             m_voxelizationShader->SetUniform(shadowSplitNames[shadowCascade], cascade.pendingShadowSplits[shadowCascade]);
         }
         int submittedDraws = 0;
-        while (cascade.jobIndex < cascade.jobs.size() && submittedDraws < m_voxelizationCommandBudget)
+        std::size_t submittedTriangles = 0;
+        while (cascade.jobIndex < cascade.jobs.size() &&
+               submittedDraws < m_voxelizationCommandBudget &&
+               submittedTriangles < kMaxVoxelTrianglesPerFrame)
         {
             auto &job = cascade.jobs[cascade.jobIndex];
             const auto &c = job.command;
@@ -1039,10 +1048,15 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
                 const std::size_t trianglesPerInstance = std::max<std::size_t>(indexCount / 3, 1);
                 const std::size_t instancesForTriangleBudget =
                     std::max<std::size_t>(kMaxVoxelTrianglesPerDraw / trianglesPerInstance, 1);
+                const std::size_t remainingTriangleBudget =
+                    kMaxVoxelTrianglesPerFrame - submittedTriangles;
+                const std::size_t instancesForFrameBudget =
+                    std::max<std::size_t>(remainingTriangleBudget / trianglesPerInstance, 1);
                 const std::size_t remainingInstances = instanceCount - job.nextInstance;
                 const std::size_t batchInstanceCount = std::min(
                     remainingInstances,
-                    std::min(kMaxVoxelInstancesPerDraw, instancesForTriangleBudget));
+                    std::min(kMaxVoxelInstancesPerDraw,
+                             std::min(instancesForTriangleBudget, instancesForFrameBudget)));
                 if (!m_voxelInstanceBuffer)
                     glGenBuffers(1, &m_voxelInstanceBuffer);
                 glBindBuffer(GL_ARRAY_BUFFER, m_voxelInstanceBuffer);
@@ -1075,6 +1089,7 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
                 m_voxelizationShader->SetUniform("uUseInstancing", 1);
                 c.mesh->DrawSubmeshInstancedBound(c.submeshIndex, batchInstanceCount, job.voxelLod);
                 job.nextInstance += batchInstanceCount;
+                submittedTriangles += trianglesPerInstance * batchInstanceCount;
                 ++submittedDraws;
                 if (job.nextInstance >= instanceCount)
                     ++cascade.jobIndex;
@@ -1084,6 +1099,10 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
                 m_voxelizationShader->SetUniform("uUseInstancing", 0);
                 m_voxelizationShader->SetUniform("uModel", c.model);
                 c.mesh->DrawSubmesh(c.submeshIndex, job.voxelLod);
+                submittedTriangles +=
+                    std::max<std::size_t>(
+                        c.mesh->GetSubmeshLodIndexCount(c.submeshIndex, job.voxelLod) / 3,
+                        1);
                 job.nextInstance = 1;
                 ++submittedDraws;
                 ++cascade.jobIndex;

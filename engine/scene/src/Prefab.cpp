@@ -144,7 +144,7 @@ namespace PlutoGE::scene
             if (componentType == "FoliageComponent")
                 return std::make_unique<FoliageComponent>();
             if (componentType == "ParticleSystemComponent")
-                return std::make_unique<ParticleSystemComponent>();
+                return CreateParticleSystemComponent();
             if (componentType == "AnimationComponent")
                 return std::make_unique<AnimationComponent>();
             if (componentType == "ActiveRagdollComponent")

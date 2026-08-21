@@ -144,6 +144,11 @@ namespace PlutoGE::scene
         ReleaseGpuResources();
     }
 
+    std::unique_ptr<Component> CreateParticleSystemComponent()
+    {
+        return std::make_unique<ParticleSystemComponent>();
+    }
+
     void ParticleSystemComponent::Update(float deltaTime)
     {
         if (m_playOnAwake && !m_playing && !m_paused && m_time == 0.0f)
@@ -1005,6 +1010,7 @@ namespace PlutoGE::scene
         m_shapeRadius = std::max(asset.shapeRadius, 0.0f);
         m_coneAngle = std::clamp(asset.coneAngle, 0.0f, 89.0f);
         m_renderShape = asset.renderShape;
+        m_renderMode = asset.renderMode;
         m_materialAssetReference = asset.materialAssetReference;
         m_flipbookColumns = std::clamp(asset.flipbookColumns, 1, 64);
         m_flipbookRows = std::clamp(asset.flipbookRows, 1, 64);
@@ -1016,6 +1022,11 @@ namespace PlutoGE::scene
         m_smokeLightingEnabled = asset.smokeLightingEnabled;
         m_smokeLightingStrength = std::clamp(asset.smokeLightingStrength, 0.0f, 1.0f);
         m_smokeAmbient = std::clamp(asset.smokeAmbient, 0.0f, 1.0f);
+        m_volumeDensity = std::max(asset.volumeDensity, 0.0f);
+        m_volumeNoiseStrength = std::clamp(asset.volumeNoiseStrength, 0.0f, 1.0f);
+        m_volumeNoiseFrequency = std::max(asset.volumeNoiseFrequency, 0.0001f);
+        m_volumeEdgeSoftness = std::max(asset.volumeEdgeSoftness, 0.01f);
+        m_volumeSelfShadow = std::clamp(asset.volumeSelfShadow, 0.0f, 4.0f);
         m_collisionEnabled = asset.collisionEnabled;
         m_collisionMode = asset.collisionMode;
         m_collisionDampening = std::clamp(asset.collisionDampening, 0.0f, 1.0f);

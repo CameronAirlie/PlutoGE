@@ -199,6 +199,11 @@ namespace PlutoGE::assets
             return shape == ParticleRenderShape::Quad ? "Quad" : "Circle";
         }
 
+        const char *ToString(ParticleRenderMode mode)
+        {
+            return mode == ParticleRenderMode::Volumetric ? "Volumetric" : "Billboard";
+        }
+
         const char *ToString(ParticleCollisionMode mode)
         {
             switch (mode)
@@ -232,6 +237,11 @@ namespace PlutoGE::assets
         ParticleRenderShape ParseParticleRenderShape(const std::string &value)
         {
             return value == "Quad" || value == "1" ? ParticleRenderShape::Quad : ParticleRenderShape::Circle;
+        }
+
+        ParticleRenderMode ParseParticleRenderMode(const std::string &value)
+        {
+            return value == "Volumetric" || value == "1" ? ParticleRenderMode::Volumetric : ParticleRenderMode::Billboard;
         }
 
         ParticleCollisionMode ParseParticleCollisionMode(const std::string &value)
@@ -2521,6 +2531,8 @@ namespace PlutoGE::assets
                 asset.coneAngle = std::clamp(ParseFloatValue(value, asset.coneAngle), 0.0f, 89.0f);
             else if (key == "RenderShape")
                 asset.renderShape = ParseParticleRenderShape(value);
+            else if (key == "RenderMode")
+                asset.renderMode = ParseParticleRenderMode(value);
             else if (key == "MaterialAsset")
                 asset.materialAssetReference = value;
             else if (key == "FlipbookColumns")
@@ -2543,6 +2555,16 @@ namespace PlutoGE::assets
                 asset.smokeLightingStrength = std::clamp(ParseFloatValue(value, asset.smokeLightingStrength), 0.0f, 1.0f);
             else if (key == "SmokeAmbient")
                 asset.smokeAmbient = std::clamp(ParseFloatValue(value, asset.smokeAmbient), 0.0f, 1.0f);
+            else if (key == "VolumeDensity")
+                asset.volumeDensity = std::max(ParseFloatValue(value, asset.volumeDensity), 0.0f);
+            else if (key == "VolumeNoiseStrength")
+                asset.volumeNoiseStrength = std::clamp(ParseFloatValue(value, asset.volumeNoiseStrength), 0.0f, 1.0f);
+            else if (key == "VolumeNoiseFrequency")
+                asset.volumeNoiseFrequency = std::max(ParseFloatValue(value, asset.volumeNoiseFrequency), 0.0001f);
+            else if (key == "VolumeEdgeSoftness")
+                asset.volumeEdgeSoftness = std::max(ParseFloatValue(value, asset.volumeEdgeSoftness), 0.01f);
+            else if (key == "VolumeSelfShadow")
+                asset.volumeSelfShadow = std::clamp(ParseFloatValue(value, asset.volumeSelfShadow), 0.0f, 4.0f);
             else if (key == "CollisionEnabled")
                 asset.collisionEnabled = ParseBoolValue(value);
             else if (key == "CollisionMode")
@@ -2669,6 +2691,7 @@ namespace PlutoGE::assets
         output << "ShapeRadius=" << asset.shapeRadius << "\n";
         output << "ConeAngle=" << asset.coneAngle << "\n";
         output << "RenderShape=" << ToString(asset.renderShape) << "\n";
+        output << "RenderMode=" << ToString(asset.renderMode) << "\n";
         output << "MaterialAsset=" << asset.materialAssetReference << "\n";
         output << "FlipbookColumns=" << asset.flipbookColumns << "\n";
         output << "FlipbookRows=" << asset.flipbookRows << "\n";
@@ -2680,6 +2703,11 @@ namespace PlutoGE::assets
         output << "SmokeLightingEnabled=" << (asset.smokeLightingEnabled ? "true" : "false") << "\n";
         output << "SmokeLightingStrength=" << asset.smokeLightingStrength << "\n";
         output << "SmokeAmbient=" << asset.smokeAmbient << "\n";
+        output << "VolumeDensity=" << asset.volumeDensity << "\n";
+        output << "VolumeNoiseStrength=" << asset.volumeNoiseStrength << "\n";
+        output << "VolumeNoiseFrequency=" << asset.volumeNoiseFrequency << "\n";
+        output << "VolumeEdgeSoftness=" << asset.volumeEdgeSoftness << "\n";
+        output << "VolumeSelfShadow=" << asset.volumeSelfShadow << "\n";
         output << "CollisionEnabled=" << (asset.collisionEnabled ? "true" : "false") << "\n";
         output << "CollisionMode=" << ToString(asset.collisionMode) << "\n";
         output << "CollisionDampening=" << asset.collisionDampening << "\n";

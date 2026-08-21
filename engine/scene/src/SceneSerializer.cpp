@@ -329,7 +329,7 @@ namespace PlutoGE::scene
             }
             if (componentType == "ParticleSystemComponent")
             {
-                return std::make_unique<ParticleSystemComponent>();
+                return CreateParticleSystemComponent();
             }
             if (componentType == "AnimationComponent")
             {

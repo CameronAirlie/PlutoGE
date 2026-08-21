@@ -144,6 +144,8 @@ namespace PlutoGE::render
                 flat out float gAge;
                 flat out float gLifetime;
                 flat out float gRandom;
+                flat out float gSize;
+                flat out vec3 gCenterView;
 
                 uniform mat4 uView;
                 uniform mat4 uProjection;
@@ -169,6 +171,8 @@ namespace PlutoGE::render
                     gAge = vAge[0];
                     gLifetime = vLifetime[0];
                     gRandom = fract(sin(vSeed[0].x) * 43758.5453);
+                    gSize = size;
+                    gCenterView = (uView * vec4(center, 1.0)).xyz;
                     EmitVertex();
                 }
 
@@ -213,6 +217,8 @@ namespace PlutoGE::render
                 flat in float gAge;
                 flat in float gLifetime;
                 flat in float gRandom;
+                flat in float gSize;
+                flat in vec3 gCenterView;
                 out vec4 FragColor;
 
                 uniform vec4 uColor;
@@ -234,6 +240,33 @@ namespace PlutoGE::render
                 uniform float uSmokeAmbient;
                 uniform vec3 uSmokeLightDirectionView;
                 uniform vec3 uSmokeLightColor;
+                uniform int uParticleRenderMode;
+                uniform float uVolumeDensity;
+                uniform float uVolumeNoiseStrength;
+                uniform float uVolumeNoiseFrequency;
+                uniform float uVolumeEdgeSoftness;
+                uniform float uVolumeSelfShadow;
+                const int MAX_LOCAL_SMOKE_LIGHTS = 4;
+                uniform int uLocalSmokeLightCount;
+                uniform int uLocalSmokeLightTypes[MAX_LOCAL_SMOKE_LIGHTS];
+                uniform vec3 uLocalSmokeLightPositionsView[MAX_LOCAL_SMOKE_LIGHTS];
+                uniform vec3 uLocalSmokeLightDirectionsView[MAX_LOCAL_SMOKE_LIGHTS];
+                uniform vec3 uLocalSmokeLightColors[MAX_LOCAL_SMOKE_LIGHTS];
+                uniform float uLocalSmokeLightRanges[MAX_LOCAL_SMOKE_LIGHTS];
+
+                float hash21(vec2 p)
+                {
+                    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+                }
+
+                float valueNoise(vec2 p)
+                {
+                    vec2 cell = floor(p);
+                    vec2 f = fract(p);
+                    f = f * f * (3.0 - 2.0 * f);
+                    return mix(mix(hash21(cell), hash21(cell + vec2(1.0, 0.0)), f.x),
+                               mix(hash21(cell + vec2(0.0, 1.0)), hash21(cell + vec2(1.0)), f.x), f.y);
+                }
 
                 float viewDepth(vec2 uv, float depth)
                 {
@@ -244,7 +277,7 @@ namespace PlutoGE::render
                 void main()
                 {
                     float mask = 1.0;
-                    if (uParticleRenderShape == 0)
+                    if (uParticleRenderShape == 0 || uParticleRenderMode == 1)
                     {
                         vec2 centered = gUv * 2.0 - 1.0;
                         mask = smoothstep(1.0, 0.82, dot(centered, centered));
@@ -274,6 +307,24 @@ namespace PlutoGE::render
 
                     vec4 color = gColor * materialColor;
                     color.a *= mask;
+                    float opticalDepth = 0.0;
+                    if (uParticleRenderMode == 1)
+                    {
+                        vec2 volumePosition = gUv * 2.0 - 1.0;
+                        float radiusSquared = dot(volumePosition, volumePosition);
+                        if (radiusSquared >= 1.0)
+                        {
+                            discard;
+                        }
+                        float chord = 2.0 * sqrt(max(1.0 - radiusSquared, 0.0)) * max(gSize, 0.0001);
+                        float edgeDensity = pow(max(1.0 - radiusSquared, 0.0), uVolumeEdgeSoftness);
+                        vec2 noisePosition = volumePosition * uVolumeNoiseFrequency +
+                                             vec2(gRandom * 17.0, gAge * 0.17);
+                        float noiseValue = valueNoise(noisePosition) * 0.65 + valueNoise(noisePosition * 2.03 + 7.1) * 0.35;
+                        float densityNoise = mix(1.0, clamp(noiseValue * 1.6, 0.05, 1.5), uVolumeNoiseStrength);
+                        opticalDepth = max(uVolumeDensity, 0.0) * edgeDensity * densityNoise * chord;
+                        color.a = (1.0 - exp(-opticalDepth)) * color.a;
+                    }
                     if (uSoftParticlesEnabled != 0)
                     {
                         vec2 screenUv = gl_FragCoord.xy / vec2(textureSize(uSceneDepth, 0));
@@ -292,11 +343,43 @@ namespace PlutoGE::render
                         float radial = dot(centered, centered);
                         vec3 normalView = normalize(vec3(centered, sqrt(max(1.0 - radial, 0.02))));
                         float diffuse = max(dot(normalView, normalize(uSmokeLightDirectionView)), 0.0);
-                        vec3 lighting = vec3(uSmokeAmbient) + uSmokeLightColor * diffuse;
-                        color.rgb *= mix(vec3(1.0), lighting, uSmokeLightingStrength);
+                        if (uParticleRenderMode == 1)
+                        {
+                            diffuse = diffuse * exp(-opticalDepth * uVolumeSelfShadow) +
+                                      0.2 * (1.0 - exp(-opticalDepth));
+                        }
+                        vec3 directLight = uSmokeLightColor * diffuse;
+                        for (int lightIndex = 0; lightIndex < MAX_LOCAL_SMOKE_LIGHTS; ++lightIndex)
+                        {
+                            if (lightIndex >= uLocalSmokeLightCount)
+                                break;
+                            vec3 toLight = uLocalSmokeLightPositionsView[lightIndex] - gCenterView;
+                            float distanceToLight = length(toLight);
+                            float range = max(uLocalSmokeLightRanges[lightIndex], 0.0001);
+                            if (distanceToLight >= range)
+                                continue;
+                            vec3 lightDirection = toLight / max(distanceToLight, 0.0001);
+                            float attenuation = pow(clamp(1.0 - distanceToLight / range, 0.0, 1.0), 2.0);
+                            if (uLocalSmokeLightTypes[lightIndex] == 2)
+                            {
+                                float cone = dot(-lightDirection, normalize(uLocalSmokeLightDirectionsView[lightIndex]));
+                                attenuation *= smoothstep(0.90, 0.975, cone);
+                            }
+                            float localDiffuse = max(dot(normalView, lightDirection), 0.0);
+                            if (uParticleRenderMode == 1)
+                                localDiffuse = localDiffuse * exp(-opticalDepth * uVolumeSelfShadow) + 0.12 * (1.0 - exp(-opticalDepth));
+                            directLight += uLocalSmokeLightColors[lightIndex] * localDiffuse * attenuation;
+                        }
+                        // Ambient and direct response are independent controls.
+                        // A zero lighting strength now removes direct light
+                        // instead of reverting to fully bright unlit albedo.
+                        vec3 lighting = vec3(uSmokeAmbient) + directLight * uSmokeLightingStrength;
+                        color.rgb *= max(lighting, vec3(0.0));
                     }
 
-                    vec3 emissive = max(uEmission, vec3(0.0));
+                    // Emission represents radiance carried by the participating
+                    // medium, so empty/transparent portions must not glow.
+                    vec3 emissive = max(uEmission, vec3(0.0)) * color.a;
                     FragColor = vec4(color.rgb + emissive, color.a);
                 }
             )";
@@ -377,6 +460,11 @@ namespace PlutoGE::render
         int ToInt(assets::ParticleRenderShape value)
         {
             return value == assets::ParticleRenderShape::Quad ? 1 : 0;
+        }
+
+        int ToInt(assets::ParticleRenderMode value)
+        {
+            return value == assets::ParticleRenderMode::Volumetric ? 1 : 0;
         }
 
         float Hash(float value)
@@ -823,6 +911,7 @@ namespace PlutoGE::render
             m_renderShader->SetUniform("uEmitterTransform", owner->GetWorldTransform());
             m_renderShader->SetUniform("uSimulationSpace", cpuSimulation ? 1 : ToInt(particleSystem->GetSimulationSpace()));
             m_renderShader->SetUniform("uParticleRenderShape", ToInt(particleSystem->GetRenderShape()));
+            m_renderShader->SetUniform("uParticleRenderMode", ToInt(particleSystem->GetRenderMode()));
             m_renderShader->SetUniform("uStartColorAlpha", particleSystem->GetStartColor().a);
             m_renderShader->SetUniform("uColorOverLifetimeEnabled", particleSystem->GetColorOverLifetimeEnabled() ? 1 : 0);
             m_renderShader->SetUniform("uEndColor", particleSystem->GetEndColor());
@@ -841,8 +930,13 @@ namespace PlutoGE::render
             m_renderShader->SetUniform("uSmokeLightingEnabled", particleSystem->GetSmokeLightingEnabled() ? 1 : 0);
             m_renderShader->SetUniform("uSmokeLightingStrength", particleSystem->GetSmokeLightingStrength());
             m_renderShader->SetUniform("uSmokeAmbient", particleSystem->GetSmokeAmbient());
+            m_renderShader->SetUniform("uVolumeDensity", particleSystem->GetVolumeDensity());
+            m_renderShader->SetUniform("uVolumeNoiseStrength", particleSystem->GetVolumeNoiseStrength());
+            m_renderShader->SetUniform("uVolumeNoiseFrequency", particleSystem->GetVolumeNoiseFrequency());
+            m_renderShader->SetUniform("uVolumeEdgeSoftness", particleSystem->GetVolumeEdgeSoftness());
+            m_renderShader->SetUniform("uVolumeSelfShadow", particleSystem->GetVolumeSelfShadow());
             glm::vec3 smokeLightDirectionView{0.0f, 0.0f, 1.0f};
-            glm::vec3 smokeLightColor{1.0f};
+            glm::vec3 smokeLightColor{0.0f};
             if (const auto *light = FindPrimaryDirectionalLight(ctx))
             {
                 smokeLightDirectionView = glm::normalize(glm::mat3(ctx.cameraData.view) * -light->direction);
@@ -850,6 +944,45 @@ namespace PlutoGE::render
             }
             m_renderShader->SetUniform("uSmokeLightDirectionView", smokeLightDirectionView);
             m_renderShader->SetUniform("uSmokeLightColor", smokeLightColor);
+
+            std::vector<const scene::Light *> localSmokeLights;
+            if (ctx.lights)
+            {
+                for (const auto *light : *ctx.lights)
+                {
+                    if (light && light->type != scene::LightType::Directional && light->range > 0.0f && light->intensity > 0.0f)
+                    {
+                        localSmokeLights.push_back(light);
+                    }
+                }
+                const glm::vec3 emitterPosition = owner->GetWorldPosition();
+                std::sort(localSmokeLights.begin(), localSmokeLights.end(), [&emitterPosition](const auto *a, const auto *b)
+                {
+                    const auto score = [&emitterPosition](const scene::Light *light)
+                    {
+                        const float distance = glm::length(light->position - emitterPosition);
+                        const float attenuation = std::max(1.0f - distance / std::max(light->range, 0.0001f), 0.0f);
+                        return light->intensity * attenuation * attenuation;
+                    };
+                    return score(a) > score(b);
+                });
+            }
+            constexpr int kMaxLocalSmokeLights = 4;
+            const int localSmokeLightCount = std::min(static_cast<int>(localSmokeLights.size()), kMaxLocalSmokeLights);
+            m_renderShader->SetUniform("uLocalSmokeLightCount", localSmokeLightCount);
+            for (int lightIndex = 0; lightIndex < localSmokeLightCount; ++lightIndex)
+            {
+                const auto *light = localSmokeLights[static_cast<std::size_t>(lightIndex)];
+                const std::string suffix = "[" + std::to_string(lightIndex) + "]";
+                m_renderShader->SetUniform("uLocalSmokeLightTypes" + suffix, static_cast<int>(light->type));
+                m_renderShader->SetUniform("uLocalSmokeLightPositionsView" + suffix,
+                                           glm::vec3(ctx.cameraData.view * glm::vec4(light->position, 1.0f)));
+                m_renderShader->SetUniform("uLocalSmokeLightDirectionsView" + suffix,
+                                           glm::normalize(glm::mat3(ctx.cameraData.view) * light->direction));
+                m_renderShader->SetUniform("uLocalSmokeLightColors" + suffix,
+                                           glm::max(light->color * light->intensity, glm::vec3(0.0f)));
+                m_renderShader->SetUniform("uLocalSmokeLightRanges" + suffix, light->range);
+            }
 
             if (!particleSystem->GetMaterialAssetReference().empty())
             {

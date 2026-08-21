@@ -26,6 +26,12 @@ namespace PlutoGE::assets
         Quad = 1,
     };
 
+    enum class ParticleRenderMode
+    {
+        Billboard = 0,
+        Volumetric = 1,
+    };
+
     enum class ParticleCollisionMode
     {
         Kill = 0,
@@ -71,6 +77,7 @@ namespace PlutoGE::assets
         float shapeRadius = 1.0f;
         float coneAngle = 25.0f;
         ParticleRenderShape renderShape = ParticleRenderShape::Circle;
+        ParticleRenderMode renderMode = ParticleRenderMode::Billboard;
         std::string materialAssetReference;
         int flipbookColumns = 1;
         int flipbookRows = 1;
@@ -82,6 +89,11 @@ namespace PlutoGE::assets
         bool smokeLightingEnabled = false;
         float smokeLightingStrength = 0.65f;
         float smokeAmbient = 0.35f;
+        float volumeDensity = 2.0f;
+        float volumeNoiseStrength = 0.45f;
+        float volumeNoiseFrequency = 3.0f;
+        float volumeEdgeSoftness = 1.5f;
+        float volumeSelfShadow = 0.75f;
 
         bool collisionEnabled = false;
         ParticleCollisionMode collisionMode = ParticleCollisionMode::Kill;

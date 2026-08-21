@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <glad/glad.h>
 #include <glm/glm.hpp>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -152,6 +153,7 @@ namespace PlutoGE::scene
         float GetConeAngle() const { return m_coneAngle; }
         void SetConeAngle(float angle);
         assets::ParticleRenderShape GetRenderShape() const { return m_renderShape; }
+        assets::ParticleRenderMode GetRenderMode() const { return m_renderMode; }
         void SetRenderShape(assets::ParticleRenderShape renderShape) { m_renderShape = renderShape; }
         const std::string &GetMaterialAssetReference() const { return m_materialAssetReference; }
         void SetMaterialAssetReference(const std::string &materialAssetReference) { m_materialAssetReference = materialAssetReference; }
@@ -165,6 +167,11 @@ namespace PlutoGE::scene
         bool GetSmokeLightingEnabled() const { return m_smokeLightingEnabled; }
         float GetSmokeLightingStrength() const { return m_smokeLightingStrength; }
         float GetSmokeAmbient() const { return m_smokeAmbient; }
+        float GetVolumeDensity() const { return m_volumeDensity; }
+        float GetVolumeNoiseStrength() const { return m_volumeNoiseStrength; }
+        float GetVolumeNoiseFrequency() const { return m_volumeNoiseFrequency; }
+        float GetVolumeEdgeSoftness() const { return m_volumeEdgeSoftness; }
+        float GetVolumeSelfShadow() const { return m_volumeSelfShadow; }
         bool UsesCpuSimulation() const;
         const std::vector<ParticleCpuData> &GetCpuParticles() const { return m_cpuParticles; }
         void BuildTrailRenderSegments(std::vector<ParticleTrailRenderSegment> &segments) const;
@@ -239,6 +246,7 @@ namespace PlutoGE::scene
         float m_shapeRadius = 1.0f;
         float m_coneAngle = 25.0f;
         assets::ParticleRenderShape m_renderShape = assets::ParticleRenderShape::Circle;
+        assets::ParticleRenderMode m_renderMode = assets::ParticleRenderMode::Billboard;
         std::string m_materialAssetReference;
         int m_flipbookColumns = 1;
         int m_flipbookRows = 1;
@@ -250,6 +258,11 @@ namespace PlutoGE::scene
         bool m_smokeLightingEnabled = false;
         float m_smokeLightingStrength = 0.65f;
         float m_smokeAmbient = 0.35f;
+        float m_volumeDensity = 2.0f;
+        float m_volumeNoiseStrength = 0.45f;
+        float m_volumeNoiseFrequency = 3.0f;
+        float m_volumeEdgeSoftness = 1.5f;
+        float m_volumeSelfShadow = 0.75f;
         bool m_collisionEnabled = false;
         assets::ParticleCollisionMode m_collisionMode = assets::ParticleCollisionMode::Kill;
         float m_collisionDampening = 0.0f;
@@ -280,4 +293,9 @@ namespace PlutoGE::scene
         std::array<GLuint, 2> m_buffers{0, 0};
         std::array<GLuint, 2> m_vaos{0, 0};
     };
+
+    // Keep allocation in the same translation unit as the implementation.
+    // This prevents stale incremental-build consumers from allocating an older
+    // class size when particle settings extend the component layout.
+    std::unique_ptr<Component> CreateParticleSystemComponent();
 }

@@ -170,6 +170,13 @@ namespace PlutoGE::ui
         ImGui::SeparatorText("Rendering");
         if (ImGui::SliderFloat("Fade In Fraction", &m_asset.fadeInFraction, 0.0f, 1.0f, "%.2f")) m_dirty = true;
         if (ImGui::SliderFloat("Fade Out Fraction", &m_asset.fadeOutFraction, 0.0f, 1.0f, "%.2f")) m_dirty = true;
+        int renderMode = static_cast<int>(m_asset.renderMode);
+        const char *renderModeItems[] = {"Billboard", "Volumetric"};
+        if (ImGui::Combo("Render Mode", &renderMode, renderModeItems, IM_ARRAYSIZE(renderModeItems)))
+        {
+            m_asset.renderMode = renderMode == 1 ? assets::ParticleRenderMode::Volumetric : assets::ParticleRenderMode::Billboard;
+            m_dirty = true;
+        }
         int renderShape = static_cast<int>(m_asset.renderShape);
         const char *renderShapeItems[] = {"Circle", "Quad"};
         if (ImGui::Combo("Particle Shape", &renderShape, renderShapeItems, IM_ARRAYSIZE(renderShapeItems)))
@@ -186,6 +193,15 @@ namespace PlutoGE::ui
         if (ImGui::DragFloat("Frames Per Second", &m_asset.flipbookFramesPerSecond, 0.25f, 0.0f, 240.0f, "%.2f")) m_dirty = true;
         if (ImGui::Checkbox("Loop Animation", &m_asset.flipbookLooping)) m_dirty = true;
         if (ImGui::Checkbox("Random Start Frame", &m_asset.flipbookRandomStart)) m_dirty = true;
+        ImGui::EndDisabled();
+
+        ImGui::BeginDisabled(m_asset.renderMode != assets::ParticleRenderMode::Volumetric);
+        ImGui::SeparatorText("Volume");
+        if (ImGui::DragFloat("Volume Density", &m_asset.volumeDensity, 0.02f, 0.0f, 100.0f, "%.3f")) m_dirty = true;
+        if (ImGui::SliderFloat("Volume Noise", &m_asset.volumeNoiseStrength, 0.0f, 1.0f, "%.2f")) m_dirty = true;
+        if (ImGui::DragFloat("Volume Noise Frequency", &m_asset.volumeNoiseFrequency, 0.05f, 0.0001f, 100.0f, "%.3f")) m_dirty = true;
+        if (ImGui::DragFloat("Volume Edge Softness", &m_asset.volumeEdgeSoftness, 0.05f, 0.01f, 8.0f, "%.2f")) m_dirty = true;
+        if (ImGui::SliderFloat("Volume Self Shadow", &m_asset.volumeSelfShadow, 0.0f, 4.0f, "%.2f")) m_dirty = true;
         ImGui::EndDisabled();
 
         ImGui::SeparatorText("Smoke Rendering");
@@ -384,6 +400,11 @@ namespace PlutoGE::ui
             m_asset.softParticleDistance = std::max(m_asset.softParticleDistance, 0.0001f);
             m_asset.smokeLightingStrength = std::clamp(m_asset.smokeLightingStrength, 0.0f, 1.0f);
             m_asset.smokeAmbient = std::clamp(m_asset.smokeAmbient, 0.0f, 1.0f);
+            m_asset.volumeDensity = std::max(m_asset.volumeDensity, 0.0f);
+            m_asset.volumeNoiseStrength = std::clamp(m_asset.volumeNoiseStrength, 0.0f, 1.0f);
+            m_asset.volumeNoiseFrequency = std::max(m_asset.volumeNoiseFrequency, 0.0001f);
+            m_asset.volumeEdgeSoftness = std::max(m_asset.volumeEdgeSoftness, 0.01f);
+            m_asset.volumeSelfShadow = std::clamp(m_asset.volumeSelfShadow, 0.0f, 4.0f);
             m_asset.emissionRateOverTime = std::max(m_asset.emissionRateOverTime, 0.0f);
             m_asset.burstTime = std::max(m_asset.burstTime, 0.0f);
             m_asset.burstCount = std::max(m_asset.burstCount, 0);

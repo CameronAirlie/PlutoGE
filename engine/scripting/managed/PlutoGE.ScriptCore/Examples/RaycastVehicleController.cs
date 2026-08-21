@@ -41,7 +41,7 @@ public sealed class RaycastVehicleController : ScriptBehaviour
     [SerializedField] private float gripLimit    = 1.5f;
     [SerializedField] private float driveGrip    = 1.0f;
     [SerializedField] private float brakeGrip    = 1.0f;
-    [SerializedField] private float handbrakeGrip    = 2.0f;
+    [SerializedField] private float handbrakeGrip    = 0.45f;
     [SerializedField] private float idleRpm  = 900.0f;
     [SerializedField] private float redlineRpm  = 7200.0f;
     [SerializedField] private float finalDriveRatio  = 4.5f;
@@ -150,6 +150,12 @@ public sealed class RaycastVehicleController : ScriptBehaviour
         {
             highSpeedSteerFade = 0.12f;
         }
+        // The original handbrake preset was still high enough to reach the
+        // generic tyre-force cap, so pulling it barely changed rear grip.
+        if (handbrakeGrip >= 1.99f && handbrakeGrip <= 2.01f)
+        {
+            handbrakeGrip = 0.45f;
+        }
         // Existing scene components retain serialized field values when script
         // defaults change. Migrate only the original rigid preset, leaving any
         // deliberately customized suspension untouched.
@@ -235,7 +241,7 @@ public sealed class RaycastVehicleController : ScriptBehaviour
         // moves them immediately after placement and they snap back next frame.
         var driveSplit = GetDriveSplit();
         UpdateTelemetry(deltaTime, _throttleInput, _brakeInput, _handbrakeInput, _steerInput, driveSplit);
-        UpdateWheelVisuals(deltaTime);
+        UpdateWheelVisuals(deltaTime, driveSplit);
     }
 
     private Vector3 Forward => SafeNormalize(GameObject.Forward, -Vector3.UnitZ);
@@ -271,6 +277,11 @@ public sealed class RaycastVehicleController : ScriptBehaviour
         var rayOriginOffset = wheelRadius + travel + 0.25f;
         var rayLength = rayOriginOffset + wheelRadius + travel + 0.10f;
         var emitDiagnostics = suspensionDiagnostics && (++_diagnosticStep % 12 == 0);
+        // Use the live pedal state here rather than smoothed drive power.
+        // Residual throttle blending after releasing W must not suppress
+        // reverse when the driver subsequently presses S.
+        var burnout = _throttleInput > 0.0f && brake > 0.0f &&
+                      MathF.Abs(Vector3.Dot(_rigidbody!.Velocity, bodyForward)) < 8.0f;
         StringBuilder? diagnostics = emitDiagnostics
             ? new StringBuilder($"[VehicleSuspension] bodyY={GameObject.WorldPosition.Y:F6} vy={_rigidbody!.Velocity.Y:F6} " +
                                 $"wx={_rigidbody.AngularVelocity.X:F6} wz={_rigidbody.AngularVelocity.Z:F6} " +
@@ -340,19 +351,35 @@ public sealed class RaycastVehicleController : ScriptBehaviour
             var wheelGrip = (!wheel.Steering && handbrake) ? handbrakeGrip : baseGrip;
             var lateralForce = -wheelRight * lateralSpeed * wheelGrip * _rigidbody.Mass * 0.25f;
             var normalLoad = MathF.Max(suspensionForce, _rigidbody.Mass * 9.81f * 0.12f);
-            lateralForce = ClampMagnitude(lateralForce, normalLoad * MathF.Max(gripLimit, 0.1f));
+            var lateralGripRatio = MathF.Max(wheelGrip, 0.0f) / MathF.Max(baseGrip, 0.01f);
+            lateralForce = ClampMagnitude(lateralForce,
+                normalLoad * MathF.Max(gripLimit, 0.1f) * lateralGripRatio);
 
             var tireForce = lateralForce;
             var driveShare = wheel.Steering ? driveSplit.Front * 0.5f : driveSplit.Rear * 0.5f;
+            var drivenWheel = driveShare > 0.0f;
             if (drivePower > 0.0f && driveShare > 0.0f)
             {
                 var speedLimiter = 1.0f - SmoothStep(Math.Clamp(MathF.Abs(Vector3.Dot(_rigidbody.Velocity, bodyForward)) / MathF.Max(maxSpeed, 1.0f), 0.0f, 1.0f));
                 var rawDrive = wheelForward * drivePower * acceleration * _rigidbody.Mass * driveShare * speedLimiter;
-                var tractionLimit = normalLoad * MathF.Max(wheelGrip, 0.0f) * MathF.Max(driveGrip, 0.0f) * driveShare;
+                // Throttle against the service brake deliberately overwhelms
+                // driven-wheel traction while the undriven axle holds the car.
+                var burnoutTraction = burnout ? 0.45f : 1.0f;
+                var tractionLimit = normalLoad * MathF.Max(wheelGrip, 0.0f) * MathF.Max(driveGrip, 0.0f) * driveShare * burnoutTraction;
+                // Once engine demand exceeds the available longitudinal grip,
+                // the driven tyre is spinning and can no longer provide its
+                // full lateral force. Without this friction trade-off, raising
+                // acceleration only hit the clamp and could never induce
+                // power oversteer.
+                var driveDemand = rawDrive.Length() / MathF.Max(tractionLimit, 0.01f);
+                var poweredSlip = SmoothStep(InverseLerp(0.75f, 2.0f, driveDemand));
+                tireForce = lateralForce * Lerp(1.0f, 0.18f, poweredSlip);
                 tireForce += ClampMagnitude(rawDrive, tractionLimit);
             }
 
-            if (brake > 0.0f)
+            // During a burnout the service brake holds the undriven wheels but
+            // must not be interpreted as reverse throttle on the driven axle.
+            if (brake > 0.0f && !(burnout && drivenWheel))
             {
                 var reversing = MathF.Abs(forwardSpeed) < 1.2f || forwardSpeed < -0.5f;
                 if (reversing && driveShare > 0.0f)
@@ -634,7 +661,7 @@ public sealed class RaycastVehicleController : ScriptBehaviour
         _rigidbody.AddImpulse(Vector3.UnitY * _rigidbody.Mass * 4.0f);
     }
 
-    private void UpdateWheelVisuals(float deltaTime)
+    private void UpdateWheelVisuals(float deltaTime, DriveSplit driveSplit)
     {
         var travel = MathF.Max(suspensionTravel, 0.01f);
         var rideCompression = Math.Clamp(rideHeight, 0.05f, 0.95f) * travel;
@@ -670,7 +697,21 @@ public sealed class RaycastVehicleController : ScriptBehaviour
                 wheel.BaseVisualPosition.Z);
 
             var spinDirection = wheel.RightSide ? rightWheelSpinDirection : leftWheelSpinDirection;
-            wheel.SpinDegrees += wheel.ForwardSpeed / MathF.Max(wheelRadius, 0.001f) * deltaTime * 180.0f / MathF.PI * spinDirection;
+            var driveWeight = wheel.Steering ? driveSplit.Front : driveSplit.Rear;
+            var visualWheelSpeed = wheel.ForwardSpeed;
+            // A locked rear wheel keeps translating with the chassis but has
+            // zero angular speed. This must take priority over driven-wheel
+            // wheelspin when throttle and handbrake are held together.
+            if (!wheel.Steering && _handbrakeInput)
+            {
+                visualWheelSpeed = 0.0f;
+            }
+            else if (driveWeight > 0.0f && _throttleInput > 0.0f &&
+                MathF.Abs(_drivenWheelSpinSpeed) > MathF.Abs(visualWheelSpeed))
+            {
+                visualWheelSpeed = _drivenWheelSpinSpeed;
+            }
+            wheel.SpinDegrees += visualWheelSpeed / MathF.Max(wheelRadius, 0.001f) * deltaTime * 180.0f / MathF.PI * spinDirection;
 
             var visualRotation = wheel.BaseVisualRotation + wheelSpinAxis * wheel.SpinDegrees;
             if (wheel.Steering && !steerFrontWheelAnchors)

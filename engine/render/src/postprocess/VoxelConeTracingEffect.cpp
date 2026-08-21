@@ -65,11 +65,12 @@ namespace PlutoGE::render
             for (const auto &command : commands)
             {
                 // The voxel field is a cached representation of static scene
-                // lighting. Skinned meshes change their joint matrices every
-                // frame and would otherwise continuously invalidate every
-                // cascade. They still receive VCTGI through the G-buffer, but
-                // do not contribute stale, intermittently rebuilt occlusion.
-                if (command.jointMatrices && !command.jointMatrices->empty())
+                // lighting. Dynamic and skinned meshes can move every frame and
+                // would otherwise continuously invalidate every cascade. They
+                // still receive VCTGI through the G-buffer, but do not contribute
+                // stale, intermittently rebuilt occlusion.
+                if (!command.isStatic ||
+                    (command.jointMatrices && !command.jointMatrices->empty()))
                     continue;
 
                 ++staticCommandCount;
@@ -810,7 +811,7 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
         cascade.jobs.reserve(commands.size());
         for (const auto &command : commands)
         {
-            if (!command.mesh || !command.material ||
+            if (!command.mesh || !command.material || !command.isStatic ||
                 (command.jointMatrices && !command.jointMatrices->empty()) ||
                 !IntersectsVoxelVolume(command, volumeOrigin, cascade.size))
                 continue;

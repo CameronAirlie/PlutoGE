@@ -95,8 +95,11 @@ namespace PlutoGE::ui
 
         ImGui::SeparatorText("Start");
         if (ImGui::DragFloat("Lifetime", &m_asset.startLifetime, 0.05f, 0.0001f, 100000.0f, "%.3f")) m_dirty = true;
+        if (ImGui::SliderFloat("Lifetime Variation", &m_asset.lifetimeVariation, 0.0f, 1.0f, "%.2f")) m_dirty = true;
         if (ImGui::DragFloat("Speed", &m_asset.startSpeed, 0.05f, 0.0f, 100000.0f, "%.3f")) m_dirty = true;
+        if (ImGui::SliderFloat("Speed Variation", &m_asset.speedVariation, 0.0f, 1.0f, "%.2f")) m_dirty = true;
         if (ImGui::DragFloat("Size", &m_asset.startSize, 0.01f, 0.0f, 100000.0f, "%.3f")) m_dirty = true;
+        if (ImGui::SliderFloat("Size Variation", &m_asset.sizeVariation, 0.0f, 1.0f, "%.2f")) m_dirty = true;
         float color[4] = {m_asset.startColor.r, m_asset.startColor.g, m_asset.startColor.b, m_asset.startColor.a};
         if (ImGui::ColorEdit4("Color", color))
         {
@@ -117,6 +120,15 @@ namespace PlutoGE::ui
         if (ImGui::DragFloat("End Size", &m_asset.endSize, 0.01f, 0.0f, 100000.0f, "%.3f")) m_dirty = true;
         ImGui::EndDisabled();
         if (ImGui::DragFloat("Gravity Modifier", &m_asset.gravityModifier, 0.01f, -1000.0f, 1000.0f, "%.3f")) m_dirty = true;
+
+        ImGui::SeparatorText("Motion");
+        if (ImGui::DragFloat("Drag", &m_asset.drag, 0.01f, 0.0f, 1000.0f, "%.3f")) m_dirty = true;
+        if (ImGui::DragFloat("Buoyancy", &m_asset.buoyancy, 0.01f, -1000.0f, 1000.0f, "%.3f")) m_dirty = true;
+        if (ImGui::DragFloat3("Wind Velocity", &m_asset.windVelocity.x, 0.01f, -1000.0f, 1000.0f, "%.3f")) m_dirty = true;
+        if (ImGui::DragFloat("Turbulence Strength", &m_asset.turbulenceStrength, 0.01f, 0.0f, 1000.0f, "%.3f")) m_dirty = true;
+        if (ImGui::DragFloat("Turbulence Frequency", &m_asset.turbulenceFrequency, 0.01f, 0.0001f, 1000.0f, "%.3f")) m_dirty = true;
+        if (ImGui::DragFloat("Rotation Speed", &m_asset.rotationSpeed, 1.0f, -10000.0f, 10000.0f, "%.1f deg/s")) m_dirty = true;
+        if (ImGui::SliderFloat("Rotation Variation", &m_asset.rotationSpeedVariation, 0.0f, 1.0f, "%.2f")) m_dirty = true;
 
         ImGui::SeparatorText("Emission");
         if (ImGui::DragFloat("Rate Over Time", &m_asset.emissionRateOverTime, 0.1f, 0.0f, 100000.0f, "%.3f")) m_dirty = true;
@@ -154,6 +166,8 @@ namespace PlutoGE::ui
         }
 
         ImGui::SeparatorText("Rendering");
+        if (ImGui::SliderFloat("Fade In Fraction", &m_asset.fadeInFraction, 0.0f, 1.0f, "%.2f")) m_dirty = true;
+        if (ImGui::SliderFloat("Fade Out Fraction", &m_asset.fadeOutFraction, 0.0f, 1.0f, "%.2f")) m_dirty = true;
         int renderShape = static_cast<int>(m_asset.renderShape);
         const char *renderShapeItems[] = {"Circle", "Quad"};
         if (ImGui::Combo("Particle Shape", &renderShape, renderShapeItems, IM_ARRAYSIZE(renderShapeItems)))
@@ -326,11 +340,20 @@ namespace PlutoGE::ui
             m_asset.duration = std::max(m_asset.duration, 0.0001f);
             m_asset.maxParticles = std::clamp(m_asset.maxParticles, 1, 200000);
             m_asset.startLifetime = std::max(m_asset.startLifetime, 0.0001f);
+            m_asset.lifetimeVariation = std::clamp(m_asset.lifetimeVariation, 0.0f, 1.0f);
             m_asset.startSpeed = std::max(m_asset.startSpeed, 0.0f);
+            m_asset.speedVariation = std::clamp(m_asset.speedVariation, 0.0f, 1.0f);
             m_asset.startSize = std::max(m_asset.startSize, 0.0f);
+            m_asset.sizeVariation = std::clamp(m_asset.sizeVariation, 0.0f, 1.0f);
             m_asset.startColor = glm::clamp(m_asset.startColor, glm::vec4(0.0f), glm::vec4(1.0f));
             m_asset.endColor = glm::clamp(m_asset.endColor, glm::vec4(0.0f), glm::vec4(1.0f));
             m_asset.endSize = std::max(m_asset.endSize, 0.0f);
+            m_asset.drag = std::max(m_asset.drag, 0.0f);
+            m_asset.turbulenceStrength = std::max(m_asset.turbulenceStrength, 0.0f);
+            m_asset.turbulenceFrequency = std::max(m_asset.turbulenceFrequency, 0.0001f);
+            m_asset.rotationSpeedVariation = std::clamp(m_asset.rotationSpeedVariation, 0.0f, 1.0f);
+            m_asset.fadeInFraction = std::clamp(m_asset.fadeInFraction, 0.0f, 1.0f);
+            m_asset.fadeOutFraction = std::clamp(m_asset.fadeOutFraction, 0.0f, 1.0f);
             m_asset.emissionRateOverTime = std::max(m_asset.emissionRateOverTime, 0.0f);
             m_asset.burstTime = std::max(m_asset.burstTime, 0.0f);
             m_asset.burstCount = std::max(m_asset.burstCount, 0);

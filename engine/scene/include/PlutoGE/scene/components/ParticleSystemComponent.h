@@ -108,10 +108,13 @@ namespace PlutoGE::scene
         int GetMaxParticles() const { return m_maxParticles; }
         void SetMaxParticles(int maxParticles);
         float GetStartLifetime() const { return m_startLifetime; }
+        float GetLifetimeVariation() const { return m_lifetimeVariation; }
         void SetStartLifetime(float lifetime);
         float GetStartSpeed() const { return m_startSpeed; }
+        float GetSpeedVariation() const { return m_speedVariation; }
         void SetStartSpeed(float speed);
         float GetStartSize() const { return m_startSize; }
+        float GetSizeVariation() const { return m_sizeVariation; }
         void SetStartSize(float size);
         const glm::vec4 &GetStartColor() const { return m_startColor; }
         void SetStartColor(const glm::vec4 &color) { m_startColor = glm::clamp(color, glm::vec4(0.0f), glm::vec4(1.0f)); }
@@ -120,6 +123,15 @@ namespace PlutoGE::scene
         bool GetSizeOverLifetimeEnabled() const { return m_sizeOverLifetimeEnabled; }
         float GetEndSize() const { return m_endSize; }
         float GetGravityModifier() const { return m_gravityModifier; }
+        float GetDrag() const { return m_drag; }
+        float GetBuoyancy() const { return m_buoyancy; }
+        const glm::vec3 &GetWindVelocity() const { return m_windVelocity; }
+        float GetTurbulenceStrength() const { return m_turbulenceStrength; }
+        float GetTurbulenceFrequency() const { return m_turbulenceFrequency; }
+        float GetRotationSpeed() const { return m_rotationSpeed; }
+        float GetRotationSpeedVariation() const { return m_rotationSpeedVariation; }
+        float GetFadeInFraction() const { return m_fadeInFraction; }
+        float GetFadeOutFraction() const { return m_fadeOutFraction; }
         void SetGravityModifier(float gravityModifier) { m_gravityModifier = gravityModifier; }
         float GetEmissionRateOverTime() const { return m_emissionRateOverTime; }
         void SetEmissionRateOverTime(float rate);
@@ -184,14 +196,26 @@ namespace PlutoGE::scene
 
         int m_maxParticles = 1000;
         float m_startLifetime = 5.0f;
+        float m_lifetimeVariation = 0.0f;
         float m_startSpeed = 2.0f;
+        float m_speedVariation = 0.0f;
         float m_startSize = 0.25f;
+        float m_sizeVariation = 0.0f;
         glm::vec4 m_startColor{1.0f};
         bool m_colorOverLifetimeEnabled = false;
         glm::vec4 m_endColor{1.0f, 1.0f, 1.0f, 0.0f};
         bool m_sizeOverLifetimeEnabled = false;
         float m_endSize = 0.0f;
         float m_gravityModifier = 0.0f;
+        float m_drag = 0.0f;
+        float m_buoyancy = 0.0f;
+        glm::vec3 m_windVelocity{0.0f};
+        float m_turbulenceStrength = 0.0f;
+        float m_turbulenceFrequency = 0.5f;
+        float m_rotationSpeed = 0.0f;
+        float m_rotationSpeedVariation = 0.0f;
+        float m_fadeInFraction = 0.0f;
+        float m_fadeOutFraction = 0.25f;
         float m_emissionRateOverTime = 10.0f;
         float m_burstTime = 0.0f;
         int m_burstCount = 0;

@@ -2459,10 +2459,16 @@ namespace PlutoGE::assets
                 asset.maxParticles = std::clamp(ParseIntValue(value, asset.maxParticles), 1, 200000);
             else if (key == "StartLifetime")
                 asset.startLifetime = std::max(ParseFloatValue(value, asset.startLifetime), 0.0001f);
+            else if (key == "LifetimeVariation")
+                asset.lifetimeVariation = std::clamp(ParseFloatValue(value, asset.lifetimeVariation), 0.0f, 1.0f);
             else if (key == "StartSpeed")
                 asset.startSpeed = std::max(ParseFloatValue(value, asset.startSpeed), 0.0f);
+            else if (key == "SpeedVariation")
+                asset.speedVariation = std::clamp(ParseFloatValue(value, asset.speedVariation), 0.0f, 1.0f);
             else if (key == "StartSize")
                 asset.startSize = std::max(ParseFloatValue(value, asset.startSize), 0.0f);
+            else if (key == "SizeVariation")
+                asset.sizeVariation = std::clamp(ParseFloatValue(value, asset.sizeVariation), 0.0f, 1.0f);
             else if (key == "StartColor")
                 asset.startColor = glm::clamp(ParseVec4Value(value, asset.startColor), glm::vec4(0.0f), glm::vec4(1.0f));
             else if (key == "ColorOverLifetimeEnabled")
@@ -2475,6 +2481,24 @@ namespace PlutoGE::assets
                 asset.endSize = std::max(ParseFloatValue(value, asset.endSize), 0.0f);
             else if (key == "GravityModifier")
                 asset.gravityModifier = ParseFloatValue(value, asset.gravityModifier);
+            else if (key == "Drag")
+                asset.drag = std::max(ParseFloatValue(value, asset.drag), 0.0f);
+            else if (key == "Buoyancy")
+                asset.buoyancy = ParseFloatValue(value, asset.buoyancy);
+            else if (key == "WindVelocity")
+                asset.windVelocity = ParseVec3Value(value, asset.windVelocity);
+            else if (key == "TurbulenceStrength")
+                asset.turbulenceStrength = std::max(ParseFloatValue(value, asset.turbulenceStrength), 0.0f);
+            else if (key == "TurbulenceFrequency")
+                asset.turbulenceFrequency = std::max(ParseFloatValue(value, asset.turbulenceFrequency), 0.0001f);
+            else if (key == "RotationSpeed")
+                asset.rotationSpeed = ParseFloatValue(value, asset.rotationSpeed);
+            else if (key == "RotationSpeedVariation")
+                asset.rotationSpeedVariation = std::clamp(ParseFloatValue(value, asset.rotationSpeedVariation), 0.0f, 1.0f);
+            else if (key == "FadeInFraction")
+                asset.fadeInFraction = std::clamp(ParseFloatValue(value, asset.fadeInFraction), 0.0f, 1.0f);
+            else if (key == "FadeOutFraction")
+                asset.fadeOutFraction = std::clamp(ParseFloatValue(value, asset.fadeOutFraction), 0.0f, 1.0f);
             else if (key == "EmissionRateOverTime")
                 asset.emissionRateOverTime = std::max(ParseFloatValue(value, asset.emissionRateOverTime), 0.0f);
             else if (key == "BurstTime")
@@ -2590,14 +2614,26 @@ namespace PlutoGE::assets
         output << "Duration=" << asset.duration << "\n";
         output << "MaxParticles=" << asset.maxParticles << "\n";
         output << "StartLifetime=" << asset.startLifetime << "\n";
+        output << "LifetimeVariation=" << asset.lifetimeVariation << "\n";
         output << "StartSpeed=" << asset.startSpeed << "\n";
+        output << "SpeedVariation=" << asset.speedVariation << "\n";
         output << "StartSize=" << asset.startSize << "\n";
+        output << "SizeVariation=" << asset.sizeVariation << "\n";
         output << "StartColor=" << asset.startColor.r << "," << asset.startColor.g << "," << asset.startColor.b << "," << asset.startColor.a << "\n";
         output << "ColorOverLifetimeEnabled=" << (asset.colorOverLifetimeEnabled ? "true" : "false") << "\n";
         output << "EndColor=" << asset.endColor.r << "," << asset.endColor.g << "," << asset.endColor.b << "," << asset.endColor.a << "\n";
         output << "SizeOverLifetimeEnabled=" << (asset.sizeOverLifetimeEnabled ? "true" : "false") << "\n";
         output << "EndSize=" << asset.endSize << "\n";
         output << "GravityModifier=" << asset.gravityModifier << "\n";
+        output << "Drag=" << asset.drag << "\n";
+        output << "Buoyancy=" << asset.buoyancy << "\n";
+        output << "WindVelocity=" << asset.windVelocity.x << "," << asset.windVelocity.y << "," << asset.windVelocity.z << "\n";
+        output << "TurbulenceStrength=" << asset.turbulenceStrength << "\n";
+        output << "TurbulenceFrequency=" << asset.turbulenceFrequency << "\n";
+        output << "RotationSpeed=" << asset.rotationSpeed << "\n";
+        output << "RotationSpeedVariation=" << asset.rotationSpeedVariation << "\n";
+        output << "FadeInFraction=" << asset.fadeInFraction << "\n";
+        output << "FadeOutFraction=" << asset.fadeOutFraction << "\n";
         output << "EmissionRateOverTime=" << asset.emissionRateOverTime << "\n";
         output << "BurstTime=" << asset.burstTime << "\n";
         output << "BurstCount=" << asset.burstCount << "\n";

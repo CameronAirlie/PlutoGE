@@ -43,6 +43,19 @@ namespace PlutoGE::render
                 uniform int uClear;
                 uniform float uStartLifetime;
                 uniform float uGravityModifier;
+                uniform float uDrag;
+                uniform float uBuoyancy;
+                uniform vec3 uWindVelocity;
+                uniform float uTurbulenceStrength;
+                uniform float uTurbulenceFrequency;
+
+                vec3 turbulenceField(vec3 position, float seed)
+                {
+                    vec3 p = position * uTurbulenceFrequency + vec3(seed * 0.013);
+                    return vec3(sin(p.y + p.z) - cos(p.z - p.y),
+                                sin(p.z + p.x) - cos(p.x - p.z),
+                                sin(p.x + p.y) - cos(p.y - p.x)) * 0.5;
+                }
 
                 void main()
                 {
@@ -59,7 +72,10 @@ namespace PlutoGE::render
                     }
                     else if (positionAge.w <= velocityLifetime.w)
                     {
-                        velocityLifetime.xyz += vec3(0.0, -9.81 * uGravityModifier, 0.0) * uDeltaTime;
+                        vec3 acceleration = vec3(0.0, uBuoyancy - 9.81 * uGravityModifier, 0.0) + uWindVelocity;
+                        acceleration += turbulenceField(positionAge.xyz, seedValue.x) * uTurbulenceStrength;
+                        velocityLifetime.xyz += acceleration * uDeltaTime;
+                        velocityLifetime.xyz *= exp(-uDrag * uDeltaTime);
                         positionAge.xyz += velocityLifetime.xyz * uDeltaTime;
                         positionAge.w += uDeltaTime;
                     }
@@ -67,7 +83,7 @@ namespace PlutoGE::render
                     vPositionAge = positionAge;
                     vVelocityLifetime = velocityLifetime;
                     vColorSize = colorSize;
-                    vSeed = seedValue + vec4(0.013, 0.017, 0.019, 0.0);
+                    vSeed = seedValue;
                 }
             )";
             source.transformFeedbackVaryings = {"vPositionAge", "vVelocityLifetime", "vColorSize", "vSeed"};
@@ -86,11 +102,13 @@ namespace PlutoGE::render
                 layout(location = 0) in vec4 aPositionAge;
                 layout(location = 1) in vec4 aVelocityLifetime;
                 layout(location = 2) in vec4 aColorSize;
+                layout(location = 3) in vec4 aSeed;
 
                 out vec3 vPosition;
                 out float vAge;
                 out float vLifetime;
                 out vec4 vColorSize;
+                out vec4 vSeed;
 
                 uniform mat4 uEmitterTransform;
                 uniform int uSimulationSpace;
@@ -106,6 +124,7 @@ namespace PlutoGE::render
                     vAge = aPositionAge.w;
                     vLifetime = aVelocityLifetime.w;
                     vColorSize = aColorSize;
+                    vSeed = aSeed;
                 }
             )";
             source.geometrySource = R"(
@@ -117,6 +136,7 @@ namespace PlutoGE::render
                 in float vAge[];
                 in float vLifetime[];
                 in vec4 vColorSize[];
+                in vec4 vSeed[];
 
                 out vec2 gUv;
                 out vec4 gColor;
@@ -130,10 +150,16 @@ namespace PlutoGE::render
                 uniform vec4 uEndColor;
                 uniform int uSizeOverLifetimeEnabled;
                 uniform float uEndSize;
+                uniform float uFadeInFraction;
+                uniform float uFadeOutFraction;
 
                 void EmitCorner(vec3 center, vec2 corner, vec2 uv, float size)
                 {
-                    vec3 worldPosition = center + (uCameraRight * corner.x + uCameraUp * corner.y) * size;
+                    float angle = vSeed[0].z + vSeed[0].w * vAge[0];
+                    float c = cos(angle);
+                    float s = sin(angle);
+                    vec2 rotatedCorner = mat2(c, -s, s, c) * corner;
+                    vec3 worldPosition = center + (uCameraRight * rotatedCorner.x + uCameraUp * rotatedCorner.y) * size;
                     gl_Position = uProjection * uView * vec4(worldPosition, 1.0);
                     gUv = uv;
                     EmitVertex();
@@ -162,6 +188,9 @@ namespace PlutoGE::render
                     {
                         gColor.a *= 1.0 - normalizedAge;
                     }
+                    float fadeIn = uFadeInFraction > 0.0 ? smoothstep(0.0, uFadeInFraction, normalizedAge) : 1.0;
+                    float fadeOut = uFadeOutFraction > 0.0 ? 1.0 - smoothstep(1.0 - uFadeOutFraction, 1.0, normalizedAge) : 1.0;
+                    gColor.a *= fadeIn * fadeOut;
 
                     EmitCorner(vPosition[0], vec2(-0.5, -0.5), vec2(0.0, 0.0), size);
                     EmitCorner(vPosition[0], vec2( 0.5, -0.5), vec2(1.0, 0.0), size);
@@ -372,9 +401,13 @@ namespace PlutoGE::render
 
                 scene::ParticleGpuData particle;
                 particle.positionAge = glm::vec4(spawnPosition, 0.0f);
-                particle.velocityLifetime = glm::vec4(spawnDirection * particleSystem.GetStartSpeed(), particleSystem.GetStartLifetime());
-                particle.colorSize = glm::vec4(glm::vec3(particleSystem.GetStartColor()), particleSystem.GetStartSize());
-                particle.seed = glm::vec4(seed, seed * 1.37f, seed * 2.11f, 1.0f);
+                const float speed = particleSystem.GetStartSpeed() * (1.0f + (Hash(seed + 20.0f) * 2.0f - 1.0f) * particleSystem.GetSpeedVariation());
+                const float lifetime = std::max(particleSystem.GetStartLifetime() * (1.0f + (Hash(seed + 22.0f) * 2.0f - 1.0f) * particleSystem.GetLifetimeVariation()), 0.0001f);
+                const float size = particleSystem.GetStartSize() * (1.0f + (Hash(seed + 21.0f) * 2.0f - 1.0f) * particleSystem.GetSizeVariation());
+                const float angularSpeed = glm::radians(particleSystem.GetRotationSpeed()) * (1.0f + (Hash(seed + 24.0f) * 2.0f - 1.0f) * particleSystem.GetRotationSpeedVariation());
+                particle.velocityLifetime = glm::vec4(spawnDirection * speed, lifetime);
+                particle.colorSize = glm::vec4(glm::vec3(particleSystem.GetStartColor()), size);
+                particle.seed = glm::vec4(seed, seed * 1.37f, Hash(seed + 23.0f) * glm::two_pi<float>(), angularSpeed);
                 particles.push_back(particle);
             }
 
@@ -423,7 +456,8 @@ namespace PlutoGE::render
                 particle.positionAge = glm::vec4(cpuParticle.position, cpuParticle.age);
                 particle.velocityLifetime = glm::vec4(cpuParticle.velocity, cpuParticle.lifetime);
                 particle.colorSize = glm::vec4(glm::vec3(cpuParticle.color), cpuParticle.size);
-                particle.seed = glm::vec4(cpuParticle.seed, cpuParticle.seed * 1.37f, cpuParticle.seed * 2.11f, 1.0f);
+                const float angularSpeed = glm::radians(particleSystem.GetRotationSpeed()) * (1.0f + (Hash(cpuParticle.seed + 24.0f) * 2.0f - 1.0f) * particleSystem.GetRotationSpeedVariation());
+                particle.seed = glm::vec4(cpuParticle.seed, cpuParticle.seed * 1.37f, Hash(cpuParticle.seed + 23.0f) * glm::two_pi<float>(), angularSpeed);
                 particles.push_back(particle);
             }
             return particles;
@@ -635,6 +669,11 @@ namespace PlutoGE::render
                     m_updateShader->SetUniform("uClear", clearRequested ? 1 : 0);
                     m_updateShader->SetUniform("uStartLifetime", particleSystem->GetStartLifetime());
                     m_updateShader->SetUniform("uGravityModifier", particleSystem->GetGravityModifier());
+                    m_updateShader->SetUniform("uDrag", particleSystem->GetDrag());
+                    m_updateShader->SetUniform("uBuoyancy", particleSystem->GetBuoyancy());
+                    m_updateShader->SetUniform("uWindVelocity", particleSystem->GetWindVelocity());
+                    m_updateShader->SetUniform("uTurbulenceStrength", particleSystem->GetTurbulenceStrength());
+                    m_updateShader->SetUniform("uTurbulenceFrequency", particleSystem->GetTurbulenceFrequency());
 
                     Graphics::Enable(GL_RASTERIZER_DISCARD);
                     glBindVertexArray(particleSystem->GetReadVao());
@@ -671,6 +710,8 @@ namespace PlutoGE::render
             m_renderShader->SetUniform("uEndColor", particleSystem->GetEndColor());
             m_renderShader->SetUniform("uSizeOverLifetimeEnabled", particleSystem->GetSizeOverLifetimeEnabled() ? 1 : 0);
             m_renderShader->SetUniform("uEndSize", particleSystem->GetEndSize());
+            m_renderShader->SetUniform("uFadeInFraction", particleSystem->GetFadeInFraction());
+            m_renderShader->SetUniform("uFadeOutFraction", particleSystem->GetFadeOutFraction());
 
             if (!particleSystem->GetMaterialAssetReference().empty())
             {

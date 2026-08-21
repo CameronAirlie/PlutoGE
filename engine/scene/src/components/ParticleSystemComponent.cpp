@@ -127,6 +127,16 @@ namespace PlutoGE::scene
 
             return RandomDirection(seed);
         }
+
+        glm::vec3 TurbulenceField(const glm::vec3 &position, float frequency, float seed)
+        {
+            const glm::vec3 p = position * frequency + glm::vec3(seed * 0.013f);
+            // Divergence-free-ish analytic field. Sampling world position makes
+            // neighbouring particles roll together instead of jittering independently.
+            return glm::vec3(std::sin(p.y + p.z) - std::cos(p.z - p.y),
+                             std::sin(p.z + p.x) - std::cos(p.x - p.z),
+                             std::sin(p.x + p.y) - std::cos(p.y - p.x)) * 0.5f;
+        }
     }
 
     ParticleSystemComponent::~ParticleSystemComponent()
@@ -274,7 +284,7 @@ namespace PlutoGE::scene
         const int accepted = std::min(count, m_maxParticles);
         m_pendingEmitCount = std::min(m_maxParticles, m_pendingEmitCount + accepted);
         m_particleCountEstimate = std::min(m_maxParticles, m_particleCountEstimate + accepted);
-        m_gpuSimulationTimeRemaining = std::max(m_gpuSimulationTimeRemaining, m_startLifetime);
+        m_gpuSimulationTimeRemaining = std::max(m_gpuSimulationTimeRemaining, m_startLifetime * (1.0f + m_lifetimeVariation));
     }
 
     void ParticleSystemComponent::EmitAt(const glm::vec3 &worldPosition, int count)
@@ -573,11 +583,11 @@ namespace PlutoGE::scene
 
             auto &particle = m_cpuParticles[static_cast<std::size_t>(particleIndex)];
             particle.position = worldPosition + emitterBasis * localOffset;
-            particle.velocity = spawnDirection * m_startSpeed;
+            particle.velocity = spawnDirection * m_startSpeed * (1.0f + (Hash(seed + 20.0f) * 2.0f - 1.0f) * m_speedVariation);
             particle.color = m_startColor;
-            particle.size = m_startSize;
+            particle.size = m_startSize * (1.0f + (Hash(seed + 21.0f) * 2.0f - 1.0f) * m_sizeVariation);
             particle.age = 0.0f;
-            particle.lifetime = m_startLifetime;
+            particle.lifetime = std::max(m_startLifetime * (1.0f + (Hash(seed + 22.0f) * 2.0f - 1.0f) * m_lifetimeVariation), 0.0001f);
             particle.seed = seed;
             particle.active = true;
             particle.deathSubEmitterFired = false;
@@ -709,7 +719,10 @@ namespace PlutoGE::scene
                                   m_trails[index].end());
 
             const glm::vec3 previousPosition = particle.position;
-            particle.velocity += glm::vec3(0.0f, -9.81f * m_gravityModifier, 0.0f) * deltaTime;
+            const glm::vec3 acceleration = glm::vec3(0.0f, m_buoyancy - 9.81f * m_gravityModifier, 0.0f) +
+                                           m_windVelocity + TurbulenceField(particle.position, m_turbulenceFrequency, particle.seed) * m_turbulenceStrength;
+            particle.velocity += acceleration * deltaTime;
+            particle.velocity *= std::exp(-m_drag * deltaTime);
             glm::vec3 nextPosition = particle.position + particle.velocity * deltaTime;
             particle.age += deltaTime;
             nextPositions[index] = nextPosition;
@@ -961,14 +974,26 @@ namespace PlutoGE::scene
         m_duration = std::max(asset.duration, 0.0001f);
         m_maxParticles = std::clamp(asset.maxParticles, 1, 200000);
         m_startLifetime = std::max(asset.startLifetime, 0.0001f);
+        m_lifetimeVariation = std::clamp(asset.lifetimeVariation, 0.0f, 1.0f);
         m_startSpeed = std::max(asset.startSpeed, 0.0f);
+        m_speedVariation = std::clamp(asset.speedVariation, 0.0f, 1.0f);
         m_startSize = std::max(asset.startSize, 0.0f);
+        m_sizeVariation = std::clamp(asset.sizeVariation, 0.0f, 1.0f);
         m_startColor = glm::clamp(asset.startColor, glm::vec4(0.0f), glm::vec4(1.0f));
         m_colorOverLifetimeEnabled = asset.colorOverLifetimeEnabled;
         m_endColor = glm::clamp(asset.endColor, glm::vec4(0.0f), glm::vec4(1.0f));
         m_sizeOverLifetimeEnabled = asset.sizeOverLifetimeEnabled;
         m_endSize = std::max(asset.endSize, 0.0f);
         m_gravityModifier = asset.gravityModifier;
+        m_drag = std::max(asset.drag, 0.0f);
+        m_buoyancy = asset.buoyancy;
+        m_windVelocity = asset.windVelocity;
+        m_turbulenceStrength = std::max(asset.turbulenceStrength, 0.0f);
+        m_turbulenceFrequency = std::max(asset.turbulenceFrequency, 0.0001f);
+        m_rotationSpeed = asset.rotationSpeed;
+        m_rotationSpeedVariation = std::clamp(asset.rotationSpeedVariation, 0.0f, 1.0f);
+        m_fadeInFraction = std::clamp(asset.fadeInFraction, 0.0f, 1.0f);
+        m_fadeOutFraction = std::clamp(asset.fadeOutFraction, 0.0f, 1.0f);
         m_emissionRateOverTime = std::max(asset.emissionRateOverTime, 0.0f);
         m_burstTime = std::max(asset.burstTime, 0.0f);
         m_burstCount = std::max(asset.burstCount, 0);

@@ -42,6 +42,10 @@ public sealed class RaycastVehicleController : ScriptBehaviour
     [SerializedField] private float driveGrip    = 1.0f;
     [SerializedField] private float brakeGrip    = 1.0f;
     [SerializedField] private float handbrakeGrip    = 0.45f;
+    [SerializedField] private float airDensity = 1.225f;
+    [SerializedField] private float downforceCoefficient = 1.2f;
+    [SerializedField] private float downforceArea = 2.2f;
+    [SerializedField] private float frontDownforceBalance = 0.45f;
     [SerializedField] private float idleRpm  = 900.0f;
     [SerializedField] private float redlineRpm  = 7200.0f;
     [SerializedField] private float finalDriveRatio  = 4.5f;
@@ -231,6 +235,7 @@ public sealed class RaycastVehicleController : ScriptBehaviour
         var driveSplit = GetDriveSplit();
         UpdateDrivetrain(fixedDeltaTime, _throttleInput, _brakeInput, forwardSpeed, driveSplit);
         var drivePower = _driveThrottle * GetEngineTorqueMultiplier();
+        ApplyAerodynamicDownforce();
         ApplyWheels(drivePower, _brakeInput, _handbrakeInput, driveSplit);
     }
 
@@ -414,6 +419,58 @@ public sealed class RaycastVehicleController : ScriptBehaviour
         {
             Debug.Log(diagnostics.ToString());
         }
+    }
+
+    private void ApplyAerodynamicDownforce()
+    {
+        if (_rigidbody is null)
+        {
+            return;
+        }
+
+        var bodyUp = Up;
+        var velocity = _rigidbody.Velocity;
+        // Vertical velocity does not create useful wing loading. Project it out
+        // so jumps and hard landings cannot manufacture extra downward force.
+        var airflowAcrossCar = velocity - bodyUp * Vector3.Dot(velocity, bodyUp);
+        var speedSquared = airflowAcrossCar.LengthSquared();
+        var downforceMagnitude = 0.5f *
+                                 MathF.Max(airDensity, 0.0f) *
+                                 MathF.Max(downforceCoefficient, 0.0f) *
+                                 MathF.Max(downforceArea, 0.0f) *
+                                 speedSquared;
+        if (downforceMagnitude <= 0.0001f)
+        {
+            return;
+        }
+
+        var frontBalance = Math.Clamp(frontDownforceBalance, 0.0f, 1.0f);
+        var downforce = -bodyUp * downforceMagnitude;
+        var bodyCenter = GameObject.WorldPosition;
+        var frontCenter = GetAxleCenter(frontLeftWheelAnchor, frontRightWheelAnchor, bodyCenter);
+        var rearCenter = GetAxleCenter(rearLeftWheelAnchor, rearRightWheelAnchor, bodyCenter);
+
+        if (frontBalance > 0.0f)
+        {
+            _rigidbody.AddForceAtPosition(downforce * frontBalance, frontCenter);
+        }
+        if (frontBalance < 1.0f)
+        {
+            _rigidbody.AddForceAtPosition(downforce * (1.0f - frontBalance), rearCenter);
+        }
+    }
+
+    private static Vector3 GetAxleCenter(GameObject? leftAnchor, GameObject? rightAnchor, Vector3 fallback)
+    {
+        if (leftAnchor is not null && rightAnchor is not null)
+        {
+            return (leftAnchor.WorldPosition + rightAnchor.WorldPosition) * 0.5f;
+        }
+        if (leftAnchor is not null)
+        {
+            return leftAnchor.WorldPosition;
+        }
+        return rightAnchor?.WorldPosition ?? fallback;
     }
 
     private DriveSplit GetDriveSplit()

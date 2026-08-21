@@ -1346,6 +1346,7 @@ namespace PlutoGE::scene
     struct Scene::RuntimePhysicsState
     {
         std::unique_ptr<BulletRuntimeWorld> world;
+        bool renderTransformsApplied = false;
     };
 
     Scene::Scene()
@@ -1448,12 +1449,62 @@ namespace PlutoGE::scene
 
     void Scene::ResetRuntimePhysicsState()
     {
+        RestoreRuntimePhysicsTransforms();
         if (m_runtimePhysicsState && m_runtimePhysicsState->world)
             for (auto &ragdoll : m_runtimePhysicsState->world->ragdolls)
                 if (ragdoll.animation)
                     ragdoll.animation->ClearRagdollPhysicsPose();
         m_runtimePhysicsState.reset();
         m_activeCollisionPairs.clear();
+    }
+
+    void Scene::RestoreRuntimePhysicsTransforms()
+    {
+        if (!m_runtimePhysicsState || !m_runtimePhysicsState->world ||
+            !m_runtimePhysicsState->renderTransformsApplied)
+            return;
+
+        for (auto &stepBody : m_runtimePhysicsState->world->bodies)
+        {
+            if (!stepBody.dynamic || !stepBody.entity || !stepBody.body)
+                continue;
+            ApplyWorldPhysicsTransform(*stepBody.entity, stepBody.body->getWorldTransform());
+            stepBody.synchronizedTransformRevision = stepBody.entity->GetTransformRevision();
+        }
+        m_runtimePhysicsState->renderTransformsApplied = false;
+    }
+
+    void Scene::ApplyRuntimePhysicsRenderExtrapolation(float remainderTime)
+    {
+        if (!m_runtimeStarted || remainderTime <= 0.0f ||
+            !m_runtimePhysicsState || !m_runtimePhysicsState->world)
+            return;
+
+        bool applied = false;
+        for (auto &stepBody : m_runtimePhysicsState->world->bodies)
+        {
+            if (!stepBody.dynamic || !stepBody.entity || !stepBody.body)
+                continue;
+
+            btTransform renderTransform = stepBody.body->getWorldTransform();
+            renderTransform.setOrigin(
+                renderTransform.getOrigin() + stepBody.body->getLinearVelocity() * remainderTime);
+
+            const btVector3 angularVelocity = stepBody.body->getAngularVelocity();
+            const btScalar angularSpeed = angularVelocity.length();
+            if (angularSpeed > SIMD_EPSILON)
+            {
+                btQuaternion rotation =
+                    btQuaternion(angularVelocity / angularSpeed, angularSpeed * remainderTime) *
+                    renderTransform.getRotation();
+                rotation.normalize();
+                renderTransform.setRotation(rotation);
+            }
+
+            ApplyWorldPhysicsTransform(*stepBody.entity, renderTransform);
+            applied = true;
+        }
+        m_runtimePhysicsState->renderTransformsApplied = applied;
     }
 
     void Scene::RebuildRuntimePhysicsState(const std::vector<Entity *> &entities,
@@ -2438,6 +2489,7 @@ namespace PlutoGE::scene
         const float simulationDeltaTime = m_runtimeStarted
                                               ? std::max(deltaTime, 0.0f) * m_timeScale
                                               : deltaTime;
+        RestoreRuntimePhysicsTransforms();
         ++m_updateSequence;
         // Continuous forces are state sampled by scripts each render frame. If
         // no fixed step occurred after the previous sample, replace that stale
@@ -2540,6 +2592,11 @@ namespace PlutoGE::scene
             }
         }
         const auto lateScriptsEnd = Clock::now();
+
+        // Physics owns authoritative simulation transforms at 60 Hz. Present
+        // dynamic bodies at the remaining fractional time for rendering so
+        // world-space cameras and their targets share the same smooth timeline.
+        ApplyRuntimePhysicsRenderExtrapolation(m_physicsTimeAccumulator);
 
         if (m_runtimeStarted)
         {

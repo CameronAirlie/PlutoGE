@@ -290,6 +290,8 @@ namespace PlutoGE::scene
         void RefreshPhysicsQueryCache() const;
         void InvalidatePhysicsQueryCache() const;
         void ResetRuntimePhysicsState();
+        void RestoreRuntimePhysicsTransforms();
+        void ApplyRuntimePhysicsRenderExtrapolation(float remainderTime);
         void RebuildRuntimePhysicsState(const std::vector<Entity *> &physicsEntities,
                                         const std::vector<Entity *> &activeEntities);
         void SyncPhysicsQueryTransform(const Entity &entity) const;

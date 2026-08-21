@@ -992,6 +992,8 @@ namespace PlutoGE::scene
         m_turbulenceFrequency = std::max(asset.turbulenceFrequency, 0.0001f);
         m_rotationSpeed = asset.rotationSpeed;
         m_rotationSpeedVariation = std::clamp(asset.rotationSpeedVariation, 0.0f, 1.0f);
+        m_startRotation = asset.startRotation;
+        m_startRotationVariation = std::clamp(asset.startRotationVariation, 0.0f, 180.0f);
         m_fadeInFraction = std::clamp(asset.fadeInFraction, 0.0f, 1.0f);
         m_fadeOutFraction = std::clamp(asset.fadeOutFraction, 0.0f, 1.0f);
         m_emissionRateOverTime = std::max(asset.emissionRateOverTime, 0.0f);
@@ -1004,6 +1006,16 @@ namespace PlutoGE::scene
         m_coneAngle = std::clamp(asset.coneAngle, 0.0f, 89.0f);
         m_renderShape = asset.renderShape;
         m_materialAssetReference = asset.materialAssetReference;
+        m_flipbookColumns = std::clamp(asset.flipbookColumns, 1, 64);
+        m_flipbookRows = std::clamp(asset.flipbookRows, 1, 64);
+        m_flipbookFramesPerSecond = std::max(asset.flipbookFramesPerSecond, 0.0f);
+        m_flipbookLooping = asset.flipbookLooping;
+        m_flipbookRandomStart = asset.flipbookRandomStart;
+        m_softParticlesEnabled = asset.softParticlesEnabled;
+        m_softParticleDistance = std::max(asset.softParticleDistance, 0.0001f);
+        m_smokeLightingEnabled = asset.smokeLightingEnabled;
+        m_smokeLightingStrength = std::clamp(asset.smokeLightingStrength, 0.0f, 1.0f);
+        m_smokeAmbient = std::clamp(asset.smokeAmbient, 0.0f, 1.0f);
         m_collisionEnabled = asset.collisionEnabled;
         m_collisionMode = asset.collisionMode;
         m_collisionDampening = std::clamp(asset.collisionDampening, 0.0f, 1.0f);

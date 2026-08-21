@@ -2495,6 +2495,10 @@ namespace PlutoGE::assets
                 asset.rotationSpeed = ParseFloatValue(value, asset.rotationSpeed);
             else if (key == "RotationSpeedVariation")
                 asset.rotationSpeedVariation = std::clamp(ParseFloatValue(value, asset.rotationSpeedVariation), 0.0f, 1.0f);
+            else if (key == "StartRotation")
+                asset.startRotation = ParseFloatValue(value, asset.startRotation);
+            else if (key == "StartRotationVariation")
+                asset.startRotationVariation = std::clamp(ParseFloatValue(value, asset.startRotationVariation), 0.0f, 180.0f);
             else if (key == "FadeInFraction")
                 asset.fadeInFraction = std::clamp(ParseFloatValue(value, asset.fadeInFraction), 0.0f, 1.0f);
             else if (key == "FadeOutFraction")
@@ -2519,6 +2523,26 @@ namespace PlutoGE::assets
                 asset.renderShape = ParseParticleRenderShape(value);
             else if (key == "MaterialAsset")
                 asset.materialAssetReference = value;
+            else if (key == "FlipbookColumns")
+                asset.flipbookColumns = std::clamp(ParseIntValue(value, asset.flipbookColumns), 1, 64);
+            else if (key == "FlipbookRows")
+                asset.flipbookRows = std::clamp(ParseIntValue(value, asset.flipbookRows), 1, 64);
+            else if (key == "FlipbookFramesPerSecond")
+                asset.flipbookFramesPerSecond = std::max(ParseFloatValue(value, asset.flipbookFramesPerSecond), 0.0f);
+            else if (key == "FlipbookLooping")
+                asset.flipbookLooping = ParseBoolValue(value);
+            else if (key == "FlipbookRandomStart")
+                asset.flipbookRandomStart = ParseBoolValue(value);
+            else if (key == "SoftParticlesEnabled")
+                asset.softParticlesEnabled = ParseBoolValue(value);
+            else if (key == "SoftParticleDistance")
+                asset.softParticleDistance = std::max(ParseFloatValue(value, asset.softParticleDistance), 0.0001f);
+            else if (key == "SmokeLightingEnabled")
+                asset.smokeLightingEnabled = ParseBoolValue(value);
+            else if (key == "SmokeLightingStrength")
+                asset.smokeLightingStrength = std::clamp(ParseFloatValue(value, asset.smokeLightingStrength), 0.0f, 1.0f);
+            else if (key == "SmokeAmbient")
+                asset.smokeAmbient = std::clamp(ParseFloatValue(value, asset.smokeAmbient), 0.0f, 1.0f);
             else if (key == "CollisionEnabled")
                 asset.collisionEnabled = ParseBoolValue(value);
             else if (key == "CollisionMode")
@@ -2632,6 +2656,8 @@ namespace PlutoGE::assets
         output << "TurbulenceFrequency=" << asset.turbulenceFrequency << "\n";
         output << "RotationSpeed=" << asset.rotationSpeed << "\n";
         output << "RotationSpeedVariation=" << asset.rotationSpeedVariation << "\n";
+        output << "StartRotation=" << asset.startRotation << "\n";
+        output << "StartRotationVariation=" << asset.startRotationVariation << "\n";
         output << "FadeInFraction=" << asset.fadeInFraction << "\n";
         output << "FadeOutFraction=" << asset.fadeOutFraction << "\n";
         output << "EmissionRateOverTime=" << asset.emissionRateOverTime << "\n";
@@ -2644,6 +2670,16 @@ namespace PlutoGE::assets
         output << "ConeAngle=" << asset.coneAngle << "\n";
         output << "RenderShape=" << ToString(asset.renderShape) << "\n";
         output << "MaterialAsset=" << asset.materialAssetReference << "\n";
+        output << "FlipbookColumns=" << asset.flipbookColumns << "\n";
+        output << "FlipbookRows=" << asset.flipbookRows << "\n";
+        output << "FlipbookFramesPerSecond=" << asset.flipbookFramesPerSecond << "\n";
+        output << "FlipbookLooping=" << (asset.flipbookLooping ? "true" : "false") << "\n";
+        output << "FlipbookRandomStart=" << (asset.flipbookRandomStart ? "true" : "false") << "\n";
+        output << "SoftParticlesEnabled=" << (asset.softParticlesEnabled ? "true" : "false") << "\n";
+        output << "SoftParticleDistance=" << asset.softParticleDistance << "\n";
+        output << "SmokeLightingEnabled=" << (asset.smokeLightingEnabled ? "true" : "false") << "\n";
+        output << "SmokeLightingStrength=" << asset.smokeLightingStrength << "\n";
+        output << "SmokeAmbient=" << asset.smokeAmbient << "\n";
         output << "CollisionEnabled=" << (asset.collisionEnabled ? "true" : "false") << "\n";
         output << "CollisionMode=" << ToString(asset.collisionMode) << "\n";
         output << "CollisionDampening=" << asset.collisionDampening << "\n";

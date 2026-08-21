@@ -129,6 +129,8 @@ namespace PlutoGE::ui
         if (ImGui::DragFloat("Turbulence Frequency", &m_asset.turbulenceFrequency, 0.01f, 0.0001f, 1000.0f, "%.3f")) m_dirty = true;
         if (ImGui::DragFloat("Rotation Speed", &m_asset.rotationSpeed, 1.0f, -10000.0f, 10000.0f, "%.1f deg/s")) m_dirty = true;
         if (ImGui::SliderFloat("Rotation Variation", &m_asset.rotationSpeedVariation, 0.0f, 1.0f, "%.2f")) m_dirty = true;
+        if (ImGui::DragFloat("Start Rotation", &m_asset.startRotation, 1.0f, -360.0f, 360.0f, "%.1f deg")) m_dirty = true;
+        if (ImGui::SliderFloat("Start Rotation Variation", &m_asset.startRotationVariation, 0.0f, 180.0f, "%.1f deg")) m_dirty = true;
 
         ImGui::SeparatorText("Emission");
         if (ImGui::DragFloat("Rate Over Time", &m_asset.emissionRateOverTime, 0.1f, 0.0f, 100000.0f, "%.3f")) m_dirty = true;
@@ -175,6 +177,27 @@ namespace PlutoGE::ui
             m_asset.renderShape = renderShape == 1 ? assets::ParticleRenderShape::Quad : assets::ParticleRenderShape::Circle;
             m_dirty = true;
         }
+
+        ImGui::SeparatorText("Texture Animation");
+        if (ImGui::DragInt("Flipbook Columns", &m_asset.flipbookColumns, 1.0f, 1, 64)) m_dirty = true;
+        if (ImGui::DragInt("Flipbook Rows", &m_asset.flipbookRows, 1.0f, 1, 64)) m_dirty = true;
+        const bool hasFlipbook = m_asset.flipbookColumns * m_asset.flipbookRows > 1;
+        ImGui::BeginDisabled(!hasFlipbook);
+        if (ImGui::DragFloat("Frames Per Second", &m_asset.flipbookFramesPerSecond, 0.25f, 0.0f, 240.0f, "%.2f")) m_dirty = true;
+        if (ImGui::Checkbox("Loop Animation", &m_asset.flipbookLooping)) m_dirty = true;
+        if (ImGui::Checkbox("Random Start Frame", &m_asset.flipbookRandomStart)) m_dirty = true;
+        ImGui::EndDisabled();
+
+        ImGui::SeparatorText("Smoke Rendering");
+        if (ImGui::Checkbox("Soft Particles", &m_asset.softParticlesEnabled)) m_dirty = true;
+        ImGui::BeginDisabled(!m_asset.softParticlesEnabled);
+        if (ImGui::DragFloat("Soft Intersection Distance", &m_asset.softParticleDistance, 0.01f, 0.0001f, 100.0f, "%.3f")) m_dirty = true;
+        ImGui::EndDisabled();
+        if (ImGui::Checkbox("Smoke Lighting", &m_asset.smokeLightingEnabled)) m_dirty = true;
+        ImGui::BeginDisabled(!m_asset.smokeLightingEnabled);
+        if (ImGui::SliderFloat("Lighting Strength", &m_asset.smokeLightingStrength, 0.0f, 1.0f, "%.2f")) m_dirty = true;
+        if (ImGui::SliderFloat("Ambient Light", &m_asset.smokeAmbient, 0.0f, 1.0f, "%.2f")) m_dirty = true;
+        ImGui::EndDisabled();
 
         auto *project = editorShell.GetProject();
         std::string materialPreview = m_asset.materialAssetReference.empty() ? "Default" : AssetDisplayName(m_asset.materialAssetReference);
@@ -352,8 +375,15 @@ namespace PlutoGE::ui
             m_asset.turbulenceStrength = std::max(m_asset.turbulenceStrength, 0.0f);
             m_asset.turbulenceFrequency = std::max(m_asset.turbulenceFrequency, 0.0001f);
             m_asset.rotationSpeedVariation = std::clamp(m_asset.rotationSpeedVariation, 0.0f, 1.0f);
+            m_asset.startRotationVariation = std::clamp(m_asset.startRotationVariation, 0.0f, 180.0f);
             m_asset.fadeInFraction = std::clamp(m_asset.fadeInFraction, 0.0f, 1.0f);
             m_asset.fadeOutFraction = std::clamp(m_asset.fadeOutFraction, 0.0f, 1.0f);
+            m_asset.flipbookColumns = std::clamp(m_asset.flipbookColumns, 1, 64);
+            m_asset.flipbookRows = std::clamp(m_asset.flipbookRows, 1, 64);
+            m_asset.flipbookFramesPerSecond = std::max(m_asset.flipbookFramesPerSecond, 0.0f);
+            m_asset.softParticleDistance = std::max(m_asset.softParticleDistance, 0.0001f);
+            m_asset.smokeLightingStrength = std::clamp(m_asset.smokeLightingStrength, 0.0f, 1.0f);
+            m_asset.smokeAmbient = std::clamp(m_asset.smokeAmbient, 0.0f, 1.0f);
             m_asset.emissionRateOverTime = std::max(m_asset.emissionRateOverTime, 0.0f);
             m_asset.burstTime = std::max(m_asset.burstTime, 0.0f);
             m_asset.burstCount = std::max(m_asset.burstCount, 0);

@@ -58,6 +58,8 @@ namespace PlutoGE::assets
         float turbulenceFrequency = 0.5f;
         float rotationSpeed = 0.0f;
         float rotationSpeedVariation = 0.0f;
+        float startRotation = 0.0f;
+        float startRotationVariation = 180.0f;
         float fadeInFraction = 0.0f;
         float fadeOutFraction = 0.25f;
         float emissionRateOverTime = 10.0f;
@@ -70,6 +72,16 @@ namespace PlutoGE::assets
         float coneAngle = 25.0f;
         ParticleRenderShape renderShape = ParticleRenderShape::Circle;
         std::string materialAssetReference;
+        int flipbookColumns = 1;
+        int flipbookRows = 1;
+        float flipbookFramesPerSecond = 0.0f;
+        bool flipbookLooping = true;
+        bool flipbookRandomStart = true;
+        bool softParticlesEnabled = false;
+        float softParticleDistance = 0.5f;
+        bool smokeLightingEnabled = false;
+        float smokeLightingStrength = 0.65f;
+        float smokeAmbient = 0.35f;
 
         bool collisionEnabled = false;
         ParticleCollisionMode collisionMode = ParticleCollisionMode::Kill;

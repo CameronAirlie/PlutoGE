@@ -26,6 +26,9 @@ namespace PlutoGE::render
         GLuint m_cpuParticleBuffer = 0;
         GLuint m_trailVao = 0;
         GLuint m_trailBuffer = 0;
+        GLuint m_sceneDepthCopy = 0;
+        int m_sceneDepthWidth = 0;
+        int m_sceneDepthHeight = 0;
         bool m_loggedUnsupported = false;
     };
 }

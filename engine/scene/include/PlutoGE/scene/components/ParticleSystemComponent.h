@@ -130,6 +130,8 @@ namespace PlutoGE::scene
         float GetTurbulenceFrequency() const { return m_turbulenceFrequency; }
         float GetRotationSpeed() const { return m_rotationSpeed; }
         float GetRotationSpeedVariation() const { return m_rotationSpeedVariation; }
+        float GetStartRotation() const { return m_startRotation; }
+        float GetStartRotationVariation() const { return m_startRotationVariation; }
         float GetFadeInFraction() const { return m_fadeInFraction; }
         float GetFadeOutFraction() const { return m_fadeOutFraction; }
         void SetGravityModifier(float gravityModifier) { m_gravityModifier = gravityModifier; }
@@ -153,6 +155,16 @@ namespace PlutoGE::scene
         void SetRenderShape(assets::ParticleRenderShape renderShape) { m_renderShape = renderShape; }
         const std::string &GetMaterialAssetReference() const { return m_materialAssetReference; }
         void SetMaterialAssetReference(const std::string &materialAssetReference) { m_materialAssetReference = materialAssetReference; }
+        int GetFlipbookColumns() const { return m_flipbookColumns; }
+        int GetFlipbookRows() const { return m_flipbookRows; }
+        float GetFlipbookFramesPerSecond() const { return m_flipbookFramesPerSecond; }
+        bool GetFlipbookLooping() const { return m_flipbookLooping; }
+        bool GetFlipbookRandomStart() const { return m_flipbookRandomStart; }
+        bool GetSoftParticlesEnabled() const { return m_softParticlesEnabled; }
+        float GetSoftParticleDistance() const { return m_softParticleDistance; }
+        bool GetSmokeLightingEnabled() const { return m_smokeLightingEnabled; }
+        float GetSmokeLightingStrength() const { return m_smokeLightingStrength; }
+        float GetSmokeAmbient() const { return m_smokeAmbient; }
         bool UsesCpuSimulation() const;
         const std::vector<ParticleCpuData> &GetCpuParticles() const { return m_cpuParticles; }
         void BuildTrailRenderSegments(std::vector<ParticleTrailRenderSegment> &segments) const;
@@ -214,6 +226,8 @@ namespace PlutoGE::scene
         float m_turbulenceFrequency = 0.5f;
         float m_rotationSpeed = 0.0f;
         float m_rotationSpeedVariation = 0.0f;
+        float m_startRotation = 0.0f;
+        float m_startRotationVariation = 180.0f;
         float m_fadeInFraction = 0.0f;
         float m_fadeOutFraction = 0.25f;
         float m_emissionRateOverTime = 10.0f;
@@ -226,6 +240,16 @@ namespace PlutoGE::scene
         float m_coneAngle = 25.0f;
         assets::ParticleRenderShape m_renderShape = assets::ParticleRenderShape::Circle;
         std::string m_materialAssetReference;
+        int m_flipbookColumns = 1;
+        int m_flipbookRows = 1;
+        float m_flipbookFramesPerSecond = 0.0f;
+        bool m_flipbookLooping = true;
+        bool m_flipbookRandomStart = true;
+        bool m_softParticlesEnabled = false;
+        float m_softParticleDistance = 0.5f;
+        bool m_smokeLightingEnabled = false;
+        float m_smokeLightingStrength = 0.65f;
+        float m_smokeAmbient = 0.35f;
         bool m_collisionEnabled = false;
         assets::ParticleCollisionMode m_collisionMode = assets::ParticleCollisionMode::Kill;
         float m_collisionDampening = 0.0f;

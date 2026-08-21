@@ -10,6 +10,7 @@
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
+#include "PlutoGE/scene/components/LightComponent.h"
 
 #include <algorithm>
 #include <cmath>
@@ -140,6 +141,9 @@ namespace PlutoGE::render
 
                 out vec2 gUv;
                 out vec4 gColor;
+                flat out float gAge;
+                flat out float gLifetime;
+                flat out float gRandom;
 
                 uniform mat4 uView;
                 uniform mat4 uProjection;
@@ -162,6 +166,9 @@ namespace PlutoGE::render
                     vec3 worldPosition = center + (uCameraRight * rotatedCorner.x + uCameraUp * rotatedCorner.y) * size;
                     gl_Position = uProjection * uView * vec4(worldPosition, 1.0);
                     gUv = uv;
+                    gAge = vAge[0];
+                    gLifetime = vLifetime[0];
+                    gRandom = fract(sin(vSeed[0].x) * 43758.5453);
                     EmitVertex();
                 }
 
@@ -203,6 +210,9 @@ namespace PlutoGE::render
                 #version 330 core
                 in vec2 gUv;
                 in vec4 gColor;
+                flat in float gAge;
+                flat in float gLifetime;
+                flat in float gRandom;
                 out vec4 FragColor;
 
                 uniform vec4 uColor;
@@ -210,6 +220,26 @@ namespace PlutoGE::render
                 uniform sampler2D uAlbedoTexture;
                 uniform float uHasAlbedoTexture;
                 uniform int uParticleRenderShape;
+                uniform int uFlipbookColumns;
+                uniform int uFlipbookRows;
+                uniform float uFlipbookFramesPerSecond;
+                uniform int uFlipbookLooping;
+                uniform int uFlipbookRandomStart;
+                uniform int uSoftParticlesEnabled;
+                uniform float uSoftParticleDistance;
+                uniform sampler2D uSceneDepth;
+                uniform mat4 uInverseProjection;
+                uniform int uSmokeLightingEnabled;
+                uniform float uSmokeLightingStrength;
+                uniform float uSmokeAmbient;
+                uniform vec3 uSmokeLightDirectionView;
+                uniform vec3 uSmokeLightColor;
+
+                float viewDepth(vec2 uv, float depth)
+                {
+                    vec4 viewPosition = uInverseProjection * vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+                    return abs(viewPosition.z / max(abs(viewPosition.w), 0.000001));
+                }
 
                 void main()
                 {
@@ -220,17 +250,50 @@ namespace PlutoGE::render
                         mask = smoothstep(1.0, 0.82, dot(centered, centered));
                     }
 
+                    vec2 textureUv = gUv;
+                    int frameCount = max(uFlipbookColumns * uFlipbookRows, 1);
+                    if (frameCount > 1)
+                    {
+                        float frame = floor(gAge * uFlipbookFramesPerSecond);
+                        if (uFlipbookRandomStart != 0)
+                        {
+                            frame += floor(gRandom * float(frameCount));
+                        }
+                        frame = uFlipbookLooping != 0 ? mod(frame, float(frameCount)) : min(frame, float(frameCount - 1));
+                        float column = mod(frame, float(uFlipbookColumns));
+                        float row = floor(frame / float(uFlipbookColumns));
+                        textureUv = (gUv + vec2(column, float(uFlipbookRows - 1) - row)) /
+                                    vec2(float(uFlipbookColumns), float(uFlipbookRows));
+                    }
+
                     vec4 materialColor = uColor;
                     if (uHasAlbedoTexture > 0.5)
                     {
-                        materialColor *= texture(uAlbedoTexture, gUv);
+                        materialColor *= texture(uAlbedoTexture, textureUv);
                     }
 
                     vec4 color = gColor * materialColor;
                     color.a *= mask;
+                    if (uSoftParticlesEnabled != 0)
+                    {
+                        vec2 screenUv = gl_FragCoord.xy / vec2(textureSize(uSceneDepth, 0));
+                        float sceneDistance = viewDepth(screenUv, texture(uSceneDepth, screenUv).r);
+                        float particleDistance = viewDepth(screenUv, gl_FragCoord.z);
+                        color.a *= clamp((sceneDistance - particleDistance) / max(uSoftParticleDistance, 0.0001), 0.0, 1.0);
+                    }
                     if (color.a <= 0.01)
                     {
                         discard;
+                    }
+
+                    if (uSmokeLightingEnabled != 0)
+                    {
+                        vec2 centered = gUv * 2.0 - 1.0;
+                        float radial = dot(centered, centered);
+                        vec3 normalView = normalize(vec3(centered, sqrt(max(1.0 - radial, 0.02))));
+                        float diffuse = max(dot(normalView, normalize(uSmokeLightDirectionView)), 0.0);
+                        vec3 lighting = vec3(uSmokeAmbient) + uSmokeLightColor * diffuse;
+                        color.rgb *= mix(vec3(1.0), lighting, uSmokeLightingStrength);
                     }
 
                     vec3 emissive = max(uEmission, vec3(0.0));
@@ -407,7 +470,9 @@ namespace PlutoGE::render
                 const float angularSpeed = glm::radians(particleSystem.GetRotationSpeed()) * (1.0f + (Hash(seed + 24.0f) * 2.0f - 1.0f) * particleSystem.GetRotationSpeedVariation());
                 particle.velocityLifetime = glm::vec4(spawnDirection * speed, lifetime);
                 particle.colorSize = glm::vec4(glm::vec3(particleSystem.GetStartColor()), size);
-                particle.seed = glm::vec4(seed, seed * 1.37f, Hash(seed + 23.0f) * glm::two_pi<float>(), angularSpeed);
+                const float startRotation = particleSystem.GetStartRotation() +
+                                            (Hash(seed + 23.0f) * 2.0f - 1.0f) * particleSystem.GetStartRotationVariation();
+                particle.seed = glm::vec4(seed, seed * 1.37f, glm::radians(startRotation), angularSpeed);
                 particles.push_back(particle);
             }
 
@@ -457,7 +522,9 @@ namespace PlutoGE::render
                 particle.velocityLifetime = glm::vec4(cpuParticle.velocity, cpuParticle.lifetime);
                 particle.colorSize = glm::vec4(glm::vec3(cpuParticle.color), cpuParticle.size);
                 const float angularSpeed = glm::radians(particleSystem.GetRotationSpeed()) * (1.0f + (Hash(cpuParticle.seed + 24.0f) * 2.0f - 1.0f) * particleSystem.GetRotationSpeedVariation());
-                particle.seed = glm::vec4(cpuParticle.seed, cpuParticle.seed * 1.37f, Hash(cpuParticle.seed + 23.0f) * glm::two_pi<float>(), angularSpeed);
+                const float startRotation = particleSystem.GetStartRotation() +
+                                            (Hash(cpuParticle.seed + 23.0f) * 2.0f - 1.0f) * particleSystem.GetStartRotationVariation();
+                particle.seed = glm::vec4(cpuParticle.seed, cpuParticle.seed * 1.37f, glm::radians(startRotation), angularSpeed);
                 particles.push_back(particle);
             }
             return particles;
@@ -546,6 +613,27 @@ namespace PlutoGE::render
             }
             return vertices;
         }
+
+        const scene::Light *FindPrimaryDirectionalLight(const RenderContext &ctx)
+        {
+            const scene::Light *best = nullptr;
+            float bestScore = -1.0f;
+            if (!ctx.lights)
+                return nullptr;
+            for (const auto *light : *ctx.lights)
+            {
+                if (!light || light->type != scene::LightType::Directional)
+                    continue;
+                const float score = glm::dot(glm::max(light->color, glm::vec3(0.0f)), glm::vec3(0.2126f, 0.7152f, 0.0722f)) *
+                                    std::max(light->intensity, 0.0f);
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    best = light;
+                }
+            }
+            return best;
+        }
     }
 
     ParticlePass::~ParticlePass()
@@ -565,6 +653,10 @@ namespace PlutoGE::render
         if (m_trailBuffer != 0)
         {
             glDeleteBuffers(1, &m_trailBuffer);
+        }
+        if (m_sceneDepthCopy != 0)
+        {
+            Graphics::DeleteTextures(1, &m_sceneDepthCopy);
         }
     }
 
@@ -614,6 +706,32 @@ namespace PlutoGE::render
         {
             Graphics::BindFramebuffer(GL_FRAMEBUFFER, 0);
             Graphics::SetViewport(0, 0, targetWidth, targetHeight);
+        }
+
+        const bool needsDepthCopy = std::any_of(particleSystems.begin(), particleSystems.end(), [](const auto *particleSystem)
+        {
+            return particleSystem && particleSystem->IsEnabled() && particleSystem->GetSoftParticlesEnabled();
+        });
+        if (needsDepthCopy)
+        {
+            if (m_sceneDepthCopy == 0)
+            {
+                glGenTextures(1, &m_sceneDepthCopy);
+            }
+            Graphics::ActiveTexture(GL_TEXTURE7);
+            Graphics::BindTexture(GL_TEXTURE_2D, m_sceneDepthCopy);
+            if (m_sceneDepthWidth != targetWidth || m_sceneDepthHeight != targetHeight)
+            {
+                glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT32F, targetWidth, targetHeight, 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+                m_sceneDepthWidth = targetWidth;
+                m_sceneDepthHeight = targetHeight;
+            }
+            glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, targetWidth, targetHeight);
+            Graphics::ActiveTexture(GL_TEXTURE0);
         }
 
         const glm::mat4 inverseView = glm::inverse(ctx.cameraData.view);
@@ -712,6 +830,26 @@ namespace PlutoGE::render
             m_renderShader->SetUniform("uEndSize", particleSystem->GetEndSize());
             m_renderShader->SetUniform("uFadeInFraction", particleSystem->GetFadeInFraction());
             m_renderShader->SetUniform("uFadeOutFraction", particleSystem->GetFadeOutFraction());
+            m_renderShader->SetUniform("uFlipbookColumns", particleSystem->GetFlipbookColumns());
+            m_renderShader->SetUniform("uFlipbookRows", particleSystem->GetFlipbookRows());
+            m_renderShader->SetUniform("uFlipbookFramesPerSecond", particleSystem->GetFlipbookFramesPerSecond());
+            m_renderShader->SetUniform("uFlipbookLooping", particleSystem->GetFlipbookLooping() ? 1 : 0);
+            m_renderShader->SetUniform("uFlipbookRandomStart", particleSystem->GetFlipbookRandomStart() ? 1 : 0);
+            m_renderShader->SetUniform("uSoftParticlesEnabled", particleSystem->GetSoftParticlesEnabled() && m_sceneDepthCopy != 0 ? 1 : 0);
+            m_renderShader->SetUniform("uSoftParticleDistance", particleSystem->GetSoftParticleDistance());
+            m_renderShader->SetUniform("uInverseProjection", glm::inverse(ctx.cameraData.projection));
+            m_renderShader->SetUniform("uSmokeLightingEnabled", particleSystem->GetSmokeLightingEnabled() ? 1 : 0);
+            m_renderShader->SetUniform("uSmokeLightingStrength", particleSystem->GetSmokeLightingStrength());
+            m_renderShader->SetUniform("uSmokeAmbient", particleSystem->GetSmokeAmbient());
+            glm::vec3 smokeLightDirectionView{0.0f, 0.0f, 1.0f};
+            glm::vec3 smokeLightColor{1.0f};
+            if (const auto *light = FindPrimaryDirectionalLight(ctx))
+            {
+                smokeLightDirectionView = glm::normalize(glm::mat3(ctx.cameraData.view) * -light->direction);
+                smokeLightColor = glm::max(light->color * std::max(light->intensity, 0.0f), glm::vec3(0.0f));
+            }
+            m_renderShader->SetUniform("uSmokeLightDirectionView", smokeLightDirectionView);
+            m_renderShader->SetUniform("uSmokeLightColor", smokeLightColor);
 
             if (!particleSystem->GetMaterialAssetReference().empty())
             {
@@ -730,6 +868,11 @@ namespace PlutoGE::render
                 m_renderShader->SetUniform("uColor", glm::vec4(1.0f));
                 m_renderShader->SetUniform("uHasAlbedoTexture", 0.0f);
             }
+
+            m_renderShader->SetUniform("uSceneDepth", 7);
+            Graphics::ActiveTexture(GL_TEXTURE7);
+            Graphics::BindTexture(GL_TEXTURE_2D, m_sceneDepthCopy);
+            Graphics::ActiveTexture(GL_TEXTURE0);
 
             glBindVertexArray(particleVao);
             glDrawArrays(GL_POINTS, 0, particleDrawCount);

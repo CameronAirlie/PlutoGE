@@ -498,15 +498,15 @@ namespace PlutoGE::scene
 
             m_config.position = owner->GetWorldPosition();
 
-            // Get direction from world rotation
-            // convert rotation from degrees to radians
-            glm::vec3 rotationRadians = glm::radians(owner->GetWorldRotation());
-            // Calculate direction vector from rotation (assuming forward is -Z)
-            glm::vec3 direction;
-            direction.x = -sin(rotationRadians.y) * cos(rotationRadians.x);
-            direction.y = sin(rotationRadians.x);
-            direction.z = -cos(rotationRadians.y) * cos(rotationRadians.x);
-            m_config.direction = glm::normalize(direction);
+            // Derive forward from the composed transform instead of converting
+            // its decomposed Euler angles back into a direction. Besides losing
+            // roll, that round trip is ambiguous for hierarchical rotations and
+            // can make a child light turn unexpectedly as its parent rotates.
+            const glm::vec3 worldForward = -glm::vec3(owner->GetWorldTransform()[2]);
+            if (glm::dot(worldForward, worldForward) > 0.000001f)
+            {
+                m_config.direction = glm::normalize(worldForward);
+            }
 
             if (!ApproximatelyEqual(m_config.position, previousPosition) ||
                 !ApproximatelyEqual(m_config.direction, previousDirection))

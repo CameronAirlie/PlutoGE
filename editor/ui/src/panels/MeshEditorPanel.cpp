@@ -347,11 +347,15 @@ namespace PlutoGE::ui
                 return;
             }
 
-            if (auto *meshComponent = entity.GetComponent<scene::MeshComponent>())
+            for (auto *meshComponent : entity.GetComponents<scene::MeshComponent>())
             {
-                if (meshComponent->GetMeshAssetReference() == meshReference)
+                if (meshComponent && meshComponent->GetMeshAssetReference() == meshReference)
                 {
                     meshComponent->SetMesh(mesh);
+                    // SetMesh normally invalidates cached commands because a
+                    // reloaded asset has a new pointer. Keep the refresh robust
+                    // if asset loading later starts updating meshes in place.
+                    meshComponent->NotifyMeshDataChanged();
                 }
             }
 
@@ -588,12 +592,46 @@ namespace PlutoGE::ui
             std::string errorMessage;
             if (editorShell.GetEngine().GetAssetManager().SaveMeshAsset(reference, m_config, m_materialReferences, &errorMessage, m_metadata))
             {
+                // A source-model directory can contain a generated mesh copy in
+                // addition to the canonical Imported/ object used by scenes.
+                // Keep that canonical object in sync so editing the source copy's
+                // LOD thresholds updates existing and subsequently loaded scenes.
+                std::string canonicalReference;
+                if (!m_metadata.sourceAssetId.empty() && m_metadata.sourceObjectId != 0)
+                {
+                    canonicalReference = editorShell.GetEngine().GetAssetManager().ResolveModelObject(
+                        m_metadata.sourceAssetId, m_metadata.sourceObjectId);
+                }
+
+                bool canonicalSaved = true;
+                if (!canonicalReference.empty() && canonicalReference != reference)
+                {
+                    auto &assetManager = editorShell.GetEngine().GetAssetManager();
+                    const auto canonicalMaterials = assetManager.GetMeshAssetMaterialReferences(canonicalReference);
+                    const auto canonicalMetadata = assetManager.GetMeshAssetMetadata(canonicalReference);
+                    canonicalSaved = assetManager.SaveMeshAsset(canonicalReference, m_config, canonicalMaterials,
+                                                                 &errorMessage, canonicalMetadata);
+                }
+
                 m_dirty = false;
                 LoadActiveMesh();
                 RefreshOpenSceneMeshAssetInstances(editorShell.GetEngine(), reference);
+                if (canonicalSaved && !canonicalReference.empty() && canonicalReference != reference)
+                {
+                    RefreshOpenSceneMeshAssetInstances(editorShell.GetEngine(), canonicalReference);
+                }
                 editorShell.MarkProjectDirty();
                 editorShell.MarkSceneDirty();
-                editorShell.Log(EditorShell::ConsoleSeverity::Info, "Saved mesh asset: " + reference);
+                if (canonicalSaved)
+                {
+                    editorShell.Log(EditorShell::ConsoleSeverity::Info, "Saved mesh asset: " + reference);
+                }
+                else
+                {
+                    editorShell.Log(EditorShell::ConsoleSeverity::Error,
+                                    errorMessage.empty() ? "Saved the source mesh, but failed to update its imported scene asset."
+                                                         : errorMessage);
+                }
             }
             else
             {

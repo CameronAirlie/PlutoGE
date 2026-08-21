@@ -1650,6 +1650,7 @@ void main()
             uniform vec4 uColor = vec4(1.0);
             uniform vec3 uEmission = vec3(0.0);
             uniform int uSurfaceType = 0;
+            uniform int uTwoSided = 0;
             uniform float uAlphaCutoff = 0.01;
             uniform sampler2D uNormalTexture;
             uniform float uHasNormalTexture = 0.0;

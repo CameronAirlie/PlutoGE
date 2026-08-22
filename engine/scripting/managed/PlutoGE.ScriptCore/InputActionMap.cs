@@ -58,6 +58,8 @@ public sealed class InputActionMap
             new() { Name = "Throttle", Bindings = [new() { Kind = InputBindingKind.Key, Key = KeyCode.W }, new() { Kind = InputBindingKind.GamepadAxis, Axis = GamepadAxis.RightTrigger }] },
             new() { Name = "Brake", Bindings = [new() { Kind = InputBindingKind.Key, Key = KeyCode.S }, new() { Kind = InputBindingKind.GamepadAxis, Axis = GamepadAxis.LeftTrigger }] },
             new() { Name = "Steer", Bindings = [new() { Kind = InputBindingKind.Key, Key = KeyCode.A }, new() { Kind = InputBindingKind.Key, Key = KeyCode.D, Scale = -1.0f }, new() { Kind = InputBindingKind.GamepadAxis, Axis = GamepadAxis.LeftX, Scale = -1.0f }] },
+            new() { Name = "CameraOrbitHorizontal", Bindings = [new() { Kind = InputBindingKind.GamepadAxis, Axis = GamepadAxis.RightX, DeadZone = 0.15f }] },
+            new() { Name = "CameraOrbitVertical", Bindings = [new() { Kind = InputBindingKind.GamepadAxis, Axis = GamepadAxis.RightY, Scale = -1.0f, DeadZone = 0.15f }] },
             new() { Name = "Handbrake", Bindings = [new() { Kind = InputBindingKind.Key, Key = KeyCode.Space }, new() { Kind = InputBindingKind.GamepadButton, Button = GamepadButton.A }] },
             new() { Name = "Recover", Bindings = [new() { Kind = InputBindingKind.Key, Key = KeyCode.R }, new() { Kind = InputBindingKind.GamepadButton, Button = GamepadButton.Y }] }
         ]

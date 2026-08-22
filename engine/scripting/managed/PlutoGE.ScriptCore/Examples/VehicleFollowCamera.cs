@@ -25,6 +25,11 @@ public sealed class VehicleFollowCamera : ScriptBehaviour
     [SerializedField] private float maxLeadDistance = 0.0f;
     [SerializedField] private bool avoidObstacles = false;
     [SerializedField] private float collisionPadding = 0.18f;
+    [SerializedField, InputMappingAsset] private string inputMappingAsset = "";
+    [SerializedField] private float orbitSpeed = 120.0f;
+    [SerializedField] private float orbitReturnSharpness = 5.0f;
+    [SerializedField] private float minimumOrbitPitch = -15.0f;
+    [SerializedField] private float maximumOrbitPitch = 55.0f;
 
     private Vector3 _smoothedWorldPosition;
     private Vector3 _smoothedFocusPoint;
@@ -33,12 +38,21 @@ public sealed class VehicleFollowCamera : ScriptBehaviour
     private Vector3 _smoothedRotation;
     private float _physicsTimeRemainder;
     private RigidbodyComponent? _targetRigidbody;
+    private InputActionMap? _inputActions;
+    private float _orbitYaw;
+    private float _orbitPitch;
     private bool _initialized;
 
     private const float PhysicsStep = 1.0f / 60.0f;
 
     public override void OnCreate()
     {
+        if (!string.IsNullOrWhiteSpace(inputMappingAsset))
+        {
+            try { _inputActions = InputActionMap.Load(inputMappingAsset); }
+            catch (Exception exception) { Debug.LogError($"Unable to load camera input map '{inputMappingAsset}': {exception.Message}"); }
+        }
+
         if (target is not null)
         {
             _targetRigidbody = target.GetComponent<RigidbodyComponent>();
@@ -67,6 +81,27 @@ public sealed class VehicleFollowCamera : ScriptBehaviour
         if (target is null || deltaTime <= 0.0f)
         {
             return;
+        }
+
+        var orbitHorizontal = _inputActions?.GetAxis("CameraOrbitHorizontal") ?? Input.GetGamepadAxis(GamepadAxis.RightX);
+        var orbitVertical = _inputActions?.GetAxis("CameraOrbitVertical") ?? -Input.GetGamepadAxis(GamepadAxis.RightY);
+        orbitHorizontal = ApplyDeadZone(orbitHorizontal, 0.15f);
+        orbitVertical = ApplyDeadZone(orbitVertical, 0.15f);
+        if (orbitHorizontal != 0.0f || orbitVertical != 0.0f)
+        {
+            _orbitYaw = NormalizeAngle(_orbitYaw + orbitHorizontal * orbitSpeed * deltaTime);
+            _orbitPitch = Math.Clamp(
+                _orbitPitch + orbitVertical * orbitSpeed * deltaTime,
+                MathF.Min(minimumOrbitPitch, maximumOrbitPitch),
+                MathF.Max(minimumOrbitPitch, maximumOrbitPitch));
+        }
+        else
+        {
+            var returnAmount = DampAmount(orbitReturnSharpness, deltaTime);
+            _orbitYaw = NormalizeAngle(LerpAngle(_orbitYaw, 0.0f, returnAmount));
+            _orbitPitch = Lerp(_orbitPitch, 0.0f, returnAmount);
+            if (MathF.Abs(_orbitYaw) < 0.01f) _orbitYaw = 0.0f;
+            if (MathF.Abs(_orbitPitch) < 0.01f) _orbitPitch = 0.0f;
         }
 
         var targetPosition = target.WorldPosition;
@@ -125,7 +160,7 @@ public sealed class VehicleFollowCamera : ScriptBehaviour
 
         if (useParentedLocalPosition)
         {
-            GameObject.Position = localOffset;
+            GameObject.Position = ComputeOrbitedLocalPosition();
             _smoothedWorldPosition = GameObject.WorldPosition;
         }
         else
@@ -160,10 +195,33 @@ public sealed class VehicleFollowCamera : ScriptBehaviour
 
         var chaseForward = SafeNormalize(forward, -Vector3.UnitZ);
         var right = SafeNormalize(Vector3.Cross(chaseForward, Vector3.UnitY), Vector3.UnitX);
-        return targetPosition +
-               right * localPosition.X +
-               Vector3.UnitY * localPosition.Y -
-               chaseForward * localPosition.Z;
+        var orbitRight = RotateAroundAxis(right, Vector3.UnitY, _orbitYaw);
+        var horizontalBack = RotateAroundAxis(-chaseForward, Vector3.UnitY, _orbitYaw);
+        var offsetFromFocus = orbitRight * localPosition.X +
+                              Vector3.UnitY * (localPosition.Y - lookOffset.Y) +
+                              horizontalBack * localPosition.Z;
+        offsetFromFocus = RotateAroundAxis(offsetFromFocus, orbitRight, -_orbitPitch);
+        return targetPosition + lookOffset + offsetFromFocus;
+    }
+
+    private Vector3 ComputeOrbitedLocalPosition()
+    {
+        var focus = lookOffset;
+        var offsetFromFocus = localOffset - focus;
+        offsetFromFocus = RotateAroundAxis(offsetFromFocus, Vector3.UnitY, _orbitYaw);
+        var orbitRight = RotateAroundAxis(Vector3.UnitX, Vector3.UnitY, _orbitYaw);
+        offsetFromFocus = RotateAroundAxis(offsetFromFocus, orbitRight, -_orbitPitch);
+        return focus + offsetFromFocus;
+    }
+
+    private static Vector3 RotateAroundAxis(Vector3 value, Vector3 axis, float degrees)
+    {
+        axis = SafeNormalize(axis, Vector3.UnitY);
+        var radians = degrees * MathF.PI / 180.0f;
+        var cosine = MathF.Cos(radians);
+        var sine = MathF.Sin(radians);
+        return value * cosine + Vector3.Cross(axis, value) * sine +
+               axis * Vector3.Dot(axis, value) * (1.0f - cosine);
     }
 
     private static Vector3 ComputeWorldLookRotation(Vector3 position, Vector3 focusPoint)
@@ -301,5 +359,10 @@ public sealed class VehicleFollowCamera : ScriptBehaviour
         if (angle > 180.0f) angle -= 360.0f;
         if (angle < -180.0f) angle += 360.0f;
         return angle;
+    }
+
+    private static float ApplyDeadZone(float value, float deadZone)
+    {
+        return MathF.Abs(value) < deadZone ? 0.0f : value;
     }
 }

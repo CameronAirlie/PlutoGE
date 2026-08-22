@@ -230,12 +230,11 @@ namespace PlutoGE::render
                 {
                     vec2 sampleUv = clamp(baseUv + offsets[sampleIndex] * texelSize, vec2(0.0), vec2(1.0));
                     float depth = texture(uSceneDepthTexture, sampleUv).r;
-                    // OpenGL depth is smaller for the surface nearest the
-                    // camera. Dilate foreground motion into silhouette pixels;
-                    // selecting the farthest neighbour instead pulled terrain
-                    // motion across tree edges and made their shadows wobble
-                    // only on TAA-enabled gameplay cameras.
-                    if (depth < closestDepth)
+                    // PlutoGE uses reversed-Z, so larger depth values are nearer.
+                    // Dilate foreground motion into silhouette pixels; selecting
+                    // the farthest neighbour pulls background motion across thin
+                    // geometry and prevents stable temporal accumulation there.
+                    if (depth > closestDepth)
                     {
                         closestDepth = depth;
                         bestMotion = texture(uSceneMotionTexture, sampleUv).xy;
@@ -256,10 +255,17 @@ namespace PlutoGE::render
                     return;
                 }
 
-                float closestDepth = 1.0;
+                float closestDepth = 0.0;
                 vec2 motion = FindResponsiveMotionVector(currentUv, texelSize, closestDepth);
-                vec2 historyUv = currentUv - motion + uPreviousJitterUv;
+                // Motion is generated from jittered view-projection matrices.
+                // PlutoGE's projection convention contributes the negative of
+                // (current jitter - previous jitter) in raster space, so remove
+                // that contribution exactly once.
                 vec2 unjitteredMotion = motion + uCurrentJitterUv - uPreviousJitterUv;
+                // The history target is already an unjittered resolve. Reproject
+                // from the output pixel; currentUv only addresses this frame's
+                // jittered source image.
+                vec2 historyUv = UV - unjitteredMotion;
                 float unjitteredMotionPixels = length(unjitteredMotion / texelSize);
                 if (any(lessThan(historyUv, vec2(0.0))) || any(greaterThan(historyUv, vec2(1.0))))
                 {
@@ -333,7 +339,12 @@ namespace PlutoGE::render
                 // history when a hard shadow edge no longer agrees with the
                 // current frame instead of dragging that edge with the camera.
                 float historyLumaDelta = abs(Luma(clippedHistory) - centerLuma) / max(centerLuma, 0.05);
-                historyValidity *= 1.0 - smoothstep(0.08, 0.30, historyLumaDelta);
+                float lightingValidity = 1.0 - smoothstep(0.08, 0.30, historyLumaDelta);
+                // Alternating jitter samples naturally differ on stationary
+                // sub-pixel edges. Rejecting those samples defeats TAA's spatial
+                // supersampling, so apply lighting rejection only as motion makes
+                // stale shadow history increasingly likely.
+                historyValidity *= mix(1.0, lightingValidity, disocclusionWeight);
 
                 float localContrast = (maxLuma - minLuma) / max(maxLuma, 0.01);
                 float detailContrast = length(current - spatial / max(spatialWeight, 0.0001)) / max(centerLuma + 0.05, 0.05);

@@ -55,7 +55,7 @@ namespace PlutoGE::ui
         constexpr int kDefaultViewportHeight = 720;
         constexpr int kResizeDebounceFrames = 2;
         constexpr float kMinRenderScale = 0.5f;
-        constexpr float kMaxRenderScale = 1.0f;
+        constexpr float kMaxRenderScale = 2.0f;
         constexpr float kRayEpsilon = 0.0001f;
         constexpr float kHomogeneousWEpsilon = 0.00000001f;
         constexpr float kTriangleDeterminantEpsilon = 0.00000001f;
@@ -2117,12 +2117,21 @@ namespace PlutoGE::ui
                 m_renderScale = 1.0f;
                 m_resizeStableFrames = kResizeDebounceFrames;
             }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Supersample"))
+            {
+                m_renderScale = 1.5f;
+                m_resizeStableFrames = kResizeDebounceFrames;
+            }
             ImGui::SetNextItemWidth(180.0f);
             if (ImGui::SliderFloat("Render Scale", &m_renderScale, kMinRenderScale, kMaxRenderScale, "%.2fx"))
             {
                 m_renderScale = glm::clamp(m_renderScale, kMinRenderScale, kMaxRenderScale);
                 m_resizeStableFrames = kResizeDebounceFrames;
             }
+            const int targetWidth = std::max(1, static_cast<int>(std::lround(viewportSize.x * m_renderScale)));
+            const int targetHeight = std::max(1, static_cast<int>(std::lround(viewportSize.y * m_renderScale)));
+            ImGui::TextDisabled("Target: %d x %d", targetWidth, targetHeight);
             ImGui::EndPopup();
         }
 

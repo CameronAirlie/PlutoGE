@@ -54,6 +54,13 @@ public sealed class RigidbodyComponent : ComponentReference
         set => ScriptBridge.SetRigidbodyFreezeRotation(EntityId, value);
     }
 
+    /// <summary>Center of mass in the rigidbody entity's local space.</summary>
+    public Vector3 CenterOfMass
+    {
+        get => ScriptBridge.GetRigidbodyCenterOfMass(EntityId);
+        set => ScriptBridge.SetRigidbodyCenterOfMass(EntityId, value);
+    }
+
     public Vector3 Velocity
     {
         get => ScriptBridge.GetRigidbodyVelocity(EntityId);

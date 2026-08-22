@@ -152,6 +152,7 @@ namespace PlutoGE::scripting
         case ScriptFieldType::PrefabAsset:
         case ScriptFieldType::ScriptableObjectAsset:
         case ScriptFieldType::MaterialAsset:
+        case ScriptFieldType::InputMappingAsset:
             return std::holds_alternative<std::string>(value);
         case ScriptFieldType::Vector2:
             return std::holds_alternative<glm::vec2>(value);
@@ -195,6 +196,7 @@ namespace PlutoGE::scripting
         case ScriptFieldType::PrefabAsset:
         case ScriptFieldType::ScriptableObjectAsset:
         case ScriptFieldType::MaterialAsset:
+        case ScriptFieldType::InputMappingAsset:
             return std::string{};
         case ScriptFieldType::Vector2:
             return glm::vec2{0.0f, 0.0f};

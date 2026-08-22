@@ -702,10 +702,16 @@ namespace PlutoGE::ui
                                                                                 assets::ProjectAssetType type)
         {
             static std::array<AssetReferenceOptionsCacheEntry,
-                              static_cast<std::size_t>(assets::ProjectAssetType::RmlDocument) + 1>
+                              static_cast<std::size_t>(assets::ProjectAssetType::Count)>
                 cacheEntries;
 
-            auto &cacheEntry = cacheEntries[static_cast<std::size_t>(type)];
+            const auto typeIndex = static_cast<std::size_t>(type);
+            if (typeIndex >= cacheEntries.size())
+            {
+                static const std::vector<AssetReferenceOption> emptyOptions;
+                return emptyOptions;
+            }
+            auto &cacheEntry = cacheEntries[typeIndex];
             if (!project)
             {
                 if (cacheEntry.project == nullptr && !cacheEntry.options.empty())
@@ -1313,6 +1319,7 @@ namespace PlutoGE::ui
             case scripting::ScriptFieldType::PrefabAsset:
             case scripting::ScriptFieldType::ScriptableObjectAsset:
             case scripting::ScriptFieldType::MaterialAsset:
+            case scripting::ScriptFieldType::InputMappingAsset:
                 return EscapeCSharpStringLiteral(std::get<std::string>(value));
             case scripting::ScriptFieldType::Vector2:
             {
@@ -2668,6 +2675,39 @@ namespace PlutoGE::ui
                 if (auto droppedReference = AcceptDroppedMaterialAssetReference())
                 {
                     changed |= scriptComponent.SetFieldValue(field.name, *droppedReference);
+                }
+                break;
+            }
+            case scripting::ScriptFieldType::InputMappingAsset:
+            {
+                const auto &options = GetCachedAssetReferenceOptions(
+                    editorShell.GetProject(), assets::ProjectAssetType::InputMapping);
+                const auto &value = std::get<std::string>(*fieldValue);
+                const std::string preview = GetAssetReferencePreview(options, value, "<None>");
+                if (ImGui::BeginCombo(field.name.c_str(), preview.c_str()))
+                {
+                    if (ImGui::Selectable("<None>", value.empty()))
+                        changed |= scriptComponent.SetFieldValue(field.name, std::string{});
+                    for (const auto &option : options)
+                    {
+                        const bool selected = option.reference == value;
+                        if (ImGui::Selectable(option.displayName.c_str(), selected))
+                            changed |= scriptComponent.SetFieldValue(field.name, option.reference);
+                        if (selected) ImGui::SetItemDefaultFocus();
+                    }
+                    ImGui::EndCombo();
+                }
+                if (ImGui::BeginDragDropTarget())
+                {
+                    if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kContentBrowserAssetDragDropPayload);
+                        payload && payload->Data && payload->DataSize > 0)
+                    {
+                        const auto *data = static_cast<const char *>(payload->Data);
+                        const std::string reference(data, data + payload->DataSize - 1);
+                        if (assets::Project::GetAssetTypeForReference(reference) == assets::ProjectAssetType::InputMapping)
+                            changed |= scriptComponent.SetFieldValue(field.name, reference);
+                    }
+                    ImGui::EndDragDropTarget();
                 }
                 break;
             }

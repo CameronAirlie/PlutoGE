@@ -216,6 +216,8 @@ internal static unsafe class ScriptBridge
     private static delegate* unmanaged[Cdecl]<uint, int, void> _setRigidbodyKinematic;
     private static delegate* unmanaged[Cdecl]<uint, int> _getRigidbodyFreezeRotation;
     private static delegate* unmanaged[Cdecl]<uint, int, void> _setRigidbodyFreezeRotation;
+    private static delegate* unmanaged[Cdecl]<uint, NativeVector3> _getRigidbodyCenterOfMass;
+    private static delegate* unmanaged[Cdecl]<uint, NativeVector3, void> _setRigidbodyCenterOfMass;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3> _getRigidbodyVelocity;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3, NativeVector3> _getRigidbodyVelocityAtPoint;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3, void> _setRigidbodyVelocity;
@@ -369,6 +371,10 @@ internal static unsafe class ScriptBridge
     private static delegate* unmanaged[Cdecl]<NativeVector3> _getMouseScrollDelta;
     private static delegate* unmanaged[Cdecl]<int> _getQuitRequested;
     private static delegate* unmanaged[Cdecl]<int> _getCursorLocked;
+    private static delegate* unmanaged[Cdecl]<int, int> _getGamepadConnected;
+    private static delegate* unmanaged[Cdecl]<int, int> _getGamepadButtonDown;
+    private static delegate* unmanaged[Cdecl]<int, int> _getGamepadButtonPressed;
+    private static delegate* unmanaged[Cdecl]<int, float> _getGamepadAxis;
     private static delegate* unmanaged[Cdecl]<int, void> _setCursorLocked;
     private static delegate* unmanaged[Cdecl]<NativeVector3, NativeVector3, float, uint, NativeRaycastHit*, int> _physicsRaycast;
     private static delegate* unmanaged[Cdecl]<NativeVector3, NativeVector3, float, uint, nint, NativeRaycastHit*, int> _physicsRaycastTagged;
@@ -815,6 +821,8 @@ internal static unsafe class ScriptBridge
         delegate* unmanaged[Cdecl]<uint, int, void> setKinematic,
         delegate* unmanaged[Cdecl]<uint, int> getFreezeRotation,
         delegate* unmanaged[Cdecl]<uint, int, void> setFreezeRotation,
+        delegate* unmanaged[Cdecl]<uint, NativeVector3> getCenterOfMass,
+        delegate* unmanaged[Cdecl]<uint, NativeVector3, void> setCenterOfMass,
         delegate* unmanaged[Cdecl]<uint, NativeVector3> getVelocity,
         delegate* unmanaged[Cdecl]<uint, NativeVector3, NativeVector3> getVelocityAtPoint,
         delegate* unmanaged[Cdecl]<uint, NativeVector3, void> setVelocity,
@@ -829,6 +837,7 @@ internal static unsafe class ScriptBridge
             getAngularDrag == null || setAngularDrag == null || getFriction == null || setFriction == null ||
             getUseGravity == null || setUseGravity == null ||
             getKinematic == null || setKinematic == null || getFreezeRotation == null || setFreezeRotation == null ||
+            getCenterOfMass == null || setCenterOfMass == null ||
             getVelocity == null || getVelocityAtPoint == null || setVelocity == null || getAngularVelocity == null || setAngularVelocity == null ||
             addForce == null || addImpulse == null || addForceAtPosition == null || addImpulseAtPosition == null)
         {
@@ -850,6 +859,8 @@ internal static unsafe class ScriptBridge
         _setRigidbodyKinematic = setKinematic;
         _getRigidbodyFreezeRotation = getFreezeRotation;
         _setRigidbodyFreezeRotation = setFreezeRotation;
+        _getRigidbodyCenterOfMass = getCenterOfMass;
+        _setRigidbodyCenterOfMass = setCenterOfMass;
         _getRigidbodyVelocity = getVelocity;
         _getRigidbodyVelocityAtPoint = getVelocityAtPoint;
         _setRigidbodyVelocity = setVelocity;
@@ -1234,7 +1245,11 @@ internal static unsafe class ScriptBridge
         delegate* unmanaged[Cdecl]<NativeVector3> getMouseScrollDelta,
         delegate* unmanaged[Cdecl]<int> getQuitRequested,
         delegate* unmanaged[Cdecl]<int> getCursorLocked,
-        delegate* unmanaged[Cdecl]<int, void> setCursorLocked)
+        delegate* unmanaged[Cdecl]<int, void> setCursorLocked,
+        delegate* unmanaged[Cdecl]<int, int> getGamepadConnected,
+        delegate* unmanaged[Cdecl]<int, int> getGamepadButtonDown,
+        delegate* unmanaged[Cdecl]<int, int> getGamepadButtonPressed,
+        delegate* unmanaged[Cdecl]<int, float> getGamepadAxis)
     {
         if (getKeyDown == null ||
             getKeyPressed == null ||
@@ -1247,7 +1262,8 @@ internal static unsafe class ScriptBridge
             getMouseScrollDelta == null ||
             getQuitRequested == null ||
             getCursorLocked == null ||
-            setCursorLocked == null)
+            setCursorLocked == null || getGamepadConnected == null || getGamepadButtonDown == null ||
+            getGamepadButtonPressed == null || getGamepadAxis == null)
         {
             SetError("Managed input API registration received a null function pointer.");
             return 0;
@@ -1265,6 +1281,10 @@ internal static unsafe class ScriptBridge
         _getQuitRequested = getQuitRequested;
         _getCursorLocked = getCursorLocked;
         _setCursorLocked = setCursorLocked;
+        _getGamepadConnected = getGamepadConnected;
+        _getGamepadButtonDown = getGamepadButtonDown;
+        _getGamepadButtonPressed = getGamepadButtonPressed;
+        _getGamepadAxis = getGamepadAxis;
         _lastError = string.Empty;
         return 1;
     }
@@ -2269,6 +2289,8 @@ internal static unsafe class ScriptBridge
     internal static void SetRigidbodyKinematic(uint entityId, bool value) { if (_setRigidbodyKinematic != null) _setRigidbodyKinematic(entityId, value ? 1 : 0); }
     internal static bool GetRigidbodyFreezeRotation(uint entityId) => _getRigidbodyFreezeRotation != null && _getRigidbodyFreezeRotation(entityId) != 0;
     internal static void SetRigidbodyFreezeRotation(uint entityId, bool value) { if (_setRigidbodyFreezeRotation != null) _setRigidbodyFreezeRotation(entityId, value ? 1 : 0); }
+    internal static Vector3 GetRigidbodyCenterOfMass(uint entityId) => _getRigidbodyCenterOfMass == null ? Vector3.Zero : _getRigidbodyCenterOfMass(entityId).ToManaged();
+    internal static void SetRigidbodyCenterOfMass(uint entityId, Vector3 value) { if (_setRigidbodyCenterOfMass != null) _setRigidbodyCenterOfMass(entityId, NativeVector3.FromManaged(value)); }
     internal static Vector3 GetRigidbodyVelocity(uint entityId) => _getRigidbodyVelocity == null ? Vector3.Zero : _getRigidbodyVelocity(entityId).ToManaged();
     internal static Vector3 GetRigidbodyVelocityAtPoint(uint entityId, Vector3 worldPosition) =>
         _getRigidbodyVelocityAtPoint == null
@@ -2610,6 +2632,15 @@ internal static unsafe class ScriptBridge
         return _getKeyDown != null && _getKeyDown(keyCode) != 0;
     }
 
+    internal static bool GetGamepadConnected(int gamepad) =>
+        _getGamepadConnected != null && _getGamepadConnected(gamepad) != 0;
+    internal static bool GetGamepadButtonDown(int gamepad, int button) =>
+        _getGamepadButtonDown != null && _getGamepadButtonDown((gamepad << 16) | (button & 0xffff)) != 0;
+    internal static bool GetGamepadButtonPressed(int gamepad, int button) =>
+        _getGamepadButtonPressed != null && _getGamepadButtonPressed((gamepad << 16) | (button & 0xffff)) != 0;
+    internal static float GetGamepadAxis(int gamepad, int axis) =>
+        _getGamepadAxis != null ? _getGamepadAxis((gamepad << 16) | (axis & 0xffff)) : 0.0f;
+
     internal static bool GetKeyPressed(int keyCode)
     {
         return _getKeyPressed != null && _getKeyPressed(keyCode) != 0;
@@ -2899,6 +2930,10 @@ internal static unsafe class ScriptBridge
                 {
                     fieldType = 25;
                 }
+                if (field.FieldType == typeof(string) && field.GetCustomAttribute<InputMappingAssetAttribute>() is not null)
+                {
+                    fieldType = 26;
+                }
                 if (fieldType is null)
                 {
                     continue;
@@ -2918,6 +2953,10 @@ internal static unsafe class ScriptBridge
                 if (property.PropertyType == typeof(string) && property.GetCustomAttribute<MaterialAssetAttribute>() is not null)
                 {
                     fieldType = 25;
+                }
+                if (property.PropertyType == typeof(string) && property.GetCustomAttribute<InputMappingAssetAttribute>() is not null)
+                {
+                    fieldType = 26;
                 }
                 if (fieldType is null)
                 {
@@ -3195,6 +3234,7 @@ internal static unsafe class ScriptBridge
             23 => string.IsNullOrWhiteSpace(value) ? null : new Prefab(value),
             24 => LoadScriptableObject(value, memberType),
             25 => value,
+            26 => value,
             _ => null,
         };
     }
@@ -3228,6 +3268,7 @@ internal static unsafe class ScriptBridge
             23 => (value as Prefab)?.AssetReference ?? string.Empty,
             24 => (value as ScriptableObject)?.AssetReference ?? string.Empty,
             25 => value as string ?? string.Empty,
+            26 => value as string ?? string.Empty,
             _ => string.Empty,
         };
     }

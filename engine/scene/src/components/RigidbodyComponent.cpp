@@ -70,6 +70,7 @@ namespace PlutoGE::scene
             {"Use Gravity", PropertyType::Bool, m_config.useGravity ? "true" : "false"},
             {"Is Kinematic", PropertyType::Bool, m_config.isKinematic ? "true" : "false"},
             {"Freeze Rotation", PropertyType::Bool, m_config.freezeRotation ? "true" : "false"},
+            {"Center Of Mass", PropertyType::Vec3, SerializeVec3(m_config.centerOfMass)},
             {"Velocity", PropertyType::Vec3, SerializeVec3(m_config.velocity)},
             {"Angular Velocity", PropertyType::Vec3, SerializeVec3(m_config.angularVelocity)},
         };
@@ -106,6 +107,10 @@ namespace PlutoGE::scene
             else if (property.name == "Freeze Rotation")
             {
                 m_config.freezeRotation = ParseBool(property.value);
+            }
+            else if (property.name == "Center Of Mass")
+            {
+                m_config.centerOfMass = ParseVec3(property.value);
             }
             else if (property.name == "Velocity")
             {

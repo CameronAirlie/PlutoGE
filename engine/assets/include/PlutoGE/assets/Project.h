@@ -29,6 +29,8 @@ namespace PlutoGE::assets
         Assembly,
         ScriptableObject,
         RmlDocument,
+        InputMapping,
+        Count,
     };
 
     struct ProjectAssetEntry

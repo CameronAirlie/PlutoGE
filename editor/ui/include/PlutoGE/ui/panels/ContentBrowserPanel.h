@@ -58,6 +58,7 @@ namespace PlutoGE::ui
             CreateAnimationGraph,
             CreateScriptableObject,
             CreateRmlDocument,
+            CreateInputMapping,
         };
 
         std::array<char, 160> m_filterBuffer{};
@@ -68,6 +69,7 @@ namespace PlutoGE::ui
         std::array<char, 96> m_newAnimationGraphNameBuffer{};
         std::array<char, 96> m_newScriptableObjectNameBuffer{};
         std::array<char, 96> m_newRmlDocumentNameBuffer{};
+        std::array<char, 96> m_newInputMappingNameBuffer{};
         std::string m_rmlDocumentCreateError;
         int m_newScriptableObjectClassIndex = 0;
         int m_selectedAssetIndex = -1;

@@ -6,6 +6,7 @@
 #include "PlutoGE/ui/panels/AnimationClipEditorPanel.h"
 #include "PlutoGE/ui/panels/MaterialEditorPanel.h"
 #include "PlutoGE/ui/panels/ParticleSystemEditorPanel.h"
+#include "PlutoGE/ui/panels/InputMappingEditorPanel.h"
 #include "PlutoGE/ui/panels/MeshEditorPanel.h"
 #include "PlutoGE/ui/panels/ShaderGraphEditorPanel.h"
 #include "PlutoGE/ui/panels/ViewportPanel.h"
@@ -2159,6 +2160,14 @@ namespace PlutoGE::ui
         Log(ConsoleSeverity::Info, "Opened particle system: " + m_activeParticleSystemAssetReference);
     }
 
+    void EditorShell::OpenInputMappingAsset(std::string reference)
+    {
+        if (reference.empty()) return;
+        m_activeInputMappingAssetReference = std::move(reference);
+        m_openInputMappingEditorRequested = true;
+        Log(ConsoleSeverity::Info, "Opened input mapping: " + m_activeInputMappingAssetReference);
+    }
+
     bool EditorShell::LoadProjectFromPath(const std::filesystem::path &manifestPath)
     {
         constexpr std::string_view kMissingScriptAssemblyPrefix = "Project script assembly was not found: ";
@@ -2682,6 +2691,10 @@ namespace PlutoGE::ui
         particleSystemEditorPanel->Initialize();
         m_panelManager.AddPanel(particleSystemEditorPanel);
 
+        auto inputMappingEditorPanel = new InputMappingEditorPanel(PanelConfig{"Input Mapping Editor", false});
+        inputMappingEditorPanel->Initialize();
+        m_panelManager.AddPanel(inputMappingEditorPanel);
+
         auto profilerPanel = new ProfilerPanel(PanelConfig{"Profiler"}, &m_profiler, &m_panelManager, &renderer);
         profilerPanel->Initialize();
         m_panelManager.AddPanel(profilerPanel);
@@ -3127,6 +3140,8 @@ namespace PlutoGE::ui
                 {
                     particleSystemEditorPanel->SetOpen(true);
                 }
+                if (ConsumeInputMappingEditorOpenRequest())
+                    inputMappingEditorPanel->SetOpen(true);
 
                 if (ImGui::BeginMenu("File"))
                 {

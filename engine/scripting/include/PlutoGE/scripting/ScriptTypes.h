@@ -38,6 +38,7 @@ namespace PlutoGE::scripting
         PrefabAsset,
         ScriptableObjectAsset,
         MaterialAsset,
+        InputMappingAsset,
     };
 
     enum class ScriptClassKind

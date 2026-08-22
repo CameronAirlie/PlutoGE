@@ -1004,6 +1004,8 @@ namespace PlutoGE::assets
         {
             return ProjectAssetType::PostProcessPreset;
         }
+        if (EndsWithInsensitive(reference, ".plutoinput"))
+            return ProjectAssetType::InputMapping;
         if (EndsWithInsensitive(reference, ".plutomesh") || EndsWithInsensitive(reference, ".obj"))
         {
             return ProjectAssetType::Mesh;
@@ -1072,7 +1074,10 @@ namespace PlutoGE::assets
             return "Scriptable Object";
         case ProjectAssetType::RmlDocument:
             return "RML Document";
+        case ProjectAssetType::InputMapping:
+            return "Input Mapping";
         case ProjectAssetType::Unknown:
+        case ProjectAssetType::Count:
         default:
             return "Unknown";
         }
@@ -1114,6 +1119,8 @@ namespace PlutoGE::assets
             return ProjectAssetType::ScriptableObject;
         if (typeName == "RML Document" || typeName == "RmlDocument")
             return ProjectAssetType::RmlDocument;
+        if (typeName == "Input Mapping" || typeName == "InputMapping")
+            return ProjectAssetType::InputMapping;
         return ProjectAssetType::Unknown;
     }
 

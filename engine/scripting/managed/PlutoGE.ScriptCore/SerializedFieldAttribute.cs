@@ -11,3 +11,8 @@ public sealed class SerializedFieldAttribute : Attribute
 public sealed class MaterialAssetAttribute : Attribute
 {
 }
+
+[AttributeUsage(AttributeTargets.Field | AttributeTargets.Property)]
+public sealed class InputMappingAssetAttribute : Attribute
+{
+}

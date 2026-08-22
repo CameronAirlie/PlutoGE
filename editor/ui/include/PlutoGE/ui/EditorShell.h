@@ -182,12 +182,14 @@ namespace PlutoGE::ui
         void OpenAnimationGraphAsset(std::string animationGraphAssetReference);
         void OpenAnimationClipAsset(std::string animationClipAssetReference);
         void OpenParticleSystemAsset(std::string particleSystemAssetReference);
+        void OpenInputMappingAsset(std::string inputMappingAssetReference);
         const std::string &GetActiveMaterialAssetReference() const { return m_activeMaterialAssetReference; }
         const std::string &GetActiveMeshAssetReference() const { return m_activeMeshAssetReference; }
         const std::string &GetActiveShaderGraphAssetReference() const { return m_activeShaderGraphAssetReference; }
         const std::string &GetActiveAnimationGraphAssetReference() const { return m_activeAnimationGraphAssetReference; }
         const std::string &GetActiveAnimationClipAssetReference() const { return m_activeAnimationClipAssetReference; }
         const std::string &GetActiveParticleSystemAssetReference() const { return m_activeParticleSystemAssetReference; }
+        const std::string &GetActiveInputMappingAssetReference() const { return m_activeInputMappingAssetReference; }
         bool ConsumeMaterialEditorOpenRequest()
         {
             const bool requested = m_openMaterialEditorRequested;
@@ -222,6 +224,12 @@ namespace PlutoGE::ui
         {
             const bool requested = m_openParticleSystemEditorRequested;
             m_openParticleSystemEditorRequested = false;
+            return requested;
+        }
+        bool ConsumeInputMappingEditorOpenRequest()
+        {
+            const bool requested = m_openInputMappingEditorRequested;
+            m_openInputMappingEditorRequested = false;
             return requested;
         }
         void Log(ConsoleSeverity severity, std::string message);
@@ -318,6 +326,7 @@ namespace PlutoGE::ui
         std::string m_activeAnimationGraphAssetReference;
         std::string m_activeAnimationClipAssetReference;
         std::string m_activeParticleSystemAssetReference;
+        std::string m_activeInputMappingAssetReference;
         std::string m_runtimeSceneSnapshot;
         std::string m_runtimeSceneSnapshotPath;
         bool m_runtimeSceneWasDirty = false;
@@ -327,5 +336,6 @@ namespace PlutoGE::ui
         bool m_openAnimationGraphEditorRequested = false;
         bool m_openAnimationClipEditorRequested = false;
         bool m_openParticleSystemEditorRequested = false;
+        bool m_openInputMappingEditorRequested = false;
     };
 }

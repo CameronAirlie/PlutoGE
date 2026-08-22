@@ -813,6 +813,10 @@ void main() {
             {
                 editorShell.OpenParticleSystemAsset(asset.reference);
             }
+            else if (asset.type == assets::ProjectAssetType::InputMapping)
+            {
+                editorShell.OpenInputMappingAsset(asset.reference);
+            }
         }
 
         std::string SanitizeAssetFileName(std::string_view text)
@@ -1983,6 +1987,11 @@ void main() {
                 m_rmlDocumentCreateError.clear();
                 m_pendingMenuAction = PendingMenuAction::CreateRmlDocument;
             }
+            if (ImGui::MenuItem("Input Mapping"))
+            {
+                m_newInputMappingNameBuffer.fill('\0');
+                m_pendingMenuAction = PendingMenuAction::CreateInputMapping;
+            }
             if (ImGui::BeginMenu("Import"))
             {
                 if (ImGui::MenuItem("3D Model..."))
@@ -2055,9 +2064,39 @@ void main() {
         case PendingMenuAction::CreateRmlDocument:
             ImGui::OpenPopup("Create RmlUi Document");
             break;
+        case PendingMenuAction::CreateInputMapping:
+            ImGui::OpenPopup("Create Input Mapping Asset");
+            break;
         case PendingMenuAction::None:
         default:
             break;
+        }
+
+        if (ImGui::BeginPopupModal("Create Input Mapping Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        {
+            ImGui::InputText("Name", m_newInputMappingNameBuffer.data(), m_newInputMappingNameBuffer.size());
+            const std::string name = SanitizeAssetFileName(m_newInputMappingNameBuffer.data());
+            if (ImGui::Button("Create") && !name.empty())
+            {
+                const auto directory = GetCreateDirectory(*project, m_selectedFolder, "Input");
+                std::error_code ec;
+                std::filesystem::create_directories(directory, ec);
+                const auto path = directory / (name + ".plutoinput");
+                std::ofstream output(path, std::ios::binary | std::ios::trunc);
+                output << "{\n  \"Actions\": []\n}\n";
+                if (output)
+                {
+                    const auto reference = project->MakeAssetReference(path);
+                    project->RefreshAssetRegistry();
+                    m_assetCacheDirty = true;
+                    editorShell.MarkProjectDirty();
+                    editorShell.OpenInputMappingAsset(reference);
+                    ImGui::CloseCurrentPopup();
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
         }
 
         if (ImGui::BeginPopupModal("Create Material Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
@@ -3276,6 +3315,11 @@ void main() {
                 {
                     editorShell.OpenParticleSystemAsset(asset.reference);
                 }
+            }
+            else if (asset.type == assets::ProjectAssetType::InputMapping)
+            {
+                if (ImGui::Button("Open Input Mapping"))
+                    editorShell.OpenInputMappingAsset(asset.reference);
             }
         }
     }

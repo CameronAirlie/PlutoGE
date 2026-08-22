@@ -6,6 +6,7 @@
 #include "PlutoGE/scene/components/CameraComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -311,13 +312,30 @@ int RunRuntime(int argc, char **argv)
         return importedMeshAsset.mesh ? 0 : 1;
     }
 
+    constexpr std::size_t benchmarkWarmupFrames = 120;
+    constexpr std::size_t defaultBenchmarkFrames = 600;
+    const bool benchmarkEnabled = argc > 1 && std::string_view(argv[1]) == "--benchmark";
+    std::size_t benchmarkFrameCount = defaultBenchmarkFrames;
+    if (benchmarkEnabled && argc > 2)
+    {
+        try
+        {
+            benchmarkFrameCount = std::max<std::size_t>(1, std::stoull(argv[2]));
+        }
+        catch (const std::exception &)
+        {
+            std::cerr << "Invalid benchmark frame count: " << argv[2] << std::endl;
+            return 2;
+        }
+    }
+
     const auto executablePath = PlutoGE::ResolveExecutablePath(argv);
     PlutoGE::TemporaryContentDirectory temporaryContent;
-    auto manifestPath = argc > 1
+    auto manifestPath = argc > 1 && !benchmarkEnabled
                             ? std::filesystem::path(argv[1])
                             : PlutoGE::assets::GetRuntimeManifestPathForExecutable(executablePath);
 
-    if (argc <= 1)
+    if (argc <= 1 || benchmarkEnabled)
     {
         const auto contentPackPath = PlutoGE::assets::GetRuntimeContentPackPathForExecutable(executablePath);
         if (std::filesystem::exists(contentPackPath))
@@ -478,6 +496,10 @@ int RunRuntime(int argc, char **argv)
     auto &window = engine.GetWindow();
     bool hasLoggedFirstFrame = false;
     bool hasLoggedFirstFrameDiagnostics = false;
+    std::size_t benchmarkFrameIndex = 0;
+    std::vector<double> benchmarkFrameTimes;
+    if (benchmarkEnabled)
+        benchmarkFrameTimes.reserve(benchmarkFrameCount);
 
     while (!window.ShouldClose())
     {
@@ -548,6 +570,19 @@ int RunRuntime(int argc, char **argv)
 #endif
         window.PollEvents();
 
+        if (benchmarkEnabled)
+        {
+            if (benchmarkFrameIndex >= benchmarkWarmupFrames)
+            {
+                benchmarkFrameTimes.push_back(
+                    std::chrono::duration<double, std::milli>(
+                        std::chrono::high_resolution_clock::now() - currentFrameTime).count());
+            }
+            ++benchmarkFrameIndex;
+            if (benchmarkFrameTimes.size() >= benchmarkFrameCount)
+                window.RequestClose();
+        }
+
 #ifdef _WIN32
         if (!hasLoggedFirstFrame)
         {
@@ -555,6 +590,36 @@ int RunRuntime(int argc, char **argv)
             hasLoggedFirstFrame = true;
         }
 #endif
+    }
+
+    if (benchmarkEnabled && !benchmarkFrameTimes.empty())
+    {
+        std::sort(benchmarkFrameTimes.begin(), benchmarkFrameTimes.end());
+        double totalMilliseconds = 0.0;
+        for (const double frameTime : benchmarkFrameTimes)
+            totalMilliseconds += frameTime;
+
+        const auto percentile = [&](double fraction)
+        {
+            const auto index = (std::min)(
+                benchmarkFrameTimes.size() - 1,
+                static_cast<std::size_t>(fraction * static_cast<double>(benchmarkFrameTimes.size() - 1)));
+            return benchmarkFrameTimes[index];
+        };
+        const double averageMilliseconds = totalMilliseconds / static_cast<double>(benchmarkFrameTimes.size());
+        const auto reportPath = executablePath.parent_path() / (executablePath.stem().string() + ".benchmark.txt");
+        std::ofstream report(reportPath, std::ios::out | std::ios::trunc);
+        if (report.is_open())
+        {
+            report << "Resolution: " << window.GetExtents().width << " x " << window.GetExtents().height << '\n'
+                   << "Frames: " << benchmarkFrameTimes.size() << '\n'
+                   << "Average: " << averageMilliseconds << " ms (" << 1000.0 / averageMilliseconds << " FPS)\n"
+                   << "Min: " << benchmarkFrameTimes.front() << " ms\n"
+                   << "Median: " << percentile(0.50) << " ms\n"
+                   << "P95: " << percentile(0.95) << " ms\n"
+                   << "P99: " << percentile(0.99) << " ms\n"
+                   << "Max: " << benchmarkFrameTimes.back() << " ms\n";
+        }
     }
 
 #ifdef _WIN32

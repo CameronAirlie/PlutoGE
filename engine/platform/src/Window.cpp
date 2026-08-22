@@ -216,6 +216,56 @@ namespace PlutoGE::platform
     {
         m_inputState.BeginFrame();
         glfwPollEvents();
+        // Present a compact logical list to scripts. GLFW joystick IDs are physical
+        // slots and commonly contain gaps (or virtual/non-gamepad devices), so JID 0
+        // is not reliably the player's first controller on Windows.
+        std::size_t gamepadIndex = 0;
+        for (int joystick = GLFW_JOYSTICK_1;
+             joystick <= GLFW_JOYSTICK_LAST && gamepadIndex < m_inputState.gamepads.size();
+             ++joystick)
+        {
+            GLFWgamepadstate state{};
+            if (!glfwJoystickIsGamepad(joystick) || !glfwGetGamepadState(joystick, &state))
+                continue;
+
+            auto &destination = m_inputState.gamepads[gamepadIndex++];
+            destination.connected = true;
+            for (std::size_t button = 0; button < destination.buttons.size(); ++button)
+                destination.buttons[button] = state.buttons[button] == GLFW_PRESS;
+            for (std::size_t axis = 0; axis < destination.axes.size(); ++axis)
+                destination.axes[axis] = state.axes[axis];
+            // Present triggers as the conventional 0..1 range (GLFW reports -1..1).
+            destination.axes[GLFW_GAMEPAD_AXIS_LEFT_TRIGGER] = (destination.axes[GLFW_GAMEPAD_AXIS_LEFT_TRIGGER] + 1.0f) * 0.5f;
+            destination.axes[GLFW_GAMEPAD_AXIS_RIGHT_TRIGGER] = (destination.axes[GLFW_GAMEPAD_AXIS_RIGHT_TRIGGER] + 1.0f) * 0.5f;
+        }
+        // Some otherwise usable DirectInput controllers have no GLFW mapping and
+        // therefore fail glfwJoystickIsGamepad(). Keep them available with their
+        // native button/axis order instead of silently ignoring them.
+        for (int joystick = GLFW_JOYSTICK_1;
+             joystick <= GLFW_JOYSTICK_LAST && gamepadIndex < m_inputState.gamepads.size();
+             ++joystick)
+        {
+            if (!glfwJoystickPresent(joystick) || glfwJoystickIsGamepad(joystick)) continue;
+            int buttonCount = 0, axisCount = 0;
+            const unsigned char *buttons = glfwGetJoystickButtons(joystick, &buttonCount);
+            const float *axes = glfwGetJoystickAxes(joystick, &axisCount);
+            if ((!buttons || buttonCount == 0) && (!axes || axisCount == 0)) continue;
+            auto &destination = m_inputState.gamepads[gamepadIndex++];
+            destination.connected = true;
+            destination.buttons.fill(false);
+            destination.axes.fill(0.0f);
+            for (int button = 0; button < buttonCount && button < static_cast<int>(destination.buttons.size()); ++button)
+                destination.buttons[button] = buttons[button] == GLFW_PRESS;
+            for (int axis = 0; axis < axisCount && axis < static_cast<int>(destination.axes.size()); ++axis)
+                destination.axes[axis] = axes[axis];
+        }
+        for (; gamepadIndex < m_inputState.gamepads.size(); ++gamepadIndex)
+        {
+            auto &destination = m_inputState.gamepads[gamepadIndex];
+            destination.connected = false;
+            destination.buttons.fill(false);
+            destination.axes.fill(0.0f);
+        }
     }
 
     void Window::Close()

@@ -20,6 +20,7 @@ public sealed class RaycastVehicleController : ScriptBehaviour
     [SerializedField] private GameObject? frontRightWheelVisual = null;
     [SerializedField] private GameObject? rearLeftWheelVisual = null;
     [SerializedField] private GameObject? rearRightWheelVisual = null;
+    [SerializedField] private GameObject? centerOfMass = null;
 
     [SerializedField] private float mass    = 1250.0f;
     [SerializedField] private float wheelRadius    = 0.5f;
@@ -74,6 +75,7 @@ public sealed class RaycastVehicleController : ScriptBehaviour
     [SerializedField] private float rightWheelSpinDirection    = 1.0f;
 
     [SerializedField] private bool lockCursorOnCreate    = true;
+    [SerializedField, InputMappingAsset] private string inputMappingAsset = "";
     [SerializedField] private string groundTag    = "ground";
     [SerializedField] private bool suspensionDiagnostics = true;
 
@@ -92,6 +94,7 @@ public sealed class RaycastVehicleController : ScriptBehaviour
     private float _steerInput;
     private bool _handbrakeInput;
     private int _diagnosticStep;
+    private InputActionMap? _inputActions;
 
     public static bool TryGetTelemetry(GameObject? vehicle, out VehicleTelemetry telemetry)
     {
@@ -106,6 +109,11 @@ public sealed class RaycastVehicleController : ScriptBehaviour
 
     public override void OnCreate()
     {
+        if (!string.IsNullOrWhiteSpace(inputMappingAsset))
+        {
+            try { _inputActions = InputActionMap.Load(inputMappingAsset); }
+            catch (Exception exception) { Debug.LogError($"Unable to load vehicle input map '{inputMappingAsset}': {exception.Message}"); }
+        }
         UpgradeLegacySuspensionPreset();
 
         _rigidbody = GameObject.GetComponent<RigidbodyComponent>();
@@ -118,6 +126,7 @@ public sealed class RaycastVehicleController : ScriptBehaviour
             _rigidbody.LinearDrag = 0.015f;
             _rigidbody.AngularDrag = 0.75f;
             _rigidbody.Friction = 0.02f;
+            _rigidbody.CenterOfMass = centerOfMass?.Position ?? Vector3.Zero;
         }
 
         _engineRpm = MathF.Max(idleRpm, 0.0f);
@@ -189,17 +198,16 @@ public sealed class RaycastVehicleController : ScriptBehaviour
             Input.CursorLocked = !Input.CursorLocked;
         }
 
-        if (Input.IsKeyPressed(KeyCode.R))
+        if (_inputActions?.WasPressed("Recover") ?? Input.IsKeyPressed(KeyCode.R))
         {
             RecoverCar();
         }
 
-        _throttleInput = Input.IsKeyDown(KeyCode.W) ? 1.0f : 0.0f;
-        _brakeInput = Input.IsKeyDown(KeyCode.S) ? 1.0f : 0.0f;
-        _handbrakeInput = Input.IsKeyDown(KeyCode.Space);
-        _steerInput = 0.0f;
-        if (Input.IsKeyDown(KeyCode.A)) _steerInput += 1.0f;
-        if (Input.IsKeyDown(KeyCode.D)) _steerInput -= 1.0f;
+        _throttleInput = _inputActions?.GetAxis("Throttle") ?? (Input.IsKeyDown(KeyCode.W) ? 1.0f : 0.0f);
+        _brakeInput = _inputActions?.GetAxis("Brake") ?? (Input.IsKeyDown(KeyCode.S) ? 1.0f : 0.0f);
+        _handbrakeInput = _inputActions?.IsDown("Handbrake") ?? Input.IsKeyDown(KeyCode.Space);
+        _steerInput = _inputActions?.GetAxis("Steer") ??
+            ((Input.IsKeyDown(KeyCode.A) ? 1.0f : 0.0f) - (Input.IsKeyDown(KeyCode.D) ? 1.0f : 0.0f));
 
         var forwardSpeed = Vector3.Dot(_rigidbody.Velocity, Forward);
         var absoluteSpeed = MathF.Abs(forwardSpeed);

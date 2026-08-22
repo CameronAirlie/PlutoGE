@@ -112,14 +112,14 @@ namespace PlutoGE::scripting
         using register_light_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *);
         using register_mesh_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *);
         using register_animation_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
-        using register_rigidbody_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
+        using register_rigidbody_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_collider_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_particle_system_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_sound_emitter_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_runtime_ui_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_advanced_ui_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_rml_ui_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
-        using register_input_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
+        using register_input_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_physics_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *);
         using register_navigation_api_fn = int(PLUTO_HOST_CALL *)(void *, void *);
         using register_debug_api_fn = int(PLUTO_HOST_CALL *)(void *);
@@ -571,7 +571,7 @@ namespace PlutoGE::scripting
         {
             int fieldTypeValue = 0;
             std::from_chars(token.data(), token.data() + token.size(), fieldTypeValue);
-            if (fieldTypeValue < static_cast<int>(ScriptFieldType::None) || fieldTypeValue > static_cast<int>(ScriptFieldType::MaterialAsset))
+            if (fieldTypeValue < static_cast<int>(ScriptFieldType::None) || fieldTypeValue > static_cast<int>(ScriptFieldType::InputMappingAsset))
             {
                 return ScriptFieldType::None;
             }
@@ -609,6 +609,7 @@ namespace PlutoGE::scripting
             case ScriptFieldType::PrefabAsset:
             case ScriptFieldType::ScriptableObjectAsset:
             case ScriptFieldType::MaterialAsset:
+            case ScriptFieldType::InputMappingAsset:
                 return token;
             case ScriptFieldType::Vector2:
             {
@@ -1761,6 +1762,17 @@ namespace PlutoGE::scripting
             if (auto *component = FindRigidbody(entityId))
                 component->SetFreezeRotation(value != 0);
         }
+        NativeVector3 GetRigidbodyCenterOfMass(uint32_t entityId)
+        {
+            auto *component = FindRigidbody(entityId);
+            const auto value = component ? component->GetCenterOfMass() : glm::vec3{0.0f};
+            return NativeVector3{value.x, value.y, value.z};
+        }
+        void SetRigidbodyCenterOfMass(uint32_t entityId, NativeVector3 value)
+        {
+            if (auto *component = FindRigidbody(entityId); component && IsFiniteVector3(value))
+                component->SetCenterOfMass(glm::vec3(value.x, value.y, value.z));
+        }
         NativeVector3 GetRigidbodyVelocity(uint32_t entityId)
         {
             auto *component = FindRigidbody(entityId);
@@ -2602,6 +2614,15 @@ namespace PlutoGE::scripting
             const auto &inputState = GetInputState();
             return button >= 0 && button < 8 && !inputState.mouseState.buttons[button] && inputState.mouseState.previousButtons[button] ? 1 : 0;
         }
+
+        int32_t GetGamepadConnected(int32_t gamepad)
+        { return gamepad >= 0 && gamepad < static_cast<int32_t>(platform::MaxGamepads) && GetInputState().gamepads[gamepad].connected ? 1 : 0; }
+        int32_t GetGamepadButtonDown(int32_t packed)
+        { return GetInputState().IsGamepadButtonDown(static_cast<uint16_t>(packed >> 16), static_cast<uint16_t>(packed)) ? 1 : 0; }
+        int32_t GetGamepadButtonPressed(int32_t packed)
+        { return GetInputState().IsGamepadButtonPressed(static_cast<uint16_t>(packed >> 16), static_cast<uint16_t>(packed)) ? 1 : 0; }
+        float GetGamepadAxis(int32_t packed)
+        { return GetInputState().GetGamepadAxis(static_cast<uint16_t>(packed >> 16), static_cast<uint16_t>(packed)); }
 
         NativeVector3 GetMousePosition()
         {
@@ -3926,6 +3947,8 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(static_cast<set_component_bool_fn>(&SetRigidbodyKinematic)),
                 reinterpret_cast<void *>(static_cast<get_component_bool_fn>(&GetRigidbodyFreezeRotation)),
                 reinterpret_cast<void *>(static_cast<set_component_bool_fn>(&SetRigidbodyFreezeRotation)),
+                reinterpret_cast<void *>(static_cast<get_component_vector3_fn>(&GetRigidbodyCenterOfMass)),
+                reinterpret_cast<void *>(static_cast<set_component_vector3_fn>(&SetRigidbodyCenterOfMass)),
                 reinterpret_cast<void *>(static_cast<get_component_vector3_fn>(&GetRigidbodyVelocity)),
                 reinterpret_cast<void *>(&GetRigidbodyVelocityAtPoint),
                 reinterpret_cast<void *>(static_cast<set_component_vector3_fn>(&SetRigidbodyVelocity)),
@@ -4128,7 +4151,11 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(static_cast<get_input_mouse_vector2_fn>(&GetMouseScrollDelta)),
                 reinterpret_cast<void *>(static_cast<get_input_quit_requested_fn>(&GetQuitRequested)),
                 reinterpret_cast<void *>(static_cast<get_input_cursor_locked_fn>(&GetCursorLocked)),
-                reinterpret_cast<void *>(static_cast<set_input_cursor_locked_fn>(&SetCursorLocked))) == 0)
+                reinterpret_cast<void *>(static_cast<set_input_cursor_locked_fn>(&SetCursorLocked)),
+                reinterpret_cast<void *>(static_cast<get_input_key_fn>(&GetGamepadConnected)),
+                reinterpret_cast<void *>(static_cast<get_input_key_fn>(&GetGamepadButtonDown)),
+                reinterpret_cast<void *>(static_cast<get_input_key_fn>(&GetGamepadButtonPressed)),
+                reinterpret_cast<void *>(static_cast<float (*)(int32_t)>(&GetGamepadAxis))) == 0)
         {
             setManagedBridgeFailure("RegisterInputApi");
             return false;

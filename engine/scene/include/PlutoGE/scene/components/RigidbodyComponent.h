@@ -16,6 +16,7 @@ namespace PlutoGE::scene
         bool useGravity = true;
         bool isKinematic = false;
         bool freezeRotation = false;
+        glm::vec3 centerOfMass{0.0f};
         glm::vec3 velocity{0.0f};
         glm::vec3 angularVelocity{0.0f};
     };
@@ -51,6 +52,9 @@ namespace PlutoGE::scene
 
         bool HasFreezeRotation() const { return m_config.freezeRotation; }
         void SetFreezeRotation(bool freezeRotation) { m_config.freezeRotation = freezeRotation; }
+
+        const glm::vec3 &GetCenterOfMass() const { return m_config.centerOfMass; }
+        void SetCenterOfMass(const glm::vec3 &centerOfMass) { m_config.centerOfMass = centerOfMass; }
 
         const glm::vec3 &GetVelocity() const { return m_config.velocity; }
         void SetVelocity(const glm::vec3 &velocity)

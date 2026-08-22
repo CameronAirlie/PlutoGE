@@ -783,6 +783,7 @@ namespace PlutoGE::scene
             uint64_t configurationSignature = 0;
             uint64_t synchronizedTransformRevision = 0;
             uint64_t synchronizedVelocityRevision = 0;
+            btVector3 centerOfMassOffset{0.0f, 0.0f, 0.0f};
             bool dynamic = false;
         };
 
@@ -939,6 +940,24 @@ namespace PlutoGE::scene
             const auto rotation = transform.getRotation();
             return glm::translate(glm::mat4(1.0f), FromBullet(transform.getOrigin())) *
                    glm::mat4_cast(glm::quat(rotation.w(), rotation.x(), rotation.y(), rotation.z()));
+        }
+
+        btTransform EntityToBodyTransform(const Entity &entity, const btVector3 &centerOfMassOffset)
+        {
+            btTransform transform;
+            transform.setIdentity();
+            transform.setRotation(ToBulletRotation(entity.GetWorldTransform()));
+            transform.setOrigin(ToBullet(entity.GetWorldPosition()) +
+                                quatRotate(transform.getRotation(), centerOfMassOffset));
+            return transform;
+        }
+
+        btTransform BodyToEntityTransform(const btTransform &bodyTransform, const btVector3 &centerOfMassOffset)
+        {
+            btTransform transform = bodyTransform;
+            transform.setOrigin(bodyTransform.getOrigin() -
+                                quatRotate(bodyTransform.getRotation(), centerOfMassOffset));
+            return transform;
         }
 
         struct BulletQueryBody
@@ -1187,7 +1206,8 @@ namespace PlutoGE::scene
             }
 
             const btTransform &transform = stepBody.body->getWorldTransform();
-            ApplyWorldPhysicsTransform(*stepBody.entity, transform);
+            ApplyWorldPhysicsTransform(*stepBody.entity,
+                                       BodyToEntityTransform(transform, stepBody.centerOfMassOffset));
             stepBody.rigidbody->SetVelocity(FromBullet(stepBody.body->getLinearVelocity()));
             stepBody.rigidbody->SetAngularVelocity(FromBullet(stepBody.body->getAngularVelocity()));
             stepBody.synchronizedTransformRevision = stepBody.entity->GetTransformRevision();
@@ -1331,6 +1351,7 @@ namespace PlutoGE::scene
                 HashCombine(signature, rigidbody->UsesGravity());
                 HashCombine(signature, rigidbody->IsKinematic());
                 HashCombine(signature, rigidbody->HasFreezeRotation());
+                HashVec3(signature, rigidbody->GetCenterOfMass());
             }
 
             return static_cast<uint64_t>(signature);
@@ -1468,7 +1489,8 @@ namespace PlutoGE::scene
         {
             if (!stepBody.dynamic || !stepBody.entity || !stepBody.body)
                 continue;
-            ApplyWorldPhysicsTransform(*stepBody.entity, stepBody.body->getWorldTransform());
+            ApplyWorldPhysicsTransform(*stepBody.entity,
+                                       BodyToEntityTransform(stepBody.body->getWorldTransform(), stepBody.centerOfMassOffset));
             stepBody.synchronizedTransformRevision = stepBody.entity->GetTransformRevision();
         }
         m_runtimePhysicsState->renderTransformsApplied = false;
@@ -1501,7 +1523,8 @@ namespace PlutoGE::scene
                 renderTransform.setRotation(rotation);
             }
 
-            ApplyWorldPhysicsTransform(*stepBody.entity, renderTransform);
+            ApplyWorldPhysicsTransform(*stepBody.entity,
+                                       BodyToEntityTransform(renderTransform, stepBody.centerOfMassOffset));
             applied = true;
         }
         m_runtimePhysicsState->renderTransformsApplied = applied;
@@ -1586,16 +1609,27 @@ namespace PlutoGE::scene
             const bool rigidbodyEnabled = rigidbody && rigidbody->IsEnabled();
             const bool dynamic = rigidbodyEnabled && !rigidbody->IsKinematic();
             const float mass = dynamic ? rigidbody->GetMass() : 0.0f;
+            const glm::vec3 scaledCenterOfMass = rigidbodyEnabled
+                ? rigidbody->GetCenterOfMass() * worldScale
+                : glm::vec3(0.0f);
+            const btVector3 centerOfMassOffset = ToBullet(scaledCenterOfMass);
+            if (rigidbodyEnabled && glm::length2(scaledCenterOfMass) > 0.00000001f)
+            {
+                auto compoundShape = std::make_unique<btCompoundShape>();
+                btTransform childTransform;
+                childTransform.setIdentity();
+                childTransform.setOrigin(-centerOfMassOffset);
+                compoundShape->addChildShape(childTransform, shapeData.shape.get());
+                shapeData.ownedChildShapes.push_back(std::move(shapeData.shape));
+                shapeData.shape = std::move(compoundShape);
+            }
             btVector3 localInertia(0.0f, 0.0f, 0.0f);
             if (mass > 0.0f)
             {
                 shapeData.shape->calculateLocalInertia(mass, localInertia);
             }
 
-            btTransform startTransform;
-            startTransform.setIdentity();
-            startTransform.setOrigin(ToBullet(entity->GetWorldPosition()));
-            startTransform.setRotation(ToBulletRotation(entity->GetWorldTransform()));
+            const btTransform startTransform = EntityToBodyTransform(*entity, centerOfMassOffset);
 
             auto motionState = std::make_unique<btDefaultMotionState>(startTransform);
             btRigidBody::btRigidBodyConstructionInfo constructionInfo(mass, motionState.get(), shapeData.shape.get(), localInertia);
@@ -1646,6 +1680,7 @@ namespace PlutoGE::scene
                 .configurationSignature = ComputeRuntimePhysicsBodySignature(*entity, *collider, rigidbodyEnabled ? rigidbody : nullptr),
                 .synchronizedTransformRevision = entity->GetTransformRevision(),
                 .synchronizedVelocityRevision = rigidbodyEnabled ? rigidbody->GetVelocityRevision() : 0,
+                .centerOfMassOffset = centerOfMassOffset,
                 .dynamic = dynamic,
             });
         }
@@ -3685,10 +3720,8 @@ namespace PlutoGE::scene
             {
                 if (stepBody.entity->GetTransformRevision() != stepBody.synchronizedTransformRevision)
                 {
-                    btTransform requestedTransform;
-                    requestedTransform.setIdentity();
-                    requestedTransform.setOrigin(ToBullet(stepBody.entity->GetWorldPosition()));
-                    requestedTransform.setRotation(ToBulletRotation(stepBody.entity->GetWorldTransform()));
+                    const btTransform requestedTransform =
+                        EntityToBodyTransform(*stepBody.entity, stepBody.centerOfMassOffset);
                     stepBody.body->setWorldTransform(requestedTransform);
                     if (stepBody.motionState)
                         stepBody.motionState->setWorldTransform(requestedTransform);
@@ -3714,10 +3747,8 @@ namespace PlutoGE::scene
                 continue;
             }
 
-            btTransform transform;
-            transform.setIdentity();
-            transform.setOrigin(ToBullet(stepBody.entity->GetWorldPosition()));
-            transform.setRotation(ToBulletRotation(stepBody.entity->GetWorldTransform()));
+            const btTransform transform =
+                EntityToBodyTransform(*stepBody.entity, stepBody.centerOfMassOffset);
             const bool transformChanged = !(stepBody.body->getWorldTransform() == transform);
             if (!transformChanged)
             {

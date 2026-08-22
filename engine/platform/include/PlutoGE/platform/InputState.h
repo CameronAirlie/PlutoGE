@@ -63,6 +63,18 @@ namespace PlutoGE::platform
         Z = 90,
     };
 
+    constexpr std::size_t MaxGamepads = 16;
+    constexpr std::size_t MaxGamepadButtons = 15;
+    constexpr std::size_t MaxGamepadAxes = 6;
+
+    struct GamepadState
+    {
+        bool connected = false;
+        std::array<bool, MaxGamepadButtons> buttons{};
+        std::array<bool, MaxGamepadButtons> previousButtons{};
+        std::array<float, MaxGamepadAxes> axes{};
+    };
+
     struct MouseState
     {
         bool buttons[8] = {false};
@@ -84,6 +96,16 @@ namespace PlutoGE::platform
         std::array<bool, 512> previousKeys = {false};
         std::vector<int> repeatedKeys;
         std::vector<std::uint32_t> textInput;
+        std::array<GamepadState, MaxGamepads> gamepads{};
+
+        [[nodiscard]] bool IsGamepadButtonDown(std::uint16_t gamepad, std::uint16_t button) const
+        { return gamepad < gamepads.size() && button < MaxGamepadButtons && gamepads[gamepad].connected && gamepads[gamepad].buttons[button]; }
+        [[nodiscard]] bool IsGamepadButtonPressed(std::uint16_t gamepad, std::uint16_t button) const
+        { return IsGamepadButtonDown(gamepad, button) && !gamepads[gamepad].previousButtons[button]; }
+        [[nodiscard]] bool IsGamepadButtonReleased(std::uint16_t gamepad, std::uint16_t button) const
+        { return gamepad < gamepads.size() && button < MaxGamepadButtons && gamepads[gamepad].connected && !gamepads[gamepad].buttons[button] && gamepads[gamepad].previousButtons[button]; }
+        [[nodiscard]] float GetGamepadAxis(std::uint16_t gamepad, std::uint16_t axis) const
+        { return gamepad < gamepads.size() && axis < MaxGamepadAxes && gamepads[gamepad].connected ? gamepads[gamepad].axes[axis] : 0.0f; }
 
         [[nodiscard]] bool IsKeyDown(KeyCode key) const
         {
@@ -125,6 +147,7 @@ namespace PlutoGE::platform
         void BeginFrame()
         {
             previousKeys = keys;
+            for (auto &gamepad : gamepads) gamepad.previousButtons = gamepad.buttons;
             for (std::uint16_t button = 0; button < 8; ++button)
             {
                 mouseState.previousButtons[button] = mouseState.buttons[button];

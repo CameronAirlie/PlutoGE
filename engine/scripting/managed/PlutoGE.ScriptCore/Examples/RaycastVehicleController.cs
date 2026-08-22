@@ -242,7 +242,12 @@ public sealed class RaycastVehicleController : ScriptBehaviour
         }
         var driveSplit = GetDriveSplit();
         UpdateDrivetrain(fixedDeltaTime, _throttleInput, _brakeInput, forwardSpeed, driveSplit);
-        var drivePower = _driveThrottle * GetEngineTorqueMultiplier();
+        // When the requested drive direction opposes the car's motion, engine
+        // force must remain available to bring it through zero speed. Applying
+        // the rev limiter to wheel speed from the old direction could otherwise
+        // leave the car permanently unable to change direction.
+        var changingToForward = _throttleInput > 0.0f && forwardSpeed < -0.5f;
+        var drivePower = _driveThrottle * (changingToForward ? 1.0f : GetEngineTorqueMultiplier());
         ApplyAerodynamicDownforce();
         ApplyWheels(drivePower, _brakeInput, _handbrakeInput, driveSplit);
     }
@@ -402,7 +407,8 @@ public sealed class RaycastVehicleController : ScriptBehaviour
             {
                 if (driveShare > 0.0f)
                 {
-                    var rawReverse = -wheelForward * brake * reverseAcceleration * _rigidbody.Mass * driveShare;
+                    var reversePower = brake * GetEngineTorqueMultiplier();
+                    var rawReverse = -wheelForward * reversePower * reverseAcceleration * _rigidbody.Mass * driveShare;
                     var tractionLimit = normalLoad * MathF.Max(wheelGrip, 0.0f) * MathF.Max(driveGrip, 0.0f) * driveShare;
                     var reverseDemand = rawReverse.Length() / MathF.Max(tractionLimit, 0.01f);
                     var poweredSlip = SmoothStep(InverseLerp(0.75f, 2.0f, reverseDemand));
@@ -602,11 +608,11 @@ public sealed class RaycastVehicleController : ScriptBehaviour
         }
 
         var reverseRequested = brake > 0.0f && throttle <= 0.0f && forwardSpeed < 1.2f;
-        if (reverseRequested || forwardSpeed < -0.5f)
+        if (reverseRequested)
         {
             _currentGear = -1;
         }
-        else if (_currentGear <= 0)
+        else if (_currentGear <= 0 && (throttle > 0.0f || forwardSpeed >= -0.5f))
         {
             _currentGear = 1;
         }
@@ -662,7 +668,12 @@ public sealed class RaycastVehicleController : ScriptBehaviour
         var peak = Math.Clamp(peakTorqueRpm, idle + 100.0f, redline);
         var lowTorque = Lerp(0.28f, 1.0f, SmoothStep(InverseLerp(idle, peak, _engineRpm)));
         var highRpmFade = Lerp(1.0f, 0.72f, SmoothStep(InverseLerp(peak, redline, _engineRpm)));
-        return Math.Clamp(lowTorque * highRpmFade, 0.0f, 1.0f);
+        // RPM is clamped to redline, so the torque output must also reach zero
+        // there. Otherwise the display stops while the car keeps accelerating
+        // indefinitely on the remaining high-RPM torque.
+        var limiterStart = MathF.Max(peak, redline * 0.97f);
+        var revLimiter = 1.0f - SmoothStep(InverseLerp(limiterStart, redline, _engineRpm));
+        return Math.Clamp(lowTorque * highRpmFade * revLimiter, 0.0f, 1.0f);
     }
 
     private void UpdateDrivenWheelSpinSpeed(float deltaTime, float throttle, float brake, float forwardSpeed, float groundedDrivenSpeed)

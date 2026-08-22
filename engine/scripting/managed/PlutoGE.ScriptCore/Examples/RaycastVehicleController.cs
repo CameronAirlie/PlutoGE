@@ -282,6 +282,12 @@ public sealed class RaycastVehicleController : ScriptBehaviour
         var bodyForward = Forward;
         var bodyRight = Right;
         var bodyUp = Up;
+        var chassisForwardSpeed = Vector3.Dot(_rigidbody!.Velocity, bodyForward);
+        // S is a service brake while travelling forwards, then becomes reverse
+        // once the car is nearly stopped. Decide that once for the whole car:
+        // using each steered wheel's local speed made one axle brake while the
+        // driven axle was trying to reverse.
+        var reverseRequested = brake > 0.0f && _throttleInput <= 0.0f && chassisForwardSpeed < 1.2f;
         var travel = MathF.Max(suspensionTravel, 0.01f);
         var rideCompression = Math.Clamp(rideHeight, 0.05f, 0.95f) * travel;
         // Start above the entire wheel/travel range. A short ray starting at the
@@ -294,7 +300,7 @@ public sealed class RaycastVehicleController : ScriptBehaviour
         // Residual throttle blending after releasing W must not suppress
         // reverse when the driver subsequently presses S.
         var burnout = _throttleInput > 0.0f && brake > 0.0f &&
-                      MathF.Abs(Vector3.Dot(_rigidbody!.Velocity, bodyForward)) < 8.0f;
+                      MathF.Abs(chassisForwardSpeed) < 8.0f;
         StringBuilder? diagnostics = emitDiagnostics
             ? new StringBuilder($"[VehicleSuspension] bodyY={GameObject.WorldPosition.Y:F6} vy={_rigidbody!.Velocity.Y:F6} " +
                                 $"wx={_rigidbody.AngularVelocity.X:F6} wz={_rigidbody.AngularVelocity.Z:F6} " +
@@ -392,21 +398,33 @@ public sealed class RaycastVehicleController : ScriptBehaviour
 
             // During a burnout the service brake holds the undriven wheels but
             // must not be interpreted as reverse throttle on the driven axle.
-            if (brake > 0.0f && !(burnout && drivenWheel))
+            if (reverseRequested)
             {
-                var reversing = MathF.Abs(forwardSpeed) < 1.2f || forwardSpeed < -0.5f;
-                if (reversing && driveShare > 0.0f)
+                if (driveShare > 0.0f)
                 {
                     var rawReverse = -wheelForward * brake * reverseAcceleration * _rigidbody.Mass * driveShare;
                     var tractionLimit = normalLoad * MathF.Max(wheelGrip, 0.0f) * MathF.Max(driveGrip, 0.0f) * driveShare;
+                    var reverseDemand = rawReverse.Length() / MathF.Max(tractionLimit, 0.01f);
+                    var poweredSlip = SmoothStep(InverseLerp(0.75f, 2.0f, reverseDemand));
+                    tireForce = lateralForce * Lerp(1.0f, 0.18f, poweredSlip);
                     tireForce += ClampMagnitude(rawReverse, tractionLimit);
                 }
-                else
+            }
+            else if (brake > 0.0f && !(burnout && drivenWheel))
+            {
+                // A fully locked tyre has no independent steering force. Its
+                // available friction opposes the contact patch's actual planar
+                // motion, preventing front-wheel steer from manufacturing yaw
+                // under full braking and keeping force inside one grip budget.
+                var planarVelocity = pointVelocity - bodyUp * Vector3.Dot(pointVelocity, bodyUp);
+                var brakeLimit = normalLoad * MathF.Max(wheelGrip, 0.0f) * MathF.Max(brakeGrip, 0.0f);
+                var lockedTireForce = Vector3.Zero;
+                if (planarVelocity.LengthSquared() > 0.01f)
                 {
-                    var rawBrake = -wheelForward * MathF.Sign(NonZero(forwardSpeed)) * brake * brakePower * _rigidbody.Mass * 0.25f;
-                    var brakeLimit = normalLoad * MathF.Max(wheelGrip, 0.0f) * MathF.Max(brakeGrip, 0.0f);
-                    tireForce += ClampMagnitude(rawBrake, brakeLimit);
+                    var requestedBrake = brakePower * _rigidbody.Mass * 0.25f;
+                    lockedTireForce = -Vector3.Normalize(planarVelocity) * MathF.Min(requestedBrake, brakeLimit);
                 }
+                tireForce = Vector3.Lerp(tireForce, lockedTireForce, Math.Clamp(brake, 0.0f, 1.0f));
             }
 
             if (handbrake && !wheel.Steering && MathF.Abs(forwardSpeed) > 0.1f)
@@ -583,7 +601,8 @@ public sealed class RaycastVehicleController : ScriptBehaviour
             _shiftTimer = MathF.Max(_shiftTimer - deltaTime, 0.0f);
         }
 
-        if (forwardSpeed < -0.5f)
+        var reverseRequested = brake > 0.0f && throttle <= 0.0f && forwardSpeed < 1.2f;
+        if (reverseRequested || forwardSpeed < -0.5f)
         {
             _currentGear = -1;
         }
@@ -771,7 +790,7 @@ public sealed class RaycastVehicleController : ScriptBehaviour
             {
                 visualWheelSpeed = 0.0f;
             }
-            else if (driveWeight > 0.0f && _throttleInput > 0.0f &&
+            else if (driveWeight > 0.0f && (_throttleInput > 0.0f || (_brakeInput > 0.0f && _currentGear == -1)) &&
                 MathF.Abs(_drivenWheelSpinSpeed) > MathF.Abs(visualWheelSpeed))
             {
                 visualWheelSpeed = _drivenWheelSpinSpeed;

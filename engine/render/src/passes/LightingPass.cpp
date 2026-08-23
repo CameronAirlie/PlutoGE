@@ -520,6 +520,19 @@ namespace PlutoGE::render
                     return worldBias / max(light.CascadeDepthRanges[cascadeIndex], 0.0001);
                 }
 
+                vec3 ComputeDirectionalShadowBiasNormal(vec3 fragPos, vec3 shadingNormal)
+                {
+                    vec3 geometricNormal = cross(dFdx(fragPos), dFdy(fragPos));
+                    float geometricLengthSquared = dot(geometricNormal, geometricNormal);
+                    if (geometricLengthSquared <= 1e-12)
+                    {
+                        return shadingNormal;
+                    }
+
+                    geometricNormal *= inversesqrt(geometricLengthSquared);
+                    return dot(geometricNormal, shadingNormal) < 0.0 ? -geometricNormal : geometricNormal;
+                }
+
                 float SampleDirectionalShadowAtCascade(vec3 fragPos, vec3 surfaceNormal, Light light, int cascadeIndex, float ndotl, out bool hasCoverage)
                 {
                     vec3 receiverPosition = fragPos + surfaceNormal * ComputeCascadeNormalBias(light, cascadeIndex, ndotl);
@@ -538,7 +551,7 @@ namespace PlutoGE::render
                         return 0.0;
                     }
 
-                    vec3 surfaceNormal = normalize(normal);
+                    vec3 surfaceNormal = ComputeDirectionalShadowBiasNormal(fragPos, normalize(normal));
                     vec3 lightVector = normalize(-light.Direction);
                     float ndotl = max(dot(surfaceNormal, lightVector), 0.0);
                     float cameraDistance = ComputeViewDepth(fragPos);

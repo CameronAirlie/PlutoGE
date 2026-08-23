@@ -18,7 +18,7 @@ target_include_directories(PlutoGEEditor
         ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-if (CMAKE_CXX_LINK_GROUP_USING_RESCAN_SUPPORTED)
+if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
     target_link_libraries(PlutoGEEditor PRIVATE
         "$<LINK_GROUP:RESCAN,PlutoGE::Platform,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Scene,PlutoGE::Import,PlutoGE::Scripting>"
     )

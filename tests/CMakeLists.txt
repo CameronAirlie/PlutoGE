@@ -2,7 +2,7 @@ add_executable(PlutoGELargeMeshOptimizationTests
     LargeMeshOptimizationTests.cpp
 )
 
-if (CMAKE_CXX_LINK_GROUP_USING_RESCAN_SUPPORTED)
+if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
     target_link_libraries(PlutoGELargeMeshOptimizationTests PRIVATE
         "$<LINK_GROUP:RESCAN,PlutoGE::Import,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Scene,PlutoGE::Scripting>"
     )
@@ -37,7 +37,7 @@ add_executable(PlutoGEPostProcessInitializationTests
     PostProcessInitializationTests.cpp
 )
 
-if (CMAKE_CXX_LINK_GROUP_USING_RESCAN_SUPPORTED)
+if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
     target_link_libraries(PlutoGEPostProcessInitializationTests PRIVATE
         "$<LINK_GROUP:RESCAN,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Scene,PlutoGE::Import,PlutoGE::Scripting>"
     )
@@ -54,7 +54,7 @@ add_executable(PlutoGERuntimeUITests
     RuntimeUITests.cpp
 )
 
-if (CMAKE_CXX_LINK_GROUP_USING_RESCAN_SUPPORTED)
+if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
     target_link_libraries(PlutoGERuntimeUITests PRIVATE
         "$<LINK_GROUP:RESCAN,PlutoGE::Scene,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Import,PlutoGE::Scripting>"
     )
@@ -71,7 +71,7 @@ add_executable(PlutoGESkeletonAttachmentTests
     SkeletonAttachmentTests.cpp
 )
 
-if (CMAKE_CXX_LINK_GROUP_USING_RESCAN_SUPPORTED)
+if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
     target_link_libraries(PlutoGESkeletonAttachmentTests PRIVATE
         "$<LINK_GROUP:RESCAN,PlutoGE::Scene,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Import,PlutoGE::Scripting>"
     )
@@ -88,7 +88,7 @@ add_executable(PlutoGEFoliageCollisionTests
     FoliageCollisionTests.cpp
 )
 
-if (CMAKE_CXX_LINK_GROUP_USING_RESCAN_SUPPORTED)
+if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
     target_link_libraries(PlutoGEFoliageCollisionTests PRIVATE
         "$<LINK_GROUP:RESCAN,PlutoGE::Scene,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Import,PlutoGE::Scripting>"
     )
@@ -105,7 +105,7 @@ add_executable(PlutoGEPrefabMeshExporterTests
     PrefabMeshExporterTests.cpp
 )
 
-if (CMAKE_CXX_LINK_GROUP_USING_RESCAN_SUPPORTED)
+if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
     target_link_libraries(PlutoGEPrefabMeshExporterTests PRIVATE
         "$<LINK_GROUP:RESCAN,PlutoGE::Scene,PlutoGE::Render,PlutoGE::Assets,PlutoGE::Core,PlutoGE::Import,PlutoGE::Scripting>"
     )

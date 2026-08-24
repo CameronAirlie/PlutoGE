@@ -11,6 +11,7 @@
 #include "PlutoGE/scene/components/DecalComponent.h"
 #include "PlutoGE/scene/components/RigidbodyComponent.h"
 #include "PlutoGE/scene/components/AnimationComponent.h"
+#include "PlutoGE/scene/components/AudioEnvironmentVolumeComponent.h"
 #include "PlutoGE/scene/components/ActiveRagdollComponent.h"
 #include "PlutoGE/scene/components/ScriptComponent.h"
 #include "PlutoGE/scene/components/SoundEmitterComponent.h"
@@ -119,7 +120,8 @@ namespace PlutoGE::scene
 
         void CollectActiveAudioComponents(Entity *entity,
                                           std::vector<SoundEmitterComponent *> &emitters,
-                                          std::vector<SoundListenerComponent *> &listeners)
+                                          std::vector<SoundListenerComponent *> &listeners,
+                                          std::vector<AudioEnvironmentVolumeComponent *> *volumes = nullptr)
         {
             if (!entity || !entity->IsActive())
             {
@@ -142,9 +144,13 @@ namespace PlutoGE::scene
                 }
             }
 
+            if (volumes)
+                for (auto *volume : entity->GetComponents<AudioEnvironmentVolumeComponent>())
+                    if (volume && volume->IsEnabled()) volumes->push_back(volume);
+
             for (auto *child : entity->GetChildren())
             {
-                CollectActiveAudioComponents(child, emitters, listeners);
+                CollectActiveAudioComponents(child, emitters, listeners, volumes);
             }
         }
 
@@ -2637,9 +2643,10 @@ namespace PlutoGE::scene
         {
             std::vector<SoundEmitterComponent *> emitters;
             std::vector<SoundListenerComponent *> listeners;
+            std::vector<AudioEnvironmentVolumeComponent *> environmentVolumes;
             for (auto *rootEntity : m_rootEntities)
             {
-                CollectActiveAudioComponents(rootEntity, emitters, listeners);
+                CollectActiveAudioComponents(rootEntity, emitters, listeners, &environmentVolumes);
             }
 
             audio::ListenerState listenerState;
@@ -2656,6 +2663,28 @@ namespace PlutoGE::scene
                 listenerState.occlusionStrength = listenerComponent->GetOcclusionStrength();
                 listenerState.airAbsorptionStrength = listenerComponent->GetAirAbsorptionStrength();
                 listenerState.lowPassStrength = listenerComponent->GetLowPassStrength();
+                int priority = std::numeric_limits<int>::min();
+                float weight = 0.0f;
+                for (const auto *v : environmentVolumes)
+                {
+                    const float w = v->InfluenceAt(listenerState.position);
+                    if (w <= 0.0f || v->GetPriority() < priority) continue;
+                    if (v->GetPriority() > priority)
+                    {
+                        priority=v->GetPriority(); weight=0.0f;
+                        listenerState.environmentReverbWet=listenerState.environmentReverbDecay=listenerState.environmentReverbDensity=listenerState.environmentReverbDiffusion=0.0f;
+                        listenerState.environmentEchoWet=listenerState.environmentEchoDelay=listenerState.environmentEchoFeedback=listenerState.environmentLowPass=listenerState.environmentGain=0.0f;
+                    }
+                    weight+=w; listenerState.environmentReverbWet+=v->GetReverbWet()*w; listenerState.environmentReverbDecay+=v->GetReverbDecay()*w; listenerState.environmentReverbDensity+=v->GetReverbDensity()*w; listenerState.environmentReverbDiffusion+=v->GetReverbDiffusion()*w;
+                    listenerState.environmentEchoWet+=v->GetEchoWet()*w; listenerState.environmentEchoDelay+=v->GetEchoDelay()*w; listenerState.environmentEchoFeedback+=v->GetEchoFeedback()*w; listenerState.environmentLowPass+=v->GetLowPass()*w; listenerState.environmentGain+=v->GetGain()*w;
+                }
+                if (weight > 0.0f)
+                {
+                    // Preserve a dry contribution while entering a boundary fade.
+                    listenerState.environmentGain += std::max(1.0f - weight, 0.0f);
+                    const float k=1.0f/std::max(weight, 1.0f); listenerState.environmentReverbWet*=k; listenerState.environmentReverbDecay*=k; listenerState.environmentReverbDensity*=k; listenerState.environmentReverbDiffusion*=k;
+                    listenerState.environmentEchoWet*=k; listenerState.environmentEchoDelay*=k; listenerState.environmentEchoFeedback*=k; listenerState.environmentLowPass*=k; listenerState.environmentGain*=k;
+                }
             }
 
             std::vector<audio::EmitterState> emitterStates;

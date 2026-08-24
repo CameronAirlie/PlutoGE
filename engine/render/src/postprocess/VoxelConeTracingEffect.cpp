@@ -1172,6 +1172,30 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
         if (!m_indirectTarget)
             return nullptr;
         const auto &renderContext = context.renderContext;
+        if (m_jobScene != renderContext.scene)
+        {
+            // Scene restoration after Play destroys every mesh and material in
+            // the previous scene. Progressive voxel jobs contain non-owning
+            // pointers to those resources, so never carry them across this
+            // boundary even when their content signature happens to match.
+            m_jobScene = renderContext.scene;
+            for (auto &cascade : m_cascades)
+            {
+                cascade.jobs.clear();
+                cascade.jobIndex = 0;
+                cascade.rebuildInProgress = false;
+                cascade.hasVolume = false;
+                cascade.pendingShadowSourceMaps.fill(0);
+                cascade.lastSceneSignature = 0;
+                cascade.lastLightSignature = 0;
+                cascade.lastVoxelizedFrame = ~0ull;
+            }
+            m_cachedSceneSignature = 0;
+            m_cachedLightSignature = 0;
+            m_lastContentCheckFrame = ~0ull;
+            m_nextCascadeToUpdate = 0;
+            ResetHistory();
+        }
         const float voxelSize = m_volumeSize / static_cast<float>(m_resolution);
         const glm::vec3 cameraPosition = glm::vec3(glm::inverse(renderContext.cameraData.view)[3]);
         const auto *sceneCommands = renderContext.renderer ? &renderContext.renderer->GetSceneRenderCommands() : renderContext.renderCommands;

@@ -128,6 +128,9 @@ namespace PlutoGE::render
         std::array<std::unique_ptr<RenderTarget>, 2> m_historyColorTargets;
         std::array<std::unique_ptr<RenderTarget>, 2> m_historyMetadataTargets;
         std::array<VoxelCascade, kCascadeCount> m_cascades;
+        // Progressive jobs borrow mesh/material resources from this scene.
+        // A scene replacement must invalidate them before another chunk runs.
+        const scene::Scene *m_jobScene = nullptr;
         std::array<unsigned int, kDirectionCount> m_radianceAtlases{};
         unsigned int m_voxelInstanceBuffer = 0;
         std::size_t m_voxelInstanceCapacity = 0;

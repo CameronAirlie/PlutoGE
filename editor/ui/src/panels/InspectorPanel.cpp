@@ -32,6 +32,7 @@
 #include "PlutoGE/scene/components/NavigationMeshComponent.h"
 #include "PlutoGE/scene/components/SoundEmitterComponent.h"
 #include "PlutoGE/scene/components/SoundListenerComponent.h"
+#include "PlutoGE/scene/components/AudioEnvironmentVolumeComponent.h"
 #include "PlutoGE/scene/components/UIComponent.h"
 #include "PlutoGE/scene/components/VolumetricCloudComponent.h"
 #include "PlutoGE/scene/Entity.h"
@@ -118,6 +119,7 @@ namespace PlutoGE::ui
             NavigationMesh = 24,
             Decal = 25,
             RmlWidget = 26,
+            AudioEnvironmentVolume = 29,
             LegacyCanvas = 27,
             ActiveRagdoll = 28,
         };
@@ -1588,6 +1590,7 @@ namespace PlutoGE::ui
             {
                 return "Sound Listener Component";
             }
+            if (dynamic_cast<const scene::AudioEnvironmentVolumeComponent *>(&component)) return "Audio Environment Volume Component";
             if (const auto *canvas = dynamic_cast<const scene::CanvasComponent *>(&component))
             {
                 return canvas->GetBackend() == scene::UIRenderBackend::RmlUi
@@ -1660,6 +1663,7 @@ namespace PlutoGE::ui
                 return "SoundEmitterComponent";
             if (dynamic_cast<const scene::SoundListenerComponent *>(&component))
                 return "SoundListenerComponent";
+            if (dynamic_cast<const scene::AudioEnvironmentVolumeComponent *>(&component)) return "AudioEnvironmentVolumeComponent";
             if (dynamic_cast<const scene::CanvasComponent *>(&component))
                 return "CanvasComponent";
             if (dynamic_cast<const scene::RmlWidgetComponent *>(&component))
@@ -1799,6 +1803,8 @@ namespace PlutoGE::ui
                 return !entity.HasComponent<scene::SoundEmitterComponent>();
             case AddableComponentType::SoundListener:
                 return !entity.HasComponent<scene::SoundListenerComponent>();
+            case AddableComponentType::AudioEnvironmentVolume:
+                return !entity.HasComponent<scene::AudioEnvironmentVolumeComponent>();
             case AddableComponentType::Canvas:
             case AddableComponentType::LegacyCanvas:
                 return !entity.HasComponent<scene::CanvasComponent>();
@@ -1876,6 +1882,7 @@ namespace PlutoGE::ui
             {
                 renderItem("Sound Emitter", AddableComponentType::SoundEmitter);
                 renderItem("Sound Listener", AddableComponentType::SoundListener);
+                renderItem("Environment Volume", AddableComponentType::AudioEnvironmentVolume);
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("UI"))
@@ -2014,6 +2021,9 @@ namespace PlutoGE::ui
                 break;
             case AddableComponentType::SoundListener:
                 entity.CreateComponent<scene::SoundListenerComponent>();
+                break;
+            case AddableComponentType::AudioEnvironmentVolume:
+                entity.CreateComponent<scene::AudioEnvironmentVolumeComponent>();
                 break;
             case AddableComponentType::Canvas:
                 if (auto *canvas = entity.CreateComponent<scene::CanvasComponent>())

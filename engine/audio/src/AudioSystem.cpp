@@ -370,6 +370,12 @@ namespace PlutoGE::audio
         m_openAlContext = context;
         m_usingOpenAl = true;
         m_openAlEfxAvailable = HasOpenALDeviceExtension(device, "ALC_EXT_EFX");
+        if (m_openAlEfxAvailable)
+        {
+            ALuint effect=0, slot=0; alGenEffects(1,&effect); alGenAuxiliaryEffectSlots(1,&slot);
+            if (alGetError()==AL_NO_ERROR) { m_openAlEnvironmentEffect=effect; m_openAlEnvironmentSlot=slot; }
+            else { if(effect) alDeleteEffects(1,&effect); if(slot) alDeleteAuxiliaryEffectSlots(1,&slot); m_openAlEfxAvailable=false; }
+        }
         m_initialized = true;
         return true;
 #else
@@ -423,6 +429,8 @@ namespace PlutoGE::audio
         ClearEmitters();
 
 #if defined(PLUTOGE_USE_OPENAL_SOFT)
+        if (m_openAlEnvironmentSlot) { const ALuint slot=m_openAlEnvironmentSlot; alDeleteAuxiliaryEffectSlots(1,&slot); m_openAlEnvironmentSlot=0; }
+        if (m_openAlEnvironmentEffect) { const ALuint effect=m_openAlEnvironmentEffect; alDeleteEffects(1,&effect); m_openAlEnvironmentEffect=0; }
         if (!m_availableOpenAlSources.empty())
         {
             alDeleteSources(
@@ -753,8 +761,8 @@ namespace PlutoGE::audio
             alSourcef(source, AL_PITCH, std::clamp(emitter.pitch, 0.25f, 4.0f));
             alSourcei(source, AL_LOOPING, emitter.looping ? AL_TRUE : AL_FALSE);
 
-            float gain = std::max(emitter.volume, 0.0f);
-            const float userLowPass = std::clamp(emitter.lowPassStrength + listener.lowPassStrength, 0.0f, 1.0f);
+            float gain = std::max(emitter.volume, 0.0f) * listener.environmentGain;
+            const float userLowPass = std::clamp(emitter.lowPassStrength + listener.lowPassStrength + listener.environmentLowPass, 0.0f, 1.0f);
             float filterDamping = userLowPass;
             if (emitter.spatialized && listener.active)
             {
@@ -818,6 +826,8 @@ namespace PlutoGE::audio
             }
 
             alSourcef(source, AL_GAIN, gain);
+            if (m_openAlEnvironmentSlot)
+                alSource3i(source, AL_AUXILIARY_SEND_FILTER, static_cast<ALint>(m_openAlEnvironmentSlot), 0, AL_FILTER_NULL);
             return;
         }
 #endif
@@ -831,8 +841,8 @@ namespace PlutoGE::audio
 
         sourceVoice->SetFrequencyRatio(std::clamp(emitter.pitch, 0.25f, 4.0f));
 
-        float gain = std::max(emitter.volume, 0.0f);
-        const float userLowPass = std::clamp(emitter.lowPassStrength + listener.lowPassStrength, 0.0f, 1.0f);
+        float gain = std::max(emitter.volume, 0.0f) * listener.environmentGain;
+        const float userLowPass = std::clamp(emitter.lowPassStrength + listener.lowPassStrength + listener.environmentLowPass, 0.0f, 1.0f);
         float filterDamping = userLowPass;
         if (emitter.spatialized && listener.active)
         {
@@ -1061,6 +1071,16 @@ namespace PlutoGE::audio
                 alListener3f(AL_VELOCITY, listenerVelocity.x, listenerVelocity.y, listenerVelocity.z);
                 alListenerfv(AL_ORIENTATION, orientation);
                 alListenerf(AL_GAIN, std::max(listener.masterVolume, 0.0f));
+                if (m_openAlEnvironmentEffect && m_openAlEnvironmentSlot)
+                {
+                    const ALuint effect=m_openAlEnvironmentEffect, slot=m_openAlEnvironmentSlot;
+                    const bool echo=listener.environmentEchoWet > listener.environmentReverbWet;
+                    alEffecti(effect, AL_EFFECT_TYPE, echo ? AL_EFFECT_ECHO : AL_EFFECT_REVERB);
+                    if (echo) { alEffectf(effect,AL_ECHO_DELAY,std::clamp(listener.environmentEchoDelay,.01f,.207f)); alEffectf(effect,AL_ECHO_FEEDBACK,std::clamp(listener.environmentEchoFeedback,0.f,1.f)); }
+                    else { alEffectf(effect,AL_REVERB_DECAY_TIME,std::clamp(listener.environmentReverbDecay,.1f,20.f)); alEffectf(effect,AL_REVERB_DENSITY,std::clamp(listener.environmentReverbDensity,0.f,1.f)); alEffectf(effect,AL_REVERB_DIFFUSION,std::clamp(listener.environmentReverbDiffusion,0.f,1.f)); }
+                    alAuxiliaryEffectSloti(slot,AL_EFFECTSLOT_EFFECT,static_cast<ALint>(effect));
+                    alAuxiliaryEffectSlotf(slot,AL_EFFECTSLOT_GAIN,std::clamp(echo?listener.environmentEchoWet:listener.environmentReverbWet,0.f,1.f));
+                }
                 m_previousOpenAlListenerPosition = listener.position;
                 m_hasPreviousOpenAlListenerPosition = true;
             }

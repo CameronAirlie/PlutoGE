@@ -13,6 +13,7 @@
 #include "PlutoGE/scene/UISystem.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/scene/components/IblCaptureComponent.h"
+#include "PlutoGE/scene/components/AudioEnvironmentVolumeComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/AnimationComponent.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
@@ -808,6 +809,24 @@ namespace PlutoGE::ui
                                                 ? IM_COL32(118, 236, 170, 230)
                                                 : IM_COL32(118, 236, 170, 120);
                         DrawWireBox(drawList, iblCaptureComponent->GetVolumeTransform(), cameraData, viewportMin, viewportSize, color, 1.75f);
+                    }
+                }
+
+                if (auto *audioVolume = entity->GetComponent<scene::AudioEnvironmentVolumeComponent>();
+                    audioVolume && audioVolume->IsEnabled())
+                {
+                    const ImU32 color = IM_COL32(190, 110, 255, 235);
+                    const glm::mat4 world = entity->GetWorldTransform();
+                    if (audioVolume->GetShape() == scene::AudioEnvironmentShape::Box)
+                        DrawWireBox(drawList, world * glm::scale(glm::mat4(1.0f), audioVolume->GetSize()), cameraData, viewportMin, viewportSize, color, 1.75f);
+                    else
+                    {
+                        const glm::vec3 center = entity->GetWorldPosition();
+                        const float radius = audioVolume->GetRadius();
+                        const glm::vec3 right=glm::vec3(world[0])*radius, up=glm::vec3(world[1])*radius, forward=glm::vec3(world[2])*radius;
+                        DrawWorldCircle(drawList,center,right,up,cameraData,viewportMin,viewportSize,color);
+                        DrawWorldCircle(drawList,center,right,forward,cameraData,viewportMin,viewportSize,color);
+                        DrawWorldCircle(drawList,center,up,forward,cameraData,viewportMin,viewportSize,color);
                     }
                 }
 
@@ -2495,6 +2514,7 @@ namespace PlutoGE::ui
                 auto *collider = selectedEntity->GetComponent<scene::ColliderComponent>();
                 auto *iblCapture = selectedEntity->GetComponent<scene::IblCaptureComponent>();
                 auto *cloud = selectedEntity->GetComponent<scene::VolumetricCloudComponent>();
+                auto *audioVolume = selectedEntity->GetComponent<scene::AudioEnvironmentVolumeComponent>();
                 int resizeTarget = 0;
                 glm::vec3 localCenter(0.0f);
                 glm::vec3 authoredSize(1.0f);
@@ -2522,6 +2542,13 @@ namespace PlutoGE::ui
                 {
                     resizeTarget = 3;
                     authoredSize = cloud->GetSize();
+                }
+                else if (audioVolume && audioVolume->IsEnabled())
+                {
+                    resizeTarget = 4;
+                    authoredSize = audioVolume->GetShape() == scene::AudioEnvironmentShape::Box
+                                       ? audioVolume->GetSize()
+                                       : glm::vec3(audioVolume->GetRadius() * 2.0f);
                 }
 
                 if (resizeTarget != 0)
@@ -2644,10 +2671,23 @@ namespace PlutoGE::ui
                             iblCapture->MarkDirty();
                             selectedEntity->AddPrefabOverride("Component:IblCaptureComponent:Size");
                         }
-                        else
+                        else if (resizeTarget == 3)
                         {
                             cloud->SetSize(newSize);
                             selectedEntity->AddPrefabOverride("Component:VolumetricCloudComponent:Size");
+                        }
+                        else
+                        {
+                            if (audioVolume->GetShape() == scene::AudioEnvironmentShape::Box)
+                            {
+                                audioVolume->SetSize(newSize);
+                                selectedEntity->AddPrefabOverride("Component:AudioEnvironmentVolumeComponent:Size");
+                            }
+                            else
+                            {
+                                audioVolume->SetRadius(newSize[m_resizeHandleAxis] * 0.5f);
+                                selectedEntity->AddPrefabOverride("Component:AudioEnvironmentVolumeComponent:Radius");
+                            }
                         }
                         editorShell.MarkSceneDirty();
                         m_isTransformGizmoUsing = true;

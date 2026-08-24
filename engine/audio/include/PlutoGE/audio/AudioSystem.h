@@ -20,6 +20,15 @@ namespace PlutoGE::audio
         float occlusionStrength = 1.0f;
         float airAbsorptionStrength = 1.0f;
         float lowPassStrength = 0.0f;
+        float environmentReverbWet = 0.0f;
+        float environmentReverbDecay = 1.0f;
+        float environmentReverbDensity = 1.0f;
+        float environmentReverbDiffusion = 1.0f;
+        float environmentEchoWet = 0.0f;
+        float environmentEchoDelay = 0.15f;
+        float environmentEchoFeedback = 0.25f;
+        float environmentLowPass = 0.0f;
+        float environmentGain = 1.0f;
     };
 
     struct EmitterState
@@ -106,6 +115,8 @@ namespace PlutoGE::audio
         bool m_spatialAudioInitialized = false;
         bool m_usingOpenAl = false;
         bool m_openAlEfxAvailable = false;
+        unsigned int m_openAlEnvironmentEffect = 0;
+        unsigned int m_openAlEnvironmentSlot = 0;
         bool m_hasPreviousOpenAlListenerPosition = false;
         glm::vec3 m_previousOpenAlListenerPosition{0.0f};
         std::array<std::uint8_t, 20> m_spatialAudioHandle{};

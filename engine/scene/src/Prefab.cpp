@@ -20,6 +20,7 @@
 #include "PlutoGE/scene/components/SkeletonAttachmentComponent.h"
 #include "PlutoGE/scene/components/SoundEmitterComponent.h"
 #include "PlutoGE/scene/components/SoundListenerComponent.h"
+#include "PlutoGE/scene/components/AudioEnvironmentVolumeComponent.h"
 #include "PlutoGE/scene/components/TerrainComponent.h"
 #include "PlutoGE/scene/components/UIComponent.h"
 #include "PlutoGE/render/Camera.h"
@@ -118,6 +119,7 @@ namespace PlutoGE::scene
                 return "SoundEmitterComponent";
             if (dynamic_cast<const SoundListenerComponent *>(&component))
                 return "SoundListenerComponent";
+            if (dynamic_cast<const AudioEnvironmentVolumeComponent *>(&component)) return "AudioEnvironmentVolumeComponent";
             if (dynamic_cast<const CanvasComponent *>(&component))
                 return "CanvasComponent";
             if (dynamic_cast<const RmlWidgetComponent *>(&component))
@@ -171,6 +173,7 @@ namespace PlutoGE::scene
                 return std::make_unique<SoundEmitterComponent>();
             if (componentType == "SoundListenerComponent")
                 return std::make_unique<SoundListenerComponent>();
+            if (componentType == "AudioEnvironmentVolumeComponent") return std::make_unique<AudioEnvironmentVolumeComponent>();
             if (componentType == "CanvasComponent")
                 return std::make_unique<CanvasComponent>();
             if (componentType == "RmlWidgetComponent")

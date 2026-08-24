@@ -570,7 +570,8 @@ namespace PlutoGE::scene
                             continue;
                         }
 
-                        output << "COMPONENT\t" << entity->GetID() << '\t' << componentType << '\n';
+                        output << "COMPONENT\t" << entity->GetID() << '\t' << componentType << '\t'
+                               << (component->IsEnabled() ? 1 : 0) << '\n';
                         for (const auto &property : component->Serialize())
                         {
                             const std::string serializedValue = IsAssetPathProperty(componentType, property.name)
@@ -663,6 +664,7 @@ namespace PlutoGE::scene
             {
                 EntityID entityId = 0;
                 std::string typeName;
+                bool enabled = true;
                 std::vector<Property> properties;
             };
 
@@ -753,6 +755,7 @@ namespace PlutoGE::scene
                     activeComponent = PendingComponent{
                         .entityId = static_cast<EntityID>(std::stoul(tokens[1])),
                         .typeName = tokens[2],
+                        .enabled = tokens.size() < 4 || tokens[3] == "1" || tokens[3] == "true" || tokens[3] == "True",
                     };
                     reportTrace("Scene load line " + std::to_string(lineNumber) +
                                 ": begin component " + activeComponent->typeName +
@@ -838,6 +841,7 @@ namespace PlutoGE::scene
                                         ": deserialize " + componentContext +
                                         " (" + std::to_string(activeComponent->properties.size()) + " properties)");
                             componentPtr->Deserialize(activeComponent->properties);
+                            componentPtr->SetEnabled(activeComponent->enabled);
                             reportTrace("Scene load line " + std::to_string(lineNumber) +
                                         ": loaded " + componentContext);
                         }

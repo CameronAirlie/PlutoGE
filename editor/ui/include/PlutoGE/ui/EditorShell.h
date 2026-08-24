@@ -295,6 +295,9 @@ namespace PlutoGE::ui
         void MarkSceneClean();
         void MarkProjectClean();
         void HandleEditorShortcuts(bool isRuntimeRunning, ProfilerPanel *profilerPanel);
+        void LoadRecentProjects();
+        void SaveRecentProjects() const;
+        void AddRecentProject(const std::filesystem::path &manifestPath);
 
         core::Engine &m_engine = core::Engine::GetInstance();
         PanelManager m_panelManager;
@@ -315,6 +318,7 @@ namespace PlutoGE::ui
         bool m_projectDirty = false;
         std::vector<SceneHistoryEntry> m_undoStack;
         std::vector<SceneHistoryEntry> m_redoStack;
+        std::vector<std::filesystem::path> m_recentProjects;
         bool m_sceneEditInProgress = false;
         std::string m_sceneEditLabel;
         std::string m_sceneEditBeforeState;

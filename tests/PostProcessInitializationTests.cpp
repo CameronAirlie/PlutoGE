@@ -1,6 +1,7 @@
 #include "PlutoGE/platform/Window.h"
 #include "PlutoGE/render/Texture.h"
 #include "PlutoGE/render/TextureManager.h"
+#include "PlutoGE/render/postprocess/ColorGradingEffect.h"
 #include "PlutoGE/render/postprocess/LSAOEffect.h"
 #include "PlutoGE/render/postprocess/SSGIEffect.h"
 
@@ -70,6 +71,17 @@ int main()
         glDeleteTextures(1, &textureId);
         delete texture;
         glDeleteBuffers(1, &unpackBuffer);
+    }
+
+    {
+        PlutoGE::render::ColorGradingEffect effect;
+        effect.EnsureInitialized();
+        if (!effect.IsInitialized() || glGetError() != GL_NO_ERROR)
+        {
+            std::cerr << "Color grading shader did not initialize cleanly.\n";
+            window.Close();
+            return 1;
+        }
     }
 
     {

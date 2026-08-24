@@ -129,6 +129,32 @@ namespace PlutoGE::ui
         constexpr std::string_view kDefaultProjectScriptDirectory = "Scripts";
         constexpr std::string_view kDefaultProjectManagedDirectory = "Managed";
         constexpr int kScriptCoreSearchAncestorLimit = 8;
+        constexpr std::size_t kMaxRecentProjects = 10;
+
+        std::filesystem::path GetEditorSettingsDirectory()
+        {
+#ifdef _WIN32
+            if (const char *appData = std::getenv("APPDATA"); appData != nullptr && appData[0] != '\0')
+            {
+                return std::filesystem::path(appData) / "PlutoGE";
+            }
+#else
+            if (const char *configHome = std::getenv("XDG_CONFIG_HOME"); configHome != nullptr && configHome[0] != '\0')
+            {
+                return std::filesystem::path(configHome) / "PlutoGE";
+            }
+            if (const char *home = std::getenv("HOME"); home != nullptr && home[0] != '\0')
+            {
+                return std::filesystem::path(home) / ".config" / "PlutoGE";
+            }
+#endif
+            return std::filesystem::current_path();
+        }
+
+        std::filesystem::path GetRecentProjectsPath()
+        {
+            return GetEditorSettingsDirectory() / "recent-projects.txt";
+        }
 
         std::string QuoteShellArgument(const std::filesystem::path &path)
         {
@@ -922,6 +948,51 @@ namespace PlutoGE::ui
         }
 
         assetManager.ClearProjectContext();
+    }
+
+    void EditorShell::LoadRecentProjects()
+    {
+        m_recentProjects.clear();
+        std::ifstream input(GetRecentProjectsPath());
+        std::string pathText;
+        while (m_recentProjects.size() < kMaxRecentProjects && std::getline(input, pathText))
+        {
+            if (pathText.empty())
+                continue;
+            std::filesystem::path path(pathText);
+            std::error_code error;
+            if (std::filesystem::is_regular_file(path, error))
+                m_recentProjects.push_back(std::move(path));
+        }
+    }
+
+    void EditorShell::SaveRecentProjects() const
+    {
+        const auto settingsDirectory = GetEditorSettingsDirectory();
+        std::error_code error;
+        std::filesystem::create_directories(settingsDirectory, error);
+        if (error)
+            return;
+
+        std::ofstream output(GetRecentProjectsPath(), std::ios::out | std::ios::trunc);
+        for (const auto &path : m_recentProjects)
+            output << path.string() << '\n';
+    }
+
+    void EditorShell::AddRecentProject(const std::filesystem::path &manifestPath)
+    {
+        std::error_code error;
+        auto normalizedPath = std::filesystem::absolute(manifestPath, error).lexically_normal();
+        if (error)
+            normalizedPath = manifestPath.lexically_normal();
+
+        m_recentProjects.erase(
+            std::remove(m_recentProjects.begin(), m_recentProjects.end(), normalizedPath),
+            m_recentProjects.end());
+        m_recentProjects.insert(m_recentProjects.begin(), std::move(normalizedPath));
+        if (m_recentProjects.size() > kMaxRecentProjects)
+            m_recentProjects.resize(kMaxRecentProjects);
+        SaveRecentProjects();
     }
 
     std::filesystem::path EditorShell::ResolveProjectScriptAssemblyPath() const
@@ -1838,6 +1909,16 @@ namespace PlutoGE::ui
             return;
         }
         const bool command = io.KeyCtrl || io.KeySuper;
+        if (command && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_O))
+        {
+            if (!m_activeBakeTask && ConfirmContinueWithUnsavedChanges())
+            {
+                const std::string projectPath = ShowOpenFileDialog(kProjectFileFilter);
+                if (!projectPath.empty())
+                    LoadProjectFromPath(projectPath);
+            }
+            return;
+        }
         if (command && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_C))
         {
             if (profilerPanel)
@@ -2249,6 +2330,7 @@ namespace PlutoGE::ui
         }
 
         UpdateWindowTitle();
+        AddRecentProject(m_project->GetManifestPath());
         return true;
     }
 
@@ -2295,6 +2377,7 @@ namespace PlutoGE::ui
         MarkProjectClean();
         Log(ConsoleSeverity::Info, m_statusMessage);
         UpdateWindowTitle();
+        AddRecentProject(m_project->GetManifestPath());
         return true;
     }
 
@@ -2594,6 +2677,7 @@ namespace PlutoGE::ui
             });
 
         InitializeEditorCamera();
+        LoadRecentProjects();
         ApplyProjectContext();
         SetScene(CreateEmptyScene());
         m_statusMessage = "Ready";
@@ -3167,7 +3251,7 @@ namespace PlutoGE::ui
                             }
                         }
                     }
-                    if (ImGui::MenuItem("Open Project..."))
+                    if (ImGui::MenuItem("Open Project...", "Ctrl+O"))
                     {
                         if (ConfirmContinueWithUnsavedChanges())
                         {
@@ -3178,6 +3262,27 @@ namespace PlutoGE::ui
                             }
                         }
                     }
+                    std::filesystem::path recentProjectToOpen;
+                    if (ImGui::BeginMenu("Open Recent", !m_recentProjects.empty()))
+                    {
+                        for (const auto &recentProject : m_recentProjects)
+                        {
+                            const std::string label = recentProject.filename().string() + "##" + recentProject.string();
+                            if (ImGui::MenuItem(label.c_str()))
+                                recentProjectToOpen = recentProject;
+                            if (ImGui::IsItemHovered())
+                                ImGui::SetTooltip("%s", recentProject.string().c_str());
+                        }
+                        ImGui::Separator();
+                        if (ImGui::MenuItem("Clear Recent Projects"))
+                        {
+                            m_recentProjects.clear();
+                            SaveRecentProjects();
+                        }
+                        ImGui::EndMenu();
+                    }
+                    if (!recentProjectToOpen.empty() && ConfirmContinueWithUnsavedChanges())
+                        LoadProjectFromPath(recentProjectToOpen);
                     if (ImGui::MenuItem("Save Project", nullptr, false, m_project != nullptr))
                     {
                         SaveProjectToDisk();

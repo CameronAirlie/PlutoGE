@@ -1,12 +1,22 @@
 #include "PlutoGE/render/postprocess/ColorGradingEffect.h"
 
+#include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/Shader.h"
+
+#include <algorithm>
+#include <cmath>
 
 namespace PlutoGE::render
 {
     std::vector<PostProcessParameter> ColorGradingEffect::GetParameters() const
     {
         return {
+            PostProcessParameter{
+                .name = "Preset",
+                .type = PostProcessParameterType::Enum,
+                .value = std::to_string(static_cast<int>(m_preset)),
+                .enumOptions = {"Custom", "Neutral", "Filmic", "Cinematic", "Teal & Orange", "Vintage", "Bleach Bypass", "Noir", "Dreamy"},
+            },
             PostProcessParameter{
                 .name = "Brightness",
                 .type = PostProcessParameterType::Float,
@@ -27,30 +37,93 @@ namespace PlutoGE::render
                 .type = PostProcessParameterType::Float,
                 .value = std::to_string(m_temperature),
             },
+            {.name = "Tint", .type = PostProcessParameterType::Float, .value = std::to_string(m_tint)},
+            {.name = "Vibrance", .type = PostProcessParameterType::Float, .value = std::to_string(m_vibrance)},
+            {.name = "Lift", .type = PostProcessParameterType::Float, .value = std::to_string(m_lift)},
+            {.name = "Gamma", .type = PostProcessParameterType::Float, .value = std::to_string(m_gamma)},
+            {.name = "Gain", .type = PostProcessParameterType::Float, .value = std::to_string(m_gain)},
+            {.name = "Fade", .type = PostProcessParameterType::Float, .value = std::to_string(m_fade)},
+            {.name = "Vignette", .type = PostProcessParameterType::Float, .value = std::to_string(m_vignette)},
+            {.name = "Film Grain", .type = PostProcessParameterType::Float, .value = std::to_string(m_grain)},
         };
+    }
+
+    void ColorGradingEffect::ApplyPreset(Preset preset)
+    {
+        m_preset = preset;
+        // brightness, contrast, saturation, temperature, tint, vibrance,
+        // lift, gamma, gain, fade, vignette, grain
+        const float values[][12] = {
+            {0.00f, 1.00f, 1.00f,  0.00f,  0.00f, 0.00f, 0.00f, 1.00f, 1.00f, 0.00f, 0.00f, 0.00f},
+            {0.00f, 1.00f, 1.00f,  0.00f,  0.00f, 0.00f, 0.00f, 1.00f, 1.00f, 0.00f, 0.00f, 0.00f},
+            {-0.01f,1.12f, 0.96f,  0.06f,  0.02f, 0.08f,-0.01f, 0.96f, 1.04f, 0.03f, 0.20f, 0.035f},
+            {-0.02f,1.18f, 0.92f, -0.05f,  0.03f, 0.12f,-0.02f, 0.94f, 1.06f, 0.02f, 0.32f, 0.025f},
+            {0.00f, 1.14f, 1.08f, -0.22f,  0.10f, 0.18f,-0.01f, 0.96f, 1.05f, 0.01f, 0.24f, 0.020f},
+            {0.03f, 0.92f, 0.78f,  0.24f,  0.08f,-0.04f, 0.03f, 1.05f, 0.96f, 0.16f, 0.22f, 0.055f},
+            {0.00f, 1.32f, 0.48f, -0.06f, -0.02f,-0.05f,-0.025f,0.91f,1.08f, 0.02f, 0.28f, 0.065f},
+            {0.00f, 1.25f, 0.00f,  0.00f,  0.00f, 0.00f,-0.02f, 0.94f, 1.05f, 0.01f, 0.38f, 0.055f},
+            {0.05f, 0.88f, 1.06f,  0.10f,  0.08f, 0.10f, 0.04f, 1.08f, 0.98f, 0.12f, 0.16f, 0.025f},
+        };
+        const auto &v = values[std::clamp(static_cast<int>(preset), 0, 8)];
+        m_brightness=v[0]; m_contrast=v[1]; m_saturation=v[2]; m_temperature=v[3];
+        m_tint=v[4]; m_vibrance=v[5]; m_lift=v[6]; m_gamma=v[7]; m_gain=v[8];
+        m_fade=v[9]; m_vignette=v[10]; m_grain=v[11];
     }
 
     void ColorGradingEffect::SetParameters(const std::vector<PostProcessParameter> &parameters)
     {
+        auto preset = m_preset;
         for (const auto &parameter : parameters)
         {
+            if (parameter.name == "Preset")
+                preset = static_cast<Preset>(std::clamp(std::stoi(parameter.value), 0, 8));
+        }
+        if (preset != m_preset)
+        {
+            // Choosing Custom keeps the current look as a starting point.
+            if (preset == Preset::Custom)
+                m_preset = preset;
+            else
+                ApplyPreset(preset);
+            return;
+        }
+
+        bool manuallyChanged = false;
+        for (const auto &parameter : parameters)
+        {
+            auto setFloat = [&parameter, &manuallyChanged](float &target, float low, float high)
+            {
+                const float value = std::clamp(std::stof(parameter.value), low, high);
+                manuallyChanged |= std::abs(value - target) > 0.00001f;
+                target = value;
+            };
             if (parameter.name == "Brightness")
             {
-                m_brightness = std::stof(parameter.value);
+                setFloat(m_brightness, -1.0f, 1.0f);
             }
             else if (parameter.name == "Contrast")
             {
-                m_contrast = std::stof(parameter.value);
+                setFloat(m_contrast, 0.0f, 3.0f);
             }
             else if (parameter.name == "Saturation")
             {
-                m_saturation = std::stof(parameter.value);
+                setFloat(m_saturation, 0.0f, 3.0f);
             }
             else if (parameter.name == "Temperature")
             {
-                m_temperature = std::stof(parameter.value);
+                setFloat(m_temperature, -1.0f, 1.0f);
             }
+            else if (parameter.name == "Tint") setFloat(m_tint, -1.0f, 1.0f);
+            else if (parameter.name == "Vibrance") setFloat(m_vibrance, -1.0f, 1.0f);
+            else if (parameter.name == "Lift") setFloat(m_lift, -1.0f, 1.0f);
+            else if (parameter.name == "Gamma") setFloat(m_gamma, 0.1f, 3.0f);
+            else if (parameter.name == "Gain") setFloat(m_gain, 0.0f, 3.0f);
+            else if (parameter.name == "Fade") setFloat(m_fade, 0.0f, 1.0f);
+            else if (parameter.name == "Vignette") setFloat(m_vignette, 0.0f, 1.0f);
+            else if (parameter.name == "Film Grain") setFloat(m_grain, 0.0f, 1.0f);
         }
+        if (manuallyChanged)
+            m_preset = Preset::Custom;
     }
 
     void ColorGradingEffect::Initialize()
@@ -85,6 +158,15 @@ namespace PlutoGE::render
             uniform float uContrast;
             uniform float uSaturation;
             uniform float uTemperature;
+            uniform float uTint;
+            uniform float uVibrance;
+            uniform float uLift;
+            uniform float uGamma;
+            uniform float uGain;
+            uniform float uFade;
+            uniform float uVignette;
+            uniform float uGrain;
+            uniform float uGrainSeed;
 
             vec3 ApplyContrast(vec3 color, float contrast)
             {
@@ -107,6 +189,26 @@ namespace PlutoGE::render
                 return color * balance;
             }
 
+            uint Hash(uint value)
+            {
+                // Integer avalanche hash avoids the directional correlation
+                // produced by translating a sine hash between frames.
+                value ^= value >> 16u;
+                value *= 0x7feb352du;
+                value ^= value >> 15u;
+                value *= 0x846ca68bu;
+                value ^= value >> 16u;
+                return value;
+            }
+
+            float GrainNoise(uvec2 pixel, uint frame)
+            {
+                uint value = pixel.x * 0x9e3779b9u;
+                value ^= pixel.y * 0x85ebca6bu;
+                value ^= frame * 0xc2b2ae35u;
+                return float(Hash(value) & 0x00ffffffu) / 16777216.0;
+            }
+
             void main()
             {
                 vec4 source = texture(uSceneTexture, UV);
@@ -116,6 +218,23 @@ namespace PlutoGE::render
                 color = ApplyContrast(color, uContrast);
                 color = ApplySaturation(color, uSaturation);
                 color = max(ApplyTemperature(color, uTemperature), vec3(0.0));
+                color *= vec3(1.0 + 0.05 * uTint, 1.0 + 0.10 * uTint, 1.0 - 0.05 * uTint);
+
+                float peak = max(color.r, max(color.g, color.b));
+                float average = (color.r + color.g + color.b) / 3.0;
+                float colorfulness = peak - average;
+                color = mix(color, color + (color - vec3(average)) * (1.0 - colorfulness), uVibrance);
+
+                color = max(color + vec3(uLift), vec3(0.0));
+                color = pow(color, vec3(1.0 / max(uGamma, 0.1))) * uGain;
+                color = mix(color, vec3(dot(color, vec3(0.2126, 0.7152, 0.0722))), uFade * 0.35);
+                color = mix(color, vec3(0.5), uFade * 0.18);
+
+                vec2 centered = UV * 2.0 - 1.0;
+                float vignette = smoothstep(0.35, 1.35, dot(centered, centered));
+                color *= 1.0 - vignette * uVignette * 0.65;
+                float grain = GrainNoise(uvec2(gl_FragCoord.xy), uint(uGrainSeed)) - 0.5;
+                color = max(color + grain * uGrain * (0.5 + 0.5 * (1.0 - dot(color, vec3(0.2126, 0.7152, 0.0722)))), vec3(0.0));
 
                 FragColor = vec4(color, source.a);
             }
@@ -139,6 +258,15 @@ namespace PlutoGE::render
         m_shader->SetUniform("uContrast", m_contrast);
         m_shader->SetUniform("uSaturation", m_saturation);
         m_shader->SetUniform("uTemperature", m_temperature);
+        m_shader->SetUniform("uTint", m_tint);
+        m_shader->SetUniform("uVibrance", m_vibrance);
+        m_shader->SetUniform("uLift", m_lift);
+        m_shader->SetUniform("uGamma", m_gamma);
+        m_shader->SetUniform("uGain", m_gain);
+        m_shader->SetUniform("uFade", m_fade);
+        m_shader->SetUniform("uVignette", m_vignette);
+        m_shader->SetUniform("uGrain", m_grain);
+        m_shader->SetUniform("uGrainSeed", static_cast<float>(context.renderContext.frameSequence % 4096u));
         DrawFullscreenTriangle();
 
         EndApply();

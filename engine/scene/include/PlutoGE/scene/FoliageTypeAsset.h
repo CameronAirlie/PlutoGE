@@ -9,6 +9,8 @@ namespace PlutoGE::scene
     {
         std::string assetReference;
         float cellSize = 32.0f;
+        // Zero inherits the owning foliage component's draw distance.
+        float maxDrawDistance = 0.0f;
         bool collisionEnabled = false;
         glm::vec3 collisionCenter{0.0f, 1.0f, 0.0f};
         float collisionRadius = 0.35f;

@@ -176,6 +176,7 @@ namespace PlutoGE::scene
         void SetTypeCollisionEnabled(std::size_t index, bool enabled);
         void SetTypeCollisionCapsule(std::size_t index, const glm::vec3 &center, float radius, float height);
         void SetTypeCellSize(std::size_t index, float cellSize);
+        void SetTypeMaxDrawDistance(std::size_t index, float distance);
         void SetTypeMeshAndMaterials(std::size_t index,
                                      render::Mesh *mesh,
                                      const std::vector<render::Material *> &materials,

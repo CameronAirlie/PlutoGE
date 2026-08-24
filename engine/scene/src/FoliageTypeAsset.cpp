@@ -18,6 +18,7 @@ namespace PlutoGE::scene
         if (!output) { SetError(errorMessage, "Failed to create foliage type asset: " + path); return false; }
         output << kHeader << '\n'
                << "CELL_SIZE\t" << asset.cellSize << '\n'
+               << "MAX_DRAW_DISTANCE\t" << asset.maxDrawDistance << '\n'
                << "COLLISION_ENABLED\t" << (asset.collisionEnabled ? 1 : 0) << '\n'
                << "COLLISION_CENTER\t" << asset.collisionCenter.x << '\t' << asset.collisionCenter.y << '\t' << asset.collisionCenter.z << '\n'
                << "COLLISION_CAPSULE\t" << asset.collisionRadius << '\t' << asset.collisionHeight << '\n';
@@ -40,12 +41,14 @@ namespace PlutoGE::scene
             std::string key;
             std::getline(stream, key, '\t');
             if (key == "CELL_SIZE") stream >> loaded.cellSize;
+            else if (key == "MAX_DRAW_DISTANCE") stream >> loaded.maxDrawDistance;
             else if (key == "COLLISION_ENABLED") { int enabled = 0; stream >> enabled; loaded.collisionEnabled = enabled != 0; }
             else if (key == "COLLISION_CENTER") stream >> loaded.collisionCenter.x >> loaded.collisionCenter.y >> loaded.collisionCenter.z;
             else if (key == "COLLISION_CAPSULE") stream >> loaded.collisionRadius >> loaded.collisionHeight;
         }
         loaded.assetReference = asset.assetReference;
         loaded.cellSize = (std::max)(loaded.cellSize, 1.0f);
+        loaded.maxDrawDistance = (std::max)(loaded.maxDrawDistance, 0.0f);
         loaded.collisionRadius = (std::max)(loaded.collisionRadius, 0.01f);
         loaded.collisionHeight = (std::max)(loaded.collisionHeight, loaded.collisionRadius * 2.0f);
         asset = std::move(loaded);

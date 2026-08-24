@@ -5404,6 +5404,15 @@ namespace PlutoGE::ui
                                     editorShell.MarkSceneDirty();
                                 }
 
+                                float typeDrawDistance = selectedType->asset.maxDrawDistance;
+                                if (ImGui::DragFloat("Draw Distance Override", &typeDrawDistance, 1.0f, 0.0f, 10000.0f, "%.1f"))
+                                {
+                                    foliageComponent->SetTypeMaxDrawDistance(selectedTypeIndex, typeDrawDistance);
+                                    entity->AddPrefabOverride("Component:FoliageComponent:Type." + std::to_string(selectedTypeIndex) + ".MaxDrawDistance");
+                                    editorShell.MarkSceneDirty();
+                                }
+                                ImGui::SetItemTooltip("0 uses the component Max Draw Distance. Use a shorter range for grass and other small foliage.");
+
                                 bool collisionEnabled = selectedType->asset.collisionEnabled;
                                 if (ImGui::Checkbox("Enable Capsule Collision", &collisionEnabled))
                                 {

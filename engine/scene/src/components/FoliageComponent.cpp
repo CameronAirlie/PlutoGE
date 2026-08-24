@@ -646,7 +646,9 @@ namespace PlutoGE::scene
                     command.submeshIndex = static_cast<uint32_t>(submeshIndex);
                     command.minLodIndex = static_cast<uint32_t>((std::max)(0, m_minRenderLod));
                     command.minShadowLodIndex = static_cast<uint32_t>((std::max)(0, m_minShadowLod));
-                    command.maxDrawDistance = m_maxDrawDistance;
+                    command.maxDrawDistance = type.asset.maxDrawDistance > 0.0f
+                                                  ? type.asset.maxDrawDistance
+                                                  : m_maxDrawDistance;
                     command.maxShadowDistance = m_maxShadowDistance;
                     command.isStatic = m_isStatic;
                     command.castsShadow = m_castShadows;
@@ -693,6 +695,7 @@ namespace PlutoGE::scene
             properties.push_back({prefix + "UseGeneratedLods", PropertyType::Bool, type.useGeneratedLods ? "true" : "false"});
             properties.push_back({prefix + "AssetReference", PropertyType::String, type.asset.assetReference});
             properties.push_back({prefix + "CellSize", PropertyType::Float, std::to_string(type.asset.cellSize)});
+            properties.push_back({prefix + "MaxDrawDistance", PropertyType::Float, std::to_string(type.asset.maxDrawDistance)});
             properties.push_back({prefix + "CollisionEnabled", PropertyType::Bool, type.asset.collisionEnabled ? "true" : "false"});
             properties.push_back({prefix + "CollisionCenter", PropertyType::Vec3,
                                   std::to_string(type.asset.collisionCenter.x) + "," +
@@ -782,6 +785,8 @@ namespace PlutoGE::scene
                     type.asset.assetReference = property.value;
                 else if (fieldName == "CellSize")
                     type.asset.cellSize = (std::max)(1.0f, std::stof(property.value));
+                else if (fieldName == "MaxDrawDistance")
+                    type.asset.maxDrawDistance = (std::max)(0.0f, std::stof(property.value));
                 else if (fieldName == "CollisionEnabled")
                     type.asset.collisionEnabled = property.value == "true" || property.value == "1";
                 else if (fieldName == "CollisionCenter")
@@ -1477,6 +1482,15 @@ namespace PlutoGE::scene
         {
             type->asset.cellSize = (std::max)(cellSize, 1.0f);
             MarkInstancesDirty();
+        }
+    }
+
+    void FoliageComponent::SetTypeMaxDrawDistance(std::size_t index, float distance)
+    {
+        if (auto *type = GetType(index))
+        {
+            type->asset.maxDrawDistance = (std::max)(distance, 0.0f);
+            MarkRenderCommandsDirty();
         }
     }
 

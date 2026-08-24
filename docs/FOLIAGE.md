@@ -64,6 +64,7 @@ The policy currently stores:
 
 - Optional asset reference
 - Spatial cell size
+- Per-type maximum draw distance (`0` inherits the component setting)
 - Whether collision is enabled
 - Local capsule center
 - Capsule radius and height
@@ -80,6 +81,7 @@ version is 1:
 ```text
 PLUTOFOLIAGE	1
 CELL_SIZE	32
+MAX_DRAW_DISTANCE	60
 COLLISION_ENABLED	1
 COLLISION_CENTER	0	1.5	0
 COLLISION_CAPSULE	0.4	3
@@ -104,7 +106,7 @@ foliage->SetTypeAssetReference(typeIndex, "project://Trees/Oak.plutofoliage");
 ```
 
 When an asset reference is present, the external asset is authoritative for
-cell and collision settings when the scene loads. Inline scene properties are
+cell, draw-distance, and collision settings when the scene loads. Inline scene properties are
 still serialized as a fallback and for backward compatibility.
 
 The editor currently exposes inline policy editing. Creating and selecting a
@@ -123,6 +125,12 @@ cell.z = floor(position.z / cellSize)
 The configurable cell size is shared by render clustering and collision
 partitioning. Render commands continue to use hardware-instanced model matrix
 arrays, with one cluster per foliage type and cell.
+
+Camera rendering rejects whole cells outside a type's draw distance, then
+filters individual instances only for cells crossing the cutoff. This is useful
+for grass and other meshes too small for geometry LODs to save meaningful work:
+give those types a short **Draw Distance Override** in the inspector while
+leaving trees on the component's longer range.
 
 The serialized source of truth remains the per-type instance array so existing
 scenes and prefab overrides continue to work. Spatial collision data is derived
@@ -197,6 +205,7 @@ Current scene serialization adds the following per-type fields:
 ```text
 Type.N.AssetReference
 Type.N.CellSize
+Type.N.MaxDrawDistance
 Type.N.CollisionEnabled
 Type.N.CollisionCenter
 Type.N.CollisionRadius

@@ -51,7 +51,19 @@ namespace PlutoGE::scene
 
         auto *scene = GetOwner()->GetScene();
         NavigationSystem *navigation = nullptr;
-        if (auto *meshEntity = scene->FindEntityByID(m_config.navigationMeshEntityId))
+        auto *meshEntity = scene->FindEntityByID(m_config.navigationMeshEntityId);
+        // Prefabs may be authored in a scene whose external navigation-mesh ID
+        // differs from the scene they are instantiated into. Internal prefab
+        // references are remapped during cloning, but an external scene ID
+        // cannot be. Resolve the conventional scene navmesh by name when the
+        // serialized reference is missing or no longer identifies a navmesh.
+        if (!meshEntity || !meshEntity->GetComponent<NavigationMeshComponent>())
+        {
+            meshEntity = scene->FindEntityByName("Navmesh");
+            if (meshEntity && meshEntity->GetComponent<NavigationMeshComponent>())
+                m_config.navigationMeshEntityId = meshEntity->GetID();
+        }
+        if (meshEntity)
             if (auto *mesh = meshEntity->GetComponent<NavigationMeshComponent>())
             {
                 if (!mesh->GetNavigation().IsBaked() && mesh->ShouldHaveBake()) mesh->Bake();

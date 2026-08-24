@@ -163,6 +163,7 @@ namespace PlutoGE::render
                 hash = HashValue(light->castsShadows, hash);
                 hash = HashValue(light->activeShadowCascadeCount, hash);
                 hash = HashValue(light->directionalShadowSettings.maxDistance, hash);
+                hash = HashValue(light->directionalShadowSettings.casterDistance, hash);
                 hash = HashValue(light->directionalShadowSettings.splitLambda, hash);
             }
             if (includeLocalLights && lights)

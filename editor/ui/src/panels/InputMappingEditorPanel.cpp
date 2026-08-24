@@ -13,9 +13,11 @@ namespace PlutoGE::ui
 {
     namespace
     {
-        constexpr const char *Kinds[] = {"Key", "GamepadButton", "GamepadAxis"};
+        constexpr const char *Kinds[] = {"Key", "GamepadButton", "GamepadAxis", "MouseButton", "MouseAxis"};
         constexpr const char *Buttons[] = {"A","B","X","Y","LeftBumper","RightBumper","Back","Start","Guide","LeftStick","RightStick","DpadUp","DpadRight","DpadDown","DpadLeft"};
         constexpr const char *Axes[] = {"LeftX","LeftY","RightX","RightY","LeftTrigger","RightTrigger"};
+        constexpr const char *MouseButtons[] = {"Left","Right","Middle","Button4","Button5","Button6","Button7","Button8"};
+        constexpr const char *MouseAxes[] = {"X","Y"};
         constexpr const char *Keys[] = {"Space","A","B","C","D","E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","W","X","Y","Z","Escape","Enter","Tab","Backspace"};
         constexpr int KeyValues[] = {32,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,256,257,258,259};
 
@@ -61,10 +63,12 @@ namespace PlutoGE::ui
             {
                 const std::string body = (*bit)[1].str();
                 InputMappingBinding binding;
-                binding.kind = IndexOf(Kinds, 3, ExtractString(body, "Kind", "Key"));
+                binding.kind = IndexOf(Kinds, static_cast<int>(std::size(Kinds)), ExtractString(body, "Kind", "Key"));
                 binding.key = IndexOf(Keys, static_cast<int>(std::size(Keys)), ExtractString(body, "Key", "Space"));
                 binding.button = IndexOf(Buttons, 15, ExtractString(body, "Button", "A"));
                 binding.axis = IndexOf(Axes, 6, ExtractString(body, "Axis", "LeftX"));
+                binding.mouseButton = IndexOf(MouseButtons, static_cast<int>(std::size(MouseButtons)), ExtractString(body, "MouseButton", "Left"));
+                binding.mouseAxis = IndexOf(MouseAxes, static_cast<int>(std::size(MouseAxes)), ExtractString(body, "MouseAxis", "X"));
                 binding.gamepad = static_cast<int>(ExtractFloat(body, "Gamepad", 0));
                 binding.scale = ExtractFloat(body, "Scale", 1.0f);
                 binding.deadZone = ExtractFloat(body, "DeadZone", 0.15f);
@@ -90,6 +94,7 @@ namespace PlutoGE::ui
                 const auto &binding=action.bindings[b];
                 out << "        { \"Kind\": \"" << Kinds[binding.kind] << "\", \"Key\": \"" << Keys[binding.key]
                     << "\", \"Button\": \"" << Buttons[binding.button] << "\", \"Axis\": \"" << Axes[binding.axis]
+                    << "\", \"MouseButton\": \"" << MouseButtons[binding.mouseButton] << "\", \"MouseAxis\": \"" << MouseAxes[binding.mouseAxis]
                     << "\", \"Gamepad\": " << binding.gamepad << ", \"Scale\": " << binding.scale << ", \"DeadZone\": " << binding.deadZone << " }"
                     << (b+1<action.bindings.size()?",":"") << "\n";
             }
@@ -143,11 +148,13 @@ namespace PlutoGE::ui
                 for (int b=0;b<static_cast<int>(action.bindings.size());++b)
                 {
                     auto &binding=action.bindings[b]; ImGui::PushID(b); ImGui::SeparatorText("Binding");
-                    if (ImGui::Combo("Device", &binding.kind, Kinds, 3)) m_dirty=true;
+                    if (ImGui::Combo("Device", &binding.kind, Kinds, static_cast<int>(std::size(Kinds)))) m_dirty=true;
                     if (binding.kind==0) { if (ImGui::Combo("Key", &binding.key, Keys, static_cast<int>(std::size(Keys)))) m_dirty=true; }
-                    else { if (ImGui::SliderInt("Gamepad", &binding.gamepad, 0, 15)) m_dirty=true;
+                    else if (binding.kind==1 || binding.kind==2) { if (ImGui::SliderInt("Gamepad", &binding.gamepad, 0, 15)) m_dirty=true;
                         if (binding.kind==1) { if (ImGui::Combo("Button", &binding.button, Buttons, 15)) m_dirty=true; }
                         else if (ImGui::Combo("Axis", &binding.axis, Axes, 6)) m_dirty=true; }
+                    else if (binding.kind==3) { if (ImGui::Combo("Mouse Button", &binding.mouseButton, MouseButtons, static_cast<int>(std::size(MouseButtons)))) m_dirty=true; }
+                    else if (binding.kind==4) { if (ImGui::Combo("Mouse Axis", &binding.mouseAxis, MouseAxes, static_cast<int>(std::size(MouseAxes)))) m_dirty=true; }
                     if (ImGui::DragFloat("Scale", &binding.scale, .05f, -10, 10)) m_dirty=true;
                     if (ImGui::SliderFloat("Dead Zone", &binding.deadZone, 0, .99f)) m_dirty=true;
                     if (ImGui::Button("Remove Binding")) removeBinding=b; ImGui::PopID();

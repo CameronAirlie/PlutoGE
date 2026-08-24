@@ -3,7 +3,9 @@ using System.Text.Json.Serialization;
 
 namespace PlutoGE.ScriptCore;
 
-public enum InputBindingKind { Key, GamepadButton, GamepadAxis }
+public enum InputBindingKind { Key, GamepadButton, GamepadAxis, MouseButton, MouseAxis }
+
+public enum MouseAxis { X, Y }
 
 public sealed class InputBinding
 {
@@ -11,6 +13,8 @@ public sealed class InputBinding
     public KeyCode Key { get; set; }
     public GamepadButton Button { get; set; }
     public GamepadAxis Axis { get; set; }
+    public MouseButton MouseButton { get; set; }
+    public MouseAxis MouseAxis { get; set; }
     public int Gamepad { get; set; }
     public float Scale { get; set; } = 1.0f;
     public float DeadZone { get; set; } = 0.15f;
@@ -22,7 +26,7 @@ public sealed class InputActionDefinition
     public List<InputBinding> Bindings { get; set; } = [];
 }
 
-/// <summary>A Unity-style asset that maps named actions to keyboard and controller bindings.</summary>
+/// <summary>A Unity-style asset that maps named actions to keyboard, mouse, and controller bindings.</summary>
 public sealed class InputActionMap
 {
     public List<InputActionDefinition> Actions { get; set; } = [];
@@ -77,6 +81,8 @@ public sealed class InputActionMap
                 InputBindingKind.Key => Input.IsKeyDown(binding.Key) ? 1.0f : 0.0f,
                 InputBindingKind.GamepadButton => Input.IsGamepadButtonDown(binding.Button, binding.Gamepad) ? 1.0f : 0.0f,
                 InputBindingKind.GamepadAxis => Input.GetGamepadAxis(binding.Axis, binding.Gamepad),
+                InputBindingKind.MouseButton => Input.IsMouseButtonDown(binding.MouseButton) ? 1.0f : 0.0f,
+                InputBindingKind.MouseAxis => binding.MouseAxis == MouseAxis.X ? Input.MouseDelta.X : Input.MouseDelta.Y,
                 _ => 0.0f
             };
             if (MathF.Abs(sample) < Math.Clamp(binding.DeadZone, 0.0f, 0.99f)) sample = 0.0f;
@@ -93,6 +99,7 @@ public sealed class InputActionMap
         {
             InputBindingKind.Key => Input.IsKeyPressed(binding.Key),
             InputBindingKind.GamepadButton => Input.IsGamepadButtonPressed(binding.Button, binding.Gamepad),
+            InputBindingKind.MouseButton => Input.IsMouseButtonPressed(binding.MouseButton),
             _ => false
         });
     }

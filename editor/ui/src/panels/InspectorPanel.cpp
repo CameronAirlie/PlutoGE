@@ -5835,6 +5835,27 @@ namespace PlutoGE::ui
                                     showHelp("Keep this beyond the player and first-person weapon to give their nearby shadows maximum resolution.");
                                     renderedCustomLightProperty = true;
                                 }
+                                else if (property.name == "Shadow Caster Distance (0 = Shadow Distance)")
+                                {
+                                    float value = std::stof(property.value);
+                                    bool matchShadowDistance = value <= 0.0f;
+                                    if (ImGui::Checkbox("Match Shadow Distance##CasterDistance", &matchShadowDistance))
+                                    {
+                                        value = matchShadowDistance ? 0.0f : 500.0f;
+                                        property.value = std::to_string(value);
+                                        propertiesChanged = true;
+                                    }
+                                    showHelp("Controls how far each cascade searches toward the directional light for occluders.");
+                                    ImGui::BeginDisabled(matchShadowDistance);
+                                    if (ImGui::DragFloat("Maximum Caster Distance", &value, 1.0f, 0.1f, 100000.0f, "%.1f m"))
+                                    {
+                                        property.value = std::to_string(value);
+                                        propertiesChanged = true;
+                                    }
+                                    ImGui::EndDisabled();
+                                    showHelp("Increase this for tall or distant terrain casting into nearby cascades. Larger values reduce shadow-depth precision slightly.");
+                                    renderedCustomLightProperty = true;
+                                }
                                 else if (property.name == "Shadow Split Lambda")
                                 {
                                     float value = std::stof(property.value);

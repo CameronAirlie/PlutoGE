@@ -28,6 +28,9 @@ namespace PlutoGE::scene
         // 0.5 reduces a 2048 base map to 256 pixels by cascade four.
         float cascadeResolutionFalloff = 0.75f;
         float maxDistance = 150.0f;
+        // Maximum distance searched toward the light for occluders. Zero keeps
+        // legacy behavior by matching the receiver shadow distance.
+        float casterDistance = 0.0f;
         float nearCascadeDistance = 8.0f;
         float splitLambda = 0.9f;
         float cascadeBlendDistance = 4.0f;

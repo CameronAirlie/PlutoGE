@@ -618,7 +618,21 @@ namespace
         cascadeRadius = glm::ceil(glm::max(cascadeRadius, 0.1f) * 16.0f) / 16.0f;
 
         const float cascadeDepth = glm::max(cascadeFar - cascadeNear, 1.0f);
-        const float casterExtrusionDistance = cascadeDepth * 2.0f + kDirectionalShadowPadding;
+        // A caster is not required to lie inside the camera-depth slice that
+        // receives its shadow. In particular, a tall hill can be well upstream
+        // of a near cascade along the light direction while its shadow still
+        // lands inside that cascade. Extruding by only twice the slice depth
+        // clipped such terrain out of cascades 0 and 1. Keep the XY fit tight,
+        // but cover the directional light's complete useful caster distance in
+        // Z so every cascade can see large occluders affecting its receivers.
+        const float configuredShadowDistance = light.directionalShadowSettings.maxDistance > 0.0f
+                                                   ? light.directionalShadowSettings.maxDistance
+                                                   : cameraData.farPlane;
+        const float configuredCasterDistance = light.directionalShadowSettings.casterDistance > 0.0f
+                                                   ? light.directionalShadowSettings.casterDistance
+                                                   : configuredShadowDistance;
+        const float casterExtrusionDistance =
+            glm::max(cascadeDepth * 2.0f, configuredCasterDistance) + kDirectionalShadowPadding;
         const glm::vec3 upVector = ResolveUpVector(lightDirection);
 
         const float pcfGuardTexels = glm::max(light.directionalShadowSettings.softness + 1.0f, 2.0f);

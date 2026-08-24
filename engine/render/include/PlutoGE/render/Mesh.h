@@ -117,6 +117,9 @@ namespace PlutoGE::render
         uint32_t materialIndex = 0;
         int animatedNodeIndex = -1;
         MeshBounds bounds;
+        glm::vec3 boundsMin{0.0f};
+        glm::vec3 boundsMax{0.0f};
+        bool hasBoundsExtents = false;
         std::string name;
 
         struct LodRange
@@ -164,6 +167,9 @@ namespace PlutoGE::render
             for (auto &submesh : m_config.submeshes)
             {
                 submesh.bounds = ComputeBounds(m_meshData, submesh.indexOffset, submesh.indexCount);
+                submesh.hasBoundsExtents = ComputeBoundsExtents(
+                    m_meshData, submesh.indexOffset, submesh.indexCount,
+                    submesh.boundsMin, submesh.boundsMax);
             }
 
             m_hasUsablePrimaryUvs = HasUsableUvs(m_meshData, 0, static_cast<uint32_t>(m_meshData.indices.size()), false);
@@ -860,6 +866,9 @@ namespace PlutoGE::render
             for (auto &submesh : m_config.submeshes)
             {
                 submesh.bounds = ComputeBounds(m_meshData, submesh.indexOffset, submesh.indexCount);
+                submesh.hasBoundsExtents = ComputeBoundsExtents(
+                    m_meshData, submesh.indexOffset, submesh.indexCount,
+                    submesh.boundsMin, submesh.boundsMax);
             }
 
             glBindBuffer(GL_ARRAY_BUFFER, m_VBO);
@@ -1018,6 +1027,43 @@ namespace PlutoGE::render
             }
 
             return bounds;
+        }
+
+        static bool ComputeBoundsExtents(const MeshData &meshData,
+                                         uint32_t indexOffset,
+                                         uint32_t indexCount,
+                                         glm::vec3 &minimum,
+                                         glm::vec3 &maximum)
+        {
+            if (meshData.vertices.empty() || meshData.indices.empty() || indexCount == 0 ||
+                indexOffset + indexCount > meshData.indices.size())
+            {
+                minimum = glm::vec3(0.0f);
+                maximum = glm::vec3(0.0f);
+                return false;
+            }
+
+            minimum = glm::vec3(std::numeric_limits<float>::max());
+            maximum = glm::vec3(std::numeric_limits<float>::lowest());
+            bool foundVertex = false;
+            for (uint32_t index = indexOffset; index < indexOffset + indexCount; ++index)
+            {
+                const auto vertexIndex = meshData.indices[index];
+                if (vertexIndex >= meshData.vertices.size())
+                    continue;
+
+                const glm::vec3 position = ToVec3(meshData.vertices[vertexIndex].position);
+                minimum = glm::min(minimum, position);
+                maximum = glm::max(maximum, position);
+                foundVertex = true;
+            }
+
+            if (!foundVertex)
+            {
+                minimum = glm::vec3(0.0f);
+                maximum = glm::vec3(0.0f);
+            }
+            return foundVertex;
         }
 
         static void GenerateTangents(MeshData &meshData)

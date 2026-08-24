@@ -37,6 +37,11 @@ namespace
     constexpr int kMaxIncrementalShadowSurfaceUpdatesPerFrame = 2;
     constexpr std::uint8_t kAllPointShadowFacesMask = 0x3fu;
     constexpr float kDirectionalShadowPadding = 2.0f;
+    // Reserve enough light-space depth around the receiver slice for normal
+    // camera traversal to retain a scrolled static cascade. The previous
+    // two-metre guard was exhausted almost immediately with long caster ranges,
+    // turning small Z movement into a full multi-megapixel refresh.
+    constexpr float kDirectionalShadowDepthGuard = 16.0f;
     constexpr float kShadowUpdateMatrixEpsilon = 0.0001f;
     constexpr float kNearCascadeMinCasterTexelRadius = 0.35f;
     constexpr float kFarCascadeMinCasterTexelRadius = 1.0f;
@@ -653,8 +658,8 @@ namespace
             const glm::vec2 receiverExtent = glm::max(glm::vec2(maxBounds.x - minBounds.x, maxBounds.y - minBounds.y), glm::vec2(0.001f));
             const glm::vec2 texelSize = receiverExtent / static_cast<float>(std::max(shadowResolution, 1));
             const glm::vec2 xyGuard = texelSize * pcfGuardTexels + glm::vec2(kDirectionalShadowPadding);
-            minBounds -= glm::vec3(xyGuard.x, xyGuard.y, kDirectionalShadowPadding);
-            maxBounds += glm::vec3(xyGuard.x, xyGuard.y, kDirectionalShadowPadding);
+            minBounds -= glm::vec3(xyGuard.x, xyGuard.y, kDirectionalShadowDepthGuard);
+            maxBounds += glm::vec3(xyGuard.x, xyGuard.y, kDirectionalShadowDepthGuard);
         };
 
         glm::mat4 view = glm::lookAt(eye, eye + lightDirection, upVector);
@@ -822,7 +827,8 @@ namespace
                                                             const glm::vec3 &previousWorldOrigin,
                                                             const glm::mat4 &currentRelative,
                                                             const glm::vec3 &currentWorldOrigin,
-                                                            int resolution)
+                                                            int resolution,
+                                                            float currentDepthRange)
     {
         DirectionalShadowScroll result;
         result.resolvedRelativeMatrix = currentRelative;
@@ -863,7 +869,12 @@ namespace
         // range so a periodic full refresh recentres depth coverage safely.
         const float depthTranslationDelta = std::abs(previous[3][2] - current[3][2]);
         result.maxMatrixDelta = glm::max(result.maxMatrixDelta, depthTranslationDelta);
-        constexpr float kMaximumRetainedDepthTranslation = 0.02f;
+        // Orthographic NDC spans two units across the cascade depth range.
+        // Keep a quarter of the depth guard unused on either side so reused
+        // receivers remain strictly within the stored projection.
+        const float retainedWorldDepth = kDirectionalShadowDepthGuard * 0.75f;
+        const float kMaximumRetainedDepthTranslation =
+            (2.0f * retainedWorldDepth) / glm::max(currentDepthRange, 0.1f);
         if (depthTranslationDelta > kMaximumRetainedDepthTranslation) return result;
         current[3][2] = previous[3][2];
         result.resolvedRelativeMatrix = current *
@@ -900,6 +911,63 @@ namespace
                lightSpaceCenter.x - radius <= regionMax.x &&
                lightSpaceCenter.y + radius >= regionMin.y &&
                lightSpaceCenter.y - radius <= regionMax.y;
+    }
+
+    bool IsModelBoundsOverlappingDirectionalRegion(const PlutoGE::render::RenderCommand &command,
+                                                    const glm::mat4 &model,
+                                                    const glm::mat4 &lightView,
+                                                    const glm::vec3 &shadowWorldOrigin,
+                                                    const glm::vec2 &regionMin,
+                                                    const glm::vec2 &regionMax)
+    {
+        if (!command.mesh || command.submeshIndex >= command.mesh->GetSubmeshCount() ||
+            command.jointMatrices)
+        {
+            return false;
+        }
+
+        const auto &submesh = command.mesh->GetSubmesh(command.submeshIndex);
+        if (!submesh.hasBoundsExtents)
+            return false;
+
+        glm::vec2 projectedMin(std::numeric_limits<float>::max());
+        glm::vec2 projectedMax(std::numeric_limits<float>::lowest());
+        for (int corner = 0; corner < 8; ++corner)
+        {
+            const glm::vec3 localPosition{
+                (corner & 1) != 0 ? submesh.boundsMax.x : submesh.boundsMin.x,
+                (corner & 2) != 0 ? submesh.boundsMax.y : submesh.boundsMin.y,
+                (corner & 4) != 0 ? submesh.boundsMax.z : submesh.boundsMin.z,
+            };
+            const glm::vec3 worldPosition = glm::vec3(model * glm::vec4(localPosition, 1.0f));
+            const glm::vec2 projected = glm::vec2(
+                lightView * glm::vec4(worldPosition - shadowWorldOrigin, 1.0f));
+            projectedMin = glm::min(projectedMin, projected);
+            projectedMax = glm::max(projectedMax, projected);
+        }
+
+        return projectedMax.x >= regionMin.x && projectedMin.x <= regionMax.x &&
+               projectedMax.y >= regionMin.y && projectedMin.y <= regionMax.y;
+    }
+
+    bool IsCommandOverlappingDirectionalRegion(const ShadowCasterEntry &shadowCaster,
+                                                const glm::mat4 &lightView,
+                                                const glm::vec3 &shadowWorldOrigin,
+                                                const glm::vec2 &regionMin,
+                                                const glm::vec2 &regionMax)
+    {
+        const auto *command = shadowCaster.command;
+        if (command && (!command->instanceModels || command->instanceModels->empty()) &&
+            !command->jointMatrices && command->mesh &&
+            command->submeshIndex < command->mesh->GetSubmeshCount() &&
+            command->mesh->GetSubmesh(command->submeshIndex).hasBoundsExtents)
+        {
+            return IsModelBoundsOverlappingDirectionalRegion(
+                *command, command->model, lightView, shadowWorldOrigin, regionMin, regionMax);
+        }
+
+        return IsBoundsOverlappingDirectionalRegion(
+            shadowCaster.bounds, lightView, shadowWorldOrigin, regionMin, regionMax);
     }
 
     PlutoGE::render::MeshBounds TransformShadowBounds(const PlutoGE::render::MeshBounds &bounds,
@@ -1142,6 +1210,11 @@ namespace
                                                 int shadowResolution,
                                                 float minCasterTexelRadius)
     {
+        if (!IsCommandOverlappingDirectionalRegion(
+                shadowCaster, lightView, shadowWorldOrigin, receiverMin, receiverMax))
+        {
+            return false;
+        }
         return IsBoundsRelevantForDirectionalCascade(shadowCaster.bounds, lightView, shadowWorldOrigin, receiverMin, receiverMax, receiverExtent, shadowResolution, minCasterTexelRadius);
     }
 
@@ -2201,7 +2274,8 @@ namespace PlutoGE::render
                                   light->shadowCascadeWorldOrigins[cascadeIndex],
                                   cascadeMatrix,
                                   cascadeShadowWorldOrigin,
-                                  shadowResolution)
+                                  shadowResolution,
+                                  cascadeProjection.depthRange)
                             : DirectionalShadowScroll{};
                     const glm::mat4 &cascadeRenderMatrix = cascadeScroll.valid
                                                                ? cascadeScroll.resolvedRelativeMatrix
@@ -2373,7 +2447,7 @@ namespace PlutoGE::render
                                     cascadeProjection.receiverExtent, shadowResolution, effectiveMinCasterTexelRadius);
                                 const bool isStaticCaster = shadowCaster.command->isStatic && !shadowCaster.command->jointMatrices;
                                 return relevant && isStaticCaster == drawStaticCasters && (!effectiveRegion ||
-                                    IsBoundsOverlappingDirectionalRegion(shadowCaster.bounds,
+                                    IsCommandOverlappingDirectionalRegion(shadowCaster,
                                         cascadeProjection.lightViewMatrix, cascadeShadowWorldOrigin,
                                         effectiveRegion->min, effectiveRegion->max));
                             },
@@ -2386,6 +2460,13 @@ namespace PlutoGE::render
                                 if (!effectiveRegion || !command.mesh || command.submeshIndex >= command.mesh->GetSubmeshCount())
                                     return true;
                                 const auto instanceBounds = resolveInstanceBounds(command, model, instanceIndex);
+                                const auto &submesh = command.mesh->GetSubmesh(command.submeshIndex);
+                                if (!command.jointMatrices && submesh.hasBoundsExtents)
+                                {
+                                    return IsModelBoundsOverlappingDirectionalRegion(
+                                        command, model, cascadeProjection.lightViewMatrix,
+                                        cascadeShadowWorldOrigin, effectiveRegion->min, effectiveRegion->max);
+                                }
                                 return IsBoundsOverlappingDirectionalRegion(
                                     instanceBounds, cascadeProjection.lightViewMatrix,
                                     cascadeShadowWorldOrigin, effectiveRegion->min, effectiveRegion->max);

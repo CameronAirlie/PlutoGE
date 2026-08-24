@@ -226,39 +226,54 @@ namespace PlutoGE::render
                 vec2 center = vec2(0.5);
                 vec3 flare = vec3(0.0);
 
-                // Ghosts lie on the line through the optical centre. Separate
-                // channel samples provide restrained lateral chromatic aberration.
-                const float ghostWeights[6] = float[6](0.95, 0.72, 0.52, 0.38, 0.27, 0.18);
-                for (int index = 0; index < 6; ++index)
+                // Each output pixel traces back toward a bright source along the
+                // optical axis. Irregular spacing avoids the synthetic row of
+                // identical blobs common to simple screen-space flare shaders.
+                const float ghostPositions[5] = float[5](-0.32, 0.28, 0.72, 1.18, 1.72);
+                const float ghostWeights[5] = float[5](0.34, 0.62, 0.42, 0.24, 0.12);
+                const float ghostSizes[5] = float[5](0.72, 0.38, 0.56, 0.30, 0.22);
+                vec2 outputAxis = UV - center;
+                for (int index = 0; index < 5; ++index)
                 {
-                    float offset = (float(index) + 1.0) * uGhostDispersal;
-                    vec2 ghostUv = mix(UV, vec2(1.0) - UV, offset);
-                    vec2 axis = ghostUv - center;
-                    vec2 chroma = normalize(axis + vec2(0.0001)) * uTexelSize * 2.0;
+                    float position = ghostPositions[index] * mix(0.65, 1.25, uGhostDispersal * 0.5);
+                    vec2 ghostUv = center - outputAxis / position;
+                    vec2 chroma = normalize(outputAxis + vec2(0.0001)) * uTexelSize * (1.0 + float(index) * 0.45);
                     vec3 bright = vec3(BrightSample(ghostUv + chroma).r,
                                        BrightSample(ghostUv).g,
                                        BrightSample(ghostUv - chroma).b);
-                    vec2 shaped = axis * vec2(uAspectRatio, 1.0);
-                    float vignette = smoothstep(0.78, 0.08, length(shaped));
-                    vec3 mask = FlareMask(center + axis * (1.0 + float(index) * 0.22), uScale);
+                    vec2 shaped = outputAxis * vec2(uAspectRatio, 1.0);
+                    float vignette = 1.0 - smoothstep(0.45, 0.95, length(shaped));
+                    vec3 mask = FlareMask(center + outputAxis / max(ghostSizes[index], 0.05), uScale);
                     flare += bright * mask * ghostWeights[index] * vignette;
                 }
 
-                vec2 axis = (UV - center) * vec2(uAspectRatio, 1.0);
+                vec2 axis = outputAxis * vec2(uAspectRatio, 1.0);
                 float radius = length(axis);
-                vec2 haloUv = center - (UV - center) * (0.75 + uGhostDispersal * 0.35);
-                float halo = exp(-pow((radius - 0.28 * uScale) / max(0.035 * uScale, 0.01), 2.0));
-                flare += BrightSample(haloUv) * halo * 0.35;
+                vec2 haloUv = center - outputAxis * (0.82 + uGhostDispersal * 0.18);
+                float halo = exp(-pow((radius - 0.22 * uScale) / max(0.045 * uScale, 0.012), 2.0));
+                vec3 haloColor = vec3(BrightSample(haloUv + vec2(uTexelSize.x * 1.5, 0.0)).r,
+                                      BrightSample(haloUv).g,
+                                      BrightSample(haloUv - vec2(uTexelSize.x * 1.5, 0.0)).b);
+                flare += haloColor * halo * 0.28;
 
-                // Subtle anamorphic glare around the brightest source pixels.
+                // Battlefield-style horizontal anamorphic glare: long enough to
+                // read as lens streaking, but energy-normalised to avoid a wash.
                 vec3 glare = vec3(0.0);
-                for (int tap = -4; tap <= 4; ++tap)
+                float glareWeight = 0.0;
+                for (int tap = -8; tap <= 8; ++tap)
                 {
                     float x = float(tap);
-                    glare += BrightSample(UV + vec2(x * uTexelSize.x * 5.0, 0.0)) * exp(-abs(x) * 0.65);
+                    float weight = exp(-abs(x) * 0.38);
+                    glare += BrightSample(UV + vec2(x * uTexelSize.x * 12.0, 0.0)) * weight;
+                    glareWeight += weight;
                 }
-                flare += glare * FlareMask(UV, uScale * 1.25) * 0.08;
+                glare /= max(glareWeight, 0.001);
+                float verticalCore = exp(-abs(outputAxis.y) / max(uTexelSize.y * 80.0, 0.012));
+                flare += glare * vec3(0.58, 0.72, 1.0) * (0.16 + verticalCore * 0.10);
 
+                // Compress extreme flare energy before the additive composite;
+                // this keeps the source hot without flattening the whole frame.
+                flare = flare / (vec3(1.0) + flare * 0.35);
                 vec3 color = source.rgb + flare * uIntensity;
                 FragColor = vec4(max(color, vec3(0.0)), source.a);
             }

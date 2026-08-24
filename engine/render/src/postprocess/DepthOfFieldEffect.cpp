@@ -26,7 +26,9 @@ namespace PlutoGE::render
             PostProcessParameter{.name = "Quality", .type = PostProcessParameterType::Enum, .value = std::to_string(static_cast<int>(m_quality)), .enumOptions = {"Balanced", "High", "Cinematic"}},
             PostProcessParameter{.name = "Auto Focus", .type = PostProcessParameterType::Bool, .value = m_autoFocus ? "true" : "false"},
             PostProcessParameter{.name = "Focus Distance", .type = PostProcessParameterType::Float, .value = std::to_string(m_focusDistance)},
-            PostProcessParameter{.name = "Focus Range", .type = PostProcessParameterType::Float, .value = std::to_string(m_focusRange)},
+            PostProcessParameter{.name = "Focal Length (mm)", .type = PostProcessParameterType::Float, .value = std::to_string(m_focalLength)},
+            PostProcessParameter{.name = "F-Stop", .type = PostProcessParameterType::Float, .value = std::to_string(m_fStop)},
+            PostProcessParameter{.name = "Sensor Width (mm)", .type = PostProcessParameterType::Float, .value = std::to_string(m_sensorWidth)},
             PostProcessParameter{.name = "Max Blur Radius", .type = PostProcessParameterType::Float, .value = std::to_string(m_maxBlurRadius)},
             PostProcessParameter{.name = "Near Blur Scale", .type = PostProcessParameterType::Float, .value = std::to_string(m_nearBlurScale)},
             PostProcessParameter{.name = "Far Blur Scale", .type = PostProcessParameterType::Float, .value = std::to_string(m_farBlurScale)},
@@ -59,9 +61,17 @@ namespace PlutoGE::render
                     m_hasFocusDistance = true;
                 }
             }
-            else if (parameter.name == "Focus Range")
+            else if (parameter.name == "Focal Length (mm)")
             {
-                m_focusRange = std::clamp(std::stof(parameter.value), 0.01f, 10000.0f);
+                m_focalLength = std::clamp(std::stof(parameter.value), 8.0f, 300.0f);
+            }
+            else if (parameter.name == "F-Stop")
+            {
+                m_fStop = std::clamp(std::stof(parameter.value), 0.7f, 32.0f);
+            }
+            else if (parameter.name == "Sensor Width (mm)")
+            {
+                m_sensorWidth = std::clamp(std::stof(parameter.value), 4.0f, 70.0f);
             }
             else if (parameter.name == "Max Blur Radius")
             {
@@ -77,7 +87,12 @@ namespace PlutoGE::render
             }
             else if (parameter.name == "Focus Speed")
             {
-                m_focusSpeed = std::clamp(std::stof(parameter.value), 0.0f, 1.0f);
+                const float speed = std::stof(parameter.value);
+                // Presets made before physical DoF stored a per-frame blend in
+                // [0, 1]. Convert it to an equivalent 60 Hz motor response.
+                m_focusSpeed = speed <= 1.0f
+                                   ? std::clamp(-std::log(std::max(1.0f - speed, 0.001f)) * 60.0f, 0.1f, 20.0f)
+                                   : std::clamp(speed, 0.1f, 20.0f);
             }
             else if (parameter.name == "Focus X")
             {
@@ -125,7 +140,9 @@ namespace PlutoGE::render
             uniform float uNearPlane;
             uniform float uFarPlane;
             uniform float uFocusDistance;
-            uniform float uFocusRange;
+            uniform float uFocalLength;
+            uniform float uFStop;
+            uniform float uSensorWidth;
             uniform float uMaxBlurRadius;
             uniform float uNearBlurScale;
             uniform float uFarBlurScale;
@@ -142,9 +159,16 @@ namespace PlutoGE::render
 
             float ComputeSignedCoC(float viewDepth)
             {
-                float signedDistance = (viewDepth - uFocusDistance) / max(uFocusRange, 0.0001);
-                float scale = signedDistance < 0.0 ? uNearBlurScale : uFarBlurScale;
-                return clamp(signedDistance * scale, -1.0, 1.0);
+                // Thin-lens circle of confusion. Scene distances and focal length
+                // are converted to millimetres so the controls match real lenses.
+                float subject = max(viewDepth * 1000.0, uFocalLength + 0.01);
+                float focus = max(uFocusDistance * 1000.0, uFocalLength + 0.01);
+                float cocMm = (uFocalLength * uFocalLength * (subject - focus)) /
+                              max(uFStop * subject * (focus - uFocalLength), 0.0001);
+                float cocPixels = 0.5 * cocMm * float(textureSize(uSceneTexture, 0).x) /
+                                  max(uSensorWidth, 0.001);
+                float scale = cocPixels < 0.0 ? uNearBlurScale : uFarBlurScale;
+                return clamp(cocPixels * scale / max(uMaxBlurRadius, 0.001), -1.0, 1.0);
             }
 
             vec3 SampleScene(vec2 uv)
@@ -156,13 +180,13 @@ namespace PlutoGE::render
             {
                 vec2 texelSize = 1.0 / vec2(textureSize(uSceneTexture, 0));
                 float centerDepthRaw = texture(uSceneDepthTexture, UV).r;
-                if (centerDepthRaw <= 0.000001 || uMaxBlurRadius <= 0.001)
+                if (uMaxBlurRadius <= 0.001)
                 {
                     FragColor = vec4(SampleScene(UV), 1.0);
                     return;
                 }
 
-                float centerDepth = LinearizeDepth(centerDepthRaw);
+                float centerDepth = centerDepthRaw <= 0.000001 ? uFarPlane : LinearizeDepth(centerDepthRaw);
                 float centerCoC = ComputeSignedCoC(centerDepth);
                 float centerBlurPixels = abs(centerCoC) * uMaxBlurRadius;
                 if (centerBlurPixels < 0.35)
@@ -238,7 +262,16 @@ namespace PlutoGE::render
         }
         else
         {
-            const float focusBlend = m_autoFocus ? m_focusSpeed : 1.0f;
+            const auto now = std::chrono::steady_clock::now();
+            float deltaSeconds = m_lastFocusUpdate.time_since_epoch().count() == 0
+                                     ? (1.0f / 60.0f)
+                                     : std::chrono::duration<float>(now - m_lastFocusUpdate).count();
+            m_lastFocusUpdate = now;
+            deltaSeconds = std::clamp(deltaSeconds, 0.0f, 0.1f);
+
+            // A damped focus motor is frame-rate independent and deliberately
+            // slows down near its target instead of visibly snapping.
+            const float focusBlend = m_autoFocus ? 1.0f - std::exp(-m_focusSpeed * deltaSeconds) : 1.0f;
             m_currentFocusDistance += (targetFocusDistance - m_currentFocusDistance) * std::clamp(focusBlend, 0.0f, 1.0f);
         }
 
@@ -249,7 +282,9 @@ namespace PlutoGE::render
         m_shader->SetUniform("uNearPlane", context.renderContext.cameraData.nearPlane);
         m_shader->SetUniform("uFarPlane", context.renderContext.cameraData.farPlane);
         m_shader->SetUniform("uFocusDistance", std::max(m_currentFocusDistance, 0.01f));
-        m_shader->SetUniform("uFocusRange", std::max(m_focusRange, 0.01f));
+        m_shader->SetUniform("uFocalLength", m_focalLength);
+        m_shader->SetUniform("uFStop", m_fStop);
+        m_shader->SetUniform("uSensorWidth", m_sensorWidth);
         m_shader->SetUniform("uMaxBlurRadius", std::max(m_maxBlurRadius, 0.0f));
         m_shader->SetUniform("uNearBlurScale", std::max(m_nearBlurScale, 0.0f));
         m_shader->SetUniform("uFarBlurScale", std::max(m_farBlurScale, 0.0f));
@@ -274,7 +309,13 @@ namespace PlutoGE::render
             return m_hasFocusDistance ? m_currentFocusDistance : m_focusDistance;
         }
 
-        const int sampleExtent = std::clamp(static_cast<int>(std::round(std::min(width, height) * m_focusWindow)), 3, 31);
+        if (std::min(width, height) < 3)
+        {
+            return m_hasFocusDistance ? m_currentFocusDistance : m_focusDistance;
+        }
+
+        const int largestOddExtent = std::min(31, (std::min(width, height) - 1) | 1);
+        const int sampleExtent = std::clamp(static_cast<int>(std::round(std::min(width, height) * m_focusWindow)), 3, largestOddExtent);
         const int sampleSize = sampleExtent | 1;
         const int halfSampleSize = sampleSize / 2;
         const int centerX = std::clamp(static_cast<int>(std::round(m_focusX * static_cast<float>(width - 1))), halfSampleSize, width - 1 - halfSampleSize);
@@ -291,9 +332,9 @@ namespace PlutoGE::render
 
         const float nearPlane = context.renderContext.cameraData.nearPlane;
         const float farPlane = context.renderContext.cameraData.farPlane;
-        float weightedDepth = 0.0f;
-        float totalWeight = 0.0f;
-        float nearestDepth = farPlane;
+        struct WeightedSample { float depth; float weight; };
+        std::vector<WeightedSample> validSamples;
+        validSamples.reserve(depthSamples.size());
 
         for (int y = 0; y < sampleSize; ++y)
         {
@@ -306,24 +347,37 @@ namespace PlutoGE::render
                 }
 
                 const float viewDepth = LinearizeDepth(depth, nearPlane, farPlane);
-                nearestDepth = std::min(nearestDepth, viewDepth);
                 const float nx = (static_cast<float>(x) - static_cast<float>(halfSampleSize)) / static_cast<float>(halfSampleSize + 1);
                 const float ny = (static_cast<float>(y) - static_cast<float>(halfSampleSize)) / static_cast<float>(halfSampleSize + 1);
-                const float centerWeight = std::exp(-(nx * nx + ny * ny) * 3.0f);
-                const float foregroundWeight = 1.0f / std::max(viewDepth, 0.1f);
-                const float weight = centerWeight * (0.35f + foregroundWeight);
-                weightedDepth += viewDepth * weight;
-                totalWeight += weight;
+                validSamples.push_back({viewDepth, std::exp(-(nx * nx + ny * ny) * 4.0f)});
             }
         }
 
-        if (totalWeight <= 0.0001f)
+        if (validSamples.empty())
         {
             return m_hasFocusDistance ? m_currentFocusDistance : m_focusDistance;
         }
 
-        const float averageDepth = weightedDepth / totalWeight;
-        return std::clamp(averageDepth * 0.82f + nearestDepth * 0.18f, nearPlane, farPlane);
+        // A centre-weighted median locks to the dominant subject surface and is
+        // not dragged forward by a single weapon/foliage pixel in the AF box.
+        std::sort(validSamples.begin(), validSamples.end(), [](const auto &a, const auto &b) { return a.depth < b.depth; });
+        float totalWeight = 0.0f;
+        for (const auto &sample : validSamples) totalWeight += sample.weight;
+        float accumulatedWeight = 0.0f;
+        float meteredDepth = validSamples.back().depth;
+        for (const auto &sample : validSamples)
+        {
+            accumulatedWeight += sample.weight;
+            if (accumulatedWeight >= totalWeight * 0.5f)
+            {
+                meteredDepth = sample.depth;
+                break;
+            }
+        }
+
+        const float previous = m_hasFocusDistance ? m_currentFocusDistance : meteredDepth;
+        const float deadBand = std::max(0.02f, previous * 0.015f);
+        return std::abs(meteredDepth - previous) < deadBand ? previous : std::clamp(meteredDepth, nearPlane, farPlane);
     }
 
     float DepthOfFieldEffect::LinearizeDepth(float depth, float nearPlane, float farPlane) const
@@ -336,5 +390,6 @@ namespace PlutoGE::render
     void DepthOfFieldEffect::ResetFocus()
     {
         m_hasFocusDistance = false;
+        m_lastFocusUpdate = {};
     }
 }

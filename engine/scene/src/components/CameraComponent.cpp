@@ -36,6 +36,8 @@ namespace PlutoGE::scene
                 return PropertyType::Bool;
             case render::PostProcessParameterType::Enum:
                 return PropertyType::Enum;
+            case render::PostProcessParameterType::Color:
+                return PropertyType::Color;
             case render::PostProcessParameterType::String:
             default:
                 return PropertyType::String;
@@ -54,9 +56,10 @@ namespace PlutoGE::scene
                 return render::PostProcessParameterType::Bool;
             case PropertyType::Enum:
                 return render::PostProcessParameterType::Enum;
+            case PropertyType::Color:
+                return render::PostProcessParameterType::Color;
             case PropertyType::String:
             case PropertyType::Vec3:
-            case PropertyType::Color:
             default:
                 return render::PostProcessParameterType::String;
             }

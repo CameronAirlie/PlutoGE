@@ -3109,6 +3109,9 @@ namespace PlutoGE::ui
                     case render::PostProcessParameterType::Enum:
                         property.type = scene::PropertyType::Enum;
                         break;
+                    case render::PostProcessParameterType::Color:
+                        property.type = scene::PropertyType::Color;
+                        break;
                     case render::PostProcessParameterType::String:
                     default:
                         property.type = scene::PropertyType::String;
@@ -3353,6 +3356,9 @@ namespace PlutoGE::ui
                         break;
                     case render::PostProcessParameterType::Enum:
                         property.type = scene::PropertyType::Enum;
+                        break;
+                    case render::PostProcessParameterType::Color:
+                        property.type = scene::PropertyType::Color;
                         break;
                     case render::PostProcessParameterType::String:
                     default:

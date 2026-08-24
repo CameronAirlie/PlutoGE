@@ -15,6 +15,7 @@ namespace PlutoGE::render
         String,
         Bool,
         Enum,
+        Color,
     };
 
     struct PostProcessParameter

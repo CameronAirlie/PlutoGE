@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 
 namespace PlutoGE::render
 {
@@ -45,6 +46,11 @@ namespace PlutoGE::render
             {.name = "Fade", .type = PostProcessParameterType::Float, .value = std::to_string(m_fade)},
             {.name = "Vignette", .type = PostProcessParameterType::Float, .value = std::to_string(m_vignette)},
             {.name = "Film Grain", .type = PostProcessParameterType::Float, .value = std::to_string(m_grain)},
+            {.name = "Shadow Color", .type = PostProcessParameterType::Color, .value = std::to_string(m_shadowColor.r) + "," + std::to_string(m_shadowColor.g) + "," + std::to_string(m_shadowColor.b) + ",1.0"},
+            {.name = "Shadow Color Strength", .type = PostProcessParameterType::Float, .value = std::to_string(m_shadowColorStrength)},
+            {.name = "Highlight Color", .type = PostProcessParameterType::Color, .value = std::to_string(m_highlightColor.r) + "," + std::to_string(m_highlightColor.g) + "," + std::to_string(m_highlightColor.b) + ",1.0"},
+            {.name = "Highlight Color Strength", .type = PostProcessParameterType::Float, .value = std::to_string(m_highlightColorStrength)},
+            {.name = "Split Balance", .type = PostProcessParameterType::Float, .value = std::to_string(m_splitBalance)},
         };
     }
 
@@ -58,7 +64,7 @@ namespace PlutoGE::render
             {0.00f, 1.00f, 1.00f,  0.00f,  0.00f, 0.00f, 0.00f, 1.00f, 1.00f, 0.00f, 0.00f, 0.00f},
             {-0.01f,1.12f, 0.96f,  0.06f,  0.02f, 0.08f,-0.01f, 0.96f, 1.04f, 0.03f, 0.20f, 0.035f},
             {-0.02f,1.18f, 0.92f, -0.05f,  0.03f, 0.12f,-0.02f, 0.94f, 1.06f, 0.02f, 0.32f, 0.025f},
-            {0.00f, 1.14f, 1.08f, -0.22f,  0.10f, 0.18f,-0.01f, 0.96f, 1.05f, 0.01f, 0.24f, 0.020f},
+            {-0.015f,1.22f,1.10f,  0.04f,  0.015f,0.18f,-0.018f,0.96f,1.05f,0.005f,0.24f,0.018f},
             {0.03f, 0.92f, 0.78f,  0.24f,  0.08f,-0.04f, 0.03f, 1.05f, 0.96f, 0.16f, 0.22f, 0.055f},
             {0.00f, 1.32f, 0.48f, -0.06f, -0.02f,-0.05f,-0.025f,0.91f,1.08f, 0.02f, 0.28f, 0.065f},
             {0.00f, 1.25f, 0.00f,  0.00f,  0.00f, 0.00f,-0.02f, 0.94f, 1.05f, 0.01f, 0.38f, 0.055f},
@@ -68,6 +74,17 @@ namespace PlutoGE::render
         m_brightness=v[0]; m_contrast=v[1]; m_saturation=v[2]; m_temperature=v[3];
         m_tint=v[4]; m_vibrance=v[5]; m_lift=v[6]; m_gamma=v[7]; m_gain=v[8];
         m_fade=v[9]; m_vignette=v[10]; m_grain=v[11];
+        m_shadowColorStrength = 0.0f;
+        m_highlightColorStrength = 0.0f;
+        m_splitBalance = 0.5f;
+        if (preset == Preset::TealAndOrange)
+        {
+            m_shadowColor = {0.0f, 0.55f, 0.43f};
+            m_highlightColor = {1.0f, 0.38f, 0.07f};
+            m_shadowColorStrength = 0.62f;
+            m_highlightColorStrength = 0.42f;
+            m_splitBalance = 0.48f;
+        }
     }
 
     void ColorGradingEffect::SetParameters(const std::vector<PostProcessParameter> &parameters)
@@ -121,6 +138,21 @@ namespace PlutoGE::render
             else if (parameter.name == "Fade") setFloat(m_fade, 0.0f, 1.0f);
             else if (parameter.name == "Vignette") setFloat(m_vignette, 0.0f, 1.0f);
             else if (parameter.name == "Film Grain") setFloat(m_grain, 0.0f, 1.0f);
+            else if (parameter.name == "Shadow Color" || parameter.name == "Highlight Color")
+            {
+                glm::vec3 color = parameter.name == "Shadow Color" ? m_shadowColor : m_highlightColor;
+                float alpha = 1.0f;
+                if (std::sscanf(parameter.value.c_str(), "%f,%f,%f,%f", &color.r, &color.g, &color.b, &alpha) >= 3)
+                {
+                    color = glm::clamp(color, glm::vec3(0.0f), glm::vec3(1.0f));
+                    glm::vec3 &target = parameter.name == "Shadow Color" ? m_shadowColor : m_highlightColor;
+                    manuallyChanged |= glm::any(glm::greaterThan(glm::abs(color - target), glm::vec3(0.00001f)));
+                    target = color;
+                }
+            }
+            else if (parameter.name == "Shadow Color Strength") setFloat(m_shadowColorStrength, 0.0f, 1.0f);
+            else if (parameter.name == "Highlight Color Strength") setFloat(m_highlightColorStrength, 0.0f, 1.0f);
+            else if (parameter.name == "Split Balance") setFloat(m_splitBalance, 0.0f, 1.0f);
         }
         if (manuallyChanged)
             m_preset = Preset::Custom;
@@ -167,6 +199,11 @@ namespace PlutoGE::render
             uniform float uVignette;
             uniform float uGrain;
             uniform float uGrainSeed;
+            uniform vec3 uShadowColor;
+            uniform vec3 uHighlightColor;
+            uniform float uShadowColorStrength;
+            uniform float uHighlightColorStrength;
+            uniform float uSplitBalance;
 
             vec3 ApplyContrast(vec3 color, float contrast)
             {
@@ -187,6 +224,22 @@ namespace PlutoGE::render
                     1.0 - 0.05 * abs(t),
                     1.0 + 0.1 * max(-t, 0.0));
                 return color * balance;
+            }
+
+            vec3 ApplySplitToning(vec3 color)
+            {
+                float luma = dot(color, vec3(0.2126, 0.7152, 0.0722));
+                float crossover = mix(0.25, 0.75, uSplitBalance);
+                float shadows = 1.0 - smoothstep(crossover - 0.20, crossover + 0.12, luma);
+                float highlights = smoothstep(crossover - 0.12, crossover + 0.24, luma);
+                const vec3 luminanceWeights = vec3(0.2126, 0.7152, 0.0722);
+                vec3 shadowTone = luma * uShadowColor /
+                                  max(dot(uShadowColor, luminanceWeights), 0.001);
+                vec3 highlightTone = luma * uHighlightColor /
+                                     max(dot(uHighlightColor, luminanceWeights), 0.001);
+                color = mix(color, shadowTone, shadows * uShadowColorStrength);
+                color = mix(color, highlightTone, highlights * uHighlightColorStrength);
+                return max(color, vec3(0.0));
             }
 
             uint Hash(uint value)
@@ -219,6 +272,8 @@ namespace PlutoGE::render
                 color = ApplySaturation(color, uSaturation);
                 color = max(ApplyTemperature(color, uTemperature), vec3(0.0));
                 color *= vec3(1.0 + 0.05 * uTint, 1.0 + 0.10 * uTint, 1.0 - 0.05 * uTint);
+
+                color = ApplySplitToning(color);
 
                 float peak = max(color.r, max(color.g, color.b));
                 float average = (color.r + color.g + color.b) / 3.0;
@@ -267,6 +322,11 @@ namespace PlutoGE::render
         m_shader->SetUniform("uVignette", m_vignette);
         m_shader->SetUniform("uGrain", m_grain);
         m_shader->SetUniform("uGrainSeed", static_cast<float>(context.renderContext.frameSequence % 4096u));
+        m_shader->SetUniform("uShadowColor", m_shadowColor);
+        m_shader->SetUniform("uHighlightColor", m_highlightColor);
+        m_shader->SetUniform("uShadowColorStrength", m_shadowColorStrength);
+        m_shader->SetUniform("uHighlightColorStrength", m_highlightColorStrength);
+        m_shader->SetUniform("uSplitBalance", m_splitBalance);
         DrawFullscreenTriangle();
 
         EndApply();

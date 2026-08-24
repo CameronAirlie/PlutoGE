@@ -58,6 +58,17 @@ namespace PlutoGE::render
             return HashBytes(&value, sizeof(value), seed);
         }
 
+        bool HasStaticVoxelContributors(const std::vector<RenderCommand> &commands)
+        {
+            return std::any_of(
+                commands.begin(), commands.end(),
+                [](const RenderCommand &command)
+                {
+                    return command.isStatic && command.mesh && command.material &&
+                           (!command.jointMatrices || command.jointMatrices->empty());
+                });
+        }
+
         std::size_t ComputeSceneSignature(const std::vector<RenderCommand> &commands)
         {
             // Render commands are sorted using their camera-selected LOD. Build an
@@ -67,19 +78,19 @@ namespace PlutoGE::render
             std::size_t hash = 1469598103934665603ull;
             std::size_t sum = 0;
             std::size_t mixed = 0;
-            std::size_t staticCommandCount = 0;
+            std::size_t contributorCount = 0;
+            const bool hasStaticContributors = HasStaticVoxelContributors(commands);
             for (const auto &command : commands)
             {
-                // The voxel field is a cached representation of static scene
-                // lighting. Dynamic and skinned meshes can move every frame and
-                // would otherwise continuously invalidate every cascade. They
-                // still receive VCTGI through the G-buffer, but do not contribute
-                // stale, intermittently rebuilt occlusion.
-                if (!command.isStatic ||
+                // Prefer a cached representation of static scene lighting.
+                // When an imported scene contains no static rigid geometry, use
+                // its rigid meshes as a compatibility fallback. Skinned meshes
+                // still receive VCTGI but never contribute stale voxel occlusion.
+                if ((hasStaticContributors && !command.isStatic) || !command.mesh || !command.material ||
                     (command.jointMatrices && !command.jointMatrices->empty()))
                     continue;
 
-                ++staticCommandCount;
+                ++contributorCount;
                 std::size_t commandHash = HashValue(command.mesh, 1469598103934665603ull);
                 commandHash = HashValue(command.material, commandHash);
                 commandHash = HashValue(command.submeshIndex, commandHash);
@@ -110,7 +121,7 @@ namespace PlutoGE::render
                 sum += commandHash;
                 mixed ^= commandHash + 0x9e3779b97f4a7c15ull + (commandHash << 6u) + (commandHash >> 2u);
             }
-            hash = HashValue(staticCommandCount, hash);
+            hash = HashValue(contributorCount, hash);
             hash = HashValue(sum, hash);
             return HashValue(mixed, hash);
         }
@@ -816,9 +827,16 @@ void main(){vec3 p=texture(uScenePositionTexture,UV).xyz,rawNormal=texture(uScen
         cascade.jobIndex = 0;
         cascade.jobs.clear();
         cascade.jobs.reserve(commands.size());
+        const bool hasStaticContributors = HasStaticVoxelContributors(commands);
         for (const auto &command : commands)
         {
-            if (!command.mesh || !command.material || !command.isStatic ||
+            // Prefer the stable cached representation whenever the scene marks
+            // voxel contributors static. Imported scenes sometimes mark every
+            // rigid submesh dynamic, however; an empty volume is never useful,
+            // so fall back to those rigid meshes only when no static contributor
+            // exists anywhere in the submitted scene.
+            if (!command.mesh || !command.material ||
+                (hasStaticContributors && !command.isStatic) ||
                 (command.jointMatrices && !command.jointMatrices->empty()) ||
                 !IntersectsVoxelVolume(command, volumeOrigin, cascade.size))
                 continue;

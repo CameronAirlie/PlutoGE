@@ -2,6 +2,8 @@
 
 #include "PlutoGE/render/postprocess/ShaderPostProcessEffect.h"
 
+#include <glm/vec3.hpp>
+
 namespace PlutoGE::render
 {
     class Shader;
@@ -62,5 +64,10 @@ namespace PlutoGE::render
         float m_fade = 0.0f;
         float m_vignette = 0.0f;
         float m_grain = 0.0f;
+        glm::vec3 m_shadowColor{0.0f, 0.55f, 0.48f};
+        glm::vec3 m_highlightColor{1.0f, 0.36f, 0.08f};
+        float m_shadowColorStrength = 0.0f;
+        float m_highlightColorStrength = 0.0f;
+        float m_splitBalance = 0.5f;
     };
 }

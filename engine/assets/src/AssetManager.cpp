@@ -73,8 +73,15 @@ namespace PlutoGE::assets
         if (sourceReference.empty() || localId == 0) return {};
         const auto sourceRelative = sourceReference.substr(Project::kProjectAssetScheme.size());
         const auto sourcePath = std::filesystem::path(m_projectRootDirectory) / m_projectAssetDirectory / sourceRelative;
-        const auto manifestPath = std::filesystem::path(m_projectRootDirectory) / m_projectAssetDirectory / "Imported" /
-                                  sourcePath.stem() / (sourcePath.stem().string() + ".plutomodel");
+        auto manifestPath = sourcePath.parent_path() / (sourcePath.stem().string() + ".plutomodel");
+        std::error_code manifestError;
+        if (!std::filesystem::is_regular_file(manifestPath, manifestError))
+        {
+            // Compatibility for projects imported before model artifacts were
+            // co-located with their source package.
+            manifestPath = std::filesystem::path(m_projectRootDirectory) / m_projectAssetDirectory / "Imported" /
+                           sourcePath.stem() / (sourcePath.stem().string() + ".plutomodel");
+        }
         ModelAsset model;
         if (!LoadModelAsset(manifestPath.string(), model)) return {};
         for (const auto &object : model.objects)

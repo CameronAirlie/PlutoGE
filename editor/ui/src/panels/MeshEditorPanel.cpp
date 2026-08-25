@@ -592,10 +592,9 @@ namespace PlutoGE::ui
             std::string errorMessage;
             if (editorShell.GetEngine().GetAssetManager().SaveMeshAsset(reference, m_config, m_materialReferences, &errorMessage, m_metadata))
             {
-                // A source-model directory can contain a generated mesh copy in
-                // addition to the canonical Imported/ object used by scenes.
-                // Keep that canonical object in sync so editing the source copy's
-                // LOD thresholds updates existing and subsequently loaded scenes.
+                // Extracted mesh copies retain the source object's stable identity.
+                // Keep the model package's canonical mesh synchronized so edits
+                // apply to every instance that inherits from that model object.
                 std::string canonicalReference;
                 if (!m_metadata.sourceAssetId.empty() && m_metadata.sourceObjectId != 0)
                 {

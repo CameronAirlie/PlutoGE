@@ -32,6 +32,34 @@ namespace PlutoGE::assets
         return hash == 0 ? 1 : hash;
     }
 
+    std::filesystem::path GetModelArtifactDirectory(const Project &project, std::string_view sourceReference)
+    {
+        const auto sourcePath = project.ResolveAssetReference(sourceReference);
+        return sourcePath.empty() ? std::filesystem::path{} : sourcePath.parent_path();
+    }
+
+    std::filesystem::path GetModelManifestPath(const Project &project, std::string_view sourceReference)
+    {
+        const auto sourcePath = project.ResolveAssetReference(sourceReference);
+        if (sourcePath.empty()) return {};
+        return GetModelArtifactDirectory(project, sourceReference) /
+               (sourcePath.stem().string() + ".plutomodel");
+    }
+
+    std::filesystem::path FindModelManifestPath(const Project &project, std::string_view sourceReference)
+    {
+        const auto canonicalPath = GetModelManifestPath(project, sourceReference);
+        std::error_code error;
+        if (std::filesystem::is_regular_file(canonicalPath, error)) return canonicalPath;
+
+        const auto sourcePath = project.ResolveAssetReference(sourceReference);
+        if (sourcePath.empty()) return canonicalPath;
+        const auto legacyPath = project.GetAssetDirectoryPath() / "Imported" / sourcePath.stem() /
+                                (sourcePath.stem().string() + ".plutomodel");
+        error.clear();
+        return std::filesystem::is_regular_file(legacyPath, error) ? legacyPath : canonicalPath;
+    }
+
     bool SaveModelAsset(const std::string &path, const ModelAsset &asset, std::string *errorMessage)
     {
         std::ofstream output(path, std::ios::trunc);

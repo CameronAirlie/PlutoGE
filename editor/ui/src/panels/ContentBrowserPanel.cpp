@@ -31,6 +31,7 @@
 #include <set>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <sstream>
 
 #include <imgui.h>
@@ -134,8 +135,7 @@ namespace PlutoGE::ui
             if (asset.type == assets::ProjectAssetType::Model)
             {
                 const auto sourcePath = project.ResolveAssetReference(asset.reference);
-                const auto manifestPath = project.GetAssetDirectoryPath() / "Imported" / sourcePath.stem() /
-                                          (sourcePath.stem().string() + ".plutomodel");
+                const auto manifestPath = assets::FindModelManifestPath(project, asset.reference);
                 assets::ModelAsset model;
                 if (!assets::LoadModelAsset(manifestPath.string(), model)) return 0;
                 const auto mesh = std::find_if(model.objects.begin(), model.objects.end(), [](const auto &object)
@@ -623,13 +623,6 @@ void main() {
             const auto separator = relativePath.find_last_of('/');
             const auto fileName = separator == std::string::npos ? relativePath : relativePath.substr(separator + 1);
             return fileName.empty() ? DisplayAssetReference(asset.reference) : fileName;
-        }
-
-        std::filesystem::path GetImportedModelManifestPath(const assets::Project &project, std::string_view sourceReference)
-        {
-            const auto sourcePath = project.ResolveAssetReference(sourceReference);
-            return project.GetAssetDirectoryPath() / "Imported" / sourcePath.stem() /
-                   (sourcePath.stem().string() + ".plutomodel");
         }
 
         std::string GetAssetFolderName(std::string_view folder)
@@ -1237,6 +1230,18 @@ void main() {
             if (!texture.sourcePath.empty() && std::filesystem::exists(texture.sourcePath))
             {
                 const auto sourcePath = std::filesystem::path(texture.sourcePath);
+                std::error_code relativeError;
+                const auto packageRelativePath = std::filesystem::relative(sourcePath, importDirectory, relativeError);
+                const auto packageRelative = packageRelativePath.lexically_normal().generic_string();
+                if (!relativeError && !packageRelative.empty() && packageRelative != ".." &&
+                    packageRelative.rfind("../", 0) != 0)
+                {
+                    // The source texture is already part of the canonical model
+                    // package. Referencing it in place avoids copying a file onto
+                    // itself (notably textures/ versus Textures/ on Windows) and
+                    // keeps the package free of duplicate texture assets.
+                    return project.MakeAssetReference(sourcePath);
+                }
                 const auto destinationPath = textureDirectory / sourcePath.filename();
                 std::error_code errorCode;
                 std::filesystem::create_directories(destinationPath.parent_path(), errorCode);
@@ -1603,7 +1608,26 @@ void main() {
                 return false;
             }
 
-            const auto importDirectory = project.GetAssetDirectoryPath() / "Imported" / sourcePath.stem();
+            // Capture the mesh's effective bindings before regenerating it. An
+            // extracted material is an authored global override and must survive
+            // reimport; importer-owned material references are replaced below by
+            // their canonical co-located equivalents.
+            std::vector<std::string> previousMaterialBindings;
+            std::unordered_set<std::string> previousGeneratedMaterials;
+            assets::ModelAsset previousModelAsset;
+            const auto previousManifestPath = assets::FindModelManifestPath(project, asset.reference);
+            if (assets::LoadModelAsset(previousManifestPath.string(), previousModelAsset))
+            {
+                for (const auto &object : previousModelAsset.objects)
+                {
+                    if (object.type == assets::ProjectAssetType::Material)
+                        previousGeneratedMaterials.insert(object.reference);
+                    else if (object.type == assets::ProjectAssetType::Mesh && previousMaterialBindings.empty())
+                        previousMaterialBindings = engine.GetAssetManager().GetMeshAssetMaterialReferences(object.reference);
+                }
+            }
+
+            const auto importDirectory = assets::GetModelArtifactDirectory(project, asset.reference);
             const std::string meshReference = project.MakeAssetReference(importDirectory / (sourcePath.stem().string() + ".plutomesh"));
             assets::ModelAsset modelAsset;
             modelAsset.sourceReference = asset.reference;
@@ -1667,6 +1691,15 @@ void main() {
 
             if (hasMesh)
             {
+                if (previousMaterialBindings.size() == materialReferences.size())
+                {
+                    for (std::size_t index = 0; index < materialReferences.size(); ++index)
+                    {
+                        const auto &previousReference = previousMaterialBindings[index];
+                        if (!previousReference.empty() && !previousGeneratedMaterials.contains(previousReference))
+                            materialReferences[index] = previousReference;
+                    }
+                }
                 logProgress("Writing mesh asset");
                 render::MeshConfig meshConfig;
                 meshConfig.data = importedSourceAsset.meshData;
@@ -1894,7 +1927,7 @@ void main() {
         }
 
         assets::ModelAsset model;
-        if (!assets::LoadModelAsset(GetImportedModelManifestPath(*project, reference).string(), model))
+        if (!assets::LoadModelAsset(assets::FindModelManifestPath(*project, reference).string(), model))
         {
             editorShell.Log(EditorShell::ConsoleSeverity::Error, "Import the model before placing it in a scene.");
             return false;
@@ -2858,7 +2891,7 @@ void main() {
                 {
                     assets::ModelAsset model;
                     std::string modelError;
-                    if (assets::LoadModelAsset(GetImportedModelManifestPath(*project, asset.reference).string(), model, &modelError))
+                    if (assets::LoadModelAsset(assets::FindModelManifestPath(*project, asset.reference).string(), model, &modelError))
                     {
                         m_openModelReference = asset.reference;
                         m_openModelName = std::filesystem::path(fileName).stem().string();
@@ -3189,7 +3222,7 @@ void main() {
             {
                 assets::ModelAsset model;
                 std::string modelError;
-                const auto manifestPath = GetImportedModelManifestPath(*project, asset.reference);
+                const auto manifestPath = assets::FindModelManifestPath(*project, asset.reference);
                 const bool imported = assets::LoadModelAsset(manifestPath.string(), model, &modelError);
                 if (imported)
                 {

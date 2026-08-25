@@ -689,6 +689,8 @@ namespace PlutoGE::scene
             const std::string prefix = std::string(kTypePrefix) + std::to_string(index) + ".";
             properties.push_back({prefix + "Name", PropertyType::String, type.name});
             properties.push_back({prefix + "SourceMesh", PropertyType::String, type.sourceMeshPath});
+            properties.push_back({prefix + "ModelAssetId", PropertyType::String, type.modelAssetId});
+            properties.push_back({prefix + "ModelObjectId", PropertyType::String, std::to_string(type.modelObjectId)});
             properties.push_back({prefix + "MaterialAsset", PropertyType::String, type.materialAssetReference});
             properties.push_back({prefix + "SubmeshIndex", PropertyType::Int, std::to_string(type.submeshIndex)});
             properties.push_back({prefix + "SubmeshIndices", PropertyType::String, SerializeSubmeshIndices(type.submeshIndices)});
@@ -773,6 +775,12 @@ namespace PlutoGE::scene
                     type.name = property.value.empty() ? DefaultTypeName(typeIndex) : property.value;
                 else if (fieldName == "SourceMesh")
                     type.sourceMeshPath = property.value;
+                else if (fieldName == "ModelAssetId")
+                    type.modelAssetId = property.value;
+                else if (fieldName == "ModelObjectId")
+                {
+                    try { type.modelObjectId = std::stoull(property.value); } catch (...) { type.modelObjectId = 0; }
+                }
                 else if (fieldName == "MaterialAsset")
                     type.materialAssetReference = property.value;
                 else if (fieldName == "SubmeshIndex")
@@ -846,6 +854,21 @@ namespace PlutoGE::scene
         m_selectedTypeIndex = std::clamp(m_selectedTypeIndex, 0, static_cast<int>(m_types.size()) - 1);
         for (auto &type : m_types)
         {
+            if (type.modelAssetId.empty() && !type.sourceMeshPath.empty())
+            {
+                // Upgrade legacy foliage that stored only an Imported/... mesh
+                // reference. Its mesh metadata already carries the stable model
+                // identity needed to follow the canonical artifact after reimport.
+                const auto &metadata = core::Engine::GetInstance().GetAssetManager().GetMeshAssetMetadata(type.sourceMeshPath);
+                type.modelAssetId = metadata.sourceAssetId;
+                type.modelObjectId = metadata.sourceObjectId;
+            }
+            if (!type.modelAssetId.empty() && type.modelObjectId != 0)
+            {
+                const auto resolved = core::Engine::GetInstance().GetAssetManager().ResolveModelObject(
+                    type.modelAssetId, type.modelObjectId);
+                if (!resolved.empty()) type.sourceMeshPath = resolved;
+            }
             if (!type.asset.assetReference.empty())
             {
                 const std::string reference = type.asset.assetReference;
@@ -1431,6 +1454,9 @@ namespace PlutoGE::scene
         if (auto *type = GetType(index))
         {
             type->sourceMeshPath = sourceMeshPath;
+            const auto &metadata = core::Engine::GetInstance().GetAssetManager().GetMeshAssetMetadata(sourceMeshPath);
+            type->modelAssetId = metadata.sourceAssetId;
+            type->modelObjectId = metadata.sourceObjectId;
             RebuildTypeMeshFromReference(*type);
             RebuildTypeMaterialFromReference(*type);
             MarkRenderCommandsDirty();

@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <filesystem>
+#include <fstream>
 
 int main()
 {
@@ -21,7 +22,7 @@ int main()
             .localId = meshId,
             .type = ProjectAssetType::Mesh,
             .name = "Robot",
-            .reference = "project://Imported/Robot/Robot.plutomesh",
+            .reference = "project://Models/Robot/Robot.plutomesh",
         }},
     };
 
@@ -40,6 +41,26 @@ int main()
     assert(loaded.objects[0].type == ProjectAssetType::Mesh);
     assert(loaded.objects[0].reference == source.objects[0].reference);
 
+    const auto projectRoot = std::filesystem::current_path() / "ModelAssetPathTests";
+    const auto assetRoot = projectRoot / "Assets";
+    const auto packageRoot = assetRoot / "SourceModels" / "Robot";
+    std::filesystem::create_directories(packageRoot);
+    const auto projectPath = projectRoot / "ModelAssetPathTests.plutoproject";
+    Project project(projectPath, ProjectManifest{.assetDirectory = "Assets"});
+    const std::string sourceReference = "project://SourceModels/Robot/Robot.fbx";
+    assert(GetModelArtifactDirectory(project, sourceReference) == packageRoot);
+    assert(GetModelManifestPath(project, sourceReference) == packageRoot / "Robot.plutomodel");
+    assert(FindModelManifestPath(project, sourceReference) == packageRoot / "Robot.plutomodel");
+
+    const auto legacyManifest = assetRoot / "Imported" / "Robot" / "Robot.plutomodel";
+    std::filesystem::create_directories(legacyManifest.parent_path());
+    std::ofstream(legacyManifest) << "legacy";
+    assert(FindModelManifestPath(project, sourceReference) == legacyManifest);
+
+    std::ofstream(packageRoot / "Robot.plutomodel") << "canonical";
+    assert(FindModelManifestPath(project, sourceReference) == packageRoot / "Robot.plutomodel");
+
     std::filesystem::remove(path);
+    std::filesystem::remove_all(projectRoot);
     return 0;
 }

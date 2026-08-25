@@ -63,6 +63,8 @@ namespace PlutoGE::scene
     {
         std::string name = "Foliage";
         std::string sourceMeshPath;
+        std::string modelAssetId;
+        std::uint64_t modelObjectId = 0;
         std::string materialAssetReference;
         render::Mesh *mesh = nullptr;
         render::Material *materialOverride = nullptr;

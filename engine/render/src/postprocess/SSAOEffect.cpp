@@ -278,21 +278,21 @@ namespace PlutoGE::render
                         continue;
                     }
 
-                    float depthDifference = abs(sceneSampleViewPos.z - fragViewPos.z);
-                    float rangeWeight = 1.0 - smoothstep(uRadius * 0.25, uRadius * 1.25, depthDifference);
+                    float rangeWeight = 1.0 - smoothstep(uRadius * 0.25, uRadius * 1.25, sceneDistance);
                     if (rangeWeight <= 0.0)
                     {
                         continue;
                     }
 
-                    float horizonWeight = max(dot(normalize(sceneDelta), normal), 0.0);
+                    float normalDistance = dot(sceneDelta, normal);
+                    float horizonWeight = max(normalDistance / sceneDistance, 0.0);
                     // A narrow transition avoids turning every sample into a hard
                     // black/white dot while preserving contact shadow definition.
                     float visibilityWidth = max(uBias, uRadius * 0.015);
                     float sampleOccluded = smoothstep(
-                        sampleViewPos.z + uBias - visibilityWidth,
-                        sampleViewPos.z + uBias + visibilityWidth,
-                        sceneSampleViewPos.z);
+                        uBias - visibilityWidth,
+                        uBias + visibilityWidth,
+                        normalDistance);
                     occlusion += sampleOccluded * rangeWeight * horizonWeight;
                 }
 

@@ -2808,8 +2808,10 @@ namespace PlutoGE::ui
                         if (terrainComponent->Raycast(ray->origin, ray->direction, hitPoint))
                         {
                             const glm::mat4 worldTransform = selectedEntity->GetWorldTransform();
-                            const glm::vec3 right = SafeNormalizedAxis(glm::vec3(worldTransform[0]), glm::vec3(1.0f, 0.0f, 0.0f));
-                            const glm::vec3 forward = SafeNormalizedAxis(glm::vec3(worldTransform[2]), glm::vec3(0.0f, 0.0f, 1.0f));
+                            // Brush radii are authored and applied in terrain-local units. Preserve the
+                            // owner's scale here so the preview covers the same local-space footprint.
+                            const glm::vec3 right = glm::vec3(worldTransform[0]);
+                            const glm::vec3 forward = glm::vec3(worldTransform[2]);
                             auto *drawList = ImGui::GetWindowDrawList();
                             drawList->PushClipRect(viewportMin, ImVec2(viewportMin.x + viewportSize.x, viewportMin.y + viewportSize.y), true);
                             DrawWorldCircle(drawList,

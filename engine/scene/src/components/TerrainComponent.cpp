@@ -481,35 +481,78 @@ namespace PlutoGE::scene
         }
         localDirection = glm::normalize(localDirection);
 
-        float selectedDistance = std::numeric_limits<float>::max();
-        const auto &meshData = m_mesh->GetMeshData();
-        for (std::size_t index = 0; index + 2 < meshData.indices.size(); index += 3)
+        const glm::vec3 boundsMin(0.0f);
+        const glm::vec3 boundsMax(static_cast<float>(m_width - 1) * m_cellSize,
+                                  m_heightScale,
+                                  static_cast<float>(m_depth - 1) * m_cellSize);
+        float entryDistance = 0.0f;
+        float exitDistance = std::numeric_limits<float>::max();
+        for (int axis = 0; axis < 3; ++axis)
         {
-            const auto i0 = meshData.indices[index];
-            const auto i1 = meshData.indices[index + 1];
-            const auto i2 = meshData.indices[index + 2];
-            if (i0 >= meshData.vertices.size() || i1 >= meshData.vertices.size() || i2 >= meshData.vertices.size())
+            if (std::abs(localDirection[axis]) <= kRayEpsilon)
             {
+                if (localOrigin[axis] < boundsMin[axis] || localOrigin[axis] > boundsMax[axis])
+                    return false;
                 continue;
             }
+            float nearDistance = (boundsMin[axis] - localOrigin[axis]) / localDirection[axis];
+            float farDistance = (boundsMax[axis] - localOrigin[axis]) / localDirection[axis];
+            if (nearDistance > farDistance)
+                std::swap(nearDistance, farDistance);
+            entryDistance = std::max(entryDistance, nearDistance);
+            exitDistance = std::min(exitDistance, farDistance);
+            if (entryDistance > exitDistance)
+                return false;
+        }
 
-            const auto &a = meshData.vertices[i0];
-            const auto &b = meshData.vertices[i1];
-            const auto &c = meshData.vertices[i2];
-            const glm::vec3 v0(a.position[0], a.position[1], a.position[2]);
-            const glm::vec3 v1(b.position[0], b.position[1], b.position[2]);
-            const glm::vec3 v2(c.position[0], c.position[1], c.position[2]);
-            float distance = 0.0f;
-            if (IntersectTriangle(localOrigin, localDirection, v0, v1, v2, distance) && distance < selectedDistance)
+        const auto heightDelta = [&](float distance)
+        {
+            const glm::vec3 point = localOrigin + localDirection * distance;
+            return point.y - SampleHeight(point.x / m_cellSize, point.z / m_cellSize);
+        };
+
+        // Sampling at most half a heightfield cell apart avoids the O(width*depth)
+        // triangle walk formerly paid every frame while the paint cursor was visible.
+        const float horizontalSpeed = glm::length(glm::vec2(localDirection.x, localDirection.z));
+        const float stepDistance = horizontalSpeed > kRayEpsilon
+                                       ? (0.5f * m_cellSize) / horizontalSpeed
+                                       : std::max(0.5f * m_cellSize, 0.01f);
+        float previousDistance = entryDistance;
+        float previousDelta = heightDelta(previousDistance);
+        float selectedDistance = std::numeric_limits<float>::max();
+        if (std::abs(previousDelta) <= kRayEpsilon)
+            selectedDistance = previousDistance;
+
+        for (float distance = std::min(entryDistance + stepDistance, exitDistance);
+             selectedDistance == std::numeric_limits<float>::max() && distance <= exitDistance;
+             distance = std::min(distance + stepDistance, exitDistance))
+        {
+            const float delta = heightDelta(distance);
+            if ((previousDelta <= 0.0f && delta >= 0.0f) || (previousDelta >= 0.0f && delta <= 0.0f))
             {
-                selectedDistance = distance;
+                float low = previousDistance;
+                float high = distance;
+                for (int iteration = 0; iteration < 12; ++iteration)
+                {
+                    const float middle = (low + high) * 0.5f;
+                    const float middleDelta = heightDelta(middle);
+                    if ((previousDelta <= 0.0f && middleDelta <= 0.0f) ||
+                        (previousDelta >= 0.0f && middleDelta >= 0.0f))
+                        low = middle;
+                    else
+                        high = middle;
+                }
+                selectedDistance = (low + high) * 0.5f;
+                break;
             }
+            if (distance >= exitDistance)
+                break;
+            previousDistance = distance;
+            previousDelta = delta;
         }
 
         if (selectedDistance == std::numeric_limits<float>::max())
-        {
             return false;
-        }
 
         const glm::vec3 localHit = localOrigin + localDirection * selectedDistance;
         worldHitPoint = glm::vec3(entity->GetWorldTransform() * glm::vec4(localHit, 1.0f));
@@ -543,11 +586,14 @@ namespace PlutoGE::scene
 
     void TerrainComponent::SetHeightScale(float heightScale)
     {
+        const float previousHeightScale = m_heightScale;
         m_heightScale = std::max(0.01f, heightScale);
+        const float scaleRatio = m_heightScale / previousHeightScale;
         for (auto &height : m_heights)
         {
-            height = glm::clamp(height, 0.0f, m_heightScale);
+            height = glm::clamp(height * scaleRatio, 0.0f, m_heightScale);
         }
+        m_flattenHeight = glm::clamp(m_flattenHeight * scaleRatio, 0.0f, m_heightScale);
         MarkMeshDirty();
     }
 

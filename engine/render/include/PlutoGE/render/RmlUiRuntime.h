@@ -126,6 +126,10 @@ namespace PlutoGE::render
         Rml::Context *m_context = nullptr;
         platform::Window *m_window = nullptr;
         std::unordered_map<std::string, Rml::ElementDocument *> m_documents;
+        // Script-side paths often use an Assets-relative spelling while the
+        // loaded document map uses a project URI. Cache the resolved key so
+        // frequent HUD mutations do not normalize paths and scan every time.
+        mutable std::unordered_map<std::string, std::string> m_documentAliases;
         // Instance key -> asset reference. Projected canvases are instanced per entity.
         std::unordered_map<std::string, std::string> m_documentReferences;
         std::unordered_map<std::string, std::filesystem::file_time_type> m_documentWriteTimes;

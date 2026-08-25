@@ -1142,6 +1142,15 @@ namespace PlutoGE::render
         if (found != m_documents.end())
             return found->second;
 
+        if (const auto alias = m_documentAliases.find(document); alias != m_documentAliases.end())
+        {
+            if (const auto resolved = m_documents.find(alias->second); resolved != m_documents.end())
+                return resolved->second;
+            // Document synchronization may have removed or renamed the keyed
+            // instance. Drop the stale alias and resolve it again below.
+            m_documentAliases.erase(alias);
+        }
+
         // Canvas paths and serialized script fields may spell the same asset
         // differently (for example a project asset URI versus a path relative
         // to the Assets directory). Resolve both forms before giving up so the
@@ -1156,7 +1165,10 @@ namespace PlutoGE::render
             const auto mapped = m_documentReferences.find(key);
             const std::string &reference = mapped != m_documentReferences.end() ? mapped->second : key;
             if (NormalizeDocumentPath(assets, reference) == requestedPath)
+            {
+                m_documentAliases.insert_or_assign(document, key);
                 return loaded;
+            }
         }
         return nullptr;
     }

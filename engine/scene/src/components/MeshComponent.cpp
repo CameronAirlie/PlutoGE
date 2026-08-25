@@ -351,9 +351,10 @@ namespace PlutoGE::scene
         {
             if (serializedMaterial.albedoPath.has_value())
             {
+                const auto resolvedPath = core::Engine::GetInstance().GetAssetManager().ResolveAssetPath(*serializedMaterial.albedoPath);
                 material.SetAlbedoTexture(serializedMaterial.albedoPath->empty()
                                               ? nullptr
-                                              : render::Texture::LoadFromFile(serializedMaterial.albedoPath->c_str(), render::TextureColorSpace::SRGB));
+                                              : render::Texture::LoadFromFile(resolvedPath.c_str(), render::TextureColorSpace::SRGB));
             }
             if (serializedMaterial.color.has_value())
             {
@@ -439,7 +440,8 @@ namespace PlutoGE::scene
                 }
                 else
                 {
-                    auto *lightmapTexture = core::Engine::GetInstance().GetTextureManager().LoadLightmapFromFile(serializedMaterial.lightmapPath->c_str());
+                    const auto resolvedPath = core::Engine::GetInstance().GetAssetManager().ResolveAssetPath(*serializedMaterial.lightmapPath);
+                    auto *lightmapTexture = core::Engine::GetInstance().GetTextureManager().LoadLightmapFromFile(resolvedPath.c_str());
                     material.SetLightmapTexture(lightmapTexture);
                 }
             }

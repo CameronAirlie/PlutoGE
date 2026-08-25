@@ -462,6 +462,16 @@ namespace PlutoGE::scene
 
             return false;
         }
+
+        std::string CanonicalizeStoredAssetPath(assets::AssetManager &assetManager, const std::string &value)
+        {
+            if (value.empty() || assets::Project::IsProjectAssetReference(value) ||
+                assets::Project::IsEngineAssetReference(value))
+                return value;
+            if (std::filesystem::path(value).is_absolute())
+                return assetManager.PersistAssetPath(value);
+            return std::filesystem::path(value).generic_string();
+        }
     }
 
     namespace
@@ -698,7 +708,7 @@ namespace PlutoGE::scene
 
                 if (tokens[0] == "ENVIRONMENT" && tokens.size() >= 3)
                 {
-                    environmentMapPath = assetManager.ResolveAssetPath(tokens[1]);
+                    environmentMapPath = CanonicalizeStoredAssetPath(assetManager, tokens[1]);
                     environmentIntensity = std::stof(tokens[2]);
                     continue;
                 }
@@ -708,7 +718,7 @@ namespace PlutoGE::scene
                     IblCaptureVolume captureVolume;
                     captureVolume.origin = ParseVec3(tokens[1]);
                     captureVolume.size = ParseVec3(tokens[2]);
-                    captureVolume.environmentMapPath = assetManager.ResolveAssetPath(tokens[3]);
+                    captureVolume.environmentMapPath = CanonicalizeStoredAssetPath(assetManager, tokens[3]);
                     captureVolume.intensity = std::stof(tokens[4]);
                     captureVolume.blendDistance = std::stof(tokens[5]);
                     iblCaptureVolumes.push_back(std::move(captureVolume));
@@ -814,7 +824,7 @@ namespace PlutoGE::scene
                     property.name = tokens[1];
                     property.type = static_cast<PropertyType>(std::stoi(tokens[2]));
                     property.value = IsAssetPathProperty(activeComponent->typeName, property.name)
-                                         ? assetManager.ResolveAssetPath(tokens[3])
+                                         ? CanonicalizeStoredAssetPath(assetManager, tokens[3])
                                          : tokens[3];
                     const int enumCount = std::stoi(tokens[4]);
                     for (int enumIndex = 0; enumIndex < enumCount && 5 + enumIndex < static_cast<int>(tokens.size()); ++enumIndex)
@@ -885,7 +895,8 @@ namespace PlutoGE::scene
 
             if (!environmentMapPath.empty())
             {
-                auto *environmentTexture = core::Engine::GetInstance().GetTextureManager().LoadEnvironmentTextureFromFile(environmentMapPath.c_str());
+                const auto resolvedEnvironmentPath = assetManager.ResolveAssetPath(environmentMapPath);
+                auto *environmentTexture = core::Engine::GetInstance().GetTextureManager().LoadEnvironmentTextureFromFile(resolvedEnvironmentPath.c_str());
                 scene->SetEnvironmentMap(environmentTexture, environmentMapPath);
                 scene->SetEnvironmentIntensity(environmentIntensity);
             }
@@ -897,7 +908,8 @@ namespace PlutoGE::scene
                     break;
                 }
 
-                captureVolume.environmentMapTexture = core::Engine::GetInstance().GetTextureManager().LoadEnvironmentTextureFromFile(captureVolume.environmentMapPath.c_str());
+                const auto resolvedCapturePath = assetManager.ResolveAssetPath(captureVolume.environmentMapPath);
+                captureVolume.environmentMapTexture = core::Engine::GetInstance().GetTextureManager().LoadEnvironmentTextureFromFile(resolvedCapturePath.c_str());
                 scene->AddIblCaptureVolume(std::move(captureVolume));
             }
 

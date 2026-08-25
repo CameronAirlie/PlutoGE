@@ -640,7 +640,8 @@ namespace PlutoGE::scene
     {
         if (path.empty())
             return;
-        auto *texture = render::Texture::LoadFromFile(path.c_str());
+        const auto resolvedPath = core::Engine::GetInstance().GetAssetManager().ResolveAssetPath(path);
+        auto *texture = render::Texture::LoadFromFile(resolvedPath.c_str());
         if (!texture)
             return;
         auto *uniqueMaterial = m_material ? new render::Material(m_material->GetConfig()) : new render::Material();

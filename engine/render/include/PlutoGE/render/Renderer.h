@@ -81,6 +81,7 @@ namespace PlutoGE::render
         bool isStatic = false;
         bool castsShadow = true;
         bool usePrimaryUvForLightmap = false;
+        bool terrainGeomorph = false;
 
         // LOD transition state is transient and packed into the otherwise
         // unused high bits of minLodIndex. Keeping RenderCommand's original

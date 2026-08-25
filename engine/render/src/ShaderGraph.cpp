@@ -336,6 +336,7 @@ namespace PlutoGE::render
 
             void ApplyLodDither()
             {
+                if (InstanceFlags.x < -0.5) return;
                 float packedFade = fract(InstanceFlags.z);
                 if (packedFade > 0.0 && packedFade < 0.3)
                 {
@@ -582,7 +583,18 @@ namespace PlutoGE::render
                     }
                 }
 
-                vec4 skinnedPosition = skinMatrix * vec4(aPos, 1.0);
+                vec3 localPosition = aPos;
+                if (aInstanceFlags.x < -0.5)
+                {
+                    int terrainLod = int(floor(aInstanceFlags.z));
+                    float morphFactor = clamp(fract(aInstanceFlags.z) * 4.0, 0.0, 1.0);
+                    float targetHeight = terrainLod < 4
+                                             ? aWeights[terrainLod]
+                                             : float(aJoints.x) / 4096.0;
+                    localPosition.y = mix(localPosition.y, targetHeight, morphFactor);
+                }
+
+                vec4 skinnedPosition = skinMatrix * vec4(localPosition, 1.0);
                 vec3 skinnedNormal = mat3(skinMatrix) * aNormal;
                 vec3 skinnedTangent = mat3(skinMatrix) * aTangent.xyz;
 

@@ -38,6 +38,7 @@ namespace PlutoGE::render
 
             return a.material == b.material &&
                    a.mesh == b.mesh &&
+                   a.terrainGeomorph == b.terrainGeomorph &&
                    a.mesh->GetSubmeshLodRange(a.submeshIndex, aLodIndex).indexOffset == b.mesh->GetSubmeshLodRange(b.submeshIndex, bLodIndex).indexOffset &&
                    a.mesh->GetSubmeshLodRange(a.submeshIndex, aLodIndex).indexCount == b.mesh->GetSubmeshLodRange(b.submeshIndex, bLodIndex).indexCount;
         }
@@ -57,7 +58,8 @@ namespace PlutoGE::render
             const float packedLod = static_cast<float>(lodIndex) +
                                     (incomingLod ? 0.5f + lodFade * 0.25f : lodFade * 0.25f);
             return glm::vec4(
-                command.isStatic && command.material && command.material->GetConfig().lightmapTexture ? 1.0f : 0.0f,
+                command.terrainGeomorph ? -1.0f :
+                    (command.isStatic && command.material && command.material->GetConfig().lightmapTexture ? 1.0f : 0.0f),
                 command.usePrimaryUvForLightmap ? 1.0f : 0.0f,
                 packedLod,
                 lodMaxIndex);
@@ -326,10 +328,14 @@ namespace PlutoGE::render
             combineStaticSignature(command.lodIndex);
             combineStaticSignature(command.minLodIndex);
             combineStaticSignature(command.usePrimaryUvForLightmap ? 1u : 0u);
+            combineStaticSignature(command.terrainGeomorph ? 1u : 0u);
             expectedStaticInstanceCount += command.instanceModels->size();
             if (command.GetLodTransitionIndex() != command.lodIndex &&
                 command.GetLodTransitionFade() > 0.0f && command.GetLodTransitionFade() < 1.0f)
-                expectedStaticInstanceCount += command.instanceModels->size();
+            {
+                if (!command.terrainGeomorph)
+                    expectedStaticInstanceCount += command.instanceModels->size();
+            }
         }
         combineStaticSignature(expectedStaticInstanceCount);
         const bool rebuildStaticInstances = staticSignature != m_staticInstanceSignature ||
@@ -392,7 +398,7 @@ namespace PlutoGE::render
                                        transitionFade > 0.0f &&
                                        transitionFade < 1.0f;
             appendDraw(command.lodIndex, transitioning ? transitionFade : 0.0f, false);
-            if (transitioning)
+            if (transitioning && !command.terrainGeomorph)
             {
                 appendDraw(transitionLodIndex, transitionFade, true);
             }

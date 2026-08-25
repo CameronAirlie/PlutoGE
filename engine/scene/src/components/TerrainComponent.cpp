@@ -211,6 +211,7 @@ namespace PlutoGE::scene
             command.submeshIndex = static_cast<uint32_t>(submeshIndex);
             command.isStatic = m_isStatic;
             command.usePrimaryUvForLightmap = true;
+            command.terrainGeomorph = true;
             renderer.SubmitRenderCommand(command);
         }
 
@@ -689,6 +690,56 @@ namespace PlutoGE::scene
     {
         EnsureHeightStorage();
 
+        const auto smoothedHeight = [&](int x, int z)
+        {
+            const float raw = GetHeightSample(x, z);
+            if (m_surfaceSmoothing <= 0.0f)
+            {
+                return raw;
+            }
+
+            float total = 0.0f;
+            float weight = 0.0f;
+            for (int offsetZ = -1; offsetZ <= 1; ++offsetZ)
+            {
+                for (int offsetX = -1; offsetX <= 1; ++offsetX)
+                {
+                    const float sampleWeight = (offsetX == 0 && offsetZ == 0) ? 4.0f :
+                                               (offsetX == 0 || offsetZ == 0 ? 2.0f : 1.0f);
+                    total += GetHeightSample(x + offsetX, z + offsetZ) * sampleWeight;
+                    weight += sampleWeight;
+                }
+            }
+            return glm::mix(raw, total / std::max(weight, 0.0001f), m_surfaceSmoothing);
+        };
+
+        const auto coarseHeight = [&](int x, int z, int step)
+        {
+            const int x0 = (x / step) * step;
+            const int z0 = (z / step) * step;
+            const int x1 = std::min(x0 + step, m_width - 1);
+            const int z1 = std::min(z0 + step, m_depth - 1);
+            if (x1 == x0 || z1 == z0)
+            {
+                return smoothedHeight(x, z);
+            }
+
+            const float tx = static_cast<float>(x - x0) / static_cast<float>(x1 - x0);
+            const float tz = static_cast<float>(z - z0) / static_cast<float>(z1 - z0);
+            const float h00 = smoothedHeight(x0, z0);
+            const float h10 = smoothedHeight(x1, z0);
+            const float h01 = smoothedHeight(x0, z1);
+            const float h11 = smoothedHeight(x1, z1);
+
+            // Match appendQuad's diagonal so the fully morphed fine mesh lies
+            // exactly on the next LOD's piecewise-linear surface.
+            if (tx + tz <= 1.0f)
+            {
+                return h00 + (h10 - h00) * tx + (h01 - h00) * tz;
+            }
+            return h11 + (h01 - h11) * (1.0f - tx) + (h10 - h11) * (1.0f - tz);
+        };
+
         render::MeshConfig config;
         config.data.vertices.reserve(static_cast<std::size_t>(m_width * m_depth));
         for (int z = 0; z < m_depth; ++z)
@@ -697,22 +748,12 @@ namespace PlutoGE::scene
             {
                 const glm::vec3 normal = ComputeNormal(x, z);
                 render::MeshVertexData vertex;
-                float height = GetHeightSample(x, z);
-                if (m_surfaceSmoothing > 0.0f)
+                const float height = smoothedHeight(x, z);
+                for (int morphIndex = 0; morphIndex < 4; ++morphIndex)
                 {
-                    float total = 0.0f;
-                    float weight = 0.0f;
-                    for (int oz = -1; oz <= 1; ++oz)
-                    {
-                        for (int ox = -1; ox <= 1; ++ox)
-                        {
-                            const float sampleWeight = (ox == 0 && oz == 0) ? 4.0f : (ox == 0 || oz == 0 ? 2.0f : 1.0f);
-                            total += GetHeightSample(x + ox, z + oz) * sampleWeight;
-                            weight += sampleWeight;
-                        }
-                    }
-                    height = glm::mix(height, total / std::max(weight, 0.0001f), m_surfaceSmoothing);
+                    vertex.weights[static_cast<std::size_t>(morphIndex)] = coarseHeight(x, z, 2 << morphIndex);
                 }
+                vertex.joints[0] = static_cast<int>(std::round(coarseHeight(x, z, 32) * 4096.0f));
                 vertex.position = {static_cast<float>(x) * m_cellSize, height, static_cast<float>(z) * m_cellSize};
                 vertex.normal = {normal.x, normal.y, normal.z};
                 vertex.uv = {static_cast<float>(x) / static_cast<float>(std::max(1, m_width - 1)),

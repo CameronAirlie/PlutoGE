@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 #include <string>
 
 namespace PlutoGE::render
@@ -51,6 +52,62 @@ namespace PlutoGE::render
         constexpr std::size_t kLightingSetupStage = 0;
         constexpr std::size_t kLightingAmbientStage = 1;
         constexpr std::size_t kLightingAccumulationStage = 2;
+
+        struct ScreenRect
+        {
+            int x = 0;
+            int y = 0;
+            int width = 0;
+            int height = 0;
+        };
+
+        // Conservatively bounds a local light on screen. Scissoring changes no
+        // shaded pixels, but avoids running PBR over pixels outside its range.
+        std::optional<ScreenRect> ProjectLocalLightBounds(const scene::Light &light,
+                                                           const CameraData &camera,
+                                                           int targetWidth,
+                                                           int targetHeight)
+        {
+            const float radius = std::max(light.range, 0.0f);
+            if (radius <= 0.0f || targetWidth <= 0 || targetHeight <= 0)
+                return std::nullopt;
+
+            const glm::vec3 viewCenter = glm::vec3(camera.view * glm::vec4(light.position, 1.0f));
+            const float nearPlane = std::max(camera.nearPlane, 0.0001f);
+            if (viewCenter.z - radius >= -nearPlane)
+                return std::nullopt;
+            if (viewCenter.z + radius >= -nearPlane)
+                return ScreenRect{0, 0, targetWidth, targetHeight};
+
+            glm::vec2 minimum(1.0f);
+            glm::vec2 maximum(-1.0f);
+            for (int corner = 0; corner < 8; ++corner)
+            {
+                const glm::vec3 offset(
+                    (corner & 1) ? radius : -radius,
+                    (corner & 2) ? radius : -radius,
+                    (corner & 4) ? radius : -radius);
+                const glm::vec4 clip = camera.projection * glm::vec4(viewCenter + offset, 1.0f);
+                if (clip.w <= 0.0001f)
+                    return ScreenRect{0, 0, targetWidth, targetHeight};
+                const glm::vec2 ndc = glm::vec2(clip) / clip.w;
+                minimum = glm::min(minimum, ndc);
+                maximum = glm::max(maximum, ndc);
+            }
+
+            minimum = glm::clamp(minimum, glm::vec2(-1.0f), glm::vec2(1.0f));
+            maximum = glm::clamp(maximum, glm::vec2(-1.0f), glm::vec2(1.0f));
+            if (minimum.x >= maximum.x || minimum.y >= maximum.y)
+                return std::nullopt;
+
+            const int x0 = std::clamp(static_cast<int>(std::floor((minimum.x * 0.5f + 0.5f) * targetWidth)) - 1, 0, targetWidth);
+            const int y0 = std::clamp(static_cast<int>(std::floor((minimum.y * 0.5f + 0.5f) * targetHeight)) - 1, 0, targetHeight);
+            const int x1 = std::clamp(static_cast<int>(std::ceil((maximum.x * 0.5f + 0.5f) * targetWidth)) + 1, 0, targetWidth);
+            const int y1 = std::clamp(static_cast<int>(std::ceil((maximum.y * 0.5f + 0.5f) * targetHeight)) + 1, 0, targetHeight);
+            if (x0 >= x1 || y0 >= y1)
+                return std::nullopt;
+            return ScreenRect{x0, y0, x1 - x0, y1 - y0};
+        }
 
         struct IndirectLightingSettings
         {
@@ -1938,6 +1995,22 @@ namespace PlutoGE::render
                     continue;
                 }
 
+                if (light->type != scene::LightType::Directional)
+                {
+                    const auto lightRect = ProjectLocalLightBounds(
+                        *light, ctx.cameraData,
+                        ctx.temporaryRenderTarget->GetWidth(),
+                        ctx.temporaryRenderTarget->GetHeight());
+                    if (!lightRect)
+                        continue;
+                    Graphics::Enable(GL_SCISSOR_TEST);
+                    glScissor(lightRect->x, lightRect->y, lightRect->width, lightRect->height);
+                }
+                else
+                {
+                    Graphics::Disable(GL_SCISSOR_TEST);
+                }
+
                 const bool hasShadowMap = BindShadowMapForLight(*light);
                 const float skyVisibility = ctx.renderer ? ctx.renderer->GetPhysicalSkyDirectionalLightVisibility(light) : 1.0f;
                 BindLightUniforms(m_directLightingPassShader, *light, hasShadowMap, skyVisibility);
@@ -1976,6 +2049,7 @@ namespace PlutoGE::render
                 m_directLightingPassShader->SetUniform("uUseFilteredShadowMask", 0);
                 Graphics::DrawFullscreenTriangle();
             }
+            Graphics::Disable(GL_SCISSOR_TEST);
         }
 
         if (ctx.renderer)

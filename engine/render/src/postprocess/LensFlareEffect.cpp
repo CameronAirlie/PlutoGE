@@ -344,12 +344,17 @@ namespace PlutoGE::render
 
         const int targetWidth = std::max(context.sourceRenderTarget->GetWidth(), 1);
         const int targetHeight = std::max(context.sourceRenderTarget->GetHeight(), 1);
-        EnsureBrightTarget(targetWidth, targetHeight);
+        // Flare energy is intentionally broad and sampled many times by the
+        // full-resolution composite. Extract it at half resolution: this is a
+        // stable prefilter and cuts bright-pass bandwidth by 75%.
+        const int brightWidth = std::max(1, (targetWidth + 1) / 2);
+        const int brightHeight = std::max(1, (targetHeight + 1) / 2);
+        EnsureBrightTarget(brightWidth, brightHeight);
 
         // Evaluate the stabilising cross filter and soft threshold once per
         // source pixel, then reuse it for every ghost, halo, and glare tap.
         Graphics::BindRenderTarget(m_brightTarget.get());
-        Graphics::SetViewport(0, 0, targetWidth, targetHeight);
+        Graphics::SetViewport(0, 0, brightWidth, brightHeight);
         Graphics::Disable(GL_DEPTH_TEST);
         Graphics::Disable(GL_CULL_FACE);
         Graphics::Disable(GL_BLEND);
@@ -376,7 +381,7 @@ namespace PlutoGE::render
         m_shader->SetUniform("uGhostDispersal", m_ghostDispersal);
         const float width = static_cast<float>(targetWidth);
         const float height = static_cast<float>(targetHeight);
-        m_shader->SetUniform("uTexelSize", glm::vec2(1.0f / width, 1.0f / height));
+        m_shader->SetUniform("uTexelSize", glm::vec2(1.0f / brightWidth, 1.0f / brightHeight));
         m_shader->SetUniform("uAspectRatio", width / height);
         DrawFullscreenTriangle();
 

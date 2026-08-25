@@ -27,6 +27,7 @@ public sealed class VehicleFollowCamera : ScriptBehaviour
     [SerializedField] private float collisionPadding = 0.18f;
     [SerializedField, InputMappingAsset] private string inputMappingAsset = "";
     [SerializedField] private float orbitSpeed = 120.0f;
+    [SerializedField] private bool returnOrbitToCenter = true;
     [SerializedField] private float orbitReturnSharpness = 5.0f;
     [SerializedField] private float minimumOrbitPitch = -15.0f;
     [SerializedField] private float maximumOrbitPitch = 55.0f;
@@ -95,7 +96,7 @@ public sealed class VehicleFollowCamera : ScriptBehaviour
                 MathF.Min(minimumOrbitPitch, maximumOrbitPitch),
                 MathF.Max(minimumOrbitPitch, maximumOrbitPitch));
         }
-        else
+        else if (returnOrbitToCenter)
         {
             var returnAmount = DampAmount(orbitReturnSharpness, deltaTime);
             _orbitYaw = NormalizeAngle(LerpAngle(_orbitYaw, 0.0f, returnAmount));

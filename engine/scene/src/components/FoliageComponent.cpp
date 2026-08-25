@@ -1219,6 +1219,26 @@ namespace PlutoGE::scene
         return type ? type->instances.size() : 0;
     }
 
+    FoliageInstanceSnapshot FoliageComponent::CaptureInstanceSnapshot() const
+    {
+        FoliageInstanceSnapshot snapshot;
+        snapshot.reserve(m_types.size());
+        for (const auto &type : m_types)
+            snapshot.push_back(type.instances);
+        return snapshot;
+    }
+
+    void FoliageComponent::RestoreInstanceSnapshot(const FoliageInstanceSnapshot &snapshot)
+    {
+        const std::size_t typeCount = std::min(m_types.size(), snapshot.size());
+        for (std::size_t typeIndex = 0; typeIndex < typeCount; ++typeIndex)
+            m_types[typeIndex].instances = snapshot[typeIndex];
+        for (std::size_t typeIndex = typeCount; typeIndex < m_types.size(); ++typeIndex)
+            m_types[typeIndex].instances.clear();
+        EnsureStableInstanceIds();
+        MarkInstancesDirty();
+    }
+
     const std::vector<FoliageCollisionCell> &FoliageComponent::BuildCollisionCells() const
     {
         const auto *owner = GetOwner();

@@ -2724,6 +2724,8 @@ namespace PlutoGE::ui
             bool texturePaintActive = false;
             static bool s_terrainStrokeActive = false;
             static bool s_foliageStrokeActive = false;
+            static scene::EntityID s_foliageStrokeEntityId = 0;
+            static scene::FoliageInstanceSnapshot s_foliageStrokeBefore;
             if (g_texturePaint.enabled)
             {
                 const bool brushActive = m_isViewportHovered && !controlsHovered &&
@@ -2837,7 +2839,8 @@ namespace PlutoGE::ui
                             }
                             if (foliagePaintActive && !s_foliageStrokeActive)
                             {
-                                editorShell.BeginSceneEdit("Paint Foliage");
+                                s_foliageStrokeEntityId = selectedEntity->GetID();
+                                s_foliageStrokeBefore = foliageComponent->CaptureInstanceSnapshot();
                                 s_foliageStrokeActive = true;
                             }
                             if (terrainPaintActive && terrainComponent->PaintAtWorldPosition(hitPoint, ImGui::GetIO().DeltaTime))
@@ -2868,7 +2871,49 @@ namespace PlutoGE::ui
             }
             if (s_foliageStrokeActive && !ImGui::IsMouseDown(ImGuiMouseButton_Left))
             {
-                editorShell.EndSceneEdit();
+                scene::FoliageInstanceSnapshot after;
+                if (auto *scene = editorShell.GetScene())
+                    if (auto *entity = scene->FindEntityByID(s_foliageStrokeEntityId))
+                        if (auto *foliage = entity->GetComponent<scene::FoliageComponent>())
+                            after = foliage->CaptureInstanceSnapshot();
+
+                if (!after.empty() && s_foliageStrokeBefore != after)
+                {
+                    const auto entityId = s_foliageStrokeEntityId;
+                    const std::size_t retainedBytes = (s_foliageStrokeBefore.size() + after.size()) * sizeof(std::vector<scene::FoliageInstance>) +
+                                                      [&]()
+                                                      {
+                                                          std::size_t bytes = 0;
+                                                          for (const auto &instances : s_foliageStrokeBefore) bytes += instances.size() * sizeof(scene::FoliageInstance);
+                                                          for (const auto &instances : after) bytes += instances.size() * sizeof(scene::FoliageInstance);
+                                                          return bytes;
+                                                      }();
+                    editorShell.PushSceneEditCommand(
+                        "Paint Foliage",
+                        [entityId, snapshot = std::move(s_foliageStrokeBefore)]()
+                        {
+                            auto *scene = EditorShell::GetInstance().GetScene();
+                            auto *entity = scene ? scene->FindEntityByID(entityId) : nullptr;
+                            auto *foliage = entity ? entity->GetComponent<scene::FoliageComponent>() : nullptr;
+                            if (!foliage) return false;
+                            foliage->RestoreInstanceSnapshot(snapshot);
+                            EditorShell::GetInstance().MarkSceneDirty();
+                            return true;
+                        },
+                        [entityId, snapshot = std::move(after)]()
+                        {
+                            auto *scene = EditorShell::GetInstance().GetScene();
+                            auto *entity = scene ? scene->FindEntityByID(entityId) : nullptr;
+                            auto *foliage = entity ? entity->GetComponent<scene::FoliageComponent>() : nullptr;
+                            if (!foliage) return false;
+                            foliage->RestoreInstanceSnapshot(snapshot);
+                            EditorShell::GetInstance().MarkSceneDirty();
+                            return true;
+                        },
+                        retainedBytes);
+                }
+                s_foliageStrokeBefore.clear();
+                s_foliageStrokeEntityId = 0;
                 s_foliageStrokeActive = false;
             }
             if (g_texturePaint.strokeActive && !ImGui::IsMouseDown(ImGuiMouseButton_Left))

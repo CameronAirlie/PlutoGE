@@ -1677,6 +1677,7 @@ namespace PlutoGE::ui
             retainedBytes += historyEntry.label.size();
             retainedBytes += historyEntry.beforeState.size();
             retainedBytes += historyEntry.afterState.size();
+            retainedBytes += historyEntry.retainedBytes;
         }
 
         while (m_undoStack.size() > 1 &&
@@ -1686,8 +1687,24 @@ namespace PlutoGE::ui
             retainedBytes -= oldest.label.size();
             retainedBytes -= oldest.beforeState.size();
             retainedBytes -= oldest.afterState.size();
+            retainedBytes -= oldest.retainedBytes;
             m_undoStack.erase(m_undoStack.begin());
         }
+    }
+
+    void EditorShell::PushSceneEditCommand(std::string label,
+                                           std::function<bool()> undo,
+                                           std::function<bool()> redo,
+                                           std::size_t retainedBytes)
+    {
+        if (!undo || !redo)
+            return;
+        PushSceneHistoryEntry(SceneHistoryEntry{.label = std::move(label),
+                                                .undo = std::move(undo),
+                                                .redo = std::move(redo),
+                                                .retainedBytes = retainedBytes});
+        m_redoStack.clear();
+        MarkSceneDirty();
     }
 
     bool EditorShell::BeginSceneEdit(std::string label)
@@ -1759,7 +1776,8 @@ namespace PlutoGE::ui
         auto entry = std::move(m_undoStack.back());
         m_undoStack.pop_back();
         std::string errorMessage;
-        if (!RestoreSceneState(entry.beforeState, &errorMessage))
+        const bool restored = entry.undo ? entry.undo() : RestoreSceneState(entry.beforeState, &errorMessage);
+        if (!restored)
         {
             Log(ConsoleSeverity::Error, errorMessage.empty() ? "Undo failed." : errorMessage);
             return false;
@@ -1780,7 +1798,8 @@ namespace PlutoGE::ui
         auto entry = std::move(m_redoStack.back());
         m_redoStack.pop_back();
         std::string errorMessage;
-        if (!RestoreSceneState(entry.afterState, &errorMessage))
+        const bool restored = entry.redo ? entry.redo() : RestoreSceneState(entry.afterState, &errorMessage);
+        if (!restored)
         {
             Log(ConsoleSeverity::Error, errorMessage.empty() ? "Redo failed." : errorMessage);
             return false;

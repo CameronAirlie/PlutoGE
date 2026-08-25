@@ -27,7 +27,10 @@ namespace PlutoGE::scene
         glm::vec3 position{0.0f};
         glm::vec3 rotationDegrees{0.0f};
         glm::vec3 scale{1.0f};
+        bool operator==(const FoliageInstance &) const = default;
     };
+
+    using FoliageInstanceSnapshot = std::vector<std::vector<FoliageInstance>>;
 
     struct FoliageCellCoordinate
     {
@@ -153,6 +156,8 @@ namespace PlutoGE::scene
         bool RemoveSelectedTypeInstance(std::size_t instanceIndex);
         std::size_t GetTotalInstanceCount() const;
         std::size_t GetSelectedTypeInstanceCount() const;
+        FoliageInstanceSnapshot CaptureInstanceSnapshot() const;
+        void RestoreInstanceSnapshot(const FoliageInstanceSnapshot &snapshot);
         const std::vector<FoliageCollisionCell> &BuildCollisionCells() const;
         std::uint64_t GetRevision() const { return m_revision; }
 

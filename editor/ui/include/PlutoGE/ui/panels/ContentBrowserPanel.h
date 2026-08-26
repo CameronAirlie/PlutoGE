@@ -61,6 +61,14 @@ namespace PlutoGE::ui
             CreateInputMapping,
         };
 
+        enum class PendingFileAction
+        {
+            None,
+            Paste,
+            Duplicate,
+            Delete,
+        };
+
         std::array<char, 160> m_filterBuffer{};
         std::array<char, 96> m_newMaterialNameBuffer{};
         std::array<char, 96> m_newParticleSystemNameBuffer{};
@@ -70,6 +78,7 @@ namespace PlutoGE::ui
         std::array<char, 96> m_newScriptableObjectNameBuffer{};
         std::array<char, 96> m_newRmlDocumentNameBuffer{};
         std::array<char, 96> m_newInputMappingNameBuffer{};
+        std::array<char, 260> m_renameBuffer{};
         std::string m_rmlDocumentCreateError;
         int m_newScriptableObjectClassIndex = 0;
         int m_selectedAssetIndex = -1;
@@ -97,6 +106,13 @@ namespace PlutoGE::ui
         std::vector<int> m_filteredAssetIndices;
         std::vector<std::string> m_filteredAssetDisplayNames;
         PendingMenuAction m_pendingMenuAction = PendingMenuAction::None;
+        PendingFileAction m_pendingFileAction = PendingFileAction::None;
+        std::string m_fileActionSource;
+        std::string m_fileActionDestination;
+        std::string m_clipboardPath;
+        std::string m_renameSource;
+        bool m_openRenamePopup = false;
+        bool m_openDeletePopup = false;
         std::unique_ptr<AssetThumbnailCache> m_thumbnailCache;
         float m_thumbnailSize = 96.0f;
     };

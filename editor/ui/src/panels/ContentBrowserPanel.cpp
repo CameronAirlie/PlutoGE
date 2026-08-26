@@ -683,6 +683,60 @@ void main() {
             return candidate;
         }
 
+        std::filesystem::path MakeUniqueCopyPath(const std::filesystem::path &directory,
+                                                 const std::filesystem::path &sourcePath)
+        {
+            const bool directorySource = std::filesystem::is_directory(sourcePath);
+            const std::string baseName = directorySource ? sourcePath.filename().string() : sourcePath.stem().string();
+            const std::string extension = directorySource ? std::string{} : sourcePath.extension().string();
+            auto candidate = directory / (baseName + " Copy" + extension);
+            for (unsigned int suffix = 2; std::filesystem::exists(candidate); ++suffix)
+                candidate = directory / (baseName + " Copy " + std::to_string(suffix) + extension);
+            return candidate;
+        }
+
+        bool CopyContentBrowserItem(const std::filesystem::path &source,
+                                    const std::filesystem::path &destination,
+                                    std::string *errorMessage)
+        {
+            std::error_code error;
+            if (std::filesystem::is_directory(source, error))
+            {
+                std::filesystem::copy(source, destination, std::filesystem::copy_options::recursive, error);
+            }
+            else
+            {
+                std::filesystem::create_directories(destination.parent_path(), error);
+                if (!error) std::filesystem::copy_file(source, destination, std::filesystem::copy_options::none, error);
+            }
+            if (error)
+            {
+                if (errorMessage) *errorMessage = "Failed to copy '" + source.string() + "': " + error.message();
+                return false;
+            }
+            // A copied asset must receive a fresh database ID on the next scan.
+            if (std::filesystem::is_directory(destination))
+            {
+                std::error_code iteratorError;
+                for (std::filesystem::recursive_directory_iterator iterator(destination, iteratorError), end;
+                     iterator != end && !iteratorError; iterator.increment(iteratorError))
+                {
+                    if (iterator->is_regular_file(iteratorError) && iterator->path().extension() == ".plutometa")
+                    {
+                        std::error_code metadataError;
+                        std::filesystem::remove(iterator->path(), metadataError);
+                    }
+                    iteratorError.clear();
+                }
+            }
+            else
+            {
+                std::error_code metadataError;
+                std::filesystem::remove(assets::AssetDatabase::GetMetadataPath(destination), metadataError);
+            }
+            return true;
+        }
+
         bool ExportPrefabMesh(const assets::Project &project,
                               const assets::ProjectAssetEntry &prefab,
                               std::string_view selectedFolder,
@@ -2841,6 +2895,37 @@ void main() {
                 m_openModelObjects.clear();
                 m_selectedAssetIndex = -1;
             }
+            if (ImGui::BeginPopupContextItem("FolderContext"))
+            {
+                const auto folderPath = project->GetAssetDirectoryPath() / std::filesystem::path(folder);
+                if (ImGui::MenuItem("Rename"))
+                {
+                    m_renameSource = folderPath.string();
+                    m_renameBuffer.fill('\0');
+                    const auto name = folderPath.filename().string();
+                    std::memcpy(m_renameBuffer.data(), name.data(), std::min(name.size(), m_renameBuffer.size() - 1));
+                    m_openRenamePopup = true;
+                }
+                if (ImGui::MenuItem("Copy", "Ctrl+C")) m_clipboardPath = folderPath.string();
+                if (ImGui::MenuItem("Paste", "Ctrl+V", false, !m_clipboardPath.empty()))
+                {
+                    m_fileActionSource = m_clipboardPath;
+                    m_fileActionDestination = folderPath.string();
+                    m_pendingFileAction = PendingFileAction::Paste;
+                }
+                if (ImGui::MenuItem("Duplicate", "Ctrl+D"))
+                {
+                    m_fileActionSource = folderPath.string();
+                    m_pendingFileAction = PendingFileAction::Duplicate;
+                }
+                ImGui::Separator();
+                if (ImGui::MenuItem("Delete"))
+                {
+                    m_fileActionSource = folderPath.string();
+                    m_openDeletePopup = true;
+                }
+                ImGui::EndPopup();
+            }
             ImGui::PopID();
         };
 
@@ -2914,6 +2999,35 @@ void main() {
             }
             if (ImGui::BeginPopupContextItem("AssetContext"))
             {
+                const bool editable = assets::Project::IsProjectAssetReference(asset.reference);
+                const auto assetPath = project->ResolveAssetReference(asset.reference);
+                if (ImGui::MenuItem("Rename", nullptr, false, editable))
+                {
+                    m_renameSource = assetPath.string();
+                    m_renameBuffer.fill('\0');
+                    const auto name = assetPath.filename().string();
+                    std::memcpy(m_renameBuffer.data(), name.data(), std::min(name.size(), m_renameBuffer.size() - 1));
+                    m_openRenamePopup = true;
+                }
+                if (ImGui::MenuItem("Copy", "Ctrl+C", false, editable)) m_clipboardPath = assetPath.string();
+                if (ImGui::MenuItem("Paste", "Ctrl+V", false, !m_clipboardPath.empty()))
+                {
+                    m_fileActionSource = m_clipboardPath;
+                    m_fileActionDestination = (project->GetAssetDirectoryPath() / std::filesystem::path(m_selectedFolder)).string();
+                    m_pendingFileAction = PendingFileAction::Paste;
+                }
+                if (ImGui::MenuItem("Duplicate", "Ctrl+D", false, editable))
+                {
+                    m_fileActionSource = assetPath.string();
+                    m_pendingFileAction = PendingFileAction::Duplicate;
+                }
+                ImGui::Separator();
+                if (ImGui::MenuItem("Delete", nullptr, false, editable))
+                {
+                    m_fileActionSource = assetPath.string();
+                    m_openDeletePopup = true;
+                }
+                ImGui::Separator();
                 if (asset.type == assets::ProjectAssetType::Prefab && ImGui::MenuItem("Export as Static Mesh"))
                 {
                     std::string outputReference, exportError;
@@ -3050,12 +3164,143 @@ void main() {
 
         if (ImGui::BeginPopupContextWindow("ContentBrowserContextMenu", ImGuiPopupFlags_NoOpenOverItems))
         {
+            if (ImGui::MenuItem("Paste", "Ctrl+V", false, !m_clipboardPath.empty()))
+            {
+                m_fileActionSource = m_clipboardPath;
+                m_fileActionDestination = (project->GetAssetDirectoryPath() / std::filesystem::path(m_selectedFolder)).string();
+                m_pendingFileAction = PendingFileAction::Paste;
+            }
+            ImGui::Separator();
             renderAddMenu();
             ImGui::EndPopup();
         }
 
         ImGui::EndChild();
         ImGui::EndChild();
+
+        const auto finishFileAction = [&](const std::string &message)
+        {
+            project->RefreshAssetRegistry();
+            m_assetCacheDirty = true;
+            m_selectedAssetIndex = -1;
+            editorShell.MarkProjectDirty();
+            editorShell.Log(EditorShell::ConsoleSeverity::Info, message);
+        };
+
+        if (m_pendingFileAction == PendingFileAction::Paste ||
+            m_pendingFileAction == PendingFileAction::Duplicate)
+        {
+            const std::filesystem::path source(m_fileActionSource);
+            const std::filesystem::path destinationDirectory =
+                m_pendingFileAction == PendingFileAction::Paste
+                    ? std::filesystem::path(m_fileActionDestination)
+                    : source.parent_path();
+            std::error_code existsError;
+            if (!std::filesystem::exists(source, existsError))
+            {
+                editorShell.Log(EditorShell::ConsoleSeverity::Error, "The copied item no longer exists: " + source.string());
+                m_clipboardPath.clear();
+            }
+            else
+            {
+                const auto destination = MakeUniqueCopyPath(destinationDirectory, source);
+                std::string copyError;
+                if (CopyContentBrowserItem(source, destination, &copyError))
+                    finishFileAction("Copied asset content to: " + destination.string());
+                else
+                    editorShell.Log(EditorShell::ConsoleSeverity::Error, copyError);
+            }
+            m_pendingFileAction = PendingFileAction::None;
+        }
+
+        if (m_openRenamePopup)
+        {
+            ImGui::OpenPopup("Rename Content");
+            m_openRenamePopup = false;
+        }
+        if (ImGui::BeginPopupModal("Rename Content", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        {
+            ImGui::TextUnformatted("New name:");
+            ImGui::SetNextItemWidth(360.0f);
+            const bool submitted = ImGui::InputText("##ContentRename", m_renameBuffer.data(), m_renameBuffer.size(),
+                                                     ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
+            const std::string newName(m_renameBuffer.data());
+            const bool validName = !newName.empty() && newName != "." && newName != ".." &&
+                                   newName.find_first_of("/\\<>:\"|?*") == std::string::npos;
+            if (!validName) ImGui::TextDisabled("Enter a valid file or folder name.");
+            if ((ImGui::Button("Rename") || submitted) && validName)
+            {
+                const std::filesystem::path source(m_renameSource);
+                const auto destination = source.parent_path() / newName;
+                std::error_code error;
+                if (std::filesystem::exists(destination, error))
+                {
+                    editorShell.Log(EditorShell::ConsoleSeverity::Error, "An item with that name already exists.");
+                }
+                else
+                {
+                    error.clear();
+                    std::filesystem::rename(source, destination, error);
+                    if (!error && std::filesystem::is_regular_file(destination))
+                    {
+                        const auto oldMetadata = assets::AssetDatabase::GetMetadataPath(source);
+                        const auto newMetadata = assets::AssetDatabase::GetMetadataPath(destination);
+                        std::error_code metadataError;
+                        if (std::filesystem::exists(oldMetadata, metadataError))
+                            std::filesystem::rename(oldMetadata, newMetadata, metadataError);
+                    }
+                    if (error)
+                        editorShell.Log(EditorShell::ConsoleSeverity::Error, "Failed to rename item: " + error.message());
+                    else
+                    {
+                        const auto oldRelative = NormalizeAssetRelativePath(std::filesystem::relative(source, project->GetAssetDirectoryPath()));
+                        const auto newRelative = NormalizeAssetRelativePath(std::filesystem::relative(destination, project->GetAssetDirectoryPath()));
+                        if (IsFolderAncestorOrSelf(oldRelative, m_selectedFolder))
+                            m_selectedFolder = newRelative + m_selectedFolder.substr(oldRelative.size());
+                        finishFileAction("Renamed asset content to: " + destination.string());
+                        ImGui::CloseCurrentPopup();
+                    }
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+        }
+
+        if (m_openDeletePopup)
+        {
+            ImGui::OpenPopup("Delete Content");
+            m_openDeletePopup = false;
+        }
+        if (ImGui::BeginPopupModal("Delete Content", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        {
+            const std::filesystem::path source(m_fileActionSource);
+            ImGui::TextWrapped("Permanently delete '%s'?", source.filename().string().c_str());
+            if (std::filesystem::is_directory(source)) ImGui::TextDisabled("The folder and all of its contents will be deleted.");
+            if (ImGui::Button("Delete"))
+            {
+                std::error_code error;
+                std::filesystem::remove_all(source, error);
+                if (!error && !std::filesystem::is_directory(source))
+                {
+                    std::error_code metadataError;
+                    std::filesystem::remove(assets::AssetDatabase::GetMetadataPath(source), metadataError);
+                }
+                if (error)
+                    editorShell.Log(EditorShell::ConsoleSeverity::Error, "Failed to delete item: " + error.message());
+                else
+                {
+                    const auto relative = NormalizeAssetRelativePath(std::filesystem::relative(source, project->GetAssetDirectoryPath()));
+                    if (IsFolderAncestorOrSelf(relative, m_selectedFolder)) m_selectedFolder = GetAssetFolderParent(relative);
+                    if (m_clipboardPath == source.string()) m_clipboardPath.clear();
+                    finishFileAction("Deleted asset content: " + source.string());
+                    ImGui::CloseCurrentPopup();
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+        }
 
         if (m_selectedAssetIndex >= 0 && m_selectedAssetIndex < static_cast<int>(assets.size()))
         {

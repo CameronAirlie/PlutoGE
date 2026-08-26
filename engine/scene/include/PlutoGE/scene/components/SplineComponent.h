@@ -49,6 +49,7 @@ namespace PlutoGE::scene
                 void Deserialize(const std::vector<Property> &properties) override;
 
                 const std::vector<SplineControlPoint> &GetPoints() const { return m_points; }
+                std::vector<SplineControlPoint> SampleControlPoints(int samplesPerSegment) const;
                 void SetPoints(std::vector<SplineControlPoint> points);
                 void AddPoint(const glm::vec3 &position);
                 void InsertPoint(std::size_t index, const glm::vec3 &position);

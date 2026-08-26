@@ -435,6 +435,40 @@ namespace PlutoGE::scene
         MarkDirty();
     }
 
+    std::vector<SplineControlPoint> SplineComponent::SampleControlPoints(int samplesPerSegment) const
+    {
+        std::vector<SplineControlPoint> sampledPoints;
+        if (m_points.size() < 2)
+        {
+            return m_points;
+        }
+
+        samplesPerSegment = std::clamp(samplesPerSegment, 1, 128);
+        const int segmentCount = m_closed ? static_cast<int>(m_points.size()) : static_cast<int>(m_points.size()) - 1;
+        sampledPoints.reserve(static_cast<std::size_t>(segmentCount * samplesPerSegment + (m_closed ? 0 : 1)));
+        for (int segment = 0; segment < segmentCount; ++segment)
+        {
+            const glm::vec3 p0 = GetWrappedPoint(m_points, segment - 1, m_closed);
+            const glm::vec3 p1 = GetWrappedPoint(m_points, segment, m_closed);
+            const glm::vec3 p2 = GetWrappedPoint(m_points, segment + 1, m_closed);
+            const glm::vec3 p3 = GetWrappedPoint(m_points, segment + 2, m_closed);
+            const glm::quat startRotation = RotationQuaternion(GetWrappedControlPoint(m_points, segment, m_closed).rotation);
+            const glm::quat endRotation = RotationQuaternion(GetWrappedControlPoint(m_points, segment + 1, m_closed).rotation);
+            for (int sample = 0; sample < samplesPerSegment; ++sample)
+            {
+                const float t = static_cast<float>(sample) / static_cast<float>(samplesPerSegment);
+                const glm::quat rotation = glm::normalize(glm::slerp(startRotation, endRotation, t));
+                sampledPoints.push_back({CatmullRom(p0, p1, p2, p3, t), glm::degrees(glm::eulerAngles(rotation))});
+            }
+        }
+
+        if (!m_closed)
+        {
+            sampledPoints.push_back(m_points.back());
+        }
+        return sampledPoints;
+    }
+
     void SplineComponent::AddPoint(const glm::vec3 &position)
     {
         m_points.push_back({position});

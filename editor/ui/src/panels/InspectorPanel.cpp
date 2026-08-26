@@ -41,6 +41,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -68,6 +69,63 @@ namespace PlutoGE::ui
         constexpr std::size_t kNewScriptNameBufferSize = 128;
         constexpr int kScriptCoreSearchAncestorLimit = 8;
         constexpr std::string_view kBuiltinExampleNamespace = "PlutoGE.ScriptCore.Examples.";
+
+        struct TerrainSurfaceCandidate
+        {
+            glm::vec3 worldPosition{0.0f};
+            float verticalDistance = 0.0f;
+        };
+
+        void CollectTerrainEntities(scene::Entity *entity, std::vector<scene::Entity *> &terrainEntities)
+        {
+            if (!entity)
+            {
+                return;
+            }
+            if (entity->GetComponent<scene::TerrainComponent>())
+            {
+                terrainEntities.push_back(entity);
+            }
+            for (auto *child : entity->GetChildren())
+            {
+                CollectTerrainEntities(child, terrainEntities);
+            }
+        }
+
+        std::optional<TerrainSurfaceCandidate> FindTerrainBelowPoint(scene::Scene &scene,
+                                                                     const glm::vec3 &worldPosition,
+                                                                     float clearance)
+        {
+            std::vector<scene::Entity *> terrainEntities;
+            for (auto *root : scene.GetRootEntities())
+            {
+                CollectTerrainEntities(root, terrainEntities);
+            }
+
+            std::optional<TerrainSurfaceCandidate> bestCandidate;
+            for (auto *terrainEntity : terrainEntities)
+            {
+                auto *terrain = terrainEntity->GetComponent<scene::TerrainComponent>();
+                const glm::mat4 terrainWorld = terrainEntity->GetWorldTransform();
+                const glm::vec3 terrainLocal = glm::vec3(glm::inverse(terrainWorld) * glm::vec4(worldPosition, 1.0f));
+                const float maxX = static_cast<float>(terrain->GetWidth() - 1) * terrain->GetCellSize();
+                const float maxZ = static_cast<float>(terrain->GetDepth() - 1) * terrain->GetCellSize();
+                if (terrainLocal.x < 0.0f || terrainLocal.z < 0.0f || terrainLocal.x > maxX || terrainLocal.z > maxZ)
+                {
+                    continue;
+                }
+
+                glm::vec3 surfaceLocal = terrainLocal;
+                surfaceLocal.y = terrain->GetHeightAtLocalPosition(terrainLocal.x, terrainLocal.z) + clearance;
+                const glm::vec3 surfaceWorld = glm::vec3(terrainWorld * glm::vec4(surfaceLocal, 1.0f));
+                const float distance = std::abs(worldPosition.y - surfaceWorld.y);
+                if (!bestCandidate || distance < bestCandidate->verticalDistance)
+                {
+                    bestCandidate = TerrainSurfaceCandidate{surfaceWorld, distance};
+                }
+            }
+            return bestCandidate;
+        }
 
         bool IsBuiltinExampleScript(std::string_view className)
         {
@@ -5037,6 +5095,60 @@ namespace PlutoGE::ui
                                 splineComponent->AddPoint(newPoint);
                                 entity->AddPrefabOverride("Component:SplineComponent:PointCount");
                                 editorShell.MarkSceneDirty();
+                            }
+
+                            static float terrainClearance = 0.08f;
+                            ImGui::SetNextItemWidth(120.0f);
+                            ImGui::DragFloat("Terrain Clearance", &terrainClearance, 0.01f, 0.0f, 5.0f, "%.2f m");
+                            if (ImGui::IsItemHovered())
+                            {
+                                ImGui::SetTooltip("Raises the track slightly above the sampled terrain to prevent flickering.");
+                            }
+
+                            scene::Scene *splineScene = entity->GetScene();
+                            ImGui::BeginDisabled(splineScene == nullptr);
+                            if (ImGui::Button("Conform Track To Terrain", ImVec2(-1.0f, 0.0f)))
+                            {
+                                const scene::EntityID entityId = entity->GetID();
+                                const float requestedClearance = terrainClearance > 0.0f ? terrainClearance : 0.0f;
+                                editorShell.ExecuteSceneEdit("Conform Track To Terrain",
+                                                             [entityId, requestedClearance]()
+                                                             {
+                                                                 auto *currentScene = core::Engine::GetInstance().GetScene();
+                                                                 auto *trackEntity = currentScene ? currentScene->FindEntityByID(entityId) : nullptr;
+                                                                 auto *trackSpline = trackEntity ? trackEntity->GetComponent<scene::SplineComponent>() : nullptr;
+                                                                 if (!currentScene || !trackEntity || !trackSpline)
+                                                                 {
+                                                                     return;
+                                                                 }
+
+                                                                 const glm::mat4 trackWorld = trackEntity->GetWorldTransform();
+                                                                 const glm::mat4 inverseTrackWorld = glm::inverse(trackWorld);
+                                                                 // Project densely sampled points rather than only the original knots;
+                                                                 // otherwise Catmull-Rom segments can cross through terrain between knots.
+                                                                 // Cap the baked knot count so repeated conform operations cannot grow it indefinitely.
+                                                                 const int pointCount = static_cast<int>(trackSpline->GetPoints().size());
+                                                                 const int sampleLimit = pointCount > 0 ? (256 / pointCount) : 1;
+                                                                 const int conformSamples = std::clamp(trackSpline->GetSamplesPerSegment(), 1,
+                                                                                                       sampleLimit > 0 ? sampleLimit : 1);
+                                                                 auto conformedPoints = trackSpline->SampleControlPoints(conformSamples);
+                                                                 for (auto &point : conformedPoints)
+                                                                 {
+                                                                     const glm::vec3 worldPoint = glm::vec3(trackWorld * glm::vec4(point.position, 1.0f));
+                                                                     if (const auto terrainHit = FindTerrainBelowPoint(*currentScene, worldPoint, requestedClearance))
+                                                                     {
+                                                                         point.position = glm::vec3(inverseTrackWorld * glm::vec4(terrainHit->worldPosition, 1.0f));
+                                                                     }
+                                                                 }
+                                                                 trackSpline->SetPoints(std::move(conformedPoints));
+                                                                 trackEntity->AddPrefabOverride("Component:SplineComponent:Points");
+                                                             });
+                                editorShell.MarkSceneDirty();
+                            }
+                            ImGui::EndDisabled();
+                            if (ImGui::IsItemHovered())
+                            {
+                                ImGui::SetTooltip("Samples every control point against the terrain underneath it. Undo with Ctrl+Z.");
                             }
                         }
                         else if (auto *oceanComponent = dynamic_cast<scene::OceanComponent *>(componentPtr))

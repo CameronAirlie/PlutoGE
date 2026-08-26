@@ -152,7 +152,12 @@ public sealed class EngineSoundController : ScriptBehaviour
         }
 
         var clampedRpm01 = Math.Clamp(rpm01, 0.0f, 1.0f);
-        var targetPitch = Lerp(Math.Clamp(enginePitchAtIdle, 0.25f, 4.0f), Math.Clamp(enginePitchAtRedline, 0.25f, 4.0f), EaseOut(clampedRpm01));
+        // For a loop recorded at a fixed engine speed, playback frequency is
+        // approximately proportional to RPM. An ease-out curve consumed most
+        // of the pitch range by mid-RPM and made 4500--7000 RPM sound nearly
+        // unchanged.
+        var targetPitch = Lerp(Math.Clamp(enginePitchAtIdle, 0.25f, 4.0f),
+            Math.Clamp(enginePitchAtRedline, 0.25f, 4.0f), clampedRpm01);
         var targetVolume = Lerp(Math.Max(engineVolumeAtIdle, 0.0f), Math.Max(engineVolumeAtRedline, 0.0f), MathF.Sqrt(clampedRpm01));
         targetVolume += Math.Clamp(load01, 0.0f, 1.0f) * MathF.Max(loadVolumeBoost, 0.0f);
 
@@ -324,9 +329,4 @@ public sealed class EngineSoundController : ScriptBehaviour
         return a + (b - a) * Math.Clamp(t, 0.0f, 1.0f);
     }
 
-    private static float EaseOut(float t)
-    {
-        var clamped = Math.Clamp(t, 0.0f, 1.0f);
-        return 1.0f - (1.0f - clamped) * (1.0f - clamped);
-    }
 }

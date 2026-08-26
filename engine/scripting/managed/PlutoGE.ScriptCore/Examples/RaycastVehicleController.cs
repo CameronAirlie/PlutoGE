@@ -24,6 +24,7 @@ public sealed class RaycastVehicleController : ScriptBehaviour
 
     [SerializedField] private float mass    = 1250.0f;
     [SerializedField] private float wheelRadius    = 0.5f;
+    [SerializedField] private float drivenWheelInertia = 1.5f;
     [SerializedField] private float suspensionTravel    = 0.32f;
     [SerializedField] private float rideHeight    = 0.42f;
     [SerializedField] private float springStrength    = 24000.0f;
@@ -41,6 +42,10 @@ public sealed class RaycastVehicleController : ScriptBehaviour
     [SerializedField] private float rearGrip    = 5.0f;
     [SerializedField] private float gripLimit    = 1.5f;
     [SerializedField] private float driveGrip    = 1.0f;
+    [SerializedField] private float peakLongitudinalSlip = 0.12f;
+    [SerializedField] private float fullLongitudinalSlip = 1.0f;
+    [SerializedField] private float spinningTyreLongitudinalGrip = 0.55f;
+    [SerializedField] private float spinningTyreLateralGrip = 0.15f;
     [SerializedField] private float brakeGrip    = 1.0f;
     [SerializedField] private float handbrakeGrip    = 0.45f;
     [SerializedField] private float airDensity = 1.225f;
@@ -59,6 +64,7 @@ public sealed class RaycastVehicleController : ScriptBehaviour
     [SerializedField] private float sixthGearRatio  = 0.25f;
     [SerializedField] private float upshiftRpm  = 6800.0f;
     [SerializedField] private float downshiftRpm  = 1200.0f;
+    [SerializedField] private float shiftHysteresisRpm = 250.0f;
     [SerializedField] private float engineResponse  = 20.0f;
     [SerializedField] private float launchRpm  = 3400.0f;
     [SerializedField] private float peakTorqueRpm  = 4800.0f;
@@ -249,7 +255,7 @@ public sealed class RaycastVehicleController : ScriptBehaviour
         var changingToForward = _throttleInput > 0.0f && forwardSpeed < -0.5f;
         var drivePower = _driveThrottle * (changingToForward ? 1.0f : GetEngineTorqueMultiplier());
         ApplyAerodynamicDownforce();
-        ApplyWheels(drivePower, _brakeInput, _handbrakeInput, driveSplit);
+        ApplyWheels(fixedDeltaTime, drivePower, _brakeInput, _handbrakeInput, driveSplit);
     }
 
     public override void OnLateUpdate(float deltaTime)
@@ -281,7 +287,7 @@ public sealed class RaycastVehicleController : ScriptBehaviour
         };
     }
 
-    private void ApplyWheels(float drivePower, float brake, bool handbrake, DriveSplit driveSplit)
+    private void ApplyWheels(float deltaTime, float drivePower, float brake, bool handbrake, DriveSplit driveSplit)
     {
         _groundedWheelCount = 0;
         var bodyForward = Forward;
@@ -306,6 +312,7 @@ public sealed class RaycastVehicleController : ScriptBehaviour
         // reverse when the driver subsequently presses S.
         var burnout = _throttleInput > 0.0f && brake > 0.0f &&
                       MathF.Abs(chassisForwardSpeed) < 8.0f;
+        var drivenWheelSurfaceAcceleration = 0.0f;
         StringBuilder? diagnostics = emitDiagnostics
             ? new StringBuilder($"[VehicleSuspension] bodyY={GameObject.WorldPosition.Y:F6} vy={_rigidbody!.Velocity.Y:F6} " +
                                 $"wx={_rigidbody.AngularVelocity.X:F6} wz={_rigidbody.AngularVelocity.Z:F6} " +
@@ -396,21 +403,40 @@ public sealed class RaycastVehicleController : ScriptBehaviour
                 // Throttle against the service brake deliberately overwhelms
                 // driven-wheel traction while the undriven axle holds the car.
                 var burnoutTraction = burnout ? 0.45f : 1.0f;
+                var wheelOverspeed = MathF.Max(
+                    MathF.Abs(_drivenWheelSpinSpeed) - MathF.Abs(forwardSpeed), 0.0f);
+                var longitudinalSlipRatio = wheelOverspeed / MathF.Max(MathF.Abs(forwardSpeed), 1.0f);
+                var postPeakSlip = SmoothStep(InverseLerp(
+                    MathF.Max(peakLongitudinalSlip, 0.0f),
+                    MathF.Max(fullLongitudinalSlip, peakLongitudinalSlip + 0.01f),
+                    longitudinalSlipRatio));
+                var longitudinalGripRetention = Lerp(1.0f,
+                    Math.Clamp(spinningTyreLongitudinalGrip, 0.0f, 1.0f), postPeakSlip);
+                var lateralGripRetention = Lerp(1.0f,
+                    Math.Clamp(spinningTyreLateralGrip, 0.0f, 1.0f), postPeakSlip);
                 // driveShare divides the engine demand between driven wheels; it
                 // must not also divide the contact patch's available traction.
                 // Doing both made the traction cap so low that even the bottom
                 // of the torque curve hit it, producing the same applied force
                 // at practically every engine RPM.
-                var tractionLimit = normalLoad * MathF.Max(wheelGrip, 0.0f) * MathF.Max(driveGrip, 0.0f) * burnoutTraction;
-                // Once engine demand exceeds the available longitudinal grip,
-                // the driven tyre is spinning and can no longer provide its
-                // full lateral force. Without this friction trade-off, raising
-                // acceleration only hit the clamp and could never induce
-                // power oversteer.
-                var driveDemand = rawDrive.Length() / MathF.Max(tractionLimit, 0.01f);
-                var poweredSlip = SmoothStep(InverseLerp(0.75f, 2.0f, driveDemand));
-                tireForce = lateralForce * Lerp(1.0f, 0.18f, poweredSlip);
-                tireForce += ClampMagnitude(rawDrive, tractionLimit);
+                var tractionLimit = normalLoad * MathF.Max(wheelGrip, 0.0f) *
+                                    MathF.Max(driveGrip, 0.0f) * burnoutTraction *
+                                    longitudinalGripRetention;
+                // A tyre using most of its friction budget longitudinally has
+                // little cornering authority left. Base this loss on measured
+                // wheel slip rather than requested engine force.
+                tireForce = lateralForce * lateralGripRetention;
+                var appliedDrive = ClampMagnitude(rawDrive, tractionLimit);
+                tireForce += appliedDrive;
+
+                // Torque which the contact patch cannot transmit accelerates
+                // the wheel instead of vanishing. Since this state stores tread
+                // speed (omega * radius), its acceleration is
+                // excessForce * radius^2 / rotationalInertia.
+                var excessDriveForce = MathF.Max(rawDrive.Length() - appliedDrive.Length(), 0.0f);
+                var surfaceAcceleration = excessDriveForce * wheelRadius * wheelRadius /
+                                          MathF.Max(drivenWheelInertia, 0.01f);
+                drivenWheelSurfaceAcceleration = MathF.Max(drivenWheelSurfaceAcceleration, surfaceAcceleration);
             }
 
             // During a burnout the service brake holds the undriven wheels but
@@ -457,6 +483,19 @@ public sealed class RaycastVehicleController : ScriptBehaviour
             wheel.ForwardSpeed = forwardSpeed;
             wheel.VisualSteerAngle = wheel.Steering ? _steerAngle : 0.0f;
             _wheels[index] = wheel;
+        }
+
+        var drivenGroundSpeed = GetAverageDrivenWheelSpeed(driveSplit, chassisForwardSpeed);
+        if (drivenWheelSurfaceAcceleration > 0.0f && drivePower > 0.0f)
+        {
+            var driveDirection = _currentGear < 0 ? -1.0f : 1.0f;
+            _drivenWheelSpinSpeed += driveDirection * drivenWheelSurfaceAcceleration * deltaTime;
+        }
+        else
+        {
+            // Static friction couples a non-slipping driven wheel to the road.
+            var coupling = 1.0f - MathF.Exp(-30.0f * MathF.Max(deltaTime, 0.0f));
+            _drivenWheelSpinSpeed = Lerp(_drivenWheelSpinSpeed, drivenGroundSpeed, coupling);
         }
 
         if (diagnostics is not null)
@@ -630,16 +669,27 @@ public sealed class RaycastVehicleController : ScriptBehaviour
         }
 
         var drivenSpeed = GetAverageDrivenWheelSpeed(driveSplit, forwardSpeed);
-        var mechanicalRpm = EstimateRpmForGear(MathF.Abs(drivenSpeed), _currentGear);
+        var rpmWheelSpeed = (throttle > 0.0f || (brake > 0.0f && _currentGear == -1)) &&
+                            MathF.Abs(_drivenWheelSpinSpeed) > MathF.Abs(drivenSpeed)
+            ? _drivenWheelSpinSpeed
+            : drivenSpeed;
+        var mechanicalRpm = EstimateRpmForGear(MathF.Abs(rpmWheelSpeed), _currentGear);
+        var roadCoupledRpm = EstimateRpmForGear(MathF.Abs(drivenSpeed), _currentGear);
         if (_shiftTimer <= 0.0f && _currentGear > 0)
         {
-            if (_currentGear < 6 && mechanicalRpm >= MathF.Max(upshiftRpm, idleRpm + 500.0f))
+            // Schedule shifts from road-coupled RPM, not spinning-wheel RPM.
+            // Wheelspin may raise actual engine RPM to the limiter, but it is
+            // not evidence that the car has reached the next gear's road speed.
+            // Conversely, residual tyre slip must not block a shift once road
+            // speed itself reaches the configured shift point.
+            if (_currentGear < 6 &&
+                roadCoupledRpm >= MathF.Max(upshiftRpm, idleRpm + 500.0f))
             {
                 _currentGear++;
                 _shiftTimer = MathF.Max(shiftDuration, 0.0f);
                 mechanicalRpm = EstimateRpmForGear(MathF.Abs(drivenSpeed), _currentGear);
             }
-            else if (_currentGear > 1 && mechanicalRpm <= MathF.Max(downshiftRpm, idleRpm))
+            else if (_currentGear > 1 && roadCoupledRpm <= GetEffectiveDownshiftRpm(_currentGear))
             {
                 _currentGear--;
                 _shiftTimer = MathF.Max(shiftDuration * 0.45f, 0.0f);
@@ -660,7 +710,7 @@ public sealed class RaycastVehicleController : ScriptBehaviour
         targetRpm = Math.Clamp(targetRpm, MathF.Max(idleRpm, 0.0f), MathF.Max(redlineRpm, idleRpm + 100.0f));
         var response = _shiftTimer > 0.0f ? engineResponse * 1.8f : engineResponse;
         _engineRpm = Lerp(_engineRpm, targetRpm, 1.0f - MathF.Exp(-MathF.Max(response, 0.0f) * deltaTime));
-        UpdateDrivenWheelSpinSpeed(deltaTime, throttle, brake, forwardSpeed, drivenSpeed);
+        UpdateDrivenWheelSpinSpeed(deltaTime, throttle, brake, drivenSpeed);
     }
 
     private float GetEngineTorqueMultiplier()
@@ -683,50 +733,29 @@ public sealed class RaycastVehicleController : ScriptBehaviour
         return Math.Clamp(lowTorque * highRpmFade * revLimiter, 0.0f, 1.0f);
     }
 
-    private void UpdateDrivenWheelSpinSpeed(float deltaTime, float throttle, float brake, float forwardSpeed, float groundedDrivenSpeed)
+    private void UpdateDrivenWheelSpinSpeed(float deltaTime, float throttle, float brake, float groundedDrivenSpeed)
     {
         var driveInput = throttle > 0.0f || (brake > 0.0f && _currentGear == -1);
-        var targetWheelSpeed = groundedDrivenSpeed;
         if (driveInput)
         {
-            targetWheelSpeed = EngineRpmToWheelSpeed(_engineRpm, _currentGear);
-            if (_currentGear > 0 && targetWheelSpeed < 0.0f)
+            // ApplyWheels integrates excess engine torque after the contact
+            // patch's transmitted force is known. Do not kinematically overwrite
+            // that physical wheel-speed state here.
+            if (MathF.Abs(_drivenWheelSpinSpeed) < MathF.Abs(groundedDrivenSpeed))
             {
-                targetWheelSpeed = MathF.Abs(targetWheelSpeed);
+                _drivenWheelSpinSpeed = groundedDrivenSpeed;
             }
-            else if (_currentGear == -1 && targetWheelSpeed > 0.0f)
-            {
-                targetWheelSpeed = -targetWheelSpeed;
-            }
-
-            if (MathF.Abs(forwardSpeed) > 0.5f && MathF.Sign(targetWheelSpeed) != MathF.Sign(forwardSpeed) && _currentGear > 0)
-            {
-                targetWheelSpeed = MathF.Abs(targetWheelSpeed) * MathF.Sign(forwardSpeed);
-            }
+            return;
         }
 
-        var response = driveInput ? 18.0f : 10.0f;
-        _drivenWheelSpinSpeed = Lerp(_drivenWheelSpinSpeed, targetWheelSpeed, 1.0f - MathF.Exp(-response * deltaTime));
+        _drivenWheelSpinSpeed = Lerp(_drivenWheelSpinSpeed, groundedDrivenSpeed,
+            1.0f - MathF.Exp(-10.0f * deltaTime));
     }
 
     private float EstimateRpmForGear(float speed, int gear)
     {
         var rpm = MathF.Abs(WheelRpm(speed)) * MathF.Abs(GetGearRatio(gear)) * MathF.Max(finalDriveRatio, 0.01f);
         return Math.Clamp(rpm, MathF.Max(idleRpm, 0.0f), MathF.Max(redlineRpm, idleRpm + 100.0f));
-    }
-
-    private float EngineRpmToWheelSpeed(float rpm, int gear)
-    {
-        var ratio = MathF.Abs(GetGearRatio(gear)) * MathF.Max(finalDriveRatio, 0.01f);
-        if (ratio <= 0.0001f)
-        {
-            return 0.0f;
-        }
-
-        var wheelRpm = MathF.Abs(rpm) / ratio;
-        var circumference = 2.0f * MathF.PI * MathF.Max(wheelRadius, 0.01f);
-        var speed = wheelRpm * circumference / 60.0f;
-        return gear < 0 ? -speed : speed;
     }
 
     private float WheelRpm(float speed)
@@ -747,6 +776,24 @@ public sealed class RaycastVehicleController : ScriptBehaviour
             5 => MathF.Max(fifthGearRatio, 0.01f),
             _ => MathF.Max(sixthGearRatio, 0.01f),
         };
+    }
+
+    private float GetEffectiveDownshiftRpm(int gear)
+    {
+        var requestedRpm = MathF.Max(downshiftRpm, idleRpm);
+        if (gear <= 1)
+        {
+            return requestedRpm;
+        }
+
+        // At the preceding gear's upshift road speed, this gear runs at the
+        // upshift RPM scaled by the ratio step. Keep the downshift point below
+        // that landing RPM so the two shift schedules cannot overlap and hunt.
+        var previousRatio = MathF.Max(MathF.Abs(GetGearRatio(gear - 1)), 0.01f);
+        var currentRatio = MathF.Abs(GetGearRatio(gear));
+        var landingRpm = MathF.Max(upshiftRpm, idleRpm + 500.0f) * currentRatio / previousRatio;
+        var nonOverlappingRpm = landingRpm - MathF.Max(shiftHysteresisRpm, 0.0f);
+        return MathF.Max(idleRpm, MathF.Min(requestedRpm, nonOverlappingRpm));
     }
 
     private void RecoverCar()

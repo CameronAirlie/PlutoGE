@@ -213,6 +213,11 @@ public sealed class RaycastVehicleController : ScriptBehaviour
         maxSteerAngle = vehicleSettings.MaxSteerAngle;
         steerSharpness = vehicleSettings.SteerSharpness;
         highSpeedSteerFade = vehicleSettings.HighSpeedSteerFade;
+
+        if (_rigidbody is not null)
+        {
+            _rigidbody.Mass = MathF.Max(mass, 50.0f);
+        }
     }
 
     private void UpgradeLegacySuspensionPreset()
@@ -258,6 +263,8 @@ public sealed class RaycastVehicleController : ScriptBehaviour
 
     public override void OnUpdate(float deltaTime)
     {
+        ApplyVehicleSettings();
+
         if (deltaTime <= 0.0f || _rigidbody is null)
         {
             return;
@@ -338,6 +345,7 @@ public sealed class RaycastVehicleController : ScriptBehaviour
 
     private void ConfigureWheel(int index, GameObject? anchor, GameObject? visual, bool steering, bool rightSide)
     {
+        var restCompression01 = 1.0f - Math.Clamp(rideHeight, 0.05f, 0.95f);
         _wheels[index] = new WheelState
         {
             Anchor = anchor,
@@ -347,7 +355,7 @@ public sealed class RaycastVehicleController : ScriptBehaviour
             BaseAnchorRotation = anchor?.Rotation ?? Vector3.Zero,
             BaseVisualPosition = visual?.Position ?? Vector3.Zero,
             BaseVisualRotation = visual?.Rotation ?? Vector3.Zero,
-            VisualCompression = Math.Clamp(rideHeight, 0.05f, 0.95f),
+            VisualCompression = restCompression01,
         };
     }
 
@@ -364,7 +372,9 @@ public sealed class RaycastVehicleController : ScriptBehaviour
         // driven axle was trying to reverse.
         var reverseRequested = brake > 0.0f && _throttleInput <= 0.0f && chassisForwardSpeed < 1.2f;
         var travel = MathF.Max(suspensionTravel, 0.01f);
-        var rideCompression = Math.Clamp(rideHeight, 0.05f, 0.95f) * travel;
+        // rideHeight is the desired extension fraction: 0 is near full bump,
+        // 1 is near full droop. Spring compression is its inverse.
+        var restCompression = (1.0f - Math.Clamp(rideHeight, 0.05f, 0.95f)) * travel;
         // Start above the entire wheel/travel range. A short ray starting at the
         // anchor loses the floor as soon as a hard landing drives that anchor
         // below the surface, leaving the suspension unable to recover.
@@ -423,13 +433,16 @@ public sealed class RaycastVehicleController : ScriptBehaviour
             // crossed the contact plane and must feed a bump stop, not turn the
             // wheel into a zero-distance ordinary suspension sample.
             var distanceFromAnchor = Vector3.Dot(anchorWorldPosition - hit.Point, bodyUp);
-            var rawCompression = wheelRadius + rideCompression - distanceFromAnchor;
+            // Compression is measured over the complete suspension range. The
+            // old formula substituted the desired ride compression for travel;
+            // that made ride height cancel out of the equilibrium geometry.
+            var rawCompression = wheelRadius + travel - distanceFromAnchor;
             var compression = Math.Clamp(rawCompression, 0.0f, travel);
             var bottomOut = MathF.Max(rawCompression - travel, 0.0f);
             var compression01 = compression / travel;
             var suspensionPointSpeed = Vector3.Dot(pointVelocity, bodyUp);
             var cornerWeight = _rigidbody!.Mass * 9.81f * 0.25f;
-            var springDisplacement = compression - rideCompression;
+            var springDisplacement = compression - restCompression;
             var suspensionForce = cornerWeight +
                                   springDisplacement * MathF.Max(springStrength, 0.0f) +
                                   -suspensionPointSpeed * MathF.Max(damperStrength, 0.0f) +
@@ -878,7 +891,6 @@ public sealed class RaycastVehicleController : ScriptBehaviour
     private void UpdateWheelVisuals(float deltaTime, DriveSplit driveSplit)
     {
         var travel = MathF.Max(suspensionTravel, 0.01f);
-        var rideCompression = Math.Clamp(rideHeight, 0.05f, 0.95f) * travel;
 
         for (var index = 0; index < _wheels.Length; ++index)
         {
@@ -904,7 +916,10 @@ public sealed class RaycastVehicleController : ScriptBehaviour
             }
             var visualBlend = 1.0f - MathF.Exp(-MathF.Max(visualSuspensionSharpness, 0.1f) * MathF.Max(deltaTime, 0.0f));
             wheel.VisualCompression = Lerp(wheel.VisualCompression, visualTarget, visualBlend);
-            var localRise = wheel.VisualCompression * travel - rideCompression;
+            // The anchor is the suspension's fully-compressed wheel position.
+            // Move the mesh down by the current extension so it follows the
+            // raycast contact instead of remaining attached to the raised body.
+            var localRise = -(1.0f - wheel.VisualCompression) * travel;
             wheel.Visual.Position = new Vector3(
                 wheel.BaseVisualPosition.X,
                 wheel.BaseVisualPosition.Y + localRise,

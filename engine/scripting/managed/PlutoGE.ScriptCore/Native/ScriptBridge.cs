@@ -1446,6 +1446,7 @@ internal static unsafe class ScriptBridge
             var uiUpdateSequence = GetUIUpdateSequence();
             UIButtonComponent.DispatchRegisteredEvents(uiUpdateSequence);
             RmlEvent.DispatchRegisteredEvents(uiUpdateSequence);
+            RefreshScriptableObjectReferences(instance);
             instance.OnUpdate(deltaTime);
             return 1;
         }
@@ -3317,8 +3318,68 @@ internal static unsafe class ScriptBridge
         }
 
         instance.AssetReference = assetReference;
+        instance.SerializedData = assetData;
+        instance.NextRefreshTimestamp = Environment.TickCount64 + 250;
         ApplyFieldValues(instance, scriptClass, string.Join('\n', lines.Skip(1)));
         return instance;
+    }
+
+    private static void RefreshScriptableObjectReferences(ScriptBehaviour instance)
+    {
+        if (_loadScriptableObjectAsset == null ||
+            !ScriptClasses.TryGetValue(instance.GetType().FullName ?? string.Empty, out var ownerClass))
+        {
+            return;
+        }
+
+        foreach (var member in ownerClass.Fields.Where(field => field.Type == 24))
+        {
+            var value = member.Member switch
+            {
+                FieldInfo fieldInfo => fieldInfo.GetValue(instance),
+                PropertyInfo propertyInfo => propertyInfo.GetValue(instance),
+                _ => null,
+            };
+            if (value is ScriptableObject scriptableObject)
+            {
+                RefreshScriptableObject(scriptableObject);
+            }
+        }
+    }
+
+    private static void RefreshScriptableObject(ScriptableObject instance)
+    {
+        var now = Environment.TickCount64;
+        if (!instance.IsValid || now < instance.NextRefreshTimestamp)
+        {
+            return;
+        }
+        instance.NextRefreshTimestamp = now + 250;
+
+        var referenceBytes = Encoding.UTF8.GetBytes(instance.AssetReference + '\0');
+        string assetData;
+        fixed (byte* referencePtr = referenceBytes)
+        {
+            assetData = Marshal.PtrToStringUTF8(_loadScriptableObjectAsset(referencePtr)) ?? string.Empty;
+        }
+        assetData = assetData.Replace("\r\n", "\n", StringComparison.Ordinal)
+                             .Replace('\r', '\n');
+        if (assetData.Length == 0 || string.Equals(assetData, instance.SerializedData, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        var lines = assetData.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        var header = lines.Length > 0 ? SplitEscaped(lines[0], '\t') : [];
+        var typeName = instance.GetType().FullName ?? string.Empty;
+        if (header.Count < 2 || header[0] != "SCRIPTABLE" || header[1] != typeName ||
+            !ScriptClasses.TryGetValue(typeName, out var scriptClass))
+        {
+            return;
+        }
+
+        ApplyFieldValues(instance, scriptClass, string.Join('\n', lines.Skip(1)));
+        instance.SerializedData = assetData;
     }
 
     private static object? CreateReferenceValue(Type memberType, string value)

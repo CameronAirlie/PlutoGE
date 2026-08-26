@@ -55,8 +55,10 @@ namespace PlutoGE::render
 
     struct RendererConfig
     {
-        // Future configuration options can be added here
         platform::Window *window = nullptr; // Pointer to the Window, set during initialization
+        // GPU queries and per-pass CPU clocks exist for the editor profiler and
+        // should not add driver or clock-query overhead to standalone games.
+        bool enableProfiling = true;
     };
 
     struct RenderCommand
@@ -242,6 +244,7 @@ namespace PlutoGE::render
         [[nodiscard]] const std::vector<CpuPassTiming> &GetCpuPassTimings() const { return m_cpuPassTimings; }
         [[nodiscard]] const std::vector<GpuPassTiming> &GetGpuPassTimings() const { return m_gpuPassTimings; }
         [[nodiscard]] const std::vector<GpuPassTiming> &GetPostProcessGpuTimings() const { return m_postProcessGpuTimings; }
+        [[nodiscard]] const std::vector<GpuPassTiming> &GetGpuDetailTimings() const { return m_gpuDetailTimings; }
         [[nodiscard]] const LightingGpuTiming &GetLightingGpuTiming() const { return m_lightingGpuTiming; }
         [[nodiscard]] const RendererCpuFrameStats &GetCpuFrameStats() const { return m_cpuFrameStats; }
         [[nodiscard]] float GetTotalGpuPassTimeMs() const;
@@ -256,6 +259,8 @@ namespace PlutoGE::render
         void EndLightingStageTiming(std::size_t stageIndex);
         bool BeginPostProcessEffectTiming(std::string_view effectName);
         void EndPostProcessEffectTiming();
+        bool BeginGpuDetailTiming(std::string_view name);
+        void EndGpuDetailTiming();
         void SetLightingPassCounters(int lightCount, int shadowedLightCount);
         void RecordGBufferResize(float resizeMs);
         void RecordShadowMapUpdate(int surfacePixels, int submittedInstances, int submittedBatches, int submittedTriangles, int materialGroups, int apiDrawCalls, bool directionalCascade);
@@ -274,7 +279,8 @@ namespace PlutoGE::render
         {
             if (!IsRenderCommandAcceptedForSubmission(command))
             {
-                ++m_cpuFrameStats.submissionCulledRenderCommandCount;
+                if (m_config.enableProfiling)
+                    ++m_cpuFrameStats.submissionCulledRenderCommandCount;
                 return;
             }
 
@@ -283,7 +289,8 @@ namespace PlutoGE::render
                 m_renderCommandsDirty = true;
             }
             m_renderCommands.push_back(command);
-            ++m_cpuFrameStats.submittedRenderCommandCount;
+            if (m_config.enableProfiling)
+                ++m_cpuFrameStats.submittedRenderCommandCount;
         }
 
         void SubmitSortedRenderCommands(const std::vector<RenderCommand> &commands, bool applySubmissionCulling = true)
@@ -299,7 +306,8 @@ namespace PlutoGE::render
             {
                 if (applySubmissionCulling && !IsRenderCommandAcceptedForSubmission(command))
                 {
-                    ++m_cpuFrameStats.submissionCulledRenderCommandCount;
+                    if (m_config.enableProfiling)
+                        ++m_cpuFrameStats.submissionCulledRenderCommandCount;
                     continue;
                 }
 
@@ -309,7 +317,8 @@ namespace PlutoGE::render
                 }
 
                 m_renderCommands.push_back(command);
-                ++m_cpuFrameStats.submittedRenderCommandCount;
+                if (m_config.enableProfiling)
+                    ++m_cpuFrameStats.submittedRenderCommandCount;
                 insertedAny = true;
             }
         }
@@ -346,6 +355,16 @@ namespace PlutoGE::render
             bool active = false;
         };
 
+        struct GpuTimestampQueryState
+        {
+            std::array<GLuint, 2> startQueryIds{};
+            std::array<GLuint, 2> endQueryIds{};
+            std::array<bool, 2> pending{};
+            std::size_t writeIndex = 0;
+            std::size_t activeIndex = 0;
+            bool active = false;
+        };
+
         RendererConfig m_config;
         bool m_isInitialized = false;
         bool m_vsyncEnabled = false;
@@ -371,6 +390,8 @@ namespace PlutoGE::render
         void ResolveAllLightingGpuTimings(std::size_t stageIndex);
         void ResolveAllPostProcessGpuTimings();
         void ResolveAllPostProcessGpuTimings(std::size_t timingIndex);
+        void ResolveAllGpuDetailTimings();
+        std::size_t EnsureGpuDetailTiming(std::string_view name);
         void UpdatePostProcessGpuTimingTotal();
         std::size_t EnsurePostProcessGpuTiming(std::string_view effectName);
         void ResolveGpuTiming(std::size_t timingIndex, std::size_t queryIndex);
@@ -397,10 +418,15 @@ namespace PlutoGE::render
         std::vector<GpuTimerQueryState> m_postProcessGpuTimerQueries;
         std::vector<bool> m_postProcessGpuTimingHasCachedResult;
         std::unordered_map<std::string, std::size_t> m_postProcessGpuTimingIndices;
+        std::vector<GpuPassTiming> m_gpuDetailTimings;
+        std::vector<GpuTimestampQueryState> m_gpuDetailTimerQueries;
+        std::unordered_map<std::string, std::size_t> m_gpuDetailTimingIndices;
         LightingGpuTiming m_lightingGpuTiming;
         RendererCpuFrameStats m_cpuFrameStats;
         std::size_t m_activePostProcessGpuTimingIndex = 0;
         bool m_postProcessGpuTimingActive = false;
+        std::size_t m_activeGpuDetailTimingIndex = 0;
+        bool m_gpuDetailTimingActive = false;
         int m_profiledRenderCount = 0;
         std::uint64_t m_frameSequence = 0;
         bool m_renderCommandsDirty = false;

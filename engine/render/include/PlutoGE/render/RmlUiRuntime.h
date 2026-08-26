@@ -154,6 +154,7 @@ namespace PlutoGE::render
         std::uint64_t m_lastInputFrame = 0;
         void *m_assetFileChangeHandle = nullptr;
         std::filesystem::path m_watchedAssetDirectory;
+        bool m_hotReloadEnabled = false;
         RmlUiCpuTiming m_cpuTiming;
     };
 }

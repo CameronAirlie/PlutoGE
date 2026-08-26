@@ -18,6 +18,7 @@ namespace PlutoGE::render
         constexpr int kDirectionalShadowCascadeTextureStartSlot = 5;
         constexpr int kOceanStateTextureSlot = 9;
         constexpr int kEnvironmentTextureSlot = 10;
+        constexpr int kFogAmbientTextureSlot = 11;
         constexpr int kMinStepCount = 16;
         constexpr int kMaxStepCount = 64;
         constexpr int kMinShadowStepStride = 1;
@@ -314,6 +315,7 @@ namespace PlutoGE::render
             uniform sampler2D uSceneDepthTexture;
             uniform sampler2D uOceanStateTexture;
             uniform sampler2D uEnvironmentMap;
+            uniform sampler2D uFogAmbientTexture;
             uniform sampler2DShadow uShadowCascadeMap0;
             uniform sampler2DShadow uShadowCascadeMap1;
             uniform sampler2DShadow uShadowCascadeMap2;
@@ -399,49 +401,6 @@ namespace PlutoGE::render
                 // second forward lobe, which created radiance and made long
                 // horizontal paths blow out around a low sun.
                 return ComputePhase(cosTheta);
-            }
-
-            vec2 DirectionToEquirectangularUv(vec3 direction)
-            {
-                const float invPi = 0.31830988618;
-                const float invTwoPi = 0.15915494309;
-                vec3 normalizedDirection = normalize(direction);
-                return vec2(atan(normalizedDirection.z, normalizedDirection.x) * invTwoPi + 0.5,
-                            acos(clamp(normalizedDirection.y, -1.0, 1.0)) * invPi);
-            }
-
-            vec3 SampleEnvironment(vec3 direction)
-            {
-                return max(texture(uEnvironmentMap, DirectionToEquirectangularUv(direction)).rgb, vec3(0.0));
-            }
-
-            vec3 ComputeFogAmbientColor()
-            {
-                if (uEnvironmentEnabled == 0)
-                {
-                    return vec3(0.0);
-                }
-
-                // Approximate the spherical mean radiance seen by an isotropic
-                // fog particle. Include diagonal directions so a bright sky
-                // near the horizon is represented instead of being missed by
-                // a sparse axis-only sample set.
-                vec3 environmentRadiance =
-                    SampleEnvironment(vec3( 1.0,  0.0,  0.0)) +
-                    SampleEnvironment(vec3(-1.0,  0.0,  0.0)) +
-                    SampleEnvironment(vec3( 0.0,  1.0,  0.0)) +
-                    SampleEnvironment(vec3( 0.0, -1.0,  0.0)) +
-                    SampleEnvironment(vec3( 0.0,  0.0,  1.0)) +
-                    SampleEnvironment(vec3( 0.0,  0.0, -1.0)) +
-                    SampleEnvironment(vec3( 1.0,  1.0,  1.0)) +
-                    SampleEnvironment(vec3(-1.0,  1.0,  1.0)) +
-                    SampleEnvironment(vec3( 1.0,  1.0, -1.0)) +
-                    SampleEnvironment(vec3(-1.0,  1.0, -1.0)) +
-                    SampleEnvironment(vec3( 1.0, -1.0,  1.0)) +
-                    SampleEnvironment(vec3(-1.0, -1.0,  1.0)) +
-                    SampleEnvironment(vec3( 1.0, -1.0, -1.0)) +
-                    SampleEnvironment(vec3(-1.0, -1.0, -1.0));
-                return max(uFogColor, vec3(0.0)) * environmentRadiance * (uEnvironmentIntensity / 14.0);
             }
 
             float SampleShadowMapPCF(sampler2DShadow shadowMap, vec3 projectedCoords)
@@ -570,7 +529,7 @@ namespace PlutoGE::render
                 bool isSky = sceneDepth <= 0.000001;
                 vec3 rayDirection = GetWorldRayDirection(UV);
                 vec3 fogTint = max(uFogColor, vec3(0.0));
-                vec3 ambientFogColor = ComputeFogAmbientColor();
+                vec3 ambientFogColor = texture(uFogAmbientTexture, vec2(0.5)).rgb;
 
                 float hitDistance = uMaxDistance;
                 // PlutoGE uses reversed-Z: cleared sky is zero and geometry is
@@ -674,6 +633,63 @@ namespace PlutoGE::render
         )";
 
         m_shader = Shader::Create(source);
+
+        ShaderSource ambientSource;
+        ambientSource.vertexSource = source.vertexSource;
+        ambientSource.fragmentSource = R"(
+            #version 330 core
+            out vec4 FragColor;
+            uniform sampler2D uEnvironmentMap;
+            uniform vec3 uFogColor;
+            uniform float uEnvironmentIntensity;
+            uniform int uEnvironmentEnabled;
+
+            vec2 DirectionToEquirectangularUv(vec3 direction)
+            {
+                const float invPi = 0.31830988618;
+                const float invTwoPi = 0.15915494309;
+                vec3 normalizedDirection = normalize(direction);
+                return vec2(atan(normalizedDirection.z, normalizedDirection.x) * invTwoPi + 0.5,
+                            acos(clamp(normalizedDirection.y, -1.0, 1.0)) * invPi);
+            }
+
+            vec3 SampleEnvironment(vec3 direction)
+            {
+                return max(texture(uEnvironmentMap, DirectionToEquirectangularUv(direction)).rgb, vec3(0.0));
+            }
+
+            void main()
+            {
+                if (uEnvironmentEnabled == 0)
+                {
+                    FragColor = vec4(0.0);
+                    return;
+                }
+                vec3 environmentRadiance =
+                    SampleEnvironment(vec3( 1.0,  0.0,  0.0)) +
+                    SampleEnvironment(vec3(-1.0,  0.0,  0.0)) +
+                    SampleEnvironment(vec3( 0.0,  1.0,  0.0)) +
+                    SampleEnvironment(vec3( 0.0, -1.0,  0.0)) +
+                    SampleEnvironment(vec3( 0.0,  0.0,  1.0)) +
+                    SampleEnvironment(vec3( 0.0,  0.0, -1.0)) +
+                    SampleEnvironment(vec3( 1.0,  1.0,  1.0)) +
+                    SampleEnvironment(vec3(-1.0,  1.0,  1.0)) +
+                    SampleEnvironment(vec3( 1.0,  1.0, -1.0)) +
+                    SampleEnvironment(vec3(-1.0,  1.0, -1.0)) +
+                    SampleEnvironment(vec3( 1.0, -1.0,  1.0)) +
+                    SampleEnvironment(vec3(-1.0, -1.0,  1.0)) +
+                    SampleEnvironment(vec3( 1.0, -1.0, -1.0)) +
+                    SampleEnvironment(vec3(-1.0, -1.0, -1.0));
+                FragColor = vec4(max(uFogColor, vec3(0.0)) * environmentRadiance *
+                                 (uEnvironmentIntensity / 14.0), 1.0);
+            }
+        )";
+        m_ambientShader = Shader::Create(ambientSource);
+        m_ambientRenderTarget = std::make_unique<RenderTarget>(RenderTargetConfig{
+            .width = 1,
+            .height = 1,
+            .clearColor = glm::vec4(0.0f),
+        });
 
         glGenSamplers(1, &m_shadowCompareSampler);
         glSamplerParameteri(m_shadowCompareSampler, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -839,7 +855,9 @@ namespace PlutoGE::render
 
     void VolumetricFogEffect::Apply(const PostProcessContext &context)
     {
-        if (!m_shader || !m_temporalShader || !m_compositeShader || !context.sourceRenderTarget || !context.destinationRenderTarget || !context.renderContext.hasCameraData)
+        if (!m_shader || !m_ambientShader || !m_temporalShader || !m_compositeShader ||
+            !m_ambientRenderTarget || !m_ambientRenderTarget->IsInitialized() ||
+            !context.sourceRenderTarget || !context.destinationRenderTarget || !context.renderContext.hasCameraData)
         {
             return;
         }
@@ -916,13 +934,41 @@ namespace PlutoGE::render
         const GLuint environmentTexture = physicalSkyTexture != 0
                                               ? physicalSkyTexture
                                               : (sceneEnvironmentTexture ? sceneEnvironmentTexture->GetTextureID() : 0);
+        const float environmentIntensity = context.renderContext.scene
+                                               ? std::max(context.renderContext.scene->GetEnvironmentIntensity(), 0.0f)
+                                               : 1.0f;
+
+        // Ambient environment lighting is constant across the fog buffer.
+        // Evaluate the original 14-direction estimate once instead of once per
+        // fog pixel, then broadcast it through this one-texel target.
+        Graphics::BindRenderTarget(m_ambientRenderTarget.get());
+        Graphics::SetViewport(0, 0, 1, 1);
+        Graphics::Disable(GL_BLEND);
+        m_ambientShader->Bind();
+        Graphics::ActiveTexture(GL_TEXTURE0 + kEnvironmentTextureSlot);
+        Graphics::BindTexture(GL_TEXTURE_2D, environmentTexture);
+        m_ambientShader->SetUniform("uEnvironmentMap", kEnvironmentTextureSlot);
+        m_ambientShader->SetUniform("uEnvironmentEnabled", environmentTexture != 0 ? 1 : 0);
+        m_ambientShader->SetUniform("uEnvironmentIntensity", environmentIntensity);
+        m_ambientShader->SetUniform("uFogColor", m_fogColor);
+        const bool ambientTiming = context.renderContext.renderer &&
+                                   context.renderContext.renderer->BeginGpuDetailTiming("Volumetric Fog / Ambient prepass");
+        DrawFullscreenTriangle();
+        if (ambientTiming)
+            context.renderContext.renderer->EndGpuDetailTiming();
+
+        Graphics::BindRenderTarget(m_fogRenderTarget.get());
+        Graphics::SetViewport(0, 0, m_internalWidth, m_internalHeight);
+        m_shader->Bind();
+        BindCommonInputs(m_shader, internalContext);
         Graphics::ActiveTexture(GL_TEXTURE0 + kEnvironmentTextureSlot);
         Graphics::BindTexture(GL_TEXTURE_2D, environmentTexture);
         m_shader->SetUniform("uEnvironmentMap", kEnvironmentTextureSlot);
         m_shader->SetUniform("uEnvironmentEnabled", environmentTexture != 0 ? 1 : 0);
-        m_shader->SetUniform("uEnvironmentIntensity", context.renderContext.scene
-                                                         ? std::max(context.renderContext.scene->GetEnvironmentIntensity(), 0.0f)
-                                                         : 1.0f);
+        m_shader->SetUniform("uEnvironmentIntensity", environmentIntensity);
+        Graphics::ActiveTexture(GL_TEXTURE0 + kFogAmbientTextureSlot);
+        Graphics::BindTexture(GL_TEXTURE_2D, m_ambientRenderTarget->GetColorTextureID());
+        m_shader->SetUniform("uFogAmbientTexture", kFogAmbientTextureSlot);
         m_shader->SetUniform("uTemporalSampling", 1);
         m_shader->SetUniform("uFrameIndex", static_cast<float>(context.renderContext.frameSequence % 16ull));
         for (int cascadeIndex = 0; cascadeIndex < scene::kMaxDirectionalShadowCascades; ++cascadeIndex)
@@ -947,7 +993,11 @@ namespace PlutoGE::render
         m_shader->SetUniform("uStepCount", std::clamp(m_stepCount, kMinStepCount, kMaxStepCount));
         m_shader->SetUniform("uShadowStepStride", std::clamp(m_shadowStepStride, kMinShadowStepStride, kMaxShadowStepStride));
         m_shader->SetUniform("uHasDirectionalLight", hasDirectionalLight);
+        const bool rayMarchTiming = context.renderContext.renderer &&
+                                    context.renderContext.renderer->BeginGpuDetailTiming("Volumetric Fog / Ray march");
         DrawFullscreenTriangle();
+        if (rayMarchTiming)
+            context.renderContext.renderer->EndGpuDetailTiming();
 
         for (int cascadeIndex = 0; cascadeIndex < scene::kMaxDirectionalShadowCascades; ++cascadeIndex)
             glBindSampler(kDirectionalShadowCascadeTextureStartSlot + cascadeIndex, 0);
@@ -977,16 +1027,24 @@ namespace PlutoGE::render
         m_temporalShader->SetUniform("uInverseViewProjection", glm::inverse(currentViewProjection));
         m_temporalShader->SetUniform("uPreviousViewProjection", m_previousViewProjection);
         m_temporalShader->SetUniform("uHasHistory", m_hasHistory ? 1 : 0);
+        const bool temporalTiming = context.renderContext.renderer &&
+                                    context.renderContext.renderer->BeginGpuDetailTiming("Volumetric Fog / Temporal resolve");
         DrawFullscreenTriangle();
+        if (temporalTiming)
+            context.renderContext.renderer->EndGpuDetailTiming();
 
         // Preserve the depth corresponding to this fog history so the next
         // frame can reject disocclusions rather than dragging shafts over
         // newly revealed surfaces.
         Graphics::BindFramebuffer(GL_READ_FRAMEBUFFER, depthSource->GetFramebufferID());
         Graphics::BindFramebuffer(GL_DRAW_FRAMEBUFFER, historyWrite->GetFramebufferID());
+        const bool historyCopyTiming = context.renderContext.renderer &&
+                                       context.renderContext.renderer->BeginGpuDetailTiming("Volumetric Fog / Depth history copy");
         glBlitFramebuffer(0, 0, depthSource->GetWidth(), depthSource->GetHeight(),
                           0, 0, m_internalWidth, m_internalHeight,
                           GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+        if (historyCopyTiming)
+            context.renderContext.renderer->EndGpuDetailTiming();
         m_previousViewProjection = currentViewProjection;
         m_historyIndex = 1 - m_historyIndex;
         m_hasHistory = true;
@@ -1005,7 +1063,11 @@ namespace PlutoGE::render
         m_compositeShader->SetUniform("uSceneDepthTexture", 6);
         m_compositeShader->SetUniform("uFogTexelSize", glm::vec2(1.0f / static_cast<float>(m_internalWidth),
                                                                   1.0f / static_cast<float>(m_internalHeight)));
+        const bool compositeTiming = context.renderContext.renderer &&
+                                     context.renderContext.renderer->BeginGpuDetailTiming("Volumetric Fog / Composite");
         DrawFullscreenTriangle();
+        if (compositeTiming)
+            context.renderContext.renderer->EndGpuDetailTiming();
 
         EndApply();
         glDepthMask(GL_TRUE);

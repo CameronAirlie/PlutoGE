@@ -504,6 +504,7 @@ namespace PlutoGE::render
             return true;
 
         m_window = &window;
+        m_hotReloadEnabled = core::Engine::GetInstance().GetConfig().isEditorHost;
         m_renderer = std::make_unique<RenderInterface_GL3>();
         if (!static_cast<bool>(*m_renderer))
         {
@@ -558,6 +559,7 @@ namespace PlutoGE::render
         m_window = nullptr;
         m_width = 0;
         m_height = 0;
+        m_hotReloadEnabled = false;
         CloseAssetFileWatcher();
     }
 
@@ -588,6 +590,9 @@ namespace PlutoGE::render
 
     bool RmlUiRuntime::ConsumeAssetFileChange()
     {
+        if (!m_hotReloadEnabled)
+            return false;
+
 #ifdef _WIN32
         auto &assets = core::Engine::GetInstance().GetAssetManager();
         std::filesystem::path assetDirectory = assets.GetProjectRootDirectory();

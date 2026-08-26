@@ -202,6 +202,7 @@ namespace PlutoGE::core
 
         render::RendererConfig rendererConfig;
         rendererConfig.window = &m_window;
+        rendererConfig.enableProfiling = m_config.isEditorHost;
         if (!m_renderer.Initialize(rendererConfig))
         {
             std::cerr << "Failed to initialize renderer." << std::endl;

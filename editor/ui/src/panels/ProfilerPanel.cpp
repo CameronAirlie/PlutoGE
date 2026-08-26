@@ -49,6 +49,7 @@ namespace PlutoGE::ui
             m_renderer->GetCpuFrameStats(),
             m_renderer->GetGpuPassTimings(),
             m_renderer->GetPostProcessGpuTimings(),
+            m_renderer->GetGpuDetailTimings(),
             m_renderer->GetTotalCpuPassTimeMs(),
             m_renderer->GetTotalGpuPassTimeMs(),
             m_renderer->GetLightingGpuTiming());
@@ -88,6 +89,7 @@ namespace PlutoGE::ui
         const auto &cpuFrameStats = m_renderer->GetCpuFrameStats();
         const auto &gpuPassTimings = m_renderer->GetGpuPassTimings();
         const auto &postProcessGpuTimings = m_renderer->GetPostProcessGpuTimings();
+        const auto &gpuDetailTimings = m_renderer->GetGpuDetailTimings();
         const auto &lightingGpuTiming = m_renderer->GetLightingGpuTiming();
         const auto &frameTimingStats = m_profiler->GetLatestFrameTimingStats();
         const auto &rmlTiming = render::RmlUiRuntime::Get().GetCpuTiming();
@@ -308,6 +310,18 @@ namespace PlutoGE::ui
                         ImGui::Text("%s: pending", postProcessGpuTiming.name.c_str());
                     }
                 }
+            }
+
+            if (!gpuDetailTimings.empty() && ImGui::TreeNode("GPU detail breakdown"))
+            {
+                for (const auto &timing : gpuDetailTimings)
+                {
+                    if (timing.hasResult)
+                        ImGui::Text("%s: %.3f ms", timing.name.c_str(), timing.gpuTimeMs);
+                    else
+                        ImGui::Text("%s: pending", timing.name.c_str());
+                }
+                ImGui::TreePop();
             }
 
             ImGui::Separator();

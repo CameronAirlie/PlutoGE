@@ -1988,10 +1988,12 @@ namespace PlutoGE::render
             glBlendEquation(GL_FUNC_ADD);
             glBlendFunc(GL_ONE, GL_ONE);
 
+            int lightIndex = 0;
             for (auto *light : *ctx.lights)
             {
                 if (!light)
                 {
+                    ++lightIndex;
                     continue;
                 }
 
@@ -2002,7 +2004,10 @@ namespace PlutoGE::render
                         ctx.temporaryRenderTarget->GetWidth(),
                         ctx.temporaryRenderTarget->GetHeight());
                     if (!lightRect)
+                    {
+                        ++lightIndex;
                         continue;
+                    }
                     Graphics::Enable(GL_SCISSOR_TEST);
                     glScissor(lightRect->x, lightRect->y, lightRect->width, lightRect->height);
                 }
@@ -2012,12 +2017,19 @@ namespace PlutoGE::render
                 }
 
                 const bool hasShadowMap = BindShadowMapForLight(*light);
-                const float skyVisibility = ctx.renderer ? ctx.renderer->GetPhysicalSkyDirectionalLightVisibility(light) : 1.0f;
-                BindLightUniforms(m_directLightingPassShader, *light, hasShadowMap, skyVisibility);
-                if (hasShadowMap &&
+                const bool filteredDirectionalShadow = hasShadowMap &&
                     light->type == scene::LightType::Directional &&
                     light->directionalShadowSettings.screenSpaceFilterEnabled &&
-                    ctx.postProcessDebugView != PostProcessDebugView::ShadowCascades)
+                    ctx.postProcessDebugView != PostProcessDebugView::ShadowCascades;
+                const char *lightTypeName = light->type == scene::LightType::Directional ? "Directional" :
+                                            light->type == scene::LightType::Point ? "Point" : "Spot";
+                std::string detailName = "Lighting / Light " + std::to_string(lightIndex) + " " + lightTypeName;
+                if (hasShadowMap)
+                    detailName += filteredDirectionalShadow ? " [shadow filtered]" : " [shadow]";
+                const bool detailTimingActive = ctx.renderer && ctx.renderer->BeginGpuDetailTiming(detailName);
+                const float skyVisibility = ctx.renderer ? ctx.renderer->GetPhysicalSkyDirectionalLightVisibility(light) : 1.0f;
+                BindLightUniforms(m_directLightingPassShader, *light, hasShadowMap, skyVisibility);
+                if (filteredDirectionalShadow)
                 {
                     if (RenderTarget *filteredShadowMask = GenerateDirectionalShadowMask(ctx, *light, true))
                     {
@@ -2041,6 +2053,9 @@ namespace PlutoGE::render
                         Graphics::BindTexture(GL_TEXTURE_2D, filteredShadowMask->GetColorTextureID());
                         m_directLightingPassShader->SetUniform("uFilteredShadowMask", kShadowMaskTextureSlot);
                         Graphics::DrawFullscreenTriangle();
+                        if (detailTimingActive)
+                            ctx.renderer->EndGpuDetailTiming();
+                        ++lightIndex;
                         continue;
                     }
                 }
@@ -2048,6 +2063,9 @@ namespace PlutoGE::render
                 m_directLightingPassShader->SetUniform("uOutputShadowMask", 0);
                 m_directLightingPassShader->SetUniform("uUseFilteredShadowMask", 0);
                 Graphics::DrawFullscreenTriangle();
+                if (detailTimingActive)
+                    ctx.renderer->EndGpuDetailTiming();
+                ++lightIndex;
             }
             Graphics::Disable(GL_SCISSOR_TEST);
         }

@@ -67,6 +67,7 @@ namespace PlutoGE::ui
                                                      const render::RendererCpuFrameStats &cpuFrameStats,
                                                      const std::vector<render::GpuPassTiming> &gpuPassTimings,
                                                      const std::vector<render::GpuPassTiming> &postProcessGpuTimings,
+                                                     const std::vector<render::GpuPassTiming> &gpuDetailTimings,
                                                      float totalCpuPassTimeMs,
                                                      float totalGpuPassTimeMs,
                                                      const render::LightingGpuTiming &lightingGpuTiming) const;

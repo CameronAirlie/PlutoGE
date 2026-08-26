@@ -212,7 +212,10 @@ namespace PlutoGE::render
                 {
                     float g = clamp(uAnisotropy, -0.9, 0.9);
                     float denominator = max(1.0 + g*g - 2.0*g*cosine, 0.0001);
-                    return (1.0 - g*g) / pow(denominator, 1.5);
+                    // Normalized Henyey-Greenstein phase function. Omitting
+                    // 1 / (4 PI) creates radiance and made the directional
+                    // contribution roughly 12.57 times too bright.
+                    return (1.0 - g*g) / (12.566370614359172 * pow(denominator, 1.5));
                 }
 
                 float LightTransmittance(vec3 position, float jitter)

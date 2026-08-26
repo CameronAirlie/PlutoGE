@@ -4,7 +4,9 @@
 #include "PlutoGE/render/RenderTarget.h"
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/Shader.h"
+#include "PlutoGE/render/Texture.h"
 #include "PlutoGE/render/UniformNames.h"
+#include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 
 #include <algorithm>
@@ -15,6 +17,7 @@ namespace PlutoGE::render
     {
         constexpr int kDirectionalShadowCascadeTextureStartSlot = 5;
         constexpr int kOceanStateTextureSlot = 9;
+        constexpr int kEnvironmentTextureSlot = 10;
         constexpr int kMinStepCount = 16;
         constexpr int kMaxStepCount = 64;
         constexpr int kMinShadowStepStride = 1;
@@ -209,6 +212,7 @@ namespace PlutoGE::render
 
     void VolumetricFogEffect::SetParameters(const std::vector<PostProcessParameter> &parameters)
     {
+        m_hasHistory = false;
         for (const auto &parameter : parameters)
         {
             if (parameter.name == "Density")
@@ -309,6 +313,7 @@ namespace PlutoGE::render
 
             uniform sampler2D uSceneDepthTexture;
             uniform sampler2D uOceanStateTexture;
+            uniform sampler2D uEnvironmentMap;
             uniform sampler2DShadow uShadowCascadeMap0;
             uniform sampler2DShadow uShadowCascadeMap1;
             uniform sampler2DShadow uShadowCascadeMap2;
@@ -336,6 +341,10 @@ namespace PlutoGE::render
             uniform int uShadowStepStride;
             uniform int uCascadeCount;
             uniform int uHasDirectionalLight;
+            uniform int uEnvironmentEnabled;
+            uniform float uEnvironmentIntensity;
+            uniform int uTemporalSampling;
+            uniform float uFrameIndex;
             uniform vec3 uCascadeWorldOrigins[4];
             uniform mat4 uCascadeLightSpaceMatrices[4];
             uniform float uCascadeSplits[4];
@@ -343,6 +352,15 @@ namespace PlutoGE::render
             float Saturate(float value)
             {
                 return clamp(value, 0.0, 1.0);
+            }
+
+            float PixelJitter(vec2 pixel, float frame)
+            {
+                // Interleaved gradient noise has little low-frequency energy,
+                // so discrete shadow samples become fine noise instead of
+                // coherent copies of each caster along the view ray.
+                float noise = fract(52.9829189 * fract(dot(pixel, vec2(0.06711056, 0.00583715))));
+                return fract(noise + frame * 0.61803398875);
             }
 
             vec3 GetWorldRayDirection(vec2 uv)
@@ -376,14 +394,54 @@ namespace PlutoGE::render
 
             float ComputeDirectionalInscattering(float cosTheta)
             {
-                float phase = ComputePhase(cosTheta);
-                float forwardScatter = pow(Saturate(cosTheta), mix(8.0, 2.0, Saturate(uAnisotropy * 0.5 + 0.5)));
-                return phase * 12.566370614359172 + forwardScatter * 0.75;
+                // Keep the phase function energy conserving.  The previous
+                // path multiplied Henyey-Greenstein by 4 PI and then added a
+                // second forward lobe, which created radiance and made long
+                // horizontal paths blow out around a low sun.
+                return ComputePhase(cosTheta);
+            }
+
+            vec2 DirectionToEquirectangularUv(vec3 direction)
+            {
+                const float invPi = 0.31830988618;
+                const float invTwoPi = 0.15915494309;
+                vec3 normalizedDirection = normalize(direction);
+                return vec2(atan(normalizedDirection.z, normalizedDirection.x) * invTwoPi + 0.5,
+                            acos(clamp(normalizedDirection.y, -1.0, 1.0)) * invPi);
+            }
+
+            vec3 SampleEnvironment(vec3 direction)
+            {
+                return max(texture(uEnvironmentMap, DirectionToEquirectangularUv(direction)).rgb, vec3(0.0));
             }
 
             vec3 ComputeFogAmbientColor()
             {
-                return uFogColor;
+                if (uEnvironmentEnabled == 0)
+                {
+                    return vec3(0.0);
+                }
+
+                // Approximate the spherical mean radiance seen by an isotropic
+                // fog particle. Include diagonal directions so a bright sky
+                // near the horizon is represented instead of being missed by
+                // a sparse axis-only sample set.
+                vec3 environmentRadiance =
+                    SampleEnvironment(vec3( 1.0,  0.0,  0.0)) +
+                    SampleEnvironment(vec3(-1.0,  0.0,  0.0)) +
+                    SampleEnvironment(vec3( 0.0,  1.0,  0.0)) +
+                    SampleEnvironment(vec3( 0.0, -1.0,  0.0)) +
+                    SampleEnvironment(vec3( 0.0,  0.0,  1.0)) +
+                    SampleEnvironment(vec3( 0.0,  0.0, -1.0)) +
+                    SampleEnvironment(vec3( 1.0,  1.0,  1.0)) +
+                    SampleEnvironment(vec3(-1.0,  1.0,  1.0)) +
+                    SampleEnvironment(vec3( 1.0,  1.0, -1.0)) +
+                    SampleEnvironment(vec3(-1.0,  1.0, -1.0)) +
+                    SampleEnvironment(vec3( 1.0, -1.0,  1.0)) +
+                    SampleEnvironment(vec3(-1.0, -1.0,  1.0)) +
+                    SampleEnvironment(vec3( 1.0, -1.0, -1.0)) +
+                    SampleEnvironment(vec3(-1.0, -1.0, -1.0));
+                return max(uFogColor, vec3(0.0)) * environmentRadiance * (uEnvironmentIntensity / 14.0);
             }
 
             float SampleShadowMapPCF(sampler2DShadow shadowMap, vec3 projectedCoords)
@@ -454,7 +512,10 @@ namespace PlutoGE::render
 
                 if (viewDepth > uCascadeSplits[uCascadeCount - 1])
                 {
-                    return 0.0;
+                    // There is no occlusion information beyond the final
+                    // cascade. Treating that region as fully visible creates
+                    // a bright ring of sun-lit fog at the shadow horizon.
+                    return 1.0;
                 }
 
                 int cascadeIndex = SelectDirectionalCascadeIndex(viewDepth);
@@ -462,7 +523,7 @@ namespace PlutoGE::render
                 float shadow = ComputeDirectionalCascadeShadow(worldPosition, cascadeIndex, hasCascadeCoverage);
                 if (!hasCascadeCoverage)
                 {
-                    return 0.0;
+                    return 1.0;
                 }
 
                 if (cascadeIndex < uCascadeCount - 1)
@@ -479,6 +540,19 @@ namespace PlutoGE::render
                             shadow = mix(shadow, nextShadow, blendFactor);
                         }
                     }
+                }
+
+                // Fade visibility into the end of the final shadow cascade.
+                // This avoids a hard transition to the conservative
+                // no-coverage result while preventing distant fog from being
+                // assumed to receive unobstructed sunlight.
+                if (cascadeIndex == uCascadeCount - 1)
+                {
+                    float splitDistance = uCascadeSplits[cascadeIndex];
+                    float fadeDistance = max(uCascadeBlendDistance, splitDistance * 0.05);
+                    float fadeStart = max(splitDistance - fadeDistance, 0.0);
+                    float coverageFade = clamp((viewDepth - fadeStart) / max(fadeDistance, 0.0001), 0.0, 1.0);
+                    shadow = mix(shadow, 1.0, coverageFade);
                 }
 
                 return shadow;
@@ -515,12 +589,14 @@ namespace PlutoGE::render
                 }
 
                 float stepLength = hitDistance / float(uStepCount);
-                float sampleDistance = 0.5 * stepLength;
-                vec3 sampleStep = rayDirection * stepLength;
-                vec3 samplePosition = uCameraPosition + rayDirection * sampleDistance;
+                // A regular midpoint march stamps the same shadow silhouette
+                // at every depth plane. Use this as the seed for a stratified
+                // low-discrepancy sequence below instead of shifting the whole
+                // regular lattice by one shared offset.
+                float frameIndex = uTemporalSampling != 0 ? uFrameIndex : 0.0;
+                float rayJitter = PixelJitter(gl_FragCoord.xy, frameIndex);
                 vec3 cameraForward = -normalize(vec3(uViewMatrix[0][2], uViewMatrix[1][2], uViewMatrix[2][2]));
-                float viewDepthStep = max(dot(rayDirection, cameraForward), 0.0) * stepLength;
-                float sampleViewDepth = 0.5 * viewDepthStep;
+                float viewDepthScale = max(dot(rayDirection, cameraForward), 0.0);
                 vec3 accumulatedLight = vec3(0.0);
                 float transmittance = 1.0;
                 float directionalInscattering = uHasDirectionalLight != 0
@@ -530,8 +606,18 @@ namespace PlutoGE::render
 
                 for (int stepIndex = 0; stepIndex < uStepCount; ++stepIndex)
                 {
-                    // Deterministic midpoint integration prevents both persistent
-                    // screen-space patterns and temporal sparkle in smooth fog.
+                    // One sample remains inside each ordered march cell, but
+                    // its fractional position follows a golden-ratio sequence.
+                    // Pillar silhouettes therefore cannot recur at a constant
+                    // world-space interval. This costs no additional density
+                    // or shadow samples and TAA integrates the changing pattern.
+                    float cellJitter = fract(rayJitter + float(stepIndex) * 0.61803398875);
+                    // Extinction controls the stable body of the fog, so keep
+                    // it at the cell midpoint. Only decorrelate the shadow
+                    // query that causes visible banding.
+                    float sampleDistance = (float(stepIndex) + 0.5) * stepLength;
+                    vec3 samplePosition = uCameraPosition + rayDirection * sampleDistance;
+                    float sampleViewDepth = viewDepthScale * sampleDistance;
                     float density = ComputeDensity(samplePosition);
                     float extinction = max(density * stepLength, 0.0);
                     float segmentTransmittance = exp(-extinction);
@@ -543,14 +629,15 @@ namespace PlutoGE::render
                     // maximum-quality path.
                     if (uHasDirectionalLight != 0 && (stepIndex % uShadowStepStride) == 0)
                     {
-                        lightVisibility = 1.0 - ComputeDirectionalLightShadow(samplePosition, sampleViewDepth);
+                        float shadowDistance = (float(stepIndex) + cellJitter) * stepLength;
+                        vec3 shadowPosition = uCameraPosition + rayDirection * shadowDistance;
+                        lightVisibility = 1.0 - ComputeDirectionalLightShadow(shadowPosition, viewDepthScale * shadowDistance);
                     }
-                    // exp(-extinction * 6) is the sixth power of the
-                    // transmittance already computed above. Multiplication is
-                    // substantially cheaper than a second exponential per step.
-                    float transmittanceSquared = segmentTransmittance * segmentTransmittance;
-                    float multipleScattering = 1.0 - transmittanceSquared * transmittanceSquared * transmittanceSquared;
-                    vec3 ambientScatter = ambientFogColor * uAmbientContribution * (0.55 + 0.45 * multipleScattering);
+                    // Environment radiance is already the incident ambient
+                    // light. Do not attenuate it a second time based on the
+                    // current segment thickness; segmentFog below supplies the
+                    // physically relevant scattering weight.
+                    vec3 ambientScatter = ambientFogColor * uAmbientContribution;
                     vec3 directionalScatter = uHasDirectionalLight != 0
                         ? (uLightColor * uLightIntensity * directionalInscattering * uScattering * uDirectionalContribution * lightVisibility)
                         : vec3(0.0);
@@ -567,9 +654,6 @@ namespace PlutoGE::render
                         transmittance = 0.0;
                         break;
                     }
-
-                    samplePosition += sampleStep;
-                    sampleViewDepth += viewDepthStep;
                 }
 
                 float totalFog = Saturate(1.0 - transmittance);
@@ -601,6 +685,68 @@ namespace PlutoGE::render
         const float shadowBorder[] = {1.0f, 1.0f, 1.0f, 1.0f};
         glSamplerParameterfv(m_shadowCompareSampler, GL_TEXTURE_BORDER_COLOR, shadowBorder);
 
+        ShaderSource temporalSource;
+        temporalSource.vertexSource = source.vertexSource;
+        temporalSource.fragmentSource = R"(
+            #version 330 core
+            in vec2 UV;
+            out vec4 FragColor;
+            uniform sampler2D uCurrentFog;
+            uniform sampler2D uCurrentDepth;
+            uniform sampler2D uHistoryFog;
+            uniform sampler2D uHistoryDepth;
+            uniform mat4 uInverseViewProjection;
+            uniform mat4 uPreviousViewProjection;
+            uniform int uHasHistory;
+
+            void main()
+            {
+                vec4 current = texture(uCurrentFog, UV);
+                if (uHasHistory == 0) { FragColor = current; return; }
+
+                float depth = texture(uCurrentDepth, UV).r;
+                vec4 clip = vec4(UV * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+                vec4 world = uInverseViewProjection * clip;
+                world /= max(abs(world.w), 0.0001);
+                vec4 previousClip = uPreviousViewProjection * vec4(world.xyz, 1.0);
+                if (previousClip.w <= 0.0) { FragColor = current; return; }
+                vec3 previousNdc = previousClip.xyz / previousClip.w;
+                vec2 historyUv = previousNdc.xy * 0.5 + 0.5;
+                if (any(lessThan(historyUv, vec2(0.0))) || any(greaterThan(historyUv, vec2(1.0))))
+                { FragColor = current; return; }
+
+                float historyDepth = texture(uHistoryDepth, historyUv).r;
+                float expectedDepth = previousNdc.z * 0.5 + 0.5;
+                bool currentSky = depth <= 0.000001;
+                bool historySky = historyDepth <= 0.000001;
+                float depthScale = max(max(abs(expectedDepth), abs(historyDepth)) * 0.02, 0.00005);
+                float depthValidity = currentSky
+                    ? (historySky ? 1.0 : 0.0)
+                    : (historySky ? 0.0 : 1.0 - smoothstep(depthScale, depthScale * 3.0, abs(expectedDepth - historyDepth)));
+
+                vec2 texel = 1.0 / vec2(textureSize(uCurrentFog, 0));
+                vec4 minimumValue = current;
+                vec4 maximumValue = current;
+                for (int y = -1; y <= 1; ++y)
+                for (int x = -1; x <= 1; ++x)
+                {
+                    vec4 sampleValue = texture(uCurrentFog, clamp(UV + vec2(x, y) * texel, vec2(0.0), vec2(1.0)));
+                    minimumValue = min(minimumValue, sampleValue);
+                    maximumValue = max(maximumValue, sampleValue);
+                }
+                vec4 history = texture(uHistoryFog, historyUv);
+                // A deliberately relaxed envelope preserves stochastic bright
+                // shaft samples so they converge instead of being rejected by
+                // the much tighter surface-TAA neighborhood clamp.
+                vec4 extent = max(maximumValue - minimumValue, vec4(0.002));
+                history = clamp(history, minimumValue - extent * 0.5, maximumValue + extent * 0.5);
+                float motionPixels = length((historyUv - UV) / texel);
+                float historyWeight = 0.92 * depthValidity * (1.0 - smoothstep(8.0, 48.0, motionPixels));
+                FragColor = mix(current, history, historyWeight);
+            }
+        )";
+        m_temporalShader = Shader::Create(temporalSource);
+
         ShaderSource compositeSource;
         compositeSource.vertexSource = source.vertexSource;
         compositeSource.fragmentSource = R"(
@@ -611,11 +757,34 @@ namespace PlutoGE::render
 
             uniform sampler2D uSceneTexture;
             uniform sampler2D uFogTexture;
+            uniform sampler2D uSceneDepthTexture;
+            uniform vec2 uFogTexelSize;
+
+            vec4 SampleFogBilateral(vec2 uv)
+            {
+                float centerDepth = texture(uSceneDepthTexture, uv).r;
+                vec4 result = vec4(0.0);
+                float totalWeight = 0.0;
+                const vec2 offsets[5] = vec2[](vec2(0.0), vec2(1.0,0.0), vec2(-1.0,0.0), vec2(0.0,1.0), vec2(0.0,-1.0));
+                for (int i = 0; i < 5; ++i)
+                {
+                    vec2 sampleUv = clamp(uv + offsets[i] * uFogTexelSize, vec2(0.0), vec2(1.0));
+                    float sampleDepth = texture(uSceneDepthTexture, sampleUv).r;
+                    bool sameClass = (centerDepth <= 0.000001) == (sampleDepth <= 0.000001);
+                    float scale = max(max(centerDepth, sampleDepth) * 0.03, 0.00005);
+                    float depthWeight = sameClass ? exp(-abs(centerDepth - sampleDepth) / scale) : 0.0;
+                    float kernelWeight = i == 0 ? 4.0 : 1.0;
+                    float weight = kernelWeight * depthWeight;
+                    result += texture(uFogTexture, sampleUv) * weight;
+                    totalWeight += weight;
+                }
+                return result / max(totalWeight, 0.0001);
+            }
 
             void main()
             {
                 vec3 sceneColor = texture(uSceneTexture, UV).rgb;
-                vec4 fog = texture(uFogTexture, UV);
+                vec4 fog = SampleFogBilateral(UV);
                 float fogFactor = clamp(fog.a, 0.0, 1.0);
                 vec3 finalColor = mix(sceneColor, fog.rgb, fogFactor);
                 FragColor = vec4(finalColor, 1.0);
@@ -646,12 +815,31 @@ namespace PlutoGE::render
         else if (m_fogRenderTarget->GetWidth() != m_internalWidth || m_fogRenderTarget->GetHeight() != m_internalHeight)
         {
             m_fogRenderTarget->Resize(m_internalWidth, m_internalHeight);
+            m_hasHistory = false;
+        }
+
+        for (auto &historyTarget : m_historyTargets)
+        {
+            if (!historyTarget)
+            {
+                historyTarget = std::make_unique<RenderTarget>(RenderTargetConfig{
+                    .width = m_internalWidth,
+                    .height = m_internalHeight,
+                    .clearColor = glm::vec4(0.0f),
+                });
+                m_hasHistory = false;
+            }
+            else if (historyTarget->GetWidth() != m_internalWidth || historyTarget->GetHeight() != m_internalHeight)
+            {
+                historyTarget->Resize(m_internalWidth, m_internalHeight);
+                m_hasHistory = false;
+            }
         }
     }
 
     void VolumetricFogEffect::Apply(const PostProcessContext &context)
     {
-        if (!m_shader || !m_compositeShader || !context.sourceRenderTarget || !context.destinationRenderTarget || !context.renderContext.hasCameraData)
+        if (!m_shader || !m_temporalShader || !m_compositeShader || !context.sourceRenderTarget || !context.destinationRenderTarget || !context.renderContext.hasCameraData)
         {
             return;
         }
@@ -661,6 +849,12 @@ namespace PlutoGE::render
         {
             return;
         }
+
+        if (m_lastHistoryFrame == 0 || context.renderContext.frameSequence != m_lastHistoryFrame + 1)
+        {
+            m_hasHistory = false;
+        }
+        m_lastHistoryFrame = context.renderContext.frameSequence;
 
         const glm::mat4 inverseView = glm::inverse(context.renderContext.cameraData.view);
         const glm::mat4 inverseProjection = glm::inverse(context.renderContext.cameraData.projection);
@@ -713,6 +907,24 @@ namespace PlutoGE::render
             m_shader->SetUniform("uOceanStateTexture", kOceanStateTextureSlot);
         }
         BindDirectionalShadowInputs(m_shader, primaryDirectionalLight);
+        const GLuint physicalSkyTexture = context.renderContext.renderer
+                                              ? context.renderContext.renderer->GetPhysicalSkyEnvironmentTextureID()
+                                              : 0;
+        const auto *sceneEnvironmentTexture = context.renderContext.scene
+                                                  ? context.renderContext.scene->GetEnvironmentMapTexture()
+                                                  : nullptr;
+        const GLuint environmentTexture = physicalSkyTexture != 0
+                                              ? physicalSkyTexture
+                                              : (sceneEnvironmentTexture ? sceneEnvironmentTexture->GetTextureID() : 0);
+        Graphics::ActiveTexture(GL_TEXTURE0 + kEnvironmentTextureSlot);
+        Graphics::BindTexture(GL_TEXTURE_2D, environmentTexture);
+        m_shader->SetUniform("uEnvironmentMap", kEnvironmentTextureSlot);
+        m_shader->SetUniform("uEnvironmentEnabled", environmentTexture != 0 ? 1 : 0);
+        m_shader->SetUniform("uEnvironmentIntensity", context.renderContext.scene
+                                                         ? std::max(context.renderContext.scene->GetEnvironmentIntensity(), 0.0f)
+                                                         : 1.0f);
+        m_shader->SetUniform("uTemporalSampling", 1);
+        m_shader->SetUniform("uFrameIndex", static_cast<float>(context.renderContext.frameSequence % 16ull));
         for (int cascadeIndex = 0; cascadeIndex < scene::kMaxDirectionalShadowCascades; ++cascadeIndex)
             glBindSampler(kDirectionalShadowCascadeTextureStartSlot + cascadeIndex, m_shadowCompareSampler);
         m_shader->SetUniform("uViewMatrix", context.renderContext.cameraData.view);
@@ -740,6 +952,45 @@ namespace PlutoGE::render
         for (int cascadeIndex = 0; cascadeIndex < scene::kMaxDirectionalShadowCascades; ++cascadeIndex)
             glBindSampler(kDirectionalShadowCascadeTextureStartSlot + cascadeIndex, 0);
 
+        RenderTarget *historyRead = m_historyTargets[m_historyIndex].get();
+        RenderTarget *historyWrite = m_historyTargets[1 - m_historyIndex].get();
+        const RenderTarget *depthSource = context.renderContext.oceanSurfaceDepthRenderTarget
+                                              ? context.renderContext.oceanSurfaceDepthRenderTarget
+                                              : context.sourceRenderTarget;
+        const glm::mat4 currentViewProjection = context.renderContext.cameraData.projection * context.renderContext.cameraData.view;
+        Graphics::BindRenderTarget(historyWrite);
+        Graphics::SetViewport(0, 0, m_internalWidth, m_internalHeight);
+        Graphics::Disable(GL_BLEND);
+        m_temporalShader->Bind();
+        Graphics::ActiveTexture(GL_TEXTURE0);
+        Graphics::BindTexture(GL_TEXTURE_2D, m_fogRenderTarget->GetColorTextureID());
+        m_temporalShader->SetUniform("uCurrentFog", 0);
+        Graphics::ActiveTexture(GL_TEXTURE1);
+        Graphics::BindTexture(GL_TEXTURE_2D, depthSource->GetDepthTextureID());
+        m_temporalShader->SetUniform("uCurrentDepth", 1);
+        Graphics::ActiveTexture(GL_TEXTURE2);
+        Graphics::BindTexture(GL_TEXTURE_2D, historyRead->GetColorTextureID());
+        m_temporalShader->SetUniform("uHistoryFog", 2);
+        Graphics::ActiveTexture(GL_TEXTURE3);
+        Graphics::BindTexture(GL_TEXTURE_2D, historyRead->GetDepthTextureID());
+        m_temporalShader->SetUniform("uHistoryDepth", 3);
+        m_temporalShader->SetUniform("uInverseViewProjection", glm::inverse(currentViewProjection));
+        m_temporalShader->SetUniform("uPreviousViewProjection", m_previousViewProjection);
+        m_temporalShader->SetUniform("uHasHistory", m_hasHistory ? 1 : 0);
+        DrawFullscreenTriangle();
+
+        // Preserve the depth corresponding to this fog history so the next
+        // frame can reject disocclusions rather than dragging shafts over
+        // newly revealed surfaces.
+        Graphics::BindFramebuffer(GL_READ_FRAMEBUFFER, depthSource->GetFramebufferID());
+        Graphics::BindFramebuffer(GL_DRAW_FRAMEBUFFER, historyWrite->GetFramebufferID());
+        glBlitFramebuffer(0, 0, depthSource->GetWidth(), depthSource->GetHeight(),
+                          0, 0, m_internalWidth, m_internalHeight,
+                          GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+        m_previousViewProjection = currentViewProjection;
+        m_historyIndex = 1 - m_historyIndex;
+        m_hasHistory = true;
+
         BeginApply(context);
         Graphics::SetViewport(0, 0, context.destinationRenderTarget->GetWidth(), context.destinationRenderTarget->GetHeight());
         Graphics::Disable(GL_BLEND);
@@ -747,8 +998,13 @@ namespace PlutoGE::render
         m_compositeShader->Bind();
         BindCommonInputs(m_compositeShader, context);
         Graphics::ActiveTexture(GL_TEXTURE5);
-        Graphics::BindTexture(GL_TEXTURE_2D, m_fogRenderTarget->GetColorTextureID());
+        Graphics::BindTexture(GL_TEXTURE_2D, historyWrite->GetColorTextureID());
         m_compositeShader->SetUniform("uFogTexture", 5);
+        Graphics::ActiveTexture(GL_TEXTURE6);
+        Graphics::BindTexture(GL_TEXTURE_2D, depthSource->GetDepthTextureID());
+        m_compositeShader->SetUniform("uSceneDepthTexture", 6);
+        m_compositeShader->SetUniform("uFogTexelSize", glm::vec2(1.0f / static_cast<float>(m_internalWidth),
+                                                                  1.0f / static_cast<float>(m_internalHeight)));
         DrawFullscreenTriangle();
 
         EndApply();

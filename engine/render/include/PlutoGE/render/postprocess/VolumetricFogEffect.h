@@ -4,6 +4,8 @@
 #include "PlutoGE/render/postprocess/ShaderPostProcessEffect.h"
 
 #include <memory>
+#include <array>
+#include <cstdint>
 
 #include <glm/glm.hpp>
 
@@ -28,9 +30,15 @@ namespace PlutoGE::render
         void EnsureInternalTarget(int width, int height);
 
         Shader *m_shader = nullptr;
+        Shader *m_temporalShader = nullptr;
         Shader *m_compositeShader = nullptr;
         unsigned int m_shadowCompareSampler = 0;
         std::unique_ptr<RenderTarget> m_fogRenderTarget;
+        std::array<std::unique_ptr<RenderTarget>, 2> m_historyTargets;
+        glm::mat4 m_previousViewProjection{1.0f};
+        int m_historyIndex = 0;
+        bool m_hasHistory = false;
+        std::uint64_t m_lastHistoryFrame = 0;
         glm::vec3 m_fogColor{1.0f, 1.0f, 1.0f};
         float m_density = 0.035f;
         float m_heightFalloff = 0.12f;
@@ -38,7 +46,7 @@ namespace PlutoGE::render
         float m_maxDistance = 80.0f;
         float m_scattering = 0.65f;
         float m_anisotropy = 0.2f;
-        float m_ambientContribution = 0.3f;
+        float m_ambientContribution = 1.0f;
         float m_directionalContribution = 6.0f;
         float m_maxOpacity = 0.92f;
         int m_stepCount = 16;

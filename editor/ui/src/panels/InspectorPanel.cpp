@@ -3022,7 +3022,7 @@ namespace PlutoGE::ui
             return;
         }
 
-        const auto presetOptions = CollectAssetReferenceOptions(EditorShell::GetInstance().GetProject(), assets::ProjectAssetType::PostProcessPreset);
+        const auto &presetOptions = GetCachedAssetReferenceOptions(EditorShell::GetInstance().GetProject(), assets::ProjectAssetType::PostProcessPreset);
         const std::string &presetReference = cameraComponent.GetPostProcessPresetAssetReference();
         const std::string presetLabel = presetReference.empty() ? "None" : presetReference;
         if (ImGui::BeginCombo("Preset", presetLabel.c_str()))
@@ -3270,7 +3270,7 @@ namespace PlutoGE::ui
             return;
         }
 
-        const auto presetOptions = CollectAssetReferenceOptions(EditorShell::GetInstance().GetProject(), assets::ProjectAssetType::PostProcessPreset);
+        const auto &presetOptions = GetCachedAssetReferenceOptions(EditorShell::GetInstance().GetProject(), assets::ProjectAssetType::PostProcessPreset);
         const std::string &presetReference = camera.GetPostProcessPresetAssetReference();
         const std::string presetLabel = presetReference.empty() ? "None" : presetReference;
         if (ImGui::BeginCombo("Preset", presetLabel.c_str()))
@@ -4103,8 +4103,8 @@ namespace PlutoGE::ui
             {
                 ImGui::Separator();
                 ImGui::Text("Animation");
-                auto animationAssetOptions = CollectAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::Animation);
-                auto animationClipAssetOptions = CollectAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::AnimationClip);
+                auto animationAssetOptions = GetCachedAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::Animation);
+                const auto &animationClipAssetOptions = GetCachedAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::AnimationClip);
                 animationAssetOptions.insert(animationAssetOptions.end(), animationClipAssetOptions.begin(), animationClipAssetOptions.end());
                 std::sort(animationAssetOptions.begin(), animationAssetOptions.end(),
                           [](const AssetReferenceOption &left, const AssetReferenceOption &right)
@@ -4145,7 +4145,7 @@ namespace PlutoGE::ui
                     }
                 }
 
-                const auto animationGraphAssetOptions = CollectAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::AnimationGraph);
+                const auto &animationGraphAssetOptions = GetCachedAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::AnimationGraph);
                 std::string animationGraphPreview = GetAssetReferencePreview(animationGraphAssetOptions,
                                                                              animationComponent->GetAnimationGraphAssetReference(),
                                                                              "None");
@@ -4963,7 +4963,7 @@ namespace PlutoGE::ui
                             }
                             ImGui::EndDisabled();
 
-                            const auto materialAssetOptions = CollectAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::Material);
+                            const auto &materialAssetOptions = GetCachedAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::Material);
                             const std::string materialPreview = GetAssetReferencePreview(
                                 materialAssetOptions,
                                 terrainComponent->GetMaterialAssetReference(),
@@ -5015,7 +5015,7 @@ namespace PlutoGE::ui
                                 {"GenerateCollision", scene::PropertyType::Bool, splineComponent->ShouldGenerateCollision() ? "true" : "false"},
                             };
 
-                            const auto materialAssetOptions = CollectAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::Material);
+                            const auto &materialAssetOptions = GetCachedAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::Material);
                             const std::string materialPreview = GetAssetReferencePreview(
                                 materialAssetOptions,
                                 splineComponent->GetMaterialAssetReference(),
@@ -5339,7 +5339,7 @@ namespace PlutoGE::ui
                             }
 
                             auto &engine = core::Engine::GetInstance();
-                            const auto meshAssetOptions = CollectAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::Mesh);
+                            const auto &meshAssetOptions = GetCachedAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::Mesh);
                             std::string meshPreview = !selectedType || selectedType->sourceMeshPath.empty() ? "None" : selectedType->sourceMeshPath;
                             for (const auto &option : meshAssetOptions)
                             {
@@ -5481,7 +5481,7 @@ namespace PlutoGE::ui
                             }
                             ImGui::EndDisabled();
 
-                            const auto materialAssetOptions = CollectAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::Material);
+                            const auto &materialAssetOptions = GetCachedAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::Material);
                             const std::string materialPreview = GetAssetReferencePreview(
                                 materialAssetOptions,
                                 selectedType ? selectedType->materialAssetReference : std::string{},
@@ -5691,7 +5691,7 @@ namespace PlutoGE::ui
 
                         if (auto *particleSystemComponent = dynamic_cast<scene::ParticleSystemComponent *>(componentPtr))
                         {
-                            const auto particleAssetOptions = CollectAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::ParticleSystem);
+                            const auto &particleAssetOptions = GetCachedAssetReferenceOptions(editorShell.GetProject(), assets::ProjectAssetType::ParticleSystem);
                             const std::string currentReference = particleSystemComponent->GetParticleSystemAssetReference();
                             const std::string preview = GetAssetReferencePreview(particleAssetOptions, currentReference, "None");
                             if (ImGui::BeginCombo("Particle System Asset", preview.c_str()))

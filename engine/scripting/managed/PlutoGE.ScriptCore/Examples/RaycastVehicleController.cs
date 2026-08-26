@@ -385,11 +385,23 @@ public sealed class RaycastVehicleController : ScriptBehaviour
             if (drivePower > 0.0f && driveShare > 0.0f)
             {
                 var speedLimiter = 1.0f - SmoothStep(Math.Clamp(MathF.Abs(Vector3.Dot(_rigidbody.Velocity, bodyForward)) / MathF.Max(maxSpeed, 1.0f), 0.0f, 1.0f));
-                var rawDrive = wheelForward * drivePower * acceleration * _rigidbody.Mass * driveShare * speedLimiter;
+                // `acceleration` calibrates peak tractive acceleration in first
+                // gear. Wheel force in every other forward gear then follows
+                // the transmission ratio, as it would for engine torque passed
+                // through a gearbox: Fwheel = Tengine * ratio / wheelRadius.
+                var gearForceRatio = MathF.Abs(GetGearRatio(_currentGear)) /
+                                     MathF.Max(MathF.Abs(GetGearRatio(1)), 0.01f);
+                var rawDrive = wheelForward * drivePower * acceleration * _rigidbody.Mass *
+                               gearForceRatio * driveShare * speedLimiter;
                 // Throttle against the service brake deliberately overwhelms
                 // driven-wheel traction while the undriven axle holds the car.
                 var burnoutTraction = burnout ? 0.45f : 1.0f;
-                var tractionLimit = normalLoad * MathF.Max(wheelGrip, 0.0f) * MathF.Max(driveGrip, 0.0f) * driveShare * burnoutTraction;
+                // driveShare divides the engine demand between driven wheels; it
+                // must not also divide the contact patch's available traction.
+                // Doing both made the traction cap so low that even the bottom
+                // of the torque curve hit it, producing the same applied force
+                // at practically every engine RPM.
+                var tractionLimit = normalLoad * MathF.Max(wheelGrip, 0.0f) * MathF.Max(driveGrip, 0.0f) * burnoutTraction;
                 // Once engine demand exceeds the available longitudinal grip,
                 // the driven tyre is spinning and can no longer provide its
                 // full lateral force. Without this friction trade-off, raising
@@ -409,7 +421,7 @@ public sealed class RaycastVehicleController : ScriptBehaviour
                 {
                     var reversePower = brake * GetEngineTorqueMultiplier();
                     var rawReverse = -wheelForward * reversePower * reverseAcceleration * _rigidbody.Mass * driveShare;
-                    var tractionLimit = normalLoad * MathF.Max(wheelGrip, 0.0f) * MathF.Max(driveGrip, 0.0f) * driveShare;
+                    var tractionLimit = normalLoad * MathF.Max(wheelGrip, 0.0f) * MathF.Max(driveGrip, 0.0f);
                     var reverseDemand = rawReverse.Length() / MathF.Max(tractionLimit, 0.01f);
                     var poweredSlip = SmoothStep(InverseLerp(0.75f, 2.0f, reverseDemand));
                     tireForce = lateralForce * Lerp(1.0f, 0.18f, poweredSlip);
@@ -640,11 +652,6 @@ public sealed class RaycastVehicleController : ScriptBehaviour
         {
             targetRpm = MathF.Max(targetRpm, Lerp(MathF.Max(idleRpm, 0.0f), MathF.Max(launchRpm, idleRpm), throttle));
         }
-        else if (throttle > 0.0f)
-        {
-            targetRpm += throttle * 350.0f;
-        }
-
         if (brake > 0.0f && _currentGear == -1)
         {
             targetRpm = MathF.Max(targetRpm, Lerp(MathF.Max(idleRpm, 0.0f), MathF.Max(launchRpm, idleRpm), brake * 0.65f));

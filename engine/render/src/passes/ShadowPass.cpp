@@ -1956,7 +1956,36 @@ namespace PlutoGE::render
             {
                 if (light->type == scene::LightType::Point)
                 {
-                    light->pendingPointShadowFaceMask |= kAllPointShadowFacesMask;
+                    // A structural caster change has no previous bounds to
+                    // classify, so every cubemap face must be rebuilt. Pure
+                    // transform/pose motion does have conservative current and
+                    // previous bounds; queue only the faces either bound can
+                    // affect instead of spending several frames redrawing all
+                    // six high-resolution faces.
+                    if (shadowCasterTopologyChanged)
+                    {
+                        light->pendingPointShadowFaceMask |= kAllPointShadowFacesMask;
+                    }
+                    else
+                    {
+                        const float farPlane = glm::max(light->range, 0.1f);
+                        const auto shadowMatrices = BuildPointShadowMatrices(*light, farPlane);
+                        for (unsigned int face = 0; face < shadowMatrices.size(); ++face)
+                        {
+                            const auto faceFrustumPlanes = ExtractFrustumPlanes(shadowMatrices[face]);
+                            const bool movedCasterTouchesFace = AnyMovedShadowCasterRelevant(
+                                shadowCasters,
+                                [&](const ShadowCasterEntry &shadowCaster)
+                                {
+                                    return IsMovedCommandRelevantForPointLight(shadowCaster, *light) &&
+                                           IsMovedCommandRelevantForProjectedLight(shadowCaster, faceFrustumPlanes);
+                                });
+                            if (movedCasterTouchesFace)
+                            {
+                                light->pendingPointShadowFaceMask |= static_cast<std::uint8_t>(1u << face);
+                            }
+                        }
+                    }
                 }
                 else if (light->type == scene::LightType::Spot)
                 {
@@ -2402,6 +2431,37 @@ namespace PlutoGE::render
                     m_shadowPassShader->SetUniform("uLightSpaceMatrix", cascadeRenderMatrix);
                     ShadowDrawStats drawStats;
                     int updatedPixels = 0;
+
+                    // Directional scrolling can draw several narrow static and
+                    // dynamic regions for the same cascade. Classifying the
+                    // complete scene for every region repeated the relatively
+                    // expensive cascade projection test (and static/dynamic
+                    // split) several times. Preserve the existing sorted order,
+                    // but build the two cascade-local streams once and reuse
+                    // them for every dirty rectangle.
+                    static thread_local std::vector<const ShadowCasterEntry *> cascadeStaticShadowCasters;
+                    static thread_local std::vector<const ShadowCasterEntry *> cascadeDynamicShadowCasters;
+                    cascadeStaticShadowCasters.clear();
+                    cascadeDynamicShadowCasters.clear();
+                    cascadeStaticShadowCasters.reserve(sortedShadowCasters.size());
+                    cascadeDynamicShadowCasters.reserve(sortedShadowCasters.size());
+                    for (const auto *shadowCaster : sortedShadowCasters)
+                    {
+                        if (!shadowCaster || !shadowCaster->command ||
+                            !IsCommandRelevantForDirectionalCascade(
+                                *shadowCaster, cascadeProjection.lightViewMatrix, cascadeShadowWorldOrigin,
+                                cascadeProjection.receiverMin, cascadeProjection.receiverMax,
+                                cascadeProjection.receiverExtent, shadowResolution, effectiveMinCasterTexelRadius))
+                        {
+                            continue;
+                        }
+
+                        const bool isStaticCaster = shadowCaster->command->isStatic &&
+                                                    !shadowCaster->command->jointMatrices;
+                        (isStaticCaster ? cascadeStaticShadowCasters : cascadeDynamicShadowCasters)
+                            .push_back(shadowCaster);
+                    }
+
                     const auto lightSpaceRegionForPixels = [&](int x, int y, int width, int height)
                     {
                         const glm::vec2 scale = cascadeProjection.receiverExtent /
@@ -2437,19 +2497,17 @@ namespace PlutoGE::render
                         else Graphics::Disable(GL_SCISSOR_TEST);
                         if (clearDepth) glClear(GL_DEPTH_BUFFER_BIT);
                         const std::size_t streamBufferIndex = AcquireStreamBuffer();
+                        const auto &cascadeCasters = drawStaticCasters
+                                                         ? cascadeStaticShadowCasters
+                                                         : cascadeDynamicShadowCasters;
                         const ShadowDrawStats regionStats = DrawShadowCasterBatches(
-                            sortedShadowCasters,
+                            cascadeCasters,
                             [&](const ShadowCasterEntry &shadowCaster)
                             {
-                                const bool relevant = IsCommandRelevantForDirectionalCascade(
-                                    shadowCaster, cascadeProjection.lightViewMatrix, cascadeShadowWorldOrigin,
-                                    cascadeProjection.receiverMin, cascadeProjection.receiverMax,
-                                    cascadeProjection.receiverExtent, shadowResolution, effectiveMinCasterTexelRadius);
-                                const bool isStaticCaster = shadowCaster.command->isStatic && !shadowCaster.command->jointMatrices;
-                                return relevant && isStaticCaster == drawStaticCasters && (!effectiveRegion ||
+                                return !effectiveRegion ||
                                     IsCommandOverlappingDirectionalRegion(shadowCaster,
                                         cascadeProjection.lightViewMatrix, cascadeShadowWorldOrigin,
-                                        effectiveRegion->min, effectiveRegion->max));
+                                        effectiveRegion->min, effectiveRegion->max);
                             },
                             [&](const ShadowCasterEntry &shadowCaster)
                             { return SelectDirectionalShadowLod(*shadowCaster.command, cascadeIndex, cascadeCount, shadowResolution); },

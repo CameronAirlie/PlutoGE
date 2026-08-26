@@ -410,7 +410,7 @@ namespace PlutoGE::scene
             }
 
             effect->SetEnabled(serializedEffect.enabled);
-            effect->SetParameters(serializedEffect.parameters);
+            effect->ApplyParameters(serializedEffect.parameters);
             m_postProcessEffects.push_back(std::move(effect));
         }
     }

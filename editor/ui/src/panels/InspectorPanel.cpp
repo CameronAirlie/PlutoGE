@@ -3193,7 +3193,7 @@ namespace PlutoGE::ui
 
                 if (parametersChanged)
                 {
-                    effect->SetParameters(parameters);
+                    effect->ApplyParameters(parameters);
                 }
 
                 ImGui::TreePop();
@@ -3441,7 +3441,7 @@ namespace PlutoGE::ui
 
                 if (parametersChanged)
                 {
-                    effect->SetParameters(parameters);
+                    effect->ApplyParameters(parameters);
                 }
 
                 ImGui::TreePop();

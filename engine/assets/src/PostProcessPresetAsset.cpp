@@ -42,7 +42,7 @@ namespace PlutoGE::assets
             if (!effect)
                 continue;
             effect->SetEnabled(serialized.enabled);
-            effect->SetParameters(serialized.parameters);
+            effect->ApplyParameters(serialized.parameters);
             effects.push_back(std::move(effect));
         }
         return effects;

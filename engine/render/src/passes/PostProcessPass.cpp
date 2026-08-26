@@ -78,32 +78,15 @@ namespace PlutoGE::render
 
         const auto &effects = *ctx.postProcessEffects;
 
-        std::vector<std::string> effectStates;
+        std::vector<EffectState> effectStates;
         effectStates.reserve(effects.size());
         for (const auto *effect : effects)
         {
-            if (!effect)
-            {
-                effectStates.emplace_back("<null>");
-                continue;
-            }
-
-            std::string state = effect->GetTypeName();
-            state += effect->IsEnabled() ? "\nenabled" : "\ndisabled";
-            // Disabled effects cannot affect this frame. Their parameters are
-            // folded into the state when they are enabled, at which point the
-            // enabled-state change also invalidates temporal history.
-            if (effect->IsEnabled())
-            {
-                for (const auto &parameter : effect->GetParameters())
-                {
-                    state += '\n';
-                    state += parameter.name;
-                    state += '=';
-                    state += parameter.value;
-                }
-            }
-            effectStates.push_back(std::move(state));
+            effectStates.push_back(EffectState{
+                .effect = effect,
+                .configurationRevision = effect ? effect->GetConfigurationRevision() : 0,
+                .enabled = effect && effect->IsEnabled(),
+            });
         }
 
         // One pass instance renders multiple viewports. Keep their stack state

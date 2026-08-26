@@ -602,7 +602,7 @@ namespace PlutoGE::ui
                     parameterIt->value = serializedParameter.value;
                 }
 
-                effect->SetParameters(parameters);
+                effect->ApplyParameters(parameters);
             }
         }
 

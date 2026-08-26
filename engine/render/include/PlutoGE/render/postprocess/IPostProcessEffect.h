@@ -2,6 +2,7 @@
 
 #include <string>
 #include <vector>
+#include <cstdint>
 
 namespace PlutoGE::render
 {
@@ -63,11 +64,29 @@ namespace PlutoGE::render
         virtual std::vector<PostProcessParameter> GetParameters() const { return {}; }
         virtual void SetParameters(const std::vector<PostProcessParameter> &parameters) {}
 
+        // Route external configuration changes through this wrapper so render
+        // passes can detect them without rebuilding and serializing every
+        // effect's parameter list on every frame.
+        void ApplyParameters(const std::vector<PostProcessParameter> &parameters)
+        {
+            SetParameters(parameters);
+            ++m_configurationRevision;
+        }
+
+        std::uint64_t GetConfigurationRevision() const { return m_configurationRevision; }
+
         bool IsEnabled() const { return m_isEnabled; }
-        void SetEnabled(bool enabled) { m_isEnabled = enabled; }
+        void SetEnabled(bool enabled)
+        {
+            if (m_isEnabled == enabled)
+                return;
+            m_isEnabled = enabled;
+            ++m_configurationRevision;
+        }
 
     private:
         bool m_isEnabled = true;
         bool m_isInitialized = false;
+        std::uint64_t m_configurationRevision = 0;
     };
 }

@@ -11,6 +11,8 @@ namespace PlutoGE.ScriptCore.Examples;
 /// </summary>
 public sealed class RaycastVehicleController : ScriptBehaviour
 {
+    [SerializedField] private RaycastVehicleSettings? vehicleSettings = null;
+
     [SerializedField] private GameObject? frontLeftWheelAnchor = null;
     [SerializedField] private GameObject? frontRightWheelAnchor = null;
     [SerializedField] private GameObject? rearLeftWheelAnchor = null;
@@ -121,6 +123,7 @@ public sealed class RaycastVehicleController : ScriptBehaviour
             catch (Exception exception) { Debug.LogError($"Unable to load vehicle input map '{inputMappingAsset}': {exception.Message}"); }
         }
         UpgradeLegacySuspensionPreset();
+        ApplyVehicleSettings();
 
         _rigidbody = GameObject.GetComponent<RigidbodyComponent>();
         if (_rigidbody is not null)
@@ -149,6 +152,67 @@ public sealed class RaycastVehicleController : ScriptBehaviour
         ConfigureWheel(1, frontRightWheelAnchor, frontRightWheelVisual, true, true);
         ConfigureWheel(2, rearLeftWheelAnchor, rearLeftWheelVisual, false, false);
         ConfigureWheel(3, rearRightWheelAnchor, rearRightWheelVisual, false, true);
+    }
+
+    private void ApplyVehicleSettings()
+    {
+        if (vehicleSettings is null)
+        {
+            return;
+        }
+
+        mass = vehicleSettings.Mass;
+        wheelRadius = vehicleSettings.WheelRadius;
+        drivenWheelInertia = vehicleSettings.DrivenWheelInertia;
+        suspensionTravel = vehicleSettings.SuspensionTravel;
+        rideHeight = vehicleSettings.RideHeight;
+        springStrength = vehicleSettings.SpringStrength;
+        damperStrength = vehicleSettings.DamperStrength;
+
+        acceleration = vehicleSettings.Acceleration;
+        throttleResponse = vehicleSettings.ThrottleResponse;
+        reverseAcceleration = vehicleSettings.ReverseAcceleration;
+        brakePower = vehicleSettings.BrakePower;
+        maxSpeed = vehicleSettings.MaxSpeed;
+        drivetrain = vehicleSettings.Drivetrain;
+
+        frontGrip = vehicleSettings.FrontGrip;
+        rearGrip = vehicleSettings.RearGrip;
+        gripLimit = vehicleSettings.GripLimit;
+        driveGrip = vehicleSettings.DriveGrip;
+        peakLongitudinalSlip = vehicleSettings.PeakLongitudinalSlip;
+        fullLongitudinalSlip = vehicleSettings.FullLongitudinalSlip;
+        spinningTyreLongitudinalGrip = vehicleSettings.SpinningTyreLongitudinalGrip;
+        spinningTyreLateralGrip = vehicleSettings.SpinningTyreLateralGrip;
+        brakeGrip = vehicleSettings.BrakeGrip;
+        handbrakeGrip = vehicleSettings.HandbrakeGrip;
+
+        airDensity = vehicleSettings.AirDensity;
+        downforceCoefficient = vehicleSettings.DownforceCoefficient;
+        downforceArea = vehicleSettings.DownforceArea;
+        frontDownforceBalance = vehicleSettings.FrontDownforceBalance;
+
+        idleRpm = vehicleSettings.IdleRpm;
+        redlineRpm = vehicleSettings.RedlineRpm;
+        finalDriveRatio = vehicleSettings.FinalDriveRatio;
+        reverseGearRatio = vehicleSettings.ReverseGearRatio;
+        firstGearRatio = vehicleSettings.FirstGearRatio;
+        secondGearRatio = vehicleSettings.SecondGearRatio;
+        thirdGearRatio = vehicleSettings.ThirdGearRatio;
+        fourthGearRatio = vehicleSettings.FourthGearRatio;
+        fifthGearRatio = vehicleSettings.FifthGearRatio;
+        sixthGearRatio = vehicleSettings.SixthGearRatio;
+        upshiftRpm = vehicleSettings.UpshiftRpm;
+        downshiftRpm = vehicleSettings.DownshiftRpm;
+        shiftHysteresisRpm = vehicleSettings.ShiftHysteresisRpm;
+        engineResponse = vehicleSettings.EngineResponse;
+        launchRpm = vehicleSettings.LaunchRpm;
+        peakTorqueRpm = vehicleSettings.PeakTorqueRpm;
+        shiftDuration = vehicleSettings.ShiftDuration;
+
+        maxSteerAngle = vehicleSettings.MaxSteerAngle;
+        steerSharpness = vehicleSettings.SteerSharpness;
+        highSpeedSteerFade = vehicleSettings.HighSpeedSteerFade;
     }
 
     private void UpgradeLegacySuspensionPreset()
@@ -389,7 +453,8 @@ public sealed class RaycastVehicleController : ScriptBehaviour
             var tireForce = lateralForce;
             var driveShare = wheel.Steering ? driveSplit.Front * 0.5f : driveSplit.Rear * 0.5f;
             var drivenWheel = driveShare > 0.0f;
-            if (drivePower > 0.0f && driveShare > 0.0f)
+            var wheelLockedByHandbrake = !wheel.Steering && handbrake;
+            if (drivePower > 0.0f && driveShare > 0.0f && !wheelLockedByHandbrake)
             {
                 var speedLimiter = 1.0f - SmoothStep(Math.Clamp(MathF.Abs(Vector3.Dot(_rigidbody.Velocity, bodyForward)) / MathF.Max(maxSpeed, 1.0f), 0.0f, 1.0f));
                 // `acceleration` calibrates peak tractive acceleration in first
@@ -443,7 +508,7 @@ public sealed class RaycastVehicleController : ScriptBehaviour
             // must not be interpreted as reverse throttle on the driven axle.
             if (reverseRequested)
             {
-                if (driveShare > 0.0f)
+                if (driveShare > 0.0f && !wheelLockedByHandbrake)
                 {
                     var reversePower = brake * GetEngineTorqueMultiplier();
                     var rawReverse = -wheelForward * reversePower * reverseAcceleration * _rigidbody.Mass * driveShare;

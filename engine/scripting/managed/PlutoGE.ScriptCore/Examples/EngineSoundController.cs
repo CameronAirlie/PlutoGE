@@ -214,17 +214,40 @@ public sealed class EngineSoundController : ScriptBehaviour
 
     private float GetTelemetryTyreScreechAmount(VehicleTelemetry telemetry)
     {
-        var wheelSpinSpeed = MathF.Abs(telemetry.DrivenWheelSpeed);
-        var vehicleSpeed = MathF.Abs(telemetry.ForwardSpeed);
-        var spinningFasterThanMoving = wheelSpinSpeed > vehicleSpeed + MathF.Max(wheelSpinScreechThreshold, 0.0f);
-        if (!telemetry.IsGrounded ||
-            !spinningFasterThanMoving ||
-            telemetry.TyreSmoke < MathF.Max(minimumTelemetryScreech, 0.0f))
+        if (!telemetry.IsGrounded)
         {
             return 0.0f;
         }
 
-        return Math.Clamp(telemetry.TyreSmoke, 0.0f, 1.0f);
+        var wheelSpinSpeed = MathF.Abs(telemetry.DrivenWheelSpeed);
+        var vehicleSpeed = MathF.Abs(telemetry.ForwardSpeed);
+        var wheelOverspeed = MathF.Max(wheelSpinSpeed - vehicleSpeed, 0.0f);
+        var wheelSpinAmount = SafeInverseLerp(
+            MathF.Max(wheelSpinScreechThreshold, 0.0f),
+            MathF.Max(wheelSpinScreechThreshold + 10.0f, 0.01f),
+            wheelOverspeed);
+
+        var lateralSlipAmount = SafeInverseLerp(
+            MathF.Max(tyreSlipThreshold, 0.0f),
+            MathF.Max(tyreSlipFull, tyreSlipThreshold + 0.01f),
+            telemetry.LateralSlip);
+        var longitudinalSlipAmount = SafeInverseLerp(
+            MathF.Max(tyreSlipThreshold, 0.0f),
+            MathF.Max(tyreSlipFull, tyreSlipThreshold + 0.01f),
+            telemetry.LongitudinalSlip);
+
+        // Sliding or locked tyres need road speed to make useful noise, while a
+        // powered burnout can screech with very little chassis movement.
+        var slidingSpeedGate = SafeInverseLerp(
+            MathF.Max(minimumScreechSpeed * 0.5f, 0.0f),
+            MathF.Max(minimumScreechSpeed, 0.01f),
+            telemetry.Speed);
+        var slidingAmount = MathF.Max(lateralSlipAmount, longitudinalSlipAmount) * slidingSpeedGate;
+        var screechAmount = MathF.Max(wheelSpinAmount, MathF.Max(slidingAmount, telemetry.TyreSmoke * slidingSpeedGate));
+
+        return screechAmount >= MathF.Max(minimumTelemetryScreech, 0.0f)
+            ? Math.Clamp(screechAmount, 0.0f, 1.0f)
+            : 0.0f;
     }
 
     private void UpdateTyreScreech(float screechAmount, float deltaTime)

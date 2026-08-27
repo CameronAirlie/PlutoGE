@@ -165,6 +165,7 @@ namespace PlutoGE::ui
             ImGui::Text("Runtime UI: %.2f ms", frameTimingStats.sceneRuntimeUiMs);
             ImGui::Text("Components: %.2f ms", frameTimingStats.sceneComponentsMs);
             ImGui::Text("Late scripts: %.2f ms", frameTimingStats.sceneLateScriptsMs);
+            ImGui::Text("Audio: %.2f ms", frameTimingStats.sceneAudioMs);
             RenderTimingBreakdown("Component types", frameTimingStats.componentTimings);
             RenderTimingBreakdown("Animation phases", frameTimingStats.animationTimings);
             RenderTimingBreakdown("Script OnUpdate", frameTimingStats.scriptUpdateTimings);

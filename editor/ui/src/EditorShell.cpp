@@ -3041,6 +3041,7 @@ namespace PlutoGE::ui
                     frameTimingStats.sceneRuntimeUiMs = sceneTimingStats.runtimeUiMs;
                     frameTimingStats.sceneComponentsMs = sceneTimingStats.componentsMs;
                     frameTimingStats.sceneLateScriptsMs = sceneTimingStats.lateScriptsMs;
+                    frameTimingStats.sceneAudioMs = sceneTimingStats.audioMs;
                     frameTimingStats.componentTimings = sceneTimingStats.componentTimings;
                     frameTimingStats.animationTimings = sceneTimingStats.animationTimings;
                     frameTimingStats.scriptUpdateTimings = sceneTimingStats.scriptUpdateTimings;

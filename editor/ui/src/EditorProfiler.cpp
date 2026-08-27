@@ -132,6 +132,7 @@ namespace PlutoGE::ui
         report << "Scene / Runtime UI: " << frameTimingStats.sceneRuntimeUiMs << " ms\n";
         report << "Scene / Components: " << frameTimingStats.sceneComponentsMs << " ms\n";
         report << "Scene / Late scripts: " << frameTimingStats.sceneLateScriptsMs << " ms\n";
+        report << "Scene / Audio: " << frameTimingStats.sceneAudioMs << " ms\n";
         const auto appendTimings = [&report](std::string_view heading, const auto &source)
         {
             auto timings = source;

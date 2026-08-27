@@ -68,7 +68,12 @@ namespace PlutoGE::scene
         void CacheAudioOcclusion(float occlusion)
         {
             m_cachedAudioOcclusion = occlusion;
-            m_audioOcclusionRefreshTime = 0.1f;
+            // Keep emitters from converging on the same refresh frame after
+            // their initial stagger. The stable 80-120 ms cadence preserves
+            // the existing update rate while distributing physics queries.
+            constexpr std::uint64_t hashMultiplier = 0x9E3779B97F4A7C15ull;
+            const std::uint64_t cadenceBucket = (GetRuntimeKey() * hashMultiplier) % 5ull;
+            m_audioOcclusionRefreshTime = 0.08f + static_cast<float>(cadenceBucket) * 0.01f;
         }
         void ClearCachedAudioOcclusion()
         {

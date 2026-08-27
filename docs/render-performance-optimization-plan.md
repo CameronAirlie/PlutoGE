@@ -2,6 +2,22 @@
 
 Constraint: preserve all post-process effects and visual fidelity.
 
+## 2026-08-27 profile pass
+
+- [x] Correct scene timing attribution: audio previously appeared inside render submission.
+- [x] Retain audio component/state scratch capacity across frames.
+- [x] Resolve clip paths only for audible emitters and reuse the result for one-shots.
+- [x] De-synchronize recurring audio-occlusion refreshes while preserving their
+  80-120 ms cadence and full ray sample count.
+- [x] Expose audio as its own editor-profiler metric for follow-up measurement.
+- [x] Rebuild the complete RelWithDebInfo editor.
+
+The supplied capture's apparent 8.12 ms scene render-submission cost was mostly audio:
+mesh, terrain, and foliage submission accounted for approximately 0.19 ms. GPU work is
+led by shadows (3.81 ms) and post-processing (2.92 ms), but changing their quality or
+effect set is intentionally outside this fidelity-preserving pass. The next captured
+profile can now distinguish backend audio, occlusion queries, and true submission cost.
+
 - [x] Hierarchical cluster accept/reject culling using cached aggregate foliage bounds.
 - [x] Renderer-owned reusable visibility scratch buffers, removing per-frame vector allocations
   without changing the public `RenderCommand` layout.

@@ -20,6 +20,7 @@ namespace PlutoGE::ui
         float sceneRuntimeUiMs = 0.0f;
         float sceneComponentsMs = 0.0f;
         float sceneLateScriptsMs = 0.0f;
+        float sceneAudioMs = 0.0f;
         float sceneRenderSubmissionMs = 0.0f;
         float sceneMeshSubmissionMs = 0.0f;
         float sceneTerrainSubmissionMs = 0.0f;

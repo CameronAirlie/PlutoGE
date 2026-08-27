@@ -2639,11 +2639,19 @@ namespace PlutoGE::scene
         // world-space cameras and their targets share the same smooth timeline.
         ApplyRuntimePhysicsRenderExtrapolation(m_physicsTimeAccumulator);
 
+        const auto audioStart = Clock::now();
         if (m_runtimeStarted)
         {
-            std::vector<SoundEmitterComponent *> emitters;
-            std::vector<SoundListenerComponent *> listeners;
-            std::vector<AudioEnvironmentVolumeComponent *> environmentVolumes;
+            // Retain frame-scratch capacity so audio-heavy scenes do not churn the
+            // allocator while collecting the same component sets each update.
+            thread_local std::vector<SoundEmitterComponent *> emitters;
+            thread_local std::vector<SoundListenerComponent *> listeners;
+            thread_local std::vector<AudioEnvironmentVolumeComponent *> environmentVolumes;
+            thread_local std::vector<audio::EmitterState> emitterStates;
+            emitters.clear();
+            listeners.clear();
+            environmentVolumes.clear();
+            emitterStates.clear();
             for (auto *rootEntity : m_rootEntities)
             {
                 CollectActiveAudioComponents(rootEntity, emitters, listeners, &environmentVolumes);
@@ -2687,7 +2695,6 @@ namespace PlutoGE::scene
                 }
             }
 
-            std::vector<audio::EmitterState> emitterStates;
             emitterStates.reserve(emitters.size());
             auto &engine = core::Engine::GetInstance();
             const std::size_t maximumOcclusionRefreshesPerFrame =
@@ -2704,7 +2711,6 @@ namespace PlutoGE::scene
 
                 audio::EmitterState emitterState;
                 emitterState.key = emitter->GetRuntimeKey();
-                emitterState.clipPath = engine.GetAssetManager().ResolveAssetPath(emitter->GetClipReference());
                 emitterState.position = owner->GetWorldPosition();
                 emitterState.playing = emitter->IsPlaying();
                 emitterState.paused = emitter->IsPaused();
@@ -2731,6 +2737,13 @@ namespace PlutoGE::scene
                         }
                     }
                 }
+
+                // Resolving an asset path may query the filesystem. Stopped
+                // emitters need no path, and all one-shots share this result.
+                const std::string resolvedClipPath = hasAudiblePlayback
+                                                         ? engine.GetAssetManager().ResolveAssetPath(emitter->GetClipReference())
+                                                         : std::string{};
+                emitterState.clipPath = resolvedClipPath;
 
                 if (listenerState.active && emitterState.spatialized && hasAudiblePlayback)
                 {
@@ -2771,7 +2784,7 @@ namespace PlutoGE::scene
 
                     audio::EmitterState oneShotState;
                     oneShotState.key = oneShotPlayback.key;
-                    oneShotState.clipPath = engine.GetAssetManager().ResolveAssetPath(emitter->GetClipReference());
+                    oneShotState.clipPath = resolvedClipPath;
                     oneShotState.position = owner->GetWorldPosition();
                     oneShotState.playing = true;
                     oneShotState.paused = false;
@@ -2828,6 +2841,7 @@ namespace PlutoGE::scene
             }
         }
 
+        const auto audioEnd = Clock::now();
         SubmitRenderCommands();
         const auto submissionEnd = Clock::now();
 
@@ -2836,7 +2850,8 @@ namespace PlutoGE::scene
         m_updateTimingStats.componentsMs = std::chrono::duration<float, std::milli>(componentsEnd - runtimeUiEnd).count();
         m_updateTimingStats.physicsMs = std::chrono::duration<float, std::milli>(physicsEnd - componentsEnd).count();
         m_updateTimingStats.lateScriptsMs = std::chrono::duration<float, std::milli>(lateScriptsEnd - physicsEnd).count();
-        m_updateTimingStats.renderSubmissionMs = std::chrono::duration<float, std::milli>(submissionEnd - lateScriptsEnd).count();
+        m_updateTimingStats.audioMs = std::chrono::duration<float, std::milli>(audioEnd - audioStart).count();
+        m_updateTimingStats.renderSubmissionMs = std::chrono::duration<float, std::milli>(submissionEnd - audioEnd).count();
     }
 
     namespace

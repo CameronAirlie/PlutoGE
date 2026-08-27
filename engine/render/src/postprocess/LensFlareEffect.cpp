@@ -65,6 +65,10 @@ namespace PlutoGE::render
         {
             m_brightTarget->Cleanup();
         }
+        if (m_flareTarget)
+        {
+            m_flareTarget->Cleanup();
+        }
     }
 
     std::vector<PostProcessParameter> LensFlareEffect::GetParameters() const
@@ -222,7 +226,6 @@ namespace PlutoGE::render
 
             void main()
             {
-                vec4 source = texture(uSceneTexture, UV);
                 vec2 center = vec2(0.5);
                 vec3 flare = vec3(0.0);
 
@@ -274,16 +277,32 @@ namespace PlutoGE::render
                 // Compress extreme flare energy before the additive composite;
                 // this keeps the source hot without flattening the whole frame.
                 flare = flare / (vec3(1.0) + flare * 0.35);
-                vec3 color = source.rgb + flare * uIntensity;
-                FragColor = vec4(max(color, vec3(0.0)), source.a);
+                FragColor = vec4(max(flare * uIntensity, vec3(0.0)), 1.0);
+            }
+        )";
+
+        ShaderSource compositeSource;
+        compositeSource.vertexSource = source.vertexSource;
+        compositeSource.fragmentSource = R"(
+            #version 330 core
+            in vec2 UV;
+            out vec4 FragColor;
+            uniform sampler2D uSceneTexture;
+            uniform sampler2D uFlareTexture;
+            void main()
+            {
+                vec4 scene = texture(uSceneTexture, UV);
+                vec3 flare = texture(uFlareTexture, UV).rgb;
+                FragColor = vec4(max(scene.rgb + flare, vec3(0.0)), scene.a);
             }
         )";
 
         m_brightPassShader = Shader::Create(brightPassSource);
         m_shader = Shader::Create(source);
+        m_compositeShader = Shader::Create(compositeSource);
     }
 
-    void LensFlareEffect::EnsureBrightTarget(int width, int height)
+    void LensFlareEffect::EnsureEffectTargets(int width, int height)
     {
         if (!m_brightTarget)
         {
@@ -296,6 +315,19 @@ namespace PlutoGE::render
         else if (m_brightTarget->GetWidth() != width || m_brightTarget->GetHeight() != height)
         {
             m_brightTarget->Resize(width, height);
+        }
+
+        if (!m_flareTarget)
+        {
+            m_flareTarget = std::make_unique<RenderTarget>(RenderTargetConfig{
+                .width = width,
+                .height = height,
+                .clearColor = glm::vec4(0.0f),
+            });
+        }
+        else if (m_flareTarget->GetWidth() != width || m_flareTarget->GetHeight() != height)
+        {
+            m_flareTarget->Resize(width, height);
         }
     }
 
@@ -331,7 +363,8 @@ namespace PlutoGE::render
 
     void LensFlareEffect::Apply(const PostProcessContext &context)
     {
-        if (!m_shader || !m_brightPassShader || !context.sourceRenderTarget)
+        if (!m_shader || !m_brightPassShader || !m_compositeShader ||
+            !context.sourceRenderTarget || !context.destinationRenderTarget)
         {
             return;
         }
@@ -349,7 +382,12 @@ namespace PlutoGE::render
         // stable prefilter and cuts bright-pass bandwidth by 75%.
         const int brightWidth = std::max(1, (targetWidth + 1) / 2);
         const int brightHeight = std::max(1, (targetHeight + 1) / 2);
-        EnsureBrightTarget(brightWidth, brightHeight);
+        EnsureEffectTargets(brightWidth, brightHeight);
+        if (!m_brightTarget || !m_brightTarget->IsInitialized() ||
+            !m_flareTarget || !m_flareTarget->IsInitialized())
+        {
+            return;
+        }
 
         // Evaluate the stabilising cross filter and soft threshold once per
         // source pixel, then reuse it for every ghost, halo, and glare tap.
@@ -366,8 +404,12 @@ namespace PlutoGE::render
         m_brightPassShader->SetUniform("uThreshold", m_threshold);
         DrawFullscreenTriangle();
 
-        BeginApply(context);
-
+        // Ghosts, halo, and glare are all deliberately broad, band-limited
+        // signals. Generate them beside the bright prefilter rather than paying
+        // their 30+ texture taps at every output pixel.
+        Graphics::BindRenderTarget(m_flareTarget.get());
+        Graphics::SetViewport(0, 0, brightWidth, brightHeight);
+        Graphics::Disable(GL_BLEND);
         m_shader->Bind();
         BindCommonInputs(m_shader, context);
         Graphics::ActiveTexture(GL_TEXTURE5);
@@ -383,6 +425,17 @@ namespace PlutoGE::render
         const float height = static_cast<float>(targetHeight);
         m_shader->SetUniform("uTexelSize", glm::vec2(1.0f / brightWidth, 1.0f / brightHeight));
         m_shader->SetUniform("uAspectRatio", width / height);
+        DrawFullscreenTriangle();
+
+        // Preserve a native-resolution destination and source alpha. The final
+        // pass is now just one scene read, one bilinearly reconstructed flare
+        // read, and one write.
+        BeginApply(context);
+        m_compositeShader->Bind();
+        BindCommonInputs(m_compositeShader, context);
+        Graphics::ActiveTexture(GL_TEXTURE5);
+        Graphics::BindTexture(GL_TEXTURE_2D, m_flareTarget->GetColorTextureID());
+        m_compositeShader->SetUniform("uFlareTexture", 5);
         DrawFullscreenTriangle();
 
         EndApply();

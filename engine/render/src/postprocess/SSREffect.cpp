@@ -2,6 +2,7 @@
 
 #include "PlutoGE/render/GBuffer.h"
 #include "PlutoGE/render/Graphics.h"
+#include "PlutoGE/render/RenderTarget.h"
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/Shader.h"
 
@@ -9,6 +10,14 @@
 
 namespace PlutoGE::render
 {
+    SSREffect::~SSREffect()
+    {
+        if (m_traceTarget)
+        {
+            m_traceTarget->Cleanup();
+        }
+    }
+
     std::vector<PostProcessParameter> SSREffect::GetParameters() const
     {
         return {
@@ -105,13 +114,12 @@ namespace PlutoGE::render
 
             void main()
             {
-                vec3 sceneColor = texture(uSceneTexture, UV).rgb;
                 vec3 worldPosition = texture(uScenePositionTexture, UV).xyz;
                 vec4 normalRoughness = texture(uSceneNormalTexture, UV);
                 vec3 worldNormal = normalRoughness.xyz;
                 if (dot(worldNormal, worldNormal) < 0.01)
                 {
-                    FragColor = vec4(sceneColor, 1.0);
+                    FragColor = vec4(0.0);
                     return;
                 }
 
@@ -126,9 +134,15 @@ namespace PlutoGE::render
                 // travelling back towards the camera cannot intersect a
                 // front-facing scene surface either.
                 float roughness = clamp(normalRoughness.a, 0.04, 1.0);
-                if (roughness >= 0.8 || uIntensity <= 0.0 || rayDirection.z >= -0.001)
+                float roughnessConfidence = 1.0 - smoothstep(0.2, 0.8, roughness);
+                roughnessConfidence *= roughnessConfidence;
+                // Every later confidence term is in [0, 1]. If this upper
+                // bound is already below one 10-bit display step, a full ray
+                // march cannot produce a visible contribution.
+                if (roughness >= 0.8 || roughnessConfidence * uIntensity < (1.0 / 1024.0) ||
+                    uIntensity <= 0.0 || rayDirection.z >= -0.001)
                 {
-                    FragColor = vec4(sceneColor, 1.0);
+                    FragColor = vec4(0.0);
                     return;
                 }
 
@@ -195,7 +209,7 @@ namespace PlutoGE::render
 
                 if (hitTravel < 0.0)
                 {
-                    FragColor = vec4(sceneColor, 1.0);
+                    FragColor = vec4(0.0);
                     return;
                 }
 
@@ -209,23 +223,109 @@ namespace PlutoGE::render
                 // SSR traces a single sharp ray and cannot represent the wide
                 // reflection lobe of a rough surface. Fade it out as that lobe
                 // broadens; smooth dielectrics retain their Fresnel reflection.
-                float roughnessConfidence = 1.0 - smoothstep(0.2, 0.8, roughness);
-                roughnessConfidence *= roughnessConfidence;
                 float confidence = edgeConfidence * distanceConfidence * facingConfidence *
                                    reflectivity * roughnessConfidence * uIntensity;
                 vec3 reflectedColor = texture(uSceneTexture, hitUv).rgb;
-                FragColor = vec4(mix(sceneColor, reflectedColor, clamp(confidence, 0.0, 1.0)), 1.0);
+                FragColor = vec4(reflectedColor, clamp(confidence, 0.0, 1.0));
             }
         )";
         m_shader = Shader::Create(source);
+
+        ShaderSource compositeSource;
+        compositeSource.vertexSource = source.vertexSource;
+        compositeSource.fragmentSource = R"(
+            #version 330 core
+            in vec2 UV;
+            out vec4 FragColor;
+
+            uniform sampler2D uSceneTexture;
+            uniform sampler2D uReflectionTexture;
+            uniform sampler2D uSceneDepthTexture;
+            uniform sampler2D uSceneNormalTexture;
+            uniform vec2 uReflectionTexelSize;
+
+            float ReconstructionWeight(vec2 sampleUv, float centerDepth, vec3 centerNormal)
+            {
+                float sampleDepth = texture(uSceneDepthTexture, sampleUv).r;
+                vec3 sampleNormal = texture(uSceneNormalTexture, sampleUv).xyz;
+                float sampleNormalLengthSq = dot(sampleNormal, sampleNormal);
+                if (sampleDepth <= 0.0 || sampleNormalLengthSq < 0.01) return 0.0;
+                sampleNormal *= inversesqrt(sampleNormalLengthSq);
+                float normalAgreement = max(dot(centerNormal, sampleNormal), 0.0);
+                float depthScale = max(abs(centerDepth), 0.001);
+                float depthAgreement = exp(-abs(sampleDepth - centerDepth) / (depthScale * 0.02));
+                return pow(normalAgreement, 16.0) * depthAgreement;
+            }
+
+            void main()
+            {
+                vec4 scene = texture(uSceneTexture, UV);
+                float centerDepth = texture(uSceneDepthTexture, UV).r;
+                vec3 rawCenterNormal = texture(uSceneNormalTexture, UV).xyz;
+                float centerNormalLengthSq = dot(rawCenterNormal, rawCenterNormal);
+                if (centerDepth <= 0.0 || centerNormalLengthSq < 0.01)
+                {
+                    FragColor = scene;
+                    return;
+                }
+
+                vec3 centerNormal = rawCenterNormal * inversesqrt(centerNormalLengthSq);
+                vec4 reflection = texture(uReflectionTexture, UV) * 4.0;
+                float totalWeight = 4.0;
+                const vec2 offsets[4] = vec2[4](
+                    vec2(1.0, 0.0), vec2(-1.0, 0.0),
+                    vec2(0.0, 1.0), vec2(0.0, -1.0));
+                for (int index = 0; index < 4; ++index)
+                {
+                    vec2 sampleUv = clamp(UV + offsets[index] * uReflectionTexelSize, vec2(0.0), vec2(1.0));
+                    float weight = ReconstructionWeight(sampleUv, centerDepth, centerNormal);
+                    reflection += texture(uReflectionTexture, sampleUv) * weight;
+                    totalWeight += weight;
+                }
+                reflection /= max(totalWeight, 0.0001);
+                FragColor = vec4(mix(scene.rgb, reflection.rgb, clamp(reflection.a, 0.0, 1.0)), scene.a);
+            }
+        )";
+        m_compositeShader = Shader::Create(compositeSource);
+    }
+
+    void SSREffect::EnsureTraceTarget(int width, int height)
+    {
+        if (!m_traceTarget)
+        {
+            m_traceTarget = std::make_unique<RenderTarget>(RenderTargetConfig{
+                .width = width,
+                .height = height,
+                .clearColor = glm::vec4(0.0f),
+            });
+        }
+        else if (m_traceTarget->GetWidth() != width || m_traceTarget->GetHeight() != height)
+        {
+            m_traceTarget->Resize(width, height);
+        }
     }
 
     void SSREffect::Apply(const PostProcessContext &context)
     {
-        if (!m_shader || !context.sourceRenderTarget || !context.destinationRenderTarget || !context.renderContext.gBuffer)
+        if (!m_shader || !m_compositeShader || !context.sourceRenderTarget ||
+            !context.destinationRenderTarget || !context.renderContext.gBuffer)
             return;
 
-        BeginApply(context);
+        const int sourceWidth = std::max(context.sourceRenderTarget->GetWidth(), 1);
+        const int sourceHeight = std::max(context.sourceRenderTarget->GetHeight(), 1);
+        const int traceWidth = std::max((sourceWidth + 1) / 2, 1);
+        const int traceHeight = std::max((sourceHeight + 1) / 2, 1);
+        EnsureTraceTarget(traceWidth, traceHeight);
+        if (!m_traceTarget || !m_traceTarget->IsInitialized())
+            return;
+
+        // The ray march dominates SSR cost. Trace one ray per 2x2 output block,
+        // while retaining the full configured step and refinement budgets.
+        Graphics::BindRenderTarget(m_traceTarget.get());
+        Graphics::SetViewport(0, 0, traceWidth, traceHeight);
+        Graphics::Disable(GL_DEPTH_TEST);
+        Graphics::Disable(GL_CULL_FACE);
+        Graphics::Disable(GL_BLEND);
         m_shader->Bind();
         BindCommonInputs(m_shader, context);
         Graphics::ActiveTexture(GL_TEXTURE6);
@@ -242,6 +342,21 @@ namespace PlutoGE::render
         m_shader->SetUniform("uMetallicBoost", m_metallicBoost);
         m_shader->SetUniform("uStepCount", m_stepCount);
         m_shader->SetUniform("uBinarySearchSteps", m_binarySearchSteps);
+        DrawFullscreenTriangle();
+
+        // Reconstruct at native resolution. Depth and normal agreement reject
+        // neighbouring samples across silhouettes and differently oriented
+        // surfaces, avoiding the bleeding of a plain bilinear upscale.
+        BeginApply(context);
+        Graphics::Disable(GL_BLEND);
+        m_compositeShader->Bind();
+        BindCommonInputs(m_compositeShader, context);
+        Graphics::ActiveTexture(GL_TEXTURE5);
+        Graphics::BindTexture(GL_TEXTURE_2D, m_traceTarget->GetColorTextureID());
+        m_compositeShader->SetUniform("uReflectionTexture", 5);
+        m_compositeShader->SetUniform(
+            "uReflectionTexelSize",
+            glm::vec2(1.0f / static_cast<float>(traceWidth), 1.0f / static_cast<float>(traceHeight)));
         DrawFullscreenTriangle();
         EndApply();
     }

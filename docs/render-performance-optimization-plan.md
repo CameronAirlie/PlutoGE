@@ -22,6 +22,30 @@ led by shadows (3.81 ms) and post-processing (2.92 ms), but changing their quali
 effect set is intentionally outside this fidelity-preserving pass. The next captured
 profile can now distinguish backend audio, occlusion queries, and true submission cost.
 
+## 1080p GPU pass
+
+- [x] Move the expensive lens-flare ghost, halo, and glare synthesis to its existing
+  half-resolution bright-signal domain, followed by a native-resolution two-sample composite.
+- [x] Enable volumetric fog's temporal, depth-aware half-resolution path in the CoD preset.
+- [x] Reuse directional fog-shadow visibility for two adjacent integration steps while retaining
+  the preset's 32 density-integration steps and native-resolution bilateral composite.
+- [x] Replace the volumetric-cloud nine-fetch tent upsample with its mathematically equivalent
+  four-fetch bilinear form at native output resolution.
+- [x] Honour the directional shadow filter's configured render scale in production and use the
+  existing depth/normal-aware reconstruction for the native-resolution lighting mask.
+- [x] Scissor spot-light accumulation against a conservative minimal sphere around the shader's
+  actual finite cone instead of the much larger point-light range sphere.
+- [x] Front-load exact direct-light rejection: background, unlit/baked-static materials, and
+  pixels outside local-light attenuation now exit before unnecessary material G-buffer reads.
+- [x] Tune the CoD main-scene cloud trace scale from 0.5 to 0.4, retaining 24 primary steps,
+  three light steps, temporal jitter, native-resolution tent reconstruction, and final TAA.
+- [x] Reject analytically zero-density cloud-border samples before procedural FBM evaluation.
+- [x] Reject SSR rays before marching when their mathematically bounded roughness contribution is
+  below one 10-bit display step; retain the full 48-step trace for contributing surfaces.
+- [x] Trace SSR radiance and confidence at half resolution, then reconstruct and composite at
+  native resolution with depth/normal-aware cross filtering. The configured ray distance,
+  48-step march, five-step binary refinement, material response, and source alpha are retained.
+
 - [x] Hierarchical cluster accept/reject culling using cached aggregate foliage bounds.
 - [x] Renderer-owned reusable visibility scratch buffers, removing per-frame vector allocations
   without changing the public `RenderCommand` layout.
@@ -63,3 +87,5 @@ profile can now distinguish backend audio, occlusion queries, and true submissio
   allocating strings inside render loops.
 - Shadow-map filtering is now configured only when depth textures are created; lighting and
   transparency no longer reapply immutable `GL_NEAREST` parameters on every bind.
+- The complete RelWithDebInfo editor rebuilt successfully after the half-resolution SSR trace
+  and native-resolution bilateral composite were added.

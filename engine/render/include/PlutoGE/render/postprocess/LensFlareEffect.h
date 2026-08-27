@@ -26,11 +26,13 @@ namespace PlutoGE::render
 
     private:
         Texture *ResolveFlareTexture();
-        void EnsureBrightTarget(int width, int height);
+        void EnsureEffectTargets(int width, int height);
 
         Shader *m_shader = nullptr;
         Shader *m_brightPassShader = nullptr;
+        Shader *m_compositeShader = nullptr;
         std::unique_ptr<RenderTarget> m_brightTarget;
+        std::unique_ptr<RenderTarget> m_flareTarget;
         Texture *m_flareTexture = nullptr;
         std::string m_texturePath;
         std::string m_loadedTexturePath;

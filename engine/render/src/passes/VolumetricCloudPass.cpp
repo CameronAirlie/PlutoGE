@@ -172,6 +172,10 @@ namespace PlutoGE::render
                     if (any(greaterThan(abs(local), vec3(0.5))))
                         return 0.0;
 
+                    float volumeShape = DensityShape(local);
+                    if (volumeShape <= 0.0)
+                        return 0.0;
+
                     vec3 advected = worldPosition + uWindOffset;
                     float base = BaseFbm(advected * uBaseNoiseScale);
                     float threshold = 1.0 - uCoverage;
@@ -181,7 +185,7 @@ namespace PlutoGE::render
                         float detail = DetailFbm(advected * uDetailNoiseScale + vec3(31.4, 7.8, 19.2));
                         shaped = clamp(shaped - (1.0 - detail) * uDetailErosion * (1.0 - shaped), 0.0, 1.0);
                     }
-                    return shaped * DensityShape(local) * uDensity;
+                    return shaped * volumeShape * uDensity;
                 }
 
                 float SampleDensityCheap(vec3 worldPosition)
@@ -189,9 +193,12 @@ namespace PlutoGE::render
                     vec3 local = (uInverseVolumeTransform * vec4(worldPosition, 1.0)).xyz;
                     if (any(greaterThan(abs(local), vec3(0.5))))
                         return 0.0;
+                    float volumeShape = DensityShape(local);
+                    if (volumeShape <= 0.0)
+                        return 0.0;
                     float base = CheapFbm((worldPosition + uWindOffset) * uBaseNoiseScale);
                     float shaped = clamp((base - (1.0 - uCoverage)) / max(uCoverage, 0.001), 0.0, 1.0);
-                    return shaped * DensityShape(local) * uDensity;
+                    return shaped * volumeShape * uDensity;
                 }
 
                 vec2 IntersectVolume(vec3 rayOrigin, vec3 rayDirection)
@@ -318,17 +325,16 @@ namespace PlutoGE::render
                 uniform vec2 uCloudTexelSize;
                 void main()
                 {
-                    // A compact tent resolve suppresses low-resolution ray-march
-                    // stippling while retaining substantially more shape than a blur.
-                    vec4 c = texture(uCloudTexture, vUv) * 4.0;
-                    c += texture(uCloudTexture, vUv + vec2( uCloudTexelSize.x, 0.0)) * 2.0;
-                    c += texture(uCloudTexture, vUv + vec2(-uCloudTexelSize.x, 0.0)) * 2.0;
-                    c += texture(uCloudTexture, vUv + vec2(0.0,  uCloudTexelSize.y)) * 2.0;
-                    c += texture(uCloudTexture, vUv + vec2(0.0, -uCloudTexelSize.y)) * 2.0;
-                    c += texture(uCloudTexture, vUv + uCloudTexelSize) + texture(uCloudTexture, vUv - uCloudTexelSize);
-                    c += texture(uCloudTexture, vUv + vec2(uCloudTexelSize.x, -uCloudTexelSize.y));
-                    c += texture(uCloudTexture, vUv + vec2(-uCloudTexelSize.x, uCloudTexelSize.y));
-                    FragColor = c / 16.0;
+                    // Four half-texel bilinear reads reproduce the previous
+                    // 3x3 tent exactly: centre 4/16, axial neighbours 2/16,
+                    // and diagonal neighbours 1/16. This removes five texture
+                    // operations from every native-resolution output pixel.
+                    vec2 halfTexel = uCloudTexelSize * 0.5;
+                    vec4 c = texture(uCloudTexture, vUv + vec2(-halfTexel.x, -halfTexel.y));
+                    c += texture(uCloudTexture, vUv + vec2( halfTexel.x, -halfTexel.y));
+                    c += texture(uCloudTexture, vUv + vec2(-halfTexel.x,  halfTexel.y));
+                    c += texture(uCloudTexture, vUv + vec2( halfTexel.x,  halfTexel.y));
+                    FragColor = c * 0.25;
                 }
             )";
             return Shader::Create(source);

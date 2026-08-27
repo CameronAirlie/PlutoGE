@@ -2,13 +2,18 @@
 
 #include "PlutoGE/render/postprocess/ShaderPostProcessEffect.h"
 
+#include <memory>
+
 namespace PlutoGE::render
 {
+    class RenderTarget;
     class Shader;
 
     class SSREffect : public ShaderPostProcessEffect
     {
     public:
+        ~SSREffect() override;
+
         void Initialize() override;
         void Apply(const PostProcessContext &context) override;
         std::string GetTypeName() const override { return "SSR"; }
@@ -17,7 +22,11 @@ namespace PlutoGE::render
         void SetParameters(const std::vector<PostProcessParameter> &parameters) override;
 
     private:
+        void EnsureTraceTarget(int width, int height);
+
         Shader *m_shader = nullptr;
+        Shader *m_compositeShader = nullptr;
+        std::unique_ptr<RenderTarget> m_traceTarget;
         float m_intensity = 0.8f;
         float m_maxRayDistance = 30.0f;
         float m_thickness = 0.35f;

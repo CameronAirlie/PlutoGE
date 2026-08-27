@@ -61,6 +61,39 @@ namespace PlutoGE::render
             int height = 0;
         };
 
+        struct BoundingSphere
+        {
+            glm::vec3 center{0.0f};
+            float radius = 0.0f;
+        };
+
+        BoundingSphere ComputeLocalLightBoundingSphere(const scene::Light &light)
+        {
+            const float range = std::max(light.range, 0.0f);
+            if (light.type != scene::LightType::Spot || range <= 0.0f)
+            {
+                return BoundingSphere{light.position, range};
+            }
+
+            // Spot attenuation is exactly zero outside cos(theta) = 0.9 in
+            // the lighting shader. Bound that finite cone with its minimal
+            // enclosing sphere instead of using the point-light range sphere.
+            // This remains conservative, so scissoring cannot remove light.
+            constexpr float kOuterConeTangent = 0.4843221f;
+            const float baseRadius = range * kOuterConeTangent;
+            const float centerDistance = (range * range + baseRadius * baseRadius) / (2.0f * range);
+            const float directionLengthSq = glm::dot(light.direction, light.direction);
+            if (directionLengthSq <= 0.000001f)
+            {
+                return BoundingSphere{light.position, range};
+            }
+            const glm::vec3 direction = light.direction * glm::inversesqrt(directionLengthSq);
+            return BoundingSphere{
+                light.position + direction * centerDistance,
+                centerDistance,
+            };
+        }
+
         // Conservatively bounds a local light on screen. Scissoring changes no
         // shaded pixels, but avoids running PBR over pixels outside its range.
         std::optional<ScreenRect> ProjectLocalLightBounds(const scene::Light &light,
@@ -68,11 +101,12 @@ namespace PlutoGE::render
                                                            int targetWidth,
                                                            int targetHeight)
         {
-            const float radius = std::max(light.range, 0.0f);
+            const BoundingSphere bounds = ComputeLocalLightBoundingSphere(light);
+            const float radius = bounds.radius;
             if (radius <= 0.0f || targetWidth <= 0 || targetHeight <= 0)
                 return std::nullopt;
 
-            const glm::vec3 viewCenter = glm::vec3(camera.view * glm::vec4(light.position, 1.0f));
+            const glm::vec3 viewCenter = glm::vec3(camera.view * glm::vec4(bounds.center, 1.0f));
             const float nearPlane = std::max(camera.nearPlane, 0.0001f);
             if (viewCenter.z - radius >= -nearPlane)
                 return std::nullopt;
@@ -824,19 +858,15 @@ namespace PlutoGE::render
                         FragColor = vec4(0.0, 0.0, 0.0, 1.0);
                         return;
                     }
-
-                    vec4 albedoMetallic = texture(gAlbedoSpec, UV);
                     vec3 normal = normalize(normalRoughness.rgb);
-                    vec3 albedo = albedoMetallic.rgb;
-                    float roughness = clamp(normalRoughness.a, 0.04, 1.0);
-                    float metallic = clamp(albedoMetallic.a, 0.0, 1.0);
-                    vec4 subsurface = texture(gSubsurface, UV);
-                    float materialFlag = texture(gBakedLighting, UV).a;
+
                     if (uDebugViewMode == DEBUG_VIEW_LOD)
                     {
                         FragColor = vec4(GetLodDebugColor(texture(gDebug, UV).r), 1.0);
                         return;
                     }
+
+                    float materialFlag = texture(gBakedLighting, UV).a;
                     if (IsUnlitMaterial(materialFlag))
                     {
                         FragColor = vec4(0.0, 0.0, 0.0, 1.0);
@@ -861,6 +891,34 @@ namespace PlutoGE::render
                             return;
                         }
                     }
+
+                    // Scissor rectangles conservatively enclose local lights,
+                    // so their corners still contain pixels with exactly zero
+                    // contribution. Reject those after the position/normal
+                    // fetches but before reading the material G-buffer.
+                    if (uLight.Type == LIGHT_TYPE_POINT)
+                    {
+                        if (ComputePointAttenuation(fragPos, uLight) <= 0.0001)
+                        {
+                            FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+                            return;
+                        }
+                    }
+                    else if (uLight.Type == LIGHT_TYPE_SPOT)
+                    {
+                        vec3 earlyLightDir = normalize(uLight.Position - fragPos);
+                        if (ComputeSpotAttenuation(fragPos, earlyLightDir, uLight) <= 0.0001)
+                        {
+                            FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+                            return;
+                        }
+                    }
+
+                    vec4 albedoMetallic = texture(gAlbedoSpec, UV);
+                    vec3 albedo = albedoMetallic.rgb;
+                    float roughness = clamp(normalRoughness.a, 0.04, 1.0);
+                    float metallic = clamp(albedoMetallic.a, 0.0, 1.0);
+                    vec4 subsurface = texture(gSubsurface, UV);
 
                     vec3 viewDir = normalize(uViewPos - fragPos);
                     float filteredShadow = uUseFilteredShadowMask != 0 && uLight.Type == LIGHT_TYPE_DIRECTIONAL
@@ -1561,13 +1619,12 @@ namespace PlutoGE::render
         }
 
         const float configuredRenderScale = glm::clamp(light.directionalShadowSettings.screenSpaceFilterRenderScale, 0.25f, 1.0f);
-        // A filtered visibility mask must align one-to-one with the final
-        // lighting pixels. Upsampling a reduced mask cannot respect foreground
-        // depth discontinuities: it creates bright halos around lit objects in
-        // front of shadowed surfaces and quantizes distant shadow silhouettes.
-        // Raw/debug masks retain the configured scale; the production filtered
-        // path runs at full resolution for correct reconstruction.
-        const float renderScale = filtered ? 1.0f : configuredRenderScale;
+        // Generate filtered visibility at the configured scale and reconstruct
+        // it through the depth/normal-aware upsample below. The production path
+        // previously forced full resolution, silently ignoring this quality
+        // control and paying for raw evaluation plus two bilateral passes at
+        // every output pixel.
+        const float renderScale = configuredRenderScale;
         const int maskWidth = std::max(1, static_cast<int>(std::lround(static_cast<float>(ctx.temporaryRenderTarget->GetWidth()) * renderScale)));
         const int maskHeight = std::max(1, static_cast<int>(std::lround(static_cast<float>(ctx.temporaryRenderTarget->GetHeight()) * renderScale)));
         EnsureShadowMaskTargets(maskWidth, maskHeight,

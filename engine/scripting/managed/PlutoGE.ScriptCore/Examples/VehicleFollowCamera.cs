@@ -37,14 +37,11 @@ public sealed class VehicleFollowCamera : ScriptBehaviour
     private Vector3 _smoothedForward = -Vector3.UnitZ;
     private Vector3 _smoothedTargetVelocity;
     private Vector3 _smoothedRotation;
-    private float _physicsTimeRemainder;
     private RigidbodyComponent? _targetRigidbody;
     private InputActionMap? _inputActions;
     private float _orbitYaw;
     private float _orbitPitch;
     private bool _initialized;
-
-    private const float PhysicsStep = 1.0f / 60.0f;
 
     public override void OnCreate()
     {
@@ -107,10 +104,6 @@ public sealed class VehicleFollowCamera : ScriptBehaviour
 
         var targetPosition = target.WorldPosition;
         var targetForward = GetTargetFlatForward();
-        if (!useParentedLocalPosition)
-        {
-            targetPosition = GetPredictedTargetPosition(deltaTime, targetPosition, targetForward, out targetForward);
-        }
         var leadOffset = Vector3.Zero;
         if (targetLeadTime > 0.0f && maxLeadDistance > 0.0f)
         {
@@ -258,51 +251,6 @@ public sealed class VehicleFollowCamera : ScriptBehaviour
         var forward = target?.Forward ?? -Vector3.UnitZ;
         forward.Y = 0.0f;
         return SafeNormalize(forward, _smoothedForward.LengthSquared() > 0.000001f ? _smoothedForward : -Vector3.UnitZ);
-    }
-
-    private Vector3 GetPredictedTargetPosition(float deltaTime,
-                                               Vector3 targetPosition,
-                                               Vector3 targetForward,
-                                               out Vector3 predictedForward)
-    {
-        // Mirror Scene's fixed-step accumulator. The remainder is the amount of
-        // render time not represented by the rigidbody's latest transform.
-        // Extrapolating by exactly that amount avoids a sawtooth when a physics
-        // step and a fractional remainder occur in the same rendered frame.
-        const int maximumPhysicsSubstepsPerFrame = 8;
-        _physicsTimeRemainder = MathF.Min(
-            _physicsTimeRemainder + deltaTime,
-            PhysicsStep * maximumPhysicsSubstepsPerFrame);
-        var completedSteps = MathF.Floor(_physicsTimeRemainder / PhysicsStep);
-        _physicsTimeRemainder -= completedSteps * PhysicsStep;
-
-        _targetRigidbody ??= target?.GetComponent<RigidbodyComponent>();
-        if (_targetRigidbody is null || _physicsTimeRemainder <= 0.0f)
-        {
-            predictedForward = targetForward;
-            return targetPosition;
-        }
-
-        var predictionTime = _physicsTimeRemainder;
-        predictedForward = RotateByAngularVelocity(targetForward, _targetRigidbody.AngularVelocity, predictionTime);
-        predictedForward.Y = 0.0f;
-        predictedForward = SafeNormalize(predictedForward, targetForward);
-        return targetPosition + _targetRigidbody.Velocity * predictionTime;
-    }
-
-    private static Vector3 RotateByAngularVelocity(Vector3 value, Vector3 angularVelocity, float deltaTime)
-    {
-        var speed = angularVelocity.Length();
-        if (speed <= 0.000001f || deltaTime <= 0.0f)
-        {
-            return value;
-        }
-
-        var axis = angularVelocity / speed;
-        var angle = speed * deltaTime;
-        var cosine = MathF.Cos(angle);
-        var sine = MathF.Sin(angle);
-        return value * cosine + Vector3.Cross(axis, value) * sine + axis * Vector3.Dot(axis, value) * (1.0f - cosine);
     }
 
     private static Vector3 SafeNormalize(Vector3 value, Vector3 fallback)

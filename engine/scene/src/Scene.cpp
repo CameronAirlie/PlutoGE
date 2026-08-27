@@ -2625,6 +2625,12 @@ namespace PlutoGE::scene
         FlushPendingDestroyEntities();
         const auto physicsEnd = Clock::now();
 
+        // Present physics bodies on the render timeline before late-update so
+        // cameras and other followers observe the same extrapolated transforms
+        // that will be rendered this frame. These transforms are restored to
+        // the authoritative fixed-step state at the start of the next update.
+        ApplyRuntimePhysicsRenderExtrapolation(m_physicsTimeAccumulator);
+
         for (auto *scriptComponent : GatherRuntimeScriptComponents(m_rootEntities))
         {
             if (scriptComponent && scriptComponent->IsEnabled())
@@ -2639,11 +2645,6 @@ namespace PlutoGE::scene
             }
         }
         const auto lateScriptsEnd = Clock::now();
-
-        // Physics owns authoritative simulation transforms at 60 Hz. Present
-        // dynamic bodies at the remaining fractional time for rendering so
-        // world-space cameras and their targets share the same smooth timeline.
-        ApplyRuntimePhysicsRenderExtrapolation(m_physicsTimeAccumulator);
 
         const auto audioStart = Clock::now();
         if (m_runtimeStarted)

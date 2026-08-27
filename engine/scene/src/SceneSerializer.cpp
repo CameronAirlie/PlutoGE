@@ -651,6 +651,12 @@ namespace PlutoGE::scene
                     trace(message);
                 }
             };
+            std::vector<std::string> recoveryWarnings;
+            const auto reportRecovery = [&](std::string message)
+            {
+                recoveryWarnings.push_back(message);
+                reportTrace("Scene recovery: " + message);
+            };
 
             if (!input.good())
             {
@@ -700,6 +706,9 @@ namespace PlutoGE::scene
                 {
                     continue;
                 }
+
+                try
+                {
 
                 if (tokens[0] == "SCENE")
                 {
@@ -853,10 +862,23 @@ namespace PlutoGE::scene
                             reportTrace("Scene load line " + std::to_string(lineNumber) +
                                         ": deserialize " + componentContext +
                                         " (" + std::to_string(activeComponent->properties.size()) + " properties)");
-                            componentPtr->Deserialize(activeComponent->properties);
-                            componentPtr->SetEnabled(activeComponent->enabled);
-                            reportTrace("Scene load line " + std::to_string(lineNumber) +
-                                        ": loaded " + componentContext);
+                            try
+                            {
+                                componentPtr->Deserialize(activeComponent->properties);
+                                componentPtr->SetEnabled(activeComponent->enabled);
+                                reportTrace("Scene load line " + std::to_string(lineNumber) +
+                                            ": loaded " + componentContext);
+                            }
+                            catch (const std::exception &exception)
+                            {
+                                entityIt->second->RemoveComponent(componentPtr);
+                                reportRecovery("Removed " + componentContext + " because it could not be deserialized: " + exception.what());
+                            }
+                            catch (...)
+                            {
+                                entityIt->second->RemoveComponent(componentPtr);
+                                reportRecovery("Removed " + componentContext + " because it could not be deserialized.");
+                            }
                         }
                         else
                         {
@@ -865,6 +887,19 @@ namespace PlutoGE::scene
                         }
                     }
                     activeComponent.reset();
+                }
+                }
+                catch (const std::exception &exception)
+                {
+                    reportRecovery("Skipped invalid record at line " + std::to_string(lineNumber) + ": " + exception.what());
+                    if (tokens[0] == "COMPONENT" || tokens[0] == "PROPERTY" || tokens[0] == "END_COMPONENT")
+                        activeComponent.reset();
+                }
+                catch (...)
+                {
+                    reportRecovery("Skipped invalid record at line " + std::to_string(lineNumber) + ".");
+                    if (tokens[0] == "COMPONENT" || tokens[0] == "PROPERTY" || tokens[0] == "END_COMPONENT")
+                        activeComponent.reset();
                 }
             }
 
@@ -914,6 +949,17 @@ namespace PlutoGE::scene
             }
 
             scene->MarkShadowLightsDirty();
+            if (errorMessage)
+            {
+                errorMessage->clear();
+                if (!recoveryWarnings.empty())
+                {
+                    *errorMessage = "Scene opened with " + std::to_string(recoveryWarnings.size()) + " recovered issue" +
+                                    (recoveryWarnings.size() == 1 ? ": " : "s: ") + recoveryWarnings.front();
+                    if (recoveryWarnings.size() > 1)
+                        *errorMessage += " (and " + std::to_string(recoveryWarnings.size() - 1) + " more; see the load trace).";
+                }
+            }
             reportTrace("Scene load completed");
             return scene;
         }

@@ -2188,6 +2188,11 @@ namespace PlutoGE::ui
         MarkSceneClean();
         m_statusMessage = "Opened scene: " + scenePath.filename().string();
         Log(ConsoleSeverity::Info, m_statusMessage);
+        if (!errorMessage.empty())
+        {
+            m_statusMessage = errorMessage;
+            Log(ConsoleSeverity::Warning, errorMessage);
+        }
         return true;
     }
 

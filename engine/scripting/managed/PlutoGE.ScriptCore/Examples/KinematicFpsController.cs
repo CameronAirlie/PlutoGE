@@ -96,7 +96,6 @@ public sealed class KinematicFpsController : ScriptBehaviour
     [SerializedField] private int magazineSize = 30;
     [SerializedField] private int startingReserveAmmo = 120;
     [SerializedField] private float roundsPerMinute = 720.0f;
-    [SerializedField] private float reloadDuration = 1.75f;
     [SerializedField] private float damage = 30.0f;
     [SerializedField] private float headshotMultiplier = 1.5f;
     [SerializedField] private float range = 180.0f;
@@ -140,7 +139,6 @@ public sealed class KinematicFpsController : ScriptBehaviour
     private float _cameraHeight;
     private float _slideTime;
     private float _shotCooldown;
-    private float _reloadTime;
     private float _bobTime;
     private float _recoilPitchOffset;
     private float _recoilYawOffset;
@@ -206,7 +204,6 @@ public sealed class KinematicFpsController : ScriptBehaviour
         // }
 
         _shotCooldown = MathF.Max(0.0f, _shotCooldown - deltaTime);
-        UpdateReload(deltaTime);
         UpdateLook(deltaTime);
         UpdateMovement(deltaTime);
         UpdateCamera(deltaTime);
@@ -426,20 +423,14 @@ public sealed class KinematicFpsController : ScriptBehaviour
             return;
         }
         _reloading = true;
-        _reloadTime = MathF.Max(0.05f, reloadDuration);
         reloadAudio?.PlayOneShot();
         weaponAnimator?.SetTrigger("Reload");
         UpdateHud();
     }
 
-    private void UpdateReload(float deltaTime)
+    public override void OnAnimationEvent(AnimationEvent animationEvent)
     {
-        if (!_reloading)
-        {
-            return;
-        }
-        _reloadTime -= deltaTime;
-        if (_reloadTime > 0.0f)
+        if (!_reloading || !string.Equals(animationEvent.Name, "ReloadFinish", StringComparison.Ordinal))
         {
             return;
         }

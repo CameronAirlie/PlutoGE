@@ -172,6 +172,9 @@ namespace PlutoGE::scene
         void SetSpeed(float speed) { m_speed = speed; }
         float GetTime() const { return m_time; }
         void SetTime(float time);
+        // Editor-only clip inspection bypasses graph states and layers so an
+        // externally controlled playhead maps directly to the current clip.
+        void SetEditorPreviewMode(bool enabled);
         float GetCurrentClipDuration() const;
         float GetPoseUpdateRate() const { return m_poseUpdateRate; }
         void SetPoseUpdateRate(float updatesPerSecond) { m_poseUpdateRate = std::max(0.0f, updatesPerSecond); }
@@ -322,5 +325,6 @@ namespace PlutoGE::scene
         uint64_t m_ragdollRevision = 0;
         bool m_suppressRagdollPose = false;
         bool m_loggedRagdollApply = false;
+        bool m_editorPreviewMode = false;
     };
 }

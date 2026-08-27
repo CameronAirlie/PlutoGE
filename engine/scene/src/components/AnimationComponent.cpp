@@ -1074,6 +1074,17 @@ namespace PlutoGE::scene
             return;
         }
 
+        // The animation clip editor owns m_time while previewing. Do not let
+        // autoplay, graph transitions, or runtime playback advance it again
+        // later in the scene update; only evaluate the requested pose.
+        if (m_editorPreviewMode)
+        {
+            m_playing = false;
+            recordPlaybackTiming();
+            EvaluateOwnedSkeletonPose(*this);
+            return;
+        }
+
         if (m_autoplay && !m_startedAutoplay)
         {
             m_playing = true;
@@ -1129,9 +1140,15 @@ namespace PlutoGE::scene
             if (!crossed)
                 continue;
 
-            for (auto *script : GetOwner()->GetComponents<ScriptComponent>())
-                if (script && script->IsEnabled())
-                    script->OnAnimationEvent(event);
+            // View-model animators commonly live on a child of the gameplay
+            // object. Bubble the event so controller scripts on ancestors can
+            // react without requiring a timing duplicate or relay component.
+            for (auto *recipient = GetOwner(); recipient; recipient = recipient->GetParent())
+            {
+                for (auto *script : recipient->GetComponents<ScriptComponent>())
+                    if (script && script->IsEnabled())
+                        script->OnAnimationEvent(event);
+            }
         }
     }
 
@@ -1759,6 +1776,14 @@ namespace PlutoGE::scene
         }
         m_jointMatricesDirty = m_jointMatricesDirty || std::abs(previousTime - m_time) > 0.00001f;
         m_nodeMatricesDirty = m_nodeMatricesDirty || std::abs(previousTime - m_time) > 0.00001f;
+    }
+
+    void AnimationComponent::SetEditorPreviewMode(bool enabled)
+    {
+        if (m_editorPreviewMode == enabled) return;
+        m_editorPreviewMode = enabled;
+        m_jointMatricesDirty = true;
+        m_nodeMatricesDirty = true;
     }
 
     float AnimationComponent::GetCurrentClipDuration() const
@@ -2525,16 +2550,30 @@ namespace PlutoGE::scene
                 layer.playing = true;
             }
 
+            // Remember whether this update advanced an active one-shot. Boolean
+            // parameters normally represent sustained layers, but a non-looping
+            // layer must be allowed to reach its natural end before it is re-armed.
+            const bool wasPlayingBeforeAdvance = layer.playing;
             bool finished = false;
             if (layer.playing && layer.enabled && layer.clipValid)
             {
                 if (layer.graphReference.empty())
+                {
+                    const float previousTime = layer.time;
                     layer.time = AdvanceClipTime(layer.clipIndex, layer.time, deltaTime, layer.speed, layer.loop, &finished);
+                    DispatchClipEvents(layer.clipIndex, previousTime, layer.time, layer.loop, layer.speed);
+                }
                 else
                     UpdateLayerGraph(layer, deltaTime);
             }
             if (layer.graphReference.empty() && finished && !layer.loop)
                 layer.playing = false;
+
+            const bool completedThisFrame = wasPlayingBeforeAdvance && !layer.playing;
+            if (completedThisFrame && activation && activation->type == AnimationParameterType::Bool)
+            {
+                m_parameters[activationIt->second].boolValue = false;
+            }
 
             float targetWeight = layer.enabled && layer.clipValid && layer.playing ? layer.weight : 0.0f;
             // Bool parameters describe sustained layers; releasing the bool
@@ -2595,8 +2634,11 @@ namespace PlutoGE::scene
         {
             const auto &source = layer.graphStates[static_cast<size_t>(layer.graphTransitionSourceStateIndex)];
             const auto &destination = layer.graphStates[static_cast<size_t>(layer.graphTransitionDestinationStateIndex)];
+            const float previousDestinationTime = layer.graphTransitionDestinationTime;
             layer.graphTransitionSourceTime = AdvanceStateTime(source, layer.graphTransitionSourceTime, deltaTime, layer.speed);
             layer.graphTransitionDestinationTime = AdvanceStateTime(destination, layer.graphTransitionDestinationTime, deltaTime, layer.speed);
+            DispatchClipEvents(destination.clipIndex, previousDestinationTime, layer.graphTransitionDestinationTime,
+                               destination.loop, destination.speed * layer.speed * m_speed);
             layer.graphTransitionElapsed += std::max(0.0f, deltaTime);
             if (layer.graphTransitionElapsed >= layer.graphTransitionDuration)
             {
@@ -2609,7 +2651,10 @@ namespace PlutoGE::scene
 
         auto &state = layer.graphStates[static_cast<size_t>(layer.graphCurrentStateIndex)];
         bool finished = false;
+        const float previousStateTime = layer.graphStateTime;
         layer.graphStateTime = AdvanceStateTime(state, layer.graphStateTime, deltaTime, layer.speed, &finished);
+        DispatchClipEvents(state.clipIndex, previousStateTime, layer.graphStateTime,
+                           state.loop, state.speed * layer.speed * m_speed);
         bool startedTransition = false;
         for (const auto &transition : state.transitions)
         {
@@ -3089,7 +3134,11 @@ namespace PlutoGE::scene
         };
 
         std::vector<glm::mat4> localTransforms;
-        if (m_transition.active)
+        if (m_editorPreviewMode)
+        {
+            localTransforms = sampleClip(m_currentClipIndex, m_time);
+        }
+        else if (m_transition.active)
         {
             const auto &source = m_states[static_cast<size_t>(m_transition.sourceStateIndex)];
             const auto &destination = m_states[static_cast<size_t>(m_transition.destinationStateIndex)];
@@ -3122,7 +3171,7 @@ namespace PlutoGE::scene
         }
         for (const auto &layer : m_layers)
         {
-            if (!layer.enabled || layer.currentWeight <= 0.00001f)
+            if (m_editorPreviewMode || !layer.enabled || layer.currentWeight <= 0.00001f)
                 continue;
             const auto &layerMask = ResolveNodeMask(layer.maskId, nodes);
             activeSampleMask = &layerMask;
@@ -3495,7 +3544,11 @@ namespace PlutoGE::scene
         };
 
         std::vector<glm::mat4> localTransforms;
-        if (m_transition.active)
+        if (m_editorPreviewMode)
+        {
+            localTransforms = sampleClip(m_currentClipIndex, m_time);
+        }
+        else if (m_transition.active)
         {
             const auto &source = m_states[static_cast<size_t>(m_transition.sourceStateIndex)];
             const auto &destination = m_states[static_cast<size_t>(m_transition.destinationStateIndex)];
@@ -3527,7 +3580,7 @@ namespace PlutoGE::scene
         }
         for (const auto &layer : m_layers)
         {
-            if (!layer.enabled || layer.currentWeight <= 0.00001f)
+            if (m_editorPreviewMode || !layer.enabled || layer.currentWeight <= 0.00001f)
                 continue;
             std::vector<glm::mat4> layerTransforms;
             if (!layer.graphReference.empty() && !layer.graphStates.empty())

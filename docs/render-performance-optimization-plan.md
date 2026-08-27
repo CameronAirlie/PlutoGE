@@ -9,6 +9,10 @@ Constraint: preserve all post-process effects and visual fidelity.
 - [x] Resolve clip paths only for audible emitters and reuse the result for one-shots.
 - [x] De-synchronize recurring audio-occlusion refreshes while preserving their
   80-120 ms cadence and full ray sample count.
+- [x] Bound audio-occlusion work to two emitter refreshes per frame (one above
+  48 active emitters), preventing residual refresh collisions from creating spikes.
+- [x] Update cached Bullet query transforms and broadphase AABBs only for colliders
+  whose world transform changed, rather than all colliders before each frame's first query.
 - [x] Expose audio as its own editor-profiler metric for follow-up measurement.
 - [x] Rebuild the complete RelWithDebInfo editor.
 

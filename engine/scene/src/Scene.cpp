@@ -969,6 +969,7 @@ namespace PlutoGE::scene
         struct BulletQueryBody
         {
             Entity *entity = nullptr;
+            glm::mat4 synchronizedWorldTransform{1.0f};
             FoliageComponent *foliage = nullptr;
             uint64_t foliageRevision = 0;
             glm::mat4 foliageOwnerTransform{1.0f};
@@ -1062,6 +1063,7 @@ namespace PlutoGE::scene
 
                 queryWorld->bodies.push_back(BulletQueryBody{
                     .entity = entity,
+                    .synchronizedWorldTransform = entity->GetWorldTransform(),
                     .triangleMeshes = std::move(shapeData.ownedTriangleMeshes),
                     .shape = std::move(shapeData.shape),
                     .childShapes = std::move(shapeData.ownedChildShapes),
@@ -1458,12 +1460,16 @@ namespace PlutoGE::scene
                     continue;
                 if (body.foliage)
                     continue;
+                const glm::mat4 worldTransform = body.entity->GetWorldTransform();
+                if (body.synchronizedWorldTransform == worldTransform)
+                    continue;
                 btTransform transform;
                 transform.setIdentity();
                 transform.setOrigin(ToBullet(body.entity->GetWorldPosition()));
-                transform.setRotation(ToBulletRotation(body.entity->GetWorldTransform()));
+                transform.setRotation(ToBulletRotation(worldTransform));
                 body.object->setWorldTransform(transform);
                 m_physicsQueryCache->world->collisionWorld.updateSingleAabb(body.object.get());
+                body.synchronizedWorldTransform = worldTransform;
             }
         }
         m_physicsQueryCache->refreshSequence = m_updateSequence;
@@ -2697,8 +2703,12 @@ namespace PlutoGE::scene
 
             emitterStates.reserve(emitters.size());
             auto &engine = core::Engine::GetInstance();
+            // Occlusion uses several physics rays per refresh. A small scene can
+            // otherwise synchronize all emitters into a large intermittent CPU
+            // spike. Two refreshes per frame sustain the normal 8-12.5 Hz cadence
+            // for typical scenes while placing a hard bound on frame cost.
             const std::size_t maximumOcclusionRefreshesPerFrame =
-                emitters.size() > 48 ? 1 : (emitters.size() > 16 ? 2 : 8);
+                emitters.size() > 48 ? 1 : 2;
             const std::size_t occlusionSampleCount = emitters.size() > 16 ? 1 : 5;
             std::size_t occlusionRefreshCount = 0;
             for (auto *emitter : emitters)

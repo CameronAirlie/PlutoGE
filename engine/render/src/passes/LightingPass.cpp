@@ -24,7 +24,6 @@ namespace PlutoGE::render
 {
     namespace
     {
-        constexpr int kPositionTextureSlot = 0;
         constexpr int kNormalTextureSlot = 1;
         constexpr int kAlbedoTextureSlot = 2;
         constexpr int kBakedLightingTextureSlot = 3;
@@ -267,7 +266,6 @@ namespace PlutoGE::render
                 out vec4 FragColor;
                 in vec2 UV;
 
-                uniform sampler2D gPosition;
                 uniform sampler2D gDepth;
                 uniform sampler2D gNormal;
                 uniform sampler2D gAlbedoSpec;
@@ -849,15 +847,24 @@ namespace PlutoGE::render
             )";
 
             source.fragmentSource += R"(
+                vec3 ReconstructWorldPosition(vec2 uv, float depth)
+                {
+                    vec4 viewPosition = uInverseProjectionMatrix *
+                        vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+                    viewPosition /= viewPosition.w;
+                    return (uInverseViewMatrix * vec4(viewPosition.xyz, 1.0)).xyz;
+                }
+
                 void main()
                 {
-                    vec3 fragPos = texture(gPosition, UV).rgb;
+                    float sceneDepth = texture(gDepth, UV).r;
                     vec4 normalRoughness = texture(gNormal, UV);
-                    if (dot(normalRoughness.rgb, normalRoughness.rgb) <= 0.000001)
+                    if (sceneDepth <= 0.000001 || dot(normalRoughness.rgb, normalRoughness.rgb) <= 0.000001)
                     {
                         FragColor = vec4(0.0, 0.0, 0.0, 1.0);
                         return;
                     }
+                    vec3 fragPos = ReconstructWorldPosition(UV, sceneDepth);
                     vec3 normal = normalize(normalRoughness.rgb);
 
                     if (uDebugViewMode == DEBUG_VIEW_LOD)
@@ -1153,13 +1160,6 @@ namespace PlutoGE::render
         void BindLightingInputs(Shader *shader, const RenderContext &ctx)
         {
             auto *gBuffer = ctx.gBuffer;
-            Graphics::ActiveTexture(GL_TEXTURE0 + kPositionTextureSlot);
-            Graphics::BindTexture(GL_TEXTURE_2D, gBuffer->GetPositionTextureID());
-            if (shader->HasUniform("gPosition"))
-            {
-                shader->SetUniform("gPosition", kPositionTextureSlot);
-            }
-
             Graphics::ActiveTexture(GL_TEXTURE0 + kNormalTextureSlot);
             Graphics::BindTexture(GL_TEXTURE_2D, gBuffer->GetNormalTextureID());
             if (shader->HasUniform("gNormal"))

@@ -481,7 +481,6 @@ namespace PlutoGE::render
 out vec4 FragColor;
 in vec2 UV;
 
-uniform sampler2D gPosition;
 uniform sampler2D gDepth;
 uniform sampler2D gNormal;
 uniform sampler2D gAlbedoSpec;
@@ -1272,13 +1271,19 @@ bool IsUnlitMaterial(float materialFlag)
 {
     return materialFlag >= MATERIAL_FLAG_UNLIT - 0.25;
 }
+
+vec3 ReconstructWorldPosition(vec2 uv, float depth)
+{
+    vec4 viewPosition = uInverseProjectionMatrix * vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+    viewPosition /= viewPosition.w;
+    return (uInverseViewMatrix * vec4(viewPosition.xyz, 1.0)).xyz;
+}
 		)";
 
             source.fragmentSource += R"(
 
 void main()
 {
-    vec3 fragPos = texture(gPosition, UV).rgb;
     float depth = texture(gDepth, UV).r;
     vec4 normalRoughness = texture(gNormal, UV);
     vec4 albedoMetallic = texture(gAlbedoSpec, UV);
@@ -1295,6 +1300,8 @@ void main()
         }
         return;
     }
+
+    vec3 fragPos = ReconstructWorldPosition(UV, depth);
 
     vec3 normal = normalize(normalRoughness.rgb);
     vec3 albedo = albedoMetallic.rgb;

@@ -24,6 +24,9 @@ profile can now distinguish backend audio, occlusion queries, and true submissio
 
 ## 1080p GPU pass
 
+- [ ] Remove the redundant `RGB32F` world-position G-buffer attachment after migrating every
+  consumer to depth reconstruction. Ambient lighting, direct lighting, SSR, and decals have
+  been migrated; LPV, SSGI, RSM, VCTGI, and shared post-process bindings remain.
 - [x] Move the expensive lens-flare ghost, halo, and glare synthesis to its existing
   half-resolution bright-signal domain, followed by a native-resolution two-sample composite.
 - [x] Enable volumetric fog's temporal, depth-aware half-resolution path in the CoD preset.

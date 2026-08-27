@@ -103,11 +103,12 @@ void main()
 in vec2 vUV;
 layout(location = 2) out vec4 outAlbedo;
 
-uniform sampler2D uWorldPosition;
+uniform sampler2D uSceneDepth;
 uniform sampler2D uWorldNormal;
 uniform sampler2D uDecalTexture;
 uniform bool uHasAlbedoTexture;
 uniform mat4 uInverseModel;
+uniform mat4 uInverseViewProjection;
 uniform vec3 uProjectorNormal;
 uniform vec4 uTint;
 uniform vec4 uMaterialColor;
@@ -118,7 +119,11 @@ uniform float uNormalCutoff;
 
 void main()
 {
-    vec3 worldPosition = texture(uWorldPosition, vUV).xyz;
+    float sceneDepth = texture(uSceneDepth, vUV).r;
+    if (sceneDepth <= 0.0)
+        discard;
+    vec4 worldH = uInverseViewProjection * vec4(vUV * 2.0 - 1.0, sceneDepth * 2.0 - 1.0, 1.0);
+    vec3 worldPosition = worldH.xyz / worldH.w;
     vec3 localPosition = (uInverseModel * vec4(worldPosition, 1.0)).xyz;
     if (any(greaterThan(abs(localPosition), vec3(0.5))))
         discard;
@@ -178,11 +183,14 @@ void main()
 
         m_shader->Bind();
         Graphics::ActiveTexture(GL_TEXTURE0);
-        Graphics::BindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetPositionTextureID());
-        m_shader->SetUniform("uWorldPosition", 0);
+        Graphics::BindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetDepthTextureID());
+        m_shader->SetUniform("uSceneDepth", 0);
         Graphics::ActiveTexture(GL_TEXTURE1);
         Graphics::BindTexture(GL_TEXTURE_2D, ctx.gBuffer->GetNormalTextureID());
         m_shader->SetUniform("uWorldNormal", 1);
+        m_shader->SetUniform(
+            "uInverseViewProjection",
+            glm::inverse(ctx.cameraData.projection * ctx.cameraData.view));
         glBindVertexArray(m_fullscreenVao);
 
         for (const auto &decal : *ctx.decalCommands)

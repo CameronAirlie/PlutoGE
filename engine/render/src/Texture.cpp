@@ -2,6 +2,8 @@
 #include "PlutoGE/render/Graphics.h"
 #include "PlutoGE/core/Engine.h"
 
+#include <iostream>
+
 namespace PlutoGE::render
 {
     namespace
@@ -15,11 +17,52 @@ namespace PlutoGE::render
 
     Texture::~Texture()
     {
-        if (m_textureID != 0 && PrepareTextureGpuAccess())
+        if (PrepareTextureGpuAccess())
         {
-            Graphics::DeleteTextures(1, &m_textureID);
+            for (auto &framebuffer : m_depthFramebuffers)
+            {
+                if (framebuffer != 0)
+                    Graphics::DeleteFramebuffers(1, &framebuffer);
+                framebuffer = 0;
+            }
+            if (m_textureID != 0)
+                Graphics::DeleteTextures(1, &m_textureID);
         }
         m_textureID = 0;
+    }
+
+    GLuint Texture::GetDepthFramebuffer(unsigned int face)
+    {
+        if (m_textureID == 0 || (m_type != GL_TEXTURE_2D && m_type != GL_TEXTURE_CUBE_MAP))
+            return 0;
+
+        const unsigned int viewIndex = m_type == GL_TEXTURE_CUBE_MAP ? face : 0;
+        if (viewIndex >= m_depthFramebuffers.size())
+            return 0;
+        if (m_depthFramebuffers[viewIndex] != 0)
+            return m_depthFramebuffers[viewIndex];
+
+        GLuint framebuffer = 0;
+        glGenFramebuffers(1, &framebuffer);
+        Graphics::BindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+        const GLenum attachmentTarget = m_type == GL_TEXTURE_CUBE_MAP
+                                            ? GL_TEXTURE_CUBE_MAP_POSITIVE_X + viewIndex
+                                            : GL_TEXTURE_2D;
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+                               attachmentTarget, m_textureID, 0);
+        glDrawBuffer(GL_NONE);
+        glReadBuffer(GL_NONE);
+        const GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+        if (status != GL_FRAMEBUFFER_COMPLETE)
+        {
+            std::cerr << "Depth texture framebuffer incomplete: 0x"
+                      << std::hex << status << std::dec << std::endl;
+            Graphics::DeleteFramebuffers(1, &framebuffer);
+            return 0;
+        }
+
+        m_depthFramebuffers[viewIndex] = framebuffer;
+        return framebuffer;
     }
 
     Texture *Texture::LoadFromFile(const char *filePath, TextureColorSpace colorSpace)

@@ -26,6 +26,10 @@ namespace PlutoGE::render
         static void BindFramebuffer(GLenum target, GLuint framebufferID);
         static void UnbindFramebuffer();
         static void SetViewport(GLint x, GLint y, GLsizei width, GLsizei height);
+        // Returns the viewport tracked by the renderer without forcing a
+        // synchronous OpenGL state query. False means the cache has not yet
+        // observed a viewport in the current context.
+        [[nodiscard]] static bool GetViewport(GLint &x, GLint &y, GLsizei &width, GLsizei &height);
         static void SetCapability(GLenum capability, bool enabled);
         static void Enable(GLenum capability);
         static void Disable(GLenum capability);

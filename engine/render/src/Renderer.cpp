@@ -1509,6 +1509,23 @@ namespace PlutoGE::render
         m_cpuFrameStats.shadowSubmittedTriangleCount += std::max(submittedTriangles, 0);
     }
 
+    void Renderer::RecordShadowCpuBreakdown(float targetBindMs, float casterBatchBuildMs,
+                                             float bufferUploadMs, float drawSubmissionMs,
+                                             float imageCopyMs, float measuredPassMs,
+                                             int batchBuildCount, int imageCopyCount)
+    {
+        m_cpuFrameStats.shadowCpuTargetBindMs += std::max(targetBindMs, 0.0f);
+        m_cpuFrameStats.shadowCpuCasterBatchBuildMs += std::max(casterBatchBuildMs, 0.0f);
+        m_cpuFrameStats.shadowCpuBufferUploadMs += std::max(bufferUploadMs, 0.0f);
+        m_cpuFrameStats.shadowCpuDrawSubmissionMs += std::max(drawSubmissionMs, 0.0f);
+        m_cpuFrameStats.shadowCpuImageCopyMs += std::max(imageCopyMs, 0.0f);
+        const float classifiedMs = targetBindMs + casterBatchBuildMs + bufferUploadMs +
+                                   drawSubmissionMs + imageCopyMs;
+        m_cpuFrameStats.shadowCpuUnclassifiedMs += std::max(measuredPassMs - classifiedMs, 0.0f);
+        m_cpuFrameStats.shadowCpuBatchBuildCount += std::max(batchBuildCount, 0);
+        m_cpuFrameStats.shadowCpuImageCopyCount += std::max(imageCopyCount, 0);
+    }
+
     void Renderer::RecordDirectionalShadowScroll(bool candidate, bool succeeded, bool topologyRejected,
                                                   float maxMatrixDelta, float fractionalTexelError)
     {

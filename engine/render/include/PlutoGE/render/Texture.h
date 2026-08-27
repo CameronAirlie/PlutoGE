@@ -3,6 +3,7 @@
 #include "PlutoGE/render/Graphics.h"
 
 #include <glad/glad.h>
+#include <array>
 #include <cstdint>
 #include <string>
 
@@ -34,6 +35,10 @@ namespace PlutoGE::render
         int GetChannels() const { return m_channels; }
         const std::string &GetFilePath() const { return m_filePath; }
 
+        // Lazily creates a stable depth-only framebuffer view owned by this
+        // texture. Cubemaps use one view per face; 2D textures ignore face.
+        [[nodiscard]] GLuint GetDepthFramebuffer(unsigned int face = 0);
+
         static Texture *LoadFromFile(const char *filePath, TextureColorSpace colorSpace = TextureColorSpace::Linear);
         static Texture *DepthTexture(int width, int height);
         static Texture *DepthCubemap(int width, int height);
@@ -51,6 +56,7 @@ namespace PlutoGE::render
         int m_height = 0;
         int m_depth = 0;
         int m_channels = 0; // Number of color channels (e.g., 3 for RGB, 4 for RGBA)
+        std::array<GLuint, 6> m_depthFramebuffers{};
 
     protected:
         friend class Graphics;

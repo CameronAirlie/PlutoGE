@@ -138,6 +138,19 @@ namespace PlutoGE::render
         cache.viewportHeight = height;
     }
 
+    bool Graphics::GetViewport(GLint &x, GLint &y, GLsizei &width, GLsizei &height)
+    {
+        const auto &cache = GetGraphicsStateCache();
+        if (cache.viewportWidth < 0 || cache.viewportHeight < 0)
+            return false;
+
+        x = cache.viewportX;
+        y = cache.viewportY;
+        width = cache.viewportWidth;
+        height = cache.viewportHeight;
+        return true;
+    }
+
     void Graphics::SetCapability(GLenum capability, bool enabled)
     {
         auto &cache = GetGraphicsStateCache();

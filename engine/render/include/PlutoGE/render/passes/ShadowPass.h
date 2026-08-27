@@ -35,7 +35,6 @@ namespace PlutoGE::render
         }
 
         Shader *m_shadowPassShader = nullptr;
-        unsigned int m_shadowFramebuffer = 0;
         std::array<unsigned int, kStreamBufferCount> m_instanceBuffers{};
         std::array<std::size_t, kStreamBufferCount> m_instanceCapacities{};
         std::array<unsigned int, kStreamBufferCount> m_indirectBuffers{};

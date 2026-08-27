@@ -13,13 +13,14 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <chrono>
 #include <cmath>
 #include <functional>
 #include <iostream>
 #include <limits>
 #include <numeric>
 #include <string>
-#include <unordered_set>
+#include <unordered_map>
 #include <vector>
 
 #include <glm/ext/matrix_clip_space.hpp>
@@ -118,6 +119,24 @@ namespace
         int materialGroups = 0;
         int apiDrawCalls = 0;
     };
+
+    struct ShadowCpuBreakdown
+    {
+        float targetBindMs = 0.0f;
+        float casterBatchBuildMs = 0.0f;
+        float bufferUploadMs = 0.0f;
+        float drawSubmissionMs = 0.0f;
+        float imageCopyMs = 0.0f;
+        int batchBuildCount = 0;
+        int imageCopyCount = 0;
+    };
+
+    using ShadowCpuClock = std::chrono::steady_clock;
+
+    float ShadowElapsedMs(ShadowCpuClock::time_point start, ShadowCpuClock::time_point end)
+    {
+        return std::chrono::duration<float, std::milli>(end - start).count();
+    }
 
     int GetDirectionalCascadeCount(const PlutoGE::scene::Light &light)
     {
@@ -308,25 +327,6 @@ namespace
     void HashCombine(std::uint64_t &seed, std::uint64_t value)
     {
         seed ^= value + 0x9e3779b97f4a7c15ull + (seed << 6) + (seed >> 2);
-    }
-
-    bool ValidateShadowFramebuffer(const char *label, unsigned int attachmentTexture)
-    {
-        // Shadow targets persist across frames. glCheckFramebufferStatus can
-        // synchronize with the driver, so validate each newly created texture
-        // once rather than once per dynamic cascade redraw.
-        static std::unordered_set<unsigned int> validatedAttachments;
-        if (validatedAttachments.contains(attachmentTexture))
-            return true;
-        const GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-        if (status == GL_FRAMEBUFFER_COMPLETE)
-        {
-            validatedAttachments.insert(attachmentTexture);
-            return true;
-        }
-
-        std::cerr << "Shadow framebuffer incomplete for " << label << ": 0x" << std::hex << status << std::dec << std::endl;
-        return false;
     }
 
     void BuildShadowCasterEntries(const std::vector<PlutoGE::render::RenderCommand> &renderCommands,
@@ -1289,8 +1289,11 @@ namespace
                                             std::size_t &indirectCapacity,
                                             bool &indirectDrawEnabled,
                                             bool &indirectDrawValidated,
-                                            std::vector<TransformInstanceData> &batchInstances)
+                                            std::vector<TransformInstanceData> &batchInstances,
+                                            ShadowCpuBreakdown &cpuBreakdown)
     {
+        const auto batchBuildStart = ShadowCpuClock::now();
+        ++cpuBreakdown.batchBuildCount;
         struct PreparedShadowDraw
         {
             const PlutoGE::render::RenderCommand *command = nullptr;
@@ -1368,7 +1371,11 @@ namespace
         // Upload the pass's complete transform stream once. The old path orphaned
         // and repopulated this buffer for every draw, which turns an animated
         // caster invalidating a directional shadow into thousands of driver calls.
+        const auto instanceBuildEnd = ShadowCpuClock::now();
+        cpuBreakdown.casterBatchBuildMs += ShadowElapsedMs(batchBuildStart, instanceBuildEnd);
         UploadTransformInstances(instanceBuffer, instanceCapacity, batchInstances);
+        const auto instanceUploadEnd = ShadowCpuClock::now();
+        cpuBreakdown.bufferUploadMs += ShadowElapsedMs(instanceBuildEnd, instanceUploadEnd);
 
         struct PreparedShadowGroup
         {
@@ -1454,8 +1461,13 @@ namespace
             drawIndex = drawEnd;
         }
 
+        const auto groupBuildEnd = ShadowCpuClock::now();
+        cpuBreakdown.casterBatchBuildMs += ShadowElapsedMs(instanceUploadEnd, groupBuildEnd);
         PlutoGE::render::UploadIndirectDrawCommands(indirectBuffer, indirectCapacity, indirectCommands);
+        const auto indirectUploadEnd = ShadowCpuClock::now();
+        cpuBreakdown.bufferUploadMs += ShadowElapsedMs(groupBuildEnd, indirectUploadEnd);
 
+        const auto drawSubmissionStart = indirectUploadEnd;
         bool skinningEnabled = false;
         const std::vector<glm::mat4> *boundJointMatrices = nullptr;
         for (const auto &group : groups)
@@ -1619,6 +1631,7 @@ namespace
         }
 
         PlutoGE::render::Graphics::Enable(GL_CULL_FACE);
+        cpuBreakdown.drawSubmissionMs += ShadowElapsedMs(drawSubmissionStart, ShadowCpuClock::now());
         return stats;
     }
 }
@@ -1655,6 +1668,17 @@ namespace PlutoGE::render
         };
 
         std::unordered_map<Key, Entry, KeyHash> staticInstanceBounds;
+
+        bool BindDepthTarget(Texture *texture, unsigned int face = 0)
+        {
+            if (!texture)
+                return false;
+            const GLuint framebuffer = texture->GetDepthFramebuffer(face);
+            if (framebuffer == 0)
+                return false;
+            Graphics::BindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+            return true;
+        }
     };
 
     ShadowPass::ShadowPass()
@@ -1666,13 +1690,11 @@ namespace PlutoGE::render
     {
         glDeleteBuffers(static_cast<GLsizei>(m_instanceBuffers.size()), m_instanceBuffers.data());
         glDeleteBuffers(static_cast<GLsizei>(m_indirectBuffers.size()), m_indirectBuffers.data());
-        if (m_shadowFramebuffer != 0) Graphics::DeleteFramebuffers(1, &m_shadowFramebuffer);
     }
 
     void ShadowPass::Initialize()
     {
         m_shadowPassShader = Shader::CreateShadowPassShader();
-        glGenFramebuffers(1, &m_shadowFramebuffer);
         glGenBuffers(static_cast<GLsizei>(m_instanceBuffers.size()), m_instanceBuffers.data());
     }
 
@@ -1733,7 +1755,9 @@ namespace PlutoGE::render
 
     void ShadowPass::Execute(const RenderContext &ctx)
     {
-        if (!m_shadowPassShader || !ctx.lights || !ctx.renderCommands || m_shadowFramebuffer == 0)
+        const auto measuredPassStart = ShadowCpuClock::now();
+        ShadowCpuBreakdown cpuBreakdown;
+        if (!m_shadowPassShader || !ctx.lights || !ctx.renderCommands)
         {
             return;
         }
@@ -1892,12 +1916,15 @@ namespace PlutoGE::render
         m_shadowCasterFingerprint = casterFrameState.fingerprint;
         m_hasShadowCasterFingerprint = true;
 
-        GLint previousViewport[4] = {0, 0, 0, 0};
-        glGetIntegerv(GL_VIEWPORT, previousViewport);
+        GLint previousViewportX = 0;
+        GLint previousViewportY = 0;
+        GLsizei previousViewportWidth = ctx.renderTarget ? ctx.renderTarget->GetWidth() : 0;
+        GLsizei previousViewportHeight = ctx.renderTarget ? ctx.renderTarget->GetHeight() : 0;
+        const bool hadCachedViewport = Graphics::GetViewport(
+            previousViewportX, previousViewportY,
+            previousViewportWidth, previousViewportHeight);
+        (void)hadCachedViewport;
 
-        Graphics::BindFramebuffer(GL_FRAMEBUFFER, m_shadowFramebuffer);
-        glDrawBuffer(GL_NONE);
-        glReadBuffer(GL_NONE);
         Graphics::Enable(GL_DEPTH_TEST);
         Graphics::Disable(GL_SCISSOR_TEST);
         glDepthMask(GL_TRUE);
@@ -1925,11 +1952,26 @@ namespace PlutoGE::render
             shadowCasters,
             movedShadowCaster);
         shadowCastersChanged = shadowCastersChanged || movedShadowCaster;
-        std::vector<const ShadowCasterEntry *> sortedShadowCasters;
+        static thread_local std::vector<const ShadowCasterEntry *> sortedShadowCasters;
+        sortedShadowCasters.clear();
         sortedShadowCasters.reserve(shadowCasters.size());
         for (const auto &shadowCaster : shadowCasters)
             sortedShadowCasters.push_back(&shadowCaster);
         static thread_local std::vector<TransformInstanceData> shadowBatchInstances;
+        const auto bindDepthTarget = [&](Texture *texture, unsigned int face = 0)
+        {
+            const auto start = ShadowCpuClock::now();
+            const bool bound = m_cache->BindDepthTarget(texture, face);
+            cpuBreakdown.targetBindMs += ShadowElapsedMs(start, ShadowCpuClock::now());
+            return bound;
+        };
+        const auto recordImageCopy = [&](const auto &copyOperation)
+        {
+            const auto start = ShadowCpuClock::now();
+            copyOperation();
+            cpuBreakdown.imageCopyMs += ShadowElapsedMs(start, ShadowCpuClock::now());
+            ++cpuBreakdown.imageCopyCount;
+        };
         int incrementalShadowSurfaceUpdates = 0;
         bool submittedFullDirectionalStaticRefresh = false;
         auto reserveIncrementalShadowSurfaceUpdate = [&]()
@@ -2092,8 +2134,7 @@ namespace PlutoGE::render
                         }
                     }
 
-                    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, shadowMap->GetTextureID(), 0);
-                    if (!ValidateShadowFramebuffer("point shadow", shadowMap->GetTextureID()))
+                    if (!bindDepthTarget(shadowMap, face))
                     {
                         light->pendingPointShadowFaceMask |= faceBit;
                         deferredShadowRefresh = true;
@@ -2124,7 +2165,8 @@ namespace PlutoGE::render
                         m_indirectCapacities[streamBufferIndex],
                         m_indirectDrawEnabled,
                         m_indirectDrawValidated,
-                        shadowBatchInstances);
+                        shadowBatchInstances,
+                        cpuBreakdown);
                     if (ctx.renderer)
                     {
                         ctx.renderer->RecordShadowMapUpdate(
@@ -2393,7 +2435,7 @@ namespace PlutoGE::render
                     }
                     const bool requiresScrollCopy = !staticNeedsFullRefresh &&
                                                     (cascadeScroll.x != 0 || cascadeScroll.y != 0);
-                    unsigned int renderDepthTexture = staticCascadeMap->GetTextureID();
+                    Texture *renderDepthTarget = staticCascadeMap;
                     std::uint8_t activeScratchIndex = 0;
                     if (requiresScrollCopy)
                     {
@@ -2406,7 +2448,11 @@ namespace PlutoGE::render
                             scratchMap.reset(Texture::DepthTexture(shadowResolution, shadowResolution));
                         }
                         const unsigned int scratchTexture = scratchMap->GetTextureID();
-                        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, scratchTexture, 0);
+                        if (!bindDepthTarget(scratchMap.get()))
+                        {
+                            deferredShadowRefresh = true;
+                            continue;
+                        }
                         Graphics::Disable(GL_SCISSOR_TEST);
 
                         const int sourceX = glm::max(0, -cascadeScroll.x);
@@ -2416,15 +2462,16 @@ namespace PlutoGE::render
                         const int copyWidth = shadowResolution - std::abs(cascadeScroll.x);
                         const int copyHeight = shadowResolution - std::abs(cascadeScroll.y);
                         glClear(GL_DEPTH_BUFFER_BIT);
-                        glCopyImageSubData(staticCascadeMap->GetTextureID(), GL_TEXTURE_2D, 0, sourceX, sourceY, 0,
-                                           scratchTexture, GL_TEXTURE_2D, 0, destinationX, destinationY, 0,
-                                           copyWidth, copyHeight, 1);
-                        renderDepthTexture = scratchTexture;
+                        recordImageCopy([&]
+                        {
+                            glCopyImageSubData(staticCascadeMap->GetTextureID(), GL_TEXTURE_2D, 0, sourceX, sourceY, 0,
+                                               scratchTexture, GL_TEXTURE_2D, 0, destinationX, destinationY, 0,
+                                               copyWidth, copyHeight, 1);
+                        });
+                        renderDepthTarget = scratchMap.get();
                     }
 
-                    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, renderDepthTexture, 0);
-                    if (!ValidateShadowFramebuffer(
-                            "directional cascade shadow", renderDepthTexture))
+                    if (!bindDepthTarget(renderDepthTarget))
                     {
                         continue;
                     }
@@ -2532,7 +2579,7 @@ namespace PlutoGE::render
                             m_shadowPassShader,
                             m_instanceBuffers[streamBufferIndex], m_instanceCapacities[streamBufferIndex],
                             m_indirectBuffers[streamBufferIndex], m_indirectCapacities[streamBufferIndex], m_indirectDrawEnabled,
-                            m_indirectDrawValidated, shadowBatchInstances);
+                            m_indirectDrawValidated, shadowBatchInstances, cpuBreakdown);
                         drawStats.submittedInstances += regionStats.submittedInstances;
                         drawStats.submittedBatches += regionStats.submittedBatches;
                         drawStats.submittedTriangles += regionStats.submittedTriangles;
@@ -2641,8 +2688,11 @@ namespace PlutoGE::render
                                 light->staticShadowCascadeScratchMaps[cascadeIndex][activeScratchIndex];
                             const unsigned int combinedScratchTexture = combinedScratchMap->GetTextureID();
                             const unsigned int previousCombinedTexture = cascadeMap->GetTextureID();
-                            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D,
-                                                   combinedScratchTexture, 0);
+                            if (!bindDepthTarget(combinedScratchMap.get()))
+                            {
+                                deferredShadowRefresh = true;
+                                continue;
+                            }
                             Graphics::Disable(GL_SCISSOR_TEST);
                             glClear(GL_DEPTH_BUFFER_BIT);
                             const int sourceX = glm::max(0, -cascadeScroll.x);
@@ -2651,33 +2701,41 @@ namespace PlutoGE::render
                             const int destinationY = glm::max(0, cascadeScroll.y);
                             const int copyWidth = shadowResolution - std::abs(cascadeScroll.x);
                             const int copyHeight = shadowResolution - std::abs(cascadeScroll.y);
-                            glCopyImageSubData(previousCombinedTexture, GL_TEXTURE_2D, 0,
-                                               sourceX, sourceY, 0,
-                                               combinedScratchTexture, GL_TEXTURE_2D, 0,
-                                               destinationX, destinationY, 0,
-                                               copyWidth, copyHeight, 1);
+                            recordImageCopy([&]
+                            {
+                                glCopyImageSubData(previousCombinedTexture, GL_TEXTURE_2D, 0,
+                                                   sourceX, sourceY, 0,
+                                                   combinedScratchTexture, GL_TEXTURE_2D, 0,
+                                                   destinationX, destinationY, 0,
+                                                   copyWidth, copyHeight, 1);
+                            });
                             std::swap(light->shadowCascadeMaps[cascadeIndex], combinedScratchMap);
                             cascadeMap = light->shadowCascadeMaps[cascadeIndex].get();
                         }
 
                         for (const auto &dirtyRegion : dynamicRefreshRegions)
                         {
-                            glCopyImageSubData(
-                                staticCascadeMap->GetTextureID(), GL_TEXTURE_2D, 0,
-                                dirtyRegion.pixelX, dirtyRegion.pixelY, 0,
-                                cascadeMap->GetTextureID(), GL_TEXTURE_2D, 0,
-                                dirtyRegion.pixelX, dirtyRegion.pixelY, 0,
-                                dirtyRegion.pixelWidth, dirtyRegion.pixelHeight, 1);
+                            recordImageCopy([&]
+                            {
+                                glCopyImageSubData(
+                                    staticCascadeMap->GetTextureID(), GL_TEXTURE_2D, 0,
+                                    dirtyRegion.pixelX, dirtyRegion.pixelY, 0,
+                                    cascadeMap->GetTextureID(), GL_TEXTURE_2D, 0,
+                                    dirtyRegion.pixelX, dirtyRegion.pixelY, 0,
+                                    dirtyRegion.pixelWidth, dirtyRegion.pixelHeight, 1);
+                            });
                         }
                     }
                     else
                     {
-                        glCopyImageSubData(staticCascadeMap->GetTextureID(), GL_TEXTURE_2D, 0, 0, 0, 0,
-                                           cascadeMap->GetTextureID(), GL_TEXTURE_2D, 0, 0, 0, 0,
-                                           shadowResolution, shadowResolution, 1);
+                        recordImageCopy([&]
+                        {
+                            glCopyImageSubData(staticCascadeMap->GetTextureID(), GL_TEXTURE_2D, 0, 0, 0, 0,
+                                               cascadeMap->GetTextureID(), GL_TEXTURE_2D, 0, 0, 0, 0,
+                                               shadowResolution, shadowResolution, 1);
+                        });
                     }
-                    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, cascadeMap->GetTextureID(), 0);
-                    if (!ValidateShadowFramebuffer("combined directional cascade shadow", cascadeMap->GetTextureID()))
+                    if (!bindDepthTarget(cascadeMap))
                     {
                         continue;
                     }
@@ -2774,8 +2832,7 @@ namespace PlutoGE::render
             Graphics::Enable(GL_POLYGON_OFFSET_FILL);
             glPolygonOffset(1.0f, 2.0f);
             glCullFace(GL_FRONT);
-            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, shadowMap->GetTextureID(), 0);
-            if (!ValidateShadowFramebuffer("projected shadow", shadowMap->GetTextureID()))
+            if (!bindDepthTarget(shadowMap))
             {
                 continue;
             }
@@ -2805,7 +2862,8 @@ namespace PlutoGE::render
                 m_indirectCapacities[streamBufferIndex],
                 m_indirectDrawEnabled,
                 m_indirectDrawValidated,
-                shadowBatchInstances);
+                shadowBatchInstances,
+                cpuBreakdown);
             if (ctx.renderer)
             {
                 ctx.renderer->RecordShadowMapUpdate(
@@ -2827,9 +2885,22 @@ namespace PlutoGE::render
         Graphics::Disable(GL_POLYGON_OFFSET_FILL);
         glCullFace(GL_BACK);
         Graphics::BindFramebuffer(GL_FRAMEBUFFER, 0);
-        Graphics::SetViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
+        Graphics::SetViewport(previousViewportX, previousViewportY,
+                              previousViewportWidth, previousViewportHeight);
         // Shadow maps remain conventional; restore the scene's reversed-Z state.
         glClearDepth(0.0);
         glDepthFunc(GL_GREATER);
+        if (ctx.renderer)
+        {
+            ctx.renderer->RecordShadowCpuBreakdown(
+                cpuBreakdown.targetBindMs,
+                cpuBreakdown.casterBatchBuildMs,
+                cpuBreakdown.bufferUploadMs,
+                cpuBreakdown.drawSubmissionMs,
+                cpuBreakdown.imageCopyMs,
+                ShadowElapsedMs(measuredPassStart, ShadowCpuClock::now()),
+                cpuBreakdown.batchBuildCount,
+                cpuBreakdown.imageCopyCount);
+        }
     }
 }

@@ -272,6 +272,16 @@ namespace PlutoGE::ui
         ImGui::Text("Shadow updates: %d surfaces (%d directional cascades)", cpuFrameStats.shadowUpdatedSurfaceCount, cpuFrameStats.shadowUpdatedDirectionalCascadeCount);
         ImGui::Text("Shadow workload: %d px, %d logical batches, %d instances, %d triangles", cpuFrameStats.shadowUpdatedPixelCount, cpuFrameStats.shadowSubmittedBatchCount, cpuFrameStats.shadowSubmittedInstanceCount, cpuFrameStats.shadowSubmittedTriangleCount);
         ImGui::Text("Shadow driver submission: %d material groups, %d API draw calls", cpuFrameStats.shadowMaterialGroupCount, cpuFrameStats.shadowApiDrawCallCount);
+        if (ImGui::TreeNode("Shadow CPU breakdown"))
+        {
+            ImGui::Text("Target bind: %.3f ms", cpuFrameStats.shadowCpuTargetBindMs);
+            ImGui::Text("Caster + batch build: %.3f ms (%d builds)", cpuFrameStats.shadowCpuCasterBatchBuildMs, cpuFrameStats.shadowCpuBatchBuildCount);
+            ImGui::Text("Buffer upload: %.3f ms", cpuFrameStats.shadowCpuBufferUploadMs);
+            ImGui::Text("Draw submission: %.3f ms", cpuFrameStats.shadowCpuDrawSubmissionMs);
+            ImGui::Text("Image copy: %.3f ms (%d copies)", cpuFrameStats.shadowCpuImageCopyMs, cpuFrameStats.shadowCpuImageCopyCount);
+            ImGui::Text("Other preparation: %.3f ms", cpuFrameStats.shadowCpuUnclassifiedMs);
+            ImGui::TreePop();
+        }
 
         ImGui::Separator();
         ImGui::Text("GPU passes total: %.2f ms", totalGpuPassTimeMs);

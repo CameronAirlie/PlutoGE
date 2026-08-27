@@ -244,6 +244,14 @@ namespace PlutoGE::ui
         report << "Shadow material groups: " << cpuFrameStats.shadowMaterialGroupCount << "\n";
         report << "Shadow API draw calls: " << cpuFrameStats.shadowApiDrawCallCount << "\n";
         report << "Shadow submitted triangles: " << cpuFrameStats.shadowSubmittedTriangleCount << "\n";
+        report << "Shadow CPU / Target bind: " << cpuFrameStats.shadowCpuTargetBindMs << " ms\n";
+        report << "Shadow CPU / Caster + batch build: " << cpuFrameStats.shadowCpuCasterBatchBuildMs << " ms ("
+               << cpuFrameStats.shadowCpuBatchBuildCount << " builds)\n";
+        report << "Shadow CPU / Buffer upload: " << cpuFrameStats.shadowCpuBufferUploadMs << " ms\n";
+        report << "Shadow CPU / Draw submission: " << cpuFrameStats.shadowCpuDrawSubmissionMs << " ms\n";
+        report << "Shadow CPU / Image copy: " << cpuFrameStats.shadowCpuImageCopyMs << " ms ("
+               << cpuFrameStats.shadowCpuImageCopyCount << " copies)\n";
+        report << "Shadow CPU / Other preparation: " << cpuFrameStats.shadowCpuUnclassifiedMs << " ms\n";
         report << "GPU passes total: " << totalGpuPassTimeMs << " ms\n";
         for (const auto &gpuPassTiming : gpuPassTimings)
         {

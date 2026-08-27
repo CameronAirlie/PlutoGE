@@ -111,6 +111,7 @@ namespace
         bool valid = false;
     };
 
+
     struct ShadowDrawStats
     {
         int submittedInstances = 0;
@@ -360,14 +361,22 @@ namespace
     }
 
     std::vector<std::size_t> BuildSortedShadowCasterCommandIndices(
-        const std::vector<PlutoGE::render::RenderCommand> &renderCommands)
+        const std::vector<PlutoGE::render::RenderCommand> &renderCommands,
+        const std::vector<std::size_t> *candidateIndices)
     {
         std::vector<std::size_t> indices;
-        indices.reserve(renderCommands.size());
-        for (std::size_t index = 0; index < renderCommands.size(); ++index)
+        indices.reserve(candidateIndices ? candidateIndices->size() : renderCommands.size());
+        if (candidateIndices)
         {
-            if (renderCommands[index].mesh && renderCommands[index].material && CastsShadow(renderCommands[index]))
-                indices.push_back(index);
+            for (const std::size_t index : *candidateIndices)
+                if (index < renderCommands.size())
+                    indices.push_back(index);
+        }
+        else
+        {
+            for (std::size_t index = 0; index < renderCommands.size(); ++index)
+                if (renderCommands[index].mesh && renderCommands[index].material && CastsShadow(renderCommands[index]))
+                    indices.push_back(index);
         }
 
         std::sort(indices.begin(), indices.end(), [&](std::size_t aIndex, std::size_t bIndex)
@@ -949,6 +958,7 @@ namespace
         return projectedMax.x >= regionMin.x && projectedMin.x <= regionMax.x &&
                projectedMax.y >= regionMin.y && projectedMin.y <= regionMax.y;
     }
+
 
     bool IsCommandOverlappingDirectionalRegion(const ShadowCasterEntry &shadowCaster,
                                                 const glm::mat4 &lightView,
@@ -1701,7 +1711,9 @@ namespace PlutoGE::render
     bool ShadowPass::CanSkipStaticFrame(const RenderContext &ctx) const
     {
         if (!m_hasShadowCasterFingerprint || !m_allCachedShadowCastersStatic ||
-            !ctx.lights || !ctx.hasCameraData)
+            !ctx.lights || !ctx.hasCameraData || !ctx.shadowCasterCommandIndices ||
+            ctx.shadowCastersMoved || !ctx.allShadowCastersStatic ||
+            ctx.shadowCasterFingerprint != m_shadowCasterFingerprint)
         {
             return false;
         }
@@ -1781,7 +1793,14 @@ namespace PlutoGE::render
             return;
         }
 
-        const ShadowCasterFrameState casterFrameState = InspectShadowCasters(*ctx.renderCommands);
+        const ShadowCasterFrameState casterFrameState = ctx.shadowCasterCommandIndices
+            ? ShadowCasterFrameState{
+                  .fingerprint = ctx.shadowCasterFingerprint,
+                  .casterCount = ctx.shadowCasterCommandIndices->size(),
+                  .hasMovedCaster = ctx.shadowCastersMoved,
+                  .allCastersStatic = ctx.allShadowCastersStatic,
+              }
+            : InspectShadowCasters(*ctx.renderCommands);
         const glm::vec3 shadowCameraPosition = ctx.hasCameraData
                                                    ? glm::vec3(glm::inverse(ctx.cameraData.view)[3])
                                                    : glm::vec3(0.0f);
@@ -1943,7 +1962,8 @@ namespace PlutoGE::render
         if (shadowCasterTopologyChanged ||
             m_sortedShadowCasterCommandIndices.size() != casterFrameState.casterCount)
         {
-            m_sortedShadowCasterCommandIndices = BuildSortedShadowCasterCommandIndices(*ctx.renderCommands);
+            m_sortedShadowCasterCommandIndices = BuildSortedShadowCasterCommandIndices(
+                *ctx.renderCommands, ctx.shadowCasterCommandIndices);
         }
         bool movedShadowCaster = false;
         BuildShadowCasterEntries(

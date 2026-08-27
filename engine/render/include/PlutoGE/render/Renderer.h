@@ -207,6 +207,10 @@ namespace PlutoGE::render
         // against the older RenderContext layout retain valid field offsets.
         RenderTarget *oceanSurfaceDepthRenderTarget = nullptr;
         RenderTarget *oceanSceneColorCopyRenderTarget = nullptr;
+        const std::vector<std::size_t> *shadowCasterCommandIndices = nullptr;
+        std::uint64_t shadowCasterFingerprint = 0;
+        bool shadowCastersMoved = false;
+        bool allShadowCastersStatic = true;
     };
 
     struct DecalCommand
@@ -287,53 +291,8 @@ namespace PlutoGE::render
         int GetPhysicalSkyEnvironmentHeight() const;
         float GetPhysicalSkyDirectionalLightVisibility(const scene::Light *light) const;
 
-        void SubmitRenderCommand(const RenderCommand &command)
-        {
-            if (!IsRenderCommandAcceptedForSubmission(command))
-            {
-                if (m_config.enableProfiling)
-                    ++m_cpuFrameStats.submissionCulledRenderCommandCount;
-                return;
-            }
-
-            if (!m_renderCommands.empty() && CompareRenderCommandKeys(command, m_renderCommands.back()))
-            {
-                m_renderCommandsDirty = true;
-            }
-            m_renderCommands.push_back(command);
-            if (m_config.enableProfiling)
-                ++m_cpuFrameStats.submittedRenderCommandCount;
-        }
-
-        void SubmitSortedRenderCommands(const std::vector<RenderCommand> &commands, bool applySubmissionCulling = true)
-        {
-            if (commands.empty())
-            {
-                return;
-            }
-
-            m_renderCommands.reserve(m_renderCommands.size() + commands.size());
-            bool insertedAny = false;
-            for (const auto &command : commands)
-            {
-                if (applySubmissionCulling && !IsRenderCommandAcceptedForSubmission(command))
-                {
-                    if (m_config.enableProfiling)
-                        ++m_cpuFrameStats.submissionCulledRenderCommandCount;
-                    continue;
-                }
-
-                if (!insertedAny && !m_renderCommands.empty() && CompareRenderCommandKeys(command, m_renderCommands.back()))
-                {
-                    m_renderCommandsDirty = true;
-                }
-
-                m_renderCommands.push_back(command);
-                if (m_config.enableProfiling)
-                    ++m_cpuFrameStats.submittedRenderCommandCount;
-                insertedAny = true;
-            }
-        }
+        void SubmitRenderCommand(const RenderCommand &command);
+        void SubmitSortedRenderCommands(const std::vector<RenderCommand> &commands, bool applySubmissionCulling = true);
 
     private:
         struct SubmissionFrustum
@@ -392,6 +351,8 @@ namespace PlutoGE::render
         void EnsureRenderCommandsSorted();
         void UpdateRenderCommandLods(const CameraData &cameraData, int viewportHeight);
         bool IsRenderCommandAcceptedForSubmission(const RenderCommand &command) const;
+        void TrackShadowCommand(std::size_t commandIndex, const RenderCommand &command);
+        void FinalizeShadowCommandSummary();
         static bool CompareRenderCommandKeys(const RenderCommand &a, const RenderCommand &b);
         void InitializeGpuTimers();
         void ShutdownGpuTimers();
@@ -413,6 +374,12 @@ namespace PlutoGE::render
         PhysicalSkyPass *m_physicalSkyPass = nullptr;
         std::vector<IRenderPass *> m_renderPasses;
         std::vector<RenderCommand> m_renderCommands;
+        std::vector<std::size_t> m_shadowCasterCommandIndices;
+        std::vector<std::uint8_t> m_shadowCasterSubmissionFlags;
+        std::uint64_t m_shadowCasterBaseFingerprint = 1469598103934665603ull;
+        std::uint64_t m_shadowCasterFingerprint = 1469598103934665603ull;
+        bool m_shadowCastersMoved = false;
+        bool m_allShadowCastersStatic = true;
         std::vector<std::uint64_t> m_cachedSubmissionSortIdentities;
         std::vector<std::size_t> m_cachedSubmissionSortPermutation;
         std::vector<DecalCommand> m_decalCommands;

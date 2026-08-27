@@ -65,6 +65,8 @@ public sealed class InputActionMap
             new() { Name = "CameraOrbitHorizontal", Bindings = [new() { Kind = InputBindingKind.GamepadAxis, Axis = GamepadAxis.RightX, DeadZone = 0.15f }] },
             new() { Name = "CameraOrbitVertical", Bindings = [new() { Kind = InputBindingKind.GamepadAxis, Axis = GamepadAxis.RightY, Scale = -1.0f, DeadZone = 0.15f }] },
             new() { Name = "Handbrake", Bindings = [new() { Kind = InputBindingKind.Key, Key = KeyCode.Space }, new() { Kind = InputBindingKind.GamepadButton, Button = GamepadButton.A }] },
+            new() { Name = "ShiftUp", Bindings = [new() { Kind = InputBindingKind.Key, Key = KeyCode.E }, new() { Kind = InputBindingKind.GamepadButton, Button = GamepadButton.RightBumper }] },
+            new() { Name = "ShiftDown", Bindings = [new() { Kind = InputBindingKind.Key, Key = KeyCode.Q }, new() { Kind = InputBindingKind.GamepadButton, Button = GamepadButton.LeftBumper }] },
             new() { Name = "Recover", Bindings = [new() { Kind = InputBindingKind.Key, Key = KeyCode.R }, new() { Kind = InputBindingKind.GamepadButton, Button = GamepadButton.Y }] }
         ]
     };

@@ -51,6 +51,28 @@ namespace PlutoGE::render
         constexpr std::size_t kLightingAmbientStage = 1;
         constexpr std::size_t kLightingAccumulationStage = 2;
 
+        void HashShadowCommandValue(std::uint64_t &seed, std::uint64_t value)
+        {
+            seed ^= value + 0x9e3779b97f4a7c15ull + (seed << 6) + (seed >> 2);
+        }
+
+        bool IsShadowCasterCommand(const RenderCommand &command)
+        {
+            return command.mesh && command.material && command.castsShadow &&
+                   command.material->GetConfig().castsShadow &&
+                   command.material->GetConfig().alphaMode != AlphaMode::Blend;
+        }
+
+        bool ShadowTransformsEqual(const glm::mat4 &a, const glm::mat4 &b,
+                                   float epsilon = 0.0001f)
+        {
+            for (int column = 0; column < 4; ++column)
+                for (int row = 0; row < 4; ++row)
+                    if (std::abs(a[column][row] - b[column][row]) > epsilon)
+                        return false;
+            return true;
+        }
+
         struct FrustumPlane
         {
             glm::vec3 normal{0.0f};
@@ -632,6 +654,7 @@ namespace PlutoGE::render
         }
 
         EnsureRenderCommandsSorted();
+        FinalizeShadowCommandSummary();
 
         RenderContext ctx{
             .renderer = this,
@@ -652,6 +675,10 @@ namespace PlutoGE::render
             .frameSequence = m_frameSequence,
             .oceanSurfaceDepthRenderTarget = frameResources->oceanSurfaceDepthRenderTarget.get(),
             .oceanSceneColorCopyRenderTarget = frameResources->oceanSceneColorCopyRenderTarget.get(),
+            .shadowCasterCommandIndices = &m_shadowCasterCommandIndices,
+            .shadowCasterFingerprint = m_shadowCasterFingerprint,
+            .shadowCastersMoved = m_shadowCastersMoved,
+            .allShadowCastersStatic = m_allShadowCastersStatic,
         };
 
         ExecutePassWithGpuTiming(*m_shadowPass, ctx, 0);
@@ -853,7 +880,14 @@ namespace PlutoGE::render
         if (m_config.enableProfiling)
             m_cpuFrameStats.renderFrameLodUpdateMs += elapsedMs(lodUpdateStart, lodUpdateEnd);
 
-        const auto visibilityStart = lodUpdateEnd;
+        const auto shadowPreparationStart = lodUpdateEnd;
+        FinalizeShadowCommandSummary();
+        const auto shadowPreparationEnd = profileNow();
+        if (m_config.enableProfiling)
+            m_cpuFrameStats.renderFrameShadowPreparationMs +=
+                elapsedMs(shadowPreparationStart, shadowPreparationEnd);
+
+        const auto visibilityStart = shadowPreparationEnd;
         m_visibleRenderCommands.clear();
         m_visibleRenderCommands.reserve(m_renderCommands.size());
         std::size_t visibleInstanceScratchCursor = 0;
@@ -923,6 +957,10 @@ namespace PlutoGE::render
             .interactivePreview = interactivePreview,
             .oceanSurfaceDepthRenderTarget = frameResources->oceanSurfaceDepthRenderTarget.get(),
             .oceanSceneColorCopyRenderTarget = frameResources->oceanSceneColorCopyRenderTarget.get(),
+            .shadowCasterCommandIndices = &m_shadowCasterCommandIndices,
+            .shadowCasterFingerprint = m_shadowCasterFingerprint,
+            .shadowCastersMoved = m_shadowCastersMoved,
+            .allShadowCastersStatic = m_allShadowCastersStatic,
         };
 
         if (m_shadowPass)
@@ -1005,9 +1043,97 @@ namespace PlutoGE::render
         return true;
     }
 
+    void Renderer::TrackShadowCommand(std::size_t commandIndex, const RenderCommand &command)
+    {
+        const bool castsShadow = IsShadowCasterCommand(command);
+        m_shadowCasterSubmissionFlags.push_back(castsShadow ? 1u : 0u);
+        if (!castsShadow)
+            return;
+
+        m_shadowCasterCommandIndices.push_back(commandIndex);
+        m_shadowCastersMoved = m_shadowCastersMoved || command.skinningPoseChanged ||
+                               !ShadowTransformsEqual(command.model, command.previousModel);
+        m_allShadowCastersStatic = m_allShadowCastersStatic &&
+                                   command.isStatic && command.jointMatrices == nullptr;
+        HashShadowCommandValue(m_shadowCasterBaseFingerprint,
+                               reinterpret_cast<std::uintptr_t>(command.mesh));
+        HashShadowCommandValue(m_shadowCasterBaseFingerprint,
+                               reinterpret_cast<std::uintptr_t>(command.material));
+        HashShadowCommandValue(m_shadowCasterBaseFingerprint, command.submeshIndex);
+    }
+
+    void Renderer::FinalizeShadowCommandSummary()
+    {
+        m_shadowCasterFingerprint = m_shadowCasterBaseFingerprint;
+        for (const std::size_t commandIndex : m_shadowCasterCommandIndices)
+        {
+            if (commandIndex < m_renderCommands.size())
+                HashShadowCommandValue(m_shadowCasterFingerprint,
+                                       m_renderCommands[commandIndex].lodIndex);
+        }
+        HashShadowCommandValue(m_shadowCasterFingerprint,
+                               static_cast<std::uint64_t>(m_shadowCasterCommandIndices.size()));
+    }
+
+    void Renderer::SubmitRenderCommand(const RenderCommand &command)
+    {
+        if (!IsRenderCommandAcceptedForSubmission(command))
+        {
+            if (m_config.enableProfiling)
+                ++m_cpuFrameStats.submissionCulledRenderCommandCount;
+            return;
+        }
+
+        if (!m_renderCommands.empty() && CompareRenderCommandKeys(command, m_renderCommands.back()))
+            m_renderCommandsDirty = true;
+        const std::size_t commandIndex = m_renderCommands.size();
+        m_renderCommands.push_back(command);
+        TrackShadowCommand(commandIndex, command);
+        if (m_config.enableProfiling)
+            ++m_cpuFrameStats.submittedRenderCommandCount;
+    }
+
+    void Renderer::SubmitSortedRenderCommands(const std::vector<RenderCommand> &commands,
+                                               bool applySubmissionCulling)
+    {
+        if (commands.empty())
+            return;
+
+        m_renderCommands.reserve(m_renderCommands.size() + commands.size());
+        m_shadowCasterSubmissionFlags.reserve(m_renderCommands.capacity());
+        bool insertedAny = false;
+        for (const auto &command : commands)
+        {
+            if (applySubmissionCulling && !IsRenderCommandAcceptedForSubmission(command))
+            {
+                if (m_config.enableProfiling)
+                    ++m_cpuFrameStats.submissionCulledRenderCommandCount;
+                continue;
+            }
+
+            if (!insertedAny && !m_renderCommands.empty() &&
+                CompareRenderCommandKeys(command, m_renderCommands.back()))
+            {
+                m_renderCommandsDirty = true;
+            }
+            const std::size_t commandIndex = m_renderCommands.size();
+            m_renderCommands.push_back(command);
+            TrackShadowCommand(commandIndex, command);
+            if (m_config.enableProfiling)
+                ++m_cpuFrameStats.submittedRenderCommandCount;
+            insertedAny = true;
+        }
+    }
+
     void Renderer::ClearRenderCommands()
     {
         m_renderCommands.clear();
+        m_shadowCasterCommandIndices.clear();
+        m_shadowCasterSubmissionFlags.clear();
+        m_shadowCasterBaseFingerprint = 1469598103934665603ull;
+        m_shadowCasterFingerprint = m_shadowCasterBaseFingerprint;
+        m_shadowCastersMoved = false;
+        m_allShadowCastersStatic = true;
         m_decalCommands.clear();
         m_renderCommandsDirty = false;
         ClearSubmissionCullingCameras();
@@ -1053,12 +1179,16 @@ namespace PlutoGE::render
             m_cachedSubmissionSortPermutation.size() == m_renderCommands.size())
         {
             std::vector<RenderCommand> reordered;
+            std::vector<std::uint8_t> reorderedShadowFlags;
             reordered.reserve(m_renderCommands.size());
+            reorderedShadowFlags.reserve(m_shadowCasterSubmissionFlags.size());
             for (const std::size_t sourceIndex : m_cachedSubmissionSortPermutation)
             {
                 reordered.push_back(std::move(m_renderCommands[sourceIndex]));
+                reorderedShadowFlags.push_back(m_shadowCasterSubmissionFlags[sourceIndex]);
             }
             m_renderCommands.swap(reordered);
+            m_shadowCasterSubmissionFlags.swap(reorderedShadowFlags);
         }
         else
         {
@@ -1070,15 +1200,27 @@ namespace PlutoGE::render
             });
 
             std::vector<RenderCommand> reordered;
+            std::vector<std::uint8_t> reorderedShadowFlags;
             reordered.reserve(m_renderCommands.size());
+            reorderedShadowFlags.reserve(m_shadowCasterSubmissionFlags.size());
             for (const std::size_t sourceIndex : permutation)
             {
                 reordered.push_back(std::move(m_renderCommands[sourceIndex]));
+                reorderedShadowFlags.push_back(m_shadowCasterSubmissionFlags[sourceIndex]);
             }
             m_renderCommands.swap(reordered);
+            m_shadowCasterSubmissionFlags.swap(reorderedShadowFlags);
             m_cachedSubmissionSortIdentities = std::move(identities);
             m_cachedSubmissionSortPermutation = std::move(permutation);
             ++m_cpuFrameStats.renderCommandSortCount;
+        }
+        m_shadowCasterCommandIndices.clear();
+        m_shadowCasterCommandIndices.reserve(m_shadowCasterSubmissionFlags.size());
+        for (std::size_t commandIndex = 0;
+             commandIndex < m_shadowCasterSubmissionFlags.size(); ++commandIndex)
+        {
+            if (m_shadowCasterSubmissionFlags[commandIndex] != 0)
+                m_shadowCasterCommandIndices.push_back(commandIndex);
         }
         m_renderCommandsDirty = false;
     }

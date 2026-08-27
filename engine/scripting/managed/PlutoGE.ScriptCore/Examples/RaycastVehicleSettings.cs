@@ -58,6 +58,7 @@ public sealed class RaycastVehicleSettings : ScriptableObject
     [SerializedField] public float LaunchRpm = 3400.0f;
     [SerializedField] public float PeakTorqueRpm = 4800.0f;
     [SerializedField] public float ShiftDuration = 0.5f;
+    [SerializedField] public bool ManualTransmission = false;
 
     [SerializedField] public float MaxSteerAngle = 32.0f;
     [SerializedField] public float SteerSharpness = 5.0f;

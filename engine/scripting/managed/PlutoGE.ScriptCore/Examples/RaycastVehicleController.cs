@@ -71,6 +71,7 @@ public sealed class RaycastVehicleController : ScriptBehaviour
     [SerializedField] private float launchRpm  = 3400.0f;
     [SerializedField] private float peakTorqueRpm  = 4800.0f;
     [SerializedField] private float shiftDuration  = 0.5f;
+    [SerializedField] private bool manualTransmission = false;
 
     [SerializedField] private float maxSteerAngle    = 32.0f;
     [SerializedField] private float steerSharpness    = 5.0f;
@@ -101,6 +102,8 @@ public sealed class RaycastVehicleController : ScriptBehaviour
     private float _brakeInput;
     private float _steerInput;
     private bool _handbrakeInput;
+    private bool _shiftUpRequested;
+    private bool _shiftDownRequested;
     private int _diagnosticStep;
     private InputActionMap? _inputActions;
 
@@ -209,6 +212,7 @@ public sealed class RaycastVehicleController : ScriptBehaviour
         launchRpm = vehicleSettings.LaunchRpm;
         peakTorqueRpm = vehicleSettings.PeakTorqueRpm;
         shiftDuration = vehicleSettings.ShiftDuration;
+        manualTransmission = vehicleSettings.ManualTransmission;
 
         maxSteerAngle = vehicleSettings.MaxSteerAngle;
         steerSharpness = vehicleSettings.SteerSharpness;
@@ -285,6 +289,16 @@ public sealed class RaycastVehicleController : ScriptBehaviour
         _handbrakeInput = _inputActions?.IsDown("Handbrake") ?? Input.IsKeyDown(KeyCode.Space);
         _steerInput = _inputActions?.GetAxis("Steer") ??
             ((Input.IsKeyDown(KeyCode.A) ? 1.0f : 0.0f) - (Input.IsKeyDown(KeyCode.D) ? 1.0f : 0.0f));
+        if (manualTransmission)
+        {
+            _shiftUpRequested |= _inputActions?.WasPressed("ShiftUp") ?? Input.IsKeyPressed(KeyCode.E);
+            _shiftDownRequested |= _inputActions?.WasPressed("ShiftDown") ?? Input.IsKeyPressed(KeyCode.Q);
+        }
+        else
+        {
+            _shiftUpRequested = false;
+            _shiftDownRequested = false;
+        }
 
         var forwardSpeed = Vector3.Dot(_rigidbody.Velocity, Forward);
         var absoluteSpeed = MathF.Abs(forwardSpeed);
@@ -746,6 +760,22 @@ public sealed class RaycastVehicleController : ScriptBehaviour
             _currentGear = 1;
         }
 
+        if (manualTransmission)
+        {
+            if (_shiftTimer <= 0.0f && _currentGear > 0)
+            {
+                var requestedDirection = (_shiftUpRequested ? 1 : 0) - (_shiftDownRequested ? 1 : 0);
+                var requestedGear = Math.Clamp(_currentGear + requestedDirection, 1, 6);
+                if (requestedGear != _currentGear)
+                {
+                    _currentGear = requestedGear;
+                    _shiftTimer = MathF.Max(shiftDuration * (requestedDirection > 0 ? 1.0f : 0.45f), 0.0f);
+                }
+            }
+            _shiftUpRequested = false;
+            _shiftDownRequested = false;
+        }
+
         var drivenSpeed = GetAverageDrivenWheelSpeed(driveSplit, forwardSpeed);
         var rpmWheelSpeed = (throttle > 0.0f || (brake > 0.0f && _currentGear == -1)) &&
                             MathF.Abs(_drivenWheelSpinSpeed) > MathF.Abs(drivenSpeed)
@@ -753,7 +783,7 @@ public sealed class RaycastVehicleController : ScriptBehaviour
             : drivenSpeed;
         var mechanicalRpm = EstimateRpmForGear(MathF.Abs(rpmWheelSpeed), _currentGear);
         var roadCoupledRpm = EstimateRpmForGear(MathF.Abs(drivenSpeed), _currentGear);
-        if (_shiftTimer <= 0.0f && _currentGear > 0)
+        if (!manualTransmission && _shiftTimer <= 0.0f && _currentGear > 0)
         {
             // Schedule shifts from road-coupled RPM, not spinning-wheel RPM.
             // Wheelspin may raise actual engine RPM to the limiter, but it is

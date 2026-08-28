@@ -10,11 +10,15 @@ struct VertexOutput
     float4 position : SV_Position;
     float3 worldNormal : NORMAL;
     float2 uv : TEXCOORD0;
+    float3 worldPosition : TEXCOORD1;
 };
 
 [[vk::binding(0, 0)]] cbuffer CameraParameters : register(b0, space0)
 {
     column_major float4x4 viewProjection;
+    float4 cameraPositionAmbient;
+    float4 directionalDirectionIntensity;
+    float4 directionalColor;
 };
 
 [[vk::binding(0, 2)]] cbuffer ObjectParameters : register(b0, space2)
@@ -22,7 +26,19 @@ struct VertexOutput
     column_major float4x4 model;
 };
 
-[[vk::binding(0, 1)]] Sampler2D baseColorTexture : register(t0, space1);
+[[vk::binding(0, 1)]] cbuffer MaterialParameters : register(b0, space1)
+{
+    float4 baseColor;
+    float2 uvScale;
+    float metallic;
+    float roughness;
+    float3 emission;
+    float alphaCutoff;
+    uint alphaMode;
+    float3 materialPadding;
+};
+
+[[vk::binding(1, 1)]] Sampler2D baseColorTexture : register(t1, space1);
 
 [shader("vertex")]
 VertexOutput vertexMain(VertexInput input)
@@ -32,14 +48,29 @@ VertexOutput vertexMain(VertexInput input)
     output.position = mul(viewProjection, worldPosition);
     output.worldNormal = normalize(mul((float3x3)model, input.normal));
     output.uv = input.uv;
+    output.worldPosition = worldPosition.xyz;
     return output;
 }
 
 [shader("fragment")]
 float4 fragmentMain(VertexOutput input) : SV_Target
 {
-    const float3 lightDirection = normalize(float3(0.4, 0.8, 0.3));
-    const float lighting = 0.2 + 0.8 * saturate(dot(normalize(input.worldNormal), lightDirection));
-    const float4 baseColor = baseColorTexture.Sample(input.uv);
-    return float4(baseColor.rgb * lighting, baseColor.a);
+    const float4 sampledColor = baseColorTexture.Sample(input.uv * uvScale) * baseColor;
+    if (alphaMode == 1 && sampledColor.a < alphaCutoff)
+        discard;
+
+    const float3 normal = normalize(input.worldNormal);
+    const float3 lightDirection = normalize(-directionalDirectionIntensity.xyz);
+    const float3 viewDirection = normalize(cameraPositionAmbient.xyz - input.worldPosition);
+    const float3 halfDirection = normalize(lightDirection + viewDirection);
+    const float ndotl = saturate(dot(normal, lightDirection));
+    const float ndoth = saturate(dot(normal, halfDirection));
+    const float perceptualRoughness = clamp(roughness, 0.04, 1.0);
+    const float specularPower = lerp(256.0, 4.0, perceptualRoughness);
+    const float3 f0 = lerp(float3(0.04), sampledColor.rgb, saturate(metallic));
+    const float3 diffuse = sampledColor.rgb * (1.0 - saturate(metallic)) * ndotl;
+    const float3 specular = f0 * pow(ndoth, specularPower) * ndotl;
+    const float3 direct = (diffuse + specular) * directionalColor.rgb * directionalDirectionIntensity.w;
+    const float3 ambient = sampledColor.rgb * cameraPositionAmbient.w;
+    return float4(ambient + direct + emission, sampledColor.a);
 }

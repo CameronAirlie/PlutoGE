@@ -52,8 +52,25 @@ namespace PlutoGE::render
     {
         const BasicMesh *mesh = nullptr;
         glm::mat4 model{1.0f};
+        glm::vec4 baseColor{1.0f};
+        glm::vec2 uvScale{1.0f};
+        rhi::TextureHandle baseColorTexture;
+        float metallic = 0.0f;
+        float roughness = 1.0f;
+        glm::vec3 emission{0.0f};
+        float alphaCutoff = 0.5f;
+        std::uint32_t alphaMode = 0;
         std::uint32_t firstIndex = 0;
         std::uint32_t indexCount = 0;
+    };
+
+    struct BasicLighting
+    {
+        glm::vec3 cameraPosition{0.0f};
+        float ambientIntensity = 0.3f;
+        glm::vec3 directionalDirection{0.4f, -0.8f, 0.3f};
+        float directionalIntensity = 1.0f;
+        glm::vec3 directionalColor{1.0f};
     };
 
     class BasicRenderer
@@ -69,6 +86,7 @@ namespace PlutoGE::render
         [[nodiscard]] BasicMesh CreateMesh(const BasicMeshData &data);
         bool Resize(std::uint32_t width, std::uint32_t height);
         void Render(const glm::mat4 &viewProjection, std::span<const BasicDraw> draws);
+        void Render(const glm::mat4 &viewProjection, const BasicLighting &lighting, std::span<const BasicDraw> draws);
 
         [[nodiscard]] rhi::TextureHandle GetColorTexture() const noexcept { return m_colorTarget.Get(); }
         [[nodiscard]] std::uint32_t GetWidth() const noexcept { return m_width; }
@@ -82,6 +100,7 @@ namespace PlutoGE::render
         // Vulkan records the complete frame before execution, so every draw
         // needs stable object data until submission completes.
         std::vector<rhi::Buffer> m_objectBuffers;
+        std::vector<rhi::Buffer> m_materialBuffers;
         rhi::Texture m_fallbackTexture;
         rhi::Sampler m_fallbackSampler;
         rhi::Texture m_colorTarget;

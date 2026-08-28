@@ -2739,6 +2739,8 @@ namespace PlutoGE::ui
         viewportConfig.clearColor = glm::vec4(0.1f, 0.1f, 0.15f, 1.0f);
         viewportConfig.initialRenderScale = 1.0f;
         viewportConfig.editorViewport = true;
+        viewportConfig.graphicsApi = m_project ? m_project->GetManifest().graphicsApi
+                                               : render::rhi::GraphicsApi::OpenGL;
         auto *viewportPanel = new ViewportPanel(viewportConfig);
         viewportPanel->Initialize();
 

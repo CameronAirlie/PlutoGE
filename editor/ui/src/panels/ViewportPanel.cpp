@@ -1879,7 +1879,7 @@ namespace PlutoGE::ui
                 // readback is uploaded to an OpenGL texture consumed by the
                 // existing ImGui backend. Native Vulkan presentation replaces
                 // this bridge once the editor window is created with NO_API.
-                if (m_vulkanAvailable)
+                if (m_config.graphicsApi == render::rhi::GraphicsApi::Vulkan && m_vulkanAvailable)
                 {
                     m_rhiDevice = std::make_unique<render::rhi::vulkan::VulkanDevice>();
                     m_activeRhiVulkan = true;
@@ -3838,6 +3838,7 @@ namespace PlutoGE::ui
         m_rhiSceneCommandCount = commands.size();
         draws.reserve(commands.size());
         std::unordered_set<const render::Mesh *> activeMeshes;
+        std::unordered_set<const render::Texture *> activeTextures;
         activeMeshes.reserve(commands.size());
         for (const auto &command : commands)
         {
@@ -3868,15 +3869,87 @@ namespace PlutoGE::ui
                 indexCount = range.indexCount;
             }
 
+            glm::vec4 baseColor(1.0f);
+            glm::vec2 uvScale(1.0f);
+            render::rhi::TextureHandle baseColorTexture;
+            float metallic = 0.0f;
+            float roughness = 1.0f;
+            glm::vec3 emission(0.0f);
+            float alphaCutoff = 0.5f;
+            std::uint32_t alphaMode = 0;
+            if (command.material)
+            {
+                const auto &material = command.material->GetConfig();
+                baseColor = material.color;
+                uvScale = material.uvScale;
+                metallic = material.metallic;
+                roughness = material.roughness;
+                emission = material.emission;
+                alphaCutoff = material.alphaCutoff;
+                alphaMode = static_cast<std::uint32_t>(material.alphaMode);
+                if (material.albedoTexture && material.albedoTexture->GetType() == GL_TEXTURE_2D &&
+                    material.albedoTexture->GetTextureID() != 0 && material.albedoTexture->GetWidth() > 0 &&
+                    material.albedoTexture->GetHeight() > 0)
+                {
+                    activeTextures.insert(material.albedoTexture);
+                    auto textureIt = m_rhiTextures.find(material.albedoTexture);
+                    if (textureIt == m_rhiTextures.end())
+                    {
+                        const std::size_t pixelCount = static_cast<std::size_t>(material.albedoTexture->GetWidth()) *
+                                                       static_cast<std::size_t>(material.albedoTexture->GetHeight());
+                        std::vector<std::byte> rgbaPixels(pixelCount * 4);
+                        glBindTexture(GL_TEXTURE_2D, material.albedoTexture->GetTextureID());
+                        glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgbaPixels.data());
+                        auto uploaded = render::rhi::Texture(
+                            *m_rhiDevice,
+                            m_rhiDevice->CreateTexture(
+                                {static_cast<std::uint32_t>(material.albedoTexture->GetWidth()),
+                                 static_cast<std::uint32_t>(material.albedoTexture->GetHeight()),
+                                 render::rhi::Format::R8G8B8A8Srgb,
+                                 render::rhi::TextureUsage::Sampled,
+                                 "RHI material albedo"},
+                                rgbaPixels));
+                        textureIt = m_rhiTextures.emplace(material.albedoTexture, std::move(uploaded)).first;
+                    }
+                    baseColorTexture = textureIt->second.Get();
+                }
+            }
+
+            const auto appendDraw = [&](const glm::mat4 &model)
+            {
+                draws.push_back(render::BasicDraw{
+                    .mesh = &meshIt->second,
+                    .model = model,
+                    .baseColor = baseColor,
+                    .uvScale = uvScale,
+                    .baseColorTexture = baseColorTexture,
+                    .metallic = metallic,
+                    .roughness = roughness,
+                    .emission = emission,
+                    .alphaCutoff = alphaCutoff,
+                    .alphaMode = alphaMode,
+                    .firstIndex = firstIndex,
+                    .indexCount = indexCount,
+                });
+            };
+
             if (command.instanceModels && !command.instanceModels->empty())
             {
                 for (const auto &instanceModel : *command.instanceModels)
-                    draws.push_back({&meshIt->second, instanceModel, firstIndex, indexCount});
+                    appendDraw(instanceModel);
             }
             else
             {
-                draws.push_back({&meshIt->second, command.model, firstIndex, indexCount});
+                appendDraw(command.model);
             }
+        }
+
+        for (auto textureIt = m_rhiTextures.begin(); textureIt != m_rhiTextures.end();)
+        {
+            if (!activeTextures.contains(textureIt->first))
+                textureIt = m_rhiTextures.erase(textureIt);
+            else
+                ++textureIt;
         }
 
         for (auto meshIt = m_rhiMeshes.begin(); meshIt != m_rhiMeshes.end();)
@@ -3900,7 +3973,21 @@ namespace PlutoGE::ui
                 depthRangeConversion[3][2] = 0.5f;
                 projection = depthRangeConversion * projection;
             }
-            m_basicRenderer->Render(projection * cameraData.view, draws);
+            render::BasicLighting lighting;
+            lighting.cameraPosition = glm::vec3(glm::inverse(cameraData.view)[3]);
+            if (auto *activeScene = EditorShell::GetInstance().GetEngine().GetScene())
+            {
+                for (const auto *light : activeScene->GetLights())
+                {
+                    if (!light || light->type != scene::LightType::Directional)
+                        continue;
+                    lighting.directionalDirection = light->direction;
+                    lighting.directionalColor = light->color;
+                    lighting.directionalIntensity = light->intensity;
+                    break;
+                }
+            }
+            m_basicRenderer->Render(projection * cameraData.view, lighting, draws);
             if (m_activeRhiVulkan)
             {
                 auto &vulkanDevice = static_cast<render::rhi::vulkan::VulkanDevice &>(*m_rhiDevice);
@@ -3986,6 +4073,7 @@ namespace PlutoGE::ui
     void ViewportPanel::Shutdown()
     {
         m_rhiMeshes.clear();
+        m_rhiTextures.clear();
         if (m_basicRenderer)
         {
             m_basicRenderer->Shutdown();

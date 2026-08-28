@@ -18,6 +18,7 @@ namespace PlutoGE::render
     class RenderTarget;
     class SpatialUpscaler;
     class Mesh;
+    class Texture;
     struct RenderCommand;
     namespace rhi { class IRenderDevice; }
 }
@@ -38,6 +39,7 @@ namespace PlutoGE::ui
         float initialRenderScale = 1.0f;
         float initialUpscaleSharpness = 0.25f;
         bool editorViewport = false;
+        render::rhi::GraphicsApi graphicsApi = render::rhi::GraphicsApi::OpenGL;
     };
 
     class ViewportPanel : public Panel
@@ -98,6 +100,7 @@ namespace PlutoGE::ui
         std::unique_ptr<render::rhi::IRenderDevice> m_rhiDevice;
         std::unique_ptr<render::BasicRenderer> m_basicRenderer;
         std::unordered_map<const render::Mesh *, render::BasicMesh> m_rhiMeshes;
+        std::unordered_map<const render::Texture *, render::rhi::Texture> m_rhiTextures;
         std::uint64_t m_rhiViewportTexture = 0;
         std::uint64_t m_vulkanBridgeTexture = 0;
         bool m_activeRhiVulkan = false;

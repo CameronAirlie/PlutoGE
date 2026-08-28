@@ -8,6 +8,8 @@
 #include <vk_mem_alloc.h>
 
 #include <array>
+#include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <stdexcept>
 #include <vector>
@@ -79,6 +81,7 @@ namespace PlutoGE::render::rhi::vulkan
             VmaAllocation allocation = VK_NULL_HANDLE;
             TextureDescriptor descriptor;
             VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
+            std::uint32_t mipLevels = 1;
         };
 
         struct SamplerResource { VkSampler sampler = VK_NULL_HANDLE; };
@@ -139,7 +142,7 @@ namespace PlutoGE::render::rhi::vulkan
             barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             barrier.image = texture.image;
-            barrier.subresourceRange = {Aspect(texture), 0, 1, 0, 1};
+            barrier.subresourceRange = {Aspect(texture), 0, texture.mipLevels, 0, 1};
             barrier.srcAccessMask = texture.layout == VK_IMAGE_LAYOUT_UNDEFINED ? 0 :
                                     texture.layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL ? VK_ACCESS_TRANSFER_WRITE_BIT :
                                     texture.layout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL ? VK_ACCESS_TRANSFER_READ_BIT :
@@ -243,13 +246,14 @@ namespace PlutoGE::render::rhi::vulkan
             auto *resource = m_impl.buffers.Get(handle);
             if (!m_pipeline || !resource || resource->usage != BufferUsage::Uniform) throw std::invalid_argument("Invalid Vulkan uniform binding");
             if (slot == 0) m_cameraBuffer = handle;
+            else if (slot == 8) m_materialBuffer = handle;
             else if (slot == 16) m_objectBuffer = handle;
             else throw std::invalid_argument("Unsupported Vulkan uniform slot");
         }
         void BindTexture(std::uint32_t slot, TextureHandle textureHandle, SamplerHandle samplerHandle) override
         {
             auto *texture = m_impl.textures.Get(textureHandle); auto *sampler = m_impl.samplers.Get(samplerHandle);
-            if (!m_pipeline || slot != 8 || !texture || !sampler) throw std::invalid_argument("Invalid Vulkan texture binding");
+            if (!m_pipeline || slot != 9 || !texture || !sampler) throw std::invalid_argument("Invalid Vulkan texture binding");
             if (texture->layout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
                 throw std::logic_error("Vulkan sampled texture has an invalid layout");
             m_sampledTexture = textureHandle;
@@ -259,10 +263,11 @@ namespace PlutoGE::render::rhi::vulkan
         {
             if (!m_rendering || !m_pipeline) throw std::logic_error("Vulkan draw requires active rendering and pipeline");
             auto *camera = m_impl.buffers.Get(m_cameraBuffer);
+            auto *material = m_impl.buffers.Get(m_materialBuffer);
             auto *object = m_impl.buffers.Get(m_objectBuffer);
             auto *texture = m_impl.textures.Get(m_sampledTexture);
             auto *sampler = m_impl.samplers.Get(m_sampler);
-            if (!camera || !object || !texture || !sampler)
+            if (!camera || !material || !object || !texture || !sampler)
                 throw std::logic_error("Vulkan draw has incomplete resource bindings");
             std::array<VkDescriptorSet, 3> sets{};
             VkDescriptorSetAllocateInfo allocation{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
@@ -270,13 +275,14 @@ namespace PlutoGE::render::rhi::vulkan
             allocation.descriptorSetCount = static_cast<std::uint32_t>(sets.size());
             allocation.pSetLayouts = m_pipeline->setLayouts.data();
             Check(vkAllocateDescriptorSets(m_impl.device, &allocation, sets.data()), "vkAllocateDescriptorSets(draw)");
-            std::array<VkDescriptorBufferInfo, 2> buffers{{{camera->buffer, 0, camera->size}, {object->buffer, 0, object->size}}};
+            std::array<VkDescriptorBufferInfo, 3> buffers{{{camera->buffer, 0, camera->size}, {material->buffer, 0, material->size}, {object->buffer, 0, object->size}}};
             VkDescriptorImageInfo image{sampler->sampler, texture->view, texture->layout};
-            std::array<VkWriteDescriptorSet, 3> writes{};
+            std::array<VkWriteDescriptorSet, 4> writes{};
             for (auto &write : writes) write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             writes[0].dstSet = sets[0]; writes[0].dstBinding = 0; writes[0].descriptorCount = 1; writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER; writes[0].pBufferInfo = &buffers[0];
-            writes[1].dstSet = sets[1]; writes[1].dstBinding = 0; writes[1].descriptorCount = 1; writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; writes[1].pImageInfo = &image;
-            writes[2].dstSet = sets[2]; writes[2].dstBinding = 0; writes[2].descriptorCount = 1; writes[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER; writes[2].pBufferInfo = &buffers[1];
+            writes[1].dstSet = sets[1]; writes[1].dstBinding = 0; writes[1].descriptorCount = 1; writes[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER; writes[1].pBufferInfo = &buffers[1];
+            writes[2].dstSet = sets[1]; writes[2].dstBinding = 1; writes[2].descriptorCount = 1; writes[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; writes[2].pImageInfo = &image;
+            writes[3].dstSet = sets[2]; writes[3].dstBinding = 0; writes[3].descriptorCount = 1; writes[3].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER; writes[3].pBufferInfo = &buffers[2];
             vkUpdateDescriptorSets(m_impl.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
             vkCmdBindDescriptorSets(m_impl.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline->layout, 0, static_cast<std::uint32_t>(sets.size()), sets.data(), 0, nullptr);
             vkCmdDrawIndexed(m_impl.commandBuffer, count, 1, firstIndex, vertexOffset, 0);
@@ -288,6 +294,7 @@ namespace PlutoGE::render::rhi::vulkan
         TextureResource *m_color = nullptr;
         TextureResource *m_depth = nullptr;
         BufferHandle m_cameraBuffer;
+        BufferHandle m_materialBuffer;
         BufferHandle m_objectBuffer;
         TextureHandle m_sampledTexture;
         SamplerHandle m_sampler;
@@ -357,19 +364,58 @@ namespace PlutoGE::render::rhi::vulkan
     {
         if (!descriptor.width || !descriptor.height) throw std::invalid_argument("Invalid Vulkan texture dimensions");
         TextureResource resource; resource.descriptor = descriptor;
-        VkImageCreateInfo image{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO}; image.imageType = VK_IMAGE_TYPE_2D; image.extent = {descriptor.width, descriptor.height, 1}; image.mipLevels = 1; image.arrayLayers = 1; image.format = ToVkFormat(descriptor.format); image.tiling = VK_IMAGE_TILING_OPTIMAL; image.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED; image.samples = VK_SAMPLE_COUNT_1_BIT;
+        resource.mipLevels = descriptor.usage == TextureUsage::Sampled
+                                 ? 1u + static_cast<std::uint32_t>(std::floor(std::log2(static_cast<double>((std::max)(descriptor.width, descriptor.height)))))
+                                 : 1u;
+        VkImageCreateInfo image{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO}; image.imageType = VK_IMAGE_TYPE_2D; image.extent = {descriptor.width, descriptor.height, 1}; image.mipLevels = resource.mipLevels; image.arrayLayers = 1; image.format = ToVkFormat(descriptor.format); image.tiling = VK_IMAGE_TILING_OPTIMAL; image.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED; image.samples = VK_SAMPLE_COUNT_1_BIT;
         image.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | (descriptor.usage == TextureUsage::Sampled ? VK_IMAGE_USAGE_SAMPLED_BIT : descriptor.usage == TextureUsage::ColorAttachment ? VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT : VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT);
         VmaAllocationCreateInfo allocation{}; allocation.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
         Check(vmaCreateImage(m_impl->allocator, &image, &allocation, &resource.image, &resource.allocation, nullptr), "vmaCreateImage");
-        VkImageViewCreateInfo view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO}; view.image = resource.image; view.viewType = VK_IMAGE_VIEW_TYPE_2D; view.format = image.format; view.subresourceRange = {Aspect(resource), 0, 1, 0, 1};
+        VkImageViewCreateInfo view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO}; view.image = resource.image; view.viewType = VK_IMAGE_VIEW_TYPE_2D; view.format = image.format; view.subresourceRange = {Aspect(resource), 0, resource.mipLevels, 0, 1};
         Check(vkCreateImageView(m_impl->device, &view, nullptr, &resource.view), "vkCreateImageView");
         const auto handle = m_impl->textures.Insert(std::move(resource));
         auto *stored = m_impl->textures.Get(handle);
         if (!data.empty())
         {
-            const BufferHandle stagingHandle = CreateBuffer({data.size(), BufferUsage::Vertex, "Texture staging"}, data);
+            std::vector<std::byte> mipData(data.begin(), data.end());
+            std::vector<VkBufferImageCopy> copies;
+            copies.reserve(stored->mipLevels);
+            std::uint32_t mipWidth = descriptor.width;
+            std::uint32_t mipHeight = descriptor.height;
+            std::size_t levelOffset = 0;
+            copies.push_back(VkBufferImageCopy{levelOffset, 0, 0, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {0, 0, 0}, {mipWidth, mipHeight, 1}});
+            for (std::uint32_t level = 1; level < stored->mipLevels; ++level)
+            {
+                const std::uint32_t nextWidth = (std::max)(1u, mipWidth / 2u);
+                const std::uint32_t nextHeight = (std::max)(1u, mipHeight / 2u);
+                const std::size_t sourceOffset = levelOffset;
+                levelOffset = mipData.size();
+                mipData.resize(levelOffset + static_cast<std::size_t>(nextWidth) * nextHeight * 4);
+                for (std::uint32_t y = 0; y < nextHeight; ++y)
+                {
+                    for (std::uint32_t x = 0; x < nextWidth; ++x)
+                    {
+                        for (std::uint32_t channel = 0; channel < 4; ++channel)
+                        {
+                            unsigned int sum = 0;
+                            for (std::uint32_t oy = 0; oy < 2; ++oy)
+                                for (std::uint32_t ox = 0; ox < 2; ++ox)
+                                {
+                                    const auto sx = (std::min)(mipWidth - 1, x * 2 + ox);
+                                    const auto sy = (std::min)(mipHeight - 1, y * 2 + oy);
+                                    sum += std::to_integer<unsigned char>(mipData[sourceOffset + (static_cast<std::size_t>(sy) * mipWidth + sx) * 4 + channel]);
+                                }
+                            mipData[levelOffset + (static_cast<std::size_t>(y) * nextWidth + x) * 4 + channel] = static_cast<std::byte>(sum / 4);
+                        }
+                    }
+                }
+                copies.push_back(VkBufferImageCopy{levelOffset, 0, 0, {VK_IMAGE_ASPECT_COLOR_BIT, level, 0, 1}, {0, 0, 0}, {nextWidth, nextHeight, 1}});
+                mipWidth = nextWidth;
+                mipHeight = nextHeight;
+            }
+            const BufferHandle stagingHandle = CreateBuffer({mipData.size(), BufferUsage::Vertex, "Texture staging"}, mipData);
             auto *staging = m_impl->buffers.Get(stagingHandle);
-            m_impl->Immediate([&](VkCommandBuffer command) { m_impl->Transition(command, *stored, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT); VkBufferImageCopy copy{}; copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}; copy.imageExtent = {descriptor.width, descriptor.height, 1}; vkCmdCopyBufferToImage(command, staging->buffer, stored->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy); m_impl->Transition(command, *stored, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT); });
+            m_impl->Immediate([&](VkCommandBuffer command) { m_impl->Transition(command, *stored, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT); vkCmdCopyBufferToImage(command, staging->buffer, stored->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, static_cast<std::uint32_t>(copies.size()), copies.data()); m_impl->Transition(command, *stored, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT); });
             DestroyBuffer(stagingHandle);
         }
         return handle;
@@ -377,7 +423,7 @@ namespace PlutoGE::render::rhi::vulkan
 
     SamplerHandle VulkanDevice::CreateSampler(const SamplerDescriptor &descriptor)
     {
-        VkSamplerCreateInfo info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO}; info.magFilter = info.minFilter = descriptor.linearFiltering ? VK_FILTER_LINEAR : VK_FILTER_NEAREST; info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR; info.addressModeU = info.addressModeV = info.addressModeW = descriptor.repeat ? VK_SAMPLER_ADDRESS_MODE_REPEAT : VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE; info.maxLod = 0;
+        VkSamplerCreateInfo info{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO}; info.magFilter = info.minFilter = descriptor.linearFiltering ? VK_FILTER_LINEAR : VK_FILTER_NEAREST; info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR; info.addressModeU = info.addressModeV = info.addressModeW = descriptor.repeat ? VK_SAMPLER_ADDRESS_MODE_REPEAT : VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE; info.maxLod = VK_LOD_CLAMP_NONE;
         SamplerResource resource; Check(vkCreateSampler(m_impl->device, &info, nullptr, &resource.sampler), "vkCreateSampler"); return m_impl->samplers.Insert(resource);
     }
 
@@ -387,8 +433,14 @@ namespace PlutoGE::render::rhi::vulkan
         auto module = [&](const auto &code) { VkShaderModuleCreateInfo info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO}; info.codeSize = code.size() * sizeof(std::uint32_t); info.pCode = code.data(); VkShaderModule result{}; Check(vkCreateShaderModule(m_impl->device, &info, nullptr, &result), "vkCreateShaderModule"); return result; };
         VkShaderModule vertex = module(descriptor.vertexShader.spirv), fragment = module(descriptor.fragmentShader.spirv);
         PipelineResource resource; resource.descriptor = descriptor;
-        std::array<VkDescriptorSetLayoutBinding, 3> bindings{{{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, nullptr}, {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}, {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, nullptr}}};
-        for (std::size_t i = 0; i < 3; ++i) { VkDescriptorSetLayoutCreateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO}; info.bindingCount = 1; info.pBindings = &bindings[i]; Check(vkCreateDescriptorSetLayout(m_impl->device, &info, nullptr, &resource.setLayouts[i]), "vkCreateDescriptorSetLayout"); }
+        const VkDescriptorSetLayoutBinding cameraBinding{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, nullptr};
+        const std::array<VkDescriptorSetLayoutBinding, 2> materialBindings{{
+            {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+            {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}}};
+        const VkDescriptorSetLayoutBinding objectBinding{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, nullptr};
+        const std::array<const VkDescriptorSetLayoutBinding *, 3> setBindings{{&cameraBinding, materialBindings.data(), &objectBinding}};
+        const std::array<std::uint32_t, 3> bindingCounts{{1, 2, 1}};
+        for (std::size_t i = 0; i < 3; ++i) { VkDescriptorSetLayoutCreateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO}; info.bindingCount = bindingCounts[i]; info.pBindings = setBindings[i]; Check(vkCreateDescriptorSetLayout(m_impl->device, &info, nullptr, &resource.setLayouts[i]), "vkCreateDescriptorSetLayout"); }
         VkPipelineLayoutCreateInfo layout{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO}; layout.setLayoutCount = 3; layout.pSetLayouts = resource.setLayouts.data(); Check(vkCreatePipelineLayout(m_impl->device, &layout, nullptr, &resource.layout), "vkCreatePipelineLayout");
         // Slang emits the selected entry point as SPIR-V's canonical `main`.
         std::array<VkPipelineShaderStageCreateInfo, 2> stages{{{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT, vertex, "main"}, {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_FRAGMENT_BIT, fragment, "main"}}};

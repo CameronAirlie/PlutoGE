@@ -7,6 +7,7 @@ file(READ "${INPUT}" shader_source)
 # [[vk::binding]]. OpenGL has one namespace per resource class, so the source
 # uses deliberately flattened register indices and this removes only `set`.
 string(REGEX REPLACE "binding[ \t]*=[ \t]*0,[ \t]*set[ \t]*=[ \t]*2" "binding = 16" shader_source "${shader_source}")
-string(REGEX REPLACE "binding[ \t]*=[ \t]*[01],[ \t]*set[ \t]*=[ \t]*1" "binding = 8" shader_source "${shader_source}")
+string(REGEX REPLACE "binding[ \t]*=[ \t]*0,[ \t]*set[ \t]*=[ \t]*1" "binding = 8" shader_source "${shader_source}")
+string(REGEX REPLACE "binding[ \t]*=[ \t]*1,[ \t]*set[ \t]*=[ \t]*1" "binding = 9" shader_source "${shader_source}")
 string(REGEX REPLACE ",[ \t]*set[ \t]*=[ \t]*0" "" shader_source "${shader_source}")
 file(WRITE "${OUTPUT}" "${shader_source}")

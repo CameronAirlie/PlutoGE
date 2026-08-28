@@ -8,6 +8,28 @@ namespace PlutoGE::render
 {
     namespace
     {
+        struct alignas(16) BasicMaterialParameters
+        {
+            glm::vec4 baseColor{1.0f};
+            glm::vec2 uvScale{1.0f};
+            float metallic = 0.0f;
+            float roughness = 1.0f;
+            glm::vec3 emission{0.0f};
+            float alphaCutoff = 0.5f;
+            std::uint32_t alphaMode = 0;
+            glm::vec3 padding{0.0f};
+        };
+        static_assert(sizeof(BasicMaterialParameters) == 64);
+
+        struct alignas(16) BasicFrameParameters
+        {
+            glm::mat4 viewProjection{1.0f};
+            glm::vec4 cameraPositionAmbient{0.0f, 0.0f, 0.0f, 0.3f};
+            glm::vec4 directionalDirectionIntensity{0.4f, -0.8f, 0.3f, 1.0f};
+            glm::vec4 directionalColor{1.0f};
+        };
+        static_assert(sizeof(BasicFrameParameters) == 112);
+
         template <typename T>
         std::span<const std::byte> Bytes(const T &value)
         {
@@ -48,7 +70,7 @@ namespace PlutoGE::render
             descriptor.cullMode = rhi::CullMode::None;
             descriptor.debugName = "BasicRenderer opaque pipeline";
             m_pipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(descriptor));
-            m_cameraBuffer = rhi::Buffer(device, device.CreateBuffer({sizeof(glm::mat4), rhi::BufferUsage::Uniform, "BasicRenderer camera"}));
+            m_cameraBuffer = rhi::Buffer(device, device.CreateBuffer({sizeof(BasicFrameParameters), rhi::BufferUsage::Uniform, "BasicRenderer frame"}));
 
             constexpr std::array<std::uint8_t, 16> checker = {
                 255, 255, 255, 255, 80, 80, 80, 255,
@@ -72,6 +94,7 @@ namespace PlutoGE::render
         m_fallbackSampler.Reset();
         m_fallbackTexture.Reset();
         m_objectBuffers.clear();
+        m_materialBuffers.clear();
         m_cameraBuffer.Reset();
         m_pipeline.Reset();
         m_device = nullptr;
@@ -113,10 +136,21 @@ namespace PlutoGE::render
 
     void BasicRenderer::Render(const glm::mat4 &viewProjection, std::span<const BasicDraw> draws)
     {
+        Render(viewProjection, BasicLighting{}, draws);
+    }
+
+    void BasicRenderer::Render(const glm::mat4 &viewProjection, const BasicLighting &lighting, std::span<const BasicDraw> draws)
+    {
         if (!m_device || !m_colorTarget || !m_depthTarget)
             throw std::logic_error("BasicRenderer must be initialized and resized before rendering");
 
-        m_device->UpdateBuffer(m_cameraBuffer.Get(), 0, Bytes(viewProjection));
+        const BasicFrameParameters frameParameters{
+            viewProjection,
+            glm::vec4(lighting.cameraPosition, lighting.ambientIntensity),
+            glm::vec4(glm::normalize(lighting.directionalDirection), lighting.directionalIntensity),
+            glm::vec4(lighting.directionalColor, 1.0f),
+        };
+        m_device->UpdateBuffer(m_cameraBuffer.Get(), 0, Bytes(frameParameters));
         auto &commands = m_device->GetImmediateContext();
         rhi::RenderingInfo renderingInfo;
         renderingInfo.colorAttachment = m_colorTarget.Get();
@@ -129,8 +163,6 @@ namespace PlutoGE::render
         commands.BeginRendering(renderingInfo);
         commands.BindPipeline(m_pipeline.Get());
         commands.BindUniformBuffer(0, m_cameraBuffer.Get());
-        commands.BindTexture(8, m_fallbackTexture.Get(), m_fallbackSampler.Get());
-
         std::size_t drawIndex = 0;
         for (const auto &draw : draws)
         {
@@ -144,6 +176,18 @@ namespace PlutoGE::render
             auto &objectBuffer = m_objectBuffers[drawIndex++];
             m_device->UpdateBuffer(objectBuffer.Get(), 0, Bytes(draw.model));
             commands.BindUniformBuffer(16, objectBuffer.Get());
+            if (m_materialBuffers.size() < drawIndex)
+            {
+                m_materialBuffers.emplace_back(*m_device, m_device->CreateBuffer(
+                    {sizeof(BasicMaterialParameters), rhi::BufferUsage::Uniform, "BasicRenderer material draw"}));
+            }
+            const BasicMaterialParameters materialParameters{
+                draw.baseColor, draw.uvScale, draw.metallic, draw.roughness,
+                draw.emission, draw.alphaCutoff, draw.alphaMode};
+            auto &materialBuffer = m_materialBuffers[drawIndex - 1];
+            m_device->UpdateBuffer(materialBuffer.Get(), 0, Bytes(materialParameters));
+            commands.BindUniformBuffer(8, materialBuffer.Get());
+            commands.BindTexture(9, draw.baseColorTexture ? draw.baseColorTexture : m_fallbackTexture.Get(), m_fallbackSampler.Get());
             commands.BindVertexBuffer(draw.mesh->m_vertexBuffer.Get());
             commands.BindIndexBuffer(draw.mesh->m_indexBuffer.Get());
             const std::uint32_t availableCount = draw.firstIndex < draw.mesh->m_indexCount

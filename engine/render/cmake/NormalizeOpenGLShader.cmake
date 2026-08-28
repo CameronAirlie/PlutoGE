@@ -1,0 +1,12 @@
+if (NOT DEFINED INPUT OR NOT DEFINED OUTPUT)
+    message(FATAL_ERROR "NormalizeOpenGLShader requires INPUT and OUTPUT")
+endif()
+
+file(READ "${INPUT}" shader_source)
+# Slang emits Vulkan descriptor-set qualifiers for resources carrying
+# [[vk::binding]]. OpenGL has one namespace per resource class, so the source
+# uses deliberately flattened register indices and this removes only `set`.
+string(REGEX REPLACE "binding[ \t]*=[ \t]*0,[ \t]*set[ \t]*=[ \t]*2" "binding = 16" shader_source "${shader_source}")
+string(REGEX REPLACE "binding[ \t]*=[ \t]*[01],[ \t]*set[ \t]*=[ \t]*1" "binding = 8" shader_source "${shader_source}")
+string(REGEX REPLACE ",[ \t]*set[ \t]*=[ \t]*0" "" shader_source "${shader_source}")
+file(WRITE "${OUTPUT}" "${shader_source}")

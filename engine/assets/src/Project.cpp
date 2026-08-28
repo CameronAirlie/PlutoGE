@@ -799,6 +799,14 @@ namespace PlutoGE::assets
                 continue;
             }
 
+            if (tokens[0] == "GRAPHICS_API" && tokens.size() >= 2)
+            {
+                manifest.graphicsApi = tokens[1] == "Vulkan"
+                                           ? render::rhi::GraphicsApi::Vulkan
+                                           : render::rhi::GraphicsApi::OpenGL;
+                continue;
+            }
+
             if (tokens[0] == "RUNTIME_UPSCALER" && tokens.size() >= 2)
             {
                 manifest.runtimeUpscaler = tokens[1] == "Spatial"
@@ -1163,6 +1171,8 @@ namespace PlutoGE::assets
         output << "WINDOW_TITLE\t" << EscapeText(m_manifest.windowTitle) << '\n';
         output << "WINDOW_SIZE\t" << m_manifest.windowWidth << '\t' << m_manifest.windowHeight << '\n';
         output << "VSYNC\t" << (m_manifest.vSyncEnabled ? 1 : 0) << '\n';
+        output << "GRAPHICS_API\t"
+               << (m_manifest.graphicsApi == render::rhi::GraphicsApi::Vulkan ? "Vulkan" : "OpenGL") << '\n';
         output << "RUNTIME_UPSCALER\t"
                << (m_manifest.runtimeUpscaler == RuntimeUpscalerMode::Spatial ? "Spatial" : "None") << '\n';
         output << "RUNTIME_RENDER_SCALE\t" << std::clamp(m_manifest.runtimeRenderScale, 0.5f, 1.0f) << '\n';

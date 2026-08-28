@@ -1,3 +1,24 @@
+add_executable(PlutoGERhiTypesTests RhiTypesTests.cpp)
+target_link_libraries(PlutoGERhiTypesTests PRIVATE PlutoGE::Render)
+target_include_directories(PlutoGERhiTypesTests PRIVATE ${CMAKE_SOURCE_DIR}/engine/render/src)
+add_test(NAME PlutoGERhiTypesTests COMMAND PlutoGERhiTypesTests)
+
+add_executable(PlutoGEOpenGLRhiTests OpenGLRhiTests.cpp)
+target_link_libraries(PlutoGEOpenGLRhiTests PRIVATE PlutoGE::Render PlutoGE::Platform)
+target_compile_definitions(PlutoGEOpenGLRhiTests PRIVATE
+    PLUTO_RHI_TEST_SHADER_DIR="${CMAKE_BINARY_DIR}/engine/render/shaders")
+add_test(NAME PlutoGEOpenGLRhiTests COMMAND PlutoGEOpenGLRhiTests)
+
+add_executable(PlutoGEVulkanBootstrapTests VulkanBootstrapTests.cpp)
+target_link_libraries(PlutoGEVulkanBootstrapTests PRIVATE PlutoGE::Render)
+add_test(NAME PlutoGEVulkanBootstrapTests COMMAND PlutoGEVulkanBootstrapTests)
+
+add_executable(PlutoGEVulkanRhiTests VulkanRhiTests.cpp)
+target_link_libraries(PlutoGEVulkanRhiTests PRIVATE PlutoGE::Render)
+target_compile_definitions(PlutoGEVulkanRhiTests PRIVATE
+    PLUTO_RHI_TEST_SHADER_DIR="${CMAKE_BINARY_DIR}/engine/render/shaders")
+add_test(NAME PlutoGEVulkanRhiTests COMMAND PlutoGEVulkanRhiTests)
+
 add_executable(PlutoGELargeMeshOptimizationTests
     LargeMeshOptimizationTests.cpp
 )

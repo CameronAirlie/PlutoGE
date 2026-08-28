@@ -30,6 +30,11 @@
 #include "PlutoGE/scene/components/UIComponent.h"
 #include "PlutoGE/scene/components/VolumetricCloudComponent.h"
 #include "PlutoGE/render/Renderer.h"
+#include "PlutoGE/render/BasicRenderer.h"
+#include "PlutoGE/render/Graphics.h"
+#include "PlutoGE/render/rhi/opengl/OpenGLDevice.h"
+#include "PlutoGE/render/rhi/vulkan/VulkanBootstrap.h"
+#include "PlutoGE/render/rhi/vulkan/VulkanDevice.h"
 #include "PlutoGE/ui/panels/ContentBrowserPanel.h"
 #include <ImGuizmo.h>
 #include <iostream>
@@ -41,8 +46,11 @@
 #include <optional>
 #include <memory>
 #include <filesystem>
+#include <fstream>
+#include <unordered_set>
 
 #include <imgui.h>
+#include <glad/glad.h>
 
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/euler_angles.hpp>
@@ -79,6 +87,28 @@ namespace PlutoGE::ui
             "Shadow Mask Filtered",
             "LOD",
         };
+
+        std::string ReadRhiShaderText(const char *fileName)
+        {
+            std::ifstream input(std::filesystem::path(PLUTO_RHI_SHADER_DIR) / fileName, std::ios::binary);
+            if (!input)
+                return {};
+            return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+        }
+
+        std::vector<std::uint32_t> ReadRhiShaderBinary(const char *fileName)
+        {
+            std::ifstream input(std::filesystem::path(PLUTO_RHI_SHADER_DIR) / fileName, std::ios::binary | std::ios::ate);
+            if (!input)
+                return {};
+            const auto byteSize = input.tellg();
+            if (byteSize <= 0 || byteSize % static_cast<std::streamoff>(sizeof(std::uint32_t)) != 0)
+                return {};
+            std::vector<std::uint32_t> words(static_cast<std::size_t>(byteSize) / sizeof(std::uint32_t));
+            input.seekg(0);
+            input.read(reinterpret_cast<char *>(words.data()), byteSize);
+            return input ? words : std::vector<std::uint32_t>{};
+        }
 
         struct PickRay
         {
@@ -1834,6 +1864,58 @@ namespace PlutoGE::ui
         renderConfig.height = std::max(1, static_cast<int>(std::lround(static_cast<float>(kDefaultViewportHeight) * m_renderScale)));
         m_scaledRenderTarget = new render::RenderTarget(renderConfig);
         m_upscaler = std::make_unique<render::SpatialUpscaler>();
+
+        if (m_config.editorViewport)
+        {
+            const auto vulkanInfo = render::rhi::vulkan::ProbeVulkanDevice();
+            m_vulkanAvailable = vulkanInfo.available;
+            m_vulkanStatus = vulkanInfo.available
+                                  ? "Vulkan available: " + vulkanInfo.deviceName
+                                  : "Vulkan unavailable: " + vulkanInfo.error;
+            std::cout << "Viewport RHI: " << m_vulkanStatus << std::endl;
+            try
+            {
+                // During the editor migration Vulkan renders off-screen and
+                // readback is uploaded to an OpenGL texture consumed by the
+                // existing ImGui backend. Native Vulkan presentation replaces
+                // this bridge once the editor window is created with NO_API.
+                if (m_vulkanAvailable)
+                {
+                    m_rhiDevice = std::make_unique<render::rhi::vulkan::VulkanDevice>();
+                    m_activeRhiVulkan = true;
+                }
+                else
+                {
+                    m_rhiDevice = std::make_unique<render::rhi::opengl::OpenGLDevice>();
+                    m_activeRhiVulkan = false;
+                }
+                m_basicRenderer = std::make_unique<render::BasicRenderer>();
+                render::BasicRendererShaderPackage shaders;
+                shaders.vertex.glsl = ReadRhiShaderText("BasicLit.vertex.glsl");
+                shaders.vertex.spirv = ReadRhiShaderBinary("BasicLit.vertex.spv");
+                shaders.fragment.glsl = ReadRhiShaderText("BasicLit.fragment.glsl");
+                shaders.fragment.spirv = ReadRhiShaderBinary("BasicLit.fragment.spv");
+                if (!m_basicRenderer->Initialize(*m_rhiDevice, shaders))
+                {
+                    m_basicRenderer.reset();
+                    m_rhiDevice.reset();
+                    m_useRhiPreview = false;
+                }
+                else
+                {
+                    std::cout << "Viewport RHI active preview backend: "
+                              << (m_activeRhiVulkan ? "Vulkan (OpenGL readback bridge)" : "OpenGL")
+                              << std::endl;
+                }
+            }
+            catch (const std::exception &error)
+            {
+                std::cerr << "Failed to initialize viewport RHI preview: " << error.what() << std::endl;
+                m_basicRenderer.reset();
+                m_rhiDevice.reset();
+                m_useRhiPreview = false;
+            }
+        }
     }
 
     void ViewportPanel::Render()
@@ -1878,7 +1960,10 @@ namespace PlutoGE::ui
             return;
         }
 
-        ImTextureID texId = (ImTextureID)(uintptr_t)m_renderTarget->GetColorTextureID();
+        const std::uint64_t displayedTexture = m_useRhiPreview && m_rhiViewportTexture != 0
+                                                   ? m_rhiViewportTexture
+                                                   : m_renderTarget->GetColorTextureID();
+        ImTextureID texId = (ImTextureID)(uintptr_t)displayedTexture;
         ImVec2 imageSize = ImVec2(panelSize.x, panelSize.y);
         ImGui::Image(texId, imageSize, ImVec2(0, 1), ImVec2(1, 0));
         const ImVec2 viewportMin = ImGui::GetItemRectMin();
@@ -2109,6 +2194,13 @@ namespace PlutoGE::ui
             overlayPopupOpen = true;
             if (m_config.editorViewport)
             {
+                ImGui::MenuItem("RHI Basic Renderer", nullptr, &m_useRhiPreview, m_basicRenderer != nullptr);
+                ImGui::TextDisabled("Active: %s RHI%s", m_activeRhiVulkan ? "Vulkan" : "OpenGL",
+                                    m_activeRhiVulkan ? " (readback bridge)" : "");
+                ImGui::TextDisabled("%s", m_vulkanStatus.c_str());
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Vulkan device creation is working; viewport presentation is still being implemented.");
+                ImGui::Separator();
                 ImGui::MenuItem("Grid", nullptr, &m_showGrid);
                 ImGui::MenuItem("Debug Shapes", nullptr, &m_showDebugShapes);
                 ImGui::MenuItem("Navigation Mesh", nullptr, &m_showNavigation);
@@ -3718,6 +3810,111 @@ namespace PlutoGE::ui
         PresentSceneRenderTarget();
     }
 
+    void ViewportPanel::RenderRhiFrame(const render::CameraData &cameraData, std::span<const render::RenderCommand> commands)
+    {
+        if (!m_useRhiPreview || !m_basicRenderer || !m_rhiDevice || !m_renderTarget)
+            return;
+
+        const auto *target = GetSceneRenderTarget();
+        if (!target || target->GetWidth() <= 0 || target->GetHeight() <= 0 ||
+            !m_basicRenderer->Resize(static_cast<std::uint32_t>(target->GetWidth()), static_cast<std::uint32_t>(target->GetHeight())))
+            return;
+
+        std::vector<render::BasicDraw> draws;
+        draws.reserve(commands.size());
+        std::unordered_set<const render::Mesh *> activeMeshes;
+        activeMeshes.reserve(commands.size());
+        for (const auto &command : commands)
+        {
+            if (!command.mesh || command.jointMatrices || command.terrainGeomorph)
+                continue;
+            activeMeshes.insert(command.mesh);
+
+            auto meshIt = m_rhiMeshes.find(command.mesh);
+            if (meshIt == m_rhiMeshes.end())
+            {
+                const auto &source = command.mesh->GetMeshData();
+                if (source.vertices.empty() || source.indices.empty())
+                    continue;
+                std::vector<render::BasicVertex> vertices;
+                vertices.reserve(source.vertices.size());
+                for (const auto &vertex : source.vertices)
+                    vertices.push_back({vertex.position, vertex.normal, vertex.uv});
+                auto uploaded = m_basicRenderer->CreateMesh({vertices, source.indices});
+                meshIt = m_rhiMeshes.emplace(command.mesh, std::move(uploaded)).first;
+            }
+
+            std::uint32_t firstIndex = 0;
+            std::uint32_t indexCount = 0;
+            if (command.submeshIndex < command.mesh->GetSubmeshCount())
+            {
+                const auto range = command.mesh->GetSubmeshLodRange(command.submeshIndex, command.lodIndex);
+                firstIndex = range.indexOffset;
+                indexCount = range.indexCount;
+            }
+
+            if (command.instanceModels && !command.instanceModels->empty())
+            {
+                for (const auto &instanceModel : *command.instanceModels)
+                    draws.push_back({&meshIt->second, instanceModel, firstIndex, indexCount});
+            }
+            else
+            {
+                draws.push_back({&meshIt->second, command.model, firstIndex, indexCount});
+            }
+        }
+
+        for (auto meshIt = m_rhiMeshes.begin(); meshIt != m_rhiMeshes.end();)
+        {
+            if (!activeMeshes.contains(meshIt->first))
+                meshIt = m_rhiMeshes.erase(meshIt);
+            else
+                ++meshIt;
+        }
+
+        try
+        {
+            m_basicRenderer->Render(cameraData.projection * cameraData.view, draws);
+            if (m_activeRhiVulkan)
+            {
+                auto &vulkanDevice = static_cast<render::rhi::vulkan::VulkanDevice &>(*m_rhiDevice);
+                const auto pixels = vulkanDevice.ReadTextureRgba8(m_basicRenderer->GetColorTexture());
+                if (m_vulkanBridgeTexture == 0)
+                {
+                    GLuint texture = 0;
+                    glGenTextures(1, &texture);
+                    m_vulkanBridgeTexture = texture;
+                }
+                glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(m_vulkanBridgeTexture));
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+                glTexImage2D(GL_TEXTURE_2D, 0, GL_SRGB8_ALPHA8,
+                             static_cast<GLsizei>(m_basicRenderer->GetWidth()),
+                             static_cast<GLsizei>(m_basicRenderer->GetHeight()), 0,
+                             GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+                m_rhiViewportTexture = m_vulkanBridgeTexture;
+            }
+            else
+            {
+                auto &openGlDevice = static_cast<render::rhi::opengl::OpenGLDevice &>(*m_rhiDevice);
+                m_rhiViewportTexture = openGlDevice.GetTextureNativeHandle(m_basicRenderer->GetColorTexture());
+            }
+        }
+        catch (const std::exception &error)
+        {
+            std::cerr << "Viewport RHI render failed: " << error.what() << std::endl;
+            m_useRhiPreview = false;
+            m_rhiViewportTexture = 0;
+        }
+
+        // The legacy renderer and ImGui still share this context during the
+        // migration, so invalidate their cached assumptions after RHI work.
+        render::Graphics::ResetStateCache();
+        render::Graphics::BindFramebuffer(0);
+    }
+
     render::RenderTarget *ViewportPanel::GetSceneRenderTarget() const
     {
         return std::abs(m_renderScale - 1.0f) < 0.001f || !m_scaledRenderTarget
@@ -3752,6 +3949,20 @@ namespace PlutoGE::ui
 
     void ViewportPanel::Shutdown()
     {
+        m_rhiMeshes.clear();
+        if (m_basicRenderer)
+        {
+            m_basicRenderer->Shutdown();
+            m_basicRenderer.reset();
+        }
+        m_rhiDevice.reset();
+        m_rhiViewportTexture = 0;
+        if (m_vulkanBridgeTexture != 0)
+        {
+            const GLuint texture = static_cast<GLuint>(m_vulkanBridgeTexture);
+            glDeleteTextures(1, &texture);
+            m_vulkanBridgeTexture = 0;
+        }
         if (m_renderTarget)
         {
             m_renderTarget->Cleanup();

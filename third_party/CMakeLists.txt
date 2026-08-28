@@ -8,6 +8,45 @@ target_include_directories(PlutoGE_glad PUBLIC
 )
 
 include(FetchContent)
+
+# Vulkan is loaded dynamically through Volk, so development builds do not
+# require a machine-wide Vulkan SDK or a link-time dependency on vulkan-1.
+FetchContent_Declare(
+    vulkan_headers
+    GIT_REPOSITORY https://github.com/KhronosGroup/Vulkan-Headers.git
+    GIT_TAG        vulkan-sdk-1.3.296.0
+)
+FetchContent_MakeAvailable(vulkan_headers)
+
+set(VOLK_PULL_IN_VULKAN OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    volk
+    GIT_REPOSITORY https://github.com/zeux/volk.git
+    GIT_TAG        vulkan-sdk-1.3.296.0
+)
+FetchContent_MakeAvailable(volk)
+# Volk's own CMake project is populated from a different source directory, so
+# attaching Vulkan::Headers here would require the broad CMP0079 policy. Give
+# the loader its one concrete compile requirement directly instead.
+target_include_directories(volk PUBLIC
+    ${vulkan_headers_SOURCE_DIR}/include
+)
+
+FetchContent_Declare(
+    vma
+    GIT_REPOSITORY https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git
+    GIT_TAG        v3.1.0
+)
+FetchContent_MakeAvailable(vma)
+
+add_library(PlutoGE_vulkan INTERFACE)
+add_library(PlutoGE::vulkan ALIAS PlutoGE_vulkan)
+target_link_libraries(PlutoGE_vulkan INTERFACE
+    volk
+    Vulkan::Headers
+    GPUOpen::VulkanMemoryAllocator
+)
+
 FetchContent_Declare(
     glfw
     GIT_REPOSITORY https://github.com/glfw/glfw.git

@@ -1,11 +1,15 @@
 add_library(PlutoGERender
     src/Renderer.cpp
+    src/BasicRenderer.cpp
     src/TextureManager.cpp
     src/TexturePainter.cpp
     src/Shader.cpp
     src/Texture.cpp
     src/ShaderGraph.cpp
     src/Graphics.cpp
+    src/rhi/opengl/OpenGLDevice.cpp
+    src/rhi/vulkan/VulkanBootstrap.cpp
+    src/rhi/vulkan/VulkanDevice.cpp
     src/RenderTarget.cpp
     src/SpatialUpscaler.cpp
     src/GBuffer.cpp
@@ -48,6 +52,33 @@ add_library(PlutoGERender
 
 add_library(PlutoGE::Render ALIAS PlutoGERender)
 
+find_program(PLUTO_SLANGC_EXECUTABLE NAMES slangc)
+if (PLUTO_SLANGC_EXECUTABLE)
+    set(PLUTO_RHI_SHADER_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/shaders")
+    set(PLUTO_BASIC_LIT_SHADER "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLit.slang")
+    set(PLUTO_BASIC_LIT_OUTPUTS
+        "${PLUTO_RHI_SHADER_OUTPUT_DIR}/BasicLit.vertex.glsl"
+        "${PLUTO_RHI_SHADER_OUTPUT_DIR}/BasicLit.fragment.glsl"
+        "${PLUTO_RHI_SHADER_OUTPUT_DIR}/BasicLit.vertex.spv"
+        "${PLUTO_RHI_SHADER_OUTPUT_DIR}/BasicLit.fragment.spv")
+    add_custom_command(
+        OUTPUT ${PLUTO_BASIC_LIT_OUTPUTS}
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${PLUTO_RHI_SHADER_OUTPUT_DIR}"
+        COMMAND ${PLUTO_SLANGC_EXECUTABLE} "${PLUTO_BASIC_LIT_SHADER}" -entry vertexMain -target glsl -profile glsl_450 -matrix-layout-column-major -o "${PLUTO_RHI_SHADER_OUTPUT_DIR}/BasicLit.vertex.glsl.raw"
+        COMMAND ${CMAKE_COMMAND} -DINPUT=${PLUTO_RHI_SHADER_OUTPUT_DIR}/BasicLit.vertex.glsl.raw -DOUTPUT=${PLUTO_RHI_SHADER_OUTPUT_DIR}/BasicLit.vertex.glsl -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NormalizeOpenGLShader.cmake"
+        COMMAND ${PLUTO_SLANGC_EXECUTABLE} "${PLUTO_BASIC_LIT_SHADER}" -entry fragmentMain -target glsl -profile glsl_450 -matrix-layout-column-major -o "${PLUTO_RHI_SHADER_OUTPUT_DIR}/BasicLit.fragment.glsl.raw"
+        COMMAND ${CMAKE_COMMAND} -DINPUT=${PLUTO_RHI_SHADER_OUTPUT_DIR}/BasicLit.fragment.glsl.raw -DOUTPUT=${PLUTO_RHI_SHADER_OUTPUT_DIR}/BasicLit.fragment.glsl -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NormalizeOpenGLShader.cmake"
+        COMMAND ${PLUTO_SLANGC_EXECUTABLE} "${PLUTO_BASIC_LIT_SHADER}" -entry vertexMain -target spirv -profile spirv_1_3 -matrix-layout-column-major -o "${PLUTO_RHI_SHADER_OUTPUT_DIR}/BasicLit.vertex.spv"
+        COMMAND ${PLUTO_SLANGC_EXECUTABLE} "${PLUTO_BASIC_LIT_SHADER}" -entry fragmentMain -target spirv -profile spirv_1_3 -matrix-layout-column-major -o "${PLUTO_RHI_SHADER_OUTPUT_DIR}/BasicLit.fragment.spv"
+        DEPENDS "${PLUTO_BASIC_LIT_SHADER}" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/NormalizeOpenGLShader.cmake"
+        COMMENT "Compiling BasicLit Slang shader for OpenGL and Vulkan"
+        VERBATIM)
+    add_custom_target(PlutoGERhiShaders DEPENDS ${PLUTO_BASIC_LIT_OUTPUTS})
+    add_dependencies(PlutoGERender PlutoGERhiShaders)
+else()
+    message(WARNING "slangc was not found; RHI shader artifacts will not be built")
+endif()
+
 target_include_directories(PlutoGERender PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
@@ -61,4 +92,5 @@ target_link_libraries(PlutoGERender PUBLIC
     PlutoGE::Scene
     PlutoGE::stb_image
     PlutoGE::rmlui
+    PlutoGE::vulkan
 )

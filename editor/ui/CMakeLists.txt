@@ -38,3 +38,6 @@ target_link_libraries(PlutoGEEditorUI PUBLIC
     PlutoGE::imguizmo
     PlutoGE::glfw
 )
+
+target_compile_definitions(PlutoGEEditorUI PRIVATE
+    PLUTO_RHI_SHADER_DIR="${CMAKE_BINARY_DIR}/engine/render/shaders")

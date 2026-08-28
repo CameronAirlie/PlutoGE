@@ -6,6 +6,7 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include "PlutoGE/render/rhi/Types.h"
 
 namespace PlutoGE::assets
 {
@@ -83,6 +84,7 @@ namespace PlutoGE::assets
         int windowWidth = 1280;
         int windowHeight = 720;
         bool vSyncEnabled = true;
+        render::rhi::GraphicsApi graphicsApi = render::rhi::GraphicsApi::OpenGL;
         RuntimeUpscalerMode runtimeUpscaler = RuntimeUpscalerMode::None;
         float runtimeRenderScale = 1.0f;
         float runtimeUpscaleSharpness = 0.25f;

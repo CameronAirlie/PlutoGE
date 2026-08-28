@@ -48,14 +48,24 @@ int main()
     const auto projectPath = projectRoot / "ModelAssetPathTests.plutoproject";
     Project project(projectPath, ProjectManifest{.assetDirectory = "Assets"});
     project.GetManifest().runtimeUpscaler = RuntimeUpscalerMode::Spatial;
+    project.GetManifest().graphicsApi = PlutoGE::render::rhi::GraphicsApi::Vulkan;
     project.GetManifest().runtimeRenderScale = 0.75f;
     project.GetManifest().runtimeUpscaleSharpness = 0.4f;
     assert(project.Save(&error));
     auto reloadedProject = Project::Load(projectPath, &error);
     assert(reloadedProject);
     assert(reloadedProject->GetManifest().runtimeUpscaler == RuntimeUpscalerMode::Spatial);
+    assert(reloadedProject->GetManifest().graphicsApi == PlutoGE::render::rhi::GraphicsApi::Vulkan);
     assert(reloadedProject->GetManifest().runtimeRenderScale == 0.75f);
     assert(reloadedProject->GetManifest().runtimeUpscaleSharpness == 0.4f);
+
+    const auto legacyProjectPath = projectRoot / "LegacyProject.plutoproject";
+    std::ofstream legacyProject(legacyProjectPath);
+    legacyProject << "PLUTOPROJECT\t1\nNAME\tLegacy\n";
+    legacyProject.close();
+    auto reloadedLegacyProject = Project::Load(legacyProjectPath, &error);
+    assert(reloadedLegacyProject);
+    assert(reloadedLegacyProject->GetManifest().graphicsApi == PlutoGE::render::rhi::GraphicsApi::OpenGL);
     const std::string sourceReference = "project://SourceModels/Robot/Robot.fbx";
     assert(GetModelArtifactDirectory(project, sourceReference) == packageRoot);
     assert(GetModelManifestPath(project, sourceReference) == packageRoot / "Robot.plutomodel");

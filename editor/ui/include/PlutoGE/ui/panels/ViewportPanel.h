@@ -1,18 +1,25 @@
 #pragma once
 
 #include "PlutoGE/render/Camera.h"
+#include "PlutoGE/render/BasicRenderer.h"
 #include "PlutoGE/ui/panels/ViewportPanel.h"
 #include "PlutoGE/ui/panels/Panel.h"
 
 #include <ImGuizmo.h>
 #include <glm/glm.hpp>
 #include <memory>
+#include <unordered_map>
+#include <span>
+#include <string>
 
 namespace PlutoGE::render
 {
     enum class PostProcessDebugView;
     class RenderTarget;
     class SpatialUpscaler;
+    class Mesh;
+    struct RenderCommand;
+    namespace rhi { class IRenderDevice; }
 }
 
 namespace PlutoGE::scene
@@ -43,6 +50,7 @@ namespace PlutoGE::ui
         void Render() override;
         void ClearFrame();
         void RenderFrame(scene::CameraComponent &cameraComponent);
+        void RenderRhiFrame(const render::CameraData &cameraData, std::span<const render::RenderCommand> commands);
         void Shutdown() override;
         bool ShouldRenderFrame() const;
 
@@ -70,6 +78,9 @@ namespace PlutoGE::ui
         float m_renderScale = 1.0f;
         float m_upscaleSharpness = 0.25f;
         bool m_showGrid = true;
+        bool m_useRhiPreview = true;
+        bool m_vulkanAvailable = false;
+        std::string m_vulkanStatus = "Vulkan not probed";
         bool m_showDebugShapes = true;
         bool m_showNavigation = false;
         bool m_showAgentPaths = true;
@@ -84,6 +95,12 @@ namespace PlutoGE::ui
         render::RenderTarget *m_renderTarget = nullptr; // The render target used for rendering the viewport content
         render::RenderTarget *m_scaledRenderTarget = nullptr;
         std::unique_ptr<render::SpatialUpscaler> m_upscaler;
+        std::unique_ptr<render::rhi::IRenderDevice> m_rhiDevice;
+        std::unique_ptr<render::BasicRenderer> m_basicRenderer;
+        std::unordered_map<const render::Mesh *, render::BasicMesh> m_rhiMeshes;
+        std::uint64_t m_rhiViewportTexture = 0;
+        std::uint64_t m_vulkanBridgeTexture = 0;
+        bool m_activeRhiVulkan = false;
         int m_pendingWidth = 0;
         int m_pendingHeight = 0;
         int m_resizeStableFrames = 0;

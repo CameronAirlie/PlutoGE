@@ -43,10 +43,12 @@ namespace PlutoGE::render
                     {2, rhi::Format::R32G32Float, static_cast<std::uint32_t>(offsetof(BasicVertex, uv))},
                 },
             };
+            // The migration renderer accepts existing scene assets whose
+            // winding conventions are not yet normalized across importers.
+            descriptor.cullMode = rhi::CullMode::None;
             descriptor.debugName = "BasicRenderer opaque pipeline";
             m_pipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(descriptor));
             m_cameraBuffer = rhi::Buffer(device, device.CreateBuffer({sizeof(glm::mat4), rhi::BufferUsage::Uniform, "BasicRenderer camera"}));
-            m_objectBuffer = rhi::Buffer(device, device.CreateBuffer({sizeof(glm::mat4), rhi::BufferUsage::Uniform, "BasicRenderer object"}));
 
             constexpr std::array<std::uint8_t, 16> checker = {
                 255, 255, 255, 255, 80, 80, 80, 255,
@@ -69,7 +71,7 @@ namespace PlutoGE::render
         m_colorTarget.Reset();
         m_fallbackSampler.Reset();
         m_fallbackTexture.Reset();
-        m_objectBuffer.Reset();
+        m_objectBuffers.clear();
         m_cameraBuffer.Reset();
         m_pipeline.Reset();
         m_device = nullptr;
@@ -129,12 +131,19 @@ namespace PlutoGE::render
         commands.BindUniformBuffer(0, m_cameraBuffer.Get());
         commands.BindTexture(8, m_fallbackTexture.Get(), m_fallbackSampler.Get());
 
+        std::size_t drawIndex = 0;
         for (const auto &draw : draws)
         {
             if (!draw.mesh || !draw.mesh->IsValid())
                 continue;
-            m_device->UpdateBuffer(m_objectBuffer.Get(), 0, Bytes(draw.model));
-            commands.BindUniformBuffer(16, m_objectBuffer.Get());
+            if (drawIndex == m_objectBuffers.size())
+            {
+                m_objectBuffers.emplace_back(*m_device, m_device->CreateBuffer(
+                    {sizeof(glm::mat4), rhi::BufferUsage::Uniform, "BasicRenderer object draw"}));
+            }
+            auto &objectBuffer = m_objectBuffers[drawIndex++];
+            m_device->UpdateBuffer(objectBuffer.Get(), 0, Bytes(draw.model));
+            commands.BindUniformBuffer(16, objectBuffer.Get());
             commands.BindVertexBuffer(draw.mesh->m_vertexBuffer.Get());
             commands.BindIndexBuffer(draw.mesh->m_indexBuffer.Get());
             const std::uint32_t availableCount = draw.firstIndex < draw.mesh->m_indexCount

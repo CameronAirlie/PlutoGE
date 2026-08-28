@@ -101,6 +101,9 @@ namespace PlutoGE::ui
         std::uint64_t m_rhiViewportTexture = 0;
         std::uint64_t m_vulkanBridgeTexture = 0;
         bool m_activeRhiVulkan = false;
+        std::size_t m_rhiSceneCommandCount = 0;
+        std::size_t m_rhiDrawCount = 0;
+        std::size_t m_rhiChangedPixelCount = 0;
         int m_pendingWidth = 0;
         int m_pendingHeight = 0;
         int m_resizeStableFrames = 0;

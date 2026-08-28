@@ -55,7 +55,10 @@ int main()
         projection[2][2] = nearPlane / (farPlane - nearPlane); projection[2][3] = -1.0f;
         projection[3][2] = farPlane * nearPlane / (farPlane - nearPlane);
         const glm::mat4 view = glm::lookAtRH(glm::vec3(2.5f, 1.8f, 3.0f), glm::vec3(0), glm::vec3(0,1,0));
-        const std::array draws{BasicDraw{&cube, glm::mat4(1)}};
+        const std::array draws{
+            BasicDraw{&cube, glm::translate(glm::mat4(1), glm::vec3(-0.65f, 0, 0))},
+            BasicDraw{&cube, glm::translate(glm::mat4(1), glm::vec3(0.65f, 0, 0))},
+        };
         renderer.Render(projection * view, draws);
         const auto pixels = device.ReadTextureRgba8(renderer.GetColorTexture());
 

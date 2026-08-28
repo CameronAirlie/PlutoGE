@@ -79,7 +79,9 @@ namespace PlutoGE::render
         rhi::IRenderDevice *m_device = nullptr;
         rhi::GraphicsPipeline m_pipeline;
         rhi::Buffer m_cameraBuffer;
-        rhi::Buffer m_objectBuffer;
+        // Vulkan records the complete frame before execution, so every draw
+        // needs stable object data until submission completes.
+        std::vector<rhi::Buffer> m_objectBuffers;
         rhi::Texture m_fallbackTexture;
         rhi::Sampler m_fallbackSampler;
         rhi::Texture m_colorTarget;

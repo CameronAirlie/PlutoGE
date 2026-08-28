@@ -1965,9 +1965,22 @@ namespace PlutoGE::ui
                                                    : m_renderTarget->GetColorTextureID();
         ImTextureID texId = (ImTextureID)(uintptr_t)displayedTexture;
         ImVec2 imageSize = ImVec2(panelSize.x, panelSize.y);
-        ImGui::Image(texId, imageSize, ImVec2(0, 1), ImVec2(1, 0));
+        const bool displayingVulkanReadback = m_useRhiPreview && m_activeRhiVulkan && m_rhiViewportTexture != 0;
+        ImGui::Image(texId, imageSize,
+                     displayingVulkanReadback ? ImVec2(0, 0) : ImVec2(0, 1),
+                     displayingVulkanReadback ? ImVec2(1, 1) : ImVec2(1, 0));
         const ImVec2 viewportMin = ImGui::GetItemRectMin();
         const ImVec2 viewportMax = ImGui::GetItemRectMax();
+        if (m_useRhiPreview)
+        {
+            const std::string rhiLabel = std::string(m_activeRhiVulkan ? "Vulkan" : "OpenGL") +
+                                         " RHI | commands " + std::to_string(m_rhiSceneCommandCount) +
+                                         " | draws " + std::to_string(m_rhiDrawCount) +
+                                         (m_activeRhiVulkan ? " | changed pixels " + std::to_string(m_rhiChangedPixelCount) : "");
+            ImGui::GetWindowDrawList()->AddText(
+                ImVec2(viewportMin.x + 10.0f, viewportMax.y - ImGui::GetTextLineHeightWithSpacing() - 8.0f),
+                IM_COL32(120, 220, 255, 255), rhiLabel.c_str());
+        }
         m_viewportMin = glm::vec2(viewportMin.x, viewportMin.y);
         m_viewportSize = glm::vec2(imageSize.x, imageSize.y);
         const ImVec2 mousePosition = ImGui::GetIO().MousePos;
@@ -2194,9 +2207,10 @@ namespace PlutoGE::ui
             overlayPopupOpen = true;
             if (m_config.editorViewport)
             {
-                ImGui::MenuItem("RHI Basic Renderer", nullptr, &m_useRhiPreview, m_basicRenderer != nullptr);
+                ImGui::MenuItem("RHI Scene Geometry Preview", nullptr, &m_useRhiPreview, m_basicRenderer != nullptr);
                 ImGui::TextDisabled("Active: %s RHI%s", m_activeRhiVulkan ? "Vulkan" : "OpenGL",
                                     m_activeRhiVulkan ? " (readback bridge)" : "");
+                ImGui::TextDisabled("Visible commands: %zu, draws: %zu", m_rhiSceneCommandCount, m_rhiDrawCount);
                 ImGui::TextDisabled("%s", m_vulkanStatus.c_str());
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Vulkan device creation is working; viewport presentation is still being implemented.");
@@ -3821,12 +3835,13 @@ namespace PlutoGE::ui
             return;
 
         std::vector<render::BasicDraw> draws;
+        m_rhiSceneCommandCount = commands.size();
         draws.reserve(commands.size());
         std::unordered_set<const render::Mesh *> activeMeshes;
         activeMeshes.reserve(commands.size());
         for (const auto &command : commands)
         {
-            if (!command.mesh || command.jointMatrices || command.terrainGeomorph)
+            if (!command.mesh)
                 continue;
             activeMeshes.insert(command.mesh);
 
@@ -3874,11 +3889,32 @@ namespace PlutoGE::ui
 
         try
         {
-            m_basicRenderer->Render(cameraData.projection * cameraData.view, draws);
+            m_rhiDrawCount = draws.size();
+            glm::mat4 projection = cameraData.projection;
+            if (m_activeRhiVulkan)
+            {
+                // Existing editor cameras still emit OpenGL -1..1 NDC depth.
+                // Convert it to Vulkan's 0..1 range at the migration boundary.
+                glm::mat4 depthRangeConversion(1.0f);
+                depthRangeConversion[2][2] = 0.5f;
+                depthRangeConversion[3][2] = 0.5f;
+                projection = depthRangeConversion * projection;
+            }
+            m_basicRenderer->Render(projection * cameraData.view, draws);
             if (m_activeRhiVulkan)
             {
                 auto &vulkanDevice = static_cast<render::rhi::vulkan::VulkanDevice &>(*m_rhiDevice);
                 const auto pixels = vulkanDevice.ReadTextureRgba8(m_basicRenderer->GetColorTexture());
+                m_rhiChangedPixelCount = 0;
+                for (std::size_t pixel = 0; pixel + 3 < pixels.size(); pixel += 4)
+                {
+                    const int red = std::to_integer<unsigned char>(pixels[pixel]);
+                    const int green = std::to_integer<unsigned char>(pixels[pixel + 1]);
+                    const int blue = std::to_integer<unsigned char>(pixels[pixel + 2]);
+                    // BasicRenderer clears to approximately (10, 15, 23).
+                    if (std::abs(red - 10) > 3 || std::abs(green - 15) > 3 || std::abs(blue - 23) > 3)
+                        ++m_rhiChangedPixelCount;
+                }
                 if (m_vulkanBridgeTexture == 0)
                 {
                     GLuint texture = 0;

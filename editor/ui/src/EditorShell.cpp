@@ -3153,7 +3153,7 @@ namespace PlutoGE::ui
                                      m_scene.get(),
                                      viewportPanel->IsGridVisible(),
                                      true);
-                viewportPanel->RenderRhiFrame(editorCameraData, renderer.GetSceneRenderCommands());
+                viewportPanel->RenderRhiFrame(editorCameraData, renderer.GetVisibleRenderCommands());
                 render::CameraData renderedEditorCameraData{};
                 if (renderer.GetLastUnjitteredCameraData(sceneRenderTarget, renderedEditorCameraData))
                 {

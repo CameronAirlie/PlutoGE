@@ -100,7 +100,8 @@ namespace PlutoGE::ui
         std::unique_ptr<render::rhi::IRenderDevice> m_rhiDevice;
         std::unique_ptr<render::BasicRenderer> m_basicRenderer;
         std::unordered_map<const render::Mesh *, render::BasicMesh> m_rhiMeshes;
-        std::unordered_map<const render::Texture *, render::rhi::Texture> m_rhiTextures;
+        std::unordered_map<const render::Texture *, render::rhi::Texture> m_rhiSrgbTextures;
+        std::unordered_map<const render::Texture *, render::rhi::Texture> m_rhiLinearTextures;
         std::uint64_t m_rhiViewportTexture = 0;
         std::uint64_t m_vulkanBridgeTexture = 0;
         bool m_activeRhiVulkan = false;

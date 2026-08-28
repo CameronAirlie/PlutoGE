@@ -253,11 +253,12 @@ namespace PlutoGE::render::rhi::vulkan
         void BindTexture(std::uint32_t slot, TextureHandle textureHandle, SamplerHandle samplerHandle) override
         {
             auto *texture = m_impl.textures.Get(textureHandle); auto *sampler = m_impl.samplers.Get(samplerHandle);
-            if (!m_pipeline || slot != 9 || !texture || !sampler) throw std::invalid_argument("Invalid Vulkan texture binding");
+            if (!m_pipeline || slot < 9 || slot > 12 || !texture || !sampler) throw std::invalid_argument("Invalid Vulkan texture binding");
             if (texture->layout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
                 throw std::logic_error("Vulkan sampled texture has an invalid layout");
-            m_sampledTexture = textureHandle;
-            m_sampler = samplerHandle;
+            const std::size_t index = slot - 9;
+            m_sampledTextures[index] = textureHandle;
+            m_samplers[index] = samplerHandle;
         }
         void DrawIndexed(std::uint32_t count, std::uint32_t firstIndex, std::int32_t vertexOffset) override
         {
@@ -265,9 +266,16 @@ namespace PlutoGE::render::rhi::vulkan
             auto *camera = m_impl.buffers.Get(m_cameraBuffer);
             auto *material = m_impl.buffers.Get(m_materialBuffer);
             auto *object = m_impl.buffers.Get(m_objectBuffer);
-            auto *texture = m_impl.textures.Get(m_sampledTexture);
-            auto *sampler = m_impl.samplers.Get(m_sampler);
-            if (!camera || !material || !object || !texture || !sampler)
+            std::array<TextureResource *, 4> textures{};
+            std::array<SamplerResource *, 4> samplers{};
+            for (std::size_t i = 0; i < textures.size(); ++i)
+            {
+                textures[i] = m_impl.textures.Get(m_sampledTextures[i]);
+                samplers[i] = m_impl.samplers.Get(m_samplers[i]);
+            }
+            if (!camera || !material || !object ||
+                std::ranges::find(textures, nullptr) != textures.end() ||
+                std::ranges::find(samplers, nullptr) != samplers.end())
                 throw std::logic_error("Vulkan draw has incomplete resource bindings");
             std::array<VkDescriptorSet, 3> sets{};
             VkDescriptorSetAllocateInfo allocation{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
@@ -276,13 +284,20 @@ namespace PlutoGE::render::rhi::vulkan
             allocation.pSetLayouts = m_pipeline->setLayouts.data();
             Check(vkAllocateDescriptorSets(m_impl.device, &allocation, sets.data()), "vkAllocateDescriptorSets(draw)");
             std::array<VkDescriptorBufferInfo, 3> buffers{{{camera->buffer, 0, camera->size}, {material->buffer, 0, material->size}, {object->buffer, 0, object->size}}};
-            VkDescriptorImageInfo image{sampler->sampler, texture->view, texture->layout};
-            std::array<VkWriteDescriptorSet, 4> writes{};
+            std::array<VkDescriptorImageInfo, 4> images{};
+            for (std::size_t i = 0; i < images.size(); ++i)
+                images[i] = {samplers[i]->sampler, textures[i]->view, textures[i]->layout};
+            std::array<VkWriteDescriptorSet, 7> writes{};
             for (auto &write : writes) write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             writes[0].dstSet = sets[0]; writes[0].dstBinding = 0; writes[0].descriptorCount = 1; writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER; writes[0].pBufferInfo = &buffers[0];
             writes[1].dstSet = sets[1]; writes[1].dstBinding = 0; writes[1].descriptorCount = 1; writes[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER; writes[1].pBufferInfo = &buffers[1];
-            writes[2].dstSet = sets[1]; writes[2].dstBinding = 1; writes[2].descriptorCount = 1; writes[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; writes[2].pImageInfo = &image;
-            writes[3].dstSet = sets[2]; writes[3].dstBinding = 0; writes[3].descriptorCount = 1; writes[3].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER; writes[3].pBufferInfo = &buffers[2];
+            for (std::size_t i = 0; i < images.size(); ++i)
+            {
+                writes[2 + i].dstSet = sets[1]; writes[2 + i].dstBinding = static_cast<std::uint32_t>(1 + i);
+                writes[2 + i].descriptorCount = 1; writes[2 + i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                writes[2 + i].pImageInfo = &images[i];
+            }
+            writes[6].dstSet = sets[2]; writes[6].dstBinding = 0; writes[6].descriptorCount = 1; writes[6].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER; writes[6].pBufferInfo = &buffers[2];
             vkUpdateDescriptorSets(m_impl.device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
             vkCmdBindDescriptorSets(m_impl.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline->layout, 0, static_cast<std::uint32_t>(sets.size()), sets.data(), 0, nullptr);
             vkCmdDrawIndexed(m_impl.commandBuffer, count, 1, firstIndex, vertexOffset, 0);
@@ -296,8 +311,8 @@ namespace PlutoGE::render::rhi::vulkan
         BufferHandle m_cameraBuffer;
         BufferHandle m_materialBuffer;
         BufferHandle m_objectBuffer;
-        TextureHandle m_sampledTexture;
-        SamplerHandle m_sampler;
+        std::array<TextureHandle, 4> m_sampledTextures;
+        std::array<SamplerHandle, 4> m_samplers;
         bool m_rendering = false;
     };
 
@@ -434,12 +449,15 @@ namespace PlutoGE::render::rhi::vulkan
         VkShaderModule vertex = module(descriptor.vertexShader.spirv), fragment = module(descriptor.fragmentShader.spirv);
         PipelineResource resource; resource.descriptor = descriptor;
         const VkDescriptorSetLayoutBinding cameraBinding{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, nullptr};
-        const std::array<VkDescriptorSetLayoutBinding, 2> materialBindings{{
+        const std::array<VkDescriptorSetLayoutBinding, 5> materialBindings{{
             {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
-            {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}}};
+            {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+            {2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+            {3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr},
+            {4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr}}};
         const VkDescriptorSetLayoutBinding objectBinding{0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, nullptr};
         const std::array<const VkDescriptorSetLayoutBinding *, 3> setBindings{{&cameraBinding, materialBindings.data(), &objectBinding}};
-        const std::array<std::uint32_t, 3> bindingCounts{{1, 2, 1}};
+        const std::array<std::uint32_t, 3> bindingCounts{{1, 5, 1}};
         for (std::size_t i = 0; i < 3; ++i) { VkDescriptorSetLayoutCreateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO}; info.bindingCount = bindingCounts[i]; info.pBindings = setBindings[i]; Check(vkCreateDescriptorSetLayout(m_impl->device, &info, nullptr, &resource.setLayouts[i]), "vkCreateDescriptorSetLayout"); }
         VkPipelineLayoutCreateInfo layout{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO}; layout.setLayoutCount = 3; layout.pSetLayouts = resource.setLayouts.data(); Check(vkCreatePipelineLayout(m_impl->device, &layout, nullptr, &resource.layout), "vkCreatePipelineLayout");
         // Slang emits the selected entry point as SPIR-V's canonical `main`.

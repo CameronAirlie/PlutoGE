@@ -17,9 +17,15 @@ namespace PlutoGE::render
             glm::vec3 emission{0.0f};
             float alphaCutoff = 0.5f;
             std::uint32_t alphaMode = 0;
-            glm::vec3 padding{0.0f};
+            std::uint32_t hasNormalTexture = 0;
+            std::uint32_t hasMetallicTexture = 0;
+            std::uint32_t hasRoughnessTexture = 0;
+            std::uint32_t metallicChannel = 0;
+            std::uint32_t roughnessChannel = 0;
+            std::uint32_t flipNormalY = 0;
+            std::uint32_t padding = 0;
         };
-        static_assert(sizeof(BasicMaterialParameters) == 64);
+        static_assert(sizeof(BasicMaterialParameters) == 80);
 
         struct alignas(16) BasicFrameParameters
         {
@@ -63,6 +69,7 @@ namespace PlutoGE::render
                     {0, rhi::Format::R32G32B32Float, static_cast<std::uint32_t>(offsetof(BasicVertex, position))},
                     {1, rhi::Format::R32G32B32Float, static_cast<std::uint32_t>(offsetof(BasicVertex, normal))},
                     {2, rhi::Format::R32G32Float, static_cast<std::uint32_t>(offsetof(BasicVertex, uv))},
+                    {3, rhi::Format::R32G32B32A32Float, static_cast<std::uint32_t>(offsetof(BasicVertex, tangent))},
                 },
             };
             // The migration renderer accepts existing scene assets whose
@@ -77,6 +84,10 @@ namespace PlutoGE::render
                 80, 80, 80, 255, 255, 255, 255, 255,
             };
             m_fallbackTexture = rhi::Texture(device, device.CreateTexture({2, 2, rhi::Format::R8G8B8A8Srgb, rhi::TextureUsage::Sampled, "BasicRenderer checker"}, Bytes(std::span(checker))));
+            constexpr std::array<std::uint8_t, 4> neutralNormal = {128, 128, 255, 255};
+            constexpr std::array<std::uint8_t, 4> neutralData = {255, 255, 255, 255};
+            m_fallbackNormalTexture = rhi::Texture(device, device.CreateTexture({1, 1, rhi::Format::R8G8B8A8Unorm, rhi::TextureUsage::Sampled, "BasicRenderer neutral normal"}, Bytes(std::span(neutralNormal))));
+            m_fallbackDataTexture = rhi::Texture(device, device.CreateTexture({1, 1, rhi::Format::R8G8B8A8Unorm, rhi::TextureUsage::Sampled, "BasicRenderer neutral material data"}, Bytes(std::span(neutralData))));
             m_fallbackSampler = rhi::Sampler(device, device.CreateSampler({true, true, "BasicRenderer sampler"}));
             return true;
         }
@@ -93,6 +104,8 @@ namespace PlutoGE::render
         m_colorTarget.Reset();
         m_fallbackSampler.Reset();
         m_fallbackTexture.Reset();
+        m_fallbackNormalTexture.Reset();
+        m_fallbackDataTexture.Reset();
         m_objectBuffers.clear();
         m_materialBuffers.clear();
         m_cameraBuffer.Reset();
@@ -183,11 +196,19 @@ namespace PlutoGE::render
             }
             const BasicMaterialParameters materialParameters{
                 draw.baseColor, draw.uvScale, draw.metallic, draw.roughness,
-                draw.emission, draw.alphaCutoff, draw.alphaMode};
+                draw.emission, draw.alphaCutoff, draw.alphaMode,
+                draw.normalTexture ? 1u : 0u,
+                draw.metallicTexture ? 1u : 0u,
+                draw.roughnessTexture ? 1u : 0u,
+                draw.metallicChannel, draw.roughnessChannel,
+                draw.flipNormalY ? 1u : 0u};
             auto &materialBuffer = m_materialBuffers[drawIndex - 1];
             m_device->UpdateBuffer(materialBuffer.Get(), 0, Bytes(materialParameters));
             commands.BindUniformBuffer(8, materialBuffer.Get());
             commands.BindTexture(9, draw.baseColorTexture ? draw.baseColorTexture : m_fallbackTexture.Get(), m_fallbackSampler.Get());
+            commands.BindTexture(10, draw.normalTexture ? draw.normalTexture : m_fallbackNormalTexture.Get(), m_fallbackSampler.Get());
+            commands.BindTexture(11, draw.metallicTexture ? draw.metallicTexture : m_fallbackDataTexture.Get(), m_fallbackSampler.Get());
+            commands.BindTexture(12, draw.roughnessTexture ? draw.roughnessTexture : m_fallbackDataTexture.Get(), m_fallbackSampler.Get());
             commands.BindVertexBuffer(draw.mesh->m_vertexBuffer.Get());
             commands.BindIndexBuffer(draw.mesh->m_indexBuffer.Get());
             const std::uint32_t availableCount = draw.firstIndex < draw.mesh->m_indexCount

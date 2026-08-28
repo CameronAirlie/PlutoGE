@@ -3838,8 +3838,45 @@ namespace PlutoGE::ui
         m_rhiSceneCommandCount = commands.size();
         draws.reserve(commands.size());
         std::unordered_set<const render::Mesh *> activeMeshes;
-        std::unordered_set<const render::Texture *> activeTextures;
+        std::unordered_set<const render::Texture *> activeSrgbTextures;
+        std::unordered_set<const render::Texture *> activeLinearTextures;
         activeMeshes.reserve(commands.size());
+
+        const auto uploadTexture = [&](const render::Texture *source,
+                                       render::rhi::Format format,
+                                       std::unordered_map<const render::Texture *, render::rhi::Texture> &cache,
+                                       std::unordered_set<const render::Texture *> &activeTextures,
+                                       const char *debugName) -> render::rhi::TextureHandle
+        {
+            if (!source || source->GetType() != GL_TEXTURE_2D || source->GetTextureID() == 0 ||
+                source->GetWidth() <= 0 || source->GetHeight() <= 0)
+                return {};
+
+            activeTextures.insert(source);
+            if (const auto cached = cache.find(source); cached != cache.end())
+                return cached->second.Get();
+
+            const std::size_t pixelCount = static_cast<std::size_t>(source->GetWidth()) *
+                                           static_cast<std::size_t>(source->GetHeight());
+            std::vector<std::byte> rgbaPixels(pixelCount * 4);
+            glBindTexture(GL_TEXTURE_2D, source->GetTextureID());
+            glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgbaPixels.data());
+
+            auto uploaded = render::rhi::Texture(
+                *m_rhiDevice,
+                m_rhiDevice->CreateTexture(
+                    {static_cast<std::uint32_t>(source->GetWidth()),
+                     static_cast<std::uint32_t>(source->GetHeight()),
+                     format,
+                     render::rhi::TextureUsage::Sampled,
+                     debugName},
+                    rgbaPixels));
+            if (!uploaded)
+                return {};
+
+            return cache.emplace(source, std::move(uploaded)).first->second.Get();
+        };
+
         for (const auto &command : commands)
         {
             if (!command.mesh)
@@ -3855,7 +3892,7 @@ namespace PlutoGE::ui
                 std::vector<render::BasicVertex> vertices;
                 vertices.reserve(source.vertices.size());
                 for (const auto &vertex : source.vertices)
-                    vertices.push_back({vertex.position, vertex.normal, vertex.uv});
+                    vertices.push_back({vertex.position, vertex.normal, vertex.uv, vertex.tangent});
                 auto uploaded = m_basicRenderer->CreateMesh({vertices, source.indices});
                 meshIt = m_rhiMeshes.emplace(command.mesh, std::move(uploaded)).first;
             }
@@ -3872,11 +3909,17 @@ namespace PlutoGE::ui
             glm::vec4 baseColor(1.0f);
             glm::vec2 uvScale(1.0f);
             render::rhi::TextureHandle baseColorTexture;
+            render::rhi::TextureHandle normalTexture;
+            render::rhi::TextureHandle metallicTexture;
+            render::rhi::TextureHandle roughnessTexture;
             float metallic = 0.0f;
             float roughness = 1.0f;
             glm::vec3 emission(0.0f);
             float alphaCutoff = 0.5f;
             std::uint32_t alphaMode = 0;
+            std::uint32_t metallicChannel = 0;
+            std::uint32_t roughnessChannel = 0;
+            bool flipNormalY = false;
             if (command.material)
             {
                 const auto &material = command.material->GetConfig();
@@ -3887,32 +3930,17 @@ namespace PlutoGE::ui
                 emission = material.emission;
                 alphaCutoff = material.alphaCutoff;
                 alphaMode = static_cast<std::uint32_t>(material.alphaMode);
-                if (material.albedoTexture && material.albedoTexture->GetType() == GL_TEXTURE_2D &&
-                    material.albedoTexture->GetTextureID() != 0 && material.albedoTexture->GetWidth() > 0 &&
-                    material.albedoTexture->GetHeight() > 0)
-                {
-                    activeTextures.insert(material.albedoTexture);
-                    auto textureIt = m_rhiTextures.find(material.albedoTexture);
-                    if (textureIt == m_rhiTextures.end())
-                    {
-                        const std::size_t pixelCount = static_cast<std::size_t>(material.albedoTexture->GetWidth()) *
-                                                       static_cast<std::size_t>(material.albedoTexture->GetHeight());
-                        std::vector<std::byte> rgbaPixels(pixelCount * 4);
-                        glBindTexture(GL_TEXTURE_2D, material.albedoTexture->GetTextureID());
-                        glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgbaPixels.data());
-                        auto uploaded = render::rhi::Texture(
-                            *m_rhiDevice,
-                            m_rhiDevice->CreateTexture(
-                                {static_cast<std::uint32_t>(material.albedoTexture->GetWidth()),
-                                 static_cast<std::uint32_t>(material.albedoTexture->GetHeight()),
-                                 render::rhi::Format::R8G8B8A8Srgb,
-                                 render::rhi::TextureUsage::Sampled,
-                                 "RHI material albedo"},
-                                rgbaPixels));
-                        textureIt = m_rhiTextures.emplace(material.albedoTexture, std::move(uploaded)).first;
-                    }
-                    baseColorTexture = textureIt->second.Get();
-                }
+                metallicChannel = static_cast<std::uint32_t>(material.metallicTextureChannel);
+                roughnessChannel = static_cast<std::uint32_t>(material.roughnessTextureChannel);
+                flipNormalY = material.flipNormalY;
+                baseColorTexture = uploadTexture(material.albedoTexture, render::rhi::Format::R8G8B8A8Srgb,
+                                                 m_rhiSrgbTextures, activeSrgbTextures, "RHI material albedo");
+                normalTexture = uploadTexture(material.normalTexture, render::rhi::Format::R8G8B8A8Unorm,
+                                              m_rhiLinearTextures, activeLinearTextures, "RHI material normal");
+                metallicTexture = uploadTexture(material.metallicTexture, render::rhi::Format::R8G8B8A8Unorm,
+                                                m_rhiLinearTextures, activeLinearTextures, "RHI material metallic");
+                roughnessTexture = uploadTexture(material.roughnessTexture, render::rhi::Format::R8G8B8A8Unorm,
+                                                 m_rhiLinearTextures, activeLinearTextures, "RHI material roughness");
             }
 
             const auto appendDraw = [&](const glm::mat4 &model)
@@ -3923,11 +3951,17 @@ namespace PlutoGE::ui
                     .baseColor = baseColor,
                     .uvScale = uvScale,
                     .baseColorTexture = baseColorTexture,
+                    .normalTexture = normalTexture,
+                    .metallicTexture = metallicTexture,
+                    .roughnessTexture = roughnessTexture,
                     .metallic = metallic,
                     .roughness = roughness,
                     .emission = emission,
                     .alphaCutoff = alphaCutoff,
                     .alphaMode = alphaMode,
+                    .metallicChannel = metallicChannel,
+                    .roughnessChannel = roughnessChannel,
+                    .flipNormalY = flipNormalY,
                     .firstIndex = firstIndex,
                     .indexCount = indexCount,
                 });
@@ -3944,13 +3978,12 @@ namespace PlutoGE::ui
             }
         }
 
-        for (auto textureIt = m_rhiTextures.begin(); textureIt != m_rhiTextures.end();)
+        const auto pruneTextureCache = [](auto &cache, const auto &activeTextures)
         {
-            if (!activeTextures.contains(textureIt->first))
-                textureIt = m_rhiTextures.erase(textureIt);
-            else
-                ++textureIt;
-        }
+            std::erase_if(cache, [&](const auto &entry) { return !activeTextures.contains(entry.first); });
+        };
+        pruneTextureCache(m_rhiSrgbTextures, activeSrgbTextures);
+        pruneTextureCache(m_rhiLinearTextures, activeLinearTextures);
 
         for (auto meshIt = m_rhiMeshes.begin(); meshIt != m_rhiMeshes.end();)
         {
@@ -4073,7 +4106,8 @@ namespace PlutoGE::ui
     void ViewportPanel::Shutdown()
     {
         m_rhiMeshes.clear();
-        m_rhiTextures.clear();
+        m_rhiSrgbTextures.clear();
+        m_rhiLinearTextures.clear();
         if (m_basicRenderer)
         {
             m_basicRenderer->Shutdown();

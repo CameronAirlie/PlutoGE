@@ -17,6 +17,9 @@ namespace PlutoGE::render
         std::array<float, 3> position{};
         std::array<float, 3> normal{};
         std::array<float, 2> uv{};
+        // A valid fallback avoids undefined normalization for procedural or legacy meshes
+        // that do not provide tangent data. Imported meshes overwrite this value.
+        std::array<float, 4> tangent{1.0f, 0.0f, 0.0f, 1.0f};
     };
 
     struct BasicMeshData
@@ -55,11 +58,17 @@ namespace PlutoGE::render
         glm::vec4 baseColor{1.0f};
         glm::vec2 uvScale{1.0f};
         rhi::TextureHandle baseColorTexture;
+        rhi::TextureHandle normalTexture;
+        rhi::TextureHandle metallicTexture;
+        rhi::TextureHandle roughnessTexture;
         float metallic = 0.0f;
         float roughness = 1.0f;
         glm::vec3 emission{0.0f};
         float alphaCutoff = 0.5f;
         std::uint32_t alphaMode = 0;
+        std::uint32_t metallicChannel = 0;
+        std::uint32_t roughnessChannel = 0;
+        bool flipNormalY = false;
         std::uint32_t firstIndex = 0;
         std::uint32_t indexCount = 0;
     };
@@ -102,6 +111,8 @@ namespace PlutoGE::render
         std::vector<rhi::Buffer> m_objectBuffers;
         std::vector<rhi::Buffer> m_materialBuffers;
         rhi::Texture m_fallbackTexture;
+        rhi::Texture m_fallbackNormalTexture;
+        rhi::Texture m_fallbackDataTexture;
         rhi::Sampler m_fallbackSampler;
         rhi::Texture m_colorTarget;
         rhi::Texture m_depthTarget;

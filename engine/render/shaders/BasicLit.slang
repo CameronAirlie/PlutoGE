@@ -3,6 +3,7 @@ struct VertexInput
     float3 position : POSITION;
     float3 normal : NORMAL;
     float2 uv : TEXCOORD0;
+    float4 tangent : TANGENT;
 };
 
 struct VertexOutput
@@ -11,6 +12,7 @@ struct VertexOutput
     float3 worldNormal : NORMAL;
     float2 uv : TEXCOORD0;
     float3 worldPosition : TEXCOORD1;
+    float4 worldTangent : TEXCOORD2;
 };
 
 [[vk::binding(0, 0)]] cbuffer CameraParameters : register(b0, space0)
@@ -35,20 +37,36 @@ struct VertexOutput
     float3 emission;
     float alphaCutoff;
     uint alphaMode;
-    float3 materialPadding;
+    uint hasNormalTexture;
+    uint hasMetallicTexture;
+    uint hasRoughnessTexture;
+    uint metallicChannel;
+    uint roughnessChannel;
+    uint flipNormalY;
+    uint materialPadding;
 };
 
 [[vk::binding(1, 1)]] Sampler2D baseColorTexture : register(t1, space1);
+[[vk::binding(2, 1)]] Sampler2D normalTexture : register(t2, space1);
+[[vk::binding(3, 1)]] Sampler2D metallicTexture : register(t3, space1);
+[[vk::binding(4, 1)]] Sampler2D roughnessTexture : register(t4, space1);
 
 [shader("vertex")]
 VertexOutput vertexMain(VertexInput input)
 {
     VertexOutput output;
     const float4 worldPosition = mul(model, float4(input.position, 1.0));
+    float3 localTangent = input.tangent.xyz;
+    if (dot(localTangent, localTangent) < 0.000001)
+    {
+        const float3 tangentAxis = abs(input.normal.y) < 0.999 ? float3(0.0, 1.0, 0.0) : float3(1.0, 0.0, 0.0);
+        localTangent = normalize(cross(tangentAxis, input.normal));
+    }
     output.position = mul(viewProjection, worldPosition);
     output.worldNormal = normalize(mul((float3x3)model, input.normal));
     output.uv = input.uv;
     output.worldPosition = worldPosition.xyz;
+    output.worldTangent = float4(normalize(mul((float3x3)model, localTangent)), input.tangent.w == 0.0 ? 1.0 : input.tangent.w);
     return output;
 }
 
@@ -59,16 +77,33 @@ float4 fragmentMain(VertexOutput input) : SV_Target
     if (alphaMode == 1 && sampledColor.a < alphaCutoff)
         discard;
 
-    const float3 normal = normalize(input.worldNormal);
+    float3 normal = normalize(input.worldNormal);
+    if (hasNormalTexture != 0)
+    {
+        float3 tangentNormal = normalTexture.Sample(input.uv * uvScale).xyz * 2.0 - 1.0;
+        if (flipNormalY != 0)
+            tangentNormal.y = -tangentNormal.y;
+        const float3 tangent = normalize(input.worldTangent.xyz);
+        const float3 bitangent = normalize(cross(normal, tangent)) * input.worldTangent.w;
+        normal = normalize(tangent * tangentNormal.x + bitangent * tangentNormal.y + normal * tangentNormal.z);
+    }
+    float sampledMetallic = 1.0;
+    if (hasMetallicTexture != 0)
+        sampledMetallic = metallicTexture.Sample(input.uv * uvScale)[metallicChannel];
+    float sampledRoughness = 1.0;
+    if (hasRoughnessTexture != 0)
+        sampledRoughness = roughnessTexture.Sample(input.uv * uvScale)[roughnessChannel];
+    const float materialMetallic = saturate(metallic * sampledMetallic);
+    const float materialRoughness = clamp(roughness * sampledRoughness, 0.04, 1.0);
     const float3 lightDirection = normalize(-directionalDirectionIntensity.xyz);
     const float3 viewDirection = normalize(cameraPositionAmbient.xyz - input.worldPosition);
     const float3 halfDirection = normalize(lightDirection + viewDirection);
     const float ndotl = saturate(dot(normal, lightDirection));
     const float ndoth = saturate(dot(normal, halfDirection));
-    const float perceptualRoughness = clamp(roughness, 0.04, 1.0);
+    const float perceptualRoughness = materialRoughness;
     const float specularPower = lerp(256.0, 4.0, perceptualRoughness);
-    const float3 f0 = lerp(float3(0.04), sampledColor.rgb, saturate(metallic));
-    const float3 diffuse = sampledColor.rgb * (1.0 - saturate(metallic)) * ndotl;
+    const float3 f0 = lerp(float3(0.04), sampledColor.rgb, materialMetallic);
+    const float3 diffuse = sampledColor.rgb * (1.0 - materialMetallic) * ndotl;
     const float3 specular = f0 * pow(ndoth, specularPower) * ndotl;
     const float3 direct = (diffuse + specular) * directionalColor.rgb * directionalDirectionIntensity.w;
     const float3 ambient = sampledColor.rgb * cameraPositionAmbient.w;

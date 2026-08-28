@@ -42,8 +42,8 @@ namespace PlutoGE::render
             return std::as_bytes(std::span(&value, 1));
         }
 
-        template <typename T>
-        std::span<const std::byte> Bytes(std::span<const T> values)
+        template <typename T, std::size_t Extent>
+        std::span<const std::byte> Bytes(std::span<const T, Extent> values)
         {
             return std::as_bytes(values);
         }
@@ -79,11 +79,8 @@ namespace PlutoGE::render
             m_pipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(descriptor));
             m_cameraBuffer = rhi::Buffer(device, device.CreateBuffer({sizeof(BasicFrameParameters), rhi::BufferUsage::Uniform, "BasicRenderer frame"}));
 
-            constexpr std::array<std::uint8_t, 16> checker = {
-                255, 255, 255, 255, 80, 80, 80, 255,
-                80, 80, 80, 255, 255, 255, 255, 255,
-            };
-            m_fallbackTexture = rhi::Texture(device, device.CreateTexture({2, 2, rhi::Format::R8G8B8A8Srgb, rhi::TextureUsage::Sampled, "BasicRenderer checker"}, Bytes(std::span(checker))));
+            constexpr std::array<std::uint8_t, 4> neutralBaseColor = {255, 255, 255, 255};
+            m_fallbackTexture = rhi::Texture(device, device.CreateTexture({1, 1, rhi::Format::R8G8B8A8Srgb, rhi::TextureUsage::Sampled, "BasicRenderer neutral base color"}, Bytes(std::span(neutralBaseColor))));
             constexpr std::array<std::uint8_t, 4> neutralNormal = {128, 128, 255, 255};
             constexpr std::array<std::uint8_t, 4> neutralData = {255, 255, 255, 255};
             m_fallbackNormalTexture = rhi::Texture(device, device.CreateTexture({1, 1, rhi::Format::R8G8B8A8Unorm, rhi::TextureUsage::Sampled, "BasicRenderer neutral normal"}, Bytes(std::span(neutralNormal))));

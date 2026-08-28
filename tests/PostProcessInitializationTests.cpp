@@ -1,6 +1,8 @@
 #include "PlutoGE/platform/Window.h"
 #include "PlutoGE/render/Texture.h"
 #include "PlutoGE/render/TextureManager.h"
+#include "PlutoGE/render/RenderTarget.h"
+#include "PlutoGE/render/SpatialUpscaler.h"
 #include "PlutoGE/render/postprocess/ColorGradingEffect.h"
 #include "PlutoGE/render/postprocess/LSAOEffect.h"
 #include "PlutoGE/render/postprocess/SSGIEffect.h"
@@ -71,6 +73,26 @@ int main()
         glDeleteTextures(1, &textureId);
         delete texture;
         glDeleteBuffers(1, &unpackBuffer);
+    }
+
+    {
+        PlutoGE::render::RenderTarget source({.width = 32, .height = 32});
+        PlutoGE::render::RenderTarget destination({.width = 64, .height = 64});
+        PlutoGE::render::SpatialUpscaler upscaler;
+        if (!upscaler.Initialize() ||
+            !upscaler.Upscale(source, destination, {.sharpness = 0.25f}) ||
+            !upscaler.UpscaleToFramebuffer(source, 64, 64, {.sharpness = 0.25f}) ||
+            glGetError() != GL_NO_ERROR)
+        {
+            std::cerr << "Spatial upscaler did not initialize and render cleanly.\n";
+            source.Cleanup();
+            destination.Cleanup();
+            window.Close();
+            return 1;
+        }
+        upscaler.Shutdown();
+        source.Cleanup();
+        destination.Cleanup();
     }
 
     {

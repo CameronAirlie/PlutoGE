@@ -3,6 +3,7 @@
 // Editor selection access is validated by EditorShell before panel use.
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/render/RenderTarget.h"
+#include "PlutoGE/render/SpatialUpscaler.h"
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/Texture.h"
 #include "PlutoGE/render/TexturePainter.h"
@@ -50,6 +51,11 @@
 
 namespace PlutoGE::ui
 {
+    ViewportPanel::ViewportPanel(const ViewportPanelConfig &config)
+        : Panel(config), m_config(config)
+    {
+    }
+
     namespace
     {
         constexpr int kDefaultViewportWidth = 1280;
@@ -1811,10 +1817,11 @@ namespace PlutoGE::ui
     void ViewportPanel::Initialize()
     {
         m_renderScale = glm::clamp(m_config.initialRenderScale, kMinRenderScale, kMaxRenderScale);
+        m_upscaleSharpness = glm::clamp(m_config.initialUpscaleSharpness, 0.0f, 1.0f);
 
         auto renderConfig = render::RenderTargetConfig{
-            .width = std::max(1, static_cast<int>(std::lround(static_cast<float>(kDefaultViewportWidth) * m_renderScale))),
-            .height = std::max(1, static_cast<int>(std::lround(static_cast<float>(kDefaultViewportHeight) * m_renderScale))),
+            .width = kDefaultViewportWidth,
+            .height = kDefaultViewportHeight,
             .clearColor = m_config.clearColor,
         };
         m_renderTarget = new render::RenderTarget(renderConfig);
@@ -1822,6 +1829,11 @@ namespace PlutoGE::ui
         {
             std::cerr << "Failed to initialize RenderTarget in ViewportPanel" << std::endl;
         }
+
+        renderConfig.width = std::max(1, static_cast<int>(std::lround(static_cast<float>(kDefaultViewportWidth) * m_renderScale)));
+        renderConfig.height = std::max(1, static_cast<int>(std::lround(static_cast<float>(kDefaultViewportHeight) * m_renderScale)));
+        m_scaledRenderTarget = new render::RenderTarget(renderConfig);
+        m_upscaler = std::make_unique<render::SpatialUpscaler>();
     }
 
     void ViewportPanel::Render()
@@ -1848,15 +1860,22 @@ namespace PlutoGE::ui
             m_pendingHeight = newHeight;
             m_resizeStableFrames = 0;
         }
-        const int scaledWidth = std::max(1, static_cast<int>(std::lround(static_cast<float>(newWidth) * m_renderScale)));
-        const int scaledHeight = std::max(1, static_cast<int>(std::lround(static_cast<float>(newHeight) * m_renderScale)));
-        if ((scaledWidth != m_renderTarget->GetWidth() || scaledHeight != m_renderTarget->GetHeight()) && ++m_resizeStableFrames >= kResizeDebounceFrames)
+        if ((newWidth != m_renderTarget->GetWidth() || newHeight != m_renderTarget->GetHeight()) && ++m_resizeStableFrames >= kResizeDebounceFrames)
         {
-            if (!m_renderTarget->Resize(scaledWidth, scaledHeight))
+            if (!m_renderTarget->Resize(newWidth, newHeight))
             {
                 std::cerr << "Failed to resize RenderTarget in ViewportPanel" << std::endl;
                 return;
             }
+        }
+
+        const int scaledWidth = std::max(1, static_cast<int>(std::lround(static_cast<float>(newWidth) * m_renderScale)));
+        const int scaledHeight = std::max(1, static_cast<int>(std::lround(static_cast<float>(newHeight) * m_renderScale)));
+        if (m_scaledRenderTarget && (scaledWidth != m_scaledRenderTarget->GetWidth() || scaledHeight != m_scaledRenderTarget->GetHeight()) &&
+            m_resizeStableFrames >= kResizeDebounceFrames && !m_scaledRenderTarget->Resize(scaledWidth, scaledHeight))
+        {
+            std::cerr << "Failed to resize scaled RenderTarget in ViewportPanel" << std::endl;
+            return;
         }
 
         ImTextureID texId = (ImTextureID)(uintptr_t)m_renderTarget->GetColorTextureID();
@@ -2151,6 +2170,12 @@ namespace PlutoGE::ui
             const int targetWidth = std::max(1, static_cast<int>(std::lround(viewportSize.x * m_renderScale)));
             const int targetHeight = std::max(1, static_cast<int>(std::lround(viewportSize.y * m_renderScale)));
             ImGui::TextDisabled("Target: %d x %d", targetWidth, targetHeight);
+            const bool upscalingActive = m_renderScale < 0.999f;
+            ImGui::TextDisabled("Upscaler: Spatial (%s)", upscalingActive ? "Active" : "Bypassed");
+            ImGui::BeginDisabled(!upscalingActive);
+            ImGui::SetNextItemWidth(180.0f);
+            ImGui::SliderFloat("Sharpness", &m_upscaleSharpness, 0.0f, 1.0f, "%.2f");
+            ImGui::EndDisabled();
             ImGui::EndPopup();
         }
 
@@ -3675,7 +3700,8 @@ namespace PlutoGE::ui
         auto &editorShell = EditorShell::GetInstance();
         auto *activeScene = editorShell.GetEngine().GetScene();
         auto &renderer = editorShell.GetEngine().GetRenderer();
-        renderer.BeginFrame(m_renderTarget);
+        auto *sceneRenderTarget = GetSceneRenderTarget();
+        renderer.BeginFrame(sceneRenderTarget);
         std::vector<render::IPostProcessEffect *> postProcessEffects;
         postProcessEffects.reserve(cameraComponent.GetPostProcessEffects().size());
         for (const auto &effect : cameraComponent.GetPostProcessEffects())
@@ -3683,12 +3709,30 @@ namespace PlutoGE::ui
             postProcessEffects.push_back(effect.get());
         }
 
-        renderer.RenderFrame(cameraComponent.GetCameraData(m_renderTarget->GetWidth(), m_renderTarget->GetHeight()),
-                             m_renderTarget,
+        renderer.RenderFrame(cameraComponent.GetCameraData(sceneRenderTarget->GetWidth(), sceneRenderTarget->GetHeight()),
+                             sceneRenderTarget,
                              activeScene ? activeScene->GetLights() : std::vector<scene::Light *>{},
                              &postProcessEffects,
                              activeScene);
-        renderer.EndFrame(m_renderTarget);
+        renderer.EndFrame(sceneRenderTarget);
+        PresentSceneRenderTarget();
+    }
+
+    render::RenderTarget *ViewportPanel::GetSceneRenderTarget() const
+    {
+        return std::abs(m_renderScale - 1.0f) < 0.001f || !m_scaledRenderTarget
+                   ? m_renderTarget
+                   : m_scaledRenderTarget;
+    }
+
+    void ViewportPanel::PresentSceneRenderTarget()
+    {
+        auto *source = GetSceneRenderTarget();
+        if (!source || source == m_renderTarget || !m_renderTarget || !m_upscaler)
+            return;
+
+        const float sharpness = m_renderScale < 1.0f ? m_upscaleSharpness : 0.0f;
+        m_upscaler->Upscale(*source, *m_renderTarget, render::UpscalerConfig{.sharpness = sharpness});
     }
 
     bool ViewportPanel::ShouldRenderFrame() const
@@ -3714,5 +3758,17 @@ namespace PlutoGE::ui
             delete m_renderTarget;
             m_renderTarget = nullptr;
         }
+        if (m_scaledRenderTarget)
+        {
+            m_scaledRenderTarget->Cleanup();
+            delete m_scaledRenderTarget;
+            m_scaledRenderTarget = nullptr;
+        }
+        if (m_upscaler)
+        {
+            m_upscaler->Shutdown();
+            m_upscaler.reset();
+        }
     }
+    ViewportPanel::~ViewportPanel() = default;
 }

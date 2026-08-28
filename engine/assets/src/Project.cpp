@@ -799,6 +799,28 @@ namespace PlutoGE::assets
                 continue;
             }
 
+            if (tokens[0] == "RUNTIME_UPSCALER" && tokens.size() >= 2)
+            {
+                manifest.runtimeUpscaler = tokens[1] == "Spatial"
+                                               ? RuntimeUpscalerMode::Spatial
+                                               : RuntimeUpscalerMode::None;
+                continue;
+            }
+
+            if (tokens[0] == "RUNTIME_RENDER_SCALE" && tokens.size() >= 2)
+            {
+                ParseFloat(tokens[1], manifest.runtimeRenderScale);
+                manifest.runtimeRenderScale = std::clamp(manifest.runtimeRenderScale, 0.5f, 1.0f);
+                continue;
+            }
+
+            if (tokens[0] == "RUNTIME_UPSCALE_SHARPNESS" && tokens.size() >= 2)
+            {
+                ParseFloat(tokens[1], manifest.runtimeUpscaleSharpness);
+                manifest.runtimeUpscaleSharpness = std::clamp(manifest.runtimeUpscaleSharpness, 0.0f, 1.0f);
+                continue;
+            }
+
             if (tokens[0] == "EDITOR_FONT_SIZE" && tokens.size() >= 2)
             {
                 ParseFloat(tokens[1], manifest.editorFontSize);
@@ -1141,6 +1163,10 @@ namespace PlutoGE::assets
         output << "WINDOW_TITLE\t" << EscapeText(m_manifest.windowTitle) << '\n';
         output << "WINDOW_SIZE\t" << m_manifest.windowWidth << '\t' << m_manifest.windowHeight << '\n';
         output << "VSYNC\t" << (m_manifest.vSyncEnabled ? 1 : 0) << '\n';
+        output << "RUNTIME_UPSCALER\t"
+               << (m_manifest.runtimeUpscaler == RuntimeUpscalerMode::Spatial ? "Spatial" : "None") << '\n';
+        output << "RUNTIME_RENDER_SCALE\t" << std::clamp(m_manifest.runtimeRenderScale, 0.5f, 1.0f) << '\n';
+        output << "RUNTIME_UPSCALE_SHARPNESS\t" << std::clamp(m_manifest.runtimeUpscaleSharpness, 0.0f, 1.0f) << '\n';
         output << "EDITOR_FONT_SIZE\t" << std::clamp(m_manifest.editorFontSize, 10.0f, 24.0f) << '\n';
         output << "EDITOR_FONT\t" << EscapeText(m_manifest.editorFont) << '\n';
         output << "EDITOR_CAMERA_POSITION\t"

@@ -7,6 +7,7 @@ add_library(PlutoGERender
     src/ShaderGraph.cpp
     src/Graphics.cpp
     src/RenderTarget.cpp
+    src/SpatialUpscaler.cpp
     src/GBuffer.cpp
     src/Material.cpp
     src/postprocess/ShaderPostProcessEffect.cpp

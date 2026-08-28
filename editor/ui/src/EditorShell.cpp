@@ -2754,7 +2754,11 @@ namespace PlutoGE::ui
         viewportConfig2.name = "Game Viewport";
         viewportConfig2.openByDefault = true;
         viewportConfig2.clearColor = glm::vec4(0.15f, 0.1f, 0.1f, 1.0f);
-        viewportConfig2.initialRenderScale = 1.0f;
+        if (m_project && m_project->GetManifest().runtimeUpscaler == assets::RuntimeUpscalerMode::Spatial)
+        {
+            viewportConfig2.initialRenderScale = m_project->GetManifest().runtimeRenderScale;
+            viewportConfig2.initialUpscaleSharpness = m_project->GetManifest().runtimeUpscaleSharpness;
+        }
         auto viewportPanel2 = new ViewportPanel(viewportConfig2);
         viewportPanel2->Initialize();
         m_panelManager.AddPanel(viewportPanel2);
@@ -2822,6 +2826,9 @@ namespace PlutoGE::ui
         int projectWindowWidth = 1280;
         int projectWindowHeight = 720;
         bool projectVSyncEnabled = true;
+        assets::RuntimeUpscalerMode projectRuntimeUpscaler = assets::RuntimeUpscalerMode::None;
+        float projectRuntimeRenderScale = 1.0f;
+        float projectRuntimeUpscaleSharpness = 0.25f;
         float projectEditorFontSize = m_panelManager.GetEditorFontSize();
         std::string projectEditorFont = m_panelManager.GetEditorFont();
         bool shouldOpenProjectSettingsPopup = false;
@@ -2851,6 +2858,9 @@ namespace PlutoGE::ui
             projectWindowWidth = manifest.windowWidth;
             projectWindowHeight = manifest.windowHeight;
             projectVSyncEnabled = manifest.vSyncEnabled;
+            projectRuntimeUpscaler = manifest.runtimeUpscaler;
+            projectRuntimeRenderScale = manifest.runtimeRenderScale;
+            projectRuntimeUpscaleSharpness = manifest.runtimeUpscaleSharpness;
             projectEditorFontSize = manifest.editorFontSize;
             projectEditorFont = manifest.editorFont;
         };
@@ -3122,6 +3132,7 @@ namespace PlutoGE::ui
             const auto viewportRenderStart = std::chrono::high_resolution_clock::now();
             if (shouldRenderViewport1)
             {
+                auto *sceneRenderTarget = viewportPanel->GetSceneRenderTarget();
                 ++frameTimingStats.renderedViewportCount;
                 frameTimingStats.editorViewportWidth = renderTargetWidth;
                 frameTimingStats.editorViewportHeight = renderTargetHeight;
@@ -3136,17 +3147,18 @@ namespace PlutoGE::ui
                 }
 
                 renderer.RenderFrame(editorCameraData,
-                                     renderTarget,
+                                     sceneRenderTarget,
                                      m_scene ? m_scene->GetLights() : std::vector<scene::Light *>{},
                                      &editorPostProcessEffects,
                                      m_scene.get(),
                                      viewportPanel->IsGridVisible(),
                                      true);
                 render::CameraData renderedEditorCameraData{};
-                if (renderer.GetLastUnjitteredCameraData(renderTarget, renderedEditorCameraData))
+                if (renderer.GetLastUnjitteredCameraData(sceneRenderTarget, renderedEditorCameraData))
                 {
                     viewportPanel->SetEditorCameraData(renderedEditorCameraData);
                 }
+                viewportPanel->PresentSceneRenderTarget();
             }
             else
             {
@@ -3617,6 +3629,27 @@ namespace PlutoGE::ui
                     ImGui::InputInt("Window Width", &projectWindowWidth);
                     ImGui::InputInt("Window Height", &projectWindowHeight);
                     ImGui::Checkbox("VSync", &projectVSyncEnabled);
+                    const char *runtimeUpscalerLabel = projectRuntimeUpscaler == assets::RuntimeUpscalerMode::Spatial
+                                                          ? "Spatial"
+                                                          : "None";
+                    if (ImGui::BeginCombo("Runtime Upscaler", runtimeUpscalerLabel))
+                    {
+                        constexpr std::array<const char *, 2> upscalerLabels = {"None", "Spatial"};
+                        for (int modeIndex = 0; modeIndex < static_cast<int>(upscalerLabels.size()); ++modeIndex)
+                        {
+                            const auto mode = static_cast<assets::RuntimeUpscalerMode>(modeIndex);
+                            const bool selected = projectRuntimeUpscaler == mode;
+                            if (ImGui::Selectable(upscalerLabels[modeIndex], selected))
+                                projectRuntimeUpscaler = mode;
+                            if (selected)
+                                ImGui::SetItemDefaultFocus();
+                        }
+                        ImGui::EndCombo();
+                    }
+                    ImGui::BeginDisabled(projectRuntimeUpscaler == assets::RuntimeUpscalerMode::None);
+                    ImGui::SliderFloat("Runtime Render Scale", &projectRuntimeRenderScale, 0.5f, 1.0f, "%.2fx");
+                    ImGui::SliderFloat("Runtime Sharpness", &projectRuntimeUpscaleSharpness, 0.0f, 1.0f, "%.2f");
+                    ImGui::EndDisabled();
                     if (ImGui::SliderFloat("Editor Font Size", &projectEditorFontSize, 10.0f, 24.0f, "%.1f px"))
                     {
                         m_panelManager.SetEditorFontSize(projectEditorFontSize);
@@ -3671,6 +3704,9 @@ namespace PlutoGE::ui
                         manifest.windowWidth = (std::max)(projectWindowWidth, 64);
                         manifest.windowHeight = (std::max)(projectWindowHeight, 64);
                         manifest.vSyncEnabled = projectVSyncEnabled;
+                        manifest.runtimeUpscaler = projectRuntimeUpscaler;
+                        manifest.runtimeRenderScale = std::clamp(projectRuntimeRenderScale, 0.5f, 1.0f);
+                        manifest.runtimeUpscaleSharpness = std::clamp(projectRuntimeUpscaleSharpness, 0.0f, 1.0f);
                         manifest.editorFontSize = std::clamp(projectEditorFontSize, 10.0f, 24.0f);
                         manifest.editorFont = projectEditorFont;
                         const std::string configuredScriptAssembly = projectScriptAssemblyBuffer.data();

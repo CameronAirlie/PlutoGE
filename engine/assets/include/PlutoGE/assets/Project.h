@@ -67,6 +67,12 @@ namespace PlutoGE::assets
         std::vector<ProjectPostProcessParameter> parameters;
     };
 
+    enum class RuntimeUpscalerMode
+    {
+        None = 0,
+        Spatial,
+    };
+
     struct ProjectManifest
     {
         std::string name = "UntitledProject";
@@ -77,6 +83,9 @@ namespace PlutoGE::assets
         int windowWidth = 1280;
         int windowHeight = 720;
         bool vSyncEnabled = true;
+        RuntimeUpscalerMode runtimeUpscaler = RuntimeUpscalerMode::None;
+        float runtimeRenderScale = 1.0f;
+        float runtimeUpscaleSharpness = 0.25f;
         float editorFontSize = 15.0f;
         std::string editorFont = "Martian Mono";
         ProjectEditorCameraSettings editorCamera;

@@ -6,11 +6,13 @@
 
 #include <ImGuizmo.h>
 #include <glm/glm.hpp>
+#include <memory>
 
 namespace PlutoGE::render
 {
     enum class PostProcessDebugView;
     class RenderTarget;
+    class SpatialUpscaler;
 }
 
 namespace PlutoGE::scene
@@ -27,14 +29,15 @@ namespace PlutoGE::ui
     {
         glm::vec4 clearColor = glm::vec4(0.1f, 0.1f, 0.1f, 1.0f);
         float initialRenderScale = 1.0f;
+        float initialUpscaleSharpness = 0.25f;
         bool editorViewport = false;
     };
 
     class ViewportPanel : public Panel
     {
     public:
-        ViewportPanel(const ViewportPanelConfig &config) : Panel(config), m_config(config) {}
-        ~ViewportPanel() override = default;
+        explicit ViewportPanel(const ViewportPanelConfig &config);
+        ~ViewportPanel() override;
 
         void Initialize() override;
         void Render() override;
@@ -44,6 +47,8 @@ namespace PlutoGE::ui
         bool ShouldRenderFrame() const;
 
         render::RenderTarget *GetRenderTarget() const { return m_renderTarget; }
+        render::RenderTarget *GetSceneRenderTarget() const;
+        void PresentSceneRenderTarget();
         bool IsViewportHovered() const { return m_isViewportHovered; }
         bool IsViewportFocused() const { return m_isViewportFocused; }
         bool IsTransformGizmoUsing() const { return m_isTransformGizmoUsing; }
@@ -63,6 +68,7 @@ namespace PlutoGE::ui
 
         ViewportPanelConfig m_config;
         float m_renderScale = 1.0f;
+        float m_upscaleSharpness = 0.25f;
         bool m_showGrid = true;
         bool m_showDebugShapes = true;
         bool m_showNavigation = false;
@@ -76,6 +82,8 @@ namespace PlutoGE::ui
 
     private:
         render::RenderTarget *m_renderTarget = nullptr; // The render target used for rendering the viewport content
+        render::RenderTarget *m_scaledRenderTarget = nullptr;
+        std::unique_ptr<render::SpatialUpscaler> m_upscaler;
         int m_pendingWidth = 0;
         int m_pendingHeight = 0;
         int m_resizeStableFrames = 0;

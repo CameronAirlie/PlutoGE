@@ -5,9 +5,13 @@
 #include "PlutoGE/scene/SceneSerializer.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
+#include "PlutoGE/render/Graphics.h"
+#include "PlutoGE/render/RenderTarget.h"
+#include "PlutoGE/render/SpatialUpscaler.h"
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -494,6 +498,13 @@ int RunRuntime(int argc, char **argv)
     auto lastFrameTime = std::chrono::high_resolution_clock::now();
     auto &renderer = engine.GetRenderer();
     auto &window = engine.GetWindow();
+    const auto &runtimeManifest = project->GetManifest();
+    const float runtimeRenderScale = std::clamp(runtimeManifest.runtimeRenderScale, 0.5f, 1.0f);
+    const bool runtimeUpscalingEnabled =
+        runtimeManifest.runtimeUpscaler == PlutoGE::assets::RuntimeUpscalerMode::Spatial &&
+        runtimeRenderScale < 0.999f;
+    std::unique_ptr<PlutoGE::render::RenderTarget> runtimeRenderTarget;
+    PlutoGE::render::SpatialUpscaler runtimeUpscaler;
     bool hasLoggedFirstFrame = false;
     bool hasLoggedFirstFrameDiagnostics = false;
     std::size_t benchmarkFrameIndex = 0;
@@ -550,15 +561,53 @@ int RunRuntime(int argc, char **argv)
 #ifdef _WIN32
         PlutoGE::g_runtimeDiagnostics.currentPhase = "begin frame";
 #endif
-        renderer.BeginFrame();
+        PlutoGE::render::RenderTarget *frameRenderTarget = nullptr;
+        const auto windowExtents = window.GetExtents();
+        if (runtimeUpscalingEnabled && windowExtents.width > 0 && windowExtents.height > 0)
+        {
+            const int internalWidth = (std::max)(1, static_cast<int>(std::lround(windowExtents.width * runtimeRenderScale)));
+            const int internalHeight = (std::max)(1, static_cast<int>(std::lround(windowExtents.height * runtimeRenderScale)));
+            if (!runtimeRenderTarget)
+            {
+                runtimeRenderTarget = std::make_unique<PlutoGE::render::RenderTarget>(
+                    PlutoGE::render::RenderTargetConfig{.width = internalWidth, .height = internalHeight});
+            }
+            else if (runtimeRenderTarget->GetWidth() != internalWidth || runtimeRenderTarget->GetHeight() != internalHeight)
+            {
+                runtimeRenderTarget->Resize(internalWidth, internalHeight);
+            }
+
+            if (runtimeRenderTarget->IsInitialized())
+                frameRenderTarget = runtimeRenderTarget.get();
+        }
+
+        renderer.BeginFrame(frameRenderTarget);
         if (auto *cameraComponent = PlutoGE::FindFirstSceneCamera(scene.get()))
         {
 #ifdef _WIN32
             PlutoGE::g_runtimeDiagnostics.currentPhase = "render frame";
 #endif
-            renderer.RenderFrame(*cameraComponent, nullptr, scene->GetLights());
+            renderer.RenderFrame(*cameraComponent, frameRenderTarget, scene->GetLights());
         }
         renderer.ClearRenderCommands();
+
+        if (frameRenderTarget)
+        {
+            renderer.EndFrame(frameRenderTarget);
+            if (!runtimeUpscaler.UpscaleToFramebuffer(
+                    *frameRenderTarget,
+                    windowExtents.width,
+                    windowExtents.height,
+                    {.sharpness = runtimeManifest.runtimeUpscaleSharpness}))
+            {
+                PlutoGE::render::Graphics::BindFramebuffer(GL_READ_FRAMEBUFFER, frameRenderTarget->GetFramebufferID());
+                PlutoGE::render::Graphics::BindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+                glBlitFramebuffer(0, 0, frameRenderTarget->GetWidth(), frameRenderTarget->GetHeight(),
+                                  0, 0, windowExtents.width, windowExtents.height,
+                                  GL_COLOR_BUFFER_BIT, GL_LINEAR);
+                PlutoGE::render::Graphics::BindFramebuffer(GL_FRAMEBUFFER, 0);
+            }
+        }
 
 #ifdef _WIN32
         PlutoGE::g_runtimeDiagnostics.currentPhase = "end frame";
@@ -590,6 +639,13 @@ int RunRuntime(int argc, char **argv)
             hasLoggedFirstFrame = true;
         }
 #endif
+    }
+
+    runtimeUpscaler.Shutdown();
+    if (runtimeRenderTarget)
+    {
+        runtimeRenderTarget->Cleanup();
+        runtimeRenderTarget.reset();
     }
 
     if (benchmarkEnabled && !benchmarkFrameTimes.empty())
